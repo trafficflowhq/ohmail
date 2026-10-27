@@ -224,6 +224,9 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // transaction, so its presence implies the key, the CHECKs and the grant. The SWALLOWED kind: the
   // recorder never fails a request, so an API ahead of the migration would record nothing, silently.
   ["connect_attempts", "transport"],
+  // cloud 0055_account_storage_holds — `updated_at`, the table's LAST column. Absent, every metered cap
+  // read faults: the worker meters nothing and the storage block is left out. The deploy gate names it.
+  ["account_storage_holds", "updated_at"],
 ] as const;
 
 /**

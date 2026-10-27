@@ -5,7 +5,7 @@ import {
 } from "@trafficflow/db";
 import type { AccountsAtCapReader, AlertHeartbeat, PlaneOpsReader, RetiredKekReferences } from "@trafficflow/db/cloud";
 import {
-  alertHeartbeatFor, kekRetiredReferences, retiredVersionInUseFault, retiredVersionUnreadFault,
+  alertHeartbeatFor, heldStorageLimitOf, kekRetiredReferences, retiredVersionInUseFault, retiredVersionUnreadFault,
 } from "@trafficflow/db/cloud";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRecorder, accountsAtCapOf,
@@ -157,10 +157,12 @@ function buildServices(cfg: HostConfig): ApiServices {
     // `null` from the read is the documented fail-open for an account with no subscription row
     // at all (the roster keeps such accounts syncing; storage follows), and it maps to the
     // typed unmetered value rather than leaking a second spelling of it.
+    // A lower limit is held 14 days (cloud 0055), as the worker's resolver applies it; a fault throws
+    // into the sent-copy projection's own catch.
     storageCapOf: async (ctx: ServiceContext) => {
       const verdict = await accessOf(entitlementsComposition(), ctx.accountId);
-      const cap = verdict.ok ? verdict.limits.storageBytes : null;
-      return cap === null ? UNMETERED_STORAGE_CAP : cap;
+      const limit = await heldStorageLimitOf(ctx.db as unknown as Tx, ctx.accountId, verdict, ctx.now());
+      return limit === null ? UNMETERED_STORAGE_CAP : limit.capBytes;
     },
     // The way around that ceiling: a transport with no request body in it. The browser mints a
     // grant here, PUTs the bytes straight into a private bucket, and the send carries a

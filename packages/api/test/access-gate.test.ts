@@ -220,6 +220,27 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
     expect("planLimitBytes" in body.storage).toBe(false);
   });
 
+  it("…and after a lower limit, the previous one for 14 days, the plan's own and the date it applies", async () => {
+    let limit = 10_000_000_000;
+    const { db, deps } = await depsWith(stubPort({
+      access: async () => ({ ok: true, limits: { mailboxes: 5, storageBytes: limit, canAddMailbox: true, aiEnabled: true } }),
+    }));
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    await db.insert(accountStorage).values({ accountId: s.accountId, bytes: 9_000_000_000 });
+    const storage = async () => (await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json()).storage;
+    expect(await storage()).toMatchObject({ limitBytes: 10_000_000_000, upgrade: "addon" });
+    limit = 2_000_000_000;
+    const held = await storage();
+    expect(held).toMatchObject({
+      limitBytes: 10_000_000_000, planLimitBytes: 2_000_000_000, upgrade: "plan", emptyingNow: false,
+    });
+    expect(Date.parse(held.limitDropsAt) - FIXED_NOW.getTime()).toBeGreaterThanOrEqual(14 * 86_400_000);
+    expect(Date.parse(held.limitDropsAt) % 86_400_000, "the hold ends at 00:00 UTC").toBe(0);
+    // A re-upgrade inside the window cancels it.
+    limit = 10_000_000_000;
+    expect("planLimitBytes" in await storage()).toBe(false);
+  });
+
   it("…and what adds room: a bigger plan below the largest plan's limit, the storage add-on from it on", async () => {
     // Solo, a trial's 4 GB floor, Plus, Pro, Solo with one add-on.
     for (const [cap, upgrade] of [

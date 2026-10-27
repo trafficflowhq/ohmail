@@ -20,6 +20,7 @@ import {
   users,
 } from "@trafficflow/db";
 import {
+  accountStorageHolds,
   attachmentStaging,
   authThrottle,
   connectAttempts,
@@ -200,6 +201,9 @@ describe("account deletion — Art. 17 erasure by anonymisation", () => {
     // How connecting a mailbox ended (cloud 0054): by count and by row, for the reason above.
     expect(result.deleted.connect_attempts).toBe(1);
     expect(await db.select().from(connectAttempts)).toHaveLength(0);
+    // A lower storage limit's hold (cloud 0055): by count and by row, for the reason above.
+    expect(result.deleted.account_storage_holds).toBe(1);
+    expect(await db.select().from(accountStorageHolds)).toHaveLength(0);
   });
 
   it("brings staged attachment tickets forward to expire NOW, rather than orphaning the bytes", async () => {

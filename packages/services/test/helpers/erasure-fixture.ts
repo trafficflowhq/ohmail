@@ -92,6 +92,7 @@ import {
   accountLifecycleNotices,
   connectAttempts,
   screenerSuggestOwed,
+  accountStorageHolds,
   totpSecrets,
   waitlist,
   webauthnChallenges,
@@ -501,6 +502,10 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   // the oracle (see the header): this table sat in the erasure scope UNSEEDED, so both suites'
   // sweeps read 0 -> 0 over it — green whether or not anything erased it.
   await db.insert(screenerSuggestOwed).values({ accountId, owedAt: NOW });
+  // A lower storage limit's hold (cloud 0055), keyed by the account alone.
+  await db.insert(accountStorageHolds).values({
+    accountId, seenBytes: 2_000_000_000, heldBytes: 10_000_000_000, heldUntil: NOW,
+  });
 
   // The wall's notice ledger (cloud 0040), keyed by the account. Seeded for the suggest-owed
   // mark's reason one block up: the seed IS the oracle, and an unseeded table reads 0 -> 0 over

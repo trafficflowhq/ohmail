@@ -63,6 +63,7 @@ import {
 } from "@trafficflow/db";
 import {
   accountLifecycleNotices,
+  accountStorageHolds,
   attachmentStaging,
   authEvents,
   connectAttempts,
@@ -437,6 +438,8 @@ export async function deleteAccount(
     // account — and `accounts` is RETAINED as a pseudonymous row, so the FK's cascade never fires
     // for an erasure. Without this line the mark would outlive the person it schedules work for.
     await drop("screener_suggest_owed", tx.delete(screenerSuggestOwed).where(eq(screenerSuggestOwed.accountId, accountId)));
+    // A lower storage limit's hold (cloud 0055): limits and a date, keyed by the account, same reason.
+    await drop("account_storage_holds", tx.delete(accountStorageHolds).where(eq(accountStorageHolds.accountId, accountId)));
     // The account's own preferences — the dormancy dial, the Ohbox posture, and
     // `seed_confirmed_at`, which is the CONSENT EVENT of onboarding — were deleted FIRST, at
     // the top of this transaction: consent to something is a record about a person and there
