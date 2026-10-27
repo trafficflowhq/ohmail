@@ -33,6 +33,7 @@ import type { RemoteImagesChrome } from "../shell/remote-images";
 import type { AttachmentsChrome } from "../shell/attachments";
 import { useStreamWindow } from "../shell/stream-window";
 import { useKeyPanelOpensCard, useStreamBar } from "../shell/stream-bar";
+import { readLandedCard } from "../shell/stream-landing-read";
 import { useBodyStamp } from "../shell/body-slice";
 import { useStreamNear } from "../shell/stream-near";
 import { afterPaint, useVisit } from "../shell/visit";
@@ -62,6 +63,7 @@ export function ReceiptsView({
   attachments,
   jumpTo,
   onJumped,
+  jumpEnters = false,
   closeTo,
   onClosed,
   onAction,
@@ -136,6 +138,8 @@ export function ReceiptsView({
   attachments?: AttachmentsChrome;
   jumpTo: string | null;
   onJumped: () => void;
+  /** The jump is a hit the person opened: the landed card is read by the rule from its landing. */
+  jumpEnters?: boolean;
   /** The controlled close and its acknowledgement — see `ReadsView` for the contract. */
   closeTo?: string | null;
   onClosed?: () => void;
@@ -277,7 +281,15 @@ export function ReceiptsView({
      every jump extends the run first and scrolls AFTER the commit that mounted the target.
      `open` marks a jump from OUTSIDE the pile, which must leave the message open and not merely
      selected — the same pair, for the same reasons, as `ReadsView`. */
-  const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean } | null>(null);
+  const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean; read?: boolean } | null>(null);
+  const landedRead = useRef<{ id: string; stop: () => void } | null>(null);
+  const seenMarkRef = useRef<(id: string) => void>(() => {});
+  const readLanded = useCallback((id: string) => {
+    landedRead.current?.stop();
+    const el = streamRef.current?.element();
+    landedRead.current = el ? { id, stop: readLandedCard({ scroller: el, id, onRead: (x) => seenMarkRef.current(x) }) } : null;
+  }, []);
+  useEffect(() => () => { landedRead.current?.stop(); landedRead.current = null; }, []);
   /** A card the shell has since asked to close — see `ReadsView.closedRef` for the race. */
   const closedRef = useRef<string | null>(null);
   /** How many closes have happened — see `ReadsView.closeSeqRef` for why an id cannot say. */
@@ -292,8 +304,8 @@ export function ReceiptsView({
   useEffect(() => {
     // A stream not armed yet has no card to land on; the scroll waits for the arming.
     if (!pendingScroll || !streamArmed) return;
-    const { id, open } = pendingScroll;
-    streamRef.current?.scrollTo(id, open ? () => openLandedCard(id) : undefined);
+    const { id, open, read } = pendingScroll;
+    streamRef.current?.scrollTo(id, open ? () => { openLandedCard(id); if (read) readLanded(id); } : undefined);
     setPendingScroll(null);
   }, [pendingScroll, openLandedCard, streamArmed]);
   /** The controlled close, through the card's own pill — see `ReadsView` for the full reasoning. */
@@ -302,6 +314,7 @@ export function ReceiptsView({
   useEffect(() => {
     if (!closeTo) return;
     closedRef.current = closeTo;
+    if (landedRead.current?.id === closeTo) { landedRead.current.stop(); landedRead.current = null; }
     closeSeqRef.current += 1;
     setPendingScroll((p) => (p && p.id === closeTo ? null : p));
     document
@@ -332,8 +345,9 @@ export function ReceiptsView({
      `ReadsView`'s twin spells out: the shell's callbacks are fresh closures on every render and
      `all` moves on every mirror delta, so anything else in here cancels the pending frame and
      drops the jump. The latest callbacks and order are read through refs at fire time. */
-  const jumpRefs = useRef({ onCur, onJumped });
-  jumpRefs.current = { onCur, onJumped };
+  seenMarkRef.current = seenMark;
+  const jumpRefs = useRef({ onCur, onJumped, jumpEnters });
+  jumpRefs.current = { onCur, onJumped, jumpEnters };
   /* The jump effect is [jumpTo]-keyed and reads its collaborators through refs; the pile
      index joins them for the same reason (a fresh Map identity per delta must not re-arm it). */
   const pileIndexOfRef = useRef(pileIndexOf);
@@ -353,7 +367,7 @@ export function ReceiptsView({
       stream.ensure(pileIndexOfRef.current(jumpTo));
       // A NEW request to show this message outranks an EARLIER close of it.
       if (closedRef.current === jumpTo) closedRef.current = null;
-      setPendingScroll({ id: jumpTo, open: true });
+      setPendingScroll({ id: jumpTo, open: true, read: jumpRefs.current.jumpEnters });
       jumpRefs.current.onJumped();
     });
     return () => cancelAnimationFrame(timer);

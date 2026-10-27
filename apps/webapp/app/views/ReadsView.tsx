@@ -43,6 +43,7 @@ import { useKeyPanelOpensCard, useStreamBar } from "../shell/stream-bar";
 import { useBodyStamp } from "../shell/body-slice";
 import { useStreamNear } from "../shell/stream-near";
 import { afterPaint, useVisit } from "../shell/visit";
+import { readLandedCard } from "../shell/stream-landing-read";
 import { waterlineStamp } from "../shell/format";
 
 export type ReadsChipState = null | "approved" | "corrected";
@@ -78,6 +79,7 @@ export function ReadsView({
   attachments,
   jumpTo,
   onJumped,
+  jumpEnters = false,
   closeTo,
   onClosed,
   onAction,
@@ -152,6 +154,8 @@ export function ReadsView({
   attachments?: AttachmentsChrome;
   jumpTo: string | null;
   onJumped: () => void;
+  /** The jump is a hit the person opened: the landed card is read by the rule from its landing. */
+  jumpEnters?: boolean;
   /**
    * The controlled close — the counterpart of `jumpTo`, the same one-shot shape: an id the shell
    * asks this view to CLOSE because the URL no longer claims that reading (Back walked out of a
@@ -348,7 +352,15 @@ export function ReadsView({
    * asked for that message and nothing else. See {@link openLandedCard} for why the open happens
    * after the landing rather than with it.
    */
-  const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean } | null>(null);
+  const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean; read?: boolean } | null>(null);
+  const landedRead = useRef<{ id: string; stop: () => void } | null>(null);
+  const seenMarkRef = useRef<(id: string) => void>(() => {});
+  const readLanded = useCallback((id: string) => {
+    landedRead.current?.stop();
+    const el = streamRef.current?.element();
+    landedRead.current = el ? { id, stop: readLandedCard({ scroller: el, id, onRead: (x) => seenMarkRef.current(x) }) } : null;
+  }, []);
+  useEffect(() => () => { landedRead.current?.stop(); landedRead.current = null; }, []);
   /**
    * Open the landed card the way a click opens it. `StreamCard` owns its own expanded state, so
    * there is no prop to set: a click selects and expands in one gesture (`expandOnClick`,
@@ -388,8 +400,8 @@ export function ReadsView({
   useEffect(() => {
     // A stream not armed yet has no card to land on; the scroll waits for the arming.
     if (!pendingScroll || !streamArmed) return;
-    const { id, open } = pendingScroll;
-    streamRef.current?.scrollTo(id, open ? () => openLandedCard(id) : undefined);
+    const { id, open, read } = pendingScroll;
+    streamRef.current?.scrollTo(id, open ? () => { openLandedCard(id); if (read) readLanded(id); } : undefined);
     setPendingScroll(null);
   }, [pendingScroll, openLandedCard, streamArmed]);
   /**
@@ -407,6 +419,7 @@ export function ReadsView({
   useEffect(() => {
     if (!closeTo) return;
     closedRef.current = closeTo;
+    if (landedRead.current?.id === closeTo) { landedRead.current.stop(); landedRead.current = null; }
     closeSeqRef.current += 1;
     // A landing still in flight for this id would re-open it; drop it before it can.
     setPendingScroll((p) => (p && p.id === closeTo ? null : p));
@@ -480,8 +493,9 @@ export function ReadsView({
    * not a subscription to the pile: the latest callbacks and order are read through refs at fire
    * time.
    */
-  const jumpRefs = useRef({ onCur, onJumped });
-  jumpRefs.current = { onCur, onJumped };
+  seenMarkRef.current = seenMark;
+  const jumpRefs = useRef({ onCur, onJumped, jumpEnters });
+  jumpRefs.current = { onCur, onJumped, jumpEnters };
   /* The jump effect is [jumpTo]-keyed and reads its collaborators through refs; the pile
      index joins them for the same reason (a fresh Map identity per delta must not re-arm it). */
   const pileIndexOfRef = useRef(pileIndexOf);
@@ -508,7 +522,7 @@ export function ReadsView({
       stream.ensure(pileIndexOfRef.current(jumpTo));
       // A NEW request to show this message outranks an EARLIER close of it — see `closedRef`.
       if (closedRef.current === jumpTo) closedRef.current = null;
-      setPendingScroll({ id: jumpTo, open: true });
+      setPendingScroll({ id: jumpTo, open: true, read: jumpRefs.current.jumpEnters });
       jumpRefs.current.onJumped();
     });
     return () => cancelAnimationFrame(timer);

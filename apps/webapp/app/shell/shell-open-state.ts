@@ -313,6 +313,8 @@ export function useShellOpenState({
    * rule rather than a race between two `setState`s and a `hashchange`.
    */
   const [readerPending, setReaderPending] = useState<string | null>(null);
+  /** A hit the person opened into the Ohbox: entered there once that row is shown (`OhboxView.enterId`). */
+  const [ohboxEnter, setOhboxEnter] = useState<string | null>(null);
   /**
    * DOES THE COLUMN VIEW THE ROUTE NAMES LIST THIS MESSAGE — asked before a routed open is read in
    * that view's own column rather than the reader. The same lists the views render; History lists
@@ -433,7 +435,7 @@ export function useShellOpenState({
   const [pickerIds, setPickerIds] = useState<string[] | null>(null);
   const [chipState, setChipState] = useState<ReadsChipState>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [jump, setJump] = useState<{ view: "reads" | "receipts"; id: string } | null>(null);
+  const [jump, setJump] = useState<{ view: "reads" | "receipts"; id: string; enters?: true } | null>(null);
   /**
    * THE STREAM CLOSE REQUEST — `jump`'s counterpart, and deliberately the same shape.
    *
@@ -738,6 +740,7 @@ export function useShellOpenState({
       setShortcutsOpen(false);
       setReplyTo(null);
       if (route.view !== "screener") setScreenerFull(false);
+      if (route.view !== "ohbox") setOhboxEnter(null);
       // …and only then honour a pending Reply Run, so the clear above cannot undo it.
       if (route.view === "triage" && frPending) {
         setFrPending(false);
@@ -917,7 +920,7 @@ export function useShellOpenState({
    * `reply` opens the message's inline editor with it. Where the open navigates, the editor rides
    * `replyPending` past the transition; where it stays on this view, nothing will clear it.
    */
-  const openMessage = useStableCallback((m: EngineMessage, opts?: { reply?: boolean }) => {
+  const openMessage = useStableCallback((m: EngineMessage, opts?: { reply?: boolean; enter?: boolean }) => {
     const replyAfter = (moves: boolean): void => {
       if (!opts?.reply) return;
       if (moves) setReplyPending(m.id);
@@ -951,6 +954,7 @@ export function useShellOpenState({
         // A landing is no row press: its Move moves the message it landed on (`ownFaceFor`).
         setRowSeed(null);
         setOhboxSel(target.id);
+        setOhboxEnter(opts?.enter ? target.id : null);
         setLocated(target.id);
         // The reader, via `readerPending` when `go` is about to clear it; already here, nothing
         // will consume a pending one, so the sheet opens now.
@@ -965,7 +969,7 @@ export function useShellOpenState({
         return;
       case "stream":
         (target.view === "reads" ? setReadsCur : setReceiptsCur)(target.id);
-        setJump({ view: target.view, id: target.id });
+        setJump({ view: target.view, id: target.id, ...(opts?.enter ? { enters: true as const } : {}) });
         setLocated(target.id);
         replyAfter(route.view !== target.view);
         go(target.view);
@@ -1401,5 +1405,7 @@ export function useShellOpenState({
     startFR,
     subjectRule,
     toggleAbsoluteTime,
+    ohboxEnter,
+    setOhboxEnter,
   };
 }

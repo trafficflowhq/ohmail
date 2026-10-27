@@ -1040,3 +1040,95 @@ describe("at phone width, Back from a letter keeps the cursor on its row", () =>
     expect(rowOn("p4")?.closest(".row-slot")?.querySelector(".tm-strip"), "T keeps its walked strip after Back").not.toBeNull();
   }, 60_000);
 });
+
+describe("a letter opened from Search: the open enters it, as ↵ on its row does", () => {
+  const letters = () => [msg("p1", 0), msg("p2", 10), msg("s1", 40, { threadId: "S", subject: "Harbour kettle" })];
+  const openHit = (): HTMLButtonElement | null =>
+    document.querySelector<HTMLButtonElement>('.view-search .hit-w[data-hit="s1"] button.hit-open');
+  /** Search asks the store: `GET /search?q=` answers s1 for "harbour". */
+  async function search(q: string): Promise<HTMLInputElement> {
+    const s1 = (msg("s1", 40, { threadId: "S", subject: "Harbour kettle" }) as { entity: unknown }).entity;
+    const inner = globalThis.fetch;
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (!/\/search\?/.test(url)) return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
+      const items = /harbour/i.test(new URL(url, "https://harness.invalid").searchParams.get("q") ?? "") ? [s1] : [];
+      return new Response(JSON.stringify({ items, total: items.length, totalExact: true, ms: 4 }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof globalThis.fetch;
+    await goTo("search");
+    const box = document.querySelector<HTMLInputElement>(".view-search .search-box input");
+    expect(box, "the search box").not.toBeNull();
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(box, q);
+      box!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await tick(1_000);
+    await settle();
+    expect(openHit(), "the hit").not.toBeNull();
+    return box!;
+  }
+
+  it("↵ on the hit opens the letter unread; after the dwell it is read", async () => {
+    await mountThread(letters());
+    const box = await search("Harbour");
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    await settle();
+    expect(window.location.hash).toContain("ohbox");
+    expect(unseen("s1"), "unread on arrival").toBe(true);
+    expect(glances(), "nothing before the dwell").toEqual([]);
+    await dwell();
+    await dwell();
+    expect(glances()).toEqual([["s1"]]);
+  }, 60_000);
+
+  it("a click on the hit: the same", async () => {
+    await mountThread(letters());
+    await search("Harbour");
+    await click(openHit(), "the hit");
+    expect(panel("s1"), "the column shows the letter").not.toBeNull();
+    await dwell();
+    await dwell();
+    expect(glances()).toEqual([["s1"]]);
+  }, 60_000);
+
+  it("a narrow window: the hit opens the sheet and the sheet reads it", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true, writable: true,
+      value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
+    });
+    await mountThread(letters());
+    await search("Harbour");
+    await click(openHit(), "the hit");
+    expect(document.querySelector('.reader [data-conv-id="s1"]'), "the sheet shows the letter").not.toBeNull();
+    await dwell();
+    await dwell();
+    expect(glances()).toEqual([["s1"]]);
+  }, 60_000);
+
+  it("j within the dwell moves on: s1 is not read", async () => {
+    await mountThread(letters());
+    await search("Harbour");
+    await click(openHit(), "the hit");
+    expect(panel("s1")).not.toBeNull();
+    await key("j");
+    await dwell();
+    await dwell();
+    expect(glances().flat()).not.toContain("s1");
+  }, 60_000);
+
+  it("a link to the letter is still a preview: nothing read", async () => {
+    await mountThread(letters());
+    await act(async () => {
+      window.location.hash = "#/ohbox/m/s1";
+      window.dispatchEvent(new Event("hashchange"));
+    });
+    await settle();
+    expect(panel("s1"), "the link opened the letter").not.toBeNull();
+    await dwell();
+    await dwell();
+    expect(glances()).toEqual([]);
+  }, 60_000);
+});
