@@ -21,6 +21,201 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.9] — 2026-10-27
+
+### Pressing End in News no longer makes the Linux desktop window reload
+
+In the Linux desktop app, pressing End in a long News or Receipts stream while a screen reader or another
+accessibility tool was reading the window could crash the window's web process. The window then showed
+"ohmail's window stopped and was reloaded." and you lost your place. The stream rebuilt its letters on every
+frame of End's scroll animation. It now holds still while End, Home or a fast scrollbar drag moves it more
+than a screen at a time, and shows the letters where the scroll stops. Scrolling with the mouse wheel or the
+arrow keys loads letters as before. This applies to the desktop app and the web.
+
+### A letter you read in News or Receipts turns read where it stands
+
+In News and Receipts, a letter you opened with a click or ↵, or clicked into, and read without scrolling
+stayed unread, and kept its blue line. With the mouse wheel, a letter shown whole on screen stayed unread
+until you scrolled it to the top. Now every letter on screen follows the same rule as in the Ohbox, once
+you have scrolled, pressed or opened a letter in the stream: it turns read once its first lines have
+stayed on screen for 0.7 seconds and its sender line or the end of its text has been on screen. Nothing
+counts while the window is in the background, and a letter you mark unread stays unread until you leave.
+
+After End, or another scroll from inside a letter, leaving News or Receipts could mark read the first
+letters, which had been on screen for only a moment while the stream opened. Now leaving after such a
+scroll marks only the letters you read. Desktop and web.
+
+### News and Receipts read with the keyboard alone
+
+Reading News or Receipts only with the keyboard marked nothing read: scrolling keys typed inside a
+letter, or pressed after clicking a letter's text or its sender line, scrolled the stream, but ohmail
+did not count them until you had scrolled once with the mouse wheel or a touch. Now they count like
+the wheel, by the same rule: a letter turns read once its first lines have stayed on screen for 0.7
+seconds, and nothing that was never on screen turns read. The app's own j and k still mark nothing.
+Keys typed inside a letter count from the first one, so the 0.30.8 note that they mark nothing until
+you have scrolled with the wheel, a touch or a key outside the letter no longer holds.
+
+After End, a letter just above the screen you stopped on could briefly push that screen down as its
+content loaded, and one to three letters you had only flown past were then marked read, mostly when
+you left News. They now stay unread. This applies to the desktop app and the web.
+
+### A letter turns read in every reader, not only in the Ohbox
+
+The read rule of 0.30.7 ran only in the Ohbox, though its note said every message. It now runs in
+History, a folder, a tag, Answer Later, Parked and Resurface, and in the reader that opens over them in a
+narrow window: a letter you open, press in or scroll yourself turns read once its first lines have stayed
+on screen for 0.7 s and its sender line or the end of its text has been on screen. Each message's ⋯ menu
+there has Mark unread. A letter opened from Search into a folder or into that reader turns read the same
+way. Stepping through a list with the arrow keys, the letter a list shows before you open one, and a link
+to a message read nothing. Trash and the Screener's preview still leave a letter as it was. Web and
+desktop.
+
+### The Ohbox keeps your place after Resurface, Park, Answer later or Delete
+
+On desktop and web, a verb on a conversation row whose letter is older than the row (a conversation you
+answered today, say) moved the cursor to a row next to where that letter arrived, often several rows
+down, and the list scrolled there. The cursor now goes to the row directly below the one you acted on.
+
+### Restart to Install in the desktop menu saves the letter open in the compose form first
+
+On the desktop, picking Restart to Install from the app's menu now saves the text of a letter open in the compose form before ohmail restarts, as the Restart in the sidebar and in Settings already did. It still waits while a message is being sent or a draft holds attached files. If the window does not answer within a few seconds, ohmail restarts as before.
+
+### Restart saves the reply or forward you are writing under a letter first
+
+Words typed into a reply or a forward under a letter were saved to your account only after the usual
+pause, so a restart inside it could leave the last of them unsaved there. Restart in the sidebar and in
+Settings on the desktop, and Reload in the browser, now save it first, as they already did for the
+compose form (web, desktop).
+
+### A stray key on "ohmail's window stopped" no longer quits ohmail
+
+When the desktop window stopped a second time within a few minutes, ohmail asked whether to relaunch,
+with Relaunch and Quit. Escape, the dialog's close button and any key that dismissed it counted as Quit,
+so a person still typing lost the app. The question now has one answer, Relaunch, and every way out of it
+brings the window back. ohmail still quits the usual ways, from its menu or tray or by closing its window.
+
+### News on the phone keeps your place when new letters arrive
+
+On Android, new letters arriving at the top of News no longer move you. If they arrive while another tab is open, News comes back at the letter you left. If they arrive while you are at the end of News, the last letters stay on screen and you can still scroll to the end. Before, the view jumped up and the end could not be reached again until the app was restarted.
+
+In two panes, Back with the sidebar open now closes the sidebar instead of leaving the app.
+
+### The phone's open Settings and Ohbox follow a settings block as it starts and ends
+
+On the phone, a Settings screen or Ohbox that was already open kept saying Organizing when this mailbox's
+settings stopped saving to the mail server, and kept the failure sentence after the next save worked. Both
+now change at the next check, without leaving the screen. A stop waiting for another copy of ohmail to let go
+of the mailbox now shows its note on an open screen the same way.
+
+### A connection lost during a large first import no longer ends the import early
+
+On the desktop and the phone, a mail server connection that dropped between two commands of a large
+mailbox's first import could leave the import marked complete with only part of the mail read, and the
+rest was then treated as mail that arrived after the import. A lost connection now fails that pass, and
+the import goes on over the next connection. A new connection that has served mail also counts as
+reconnected at once: a drop after that retries at the first step instead of waiting longer each time, up
+to five minutes, and the connection check now watches it even when the launch's own import was the one
+cut off.
+
+### Agreeing on two computers at the same moment no longer lets both organize the mailbox
+
+When two computers agreed to organize one mailbox within the same moment, both could file its mail for
+one pass before one of them stood down. Now the computer whose claim reached the mail server second waits
+a few seconds for the first, then reads the folder again and names the computer that organizes. On
+desktop, phone, Cloud and your own server.
+
+### Signing up continues in one tab, and the plan step names a trial only when there is one
+
+Confirming your email address from the mail used to open the setup in a new tab even when the tab
+that said "Check your email" was still open, so two tabs could walk the setup side by side and the
+recovery codes one of them showed could be cancelled by the other. The tab already waiting now
+carries on by itself and the confirming page says so; it opens the setup only when no tab is
+waiting. A tab whose step was done in another (a passkey added, codes saved) moves on instead of
+adding a second factor or a second set of codes, and says when codes for the account already exist.
+
+The plan step offers "Start my 14-day trial" only to an account that never had a trial or a
+subscription; an account whose trial ended, or that has paid before, is sent to its account page
+without trial words. After a return from the account page the setup waits about two minutes for the
+trial or plan to start, says it is starting meanwhile, and only then says "not yet". The progress
+rail ends with Organize, the decision that follows setup. Web and ohmail Cloud.
+
+### Screener tabs switch with less work per click
+
+Switching to Screened out or Spam draws a short list once before it shows, not twice, and a letter's
+dark-mode setting is written into its preview only once the letter has loaded there. Desktop and web.
+
+### A first sync over long conversations reads less
+
+When a device syncs a mailbox for the first time, the server now reads only what it needs about the
+other letters in each conversation it sends, instead of every one of them whole. A first sync over
+long conversations finishes sooner, and how much it reads no longer grows with the size of those
+letters. On desktop, Cloud and your own server.
+
+### The desktop app's log says when its last run ended without closing
+
+When ohmail on the desktop vanished without closing, for example after a crash in the system's
+window toolkit, its log said nothing about it. The next start now writes one line saying the previous
+run ended uncleanly, how long ago that run started and which process it was, so a crash report can be
+matched to it. A normal quit, an update's restart, and logging out or shutting down leave no such
+line: on Linux, ohmail now quits the same way as from its menu when the session ends. The line
+carries no file paths and no account data.
+
+### The test suite refuses Postgres-only SQL in code the phone carries
+
+A query only the server's database understands, in a file the phone app's mail engine bundles, now fails
+the main test suite, not only the Android build. On the phone the store is SQLite, where such a query
+fails or answers a different question. Phone.
+
+### The desktop store's crash tests run again
+
+The tests that kill the desktop app's local store mid-write and open it again (a first start killed at
+each step, a kill in the middle of a sync, a kill mid-ingest, the data-directory lock) are back in the
+suite, and so is the check that the API host keeps its mail and database drivers out of the bundle.
+Nothing changes in the apps; these guard the desktop app and ohmail Cloud against regressions.
+
+### The phone app's tests can mount its components
+
+For contributors: `apps/mobile` now carries `@testing-library/react-native` and `react-test-renderer`
+(19.2.3, the app's React), and `apps/mobile/test/helpers/rn-host.ts` stands in for React Native's
+primitives, so a test renders a phone component, presses it and reads its styles. The "could not be
+saved" notice is the first one tested that way: it renders, its Try again and Discard sit inside the
+bounded scroller and stack on a narrow screen, a press reaches the engine, and a send whose outcome is
+unknown keeps its warning on screen after its row is gone. Nothing changes in the app.
+
+### ohmail Cloud stays up when one window loads hundreds of pictures at once
+
+Opening many letters with pictures at the same moment (a sender's held letters in the Screener, for example) could fill ohmail Cloud's database connections and make it refuse everyone for several minutes. A picture request that names no valid letter or address is now refused before it reaches the database, the server lets go of idle database connections within about 20 seconds, and a full connection limit is answered as "busy, try again" instead of as an error.
+
+For operators: a connection pooler at its client limit (`EMAXCONN`) or Postgres at its connection limit (`53300`) is answered `503 db_busy` with `Retry-After: 5`, recorded as `DbConnectionCapError` and counted by `pooler_refusals`. `/health` answers `503 database_refusing_new_connections` when a fresh connection is refused while the instance's held ones still work, and reports `dbFreshConnectMs` otherwise. Pooled connections close after 20 seconds idle (was 120), and the hosted API keeps an instance awake 22 seconds after its last answer so they close before the platform suspends it.
+
+### ohmail Cloud answers "busy, retry shortly" when the database pooler turns a request away
+
+When the database pooler gives up on a statement it never passed to the database, ohmail Cloud now
+answers "busy, retry shortly" instead of a server error. That statement did not run; an earlier
+statement of the same request may already have been written.
+
+### The 5xx poll keeps working when ohmail Cloud is busy
+
+For operators. When the API served more requests than one poll can page through, the platform-signals poll
+answered 502 after 40 seconds although it had written the newest window, and the organizer paged
+`api_cron_stale` for it. A window the poll has no time left for now waits for the next poll (`deferred` on the
+`platform_signal_pass` line), and a window that stopped at its page budget is not read again.
+
+### The sign-in record says why a session ended
+
+For operators. The clean-up that ends sign-ins unused for 60 days now leaves one `session_reaped` row in
+`auth_events` for each session it ends, naming the session, its refresh family and the days it went unused
+(`idle_d`); the operator console's account page lists it by name. The row a reused refresh token leaves
+(`refresh_reuse_revoked`, and `refresh_attempt_revoked`) now also says how many renewals behind the presented
+token was (`depth`) and how many seconds had passed since the family's last renewal (`tail_age_s`). Neither
+says who renewed, and an ordinary renewal leaves no row saying where it came from. A `tail_age_s` under 900, one
+access token's lifetime, means something renewed the family just before: a second copy, or the same client
+presenting its previous token right after renewing (an answer it lost or never stored, or two of its own
+renewals racing). A longer `tail_age_s`, whatever the `depth`, fits a client whose stored sign-in went back and
+equally a copied profile or a stolen token that renewed elsewhere and then went quiet. Nothing reads the new keys
+back: the reuse alert fires on every `refresh_reuse_revoked` row as before. The new keys carry no token, and a
+`session_reaped` row has no IP. No migration, and nothing changes for the person signed in.
+
 ## [0.30.8] — 2026-10-27
 
 ### A reply in News or Receipts is written where the letter is
@@ -14417,7 +14612,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.8...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.9...HEAD
+[0.30.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.9
 [0.30.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.8
 [0.30.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.7
 [0.30.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.6
