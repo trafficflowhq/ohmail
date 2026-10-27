@@ -65,7 +65,8 @@ export interface StreamHandle {
   whenOffScreen: (id: string, cb: () => void) => void;
   /**
    * A letter answered in place has just grown into its conversation: hold its own top, then
-   * scroll down (never up, at once) until its end meets the foot of the port.
+   * scroll down (never up, at once) until its end meets the foot of the port; and again each time
+   * it grows while its dock is open and its end sat at the foot, so the dock never covers it.
    */
   reveal: (id: string) => void;
   /**
@@ -228,6 +229,9 @@ export const StreamShell = forwardRef<
    * the spy for the life of the view.
    */
   const jumpRef = useRef<{ id: string; until: number } | null>(null);
+  /** The last revealed letter's growth watch (`reveal`). */
+  const followRef = useRef<ResizeObserver | null>(null);
+  useEffect(() => () => followRef.current?.disconnect(), []);
   /** The visit's own reset scroll is in flight: the spy's next reading is taken, not announced. */
   const quietRef = useRef(false);
   /** The anchoring loop's live frame — see {@link ANCHOR_FRAMES}. 0 when nothing is in flight. */
@@ -882,12 +886,32 @@ export const StreamShell = forwardRef<
       offScreenRef.current.set(id, cb);
     },
     reveal: (id: string) => {
+      followRef.current?.disconnect();
+      followRef.current = null;
       const el = divRef.current;
       const item = el?.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(id)}"]`);
       if (!el || !item) return;
-      toggledRef.current(id, true);
-      const below = cssRect(item).bottom - cssRect(el).bottom;
-      if (below > 0.5) observerRef.current.own(() => el.scrollTo({ top: el.scrollTop + below, behavior: "instant" }));
+      const toEnd = (below: number) => {
+        toggledRef.current(id, true);
+        if (below > 0.5) observerRef.current.own(() => el.scrollTo({ top: el.scrollTop + below, behavior: "instant" }));
+      };
+      toEnd(cssRect(item).bottom - cssRect(el).bottom);
+      /* The letter grows after this (its frame sizing itself, the editor's lines) under a sticky
+         dock: follow while the dock is open and the end was at the foot before the growth. */
+      if (typeof ResizeObserver !== "function") return;
+      let height = cssRect(item).height;
+      const ro = new ResizeObserver(() => {
+        if (!item.isConnected || !item.querySelector(".reply-dock")) {
+          ro.disconnect();
+          return;
+        }
+        const grew = cssRect(item).height - height;
+        height += grew;
+        const below = cssRect(item).bottom - cssRect(el).bottom;
+        if (below > 0.5 && below <= grew + ANCHOR_TOLERANCE_PX) toEnd(below);
+      });
+      ro.observe(item);
+      followRef.current = ro;
     },
     scrollTo: (id: string, onLanded?: () => void) => {
       const el = divRef.current;

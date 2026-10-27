@@ -246,3 +246,67 @@ describe("the stream answers where a card is — what the verb bar waits on", ()
     expect(fired, "once").toBe(1);
   });
 });
+
+/* ── AN ANSWERED LETTER KEEPS ITS END ABOVE THE DOCK (`reveal`) ──────────────────────────────── */
+
+describe("a letter answered in place that grows after its reveal", () => {
+  let observers: { cb: () => void; on: Set<Element> }[] = [];
+  beforeEach(() => {
+    observers = [];
+    (globalThis as Record<string, unknown>).ResizeObserver = class {
+      o: { cb: () => void; on: Set<Element> };
+      constructor(cb: () => void) { this.o = { cb, on: new Set() }; observers.push(this.o); }
+      observe(e: Element): void { this.o.on.add(e); }
+      unobserve(e: Element): void { this.o.on.delete(e); }
+      disconnect(): void { this.o.on.clear(); }
+    };
+  });
+  afterEach(() => { delete (globalThis as Record<string, unknown>).ResizeObserver; });
+
+  /** c2 sits at the port's top; the editor opens (900px) and the stream reveals its end. */
+  async function answered() {
+    const heights = { c1: 2000, c2: 300, c3: 300, c4: 300 };
+    const s = await mountStream(2000, heights);
+    const c2 = document.querySelector<HTMLElement>('.scast[data-sid="c2"]')!;
+    const dock = document.createElement("div");
+    dock.className = "reply-dock";
+    await s.change("c2", 900, "scast in-place", 0);
+    c2.appendChild(dock);
+    await act(async () => { s.handle.current!.reveal("c2"); });
+    await drainFrames(2);
+    /** The letter grows on its own (its frame sizing itself, the editor's lines): the observer says so. */
+    const grow = async (height: number) => {
+      heights.c2 = height;
+      await act(async () => { for (const o of observers) if (o.on.has(c2)) o.cb(); });
+      await drainFrames(4);
+    };
+    return { ...s, grow, dock };
+  }
+
+  it("follows the growth, so the end meets the port's foot and nothing hides behind the dock", async () => {
+    const s = await answered();
+    expect(s.top("c3"), "the reveal put the end at the foot").toBe(600);
+    await s.grow(1100);
+    expect(s.top("c3"), "after the frame grew by 200").toBe(600);
+    await s.grow(1250);
+    expect(s.top("c3"), "and again").toBe(600);
+    expect(s.scrollTos.at(-1)).toBe(2650);
+  });
+
+  it("never moves a letter the person scrolled away from", async () => {
+    const s = await answered();
+    await s.scroll(2100);
+    const writes = s.scrollTos.length;
+    await s.grow(1100);
+    expect(s.scrollTos.length, "no scroll of the stream's").toBe(writes);
+    expect(s.top("c2")).toBe(-100);
+  });
+
+  it("stops once the dock has closed", async () => {
+    const s = await answered();
+    s.dock.remove();
+    const writes = s.scrollTos.length;
+    await s.grow(1100);
+    expect(s.scrollTos.length).toBe(writes);
+  });
+});
