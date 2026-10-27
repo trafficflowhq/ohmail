@@ -15,7 +15,8 @@ import {
 import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { OHBOX_UNSCREENED_GROUPS_MAX as GROUPS } from "@trafficflow/core/adapters/drizzle-repo";
 import type { Logger, SweepClearance } from "@trafficflow/core/mail";
-import { gapCatchupPass } from "../src/gap-catchup.js";
+import { clockSkewBoundMs, DEFAULT_STALE_AFTER_MS } from "@trafficflow/core/adapters/organizer-lease";
+import { GAP_CLOCK_ALLOWANCE_MS, gapCatchupPass } from "../src/gap-catchup.js";
 import { markMailboxStoodDown } from "../src/mailboxes.js";
 
 /**
@@ -159,12 +160,47 @@ describe("letters from a gap are counted for the person and filed only on their 
     const counted = await seedArrival(w, { from: "letters@news.test" });
     // Taken in while the row said another install held the mailbox, its arrival dated inside the window.
     const heldFirstSeen = await seedArrival(w, { from: "letters@news.test", takenInAt: BEFORE_GAP });
+    // Taken in a minute before a start on the server's clock, by a store whose clock runs behind it.
+    const skewedIntake = await seedArrival(w, { from: "letters@news.test", takenInAt: new Date(GAP.getTime() - 60_000) });
     expect(await run(w)).toMatchObject({ offered: 1 });
-    expect((await offerOf(w)).letters, "the held-first-seen letter was counted").toBe(1);
+    expect((await offerOf(w)).letters, "the held-first-seen letter was counted, or the skewed intake left out").toBe(2);
+    await press(w);
+    expect(await run(w)).toMatchObject({ moved: 2, completed: 1 });
+    expect(await placement(w, counted)).toEqual({ d: NEWS, by: "us" });
+    expect(await placement(w, skewedIntake)).toEqual({ d: NEWS, by: "us" });
+    expect(await placement(w, heldFirstSeen), "a letter taken in while held was filed").toEqual({ d: INBOX, by: "peer" });
+  });
+
+  /* Mail 0169: the row said another install held the mailbox until 75 s before the start. */
+  const heldUntil = (w: World) => w.db.update(mailboxes)
+    .set({ heldElsewhereUntil: new Date(GAP.getTime() - 75_000) }).where(eq(mailboxes.id, w.mailboxId));
+
+  it("the clock allowance never reaches a letter taken in while the row said another install held the mailbox; CONTROL — one taken in after is counted", async () => {
+    const w = await newWorld();
+    await seedRule(w, "letters@news.test");
+    await heldUntil(w);
+    const whileHeld = await seedArrival(w, { from: "letters@news.test", takenInAt: new Date(GAP.getTime() - 90_000) });
+    const atTheLook = await seedArrival(w, { from: "letters@news.test", takenInAt: new Date(GAP.getTime() - 75_000) });
+    const afterIt = await seedArrival(w, { from: "letters@news.test", takenInAt: new Date(GAP.getTime() - 60_000) });
+    expect(await run(w)).toMatchObject({ offered: 1 });
+    expect((await offerOf(w)).letters, "a letter taken in while held was counted, or the one after it left out").toBe(1);
     await press(w);
     expect(await run(w)).toMatchObject({ moved: 1, completed: 1 });
-    expect(await placement(w, counted)).toEqual({ d: NEWS, by: "us" });
-    expect(await placement(w, heldFirstSeen), "a letter taken in while held was filed").toEqual({ d: INBOX, by: "peer" });
+    expect(await placement(w, afterIt)).toEqual({ d: NEWS, by: "us" });
+    expect(await placement(w, whileHeld), "a letter taken in while held was filed").toEqual({ d: INBOX, by: "peer" });
+    expect(await placement(w, atTheLook), "a letter taken in at the last held instant was filed").toEqual({ d: INBOX, by: "peer" });
+  });
+
+  it("says only the unarrived letters taken in after the row last said another install held the mailbox", async () => {
+    const w = await newWorld();
+    await seedRule(w, "letters@news.test");
+    await heldUntil(w);
+    await seedArrival(w, { from: "letters@news.test", arrivedAt: null, takenInAt: new Date(GAP.getTime() - 90_000) });
+    await seedArrival(w, { from: "letters@news.test", arrivedAt: null, takenInAt: new Date(GAP.getTime() - 60_000) });
+    const c = captured();
+    expect(await run(w, { log: c.log })).toEqual({ offered: 0, moved: 0, completed: 1 });
+    expect(c.lines.filter((l) => l.event === "gap_catchup_unarrived").map((l) => l.fields.count),
+      "a letter taken in while held was said, or the one after it not").toEqual([1]);
   });
 
   it("leaves out a letter gone from the server since, beside one it counts", async () => {
@@ -265,6 +301,10 @@ describe("letters from a gap are counted for the person and filed only on their 
     expect(await run(big, { batch: 1, maxPages: 1 })).toEqual({ offered: 0, moved: 0, completed: 1 });
     expect(await offerOf(big), "a window past its bound stayed open to be walked again")
       .toEqual({ since: null, letters: null, pressed: null });
+  });
+
+  it("reads intake with the lease's own clock allowance", () => {
+    expect(GAP_CLOCK_ALLOWANCE_MS).toBe(clockSkewBoundMs(DEFAULT_STALE_AFTER_MS));
   });
 
   it("closes a window whose letters carry no arrival time, and says how many; CONTROL — an arrival is offered", async () => {

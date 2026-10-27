@@ -69,7 +69,7 @@ import {
 } from "./health.js";
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
-import { runSyncCycle, LeaderFencedError, refusalIsRemoval, type SyncDeps } from "./sync.js";
+import { newCycleCensus, runSyncCycle, LeaderFencedError, refusalIsRemoval, type SyncDeps } from "./sync.js";
 import {
   applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests, shrinkMetaOnRefusal,
 } from "./request-drain.js";
@@ -137,7 +137,7 @@ import {
   markMailboxStoodDown, stampSyncProgress,
   clearOrganizerStandDown,
   markMailboxReleased, readTravellingGapSince, refreshOrganizerHolder, resumeParkedMailbox, deleteParkedPushRows,
-  markMailboxSyncBlocked, clearMailboxSyncBlock,
+  markOrganizedThrough, markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, isProviderRefusal, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, stampImportProgress, makeSyncWriteFence, type LeaderFence,
   accountsOf, organizedMailboxIdsOf, accountInShard, accountShardFilter, shardFilter, loadAttachHosts,
@@ -422,6 +422,8 @@ interface MailboxRuntime {
    * writes it); that visit starts {@link agreeSweep} from it.
    */
   agreeStamp?: Date | null;
+  /** The server's stamp on the claim this cycle's gate wrote (`organized_through` when the cycle finishes). */
+  claimServerAt?: Date | null;
   /**
    * The agree's sweep in progress: each organizing visit runs it (`agreeSweepRun`) until its cursor
    * is null; any other verdict, a throw or a demotion clears it. Memory only: a crash mid-sweep
@@ -1699,6 +1701,8 @@ export async function startWorkerWithLock(
         leasePermit: OrganizerWriteAuthority;
         /** Written when a promotion spends a stamp; see {@link MailboxRuntime.agreeStamp}. */
         agreeStamp?: Date | null;
+        /** Written by every gate; see {@link MailboxRuntime.claimServerAt}. */
+        claimServerAt?: Date | null;
       },
       adapter: MailboxAdapter,
       phase: "attach" | "cycle",
@@ -1987,6 +1991,7 @@ export async function startWorkerWithLock(
          offered the correction to the lease. */
       nonce.seenClockCorrections = correctionsNow;
 
+      nonce.claimServerAt = outcome.organize ? outcome.claimServerAt ?? null : null;
       if (outcome.organize) {
         nonce.leaseNonce = outcome.nonce;
         /*
@@ -4183,6 +4188,7 @@ export async function startWorkerWithLock(
            * request channel below to run. See that block for why. */
           let cycleError: unknown = null;
           let syncOutcome: { hasBacklog: boolean; owesFiling: boolean } | null = null;
+          const census = newCycleCensus();
           try {
             /* The routing hold, evaluated once per cycle (see `importHold` below); its outcome is
                also the gap pass's clearance, handed to the tail as data. */
@@ -4190,6 +4196,7 @@ export async function startWorkerWithLock(
             if (rt.role === "organizer") gapClearances.set(rt.mailboxId, rt.profile.gapClearance());
             syncOutcome = await runSyncCycle({
             ...rt.deps, ...aiFor(rt.mailboxId, rt.accountId), ...(await screeningFor(rt.accountId)),
+            census,
             // Mail 0083. THE ROLE THE GATE JUST ANSWERED, spread over the attach-time deps so a
             // flip applies to THIS pass rather than to the one after the next re-attach. Placed
             // after the spread deliberately: it must win over `rt.deps.role`, which is only ever
@@ -4276,6 +4283,20 @@ export async function startWorkerWithLock(
             // exactly the path that exists to stop doing work. It costs the shard a round trip per
             // mailbox to learn what the first mailbox already knew.
             && !isSharedDatabaseFault(cycleError);
+          /* THIS CYCLE TOOK MAIL IN AND EMPTIED THE INBOUND BACKLOG: nothing the server stamped before
+             its claim waits unorganized, so a hand-back's window may start there (mail 0169). */
+          if (organize && cycleMayStillWrite && cycleError === null && syncOutcome !== null
+            && !syncOutcome.hasBacklog && census.observed > 0 && rt.claimServerAt) {
+            try {
+              await markOrganizedThrough(db, rt.mailboxId, rt.claimServerAt);
+            } catch (err) {
+              log.warn("organized_through_write_failed", {
+                mailboxId: rt.mailboxId, accountId: rt.accountId, err,
+                reason: "where a hand-back's gap window starts could not be recorded; the last value "
+                  + "stands, and a window opens no later than it did",
+              });
+            }
+          }
 
           /* The request channel, after the mail — and the order is the security property. This ran
            * BEFORE `runSyncCycle` until mail 0090, so a decision could govern mail arriving the same

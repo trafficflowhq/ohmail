@@ -3606,6 +3606,11 @@ export interface LeaseGateResult {
    * stamp, and `runLeaseGate`'s tail for the order the two halves are asked in.
    */
   stamp: Promise<MetaBaselineReading>;
+  /**
+   * The server's INTERNALDATE on the claim this gate wrote, as the verify read saw it. On
+   * `organize` only; null when the server gave none or on any other verdict.
+   */
+  claimServerAt?: Date | null;
 }
 
 /**
@@ -4376,7 +4381,13 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       .filter((r): r is unknown => r !== undefined));
     return { custody: "lost", verdict: survivors };
   };
-  return { verdict, nonce, uidValidity: electionUidValidity, stamp: proveAndStamp() };
+  const written = verifyClaims.find(
+    (c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce,
+  );
+  return {
+    verdict, nonce, uidValidity: electionUidValidity, stamp: proveAndStamp(),
+    claimServerAt: written?.serverStamp ?? null,
+  };
 }
 
 // Layer 4: requests — a reader's decision, waiting for the organizer. The claim answers "who

@@ -1035,15 +1035,15 @@ export const DE: Deck = {
     + `zurückgeben, deshalb konnte eine andere Maschine es bis zu ${minutes} Minuten nicht übernehmen.`,
   organizerNotificationsSettings: "Benachrichtigungen einstellen",
   gapLetters: (count: number, address: string) => count === 1
-    ? `1 Mail ist in ${address} angekommen, während kein Gerät das Postfach organisiert hat. Nach deinen Regeln ablegen?`
-    : `${count} Mails sind in ${address} angekommen, während kein Gerät das Postfach organisiert hat. Nach deinen Regeln ablegen?`,
+    ? `1 Mail ist in ${address} angekommen, und kein Gerät hat sie organisiert. Nach deinen Regeln ablegen?`
+    : `${count} Mails sind in ${address} angekommen, und kein Gerät hat sie organisiert. Nach deinen Regeln ablegen?`,
   gapStrangers: (count: number, address: string) => count === 1
-    ? `1 Mail von einem Absender, über den du nie entschieden hast, ist in ${address} angekommen, während kein Gerät das Postfach organisiert hat. In den Screener legen?`
-    : `${count} Mails von Absendern, über die du nie entschieden hast, sind in ${address} angekommen, während kein Gerät das Postfach organisiert hat. In den Screener legen?`,
+    ? `1 Mail von einem Absender, über den du nie entschieden hast, ist in ${address} angekommen, und kein Gerät hat sie organisiert. In den Screener legen?`
+    : `${count} Mails von Absendern, über die du nie entschieden hast, sind in ${address} angekommen, und kein Gerät hat sie organisiert. In den Screener legen?`,
   gapBoth: (letters: number, strangers: number, address: string) =>
     `${letters === 1 ? "1 Mail" : `${letters} Mails`} für deine Regeln und `
     + `${strangers === 1 ? "1 von einem Absender, über den" : `${strangers} von Absendern, über die`} du nie entschieden hast, `
-    + `sind in ${address} angekommen, während kein Gerät das Postfach organisiert hat. `
+    + `sind in ${address} angekommen, und kein Gerät hat sie organisiert. `
     + "Nach deinen Regeln ablegen und die neuen Absender in den Screener legen?",
   gapFile: "Ablegen",
   gapScreen: "In den Screener",

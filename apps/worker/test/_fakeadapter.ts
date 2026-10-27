@@ -297,13 +297,16 @@ export class FakeMetaFolder implements LeaseIo, ProfileIo {
       .map((m) => ({ ...m }));
   }
 
+  /** The server's INTERNALDATE on each appended claim; none when null. */
+  claimStamp: (() => Date) | null = null;
+
   async appendClaim(raw: string): Promise<void> {
     this.refuseIfDead();
     this.appends++;
     // `runLeaseGate` appends ONLY on an `organize` verdict, so this is the observable moment the
     // gate said yes — see the trace comment on `FakeAdapterFleet.trace`.
     this.onEvent("lease_organize");
-    this.messages.push({ ref: this.nextUid++, raw });
+    this.messages.push({ ref: this.nextUid++, raw, ...(this.claimStamp === null ? {} : { internalDate: this.claimStamp() }) });
   }
 
   async removeClaims(refs: readonly unknown[]): Promise<void> {

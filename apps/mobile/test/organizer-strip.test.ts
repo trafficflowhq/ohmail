@@ -107,8 +107,19 @@ describe("the gap offer on the list (mail 0151)", () => {
     ])).toEqual([]);
   });
   it("says the count and asks, in both decks", () => {
-    expect(EN.gapLetters(2, "a@b.test")).toBe("2 letters arrived in a@b.test while no device was organizing it. File them by your rules?");
+    expect(EN.gapLetters(2, "a@b.test")).toBe("2 letters arrived in a@b.test, and no device organized them. File them by your rules?");
     expect(EN.gapLetters(1, "a@b.test")).toContain("File it by your rules?");
+    expect(DE.gapLetters(2, "a@b.test")).toBe("2 Mails sind in a@b.test angekommen, und kein Gerät hat sie organisiert. Nach deinen Regeln ablegen?");
+  });
+  /* Mail 0169 offers a letter another device took in before the holder's last pass reached it, so no
+     sentence says nothing was organizing the mailbox when the letters arrived. */
+  it("every sentence in both decks says no device organized the letters, never that none was organizing", () => {
+    for (const [deck, said] of [[EN, "and no device organized"], [DE, "und kein Gerät hat sie organisiert"]] as const) {
+      for (const s of [deck.gapLetters(1, "a@b.test"), deck.gapStrangers(2, "a@b.test"), deck.gapBoth(1, 2, "a@b.test")]) {
+        expect(s).toContain(said);
+        expect(s).not.toMatch(/while no device was organizing|während kein Gerät/);
+      }
+    }
   });
 });
 
@@ -148,7 +159,7 @@ describe("the gap offer's strangers on the phone (mail 0158)", () => {
 
   it("names the Screener for strangers, never the rules, in both decks", () => {
     expect(EN.gapStrangers(2, "a@b.test")).toBe(
-      "2 letters from senders you have not decided about arrived in a@b.test while no device was organizing it. Put them in the Screener?");
+      "2 letters from senders you have not decided about arrived in a@b.test, and no device organized them. Put them in the Screener?");
     expect(EN.gapStrangers(1, "a@b.test")).not.toMatch(/rules/);
     expect(EN.gapBoth(1, 2, "a@b.test")).toMatch(/^1 letter for your rules and 2 from senders you have not decided about arrived in a@b\.test/);
     expect(DE.gapStrangers(1, "a@b.test")).toContain("In den Screener legen?");
