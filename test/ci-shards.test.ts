@@ -213,6 +213,10 @@ describe("the suite workflow", () => {
     expect(Object.keys(wf.on).sort()).toEqual(["pull_request", "schedule", "workflow_dispatch"]);
   });
 
+  it("starts a pull request run when a draft is marked ready, besides opened, synchronize and reopened", () => {
+    expect((wf.on.pull_request as { types?: string[] } | null)?.types).toEqual(["opened", "synchronize", "reopened", "ready_for_review"]);
+  });
+
   it("names its checks so they never collide with the checks the public repository already requires", () => {
     const names = Object.values(wf.jobs).map((j) => j.name ?? "");
     for (const taken of ["every commit is signed off", "engine · typecheck · build", "engine-bearing UI · scan · smoke"]) {
