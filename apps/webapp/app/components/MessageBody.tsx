@@ -3383,8 +3383,8 @@ export interface MessageBodyProps {
   /**
    * WHICH MESSAGE THIS IS — carried only so the dark-viewer "original" override can be
    * remembered PER MESSAGE. Absent ⇒ the override still works for the session but is not
-   * persisted (the desktop shell, a bare test mount). Nothing else reads it, and it never
-   * touches the sanitize/srcdoc pipeline.
+   * persisted (the desktop shell, a bare test mount). It also keys the per-engine document cache
+   * and the quoted-history fold; absent ⇒ uncached.
    */
   messageId?: string;
   /** The sensitivity-redacted text part. Always present; the fallback when there is no html. */
@@ -3633,7 +3633,7 @@ export function MessageBody({
   /**
    * THE DOCUMENT IS KEPT PER ENGINE (`mail-doc-cache.ts`): a card or a pane that shows a message
    * again reads its document back instead of sanitizing it again, in the same render. No engine (a
-   * bare mount) or no message id (the Screener's held card) is the uncached path, as before.
+   * bare mount) or no message id (a live Junk window card) is the uncached path, as before.
    */
   const engine = useEngineOrNull();
   const mail = useMemo(() => {

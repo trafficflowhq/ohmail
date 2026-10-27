@@ -140,18 +140,19 @@ afterEach(async () => {
 });
 
 describe("the held preview's bodies are asked with urgency", () => {
-  it("the selected sender's held bodies are ONE urgent ask, never one per message", async () => {
+  it("the selected sender's mounted held bodies are ONE urgent ask, never one per message", async () => {
     const { engine } = await engineWith(heldOf(6), async (id) => answer(id));
     const one: Array<[string[], { urgent?: boolean } | undefined]> = [];
     const each: string[] = [];
     await mount(engine, (id) => { each.push(id); }, (ids, opts) => { one.push([ids, opts]); });
     expect(one, "the preview a person is reading must not ask as background work").toHaveLength(1);
-    expect([...one[0]![0]].sort()).toEqual(["h1", "h2", "h3", "h4", "h5", "h6"]);
+    // The newest three are mounted (`held-window.ts`); older letters are asked for as they mount.
+    expect([...one[0]![0]].sort()).toEqual(["h4", "h5", "h6"]);
     expect(one[0]![1]).toEqual({ urgent: true });
     expect(each, "selection asks no single body and is no human re-ask").toEqual([]);
   });
 
-  it("ten held on a server answering in 10 s, behind four busy slots, all draw by the stall bound (SCREENER-OLDER-HELD-BODIES)", async () => {
+  it("ten held on a server answering in 10 s, behind four busy slots, every mounted one draws by the stall bound (SCREENER-OLDER-HELD-BODIES)", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const slow = (id: string) => new Promise<MessageBodyWire>((r) => { setTimeout(() => r(answer(id)), 10_000); });
     const { engine, asked, batches } = await engineWith([...BACKGROUND, ...heldOf(10)], slow, { batch: true });
@@ -160,9 +161,9 @@ describe("the held preview's bodies are asked with urgency", () => {
     expect(asked.filter((id) => id.startsWith("b")), "premise: the four slots are taken").toHaveLength(4);
     await mount(engine, (id, opts) => { void engine.hydrateBody(id, opts); });
     await act(async () => { await vi.advanceTimersByTimeAsync(BODY_STALL_MS + 1_000); });
-    expect(batches, "one request for the whole held list").toHaveLength(1);
+    expect(batches, "one request for the mounted held letters").toHaveLength(1);
     const notes = articles().map(noteOf);
-    expect(notes, "premise: ten held messages drawn").toHaveLength(10);
+    expect(notes, "premise: the newest three of ten held messages drawn").toHaveLength(3);
     expect(notes.filter((n) => n.includes("Couldn't load"))).toEqual([]);
   });
 
