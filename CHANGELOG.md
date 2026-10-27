@@ -21,6 +21,252 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.8] — 2026-10-27
+
+### A reply in News or Receipts is written where the letter is
+
+Replying to a letter in News or Receipts no longer opens it on a separate page over everything else.
+The letter becomes a conversation right where its card was, laid out like a conversation in the
+Ohbox, and the reply editor sits under it. Once sent, your reply joins the conversation below the
+letter with its square beside it, and the letter's row in the list reads "Me → …". Press Esc
+before sending and the card comes back as it was. The rest of the stream stays where it was
+(desktop and web).
+
+### Screened out and Spam open at once
+
+Clicking Screened out or Spam in the Screener could take several seconds when the newest sender there had
+many letters, because every one of them was drawn, and its body and file list asked for, in the click
+itself. The preview now opens on that sender's newest three letters and adds older ones as you scroll up to
+them, so every letter is still there to read and the counts still cover all of them. A letter you open again
+is no longer cleaned and laid out a second time. Allow and Not spam still act on every letter the sender
+has. Desktop and web.
+
+### Desktop updates now install on the next restart, and the sidebar says when one is ready
+
+ohmail on the desktop now installs a verified update when you quit it, instead of asking first; the AppImage also installs it when it next starts. Where replacing ohmail needs your password, the update waits for Restart instead. A short line at the foot of the sidebar, above Command, says when an update is ready, with Restart to install it at once. An open draft's text is saved first, and Restart waits while a message is still being sent or a draft holds attached files. An update that could not install by itself is said in the same line, with Retry, and is not tried again at every quit. To be asked before every update again, turn off "Install updates automatically" in Settings → About → Updates.
+
+The strip across the top of the window is gone: in the browser, the offer to reload into a newer ohmail moved into the same line. The AppImage now replaces itself with a single rename, so an update interrupted by a crash or a power cut can no longer leave an app that does not start. Installs updated by a package manager, Flatpak or the App Store are unchanged.
+
+### In a long conversation the squares follow the message you are reading
+
+When a conversation has more messages than its squares have room for, the squares in its list row and
+beside the reader no longer scroll sideways or show a square cut at the edge. They now show the part of
+the conversation around the message you are reading, which stays whole in the middle. At an edge that
+hides more, the last two or three squares get smaller, and a quiet +N counts the hidden ones. As you
+read on, the squares move along with you. In the open conversation's list row they start at the
+subject's left edge, +N included, rather than under the sender's circle. On desktop, the web and the
+phone.
+
+### The focused conversation's border no longer runs through the thread squares
+
+With the Omarchy look, the accent border of a focused conversation ran along the column of thread squares
+beside it and across the top of that column, so two lines lay on top of each other. The border now starts
+at the messages, over their own border, and the squares stand on their own between the list and the
+conversation (desktop and web).
+
+### A letter opened from Search turns read
+
+A letter opened from Search or from an address page, with Return or a click on the result, now turns
+read by the same rule as one opened in its own list: once its first lines have stayed on screen for
+0.7 s and its sender line or the end of its text has been on screen. Before, it stayed unread until you
+pressed in it or scrolled it, in the Ohbox, News and Receipts alike. A link to a message still opens it
+without reading it. Web and desktop; the phone app already read these.
+
+### End and Home in News and Receipts mark only the letters they stop on
+
+End, Home, ⌘↓ and ⌘↑ (Ctrl+↓ and Ctrl+↑ on Linux and Windows) scroll a News or Receipts list or stream in
+a short animation, and every letter that animation carried past the top of the pane was marked read, also
+letters that were never on screen once it stopped. Now a jump to an end marks only what it stops on. This
+applies to the desktop app and the web.
+
+In the desktop app on Linux and macOS, and in Safari, a key typed inside a letter (after clicking into it)
+does not reach ohmail, so End cannot be told from the other scrolling keys there. Once you have scrolled
+News with the mouse wheel, a touch or a scrolling key outside a letter, scrolling with the keyboard inside a
+letter marks a letter once its first lines have stayed on screen for 0.7 seconds. Before that, keys inside
+a letter mark nothing, as before. When you leave News, the screens you stopped on count as read, even a
+short stop, but the letters a jump or a fast run of keys carried past without stopping stay unread. What
+you read before still counts. A key pressed there while a mouse-wheel scroll is still settling counts as
+part of that scroll.
+
+### News and Receipts on the phone mark only what you scrolled through
+
+On the phone, letters that arrive above your place in News or Receipts, and your place coming back
+when you return to the tab, no longer mark anything as read. A fling marks only what was on screen
+while your finger moved and where it comes to rest, not every letter it flew past. Your own scrolling
+marks letters as before.
+
+### When ohmail Cloud ends your sign-in, the sign-in screen says so
+
+On the web, a sign-in that ohmail Cloud had ended showed "Checking your sign-in…" and then the front
+page, without a word. It now goes to the sign-in page, which says that you were signed out on this
+browser, or that your sign-in here expired.
+
+In the desktop app, the reason was lost when the app was restarted after ohmail Cloud ended its sign-in:
+it opened on the sign-in dialog as if it had never been signed in. The dialog now says why at the next
+start too (signed out from another device or after a security check, or expired after a long time
+without use) until you sign in again, sign out yourself or switch to another account.
+
+On ohmail Cloud, a desktop app signed in with version 0.11.0 or 0.11.1 was signed out after 60 days
+without use, by the clean-up meant only for browsers. It now keeps its sign-in for 400 days without
+use, like every desktop sign-in.
+
+### Fewer sign-outs after a crash or a forced restart
+
+After a crash, a power cut or a forced restart, the desktop app or the browser could come back with a
+sign-in that had already been replaced. The server refuses such a sign-in the way it refuses a stolen
+one, so you had to sign in again.
+
+The desktop app now writes each renewed sign-in to the disk before it uses it. On the web, tabs that come
+back together, after a restart or a sleep, renew the sign-in once instead of once each, which leaves much
+less for a crash right after to undo (desktop, web, Cloud, your own server).
+
+### Pictures in mail load a few at a time on the web
+
+On the web app, the pictures of the messages on screen, background pictures included, are now fetched
+through the image proxy at most six at a time instead of all at once. Opening a sender in the Screener with many picture-heavy newsletters sent
+more than a thousand requests in a few seconds, and on 26 October that briefly took ohmail Cloud down for
+everyone. Every picture still loads; pictures in the message you just opened go first. A picture address the
+proxy would refuse on sight (not http or https, or longer than the proxy takes) is no longer asked for.
+
+### The desktop log says why its window stopped
+
+When "ohmail's window stopped and was reloaded." shows on Linux, the app's log line for it now also
+carries how long the app had been running, how much memory the computer had left once the window's
+process was gone, and how many of ohmail's own processes the system ended for lack of memory since the
+window last stopped. Kills of other programs are not counted. That tells a crash in the window apart from
+the system reclaiming ohmail's memory, which both looked the same before. On desktops that start each app
+in its own systemd unit, a memory kill ends the whole app, so the message there means a crash. The numbers
+stay in the log on your computer.
+
+### The desktop log says how the window's process ended
+
+When "ohmail's window stopped and was reloaded." shows on Linux, the app's log now gets a second line
+a moment later. It says how the window's process ended: the signal that stopped it, and whether that
+was a crash or a kill, or the exit code it left with. ohmail reads this from the system without
+disturbing the process. What the window's libraries print to the error output just before they stop
+was thrown away when ohmail was started from a launcher. It is now kept in `stderr.log` beside the
+app's log, at most 256 KiB plus one older file, with a marker at each start and at each window process
+that ended. The diagnostic file gets the new numbers and none of that text. Nothing leaves your
+computer. Set `OHMAIL_STDERR_LOG=0` to keep the old behaviour; a terminal's output is never moved.
+
+### Shorter pauses while the desktop app stores a first sync
+
+While the desktop app stores its very first sync, its local database no longer fills each new
+log file with zeroes. That was disk work on the same thread that answers the window, so
+opening a message waited behind it. Nothing is written to disk less safely than before. The app's
+diagnostics now also record how long the engine was held during a sync and how much of that was
+the local database syncing to disk (desktop).
+
+### A large letter no longer holds up new mail on a busy computer
+
+On a heavily loaded computer, a letter of a megabyte or more with large inline pictures could take
+longer than 30 seconds to read in. ohmail then gave up on it, and the folder it sat in stopped
+receiving new mail until that letter was gone. The 30 seconds now count only time in which the
+letter made no progress at all, so a slow letter is read whole and the mail behind it arrives; a
+letter that truly stops is still set aside as before, and no letter takes longer than 10 minutes
+(desktop, phone, Cloud, your own server).
+
+### Letters that reached your mail server just before Stop organizing here are offered after Start
+
+On every app and on ohmail Cloud, Stop organizing here, and a phone handing its mailbox back, now
+start the window of letters to offer where the last finished organizing pass began, by the mail
+server's clock, rather than at the press. A letter that reached the server after that pass and
+before Stop was neither filed by your rules nor offered; after Start it is offered with the others.
+Nothing moves until you choose File. A letter one of your devices has already filed is never offered
+again. Letters that arrived after the last device to organize the mailbox finished its last pass are
+offered, even when another of your devices had already taken them in; the offer now says that no
+device organized them.
+
+On Android and iOS, letters the phone stored before it read the server's arrival time now get that
+time from the server, a page at a time while the phone syncs, and nothing else about them changes on
+the server. They then sort by arrival in the Ohbox and count in the Screener as they do on the
+desktop, and a window of letters to offer waits for them instead of closing without them. Letters
+stored before ohmail kept arrival times at all keep their place.
+
+### A phone that organizes a mailbox shares its rules and screening window again
+
+On Android and iOS, the phone organizing a mailbox failed to write its settings to the mailbox since
+0.25.11, so its rules and the Screener's window never reached your other devices. The phone now writes
+them as the desktop does, and another install picks them up on its next pass.
+
+### Rules made on the computer that organizes your mail show on your other devices
+
+Settings → Rules now lists the rules your mail is filed by. On a device that only reads a mailbox
+another computer organizes, those are that computer's rules, including ones made or changed there;
+before, the page listed only the rules this device wrote (desktop, web). The page says a change made here
+goes to that computer only while that computer can take one; otherwise it says these are the rules that
+computer last published, and why a change can't be made here. On the computer that organizes
+your mail, the page lists its own rules, as before. A rule made there is listed without Change or Revoke
+and says to change it there. A change you make here shows as you made it until that computer's next copy
+includes it; an organizing computer on an older release is followed once its copy agrees. On such a
+mailbox the sender sheet's "Their rules" no longer names an older rule of this device beside the one that
+files the mail (desktop, web, phone).
+
+### A forward left unfinished is a draft with its recipients, note and files
+
+A forward started in the reading pane and left unfinished is now saved to your account after the same
+pause as a reply: it is listed in Drafts, keeps its recipients, its note and the files you kept, and
+opens whole when you press Forward again, after a reload or on another device. Sending it sends that
+draft with only the files you kept and leaves no copy in Drafts. Before, it stayed in that browser only,
+lost its To after a reload, and another device opened a fresh forward. A forward or a reply sent from
+another device while it is open here now closes and says so, and is not sent a second time (web, desktop).
+
+### A click anywhere on a Screener row selects that sender, so s opens their menu
+
+On desktop and web, a click on a waiting sender's address or avatar in the Screener opened the sender
+sheet instead of selecting the row, and s then did nothing. A Screener row is now one target at every
+width, as it already was on a phone: the click selects the sender, and s, o, r, c, n and x act on them.
+In a narrow window, where the click opens the full letter, s now leaves the letter and opens that sender's
+menu; it did nothing before.
+The sender sheet still opens from a press on the sender in the preview.
+
+### A sender filed somewhere and back takes every letter along
+
+Filing a sender from the sender panel or the Screener card with "Also move the mail already in your
+mailbox", then filing them somewhere else the same way, left one letter behind: the one the first
+decision was made on (and, from a Screener card, the Inbox letters it listed). Releasing a sender from
+Screened out or Spam left the released letters behind the same way. The letters a sender decision or a
+release files now stay that decision's, so the next one moves all of them. Letters you moved yourself
+still stay where you put them. A letter left behind before this update stays where it is; move it
+yourself. On desktop, web, phone and Cloud.
+
+### A month chosen on History's rail opens at that month, also on a large mailbox
+
+On web and desktop, a year and then a month pressed quickly on History's rail could open the list some fifty
+messages below the month, with its first message nowhere in sight and the keyboard still on the rail. That
+happened when the History pages arrived before the list had moved, and the rows above the month were sized again.
+The list now goes to the month's first message wherever it stands, and that message takes the cursor and,
+from the keyboard, the focus.
+
+### Adding a mailbox another install organizes never takes it over without asking
+
+Setup now waits until ohmail has checked whether another computer or your own server already
+organizes the mailbox before it shows the consent statement, and asks the claim question when one
+does. Before, Agree could be pressed in the seconds before that check answered, and a mailbox your
+server organized was taken over without the question being asked. If the check takes longer than a
+minute, setup says so and offers to try again; it never offers Agree without an answer. On desktop
+and web.
+
+Agree without "Organize here instead" also no longer takes a mailbox whose organizer is still active
+when the mail server shows that organizer's claim a moment late: the desktop looks before it agrees,
+and an install that starts organizing steps back if the claim turns up as it starts. On desktop,
+phone, Cloud and your own server.
+
+### Tests that migrate a database refuse the shared test database
+
+For contributors: the test files that apply the migrations to the database they are handed (the
+repository adapter, the rules schema, the worker's leader lock and its end-to-end mail tests) now take
+their database through the same refusal as the other Postgres tests. In a checkout without its own
+database (`scripts/lane-db.sh`) they stop at collection with the remedy, instead of migrating the shared
+`trafficflow_test` database another checkout is testing on.
+
+### A maintainer's dispatched test run uses the maintainers' own runners
+
+For contributors: when the maintainers' own runners are switched on, a test run a maintainer starts by
+hand on `main` or on a `pr/` branch now runs its Linux jobs there, as the nightly does, instead of on
+GitHub's runners. On those runners six suite shards run at once instead of three. A dispatch on any
+other branch or tag, a bot's run and a fork's pull request still run on GitHub's runners.
+
 ## [0.30.7] — 2026-10-26
 
 ### A message you read turns read, under a long To list or with its sender line scrolled off
@@ -14171,7 +14417,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.7...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.8...HEAD
+[0.30.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.8
 [0.30.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.7
 [0.30.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.6
 [0.30.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.5
