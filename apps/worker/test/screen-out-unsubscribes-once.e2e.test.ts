@@ -10,8 +10,10 @@ import {
 } from "@trafficflow/services";
 import { runSyncCycle, type SyncDeps } from "../src/sync.js";
 import { ruleRetroPass } from "../src/rule-retro.js";
-import { byMessageId, makeHarness, rawClient, DB_URL, ORGANIZER_CONSENT } from "./_workerenv.js";
+import { byMessageId, makeHarness, rawClient, dbUrlFor, ORGANIZER_CONSENT } from "./_workerenv.js";
 import { FIXTURE_LEASE } from "./_door.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * THE LIVE CELL, on this checkout's own Postgres and GreenMail. A list whose held letter

@@ -9,11 +9,12 @@ import { evalIf, evalValue, type IfContext } from "./support/workflow-if.js";
  * The suite's jobs and the two engine jobs carry one `runs-on:` expression, byte for byte. It names the maintainers'
  * self-hosted runners (`self-hosted`, `ohmail-zorin`) only when the repository variable OHMAIL_LINUX_RUNNER reads
  * `zorin`, the run is this repository's own, no bot started it (neither `github.actor` nor `github.triggering_actor`
- * ends in `[bot]`), and it is the nightly schedule, a push to main, or a maintainer's pull request: its head a `pr/`
- * branch of this repository, opened by a User who is OWNER, MEMBER or COLLABORATOR — the door guard.yml keeps
+ * ends in `[bot]`), and it is the nightly schedule, a push to main, a dispatch on main or on a `pr/` branch (a
+ * dispatch needs write access: the release's whole run on its bump branch), or a maintainer's pull request: its head
+ * a `pr/` branch of this repository, opened by a User who is OWNER, MEMBER or COLLABORATOR — the door guard.yml keeps
  * (.github/scripts/assert-pr-guard.sh). Everything else runs on GitHub's `ubuntu-latest`, as before: a fork's pull
  * request (a maintainer's own fork too, and one whose head was deleted), Dependabot's and an app's pull requests, a
- * branch outside `pr/`, a tag, a merge group, a dispatch, `pull_request_target`, the variable unset or set to anything
+ * branch outside `pr/`, a tag, a merge group, a dispatch on any other ref, `pull_request_target`, the variable unset or set to anything
  * else. Unset is the default, so this lands with no effect, and setting it to `hosted` is the way back. The runners'
  * own admission hook refuses the same set and ends its VM; it is written apart from this expression on purpose.
  *
@@ -24,7 +25,7 @@ import { evalIf, evalValue, type IfContext } from "./support/workflow-if.js";
  *   · the expression routes as above, and each of its guards is watched failing.
  */
 export const ROUTE =
-  "${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.pull_request.author_association)) && fromJSON('[\"self-hosted\",\"ohmail-zorin\"]') || 'ubuntu-latest' }}";
+  "${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.pull_request.author_association)) && fromJSON('[\"self-hosted\",\"ohmail-zorin\"]') || 'ubuntu-latest' }}";
 const SELF_HOSTED = ["self-hosted", "ohmail-zorin"];
 
 /** The routed jobs by file, with the names they keep (five of them are required contexts). */
@@ -130,6 +131,8 @@ const TO_SELF: Array<[string, IfContext]> = [
   ["the same, opened by a COLLABORATOR", { ...SAME_PR, "github.event.pull_request.author_association": "COLLABORATOR" }],
   ["a push to main", run("push", "refs/heads/main", null)],
   ["the nightly schedule", run("schedule", "refs/heads/main", null)],
+  ["a dispatch on main", run("workflow_dispatch", "refs/heads/main", null)],
+  ["a dispatch on a release's bump branch", run("workflow_dispatch", "refs/heads/pr/release-0.30.6", null)],
 ];
 const TO_HOSTED: Array<[string, IfContext]> = [
   ["a fork's pull request", FORK_PR],
@@ -146,7 +149,12 @@ const TO_HOSTED: Array<[string, IfContext]> = [
   ["an android-v* tag", run("push", "refs/tags/android-v1.2.3", null)],
   ["a push to another branch", run("push", "refs/heads/pr/x", null)],
   ["a merge group", run("merge_group", "refs/heads/gh-readonly-queue/main/pr-7-abc", null)],
-  ["a dispatch on main", run("workflow_dispatch", "refs/heads/main", null)],
+  ["a dispatch on a branch outside pr/", run("workflow_dispatch", "refs/heads/docs/x", null)],
+  ["a dispatch on a v* tag", run("workflow_dispatch", "refs/tags/v1.2.3", null)],
+  ["a dispatch by an app", run("workflow_dispatch", "refs/heads/pr/x", null, { "github.actor": "an-app[bot]", "github.triggering_actor": "an-app[bot]" })],
+  ["a maintainer's dispatch re-run by a bot", run("workflow_dispatch", "refs/heads/pr/x", null, { "github.triggering_actor": "an-app[bot]" })],
+  ["a fork's own repository, a dispatch on main", run("workflow_dispatch", "refs/heads/main", null, { "github.repository": "someone/ohmail" })],
+  ["a dispatch on main, the switch set to hosted", run("workflow_dispatch", "refs/heads/main", null, { "vars.OHMAIL_LINUX_RUNNER": "hosted" })],
   ["pull_request_target", run("pull_request_target", "refs/heads/main", "trafficflowhq/ohmail")],
   ["the switch unset", run("pull_request", "refs/pull/7/merge", "trafficflowhq/ohmail", { "vars.OHMAIL_LINUX_RUNNER": "" })],
   ["the switch set to hosted", run("pull_request", "refs/pull/7/merge", "trafficflowhq/ohmail", { "vars.OHMAIL_LINUX_RUNNER": "hosted" })],
@@ -180,6 +188,12 @@ describe("the value evaluator (test/support/workflow-if.ts)", () => {
     expect(() => evalValue("${{ a.b }}", {})).toThrow(/no value given for the context a\.b/);
     expect(() => evalValue("${{ fromJSON(a.b) }}", { "a.b": "[]" })).toThrow(/fromJSON reads a string literal only/);
     expect(() => evalValue("${{ toJSON('x') }}", {})).toThrow(/no value given for the context toJSON/);
+  });
+  it("reads integer literals, as the suite's max-parallel writes them", () => {
+    expect(evalValue("${{ a.b == 'x' && 6 || 3 }}", { "a.b": "x" })).toBe(6);
+    expect(evalValue("${{ a.b == 'x' && 6 || 3 }}", { "a.b": null })).toBe(3);
+    expect(() => evalValue("${{ 1.5 }}", {})).toThrow(/not an expression this reads/);
+    expect(() => evalValue("${{ 6x }}", {})).toThrow(/not an expression this reads/);
   });
   it("evalIf is the value read for truth", () => {
     for (const e of ["${{ 'a' && 'b' }}", "${{ '' }}", "${{ fromJSON('[]') }}", "${{ null }}", "${{ !cancelled() }}"]) {
@@ -235,6 +249,12 @@ describe("the Linux test jobs and the switch to the self-hosted runners", () => 
       expect(evalValue(ROUTE, ctx), clause).toBe("ubuntu-latest");
       expect(evalValue(mutated, ctx), clause).toEqual(SELF_HOSTED);
     }
+    /* The dispatch's ref clause dropped: a dispatch on any branch would run here. */
+    const anyRef = ROUTE.replace("(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/'))", "true");
+    expect(anyRef).not.toBe(ROUTE);
+    const docs = run("workflow_dispatch", "refs/heads/docs/x", null);
+    expect(evalValue(ROUTE, docs)).toBe("ubuntu-latest");
+    expect(evalValue(anyRef, docs)).toEqual(SELF_HOSTED);
     /* The switch dropped: unset no longer means GitHub's runners. */
     const noSwitch = ROUTE.replace("vars.OHMAIL_LINUX_RUNNER == 'zorin' && ", "");
     expect(noSwitch).not.toBe(ROUTE);

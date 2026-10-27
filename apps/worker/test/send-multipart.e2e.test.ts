@@ -7,7 +7,9 @@ import {
   DraftingService, DraftsService, SendService, type ServiceContext,
 } from "@trafficflow/services";
 import type { DraftPort, OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { makeHarness, rawClient, DB_URL } from "./_workerenv.js";
+import { makeHarness, rawClient, dbUrlFor } from "./_workerenv.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * WHAT A RECIPIENT ACTUALLY RECEIVES WHEN THE REPLY WAS GENERATED.

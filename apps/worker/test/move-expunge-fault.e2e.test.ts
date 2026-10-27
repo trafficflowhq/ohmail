@@ -9,7 +9,7 @@ import { makeDb } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
 import { runSyncCycle } from "../src/sync.js";
-import { DB_URL, byMessageId, refuseDriftedSharedDb } from "./_workerdb.js";
+import { dbUrlFor, byMessageId, refuseDriftedSharedDb } from "./_workerdb.js";
 import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
 import {
   CONDSTORE_HOST, CONDSTORE_PORT, probeCondstore,
@@ -17,6 +17,8 @@ import {
 import {
   copiesOf as census, startFaultProxy, type ExpungeFault, type FaultProxy,
 } from "../../../packages/core/test/adapters/_fault-proxy.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * A FILING WHOSE EXPUNGE FAILS, ON A REAL DOVECOT. The proxy hides MOVE, so filing is COPY then

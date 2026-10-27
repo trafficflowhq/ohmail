@@ -6,7 +6,9 @@ import { drafts, outboundSends } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { SendService, SEND_STALE_AFTER_MS, type ServiceContext } from "@trafficflow/services";
 import type { EmailAddress, OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { makeHarness, rawClient, uidInFolder, DB_URL } from "./_workerenv.js";
+import { makeHarness, rawClient, uidInFolder, dbUrlFor } from "./_workerenv.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 // End-to-end (GreenMail SMTP :3025 + IMAP :3143 + Postgres): the gated idempotent
 // send actually delivers over SMTP AND appends to Sent, then finalizes the state

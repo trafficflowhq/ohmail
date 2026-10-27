@@ -1,5 +1,9 @@
+// @services: none — its child run dials this file's own listener, never a real service
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-expect-error — plain .mjs helper, no declarations by design.
@@ -111,4 +115,72 @@ describe("which Postgres a test reaches", () => {
     walk(join(REPO, "scripts"));
     expect(sources.sort()).toEqual(["packages/db/src/testing.ts", "scripts/lane-db.mjs"]);
   });
+});
+
+/* The files that migrate the database they are handed. Off a lane database that is the shared box,
+ * so each must take its URL through the refusal before it migrates. */
+const MIGRATING = [
+  "packages/core/test/adapters/drizzle-repo.test.ts",
+  "packages/db/test/schema.rules.test.ts",
+  "apps/worker/test/leader-lock.test.ts",
+  ...["another-apps-filing-says-why", "api-move-handoff", "attachments", "external-move", "forward-round-trip",
+    "move-expunge-fault", "part-cut-by-move", "passive-folders", "poison-batch", "reconcile-cron",
+    "reconcile-cron-promotion", "reconcile-poison", "restart", "screen-out-unsubscribes-once", "send",
+    "send-multipart", "send-warm-connection", "sync", "uidvalidity-reset"].map((n) => `apps/worker/test/${n}.e2e.test.ts`),
+];
+
+describe("a file that migrates, in a checkout with no lane database", () => {
+  /* The real files, under the suite's own config, setup and runner, from a tree that links this one's
+   * sources and has no .lane-db.env. Every service the probe reads is a listener that accepts and
+   * closes, so nothing is skipped and nothing real is dialed; the box's database name is at that port. */
+  it("refuses the shared box by the file's name instead of migrating it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ohmail-no-lane-db-"));
+    const srv = createServer((s) => s.destroy());
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const port = (srv.address() as { port: number }).port;
+    try {
+      for (const e of ["apps", "packages", "node_modules", "test", "scripts", "tsconfig.base.json", "tsconfig.json"]) {
+        symlinkSync(join(REPO, e), join(root, e));
+      }
+      copyFileSync(join(REPO, "package.json"), join(root, "package.json"));
+      copyFileSync(join(REPO, "vitest.config.ts"), join(root, "vitest.config.ts"));
+      writeFileSync(join(root, "vitest.fixture.mts"), `import { mergeConfig } from "vitest/config";
+import base from "./vitest.config.ts";
+export default mergeConfig(base, { resolve: { preserveSymlinks: true }, cacheDir: ${JSON.stringify(join(root, ".vite"))} });
+`);
+      const env: Record<string, string> = {};
+      for (const [k, v] of Object.entries(process.env)) {
+        if (v === undefined || /^(VITEST|TEST$|NODE_OPTIONS$|TF_REQUIRE_|OHMAIL_|DATABASE_URL|IMAP_|SMTP_|TF_RUSTFS_URL$)/.test(k)) continue;
+        env[k] = v;
+      }
+      Object.assign(env, {
+        DATABASE_URL_PG_TEST: `postgres://tf@127.0.0.1:${port}/trafficflow_test`,
+        IMAP_HOST: "127.0.0.1", IMAP_PORT: String(port), SMTP_HOST: "127.0.0.1", SMTP_PORT: String(port),
+        IMAP_CONDSTORE_PORT: String(port), TF_RUSTFS_URL: `http://127.0.0.1:${port}`,
+      });
+      const out = join(root, "out.json");
+      /* Asynchronous, so this process's listener answers the child's dials. */
+      let said = "";
+      await new Promise<void>((resolve) => {
+        const c = spawn(process.execPath, [join(REPO, "node_modules/vitest/vitest.mjs"), "run", "--root", root,
+          "--config", join(root, "vitest.fixture.mts"), "--reporter=json", `--outputFile=${out}`, ...MIGRATING],
+        { cwd: root, env, timeout: 240_000 });
+        c.stdout.on("data", (d) => { said += d; });
+        c.stderr.on("data", (d) => { said += d; });
+        c.on("close", () => resolve());
+      });
+      expect(existsSync(out), `vitest wrote no report:\n${said}`).toBe(true);
+      const report = JSON.parse(readFileSync(out, "utf8")) as { testResults: { name: string; message?: string; assertionResults: { status: string; failureMessages: string[] }[] }[] };
+      const verdicts = MIGRATING.map((f) => {
+        const t = report.testResults.find((x) => x.name === join(root, f));
+        const why = [t?.message ?? "", ...(t?.assertionResults ?? []).flatMap((a) => a.failureMessages)].join("\n");
+        const passed = (t?.assertionResults ?? []).some((a) => a.status === "passed");
+        return { f, refused: !passed && why.includes(`${f}: this run resolved to the SHARED box database`), why: why.trim().split("\n")[0] };
+      });
+      expect(verdicts.filter((v) => !v.refused).map((v) => `${v.f}: ${v.why}`)).toEqual([]);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 300_000);
 });

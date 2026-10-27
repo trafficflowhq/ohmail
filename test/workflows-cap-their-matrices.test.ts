@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { publicPath } from "./support/public-root.mjs";
+import { evalValue } from "./support/workflow-if.js";
 
 /**
  * A MATRIX THAT RUNS ON EVERY PULL REQUEST HOLDS A BOUNDED SHARE OF THE HOSTED RUNNERS.
@@ -11,13 +12,20 @@ import { publicPath } from "./support/public-root.mjs";
  * take all of it: every shard of every matrix started at once. So each matrix in a workflow that runs on
  * a pull request, a merge group or a push to main says how many of its jobs run at a time
  * (`max-parallel`), and ci.yml's bounds are pinned: three suite shards, one file that runs alone, one
- * SQLite shard. A workflow that runs only on a tag or by hand (ghcr-images.yml) is the release's, and
+ * SQLite shard. The suite's bound follows the pool its plan job ran on (`runner.environment`): six on the
+ * maintainers' own runners, whose supervisor starts at most six VMs, three on GitHub's and on any pool it
+ * cannot read. A workflow that runs only on a tag or by hand (ghcr-images.yml) is the release's, and
  * keeps its matrices whole.
  * Whole to this census, that is: the pool is the organisation's, so ghcr-images.yml bounds its two itself (three
  * image builds and two boots at a time), held below with the hosted jobs each event starts.
  */
 const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): unknown };
-type Workflow = { on?: Record<string, unknown> | null; jobs?: Record<string, { strategy?: { matrix?: unknown; "max-parallel"?: unknown } }> };
+type Workflow = {
+  on?: Record<string, unknown> | null;
+  jobs?: Record<string, { strategy?: { matrix?: unknown; "max-parallel"?: unknown }; outputs?: Record<string, string> }>;
+};
+/** The pools a run's plan job can report, the last one unread. */
+const POOLS = ["self-hosted", "github-hosted", ""];
 const DIR = publicPath("github/workflows");
 const FILES = readdirSync(DIR).filter((f) => f.endsWith(".yml")).sort();
 const text = (f: string) => readFileSync(`${DIR}/${f}`, "utf8");
@@ -42,10 +50,18 @@ export function matricesOf(t: string): Array<{ job: string; bound: unknown }> {
     .map(([job, j]) => ({ job, bound: j.strategy?.["max-parallel"] }));
 }
 
-/** The matrices that start every job at once in a workflow that runs on every change. */
+/** A bound as each pool reads it: a number as written, an expression evaluated (undefined when it cannot be). */
+export function boundPerPool(bound: unknown): unknown[] {
+  if (typeof bound !== "string") return POOLS.map(() => bound);
+  return POOLS.map((pool) => {
+    try { return evalValue(bound, { "needs.plan.outputs.pool": pool }); } catch { return undefined; }
+  });
+}
+
+/** The matrices that start every job at once, on any pool, in a workflow that runs on every change. */
 export function unbounded(file: string, t: string): string[] {
   if (!runsOnEveryChange((yaml.load(t) as Workflow).on)) return [];
-  return matricesOf(t).filter((m) => !(Number.isInteger(m.bound) && (m.bound as number) > 0))
+  return matricesOf(t).filter((m) => !boundPerPool(m.bound).every((b) => Number.isInteger(b) && (b as number) > 0))
     .map((m) => `${file}: ${m.job} starts its whole matrix at once`);
 }
 
@@ -62,15 +78,25 @@ describe("the matrices share the hosted runners", () => {
     expect(matricesOf(images).map((m) => m.job)).toEqual(["build-push", "gate-boot"]);
   });
 
-  it("ci.yml runs three suite shards, one alone file and one SQLite shard at a time", () => {
-    expect(matricesOf(ci)).toEqual([{ job: "suite", bound: 3 }, { job: "alone", bound: 1 }, { job: "sqlite", bound: 1 }]);
+  it("ci.yml runs six suite shards at a time on its own runners and three on GitHub's, one alone file and one SQLite shard", () => {
+    const [suite, alone, sqlite] = matricesOf(ci);
+    expect([suite!.job, alone, sqlite]).toEqual(["suite", { job: "alone", bound: 1 }, { job: "sqlite", bound: 1 }]);
+    expect(boundPerPool(suite!.bound)).toEqual([6, 3, 3]);
+    /* The pool is the plan job's own, as the runner reports it. */
+    expect((yaml.load(ci) as Workflow).jobs?.plan?.outputs?.pool).toBe("${{ runner.environment }}");
   });
 
   it("each reading is watched failing", () => {
     const dropped = ci.replace(/\n {6}max-parallel: 1\n/, "\n");
     expect(dropped).not.toBe(ci);
     expect(unbounded("ci.yml", dropped)).toEqual(["ci.yml: alone starts its whole matrix at once"]);
-    expect(unbounded("ci.yml", ci.replace(/max-parallel: 3\n/, "max-parallel: 0\n"))).toEqual(["ci.yml: suite starts its whole matrix at once"]);
+    /* An expression bound is read for every pool: one that leaves a pool unbounded, or reads a context it is not given. */
+    const suiteBound = /max-parallel: (\$\{\{ .+ \}\})\n/.exec(ci)?.[1];
+    expect(suiteBound, "the suite's bound is no expression").toBeDefined();
+    expect(unbounded("ci.yml", ci.replace(suiteBound!, "${{ needs.plan.outputs.pool == 'self-hosted' && 6 || 0 }}"))).toEqual(["ci.yml: suite starts its whole matrix at once"]);
+    expect(unbounded("ci.yml", ci.replace(suiteBound!, "${{ vars.X == 'zorin' && 6 || 3 }}"))).toEqual(["ci.yml: suite starts its whole matrix at once"]);
+    expect(unbounded("ci.yml", ci.replace(suiteBound!, "0"))).toEqual(["ci.yml: suite starts its whole matrix at once"]);
+    expect(boundPerPool(suiteBound!.replace("'self-hosted'", "'github-hosted'"))).toEqual([3, 6, 3]);
     /* ghcr-images.yml on a pull request is held to the same bound. */
     const onPr = images.replace("\non:\n  push:\n", "\non:\n  pull_request:\n  push:\n").replace(/\n {6}max-parallel: \d+\n/g, "\n"); // its own bounds dropped
     expect(onPr).not.toBe(images);

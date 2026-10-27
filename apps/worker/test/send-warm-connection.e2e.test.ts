@@ -10,7 +10,9 @@ import { drafts, mailboxes } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { makeDb } from "@trafficflow/db/cloud";
 import { SendService, type ServiceContext } from "@trafficflow/services";
-import { greenmailPorts, rawClient, refuseDriftedSharedDb, uidInFolder, DB_URL } from "./_workerenv.js";
+import { greenmailPorts, rawClient, refuseDriftedSharedDb, uidInFolder, dbUrlFor } from "./_workerenv.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * read off the WIRE. Every press of Send dialled, handshook,

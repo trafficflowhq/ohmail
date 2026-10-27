@@ -6,8 +6,10 @@ import { runMigrations } from "@trafficflow/db/admin";
 import type { NativeLocator } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { runSyncCycle, reconcileMailbox } from "../src/sync.js";
-import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, DB_URL } from "./_workerenv.js";
+import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, dbUrlFor } from "./_workerenv.js";
 import { FIXTURE_LEASE } from "./_door.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * ═══ AGAINST A REAL MAIL SERVER — one move it will not perform, three that it will ═════
