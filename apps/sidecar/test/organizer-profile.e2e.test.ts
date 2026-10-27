@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ImapFlow } from "imapflow";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { awayResponders, contacts, notifyRules, rules, tags } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import { META_FOLDER, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
@@ -15,6 +15,13 @@ import {
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
+
+/* The app version a bundler bakes in (`__OHMAIL_ENGINE_VERSION__`), set before the engine loads. */
+const BAKED = vi.hoisted(() => {
+  (globalThis as Record<string, unknown>).__OHMAIL_ENGINE_VERSION__ = "9.8.7";
+  return "9.8.7";
+});
+afterAll(() => { delete (globalThis as Record<string, unknown>).__OHMAIL_ENGINE_VERSION__; });
 
 /**
  * THE PORTABLE ORGANIZER PROFILE — the LOCAL half, against a real IMAP server and the real
@@ -124,6 +131,8 @@ describe("the sidecar writes this mailbox's settings into ohmail/_meta", () => {
     expect(doc.v).toBe(PROFILE_VERSION);
     expect(doc.v).toBeGreaterThanOrEqual(PROFILE_VERSION_MIN_READ);
     expect(doc.producer.kind).toBe("local");
+    // The app's own version, not a placeholder: another device reads which build wrote it.
+    expect(doc.producer.version).toBe(BAKED);
     // A screener yes is a person's contact (mail 0148), and the document says so.
     expect(doc.screener).toEqual([{ address: "anna@x.example", name: "Anna", source: "person" }]);
     // A rule's age travels with the document (outside its fingerprint), so a phone that imports

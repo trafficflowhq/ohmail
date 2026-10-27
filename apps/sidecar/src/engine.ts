@@ -5059,8 +5059,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * store. One serialization of one store, or LOCAL and CLOUD would write documents that
        * disagree about the same configuration. Ticked only from `syncUntilQuiet` AFTER
        * `mayOrganize()` said yes — the single-writer discipline every organizer-side write
-       * rides. `"0.0.0"` is the version every local surface reports today (the /hello
-       * convention); provenance in the document, never a decision.
+       * rides. The version is the app's own, as the bundler baked it (`"0.0.0"` only in an
+       * unbundled dev run); provenance in the document, never a decision.
        */
       const profileSync = new OrganizerProfileSync({
         db, accountId: world.accountId, mailboxId: mb.id,
@@ -5071,7 +5071,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            healed — a partial recovery, which is worse to diagnose than none. */
         get adapter() { return adapter; },
         self: { installId, kind: organizerKind },
-        producerVersion: "0.0.0",
+        producerVersion: BAKED_ENGINE_VERSION?.trim() || "0.0.0",
         ...(config.profileFlushIntervalMs !== undefined
           ? { flushIntervalMs: config.profileFlushIntervalMs } : {}),
         now,
