@@ -11,12 +11,13 @@ import { DOOR_COPY, machineWord } from "./door-copy.js";
  */
 
 export interface CloudSessionWire {
-  state: "live" | "renewing" | "unreachable" | "refused" | "seal_failed";
+  /** `refused_before`: a refusal an earlier run heard, said at a launch that has no session. */
+  state: "live" | "renewing" | "unreachable" | "refused" | "seal_failed" | "refused_before";
   code: string | null;
   since: string;
 }
 
-const STATES = new Set(["live", "renewing", "unreachable", "refused", "seal_failed"]);
+const STATES = new Set(["live", "renewing", "unreachable", "refused", "seal_failed", "refused_before"]);
 
 /** The reading off a `/health` body, or null — an older engine sends none, and none is not a fault. */
 export function sessionOf(value: unknown): CloudSessionWire | null {
@@ -30,8 +31,9 @@ export function sessionOf(value: unknown): CloudSessionWire | null {
 export type SignInCause = "revoked" | "expired" | "seal" | null;
 
 export function signInCauseOf(session: CloudSessionWire | null): SignInCause {
-  if (session?.state === "refused" && session.code === "refresh_revoked") return "revoked";
-  if (session?.state === "refused" && session.code === "refresh_expired") return "expired";
+  const refused = session?.state === "refused" || session?.state === "refused_before";
+  if (refused && session.code === "refresh_revoked") return "revoked";
+  if (refused && session.code === "refresh_expired") return "expired";
   if (session?.state === "seal_failed" && session.code === "seal_unreadable") return "seal";
   return null;
 }

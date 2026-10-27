@@ -2,13 +2,16 @@ import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, users, devices, sessions, refreshTokens, type Tx } from "@trafficflow/db";
-import { reapStaleWebSessions } from "../src/index.js";
+import {
+  generateToken, hashToken, makeSessionLifecycle, makeTestAuthDeps, reapStaleWebSessions, type ServiceContext,
+} from "../src/index.js";
 
 /**
  * ═══ THE WEB-SESSION REAPER — what it may touch, proven by what survives ═══
  *
  * The predicate is structural (`device_id IS NULL AND scope = 'full' AND last_seen_at <
- * now - 60d`), and every arm of it is pinned by a row that DIFFERS in exactly that arm:
+ * now - 60d`, on the cookie window: `refresh_expires_at - last_seen_at < 100d`), and every
+ * arm of it is pinned by a row that DIFFERS in exactly that arm:
  *
  *  · a plain web session idle 61 days      → REAPED, refresh family included
  *  · the same, idle 59 days                → kept (the cutoff is the cutoff)
@@ -17,6 +20,7 @@ import { reapStaleWebSessions } from "../src/index.js";
  *    that a web re-login does not
  *  · an enrollment session, however old    → kept (its own five-minute death owns it)
  *  · an already-revoked session            → not counted twice (the claim is guarded)
+ *  · a device-less session on the native window, idle 61 days → kept, and it renews
  */
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -39,7 +43,8 @@ async function seedSession(db: Tx, o: {
     familyId: crypto.randomUUID(), scope: o.scope ?? "full",
     accessTokenHash: "fixture",
     accessExpiresAt: new Date(NOW.getTime() + 60_000),
-    refreshExpiresAt: new Date(NOW.getTime() + 60_000),
+    // The cookie window, written in lockstep with last_seen_at as a rotation writes it.
+    refreshExpiresAt: new Date(o.lastSeenAt.getTime() + 90 * DAY),
     lastSeenAt: o.lastSeenAt, revokedAt: o.revokedAt ?? null,
   }).returning();
   return { id: s!.id, familyId: s!.familyId };
@@ -85,6 +90,35 @@ describe("reapStaleWebSessions", () => {
     const fam = (await db.select().from(refreshTokens)
       .where(eq(refreshTokens.familyId, stale.familyId)))[0]!;
     expect(fam.revokedAt?.toISOString()).toBe(NOW.toISOString());
+  });
+
+  it("reaps a browser but keeps a device-less desktop session, which renews on the native window", async () => {
+    // Desktop password sign-ins of v0.11.0–v0.11.1 declared no device kind, so they have no
+    // device row; the desktop's rotations write the native window (400 days), a browser's 90.
+    const db = (await makeTestDb()) as unknown as Tx;
+    const me = await seedUser(db);
+    const lifecycle = makeSessionLifecycle({ config: makeTestAuthDeps().config });
+    const lastUse = new Date(NOW.getTime() - 61 * DAY);
+    const renew = async (at: Date, token: string, surface: "cookie" | "native") => (await lifecycle.refresh(
+      { db: db as unknown as ServiceContext["db"], accountId: "", userId: null, now: () => at, requestId: "reap" },
+      { refreshToken: token }, { surface })).tokens!.refreshToken;
+    const usedOn = async (surface: "cookie" | "native") => {
+      const s = await seedSession(db, { ...me, lastSeenAt: lastUse });
+      const token = generateToken();
+      await db.insert(refreshTokens).values({
+        ...me, sessionId: s.id, familyId: s.familyId, tokenHash: hashToken(token),
+        expiresAt: new Date(lastUse.getTime() + 90 * DAY),
+      });
+      return { id: s.id, token: await renew(lastUse, token, surface) };
+    };
+    const browser = await usedOn("cookie");
+    const desktop = await usedOn("native");
+
+    expect((await reapStaleWebSessions(db, NOW)).reaped).toBe(1);
+    const revokedAt = async (id: string) => (await db.select().from(sessions).where(eq(sessions.id, id)))[0]!.revokedAt;
+    expect(await revokedAt(browser.id)).not.toBeNull();
+    expect(await revokedAt(desktop.id)).toBeNull();
+    expect(await renew(NOW, desktop.token, "native")).toBeTruthy();
   });
 
   it("a session that ROTATES between the candidate read and the claim survives the claim", async () => {

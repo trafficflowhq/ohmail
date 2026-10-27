@@ -164,10 +164,15 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
    * its renewal was out waits for that renewal's answer rather than presenting the token again.
    */
   const attempt = useCallback(async (n: number): Promise<void> => {
+    const before = lastRefreshReport();
     const ok = await resumeSession({ mayProceed: stillMine, landing: true }) === "resumed";
-    // The jar changed while this waited for the lock: somebody else's session, or its own sign-out.
-    if (!ok && !stillMine()) { leave(); return; }
     const report = lastRefreshReport();
+    // The door's own refusal clears the jar, tf_owner with it: that is this splash's answer.
+    const owner = readOwnerCookie();
+    const refusedHere = !ok && report !== before && report?.outcome === "revoked" && report.status === 401
+      && (owner === null || owner === initialOwner);
+    // The jar changed while this waited for the lock: somebody else's session, or its own sign-out.
+    if (!ok && !refusedHere && !stillMine()) { leave(); return; }
     const answer = answerOf(ok, report);
     if (answer === "minted") {
       // Stamped BEFORE the reload: the next pass reads it to tell the gate refusing a live jar.
@@ -187,7 +192,7 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
     // busy card at once, whose Try again asks again. Never a sign-in — nothing was learned.
     if (n >= CONFIRM_ATTEMPTS || report?.timedOut !== undefined) { setView({ kind: "busy" }); return; }
     timer.current = setTimeout(() => void attempt(n + 1), nextConfirmDelay(n, report?.retryAfterMs ?? null));
-  }, [leave, stillMine]);
+  }, [initialOwner, leave, stillMine]);
 
   useEffect(() => {
     if (started.current) return;
