@@ -53,3 +53,50 @@ describe("GET /health — dbTls", () => {
     expect("dbTlsBackend" in body).toBe(false);
   });
 });
+
+/**
+ * A REFUSED FRESH CONNECTION IS NOT HEALTHY. On 2026-10-26 the pooler refused every new client for
+ * six minutes while `/health` answered 200 on warm instances, whose probe rode a connection they
+ * already held. The host's `freshConnect` opens one of its own, after the probe answered.
+ */
+describe("GET /health — a fresh connection", () => {
+  const unreachableDb = (db: ApiDeps["db"]) => ({
+    ...db, execute: async () => { throw Object.assign(new Error("down"), { code: "ECONNREFUSED" }); },
+  }) as unknown as ApiDeps["db"];
+  const refused = async () => ({ ok: false, ms: 3, code: "db_connection_cap" });
+
+  it("refused: 503 database_refusing_new_connections with the cap's code, keyed as the unreachable answer", async () => {
+    const { deps } = await makeDeps();
+    const res = await H(req("GET", "/health"), { ...deps, health: { version: "v", freshConnect: refused } });
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: false, error: "database_refusing_new_connections", errorCode: "db_connection_cap" });
+    const unreachable = await (await H(req("GET", "/health"),
+      { ...deps, db: unreachableDb(deps.db), health: { version: "v", freshConnect: refused } })).json();
+    expect(unreachable.error).toBe("database_unreachable");
+    expect(Object.keys(body).sort()).toEqual(Object.keys(unreachable).sort());
+  });
+
+  it("opened: the healthy answer carries dbFreshConnectMs", async () => {
+    const { deps } = await makeDeps();
+    const res = await H(req("GET", "/health"),
+      { ...deps, health: { version: "v", freshConnect: async () => ({ ok: true, ms: 12, code: null }) } });
+    expect(res.status).toBe(200);
+    expect((await res.json()).dbFreshConnectMs).toBe(12);
+  });
+
+  it("a throw is no reading, and nothing is asked when the probe was unreachable", async () => {
+    const { deps } = await makeDeps();
+    const thrown = await H(req("GET", "/health"),
+      { ...deps, health: { version: "v", freshConnect: async () => { throw new Error("boom"); } } });
+    expect(thrown.status).toBe(200);
+    expect("dbFreshConnectMs" in await thrown.json()).toBe(false);
+    let asked = 0;
+    const res = await H(req("GET", "/health"), {
+      ...deps, db: unreachableDb(deps.db),
+      health: { version: "v", freshConnect: async () => { asked += 1; return { ok: true, ms: 1, code: null }; } },
+    });
+    expect(res.status).toBe(503);
+    expect(asked).toBe(0);
+  });
+});

@@ -1,14 +1,32 @@
-import { ServiceError } from "@trafficflow/services/mail";
+import { ServiceError, proxyImageRefusal } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
 import { serviceContext } from "../context.js";
 import { errorResponse, jsonResponse } from "../responses.js";
-import { countFault } from "../middleware.js";
+import { countFault, isDbBusy, withErrorEnvelope, type Middleware } from "../middleware.js";
 import type { Route } from "../router.js";
 import { privacy } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
 
 /** What a fault row names for `/img`: its pattern, nothing the sender chose. */
 const IMG_ROUTE = { pattern: "/img" } as const;
+
+/**
+ * THE STATELESS REFUSALS, BEFORE THE SESSION READ. A `u` no proxy could fetch or a `mid` that is no
+ * id needs no database to refuse, and 2026-10-26 showed the cost of asking one: a tab of 807 such
+ * requests in seconds, a session read each, filled the pooler's client cap for everyone. The
+ * service's own sentence and the handler's own `request_failed` line.
+ */
+const withImageInputShape: Middleware = (next) => async (req, deps, params) => {
+  const url = new URL(req.url);
+  const refusal = proxyImageRefusal({
+    messageId: url.searchParams.get("mid") ?? "", url: url.searchParams.get("u") ?? "",
+  });
+  if (!refusal) return next(req, deps, params);
+  (deps.logger ?? silentLogger).warn("request_failed", {
+    method: req.method, route: "/img", status: refusal.httpStatus, code: refusal.code,
+  });
+  return errorResponse(refusal.code, refusal.httpStatus, refusal.message, refusal.details, refusal.retryable);
+};
 
 /**
  * The spy-pixel blocker surface (4 endpoints). `GET /img` is mounted again; its return condition
@@ -96,14 +114,16 @@ export const privacyRoutes: Route[] = [
     cost: "connection",
     /* `raw` for the reason the attachment byte routes are: the response is bytes, not
        the JSON envelope. Still session-gated — RAW_PIPELINE keeps `withSession`, which
-       is what makes `mid` an authorisation rather than a parameter. */
-    options: { raw: true },
+       is what makes `mid` an authorisation rather than a parameter. The carried envelope
+       answers a busy session or ownership read 503 `db_busy`, as the byte routes' does;
+       the shape refusals run before the session. */
+    options: { raw: true, middleware: [withErrorEnvelope, withImageInputShape] },
     handler: async (req, deps) => {
-      /* `raw` SKIPS THE JSON ERROR ENVELOPE, so this route builds its own — the same
-         shape the attachment byte routes use, and for the same reason. Without it a
-         refusal (a 404 for a cross-account `mid`, a 400 from the SSRF gate, the 415
-         below) escapes the handler as an unhandled throw and the caller gets a 500,
-         which reports our own correct refusals as our own bug. */
+      /* The handler still builds its own refusals — the same shape the attachment byte
+         routes use, and for the same reason. Without it a refusal (a 404 for a
+         cross-account `mid`, a 400 from the SSRF gate, the 415 below) escapes the
+         handler as an unhandled throw and the caller gets a 500, which reports our own
+         correct refusals as our own bug. */
       try {
         const url = new URL(req.url);
         const target = url.searchParams.get("u") ?? "";
@@ -113,6 +133,8 @@ export const privacyRoutes: Route[] = [
         );
         return imageResponse(contentType, body);
       } catch (err) {
+        // A busy pool is the envelope's 503 `db_busy`, never this proxy's fault.
+        if (isDbBusy(err)) throw err;
         /**
          * Every refusal says which arm it was. This catch used to answer and log nothing, so a
          * census of the route's 5xx found `logs[]` empty — the status in the platform's log, the

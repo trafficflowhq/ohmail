@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { apiFaults } from "./schema.js";
 import type { Tx } from "./change-log.js";
 import type { CallFault } from "./entitlements-client.js";
@@ -24,6 +24,12 @@ export const API_FAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
  * `test/api-faults.test.ts` imports the real class and asserts this still names it.
  */
 export const POOLER_REFUSAL_ERROR_CLASS = "DbAcquireTimeoutError";
+
+/**
+ * Every class a refused pooled request is recorded under: the acquire ceiling, and a pooler or
+ * server at its client cap (`DbConnectionCapError`). Spelled for the reason above, pinned the same way.
+ */
+export const POOLER_REFUSAL_ERROR_CLASSES = [POOLER_REFUSAL_ERROR_CLASS, "DbConnectionCapError"] as const;
 
 /**
  * A credit-check call no request was waiting on that got no answer: a refresh behind a response.
@@ -193,7 +199,7 @@ export async function apiFaultWindow(
       faults: sql<number>`count(*)::int`,
       minutes: sql<number>`count(distinct date_trunc('minute', ${apiFaults.at}))::int`,
       poolerRefusals:
-        sql<number>`count(*) filter (where ${apiFaults.errorClass} = ${POOLER_REFUSAL_ERROR_CLASS})::int`,
+        sql<number>`count(*) filter (where ${inArray(apiFaults.errorClass, [...POOLER_REFUSAL_ERROR_CLASSES])})::int`,
       newest: sql<Date>`max(${apiFaults.at})`,
     })
     .from(apiFaults)
@@ -215,7 +221,7 @@ export async function apiFaultWindow(
 }
 
 /**
- * Pooled-acquire refusals inside the window, DEPLOYMENT-WIDE.
+ * Pooled refusals inside the window — the acquire ceiling and the client cap — DEPLOYMENT-WIDE.
  *
  * Not per route, and that is the whole reading: a saturated pooler refuses whichever request
  * asked next, so the route it landed on is noise. `middleware.ts` says the same thing one level
@@ -233,7 +239,7 @@ export async function poolerRefusalsInWindow(
     })
     .from(apiFaults)
     .where(sql`${apiFaults.at} >= ${cut.toISOString()}::timestamptz
-      and ${apiFaults.errorClass} = ${POOLER_REFUSAL_ERROR_CLASS}`);
+      and ${inArray(apiFaults.errorClass, [...POOLER_REFUSAL_ERROR_CLASSES])}`);
   const r = rows[0];
   return {
     refusals: Number(r?.refusals ?? 0),

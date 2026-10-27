@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   apiFaults, evaluateAlerts, makeOwnedDb, pruneApiFaults, recordApiFault,
-  DEFAULT_ALERT_THRESHOLDS, POOLER_REFUSAL_ERROR_CLASS, API_FAULT_RETENTION_MS,
-  DbAcquireTimeoutError, type OwnedDb,
+  DEFAULT_ALERT_THRESHOLDS, POOLER_REFUSAL_ERROR_CLASS, POOLER_REFUSAL_ERROR_CLASSES, API_FAULT_RETENTION_MS,
+  DbAcquireTimeoutError, DbConnectionCapError, type OwnedDb,
 } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -376,6 +376,23 @@ describe.skipIf(!PG_UP)("api_faults on real Postgres", () => {
 
   it("the recorded class still NAMES the real refusal — a rename breaks this, not production", () => {
     expect(POOLER_REFUSAL_ERROR_CLASS).toBe(new DbAcquireTimeoutError(1).name);
+    expect(POOLER_REFUSAL_ERROR_CLASSES).toEqual([new DbAcquireTimeoutError(1).name, new DbConnectionCapError("pooler").name]);
+  });
+
+  it("pooler_refusals counts a pooler at its client cap: silent one below the floor, fires at it", async () => {
+    await db.delete(apiFaults);
+    await seedRoute("/probe/cap-a", T.poolerRefusalThreshold - 1, "DbConnectionCapError");
+    let alerts = await evaluateAlerts(db as never, { now: NOW });
+    expect(alerts.filter((a) => a.kind === "pooler_refusals")).toEqual([]);
+
+    await seedRoute("/probe/cap-b", 1, "DbConnectionCapError");
+    alerts = await evaluateAlerts(db as never, { now: NOW });
+    const firing = alerts.filter((a) => a.kind === "pooler_refusals");
+    expect(firing).toHaveLength(1);
+    expect(firing[0]!.count).toBe(T.poolerRefusalThreshold);
+    // The sentence names both causes, so the page says what to look at.
+    expect(firing[0]!.detail).toMatch(/acquire ceiling/);
+    expect(firing[0]!.detail).toMatch(/connection limit/);
   });
 
   // ── THE PRUNE ────────────────────────────────────────────────────────────────────────────

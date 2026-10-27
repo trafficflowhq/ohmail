@@ -1176,6 +1176,9 @@ const QUERY_PARAM_READS: Readonly<Record<string, number>> = {
   "routes/notify.ts#limit": 1,
   "routes/privacy.ts#cursor": 2,
   "routes/privacy.ts#limit": 2,
+  // `GET /img`'s shape check reads both before the session, and the handler again after it.
+  "routes/privacy.ts#mid": 2,
+  "routes/privacy.ts#u": 2,
   // TWO ARMS, one file, one name: `?limit=` is read once by the address arm and once by the text
   // search below it. Both go through `clampLimit` in the service, so the disposition is the same
   // for both — but the COUNT is what makes the second reader visible, which is the whole reason

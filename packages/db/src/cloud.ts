@@ -35,7 +35,8 @@ export {
   WORKER_TIMEOUTS, WORKER_POOL_MAX,
   POOLED_TIMEOUTS, API_MAX_DURATION_MS, ROLE_DEFAULT_TIMEOUTS,
   POOLED_ACQUIRE_TIMEOUT_MS, SESSION_ACQUIRE_TIMEOUT_MS, POOLED_MAX_CONNECTIONS, POOLED_IDLE_TIMEOUT_S,
-  DbAcquireTimeoutError, isDbAcquireTimeout, DbParameterTypeError,
+  DbAcquireTimeoutError, isDbAcquireTimeout, DbConnectionCapError, isDbConnectionCap, DbParameterTypeError,
+  freshConnectProbe, type FreshConnectReading,
   BindLimitError, MAX_BIND_PARAMETERS, withBindLimit,
   type OwnedDb,
 } from "./client.js";
@@ -184,7 +185,7 @@ export {
 export {
   recordApiFault, entitlementsFaultRow, apiFaultWindow, poolerRefusalsInWindow,
   pruneApiFaults, faultClassOf, entitlementsFaultRecorder,
-  API_FAULT_RETENTION_MS, POOLER_REFUSAL_ERROR_CLASS, OUTLIVED_REQUEST_ERROR_CLASS,
+  API_FAULT_RETENTION_MS, POOLER_REFUSAL_ERROR_CLASS, POOLER_REFUSAL_ERROR_CLASSES, OUTLIVED_REQUEST_ERROR_CLASS,
   ENTITLEMENTS_FAULT_GRAIN, ENTITLEMENTS_FAULT_ROUTE_PREFIX,
   type ApiFaultInput, type ApiFaultArm, type ApiFaultRouteCount, type FaultRecorderLog,
 } from "./api-faults.js";

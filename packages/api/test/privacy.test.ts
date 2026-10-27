@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
+import { randomUUID } from "node:crypto";
 import { createApp, apiRoutes, privacyRoutesGroup, type ApiDeps } from "@trafficflow/api";
-import { accountSettings, trackerEvents } from "@trafficflow/db";
-import { ServiceError } from "@trafficflow/services/mail";
+import { accountSettings, messages, trackerEvents } from "@trafficflow/db";
+import { DbAcquireTimeoutError, DbConnectionCapError } from "@trafficflow/db/cloud";
+import { PROXY_URL_MAX_CHARS, ServiceError } from "@trafficflow/services/mail";
 import {
   makeDeps, seedSession, seedMessage, seedBody, req, FIXED_NOW,
 } from "./helpers.js";
@@ -459,6 +461,90 @@ describe("GET /img counts its own faults, as the envelope does", () => {
 
   it("CONTROL: the sender's server failing (424) writes no row", async () => {
     expect((await fetchThrowing(new ServiceError("upstream_failed", 424, "down", undefined, false))).rows).toEqual([]);
+  });
+});
+
+/**
+ * ── A PICTURE NO PROXY COULD SERVE COSTS NO DATABASE READ ─────────────────────────────────
+ *
+ * 2026-10-26: one tab sent 1,080 `/img` in six seconds, most of them malformed, and each read the
+ * session before its stateless checks; the cold instances' pooled connections filled the pooler's
+ * client cap and Cloud refused everyone for six minutes. The shape is refused before the session
+ * now, in the service's words, and a busy database is answered as busy, not as the proxy's 500.
+ */
+describe("GET /img — the shape before the session, and a busy database answered as busy", () => {
+  /** A handle whose every use throws: the answer must not need it. */
+  const throwing = (err: () => Error) => new Proxy({}, { get() { throw err(); } }) as unknown as ApiDeps["db"];
+  /** The real handle, except that the ownership read (`from(messages)`) throws `err`. */
+  const ownershipThrows = (db: ApiDeps["db"], err: Error) => new Proxy(db as object, {
+    get(t, p, r) {
+      const v = Reflect.get(t, p, r);
+      if (p !== "select" || typeof v !== "function") return v;
+      return (...a: unknown[]) => new Proxy((v as (...x: unknown[]) => object).apply(t, a), {
+        get(q, qp, qr) {
+          const f = Reflect.get(q, qp, qr);
+          if (qp !== "from" || typeof f !== "function") return f;
+          return (table: unknown) => {
+            if (table === messages) throw err;
+            return (f as (x: unknown) => unknown).call(q, table);
+          };
+        },
+      });
+    },
+  }) as ApiDeps["db"];
+  const picture = encodeURIComponent("https://images.acme-cdn.com/hero.png");
+  const long = `https://images.acme-cdn.com/${"a".repeat(PROXY_URL_MAX_CHARS)}`;
+  const BUSY: Array<[string, () => Error, string]> = [
+    ["the acquire ceiling", () => new DbAcquireTimeoutError(15_000), "DbAcquireTimeoutError"],
+    ["the pooler's client cap", () => new DbConnectionCapError("pooler"), "DbConnectionCapError"],
+  ];
+
+  it.each([
+    ["a mid that is no id", `mid=not-an-id&u=${picture}`, "mid must be an id"],
+    ["a u that is not http(s)", `mid=${randomUUID()}&u=${encodeURIComponent("cid:part1.acme")}`, "u must be an http(s) url"],
+    ["a u over the cap", `mid=${randomUUID()}&u=${encodeURIComponent(long)}`,
+      `u is ${long.length} characters; the limit is ${PROXY_URL_MAX_CHARS}`],
+  ])("%s is 400 in the service's words, with no database at all", async (_shape, query, sentence) => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const lines: Array<[string, string[]]> = [];
+    const logger = {
+      child: () => logger, debug() {}, info() {}, error() {},
+      warn: (event: string, fields: Record<string, unknown> = {}) => { lines.push([event, Object.keys(fields).sort()]); },
+    };
+    const res = await H(req("GET", `/img?${query}`, { bearer: s.token }),
+      { ...deps, db: throwing(() => new Error("the database was asked")), logger: logger as never });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatchObject({ code: "validation_failed", message: sentence });
+    expect(res.headers.get("x-ohmail-account"), "an answer given before the session names nobody").toBeNull();
+    expect(lines).toEqual([["request_failed", ["code", "method", "route", "status"]]]);
+  });
+
+  it("a well-formed request with no session is still 401", async () => {
+    const { deps } = await makeDeps();
+    expect((await H(req("GET", `/img?mid=${randomUUID()}&u=${picture}`), deps)).status).toBe(401);
+  });
+
+  it.each(BUSY)("a session read refused by %s is 503 db_busy, retryable, and one fault row", async (_why, busy, errorClass) => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const rows: Array<{ route: string; status: number; errorClass: string }> = [];
+    deps.faultLog = { record: async (r) => { rows.push({ route: r.route, status: r.status, errorClass: r.errorClass }); } };
+    const res = await H(req("GET", `/img?mid=${randomUUID()}&u=${picture}`, { bearer: s.token }), { ...deps, db: throwing(busy) });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("5");
+    expect((await res.json()).error).toMatchObject({ code: "db_busy", retryable: true });
+    expect(rows).toEqual([{ route: "/img", status: 503, errorClass }]);
+  });
+
+  it.each(BUSY)("an ownership read refused by %s is 503 db_busy, not the proxy's 500", async (_why, busy) => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const { id } = await seedMessage(db, { accountId: s.accountId, folder: "INBOX" });
+    const res = await H(req("GET", `/img?mid=${id}&u=${picture}`, { bearer: s.token }),
+      { ...deps, db: ownershipThrows(deps.db, busy()) });
+    expect(res.status).toBe(503);
+    expect((await res.json()).error.code).toBe("db_busy");
   });
 });
 

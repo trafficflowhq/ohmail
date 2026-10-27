@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   STAFF_CHANNELS, STAFF_CHANNEL_OTHER, AUDIT_LOG_ACTIONS, API_HEALTH_ERROR_CODES,
-  DB_ACQUIRE_TIMEOUT_CODE, auditAction, isAuditLogAction, isApiHealthErrorCode,
+  DB_ACQUIRE_TIMEOUT_CODE, DB_CONNECTION_CAP_CODE, auditAction, isAuditLogAction, isApiHealthErrorCode,
   staffChannel, staffChannelValue, staffChannelWord, StaffChannelViolation,
   MAILBOX_ERROR_CODES, MAILBOX_ERROR_DETAIL_TOKENS,
 } from "../src/index.js";
-import { DbAcquireTimeoutError } from "../src/client.js";
+import { DbAcquireTimeoutError, DbConnectionCapError } from "../src/client.js";
 import { presentRoots } from "../../../test/support/public-root.mjs";
 
 const REPO = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..");
@@ -200,5 +200,10 @@ describe("the staff-visible free-text channels are closed sets", () => {
     expect(isApiHealthErrorCode("AUTHENTICATIONFAILED")).toBe(false);
     expect(MAILBOX_ERROR_DETAIL_TOKENS.has("AUTHENTICATIONFAILED")).toBe(true);
     expect(API_HEALTH_ERROR_CODES.size).toBeGreaterThan(20);
+  });
+
+  it("…and the connection cap the pooled handle raises", () => {
+    expect(new DbConnectionCapError("pooler").code).toBe(DB_CONNECTION_CAP_CODE);
+    expect(API_HEALTH_ERROR_CODES.has("db_connection_cap")).toBe(true);
   });
 });

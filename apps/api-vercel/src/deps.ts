@@ -11,7 +11,7 @@ import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRecorder, accountsAtCapOf,
   ALERT_PARKED_READ_BOUND, planeOpsReaderOf,
   makeEntitlementsClient, refundObligationsOn, SESSION_ACQUIRE_TIMEOUT_MS, readDbTls,
-  type EntitlementsClient,
+  freshConnectProbe, type EntitlementsClient, type FreshConnectReading,
 } from "@trafficflow/db/cloud";
 import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, refusingAlertSink, acquireImapSlot, releaseImapSlot, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
   // send path, because the retention sweep's caller is the worker, which may not depend on
@@ -696,6 +696,8 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
       dbProvider: cfg.dbProvider,
       // Both transport hops of the runtime pool — the handle above, so its handshakes are the ones counted.
       dbTls: (reached: boolean) => readDbTls(cfg.databaseUrlPooled, db, reached),
+      // Whether a NEW connection is admitted, beside the held one the probe rode: one per URL per instance.
+      freshConnect: freshConnectFor(cfg.databaseUrlPooled),
       // Whether this host reaches an entitlements program at all, on dbProvider's pattern.
       // Reads the SAME config member `buildServices` arms from, so the marker cannot disagree
       // with the wiring.
@@ -969,6 +971,18 @@ function hostLogger(cfg: HostConfig): Logger {
   return logger;
 }
 
+/** `/health`'s fresh-connection probe, one per connection string, so its memo is the instance's. */
+const freshProbes = new Map<string, () => Promise<FreshConnectReading>>();
+
+function freshConnectFor(url: string): () => Promise<FreshConnectReading> {
+  let probe = freshProbes.get(url);
+  if (!probe) {
+    probe = freshConnectProbe(url);
+    freshProbes.set(url, probe);
+  }
+  return probe;
+}
+
 /** The definite answers of the key-retirement check, one per config (production: one per cold instance). */
 const kekRetirementAnswers = new WeakMap<HostConfig, Promise<{ error: string; detail: string } | null>>();
 
@@ -1020,4 +1034,5 @@ export function resetServices(): void {
   // the previous one.
   staffDbs.clear();
   resetAdminDbs();
+  freshProbes.clear();
 }

@@ -611,6 +611,21 @@ export function req(
   return new Request(`http://localhost${path}`, { method, headers, body: init.body });
 }
 
+/** Queries for the routes that refuse their shape before the session, as a `:param` gets a uuid. */
+const SWEEP_QUERY: Readonly<Record<string, string>> = {
+  "GET /img": `?mid=${randomUUID()}&u=${encodeURIComponent("https://images.acme-cdn.com/a.png")}`,
+};
+
+/**
+ * The path a whole-table sweep asks of `route`: every `:param` a well-formed uuid that names no
+ * row, and a well-formed query where the shape is refused before the session, so the sweep meets
+ * the control it is about rather than that refusal.
+ */
+export function sweepPath(route: { method: string; pattern: string }, id: string): string {
+  const path = route.pattern.split("/").map((p) => (p.startsWith(":") ? id : p)).join("/");
+  return path + (SWEEP_QUERY[`${route.method} ${route.pattern}`] ?? "");
+}
+
 /** Parse a response's `Set-Cookie` list into a `{ name: value }` map (first token only). */
 export function setCookieMap(res: Response): Record<string, string> {
   const out: Record<string, string> = {};
