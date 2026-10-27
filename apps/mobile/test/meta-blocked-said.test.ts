@@ -10,7 +10,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { EN } from "../src/copy.en";
 import { DE } from "../src/copy.de";
 import {
-  claimHereStandalone, forgetOrganizerSessionForTests, holdStandaloneDoor, pressOrganizeHere, standaloneHere,
+  claimHereStandalone, forgetOrganizerSessionForTests, holdStandaloneDoor, onOrganizerState, pokeOrganizerState,
+  pressOrganizeHere, standaloneHere,
 } from "../src/engine/organizer-session";
 import type { ClaimHereOutcome, StandaloneEngine } from "../src/engine/standalone-door";
 import { organizerStripOf } from "../src/ui/organizer-strip";
@@ -174,5 +175,51 @@ describe("an organizing phone whose settings document cannot be kept", () => {
     const claim = claimHere(standaloneHere()!, "idle", false);
     expect(claimChipLabel(claim)).toBe(EN.phoneStateOrganizing);
     expect(organizerStripOf(claim, { ...facts, stoppedHere: false })).toBeNull();
+  });
+});
+
+/* An open Settings or Ohbox re-derives only when the claim watch's poke notifies: a block that
+   starts or ends mid-session must move its fingerprint, or the screen keeps the old chip. */
+describe("a block that starts or ends while the screen is open", () => {
+  it("each flip notifies once, and the chip follows", () => {
+    let block: { code: string | null; confirmed: boolean } | null = null;
+    const base = door(null, "refused", true);
+    const r = base.runtimes();
+    expect(holdStandaloneDoor({
+      ...base, runtimes: () => ({ ...r, connection: { m1: { ...r.connection!.m1!, profileBlocked: block } } }),
+    })).toBe(true);
+    let notified = 0;
+    const off = onOrganizerState(() => { notified += 1; });
+    pokeOrganizerState();
+    const chip = (): string | null => claimChipLabel(claimHere(standaloneHere()!, "idle", false));
+    expect(chip()).toBe(EN.phoneStateOrganizing);
+    const before = notified;
+    block = { code: "profile_gap_too_deep", confirmed: true };
+    pokeOrganizerState();
+    expect(notified - before, "the block began and nothing re-derived the open screen").toBe(1);
+    expect(chip()).toBe(EN.phoneStateSettingsUnsyncedCode("profile_gap_too_deep"));
+    block = null;
+    pokeOrganizerState();
+    expect(notified - before, "a write that worked left the failure sentence on the open screen").toBe(2);
+    expect(chip()).toBe(EN.phoneStateOrganizing);
+    off();
+  });
+
+  it("a stop waiting on a sibling's lapse notifies when the refusal arrives", () => {
+    let refusal: "sibling_lapse" | null = null;
+    const base = door(null, "refused", false, undefined, "2026-10-25T08:00:00.000Z");
+    const r = base.runtimes();
+    expect(holdStandaloneDoor({
+      ...base, runtimes: () => ({ ...r, organizer: { m1: { ...r.organizer.m1!, releaseRefusal: refusal } } }),
+    })).toBe(true);
+    let notified = 0;
+    const off = onOrganizerState(() => { notified += 1; });
+    pokeOrganizerState();
+    const before = notified;
+    refusal = "sibling_lapse";
+    pokeOrganizerState();
+    expect(notified - before, "the sibling-lapse note never reached the open screen").toBe(1);
+    expect(claimHere(standaloneHere()!, "idle", false)).toMatchObject({ k: "ours", siblingLapse: true });
+    off();
   });
 });

@@ -182,7 +182,9 @@ describe("the engine bundle a phone would ship", () => {
     // Not "did not throw": the export the app calls has to be there. A bundle that loaded and
     // exported nothing is the same outage one step later.
     expect(typeof mod.startPhoneEngine, "the artifact exports its composition root").toBe("function");
-  });
+    // 20 s: this case proves the bundle builds and loads, not how fast. 1.4 s in a whole-run shard, over
+    // the default 5 s twice in a loaded 247-file shard of a selected run (2026-10-27).
+  }, 20_000);
 
   it("exports everything the declaration beside it claims", async () => {
     /**
