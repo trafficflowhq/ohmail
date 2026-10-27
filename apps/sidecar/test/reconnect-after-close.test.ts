@@ -7,7 +7,7 @@ import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
   OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
-import { ImapConnectionClosedError } from "@trafficflow/core/adapters/imap";
+import { ImapBoundExceeded, ImapConnectionClosedError } from "@trafficflow/core/adapters/imap";
 import type {
   LeaseIo, LeasePeekIo, RawClaimMessage, RequestOrganizerIo, RequestReaderIo,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -383,6 +383,15 @@ function dialLog(
      *  first drain of all is `start()`'s, and killing that one makes the fixture measure the
      *  launch instead of the flap. */
     dieAfterFirstCycle?: { armed: boolean };
+    /** One entry per re-dial, in order: "fail" refuses its connect; a count serves that many
+     *  cycles with a backlog and then the server closes the link; `park` holds cycle `at`;
+     *  `breach` ends it with a read bound that names no message instead of a close. */
+    reDialPlan?: ReadonlyArray<"fail" | number | {
+      serve: number; breach?: true; park?: { at: number; entered: () => void; wait: Promise<void> };
+    }>;
+    /** The launch's second cycle reports the close and still answers "nothing left": the shape
+     *  an adapter that read a closed link's folders as absent handed back. */
+    answerAfterClose?: boolean;
   },
 ): DialLog {
   const connections: FakeConnection[] = [];
@@ -392,6 +401,8 @@ function dialLog(
     let handedBacklog = false;
     let parked = false;
     let flapServed = false;
+    const plan = isReDial ? opts?.reDialPlan?.[connections.length - 1] : undefined;
+    let planServed = 0;
     connections.push(conn);
     /* THE FIVE ACCESSORS THIS DOUBLE OFFERS BESIDE `MailboxAdapter`, each named with the
        interface the real `ImapAdapter` returns from it. They are not on `MailboxAdapter` —
@@ -466,6 +477,7 @@ function dialLog(
           await reDial.park.wait;
         }
         if (isReDial && reDial?.fails) throw reDial.fails;
+        if (plan === "fail") throw Object.assign(new Error("connect ENETUNREACH"), { code: "ENETUNREACH" });
         conn.live = true;
         conn.closedByUs = false;
       },
@@ -538,6 +550,29 @@ function dialLog(
           return { ...EMPTY_BATCH };
         }
         conn.heard();
+        if (plan !== undefined && plan !== "fail") {
+          planServed += 1;
+          if (typeof plan === "object" && planServed === plan.park?.at) {
+            plan.park.entered();
+            await plan.park.wait;
+            conn.assertLive();
+          }
+          if (planServed > (typeof plan === "number" ? plan : plan.serve)) {
+            if (typeof plan === "object" && plan.breach) {
+              const breach = new ImapBoundExceeded("read_bytes", 1_048_576, 1_600_000, "INBOX");
+              conn.onConnectionError(breach);
+              throw breach;
+            }
+            conn.killFromServer();
+            conn.assertLive();
+          }
+          return { ...EMPTY_BATCH, hasBacklog: true };
+        }
+        if (opts?.answerAfterClose && !isReDial) {
+          if (flapServed) { conn.killFromServer(); return { ...EMPTY_BATCH }; }
+          flapServed = true;
+          return { ...EMPTY_BATCH, hasBacklog: true };
+        }
         if (opts?.dieAfterFirstCycle?.armed && !isReDial) {
           if (flapServed) { conn.dieSilently(); conn.assertLive(); }
           flapServed = true;
@@ -3329,6 +3364,142 @@ describe("the engine re-dials a connection that died under it", () => {
     expect(armed).toBeLessThan(PHONE_RECONNECT.ladderMs[0]! * 1.3);
     expect(armed, "the wait armed is the desktop's first step, not the phone's")
       .toBeLessThan(REDIAL_BACKOFF_BASE_MS * 0.8);
+  }, 60_000);
+
+  /**
+   * ══ A LINK THAT DROPS DURING A LARGE FIRST IMPORT ═════════════════════════════════════════
+   *
+   * The re-dial drains inside itself, so a 5,000-letter import over a flapping link used to log
+   * every progressful re-dial as `mailbox_reconnect_failed` and climb the ladder to its cap. A
+   * re-dial is proven by its first served cycle; a drop after that waits the first step again.
+   * Each round moves the wall clock past any wait and asks for one pass.
+   */
+  const flapRounds = async (
+    plan: ReadonlyArray<"fail" | number | { serve: number; breach: true }>, organizerKind?: OrganizerKind,
+  ): Promise<{ b: Booted; dials: DialLog }> => {
+    const dials = dialLog(new MemoryMetaFolder(), [], undefined, undefined, { reDialPlan: plan });
+    const b = await boot(await dataDir(), dials, organizerKind === undefined ? {} : { organizerKind });
+    await b.sidecar.start();
+    dials.current.killFromServer();
+    const t0 = Date.now();
+    vi.useFakeTimers({ toFake: ["Date"], now: t0 });
+    try {
+      for (let round = 1; round <= plan.length; round++) {
+        vi.setSystemTime(t0 + round * 400_000);
+        await b.sidecar.syncMailbox(b.sidecar.world.mailboxId).catch(() => undefined);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+    return { b, dials };
+  };
+  const inBand = (ms: unknown, stepMs: number): boolean =>
+    typeof ms === "number" && ms >= stepMs * 0.8 && ms <= stepMs * 1.2;
+
+  it("A RE-DIAL THAT SERVED MAIL AND THEN DROPPED IS A RECONNECTION, and waits the first step", async () => {
+    const { b, dials } = await flapRounds([3, 3, 3]);
+    expect(dials.connections).toHaveLength(4);
+    expect(seen(b, "mailbox_reconnected"), "a re-dial that served mail was never called back").toHaveLength(3);
+    expect(seen(b, "mailbox_reconnect_failed"), "a progressful re-dial was filed as a failed one").toHaveLength(0);
+    const waits = seen(b, "mailbox_redial_after_progress").map((d) => d.retryInMs);
+    expect(waits).toHaveLength(3);
+    for (const w of waits) expect(inBand(w, DESKTOP_RECONNECT.ladderMs[0]!), `wait ${String(w)} climbed`).toBe(true);
+  }, 60_000);
+
+  it("CONTROL: a re-dial that drops before serving a cycle still climbs the ladder", async () => {
+    const { b } = await flapRounds([0, 0, 0]);
+    const failed = seen(b, "mailbox_reconnect_failed");
+    expect(failed.map((d) => d.attempt)).toEqual([1, 2, 3]);
+    failed.forEach((d, i) => expect(inBand(d.retryInMs, DESKTOP_RECONNECT.ladderMs[i]!)).toBe(true));
+    expect(seen(b, "mailbox_reconnected")).toHaveLength(0);
+    expect(seen(b, "mailbox_redial_after_progress")).toHaveLength(0);
+  }, 60_000);
+
+  it("A RE-DIAL THAT SERVED MAIL RESETS THE LADDER for the next failed dial", async () => {
+    const { b } = await flapRounds(["fail", 3, "fail"]);
+    expect(seen(b, "mailbox_reconnect_failed").map((d) => d.attempt), "the ladder kept climbing over served mail")
+      .toEqual([1, 1]);
+    expect(seen(b, "mailbox_reconnected")).toHaveLength(1);
+  }, 60_000);
+
+  it("ONLY A DROPPED LINK IS PROGRESS: a read bound after served mail keeps the failed-dial arm", async () => {
+    const { b } = await flapRounds([{ serve: 3, breach: true }]);
+    expect(seen(b, "mailbox_reconnected")).toHaveLength(1);
+    expect(seen(b, "mailbox_reconnect_failed").map((d) => d.attempt)).toEqual([1]);
+    expect(seen(b, "mailbox_redial_after_progress"), "a breach was filed as a dropped link").toHaveLength(0);
+  }, 60_000);
+
+  it("…and on the phone the progress wait is the phone's first step", async () => {
+    const { b } = await flapRounds([3, 3, 3], "mobile");
+    expect(seen(b, "mailbox_reconnected")).toHaveLength(3);
+    expect(seen(b, "mailbox_reconnect_failed")).toHaveLength(0);
+    const waits = seen(b, "mailbox_redial_after_progress").map((d) => d.retryInMs);
+    expect(waits).toHaveLength(3);
+    for (const w of waits) expect(inBand(w, PHONE_RECONNECT.ladderMs[0]!), `wait ${String(w)}`).toBe(true);
+  }, 60_000);
+
+  it("A RE-DIAL IS CALLED BACK, AND WATCHED, WHILE ITS IMPORT IS STILL RUNNING", async () => {
+    let entered!: () => void;
+    const inDrain = new Promise<void>((r) => { entered = r; });
+    let release!: () => void;
+    const wait = new Promise<void>((r) => { release = r; });
+    const dials = dialLog(new MemoryMetaFolder(), [], undefined, undefined, {
+      reDialPlan: [{ serve: 1_000, park: { at: 2, entered: () => entered(), wait } }],
+    });
+    const b = await boot(await dataDir(), dials, { heartbeatTimeoutMs: WINDOW });
+    await b.sidecar.start();
+    dials.current.killFromServer();
+    const pass = b.sidecar.syncMailbox(b.sidecar.world.mailboxId).catch(() => undefined);
+    await inDrain;
+    const importing = dials.current;
+    cleanups.push(() => { release(); importing.abandon(); });
+    expect(await untilEventTicked(b, "mailbox_reconnected"), "the re-dial was not called back mid-import").toBe(1);
+    for (let i = 0; i < 200 && importing.noops === 0; i++) await new Promise((r) => setTimeout(r, 25));
+    expect(importing.noops, "no heartbeat watched the new connection during its import").toBeGreaterThanOrEqual(1);
+    expect(b.sidecar.connectionStates()[b.sidecar.world.mailboxId]!.reachable).toBe(true);
+    release();
+    importing.abandon();
+    await pass;
+  }, 60_000);
+
+  it("A LAUNCH WHOSE IMPORT DROPPED ARMS THE HEARTBEAT, and it watches the re-dial's import", async () => {
+    let entered!: () => void;
+    const inDrain = new Promise<void>((r) => { entered = r; });
+    let release!: () => void;
+    const wait = new Promise<void>((r) => { release = r; });
+    const dials = dialLog(new MemoryMetaFolder(), [], undefined, undefined, {
+      dieAfterFirstCycle: { armed: true },
+      reDialPlan: [{ serve: 1_000, park: { at: 2, entered: () => entered(), wait } }],
+    });
+    const b = await boot(await dataDir(), dials, { heartbeatTimeoutMs: WINDOW });
+    expect((await b.sidecar.start()).failures).toHaveLength(1);
+    // The poll is an hour away: only the heartbeat's own timer can re-dial here.
+    const reDialled = await Promise.race([
+      inDrain.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 40 * WINDOW)),
+    ]);
+    expect(reDialled, "nothing re-dialled after the failed launch").toBe(true);
+    const importing = dials.current;
+    cleanups.push(() => { release(); importing.abandon(); });
+    for (let i = 0; i < 200 && importing.noops === 0; i++) await new Promise((r) => setTimeout(r, 25));
+    expect(importing.noops, "no heartbeat watched the re-dial's import").toBeGreaterThanOrEqual(1);
+    importing.goHalfOpen();
+    release();
+    for (let i = 0; i < 200 && !seen(b, "mailbox_connection_unavailable").some((d) => d.detectedBy === "heartbeat"); i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(seen(b, "mailbox_connection_unavailable").filter((d) => d.detectedBy === "heartbeat"),
+      "a link that wedged under the re-dial's import was never stamped").toHaveLength(1);
+    expect(importing.forceCloses).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it("A CYCLE THAT ANSWERS AFTER ITS CONNECTION'S CLOSE WAS REPORTED is not served and stamps no import", async () => {
+    const dials = dialLog(new MemoryMetaFolder(), [], undefined, undefined, { answerAfterClose: true });
+    const b = await boot(await dataDir(), dials);
+    expect((await b.sidecar.start()).failures, "the launch over a closed link read as a success").toHaveLength(1);
+    const [row] = await b.sidecar.db.select({ at: mailboxes.initialImportCompletedAt }).from(mailboxes);
+    expect(row?.at ?? null, "an import over a closed link was stamped complete").toBeNull();
+    expect(seen(b, "first_sync_finished")).toHaveLength(0);
+    expect(b.sidecar.connectionStates()[b.sidecar.world.mailboxId]!.reachable).toBe(false);
   }, 60_000);
 
   /**
