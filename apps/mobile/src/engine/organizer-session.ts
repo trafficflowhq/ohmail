@@ -1012,9 +1012,9 @@ export function pokeOrganizerState(): void {
   const now = JSON.stringify([
     here === null
       ? null
-      : [here.id, here.address, here.organizing, here.releaseRequestedAt,
+      : [here.id, here.address, here.organizing, here.releaseRequestedAt, here.releaseRefusal,
         here.heldBy?.name ?? null, here.heldBy?.standDownReason ?? null, here.heldBy?.holderState ?? null,
-        here.metaBlocked],
+        here.metaBlocked, here.profileBlocked],
     instruction,
     live !== null,
     live?.organizing.backgrounded() ?? false,
