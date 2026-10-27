@@ -758,13 +758,11 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   }
 }
 
-/* ================= a newer ohmail =================
-   The update strip, a sibling of the sync strip and deliberately its quieter twin. Same
-   geometry — `flex: none` inside .shell, centred row, 11.5px — so the two cannot disagree about
-   what a shell-level sentence looks like, and a neutral ground rather than the accent because
-   this is information and the sync strip is a fault. Nothing about it is conditional on face or
-   layout: it reads tokens and nothing else. */
-.upd-bar {
+/* ================= this browser is not keeping it =================
+   The durability strips (`DurabilityNotice.tsx`, the paired page's `HostOutboxNotice.tsx`): a
+   fact about the whole app, said once, above everything — `flex: none` inside .shell, centred
+   row, 11.5px, on a neutral ground because this is information and the sync strip is a fault. */
+.ohx-durability {
   flex: none;
   display: flex;
   align-items: center;
@@ -777,10 +775,9 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   background: var(--tint);
   border-bottom: 1px solid var(--hair);
 }
-/* Both controls are the strip's own shape rather than the app's Button: a 22px-tall row cannot
-   hold a control built for a form without growing to twice its height, which is the difference
-   between a strip and a banner. */
-.upd-bar button {
+/* The strip's own control shape rather than the app's Button: a 22px-tall row cannot hold a
+   control built for a form without growing to twice its height. */
+.ohx-durability button {
   font: inherit;
   font-weight: 600;
   color: inherit;
@@ -790,25 +787,166 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   padding: 1px 9px;
   background: transparent;
 }
-.upd-bar .upd-do {
-  color: var(--on-accent);
-  background: var(--accent);
-}
-.upd-bar .upd-do:hover {
-  filter: brightness(1.06);
-}
-.upd-bar .upd-later {
+.ohx-durability .upd-later {
   color: var(--ink3);
 }
-.upd-bar .upd-later:hover {
+.ohx-durability .upd-later:hover {
   color: var(--ink2);
   background: var(--tint2);
 }
+/* ================= a newer ohmail: the update line =================
+   One quiet line at the rail's foot, above Command (`UpdateLine.tsx`): a mark, a sentence, a verb
+   and ×, in the rail's notice register — no box, no fill. A filled accent mark is an offer, one
+   press away; a hollow one a fact that asks nothing (downloading, a failure); a faded one an offer
+   held while a send waits. The mark rides the sentence's first line, so a sentence that wraps
+   wraps under itself and only the verbs drop to a row of their own. */
+.upd-line {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: 4px;
+  row-gap: 2px;
+  padding: 3px 0 7px 8px;
+  font-size:calc(11.5px + var(--type-up));
+  line-height: 1.45;
+  color: var(--ink2);
+}
+.upd-mark {
+  display: inline-block;
+  vertical-align: middle;
+  width: 8px;
+  height: 8px;
+  margin: -2px 7px 0 0;
+  border-radius: var(--r-avatar);
+  background: var(--accent);
+}
+.upd-mark.hollow {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--ink3);
+}
+.upd-mark.wait {
+  opacity: 0.5;
+}
+.ul-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.upd-line[data-s="downloading"] .ul-text,
+.upd-line[data-s="failed"] .ul-text {
+  color: var(--ink2);
+  font-weight: 500;
+}
+.ul-acts {
+  display: inline-flex;
+  align-items: center;
+  margin: -1px 0 -1px auto;
+}
+.ul-do,
+.ul-x {
+  font: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.ul-do {
+  font-weight: 600;
+  color: var(--accent-ink);
+  border-radius: var(--r-pill);
+  padding: 1px 5px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.ul-do:hover {
+  background: var(--accent-soft);
+}
+.ul-do[aria-disabled="true"] {
+  color: var(--ink3);
+  cursor: default;
+}
+.ul-do[aria-disabled="true"]:hover {
+  background: none;
+}
+.ul-x {
+  width: 18px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: calc(var(--r-ctl) * 6 / 8);
+  color: var(--ink3);
+}
+.ul-x:hover {
+  color: var(--ink);
+  background: var(--tint);
+}
+.ul-x svg {
+  width: 11px;
+  height: 11px;
+}
+/* Restart's hover: what a restart costs, said before it is pressed. */
+.ul-tip {
+  position: absolute;
+  left: 8px;
+  right: 0;
+  bottom: calc(100% - 2px);
+  z-index: 5;
+  padding: 4px 9px;
+  font-size:calc(11px + var(--type-up));
+  font-weight: 450;
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--float);
+  box-shadow: var(--lift-2);
+  border-radius: var(--r-ctl);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s var(--swift);
+}
+.upd-line:has(.ul-do:hover) .ul-tip,
+.upd-line:has(.ul-do:focus-visible) .ul-tip {
+  opacity: 1;
+}
+/* Why Restart waits, under the held verb, past the mark. */
+.upd-sub {
+  flex: 1 1 100%;
+  margin: -2px 0 0 15px;
+  font-size:calc(10.5px + var(--type-up));
+  line-height: 1.4;
+  color: var(--ink3);
+}
+.upd-track {
+  flex: 0 0 auto;
+  width: 100%;
+  margin-top: 4px;
+}
+/* The desktop's foot line: the version this copy runs. */
+.rail-version {
+  font-variant-numeric: tabular-nums;
+}
+/* The ≡ below 1024px carries a dot while the line has something to press and the drawer is shut. */
+.tb-btn:has(.upd-dot),
+.rail-expand:has(.upd-dot) {
+  position: relative;
+}
+.upd-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-avatar);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--panel);
+}
 /* ── THE ACCOUNT'S OWN STRIP, and the one after it reopens ────────────────────────────────────
-   `.upd-bar`'s shape and its slot: a fact about the whole app, said once, above everything, and
-   absent from the DOM when there is nothing to say. A separate class rather than a second
-   modifier on the update strip because the two can stand at once and must not merge into one
-   unreadable row — this one takes the accent tint so the eye tells them apart. */
+   The durability strip's shape and its slot: a fact about the whole app, said once, above
+   everything, and absent from the DOM when there is nothing to say. A separate class rather than
+   a second modifier because the two can stand at once and must not merge into one unreadable row
+   — this one takes the accent tint so the eye tells them apart. */
 .acct-bar {
   flex: none;
   display: flex;
@@ -1204,7 +1342,8 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    so the total is unknowable until the drain ends and a filled track would be an invention. A
    travelling sliver carries exactly the knowledge available — a process is running — which is
    the spinner's claim in the shape a compact row has room for. */
-.rail-sync .rs-track {
+.rail-sync .rs-track,
+.upd-line .rs-track {
   position: relative;
   display: block;
   height: 2px;
@@ -1217,7 +1356,8 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    no progress — and one infinite animation buys the whole 60 Hz pipeline (1.7 cores in the
    desktop's web process, Omarchy guest), which is why it is mounted by a fact rather than
    stilled by a class. */
-.rail-sync .rs-track i {
+.rail-sync .rs-track i,
+.upd-line .rs-track i {
   position: absolute;
   inset: 0 auto 0 0;
   width: 38%;
@@ -1236,7 +1376,8 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 /* The track survives without the travel, the same answer `.mbx-spin` gives: the affordance is
    the thing, the motion is how it is drawn. */
 @media (prefers-reduced-motion: reduce) {
-  .rail-sync .rs-track i {
+  .rail-sync .rs-track i,
+  .upd-line .rs-track i {
     animation: none;
     width: 100%;
     opacity: 0.45;
@@ -4643,6 +4784,10 @@ input.set-tag-input {
 }
 /* ═══ THE DRAWER BAND, < 1024: the rail is a drawer, the topbar stands over the deck ═══════ */
 @media (max-width: 1023.98px) {
+  /* A shut drawer is off screen, and the update download's sliver does not travel there. */
+  .deck > .rail:not(.open) .upd-line .rs-track i {
+    animation: none;
+  }
   .topbar {
     display: flex;
     align-items: center;

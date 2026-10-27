@@ -122,6 +122,11 @@ const WINDOW_COMMANDS: &[&str] = &[
     // a dialog. Routing a daily cadence through the press would put that dialog over
     // somebody's mail every day. `src/updater.rs` carries the reasoning.
     "update_poll",
+    // …and two that take one bool each and can only delay an install, never cause one: Settings'
+    // "Install updates automatically" (install at the next quit or launch, or wait for a press),
+    // and the window's word that a send waits, which holds every install while it does.
+    "update_set_auto",
+    "update_hold",
     "window_ready",
     // SETTINGS → TEXT SIZE (`src/text_scale.rs`): one of five percentages, which the shell turns
     // into the main window's page zoom and keeps for the next launch. Any other number is refused.

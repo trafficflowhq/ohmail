@@ -10,8 +10,11 @@ import { ThemeProvider } from "@ohmail/ui";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
+import { holdFilesForRestart, holdForRestart, resetUpdateStoreForTests } from "../../webapp/app/shell/app-update.js";
 import { DesktopUpdate } from "../src/DesktopUpdate.js";
 import {
+  AUTO_INSTALLS_AT,
+  autoSentenceKey,
   INSTALL_KINDS,
   reportOfPayload,
   resetUpdateFeedForTests,
@@ -136,6 +139,10 @@ const WIRE: Record<string, Wire> = {
 };
 
 let pressed = 0;
+/** What `update_set_auto` was asked, in order. */
+let setAuto: unknown[] = [];
+/** Each call the shell took, in order — for what happened before a press. */
+let calls: string[] = [];
 let listens = 0;
 let listener: ((payload: unknown) => void) | null = null;
 /** What `update_state` answers next — swapped mid-test to model the shell moving on. */
@@ -162,6 +169,8 @@ function holdTheNextRead(): (wire: Wire) => void {
 /** A shell that answers `state` and records presses. `null` = no shell at all (the preview). */
 function shell(state: Wire | null): void {
   pressed = 0;
+  setAuto = [];
+  calls = [];
   listens = 0;
   listener = null;
   refusePress = false;
@@ -175,6 +184,7 @@ function shell(state: Wire | null): void {
   }
   globe.__TAURI_INTERNALS__ = {
     invoke: (command, payload) => {
+      calls.push(command);
       switch (command) {
         case "update_state":
           return held ?? Promise.resolve(answer);
@@ -183,6 +193,9 @@ function shell(state: Wire | null): void {
           return refusePress
             ? Promise.reject(new Error("no such command"))
             : Promise.resolve(undefined);
+        case "update_set_auto":
+          setAuto.push((payload as { on: unknown }).on);
+          return Promise.resolve(undefined);
         case "plugin:event|listen":
           // The runtime hands back a callback ID; the test keeps the callback itself so a push
           // can be delivered the way the shell delivers one — and COUNTS the registrations,
@@ -209,6 +222,7 @@ afterEach(async () => {
   hostEl?.remove();
   delete globe.__TAURI_INTERNALS__;
   resetUpdateFeedForTests();
+  resetUpdateStoreForTests();
   vi.useRealTimers();
 });
 
@@ -539,6 +553,119 @@ describe("the pane is the same flow as the menu item, not a second one", () => {
  * process. The registration is therefore the module's, made once; the component's subscription is
  * an ordinary one it releases on unmount.
  */
+/**
+ * ═══ INSTALL UPDATES AUTOMATICALLY — ON BY DEFAULT ═══════════════════════════════════════════
+ *
+ * The shell installs a verified release at the next quit or launch while the switch is on, and
+ * waits for a press while it is off. The pane draws the switch only where it means something — a
+ * copy that replaces its own files — and only from a shell that says where it stands.
+ */
+describe("the install switch", () => {
+  const sw = (): HTMLButtonElement | null => hostEl.querySelector<HTMLButtonElement>('[role="switch"]');
+
+  /* THE SENTENCE IS WHAT THE SHELL WILL DO on this copy: only an AppImage stages the release and
+     installs it at its next start; the Windows setup and the macOS app install as they quit; and
+     a copy whose replacing needs a password waits for Restart. */
+  it("is on by default, drawn on the three kinds that install themselves, and says when each installs", async () => {
+    const cases = [
+      ["appimage", "quitOrLaunch", copy.autoOn],
+      ["windowsSetup", "quit", copy.autoOnQuit],
+      ["macBundle", "quit", copy.autoOnQuit],
+      ["macBundle", "restart", copy.autoOnRestart],
+      ["appimage", "restart", copy.autoOnRestart],
+    ] as const;
+    for (const [installKind, autoInstallsAt, sentence] of cases) {
+      shell({ ...WIRE.upToDate!, installKind, autoInstall: true, autoInstallsAt });
+      await mount();
+      expect(sw(), installKind).not.toBeNull();
+      expect(sw()!.getAttribute("aria-checked")).toBe("true");
+      expect(sw()!.getAttribute("aria-label")).toBe(copy.autoLabel);
+      expect(sentence, `${installKind}/${autoInstallsAt} has no copy`).toBeTruthy();
+      expect(hostEl.textContent, `${installKind}/${autoInstallsAt}`).toContain(sentence);
+      if (autoInstallsAt !== "quitOrLaunch") {
+        expect(hostEl.textContent, `${installKind} promises an install at start`).not.toContain(copy.autoOn);
+      }
+      await unmount();
+    }
+  });
+
+  it("is not drawn where a package manager updates, nor from a shell that does not say", async () => {
+    shell({ ...WIRE.deb!, autoInstall: true });
+    await mount();
+    expect(sw()).toBeNull();
+    await unmount();
+    shell({ ...WIRE.upToDate!, installKind: "appimage" });
+    await mount();
+    expect(sw(), "a shell that names no policy drew a switch").toBeNull();
+    await unmount();
+    shell({ ...WIRE.upToDate!, installKind: "appimage", autoInstall: true });
+    await mount();
+    expect(sw(), "a shell that does not say when it installs drew a switch").toBeNull();
+  });
+
+  it("an automatic install that failed is said, and Restart tries it again", async () => {
+    shell({ ...WIRE.ready!, installKind: "macBundle", autoInstall: true, autoInstallsAt: "quit", installFailedAt: CHECKED_AT });
+    await mount();
+    expect(hostEl.textContent).toContain(copy.autoFailed!.replace("{offered}", NEXT));
+    expect(hostEl.textContent).not.toContain(copy.readyOnQuit!.replace("{offered}", NEXT));
+    expect(button()!.textContent).toBe(copy.restart!);
+  });
+
+  it("a draft's files hold Restart as a send does, and the pane says which", async () => {
+    const release = holdFilesForRestart();
+    shell({ ...WIRE.ready!, installKind: "appimage", autoInstall: true, autoInstallsAt: "quitOrLaunch", held: true, canInstall: false });
+    await mount();
+    expect(hostEl.textContent).toContain(copy.readyHeldFiles!.replace("{offered}", NEXT));
+    expect(button()!.disabled).toBe(true);
+    release();
+  });
+
+  it("turning it off asks the shell, and the pane shows what the shell then says", async () => {
+    shell({ ...WIRE.upToDate!, installKind: "appimage", autoInstall: true, autoInstallsAt: "quitOrLaunch" });
+    await mount();
+    answer = { ...WIRE.upToDate!, installKind: "appimage", autoInstall: false, autoInstallsAt: "quitOrLaunch" };
+    await act(async () => {
+      sw()!.click();
+    });
+    await settle();
+    expect(setAuto).toEqual([false]);
+    expect(sw()!.getAttribute("aria-checked")).toBe("false");
+    expect(hostEl.textContent).toContain(copy.autoOff);
+  });
+
+  it("the ready sentence follows it: installed at quit, or Restart now — and Restart waits for a send", async () => {
+    shell({ ...WIRE.ready!, installKind: "appimage", autoInstall: true, installsOnQuit: true });
+    await mount();
+    expect(hostEl.textContent).toContain(copy.readyOnQuit!.replace("{offered}", NEXT));
+    await unmount();
+
+    shell({ ...WIRE.ready!, installKind: "appimage", autoInstall: true, held: true, canInstall: false });
+    await mount();
+    expect(hostEl.textContent).toContain(copy.readyHeld!.replace("{offered}", NEXT));
+    expect(button()!.textContent).toBe(copy.restart!);
+    expect(button()!.disabled, "Restart pressable while a send waits").toBe(true);
+    await unmount();
+
+    shell({ ...WIRE.downloading!, autoInstall: true });
+    await mount();
+    expect(hostEl.textContent).toContain(copy.downloadingAuto!.replace("{offered}", NEXT));
+    expect(hostEl.textContent, "a promise the switch no longer keeps").not.toContain("until you agree");
+  });
+
+  it("an open editor is written before the press that restarts ohmail", async () => {
+    const order: string[] = [];
+    holdForRestart(async () => {
+      await Promise.resolve();
+      order.push(`editor saved after ${calls.filter((c) => c === "update_press").length} presses`);
+    });
+    shell({ ...WIRE.ready!, installKind: "appimage", autoInstall: true });
+    await mount();
+    await click();
+    expect(order).toEqual(["editor saved after 0 presses"]);
+    expect(pressed).toBe(1);
+  });
+});
+
 describe("revisiting the pane does not accumulate listeners", () => {
   it("registers with the shell exactly once, however many times the pane is opened", async () => {
     shell(WIRE.upToDate!);
@@ -722,6 +849,17 @@ describe("what the window will accept from a shell that may be a version ahead",
     for (const junk of [null, "now", Number.NaN, undefined]) {
       expect(reportOfPayload({ ...good, pressedAt: junk })!.pressedAt).toBeNull();
     }
+    expect(reportOfPayload({ ...good, installFailedAt: CHECKED_AT })!.installFailedAt).toBe(CHECKED_AT);
+    for (const junk of [null, "now", Number.NaN, undefined]) {
+      expect(reportOfPayload({ ...good, installFailedAt: junk })!.installFailedAt).toBeNull();
+    }
+  });
+
+  it("names when the switch installs only in a word it knows", () => {
+    for (const at of AUTO_INSTALLS_AT) expect(reportOfPayload({ ...good, autoInstallsAt: at })!.autoInstallsAt).toBe(at);
+    for (const junk of [null, "always", 3, undefined]) {
+      expect(reportOfPayload({ ...good, autoInstallsAt: junk })!.autoInstallsAt).toBeNull();
+    }
   });
 });
 
@@ -735,6 +873,10 @@ describe("the two pure mappings", () => {
         for (const installKind of INSTALL_KINDS) {
           keys.add(updateSentenceKey({ ...base, state, lastResult, installKind } as UpdateReport));
           keys.add(updateSentenceKey({ ...base, state, lastResult, installKind, notStartedAt: 1 } as UpdateReport));
+          // …and as the switch, the hold, the quit's install and its failure move them.
+          for (const over of [{ autoInstall: true }, { held: true }, { installsOnQuit: true }, { installFailedAt: 1 }]) {
+            keys.add(updateSentenceKey({ ...base, state, lastResult, installKind, ...over } as UpdateReport));
+          }
         }
       }
     }
@@ -745,6 +887,11 @@ describe("the two pure mappings", () => {
     keys.add("label");
     keys.add("lastChecked");
     keys.add("neverChecked");
+    keys.add("autoLabel");
+    keys.add("readyHeldFiles");
+    for (const autoInstallsAt of [null, ...AUTO_INSTALLS_AT]) {
+      for (const autoInstall of [true, false]) keys.add(autoSentenceKey({ ...base, autoInstall, autoInstallsAt }));
+    }
     // Nothing invented and nothing missing: the pane can address every key it can compute, in
     // both catalogues. A key with no copy renders as the raw key on the one control that tells
     // somebody whether their mail client is current.

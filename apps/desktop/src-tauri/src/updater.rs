@@ -46,16 +46,19 @@
 //!      hands back bytes. A check the user asked for also opens the small progress
 //!      window (`src/updater-window.ts`) so the wait is visible; a check nobody
 //!      asked for stays silent, and the menu item is the only sign of it.
-//!   3. When the payload is verified and waiting, ONE ask: whether to restart and
-//!      install it. In the engine build ohmail's own window asks (the strip,
-//!      `src/update-cadence.ts`), because a native dialog has no parent on Linux
-//!      and opens on whatever workspace is in front; the preview asks natively.
-//!      "Later" leaves the payload ready, and the menu item becomes "Restart to
-//!      Install", which is the only thing that ever installs anything.
+//!   3. When the payload is verified and waiting, the engine build's window says so in
+//!      one quiet line at the foot of its sidebar (`src/update-cadence.ts`), with
+//!      Restart beside it; the preview asks natively. With Settings' "Install updates
+//!      automatically" on (the default) the release goes in when the app quits, or at
+//!      the next launch for an AppImage staged beside itself; with it off it waits for
+//!      Restart, and the menu item says "Restart to Install".
 //!
-//! The restart happens on that press and on nothing else. There is no second
-//! prompt, no dialog stacked on a dialog, and no path where the app relaunches
-//! itself while somebody is reading their mail.
+//! The app restarts on that press, and at a launch that applied a staged release
+//! before any window showed. The installs at quit and at launch happen while no
+//! window is on screen, and none happens while a send waits or a draft holds files.
+//! A quit that is a restart (the relaunch card's) installs too, and Windows' installer
+//! then starts the app again in its place. An install at quit or launch that fails is
+//! kept for the next launch, whose window says so; no quit tries that release again.
 //!
 //! ── WHAT THE WINDOW ADDS TO THAT, AND WHY IT IS NOT A SECOND POLICY ───────────
 //!
@@ -97,11 +100,12 @@
 //!   * ONE endpoint, pinned in `tauri.conf.json` (`plugins.updater.endpoints`):
 //!     the project's own GitHub Releases `latest.json` feed, over HTTPS. Nothing
 //!     else is reachable.
-//!   * NOTIFY-AND-INSTALL, never silent. Downloading and installing are two
-//!     separate calls here, and the consent gates the second one: not a byte of a
-//!     new release is applied to the installed app until the user presses for it.
-//!     A payload that is fetched and never consented to is dropped when the app
-//!     quits.
+//!   * INSTALLED AT THE NEXT RESTART, by the person's own setting. Downloading and
+//!     installing are two separate calls here. The switch (on by default) lets the
+//!     release go in at quit or at launch; off, nothing is applied until a press, and a
+//!     payload never pressed for is dropped when the app quits. Nothing installs while
+//!     the window says a send waits or a draft holds files, and a staged release is
+//!     verified again before use.
 //!   * EVERY payload is minisign-verified against `plugins.updater.pubkey` by
 //!     `tauri-plugin-updater` before `download` will return it — a tampered
 //!     payload never becomes bytes this module could install. That verification,
@@ -139,6 +143,7 @@
 //! `{ "version", "notes", "pub_date", "platforms": { "<target>-<arch>":
 //! { "signature", "url" } } }`.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -677,6 +682,14 @@ impl Flow {
         self.pressed_at
     }
 
+    /// The release being fetched or waiting, in the two stages that have one.
+    pub fn offered(&self) -> Option<&str> {
+        match &self.stage {
+            Stage::Downloading(version) | Stage::Ready(version) => Some(version),
+            _ => None,
+        }
+    }
+
     /// Fold one signal in. Signals that do not belong to the current stage are ignored rather than
     /// asserted on: they arrive from spawned work, and a task finishing after the flow has moved on
     /// must not be able to drag it backwards.
@@ -768,8 +781,18 @@ impl Flow {
 
     /// Whether the item can be picked. False exactly where [`Press::Nothing`] would be a no-op:
     /// an item that looks live and does nothing is worse than one that is visibly busy.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn menu_enabled(&self) -> bool {
         self.press() != Press::Nothing
+    }
+}
+
+/// What a press does now: the flow's own answer, except that no install starts while a send
+/// waits (`held`). The menu item, the pane and the window's line all ask this one rule.
+pub fn press_now(flow: &Flow, held: bool) -> Press {
+    match flow.press() {
+        Press::Restart if held => Press::Nothing,
+        press => press,
     }
 }
 
@@ -778,11 +801,146 @@ impl Flow {
 /// Pure, so `updater_tests.rs` drives every pair, and the only place the two are put together:
 /// an install that cannot replace its own files says so in every stage, because on such a copy
 /// no stage but `Idle` is ever reached.
-pub fn menu_text(kind: InstallKind, flow: &Flow) -> (String, bool) {
+pub fn menu_text(kind: InstallKind, flow: &Flow, held: bool) -> (String, bool) {
     match kind.menu_sentence() {
         Some(sentence) => (sentence.to_string(), false),
-        None => (flow.menu_label(), flow.menu_enabled()),
+        None => (flow.menu_label(), press_now(flow, held) != Press::Nothing),
     }
+}
+
+/// What a verified release waits for: the next quit or launch (`Auto`, Settings' "Install
+/// updates automatically", on by default) or a press (`Ask`, the switch off).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Policy {
+    Auto,
+    Ask,
+}
+
+impl Policy {
+    /// The policy file, read: none is the default; anything unreadable or unknown asks first,
+    /// because a choice nobody can read is not consent.
+    pub fn read(found: &crate::appimage_stage::PolicyRead) -> Policy {
+        match found {
+            crate::appimage_stage::PolicyRead::Missing => Policy::Auto,
+            crate::appimage_stage::PolicyRead::Text(text) if text.trim() == "auto" => Policy::Auto,
+            _ => Policy::Ask,
+        }
+    }
+
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    pub fn word(self) -> &'static str {
+        match self {
+            Policy::Auto => "auto",
+            Policy::Ask => "ask",
+        }
+    }
+}
+
+/// How long one "a send waits" (or "a draft holds files") from the window holds every install. The
+/// window renews it each minute while it holds, so a window that went away holds nothing for long.
+pub const HOLD_FOR: Duration = Duration::from_secs(120);
+
+/// A send waits or a draft holds files, by the window's word: until when no install may start.
+#[derive(Debug, Default)]
+pub struct SendHold(Mutex<Option<Instant>>);
+
+impl SendHold {
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    pub fn set(&self, waits: bool, now: Instant) {
+        *lock(&self.0) = waits.then(|| now + HOLD_FOR);
+    }
+
+    pub fn held(&self, now: Instant) -> bool {
+        lock(&self.0).is_some_and(|until| now < until)
+    }
+}
+
+/// Everything the install at the app's own quit is allowed to know.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QuitFacts {
+    /// A verified release is ready.
+    pub ready: bool,
+    /// Its bytes are held, in memory or staged.
+    pub payload: bool,
+    /// Settings' switch is on.
+    pub auto: bool,
+    /// This release's install at quit or launch failed before; it waits for a press.
+    pub failed_before: bool,
+    /// A send waits, or a draft holds files, by the window's word.
+    pub send_waits: bool,
+    /// The AppImage, the Windows setup or the macOS app.
+    pub self_applies: bool,
+    /// The install can replace the app without a password prompt.
+    pub replaceable: bool,
+    /// Windows is ending the session.
+    pub session_ending: bool,
+    /// Another install holds the latch.
+    pub busy: bool,
+    /// The exit is a restart, which Tauri performs after it ([`InstallFence::restarts`]).
+    pub restarting: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuitInstall {
+    Install,
+    Skip(Skip),
+}
+
+/// Why the quit installed nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Skip {
+    Busy,
+    CannotSelfApply,
+    NotReady,
+    NoPayload,
+    AskFirst,
+    FailedBefore,
+    SendWaits,
+    NeedsPermission,
+    SessionEnding,
+}
+
+impl Skip {
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Skip::Busy => "busy",
+            Skip::CannotSelfApply => "cannotSelfApply",
+            Skip::NotReady => "notReady",
+            Skip::NoPayload => "noPayload",
+            Skip::AskFirst => "askFirst",
+            Skip::FailedBefore => "failedBefore",
+            Skip::SendWaits => "sendWaits",
+            Skip::NeedsPermission => "needsPermission",
+            Skip::SessionEnding => "sessionEnding",
+        }
+    }
+}
+
+/// THE INSTALL AT QUIT, as a pure function of what the app knows as it goes.
+pub fn quit_install(facts: QuitFacts) -> QuitInstall {
+    let skip = if facts.busy {
+        Skip::Busy
+    } else if !facts.self_applies {
+        Skip::CannotSelfApply
+    } else if !facts.ready {
+        Skip::NotReady
+    } else if !facts.payload {
+        Skip::NoPayload
+    } else if !facts.auto {
+        Skip::AskFirst
+    } else if facts.failed_before {
+        Skip::FailedBefore
+    } else if facts.send_waits {
+        Skip::SendWaits
+    } else if !facts.replaceable {
+        Skip::NeedsPermission
+    } else if facts.session_ending {
+        Skip::SessionEnding
+    } else {
+        return QuitInstall::Install;
+    };
+    QuitInstall::Skip(skip)
 }
 
 /// What the LAST COMPLETED CHECK found — a different question from [`Stage`], and it has to be.
@@ -829,34 +987,44 @@ pub struct Check {
 }
 
 /// A payload that has been fetched and verified and has NOT been installed.
-///
-/// Held in memory rather than written anywhere: an update nobody consented to must leave no trace
-/// on the machine, so quitting the app is enough to discard it.
 type Pending = Waiting<Plugin>;
 
-/// A release waiting for the press that installs it: the payload, its verified bytes, and the hook
-/// the plugin runs before the Windows installer starts.
+/// Where a verified release waits.
+pub(crate) enum Held {
+    /// Its bytes, in memory: dropped if the app quits without installing them.
+    Memory(Vec<u8>),
+    /// Beside the AppImage, recorded (`appimage_stage.rs`); verified again by the install.
+    Staged,
+    /// Nothing: an installer that did not start took the bytes, or the switch went off. The next
+    /// press fetches and verifies again rather than handing kept bytes to an installer.
+    Nothing,
+}
+
+/// A release waiting for its install: the payload, where it is held, and the hook the plugin runs
+/// before the Windows installer starts.
 pub(crate) struct Waiting<P> {
     payload: P,
-    /// What `download` verified, or `None` once an installer did not start: the next press fetches
-    /// and verifies the payload again rather than handing kept bytes to an installer.
-    bytes: Option<Vec<u8>>,
+    held: Held,
     hook: Arc<InstallHook>,
 }
 
 impl<P> Waiting<P> {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new(payload: P, bytes: Vec<u8>, hook: Arc<InstallHook>) -> Self {
-        Waiting { payload, bytes: Some(bytes), hook }
+        Waiting::holding(payload, Held::Memory(bytes), hook)
     }
 
-    /// Are verified bytes held? `false` after an installer that did not start.
-    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn holding(payload: P, held: Held, hook: Arc<InstallHook>) -> Self {
+        Waiting { payload, held, hook }
+    }
+
+    /// Is a release held, in memory or staged? `false` after an installer that did not start.
     pub(crate) fn holds_bytes(&self) -> bool {
-        self.bytes.is_some()
+        !matches!(self.held, Held::Nothing)
     }
 }
 
-/// The plugin's two calls an install makes, behind a seam the tests drive: `download` fetches and
+/// The plugin's calls an install makes, behind a seam the tests drive: `download` fetches and
 /// verifies, `install` hands verified bytes to the platform's installer.
 pub(crate) trait Payload {
     type Error: std::fmt::Debug;
@@ -865,10 +1033,23 @@ pub(crate) trait Payload {
     /// On Windows the plugin prepares the installer, runs the hook, starts the installer and exits,
     /// and returns only when preparing or starting it failed.
     fn install(&self, bytes: &[u8]) -> Result<(), Self::Error>;
+    /// The same install as the app goes: the Windows installer starts the app again only when the
+    /// exit is a restart, which its exit then stands in for.
+    fn install_on_quit(&self, bytes: &[u8], restart: bool) -> Result<(), Self::Error>;
+    /// The release staged beside the AppImage, read back; the install verifies it again.
+    fn read_staged(&self) -> Result<Vec<u8>, Self::Error>;
 }
 
-/// The release the plugin found, as a [`Payload`].
-pub(crate) struct Plugin(tauri_plugin_updater::Update);
+/// What an AppImage's install needs beside the release: its image, the data folder its record is
+/// in, and the shipped key a staged copy is verified against.
+pub(crate) struct Staging {
+    image: PathBuf,
+    dir: Option<PathBuf>,
+    pubkey: String,
+}
+
+/// The release the plugin found, as a [`Payload`]; on an AppImage, with its [`Staging`].
+pub(crate) struct Plugin(tauri_plugin_updater::Update, Option<Staging>);
 
 impl Payload for Plugin {
     type Error = tauri_plugin_updater::Error;
@@ -880,8 +1061,43 @@ impl Payload for Plugin {
     }
 
     fn install(&self, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.0.install(bytes)
+        self.put(bytes, true)
     }
+
+    fn install_on_quit(&self, bytes: &[u8], restart: bool) -> Result<(), Self::Error> {
+        self.put(bytes, restart)
+    }
+
+    fn read_staged(&self) -> Result<Vec<u8>, Self::Error> {
+        let staging = self.1.as_ref().ok_or_else(no_image)?;
+        Ok(crate::appimage_stage::read_staged(&staging.image)?)
+    }
+}
+
+impl Plugin {
+    /// THE ONE INSTALL. An AppImage's bytes, staged or held, are verified again and then written
+    /// beside it and renamed over (`appimage_stage.rs`); the plugin's own AppImage install, which
+    /// wrote in place, is never reached. Every other kind is the plugin's, the Windows installer
+    /// told whether to start the app again.
+    fn put(&self, bytes: &[u8], restart: bool) -> Result<(), tauri_plugin_updater::Error> {
+        if install_kind() == InstallKind::AppImage {
+            let staging = self.1.as_ref().ok_or_else(no_image)?;
+            let running = env!("CARGO_PKG_VERSION");
+            if verify_staged(bytes, &self.0.signature, &staging.pubkey, running, &self.0.version, EXPECTED_ASSET).is_none() {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "the release did not verify").into());
+            }
+            crate::appimage_stage::replace(&staging.image, bytes)?;
+            if let Some(dir) = &staging.dir {
+                crate::appimage_stage::forget_record(dir);
+            }
+            return Ok(());
+        }
+        self.0.clone().restart_after_install(restart).install(bytes)
+    }
+}
+
+fn no_image() -> tauri_plugin_updater::Error {
+    std::io::Error::new(std::io::ErrorKind::NotFound, "no image to replace").into()
 }
 
 /// The flow, the payload waiting on it, the menu item that reports both, and the last check.
@@ -893,6 +1109,9 @@ struct Updater<R: Runtime> {
     /// the honest thing for a launch check to be able to say. A value read back from disk would
     /// claim a check this run never made.
     last: Mutex<Option<Check>>,
+    /// Settings' switch, read once from its file and kept.
+    policy: Mutex<Option<Policy>>,
+    hold: SendHold,
 }
 
 impl<R: Runtime> Updater<R> {
@@ -902,6 +1121,8 @@ impl<R: Runtime> Updater<R> {
             pending: Mutex::new(None),
             item: Mutex::new(None),
             last: Mutex::new(None),
+            policy: Mutex::new(None),
+            hold: SendHold::default(),
         }
     }
 }
@@ -956,10 +1177,103 @@ pub fn report(
     })
 }
 
-/// What the window is told: [`report`], and `closing` — a quit is waiting for an install to finish
-/// writing ([`FENCE`]), which the window says until it closes.
-fn told(flow: &Flow, last: Option<Check>, kind: InstallKind) -> serde_json::Value {
-    let mut told = report(flow, last, env!("CARGO_PKG_VERSION"), kind);
+/// What the window is told beside the flow: the switch, the hold, whether a ready release goes in
+/// when the app quits — [`quit_install`]'s own answer, so the line cannot promise what the quit
+/// would refuse — when an install at quit or launch failed, and when the switch installs here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Standing {
+    pub auto_install: bool,
+    pub held: bool,
+    pub installs_on_quit: bool,
+    pub install_failed_at: Option<u64>,
+    pub auto_at: Option<AutoAt>,
+}
+
+/// When Settings' switch, on, installs a ready release on this copy: what the sentence under it says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutoAt {
+    /// At quit, or at the next launch: an AppImage that stages the release beside itself.
+    QuitOrLaunch,
+    /// At quit: the Windows setup and the macOS app hold the release in memory until then.
+    Quit,
+    /// Only on Restart: replacing this copy needs a password, which no quit can ask for.
+    Restart,
+}
+
+impl AutoAt {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AutoAt::QuitOrLaunch => "quitOrLaunch",
+            AutoAt::Quit => "quit",
+            AutoAt::Restart => "restart",
+        }
+    }
+}
+
+/// When the switch installs on this kind, given whether it can be replaced without a prompt and
+/// whether it can stage a release beside itself; `None` where the switch means nothing.
+pub fn auto_at(kind: InstallKind, replaceable: bool, stages: bool) -> Option<AutoAt> {
+    if !kind.self_applies() {
+        return None;
+    }
+    Some(match (replaceable, kind == InstallKind::AppImage && stages) {
+        (false, _) => AutoAt::Restart,
+        (true, true) => AutoAt::QuitOrLaunch,
+        (true, false) => AutoAt::Quit,
+    })
+}
+
+/// [`Standing`] from what was read: a failed automatic install still standing for this release is
+/// not tried at quit again (so not promised either), and the window is told when it failed.
+pub fn standing_of(
+    auto_install: bool,
+    facts: QuitFacts,
+    failed: Option<&crate::appimage_stage::Failure>,
+    auto_at: Option<AutoAt>,
+) -> Standing {
+    let facts = QuitFacts { failed_before: failed.is_some(), ..facts };
+    Standing {
+        auto_install,
+        held: facts.send_waits,
+        installs_on_quit: quit_install(facts) == QuitInstall::Install,
+        install_failed_at: failed.map(|failure| failure.at_unix_ms),
+        auto_at,
+    }
+}
+
+/// Does a kept failure still stand? Only for a release newer than the one running (one that went
+/// in after all is over), and only while that release, or none, is on offer.
+pub fn failure_stands(failure: &crate::appimage_stage::Failure, running: &str, offered: Option<&str>) -> bool {
+    let newer = match (semver::Version::parse(&failure.version), semver::Version::parse(running)) {
+        (Ok(failed), Ok(running)) => failed > running,
+        _ => false,
+    };
+    newer && offered.map_or(true, |version| version == failure.version)
+}
+
+/// [`report`], with the [`Standing`] facts; `canInstall` is false while a send waits.
+pub fn report_with(
+    flow: &Flow,
+    last: Option<Check>,
+    installed: &str,
+    kind: InstallKind,
+    standing: Standing,
+) -> serde_json::Value {
+    let mut told = report(flow, last, installed, kind);
+    told["canInstall"] =
+        serde_json::Value::Bool(press_now(flow, standing.held) == Press::Restart && kind.self_applies());
+    told["autoInstall"] = serde_json::Value::Bool(standing.auto_install);
+    told["held"] = serde_json::Value::Bool(standing.held);
+    told["installsOnQuit"] = serde_json::Value::Bool(standing.installs_on_quit);
+    told["installFailedAt"] = standing.install_failed_at.map_or(serde_json::Value::Null, serde_json::Value::from);
+    told["autoInstallsAt"] = standing.auto_at.map_or(serde_json::Value::Null, |at| at.as_str().into());
+    told
+}
+
+/// What the window is told: [`report_with`], and `closing` — a quit is waiting for an install to
+/// finish writing ([`FENCE`]), which the window says until it closes.
+fn told(flow: &Flow, last: Option<Check>, kind: InstallKind, standing: Standing) -> serde_json::Value {
+    let mut told = report_with(flow, last, env!("CARGO_PKG_VERSION"), kind, standing);
     told["closing"] = serde_json::Value::Bool(FENCE.quit_waits());
     told
 }
@@ -998,6 +1312,12 @@ pub enum Verdict {
     Failed,
     /// The engine stopped for the Windows installer and the installer did not start.
     NotStarted,
+    /// A quit with a release ready installed nothing, and the line says why.
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    Skipped,
+    /// A launch found a staged release it would not apply, and discarded it.
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    Refused,
 }
 
 impl Verdict {
@@ -1007,6 +1327,8 @@ impl Verdict {
             Verdict::Deferred => "deferred",
             Verdict::Failed => "failed",
             Verdict::NotStarted => "notStarted",
+            Verdict::Skipped => "skipped",
+            Verdict::Refused => "refused",
         }
     }
 }
@@ -1085,10 +1407,16 @@ fn log_offer(found: &str, offered: Option<&str>, kind: InstallKind) {
 
 /// What became of a payload, and — when it failed — the class of the failure.
 fn log_verdict(verdict: Verdict, error_class: Option<&str>) {
+    log_verdict_with(verdict, error_class, &[]);
+}
+
+/// [`log_verdict`], and where (`at`: press, quit, launch) and why, where a line says so.
+fn log_verdict_with(verdict: Verdict, error_class: Option<&str>, more: &[(&str, &str)]) {
     let mut fields = vec![("verdict", verdict.as_str())];
     if let Some(class) = error_class {
         fields.push(("errorClass", class));
     }
+    fields.extend_from_slice(more);
     emit(line("updater_verdict", &fields));
 }
 
@@ -1183,7 +1511,51 @@ pub fn update_state<R: Runtime>(app: AppHandle<R>) -> serde_json::Value {
     let state = app.state::<Updater<R>>();
     let flow = lock(&state.flow);
     let last = *lock(&state.last);
-    told(&flow, last, install_kind())
+    told(&flow, last, install_kind(), standing(&app, &flow))
+}
+
+/// SETTINGS → UPDATES, THE SWITCH. On (the default), a ready release goes in at the next quit or
+/// launch; off, it waits for a press, and a release staged beside the image is discarded. One
+/// bool, from the main window only; it can delay an install, never cause one.
+#[cfg(feature = "local-engine")]
+#[tauri::command]
+pub fn update_set_auto<R: Runtime>(window: tauri::WebviewWindow<R>, on: bool) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("the update switch is the main window's".into());
+    }
+    let app = window.app_handle();
+    let next = if on { Policy::Auto } else { Policy::Ask };
+    let dir = data_dir(app).ok_or("this platform names no data folder")?;
+    crate::appimage_stage::write_policy(&dir, next.word()).map_err(|err| err.to_string())?;
+    let state = app.state::<Updater<R>>();
+    *lock(&state.policy) = Some(next);
+    if next == Policy::Ask {
+        if let Some(image) = crate::appimage_stage::running_image() {
+            crate::appimage_stage::discard(&dir, &image);
+        }
+        // An install or a fetch holding the slot has already taken what was held.
+        if let Ok(mut slot) = state.pending.try_lock() {
+            if let Some(waiting) = slot.as_mut().filter(|w| matches!(w.held, Held::Staged)) {
+                waiting.held = Held::Nothing;
+            }
+        }
+    }
+    relabel(app);
+    Ok(())
+}
+
+/// THE WINDOW'S "A SEND WAITS" (or "A DRAFT HOLDS FILES"): while it holds, no press, menu item or
+/// quit installs. The window renews it each minute; it lapses by itself [`HOLD_FOR`] after the last.
+#[cfg(feature = "local-engine")]
+#[tauri::command]
+pub fn update_hold<R: Runtime>(window: tauri::WebviewWindow<R>, waits: bool) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("the update hold is the main window's".into());
+    }
+    let app = window.app_handle();
+    app.state::<Updater<R>>().hold.set(waits, Instant::now());
+    relabel(app);
+    Ok(())
 }
 
 /// SETTINGS → UPDATES, THE PRESS. Exactly what picking the menu item does, and nothing else.
@@ -1242,7 +1614,7 @@ fn pressed<R: Runtime>(app: AppHandle<R>) {
     let what = {
         let state = app.state::<Updater<R>>();
         let flow = lock(&state.flow);
-        flow.press()
+        press_now(&flow, state.hold.held(Instant::now()))
     };
     match what {
         Press::Check => check(app, true),
@@ -1391,12 +1763,370 @@ async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
         Err(_) => return failed(&app, user_initiated),
     };
 
+    // With the switch on, an AppImage's release is staged beside it and freed from memory: a
+    // quit that never reaches the loop's last event (a reboot, SIGTERM) still finds it at launch.
+    // Not a release whose install at quit or launch already failed: that one waits for a press.
+    let staging = staging_for(&app);
+    let to_stage = staging.as_ref().and_then(|staging| {
+        let record = crate::appimage_stage::Record {
+            image: staging.image.clone(),
+            version: update.version.clone(),
+            signature: update.signature.clone(),
+        };
+        Some((staging.dir.clone()?, record))
+    });
+    let failed_before = failure(&app).is_some_and(|failed| failure_stands(&failed, env!("CARGO_PKG_VERSION"), Some(&version)));
+    let held = match to_stage {
+        Some((dir, record)) if policy(&app) == Policy::Auto && !failed_before => {
+            tauri::async_runtime::spawn_blocking(move || match crate::appimage_stage::stage(&dir, &record, &bytes) {
+                Ok(()) => Held::Staged,
+                Err(_) => Held::Memory(bytes),
+            })
+            .await
+            .unwrap_or(Held::Nothing)
+        }
+        _ => Held::Memory(bytes),
+    };
+
     {
         let state = app.state::<Updater<R>>();
-        *lock(&state.pending) = Some(Waiting::new(Plugin(update), bytes, hook));
+        *lock(&state.pending) = Some(Waiting::holding(Plugin(update, staging), held, hook));
     }
     signal(&app, Signal::Downloaded);
     prompt_ready(&app, &version);
+}
+
+/// What an AppImage's install needs beside the release, or `None` on every other kind.
+fn staging_for<R: Runtime>(app: &AppHandle<R>) -> Option<Staging> {
+    if install_kind() != InstallKind::AppImage {
+        return None;
+    }
+    Some(Staging {
+        image: crate::appimage_stage::running_image()?,
+        dir: data_dir(app),
+        pubkey: shipped_pubkey(app),
+    })
+}
+
+/// The app's data folder: the policy file and the staged release's record.
+fn data_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    app.path().app_data_dir().ok()
+}
+
+/// The public key every payload is verified against, read from the config the plugin reads.
+fn shipped_pubkey<R: Runtime>(app: &AppHandle<R>) -> String {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|updater| updater.get("pubkey"))
+        .and_then(|key| key.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The switch now. The preview always asks first; the engine build reads Settings' file once.
+fn policy<R: Runtime>(app: &AppHandle<R>) -> Policy {
+    if !cfg!(feature = "local-engine") {
+        return Policy::Ask;
+    }
+    let state = app.state::<Updater<R>>();
+    let mut kept = lock(&state.policy);
+    *kept.get_or_insert_with(|| {
+        data_dir(app).map_or(Policy::Ask, |dir| Policy::read(&crate::appimage_stage::read_policy(&dir)))
+    })
+}
+
+/// Can the install replace this copy without a password prompt? The AppImage's folder, and the
+/// macOS app with its folder, must be writable: the plugin's macOS install asks for a password on
+/// the thread that draws, which at quit never answers.
+fn replaceable_without_a_prompt(kind: InstallKind) -> bool {
+    use crate::appimage_stage::writable;
+    match kind {
+        InstallKind::AppImage => crate::appimage_stage::running_image()
+            .is_some_and(|image| image.parent().is_some_and(writable)),
+        InstallKind::MacBundle => std::env::current_exe()
+            .ok()
+            .and_then(|exe| tauri_plugin_updater::extract_path_from_executable(&exe).ok())
+            .is_some_and(|app| writable(&app) && app.parent().is_some_and(writable)),
+        InstallKind::WindowsSetup => true,
+        _ => false,
+    }
+}
+
+/// Is Windows ending the session? Then the loop's last event is a shutdown, and no installer starts.
+#[cfg(windows)]
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+fn session_ending() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SHUTTINGDOWN};
+    unsafe { GetSystemMetrics(SM_SHUTTINGDOWN) != 0 }
+}
+
+#[cfg(not(windows))]
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+fn session_ending() -> bool {
+    false
+}
+
+/// What the window is told beside the flow, read now. The payload is asked with `try_lock`: an
+/// install or a fetch holding it is under way, and a quit would then install nothing more.
+fn standing<R: Runtime>(app: &AppHandle<R>, flow: &Flow) -> Standing {
+    let state = app.state::<Updater<R>>();
+    let kind = install_kind();
+    let auto = policy(app) == Policy::Auto;
+    let held = state.hold.held(Instant::now());
+    let payload = match state.pending.try_lock() {
+        Ok(slot) => slot.as_ref().is_some_and(Waiting::holds_bytes),
+        Err(std::sync::TryLockError::Poisoned(slot)) => slot.into_inner().as_ref().is_some_and(Waiting::holds_bytes),
+        Err(std::sync::TryLockError::WouldBlock) => false,
+    };
+    let replaceable = replaceable_without_a_prompt(kind);
+    let facts = QuitFacts {
+        ready: flow.press() == Press::Restart,
+        payload,
+        auto,
+        send_waits: held,
+        self_applies: kind.self_applies(),
+        replaceable,
+        ..QuitFacts::default()
+    };
+    let failed = failure(app).filter(|failed| failure_stands(failed, env!("CARGO_PKG_VERSION"), flow.offered()));
+    standing_of(auto, facts, failed.as_ref(), auto_at(kind, replaceable, data_dir(app).is_some()))
+}
+
+/// The install at quit or launch that failed, as the data folder keeps it. Read each time, so a
+/// launch's own failure is seen; one for a release no newer than this one went in after all.
+fn failure<R: Runtime>(app: &AppHandle<R>) -> Option<crate::appimage_stage::Failure> {
+    let dir = data_dir(app)?;
+    let failed = crate::appimage_stage::read_failure(&dir)?;
+    if failure_stands(&failed, env!("CARGO_PKG_VERSION"), None) {
+        return Some(failed);
+    }
+    crate::appimage_stage::forget_failure(&dir);
+    None
+}
+
+/// What the install at quit came to.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub(crate) enum AtQuit<E> {
+    Skipped(Skip),
+    Installed,
+    Failed(E),
+}
+
+/// THE INSTALL AT THE APP'S OWN QUIT, everything but the facts the app reads. It never goes
+/// through the fence (the loop's last event closed it before this runs), never fetches, never
+/// resumes the engine and never moves the flow: the app is going. The latch stays taken once it
+/// installs.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub(crate) fn at_quit<P: Payload>(
+    latch: &AtomicBool,
+    waiting: &Mutex<Option<Waiting<P>>>,
+    facts: QuitFacts,
+) -> AtQuit<P::Error> {
+    if latch.swap(true, Ordering::SeqCst) {
+        return AtQuit::Skipped(Skip::Busy);
+    }
+    let mut slot = lock(waiting);
+    let payload = slot.as_ref().is_some_and(Waiting::holds_bytes);
+    if let QuitInstall::Skip(skip) = quit_install(QuitFacts { payload, busy: false, ..facts }) {
+        latch.store(false, Ordering::SeqCst);
+        return AtQuit::Skipped(skip);
+    }
+    let Some(waiting) = slot.as_mut() else { return AtQuit::Skipped(Skip::NoPayload) };
+    let bytes = match std::mem::replace(&mut waiting.held, Held::Nothing) {
+        Held::Memory(bytes) => bytes,
+        Held::Staged => match waiting.payload.read_staged() {
+            Ok(bytes) => bytes,
+            Err(err) => return AtQuit::Failed(err),
+        },
+        Held::Nothing => return AtQuit::Skipped(Skip::NoPayload),
+    };
+    waiting.hook.arm();
+    match waiting.payload.install_on_quit(&bytes, facts.restarting) {
+        Ok(()) => AtQuit::Installed,
+        Err(err) => AtQuit::Failed(err),
+    }
+}
+
+/// A READY RELEASE GOES IN AS THE APP QUITS, called from the loop's last event after the engine was
+/// told to leave: on Windows the hook's stop then waits for that quit's stop instead of replacing it.
+#[cfg(feature = "local-engine")]
+pub fn install_on_quit<R: Runtime>(app: &AppHandle<R>) {
+    let Some(state) = app.try_state::<Updater<R>>() else { return };
+    let kind = install_kind();
+    let (facts, version) = {
+        let flow = lock(&state.flow);
+        let offered = flow.offered();
+        let failed_before = failure(app).is_some_and(|failed| failure_stands(&failed, env!("CARGO_PKG_VERSION"), offered));
+        let facts = QuitFacts {
+            ready: flow.press() == Press::Restart,
+            auto: policy(app) == Policy::Auto,
+            failed_before,
+            send_waits: state.hold.held(Instant::now()),
+            self_applies: kind.self_applies(),
+            replaceable: replaceable_without_a_prompt(kind),
+            session_ending: session_ending(),
+            restarting: FENCE.restarts(),
+            ..QuitFacts::default()
+        };
+        (facts, offered.map(str::to_string))
+    };
+    let outcome = at_quit(&INSTALLING, &state.pending, facts);
+    match &outcome {
+        // Busy: a press's install holds the latch into its own restart, and said so.
+        AtQuit::Skipped(Skip::NotReady | Skip::CannotSelfApply | Skip::Busy) => {}
+        AtQuit::Skipped(skip) => log_verdict_with(Verdict::Skipped, None, &[("reason", skip.as_str()), ("at", "quit")]),
+        AtQuit::Installed => log_verdict_with(Verdict::Installed, None, &[("at", "quit")]),
+        AtQuit::Failed(err) => {
+            log_verdict_with(Verdict::Failed, Some(error_class(&format!("{err:?}"))), &[("at", "quit")])
+        }
+    }
+    if let (Some(dir), Some(version)) = (data_dir(app), version) {
+        keep_quit_outcome(&dir, &version, &outcome, now_unix_ms());
+    }
+}
+
+/// What the next launch is told of the install at quit: a failure is kept for its release (the line
+/// says so, and no quit tries that release by itself again); an install forgets one.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub(crate) fn keep_quit_outcome<E: std::fmt::Debug>(dir: &Path, version: &str, outcome: &AtQuit<E>, at_unix_ms: u64) {
+    match outcome {
+        AtQuit::Failed(err) => {
+            let failure = crate::appimage_stage::Failure {
+                version: version.to_string(),
+                error_class: error_class(&format!("{err:?}")).to_string(),
+                at: "quit".into(),
+                at_unix_ms,
+            };
+            let _ = crate::appimage_stage::write_failure(dir, &failure);
+        }
+        AtQuit::Installed => crate::appimage_stage::forget_failure(dir),
+        AtQuit::Skipped(_) => {}
+    }
+}
+
+/// A STAGED RELEASE A QUIT NEVER REACHED goes in at the next launch, before the engine and the
+/// window start, and the app restarts into it with its launch arguments.
+#[cfg(feature = "local-engine")]
+pub fn apply_staged_at_launch(app: &tauri::App) {
+    if install_kind() != InstallKind::AppImage {
+        return;
+    }
+    let app = app.handle();
+    let (Some(dir), Some(image)) = (data_dir(app), crate::appimage_stage::running_image()) else { return };
+    let pubkey = shipped_pubkey(app);
+    let launch = Launch {
+        dir: &dir,
+        image: &image,
+        running: env!("CARGO_PKG_VERSION"),
+        pubkey: &pubkey,
+        policy: policy(app),
+        expected_asset: EXPECTED_ASSET,
+    };
+    match launch_apply(&launch) {
+        AtLaunch::Nothing => {}
+        AtLaunch::Refused(reason) => log_verdict_with(Verdict::Refused, None, &[("reason", reason), ("at", "launch")]),
+        AtLaunch::Applied(_) => {
+            // No loop has run to let go of the single-instance name; the new copy needs it free.
+            tauri_plugin_single_instance::destroy(app);
+            restart_into_the_new_copy(app, "launch");
+        }
+    }
+}
+
+/// What a launch knows about a staged release.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub(crate) struct Launch<'a> {
+    pub(crate) dir: &'a Path,
+    pub(crate) image: &'a Path,
+    pub(crate) running: &'a str,
+    pub(crate) pubkey: &'a str,
+    pub(crate) policy: Policy,
+    pub(crate) expected_asset: &'a str,
+}
+
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum AtLaunch {
+    Nothing,
+    Applied(semver::Version),
+    Refused(&'static str),
+}
+
+/// THE LAUNCH'S DECISION AND ITS ONE RENAME. Applied only for this image, with the switch on, and
+/// for a release that verifies again and is newer than the one running; anything else is refused,
+/// the image untouched, and the staged release and its record discarded so no launch retries it.
+/// A release that should have gone in and could not (gone, or not renamed) is kept as a failure,
+/// for the line to say.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub(crate) fn launch_apply(launch: &Launch<'_>) -> AtLaunch {
+    let Some(record) = crate::appimage_stage::read_record(launch.dir) else { return AtLaunch::Nothing };
+    let refuse = |reason| {
+        crate::appimage_stage::discard(launch.dir, launch.image);
+        AtLaunch::Refused(reason)
+    };
+    let failed = |reason, err: std::io::Error| {
+        let failure = crate::appimage_stage::Failure {
+            version: record.version.clone(),
+            error_class: format!("{:?}", err.kind()),
+            at: "launch".into(),
+            at_unix_ms: now_unix_ms(),
+        };
+        let _ = crate::appimage_stage::write_failure(launch.dir, &failure);
+        refuse(reason)
+    };
+    if launch.policy != Policy::Auto {
+        return refuse("askFirst");
+    }
+    if record.image != launch.image {
+        return refuse("otherImage");
+    }
+    let bytes = match crate::appimage_stage::read_staged(launch.image) {
+        Ok(bytes) => bytes,
+        Err(err) => return failed("missing", err),
+    };
+    let verified = verify_staged(
+        &bytes,
+        &record.signature,
+        launch.pubkey,
+        launch.running,
+        &record.version,
+        launch.expected_asset,
+    );
+    drop(bytes);
+    let Some(version) = verified else { return refuse("unverified") };
+    match crate::appimage_stage::apply(launch.image) {
+        Ok(()) => {
+            crate::appimage_stage::forget_record(launch.dir);
+            crate::appimage_stage::forget_failure(launch.dir);
+            AtLaunch::Applied(version)
+        }
+        Err(err) => failed("notApplied", err),
+    }
+}
+
+/// A STAGED RELEASE, VERIFIED AGAIN before any use: the minisign signature over the bytes with the
+/// shipped key, as the plugin's `download` checks it, then [`should_install`] — the signed version
+/// and asset, newer than the version RUNNING.
+pub fn verify_staged(
+    bytes: &[u8],
+    signature_b64: &str,
+    pubkey_b64: &str,
+    running: &str,
+    advertised: &str,
+    expected_asset: &str,
+) -> Option<semver::Version> {
+    use base64::Engine as _;
+    let text = |b64: &str| {
+        let raw = base64::engine::general_purpose::STANDARD.decode(b64.trim()).ok()?;
+        String::from_utf8(raw).ok()
+    };
+    let key = minisign_verify::PublicKey::decode(&text(pubkey_b64)?).ok()?;
+    let signature = minisign_verify::Signature::decode(&text(signature_b64)?).ok()?;
+    key.verify(bytes, &signature, true).ok()?;
+    should_install(running, advertised, signature_b64, expected_asset)
 }
 
 /// Is a ready payload asked about in a native dialog? Only in the preview, whose window holds no
@@ -1454,15 +2184,7 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
     match attempt(&INSTALLING, &FENCE, &state.pending, |told| signal(app, told)) {
         // Another install in flight, nothing waiting, or an exit that closed the fence first.
         Attempt::Busy | Attempt::Nothing | Attempt::Closed => {}
-        Attempt::Installed => after_the_engine(app, || {
-            // Before the restart, and it survives it: the log flushes per write, so the last
-            // line of the old build's log is the one saying why there is a new one.
-            log_verdict(Verdict::Installed, None);
-            // The new image starts without the old one's keep-alive, so the old mount goes when
-            // this process does rather than when the new one quits.
-            crate::inherited_fds::withhold_from_the_restart();
-            app.restart();
-        }),
+        Attempt::Installed => restart_into_the_new_copy(app, "press"),
         // The failures that always speak, whoever started the check: the user pressed a button
         // that promised a restart, and nothing at all happening is the worst answer.
         Attempt::FetchFailed(err) => {
@@ -1488,6 +2210,20 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     }
+}
+
+/// EVERY RESTART INTO AN INSTALLED RELEASE, the press's and the launch's: once no install writes
+/// and the engine has left (at launch none has started), with none of this launch's descriptors.
+fn restart_into_the_new_copy<R: Runtime>(app: &AppHandle<R>, at: &str) {
+    after_the_engine(app, || {
+        // Before the restart, and it survives it: the log flushes per write, so the last
+        // line of the old build's log is the one saying why there is a new one.
+        log_verdict_with(Verdict::Installed, None, &[("at", at)]);
+        // The new image starts without the old one's keep-alive, so the old mount goes when
+        // this process does rather than when the new one quits.
+        crate::inherited_fds::withhold_from_the_restart();
+        app.restart();
+    })
 }
 
 /// What one press of Restart came to.
@@ -1542,7 +2278,14 @@ fn attempt_held<P: Payload>(
     let mut slot = lock(waiting);
     // Nothing waiting: a press that raced the payload being dropped. Silent by design.
     let Some(waiting) = slot.as_mut() else { return Attempt::Nothing };
-    let bytes = match waiting.bytes.take() {
+    // A staged release is read back and verified again; one gone or no longer verifying is
+    // fetched again like bytes an installer that did not start took.
+    let kept = match std::mem::replace(&mut waiting.held, Held::Nothing) {
+        Held::Memory(bytes) => Some(bytes),
+        Held::Staged => waiting.payload.read_staged().ok(),
+        Held::Nothing => None,
+    };
+    let bytes = match kept {
         Some(bytes) => bytes,
         None => {
             tell(Signal::Refetching);
@@ -1558,7 +2301,7 @@ fn attempt_held<P: Payload>(
     waiting.hook.arm();
     let Some(installed) = fenced(fence, || waiting.payload.install(&bytes)) else {
         // Nothing ran: these are still the verified bytes, kept for a press after the exit.
-        waiting.bytes = Some(bytes);
+        waiting.held = Held::Memory(bytes);
         return Attempt::Closed;
     };
     match installed {
@@ -1706,6 +2449,8 @@ struct Fence {
     said: bool,
     /// The process is going, and no install may start.
     closed: bool,
+    /// A restart asked for the exit.
+    restarts: bool,
 }
 
 /// An install writing. Dropped when the install returns, and every waiting exit goes on.
@@ -1720,6 +2465,7 @@ impl InstallFence {
                 gives_up_at: None,
                 said: false,
                 closed: false,
+                restarts: false,
             }),
             returned: Condvar::new(),
             bound,
@@ -1755,6 +2501,12 @@ impl InstallFence {
         if fence.writing > 0 {
             fence.quit_waits = true;
         }
+    }
+
+    /// Does the app start again after this exit? Tauri's own flag is not readable, and never resets.
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    pub fn restarts(&self) -> bool {
+        lock(&self.state).restarts
     }
 
     /// Wait for the install to return, never past the bound. `false` when the bound ran out.
@@ -1863,8 +2615,11 @@ impl PreventsExit for tauri::ExitRequestApi {
 }
 
 /// [`on_exit_requested`] with its fence and its quit handed in: an exit held for an install is
-/// prevented and asked again by the quit, which waits for the install.
+/// prevented and asked again by the quit, which waits for the install. A restart's is noted.
 pub(crate) fn hold_the_exit(fence: &InstallFence, code: Option<i32>, api: &impl PreventsExit, quit: impl FnOnce(i32)) {
+    if code == Some(tauri::RESTART_EXIT_CODE) {
+        lock(&fence.state).restarts = true;
+    }
     if holds_the_exit(fence, code) {
         api.prevent_exit();
         quit(code.unwrap_or(0));
@@ -1910,7 +2665,7 @@ pub(crate) fn say_a_quit_waits<R: Runtime>(app: &AppHandle<R>) {
         let state = app.state::<Updater<R>>();
         let flow = lock(&state.flow);
         let last = *lock(&state.last);
-        told(&flow, last, install_kind())
+        told(&flow, last, install_kind(), standing(app, &flow))
     };
     let _ = app.emit(STATE_EVENT, report);
 }
@@ -2054,8 +2809,9 @@ fn relabel<R: Runtime>(app: &AppHandle<R>) {
             let flow = lock(&state.flow);
             let last = *lock(&state.last);
             let kind = install_kind();
-            let (label, enabled) = menu_text(kind, &flow);
-            (label, enabled, told(&flow, last, kind))
+            let standing = standing(app, &flow);
+            let (label, enabled) = menu_text(kind, &flow, standing.held);
+            (label, enabled, told(&flow, last, kind, standing))
         };
         // A bar that has not been built yet (this runs before `menu.rs` hands the item over on a
         // very early check) has nothing to relabel; `adopt_menu_item` relabels once on arrival. On
@@ -2110,6 +2866,13 @@ fn record<R: Runtime>(app: &AppHandle<R>, result: CheckResult, offered: Option<&
     let state = app.state::<Updater<R>>();
     *lock(&state.last) = Some(Check { at_unix_ms: now_unix_ms(), result });
     log_offer(result.as_str(), offered, install_kind());
+    // A check that reached the feed and did not offer the release whose install failed ends that
+    // failure: a newer one is on offer, or none is.
+    if result != CheckResult::Failed && failure(app).is_some_and(|failed| offered != Some(failed.version.as_str())) {
+        if let Some(dir) = data_dir(app) {
+            crate::appimage_stage::forget_failure(&dir);
+        }
+    }
 }
 
 /// Build the transient progress window that renders `PROGRESS_EVENT`.

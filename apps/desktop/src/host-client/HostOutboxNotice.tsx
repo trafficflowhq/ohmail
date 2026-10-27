@@ -9,7 +9,7 @@ import { useTranslations } from "next-intl";
 export function HostOutboxNotice({ onDismiss }: { onDismiss: () => void }) {
   const t = useTranslations("pairLanding");
   return (
-    <div className="upd-bar ohx-durability" role="status">
+    <div className="ohx-durability" role="status">
       <span>{t("outboxNotKept")}</span>
       <button type="button" className="upd-later" onClick={onDismiss}>
         {t("outboxNotKeptDismiss")}

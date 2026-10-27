@@ -6,15 +6,19 @@ import ts from "typescript";
 
 import {
   currentUpdateOffer,
+  currentVersion,
+  holdFilesForRestart,
+  putUpdateAway,
   resetUpdateStoreForTests,
+  setSendWaits,
   UPDATE_PERIOD_MS,
 } from "../../webapp/app/shell/app-update.js";
 import {
-  cannotSelfInstall,
   checkDue,
   CHECK_EVERY_MS,
+  HOLD_RENEW_MS,
   installRefused,
-  offerOf,
+  lineOf,
   POLL_EVERY_MS,
   REQUEST_RETRIES,
   startUpdateCadence,
@@ -60,6 +64,11 @@ const report = (over: Partial<UpdateReport> = {}): UpdateReport => ({
   lastCheckedAt: START,
   lastResult: "upToDate",
   closing: false,
+  autoInstall: false,
+  held: false,
+  installsOnQuit: false,
+  installFailedAt: null,
+  autoInstallsAt: null,
   ...over,
 });
 
@@ -293,30 +302,17 @@ describe("when a periodic check is due", () => {
     expect(checkDue(running, START + 10 * CHECK_EVERY_MS, START)).toBe(false);
   });
 
-  it("THE REFUSED-INSTALL STATE IS CLASSIFIED, and it is Linux's alone", () => {
-    // The state the strip calls "ohmail could not replace its own files". `canCheck` is TRUE
-    // there — a refused install leaves the flow somewhere a press would check from — so the
-    // period alone would send this install round the whole loop every twenty-four hours: fetch
-    // the release again, verify it, raise the shell's own "ready to install" dialog (which is
-    // not gated on anybody having asked for the check), fail the install again, repeat for the
-    // life of the install. That is the nag the strip exists to replace, made DAILY on exactly
-    // the machines it names, and it is why the predicate is shared with `offerOf` rather than
-    // written twice.
+  it("THE REFUSED-INSTALL STATE IS CLASSIFIED, on every platform", () => {
+    // `canCheck` is TRUE there — a refused install leaves the flow somewhere a press would check
+    // from — so the period alone would send this install round the whole loop every twenty-four
+    // hours: fetch the release again, verify it, fail the install again, repeat for the life of
+    // the install. It is why the predicate is shared with `lineOf` rather than written twice.
     const refused = report({ state: "failed", lastResult: "offered", offered: null });
     expect(installRefused(refused), "the bound's condition, on every platform").toBe(true);
-    expect(cannotSelfInstall(refused, true), "the sentence's condition, on Linux").toBe(true);
+    expect(lineOf(refused)?.failed, "the line's condition").toBe("install");
 
-    // Everywhere else the same pair is a refusal that may not repeat — a file held open, a
-    // half-written temporary directory — and giving up on checking would be the wrong lesson.
-    expect(cannotSelfInstall(refused, false)).toBe(false);
-    expect(checkDue(refused, START + CHECK_EVERY_MS, START)).toBe(true);
-
-    // And a check that could not reach the feed is not that state at all, on any platform —
-    // neither for the sentence nor for the bound. "Update it through your package manager" is a
-    // false claim about a network failure, and giving up on checking would be the wrong lesson
-    // from one.
+    // A check that could not reach the feed is not that state at all, for the line or the bound.
     const offline = report({ state: "failed", lastResult: "failed" });
-    expect(cannotSelfInstall(offline, true)).toBe(false);
     expect(installRefused(offline)).toBe(false);
 
     // The TIME rule knows nothing about any of it. Whether to give up is a question about how
@@ -367,44 +363,59 @@ describe("which request the schedule makes", () => {
   });
 });
 
-describe("what the window says about a report", () => {
-  it("a verified payload waiting is the ask, and it names the release", () => {
-    const offer = offerOf(report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true }), false);
-    expect(offer?.kind).toBe("restart");
-    expect(offer?.version).toBe(NEXT);
+describe("what the line says about a report", () => {
+  it("READY: a verified payload waiting, named, one press away — greyed while a send waits", () => {
+    const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
+    expect(lineOf(ready)).toMatchObject({ kind: "ready", version: NEXT, key: `ready:${NEXT}` });
+    expect(typeof lineOf(ready)?.act).toBe("function");
+    // Held by a waiting send, the shell answers no install press; the line still stands.
+    expect(lineOf({ ...ready, canInstall: false, held: true })?.kind).toBe("ready");
+    // …and a ready a press produced is keyed by that press, so it is said at once.
+    expect(lineOf({ ...ready, pressedAt: START })?.key).toBe(`ready:${NEXT}@${START}`);
   });
 
-  it("A FAILED INSTALL ON LINUX IS A DIFFERENT SENTENCE, told apart by the last check", () => {
+  it("DOWNLOADING: the release being fetched, with nothing to press", () => {
+    const line = lineOf(report({ state: "downloading", offered: NEXT, canCheck: false }));
+    expect(line).toMatchObject({ kind: "downloading", version: NEXT });
+    expect(line?.act).toBeUndefined();
+  });
+
+  it("FAILED: an install that did not go through, on every platform, told apart by the last check", () => {
     // The stage collapses two facts a person would want separated: a check that could not reach
     // the feed and an install that refused are both `failed`. The last CHECK result separates
     // them exactly — every path that ends a check writes its result, and an install writes
     // none, so `failed` beside `offered` can only mean the install itself refused.
     const installFailed = report({ state: "failed", lastResult: "offered", offered: null });
-    expect(offerOf(installFailed, true)?.kind).toBe("package");
-
-    // A check that could not reach the feed is not that, and must not borrow the sentence:
-    // "update it through your package manager" is a false claim about a network failure.
-    const checkFailed = report({ state: "failed", lastResult: "failed" });
-    expect(offerOf(checkFailed, true)).toBeNull();
-
-    // And it is a Linux sentence. Everywhere else this app does install its own updates, so a
-    // failed install is a failure rather than a signpost.
-    expect(offerOf(installFailed, false)).toBeNull();
+    expect(lineOf(installFailed)).toMatchObject({ kind: "failed", failed: "install", key: "failed:install" });
+    // An installer that did not start is the same failure, at once, keyed by its instant.
+    const failedStart = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, notStartedAt: START });
+    expect(lineOf(failedStart)).toMatchObject({ kind: "failed", failed: "install", version: NEXT });
+    expect(typeof lineOf(failedStart)?.act).toBe("function");
   });
 
-  it("AN INSTALLER THAT DID NOT START IS THE RETRY, and still names the release", () => {
-    const failedStart = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, notStartedAt: START });
-    const offer = offerOf(failedStart, false);
-    expect(offer?.kind).toBe("retry");
-    expect(offer?.version).toBe(NEXT);
-    expect(typeof offer?.act).toBe("function");
-    // The positive control: the same payload with no failed start is the ordinary ask.
-    expect(offerOf({ ...failedStart, notStartedAt: null }, false)?.kind).toBe("restart");
+  it("AN AUTOMATIC INSTALL THAT FAILED AT QUIT OR LAUNCH is said, with Retry wherever a press can act", () => {
+    const failedAt = START - HOUR;
+    const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, installFailedAt: failedAt });
+    expect(lineOf(ready)).toMatchObject({ kind: "failed", failed: "install", key: `failed:install@${failedAt}` });
+    expect(typeof lineOf(ready)?.act, "Retry, which goes through the press").toBe("function");
+    // At launch, before the release is on offer again, Retry checks.
+    expect(typeof lineOf(report({ installFailedAt: failedAt }))?.act).toBe("function");
+    // While the release downloads again the same line stands, with nothing to press.
+    const fetching = report({ state: "downloading", offered: NEXT, canCheck: false, installFailedAt: failedAt });
+    expect(lineOf(fetching)).toMatchObject({ kind: "failed", key: `failed:install@${failedAt}` });
+    expect(lineOf(fetching)?.act).toBeUndefined();
+    expect(lineOf({ ...ready, canInstall: false, held: true })?.act, "Retry while a send waits").toBeUndefined();
+  });
+
+  it("A FAILED CHECK IS SAID ONLY WHEN SOMEBODY PRESSED FOR IT — never for a scheduled one", () => {
+    const scheduled = report({ state: "failed", lastResult: "failed" });
+    expect(lineOf(scheduled)).toBeNull();
+    expect(lineOf({ ...scheduled, pressedAt: START })).toMatchObject({ kind: "failed", failed: "check" });
   });
 
   it("nothing in flight is nothing to say", () => {
-    expect(offerOf(report(), true)).toBeNull();
-    expect(offerOf(report({ state: "downloading", offered: NEXT, canCheck: false }), true)).toBeNull();
+    expect(lineOf(report())).toBeNull();
+    expect(lineOf(report({ state: "checking", canCheck: false }))).toBeNull();
   });
 });
 
@@ -417,7 +428,7 @@ describe("the cadence, running", () => {
     // day, because the alternative — pressing at every tick because the stamp never moved —
     // is a check every quarter of an hour wearing a daily check's name.
     const s = shell(() => report({ lastCheckedAt: START }));
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
 
     await run(clock, 12 * HOUR);
     expect(s.polls, "half a day in, nothing is owed").toHaveLength(0);
@@ -437,7 +448,7 @@ describe("the cadence, running", () => {
     vi.useFakeTimers();
     const clock = { at: START };
     const s = shell(() => report({ lastCheckedAt: START }));
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
 
     // The machine slept for thirty hours: the wall clock moved, the interval did not run. One
     // tick after it wakes is all it takes, because the decision is arithmetic on two instants.
@@ -455,13 +466,13 @@ describe("the cadence, running", () => {
     const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
     let now = report();
     const s = shell(() => now);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
 
     await vi.advanceTimersByTimeAsync(0);
     expect(currentUpdateOffer()).toBeNull();
     now = ready;
     s.tell(ready);
-    expect(currentUpdateOffer()?.kind).toBe("restart");
+    expect(currentUpdateOffer()?.kind).toBe("ready");
     expect(currentUpdateOffer()?.version).toBe(NEXT);
 
     // Put away, and quiet for the rest of the day however many transitions arrive.
@@ -483,9 +494,9 @@ describe("the cadence, running", () => {
     const clock = { at: START };
     const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
     const s = shell(() => ready);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
     await vi.advanceTimersByTimeAsync(0);
-    expect(currentUpdateOffer()?.kind).toBe("restart");
+    expect(currentUpdateOffer()?.kind).toBe("ready");
     expect(s.polls, "reading the state is not a check").toEqual([]);
     stop();
   });
@@ -496,16 +507,16 @@ describe("the cadence, running", () => {
     const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
     let now = ready;
     const s = shell(() => now);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
     await vi.advanceTimersByTimeAsync(0);
 
     s.tell(ready);
-    expect(currentUpdateOffer()?.kind).toBe("restart");
+    expect(currentUpdateOffer()?.kind).toBe("ready");
     // The strip's press, and an installer that did not start: the answer to it is due now.
     clock.at += 5_000;
     now = { ...ready, notStartedAt: clock.at };
     s.tell(now);
-    expect(currentUpdateOffer()?.kind).toBe("retry");
+    expect(currentUpdateOffer()?.kind).toBe("failed");
     expect(currentUpdateOffer()?.version).toBe(NEXT);
 
     // Put away, and that failure is not said again.
@@ -518,7 +529,7 @@ describe("the cadence, running", () => {
     clock.at += 60_000;
     now = { ...ready, notStartedAt: clock.at };
     s.tell(now);
-    expect(currentUpdateOffer()?.kind).toBe("retry");
+    expect(currentUpdateOffer()?.kind).toBe("failed");
     stop();
   });
 
@@ -528,10 +539,10 @@ describe("the cadence, running", () => {
     const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, lastResult: "offered" });
     let now = report();
     const s = shell(() => now);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
     await vi.advanceTimersByTimeAsync(0);
     s.tell(ready);
-    expect(currentUpdateOffer()?.kind).toBe("restart");
+    expect(currentUpdateOffer()?.kind).toBe("ready");
 
     // Restart is refused; the failure dialog's Try again checks, fetches and is ready again.
     resetUpdateStoreForTests();
@@ -542,7 +553,7 @@ describe("the cadence, running", () => {
     s.tell(report({ state: "downloading", offered: NEXT, canCheck: false, pressedAt: press }));
     now = { ...ready, pressedAt: press };
     s.tell(now);
-    expect(currentUpdateOffer()?.kind, "the retry somebody pressed ended in silence").toBe("restart");
+    expect(currentUpdateOffer()?.kind, "the retry somebody pressed ended in silence").toBe("ready");
     expect(currentUpdateOffer()?.version).toBe(NEXT);
 
     // Later: that press's ready is not said again.
@@ -557,10 +568,10 @@ describe("the cadence, running", () => {
     const clock = { at: START };
     const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, lastResult: "offered" });
     const s = shell(() => null);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
     await vi.advanceTimersByTimeAsync(0);
     s.tell(ready);
-    expect(currentUpdateOffer()?.kind).toBe("restart");
+    expect(currentUpdateOffer()?.kind).toBe("ready");
     resetUpdateStoreForTests();
 
     // A cycle nobody pressed for, the same day: the daily rule holds.
@@ -571,7 +582,7 @@ describe("the cadence, running", () => {
     // A press of Check for Updates that ends ready: asked now.
     clock.at += HOUR;
     s.tell({ ...ready, pressedAt: clock.at });
-    expect(currentUpdateOffer()?.kind).toBe("restart");
+    expect(currentUpdateOffer()?.kind).toBe("ready");
     stop();
   });
 
@@ -583,33 +594,33 @@ describe("the cadence, running", () => {
     const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
     const s = shell(() => ready);
 
-    const first = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const first = startUpdateCadence({ ...s.options, now: () => clock.at });
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
     expect(currentUpdateOffer()?.version, "the first run asks").toBe(NEXT);
     first();
     resetUpdateStoreForTests();
 
     clock.at += 6 * HOUR;
-    const second = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const second = startUpdateCadence({ ...s.options, now: () => clock.at });
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
     expect(currentUpdateOffer(), "same day, second run — nothing to add").toBeNull();
     second();
 
     clock.at += 19 * HOUR;
-    const third = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const third = startUpdateCadence({ ...s.options, now: () => clock.at });
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
     expect(currentUpdateOffer()?.version).toBe(NEXT);
     third();
   });
 
-  it("A PACKAGE-MANAGED INSTALL IS TOLD ONCE AND THEN LEFT ALONE — no daily re-download", async () => {
+  it("AN INSTALL THAT KEEPS REFUSING IS TOLD ONCE AND THEN LEFT ALONE — no daily re-download", async () => {
     vi.useFakeTimers();
     const clock = { at: START };
     const s = shell(() => report({ state: "failed", lastResult: "offered", offered: null }));
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
 
     await run(clock, POLL_EVERY_MS);
-    expect(currentUpdateOffer()?.kind, "the strip says it once").toBe("package");
+    expect(currentUpdateOffer()?.failed, "the line says it once").toBe("install");
 
     // ONE more attempt, a day later, and never again. The retry is for the machines this state
     // is also reachable on and CAN be repaired while the app is open — a full disk since freed,
@@ -636,7 +647,7 @@ describe("the cadence, running", () => {
     const REFUSED = report({ state: "failed", lastResult: "offered", offered: null });
     let now = REFUSED;
     const s = shell(() => now);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
 
     await run(clock, CHECK_EVERY_MS);
     expect(s.polls, "the one retry").toHaveLength(1);
@@ -668,7 +679,7 @@ describe("the cadence, running", () => {
     const clock = { at: START };
     let now = report({ state: "failed", lastResult: "offered", offered: null });
     const s = shell(() => now);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
 
     await run(clock, CHECK_EVERY_MS);
     expect(s.polls, "the one retry").toHaveLength(1);
@@ -697,7 +708,7 @@ describe("the cadence, running", () => {
     const clock = { at: START };
     let now = report({ state: "failed", lastResult: "offered", offered: null });
     const s = shell(() => now);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
 
     await run(clock, CHECK_EVERY_MS);
     expect(s.polls, "the one retry").toHaveLength(1);
@@ -786,7 +797,7 @@ describe("the cadence, running", () => {
     const clock = { at: START };
     let now = report({ state: "failed", lastResult: "offered", offered: null });
     const s = shell(() => now);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
 
     await run(clock, CHECK_EVERY_MS);
     expect(s.polls, "the first episode's retry").toHaveLength(1);
@@ -806,17 +817,14 @@ describe("the cadence, running", () => {
     stop();
   });
 
-  it("…and the bound is not Linux's alone — a daily dialog is a nag anywhere", async () => {
-    // The SENTENCE is Linux's, because only there can the files belong to something else. The
-    // BOUND is not: an install that keeps refusing on any platform would otherwise raise the
-    // shell's "ready to install" dialog once a day for the life of the window.
+  it("…and the bound holds while the line stands — a daily re-download is a nag anywhere", async () => {
     vi.useFakeTimers();
     const clock = { at: START };
     const s = shell(() => report({ state: "failed", lastResult: "offered", offered: null }));
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
+    await vi.advanceTimersByTimeAsync(0);
 
-    expect(currentUpdateOffer(), "and it says nothing, because there is nowhere else to go")
-      .toBeNull();
+    expect(currentUpdateOffer()?.failed, "the failed install is said").toBe("install");
     await run(clock, 7 * CHECK_EVERY_MS);
     expect(s.polls).toHaveLength(1);
     stop();
@@ -834,7 +842,6 @@ describe("the cadence, running", () => {
     let tried = 0;
     const stop = startUpdateCadence({
       now: () => clock.at,
-      linux: false,
       read: async () => report({ lastCheckedAt: null }),
       poll: async () => {
         tried += 1;
@@ -874,7 +881,6 @@ describe("the cadence, running", () => {
     let tried = 0;
     const stop = startUpdateCadence({
       now: () => clock.at,
-      linux: true,
       read: async () => report({ state: "failed", lastResult: "offered", offered: null }),
       poll: async () => {
         tried += 1;
@@ -906,7 +912,6 @@ describe("the cadence, running", () => {
     let tried = 0;
     const stop = startUpdateCadence({
       now: () => clock.at,
-      linux: false,
       read: async () => report({ lastCheckedAt: stamp }),
       poll: async () => {
         tried += 1;
@@ -933,15 +938,15 @@ describe("the cadence, running", () => {
     stop();
   });
 
-  it("withdraws a standing strip once there is nothing to install", async () => {
+  it("withdraws a standing line once there is nothing to install", async () => {
     vi.useFakeTimers();
     const clock = { at: START };
     let now = report({ state: "failed", lastResult: "offered", offered: null });
     const s = shell(() => now);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
 
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
-    expect(currentUpdateOffer()?.kind).toBe("package");
+    expect(currentUpdateOffer()?.failed).toBe("install");
 
     now = report();
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
@@ -949,11 +954,145 @@ describe("the cadence, running", () => {
     stop();
   });
 
+  it("A SEND THAT WAITS HOLDS EVERY INSTALL: the shell is told at once, each minute, and at the end", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const said: boolean[] = [];
+    const s = shell(() => report());
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, hold: async (waits) => void said.push(waits) });
+
+    setSendWaits(true);
+    expect(said, "told at once").toEqual([true]);
+    await vi.advanceTimersByTimeAsync(HOLD_RENEW_MS);
+    await vi.advanceTimersByTimeAsync(HOLD_RENEW_MS);
+    expect(said, "renewed each minute, inside the shell's two").toEqual([true, true, true]);
+    setSendWaits(false);
+    await vi.advanceTimersByTimeAsync(5 * HOLD_RENEW_MS);
+    expect(said, "let go when the send is gone, and not renewed after").toEqual([true, true, true, false]);
+    stop();
+    setSendWaits(true);
+    expect(said, "a stopped cadence tells nothing").toHaveLength(4);
+  });
+
+  it("A DRAFT'S FILES HOLD EVERY INSTALL TOO, and a send beside them is still one hold", async () => {
+    vi.useFakeTimers();
+    const said: boolean[] = [];
+    const s = shell(() => report());
+    const stop = startUpdateCadence({ ...s.options, hold: async (waits) => void said.push(waits) });
+
+    const release = holdFilesForRestart();
+    expect(said, "told at once").toEqual([true]);
+    setSendWaits(true);
+    release();
+    expect(said, "the hold moved from the files to the send without a gap").toEqual([true]);
+    setSendWaits(false);
+    expect(said).toEqual([true, false]);
+    stop();
+  });
+
+  it("A FAILED AUTOMATIC INSTALL IS SAID AT LAUNCH, and stands while the release downloads again", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const failedAt = START - HOUR;
+    const s = shell(() => report({ installFailedAt: failedAt }));
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(currentUpdateOffer()).toMatchObject({ kind: "failed", failed: "install" });
+
+    s.tell(report({ state: "checking", canCheck: false, installFailedAt: failedAt }));
+    s.tell(report({ state: "downloading", offered: NEXT, canCheck: false, installFailedAt: failedAt }));
+    expect(currentUpdateOffer()?.failed, "the download took the failure off the line").toBe("install");
+    s.tell(report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, installFailedAt: failedAt }));
+    expect(currentUpdateOffer()?.failed, "the release, ready again, hid its failure").toBe("install");
+    expect(typeof currentUpdateOffer()?.act).toBe("function");
+    stop();
+  });
+
+  it("A HOLD THE SHELL CANNOT TAKE CHANGES NOTHING — an older shell without the verb", async () => {
+    vi.useFakeTimers();
+    const s = shell(() => report());
+    const stop = startUpdateCadence({ ...s.options, hold: async () => { throw new Error("no such command"); } });
+    setSendWaits(true);
+    await vi.advanceTimersByTimeAsync(HOLD_RENEW_MS);
+    setSendWaits(false);
+    stop();
+  });
+
+  it("LATER, WITH INSTALLS AUTOMATIC, HIDES THE LINE UNTIL THE NEXT LAUNCH — however long this one runs", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, autoInstall: true, installsOnQuit: true });
+    const s = shell(() => ready);
+    const first = startUpdateCadence({ ...s.options, now: () => clock.at });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(currentUpdateOffer()?.kind).toBe("ready");
+
+    putUpdateAway();
+    await run(clock, 3 * CHECK_EVERY_MS);
+    s.tell(ready);
+    expect(currentUpdateOffer(), "a day is no licence to ask again in this run").toBeNull();
+    first();
+
+    // The next launch is a fresh window: nothing put away, and the line stands again.
+    resetUpdateStoreForTests();
+    const second = startUpdateCadence({ ...s.options, now: () => clock.at });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(currentUpdateOffer()?.kind).toBe("ready");
+    second();
+  });
+
+  it("…AND WITH THE SWITCH OFF, LATER IS TODAY'S RULE: asked again a day on, in the same run", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, autoInstall: false });
+    const s = shell(() => ready);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(currentUpdateOffer()?.kind).toBe("ready");
+
+    putUpdateAway();
+    clock.at += 6 * HOUR;
+    s.tell(ready);
+    expect(currentUpdateOffer(), "the same day").toBeNull();
+    clock.at += UPDATE_PERIOD_MS;
+    s.tell(ready);
+    expect(currentUpdateOffer()?.kind, "a day on").toBe("ready");
+    stop();
+  });
+
+  it("A STANDING LINE IS REFRESHED, NOT RE-ASKED: a send beginning greys it even after the day's ask", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
+    const s = shell(() => ready);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
+    await vi.advanceTimersByTimeAsync(0);
+    const asked = currentUpdateOffer();
+    expect(asked?.kind).toBe("ready");
+
+    s.tell({ ...ready, canInstall: false, held: true });
+    expect(currentUpdateOffer(), "the held line was withdrawn by the day's memory").not.toBeNull();
+    expect(currentUpdateOffer(), "the line was not refreshed").not.toBe(asked);
+    // …and the download that begins after it stands.
+    s.tell(report({ state: "downloading", offered: "0.15.2", canCheck: false }));
+    expect(currentUpdateOffer()?.kind).toBe("downloading");
+    stop();
+  });
+
+  it("the foot names the version the shell runs, from the first report", async () => {
+    const s = shell(() => report());
+    const stop = startUpdateCadence({ ...s.options });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(currentVersion()).toBe(VERSION);
+    stop();
+  });
+
   it("is inert where the shell answers nothing — a build whose window holds no update command", async () => {
     vi.useFakeTimers();
     const clock = { at: START };
     const s = shell(() => null);
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
     clock.at += 3 * CHECK_EVERY_MS;
     await vi.advanceTimersByTimeAsync(3 * CHECK_EVERY_MS);
     expect(s.polls).toEqual([]);
@@ -965,7 +1104,7 @@ describe("the cadence, running", () => {
     vi.useFakeTimers();
     const clock = { at: START };
     const s = shell(() => report({ lastCheckedAt: START }));
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
     stop();
     clock.at += 3 * CHECK_EVERY_MS;
     await vi.advanceTimersByTimeAsync(3 * CHECK_EVERY_MS);
@@ -996,15 +1135,14 @@ describe("the cadence, running", () => {
         lastResult: "never",
       });
       expect(checkDue(managed, clock.at + 7 * 24 * HOUR, START)).toBe(false);
-      expect(offerOf(managed, true)).toBeNull();
-      expect(offerOf(managed, false)).toBeNull();
+      expect(lineOf(managed)).toBeNull();
 
       const s = shell(() => managed);
-      const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+      const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
       clock.at += 7 * 24 * HOUR;
       await vi.advanceTimersByTimeAsync(7 * 24 * HOUR);
       expect(s.polls, `${installKind}: the window asked the feed anyway`).toEqual([]);
-      expect(currentUpdateOffer(), `${installKind}: a strip was raised`).toBeNull();
+      expect(currentUpdateOffer(), `${installKind}: a line was raised`).toBeNull();
       stop();
       resetUpdateStoreForTests();
     }
@@ -1015,7 +1153,7 @@ describe("the cadence, running", () => {
     // would then pass for the same reason the case above does.
     const armed = clock.at;
     const s = shell(() => report({ installKind: "appimage", lastCheckedAt: armed }));
-    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
     clock.at += 7 * 24 * HOUR;
     await vi.advanceTimersByTimeAsync(7 * 24 * HOUR);
     expect(s.polls.length, "the AppImage stopped being asked about too").toBeGreaterThan(0);

@@ -112,6 +112,7 @@ import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text
 import { go, type Route } from "./routing";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { documentHidden } from "./document-hidden";
+import { holdFilesForRestart, holdForRestart } from "./app-update";
 import { attachSendLockDraft, discardDecision, holdOf, releaseSendLockForRow } from "./send-lock";
 import { releaseSendAndDone } from "./send-release";
 import type { DiscardRefusal } from "../views/DraftsView";
@@ -2815,6 +2816,14 @@ export function useShellCompose({
    * refusals the composer already states, so only `failed` stops the exit. Every other way out
    * takes the hook's belt, which cannot stay open and does not need to.
    */
+  /* A RESTART FROM THE UPDATE LINE OR SETTINGS writes what the open composer holds first, as a
+     close does (`app-update.ts`). Files live in memory only, so while the form or an open reply
+     holds any, the restart waits for them instead. */
+  const composeOpen = route.view === "compose";
+  useEffect(() => (composeOpen ? holdForRestart(autosave.flush) : undefined), [composeOpen, autosave.flush]);
+  const holdsFiles = (compose.attachments?.length ?? 0) > 0 || (replyTo !== null && replyAttachments.length > 0);
+  useEffect(() => (holdsFiles ? holdFilesForRestart() : undefined), [holdsFiles]);
+
   const closing = useRef(false);
   const closeCompose = useStableCallback(() => {
     if (closing.current) return;

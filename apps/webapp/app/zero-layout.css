@@ -177,6 +177,7 @@
   :root[data-layout="zero"] .deck > .rail:not(.open) .fsec,
   :root[data-layout="zero"] .deck > .rail:not(.open) .rsub-empty,
   :root[data-layout="zero"] .deck > .rail:not(.open) .mbx,
+  :root[data-layout="zero"] .deck > .rail:not(.open) .rail-update,
   :root[data-layout="zero"] .deck > .rail:not(.open) .rail-dock,
   :root[data-layout="zero"] .deck > .rail:not(.open) .rail-mail,
   :root[data-layout="zero"] .deck > .rail:not(.open) .ritem:not([data-nav-key]),

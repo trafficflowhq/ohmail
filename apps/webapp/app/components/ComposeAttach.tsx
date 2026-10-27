@@ -56,6 +56,7 @@ import {
   readImageQualityLevel,
   writeImageQualityLevel,
 } from "./image-quality";
+import { holdFilesForRestart } from "../shell/app-update";
 import { activeFormatLocale } from "../shell/locale";
 import { storageOwner } from "../shell/storage-owner";
 
@@ -259,9 +260,21 @@ export function ComposeAttach({
    */
   const picksInFlight = useRef(new Map<number, readonly string[]>());
   const pickSeq = useRef(0);
+  /* A pick still being read holds an app restart: its bytes are in memory only (`app-update.ts`). */
+  const restartHeld = useRef<(() => void) | null>(null);
   const reportAttaching = useRef((): void => {
-    onAttachingRef.current?.([...picksInFlight.current.values()].flat());
+    const files = [...picksInFlight.current.values()].flat();
+    if (files.length > 0) restartHeld.current ??= holdFilesForRestart();
+    else {
+      restartHeld.current?.();
+      restartHeld.current = null;
+    }
+    onAttachingRef.current?.(files);
   });
+  useEffect(() => () => {
+    restartHeld.current?.();
+    restartHeld.current = null;
+  }, []);
   const maxTotalBytesRef = useRef(maxTotalBytes);
   maxTotalBytesRef.current = maxTotalBytes;
   /**
