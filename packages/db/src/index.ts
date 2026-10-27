@@ -211,7 +211,7 @@ export {
   AWAY_PILES,
   validateProfileUpdatePayload, applyProfileUpdate,
   RULE_TERM_MAX, RULE_MATCH_MAX, RULE_PRIORITY_MAX, validateRulePayload, ruleCreatePayload, applyRuleRequest, settleReaderRuleRows,
-  reconcileRuleCreate, pressSettled, settlePressesLeavingMailbox, type RuleCreateOutcome, type PressLeg, type ReaderSettleSkip,
+  reconcileRuleCreate, pressSettled, settlePressesLeavingMailbox, createPressKeysSince, type RuleCreateOutcome, type PressLeg, type ReaderSettleSkip,
   type LeavingSettle,
   type ValidatedMovePayload, type MoveRefusal,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,

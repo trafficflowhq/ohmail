@@ -1,10 +1,10 @@
 import { canonicalDestination } from "@trafficflow/core/destinations";
 import { compareTwins, effectForDestination } from "@trafficflow/core/rule-order";
 import { mailboxProfiles } from "./consent-cutline.js";
-import type { AppliedRuleRequest } from "./engine.js";
+import type { AppliedRuleRequest, UnsettledRulePress } from "./engine.js";
 import { PROFILE_APPLIED_MAX } from "./profile-bound.js";
-import { oneRowPerKey, ruleKeyOf } from "./rule-twins.js";
-import { rulesAsRun } from "./selectors.js";
+import { heldRuleId, heldRuleKey, oneRowPerKey, ruleKeyOf } from "./rule-twins.js";
+import { rulesAsRun, rulesList } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import type { MailboxProfileEntity, RuleDTO } from "./types.js";
 
@@ -18,32 +18,30 @@ export interface RulesShown {
   /** `published`: the organizer's copy is the list; `local`: this install's own rows, as before. */
   source: "local" | "published";
   rules: RuleDTO[];
-  /** Rows made on the organizer with no row here under their key: no press here can name them. */
-  doorless: ReadonlySet<string>;
   /** The organizer's name where every copy names the same one, else `null`. */
   holder: string | null;
 }
 
 type Queued = ReadonlyArray<{ ruleId: string; rule: RuleDTO | undefined }>;
-type Applied = ReadonlyArray<Pick<AppliedRuleRequest, "requestId" | "mailboxId" | "decidedAt" | "resolvedAt" | "target">>;
+type Applied = ReadonlyArray<Pick<AppliedRuleRequest, "requestId" | "mailboxId" | "decidedAt" | "resolvedAt" | "target"> & { kind?: string }>;
 type RuleKeyed = Pick<RuleDTO, "kind" | "match" | "subjectContains" | "bodyContains">;
-
-const NONE: ReadonlySet<string> = new Set();
+type Press = Applied[number];
 
 /**
  * THE RULES PAGE'S LIST. An organizing install, or a reader with no copy, lists {@link rulesAsRun}.
  * A reader-only install lists the organizer's published rules: identical entries of all copies
  * collapsed, entries that differ under one key kept as twins. A row takes the id of this install's
- * row under its key, so a press names a local entity; one with none is `held:<key>` and doorless.
- * A key this install pressed, whose press the organizer applied and the copy does not include yet,
- * shows this install's rows (none for a removal) until it does.
+ * row under its key, so a press names a local entity; one with none is `held:<key>`, which a press
+ * names by its key ({@link heldRuleId}). A key this install pressed, whose press the organizer
+ * applied and the copy does not include yet, shows this install's rows until it does; with no row
+ * here, the copy's rows at the place the press asked for, or none for a removal.
  */
 export function rulesShown(
   reader: EntityReader, opts: { readerOnly: boolean; queued: Queued; applied: Applied; now: Date },
 ): RulesShown {
   const local = rulesAsRun(reader, opts.queued);
   const profiles = opts.readerOnly ? mailboxProfiles(reader) : [];
-  if (profiles.length === 0) return { source: "local", rules: local, doorless: NONE, holder: null };
+  if (profiles.length === 0) return { source: "local", rules: local, holder: null };
   const localByKey = byKey(local);
   const localId = new Map(oneRowPerKey(local).map((r) => [ruleKeyOf(r), r.id]));
   const variants = new Map<string, RuleDTO[]>();
@@ -57,45 +55,99 @@ export function rulesShown(
   }
   const held = heldKeys(profiles, localByKey, opts);
   const rows: RuleDTO[] = [];
-  const doorless = new Set<string>();
-  for (const k of held) rows.push(...(localByKey.get(k) ?? []));
-  for (const [k, list] of variants) {
-    if (held.has(k)) continue;
+  const listed = (k: string, list: readonly RuleDTO[], destination?: string): void => {
     [...list].sort(twinOrder).forEach((r, i) => {
       const own = i === 0 ? localId.get(k) : undefined;
-      const id = own ?? (i === 0 ? `held:${k}` : `held:${k}#${i}`);
-      if (own === undefined) doorless.add(id);
-      rows.push({ ...r, id });
+      const id = own ?? (i === 0 ? heldRuleId(r) : `${heldRuleId(r)}#${i}`);
+      rows.push({ ...r, id, ...(destination === undefined ? {} : { destination: destination as RuleDTO["destination"] }) });
     });
+  };
+  for (const [k, p] of held) {
+    const mine = localByKey.get(k);
+    if (mine) rows.push(...mine);
+    else if (p.kind !== "rule.delete") listed(k, variants.get(k) ?? [], (p.target as { destination?: string }).destination);
   }
+  for (const [k, list] of variants) if (!held.has(k)) listed(k, list);
   const names = new Set(profiles.map((p) => p.from.name).filter((n): n is string => n !== null));
-  return { source: "published", rules: newestFirst(rows), doorless, holder: names.size === 1 ? [...names][0]! : null };
+  return { source: "published", rules: newestFirst(rows), holder: names.size === 1 ? [...names][0]! : null };
 }
 
 /**
- * The keys an applied press of this install still holds: decided inside the horizon, answered by
- * the holder whose copy this is, and (a) not named in the copy's `applied` list under its bound,
- * or (b) with no list (an older organizer), the copy still disagreeing with the row here.
+ * THE RULES A PRESS PLANS OVER. Where a change made here travels to the organizer (`travels`: every
+ * mailbox read, its holder live and taking requests) and its copy is the list, the list the Rules
+ * page shows, so a ladder reads where the mail is filed, with this install's presses the organizer
+ * has not applied yet laid over it (`unsettled`, newest first: a key's rows at the place its
+ * newest press asked for, or gone for a removal); otherwise the local rows, as ever.
  */
-function heldKeys(profiles: readonly MailboxProfileEntity[], localByKey: ReadonlyMap<string, RuleDTO[]>, opts: { applied: Applied; now: Date }): Set<string> {
+export function pressRules(
+  reader: EntityReader,
+  opts: { travels: boolean; queued: Queued; applied: Applied; unsettled: readonly UnsettledRulePress[]; now: Date },
+): RuleDTO[] {
+  if (!opts.travels) return rulesList(reader);
+  const shown = rulesShown(reader, { readerOnly: true, queued: opts.queued, applied: opts.applied, now: opts.now });
+  if (shown.source !== "published") return rulesList(reader);
+  const newest = new Map<string, UnsettledRulePress>();
+  for (const u of opts.unsettled) {
+    const k = ruleKeyOf(u.key);
+    if (!newest.has(k)) newest.set(k, u);
+  }
+  if (newest.size === 0) return shown.rules;
+  return shown.rules.flatMap((r) => {
+    const u = newest.get(ruleKeyOf(r));
+    if (u === undefined) return [r];
+    if (u.kind === "rule.delete") return [];
+    return u.destination === null ? [r] : [{ ...r, destination: u.destination as RuleDTO["destination"] }];
+  });
+}
+
+/** The id a press names for `rule`: the row of `rows` under its key (a local id, or its key), else its own. */
+export function pressRuleId(rule: RuleKeyed & { id: string }, rows: readonly RuleDTO[]): string {
+  const k = ruleKeyOf(rule);
+  const named = rows.filter((r) => ruleKeyOf(r) === k && !(r.id.startsWith("held:") && heldRuleKey(r.id) === null));
+  return oneRowPerKey(named)[0]?.id ?? rule.id;
+}
+
+/**
+ * The keys an applied press of this install still holds, each with the newest such press: decided
+ * inside the horizon, answered by the holder whose copy this is, and (a) not named in the copy's
+ * `applied` list under its bound, or (b) with no list (an older organizer), the copy still
+ * disagreeing with the row here or, with none here, with what the press asked for. A key with no
+ * row here is decided by its newest press alone.
+ */
+function heldKeys(
+  profiles: readonly MailboxProfileEntity[], localByKey: ReadonlyMap<string, RuleDTO[]>, opts: { applied: Applied; now: Date },
+): Map<string, Press> {
   const docOf = new Map(profiles.map((p) => [p.mailboxId, p]));
   const horizon = opts.now.getTime() - APPLIED_OVERLAY_MS;
-  const out = new Set<string>();
-  for (const p of opts.applied) {
+  const out = new Map<string, Press>();
+  const seen = new Set<string>();
+  const newest = [...opts.applied].sort((a, b) => Date.parse(b.decidedAt) - Date.parse(a.decidedAt));
+  for (const p of newest) {
     const rule = (p.target as { rule?: RuleKeyed }).rule;
     if (!rule || !(Date.parse(p.decidedAt) > horizon)) continue;
     const k = ruleKeyOf(rule);
     const doc = docOf.get(p.mailboxId);
-    if (out.has(k) || !doc) continue;
+    const mine = localByKey.get(k);
+    if (out.has(k) || !doc || (mine === undefined && seen.has(k))) continue;
     const since = doc.from.since === null ? NaN : Date.parse(doc.from.since);
     if (since > Date.parse(p.resolvedAt ?? p.decidedAt)) continue;
+    seen.add(k);
     const ids = doc.applied;
+    const theirs = doc.rules.filter((r) => ruleKeyOf(r) === k);
     const missing = Array.isArray(ids)
       ? ids.length < PROFILE_APPLIED_MAX && !ids.includes(p.requestId)
-      : disagrees(doc.rules.filter((r) => ruleKeyOf(r) === k), localByKey.get(k) ?? []);
-    if (missing) out.add(k);
+      : mine !== undefined ? disagrees(theirs, mine) : !asked(theirs, p);
+    if (missing) out.set(k, p);
   }
   return out;
+}
+
+/** Whether a copy's rows under one key already say what a press asked: gone, or filing at its place. */
+function asked(theirs: readonly RuleDTO[], p: Press): boolean {
+  const top = oneRowPerKey(theirs)[0];
+  if (p.kind === "rule.delete") return top === undefined;
+  const to = (p.target as { destination?: string }).destination;
+  return top !== undefined && (to === undefined || canonicalDestination(top.destination) === canonicalDestination(to));
 }
 
 function disagrees(theirs: readonly RuleDTO[], mine: readonly RuleDTO[]): boolean {

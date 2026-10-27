@@ -2,6 +2,7 @@ import {
   IdempotencyRaceLost, ServiceError, sha256,
   type CreateRuleBody, type PatchRuleBody, type RuleRemoval, type RuleRequestResult,
 } from "@trafficflow/services/mail";
+import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { serviceContext } from "../context.js";
 import { lookupIdempotent, storedResponse, type StoredIdempotent } from "../idempotency.js";
 import { canonicalQuery } from "../middleware.js";
@@ -131,8 +132,13 @@ export const rulesRoutes: Route[] = [
       // No key ⇒ nothing distinguishes a retry from a probe, so the service's plain 404 for
       // an id that is not there stands. `accountId` is belt-and-braces: `withSession` has
       // already 401'd an unauthenticated caller on this protected route.
+      /* The published rule's key, read only at its address; `null` there for a body without one (a 400). */
+      const ruleKey = params.id === PUBLISHED_RULE_ID
+        ? ((await req.clone().json().catch(() => null)) as { key?: unknown } | null)?.key ?? null
+        : undefined;
+
       if (!key || !accountId) {
-        return answer(await rules(deps).remove(serviceContext(deps, req), params.id!));
+        return answer(await rules(deps).remove(serviceContext(deps, req), params.id!, { key: ruleKey }));
       }
 
       const url = new URL(req.url);
@@ -154,7 +160,7 @@ export const rulesRoutes: Route[] = [
 
       try {
         return answer(await rules(deps).remove(serviceContext(deps, req), params.id!, {
-          idempotency: { key, requestHash },
+          idempotency: { key, requestHash }, key: ruleKey,
         }));
       } catch (err) {
         // A concurrent same-key delete ends in two different ways, and `IdempotencyRaceLost` is

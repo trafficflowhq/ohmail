@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
-import { mailboxes, organizerRequests, rules as rulesTbl } from "@trafficflow/db";
+import { changeLog, mailboxes, mailboxProfileMirror, organizerRequests, rules as rulesTbl } from "@trafficflow/db";
+import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { RulesService, type RuleMutation, type RuleRequestResult } from "../src/index.js";
 import { makeCtx } from "./helpers.js";
 
@@ -329,6 +330,91 @@ describe("onboarding: nothing held and nothing organized is ADMITTED", () => {
 
     const result = await svc.create(w.ctx, BODY) as RuleMutation;
     expect(result.rule.match).toBe("news@corp.example");
+    expect(await requestRows(w)).toEqual([]);
+  });
+});
+
+describe("a published rule is changed by its key, relayed only", () => {
+  const KEY = { kind: "sender", match: "news@corp.example", subjectContains: null, bodyContains: null };
+  /** The organizer's copy of one held mailbox, listing the given rules. */
+  async function copy(w: World, mailboxId: string, rules: Record<string, unknown>[]): Promise<void> {
+    await w.db.insert(mailboxProfileMirror).values({
+      mailboxId, accountId: w.accountId, readAt: new Date(), doc: { v: 2, rules },
+    });
+  }
+  const NEWS = { kind: "sender", match: "News@Corp.example", destination: "ohmail/News", priority: 0, enabled: true };
+  async function changes(w: World) {
+    return w.db.select().from(changeLog).where(eq(changeLog.accountId, w.accountId));
+  }
+  /** A reader-only account: its own mailbox and a second one, both held, both with a copy. */
+  async function readerOnly(w: World): Promise<string> {
+    await demoteOwn(w);
+    const other = await addMailbox(w, "reader", { name: "mila-air" });
+    await copy(w, w.mailboxId, [NEWS]);
+    await copy(w, other, [NEWS]);
+    return other;
+  }
+
+  it("a change by key sends one request per holder in the copy's spelling, answers 202 and writes no row", async () => {
+    const w = await makeCtx();
+    const other = await readerOnly(w);
+    const before = (await changes(w)).length;
+    const out = await svc.update(w.ctx, PUBLISHED_RULE_ID, { key: KEY, destination: "INBOX" }) as RuleRequestResult;
+    expect(out.pending).toBe(true);
+    expect(out.rule).toBeUndefined();
+    const rows = await requestRows(w);
+    expect(new Set(rows.map((r) => r.mailboxId))).toEqual(new Set([w.mailboxId, other]));
+    expect(rows.every((r) => r.kind === "rule.update")).toBe(true);
+    expect(rows[0]!.payload).toEqual({ key: { ...KEY, match: "News@Corp.example" }, set: { destination: "inbox" } });
+    expect(await ruleRows(w)).toEqual([]);
+    expect(await changes(w)).toHaveLength(before);
+  });
+
+  it("a removal by key is asked of every holder and removes nothing", async () => {
+    const w = await makeCtx();
+    await readerOnly(w);
+    const out = await svc.remove(w.ctx, PUBLISHED_RULE_ID, { key: KEY }) as RuleRequestResult;
+    expect(out.pending).toBe(true);
+    const rows = await requestRows(w);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.kind === "rule.delete")).toBe(true);
+    expect(rows[0]!.payload).toEqual({ key: { ...KEY, match: "News@Corp.example" } });
+    expect(await ruleRows(w)).toEqual([]);
+  });
+
+  it("a key no copy lists is 404, and nothing travels", async () => {
+    const w = await makeCtx();
+    await readerOnly(w);
+    await expect(svc.update(w.ctx, PUBLISHED_RULE_ID, { key: { ...KEY, subjectContains: "Invoice" }, destination: "INBOX" }))
+      .rejects.toMatchObject({ code: "not_found", httpStatus: 404 });
+    await expect(svc.remove(w.ctx, PUBLISHED_RULE_ID, { key: { ...KEY, match: "else@corp.example" } }))
+      .rejects.toMatchObject({ code: "not_found", httpStatus: 404 });
+    expect(await requestRows(w)).toEqual([]);
+  });
+
+  it("an organizer or a mixed account is 409 rule_runs_here, never a 404 a delete reads as done", async () => {
+    const organizer = await makeCtx();
+    await expect(svc.remove(organizer.ctx, PUBLISHED_RULE_ID, { key: KEY }))
+      .rejects.toMatchObject({ code: "rule_runs_here", httpStatus: 409 });
+    const mixed = await makeCtx();
+    const held = await addMailbox(mixed, "reader");
+    await copy(mixed, held, [NEWS]);
+    await expect(svc.update(mixed.ctx, PUBLISHED_RULE_ID, { key: KEY, destination: "INBOX" }))
+      .rejects.toMatchObject({ code: "rule_runs_here", httpStatus: 409 });
+    expect(await requestRows(mixed)).toEqual([]);
+  });
+
+  it("a key-changing field, a malformed key or a key at a row's id is 400", async () => {
+    const w = await makeCtx();
+    await readerOnly(w);
+    await expect(svc.update(w.ctx, PUBLISHED_RULE_ID, { key: KEY, match: "else@corp.example" }))
+      .rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+    await expect(svc.remove(w.ctx, PUBLISHED_RULE_ID, { key: null }))
+      .rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+    await expect(svc.remove(w.ctx, PUBLISHED_RULE_ID, { key: { ...KEY, kind: "domain", subjectContains: "x" } }))
+      .rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+    await expect(svc.update(w.ctx, crypto.randomUUID(), { key: KEY, destination: "INBOX" }))
+      .rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
     expect(await requestRows(w)).toEqual([]);
   });
 });

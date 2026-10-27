@@ -7,7 +7,7 @@ import {
   markRequestsSent, markRequestsApplied, settleReaderRuleRows,
 } from "@trafficflow/db";
 import { FIXED_NOW, makeDeps, seedSession } from "../../api/test/helpers.js";
-import { HttpAdapter, OhmailEngine, rulesShown, type FetchLike } from "@ohmail/client-engine";
+import { HttpAdapter, OhmailEngine, heldRuleKey, rulesShown, type FetchLike } from "@ohmail/client-engine";
 import { makeTestDb } from "../../db/src/testing.js";
 import { applyRuleRequest, validateRulePayload } from "../../db/src/request-apply.js";
 import { serializeOrganizerProfileCounted } from "../../core/src/adapters/organizer-profile-store.js";
@@ -155,7 +155,7 @@ describe("VERIFY-026 probe: the second press before the published copy is re-rea
 });
 
 describe("a reader-only Rules page follows the organizer's own edits", () => {
-  it("a rule the organizer made and then edited is listed at the edited place, without controls", async () => {
+  it("a rule the organizer made and then edited is listed at the edited place, named by its key", async () => {
     const w = await world();
     await w.organizerSets("bob@shop.example", "ohmail/News");
     await w.publish();
@@ -164,8 +164,29 @@ describe("a reader-only Rules page follows the organizer's own edits", () => {
     const shown = page(await w.fresh());
     const bob = shown.rules.find((r) => r.match === "bob@shop.example");
     expect(bob?.destination, "the organizer's rule is missing or stale").toBe("ohmail/Receipts");
-    expect(shown.doorless.has(bob!.id), "no press here names the organizer's own rule").toBe(true);
+    expect(heldRuleKey(bob!.id), "a press here names the organizer's own rule by its key").toMatchObject({ match: "bob@shop.example" });
     expect(shown.rules.find((r) => r.match === "ann@shop.example")?.id, "the twin row carries the local id").toBe(w.ruleId);
+  });
+
+  it("a rule made on the organizer is changed here by its key, and the page holds the change until the copy names it", async () => {
+    const w = await world();
+    await w.organizerSets("bob@shop.example", "ohmail/News");
+    await w.publish([]);
+    const e = await w.fresh();
+    const bob = page(e).rules.find((r) => r.match === "bob@shop.example")!;
+    expect((await e.mutate({ kind: "rule_update", ruleId: bob.id, destination: "INBOX" })).status).toBe("awaiting_organizer");
+    const { outcome, requestId } = await w.organizerApplies();
+    expect(outcome).toMatchObject({ applied: true });
+    expect((await w.orgRule()).sort()).toEqual(["INBOX", "ohmail/News"]);
+    e.refreshWaitingOnOrganizer();
+    await tick();
+    expect(page(e).rules.find((r) => r.match === "bob@shop.example")?.destination, "the applied change, before the copy names it").toBe("INBOX");
+    await w.org.insert(idempotencyKeys).values(w.claimed(requestId, FIXED_NOW));
+    await w.publish(await w.appliedList());
+    const next = await w.fresh();
+    next.refreshWaitingOnOrganizer();
+    await tick();
+    expect(page(next).rules.find((r) => r.match === "bob@shop.example")).toMatchObject({ id: bob.id, destination: "INBOX" });
   });
 
   it("after the person's own applied edit, the organizer's next edit shows once its copy includes the request", async () => {

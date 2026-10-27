@@ -16,6 +16,7 @@ import {
   type RuleDTO,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 
 /**
@@ -175,6 +176,32 @@ describe("rule_update on the wire", () => {
  * So the first assertion here is that the network was touched at all, and it fails first if the
  * verb ever stops reaching it.
  */
+describe("a published rule's verbs go to its address with the key in the body", () => {
+  const key = { kind: "sender", match: "a@b.test", subjectContains: null, bodyContains: null };
+  const queued = () => new Response(JSON.stringify({ pending: true, travel: { appliedLocally: [], pending: [], refused: [] } }), {
+    status: 202, headers: { "content-type": "application/json" },
+  });
+  it("DELETE and PATCH name the nil address, never the held id, and answer queued on 202", async () => {
+    const calls: Captured[] = [];
+    const adapter = adapterCapturing(calls, queued);
+    const held = `held:${JSON.stringify(["sender", "a@b.test", null, null])}`;
+    const del = await adapter.mutate({ kind: "rule_delete", ruleId: held, key }, { idempotencyKey: "k-d" });
+    await adapter.mutate({ kind: "rule_update", ruleId: held, key, destination: "INBOX" }, { idempotencyKey: "k-u" });
+    expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ["DELETE", `https://api.test/rules/${PUBLISHED_RULE_ID}`, { key }],
+      ["PATCH", `https://api.test/rules/${PUBLISHED_RULE_ID}`, { key, destination: "INBOX" }],
+    ]);
+    expect(del).toMatchObject({ settlement: "queued" });
+  });
+  it("a held id with no key is refused here and nothing is sent", async () => {
+    const calls: Captured[] = [];
+    const adapter = adapterCapturing(calls, queued);
+    await expect(adapter.mutate({ kind: "rule_delete", ruleId: "held:x" }, { idempotencyKey: "k" }))
+      .rejects.toMatchObject({ code: "validation_failed" });
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("rule_create on the wire", () => {
   it("POSTs /rules with kind/match/destination/applyRetro, and echoes the created DTO at its seq", async () => {
     const calls: Captured[] = [];

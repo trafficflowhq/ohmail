@@ -26,7 +26,8 @@ import {
   ruleFingerprint,
   rulesInPlay,
   rulesList,
-  rulesShown,
+  pressRuleId,
+  pressRules,
   outrankCoveringDomains,
   triageSubjectIds,
   type EngineMessage,
@@ -142,8 +143,11 @@ export function verdictSentence(
 
 export interface ShellVerbsInput {
   engine: OhmailEngine;
-  /** The Rules page lists the organizer's copy (`rulesShown`): a Change ranks and counts over it. */
-  rulesReaderOnly?: boolean;
+  /**
+   * A rule change made here travels to the organizer (posture `pending`): every press plans over
+   * the organizer's copy as the Rules page lists it (`pressRules`), and its writes are lifted over it.
+   */
+  rulesTravel?: boolean;
   /** The mirror as it is — `engine.read()` from the render, never re-read here. */
   reader: EntityReader;
   t: ReturnType<typeof useTranslations>;
@@ -212,7 +216,7 @@ export interface ShellVerbsInput {
 export type ShellVerbs = ReturnType<typeof useShellVerbs>;
 
 export function useShellVerbs({
-  engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesReaderOnly = false,
+  engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesTravel = false,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
   markSeen, readSetFor, offOhbox = false, ownFaceFor, pileSetFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
@@ -267,6 +271,19 @@ export function useShellVerbs({
     });
   });
 
+  /** The rules a press plans over, read at the press: the organizer's copy where a change here travels to it. */
+  const planRules = (read: EntityReader): RuleDTO[] => pressRules(read, {
+    travels: rulesTravel, queued: engine.queuedRuleWrites?.() ?? [], applied: engine.appliedRuleRequests?.() ?? [],
+    unsettled: engine.unsettledRulePresses?.() ?? [], now: nowAt(),
+  });
+  /** That list where it is not the local rows; the planners read the local rows when it is absent. */
+  const planOver = (read: EntityReader): RuleDTO[] | undefined => (rulesTravel ? planRules(read) : undefined);
+  /** A rule write lifted over that list: the engine's own lift reads only the local rows. */
+  const liftOver = (over: readonly RuleDTO[] | undefined, m: EngineMutation): EngineMutation =>
+    (over ? outrankCoveringDomains(over, m) : m);
+  // The routing window's commits re-plan over the same list.
+  routing.planOver.current = rulesTravel ? planRules : null;
+
   /** The sheet's "why did these stay" read; stable, so the sheet's effect asks once per row set. */
   const stayedFor = useStableCallback((ids: readonly string[]) => engine.whyStayed(ids));
 
@@ -289,7 +306,8 @@ export function useShellVerbs({
     press?: ScreeningPress,
   ) => {
     setSenderMenu(null);
-    const sender = senderScreening(engine.verbRead(), messageId, address);
+    const over = planOver(engine.verbRead());
+    const sender = senderScreening(engine.verbRead(), messageId, address, undefined, over);
     if (!sender) return;
     const base = planScreeningChange(sender, dest, scope, makeRule, applyRetro);
     const path = screeningPath(sender, scope, makeRule);
@@ -333,7 +351,8 @@ export function useShellVerbs({
         toast(text, {
           action: t("screening.verdictRemoveRule"), duration: 8000,
           onAction: () => {
-            void mutateAndReport({ kind: "rule_delete", ruleId: act.ruleId }, null).then((ok) => {
+            const ruleId = over && v.key === "kept" ? pressRuleId(v.rule, planRules(engine.verbRead())) : act.ruleId;
+            void mutateAndReport({ kind: "rule_delete", ruleId }, null).then((ok) => {
               if (ok) changeScreening(messageId, dest, scope, makeRule, applyRetro, address);
             });
           },
@@ -386,7 +405,7 @@ export function useShellVerbs({
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH. This one has not been since it
        shipped: the mail moved and the filing strip's count stayed stale until its next poll, up to
        thirty seconds later. Both Move arms already go through it. */
-    void dispatchScreeningChange(plan, pressMoves, (m) => fileAndRefresh(engine.mutate(m)), pressMoves.length, decided)
+    void dispatchScreeningChange(plan, pressMoves, (m) => fileAndRefresh(engine.mutate(liftOver(over, m))), pressMoves.length, decided)
       .then((key) => { if (key !== null) say(key); });
   });
 
@@ -401,11 +420,13 @@ export function useShellVerbs({
   ): PressForecast | null => {
     if (demo) return null;
     const read = engine.verbRead();
-    const sender = senderScreening(read, messageId, address);
+    const over = planOver(read);
+    const sender = senderScreening(read, messageId, address, undefined, over);
     if (!sender) return null;
     const plan = planScreeningChange(sender, dest, scope, makeRule, applyRetro);
     const decide = plan.mutations.find((m) => m.kind === "screener_decide");
     return pressForecast({
+      ...(over ? { rules: over } : {}),
       reader: read, options: shellConsentOptions(consent, nowAt(), ownAddresses, firstImportDoneAt),
       subject: sender.scopes[scope].messages, scope, match: ruleMatchOf(sender, scope),
       wanted: FOLDER_OF_VIEW[dest], makeRule, applyRetro, now: nowAt(), seedId: messageId,
@@ -618,7 +639,7 @@ export function useShellVerbs({
        other — and the pressed row itself, which a reading column can hold past its page. */
     const base = withRows(engine.verbRead(), surfaceById);
     const read = seed ? withRow(base, seed) : base;
-    const sender = senderScreening(read, seedId);
+    const sender = senderScreening(read, seedId, undefined, undefined, planOver(read));
     if (!sender) return null;
     /* SENDER SCOPE AND NO RETRO: the press is about these messages, not a domain, and nobody
        asked the server to walk the backlog. OUR OWN LETTER TEACHES NOTHING: a rule about our own
@@ -923,24 +944,12 @@ export function useShellVerbs({
 
   const revokeRule = useStableCallback((ruleId: string) => engine.mutate({ kind: "rule_delete", ruleId }));
 
-  /** The organizer's copy as the page lists it, read at the press; `null` where the page lists the local rows. */
-  const shownAtPress = (): RuleDTO[] | null => {
-    if (!rulesReaderOnly) return null;
-    const shown = rulesShown(engine.read(), {
-      readerOnly: true, queued: engine.queuedRuleWrites?.() ?? [], applied: engine.appliedRuleRequests?.() ?? [], now: nowAt(),
-    });
-    return shown.source === "published" ? shown.rules : null;
-  };
-  const retargetRule = useStableCallback((ruleId: string, destination: Folder, refile: boolean | "walk") => {
-    const m = ruleRetarget(ruleId, destination, refile);
-    const shown = shownAtPress();
-    // The lift over the rules the page shows: the engine's own lift reads only the local rows.
-    return engine.mutate(shown === null ? m : outrankCoveringDomains(shown, m));
-  });
+  const retargetRule = useStableCallback((ruleId: string, destination: Folder, refile: boolean | "walk") =>
+    engine.mutate(liftOver(planOver(engine.read()), ruleRetarget(ruleId, destination, refile))));
   /* Read at the press, over the mirror as it is then — the count a Change states, in the mailboxes a walk reaches. */
   const rulePastMailOf = useStableCallback((rule: RuleDTO, destination: Folder | null) => {
     const reader = engine.read();
-    return rulePastMail(rule, shownAtPress() ?? rulesList(reader), reader.list<EngineMessage>("message"), destination, walkedMailboxes(rosterRef.current));
+    return rulePastMail(rule, planRules(reader), reader.list<EngineMessage>("message"), destination, walkedMailboxes(rosterRef.current));
   });
 
   const toggleTag = useStableCallback((messageId: string, tagId: string, assigned: boolean) => {

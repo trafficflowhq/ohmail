@@ -732,20 +732,36 @@ describe("a reader-only install lists the organizer's copy", () => {
   });
   // Laptop holds the mailbox and takes requests: the posture this list takes changes in.
   const more = (waiting: unknown[] = []) => ({
-    source: "published", doorless: new Set(["held:bob", "held:cy"]), holder: "Laptop", waiting, posture: { mode: "pending", name: "Laptop" },
+    source: "published", holder: "Laptop", waiting, posture: { mode: "pending", name: "Laptop" },
   });
   const row = (id: string) => ruleRows().find((r) => r.dataset.ruleId === id)!;
 
-  it("names the holder; a rule made there has no controls and no part in a bulk revoke", async () => {
+  // Changed on purpose: a rule made on the organizer was listed without controls while no press
+  // here could name it. It is now changed or revoked by its key, relayed to the organizer.
+  it("names the holder; a rule made there has Change and Revoke and takes part in a bulk revoke", async () => {
     const seen = await renderSettings({ items, more: more() });
     await openRulesPane();
     expect(host.textContent).toContain("Laptop organizes your mail, and these are the rules it files by.");
-    expect(row("held:bob").querySelectorAll("button")).toHaveLength(0);
-    expect(row("held:bob").textContent).toContain("Made on Laptop; change or revoke it there.");
-    await act(async () => { clickText("Revoke all 2 matching"); });
-    await act(async () => { clickText("Revoke 2 rules"); });
-    expect([...seen.revoked].sort()).toEqual(["local-1", "local-2"]);
-    expect(seen.retargeted).toEqual([]);
+    expect([...row("held:bob").querySelectorAll("button")].map((b) => [b.textContent, b.disabled])).toEqual([["Change", false], ["Revoke", false]]);
+    expect(host.textContent).not.toContain("change or revoke it there");
+    await act(async () => { clickText("Revoke all 4 matching"); });
+    await act(async () => { clickText("Revoke 4 rules"); });
+    expect([...seen.revoked].sort()).toEqual(["held:bob", "held:cy", "local-1", "local-2"]);
+  });
+
+  it("a rule made there can be lifted over its domain's, and its controls wait outside posture pending", async () => {
+    const lifted = [
+      rule({ id: "held:bob", match: "bob@shop.example", destination: "ohmail/News" }),
+      rule({ id: "held:dom", kind: "domain", match: "shop.example", destination: "ohmail/Screened", priority: 5 }),
+    ];
+    const seen = await renderSettings({ items: lifted, more: more() });
+    await openRulesPane();
+    await act(async () => { row("held:bob").querySelector<HTMLButtonElement>(".rules-lift")!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(seen.retargeted).toEqual([["held:bob", "ohmail/News", false]]);
+    await act(async () => { root!.unmount(); root = createRoot(host); });
+    await renderSettings({ items: lifted, more: { ...more(), posture: { mode: "blocked", name: "Laptop", reason: "organizer_outdated" } } });
+    await openRulesPane();
+    expect([...row("held:bob").querySelectorAll("button")].every((b) => b.disabled)).toBe(true);
   });
 
   it("a twin row's Revoke sends the local id", async () => {

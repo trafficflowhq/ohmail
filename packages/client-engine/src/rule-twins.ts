@@ -1,7 +1,7 @@
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { outranks } from "./consent-cutline.js";
 import { storedRuleDestination } from "./selectors.js";
-import type { EngineMutation, Folder, RuleDTO } from "./types.js";
+import type { EngineMutation, Folder, RuleDTO, RuleKeyAddress } from "./types.js";
 
 /**
  * A SUBJECT'S RULE TWINS AND WHAT A SCREENING PRESS WRITES OVER THEM — the ladder past the gate,
@@ -50,9 +50,29 @@ export function twinWinner(twins: readonly RuleDTO[]): RuleDTO | null {
   return winner;
 }
 
+type KeyFields = { kind: string; match: string; subjectContains?: string | null; bodyContains?: string | null };
+
 /** A rule's four-field key as the server's one-per-key writes compare it: kind, folded match, terms. */
-export function ruleKeyOf(r: Pick<RuleDTO, "kind" | "match" | "subjectContains" | "bodyContains">): string {
+export function ruleKeyOf(r: KeyFields): string {
   return JSON.stringify([r.kind, ruleMatchKey(r.match), r.subjectContains ?? null, r.bodyContains ?? null]);
+}
+
+/** The id a published rule with no row here is listed under (`rulesShown`): its key, nothing else. */
+export function heldRuleId(r: KeyFields): string {
+  return `held:${ruleKeyOf(r)}`;
+}
+
+/** The key {@link heldRuleId} wrote, or `null` for any other id (a twin's `#n` id included). */
+export function heldRuleKey(id: string): RuleKeyAddress | null {
+  if (!id.startsWith("held:")) return null;
+  let v: unknown;
+  try { v = JSON.parse(id.slice(5)); } catch { return null; }
+  if (!Array.isArray(v) || v.length !== 4) return null;
+  const [kind, match, subjectContains, bodyContains] = v as unknown[];
+  const term = (t: unknown) => t === null || typeof t === "string";
+  if (typeof kind !== "string" || typeof match !== "string" || match === "" || !term(subjectContains) || !term(bodyContains)) return null;
+  const key = { kind, match, subjectContains: subjectContains as string | null, bodyContains: bodyContains as string | null };
+  return heldRuleId(key) === id ? key : null;
 }
 
 /**

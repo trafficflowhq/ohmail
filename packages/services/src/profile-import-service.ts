@@ -267,7 +267,7 @@ export class ProfileImportService {
       if (askStands(asked, now)) return { state: "importing", fingerprint };
       if (asked.outcome === "imported") {
         const result = await profileImportResult(asTx(ctx), { accountId: ctx.accountId, mailboxId, fingerprint });
-        if (result !== null) return { ...result, seq: null };
+        if (result !== null) return { ...result, retiredRules: result.retiredRules ?? 0, seq: null };
       }
     }
 
