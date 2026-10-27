@@ -9,9 +9,9 @@
  * feeds (`EngineMessage.unread`):
  *
  *  1. FIRST PAINT IS TRUTHFUL. A message `\Seen` before this client ever ran renders READ
- *     (quiet ink, no `data-unseen`), and nothing that predates this device's first sync is
- *     counted "new since you were here", unread or not (`feedPartition` `newCount`). No line
- *     is drawn before a visit commits one.
+ *     (quiet ink, no `data-unseen`). Before the first visit every unread letter is "new since
+ *     you were here" and no read one is (`feedPartition` `newCount`). No line is drawn before
+ *     a visit commits one.
  *  2. THE BUTTON AND THE ROWS CANNOT DISAGREE. The control is present exactly while the view
  *     shows something to clear — an unread row, or a fresh count — and pressing it flips the
  *     unread ids AND commits the line to the top, so afterwards nothing renders unread,
@@ -216,10 +216,9 @@ describe("first paint over a warm import is truthful (Reads)", () => {
   it("an already-\\Seen message renders READ — quiet ink, no data-unseen — and is not counted new", async () => {
     const part = feedPartition(await importedAt(WARM, d(-1)), "reads");
     await mountReads(part);
-    // The whole pile predates this device's first sync: nothing is new, unread or not
-    // (`stream.newSince`, `test/waterline-word.test.ts`). A junction at the newest READ letter
-    // used to stand in for a visit, and a read letter moved in on top zeroed real new mail.
-    expect(metaText()).toBe("Nothing new since you were here");
+    // The whole pile predates this device's first sync, and no visit has been made: its two
+    // unread letters are new. It read "Nothing new" over them.
+    expect(metaText()).toBe("2 new since you were here");
     // Pre-import \Seen mail LOOKS read. Stop passing `seen` from `m.unread` (or re-suppress it
     // under `dotless`) and these are red — the full-weight row is what read "all unread" live.
     expect(rowOf("read1")!.classList.contains("seen")).toBe(true);
@@ -233,15 +232,15 @@ describe("first paint over a warm import is truthful (Reads)", () => {
     expect(host!.querySelectorAll(".dot-unread")).toHaveLength(0);
   });
 
-  it("no visit yet: mail after the first sync counts, older mail does not, and no line is drawn", async () => {
+  it("no visit yet: unread mail counts on either side of the first sync, and no line is drawn", async () => {
     const part = feedPartition(await importedAt(WARM, d(1)), "reads");
     await mountReads(part);
-    expect(metaText()).toBe("1 new since you were here");
+    expect(metaText()).toBe("2 new since you were here");
     const blocks = [...host!.querySelectorAll(".list-col .rows")].map((b) =>
       [...b.querySelectorAll(".row[data-id]")].map((r) => r.getAttribute("data-id")),
     );
-    expect(blocks[0]).toEqual(["new1"]);
-    expect(blocks[1]).toEqual(["read1", "skip1", "read2"]);
+    expect(blocks[0]).toEqual(["new1", "read1", "skip1", "read2"]);
+    expect(blocks[1]).toEqual([]);
     expect(host!.querySelectorAll(".list-col .waterline")).toHaveLength(0);
   });
 });
@@ -325,7 +324,7 @@ describe("Receipts — the same contract through its own props", () => {
     ];
     const part = feedPartition(await importedAt(pile, d(1)), "receipts");
     await mountReceipts(part);
-    expect(metaText()).toBe("1 new since you were here");
+    expect(metaText()).toBe("2 new since you were here");
     expect(rowOf("t1")!.classList.contains("seen")).toBe(true);
     expect(rowOf("t1")!.hasAttribute("data-unseen")).toBe(false);
     expect(rowOf("t0")!.hasAttribute("data-unseen")).toBe(true);

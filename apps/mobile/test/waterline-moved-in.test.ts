@@ -89,7 +89,7 @@ describe("the phone: a read letter moved in on top of a pile it never visited", 
 });
 
 describe("the phone: an imported pile before any visit", () => {
-  it("old unread mail is 'nothing new' in News and Receipts, and no line is drawn", async () => {
+  it("old unread mail is named on the first visit in News and Receipts, and no line is drawn", async () => {
     const fake = mailServer();
     const origin = await listen(fake.server);
     try {
@@ -101,11 +101,12 @@ describe("the phone: an imported pile before any visit", () => {
       const reads = liveReads(presentedOf(live.engine.read(), view.now), view);
       expect(reads.items).toHaveLength(20);
       expect(reads.unreadIds).toHaveLength(20);
-      expect(reads.newCount).toBe(0);
+      // Unread is new until read: the tab and the header said "0 new" over these.
+      expect(reads.newCount).toBe(20);
       expect(reads.waterlineAboveId).toBeNull();
       const receipts = liveReceipts(presentedOf(live.engine.read(), view.now), view);
       expect(receipts.total).toBe(20);
-      expect(receipts.newCount).toBe(0);
+      expect(receipts.newCount).toBe(20);
       expect(receipts.waterlineAboveId).toBeNull();
       live.store.close();
     } finally {

@@ -106,7 +106,7 @@ describe("no visit yet on this device: a read letter moved in on top", () => {
     expect(part.waterline).toBeNull();
   });
 
-  it("an OLD read letter moved in predates the first sync: not new, and no line", async () => {
+  it("an OLD read letter moved in is not new, and draws no line", async () => {
     const store = await mirrorOf([
       msg({ id: "n1", date: at(11, 35), unread: true, folder: "ohmail/News" }),
       msg({ id: "old", date: at(8), unread: false, folder: "INBOX" }),
@@ -116,27 +116,27 @@ describe("no visit yet on this device: a read letter moved in on top", () => {
     const part = feedPartition(store, "reads");
     expect(part.newCount).toBe(1);
     expect(part.waterline).toBeNull();
-    expect(part.seen.map((m) => m.id)).toEqual(["old"]);
+    expect(part.fresh.map((m) => m.id)).toEqual(["n1", "old"]);
   });
 });
 
-describe("an imported pile: the first sync is the anchor until a visit", () => {
-  it("old unread mail is 'nothing new'; mail after the first sync counts; a visit moves the line", async () => {
+describe("an imported pile: unread is new until a visit", () => {
+  it("old unread mail counts on the first visit; arrivals add to it; a visit moves the line", async () => {
     const old = Array.from({ length: 50 }, (_, i) =>
       msg({ id: `old${String(i).padStart(2, "0")}`, date: `2026-09-${String(1 + (i % 28)).padStart(2, "0")}${"T"}08:00:00.000Z`, unread: true, folder: "ohmail/News" }));
     const store = await mirrorOf(old);
     await firstSync(store, at(9));
     let part = feedPartition(store, "reads");
-    expect(part.newCount).toBe(0);
+    expect(part.newCount).toBe(50);
     expect(part.waterline).toBeNull();
-    expect(part.fresh).toEqual([]);
+    expect(part.seen).toEqual([]);
     await store.applyChanges([{
       type: "message", op: "create", id: "fresh", seq: ++seq, updatedAt: at(10),
       entity: msg({ id: "fresh", date: at(10), unread: true, folder: "ohmail/News" }),
     }] as SyncChange[]);
     part = feedPartition(store, "reads");
-    expect(part.newCount).toBe(1);
-    expect(part.fresh.map((m) => m.id)).toEqual(["fresh"]);
+    expect(part.newCount).toBe(51);
+    expect(part.fresh[0]?.id).toBe("fresh");
     await leave(store, "reads", "fresh");
     part = feedPartition(store, "reads");
     expect(part.newCount).toBe(0);

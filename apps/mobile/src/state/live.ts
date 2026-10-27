@@ -1554,7 +1554,7 @@ export function liveReads(pres: EntityReader, v: WorldView): WorldReads {
   const items = all.map((m) => toListRow(pres, m, v));
   return {
     items,
-    // A line only where a visit committed one: before any, `seen` is the mail that predates this device.
+    // A line only where a visit committed one.
     waterlineAboveId: p.waterline ? p.seen[0]?.id ?? null : null,
     // The engine rows' own flag, not the mapped rows': `toMail` presents a pinned row unread.
     unreadIds: all.filter((m) => m.unread).map((m) => m.id),
