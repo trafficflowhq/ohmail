@@ -52,7 +52,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..135a85e1530dc1ed88777606ae214e30
 +    }
  
 -    !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
-+    ;(query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    ;(query || sent.length) && error(sentError ? Object.defineProperty(Errors.connection('CONNECTION_CLOSED', options, socket), 'serverError', { value: sentError }) : Errors.connection('CONNECTION_CLOSED', options, socket))
 +    query = null
      closedTime = performance.now()
      hadError && options.shared.retries++
@@ -131,7 +131,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..4c96dc3747fcb686ba7f641e7e1af376
 +    }
  
 -    !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
-+    ;(query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    ;(query || sent.length) && error(sentError ? Object.defineProperty(Errors.connection('CONNECTION_CLOSED', options, socket), 'serverError', { value: sentError }) : Errors.connection('CONNECTION_CLOSED', options, socket))
 +    query = null
      closedTime = performance.now()
      hadError && options.shared.retries++
