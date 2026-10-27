@@ -118,3 +118,119 @@ export function sectionItemLayout<T>(
     return { length: rows.lengthOf(i), offset: origin + head + rows.offsetOf(i), index };
   };
 }
+
+/** How long after a commit or a return a scroll the list makes on its own is taken as its slip. */
+export const PLACE_HOLD_MS = 1000;
+/** Scrolls back per commit at most: a view that will not stay there is not chased. */
+const PLACE_TRIES = 3;
+
+interface PlaceView {
+  y: number;
+  height: number;
+}
+
+/**
+ * THE READER'S PLACE BY ITS ROW: the first row on screen and how far below the view's top it
+ * starts, taken from the person's own scrolling. When that row moves (letters arrive above it), or
+ * the list slips on its own while the screen is behind another or just after a commit or a return,
+ * the list scrolls back to it. Near the top there is no place to keep: arrivals there show
+ * (`TOP_HOLD`).
+ */
+export class PlaceKeeper {
+  private frames = new Map<string, { top: number; bottom: number }>();
+  private view: PlaceView | null = null;
+  private place: { key: string; rel: number } | null = null;
+  private by: "app" | "person" = "app";
+  private away = false;
+  private holdUntil = 0;
+  private tries = PLACE_TRIES;
+
+  constructor(
+    private readonly scrollTo: (y: number) => void,
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+
+  frame(key: string, top: number, height: number): void {
+    const was = this.frames.get(key);
+    this.frames.set(key, { top, bottom: top + height });
+    if (key === this.place?.key && was?.top !== top) {
+      this.committed();
+      this.restore();
+    }
+  }
+
+  gone(key: string): void {
+    this.frames.delete(key);
+  }
+
+  /** A commit of the list: the native hold may move the offset in the next moment. */
+  committed(): void {
+    this.holdUntil = this.now() + PLACE_HOLD_MS;
+    this.tries = PLACE_TRIES;
+  }
+
+  /** The screen is behind another: what the list does meanwhile is never the reader's place. */
+  leave(): void {
+    this.away = true;
+  }
+
+  /** The screen is in front again: its place comes back. */
+  back(): void {
+    this.away = false;
+    this.committed();
+    this.restore();
+  }
+
+  drag(): void {
+    this.by = "person";
+    this.holdUntil = 0;
+  }
+
+  /** The finger lifts; a glide may follow, and its landing ends the person's move. */
+  lift(v: PlaceView): void {
+    this.take(v);
+    this.by = "app";
+  }
+
+  glide(): void {
+    this.by = "person";
+  }
+
+  land(v: PlaceView): void {
+    this.take(v);
+    this.by = "app";
+  }
+
+  scroll(v: PlaceView): void {
+    if (this.by === "person") this.take(v);
+    else if (this.away || this.now() < this.holdUntil) {
+      this.view = v;
+      this.restore();
+    } else this.take(v);
+  }
+
+  private take(v: PlaceView): void {
+    this.view = v;
+    if (this.away) return;
+    if (v.y <= TOP_HOLD) {
+      this.place = null;
+      return;
+    }
+    let first: { key: string; top: number } | null = null;
+    for (const [key, f] of this.frames) {
+      if (f.bottom > v.y && f.top < v.y + v.height && (first === null || f.top < first.top)) first = { key, top: f.top };
+    }
+    this.place = first === null ? null : { key: first.key, rel: first.top - v.y };
+  }
+
+  private restore(): void {
+    if (this.by === "person" || this.place === null || this.view === null || this.tries <= 0) return;
+    const f = this.frames.get(this.place.key);
+    if (f === undefined) return;
+    const y = f.top - this.place.rel;
+    if (Math.abs(y - this.view.y) <= 1) return;
+    this.tries -= 1;
+    this.view = { ...this.view, y };
+    this.scrollTo(y);
+  }
+}

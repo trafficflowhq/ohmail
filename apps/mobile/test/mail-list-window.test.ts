@@ -76,11 +76,12 @@ describe("the primitive reads the plan and nothing else", () => {
     expect(el, "Android's clipping is the one platform switch").toContain(
       'removeClippedSubviews={Platform.OS === "android" && rowLayout === undefined}',
     );
-    // The head anchors at the top: the hold skips the surface only once it has mounted (handed
-    // `1` before that, the first ROW anchored and a growing head scrolled the title off), and a
-    // change within TOP_HOLD of the top scrolls back to 0 as the belt.
-    expect(el, "the position hold skips the injected surface only once it exists").toContain(
-      "minIndexForVisible: surfaceNode !== null ? 1 : 0",
+    // The list keys its window by the first row; the native hold skips the surface only once it
+    // has mounted (a first ROW there let a growing head scroll the title off), and a change within
+    // TOP_HOLD of the top scrolls back to 0 as the belt.
+    expect(el, "the list's window follows the first row").toContain("minIndexForVisible: 1,");
+    expect(src, "the native hold skips the injected surface only once it exists").toContain(
+      "const anchorFrom = (surface !== null ? 1 : 0) + 1;",
     );
     expect(el).toContain("autoscrollToTopThreshold: TOP_HOLD");
     expect(src).toContain("const sections = useMemo(() => planSections(groups), [groups]);");

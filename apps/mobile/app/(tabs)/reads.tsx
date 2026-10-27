@@ -23,7 +23,7 @@ import { BodyPages } from "../../src/ui/BodyPages";
 import { mailboxStatusOf, withheldNote } from "../../src/ui/body-note";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
-import { MailList, type RowFrame } from "../../src/ui/MailList";
+import { MailList, type ListPlace, type RowFrame } from "../../src/ui/MailList";
 import { AttachmentTiles, MessageReader } from "../../src/ui/MessageReader";
 import { EventCards } from "../../src/ui/EventCard";
 import { FadeOut } from "../../src/ui/FadeOut";
@@ -78,15 +78,19 @@ function ReadsBody() {
   // engine's durable outbox, so even a kill right after the flush delivers it on the next
   // boot. Backgrounding then RETURNING starts a fresh visit pool — a second commit at the
   // real leave carries only what accrued after, and a commit that says nothing new is skipped.
+  // The reader's place comes back by its letter when the stream is in front again.
+  const place = useRef<ListPlace | null>(null);
   useFocusEffect(
     useCallback(() => {
       run.restart();
+      place.current?.back();
       const sub = AppState.addEventListener("change", (s) => {
         if (s === "background") void actions.leaveFeed("reads");
         if (s === "active") run.restart();
       });
       return () => {
         sub.remove();
+        place.current?.leave();
         void actions.leaveFeed("reads");
       };
     }, [actions, run]),
@@ -119,6 +123,7 @@ function ReadsBody() {
         onRowFrame={onRowFrame}
         onRowGone={onRowGone}
         {...gestures}
+        place={place}
         scrollEventThrottle={64}
         refresh={pull}
         head={

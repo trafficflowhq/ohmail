@@ -112,6 +112,16 @@ export function ListDetail({
     const sub = BackHandler.addEventListener("hardwareBackPress", () => { closeRef.current(); return true; });
     return () => sub.remove();
   }, [twoPane, open, focused]);
+  // The sidebar over the list closes before the reading pane: the newest listener answers first.
+  // A fold hides it, so it answers no Back there and the next unfold shows it closed.
+  useEffect(() => {
+    if (!plan.drawer) setDrawerOpen(false);
+  }, [plan.drawer]);
+  useEffect(() => {
+    if (!drawerOpen || !plan.drawer || !focused) return undefined;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => { setDrawerOpen(false); return true; });
+    return () => sub.remove();
+  }, [drawerOpen, plan.drawer, focused]);
 
   /* ONE TREE ON EVERY POSTURE (`pairSlots`): the slots are restyled, never swapped or re-parented.
      The transition frame before the effect lands keeps the reader up — never a list flash. */
