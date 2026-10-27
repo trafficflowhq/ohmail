@@ -4,11 +4,12 @@ import { loadavg } from "node:os";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql, type SQL } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
+import { brandDialect, pgDialect } from "@trafficflow/db/dialect";
 import { mailboxes } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
+import { searchIndexProgress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { LOADED_CEILING, QUIET_RATIO, isQuiet, quietLimit, verdicts, type Round, type Verdict } from "./_budget-clock.js";
@@ -198,19 +199,25 @@ function ctx(accountId: string = A): ServiceContext {
   return { db, accountId, userId: null, now: () => new Date("2026-09-23T12:00:00Z"), requestId: "search-budget" };
 }
 
-/** The relations a statement read by a sequential scan, from its own plan, under the session settings. */
-async function seqScans(st: SQL, session: SQL[]): Promise<string[]> {
+type PlanNode = Record<string, unknown>;
+/** Every node of a statement's plan as it ran, under the session settings. */
+async function planNodes(st: SQL, session: SQL[]): Promise<PlanNode[]> {
   const r = (await base.transaction(async (tx) => {
     for (const s of session) await tx.execute(s);
     return tx.execute(sql`explain (analyze, format json) ${st}`);
   })) as unknown as Array<Record<string, unknown>>;
-  const out: string[] = [];
-  const walk = (p: Record<string, unknown>) => {
-    if (p["Node Type"] === "Seq Scan") out.push(String(p["Relation Name"]));
-    for (const c of (p["Plans"] as Array<Record<string, unknown>> | undefined) ?? []) walk(c);
+  const out: PlanNode[] = [];
+  const walk = (p: PlanNode) => {
+    out.push(p);
+    for (const c of (p["Plans"] as PlanNode[] | undefined) ?? []) walk(c);
   };
-  walk(((r[0]!["QUERY PLAN"] as Array<Record<string, unknown>>)[0]!)["Plan"] as Record<string, unknown>);
-  return out.filter((rel) => rel === "messages" || rel === "message_bodies");
+  walk(((r[0]!["QUERY PLAN"] as PlanNode[])[0]!)["Plan"] as PlanNode);
+  return out;
+}
+/** The relations a statement read by a sequential scan, from its own plan, under the session settings. */
+async function seqScans(st: SQL, session: SQL[]): Promise<string[]> {
+  return (await planNodes(st, session)).filter((p) => p["Node Type"] === "Seq Scan").map((p) => String(p["Relation Name"]))
+    .filter((rel) => rel === "messages" || rel === "message_bodies");
 }
 
 /**
@@ -332,17 +339,17 @@ async function bestOfRounds(label: string, round: () => Promise<Record<string, n
   return verdicts(rounds, BUDGET_MS, quietLimit(quietest));
 }
 /** A figure inside the budget, or over it on a quiet round (red); over on no quiet round warns. */
-function judge(v: Verdict, what: string, budget = BUDGET_MS): void {
+function judge(v: Verdict, what: string): void {
   const limit = quietLimit(quietest);
   if (v.kind === "unjudged") {
-    console.log(`::warning title=search budget CLASSIFY-ASK RUNNER::${what} p95 ${v.ms} ms over ${budget} ms with no quiet round `
+    console.log(`::warning title=search budget CLASSIFY-ASK RUNNER::${what} p95 ${v.ms} ms over ${BUDGET_MS} ms with no quiet round `
       + `(limit ${limit.toFixed(1)} ms, the run's quietest reference ${quietest.toFixed(1)} ms): unjudged`);
     return;
   }
   const how = v.kind !== "over" ? `the best of ${ROUNDS} rounds`
     : v.round ? `on a quiet round (reference ${v.round.before.toFixed(1)}/${v.round.after.toFixed(1)} ms, limit ${limit.toFixed(1)} ms): search over budget`
     : `past ${LOADED_CEILING * BUDGET_MS} ms with no quiet round, slower than load alone has ever read: search over budget`;
-  expect(v.ms, `${what} p95 ${how}`).toBeLessThanOrEqual(budget);
+  expect(v.ms, `${what} p95 ${how}`).toBeLessThanOrEqual(BUDGET_MS);
 }
 
 describe("the first page of a search is milliseconds (real Postgres, a large mailbox)", () => {
@@ -439,8 +446,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       }
       return figures;
     });
-    const COUNT_W3000_W1_MS = 125; // temporary ceiling: row SEARCH-BUDGET-COUNT-W3000-STATS-SAMPLE, back to 100 when that row closes
-    for (const [k, v] of Object.entries(best)) judge(v, k, k === "w3000 w1 count" ? COUNT_W3000_W1_MS : BUDGET_MS);
+    for (const [k, v] of Object.entries(best)) judge(v, k);
     for (const q of QS) {
       seen.length = 0;
       await svc.search(ctx(), { q, parts: "page" });
@@ -602,6 +608,19 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       for (const st of reads) expect(await seqScans(st, session), c.cls).toEqual([]);
     }
   }, 600_000);
+
+  // Every count on an account still building reads its progress: only that account's documents.
+  it("the backfill's progress reads only the account's own search documents", async () => {
+    for (const [acct, done, most] of [[A, 0, 0], [D, N, N]] as const) {
+      seen.length = 0;
+      expect(await searchIndexProgress(db as never, acct)).toEqual({ done, total: N });
+      expect(seen).toHaveLength(1);
+      const nodes = await planNodes(seen[0]!, [pgDialect().search.searchSession({ preferIndexes: true })!]);
+      const read = nodes.filter((p) => p["Relation Name"] === "message_search")
+        .reduce((n, p) => n + (Number(p["Actual Rows"]) + Number(p["Rows Removed by Filter"] ?? 0)) * Number(p["Actual Loops"]), 0);
+      expect(read, acct === A ? "A" : "D").toBeLessThanOrEqual(most);
+    }
+  }, 300_000);
 
   it("a broad page says its total is a lower bound, and the summary answers it exactly", async () => {
     const svc = new SearchService();
