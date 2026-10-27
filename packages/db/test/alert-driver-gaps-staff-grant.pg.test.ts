@@ -185,9 +185,9 @@ describe.skipIf(!PG_UP)("cloud 0049 on real Postgres: the role's gap writes, ref
     await migrate(owner(), { migrationsFolder: MAIL_DIR, migrationsSchema: "drizzle_mail" });
     await migrate(owner(), { migrationsFolder: before0049, migrationsSchema: "drizzle_cloud" });
     // The shipped script — it creates the role when absent — without the stanzas of tables newer
-    // than this database (cloud 0051's `alert_drills`), then the stanza 0048 added to it taken back:
-    // the role as production holds it, hardened before 0048 and not since.
-    await ownerClient.unsafe(hardenScriptWithout("alert_drills")).simple();
+    // than this database (cloud 0051's `alert_drills`, 0054's `connect_attempts`), then the stanza
+    // 0048 added to it taken back: the role as production holds it, hardened before 0048 and not since.
+    await ownerClient.unsafe(hardenScriptWithout("alert_drills", "connect_attempts")).simple();
     await ownerClient.unsafe(`revoke all on public.${TABLE} from ${STAFF_ROLE}`);
 
     roleClient = postgres(urlFor(DB_NAME), { max: 1, onnotice: () => {} });

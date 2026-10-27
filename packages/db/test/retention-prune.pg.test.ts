@@ -2,18 +2,18 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { brandDialect } from "../src/dialect/index.js";
 import { schema } from "../src/schema.js";
 import { runMigrations } from "../src/migrate.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 import { accounts, accountSyncState, auditLog, changeLog, devices, sessions, users } from "../src/schema-mail.js";
-import { authEvents } from "../src/schema-cloud.js";
+import { authEvents, connectAttempts } from "../src/schema-cloud.js";
 import { seqBounds, type Tx } from "../src/change-log.js";
 import {
-  pruneChangeLogForAccount, pruneAuditLog, pruneAuthEvents,
+  pruneChangeLogForAccount, pruneAuditLog, pruneAuthEvents, pruneConnectAttempts,
   CHANGE_LOG_RETENTION_GRACE_MS, CHANGE_LOG_HOLDBACK_LIVE_MS,
-  AUDIT_LOG_RETENTION_MS, AUTH_EVENTS_RETENTION_MS,
+  AUDIT_LOG_RETENTION_MS, AUTH_EVENTS_RETENTION_MS, CONNECT_ATTEMPTS_RETENTION_MS,
 } from "../src/retention.js";
 
 /**
@@ -257,5 +257,25 @@ describe.skipIf(!PG_UP)("the retention pass (real Postgres)", () => {
     // The stated horizons, pinned: shortening either silently is a policy change, not a tweak.
     expect(AUDIT_LOG_RETENTION_MS).toBe(365 * DAY);
     expect(AUTH_EVENTS_RETENTION_MS).toBe(180 * DAY);
+  });
+
+  it("connect_attempts ages out at 30 days on its full key, bounded per batch (cloud 0054)", async () => {
+    const mine = randomUUID();
+    const theirs = randomUUID();
+    await db.insert(accounts).values([{ id: mine, name: "ca" }, { id: theirs, name: "cb" }]);
+    const row = { door: "connect", preset: "gmail", outcome: "refused", reason: "auth", transport: "imap" } as const;
+    await db.insert(connectAttempts).values([
+      { ...row, accountId: mine, at: at(31) }, { ...row, accountId: mine, at: at(31) },
+      { ...row, accountId: mine, at: at(29) }, { ...row, accountId: theirs, at: at(29) },
+    ]);
+    // Two rows on one instant differ by `id` alone: one batch of one takes exactly one of them.
+    expect(await pruneConnectAttempts(db as unknown as Tx, NOW, CONNECT_ATTEMPTS_RETENTION_MS, 1)).toBe(1);
+    for (let g = 0; g < 50; g += 1) {
+      if (await pruneConnectAttempts(db as unknown as Tx, NOW, CONNECT_ATTEMPTS_RETENTION_MS, 100) < 100) break;
+    }
+    const left = await db.select().from(connectAttempts).where(inArray(connectAttempts.accountId, [mine, theirs]));
+    expect(left.map((r) => [r.accountId === mine ? "mine" : "theirs", r.at.getTime()]).sort())
+      .toEqual([["mine", at(29).getTime()], ["theirs", at(29).getTime()]]);
+    expect(CONNECT_ATTEMPTS_RETENTION_MS).toBe(30 * DAY);
   });
 });

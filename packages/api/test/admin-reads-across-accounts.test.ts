@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { accounts, accountStorage, mailboxes, sessions, users } from "@trafficflow/db";
-import { alertState, staffAuditEvents, staffRoleGrants, staffSessions, staffUsers } from "@trafficflow/db/cloud";
+import { alertState, connectAttempts, staffAuditEvents, staffRoleGrants, staffSessions, staffUsers } from "@trafficflow/db/cloud";
 import type { ApiDeps } from "@trafficflow/api";
 import type {
-  AlertResolvedPage, EngagementSnapshot, FunnelSnapshot, StaffFeedPage, StaffList, StoragePage,
+  AlertResolvedPage, ConnectAttemptsPage, EngagementSnapshot, FunnelSnapshot, StaffFeedPage, StaffList, StoragePage,
 } from "@trafficflow/services";
 import { MAIL_POLICY_ROW_KIND } from "../../db/src/alert-mail-policy.js";
 import { STAFF_SESSION_HEADER } from "../src/routes/admin.js";
@@ -179,6 +179,70 @@ describe("GET /admin/storage — stored bytes per measured account, keyset by id
     expect(second).toMatchObject({ totalBytes: 600, measuredAccounts: 3, nextCursor: null });
     const junk = await read<StoragePage>(w.deps, w.token, "/admin/storage?cursor=not-an-id");
     expect(junk.rows.map((r) => r.accountId)).toEqual([A, B, C]);
+  });
+});
+
+describe("GET /admin/connect-attempts — how connecting a mailbox ended (cloud 0054)", () => {
+  const attempt = (accountId: string, at: Date, reason: string | null = null) => ({
+    accountId, at, door: "connect", preset: "gmail", outcome: reason === null ? "ok" : "refused", reason,
+    transport: reason === null ? null : "imap",
+  });
+  const iso = (ms: number): string => ago(ms).toISOString();
+  const page = (deps: ApiDeps, token: string, query = ""): Promise<ConnectAttemptsPage> =>
+    read<ConnectAttemptsPage>(deps, token, `/admin/connect-attempts${query}`);
+
+  async function world(): Promise<{ deps: ApiDeps; token: string }> {
+    const deps = await staffDeps();
+    await deps.db.insert(accounts).values([{ id: A, name: "A" }, { id: B, name: "B" }, { id: C, name: "C" }]);
+    await deps.db.insert(connectAttempts).values([
+      attempt(A, ago(3 * HOUR), "auth"), attempt(A, ago(2 * HOUR), "auth"), attempt(A, ago(HOUR)),
+      attempt(B, ago(DAY), "timeout"), attempt(C, ago(40 * DAY)),
+    ]);
+    return { deps, token: (await seedStaff(deps, { roles: ["support"] })).token };
+  }
+
+  it("answers the last 30 days by default: the counts, and each account's totals in id order", async () => {
+    const w = await world();
+    const gmail = { door: "connect", preset: "gmail" };
+    expect(await page(w.deps, w.token)).toEqual({
+      now: FIXED_NOW.toISOString(), window: { from: iso(30 * DAY), to: FIXED_NOW.toISOString() }, account: null,
+      byOutcome: [
+        { ...gmail, outcome: "ok", reason: null, count: 1 },
+        { ...gmail, outcome: "refused", reason: "auth", count: 2 },
+        { ...gmail, outcome: "refused", reason: "timeout", count: 1 },
+      ],
+      accounts: [
+        { accountId: A, attempts: 3, refused: 2, firstAt: iso(3 * HOUR), lastAt: iso(HOUR), firstOkAt: iso(HOUR) },
+        { accountId: B, attempts: 1, refused: 1, firstAt: iso(DAY), lastAt: iso(DAY), firstOkAt: null },
+      ],
+      nextCursor: null, rows: null,
+    });
+  });
+
+  it("one account named: its counts and its newest rows; a cursor pages by id; a value that is no id is dropped", async () => {
+    const w = await world();
+    const one = await page(w.deps, w.token, `?account=${A}`);
+    expect([one.account, one.accounts.map((a) => a.accountId), one.byOutcome.map((b) => b.count)]).toEqual([A, [A], [1, 2]]);
+    expect(one.rows).toEqual([
+      { at: iso(HOUR), door: "connect", preset: "gmail", outcome: "ok", reason: null, transport: null },
+      { at: iso(2 * HOUR), door: "connect", preset: "gmail", outcome: "refused", reason: "auth", transport: "imap" },
+      { at: iso(3 * HOUR), door: "connect", preset: "gmail", outcome: "refused", reason: "auth", transport: "imap" },
+    ]);
+    const first = await page(w.deps, w.token, "?limit=1");
+    expect([first.accounts.map((a) => a.accountId), first.nextCursor]).toEqual([[A], A]);
+    const second = await page(w.deps, w.token, `?limit=1&cursor=${A}`);
+    expect(second.accounts.map((a) => a.accountId)).toEqual([B]);
+    const junk = await page(w.deps, w.token, "?account=not-an-id&cursor=nope");
+    expect([junk.account, junk.rows, junk.accounts.length]).toEqual([null, null, 2]);
+  });
+
+  it("reads a window it is given, and clamps one longer than 31 days to its end", async () => {
+    const w = await world();
+    const wide = await page(w.deps, w.token, `?from=${iso(60 * DAY)}&to=${FIXED_NOW.toISOString()}`);
+    expect([wide.window, wide.accounts.map((a) => a.accountId)])
+      .toEqual([{ from: iso(31 * DAY), to: FIXED_NOW.toISOString() }, [A, B]]);
+    const older = await page(w.deps, w.token, `?from=${iso(45 * DAY)}&to=${iso(35 * DAY)}`);
+    expect(older.accounts.map((a) => a.accountId)).toEqual([C]);
   });
 });
 

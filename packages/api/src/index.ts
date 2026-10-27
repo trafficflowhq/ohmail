@@ -70,6 +70,12 @@ export {
   makeProbeHostGuard, ALLOW_ANY_PROBE_HOST, MAIL_PROBE_PORTS, type ProbeHostGuard,
 } from "./imap-probe.js";
 
+// How connecting a mailbox ended (cloud 0054): the managed host's recorder for `ApiDeps.connectAttempts`.
+export {
+  connectAttemptRecorder, connectAttemptReason, connectAttemptRow, presetOfImapHost, CONNECT_PRESET_IMAP_HOSTS,
+} from "./connect-attempts.js";
+export type { ConnectAttemptFacts, ConnectDoor } from "./deps.js";
+
 // The mail-domain lookup behind `POST /mailboxes/discover`; the hosted root wires `nodeMailDns`.
 export {
   discoverMailHosting, nodeMailDns, DISCOVER_MX_PRESETS, DISCOVER_PROTON_MX, NOTHING_DISCOVERED,

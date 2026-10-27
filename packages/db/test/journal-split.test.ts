@@ -291,6 +291,9 @@ const CLOUD_TABLES = [
   // Cloud 0051 — alert drills and their acknowledgements, CLOUD for the same reason: the two alert
   // drivers' pager is the hosted and the self-hosted server's, and a desktop install runs neither.
   "alert_drills",
+  // Cloud 0054 — how connecting a mailbox ended. CLOUD: only the managed API records it, and a local
+  // install or a self-hosted server keeps no such record of its own person.
+  "connect_attempts",
   // the funnel
   "waitlist", "invites",
   // always-on push — named in §7 as part of the moat
@@ -3245,6 +3248,12 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
     "fadf3cda18b3d0cd",   // ALTER TABLE account_lifecycle_notices DROP CONSTRAINT IF EXISTS …_kind_closed
     "24a379adaeee4617",   // ADD CONSTRAINT account_lifecycle_notices_kind_closed … 'connect_reminder' … NOT VALID
   ],
+  // CLOUD 0054 — how connecting a mailbox ended: one new table and the staff role's SELECT on seven of
+  // its columns, in a DO block guarded on `ohmail_admin` existing. No DML, no index beyond the key.
+  "0054_connect_attempts": [
+    "23bcbc0fe8f5332b",   // CREATE TABLE connect_attempts (account_id, at, id PK; six CHECKs)
+    "e1a55d191dd73f2a",   // DO … REVOKE ALL, then GRANT SELECT (seven, not `id`) TO ohmail_admin
+  ],
 };
 
 /** Short, stable identity for one normalized statement. */
@@ -4172,7 +4181,8 @@ describe("the two journals are well-formed", () => {
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
   // cloud 37 → 38 for `0052_lifecycle_notice_delivered`: its `when` (1792886819380) is strictly above 0051's.
   // cloud 38 → 39 for `0053_connect_reminder_notices`: its `when` (1792901976213) is strictly above 0052's.
-  it.each([["mail", MAIL_DIR, 171], ["cloud", CLOUD_DIR, 39]] as const)(
+  // cloud 39 → 40 for `0054_connect_attempts`: its `when` (1793059413550) is strictly above 0053's.
+  it.each([["mail", MAIL_DIR, 171], ["cloud", CLOUD_DIR, 40]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);
@@ -4315,7 +4325,8 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 103 → 104 for `alert_driver_gaps` (cloud 0048) — the alert drivers' gap history, CLOUD.
     // 104 → 105 for `alert_drills` (cloud 0051) — alert drills and their acknowledgements, CLOUD.
     // 105 → 106 for `outbound_sent_copies` (mail 0170) — a delivered send's owed Sent copy, MAIL.
-    expect(SIDE.size).toBe(106);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
+    // 106 → 107 for `connect_attempts` (cloud 0054) — how connecting a mailbox ended, CLOUD.
+    expect(SIDE.size).toBe(107);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
     // 44 → 45 and 27 → 26 for `refresh_tokens` (mail 0060) — the first MOVE in the partition's
     // history rather than an addition, so the total stayed 71 while both halves changed together.
     expect(MAIL_TABLES).toHaveLength(58);   // 57 → 58: outbound_sent_copies (mail 0170)   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
@@ -4331,7 +4342,8 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 44 → 46: staff_role_grants + staff_audit_events (cloud 0047)
     // 46 → 47: alert_driver_gaps (cloud 0048)
     // 47 → 48: alert_drills (cloud 0051)
-    expect(CLOUD_TABLES).toHaveLength(48);   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
+    // 48 → 49: connect_attempts (cloud 0054)
+    expect(CLOUD_TABLES).toHaveLength(49);   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
   });
 
   it("NO mail statement names a private object — so mail-first is sound, not assumed", () => {

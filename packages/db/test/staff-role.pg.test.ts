@@ -18,8 +18,8 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { managedDomain } from "../../../test/support/fixture-credentials.js";
 import {
-  adminAccountDetail, adminAccounts, adminAccountsByIds, adminActions, adminAlerts, adminEngagement,
-  adminFunnel, adminLatestResolvedAlerts, adminStaffFeed, adminStorage, adminSyncRoster, adminWorker,
+  adminAccountDetail, adminAccounts, adminAccountsByIds, adminActions, adminAlerts, adminConnectAttempts,
+  adminEngagement, adminFunnel, adminLatestResolvedAlerts, adminStaffFeed, adminStorage, adminSyncRoster, adminWorker,
   type AdminDb,
 } from "@trafficflow/services";
 import {
@@ -721,6 +721,42 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
     const refused = await staffClient.unsafe("delete from alert_drills").then(() => null, (e: unknown) => sqlstateOf(e));
     expect(refused).toBe(DENIED_SQLSTATE);
     await ownerClient.unsafe("delete from alert_drills");
+  });
+
+  it("serves the connect-attempt read as the blind role, and refuses it `id` and every write (cloud 0054)", async () => {
+    const now = new Date();
+    await ownerClient.unsafe(`insert into connect_attempts (account_id, door, preset, outcome, reason, transport)
+      values ('${seeded.accountId}', 'connect', 'gmail', 'refused', 'auth', 'imap')`);
+    const page = await adminConnectAttempts(staff, now, {
+      window: { from: new Date(now.getTime() - 86_400_000), to: new Date(now.getTime() + 60_000) },
+      account: seeded.accountId, cursor: null, limit: 500,
+    });
+    expect(page.byOutcome).toEqual([{ door: "connect", preset: "gmail", outcome: "refused", reason: "auth", count: 1 }]);
+    expect(page.accounts).toMatchObject([{ accountId: seeded.accountId, attempts: 1, refused: 1, firstOkAt: null }]);
+    expect(page.rows).toMatchObject([{ door: "connect", preset: "gmail", outcome: "refused", reason: "auth", transport: "imap" }]);
+    for (const statement of [
+      "select id from connect_attempts",
+      `insert into connect_attempts (account_id, door, preset, outcome) values ('${seeded.accountId}', 'test', 'imap', 'ok')`,
+      "delete from connect_attempts",
+    ]) {
+      expect(await staffClient.unsafe(statement).then(() => null, (e: unknown) => sqlstateOf(e)), statement).toBe(DENIED_SQLSTATE);
+    }
+    await ownerClient.unsafe("delete from connect_attempts");
+  });
+
+  it("cloud 0054's own grant, run alone, is the allow-list's seven columns and no write", async () => {
+    // The migration is the deploy's grant: its DO block, after the script's stanza is taken back.
+    const [, grant] = readFileSync(join(CLOUD_DIR, "0054_connect_attempts.sql"), "utf8").split("--> statement-breakpoint");
+    await ownerClient.unsafe(`revoke all on public.connect_attempts from ${STAFF_ROLE}`);
+    await ownerClient.unsafe(grant!);
+    const [row] = await ownerClient.unsafe<Array<{ cols: string[]; writes: boolean }>>(`
+      select array(select column_name::text from information_schema.columns
+                    where table_schema = 'public' and table_name = 'connect_attempts'
+                      and has_column_privilege('${STAFF_ROLE}', 'public.connect_attempts', column_name, 'SELECT')
+                    order by 1) as cols,
+             has_any_column_privilege('${STAFF_ROLE}', 'public.connect_attempts', 'INSERT, UPDATE')
+               or has_table_privilege('${STAFF_ROLE}', 'public.connect_attempts', 'DELETE, TRUNCATE') as writes`);
+    expect(row).toEqual({ cols: [...STAFF_SELECT_GRANTS["public.connect_attempts"]!].sort(), writes: false });
   });
 
   /* ══ 3. The census — equality, so a grant nobody asserted still fails ════════════════ */

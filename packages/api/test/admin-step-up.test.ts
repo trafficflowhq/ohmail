@@ -225,6 +225,7 @@ const ADMIN_ROUTE_CLASS: Readonly<Record<string, "identity" | "read" | "write">>
   "GET /admin/storage": "read",
   "GET /admin/staff-activity": "read",
   "GET /admin/alerts/history": "read",
+  "GET /admin/connect-attempts": "read",
   "POST /admin/staff/list": "read",
   // Cloud 0047. The mint judges the session's step-up stamp itself for a write scope (or a TOTP
   // in its body); the roles change consumes a TOTP in its own body. Neither can carry the

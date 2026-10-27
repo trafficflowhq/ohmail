@@ -114,7 +114,7 @@ describe("admin reads — registration and shape", () => {
     const admin = apiRoutes.filter(
       (r) => r.pattern.startsWith("/admin") && r.method === "GET",
     );
-    expect(admin).toHaveLength(13);
+    expect(admin).toHaveLength(14);
     for (const route of admin) {
       expect(route.method, route.pattern).toBe("GET");
       expect(route.options, route.pattern).toEqual({ public: true, anonymous: true, raw: true });
@@ -125,10 +125,10 @@ describe("admin reads — registration and shape", () => {
     // session, or that was not `raw`, would be a different animal wearing the same path prefix.
     // 6 → 9 (cloud 0047): search, the sync roster and an account's staff activity.
     // 9 → 13: active-account counts, stored bytes per account, the staff audit across accounts
-    // and the alert keys whose latest episode resolved.
+    // and the alert keys whose latest episode resolved. 13 → 14: how connecting a mailbox ended (cloud 0054).
     expect(admin.map((r) => r.pattern).sort()).toEqual([
       "/admin/accounts", "/admin/accounts/:id", "/admin/accounts/:id/staff-activity", "/admin/actions",
-      "/admin/alerts/history", "/admin/engagement", "/admin/funnel", "/admin/overview", "/admin/search",
+      "/admin/alerts/history", "/admin/connect-attempts", "/admin/engagement", "/admin/funnel", "/admin/overview", "/admin/search",
       "/admin/staff-activity", "/admin/storage", "/admin/sync-roster", "/admin/worker",
     ]);
   });

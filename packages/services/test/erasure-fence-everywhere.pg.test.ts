@@ -9,10 +9,10 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accounts, mailboxes, drafts, rules, organizerRequests, users, graduations,
-  MailboxErasedError, type LedgerTx, type OrganizedBy, type Tx,
+  AccountErasedError, MailboxErasedError, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 // `auth_events` is a HOSTED table — the local install has no sign-in trail to keep.
-import { authEvents } from "@trafficflow/db/cloud";
+import { authEvents, connectAttempts, recordConnectAttempt } from "@trafficflow/db/cloud";
 import { sweepMailboxData } from "../src/mailbox-erasure.js";
 import { writeReaderRequest } from "../src/reader-request.js";
 import { DraftsService } from "../src/drafts-service.js";
@@ -294,5 +294,28 @@ describe.skipIf(!PG_UP)("the authentication trail", () => {
     expect(await db.select({ id: authEvents.id }).from(authEvents)
       .where(eq(authEvents.accountId, accountId)),
     "the fence turned the trail off for an ordinary failure").toHaveLength(1);
+  });
+});
+
+describe.skipIf(!PG_UP)("the connect record (cloud 0054)", () => {
+  const row = (accountId: string) =>
+    ({ accountId, door: "connect", preset: "gmail", outcome: "refused", reason: "auth", transport: "imap" } as const);
+
+  it("records nothing for an account erased between the request's start and the write", async () => {
+    /* `accounts` survives the erasure, so the key refuses nothing: the erasure commits on its own
+       connection at the last moment before the record's transaction opens, and the fence refuses. */
+    const { accountId } = await seed();
+    const raced = raceDb(async () => {
+      await sweepDb.update(accounts).set({ erasedAt: NOW }).where(eq(accounts.id, accountId));
+    });
+    await expect(recordConnectAttempt(raced as unknown as Tx, row(accountId), NOW)).rejects.toBeInstanceOf(AccountErasedError);
+    expect(await db.select().from(connectAttempts).where(eq(connectAttempts.accountId, accountId)),
+      "a connect record was written under an erased account").toHaveLength(0);
+  });
+
+  it("still records on a LIVE account — the positive", async () => {
+    const { accountId } = await seed();
+    expect(await recordConnectAttempt(db as unknown as Tx, row(accountId), NOW)).toBe("recorded");
+    expect(await db.select().from(connectAttempts).where(eq(connectAttempts.accountId, accountId))).toHaveLength(1);
   });
 });

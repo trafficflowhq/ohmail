@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { folderState, mailboxes, mailboxCredentials, messages } from "@trafficflow/db";
+import { createApp, apiRoutes, connectAttemptRecorder, type ApiDeps } from "@trafficflow/api";
+import { folderState, mailboxes, mailboxCredentials, messages, type Tx } from "@trafficflow/db";
+import { connectAttempts } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/services";
 import { and, eq } from "drizzle-orm";
 import { makeDeps, seedSession, seedMailbox, req, FIXED_NOW } from "./helpers.js";
@@ -229,6 +230,42 @@ describe("mailbox mutations — the plan limit, as the client sees it", () => {
     expect(error.code).toBe("payment_required");
     // The distinction is the whole point of the taxonomy: an upgrade would not fix this one.
     expect(error.details).toMatchObject({ reason: "payment_required", accessReason: "payment_required" });
+  });
+});
+
+describe("how a connect ended is recorded on the managed host (cloud 0054)", () => {
+  const create = (token: string, over: Record<string, unknown> = {}) => req("POST", "/mailboxes", {
+    bearer: token, headers: { "content-type": "application/json" },
+    body: body({ provider: "imap", address: "mila@lichtgrat.example", imap: IMAP, ...over }),
+  });
+  async function recording(over: Parameters<typeof makeDeps>[2] = {}) {
+    const made = await makeDeps(FIXED_NOW, {}, over);
+    const s = await seedSession(made.db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const deps: ApiDeps = { ...made.deps, connectAttempts: connectAttemptRecorder(made.db as unknown as Tx, made.deps.now) };
+    const rows = () => made.db.select({
+      door: connectAttempts.door, preset: connectAttempts.preset, outcome: connectAttempts.outcome,
+      reason: connectAttempts.reason, transport: connectAttempts.transport,
+    }).from(connectAttempts);
+    return { ...made, deps, token: s.token, rows };
+  }
+
+  it("a connect that lands is one ok row for its preset; the replay the address index refuses adds none", async () => {
+    const { deps, token, rows } = await recording();
+    const gmail = { imap: { ...IMAP, host: "imap.gmail.com" } };
+    expect((await H(create(token, gmail), deps)).status).toBe(201);
+    expect((await H(create(token, gmail), deps)).status).toBe(409);
+    expect(await rows()).toEqual([{ door: "connect", preset: "gmail", outcome: "ok", reason: null, transport: null }]);
+  });
+
+  it("a refused submission login is recorded as refused on smtp, and a full plan by its word", async () => {
+    const refusing = await recording({ smtpVerify: async () => { throw Object.assign(new Error("Invalid login"), { code: "EAUTH" }); } });
+    expect((await H(create(refusing.token, { smtp: SMTP }), refusing.deps)).status).toBe(400);
+    expect(await refusing.rows()).toEqual([{ door: "connect", preset: "imap", outcome: "refused", reason: "auth", transport: "smtp" }]);
+
+    const full = await recording();
+    full.access.metered({ mailboxes: 0 });
+    expect((await H(create(full.token), full.deps)).status).toBe(409);
+    expect(await full.rows()).toEqual([{ door: "connect", preset: "imap", outcome: "refused", reason: "at_limit", transport: null }]);
   });
 });
 

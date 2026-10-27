@@ -6,6 +6,8 @@ import {
   adminSyncRoster, isUuid, ADMIN_BATCH_MAX, ADMIN_SYNC_ROSTER_MAX,
   adminEngagement, adminStorage, adminStaffFeed, adminLatestResolvedAlerts, STAFF_AUDIT_ACTIONS,
   ADMIN_FUNNEL_WINDOW_MAX_DAYS, ADMIN_STORAGE_MAX, ADMIN_RESOLVED_ALERTS_DEFAULT_DAYS, ADMIN_RESOLVED_ALERTS_MAX_DAYS,
+  adminConnectAttempts, ADMIN_CONNECT_ATTEMPTS_MAX, ADMIN_CONNECT_ATTEMPTS_DEFAULT_DAYS, ADMIN_CONNECT_ATTEMPTS_MAX_DAYS,
+  type ConnectAttemptsQuery,
   type AccountQuery, type AdminDb, type AdminViewer, type ApiHealth, type OverviewSnapshot,
   type StaffAuditAction, type StaffAuditOutcome, type StaffFeedQuery, type StaffList, type StaffRole,
 } from "@trafficflow/services";
@@ -165,7 +167,8 @@ interface StaffReadPolicy {
   roles: readonly StaffRole[] | "any";
   /** A refusal decided per request beyond the role list; recorded like one (`role_required`). */
   admits?: (req: Request, viewer: AdminViewer) => boolean;
-  audit?: (req: Request, params: RouteParams, secret: string) => AuditExtra;
+  /** `now` is the request's clock, for a read whose window defaults to it. */
+  audit?: (req: Request, params: RouteParams, secret: string, now: Date) => AuditExtra;
 }
 
 /**
@@ -340,7 +343,7 @@ function adminRoute(name: string, action: StaffAuditAction, read: StaffRead, pol
     const requestId = adoptRequestId(req, deps);
     const row: StaffEventInput = {
       requestId, at: deps.now(), actor: actorOf(staffWho), action, outcome: "ok",
-      ...(policy.audit?.(req, params, cfg.secret) ?? {}),
+      ...(policy.audit?.(req, params, cfg.secret, deps.now()) ?? {}),
     };
     const reader: AdminViewer = { roles: staffWho.roles, staffId: staffWho.staffId };
     const refused = !rolesAdmit(staffWho.roles, policy.roles)
@@ -574,6 +577,24 @@ export const adminRoutes: Route[] = [
       adminLatestResolvedAlerts(ctx.db, ctx.now(), resolvedWindowOf(req, ctx.now())), { roles: "any" }),
   },
   {
+    method: "GET",
+    pattern: "/admin/connect-attempts",
+    relay: false,  /* the hosted console's own surface */
+    cost: COST,
+    options: OPTIONS,
+    // How connecting a mailbox ended (cloud 0054): closed words and instants. A named account is the
+    // audit row's target; the detail says only the window's length and that one was named.
+    handler: adminRoute("connect-attempts", "read.connect_attempts", (req, ctx) =>
+      adminConnectAttempts(ctx.db, ctx.now(), connectAttemptsQueryOf(req, ctx.now())), {
+      roles: "any",
+      audit: (req, _params, _secret, now) => {
+        const q = connectAttemptsQueryOf(req, now);
+        const windowDays = Math.ceil((q.window.to.getTime() - q.window.from.getTime()) / DAY_MS);
+        return { targetAccountId: q.account, detail: { windowDays, account: q.account !== null } };
+      },
+    }),
+  },
+  {
     method: "POST",
     pattern: "/admin/staff/list",
     relay: false,  /* the hosted console's own surface */
@@ -624,6 +645,30 @@ function resolvedWindowOf(req: Request, now: Date): { from: Date; to: Date } {
   const from = b.from ?? new Date(to.getTime() - ADMIN_RESOLVED_ALERTS_DEFAULT_DAYS * DAY_MS);
   return clampedWindow(from, to, ADMIN_RESOLVED_ALERTS_MAX_DAYS)
     ?? { from: new Date(now.getTime() - ADMIN_RESOLVED_ALERTS_DEFAULT_DAYS * DAY_MS), to: now };
+}
+
+/** A query value that is a uuid, lower-cased, or null. */
+function uuidParamOf(raw: string | null): string | null {
+  const v = raw?.trim().toLowerCase() ?? null;
+  return v !== null && isUuid(v) ? v : null;
+}
+
+/**
+ * `?from&to&account&cursor&limit` for the connect-attempt read: the last 30 days by default, at most
+ * 31 ending `to` or now; `account` and `cursor` uuids or dropped; the limit 1..{@link ADMIN_CONNECT_ATTEMPTS_MAX}.
+ */
+function connectAttemptsQueryOf(req: Request, now: Date): ConnectAttemptsQuery {
+  const p = new URL(req.url).searchParams;
+  const b = windowBoundsOf(req);
+  const to = b.to ?? now;
+  const from = b.from ?? new Date(to.getTime() - ADMIN_CONNECT_ATTEMPTS_DEFAULT_DAYS * DAY_MS);
+  const window = clampedWindow(from, to, ADMIN_CONNECT_ATTEMPTS_MAX_DAYS)
+    ?? { from: new Date(now.getTime() - ADMIN_CONNECT_ATTEMPTS_DEFAULT_DAYS * DAY_MS), to: now };
+  const n = pagingNumber(p.get("limit"));
+  return {
+    window, account: uuidParamOf(p.get("account")), cursor: uuidParamOf(p.get("cursor")),
+    limit: n && n > 0 ? Math.min(ADMIN_CONNECT_ATTEMPTS_MAX, n) : ADMIN_CONNECT_ATTEMPTS_MAX,
+  };
 }
 
 /** `?cursor=&limit=` for the storage read, on the sync roster's terms (1..{@link ADMIN_STORAGE_MAX}). */
