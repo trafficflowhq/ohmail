@@ -8,6 +8,7 @@ import {
 } from "@trafficflow/core/mail";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
+  ImapDeadline, IMAP_META_DEADLINE_MS,
   isImapBoundExceeded, loopbackHarnessReason, googleAuthHint, type ImapConfig, type MailboxAdapter, type CredMetaAuth,
   type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
@@ -9621,7 +9622,42 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               /* AND OVER A HOLDER THE ROW ALREADY SHOWS RENEWING, THE PRESS IS REFUSED, with the
                  holder named: setup has not asked the claim question yet. The phone door's 409. */
               const seen = await liveForeignHolder(db, mailboxId, installId).catch(() => null);
-              if (seen?.answer === "held") {
+              let holder = seen?.answer === "held" ? seen.holder : null;
+              /* THE ROW CANNOT SAY (not looked yet, or unreadable), SO THIS DOOR LOOKS, as the phone's
+                 does and under the same ceiling. The phone's door has looked before this one. */
+              if (holder === null && seen?.answer !== "free" && organizerKind !== "mobile") {
+                const rt = runtimes.get(mailboxId);
+                let looked: LeasePeekAnswer;
+                try {
+                  looked = rt === undefined
+                    ? { answer: "unreadable", op: "no_lease_peek_io", cause: undefined }
+                    : await ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline").race(rt.peekOrganizer());
+                } catch (err) {
+                  /* Captured: a look that threw or ran out of time is the unreadable answer below. */
+                  looked = { answer: "unreadable", op: "list_claims", cause: err };
+                }
+                if (looked.answer === "unreadable") {
+                  log("local_mailbox_organize_refused", {
+                    verdict: "unreadable",
+                    op: looked.op,
+                    reason: "the row does not say who organizes this mailbox and the claim folder could "
+                      + "not be read in time, so nothing was written; the next press looks again",
+                  });
+                  return new Response(
+                    JSON.stringify({
+                      error: { code: "organizer_unreadable", message: "whether another install organizes this mailbox could not be read" },
+                    }),
+                    { status: 503, headers: { "content-type": "application/json" } },
+                  );
+                }
+                if (looked.answer === "held" && looked.holder.installId !== installId) {
+                  holder = { name: organizerDisplayName(looked.holder.displayName) ?? "", kind: looked.holder.kind };
+                  /* The engine's own look records the holder; it stays the only writer of those columns. */
+                  void rt?.syncUntilQuiet(undefined, { force: true })
+                    .catch(() => { /* the drain reports its own failures */ });
+                }
+              }
+              if (holder !== null) {
                 log("local_mailbox_organize_refused", {
                   verdict: "held",
                   reason: "another install is renewing its claim and this press did not ask to take "
@@ -9630,7 +9666,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 return new Response(
                   JSON.stringify({
                     error: { code: "organized_elsewhere", message: "another install is organizing this mailbox" },
-                    holder: seen.holder,
+                    holder,
                   }),
                   { status: 409, headers: { "content-type": "application/json" } },
                 );

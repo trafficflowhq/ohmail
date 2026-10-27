@@ -36,9 +36,13 @@ class MemoryMetaFolder implements LeaseIo {
 
 const EMPTY: ChangeBatch = { creates: [], moves: [], flagChanges: [], deletes: [], newCursor: { folders: {} } };
 
-function quietMailbox(meta: MemoryMetaFolder): (cfg: ImapConfig) => MailboxAdapter & { leaseIo(): LeaseIo } {
+function quietMailbox(meta: MemoryMetaFolder): (cfg: ImapConfig) => MailboxAdapter & {
+  leaseIo(): LeaseIo; leasePeekIo(): { listClaims(): Promise<RawClaimMessage[]> };
+} {
   return () => ({
     leaseIo: () => meta,
+    // The read-only look the real adapter has: the consent door looks before it admits a join.
+    leasePeekIo: () => ({ listClaims: () => meta.listClaims() }),
     async connect(): Promise<void> {},
     async close(): Promise<void> {},
     async capabilities(): Promise<ImapCapabilities> {

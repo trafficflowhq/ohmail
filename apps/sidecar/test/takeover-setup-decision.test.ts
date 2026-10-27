@@ -1,12 +1,12 @@
 import { rmSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
   OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
-import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
+import { decideLease, formatClaim, parseClaim, type OrganizerClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { folderState, mailboxes, messageInstances, messages, organizerRequests, rules } from "@trafficflow/db";
 import { freshDataDir } from "./_datadir.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -39,24 +39,55 @@ class MemoryMetaFolder implements LeaseIo {
 
 const EMPTY: ChangeBatch = { creates: [], moves: [], flagChanges: [], deletes: [], newCursor: { folders: {} } };
 
-function mailbox(
-  meta: MemoryMetaFolder, moves: Array<{ from: string; to: string }>,
-  /** Holds every peek until it resolves — the first look still in flight. */
-  peekGate: Promise<void> = Promise.resolve(),
+/** How the mail server's claim folder answers the engine: held, failing or lagging reads. */
+interface FolderView {
+  /** Holds the engine's FIRST look until it resolves — the first look still in flight. */
+  firstLook?: Promise<void>;
   /** Holds the GATE's lease read — the claim not landed yet. Agreeing wakes the gate at once. */
-  leaseGate: Promise<void> = Promise.resolve(),
-) {
+  leaseGate?: Promise<void>;
+  /** Every look throws: the claim folder cannot be read. */
+  looksFail?: boolean;
+  /** Every look and every lease read throws: the mail server does not answer. */
+  offline?: boolean;
+  /** A holder the looks, and the gate's first lease read, do not see: a lagging view of the folder. */
+  missing?: { installId: string; looks: boolean; firstLeaseRead: boolean };
+  /** Holds the gate's first lease read, once taken, until it resolves. */
+  afterFirstLeaseRead?: () => Promise<void>;
+  /** Looks and lease reads so far. */
+  looks?: number;
+  leaseReads?: number;
+}
+
+function mailbox(meta: MemoryMetaFolder, moves: Array<{ from: string; to: string }>, view: FolderView = {}) {
+  const seen = (all: RawClaimMessage[], hide: boolean | undefined) => (hide && view.missing
+    ? all.filter((c) => !c.raw.includes(`X-Ohmail-Install-Id: ${view.missing!.installId}`)) : all);
   return (_cfg: ImapConfig): MailboxAdapter & {
     leaseIo(): LeaseIo; leasePeekIo(): { listClaims(): Promise<RawClaimMessage[]> };
   } => ({
     leaseIo: () => new Proxy(meta, {
       get(target, key) {
-        if (key === "listClaims") return async () => { await leaseGate; return target.listClaims(); };
+        if (key === "listClaims") {
+          return async () => {
+            await view.leaseGate;
+            if (view.offline) throw new Error("the mail server did not answer");
+            view.leaseReads = (view.leaseReads ?? 0) + 1;
+            const read = seen(await target.listClaims(), view.leaseReads === 1 && view.missing?.firstLeaseRead);
+            if (view.leaseReads === 1) await view.afterFirstLeaseRead?.();
+            return read;
+          };
+        }
         const value = Reflect.get(target, key) as unknown;
         return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
       },
     }),
-    leasePeekIo: () => ({ listClaims: async () => { await peekGate; return meta.listClaims(); } }),
+    leasePeekIo: () => ({
+      listClaims: async () => {
+        view.looks = (view.looks ?? 0) + 1;
+        if (view.looks === 1) await view.firstLook;
+        if (view.looksFail || view.offline) throw new Error("the claim folder could not be read");
+        return seen(await meta.listClaims(), view.missing?.looks);
+      },
+    }),
     async connect(): Promise<void> {},
     async close(): Promise<void> {},
     async capabilities(): Promise<ImapCapabilities> {
@@ -79,6 +110,12 @@ function mailbox(
 const DAY = 24 * 60 * 60 * 1000;
 const SENDER = "b@b.test";
 
+/** Nothing about organizing was written: no consent and no stamp. */
+const nothingWritten = (r: { organizeConsentedAt: Date | null; takeoverAuthorizedAt: Date | null }) => {
+  expect(r.organizeConsentedAt, "a consent was written").toBeNull();
+  expect(r.takeoverAuthorizedAt, "a takeover stamp was written").toBeNull();
+};
+
 describe("the takeover path's first decision is kept", () => {
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
@@ -98,7 +135,7 @@ describe("the takeover path's first decision is kept", () => {
       imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
       address: "owner@trafficflow.test", machineName: "the new laptop",
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
-      adapterFactory: mailbox(meta, moves, undefined, leaseGate), log: () => {},
+      adapterFactory: mailbox(meta, moves, { leaseGate }), log: () => {},
     });
     cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
     await sidecar.start();
@@ -247,15 +284,17 @@ describe("the takeover path's first decision is kept", () => {
  * THE CLAIM OVER A LIVE HOLDER FOLLOWS ONLY "ORGANIZE HERE INSTEAD". Setup's
  * How-far-back step offered Agree for 11-26 s before the claim question landed, and an Agree in
  * that window took a live organizer's mailbox: the door read the missing verb as a takeover. The
- * door now reads it as a join and refuses one over a row showing a live holder. To watch it fail:
- * make the route's `intent` `"takeover"` whatever the body says.
+ * door now reads it as a join, refuses one over a row showing a live holder, and LOOKS when the
+ * row cannot say (never looked, or unreadable): a holder found is a 409, a look that does not land
+ * a 503, and neither writes anything. To watch it fail: make the route's `intent` `"takeover"`
+ * whatever the body says, or drop the door's look.
  */
 describe("the organize door takes a live holder's mailbox only by name", () => {
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
   /** `ageMs` null: no claim at all. 0: a holder renewing now. */
-  async function boot(ageMs: number | null, opts: { holdFirstLook?: boolean } = {}) {
+  async function boot(ageMs: number | null, opts: { holdFirstLook?: boolean; looksFail?: boolean } = {}) {
     const meta = new MemoryMetaFolder();
     if (ageMs !== null) {
       const at = new Date(Date.now() - ageMs);
@@ -265,14 +304,17 @@ describe("the organize door takes a live holder's mailbox only by name", () => {
       }));
     }
     let release: () => void = () => {};
-    const gate = opts.holdFirstLook ? new Promise<void>((r) => { release = r; }) : Promise.resolve();
+    const view: FolderView = {
+      ...(opts.holdFirstLook ? { firstLook: new Promise<void>((r) => { release = r; }) } : {}),
+      ...(opts.looksFail ? { looksFail: true } : {}),
+    };
     const dataDir = await freshDataDir("ohmail-organize-door-");
     const sidecar: Sidecar = await createSidecar({
       dataDir,
       imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
       address: "owner@trafficflow.test", machineName: "the second computer",
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
-      adapterFactory: mailbox(meta, [], gate), log: () => {},
+      adapterFactory: mailbox(meta, [], view), log: () => {},
     });
     cleanups.push(async () => { release(); await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
     const started = sidecar.start();
@@ -281,13 +323,14 @@ describe("the organize door takes a live holder's mailbox only by name", () => {
       method, headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }));
-    const organize = (body: Record<string, unknown>) =>
-      call("POST", `/local/mailboxes/${sidecar.world.mailboxId}/organize`, { screening: { scope: "window" }, ...body });
-    const row = async () => (await sidecar.db.select().from(mailboxes).where(eq(mailboxes.id, sidecar.world.mailboxId)))[0]!;
+    const organize = (body: Record<string, unknown>, id: string = sidecar.world.mailboxId) =>
+      call("POST", `/local/mailboxes/${id}/organize`, { screening: { scope: "window" }, ...body });
+    const row = async (id: string = sidecar.world.mailboxId) =>
+      (await sidecar.db.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]!;
     const listed = async () => ((await (await call("GET", "/mailboxes")).json()) as { items: Array<Record<string, unknown>> })
       .items.find((m) => m.id === sidecar.world.mailboxId)!;
     const liveClaimStands = () => meta.claims.some((c) => c.raw.includes("local:w-live"));
-    return { sidecar, organize, row, listed, liveClaimStands, release, started, meta };
+    return { sidecar, organize, row, listed, liveClaimStands, release, started, meta, view };
   }
 
   it("a press without the takeover verb over a live holder is refused, the holder named, nothing written", async () => {
@@ -312,18 +355,40 @@ describe("the organize door takes a live holder's mailbox only by name", () => {
     expect((await w.row()).takeoverIntent).toBe("takeover");
   }, 60_000);
 
-  it("a press before the first look lands is a join, and the fence yields to the live holder", async () => {
+  it("a press before the first look lands: the door looks, refuses with the holder named, and writes nothing", async () => {
     const w = await boot(0, { holdFirstLook: true });
+    await vi.waitFor(() => expect(w.view.looks, "the engine's first look has not started").toBeGreaterThan(0));
     expect((await w.listed()).organizerChecked, "the list says the look has not answered").toBe(false);
     const res = await w.organize({});
-    expect(res.status, "the row cannot say yet, so the press is admitted").toBe(200);
-    expect((await w.row()).takeoverIntent, "but only as a join").toBe("join");
+    expect(res.status, "the row could not say, and the press was admitted over a live holder").toBe(409);
+    expect(((await res.json()) as { holder?: { name?: string } }).holder?.name).toBe("W-live");
+    nothingWritten(await w.row());
     w.release();
     await w.started;
     await w.sidecar.syncUntilQuiet();
-    expect((await w.row()).organizerRole, "a join yields to a live claim").toBe("reader");
+    expect((await w.row()).organizerRole).toBe("reader");
     expect(w.liveClaimStands(), "the live organizer keeps its mailbox").toBe(true);
     expect((await w.listed()).organizerChecked, "the look answered").toBe(true);
+  }, 60_000);
+
+  it("a look that does not land is a 503, and nothing is written", async () => {
+    const w = await boot(0, { looksFail: true });
+    expect((await w.row()).organizerState, "the row says nothing about the holder").toBeNull();
+    const res = await w.organize({});
+    expect(res.status, "a press was admitted over a folder nobody could read").toBe(503);
+    expect(((await res.json()) as { error?: { code?: string } }).error?.code).toBe("organizer_unreadable");
+    nothingWritten(await w.row());
+  }, 60_000);
+
+  it("a mailbox this install runs no engine for cannot be looked at: a 503, and nothing is written", async () => {
+    const w = await boot(0);
+    const [orphan] = await w.sidecar.db.insert(mailboxes).values({
+      accountId: w.sidecar.world.accountId, provider: "imap", address: "second@trafficflow.test",
+      status: "connected", organizerRole: "reader",
+    }).returning({ id: mailboxes.id });
+    const res = await w.organize({}, orphan!.id);
+    expect(res.status, "a press was admitted with nothing to look with").toBe(503);
+    nothingWritten(await w.row(orphan!.id));
   }, 60_000);
 
   it.each([["no holder", null], ["a stopped holder", 12 * DAY]] as const)(
@@ -335,4 +400,203 @@ describe("the organize door takes a live holder's mailbox only by name", () => {
       await w.sidecar.syncUntilQuiet();
       expect((await w.row()).organizerRole).toBe("organizer");
     }, 60_000);
+});
+
+/**
+ * ADDING A MAILBOX ANOTHER INSTALL ORGANIZES NEVER TAKES IT OVER SILENTLY. Desktop 0.30.5 beside a
+ * self-hosted server: Agree pressed straight after Connect, before the new mailbox's first look
+ * landed, wrote the desktop's claim and the server became a reader (1 of 4 adds). The door now
+ * looks when the row cannot say, and a join that won on a read missing the holder yields at its
+ * confirm read.
+ */
+describe("adding a mailbox a self-hosted server organizes", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
+
+  const HOLDER = "cloud:selfhost";
+  const installIdOf = (c: RawClaimMessage) => (parseClaim(c.raw) as OrganizerClaim | null)?.installId;
+
+  /** The desktop's own mailbox, and a second one whose server holds the self-host's live claim. */
+  async function boot(view: FolderView) {
+    const desk = { meta: new MemoryMetaFolder(), view: {} as FolderView };
+    const held = { meta: new MemoryMetaFolder(), view };
+    await held.meta.appendClaim(formatClaim({
+      installId: HOLDER, kind: "cloud", displayName: "localhost:6080",
+      heartbeat: new Date(Date.now() - 30_000), claimedAt: new Date(Date.now() - 20 * 60_000), nonce: "sh",
+      authorizedAt: new Date(Date.now() - 20 * 60_000), capabilities: ["requests"],
+    }));
+    const byLogin = new Map([
+      ["desk@trafficflow.test", mailbox(desk.meta, [], desk.view)],
+      ["second@trafficflow.test", mailbox(held.meta, [], held.view)],
+    ]);
+    const dataDir = await freshDataDir("ohmail-add-held-");
+    const sidecar: Sidecar = await createSidecar({
+      dataDir,
+      imap: {
+        host: "127.0.0.1", port: 993, secure: true,
+        auth: { user: "desk@trafficflow.test", pass: "not-dialled-password-password" },
+        smtp: { host: "smtp-a.invalid", port: 587, secure: false },
+      },
+      address: "desk@trafficflow.test", machineName: "the desktop",
+      pollIntervalMs: 60 * 60 * 1000,
+      keks: { 1: Buffer.alloc(32, 7) },
+      adapterFactory: (cfg) => {
+        const make = byLogin.get((cfg.auth as { user: string }).user);
+        if (make === undefined) throw new Error("a login this case has no server for");
+        return make(cfg);
+      },
+      log: () => {},
+    });
+    cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
+    await sidecar.start();
+    const call = (method: string, path: string, body?: unknown) => sidecar.handle(new Request(`http://engine.invalid${path}`, {
+      method, headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }));
+    /** Connect: Settings → Add mailbox, on this computer's own route. */
+    const connect = async (): Promise<string> => {
+      const res = await call("POST", "/local/mailboxes", {
+        provider: "imap", address: "second@trafficflow.test",
+        imap: { host: "127.0.0.1", port: 993, secure: true, user: "second@trafficflow.test", pass: "second-password-second" },
+        smtp: { host: "smtp-b.invalid", port: 587, secure: false },
+      });
+      expect(res.status, await res.clone().text()).toBe(201);
+      return ((await res.json()) as { id: string }).id;
+    };
+    /** Agree, as setup's window step sends it before any claim question: a join. */
+    const agree = (id: string) => call("POST", `/local/mailboxes/${id}/organize`, { screening: { scope: "window" }, intent: "join" });
+    const row = async (id: string) => (await sidecar.db.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]!;
+    /** The self-hosted server's own next pass, over the folder as it now stands. */
+    const holderNext = () => decideLease({
+      self: { installId: HOLDER, kind: "cloud", displayName: "localhost:6080", lastNonce: "sh" },
+      claims: held.meta.claims.map((c) => parseClaim(c.raw, c.ref)!).filter(Boolean),
+      now: new Date(Date.now() + 30_000),
+    }).verdict;
+    return { sidecar, connect, agree, row, holderNext, claims: () => held.meta.claims.map(installIdOf) };
+  }
+
+  it("Agree straight after Connect, before the first look lands: refused with the holder named, nothing written", async () => {
+    let release!: () => void;
+    const view: FolderView = { firstLook: new Promise<void>((r) => { release = r; }) };
+    const w = await boot(view);
+    cleanups.push(() => release());
+    const id = await w.connect();
+    await vi.waitFor(() => expect(view.looks, "the new mailbox's first look has not started").toBeGreaterThan(0));
+    const res = await w.agree(id);
+    expect(res.status, "the desktop took over a mailbox the server organizes").toBe(409);
+    expect(((await res.json()) as { holder?: unknown }).holder).toEqual({ name: "localhost:6080", kind: "cloud" });
+    nothingWritten(await w.row(id));
+    release();
+    await w.sidecar.syncUntilQuiet();
+    expect((await w.row(id)).organizerRole).toBe("reader");
+    expect(w.claims(), "the desktop's claim stands beside the server's").toEqual([HOLDER]);
+    expect(w.holderNext()).toBe("organize");
+  }, 60_000);
+
+  it("a look and a first lease read that both miss the holder: the confirm read yields, and the server keeps organizing", async () => {
+    const view: FolderView = { missing: { installId: HOLDER, looks: true, firstLeaseRead: true } };
+    const w = await boot(view);
+    const id = await w.connect();
+    expect((await w.agree(id)).status, "a look that saw nobody admits the join").toBe(200);
+    await w.sidecar.syncUntilQuiet();
+    expect(view.leaseReads, "the gate never read the folder").toBeGreaterThan(1);
+    expect((await w.row(id)).organizerRole, "the desktop organizes beside a live holder").toBe("reader");
+    expect(w.claims(), "the desktop's claim stands beside the server's").toEqual([HOLDER]);
+    expect(w.holderNext(), "the server stands down on its next pass").toBe("organize");
+  }, 60_000);
+});
+
+/** TWO INSTALLS AGREE ON ONE MAILBOX NOBODY ORGANIZES, both gates reading the empty folder before either claim lands. */
+describe("two installs agree on one mailbox nobody organizes", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
+
+  it("exactly one organizes, and the other reads and names it", async () => {
+    const meta = new MemoryMetaFolder();
+    let arrived = 0;
+    let open!: () => void;
+    const bothRead = new Promise<void>((r) => { open = r; });
+    const afterFirstLeaseRead = async (): Promise<void> => { arrived += 1; if (arrived === 2) open(); await bothRead; };
+    const install = async (name: string) => {
+      const dataDir = await freshDataDir("ohmail-two-agree-");
+      const sidecar: Sidecar = await createSidecar({
+        dataDir,
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+        address: "owner@trafficflow.test", machineName: name,
+        pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
+        adapterFactory: mailbox(meta, [], { afterFirstLeaseRead }), log: () => {},
+      });
+      cleanups.push(async () => { open(); await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
+      await sidecar.start();
+      const agree = () => sidecar.handle(new Request(`http://engine.invalid/local/mailboxes/${sidecar.world.mailboxId}/organize`, {
+        method: "POST", headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ screening: { scope: "window" }, intent: "join" }),
+      }));
+      const row = async () => (await sidecar.db.select().from(mailboxes).where(eq(mailboxes.id, sidecar.world.mailboxId)))[0]!;
+      return { sidecar, agree, row };
+    };
+    const a = await install("laptop-a");
+    const b = await install("laptop-b");
+    expect([(await a.agree()).status, (await b.agree()).status]).toEqual([200, 200]);
+    await Promise.all([a.sidecar.syncUntilQuiet(), b.sidecar.syncUntilQuiet()]);
+    const rows = { "laptop-a": await a.row(), "laptop-b": await b.row() };
+    const organizing = Object.entries(rows).filter(([, r]) => r.organizerRole === "organizer").map(([name]) => name);
+    expect(organizing, "both presses stood down, or both organize").toHaveLength(1);
+    const reader = Object.values(rows).find((r) => r.organizerRole === "reader");
+    expect(reader?.organizedByName).toBe(organizing[0]);
+    expect(meta.claims.map((c) => (parseClaim(c.raw) as OrganizerClaim).displayName)).toEqual(organizing);
+  }, 60_000);
+});
+
+/**
+ * AN OLDER PRESS NEVER REVERSES A NEWER ONE. "Organize here instead" on a laptop whose mail server
+ * does not answer stays on its row, unspent; the person then sets the mailbox up on the desktop
+ * and agrees, over a free folder. When the laptop's server answers again, the desktop keeps it.
+ */
+describe("an older press still unspent on another computer", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
+
+  it("does not take the mailbox from the computer the person agreed on later", async () => {
+    const meta = new MemoryMetaFolder();
+    const install = async (name: string, view: FolderView) => {
+      const dataDir = await freshDataDir("ohmail-older-press-");
+      const sidecar: Sidecar = await createSidecar({
+        dataDir,
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+        address: "owner@trafficflow.test", machineName: name,
+        pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
+        adapterFactory: mailbox(meta, [], view), log: () => {},
+      });
+      cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
+      await sidecar.start();
+      const press = (intent: "join" | "takeover") => sidecar.handle(new Request(`http://engine.invalid/local/mailboxes/${sidecar.world.mailboxId}/organize`, {
+        method: "POST", headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ screening: { scope: "window" }, intent }),
+      }));
+      const row = async () => (await sidecar.db.select().from(mailboxes).where(eq(mailboxes.id, sidecar.world.mailboxId)))[0]!;
+      return { sidecar, press, row };
+    };
+
+    const laptopView: FolderView = { offline: true };
+    const laptop = await install("laptop", laptopView);
+    expect((await laptop.press("takeover")).status).toBe(200);
+    await laptop.sidecar.syncUntilQuiet().catch(() => undefined);
+    expect((await laptop.row()).takeoverAuthorizedAt, "the laptop's press was spent").not.toBeNull();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const desktop = await install("desktop", {});
+    expect((await desktop.press("join")).status).toBe(200);
+    await desktop.sidecar.syncUntilQuiet();
+    expect((await desktop.row()).organizerRole).toBe("organizer");
+
+    laptopView.offline = false;
+    await laptop.sidecar.syncUntilQuiet();
+    await desktop.sidecar.syncUntilQuiet();
+    expect({
+      laptop: (await laptop.row()).organizerRole, desktop: (await desktop.row()).organizerRole,
+      claims: meta.claims.map((c) => (parseClaim(c.raw) as OrganizerClaim).displayName),
+    }, "the laptop's older press took the mailbox from the newer Agree")
+      .toEqual({ laptop: "reader", desktop: "organizer", claims: ["desktop"] });
+  }, 60_000);
 });

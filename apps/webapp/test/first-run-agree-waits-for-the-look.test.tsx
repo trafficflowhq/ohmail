@@ -8,19 +8,20 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
-import { FirstRun, HOLDER_CHECK_MS } from "../app/shell/FirstRun";
+import { FirstRun, HOLDER_CHECK_MS, HOLDER_REREAD_MS } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
 import { holderAnswered } from "../app/shell/reader-holder";
 import type { FirstRunHost, FirstRunOrganizeOutcome } from "../app/shell/first-run-host";
 import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding";
 
 /**
- * AGREE WAITS FOR THE FIRST LOOK AT WHO HOLDS THE MAILBOX. A second computer's
+ * SETUP WAITS FOR THE FIRST LOOK AT WHO HOLDS THE MAILBOX. A second computer's
  * How-far-back step offered "Agree and start organizing" for 11-26 s before the claim question
- * landed, and a press in that window took a live organizer's mailbox. The step now waits while
- * the door says it has not looked (`organizerChecked: false`), a live holder lands on the claim
+ * landed, and a press in that window took a live organizer's mailbox (0.30.5, 1 of 4 adds). The
+ * consent step now shows a waiting panel while the door says it has not looked
+ * (`organizerChecked: false`) and reads again every two seconds; a live holder lands on the claim
  * question, and only "Organize here instead" sends the takeover verb. HOW TO WATCH IT FAIL: make
- * `holderAnswered` answer `true` — the waiting case goes red.
+ * `holderAnswered` answer `true` — the waiting cases go red.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -46,11 +47,16 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-async function mount(first: OnboardingMailbox, answer: () => FirstRunOrganizeOutcome = () => "stored") {
+async function mount(
+  first: OnboardingMailbox, answer: () => FirstRunOrganizeOutcome = () => "stored",
+  /** What a re-read answers with; counted in `reads`. */
+  refresh: () => void | Promise<void> = () => undefined,
+) {
   let current: OnboardingFacts = {
     door: "local", mailbox: first, account: { onboardingCompletedAt: null }, ai: "unset", queuedSenders: 0,
   };
   const organizedWith: Array<Record<string, unknown>> = [];
+  const reads = { count: 0 };
   const el = document.createElement("div");
   document.body.appendChild(el);
   const root = createRoot(el);
@@ -77,7 +83,8 @@ async function mount(first: OnboardingMailbox, answer: () => FirstRunOrganizeOut
     const [, set] = React.useState(0);
     bump = () => set((n) => n + 1);
     return h(FirstRun, {
-      host, facts: current, onRefresh: () => bump?.(), onLeave: () => { /* left */ },
+      host, facts: current, onRefresh: () => { reads.count += 1; bump?.(); return refresh(); },
+      onLeave: () => { /* left */ },
       pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: "mb-1",
       organizedSince: "26 Sept 2026",
     });
@@ -111,7 +118,13 @@ async function mount(first: OnboardingMailbox, answer: () => FirstRunOrganizeOut
       current = { ...current, mailbox: { ...mailbox, organizeConsentedAt: current.mailbox!.organizeConsentedAt } };
       await act(async () => { bump?.(); });
     },
+    /** Time passing, as the stage's timers see it. */
+    wait: async (ms: number) => {
+      await act(async () => { vi.advanceTimersByTime(ms); for (let i = 0; i < 12; i++) await Promise.resolve(); });
+    },
+    button,
     organizedWith,
+    reads,
   };
 }
 
@@ -122,20 +135,49 @@ async function toWindow(s: Awaited<ReturnType<typeof mount>>) {
   expect(s.heading()).toBe(t.windowTitle);
 }
 
-describe("How far back waits for the first look", () => {
-  it("before the look answers, Agree is withheld and a press takes nothing", async () => {
+/** The waiting panel stands where the consent statement would: no statement, no way forward. */
+function waiting(s: Awaited<ReturnType<typeof mount>>, line: string = t.windowCheckingHolder) {
+  expect(s.heading(), "the consent step showed before the look answered").toBe(t.resumeCheckingTitle);
+  expect(s.text()).toContain(line);
+  expect(s.text(), "the consent statement was on screen").not.toContain(t.consentBody);
+  expect(s.button(t.continue)?.disabled, "Continue was offered before anybody looked").toBe(true);
+  expect(s.agree(), "Agree was offered before anybody looked").toBeUndefined();
+}
+
+describe("setup waits for the first look before it asks for consent", () => {
+  it("before the look answers, the waiting panel stands in for the consent statement and no press goes anywhere", async () => {
     const s = await mount(UNLOOKED);
-    await toWindow(s);
-    expect(s.text()).toContain(t.windowCheckingHolder);
-    expect(s.agree()?.disabled, "Agree was offered before anybody looked").toBe(true);
-    await s.press(t.agree);
+    waiting(s);
+    await s.press(t.continue);
     await s.submit();
+    waiting(s);
     expect(s.organizedWith, "a press before the look reached the door").toEqual([]);
   });
 
-  it("the look lands a LIVE holder: the claim question, and Organize here instead names the takeover", async () => {
+  it("while it waits it reads again every two seconds, one read at a time, and stops at the bound", async () => {
+    vi.useFakeTimers();
+    let hold = true;
+    let answer: () => void = () => undefined;
+    const s = await mount(UNLOOKED, undefined, () => (hold ? new Promise<void>((r) => { answer = r; }) : undefined));
+    const before = s.reads.count;
+    await s.wait(HOLDER_REREAD_MS);
+    expect(s.reads.count - before, "no read after two seconds").toBe(1);
+    for (let i = 0; i < 3; i++) await s.wait(HOLDER_REREAD_MS);
+    expect(s.reads.count - before, "a read went out while one was still in flight").toBe(1);
+    hold = false;
+    await act(async () => { answer(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
+    for (let i = 0; i < 3; i++) await s.wait(HOLDER_REREAD_MS);
+    expect(s.reads.count - before, "it did not read every two seconds").toBe(4);
+    for (let i = 0; i * HOLDER_REREAD_MS <= HOLDER_CHECK_MS; i++) await s.wait(HOLDER_REREAD_MS);
+    const atBound = s.reads.count;
+    for (let i = 0; i < 5; i++) await s.wait(HOLDER_REREAD_MS);
+    expect(s.reads.count, "it went on reading past the bound").toBe(atBound);
+    waiting(s, t.holderCheckSlow);
+  });
+
+  it("the look lands a LIVE holder: the claim question with no consent in between, and Organize here instead names the takeover", async () => {
     const s = await mount(UNLOOKED);
-    await toWindow(s);
+    waiting(s);
     await s.read(LIVE);
     expect(s.heading(), "the claim question did not come").toBe(t.elsewhereTitle);
     await s.press(t.continue);
@@ -145,10 +187,11 @@ describe("How far back waits for the first look", () => {
     expect(s.organizedWith.map((b) => b.intent)).toEqual(["takeover"]);
   });
 
-  it("CONTROL: the look lands nobody — Agree is offered and the press is a join", async () => {
+  it("CONTROL: the look lands nobody: the consent statement, then Agree is offered and the press is a join", async () => {
     const s = await mount(UNLOOKED);
-    await toWindow(s);
+    waiting(s);
     await s.read(NOBODY);
+    await toWindow(s);
     expect(s.text()).not.toContain(t.windowCheckingHolder);
     expect(s.agree()?.disabled).toBe(false);
     await s.press(t.agree);
@@ -157,7 +200,7 @@ describe("How far back waits for the first look", () => {
 
   it("CONTROL: the look lands a STOPPED holder — the claim question, and its default still claims", async () => {
     const s = await mount(UNLOOKED);
-    await toWindow(s);
+    waiting(s);
     await s.read(STOPPED);
     expect(s.heading()).toBe(t.elsewhereTitleStopped);
     await s.press(t.continue);
@@ -166,28 +209,44 @@ describe("How far back waits for the first look", () => {
     expect(s.organizedWith.map((b) => b.intent)).toEqual(["takeover"]);
   });
 
-  it("the door refuses over a holder the screen had not seen: nothing stored, the claim question next", async () => {
+  it("the door refuses over a holder the screen had not seen: nothing stored, it waits for the holder's name, then the claim question", async () => {
     let refuse = true;
     const s = await mount(NOBODY, () => (refuse ? "held" : "stored"));
     await toWindow(s);
-    await s.read(NOBODY);
     // The door has read the holder the window's facts do not show yet, and refuses the join.
     await s.press(t.agree);
     refuse = false;
+    waiting(s);
+    await s.read(NOBODY);
+    waiting(s);
     await s.read(LIVE);
     expect(s.organizedWith.map((b) => b.intent)).toEqual(["join"]);
     expect(s.heading()).toBe(t.elsewhereTitle);
   });
 
-  it("the wait is bounded: past HOLDER_CHECK_MS Agree is offered, as a join", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const s = await mount(UNLOOKED);
+  it("the door could not look: it says so, nothing is stored and the window stays", async () => {
+    const s = await mount(NOBODY, () => "unchecked");
     await toWindow(s);
-    expect(s.agree()?.disabled).toBe(true);
-    await act(async () => { vi.advanceTimersByTime(HOLDER_CHECK_MS + 1); });
-    expect(s.agree()?.disabled).toBe(false);
     await s.press(t.agree);
-    expect(s.organizedWith.map((b) => b.intent)).toEqual(["join"]);
+    expect(s.text()).toContain(t.holderCheckSlow);
+    expect(s.heading()).toBe(t.windowTitle);
+    expect(s.text(), "the run went on as if the press had been stored").not.toContain(t.aiTitle);
+  });
+
+  it("the wait is bounded: past HOLDER_CHECK_MS it says the check is slow, never offers consent or Agree, and Try again reads once", async () => {
+    vi.useFakeTimers();
+    const s = await mount(UNLOOKED);
+    await s.wait(HOLDER_CHECK_MS + 1);
+    waiting(s, t.holderCheckSlow);
+    const before = s.reads.count;
+    await s.press(t.resumeRetry);
+    expect(s.reads.count - before).toBe(1);
+    await s.wait(5 * HOLDER_REREAD_MS);
+    expect(s.reads.count - before, "Try again started reading on a timer").toBe(1);
+    waiting(s, t.holderCheckSlow);
+    expect(s.organizedWith).toEqual([]);
+    await s.read(NOBODY);
+    expect(s.heading(), "the answer after the bound did not open consent").toBe(t.consentTitle);
   });
 });
 
@@ -198,9 +257,11 @@ describe("holderAnswered reads the door's look", () => {
     expect(holderAnswered({ organizerRole: "organizer", organizerChecked: false })).toBe(true);
     expect(holderAnswered(null)).toBe(true);
   });
-  it("both catalogues carry the checking sentence", () => {
+  it("both catalogues carry the checking and the slow sentence", () => {
     expect(t.windowCheckingHolder).toBeTruthy();
     expect(de.onboarding.windowCheckingHolder).toBeTruthy();
+    expect(t.holderCheckSlow).toBeTruthy();
+    expect(de.onboarding.holderCheckSlow).toBeTruthy();
   });
 });
 

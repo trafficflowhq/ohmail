@@ -3707,6 +3707,20 @@ function probeCandidate(
   return uids[0] ?? null;
 }
 
+/**
+ * THE HOLDER A JOIN'S CONFIRM YIELDS TO, or null: another install's claim the read-back shows
+ * live, by its own folder clock, and renewed since its tenure began. A claim never renewed is a
+ * press racing ours, which the election ranks the same way on both sides.
+ */
+function liveHolderOfJoin(
+  claims: readonly ClaimRecord[], self: LeaseSelf, now: Date, staleAfterMs: number,
+): OrganizerClaim | null {
+  const election = runElection(withServerClock(claims), now, staleAfterMs);
+  const holder = election.ranked.find((c) => c.installId !== self.installId
+    && isClaimLive(c, election.clock, staleAfterMs) && writerStampOf(c) > c.claimedAt.getTime());
+  return holder === undefined ? null : namedHolder(holder, self.protocol ?? CLAIM_PROTOCOL);
+}
+
 export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResult> {
   const { io, self, now } = input;
   const log = input.log ?? ((): void => undefined);
@@ -3938,17 +3952,21 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   const priorOwn = claims
     .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
     .sort((a, b) => a.claimedAt.getTime() - b.claimedAt.getTime())[0];
-  const claimedAt = priorOwn?.claimedAt ?? now;
+  /* A JOIN'S FIRST CLAIM CARRIES NO PRESS AND STARTS ITS OWN TENURE, so while its confirm is
+     outstanding every install's election ranks it below any holder already there, one its read
+     missed included. The press goes on once the confirm stands (below). */
+  const joinWin = verdict.authorized && input.takeover?.intent === "join";
+  const claimedAt = joinWin ? now : (priorOwn?.claimedAt ?? now);
 
   /**
    * The press travels with the tenure, exactly as `claimedAt` does. The failure if not carried:
    * an authorized takeover writes a stamped claim; a minute later the same install renews on rule
    * 3, and a renewal writing no stamp replaces the winning claim with an UNPRESSED one — the next
    * election ranks it below the incumbent it displaced, and the takeover undoes itself. So an
-   * authorized win writes the press it rested on; every other win carries forward the prior
-   * claim's. The flag comes off the VERDICT, not `input.takeover !== null`: a press can be
-   * outstanding while the win comes from rules 3 or 4, and then nothing was taken over and
-   * nothing should be stamped.
+   * authorized takeover writes the press it rested on (a join, once confirmed, below); every other
+   * win carries forward the prior claim's. The flag comes off the VERDICT, not `input.takeover !==
+   * null`: a press can be outstanding while the win comes from rules 3 or 4, and then nothing was
+   * taken over and nothing should be stamped.
    */
   /**
    * And it is the NEWEST own claim that carries it, not `priorOwn`. `priorOwn` is the oldest by
@@ -3964,7 +3982,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
     .sort((a, b) => compareRecency(a, b, now))[0];
   const authorizedAt = verdict.authorized
-    ? (input.takeover?.authorizedAt ?? null)
+    ? (joinWin ? null : (input.takeover?.authorizedAt ?? null))
     : (newestOwn?.authorizedAt ?? null);
   /* The VERB travels with the tenure exactly as the press does, off the same two sources: an
      authorized win carries the verb it rested on, every other win carries forward the one the
@@ -3975,25 +3993,24 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     ? (input.takeover?.intent ?? "takeover")
     : (newestOwn?.intent ?? "takeover");
 
+  /** This tenure's claim; a confirmed join writes it twice, the second time with its press. */
+  const ownClaim = (fields: { nonce: string; heartbeat: Date; authorizedAt: Date | null }): string => formatClaim({
+    installId: self.installId,
+    kind: self.kind,
+    displayName: self.displayName,
+    claimedAt,
+    protocol: self.protocol ?? CLAIM_PROTOCOL,
+    intent,
+    capabilities: input.capabilities,
+    ...fields,
+  });
+
   const nonce = newNonce();
   /* RECORDED BEFORE IT IS WRITTEN — see {@link LeaseGateInput.onNonceMinted}. Nothing between this
      line and the APPEND, so a caller can always prove from what it wrote which claim is its own. */
   input.onNonceMinted?.(nonce);
   try {
-    await io.appendClaim(
-      formatClaim({
-        installId: self.installId,
-        kind: self.kind,
-        displayName: self.displayName,
-        heartbeat: now,
-        claimedAt,
-        nonce,
-        protocol: self.protocol ?? CLAIM_PROTOCOL,
-        authorizedAt,
-        intent,
-        capabilities: input.capabilities,
-      }),
-    );
+    await io.appendClaim(ownClaim({ nonce, heartbeat: now, authorizedAt }));
   } catch (err) {
     throw new LeaseUnavailableError(
       `the organizer claim in ${META_FOLDER} could not be renewed`,
@@ -4099,12 +4116,21 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
      just appended, which a caller's ring may already name. */
   const supersededOwn = (c: ClaimRecord): boolean =>
     !isMalformed(c) && c.installId === self.installId && c.nonce !== nonce && writtenByThisProcess(self, c.nonce);
-  const confirmed = decideLease({
+  const confirmClaims = verifyClaims.filter((c) => (c.ref === undefined || !displacedRefs.has(c.ref)) && !supersededOwn(c));
+  const elected = decideLease({
     self: { ...self, lastNonce: nonce },
-    claims: verifyClaims.filter((c) => (c.ref === undefined || !displacedRefs.has(c.ref)) && !supersededOwn(c)),
+    claims: confirmClaims,
     now,
     ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
   });
+  /* A JOIN YIELDS TO A RENEWING HOLDER ITS ELECTION READ MISSED, which a writer clock running ahead
+     can rank below the join's claim. */
+  const yieldTo = elected.verdict === "organize" && joinWin
+    ? liveHolderOfJoin(confirmClaims, self, now, staleWindowMs)
+    : null;
+  const confirmed: LeaseVerdict = yieldTo === null
+    ? elected
+    : { verdict: "stand_down", reason: reasonFor(yieldTo), by: yieldTo };
 
   if (confirmed.verdict !== "organize") {
     /* The loser releases its own claims and never the winner's — the election's rule, held here
@@ -4127,6 +4153,28 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     }
     log("lease_lost_race", { verdict: confirmed.verdict });
     return { verdict: confirmed, nonce: null, uidValidity: electionUidValidity, stamp: noBaseline };
+  }
+
+  /* A CONFIRMED JOIN TAKES ITS PRESS, the rule arm 4 states: unpressed, its tenure lost to any
+     "Organize here instead" still unspent elsewhere, however much older than this Agree. Written
+     once the confirm showed no holder to yield to, as a second claim a millisecond newer by this
+     writer's clock, so readers and the next renewal take it over the first, which goes with the
+     cleanup. Refused, the tenure organizes unpressed. A gate stopped between the two writes
+     leaves the press unspent on the row, and the next pass offering it finishes the join. */
+  let standingNonce = nonce;
+  let firstRef: unknown;
+  const unpressedJoin = !verdict.authorized && newestOwn?.intent === "join" && newestOwn.authorizedAt === null;
+  const joinPress = input.takeover?.intent === "join" && (joinWin || unpressedJoin) ? input.takeover.authorizedAt : null;
+  if (joinPress !== null) {
+    const pressed = newNonce();
+    input.onNonceMinted?.(pressed);
+    try {
+      await io.appendClaim(ownClaim({ nonce: pressed, heartbeat: new Date(now.getTime() + 1), authorizedAt: joinPress }));
+      firstRef = verifyClaims.find((c) => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce)?.ref;
+      standingNonce = pressed;
+    } catch (err) {
+      log("lease_join_press_failed", { op: "renew_claim" satisfies LeaseOp, err });
+    }
   }
 
   // WHAT THIS WIN DISPLACED, plus our own older copies. A takeover that lands half-applied is
@@ -4158,7 +4206,8 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       .filter((r): r is unknown => r !== undefined).sort(byUid)
     : [];
   const thisPass = residueMode === "remove" ? foreign.slice(0, RESIDUE_REMOVE_MAX_PER_PASS) : [];
-  const toRemove = [...new Set([...ourRefs, ...thisPass, ...verdict.displace])].sort(byUid);
+  const firstClaim = firstRef === undefined ? [] : [firstRef];
+  const toRemove = [...new Set([...ourRefs, ...firstClaim, ...thisPass, ...verdict.displace])].sort(byUid);
   let cleanupLanded = toRemove.length === 0;
   if (toRemove.length > 0) {
     let removalErr: unknown = null;
@@ -4219,7 +4268,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
         .filter((c): c is ClaimRecord => c !== null);
       const ownStanding = afterClaims
-        .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce);
+        .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === standingNonce);
       const stillRefs = new Set(after.map((m) => m.ref));
       /**
        * The read is complete, so an absent ref is an expunged one — while the UID GENERATION says
@@ -4283,8 +4332,11 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         // standing, our fresh claim wins the NEXT gate outright wherever the beaten claim is
         // weaker — continuation, with an empty displace list — and the displacement this cycle
         // still owes is never attempted again while the authorization is spent on the
-        // continuation.
-        await releaseRefs(ownStanding.map((c) => c.ref).filter((r): r is unknown => r !== undefined));
+        // continuation. A join's first claim goes too, if its cleanup left it.
+        await releaseRefs(afterClaims
+          .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId
+            && (c.nonce === standingNonce || c.nonce === nonce))
+          .map((c) => c.ref).filter((r): r is unknown => r !== undefined));
         throw new LeaseUnavailableError(
           `the organizer handover in ${META_FOLDER} could not be recorded (a displaced claim ` +
           `survived the expunge), so the takeover did not complete`,
@@ -4302,7 +4354,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       // exactly as it wins in the verify: our claim is released and the loss is reported as
       // held-by-them, and the press retries rather than steamrolling a live renewal.
       const finalElection = decideLease({
-        self: { ...self, lastNonce: nonce },
+        self: { ...self, lastNonce: standingNonce },
         claims: afterClaims,
         now,
         ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
@@ -4355,7 +4407,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       return { custody: "unproven" };
     }
     if (after.some((c): c is OrganizerClaim =>
-      !isMalformed(c) && c.installId === self.installId && c.nonce === nonce)) {
+      !isMalformed(c) && c.installId === self.installId && c.nonce === standingNonce)) {
       return { custody: "held", stamp };
     }
     /* OUR CLAIM IS GONE FROM UNDER THE COUNTERS. Decided over the survivors with this caller's own
@@ -4385,7 +4437,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     (c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce,
   );
   return {
-    verdict, nonce, uidValidity: electionUidValidity, stamp: proveAndStamp(),
+    verdict, nonce: standingNonce, uidValidity: electionUidValidity, stamp: proveAndStamp(),
     claimServerAt: written?.serverStamp ?? null,
   };
 }
