@@ -157,8 +157,14 @@ export function useSeenOnScroll({
         onJudgedRef.current?.();
       }
     };
+    // Only a key the pane itself scrolls with: never one typed into an editor inside it (a reply
+    // answered in place), nor one a handler already took.
     const armOnScrollKey = (e: KeyboardEvent) => {
-      if (SCROLL_KEYS.has(e.key)) userDrove.current = true;
+      if (e.defaultPrevented || !SCROLL_KEYS.has(e.key)) return;
+      const t = e.target instanceof Element ? e.target : null;
+      if (t?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) return;
+      if (t instanceof HTMLElement && t.isContentEditable) return;
+      userDrove.current = true;
     };
     // Both listeners sit on the scroller, so they only ever see input aimed at
     // THIS pane — the list and the stream each keep their own guard, and a wheel

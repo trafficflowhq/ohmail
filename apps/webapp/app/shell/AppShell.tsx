@@ -240,6 +240,7 @@ import {
   type ReplyEnvelopeEdit,
 } from "./compose-from";
 import { MessageChromeProvider, type BodyTarget } from "./message-chrome";
+import { useInPlaceHost } from "./stream-in-place";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
 import { SenderAuditPanel } from "./SenderAuditPanel";
 import { attributeMessages } from "./sender-audit";
@@ -1939,6 +1940,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * which it reads (`setReaderFor` for the narrow open); `replyTo` stays above both, because the
    * route transition closes the editor.
    */
+  const inPlaceHost = useInPlaceHost({ view: route.view, seedOwed, partition, receipts, conversationOf });
   /** May a send leave its editor at once: the connection's health read at the press (`send-handoff.ts`). */
   const mayHandOffFor = useMayHandOffFor({ stateKey: mailState.key, sync: syncStatus, hostOffline: hostConnection != null, engine, facts });
   const {
@@ -1952,7 +1954,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     composeForwardFiles, replyForwardFiles,
   } = useShellCompose({
     engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
-    fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
+    fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues, inPlaceHost,
     setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor,
   });
 
@@ -1965,7 +1967,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   const {
     bulkToggleTag, bulkVerbs, canDeleteMessage, canReplyAllTo, changeScreening, moveStayed, stayedFor, confirmSubjectRule,
     createTag, createTagAlone, dropTag, actedIds, lastActed, onMessageAction, onStageClickCapture,
-    onStreamAction, openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
+    openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
     revokeRule, rulePastMailOf, screeningForecast, screeningRules, tagAdmin, toggleTag,
   } = useShellVerbs({
     engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesReaderOnly,
@@ -2007,7 +2009,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
     shortcutsOpen, startFR, subjectRule,
     mailSend, openForward, sendReply, toggleReply,
-    createTagAlone, onMessageAction, onStreamAction, openSenderMenu, toggleTag,
+    createTagAlone, onMessageAction, openSenderMenu, toggleTag,
     replyTo, setReplyTo,
   });
   useOhboxVisitMark(demo ? null : engine, !demo && effectiveView === "ohbox"); // ohbox-visit.ts
@@ -2736,7 +2738,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onJumped={() => setJump(null)}
                 closeTo={closeCard?.view === "reads" ? closeCard.id : null}
                 onClosed={() => setCloseCard(null)}
-                onAction={onStreamAction}
+                onAction={onMessageAction}
                 onMarkAllRead={markAllRead}
                 onPick={reportPick}
               />
@@ -2784,7 +2786,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onJumped={() => setJump(null)}
                 closeTo={closeCard?.view === "receipts" ? closeCard.id : null}
                 onClosed={() => setCloseCard(null)}
-                onAction={onStreamAction}
+                onAction={onMessageAction}
                 onMarkAllRead={markAllRead}
                 onPick={reportPick}
               />

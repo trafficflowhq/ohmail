@@ -240,6 +240,8 @@ export interface ShellComposeInput {
    * Absent: never, and every send waits in its editor as before.
    */
   mayHandOffFor?: (mailboxId: string | null) => boolean;
+  /** A reading stream on screen answers this message in place (`stream-in-place.tsx`): no sheet. */
+  inPlaceHost?: (messageId: string) => boolean;
 }
 
 /** The record the shell composes with. Consumers destructure it: a memo may not depend on it. */
@@ -249,6 +251,7 @@ export function useShellCompose({
   engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
   fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
   setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor,
+  inPlaceHost,
 }: ShellComposeInput) {
   /** The route as it is now, for an ending that arrives after the person moved on. */
   const routeViewRef = useRef(route.view);
@@ -493,7 +496,7 @@ export function useShellCompose({
       // MOBILE. Under 700px the reading column is `display:none` (app.css), so an inline
       // reply would mount into a pane nobody can see and `r` would look broken — measured on
       // the shipped build at 390px. There, the reader IS the open message, so open it.
-      if (readColumnHidden()) setReaderFor(messageId);
+      if (readColumnHidden() && !inPlaceHost?.(messageId)) setReaderFor(messageId);
     };
     resumeLane(messageId, open, all);
   });
@@ -604,7 +607,7 @@ export function useShellCompose({
       setReplyTo(messageId);
       setReplyBody(body);
       // The same mobile rule `openReply` states: below 700px the dock lives in the reader.
-      if (readColumnHidden()) setReaderFor(messageId);
+      if (readColumnHidden() && !inPlaceHost?.(messageId)) setReaderFor(messageId);
     };
     // The forward's own lane: its scratch, or the account's forward row for this message.
     const resume = (): void => resumeLane(replyDraftKey("forward", messageId), open, false);
@@ -871,7 +874,7 @@ export function useShellCompose({
     writeReplyDraft(messageId, next);
     // Same mobile rule `openReply` states: under 700px the reading column is display:none,
     // so an editor mounted there is one nobody can see.
-    if (readColumnHidden()) setReaderFor(messageId);
+    if (readColumnHidden() && !inPlaceHost?.(messageId)) setReaderFor(messageId);
   });
 
   /**

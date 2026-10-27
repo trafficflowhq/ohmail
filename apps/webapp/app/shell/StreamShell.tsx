@@ -59,6 +59,17 @@ export interface StreamHandle {
    * moment a change to it can no longer be seen (`stream-bar.ts` waits for it).
    */
   whenOffScreen: (id: string, cb: () => void) => void;
+  /**
+   * A letter answered in place has just grown into its conversation: hold its own top, then
+   * scroll down (never up, at once) until its end meets the foot of the port.
+   */
+  reveal: (id: string) => void;
+  /**
+   * An answered letter is about to shrink (its dock closes): hold its own top, so the scroll-spy
+   * keeps it. `land`: and if its head is then above the port, bring it to the reading line. Only
+   * while the cursor is on it: a person who read on below it keeps the card they are reading.
+   */
+  hold: (id: string, land?: boolean) => void;
 }
 
 /**
@@ -189,7 +200,8 @@ export const StreamShell = forwardRef<
     const el = divRef.current;
     if (!el) return;
     const measure = () => {
-      const card = el.querySelector<HTMLElement>(".scast");
+      // An answered letter is wider than a card (`stream-in-place.tsx`): never the sample.
+      const card = el.querySelector<HTMLElement>(".scast:not(.in-place)");
       const w = card?.offsetWidth ?? 0;
       setCardWidth((prev) => (w > 0 && Math.abs(w - prev) >= 1 ? w : prev));
     };
@@ -801,10 +813,25 @@ export const StreamShell = forwardRef<
   }, []);
 
   useImperativeHandle(ref, () => ({
+    hold(id: string, land = false) {
+      const el = divRef.current;
+      const item = el?.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(id)}"]`);
+      if (!el || !item || curRef.current !== id) return;
+      toggledRef.current(id, true);
+      if (land && cssRect(item).top < cssRect(el).top - 0.5) observerRef.current.own(() => this.scrollTo(id));
+    },
     element: () => divRef.current,
     onScreen: inPort,
     whenOffScreen: (id: string, cb: () => void) => {
       offScreenRef.current.set(id, cb);
+    },
+    reveal: (id: string) => {
+      const el = divRef.current;
+      const item = el?.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(id)}"]`);
+      if (!el || !item) return;
+      toggledRef.current(id, true);
+      const below = cssRect(item).bottom - cssRect(el).bottom;
+      if (below > 0.5) observerRef.current.own(() => el.scrollTo({ top: el.scrollTop + below, behavior: "instant" }));
     },
     scrollTo: (id: string, onLanded?: () => void) => {
       const el = divRef.current;

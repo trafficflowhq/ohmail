@@ -15,14 +15,14 @@
  */
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { countWhen, presentsUnread } from "@ohmail/client-engine";
+import { countWhen, isOwnOutbound, presentsUnread } from "@ohmail/client-engine";
 import type { EngineMessage, MessageBody, TagDTO, WaterlineMeta } from "@ohmail/client-engine";
 import { ListPane, ListRows, MessageRow, Waterline } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, waterlineStamp, withheldCopyKey } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
-import { useRowBadgeCopy } from "../shell/row-copy";
+import { useRowBadgeCopy, useSentLabel } from "../shell/row-copy";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { useListWindow } from "../shell/list-window";
@@ -37,6 +37,8 @@ import { readLandedCard } from "../shell/stream-landing-read";
 import { useBodyStamp } from "../shell/body-slice";
 import { useStreamNear } from "../shell/stream-near";
 import { afterPaint, useVisit } from "../shell/visit";
+import { useStreamInPlace } from "../shell/stream-in-place";
+import { ThreadStrip } from "../shell/ThreadStrip";
 
 export function ReceiptsView({
   settled,
@@ -241,6 +243,16 @@ export function ReceiptsView({
     return m;
   }, [streamIds]);
   const pileIndexOf = useCallback((id: string) => pileIndex.get(id) ?? -1, [pileIndex]);
+  /* A letter answered here becomes its conversation in place (`stream-in-place.tsx`). */
+  const answered = useStreamInPlace({
+    pileHas: (id) => pileIndex.has(id),
+    stamp: messages,
+    streamRef,
+    tags,
+    now,
+    onAction,
+  });
+  const sentLabelOf = useSentLabel();
   /** Are the cards drawn yet — see "the rows paint before the stream" below. */
   const [streamArmed, setStreamArmed] = useState(false);
   const stream = useStreamWindow({
@@ -514,27 +526,33 @@ export function ReceiptsView({
         onSelect={onCur}
         onToggle={onToggle}
         onAction={onAction}
+        inPlace={answered.inPlace(m)}
       />
     );
   };
 
   /* `windowIndex` is passed explicitly by each mapper — never `.map(row)`, which would stamp the
      array index as the slot (the Ohbox's warning). */
-  const row = (m: EngineMessage, windowIndex: number, inSet: { size: number; position: number }) => (
+  const row = (m: EngineMessage, windowIndex: number, inSet: { size: number; position: number }) => {
+    /* Answered in place: the row reads as the Ohbox's for a conversation ending in your reply. */
+    const placed = answered.rowOf(m.id);
+    const sent = placed && isOwnOutbound(placed.newest) ? sentLabelOf(placed.newest) : null;
+    const shown = sent ? placed!.newest : m;
+    return (
     <MessageRow
       spoken={rowBadge.spoken}
       key={m.id}
       id={m.id}
       windowIndex={windowIndex}
       inSet={inSet}
-      from={senderName(m)}
-      address={rowAddress(m)}
-      {...senderCheckRow(m)}
-      {...avatarOf(m)}
+      from={sent ? sent.label : senderName(m)}
+      address={sent ? undefined : rowAddress(m)}
+      {...(sent ? {} : senderCheckRow(m))}
+      {...(sent ? sent.avatar : avatarOf(m))}
       participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
-      {...rowStamp(m, now, absoluteTime, onToggleTime)}
+      {...rowStamp(shown, now, absoluteTime, onToggleTime)}
       subject={m.subject}
-      preview={m.snippet}
+      preview={shown.snippet}
       amount={m.amount}
       /* `data-unseen` for the sweep; NO dot — newness is position relative to the line, exactly as
          in Reads, and read state renders truthfully beside it (a `\Seen` receipt takes the quiet
@@ -548,9 +566,18 @@ export function ReceiptsView({
       dotless
       selected={current === m.id}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
+      follow={placed ? (
+        <ThreadStrip
+          channel={placed.walk}
+          members={placed.members}
+          onOpen={() => jump(m.id)}
+          conversationOf={answered.conversationOf}
+        />
+      ) : undefined}
       onClick={() => jump(m.id)}
     />
-  );
+    );
+  };
 
   return (
     <section className="view split view-receipts">

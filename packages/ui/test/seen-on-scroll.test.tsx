@@ -176,6 +176,27 @@ describe("useSeenOnScroll", () => {
     expect(onSeen).toHaveBeenCalledWith("f1");
   });
 
+  it("a key typed into an editor inside the scroller, or one already handled, does not arm it", () => {
+    // A reply typed in place sits inside the stream: its spaces and caret keys scroll nothing.
+    const onSeen = vi.fn();
+    const { getByTestId } = render(<Harness onSeen={onSeen} />);
+    const io = MockIntersectionObserver.instances.at(-1)!;
+    const scroller = getByTestId("scroller");
+    const rich = document.createElement("div");
+    rich.setAttribute("contenteditable", "true");
+    const inner = rich.appendChild(document.createElement("p"));
+    for (const tag of ["input", "textarea", "select"]) scroller.appendChild(document.createElement(tag));
+    scroller.appendChild(rich);
+    for (const t of [inner, ...scroller.querySelectorAll("input, textarea, select")]) {
+      for (const key of [" ", "ArrowDown", "End"]) fireEvent.keyDown(t, { key });
+    }
+    const handled = new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true });
+    handled.preventDefault();
+    scroller.dispatchEvent(handled);
+    io.callback([entryFor(io.observed[0], 100)]);
+    expect(onSeen).not.toHaveBeenCalled();
+  });
+
   it("input aimed at a row inside the scroller counts — the listener is on the pane", () => {
     // A wheel is delivered to the element under the pointer, which is a row, and reaches
     // the scroller by bubbling. Move the listeners to the document and this still passes

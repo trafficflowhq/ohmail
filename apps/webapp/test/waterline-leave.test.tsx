@@ -60,6 +60,14 @@ function streamCards(stream: Element): HTMLElement[] {
   return [...stream.querySelectorAll<HTMLElement>(".scast[data-sid]")];
 }
 
+/** A letter answered in place is its conversation: taller, and taller still with the dock open. */
+const grown = (el: Element): number =>
+  !el.classList.contains("in-place") ? 0 : el.querySelector(".reply-dock") ? 700 : 300;
+const grownAbove = (stream: Element, i: number): number =>
+  [...stream.querySelectorAll<HTMLElement>(".scast.in-place")]
+    .filter((c) => Number(c.dataset.sid?.slice(1)) < i)
+    .reduce((y, c) => y + grown(c), 0);
+
 /** `.stream` is the viewport; each `.scast` sits at its index times CARD_H, minus the offset. */
 function rectFor(el: Element): DOMRect {
   const zero = { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) };
@@ -72,14 +80,15 @@ function rectFor(el: Element): DOMRect {
     // Placed at its PILE index (the ids are r<index>), so the window may mount any run of it.
     const i = Number((el as HTMLElement).dataset.sid?.slice(1));
     if (!Number.isFinite(i)) return zero as DOMRect;
-    const top = i * CARD_H + (i >= shift.from ? shift.by : 0) - (scrollTops.get(stream) ?? 0);
-    return { ...zero, top, bottom: top + CARD_H, height: CARD_H } as DOMRect;
+    const top = i * CARD_H + (i >= shift.from ? shift.by : 0) + grownAbove(stream, i) - (scrollTops.get(stream) ?? 0);
+    const height = CARD_H + grown(el);
+    return { ...zero, top, bottom: top + height, height } as DOMRect;
   }
   return zero as DOMRect;
 }
 
 function setStreamScroll(stream: Element, next: number): void {
-  const max = Math.max(0, pileSize * CARD_H - VIEW_H);
+  const max = Math.max(0, pileSize * CARD_H + grownAbove(stream, pileSize) - VIEW_H);
   scrollTops.set(stream, Math.min(Math.max(0, next), max));
   for (const c of streamCards(stream)) {
     const r = rectFor(c);
@@ -301,7 +310,7 @@ beforeEach(() => {
     configurable: true, get(this: Element) { return isStream(this) ? VIEW_H : 0; },
   });
   Object.defineProperty(Element.prototype, "scrollHeight", {
-    configurable: true, get(this: Element) { return isStream(this) ? pileSize * CARD_H : 0; },
+    configurable: true, get(this: Element) { return isStream(this) ? pileSize * CARD_H + grownAbove(this, pileSize) : 0; },
   });
   Object.defineProperty(Element.prototype, "scrollTop", {
     configurable: true,
@@ -667,5 +676,180 @@ describe("the streams are dotless; the sweep's attribute survives", () => {
     });
     expect(host!.querySelectorAll(".dot-unread")).toHaveLength(1);
     expect(host!.querySelector(".row[data-unseen]")).not.toBeNull();
+  });
+});
+
+/* ── a letter answered in place ─────────────────────────────────────────────────────────── */
+
+/** The view under the chrome the shell answers with: `replyTo`, the send lanes, the cursor. */
+let answer: { replyTo: string | null; phases: Record<string, string>; curs: string[] };
+let rerender: () => Promise<void> = async () => {};
+
+async function mountAnswering(view: "reads" | "receipts"): Promise<void> {
+  await unmount();
+  const { ReadsView } = await import("../app/views/ReadsView.js");
+  const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
+  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
+  answer = { replyTo: null, phases: {}, curs: [] };
+  const body = (m: { snippet: string }) => ({
+    text: m.snippet, state: "full", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
+  });
+  const common = {
+    settled: true, owed: false, tags: [], now: NOW, cur: "r1", onCur: (id: string) => { answer.curs.push(id); },
+    markSeen: (id: string) => { marked.push(id); },
+    onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.push(c); },
+    bodyOf: body, hydrateBody: () => {}, jumpTo: null, onJumped: () => {}, onAction: () => {},
+  };
+  const node = () => view === "reads"
+    ? h(ReadsView as never, {
+      ...common, aiChip: null, chipState: null, onChipState: () => {},
+      partition: { waterline: null, fresh: TEN.map((r) => msg(r, "ohmail/News")), seen: [] },
+    } as never)
+    : h(ReceiptsView as never, {
+      ...common, messages: TEN.map((r) => msg(r, "ohmail/Receipts")), waterline: null,
+      unreadCount: TEN.length, isUnread: (m: { unread: boolean }) => m.unread,
+    } as never);
+  const tree = () => wrap(h(MessageChromeProvider as never, {
+    value: {
+      nowAt: () => NOW, ownAddresses: [], absoluteTime: false, onToggleAbsoluteTime: () => {},
+      replyTo: answer.replyTo, replyBody: { text: "", html: "" },
+      onReplyBody: () => {}, closeReply: () => {}, sendReply: () => {},
+      replyEnvelope: null, replyFromId: null, replyAttachments: [], replySubjectEdit: null,
+      replySig: { mode: "following" }, replySendShowing: null,
+      replySendState: (lane: string) => ({ phase: answer.phases[lane] ?? "idle" }),
+      openSenderMenu: () => {}, openAttachmentPreview: () => {},
+      conversationOf: () => [], bodyOf: body, hydrateBody: () => {}, hydrateThread: () => {},
+    },
+    children: node(),
+  } as never), KeymapProvider);
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  rerender = async () => { await act(async () => { root!.render(tree()); await Promise.resolve(); }); };
+  await rerender();
+  await rerender();
+}
+
+/** Lets the stream's frames run: the reveal, the hold, the scroll-spy. */
+const frames = async (n = 10) => { for (let i = 0; i < n; i += 1) await act(async () => { vi.advanceTimersByTime(20); }); };
+/** The editor's typing surface, once the editor has loaded in the letter's place. */
+const editorIn = async (sid: string): Promise<Element> => {
+  const sel = `.scast[data-sid='${sid}'].in-place .reply .rte-surface`;
+  await vi.waitFor(async () => {
+    await act(async () => { vi.advanceTimersByTime(20); });
+    expect(host!.querySelector(sel), "the editor in place, inside the stream").not.toBeNull();
+  }, { timeout: 5000, interval: 20 });
+  return host!.querySelector(sel)!;
+};
+const topOf = (sid: string): number => host!.querySelector(`.scast[data-sid='${sid}']`)!.getBoundingClientRect().top;
+
+describe("a letter answered in place", () => {
+  it("typing its reply scrolls nothing: leaving writes no \\Seen, a later app scroll marks nothing", async () => {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    for (const view of ["reads", "receipts"] as const) {
+      commits = [];
+      marked = [];
+      await mountAnswering(view);
+      answer.replyTo = "r1";
+      await rerender();
+      const surface = await editorIn("r1");
+      for (const k of ["o", " ", "End"]) {
+        await act(async () => { surface.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); });
+      }
+      answer.replyTo = null;
+      await rerender();
+      await act(async () => { setStreamScroll(streamEl(), 800); });
+      await frames(5);
+      expect(marked, view).toEqual([]);
+      await unmount();
+      expect(commits, view).toEqual([]);
+    }
+  });
+
+  /* The letter straddles the port's top edge: a close that held the card below would pull it down
+     past the reading line and hand the cursor to the letter above. */
+  const answeredAbove = async (): Promise<void> => {
+    await mountAnswering("reads");
+    await act(async () => { setStreamScroll(streamEl(), 400); });
+    answer.replyTo = "r1";
+    await rerender();
+    await frames();
+    expect(topOf("r1"), "the dock's end revealed, the letter's head above the port").toBeLessThan(0);
+    // The person writes for a while: the open's own hold has long run out.
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    await frames();
+    answer.curs = [];
+  };
+
+  it("after Send the cursor stays on the answered letter and its top stays where it was", async () => {
+    await answeredAbove();
+    const top = topOf("r1");
+    answer.replyTo = null;
+    answer.phases = { r1: "sending" };
+    await rerender();
+    await frames();
+    expect(host!.querySelector(".scast[data-sid='r1'].in-place"), "still its conversation").not.toBeNull();
+    expect(topOf("r1")).toBe(top);
+    expect(answer.curs.filter((id) => id !== "r1"), "the cursor moved").toEqual([]);
+  });
+
+  it("after Esc the card comes back at the reading line, the cursor still on it", async () => {
+    await answeredAbove();
+    answer.replyTo = null;
+    await rerender();
+    await frames();
+    expect(host!.querySelector(".scast[data-sid='r1'].in-place")).toBeNull();
+    expect(topOf("r1"), "its head at the reading line").toBe(14);
+    expect(answer.curs.filter((id) => id !== "r1"), "the cursor moved").toEqual([]);
+  });
+
+  /** The card on the scroll-spy's reading line, 90px down: where the cursor is. */
+  const onLine = (): string | null => {
+    let at: string | null = null;
+    for (const c of streamCards(streamEl())) {
+      if (c.getBoundingClientRect().top > 90) break;
+      at = c.dataset.sid!;
+    }
+    return at;
+  };
+  /* The person read on below the answered letter with its dock still open: the letter is wholly
+     above the port and the cursor is on r3. Closing the dock must not take them back to it. */
+  const readOnBelow = async (): Promise<number> => {
+    await mountAnswering("reads");
+    answer.replyTo = "r1";
+    await rerender();
+    await frames();
+    await wheelStream(1300);
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    await frames();
+    expect(onLine(), "read on to r3").toBe("r3");
+    expect(answer.curs.at(-1), "the cursor followed").toBe("r3");
+    expect(topOf("r2"), "the letter wholly above the port").toBeLessThan(0);
+    answer.curs = [];
+    return topOf("r3");
+  };
+
+  it("read on below it, Esc leaves the stream on the card being read, the cursor with it", async () => {
+    const top = await readOnBelow();
+    answer.replyTo = null;
+    await rerender();
+    await frames();
+    expect(host!.querySelector(".scast[data-sid='r1'].in-place")).toBeNull();
+    expect(onLine(), "the card on the reading line").toBe("r3");
+    expect(topOf("r3"), "the stream jumped").toBe(top);
+    expect(answer.curs.filter((id) => id !== "r3"), "the cursor moved").toEqual([]);
+  });
+
+  it("read on below it, a handed-off Send leaves the stream on the card being read", async () => {
+    const top = await readOnBelow();
+    answer.replyTo = null;
+    answer.phases = { r1: "sending" };
+    await rerender();
+    await frames();
+    expect(host!.querySelector(".scast[data-sid='r1'].in-place"), "still its conversation").not.toBeNull();
+    expect(onLine(), "the card on the reading line").toBe("r3");
+    expect(topOf("r3"), "the stream jumped").toBe(top);
+    expect(answer.curs.filter((id) => id !== "r3"), "the cursor moved").toEqual([]);
   });
 });

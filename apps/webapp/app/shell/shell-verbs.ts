@@ -1351,28 +1351,6 @@ export function useShellVerbs({
   );
 
   /**
-   * The same verbs, pressed from a stream card. Reads and Receipts read in the card and mount no `ReadingPane`, which
-   * is exactly why they had no verbs; they have the Ohbox's bar now (`MessageActionBar`), and every action means here
-   * what it means there — this delegates and invents nothing. The ONE addition is a place for an answer to be
-   * written: `reply` and `draft` open the inline editor, which renders inside a message pane, and a stream has none —
-   * pressing Reply on a card would set a draft nobody can see. The reader sheet IS a message pane over the current
-   * message, so it is raised first and the editor lands in it (both are state setters, batched into one render).
-   * Every other action is a mutation with a toast and needs no surface, passed straight through.
-   */
-
-  /**
-   * `forward` is in the same list as `reply` and not a fourth case: the inline forward IS the reply dock in forward
-   * mode (`openForward`), so it needs the identical pane — left out, Forward on a card would set `replyTo` with
-   * nothing mounted to render it, the dead-button shape this list exists to prevent.
-   */
-  const onStreamAction = useStableCallback((action: MessageAction, m: EngineMessage) => {
-    if (action === "reply" || action === "reply_all" || action === "forward" || action === "draft") {
-      setReaderFor(m.id);
-    }
-    onMessageAction(action, m);
-  });
-
-  /**
    * THE SELECTION'S VERBS: The requirement: a selection must offer more than mark unseen, mark read and Escape — it
    * needs the sender's screening and its tags too. The count was exact: ⇧U and Escape, in one view. The vocabulary is
    * the ACTION BAR's, not a second one invented for bulk — the same three horizons, the same two filing verbs, the
@@ -1735,7 +1713,6 @@ export function useShellVerbs({
     lastActed,
     onMessageAction,
     onStageClickCapture,
-    onStreamAction,
     openSenderAudit,
     openSenderMenu,
     openSubjectRule,

@@ -9,6 +9,7 @@ import { MAX_RAW_MESSAGE_BYTES } from "@trafficflow/core/mail";
 import messages from "../messages/en.json";
 import { settleEditor } from "./_first-paint.js";
 import { setActiveFormatZone } from "../app/shell/locale";
+import { createThreadWalkChannel } from "../app/shell/thread-walk-channel";
 
 /**
  * THE CONVERSATION IN THE READER — ONE FULL-BODY PANEL PER MESSAGE.
@@ -164,6 +165,8 @@ let held: string[] = [];
  * every other surface, where the rule, the tint, the squares and Mark unread are absent.
  */
 let threadRead: Record<string, unknown> | null = null;
+/** Mutation point: the reading stream's form (`stream-in-place.tsx`), or null — every other surface. */
+let streamForm: { arriving: boolean } | null = null;
 
 /**
  * A ready attachments chrome over fixed per-message lists — the strip's own wire, stubbed at
@@ -276,6 +279,9 @@ async function mountPane(open: Record<string, unknown>, prepare?: (host: HTMLDiv
             onAddTag: () => {},
             onAttachment: () => {},
             ...(threadRead ? { threadRead } : {}),
+            ...(streamForm
+              ? { stream: { walk: createThreadWalkChannel(), arriving: streamForm.arriving }, scroller: { current: host } }
+              : {}),
           } as never),
         } as never),
       })
@@ -322,6 +328,7 @@ beforeEach(() => {
   previewed = [];
   held = [];
   threadRead = null;
+  streamForm = null;
 });
 
 afterEach(async () => {
@@ -905,6 +912,76 @@ describe("a message with no conversation gets no conversation chrome", () => {
     expect(text()).not.toContain("Sent folder");
     // The body is still the body — the singleton path is byte-identical to pre-P6b.
     expect(host!.querySelector(".msg-body")!.textContent).toBe("snippet-solo");
+  });
+});
+
+describe("a letter answered in its reading stream", () => {
+  const SOLO = msg({ id: "solo", subject: "Issue 118", threadId: null, date: "2026-08-01T09:00:00.000Z" });
+  /** A scrolling host whose every `scrollTop` write is recorded. */
+  const scrolling = (writes: number[]) => (col: HTMLDivElement): void => {
+    col.style.overflowY = "auto";
+    Object.defineProperty(col, "scrollTop", {
+      configurable: true,
+      get: () => 50,
+      set: (v: number) => { writes.push(v); },
+    });
+    col.scrollTo = ((o: ScrollToOptions) => { writes.push(o.top ?? -1); }) as typeof col.scrollTo;
+  };
+
+  it("a lone letter is one panel of a conversation, so the paper keeps its place when a reply joins", async () => {
+    streamForm = { arriving: true };
+    replyTo = "solo";
+    await mountPane(SOLO);
+    expect(host!.querySelector("article.msg"), "the single-message article").toBeNull();
+    expect(host!.querySelector(".conv[data-stream] > article.pm[data-conv-id='solo']")).not.toBeNull();
+    expect(host!.querySelector(".conv[data-stream] > .reply-dock .reply[data-reply-for]")).not.toBeNull();
+    expect(host!.querySelector(".conv[data-thread-read]"), "no thread-read rule in a stream").toBeNull();
+    expect(host!.querySelector(".thread-marks"), "one message draws no squares").toBeNull();
+  });
+
+  it("two messages draw the squares, without the read rule", async () => {
+    streamForm = { arriving: false };
+    conversation = [A, MINE];
+    await mountPane(A);
+    const squares = [...host!.querySelectorAll<HTMLElement>(".conv[data-stream] > .thread-marks .tm-mb")];
+    expect(squares.map((b) => b.dataset.for)).toEqual(["a", "mine"]);
+    expect(squares[1]!.querySelector(".tm-sq.mine")).not.toBeNull();
+    expect(host!.querySelector("[data-thread-read]")).toBeNull();
+  });
+
+  it("mounting scrolls nothing — the stream is the host's to move", async () => {
+    const control: number[] = [];
+    await mountPane(SOLO, scrolling(control));
+    expect(control, "control: outside a stream a lone letter opens at its top").toContain(0);
+
+    for (const [conv, open] of [[[], SOLO], [[A, B, C], B]] as const) {
+      const writes: number[] = [];
+      streamForm = { arriving: true };
+      conversation = [...conv];
+      replyTo = open.id as string;
+      await mountPane(open, scrolling(writes));
+      expect(writes, `the pane scrolled the stream (${conv.length} panels)`).toEqual([]);
+    }
+  });
+
+  it("the editor takes focus on its arrival only", async () => {
+    // The editor focuses itself a frame after it stands: run that frame at once.
+    const frame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => { cb(0); return 0; });
+    const focused = (): boolean => !!host!.querySelector(".reply-editor")?.contains(document.activeElement);
+    try {
+      streamForm = { arriving: true };
+      replyTo = "solo";
+      await mountPane(SOLO);
+      expect(host!.querySelector(".reply-editor .ProseMirror"), "the editor stands").not.toBeNull();
+      expect(focused(), "control: an arrival focuses").toBe(true);
+
+      streamForm = { arriving: false };
+      await mountPane(SOLO);
+      expect(host!.querySelector(".reply-editor .ProseMirror"), "the editor stands").not.toBeNull();
+      expect(focused()).toBe(false);
+    } finally {
+      frame.mockRestore();
+    }
   });
 });
 
