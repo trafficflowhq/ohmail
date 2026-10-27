@@ -1681,7 +1681,7 @@ async function applyProfileUpsert(
     if (err instanceof AccountErasedError || err instanceof MailboxErasedError) return false;
     throw err;
   }
-  const doc = { rules: profileDocRules(p.rules) };
+  const doc = { rules: profileDocRules(p.rules), ...(Array.isArray(p.applied) ? { applied: p.applied } : {}) };
   const readAt = asDate(p.asOf) ?? now;
   const row = { accountId: world.accountId, uidvalidity: null, uid: null, doc, readAt };
   await tx.insert(mailboxProfileMirror).values({ mailboxId: ch.id, ...row })

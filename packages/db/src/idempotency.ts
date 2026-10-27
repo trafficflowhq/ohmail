@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lte, ne, or, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 /* The mail half directly — see the note in `change-log.ts`. `idempotency_keys` is a mail table. */
 import { drafts, idempotencyKeys, mailboxes, messages } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
@@ -144,12 +144,16 @@ async function writeClaim(tx: Tx, i: IdempotencyClaimInput, takeOver: SQL): Prom
 /**
  * Delete every `idempotency_keys` row whose TTL has passed. Run from the worker's
  * maintenance pass — without it the table only grows, since a mutation never revisits
- * its own key.
+ * its own key. `batch` caps one call (the local stores' retention); the next call takes the rest.
  */
-export async function pruneIdempotencyKeys(tx: Tx, now: Date): Promise<number> {
+export async function pruneIdempotencyKeys(tx: Tx, now: Date, batch?: number): Promise<number> {
+  const aged = lte(idempotencyKeys.expiresAt, now);
+  const where = batch === undefined ? aged : sql`(${idempotencyKeys.accountId}, ${idempotencyKeys.key}) in ${
+    tx.select({ a: idempotencyKeys.accountId, k: idempotencyKeys.key }).from(idempotencyKeys).where(aged).limit(batch)
+  }`;
   const gone = await tx
     .delete(idempotencyKeys)
-    .where(lte(idempotencyKeys.expiresAt, now))
+    .where(where)
     .returning({ key: idempotencyKeys.key });
   return gone.length;
 }

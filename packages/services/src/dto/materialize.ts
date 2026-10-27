@@ -5,6 +5,7 @@ import {
   senderDomainOf, type CheckedSuggestion, type EmailAddress,
 } from "@trafficflow/core/mail";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
+import { readProfileApplied } from "@trafficflow/core/adapters/organizer-profile";
 import { reasonDetail, suggestionAdvice } from "../screener-advice.js";
 import {
   accountSettings, autoReplyByUsWhere, awayReplies, mailboxes, mailboxProfileMirror, isOrganizerKind,
@@ -1044,6 +1045,8 @@ function profileRuleToDTO(mailboxId: string, at: number, e: unknown, asOf: strin
   if (typeof r.kind !== "string" || !RULE_KINDS.has(r.kind)) return null;
   if (typeof r.match !== "string" || typeof r.destination !== "string") return null;
   const term = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
+  // The rule's own age where the organizer published it; the read's otherwise.
+  const age = typeof r.updatedAt === "string" && writtenInstant(r.updatedAt) ? r.updatedAt : asOf;
   return {
     // The document is written in canonical order, so the index names the same rule on every read.
     id: `profile:${mailboxId}:${at}`,
@@ -1056,8 +1059,8 @@ function profileRuleToDTO(mailboxId: string, at: number, e: unknown, asOf: strin
     subjectContains: term(r.subjectContains),
     bodyContains: term(r.bodyContains),
     stats: { hits: 0, lastHitAt: null, demotions: 0 },
-    createdAt: asOf,
-    updatedAt: asOf,
+    createdAt: age,
+    updatedAt: age,
     retro: { requestedAt: null, doneAt: null, from: null },
     // The published document carries no mark, so a holder's rule read here reads as a person's.
     byOhmail: false,
@@ -1085,7 +1088,14 @@ export function mailboxProfileRowToDTO(r: MailboxProfileRow): MailboxProfileDTO 
     asOf,
     from: { kind: isOrganizerKind(r.kind) ? r.kind : null, name: r.name ?? null, since: iso(r.since) },
     updatedAt: asOf,
+    // The requests the organizer says this copy includes; `null` from an organizer that does not say.
+    applied: readProfileApplied((doc as { applied?: unknown }).applied) ?? null,
   };
+}
+
+function writtenInstant(s: string): boolean {
+  const t = Date.parse(s);
+  return Number.isFinite(t) && new Date(t).toISOString() === s;
 }
 
 /**

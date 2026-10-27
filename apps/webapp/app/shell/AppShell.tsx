@@ -46,6 +46,7 @@ import {
   type TagDTO,
   autoUnsubscribeConfirms,
   unsubscribeLetterOf,
+  rulesShown,
 } from "@ohmail/client-engine";
 import {
   Button,
@@ -1440,7 +1441,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, mailboxStatusOf, mailboxStatusKey, consentView, presented, trashPage, trashWindow,
     older, folderOlder, ohbox, ohboxFiled, resurfacedRows, partition, receipts, receiptsPartition, piles,
     parked, tagGroups, history, tags, folders, folderMailboxes,
-    folderUnread, openFolder, folderMessages, rules, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
+    folderUnread, openFolder, folderMessages, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
     notifications, allOhbox, participantsOf, threadCountOf, threadMarksOf, threadSubjectOf, fallbackMailboxId,
     drafts, scheduled, waitingRows,
   } = useShellDerivations({
@@ -1514,6 +1515,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   // The Rules pane's posture from the same roster; the Screener's role carries its refusal, said first.
   const rulesPosture = useMemo(() => rulesPostureOf(facts), [facts]);
+  /* A reader-only install lists the organizer's copy, its own applied presses over it. */
+  const rulesReaderOnly = rulesPosture.mode !== "organizer";
+  const rulesApplied = useMemo(() => engine.appliedRuleRequests?.() ?? [], [engine, reader, derived]);
+  const shownRules = useMemo(
+    () => rulesShown(reader, { readerOnly: rulesReaderOnly, queued: rulesQueued, applied: rulesApplied, now: nowAt() }),
+    [reader, derived, rulesReaderOnly, rulesQueued, rulesApplied, nowAt],
+  );
   const screenerRole = useMemo(() => ({ ...screenerMode(facts), pressRefusal: postureRefusal(rulesPosture) }), [facts, rulesPosture]);
   /* …AND THE DELETE KEY READS THE SAME ROSTER, one mailbox at a time. In an EFFECT rather than
      during render (review finding): a render that yields and is discarded must not publish a
@@ -1960,7 +1968,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     onStreamAction, openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
     revokeRule, rulePastMailOf, screeningForecast, screeningRules, tagAdmin, toggleTag,
   } = useShellVerbs({
-    engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
+    engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesReaderOnly,
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor,
@@ -3235,7 +3243,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 tagCounts={Object.fromEntries(
                   tagGroups.map((g) => [g.tag.id, g.messages.length]),
                 )}
-                rules={{ items: rules, waiting: rulesWaiting, queued: rulesQueued, mailboxLabel: mailboxLabelOf, onRevoke: revokeRule, onRetarget: retargetRule, pastMail: rulePastMailOf, posture: rulesPosture }}
+                rules={{
+                  items: shownRules.rules, waiting: rulesWaiting, queued: rulesQueued, mailboxLabel: mailboxLabelOf, onRevoke: revokeRule,
+                  onRetarget: retargetRule, pastMail: rulePastMailOf, posture: rulesPosture,
+                  source: shownRules.source, doorless: shownRules.doorless, holder: shownRules.holder,
+                }}
                 /* Rename and delete. Not gated on `demo`, unlike the four injected panes:
                    both are ordinary engine mutations, so the FixturesAdapter serves them out
                    of `mutationEffects` and the demo is correct with no special case. */

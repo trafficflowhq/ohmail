@@ -5,3 +5,6 @@
  * the two equal.
  */
 export const PROFILE_RULES_SENT_MAX = 5_000;
+
+/** `@trafficflow/core`'s `PROFILE_APPLIED_MAX`, copied for the same reason; the same test holds it. */
+export const PROFILE_APPLIED_MAX = 1_000;

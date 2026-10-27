@@ -470,6 +470,10 @@ export function SettingsView({
     queued?: readonly QueuedRuleWrite[];
     /** A mailbox's address by id — what a waiting removal names. */
     mailboxLabel?: (mailboxId: string) => string | null;
+    /** Where `items` come from, and the rows no press here names — `rulesShown`. */
+    source?: "local" | "published";
+    doorless?: ReadonlySet<string>;
+    holder?: string | null;
   };
   /**
    * CREATE / RENAME / RECOLOUR / DELETE — one object, or a read-only list. The same rule as {@link rules} and for the
@@ -1334,7 +1338,8 @@ export function SettingsView({
 
           {shown === "rules" && rules ? (
             <RulesView rules={rules.items} onRevoke={rules.onRevoke} onRetarget={rules.onRetarget} pastMail={rules.pastMail}
-              posture={rules.posture} waiting={rules.waiting} queued={rules.queued} mailboxLabel={rules.mailboxLabel} />
+              posture={rules.posture} waiting={rules.waiting} queued={rules.queued} mailboxLabel={rules.mailboxLabel}
+              source={rules.source} doorless={rules.doorless} holder={rules.holder} />
           ) : null}
 
           {shown === "tags" ? (

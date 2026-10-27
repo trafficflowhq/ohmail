@@ -66,7 +66,7 @@ interface Dispatched {
 }
 
 async function renderSettings(
-  rules: { items: RuleDTO[]; status?: MutationStatus } | undefined,
+  rules: { items: RuleDTO[]; status?: MutationStatus; more?: Record<string, unknown> } | undefined,
 ): Promise<Dispatched> {
   const seen: Dispatched = { revoked: [], retargeted: [] };
   const status: MutationStatus = rules?.status ?? "confirmed";
@@ -87,6 +87,7 @@ async function renderSettings(
               return { status };
             },
             pastMail: () => 0,
+            ...rules.more,
           },
         }
       : {}),
@@ -714,5 +715,52 @@ describe("bulk revoke acts over the FILTERED set, through the per-rule path", ()
     });
     expect([...seen.revoked].sort()).toEqual(["r1", "r2"]);
     expect(host.textContent).toContain("2 rules revoked. Your mail hasn't moved.");
+  });
+});
+
+describe("a reader-only install lists the organizer's copy", () => {
+  const items = [
+    rule({ id: "local-1", match: "ann@shop.example", destination: "ohmail/Receipts" }),
+    rule({ id: "local-2", match: "dee@shop.example", destination: "ohmail/Receipts" }),
+    rule({ id: "held:bob", match: "bob@shop.example", destination: "ohmail/News" }),
+    rule({ id: "held:cy", match: "cy@shop.example", destination: "ohmail/News" }),
+  ];
+  const key = (match: string) => ({ kind: "sender", match, subjectContains: null, bodyContains: null });
+  const waits = (requestId: string, kind: string, match: string, destination?: string) => ({
+    requestId, kind, state: "sent", holder: { name: "Laptop" }, mailboxId: "mb", decidedAt: "2026-08-03T10:00:00.000Z",
+    refusedReason: null, target: { rule: key(match), ...(destination ? { destination } : {}) }, ruleId: null, messageId: null, slow: false,
+  });
+  // Laptop holds the mailbox and takes requests: the posture this list takes changes in.
+  const more = (waiting: unknown[] = []) => ({
+    source: "published", doorless: new Set(["held:bob", "held:cy"]), holder: "Laptop", waiting, posture: { mode: "pending", name: "Laptop" },
+  });
+  const row = (id: string) => ruleRows().find((r) => r.dataset.ruleId === id)!;
+
+  it("names the holder; a rule made there has no controls and no part in a bulk revoke", async () => {
+    const seen = await renderSettings({ items, more: more() });
+    await openRulesPane();
+    expect(host.textContent).toContain("Laptop organizes your mail, and these are the rules it files by.");
+    expect(row("held:bob").querySelectorAll("button")).toHaveLength(0);
+    expect(row("held:bob").textContent).toContain("Made on Laptop; change or revoke it there.");
+    await act(async () => { clickText("Revoke all 2 matching"); });
+    await act(async () => { clickText("Revoke 2 rules"); });
+    expect([...seen.revoked].sort()).toEqual(["local-1", "local-2"]);
+    expect(seen.retargeted).toEqual([]);
+  });
+
+  it("a twin row's Revoke sends the local id", async () => {
+    const seen = await renderSettings({ items, more: more() });
+    await openRulesPane();
+    await act(async () => { row("local-1").querySelectorAll("button")[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { clickText("Revoke this rule"); });
+    expect(seen.revoked).toEqual(["local-1"]);
+  });
+
+  it("a waiting note rides its row by key: a create there reads as a change, a removal with no row still waits", async () => {
+    await renderSettings({ items, more: more([waits("q1", "rule.create", "ann@shop.example", "INBOX"), waits("q2", "rule.delete", "gone@shop.example")]) });
+    await openRulesPane();
+    expect(row("local-1").textContent).toMatch(/Change to .* waits on Laptop/);
+    expect(host.textContent).toContain("Removal waits on Laptop");
+    expect(host.textContent).not.toContain("Removed here");
   });
 });

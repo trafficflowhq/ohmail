@@ -1271,3 +1271,25 @@ describe("the Piles screen is translatable — it reads the deck, not a copy of 
     }
   });
 });
+
+describe("the sheet's rules on a mailbox this install only reads", () => {
+  it("names the organizer's rule, never a stale rule of this install's own", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    try {
+      fake.addRule(ruleDto("local-1", "sender", "sender@fake.test", "ohmail/News"));
+      fake.addMessage(dto("m1", { subject: "Order", folder: "ohmail/Receipts" }));
+      const at = "2026-08-19T09:00:00Z";
+      fake.push("mailbox_profile", "create", "mb-1", {
+        mailboxId: "mb-1", rules: [ruleDto("profile:mb-1:0", "sender", "sender@fake.test", "ohmail/Receipts")],
+        asOf: at, from: { kind: "local", name: "Laptop", since: null }, updatedAt: at, applied: null,
+      });
+      const live = await liveWorldOn(fake, origin);
+      const inPlay = live.actions.screeningRules("m1", "sender");
+      expect(inPlay?.lines.flatMap((l) => l.rules.map((r) => `${r.id}->${r.destination}`))).toEqual(["profile:mb-1:0->ohmail/Receipts"]);
+      live.store.close();
+    } finally {
+      fake.server.close();
+    }
+  });
+});

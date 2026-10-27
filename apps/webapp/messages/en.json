@@ -3959,7 +3959,11 @@
     "otherTwins": "Also for this sender: {list}. Revoke removes {count, plural, one {that rule} other {those rules}} too.",
     "twinPlace": "files into {place}",
     "twinPaused": "files into {place}, paused",
-    "profileBound": "Your other computers receive your newest {max, number} rules; {count, plural, one {1 older one stays} other {# older ones stay}} on this one."
+    "profileBound": "Your other computers receive your newest {max, number} rules; {count, plural, one {1 older one stays} other {# older ones stay}} on this one.",
+    "introHeld": "{holder} organizes your mail, and these are the rules it files by. A change you make here goes to {holder}.",
+    "introCopy": "These are the rules {holder} last published.",
+    "madeOnHolder": "Made on {holder}; change or revoke it there.",
+    "profileBoundHeld": "{holder} sends its newest {max, number} rules; any older ones are not listed here."
   },
   "drafts": {
     "title": "Drafts",
