@@ -60,7 +60,7 @@ vi.mock("../src/ui/base", async () => {
   };
 });
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: ({ children }: { children: unknown }) => children }));
-vi.mock("../src/ui/glass", () => ({ GlassRail: () => null, GlassSidebar: () => null }));
+vi.mock("../src/ui/glass", () => ({ GlassRail: () => null, GlassSidebar: (p: { open: boolean }) => (p.open ? "sidebar" : null) }));
 vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
 vi.mock("../src/ui/MoreNav", () => ({ MoreNav: () => null, Nav: () => null }));
 vi.mock("../src/ui/reader-rail", () => ({ useReaderRail: () => null }));
@@ -75,6 +75,8 @@ vi.mock("../src/ui/posture", async () => ({
 const { ListDetail } = await import("../src/ui/list-detail");
 const { TabFocused } = (await import("expo-router")) as unknown as { TabFocused: import("react").Context<boolean | null> };
 const { usePaneMove } = await import("../src/ui/pane-move");
+const { usePaneChrome } = await import("../src/ui/pane-chrome");
+const { act } = await import("react");
 
 const vertical = (x: number, h: number, state: "flat" | "half"): FoldFeature =>
   ({ bounds: { x, y: 0, w: 0, h }, state, orientation: "vertical", occlusion: "none" });
@@ -307,6 +309,49 @@ describe("system Back closes the reading pane before it leaves the app", () => {
     expect(nav.params.open, "the reader closed").toBe("");
     r.render(<Pair tick={tick++} />);
     expect(pressBack(), "nothing open: Back leaves").toBe(false);
+    r.unmount();
+  });
+
+  it("with the sidebar open, Back closes the sidebar first, then the reader, then it leaves", () => {
+    setPose("inner");
+    let chrome: ReturnType<typeof usePaneChrome> = null;
+    function Toggle() { chrome = usePaneChrome(); return null; }
+    const Shown = () => (
+      <ListDetail open={nav.params.open === "" ? null : nav.params.open} onClose={() => { nav.params = { open: "" }; }}
+        toRoute={(id) => `/message/${id}`} list={<Toggle />} renderDetail={(id) => <Reader id={id} />} />
+    );
+    const r = mount(<Shown />);
+    act(() => chrome!.openDrawer());
+    expect(r.el.textContent).toContain("sidebar");
+    expect(pressBack(), "Back with the sidebar open").toBe(true);
+    r.render(<Shown />);
+    expect(r.el.textContent, "the sidebar closed").not.toContain("sidebar");
+    expect(nav.params.open, "the reader is still open").toBe("m1");
+    expect(pressBack()).toBe(true);
+    r.render(<Shown />);
+    expect(pressBack(), "nothing open: Back leaves").toBe(false);
+    r.unmount();
+  });
+
+  it("a fold with the sidebar open leaves Back to the outer screen, and an unfold brings the sidebar back closed", () => {
+    setPose("inner");
+    nav.params = { open: "" };
+    let chrome: ReturnType<typeof usePaneChrome> = null;
+    function Toggle() { chrome = usePaneChrome(); return null; }
+    const Shown = () => (
+      <ListDetail open={nav.params.open === "" ? null : nav.params.open} onClose={() => { nav.params = { open: "" }; }}
+        toRoute={(id) => `/message/${id}`} list={<Toggle />} renderDetail={(id) => <Reader id={id} />} />
+    );
+    const r = mount(<Shown />);
+    act(() => chrome!.openDrawer());
+    expect(r.el.textContent).toContain("sidebar");
+    setPose("outer");
+    r.render(<Shown />);
+    expect(r.el.textContent, "no sidebar on the outer screen").not.toContain("sidebar");
+    expect(pressBack(), "the first Back on the outer screen is the system's").toBe(false);
+    setPose("inner");
+    r.render(<Shown />);
+    expect(r.el.textContent, "the unfold shows the sidebar closed").not.toContain("sidebar");
     r.unmount();
   });
 

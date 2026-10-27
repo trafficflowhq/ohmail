@@ -10,16 +10,28 @@
 import { createElement as h, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const win = vi.hoisted(() => ({ ids: null as null | string[], scroller: null as any }));
+/** `at`: where the list stands, by its last report or the last scroll it was told. */
+const win = vi.hoisted(() => ({ ids: null as null | string[], scroller: null as any, held: "", scrolls: [] as number[], at: 0 }));
 vi.mock("react-native", async () => {
   const React = await import("react");
   const keep = (props: any) => (el: any) => { if (el) el.__props = props; };
   const host = (name: string) => (props: any) => React.createElement("div", { "data-rn": name, ref: keep(props) }, props.children);
+  /** The key VirtualizedSectionList gives a cell: the section's header, then its rows. */
+  const cellKey = (p: any, at: number) => {
+    const s = p.sections[0];
+    return at === 0 ? `${s.key}:header` : `${s.key}:${p.keyExtractor(s.data[at - 1])}`;
+  };
   const SectionList = (p: any) => {
     win.scroller = p;
+    // The device's list: it scrolls where it is told, and it does not hold the place by itself.
+    React.useImperativeHandle(p.ref, () => ({ getScrollResponder: () => ({ scrollTo: ({ y }: { y: number }) => { win.scrolls.push(y); win.at = y; } }) }));
+    const mvcp = p.maintainVisibleContentPosition;
+    win.held = mvcp ? cellKey(p, mvcp.minIndexForVisible) : "";
     const rows = p.sections.flatMap((s: any) => s.data).filter((r: any) => win.ids === null || win.ids.includes(p.keyExtractor(r)));
     const Cell = p.CellRendererComponent;
-    return React.createElement("div", null, ...rows.map((r: any) =>
+    // VirtualizedList hands the scroll view the hold one further on, past its own head cell.
+    const scroll = p.renderScrollComponent({ maintainVisibleContentPosition: mvcp && { ...mvcp, minIndexForVisible: mvcp.minIndexForVisible + 1 } });
+    return React.cloneElement(scroll, {}, ...rows.map((r: any) =>
       React.createElement(Cell, { key: p.keyExtractor(r), item: r, onLayout: () => undefined, style: null },
         React.createElement("i", { "data-row": p.keyExtractor(r) }, p.renderItem({ item: r })))));
   };
@@ -117,7 +129,7 @@ const place = (y: number) => {
   });
 };
 const report = (name: string, y: number) =>
-  act(() => { win.scroller[name]?.({ nativeEvent: { contentOffset: { x: 0, y }, layoutMeasurement: { width: 400, height: VIEW } } }); });
+  act(() => { win.at = y; win.scroller[name]?.({ nativeEvent: { contentOffset: { x: 0, y }, layoutMeasurement: { width: 400, height: VIEW } } }); });
 const look = (y: number) => { for (const m of st.items) if (topOf(m.id) < y + VIEW && topOf(m.id) + ROW > y) onScreen.add(m.id); };
 /** The list scrolls itself to `y`: no finger on the screen. */
 const listMoves = (y: number) => { place(y); report("onScroll", y); };
@@ -143,12 +155,14 @@ const open = (rows: any[], shown: () => ReturnType<typeof h> = () => h(ReadsScre
   st.marked = [];
   onScreen.clear();
   win.ids = null;
+  win.scrolls = [];
+  win.at = 0;
   screen = mount(Shown());
   place(0);
 };
 const arrive = (rows: any[]) => { st.items = [...rows, ...st.items]; };
 
-afterEach(() => { screen?.unmount(); screen = null; win.ids = null; });
+afterEach(() => { screen?.unmount(); screen = null; win.ids = null; vi.restoreAllMocks(); });
 
 describe("phone News marks only the letters a person scrolled through", () => {
   it("letters arriving above a deep place stay unread while the list holds the place", () => {
@@ -190,6 +204,42 @@ describe("phone News marks only the letters a person scrolled through", () => {
     drag(0, 3600, 150);
     expect(st.marked.filter((id) => !onScreen.has(id))).toEqual([]);
     expect(st.marked).toContain("NX19"); // the arrivals the person did scroll through turn seen
+  });
+
+  it("News shown again after the Ohbox opens at the letter the reader left, though the list slipped meanwhile", () => {
+    open(letters("NW", 40));
+    drag(0, topOf("NW16"));
+    act(() => { if (typeof focus.cleanup === "function") focus.cleanup(); focus.cleanup = undefined; });
+    arrive(letters("NZ", 3));
+    place(topOf("NW16") - 3 * ROW); // the letters are drawn above; the window has not moved
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+    report("onScroll", HEAD + 3 * ROW); // a minute on, the device's list slips to the top of the old block
+    act(() => { focus.cleanup = focus.cb?.(); });
+    expect(win.at, "News opens at the letter the reader left").toBe(topOf("NW16"));
+  });
+
+  it("letters arriving at the end of News keep the last letters in view, and the list's window follows the rows", () => {
+    open(letters("NW", 40));
+    drag(0, endOf(40), 150);
+    expect(win.held, "the list moves its window by the first row, not the group's header").toBe("issues:NW39");
+    const scroll = screen!.el.querySelector('[data-rn="ScrollView"]') as any;
+    expect(scroll.__props.maintainVisibleContentPosition.minIndexForVisible, "the scroll view's hold starts past the head").toBe(1);
+    arrive(letters("NY", 5));
+    place(endOf(40));
+    expect(win.held).toBe("issues:NY4");
+    expect(win.at, "the last letters are still in view").toBe(endOf(45));
+    report("onScroll", endOf(45));
+    const before = win.scrolls.length;
+    drag(endOf(45), endOf(45) - 900); // the person's own scroll is never pulled back
+    expect(win.scrolls.length).toBe(before);
+  });
+
+  it("control: at the top, letters arriving show above; nothing is scrolled", () => {
+    open(letters("NW", 40));
+    arrive(letters("NY", 5));
+    place(0);
+    report("onScroll", 0);
+    expect(win.scrolls).toEqual([]);
   });
 
   it("control: a person's own slow scroll marks each letter as its foot passes the line", () => {
