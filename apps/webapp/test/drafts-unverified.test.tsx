@@ -293,9 +293,10 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
       "the form is seeded before the hold is known, so the refusal below cannot come first",
     ).toBeGreaterThan(askedAt);
 
-    // The session is re-minted for every door EXCEPT this one — the whole of the defect.
+    // The session is re-minted for every door EXCEPT this one — the whole of the defect — unless a
+    // letter whose own send waits is on screen: its session is that send's, never the held row's.
     expect(shell, "the reopen re-mints the session unconditionally, which is the duplicate itself")
-      .toMatch(/if \(!parked\) clearComposeDraft\(\)/);
+      .toMatch(/if \(!parked \|\| waiting\) clearComposeDraft\(\)/);
 
     /*
      * The parked arm's body, read on its own: it takes no row, releases nothing, arms no delete.

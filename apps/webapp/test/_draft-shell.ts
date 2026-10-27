@@ -27,6 +27,7 @@ import messages from "../messages/en.json";
 import type { MailboxFacts } from "../app/shell/mail-state";
 import { announceUpdate, resetUpdateStoreForTests } from "../app/shell/app-update";
 import type { DraftReplyWire } from "../app/shell/draft-reply";
+import type { ComposePrefill } from "../app/shell/compose";
 import { settleEditor, settleFirstPaint } from "./_first-paint.js";
 import { typeInto } from "./fixtures/rich-editor-driver";
 
@@ -89,6 +90,8 @@ export interface DraftShell {
   loseSendAnswer: { on: boolean };
   /** Rows whose saves the server refuses for good (400 `validation_failed`), as it refuses an edit it cannot take. */
   refuseSave: Set<string>;
+  /** The host's mail-link seam: `open` hands the shell a parsed `mailto:`; `seeded` counts the shell's takes. */
+  mailto: { open: (d: ComposePrefill) => Promise<void>; seeded: number };
 }
 
 let roots: Root[] = [];
@@ -395,6 +398,19 @@ function engineOver(
         if (m.kind === "mail_send" && refuseSend.on && (refuseSend.retryableFirst ?? 0) > 0) {
           refuseSend.retryableFirst! -= 1;
           const row = refuseSend.saveFirst === true && m.draftId ? s.get<EngineDraft>("draft", m.draftId) : undefined;
+          if (refuseSend.saveFirst === true && !m.draftId && m.kind === "mail_send") {
+            // A press that carried no row: the route's save creates one, and the adapter reports it.
+            const id = `row-${++seq}`;
+            await s.applyChanges([{
+              type: "draft", op: "create", id, seq: ++seq, updatedAt: NOW.toISOString(),
+              entity: {
+                id, mailboxId: "mb1", threadId: null, inReplyToMessageId: null, rationale: null, status: "draft",
+                subject: m.subject ?? "", body: m.body, html: m.html ?? null, to: m.to ?? [], cc: m.cc ?? [], bcc: m.bcc ?? [],
+                createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(),
+              },
+            } as unknown as SyncChange]);
+            await o?.onDraftRow?.({ id, revision: null, fingerprint: sendFingerprint(m) });
+          }
           if (row !== undefined) {
             // The route's save before the send: the row holds the press's words, and the adapter reports it.
             const revision = versions !== null ? `rev-${++seq}` : null;
@@ -562,6 +578,12 @@ export async function mountShell(
     sendGate?: DraftShell["sendGate"];
     /** Every message carries three files (`FORWARD_PARTS`), and the server takes a forward's kept list. */
     parts?: boolean;
+    /** A mail link the host holds from the first render: the click that started the app. */
+    mailto?: ComposePrefill;
+    /** What the first `/sync` carries: a launch over an empty mirror (the desktop rebuilds it each start). */
+    remoteAtStart?: SyncChange[];
+    /** No mailbox connected: the roster reads empty, so nothing can be sent or saved as a new row. */
+    noMailbox?: boolean;
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
@@ -575,7 +597,7 @@ export async function mountShell(
   const sent: EngineMutation[] = [];
   const refuseSend: DraftShell["refuseSend"] = { on: false };
   const saveGate: DraftShell["saveGate"] = { wait: null };
-  const remote: SyncChange[] = [];
+  const remote: SyncChange[] = [...(options.remoteAtStart ?? [])];
   const offline: DraftShell["offline"] = { on: options.startOffline === true };
   const sendGate: DraftShell["sendGate"] = options.sendGate ?? { wait: null };
   const serverGone = new Set<string>(options.serverGone ?? []);
@@ -596,19 +618,33 @@ export async function mountShell(
   document.body.appendChild(el);
   const root = createRoot(el);
   roots.push(root);
+  const shellProps = {
+    demo: false, engine, consentTransport: consentTransportWith(options.signatures),
+    mailboxFacts: async () => (options.noMailbox === true ? [] : options.secondMailbox === true
+      ? [...ROSTER, { ...ROSTER[0]!, id: "mb2", address: "me2@example.invalid", createdAt: "2026-09-02T00:00:00.000Z" }]
+      : ROSTER),
+    ...(options.draftReplyWire !== undefined ? { draftReplyWire: options.draftReplyWire } : {}),
+  };
+  /* The host's half of the mail-link seam, as the desktop holds it: the link in state, dropped
+     once the shell says it took it. */
+  let hand: ((d: ComposePrefill | null) => void) | null = null;
+  const mailto: DraftShell["mailto"] = {
+    seeded: 0,
+    open: async (d) => { await act(async () => { hand?.(d); }); },
+  };
+  function Host(): React.ReactElement {
+    const [link, setLink] = React.useState<ComposePrefill | null>(options.mailto ?? null);
+    hand = setLink;
+    return h(AppShell as never, {
+      ...shellProps,
+      ...(link ? { mailtoDraft: link, onMailtoDraftSeeded: () => { mailto.seeded += 1; setLink(null); } } : {}),
+    } as never);
+  }
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC", now: NOW,
       children: h(ThemeProvider, {
-        children: h(ToastHost, {
-          children: h(AppShell as never, {
-            demo: false, engine, consentTransport: consentTransportWith(options.signatures),
-            mailboxFacts: async () => (options.secondMailbox === true
-              ? [...ROSTER, { ...ROSTER[0]!, id: "mb2", address: "me2@example.invalid", createdAt: "2026-09-02T00:00:00.000Z" }]
-              : ROSTER),
-            ...(options.draftReplyWire !== undefined ? { draftReplyWire: options.draftReplyWire } : {}),
-          } as never),
-        }),
+        children: h(ToastHost, { children: h(Host) }),
       }),
     }));
   });
@@ -624,7 +660,7 @@ export async function mountShell(
   };
   return {
     el, engine, store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow,
-    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere, loseSendAnswer, refuseSave,
+    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere, loseSendAnswer, refuseSave, mailto,
   };
 }
 

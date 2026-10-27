@@ -269,6 +269,7 @@ import {
   useHashRoute,
   type Route,
 } from "./routing";
+import { goCompose } from "./compose-door";
 import { beginSearch, markStartup, useUiVitals } from "./ui-vitals";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
@@ -964,11 +965,11 @@ export function AppShell({
   firstRun?: FirstRunHost;
   /**
    * A compose the host was handed from outside — the desktop's mailto seam. The OS delivers a
-   * `mailto:` click to the desktop shell, the parsed fields arrive here, and the shell seeds
-   * the compose form the way `writeTo` and `openDraft` do — same release-first rule, same chip
-   * formatting — then navigates to compose. `onMailtoDraftSeeded` is called once the form holds
-   * the fields so the host drops its copy; a draft left in the prop would re-seed on every
-   * remount over whatever was typed since. Fields are plain bounded text (the desktop's
+   * `mailto:` click to the desktop shell, the parsed fields arrive here, and the shell opens them
+   * by `writeTo`'s door — what the composer holds is saved first, a letter whose send waits gives
+   * way only once a row holds its words — then navigates to compose. `onMailtoDraftSeeded` is
+   * called when the shell takes the link, so the host drops its copy: each link is taken once, and
+   * one refused for unsaved words is not tried again over them. Fields are plain bounded text (the desktop's
    * `mailto.ts` is the one place a mailto is read); the body seeds as plain text (`html: ""`,
    * `openDraft`'s rule).
    */
@@ -1946,7 +1947,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   const {
     cancelCompose, discardKeepsCompose, cancelSchedule, closeCompose, closeReply, compose, composeResumed, composeCloseRefusal,
     confirmForward, forwardAsk, composeFrom, discardDraft, notSentRows, draftRepliesHere, draftReply, draftReplyChrome, editScheduled,
-    heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig,
+    heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig, composeHeldBySend, composeWaitNote,
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
     pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply, openNotSent,
@@ -2309,7 +2310,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             corner pill are the only way the mailbox can speak, and they keep the job. */}
         {sessionRefused ? null : <SyncBar hostOffline={hostConnection != null} setupHref={setupHref} />}
         {/* A send that left its editor, finishing — the narrow-width pill; the rail carries it at width. */}
-        <SendingLine api={mailSend} variant="shell" onOpen={(i) => openNotSent(i.key, i.left, i.m)} onOpenMany={() => go("drafts")} />
+        <SendingLine api={mailSend} variant="shell" onOpen={(i) => openNotSent(i.key, i.left, i.m, i.state !== "ended")} onOpenMany={() => go("drafts")} />
 
         {/* THE COMPUTER THIS WINDOW READS THROUGH, when it is not answering — the narrow-width
             copy, on `SyncBar`'s rule and hidden at 1024px and up by the same single query. It sits
@@ -2423,7 +2424,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             composeLabel={t("rail.compose")}
             onCompose={() => {
               setRailOpen(false);
-              go("compose");
+              goCompose();
             }}
             composeActive={route.view === "compose"}
             groups={railGroupsWithHints}
@@ -2468,7 +2469,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                     base; see `PullNewMail.tsx` for the honest-settle contract. */}
                 <PullNewMail variant="rail" binding={pullBinding} />
                 {/* A send that left its editor finishes here, above the mailbox's own line. */}
-                <SendingLine api={mailSend} variant="rail" onOpen={(i) => openNotSent(i.key, i.left, i.m)} onOpenMany={() => go("drafts")} />
+                <SendingLine api={mailSend} variant="rail" onOpen={(i) => openNotSent(i.key, i.left, i.m, i.state !== "ended")} onOpenMany={() => go("drafts")} />
                 {sessionRefused ? null : <SyncBar variant="rail" hostOffline={hostConnection != null} setupHref={setupHref} />}
                 {/* Same component at rail width — its own layout collapses under 520px, so the
                     rail does not need a second variant. */}
@@ -3156,9 +3157,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    next press would mint a fresh Idempotency-Key for mail already on its way: the
                    server collapses two presses only under ONE key, so that is a second copy at the
                    recipient. Held rather than warned, because a warning is something to read past
-                   and this cannot be taken back. `restoredPending` is keyed on WHICH MESSAGE, so a
-                   new message started on the same lane is never held. */
-                locked={mailSend.restoredPending(COMPOSE_SEND_KEY)
+                   and this cannot be taken back. Keyed on WHICH MESSAGE (`composeHeldBySend`: the
+                   last session's send, or one naming the row on screen), so a new message started
+                   on the same lane is never held. */
+                locked={composeHeldBySend
                   /* A store whose load was refused cannot say the send is over: held, and said. */
                   ? { sentence: t(engine.outboxUnreadable?.() === true ? "compose.sendingOutboxUnread" : "compose.sendingFromLastSession") }
                   : null}
@@ -3175,6 +3177,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    sent one, which `elsewhere` let go of. */
                 onSendAsNew={sendCompose}
                 resumed={composeResumed}
+                waitNote={composeWaitNote}
                 /* LEAVING SAVES FIRST — see `closeCompose`. Escape and the close control take
                    this; every other exit takes the autosave hook's own belt. */
                 onClose={closeCompose}

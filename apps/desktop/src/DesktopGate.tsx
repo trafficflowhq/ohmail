@@ -29,6 +29,7 @@ import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
 import { setComposerScope } from "../../webapp/app/shell/compose";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
+import { goCompose } from "../../webapp/app/shell/compose-door";
 import { setMailtoSink } from "../../webapp/app/shell/open-external";
 import { agoStamp } from "../../webapp/app/shell/format";
 import {
@@ -1682,10 +1683,10 @@ function useUnreadSink(): (unread: number) => void {
  * accelerator the platform swallowed is handed back to the page rather than lost. `bubbles`
  * because the listener is on `document`; `cancelable` because the binding calls `preventDefault()`.
  */
-function runMenuCommand(command: MenuCommand): void {
+export function runMenuCommand(command: MenuCommand): void {
   switch (command) {
     case "compose":
-      go("compose");
+      goCompose();
       return;
     case "settings":
       go("settings");

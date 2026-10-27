@@ -15,8 +15,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type { EmailAddress, EngineDraft, KeptAsNewDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields, ComposeRowHolds } from "./compose";
-import { COMPOSE_SEND_KEY, sendLockOwed, sendNamesRow, writeReplyMeta } from "./mail-send";
-import { holdOf, releaseSendLockForRow, sendRecordNames, type Hold } from "./send-lock";
+import { COMPOSE_SEND_KEY, composeBufferFingerprint, sendLockOwed, sendNamesRow, writeReplyMeta } from "./mail-send";
+import { holdOf, releaseSendLockForRow, sendRecordNames, sendRecordsNaming, type Hold } from "./send-lock";
 import {
   clearComposeDraft, composeSessionId, markComposeRowHolds, parseRecipients, readComposeDraft,
   readComposeCreates, readComposeRow, readComposeRowHolds, whenComposerReady, writeComposeCreates, writeComposeRow,
@@ -350,8 +350,23 @@ export interface ComposeAutosave {
   epochNow: () => number;
   /** The row version the text on screen is based on, for the send's save; `null` = not known. */
   baseNow: () => string | null;
-  /** A save holds the words on screen: the row's, a create's, one waiting on the outbox, or this message's own send. */
+  /**
+   * A save holds the words on screen: the row's, a create's, one waiting on the outbox, or a parked
+   * send's (its row unchanged since, or the words its press carried, unchanged since).
+   */
   holdsOnScreen: () => boolean;
+  /** The mount's adoption of the row the last session held has answered (or there was none). */
+  adoptionAnswered: () => boolean;
+  /**
+   * The composer's own confirmed save of the row it holds is exactly the words on screen. Claims,
+   * an update on the outbox and a letter let go do not count: only a row the account holds.
+   */
+  rowHoldsOnScreen: () => boolean;
+  /**
+   * The letter on screen, whose send is on its way, is let go of: its binding ends, so a create its
+   * press took back is dropped when it lands, as after a confirmed send.
+   */
+  endWaiting: () => void;
   /**
    * The engine's kept-as-new-draft list ({@link OhmailEngine.keptAsNewDrafts}), handed in by the surface
    * on each change: this composer takes its own, and each is said once.
@@ -1539,13 +1554,39 @@ export function useComposeAutosave(opts: {
     const sig = signatureOf(f);
     // The row's or a create's, an update on the outbox, or the message let go of unchanged.
     if (keptNow(sig) || pendingLand.current?.signature === sig || abandonedAt.current === sig) return true;
-    // Carried by this message's own send, on its way or held.
-    if (sendInFlightRef.current && carried(draftIdRef.current)) return true;
-    return holdOf(engine, { lane: COMPOSE_SEND_KEY, draftId: readComposeRow(), session: composeSessionId() }).kind === "parked";
+    // The row marker: what the bound row held at this browser's last write (a launch, before adoption).
+    const marked = readComposeRowHolds();
+    if (marked !== null && marked.row === readComposeRow() && marked.sig === holdsSig(f)
+      && marked.pending === undefined && marked.gone !== true) return true;
+    const hold = holdOf(engine, { lane: COMPOSE_SEND_KEY, draftId: readComposeRow(), session: composeSessionId() });
+    if (hold.kind !== "parked") return false;
+    /* The words a send answered unverified carried, as its press recorded them (`SendLock.bfp`): its own
+       save wrote them, a signature folded in, before the send went. Files are on no row. */
+    const pressed = (f.attachments?.length ?? 0) === 0 && holdsSig(readComposeDraft()) === holdsSig(f)
+      ? composeBufferFingerprint() : null;
+    if (pressed !== null && sendRecordsNaming(COMPOSE_SEND_KEY, readComposeRow(), composeSessionId())
+      .some((r) => r.unverified && r.bfp === pressed)) return true;
+    // A park's row holds what it held; words typed since are on no row, as its saves are refused.
+    const row = hold.draftId ?? readComposeRow();
+    const d = row !== null ? engine.read().get<EngineDraft>("draft", row) : undefined;
+    const line = (xs: readonly EmailAddress[] | null | undefined): string => (xs ?? []).map((a) => a.address).join(", ");
+    return typeof d?.body === "string" && !reopenWouldOverwrite(f, {
+      ...f, attachments: [], to: line(d.to), cc: line(d.cc), bcc: line(d.bcc), subject: d.subject ?? "", body: d.body,
+    });
   };
+  const adoptionAnswered = (): boolean => adopted.current;
+  const rowHoldsOnScreen = (): boolean => {
+    const row = draftIdRef.current;
+    return row !== null && row === readComposeRow() && saved.current === signatureOf(fieldsRef.current);
+  };
+  const endWaiting = useCallback(() => {
+    ended.current.add(epoch.current);
+    for (const c of claims.current.values()) if (c.binding === epoch.current) c.held = false;
+    resolveRef.current();
+  }, []);
 
   return {
     draftId, adopt, release, discard, flush, sending, notSent, holdsCreate, awaitCreate, restored, settled, settleCompose, elsewhere, saveRefused, epochNow,
-    baseNow, keptAsNew, holdsOnScreen,
+    baseNow, keptAsNew, holdsOnScreen, adoptionAnswered, rowHoldsOnScreen, endWaiting,
   };
 }
