@@ -459,7 +459,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
     for (const q of ["common", "rarest", "generated", "sender12"]) {
       const { handle, seen } = recording();
       await svc.page(ctx(L, handle), { q });
-      const fused = seen.filter((s) => new PgDialectText(s).includes("with a0 as"));
+      const fused = seen.filter((s) => new PgDialectText(s).includes(" a0 as ("));
       expect(fused.length, `the fused page statement was not recorded for ${q}`).toBe(1);
       const session = seen.filter((s) => new PgDialectText(s).includes("set_config"));
       expect(session.length, "the page's session settings were not recorded").toBeGreaterThan(0);
