@@ -76,6 +76,17 @@ const GROW_STEP_CARDS = 6;
 /** How long a jump's pin outlives its commit when no landing scroll ever arrives. */
 const PIN_MS = 1000;
 
+/**
+ * A move of more than this many viewports between two samples is a FLIGHT — End, Home, a fast
+ * drag of the scrollbar — and the window holds still until it lands. Committing on every frame of
+ * WebKit's own End animation (10–14 frames) unmounted and mounted the cards and their framed
+ * letters a dozen times while that animation ran, and the desktop's web process crashed there.
+ */
+const FLIGHT_VIEWPORTS = 1;
+
+/** Painted frames with no scroll event that end a flight. */
+const FLIGHT_REST_FRAMES = 2;
+
 export interface StreamWindow {
   /** First mounted index into the caller's card order, inclusive. */
   start: number;
@@ -91,6 +102,8 @@ export interface StreamWindow {
   reset: () => void;
   /** How many cards the opening slice holds. */
   opening: number;
+  /** Is the stream in a flight (see {@link FLIGHT_VIEWPORTS})? Stable; reads a ref. */
+  inFlight: () => boolean;
 }
 
 interface Range {
@@ -119,6 +132,9 @@ export function useStreamWindow({
   const heights = useRef<Map<string, number>>(new Map());
   /** A jump's protection — see the header. Cleared by the sampler once scroll reaches it. */
   const pin = useRef<{ index: number; until: number } | null>(null);
+  /** The flight in progress, if any: the last sampled offset, whether a scroll event came since
+   *  the watcher's last frame, how many frames went without one, and the watcher's frame. */
+  const flight = useRef({ on: false, lastTop: null as number | null, heard: false, still: 0, raf: 0 });
   const idsRef = useRef(ids);
   idsRef.current = ids;
   /** Kept in step with the RENDERED (clamped) range at the bottom of every render. */
@@ -200,6 +216,22 @@ export function useStreamWindow({
   useEffect(() => {
     const el = getRoot();
     if (!el) return;
+    const fl = flight.current;
+    /* The flight ends after FLIGHT_REST_FRAMES painted frames without a scroll event, and the
+       window is committed once, where the scroll stopped. */
+    const watch = () => {
+      fl.raf = requestAnimationFrame(() => {
+        fl.raf = 0;
+        if (!fl.on) return;
+        if (fl.heard) {
+          fl.heard = false;
+          fl.still = 0;
+        } else fl.still += 1;
+        if (fl.still < FLIGHT_REST_FRAMES) return watch();
+        fl.on = false;
+        sample();
+      });
+    };
     /** Answers whether a stepped growth (`later`) has more to add. */
     const sample = (later = false): boolean => {
       const order = idsRef.current;
@@ -208,6 +240,16 @@ export function useStreamWindow({
       const viewport = el.clientHeight;
       if (viewport <= 0) return false; // not laid out (and jsdom): rest at the opening window
       const scrollTop = el.scrollTop;
+      const moved = fl.lastTop === null ? 0 : Math.abs(scrollTop - fl.lastTop);
+      fl.lastTop = scrollTop;
+      // A pinned jump's landing is the app's own scroll, never a flight.
+      if (!fl.on && !pin.current && moved > viewport * FLIGHT_VIEWPORTS && typeof requestAnimationFrame === "function") {
+        fl.on = true;
+        fl.heard = false;
+        fl.still = 0;
+        if (!fl.raf) watch();
+      }
+      if (fl.on) return false;
       /** The non-card head above the first card (title row, hints): first card's offset minus
        *  the top spacer standing over it. Zero when nothing is mounted or laid out. */
       const first = el.querySelector<HTMLElement>(".scast[data-sid]");
@@ -276,6 +318,7 @@ export function useStreamWindow({
     };
     let frame = 0;
     const onScroll = () => {
+      fl.heard = true;
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
@@ -284,8 +327,11 @@ export function useStreamWindow({
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onScroll);
+    if (fl.on && !fl.raf) watch();
     return () => {
       if (frame) cancelAnimationFrame(frame);
+      if (fl.raf) cancelAnimationFrame(fl.raf);
+      fl.raf = 0;
       el.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onScroll);
       growRef.current = null;
@@ -375,13 +421,20 @@ export function useStreamWindow({
 
   const reset = useCallback(() => {
     pin.current = null;
+    const fl = flight.current;
+    fl.on = false;
+    fl.lastTop = null;
+    if (fl.raf) cancelAnimationFrame(fl.raf);
+    fl.raf = 0;
     setRange({ start: 0, end: Math.min(idsRef.current.length, openingRef.current) });
   }, []);
+
+  const inFlight = useCallback(() => flight.current.on, []);
 
   let padTopPx = 0;
   for (let i = 0; i < eff.start; i++) padTopPx += heightOf(ids[i]!);
   let padBottomPx = 0;
   for (let i = eff.end; i < total; i++) padBottomPx += heightOf(ids[i]!);
 
-  return { start: eff.start, end: eff.end, padTopPx, padBottomPx, ensure, reset, opening };
+  return { start: eff.start, end: eff.end, padTopPx, padBottomPx, ensure, reset, opening, inFlight };
 }

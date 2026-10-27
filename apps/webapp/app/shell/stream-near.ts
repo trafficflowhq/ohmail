@@ -30,6 +30,8 @@ export function useStreamNear(
   opening: readonly string[],
   armed: boolean,
   getRoot: () => HTMLElement | null,
+  /** While true (the stream is flying, `StreamWindow.inFlight`) the queue waits. */
+  held?: () => boolean,
 ): StreamNear {
   const [near, setNear] = useState<ReadonlySet<string>>(() => new Set(opening.slice(0, NEAR_SEED)));
   const nearRef = useRef(near);
@@ -70,14 +72,26 @@ export function useStreamNear(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mountedKey, openingKey]);
   /* THE PUMP: once the frame that drew the last one has painted, the next queued card joins. One
-     at a time: the next waits until the commit that added the last is in. */
-  useEffect(() => {
+     at a time: the next waits until the commit that added the last is in. While the stream is
+     held it takes nothing and looks again on the next frame, with no commit. */
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  const pump = useRef<() => void>(() => {});
+  pump.current = () => {
     if (!armed || pending.current || queue.current.length === 0) return;
-    if (inFlight.current !== null && !near.has(inFlight.current)) return;
+    if (inFlight.current !== null && !nearRef.current.has(inFlight.current)) return;
     let ran = false;
     const cancel = afterPaint(getRoot(), () => {
       ran = true;
       pending.current = null;
+      if (heldRef.current?.() && typeof requestAnimationFrame === "function") {
+        const frame = requestAnimationFrame(() => {
+          pending.current = null;
+          pump.current();
+        });
+        pending.current = () => cancelAnimationFrame(frame);
+        return;
+      }
       let id = queue.current.shift();
       while (id !== undefined && nearRef.current.has(id)) id = queue.current.shift();
       if (id === undefined) return;
@@ -85,7 +99,8 @@ export function useStreamNear(
       startTransition(() => setNear((prev) => (prev.has(id) ? prev : new Set(prev).add(id))));
     });
     if (!ran) pending.current = cancel;
-  });
+  };
+  useEffect(() => pump.current());
   /* A visit's end (or the stream disarmed) drops a waiting step; the next visit starts its own. */
   useEffect(
     () => () => {
