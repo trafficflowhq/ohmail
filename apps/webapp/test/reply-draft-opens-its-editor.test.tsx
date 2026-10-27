@@ -6,7 +6,7 @@ import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { writeReplyDraft } from "../app/shell/mail-send";
 import {
-  act, FORWARD_PARTS, fillForward, forwardDock, message, mountShell, NOW, press, replyDraft, replySurface, stubDom, unmountAll, waitFor,
+  act, FORWARD_PARTS, fillForward, forwardDock, message, mountShell, NOW, press, pressRestart, replyDraft, replySurface, stubDom, unmountAll, waitFor,
   type DraftShell,
 } from "./_draft-shell.js";
 
@@ -356,6 +356,16 @@ describe("a reply draft open here while another device changes it", () => {
     await rounds(200);
     expect({ first: replies(s).some((d) => d.body === first), count: replies(s).length }).toEqual({ first: true, count: 3 });
   }, 90_000);
+
+  it("Restart over their version keeps the words as a new draft before it restarts", async () => {
+    const s = await openD1();
+    await changedThere(s);
+    await act(async () => { typeInto(replySurface(s.el)!, " and typed here"); });
+    const restarted = await pressRestart(s, () => ({
+      theirs: s.store.get<EngineDraft>("draft", "d1")?.body, mine: replies(s).some((d) => d.id !== "d1" && d.body?.includes("typed here")),
+    }));
+    expect(await restarted(), "the restart went before the words were kept").toEqual({ theirs: OTHER, mine: true });
+  }, 60_000);
 
   it("its own saves never fork (the control)", async () => {
     const s = await openD1();

@@ -98,6 +98,8 @@ export interface ReplyAutosave {
   waitedOf: (lane: string) => ReadonlySet<string>;
   /** The editor shows the row's words again: the lane's earlier waiting saves are not these words. */
   opened: (lane: string) => void;
+  /** Before a restart: the open editor's words are written now, as its pause would write them. */
+  flush: () => Promise<void>;
 }
 
 function signatureOf(f: ReplyDraftForm): string {
@@ -560,8 +562,18 @@ export function useReplyAutosave(
   };
   useEffect(() => () => { createsOff.current?.(); createsOff.current = null; }, [engine]);
   const asSaved = useCallback((l: string, body: string) => { quiet.current.set(l, body); }, []);
+  const settleWrites = useCallback(async (): Promise<void> => {
+    for (let i = 0; i < 8 && writes.current.size > 0; i++) await Promise.allSettled([...writes.current.values()]);
+  }, []);
+  const flush = useCallback(async (): Promise<void> => {
+    // A write on the wire carries older words: waited out, not deduped against.
+    await settleWrites();
+    const f = formRef.current;
+    if (f !== null) await writeNow(f, true);
+    await settleWrites(); // a fork or carry the write started
+  }, [settleWrites, writeNow]);
   return {
     seal, sending, cancelled, baseline, forget, asSaved, rebind, owns, ownsRow, restore, awaits, settled, notSent, takeOwn, fork,
-    waitedOf, opened,
+    waitedOf, opened, flush,
   };
 }

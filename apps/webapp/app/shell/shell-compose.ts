@@ -2819,11 +2819,12 @@ export function useShellCompose({
    * refusals the composer already states, so only `failed` stops the exit. Every other way out
    * takes the hook's belt, which cannot stay open and does not need to.
    */
-  /* A RESTART FROM THE UPDATE LINE OR SETTINGS writes what the open composer holds first, as a
-     close does (`app-update.ts`). Files live in memory only, so while the form or an open reply
-     holds any, the restart waits for them instead. */
+  /* A RESTART FROM THE UPDATE LINE OR SETTINGS writes what the open composer, inline reply or
+     forward holds first, as a close does (`app-update.ts`). Files live in memory only, so while the
+     form or an open reply holds any, the restart waits for them instead. */
   const composeOpen = route.view === "compose";
   useEffect(() => (composeOpen ? holdForRestart(autosave.flush) : undefined), [composeOpen, autosave.flush]);
+  useEffect(() => holdForRestart(replyAutosave.flush), [replyAutosave.flush]);
   const holdsFiles = (compose.attachments?.length ?? 0) > 0 || (replyTo !== null && replyAttachments.length > 0);
   useEffect(() => (holdsFiles ? holdFilesForRestart() : undefined), [holdsFiles]);
 
