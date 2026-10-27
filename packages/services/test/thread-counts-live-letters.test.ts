@@ -2,11 +2,12 @@ import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accounts, changeLog, mailboxes, messageInstances, messages, recordChanges, threads, type LedgerTx,
+  accounts, changeLog, folderState, mailboxes, messageInstances, messages, recordChanges, threads, type LedgerTx,
 } from "@trafficflow/db";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { MemoryMirrorStore, threadSizeIndex } from "@ohmail/client-engine";
 import { SyncService, ThreadService, type ServiceContext } from "@trafficflow/services";
+import { materializeThread, materializeThreads } from "../src/dto/materialize.js";
 
 /**
  * A CONVERSATION COUNTS THE LETTERS IT STILL HOLDS (THREAD-COUNT-INCLUDES-DELETED-LETTERS).
@@ -96,5 +97,51 @@ describe("a conversation counts the letters it still holds", () => {
       .where(and(eq(changeLog.accountId, s.accountId), eq(changeLog.entityId, s.single)));
     expect(rows, "an emptied thread was announced again").toEqual([{ op: "create", type: "thread" }]);
     expect((await new ThreadService().get(ctxFor(db, s.accountId), s.single)).messageIds).toEqual([]);
+  });
+});
+
+describe("the batch thread reader answers what the single-thread reader answers", () => {
+  it("byte for byte, on the batch, on a snapshot page, and never for another account", async () => {
+    const db = await makeTestDb();
+    const s = await seed(db);
+    const other = await seed(db);
+    const letter = async (threadId: string, n: number, o: { date?: Date | null; unread?: boolean; folder?: string | null; gone?: boolean } = {}) => {
+      const key = `p${n}-${s.accountId.slice(0, 8)}@example.test`;
+      const [m] = await db.insert(messages).values({
+        accountId: s.accountId, mailboxId: s.mailboxId, threadId, bodyHash: key, dedupKey: `mid:<${key}>`,
+        subject: "parity", fromAddress: "anna@example.test", unread: o.unread ?? true,
+        date: o.date === undefined ? new Date(NOW.getTime() - n * 60_000) : o.date,
+        nativeLocator: o.folder === null ? null : { folder: o.folder ?? "INBOX", ref: `7:${n}` },
+        ...(o.gone ? { deletedAt: NOW } : {}),
+      }).returning();
+      return m!.id;
+    };
+    // The seeded pair gains an older letter whose folder_state names the thread's folder.
+    const first = await letter(s.pair, 9, { unread: false });
+    await db.insert(folderState).values({ messageId: first, desiredFolder: "Archive", observedFolder: "INBOX", lastSetBy: "us" });
+    await letter(s.pair, 8, { gone: true });
+    const [mixed] = await db.insert(threads).values({ accountId: s.accountId }).returning();
+    await letter(mixed!.id, 20, { folder: "Projects" });
+    await letter(mixed!.id, 21, { date: null, unread: false, folder: null });
+    await letter(mixed!.id, 22, { unread: false, folder: "Receipts" });
+    const [bare] = await db.insert(threads).values({ accountId: s.accountId }).returning();
+    await letter(bare!.id, 30, { folder: null });
+
+    const ids = [s.pair, s.single, mixed!.id, bare!.id];
+    const many = await materializeThreads(db as never, s.accountId, [...ids, other.pair]);
+    expect(many.has(other.pair), "another account's thread id").toBe(false);
+    expect(await materializeThread(db as never, s.accountId, other.pair)).toBeNull();
+    for (const id of ids) {
+      expect(JSON.stringify(many.get(id)), id).toBe(JSON.stringify(await materializeThread(db as never, s.accountId, id)));
+    }
+    expect(many.get(s.pair)?.folder).toBe("Archive");
+    expect(many.get(bare!.id)?.folder).toBe("INBOX");
+
+    const page = await sync.getSnapshot(ctxFor(db, s.accountId), { limit: 500 });
+    const served = page.changes.filter((c) => c.type === "thread");
+    expect(new Set(served.map((c) => c.id))).toEqual(new Set(ids));
+    for (const c of served) {
+      expect(JSON.stringify(c.entity), c.id).toBe(JSON.stringify(await materializeThread(db as never, s.accountId, c.id)));
+    }
   });
 });
