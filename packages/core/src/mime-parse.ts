@@ -1,49 +1,79 @@
 import { MailParser, type ParsedMail } from "mailparser";
 
 /**
- * How long one `normalizeMime` call may take to settle, both parses included. Real mail parses
- * in milliseconds and the slowest html-to-text shape measured costs about 5.5 s, so 30 s never
- * fires on real mail. It bounds a parse that STOPPED, not one that is busy: a synchronous
- * computation holds the timer too, which is `MAX_HTML_TO_TEXT_CHARS`'s job.
+ * How long a parse may go WITHOUT PROGRESS before it is refused: the splitter reading a line or the
+ * parser finishing a chunk is progress. It counts looks the loop actually took, so a loaded machine
+ * (a loop held elsewhere fires one late look) never refuses a busy parse, only one that STOPPED.
+ * A synchronous computation is one look too, which is `MAX_HTML_TO_TEXT_CHARS`'s job.
  */
 export const MIME_PARSE_DEADLINE_MS = 30_000;
+
+/** Wall time for the whole operation, both parses included, so a parse always settles. */
+export const MIME_PARSE_CEILING_MS = 10 * 60_000;
+
+const LOOKS = 30;
 
 /** The budget ran out before the parse settled. `MimeParseError` reads it as `parse_timeout`. */
 export class ParseDeadlineExceeded extends Error {
   readonly name = "ParseDeadlineExceeded";
   constructor(readonly ms: number) {
-    super(`the parse did not settle within ${ms} ms`);
+    super(`the parse did not settle within its ${ms} ms bound`);
   }
 }
 
 /**
- * One deadline for a whole operation, shared by every parse inside it: a clock per parse would
- * let the fallback re-parse start a second 30 s. Each parse subscribes while it runs; on expiry
- * every live subscriber is told once, and `clear` releases the timer on the way out.
+ * One budget for a whole operation, shared by every parse inside it: a budget per parse would let
+ * the fallback re-parse start a second ceiling. Each parse subscribes while it runs; on expiry
+ * every live subscriber is told once, with the bound that fired, and `clear` stops both timers.
  */
 export interface ParseBudget {
   readonly ms: number;
-  onExpire(fn: () => void): () => void;
+  onExpire(fn: (ms: number) => void): () => void;
+  progress(): void;
   clear(): void;
 }
 
-export function startParseBudget(ms: number = MIME_PARSE_DEADLINE_MS): ParseBudget {
-  const waiting = new Set<() => void>();
-  let expired = false;
-  const timer = setTimeout(() => {
-    expired = true;
-    for (const fn of [...waiting]) fn();
+const unref = (t: unknown): void => { (t as { unref?: () => void }).unref?.(); };
+
+// setTimeout and clearTimeout only: the phone's engine runs on Hermes (no `refresh()`, no clock reads).
+export function startParseBudget(
+  ms: number = MIME_PARSE_DEADLINE_MS,
+  ceilingMs: number = MIME_PARSE_CEILING_MS,
+): ParseBudget {
+  const waiting = new Set<(ms: number) => void>();
+  let expiredBy: number | null = null;
+  let looks = 0;
+  let lastProgress = 0;
+  let look: ReturnType<typeof setTimeout> | undefined;
+  let ceiling: ReturnType<typeof setTimeout> | undefined;
+  const expire = (bound: number): void => {
+    if (expiredBy !== null) return;
+    expiredBy = bound;
+    clearTimeout(look);
+    clearTimeout(ceiling);
+    for (const fn of [...waiting]) fn(bound);
     waiting.clear();
-  }, ms);
-  (timer as { unref?: () => void }).unref?.();
+  };
+  const next = (): void => {
+    look = setTimeout(() => {
+      looks++;
+      if (looks - lastProgress >= LOOKS) expire(ms);
+      else next();
+    }, ms / LOOKS);
+    unref(look);
+  };
+  next();
+  ceiling = setTimeout(() => expire(ceilingMs), ceilingMs);
+  unref(ceiling);
   return {
     ms,
     onExpire(fn) {
-      if (expired) { fn(); return () => {}; }
+      if (expiredBy !== null) { fn(expiredBy); return () => {}; }
       waiting.add(fn);
       return () => { waiting.delete(fn); };
     },
-    clear() { clearTimeout(timer); waiting.clear(); },
+    progress() { lastProgress = looks; },
+    clear() { clearTimeout(look); clearTimeout(ceiling); waiting.clear(); },
   };
 }
 
@@ -69,6 +99,21 @@ type Emitting = {
  * {@link refuse}: the parser's own `error`, which the parse turns into a rejection.
  */
 class SettlingMailParser extends MailParser {
+  progress: () => void = () => {};
+
+  constructor(options: BoundedParseOptions) {
+    super(options);
+    // The splitter reads lines for up to 16 KB of input per turn and emits nothing while it does.
+    const splitter = (this as unknown as { splitter?: { processLine?: unknown } }).splitter;
+    const processLine = splitter?.processLine;
+    if (splitter && typeof processLine === "function") {
+      splitter.processLine = (...args: unknown[]): unknown => {
+        try { this.progress(); } catch { /* progress never fails a line */ }
+        return processLine.apply(splitter, args);
+      };
+    }
+  }
+
   // The one door: the first throw fails the parse, a later one finds it already failed.
   refuse(err: unknown): void {
     const self = this as unknown as ParserInternals;
@@ -113,7 +158,9 @@ class SettlingMailParser extends MailParser {
     const node = data as { getDecoder?: () => Emitting } | null;
     const make = node?.getDecoder;
     if (make) node!.getDecoder = () => { const d = make.call(node); this.guard(d); return d; };
-    return (MailParser.prototype as unknown as ParserInternals).processChunk.call(this, data, done);
+    // Progress on completion, not entry: a chunk that never completes is a stopped parse.
+    const finished = (err?: unknown): void => { this.progress(); done(err); };
+    return (MailParser.prototype as unknown as ParserInternals).processChunk.call(this, data, finished);
   }
 }
 
@@ -141,6 +188,7 @@ export function parseBounded(
 ): Promise<ParsedMail> {
   return new Promise<ParsedMail>((resolve, reject) => {
     const parser = new SettlingMailParser(options);
+    parser.progress = () => budget.progress();
     const mail: Record<string, unknown> & { attachments: unknown[] } = { attachments: [] };
     let settled = false;
     let unsubscribe: () => void = () => {};
@@ -151,7 +199,7 @@ export function parseBounded(
       try { parser.destroy(); } catch { /* the refusal is already decided */ }
       reject(err);
     };
-    unsubscribe = budget.onExpire(() => fail(new ParseDeadlineExceeded(budget.ms)));
+    unsubscribe = budget.onExpire((ms) => fail(new ParseDeadlineExceeded(ms)));
     if (settled) return;
 
     parser.on("error", fail);

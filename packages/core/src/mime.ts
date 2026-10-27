@@ -271,7 +271,8 @@ function rawByteLength(raw: Buffer | string): number {
  * the on-demand design refuses to store. `parseBounded` takes the option as a literal `true` and
  * carries no rewrite: the html keeps its `cid:` references, `contentId`/`inline` populated. A
  * sender's own `data:` URI is {@link prepareHtmlForStorage}'s job. `raw` is attacker-controlled;
- * this settles, within one 30 s budget, on a usable message or one of the two typed errors.
+ * this settles, within one budget (30 s without progress, 10 min in all), on a usable message or one
+ * of the two typed errors.
  */
 export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger } = {}): Promise<NormalizedMessage> {
   const bytes = rawByteLength(raw);
