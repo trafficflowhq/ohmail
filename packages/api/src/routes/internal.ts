@@ -576,6 +576,7 @@ async function platformSignalPass(req: Request, deps: ApiDeps): Promise<Response
     log.info("platform_signal_pass", {
       outcome: report.outcome, rows: report.rows, pruned: report.pruned,
       ...(report.code ? { code: report.code } : {}),
+      ...(report.deferred > 0 ? { deferred: report.deferred } : {}),
     });
     // A semantic failure must not be a 200, because the caller reads only the status: the
     // worker's cron driver discards the body and looks at `res.ok`. A poll that could not

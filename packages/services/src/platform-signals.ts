@@ -165,6 +165,9 @@ export const SIGNAL_PAGE_BUDGET = 12;
  */
 export const SIGNAL_WALL_CLOCK_MS = 40_000;
 
+/** The one code for a window left unread because the caller's deadline ran out first. */
+const DEADLINE_UNREAD = "deadline_before_first_page";
+
 /**
  * How many CLOSED buckets a pass will fill in if they are missing.
  *
@@ -285,6 +288,9 @@ export function makePlatformSignalPort(
       const deadline = callOpts?.deadlineMs ?? nowMs() + wallClockMs;
       /** What one request may take: its own ceiling, or the rest of the poll's, whichever is less. */
       const budgetFor = (): number => Math.max(0, Math.min(timeoutMs, deadline - nowMs()));
+      /** A timeout on a request whose budget was the rest of the caller's deadline is the deadline's. */
+      const deadlineCut = (ms: number, err: unknown): boolean => ms < timeoutMs
+        && ["TimeoutError", "AbortError"].includes(String((err as Error)?.name));
       const token = trimmed(env.VERCEL_TOKEN);
       const team = trimmed(env.VERCEL_TEAM_ID);
       // BOTH are required, and the team id is not optional here even though a personal account
@@ -293,21 +299,25 @@ export function makePlatformSignalPort(
       // not broken — it has not been set up, and saying "failed" would put a red state on a board
       // for a deployment that simply has not been asked to measure anything.
       if (token.length === 0 || team.length === 0) return { unconfigured: true };
+      // The caller's budget is already spent: no request at all, and the deadline says so.
+      if (nowMs() >= deadline) return { failed: DEADLINE_UNREAD };
 
       const projects = resolvedProjects;
 
-      // NAME → ID, once per pass, before any log query. A name that does not resolve fails the
+      // NAME → ID, once per fetch, before any log query. A name that does not resolve fails the
       // whole poll rather than being walked as an id: querying the log endpoint with a name is
       // what produced an empty, confident-looking result for this port's entire life.
       const ids = new Map<string, string>();
       for (const name of projects) {
         let res: Response;
+        const ms = budgetFor();
         try {
           res = await doFetch(
             `${VERCEL_PROJECT_URL}/${encodeURIComponent(name)}?teamId=${encodeURIComponent(team)}`,
-            { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(budgetFor()) },
+            { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(ms) },
           );
         } catch (err) {
+          if (deadlineCut(ms, err)) return { failed: DEADLINE_UNREAD };
           return { failed: `project_transport:${String((err as Error)?.name ?? "unknown")}` };
         }
         if (!res.ok) return { failed: `project_http_${res.status}` };
@@ -381,7 +391,7 @@ export function makePlatformSignalPort(
             // state this whole file is built to make unrepresentable: a zero is only ever a row
             // that says zero. An unread project is reported as a FAILURE, so the pass writes no
             // row for it and the board says "not measured".
-            if (pages === 0) return { failed: "deadline_before_first_page" };
+            if (pages === 0) return { failed: DEADLINE_UNREAD };
             // WHAT WAS COUNTED IS EVIDENCE, and it used to be thrown away on this path when the
             // deadline (rather than the page budget) ended the walk: the catch below returned a
             // failure and the pages already read went with it, so a slow endpoint left the
@@ -415,10 +425,11 @@ export function makePlatformSignalPort(
             endDate: String(pages === 1 ? window.end.getTime() - 1 : cursor),
           });
           let res: Response;
+          const ms = budgetFor();
           try {
             res = await doFetch(`${VERCEL_REQUEST_LOGS_URL}?${q}`, {
               headers: { Authorization: `Bearer ${token}` },
-              signal: AbortSignal.timeout(budgetFor()),
+              signal: AbortSignal.timeout(ms),
             });
           } catch (err) {
             // A TIMEOUT AFTER A COMPLETED PAGE IS A PARTIAL WALK, NOT A FAILED ONE. Two paths end
@@ -433,6 +444,7 @@ export function makePlatformSignalPort(
               return partial("deadline");
             }
             if (completed > 0) return partial("upstream_refused");
+            if (deadlineCut(ms, err)) return { failed: DEADLINE_UNREAD };
             // The NAME only, never the message: a fetch error's message carries the URL, and this
             // string reaches a log line and an operator's screen.
             return { failed: `transport:${name}` };
@@ -596,6 +608,8 @@ export interface PlatformSignalPassReport {
   rows: number;
   /** Rows the retention sweep removed on this pass. */
   pruned: number;
+  /** Missing buckets left unread for the next pass because this pass's wall clock ran out. */
+  deferred: number;
 }
 
 export interface PlatformSignalPassOptions {
@@ -643,19 +657,17 @@ export async function runPlatformSignalPass(
   for (let i = 0; i < SIGNAL_BACKFILL_BUCKETS; i++) candidates.push(newestEnd - i * windowMs);
   const oldestStart = candidates[candidates.length - 1]! - windowMs;
   const haveRows = await db
-    // ── ONLY A FULLY COUNTED ROW COUNTS AS HELD ────────────────────────────────────────
+    // ── ONLY A FULLY COUNTED ROW COUNTS AS HELD, AND A PAGE-BUDGET SAMPLE ───────────────
     //
-    // A walk that exhausts its budget after reading at least one page persists the bucket with
-    // `truncated: true`. The rule then EXCLUDES that row from its arithmetic — a sampled count
-    // cannot be divided into a rate — so a bucket that is held-but-excluded is a permanent hole:
-    // never retried because it is present, never counted because it is sampled. It ages out of
-    // the window without ever having contributed. The two halves were each correct and their
-    // conjunction was not, which is why this filter belongs next to the exclusion it mirrors.
+    // The rule EXCLUDES a sample from its arithmetic, so a held sample would be a permanent hole:
+    // never retried because it is present, never counted because it is sampled. A page-budget
+    // sample is the one exception: a re-walk reads the same newest pages and stops at the same
+    // budget, and re-reading it spent the pass's clock on buckets it could never complete.
     .select({ project: platformSignals.project, windowStart: platformSignals.windowStart })
     .from(platformSignals)
     .where(and(
       sql`${platformSignals.windowStart} >= ${new Date(oldestStart).toISOString()}::timestamptz`,
-      sql`not ${platformSignals.truncated}`,
+      sql`(not ${platformSignals.truncated} or ${platformSignals.sampleCause} = ${"page_budget"})`,
     ));
   const held = new Set(
     haveRows.map((r) => `${r.project}@${new Date(r.windowStart as unknown as string).getTime()}`),
@@ -680,11 +692,17 @@ export async function runPlatformSignalPass(
   // pass is what the invocation kills.
   const passDeadline = Date.now() + (opts.wallClockMs ?? SIGNAL_WALL_CLOCK_MS);
   const answers: PlatformSignalFetch[] = [];
-  for (const end of missing) {
+  let deferred = 0;
+  for (const [i, end] of missing.entries()) {
     const a = await opts.port.fetch(
       { start: new Date(end - windowMs), end: new Date(end) },
       { deadlineMs: passDeadline },
     );
+    // The pass's own clock ran out after a bucket was read: the rest is the next pass's work.
+    if ("failed" in a && a.failed === DEADLINE_UNREAD && answers.some((x) => "rows" in x)) {
+      deferred = missing.length - i;
+      break;
+    }
     answers.push(a);
     // A FAILURE STOPS THE LOOP rather than being collected past: one refusal is almost always
     // the token or the endpoint, and walking the remaining buckets would spend the budget
@@ -702,7 +720,7 @@ export async function runPlatformSignalPass(
   // range delete over a table with a few thousand rows.
   const pruned = await prune(db, new Date(now.getTime() - retentionMs));
 
-  if (answer === null) return { outcome: "written", rows: 0, pruned };
+  if (answer === null) return { outcome: "written", rows: 0, pruned, deferred };
 
   // WHAT SUCCEEDED IS PERSISTED FIRST; ONLY THEN IS THE FAILURE REPORTED. Returning the failure
   // before the upserts threw away every measurement the pass HAD made: with the newest bucket
@@ -783,9 +801,9 @@ export async function runPlatformSignalPass(
   // The outcome reflects the WORST thing that happened, over rows that are already persisted.
   // `unconfigured` outranks `failed` for the reason the three-way union exists: a deployment
   // that was never asked to measure anything is not failing.
-  if (unconfigured) return { outcome: "unconfigured", rows: written.length, pruned };
-  if (failed) return { outcome: "failed", code: failed.failed, rows: written.length, pruned };
-  return { outcome: "written", rows: written.length, pruned };
+  if (unconfigured) return { outcome: "unconfigured", rows: written.length, pruned, deferred };
+  if (failed) return { outcome: "failed", code: failed.failed, rows: written.length, pruned, deferred };
+  return { outcome: "written", rows: written.length, pruned, deferred };
 }
 
 /** Delete rows older than the cut. Returns how many went. */

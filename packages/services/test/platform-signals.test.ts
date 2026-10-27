@@ -129,12 +129,14 @@ describe("the backfill spends ONE budget and keeps what it measured", () => {
     // property that actually bounds the invocation. A port that ignored it and computed its own
     // would walk normally here — the mutation that first slipped past this file.
     let logCalls = 0;
+    let lookups = 0;
     const port = makePlatformSignalPort(
       { VERCEL_TOKEN: "tok", VERCEL_TEAM_ID: "team_x" },
       {
         nowMs: () => 1_000,
         fetchImpl: (async (url: unknown) => {
           if (String(url).includes("/v9/projects/")) {
+            lookups++;
             return new Response(JSON.stringify({ id: "prj_test", name: "ohmail-api" }));
           }
           logCalls++;
@@ -145,8 +147,44 @@ describe("the backfill spends ONE budget and keeps what it measured", () => {
 
     // A deadline ALREADY IN THE PAST. Nothing may be walked under it.
     const out = await port.fetch({ start: new Date(0), end: new Date(5000) }, { deadlineMs: 500 });
-    expect("failed" in out, "an expired budget is a failure, never an empty measurement").toBe(true);
-    expect(logCalls, "and no request log was read at all").toBe(0);
+    expect(out, "an expired budget is the deadline's failure, never an empty measurement")
+      .toEqual({ failed: "deadline_before_first_page" });
+    expect(logCalls + lookups, "and nothing was asked at all").toBe(0);
+  });
+
+  it("a timeout cut short by the caller's deadline names the deadline; a full one is the transport's", async () => {
+    const w = { start: new Date(0), end: new Date(5000) };
+    for (const lookup of [true, false]) {
+      const at = (nowMs: number) => makePlatformSignalPort({ VERCEL_TOKEN: "tok", VERCEL_TEAM_ID: "team_x" }, {
+        nowMs: () => nowMs,
+        fetchImpl: (async (url: unknown) => {
+          if (!lookup && String(url).includes("/v9/projects/")) return new Response(JSON.stringify({ id: "prj_test" }));
+          throw new DOMException("timed out", "TimeoutError");
+        }) as unknown as typeof fetch,
+      }).fetch(w, { deadlineMs: 40_000 });
+      // 10 s left: the request's 15 s ceiling was cut to the deadline.
+      expect(await at(30_000)).toEqual({ failed: "deadline_before_first_page" });
+      expect(await at(0)).toEqual({ failed: lookup ? "project_transport:TimeoutError" : "transport:TimeoutError" });
+    }
+  });
+
+  it("a bucket the pass's OWN deadline left unread is deferred, not a failure", async () => {
+    const db = await makeTestDb();
+    let calls = 0;
+    const port: PlatformSignalPort = {
+      projects: ["ohmail-api"],
+      async fetch(w) {
+        return calls++ > 0 ? { failed: "deadline_before_first_page" } : { rows: [{ provider: "vercel", project: "ohmail-api",
+          windowStart: w.start, requests: 600, errors5xx: 3, truncated: true, sampleCause: "page_budget" }] };
+      },
+    };
+    expect(await runPlatformSignalPass(db, { port, now: () => NOW }))
+      .toMatchObject({ outcome: "written", rows: 1, deferred: 2 });
+    expect(calls, "the loop stops at the first deferred bucket").toBe(2);
+    expect(await db.select().from(platformSignals), "a deferred bucket writes no row").toHaveLength(1);
+    // The control: with nothing read before it, the deadline is the pass's failure.
+    expect(await runPlatformSignalPass(await makeTestDb(), { port: fakePort({ failed: "deadline_before_first_page" }), now: () => NOW }))
+      .toMatchObject({ outcome: "failed", code: "deadline_before_first_page", rows: 0 });
   });
 
   it("a LATER bucket's failure does not discard what earlier buckets measured", async () => {
@@ -534,6 +572,24 @@ describe("runPlatformSignalPass — the window", () => {
     const report = await runPlatformSignalPass(db, { port, now: () => NOW });
     expect(calls, "nothing missing, nothing polled").toBe(0);
     expect(report.outcome, "and that is not a failure").toBe("written");
+  });
+
+  it("a PAGE-BUDGET sample is final — a re-walk stops at the same budget; a deadline sample is not", async () => {
+    const db = await makeTestDb();
+    for (const [iso, cause] of [["12:00", "page_budget"], ["11:55", "deadline"], ["11:50", "page_budget"]]) {
+      await db.insert(platformSignals).values({ provider: "vercel", project: "ohmail-api",
+        windowStart: new Date(`2026-09-04T${iso}:00.000Z`), requests: 600, errors5xx: 6, truncated: true,
+        sampleCause: cause, fetchedAt: NOW } as never);
+    }
+    const asked: string[] = [];
+    await runPlatformSignalPass(db, { now: () => NOW, port: { projects: ["ohmail-api"], async fetch(w) {
+      asked.push(w.start.toISOString());
+      return { rows: [{ provider: "vercel", project: "ohmail-api", windowStart: w.start,
+        requests: 50, errors5xx: 0, truncated: true, sampleCause: "deadline" }] };
+    } } });
+    expect(asked, "only the deadline sample is walked again").toEqual(["2026-09-04T11:55:00.000Z"]);
+    expect((await db.select().from(platformSignals)).map((r) => Number(r.requests)).sort())
+      .toEqual([50, 600, 600]);
   });
 
   it("a RE-POLL of the same window overwrites rather than doubling it", async () => {
