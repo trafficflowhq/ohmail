@@ -1007,8 +1007,10 @@ export function ScreenerView({
     // The arithmetic is {@link heldAnchorTop} — extracted so a guard can drive it directly, because
     // jsdom reports every rect as zero and a mounted assertion cannot tell this formula from a
     // wrong one.
+    // The decision bar is sticky over the column's top: the letter lands below it, not under it.
+    const bar = read.querySelector<HTMLElement>(":scope > .decide");
     read.scrollTop = heldAnchorTop(
-      cssRect(read).top, cssRect(last).top, read.scrollTop,
+      bar ? cssRect(bar).bottom : cssRect(read).top, cssRect(last).top, read.scrollTop,
     );
     // The OBSERVED value, not the target: a browser clamps `scrollTop` to the scrollable range, and
     // a stored target beyond it would never match on the next pass — which reads as "the reader
