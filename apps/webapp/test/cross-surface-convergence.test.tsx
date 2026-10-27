@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
+  FEED_SINCE_ID,
   MemoryMirrorStore,
   conversationKeyOf,
   feedPartition,
@@ -476,6 +477,19 @@ describe("the streams' badge is ONE number", () => {
     const reader = await mirrorOf(pile, { view: "reads", newestSeenId: "r0" });
     expect(feedPartition(reader, "reads").newCount).toBe(2);
     expect(liveReads(reader, VIEW).newCount).toBe(feedPartition(reader, "reads").newCount);
+  });
+
+  it("a first visit names the unread letters present at setup, on the phone as on the shell", async () => {
+    const pile = [
+      msg({ id: "u0", date: d(0), unread: true, folder: "ohmail/News" }),
+      msg({ id: "r0", date: d(1), unread: false, lastReadAt: d(1), folder: "ohmail/News" }),
+      msg({ id: "u1", date: d(2), unread: true, folder: "ohmail/News" }),
+    ];
+    const reader = await mirrorOf(pile);
+    // This device's first sync came after all three; no visit has committed a line.
+    await reader.putLocal("view_meta", FEED_SINCE_ID, { at: NOW.toISOString() });
+    expect(feedPartition(reader, "reads").newCount).toBe(2);
+    expect(liveReads(reader, VIEW).newCount).toBe(2);
   });
 });
 

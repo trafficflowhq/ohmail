@@ -1021,6 +1021,22 @@ export const connectAttempts = pgTable("connect_attempts", {
   ckTransport: check("connect_attempts_transport_closed", sql`${t.transport} is null or ${t.transport} in ('imap', 'smtp')`),
 }));
 
+/**
+ * A LOWER STORAGE LIMIT, HELD (cloud 0055): the plan's own limit as last seen and, for 14 days after
+ * it drops, the previous one. Written only by `heldStorageLimitOf`, through the erasure fence.
+ */
+export const accountStorageHolds = pgTable("account_storage_holds", {
+  accountId: uuid("account_id").primaryKey().references(() => accounts.id, { onDelete: "cascade" }),
+  seenBytes: bigint("seen_bytes", { mode: "number" }).notNull(),
+  heldBytes: bigint("held_bytes", { mode: "number" }),
+  heldUntil: timestamp("held_until", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  ckSeen: check("account_storage_holds_seen_nonneg", sql`${t.seenBytes} >= 0`),
+  ckPair: check("account_storage_holds_held_pair", sql`(${t.heldBytes} is null) = (${t.heldUntil} is null)`),
+  ckAbove: check("account_storage_holds_held_above_seen", sql`${t.heldBytes} is null or ${t.heldBytes} > ${t.seenBytes}`),
+}));
+
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
@@ -1029,4 +1045,5 @@ export const cloudSchema = {
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,
   creditRefundObligations, screenerSuggestOwed, accountLifecycleNotices, erasedBearers, connectAttempts,
+  accountStorageHolds,
 };

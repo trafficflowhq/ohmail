@@ -1271,10 +1271,11 @@ describe("the shell is the consumer, not just the harness", () => {
     const doors = lines
       .map((line, i) => ({ line, i }))
       .filter(({ line }) => line.includes("writeComposeDraft(seeded)"));
+    // The reopen, and `replaceComposer` (Compose, Write-to and a mail link share it).
     expect(
       doors.length,
       "the compose-seeding doors moved — this census is counting something else",
-    ).toBe(3);
+    ).toBe(2);
 
     /*
      * ── ONE DOOR IS CONDITIONAL, AND THE CONDITION IS NAMED ─────────────────────────────────
@@ -1282,14 +1283,15 @@ describe("the shell is the consumer, not just the harness", () => {
      * Reopening a draft the browser holds an UNRESOLVED send record for must NOT re-mint: doing
      * so takes both of the names the park holds that message by off it at once, which is the
      * measured duplicate delivery (recipient total 2). So that one door reads
-     * `if (!parked) clearComposeDraft();`.
+     * `if (!parked || waiting) clearComposeDraft();`: over a letter whose own send waits it does
+     * re-mint, or the held row would answer for that send.
      *
      * The census is not loosened to accept either form anywhere — that would let the next door
      * added quietly skip the re-mint behind any condition at all. The guarded form is allowed at
      * exactly ONE door, its condition must be the `parked` question, and that question must be
      * asked from `holdOf` above it. Every other door stays unconditional.
      */
-    const GUARDED = "if (!parked) clearComposeDraft();";
+    const GUARDED = "if (!parked || waiting) clearComposeDraft();";
     let guarded = 0;
     for (const { i } of doors) {
       // Upwards past blank lines and comment lines to the previous STATEMENT.
@@ -1324,6 +1326,7 @@ describe("the shell is the consumer, not just the harness", () => {
           `the door at shell-compose.ts:${i + 1} skips the re-mint behind a condition that is not the `
           + "parked question asked from `holdOf` inside its own callback",
         ).toContain("const parked = hold.kind !== \"free\";");
+        expect(above, "the re-mint over a waiting letter asks the waiting question").toContain("const waiting = sendCarriesThis;");
         continue;
       }
       expect(
@@ -1685,7 +1688,7 @@ describe("reopening a held row does not write over what is on screen", () => {
     expect(
       openDraft,
       "openDraftWithBody decides for itself whether the reopen would overwrite anything",
-    ).toMatch(/if \(parked && reopenWouldOverwrite\(composeRef\.current, seeded\)\)/);
+    ).toMatch(/if \(!waiting && parked && reopenWouldOverwrite\(composeRef\.current, seeded\)\)/);
     expect(
       openDraft,
       "openDraftWithBody still skips the refusal for the row it is bound to — which is exactly "

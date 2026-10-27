@@ -24,7 +24,7 @@ export { ruleMatchKey };
 
 /**
  * How many messages one set of a per-message write carries — a decision's held mail, the bulk
- * mark-read route's ids, a read-retro page: `@trafficflow/core`'s `FILING_BATCH_MAX`, copied for
+ * mark-read route's ids: `@trafficflow/core`'s `FILING_BATCH_MAX`, copied for
  * the same reason; `screener-decide-statements.test.ts` (services) pins the two equal. Their
  * statements grow with these sets, not with their messages.
  */

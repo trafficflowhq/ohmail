@@ -7,6 +7,7 @@ import {
   type ParkedAccountsReader, type PlaneOpsReader, type PlaneReadBound,
 } from "./entitlements-port.js";
 import { planeOpsReaderOf } from "./plane-ops.js";
+import { storageHoldsOf, storageLimitFrom } from "./storage-hold.js";
 
 /**
  * How many accounts one reading asks about, largest stored bytes first. A bound on the pass, and a
@@ -26,7 +27,7 @@ export const ALERT_PARKED_READ_BOUND: PlaneReadBound = { boundMs: 3_000, faultCe
 
 /**
  * WHO IS AT THEIR STORAGE CAP — the bytes this database counts (`account_storage`) against the cap
- * the entitlements program states, asked through the host's cached `access`. `null` on an unmetered
+ * the entitlements program states (or a lower one's hold), asked through the host's cached `access`. `null` on an unmetered
  * host: nobody is capped there, and the caller says so. An account whose ask fell to the client's
  * fault arm with nothing held (`UNMETERED_ACCESS` itself) is not read, so an outage reads partial.
  */
@@ -34,7 +35,7 @@ export function accountsAtCapOf(
   entitlements: EntitlementsComposition, bound: PlaneReadBound = AT_CAP_READ_BOUND,
 ): AccountsAtCapReader | null {
   if (!isMetered(entitlements)) return null;
-  return async (db: Tx) => {
+  return async (db: Tx, now: Date) => {
     const [counted] = await db.select({ n: sql<number>`count(*)::int` })
       .from(accountStorage).where(gt(accountStorage.bytes, 0));
     const rows = await db.select({ accountId: accountStorage.accountId, bytes: accountStorage.bytes })
@@ -44,10 +45,14 @@ export function accountsAtCapOf(
     let read = 0;
     // A round the bound stopped leaves its accounts unread, so the reading says partial.
     const { answered } = await inPlaneRounds(entitlements, rows, (r) => entitlements.access(r.accountId), bound);
+    // A held drop (cloud 0055) is the cap the trim keeps under, read only: one read for the batch.
+    const holds = await storageHoldsOf(db, answered.filter(([, v]) => v.ok).map(([r]) => r.accountId));
     for (const [r, v] of answered) {
       if (v === UNMETERED_ACCESS) continue;
       read++;
-      const cap = v.ok ? v.limits.storageBytes : null;
+      const limit = v.ok ? v.limits.storageBytes : null;
+      const cap = limit === null || !v.ok
+        ? null : storageLimitFrom(limit, v.trialStorage ?? null, holds.get(r.accountId) ?? null, now).capBytes;
       const bytes = Number(r.bytes);
       if (cap !== null && bytes >= cap) atCap.push({ accountId: r.accountId, bytes, storageBytesLimit: cap });
     }

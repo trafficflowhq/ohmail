@@ -545,15 +545,6 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
 
   /* ── OPERATOR CLI REPAIRS (idempotent, resumable, safe to kill) ───────────────────────── */
   {
-    name: "read_retro",
-    module: `${W}/read-retro.ts`, entry: "readStateRetroPass",
-    triggers: ["cli"], cli: ["run-read-retro.ts"],
-    cadence: "operator-run, per mailbox",
-    budget: "READ_RETRO_BATCH / READ_RETRO_WRITES_PER_CYCLE / READ_RETRO_MAX_PAGES",
-    owns: "unread mail already demoted to the two read-retro folders gets its desired-seen intent (flag-intent.ts, the one spelling)",
-    fence: "row locks (FOR UPDATE OF messages); idempotent — unread=false leaves the candidate set",
-  },
-  {
     name: "redacted_restore",
     module: `${W}/redacted-restore.ts`, entry: "redactedRestorePass",
     triggers: ["cli"], cli: ["run-redacted-restore.ts"],

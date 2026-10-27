@@ -48,6 +48,7 @@ import {
 import type { PullBinding } from "./PullNewMail";
 import { EMPTY_RICH, type RichValue } from "./rich-text";
 import { go, goFolder, goScreener, goSettings, goTag, goTriage, switchKeyOf, type Route, type TriagePileId } from "./routing";
+import { goCompose } from "./compose-door";
 import type { ScreenerState } from "./screener-state";
 import type { ShellCompose } from "./shell-compose";
 import type { ShellDerivations } from "./shell-derivations";
@@ -527,7 +528,7 @@ export function useShellKeys({
       disabled: !pullBinding.available || pullBinding.pulling,
       run: () => pullBinding.pull(),
     },
-    { chord: "c", group: "app", label: t("shortcuts.compose"), run: () => go("compose") },
+    { chord: "c", group: "app", label: t("shortcuts.compose"), run: () => goCompose() },
     {
       chord: "f",
       group: "message",
@@ -936,7 +937,7 @@ export function useShellKeys({
         },
       },
       { id: "search", label: t("palette.search"), keys: ["/"], run: () => go("search") },
-      { id: "compose", label: t("palette.newMessage"), keys: ["c"], run: () => go("compose") },
+      { id: "compose", label: t("palette.newMessage"), keys: ["c"], run: () => goCompose() },
       {
         /* THE DESTINATION ROW, reading the registry's own wording (`shortcuts.goTrash`) exactly
            as the four rows above it do — one message per destination, in the namespace the

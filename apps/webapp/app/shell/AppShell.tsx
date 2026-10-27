@@ -119,7 +119,7 @@ import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import { OhboxWhereLine } from "./OhboxWhereLine";
 import { useOhboxVisitMark } from "./ohbox-visit";
-import type { ApplyFaceAllDevices } from "./FaceRow";
+import { useFaceFollowsAccount, type ApplyFaceAllDevices } from "./FaceRow";
 import {
   ProfileImportCard, SavedProfileSection, settingsDoorbell, useProfileImport, type ProfileImportTransport,
 } from "./ProfileImportCard";
@@ -269,6 +269,7 @@ import {
   useHashRoute,
   type Route,
 } from "./routing";
+import { goCompose } from "./compose-door";
 import { beginSearch, markStartup, useUiVitals } from "./ui-vitals";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
@@ -964,11 +965,11 @@ export function AppShell({
   firstRun?: FirstRunHost;
   /**
    * A compose the host was handed from outside — the desktop's mailto seam. The OS delivers a
-   * `mailto:` click to the desktop shell, the parsed fields arrive here, and the shell seeds
-   * the compose form the way `writeTo` and `openDraft` do — same release-first rule, same chip
-   * formatting — then navigates to compose. `onMailtoDraftSeeded` is called once the form holds
-   * the fields so the host drops its copy; a draft left in the prop would re-seed on every
-   * remount over whatever was typed since. Fields are plain bounded text (the desktop's
+   * `mailto:` click to the desktop shell, the parsed fields arrive here, and the shell opens them
+   * by `writeTo`'s door — what the composer holds is saved first, a letter whose send waits gives
+   * way only once a row holds its words — then navigates to compose. `onMailtoDraftSeeded` is
+   * called when the shell takes the link, so the host drops its copy: each link is taken once, and
+   * one refused for unsaved words is not tried again over them. Fields are plain bounded text (the desktop's
    * `mailto.ts` is the one place a mailto is read); the body seeds as plain text (`html: ""`,
    * `openDraft`'s rule).
    */
@@ -1321,36 +1322,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     void adoptLocale(accountLocale);
   }, [adoptLocale, accountLocale, activeLocale]);
   /**
-   * The account's face, adopted the same way — same `GET /consent` read, into
-   * `adoptAccountFace` (which mirrors it to storage so the next boot's init script stamps it
-   * pre-paint). Never a write: PATCHing back a value that came from the account is the loop
-   * `adoptLocale` warns about. Two deliberate differences from the locale effect: null IS
-   * adopted once known — it clears the device's mirror of a previous account answer, else a
-   * revoked choice keeps re-skinning this device from a stale copy; and the device's own
-   * explicit pin still outranks what is adopted (the provider's resolution order).
-   */
-  const adoptAccountFace = theme.adoptAccountFace;
-  const accountThemeFace = consent.themeFace;
-  /* `themeFaceKnown`, NOT `known` (review-caught): the boot cache can make `known` true with
-     the face still resting null, and adopting THAT null would wipe this device's mirror of
-     the account's real answer on every warm boot whose live read is slow. */
-  const themeFaceKnown = consent.themeFaceKnown;
-  const consentStandalone = consent.standalone;
-  useEffect(() => {
-    /* A STANDALONE door has no account, so it may not wear one (review-caught, desktop):
-       the provider outlives the desktop's door switch, and the departed cloud account's
-       adopted face — in memory AND in the `ohmail.face.account` mirror — would otherwise
-       skin the standalone mailbox, and the next relaunch, with an answer nobody on this
-       door ever gave. Adopting null clears both. The web never takes this arm (its cloud
-       client is always reachable); the device's own pin is untouched either way. */
-    if (consentStandalone) {
-      adoptAccountFace(null);
-      return;
-    }
-    if (!themeFaceKnown) return;
-    adoptAccountFace(accountThemeFace);
-  }, [adoptAccountFace, accountThemeFace, themeFaceKnown, consentStandalone]);
-  /**
    * Being woken, reconciled at boot — the sign-in counterpart of the sign-out revoke. Sign-out
    * drops this browser's push row; the channels in localStorage and the OS permission survive it
    * (a per-install preference), so signing back in showed every switch ON over no registration,
@@ -1398,7 +1369,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * no transport — the device pin is the whole of its appearance choice.
    */
   const applyFaceAllDevices: ApplyFaceAllDevices | null =
-    !demo && themeFaceKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;
+    !demo && consent.themeFaceKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;
+  const holdFaceForAccount = useFaceFollowsAccount(consent, applyFaceAllDevices); // the account's look (FaceRow.tsx)
   /**
    * REMEMBER THE RESURFACE TIME (mail 0110) — the account write the horizon chooser makes after
    * it has dispatched, folded to one nullable callback. Null on the demo (no session) and on a
@@ -1657,19 +1629,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   /**
    * THE LIVE JUNK WINDOW (FOLDERS-SPEC.md §16.2) — the Screener's third segment, flag-on.
    *
-   * The hook is called unconditionally (it is a hook); what is CONDITIONAL is `active` — the
-   * first page is read lazily on the segment's first entry, and nothing is ever fetched while
-   * "Use folders" is off, in the demo, or away from the segment. The PROP below is gated the
-   * same way plus on `autoOptIn.supported` (the shell's one answer to "is there a server to
-   * ask", the same read the suggest control uses): absent, `ScreenerView` renders the
-   * flag-off segment byte-identically to before the window existed (§16.7).
+   * The hook is called unconditionally (it is a hook); what is CONDITIONAL is `active` and `warm`:
+   * the page and the preview are read when the Screener opens, so the segment's first entry draws
+   * them at once; nothing is fetched while "Use folders" is off, in the demo, or away from the
+   * Screener. The PROP below is gated the same way plus on `autoOptIn.supported` (the shell's
+   * one answer to "is there a server to ask", the same read the suggest control uses): absent,
+   * `ScreenerView` renders the flag-off segment byte-identically to before the window existed
+   * (§16.7).
    */
-  const junkWindow = useJunkWindow(
-    !demo && consent.foldersEnabled && !seedOwed
-      && route.view === "screener" && route.screenerSegment === "spam",
-    toast,
-    junkWire,
-  );
+  const junkOnScreener = !demo && consent.foldersEnabled && !seedOwed && route.view === "screener";
+  const junkWindow = useJunkWindow(junkOnScreener && route.screenerSegment === "spam", toast, junkWire, junkOnScreener);
   /**
    * WHAT TO SAY ABOUT THE PROVIDER'S JUNK FOLDER, and whether to offer the way in — the honest
    * half of JUNK-INVISIBLE, read by the rail's folders group and by search's empty state. The
@@ -1942,7 +1911,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   const {
     cancelCompose, discardKeepsCompose, cancelSchedule, closeCompose, closeReply, compose, composeResumed, composeCloseRefusal,
     confirmForward, forwardAsk, composeFrom, discardDraft, notSentRows, draftRepliesHere, draftReply, draftReplyChrome, editScheduled,
-    heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig,
+    heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig, composeHeldBySend, composeWaitNote,
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
     pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply, openNotSent,
@@ -2305,7 +2274,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             corner pill are the only way the mailbox can speak, and they keep the job. */}
         {sessionRefused ? null : <SyncBar hostOffline={hostConnection != null} setupHref={setupHref} />}
         {/* A send that left its editor, finishing — the narrow-width pill; the rail carries it at width. */}
-        <SendingLine api={mailSend} variant="shell" onOpen={(i) => openNotSent(i.key, i.left, i.m)} onOpenMany={() => go("drafts")} />
+        <SendingLine api={mailSend} variant="shell" onOpen={(i) => openNotSent(i.key, i.left, i.m, i.state !== "ended")} onOpenMany={() => go("drafts")} />
 
         {/* THE COMPUTER THIS WINDOW READS THROUGH, when it is not answering — the narrow-width
             copy, on `SyncBar`'s rule and hidden at 1024px and up by the same single query. It sits
@@ -2419,7 +2388,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             composeLabel={t("rail.compose")}
             onCompose={() => {
               setRailOpen(false);
-              go("compose");
+              goCompose();
             }}
             composeActive={route.view === "compose"}
             groups={railGroupsWithHints}
@@ -2464,7 +2433,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                     base; see `PullNewMail.tsx` for the honest-settle contract. */}
                 <PullNewMail variant="rail" binding={pullBinding} />
                 {/* A send that left its editor finishes here, above the mailbox's own line. */}
-                <SendingLine api={mailSend} variant="rail" onOpen={(i) => openNotSent(i.key, i.left, i.m)} onOpenMany={() => go("drafts")} />
+                <SendingLine api={mailSend} variant="rail" onOpen={(i) => openNotSent(i.key, i.left, i.m, i.state !== "ended")} onOpenMany={() => go("drafts")} />
                 {sessionRefused ? null : <SyncBar variant="rail" hostOffline={hostConnection != null} setupHref={setupHref} />}
                 {/* Same component at rail width — its own layout collapses under 520px, so the
                     rail does not need a second variant. */}
@@ -3152,9 +3121,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    next press would mint a fresh Idempotency-Key for mail already on its way: the
                    server collapses two presses only under ONE key, so that is a second copy at the
                    recipient. Held rather than warned, because a warning is something to read past
-                   and this cannot be taken back. `restoredPending` is keyed on WHICH MESSAGE, so a
-                   new message started on the same lane is never held. */
-                locked={mailSend.restoredPending(COMPOSE_SEND_KEY)
+                   and this cannot be taken back. Keyed on WHICH MESSAGE (`composeHeldBySend`: the
+                   last session's send, or one naming the row on screen), so a new message started
+                   on the same lane is never held. */
+                locked={composeHeldBySend
                   /* A store whose load was refused cannot say the send is over: held, and said. */
                   ? { sentence: t(engine.outboxUnreadable?.() === true ? "compose.sendingOutboxUnread" : "compose.sendingFromLastSession") }
                   : null}
@@ -3171,6 +3141,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    sent one, which `elsewhere` let go of. */
                 onSendAsNew={sendCompose}
                 resumed={composeResumed}
+                waitNote={composeWaitNote}
                 /* LEAVING SAVES FIRST — see `closeCompose`. Escape and the close control take
                    this; every other exit takes the autosave hook's own belt. */
                 onClose={closeCompose}
@@ -3242,6 +3213,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
               <Suspense fallback={null}>
               <SettingsView
                 applyFaceAllDevices={applyFaceAllDevices}
+                holdFaceForAccount={holdFaceForAccount}
                 notifications={notifications}
                 tags={tags}
                 tagCounts={Object.fromEntries(

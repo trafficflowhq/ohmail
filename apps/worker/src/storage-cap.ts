@@ -1,5 +1,6 @@
 import { UNMETERED_STORAGE_CAP, type Logger, type StorageCap } from "@trafficflow/core/mail";
-import { accessOf, type EntitlementsComposition } from "@trafficflow/db";
+import { accessOf, type EntitlementsComposition, type Tx } from "@trafficflow/db";
+import { heldStorageLimitOf } from "@trafficflow/db/cloud";
 
 /**
  * THE ORGANIZER'S STORAGE-CAP RESOLVER — the one composition that turns the entitlements port's answer into
@@ -10,13 +11,14 @@ import { accessOf, type EntitlementsComposition } from "@trafficflow/db";
  * FAULT resolves to unmetered FOR THIS RESOLUTION ONLY and is NOT cached (a transient blip must never start
  * withholding a paying customer's bodies, and must not stick — bounded by the fault's duration). No
  * absent-config arm: `SyncDeps.storageCap` is required, so a composition that forgets this resolver is a
- * compile error, not an unmetered cap. */
+ * compile error, not an unmetered cap. A lower limit is held 14 days (`heldStorageLimitOf`, cloud 0055);
+ * a hold that cannot be read is a fault like the program's, never the lower limit. */
 export interface StorageCapResolver {
   (accountId: string): Promise<StorageCap>;
   /**
-   * Inside a trial's storage floor, the plan's own limit (`trialStorage.planBytesLimit`) where it is below
-   * the cap, else `null`: what the storage refill fills to (`SyncDeps.storagePlanLimit`). The same read and
-   * cache as the cap; a fault answers `null` beside the unmetered cap, which refills nothing.
+   * The plan's own limit where it is below the cap (inside a trial's floor or a held drop), else `null`:
+   * what the storage refill fills to (`SyncDeps.storagePlanLimit`). The same read and cache as the cap; a
+   * fault answers `null` beside the unmetered cap, which refills nothing.
    */
   planLimit(accountId: string): Promise<number | null>;
 }
@@ -25,6 +27,7 @@ interface Resolved { value: StorageCap; planLimit: number | null }
 
 export function makeStorageCapResolver(
   entitlements: EntitlementsComposition,
+  db: Tx,
   log: Pick<Logger, "warn">,
   opts: { ttlMs?: number; now?: () => Date } = {},
 ): StorageCapResolver {
@@ -37,11 +40,9 @@ export function makeStorageCapResolver(
     if (hit && at - hit.at < ttlMs) return hit;
     try {
       const verdict = await accessOf(entitlements, accountId);
-      const cap = verdict.ok ? verdict.limits.storageBytes : null;
-      const plan = verdict.ok ? verdict.trialStorage?.planBytesLimit ?? null : null;
+      const limit = await heldStorageLimitOf(db, accountId, verdict, new Date(at));
       const entry: Resolved & { at: number } = {
-        at, value: cap === null ? UNMETERED_STORAGE_CAP : cap,
-        planLimit: cap !== null && plan !== null && plan < cap ? plan : null,
+        at, value: limit === null ? UNMETERED_STORAGE_CAP : limit.capBytes, planLimit: limit?.planBytes ?? null,
       };
       cache.set(accountId, entry);
       return entry;

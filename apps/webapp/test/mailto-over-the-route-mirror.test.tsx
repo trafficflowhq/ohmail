@@ -9,12 +9,22 @@
  * `useShellOpenState` (ARCH-022, the L3 ruling) — mirror, then mailto — and the explicit action
  * stands. The old order let the mirror swallow the click, and it is the red arm below.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
+import { MemoryMirrorStore, type EngineDraft, type MirrorStore, type SyncChange } from "@ohmail/client-engine";
+import en from "../messages/en.json";
 import { go, parseHash, reflectMessage } from "../app/shell/routing";
+import { EMPTY_COMPOSE, markComposeRowHolds, resetComposerForTest, writeComposeDraft, writeComposeRow } from "../app/shell/compose";
+import { holdsSig } from "../app/shell/compose-autosave";
+import { sendPendingInDurableOutbox } from "../app/shell/mail-send";
+import { RESTART_FLUSH_MS } from "../app/shell/app-update";
+import { typeInto } from "./fixtures/rich-editor-driver";
+import { settleEditor } from "./_first-paint.js";
+import { message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
+import { composeLine, composeSend, composeSubject, composerOn, letter, navigate, rounds, toasts } from "./_handoff-steps.js";
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -109,4 +119,183 @@ describe("the order the shell registers them in", () => {
     expect(read("shell-open-state.ts")).toContain("reflectMessage(route, openOnScreen);");
     expect(read("AppShell.tsx")).not.toContain(deps);
   });
+});
+
+/* ── A MAIL LINK OVER WORDS THE COMPOSER HOLDS ───────────────────────────────────────────────
+   The link's letter replaces what is on screen only once those words are on the account: saved
+   first, never asked, and a link whose save was refused leaves them where they are. */
+describe("a mail link over a letter being written", () => {
+  const LINK = { to: ["lena@example.invalid"], cc: [], bcc: [], subject: "Hello from a link", body: "" };
+  const subject = (s: DraftShell): HTMLInputElement | null => s.el.querySelector<HTMLInputElement>("#compose-subject");
+  const rows = (s: DraftShell): string[] => s.store.list<EngineDraft>("draft").filter((d) => d.status === "draft")
+    .map((d) => `${d.subject}|${(d.body ?? "").trim()}`);
+  async function setSubject(s: DraftShell, value: string): Promise<void> {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(subject(s)!, value);
+      subject(s)!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  /** Rows on the account at the moment the composer first shows the link's letter. */
+  async function rowsWhenLinkShows(s: DraftShell): Promise<string[]> {
+    await waitFor(() => subject(s)?.value === LINK.subject, "the link's letter", 240);
+    return rows(s);
+  }
+  beforeEach(() => {
+    try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
+    stubDom();
+    Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => true });
+  });
+  afterEach(async () => { await unmountAll(); resetComposerForTest(); });
+
+  it("words typed inside the pause are saved as a draft before the link's letter opens", async () => {
+    const s = await mountShell("#/ohbox", [message("m1")], []);
+    await navigate("#/compose");
+    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer");
+    await settleEditor();
+    await setSubject(s, "Notes from the meeting");
+    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")!, "We agreed on three things."); });
+    await s.mailto.open(LINK);
+    expect(await rowsWhenLinkShows(s)).toEqual(["Notes from the meeting|We agreed on three things."]);
+    expect(s.mailto.seeded).toBe(1);
+  }, 60_000);
+
+  it("a link that starts the app saves the letter the last session left before it opens", async () => {
+    writeComposeDraft({ ...EMPTY_COMPOSE, subject: "Left unsaved last time", body: "Words only this buffer holds." });
+    const s = await mountShell("#/ohbox", [message("m1")], [], { mailto: LINK });
+    expect(await rowsWhenLinkShows(s)).toEqual(["Left unsaved last time|Words only this buffer holds."]);
+    expect(window.location.hash).toBe("#/compose");
+  }, 60_000);
+
+  it("a save the account refuses keeps the words on screen, says so, and the link is taken once", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], [letter("d-x", "Plans for Friday", "Shall we meet at noon?")]);
+    await composerOn(s, "d-x", "Plans for Friday");
+    s.refuseSave.add("d-x");
+    await setSubject(s, "Plans for Friday, changed");
+    await s.mailto.open(LINK);
+    await waitFor(() => toasts().includes(en.drafts.reopenBlockedUnsaved), "the refusal said", 240);
+    await navigate("#/ohbox");
+    await rounds(4);
+    await navigate("#/compose");
+    await rounds(20);
+    expect({ shown: subject(s)?.value, seeded: s.mailto.seeded }).toEqual({ shown: "Plans for Friday, changed", seeded: 1 });
+  }, 60_000);
+
+  it("a link over words typed after a send came back unverified keeps them on screen and says so", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], [letter("d-a", "Plans for Friday", "Shall we meet at noon?")]);
+    await composerOn(s, "d-a", "Plans for Friday");
+    Object.assign(s.refuseSend, { on: true, unverified: true });
+    await press(composeSend(s.el)!, "Send A");
+    await waitFor(() => composeLine(s.el).includes(en.compose.statusUnverified), "A unverified", 240);
+    await setSubject(s, "Plans for Friday, at one");
+    await rounds(100);
+    await s.mailto.open(LINK);
+    await waitFor(() => toasts().includes(en.drafts.reopenBlockedUnsaved), "the refusal said", 240);
+    await rounds(10);
+    expect({ shown: subject(s)?.value, seeded: s.mailto.seeded }).toEqual({ shown: "Plans for Friday, at one", seeded: 1 });
+  }, 60_000);
+
+  /* THE DESKTOP'S LAUNCH: its mirror is rebuilt at each start, so the drafts arrive with the first sync. */
+  const atLaunch = async (): Promise<{ store: MirrorStore; remoteAtStart: SyncChange[] }> => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const m = message("m1");
+    const at = "2026-09-27T09:00:00.000Z";
+    return {
+      store,
+      remoteAtStart: [
+        { type: "message", op: "create", id: m.id, seq: 0, updatedAt: m.updatedAt, entity: m } as SyncChange,
+        {
+          type: "rule", op: "create", id: "r-colleague", seq: 0, updatedAt: at,
+          entity: { id: "r-colleague", kind: "sender", match: "colleague@example.invalid", destination: "INBOX", enabled: true, createdAt: at },
+        } as SyncChange,
+        { type: "draft", op: "create", id: "d-r", seq: 0, updatedAt: at, entity: letter("d-r", "Plans for Friday", "Shall we meet at noon?") } as unknown as SyncChange,
+      ],
+    };
+  };
+
+  it("a link that starts the app over a letter its row already holds opens, and the row stays", async () => {
+    const left = { ...EMPTY_COMPOSE, to: "Mila <mila@example.invalid>", subject: "Plans for Friday", body: "Shall we meet at noon?" };
+    writeComposeDraft(left);
+    writeComposeRow("d-r");
+    markComposeRowHolds({ row: "d-r", sig: holdsSig(left) });
+    const s = await mountShell("#/ohbox", [], [], { ...await atLaunch(), mailto: LINK });
+    await rowsWhenLinkShows(s);
+    await waitFor(() => rows(s).length > 0, "the first sync's drafts", 240);
+    expect(toasts()).not.toContain(en.drafts.reopenBlockedUnsaved);
+    expect(rows(s)).toContain("Plans for Friday|Shall we meet at noon?");
+  }, 60_000);
+
+  it("a link that starts the app over a letter no row holds saves it first, its drafts arriving with the first sync", async () => {
+    writeComposeDraft({ ...EMPTY_COMPOSE, subject: "Left unsaved last time", body: "Words only this buffer holds." });
+    const s = await mountShell("#/ohbox", [], [], { ...await atLaunch(), mailto: LINK });
+    expect(await rowsWhenLinkShows(s)).toContain("Left unsaved last time|Words only this buffer holds.");
+  }, 60_000);
+
+  it("a link while a letter's send waits leaves it standing when no row holds its words", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], [letter("d-a", "Plans for Friday", "Shall we meet at noon?")], { handOff: true });
+    await composerOn(s, "d-a", "Plans for Friday");
+    s.offline.on = true;
+    await setSubject(s, "Plans for Friday, typed offline");
+    await press(composeSend(s.el)!, "Send A");
+    await waitFor(() => sendPendingInDurableOutbox(s.engine, "compose"), "A waits on the outbox");
+    await s.mailto.open(LINK);
+    await rounds(40);
+    expect({ shown: subject(s)?.value, frozen: subject(s)?.readOnly, seeded: s.mailto.seeded, hash: window.location.hash })
+      .toEqual({ shown: "Plans for Friday, typed offline", frozen: true, seeded: 1, hash: "#/compose" });
+    expect(s.el.querySelector(".view-compose .send-row")?.textContent ?? "").toContain(en.compose.waitingNotSaved);
+  }, 60_000);
+
+  it("a link while a letter's send waits over its saved row opens, and the send goes on", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], [letter("d-a", "Plans for Friday", "Shall we meet at noon?")], { handOff: true });
+    await composerOn(s, "d-a", "Plans for Friday");
+    Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424, retryableFirst: 500 });
+    await press(composeSend(s.el)!, "Send A");
+    await waitFor(() => s.engine.waitingSends().length === 1, "A waits");
+    await s.mailto.open(LINK);
+    expect(await rowsWhenLinkShows(s)).toEqual(["Plans for Friday|Shall we meet at noon?"]);
+    expect({ readOnly: subject(s)?.readOnly, waiting: s.engine.waitingSends().map((w) => w.draftId) })
+      .toEqual({ readOnly: false, waiting: ["d-a"] });
+  }, 60_000);
+});
+
+/* ── A MAIL LINK WITH NO MAILBOX CONNECTED ───────────────────────────────────────────────────
+   Nothing to protect, it opens at once with its fields and the shell says what is missing; over
+   words no row can hold it answers at once. It never waits for a mailbox to appear. */
+describe("a mail link with no mailbox connected", () => {
+  const LINK = { to: ["lena@example.invalid"], cc: [], bcc: [], subject: "Hello from a link", body: "A line from the page." };
+  /** Rounds of 25 ms, well inside the bounded wait a launch may take for what a save needs. */
+  const AT_ONCE = RESTART_FLUSH_MS / 25 / 4;
+  beforeEach(() => {
+    try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
+    stubDom();
+    Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => true });
+  });
+  afterEach(async () => { await unmountAll(); resetComposerForTest(); });
+
+  it("opens the composer at once with the link's fields; Send cannot go, and the shell says no mailbox is connected", async () => {
+    const s = await mountShell("#/ohbox", [], [], { noMailbox: true });
+    await s.mailto.open(LINK);
+    await waitFor(() => window.location.hash === "#/compose" && s.mailto.seeded === 1, "the link opened", AT_ONCE);
+    await waitFor(() => composeSubject(s.el) === LINK.subject, "the link's letter", 240);
+    expect({
+      to: s.el.querySelector(".view-compose")?.textContent?.includes("lena@example.invalid"),
+      sendDisabled: composeSend(s.el)?.disabled,
+      said: s.el.textContent?.includes(en.sync.noMailbox),
+    }).toEqual({ to: true, sendDisabled: true, said: true });
+  }, 60_000);
+
+  it("over words no row can hold, says at once that they stay, and keeps them", async () => {
+    const s = await mountShell("#/ohbox", [], [], { noMailbox: true });
+    await navigate("#/compose");
+    await waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject") != null, "the composer");
+    await settleEditor();
+    await act(async () => {
+      const input = s.el.querySelector<HTMLInputElement>("#compose-subject")!;
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "Notes from the meeting");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await s.mailto.open(LINK);
+    await waitFor(() => toasts().includes(en.drafts.reopenBlockedUnsaved), "the refusal said", AT_ONCE);
+    expect({ shown: composeSubject(s.el), seeded: s.mailto.seeded }).toEqual({ shown: "Notes from the meeting", seeded: 1 });
+  }, 60_000);
 });

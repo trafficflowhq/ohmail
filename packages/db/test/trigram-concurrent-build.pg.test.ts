@@ -5,7 +5,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { brandDialect } from "../src/dialect/index.js";
 import { openMigrationSession, runMigrations } from "../src/migrate.js";
-import { ensureSearchExtensions, TRIGRAM_INDEX_SPECS } from "../src/search-setup.js";
+import { ensureSearchExtensions, ensureWordIndex, TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC } from "../src/search-setup.js";
 import { TRIGRAM_INDEXES } from "../src/setup-prod.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 
@@ -74,6 +74,37 @@ describe.skipIf(!PG_UP)("the trigram indexes are built without holding writes", 
       expect(await validIndexes()).toEqual([...TRIGRAM_INDEXES].sort());
     } finally {
       await writer.end({ timeout: 5 });
+      await session.end();
+    }
+  }, 60_000);
+});
+
+describe.skipIf(!PG_UP)("the account-keyed word index", () => {
+  const validOf = async (): Promise<boolean | null> => {
+    const [r] = await admin<{ valid: boolean }[]>`select i.indisvalid as valid from pg_index i
+      where i.indexrelid = to_regclass('public.message_search_words_idx')`;
+    return r?.valid ?? null;
+  };
+
+  it("builds concurrently, once, and over an invalid leftover", async () => {
+    expect(new PgDialect().sqlToQuery(WORD_INDEX_SPEC.ddl).sql).toMatch(/^create index concurrently if not exists /);
+    await admin.unsafe(`drop index concurrently if exists public."message_search_words_idx"`);
+    const session = await openMigrationSession(PG_TEST_URL);
+    try {
+      const db = brandDialect(drizzle(session.sql), "pg");
+      await ensureSearchExtensions(db);
+      const said: string[] = [];
+      await ensureWordIndex(db, { log: (m) => said.push(m) });
+      expect(said).toEqual(["message_search_words_idx: building concurrently on message_search"]);
+      expect(await validOf()).toBe(true);
+      said.length = 0;
+      await ensureWordIndex(db, { log: (m) => said.push(m) });
+      expect(said, "a valid index was built again").toEqual([]);
+      await admin.unsafe(`update pg_index set indisvalid = false where indexrelid = 'public.message_search_words_idx'::regclass`);
+      await ensureWordIndex(db, { log: (m) => said.push(m) });
+      expect(said.join("\n")).toMatch(/INVALID leftover/);
+      expect(await validOf(), "an INVALID leftover was kept as present").toBe(true);
+    } finally {
       await session.end();
     }
   }, 60_000);

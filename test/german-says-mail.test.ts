@@ -69,9 +69,8 @@ const THIRD_PARTY_KONTO_PHONE = [
   "ohmail hat diese Nachricht als Kontobestätigung erkannt.",
   "ohmail hat diese Nachricht als Sicherheitswarnung zu einem Konto erkannt.",
   /* The provider's accounts (the web's `note_gmail`, `probe_auth_gmail_*`), pieces of their templates. */
-  "füg hier seine 16 Buchstaben ein, mit oder ohne Leerzeichen. Arbeits-, Schul- und Advanced-Protection-Konten, ",
   " meldet, dass IMAP für dieses Konto ausgeschaltet ist. Eine Administratorin oder ein Administrator ",
-  "Arbeits-, Schul- und Advanced-Protection-Konten können keine App-Passwörter erstellen; die kann ohmail noch ",
+  "Manche Arbeits-, Schul- und Advanced-Protection-Konten sowie Konten, die sich nur mit ",
 ];
 
 /* Empty since the signup copy change landed: it rewrote the three join lines and the signup screens' Konto. */

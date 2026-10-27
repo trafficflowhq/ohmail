@@ -11,7 +11,7 @@ import {
 } from "./migration-provenance.js";
 import { runMigrations, openMigrationSession, JOURNALS } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
-import { ensureSearchExtensions, ensureWithheldProvenanceIndex, TRIGRAM_INDEX_SPECS } from "./search-setup.js";
+import { ensureSearchExtensions, ensureWithheldProvenanceIndex, ensureWordIndex, TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC } from "./search-setup.js";
 import {
   ensureHotPathIndexes, HOT_PATH_INDEXES, DEFERRED_HOT_PATH_INDEXES,
 } from "./hot-path-indexes.js";
@@ -102,6 +102,7 @@ export interface ProdSetupReport {
   appliedThisRun: string[];
   pgTrgm: boolean;
   pgTrgmVersion: string | null;
+  /** The trigram GIN indexes and the word index that exist, sorted. */
   trigramIndexes: string[];
   /** Which of {@link HOT_PATH_INDEXES} exist, sorted — verified fail-closed below. */
   hotPathIndexes: string[];
@@ -579,6 +580,8 @@ export async function setupProdDatabase(
     await client.unsafe(`set idle_in_transaction_session_timeout = 0`);
     log("ensuring search extensions (pg_trgm + trigram GIN indexes)");
     await ensureSearchExtensions(db);
+    log("ensuring the account-keyed word index");
+    await ensureWordIndex(db, { log: (m) => log(m) });
 
     // AFTER the migrator, not before it: these index tables the journal creates, and unlike the
     // provenance prebuild there is no journal statement to beat to the punch. Same session, so
@@ -767,7 +770,7 @@ export async function setupProdDatabase(
       db,
       sql`select indexname from pg_indexes where schemaname = 'public'
           and (tablename::text, indexname::text) in (${sql.join(
-            TRIGRAM_INDEX_SPECS.map((s) => sql`(${s.table}::text, ${s.name}::text)`), sql`, `)})`,
+            [...TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC].map((s) => sql`(${s.table}::text, ${s.name}::text)`), sql`, `)})`,
     );
     // Every `ensureHotPathIndexes` build, read back by name — the list is DERIVED from the specs,
     // never typed here. `indisvalid` as well as existence: a failed CONCURRENTLY build leaves an
@@ -867,6 +870,7 @@ export async function setupProdDatabase(
     for (const want of TRIGRAM_INDEXES) {
       if (!report.trigramIndexes.includes(want)) problems.push(`trigram GIN index missing: ${want}`);
     }
+    if (!report.trigramIndexes.includes(WORD_INDEX_SPEC.name)) problems.push(`search word index missing: ${WORD_INDEX_SPEC.name}`);
     for (const want of HOT_PATH_INDEXES) {
       if (!report.hotPathIndexes.includes(want)) {
         problems.push(`hot-path index missing or INVALID: ${want}`);

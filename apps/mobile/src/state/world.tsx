@@ -59,7 +59,7 @@ import { openLetterSession, ownedLetters } from "../compose/letter-keeper";
 import { restoreLetters, sayLetterRestore, settleLetters, sweepLetters } from "../compose/letter-restore";
 import { letterDoor } from "../compose/letter-store";
 import type { FaceName } from "../theme/face";
-import { faceScope } from "./face-scope";
+import { accountFaceShown, faceMirrorStands, faceScope } from "./face-scope";
 import { foldersFlag, freshestRead, type FreshestRead } from "./folders-flag";
 import { askEngineQueues, drainReads } from "./drain-reads";
 import { startUiVitals } from "../engine/engine-log";
@@ -459,8 +459,9 @@ export interface World {
    *
    * `account` rides the folders flag's own `GET /consent` cadence (boot + after every drain), so
    * a face chosen in the webapp's Settings reaches an open phone without a new mechanism. `null`
-   * means the account has no preference, and the empty world has none either — a face is an
-   * account's state, and there is no account until something is connected.
+   * means the account has no preference. Until this session's read lands (and through a launch
+   * or an offline session) it is the look this phone last adopted for the account
+   * (`accountFaceShown`).
    */
   face: {
     account: FaceName | null;
@@ -483,6 +484,12 @@ export interface World {
      * and leaves both the adopted face and the pin exactly as they were.
      */
     applyAll(face: FaceName): Promise<boolean>;
+    /**
+     * The Look control (`face-scope.ts`'s `choose`): signed in, the press is written to the
+     * account; on the standalone door it is this device's pin. Resolves `false` on a refused
+     * write. Null where nothing is connected: the control is the pin alone.
+     */
+    choose: ((face: FaceName) => Promise<boolean>) | null;
   };
   /**
    * THE ACT ON SUGGESTIONS, off the same `GET /consent` cadence; `null` until a read
@@ -673,7 +680,7 @@ const EMPTY_QUEUED: readonly QueuedChange[] = Object.freeze([]);
  */
 const LIVE_VERDICT_BEAT_MS = 15_000;
 
-function emptyWorld(actions: WorldActions): World {
+function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null): World {
   return {
     live: false,
     boot: { settled: false, syncFailure: null, staleAsOf: null, draining: false, connection: null, firstSync: null, setAside: null },
@@ -726,9 +733,9 @@ function emptyWorld(actions: WorldActions): World {
     // chooses — on the product's 09:00, which is what `null` means everywhere.
     resurfaceTime: null,
     remember: () => Promise.resolve(null),
-    // No account, so no account face, nothing that could have been read, and nothing to write one
-    // to. `false` is "not confirmed", which is exactly what nothing-connected means.
-    face: { account: null, known: false, pending: false, applyAll: () => Promise.resolve(false) },
+    // Nothing read and nothing to write to; the account face is only the kept one, if any.
+    // `false` is "not confirmed", which is exactly what nothing-connected means.
+    face: { account: accountFace, known: false, pending: false, applyAll: () => Promise.resolve(false), choose: null },
     autoAct: null,
     seed: { known: false },
     message: () => undefined,
@@ -815,9 +822,9 @@ export function useMessageBody(id: string): ReturnType<typeof liveBody> {
 export function WorldProvider({ children }: { children: ReactNode }) {
   const conn = useConnection();
   /* The DEVICE half of the face lives in the prefs store (above this provider), and the account
-     half is here. This layer only ever CLEARS the pin, and only after a confirmed account write —
-     which is what "apply on all devices" asked for. It never sets one. */
-  const { facePin, setFacePin } = usePrefs();
+     half is here. Signed in, this layer clears the pin once the account holds the look; it sets
+     one only for a press (`face-scope.ts`). */
+  const { facePin, setFacePin, faceMirror, setFaceMirror } = usePrefs();
 
   const session = conn.state.k === "live" ? conn.state.session : null;
   const engine = session?.engine ?? null;
@@ -1099,6 +1106,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         if (faceCurrent.current !== faces) return;
         if (pinNow.current === submitted || pinNow.current === null) setFacePin(null);
       },
+      pin: () => pinNow.current,
+      setPin: (face) => setFacePin(face),
+      remember: (face) => {
+        if (faceCurrent.current !== faces) return;
+        setFaceMirror(face === null ? null : { owner: session.ownerKey, face });
+      },
+      follows: !session.standalone,
     });
     faceCurrent.current = faces;
     // The signatures ride the flag's read but keep their OWN ordering: the machine's epoch
@@ -1257,6 +1271,27 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // `machine` is the dependency rather than `faceCurrent`: the two are built together, so this
     // callback's identity moves exactly when the session's machines are rebuilt.
     [machine],
+  );
+  /* The kept look goes with the account it belongs to (`faceMirrorStands`). */
+  useEffect(() => {
+    if (faceMirror !== null && !faceMirrorStands(faceMirror, conn.state)) setFaceMirror(null);
+  }, [faceMirror, conn.state, setFaceMirror]);
+  const shownFace = accountFaceShown(accountFace, accountFaceKnown, faceMirror, session?.ownerKey ?? null);
+  const chooseFace = useCallback(
+    async (face: FaceName): Promise<boolean> => {
+      const f = faceCurrent.current;
+      if (!f) {
+        setFacePin(face);
+        return true;
+      }
+      setFacePending(true);
+      try {
+        return await f.choose(face);
+      } finally {
+        if (faceCurrent.current === f) setFacePending(false);
+      }
+    },
+    [machine, setFacePin],
   );
   /**
    * REMEMBER THE RESURFACE TIME — the account write the sheet makes after it has dispatched.
@@ -1826,7 +1861,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * flush settling a queued key reaches a locked composer's settle effect.
    */
   const world = useMemo<World>(() => {
-    if (projected === null || engine === null || session === null) return emptyWorld(actions);
+    if (projected === null || engine === null || session === null) return emptyWorld(actions, shownFace);
     /* The projection's lists are GETTERS, so it is copied by descriptor, never spread: a spread
        would compute every list on every connection change. */
     return withFacts(projected, {
@@ -1861,10 +1896,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       abandoned: engine.abandoned(),
       queued: engine.queuedDiscards(),
       face: {
-        account: accountFace,
+        account: shownFace,
         known: accountFaceKnown,
         pending: facePending,
         applyAll: applyFaceAllDevices,
+        choose: chooseFace,
       },
       autoAct: autoAct === null ? null : { ...autoAct, pending: autoActPending, set: setAutoActOn },
       seed,
@@ -1873,7 +1909,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projected, engine, session, actions, zone, conn.syncing, conn.syncError, outcomeSeq,
-    outcomeOf, settlementOf, accountFace, accountFaceKnown, facePending, applyFaceAllDevices,
+    outcomeOf, settlementOf, shownFace, accountFaceKnown, facePending, applyFaceAllDevices, chooseFace,
     autoAct, autoActPending, setAutoActOn, seed]);
 
   /**

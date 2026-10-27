@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "../src/testing.js";
-import { accountStorage, UNMETERED, UNMETERED_ACCESS, type AccessVerdict } from "@trafficflow/db";
+import { accountStorage, accounts, UNMETERED, UNMETERED_ACCESS, type AccessVerdict, type Tx } from "@trafficflow/db";
+import { heldStorageLimitOf, STORAGE_DROP_GRACE_MS } from "../src/storage-hold.js";
 import { accountsAtCapOf, alertReadersOf, AT_CAP_READ_LIMIT } from "../src/at-cap-reader.js";
 import { alertKindArms, evaluateAlertsWithScope } from "../src/alerts.js";
 
@@ -56,6 +57,20 @@ describe("storage_at_cap is read by the drivers' reader, and says when it is not
     expect(hit?.count).toBe(1);
     expect(hit?.detail).not.toContain("Partial reading");
     expect(scope.unread.has("storage_at_cap")).toBe(false);
+  });
+
+  it("an account between a held limit and the lower one is not at its cap; after the hold's date it is", async () => {
+    const db = await makeTestDb();
+    const held = randomUUID();
+    await db.insert(accounts).values({ id: held, name: "Held" });
+    await stored(db, [{ id: held, bytes: 3 * GB }]);
+    const cap = { ok: true as const, limits: { mailboxes: null, storageBytes: 10 * GB, canAddMailbox: true, aiEnabled: true } };
+    await heldStorageLimitOf(db as unknown as Tx, held, cap, NOW);
+    await heldStorageLimitOf(db as unknown as Tx, held, { ...cap, limits: { ...cap.limits, storageBytes: 2 * GB } }, NOW);
+    const reader = accountsAtCapOf(program(new Map([[held, 2 * GB]])))!;
+    expect((await reader(db, NOW)).atCap).toEqual([]);
+    const after = new Date(NOW.getTime() + STORAGE_DROP_GRACE_MS + 86_400_000);
+    expect((await reader(db, after)).atCap).toEqual([{ accountId: held, bytes: 3 * GB, storageBytesLimit: 2 * GB }]);
   });
 
   it("past the bound the reading is partial: '500 of 501', and its silence clears nothing", async () => {

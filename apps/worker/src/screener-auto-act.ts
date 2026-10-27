@@ -22,7 +22,7 @@ import {
  * whose stored advice is confident, through the door a PRESS uses. It reads advice and never buys
  * it (no model, no spend, no claim), and files through `applyScreenerDecision` — the manual Apply's
  * and the reader drain's one implementation — so the promoted rule the person undoes, the held-bag
- * re-route that empties the Waiting count, the mark-read and the learning signal cannot drift from
+ * re-route that empties the Waiting count and the learning signal cannot drift from
  * the press. One exception: a deny that may not stand as a rule writes none. Advice on a letter its
  * provider did not confirm files that letter alone (`rerouteUnconfirmedHeld`), as does advice on a
  * confirmed letter whose reason is no fact about the address — the crowd's cap, or a row stored

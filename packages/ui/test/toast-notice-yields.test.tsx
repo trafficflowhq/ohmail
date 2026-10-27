@@ -6,7 +6,7 @@
  * and draws after its fade; every other notice still replaces whatever stands.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { ToastHost, useToast, type ToastFn } from "@ohmail/ui";
 
 let say: ToastFn = () => undefined;
@@ -137,5 +137,40 @@ describe("interrupting notices still pre-empt", () => {
     expect(shows()).toBe("Saved.");
     tick(NOTICE_MS + FADE_MS);
     expect(shows(), "the replaced notice never comes back").toBe("");
+  });
+});
+
+describe("a notice with a dismiss button stands until it is pressed", () => {
+  it("is a status named by its sentence, stays past any window, and leaves on its button", () => {
+    act(() => say("The window was reloaded.", { dismiss: "Dismiss" }));
+    expect(screen.getByRole("status", { name: "The window was reloaded." })).toBe(notice());
+    tick(60_000);
+    expect(shows(), "no timer takes it").toBe("The window was reloaded.Dismiss");
+    const button = within(notice()).getByRole("button", { name: "Dismiss" });
+    button.focus();
+    expect(document.activeElement, "reachable from the keyboard").toBe(button);
+    fireEvent.click(button);
+    expect(shows()).toBe("");
+    tick(FADE_MS);
+    expect(screen.queryByRole("status", { name: "The window was reloaded." })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+  });
+
+  it("a yielding notice waits behind it and draws after the dismiss", () => {
+    act(() => say("The window was reloaded.", { dismiss: "Dismiss" }));
+    act(() => say("1 suggestion · 1 credit used.", { yields: true }));
+    tick(10_000);
+    expect(shows()).toBe("The window was reloaded.Dismiss");
+    fireEvent.click(within(notice()).getByRole("button", { name: "Dismiss" }));
+    tick(FADE_MS);
+    expect(shows()).toBe("1 suggestion · 1 credit used.");
+    expect(within(notice()).queryByRole("button")).toBeNull();
+    tick(NOTICE_MS);
+    expect(shows(), "on its own timer").toBe("");
+  });
+
+  it("the Undo capsule is a status named by its sentence too", () => {
+    act(() => say("Archived.", { action: "Undo", onAction: () => undefined, duration: UNDO_MS }));
+    expect(screen.getByRole("status", { name: "Archived." })).toBe(held());
   });
 });

@@ -49,7 +49,7 @@ import { openLetterKeeper, ownedLetters } from "../src/compose/letter-keeper";
 import { restoreLetters, settleLetters } from "../src/compose/letter-restore";
 import { letterDoor } from "../src/compose/letter-store";
 import {
-  afterWithdraw, cancelAct, cancelledSay, cancelSendOffered, cancelSendPress, keptSay, type CloseRoad, type SendVerdict, type WithdrawAnswer,
+  afterWithdraw, cancelAct, cancelledSay, cancelSendOffered, cancelSendPress, keptSay, waitingRowOf, type CloseRoad, type SendVerdict, type WithdrawAnswer,
 } from "../src/ui/send-cancel";
 import { Copy } from "../src/copy";
 import { dto, listen, mailServer } from "./helpers/mail-server";
@@ -503,6 +503,8 @@ describe("a message the person cancelled is never sent, and never sent twice", (
     const queued = await live.actions.sendReply("m-1", "Never mind.", false, null, null, [file]);
     other.sendAnswered(queued);
     expect(queued.outcome).toBe("queued");
+    const now = { now: new Date(), zone: "UTC", locale: "en" } as never;
+    expect(waitingRowOf(liveDrafts(live.engine.read(), now, live.engine.waitingSends()), queued.key!), "a rowless send named a row").toBeNull();
     // The signal back before the press: the server is asked and answers it withdrawn.
     live.tunnel(false);
     expect(await pressCancel(live, queued.key ?? null, "cancelSend")).toBe("close");

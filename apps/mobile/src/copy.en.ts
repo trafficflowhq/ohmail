@@ -103,7 +103,7 @@ const TABLE = {
    * and behind the fourth the phone is the organizer — so the final clause was dropped rather
    * than being true of three doors out of four. The list is the catalogue's own (`leave.note`),
    * shortened to the three a phone shows, and it does not say "settings" unqualified: the Look
-   * setting is per-device on purpose (`faceScopeDevice`), and triage piles and Resurface timers
+   * setting travels with the account rather than the mailbox, and triage piles and Resurface timers
    * stay with the install that made them.
    */
   doorsTravel:
@@ -355,11 +355,15 @@ const TABLE = {
   standaloneAuthAppOnly: (provider: string, account: string) =>
     `${account} refused your ${account} password: ${provider} signs in only with an App Password. Turn on 2-Step `
     + "Verification, then create an App Password with any name and paste its 16 letters here, with or without the "
-    + "spaces. Work, school and Advanced Protection accounts that cannot create one cannot connect yet.",
+    + "spaces. Some work, school and Advanced Protection accounts, and accounts that sign in with security keys "
+    + "only, cannot create App Passwords; ohmail cannot connect those yet: ask your administrator to allow App "
+    + "Passwords, or connect another address.",
   standaloneAuthInvalid: (provider: string, account: string) =>
     `${account} did not accept that password. ${provider} needs an App Password, not your ${account} password: `
     + `create one and paste its 16 letters here. Changing your ${account} password ends every App Password, so a `
-    + "new one is needed after that.",
+    + "new one is needed after that. Some work, school and Advanced Protection accounts, and accounts that sign "
+    + "in with security keys only, cannot create App Passwords; ohmail cannot connect those yet: ask your "
+    + "administrator to allow App Passwords, or connect another address.",
   standaloneAuthWebLogin: (provider: string, account: string) =>
     `${account} wants this sign-in confirmed in a web browser first. Sign in to ${provider} in a browser once, `
     + "then try again here. The password may be right.",
@@ -370,8 +374,9 @@ const TABLE = {
   standaloneProviderNote: (provider: string, account: string) =>
     `${provider} signs in only with an App Password, not your ${account} password. Turn on 2-Step Verification `
     + "first, or the App Passwords page says it is not available. Give the App Password any name, then paste its "
-    + "16 letters here, with or without the spaces. Some work, school and Advanced Protection accounts cannot "
-    + "create App Passwords; ohmail cannot connect those yet.",
+    + "16 letters here, with or without the spaces. Some work, school and Advanced Protection accounts, and "
+    + "accounts that sign in with security keys only, cannot create App Passwords; ohmail cannot connect those "
+    + "yet: ask your administrator to allow App Passwords, or connect another address.",
   standaloneProviderHelpLink: (account: string) => `${account} App Passwords`,
   standalonePrereqLink: "Turn on 2-Step Verification",
   standaloneNoEncryption:

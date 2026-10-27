@@ -212,7 +212,8 @@ describe("the schema split matches the journal split", () => {
     // 30 → 31: `alert_driver_gaps` (cloud 0048) — the alert drivers' gap history, as above.
     // 31 → 32: `alert_drills` (cloud 0051) — alert drills and their acknowledgements, as above.
     // 32 → 33: `connect_attempts` (cloud 0054) — how connecting a mailbox ended, as above.
-    expect(declaredTables("schema-cloud.ts").size).toBe(33);
+    // 33 → 34: `account_storage_holds` (cloud 0055) — a lower storage limit's hold, as above.
+    expect(declaredTables("schema-cloud.ts").size).toBe(34);
   });
 
   /**

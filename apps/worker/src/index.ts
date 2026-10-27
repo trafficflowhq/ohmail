@@ -1380,7 +1380,7 @@ export async function startWorkerWithLock(
     // baseline or a read fault resolves to `undefined` (no cutoff, the consent-gate direction). And
     // the storage cap per account: the hosted worker is THE metered composition (`SyncDeps.storageCap`
     // required, local engines `UNMETERED_STORAGE_CAP`), refreshed per cycle so a limit change moves within one.
-    const storageCapFor = makeStorageCapResolver(entitlements, log);
+    const storageCapFor = makeStorageCapResolver(entitlements, db as unknown as Tx, log);
     /* ONE KEY LOOKUP FOR THE PROCESS: the sender-signature check where a mailbox's provider names no
        authserv-id (`pipeline.ts#signatureVerdict`). Its cache holds public DNS answers only. */
     const signatureCheck = makeSignatureCheck({ keys: makeDnsDkimKeys() });

@@ -1837,9 +1837,8 @@ export class MessageService {
     return { observed: loc?.folder ?? "INBOX", desired: null };
   }
 
-  // The `flag_state` intent writer lives in `@trafficflow/db` (`flag-intent.ts`) now — the
-  // Screener's mark-read-on-dismiss and the worker's read-state retro pass write the same
-  // intent, and a second copy would be a second answer to when a `\Seen` round trip is owed.
+  // The `flag_state` intent writer lives in `@trafficflow/db` (`flag-intent.ts`) now — a second
+  // copy would be a second answer to when a `\Seen` round trip is owed.
 
   /**
    * Upsert folder_state desired=<folder>, pending, us — preserving observedFolder on conflict.

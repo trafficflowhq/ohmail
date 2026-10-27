@@ -8,7 +8,7 @@
  * stay reversible; auto-detected spam is held viewable, never deleted
  * silently. On mobile the preview opens full-screen.
  */
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { startTransition, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import type {
   BodyState,
@@ -60,6 +60,7 @@ import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden, watchNarrow } from "../shell/narrow";
+import { afterPaint } from "../shell/visit";
 import { useRowMenuFit } from "../shell/row-menu-fit";
 import { useListWindow } from "../shell/list-window";
 import { HELD_ANCHOR_PAD_PX, heldAnchorTop, heldAnchored, useHeldWindow } from "../shell/held-window";
@@ -1017,6 +1018,14 @@ export function ScreenerView({
     // scrolled" and stops the re-anchoring this effect exists to do.
     anchoredAt.current = read.scrollTop;
   };
+  /* THE ROWS PAINT BEFORE THE BODIES: a selection's commit draws the rows and the letters' heads,
+     and the bodies (a sanitize pass and a frame each) follow in a transition once it has painted. */
+  const [bodiesFor, setBodiesFor] = useState<string | null>(null);
+  const bodies = bodiesFor === anchorKey;
+  useEffect(() => {
+    if (bodies) return;
+    return afterPaint(readRef.current, () => startTransition(() => setBodiesFor(anchorKey)));
+  }, [anchorKey, bodies]);
   /**
    * THE MOUNTED LETTERS (`held-window.ts`): the newest few on entry, older ones as the reader
    * scrolls up to them. Counts, captions and decisions read the whole bag; what is drawn, asked
@@ -1028,9 +1037,10 @@ export function ScreenerView({
     read: () => readRef.current,
     anchoredAt,
     reanchor: () => { if (readRef.current) placeAnchor(readRef.current); },
+    ready: bodies,
   });
   const shownHeld = heldWin.from > 0 ? heldOfCurrent.slice(heldWin.from) : heldOfCurrent;
-  const heldShown: HeldShown = { shown: shownHeld, from: heldWin.from, busy: heldWin.busy };
+  const heldShown: HeldShown = { shown: shownHeld, from: heldWin.from, busy: heldWin.busy, bodies };
   /**
    * The BODY STATES of the selected sender's held mail, as one string.
    *
@@ -1121,7 +1131,7 @@ export function ScreenerView({
     if (!read) return;
     if (!fresh && anchoredAt.current !== null && !heldAnchored(anchoredAt.current, read.scrollTop)) return;
     placeAnchor(read);
-  }, [anchorKey, heldBodyKey]);
+  }, [anchorKey, heldBodyKey, bodies]);
 
   /* `scn-full-open` used to be set on <body> here, and the one rule that read it hid the
      floating ⌘K capsule while the mobile full-screen preview was up. The capsule is a group at
@@ -2091,6 +2101,8 @@ interface HeldShown {
   shown: readonly ScreenerHeldMail[];
   from: number;
   busy: boolean;
+  /** Draw the letters' bodies: false for the selection's first frame. */
+  bodies: boolean;
 }
 
 /**
@@ -2281,6 +2293,7 @@ export function HeldMail({
   dull,
   setSize,
   posInSet,
+  drawBody = true,
 }: {
   /**
    * Which held message this is — carried for {@link useBodyStalled}'s key and nothing else.
@@ -2335,6 +2348,8 @@ export function HeldMail({
   /** The sender's whole bag, and this letter's place in it: spoken in the feed, which mounts a slice. */
   setSize?: number;
   posInSet?: number;
+  /** False leaves the body out (the selection's first frame, `HeldShown.bodies`). */
+  drawBody?: boolean;
 }) {
   const t = useTranslations("body");
   const ts = useTranslations("screening");
@@ -2493,7 +2508,7 @@ export function HeldMail({
       />
       {message ? <MessageEvents messageId={message.id} /> : null}
       <div className="hm-body">
-        <MessageBody
+        {drawBody ? <MessageBody
           {...(message ? { messageId: message.id } : {})}
           text={body}
           html={html}
@@ -2506,7 +2521,7 @@ export function HeldMail({
           onRemoteImages={onRemoteImages}
           onNotice={setNotice}
           adaptSlot={adaptSlot}
-        />
+        /> : null}
       </div>
       {/* A held message's files, through the one holder every reader uses. Only a row the mirror
           backs has a list to ask for; a fixture row and the live Junk window's rows have none. */}
@@ -2989,6 +3004,7 @@ function WaitingPreview({
             dull={sender.dull}
             setSize={sender.held.length}
             posInSet={mounted.from + i + 1}
+            drawBody={mounted.bodies}
             {...heldRemoteProps(remoteImages, h)}
           />
         ))}
@@ -3101,6 +3117,7 @@ function ScreenedPreview({
             onUnsubscribe={onUnsubscribe ? () => onUnsubscribe(h.id) : undefined}
             trackerNote={h.trackerNote}
             dull
+            drawBody={mounted.bodies}
             {...heldRemoteProps(remoteImages, h)}
           />
         ))}
@@ -3220,6 +3237,7 @@ function SpamPreview({
             onUnsubscribe={onUnsubscribe ? () => onUnsubscribe(h.id) : undefined}
             trackerNote={h.trackerNote}
             dull
+            drawBody={mounted.bodies}
             {...heldRemoteProps(remoteImages, h)}
           />
         ))}

@@ -481,6 +481,15 @@ describe("the menu's commands", () => {
   it("is silent when there is no shell to listen to", async () => {
     await expect(onMenuCommand(() => undefined)).resolves.toBeUndefined();
   });
+
+  it("Compose runs the shell's own Compose door, which may keep a waiting letter on screen", async () => {
+    const { runMenuCommand } = await import("../src/DesktopGate.js");
+    const { setComposeDoor } = await import("../../webapp/app/shell/compose-door");
+    const ran: string[] = [];
+    setComposeDoor(() => { ran.push("door"); });
+    try { runMenuCommand("compose"); } finally { setComposeDoor(null); }
+    expect(ran).toEqual(["door"]);
+  });
 });
 
 /**

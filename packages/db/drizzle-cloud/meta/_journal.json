@@ -281,6 +281,13 @@
       "when": 1793059413550,
       "tag": "0054_connect_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793139772651,
+      "tag": "0055_account_storage_holds",
+      "breakpoints": true
     }
   ]
 }

@@ -284,7 +284,9 @@ describe("the baseline cutoff is frozen", () => {
     // redefined on an existing table, adopting nothing.
     // `- 33` → `- 34`: cloud 0054_connect_attempts — ONE entry above the cutoff, a NEW table, empty,
     // and a role-guarded grant on it, adopting nothing.
-    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 34);
+    // `- 34` → `- 35`: cloud 0055_account_storage_holds — ONE entry above the cutoff, a NEW table, empty,
+    // adopting nothing.
+    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 35);
 
     // And the entries above the cutoff are REAL migrations that must run, not an empty set.
     // Listed by TAG rather than counted, so a new one has to be named here on purpose — this
@@ -1026,6 +1028,8 @@ describe("the baseline cutoff is frozen", () => {
       // How connecting a mailbox ended: a new table, IF NOT EXISTS, empty, and the staff role's grant
       // on it only where `ohmail_admin` exists. Safe over any history.
       "0054_connect_attempts",
+      // A lower storage limit's hold: a new table, IF NOT EXISTS, empty. Safe over any history.
+      "0055_account_storage_holds",
     ]);
 
     // …and the moment an entry is added above the cutoff it is NOT adoptable. Simulated by

@@ -1457,8 +1457,8 @@ describe("the three doors — the claims, held to the code", () => {
    * The catalogue's own enumeration (`leave.note`) is the authority: screened senders, rules,
    * notification choices, the away reply and tag names travel; triage piles, Resurface timers and
    * learned patterns stay with the install that made them. The phone's short form must not widen
-   * that into "your settings", because this app's own Look setting is per-device on purpose
-   * (`faceScopeDevice`) and its piles are local.
+   * that into "your settings", because this app's own Look setting travels with the account,
+   * not the mailbox, and its piles are local.
    */
   it("the travel sentence claims only what travels", () => {
     const said = Copy.doorsTravel;

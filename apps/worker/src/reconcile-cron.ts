@@ -412,6 +412,7 @@ export async function runReconcileCron(
           onCallFault: entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log }),
         })
         : (UNMETERED satisfies EntitlementsComposition),
+      db as unknown as Tx,
       log,
     );
     /* WITHOUT THE PERMIT, and the type says so: this object is the sweep's two cycles' shared

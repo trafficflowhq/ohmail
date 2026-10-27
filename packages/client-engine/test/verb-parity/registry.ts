@@ -98,6 +98,13 @@ const tagByName = (r: EntityReader, name: string): TagDTO | undefined =>
 const folderByName = (r: EntityReader, name: string): FolderEntity | undefined =>
   r.list<FolderEntity>("folder").find((f) => f.name === name);
 
+/** Runs every worker pass the world drives, at the world's clock. */
+const runEveryPass = async (w: VerbWorld): Promise<void> => {
+  const passes = Object.values(w.pass) as ((at: Date) => Promise<unknown>)[];
+  expect(passes.length, "vacuity: the world drives no pass").toBeGreaterThanOrEqual(5);
+  for (const run of passes) await run(w.clock.now());
+};
+
 export const VERB_MATRIX: Record<MutationKind, VerbEntry> = {
   // ── the message verbs ─────────────────────────────────────────────────────────────────────
 
@@ -394,10 +401,9 @@ export const VERB_MATRIX: Record<MutationKind, VerbEntry> = {
         // Full-field parity, read state included: neither the overlay nor the server marks the letters read.
         optimistic: "landed",
         pass: {
-          none: "the decide files inside its own transaction; the one worker interaction in this " +
-            "state's lifetime — a mid-window arrival re-filed to the gate until the next cycle " +
-            "(INSTANT-ARCH §4.2.6) — is the IMAP ingest pipeline's, out of an in-process world " +
-            "and owned by apps/worker's screening e2e suites",
+          name: "every pass this world drives",
+          // The runner re-asserts `landed` afterwards: no worker pass reads screened-out mail either.
+          run: runEveryPass,
         },
       },
       {
@@ -608,12 +614,10 @@ export const VERB_MATRIX: Record<MutationKind, VerbEntry> = {
         },
       },
       {
-        name: "mark unread lands, and the read-retro repair leaves a deliberate INBOX unread alone",
+        name: "mark unread lands, and no worker pass reads the letter back",
         seed: async (w) => {
           const id = await w.seedMail({ unread: false }); // genuinely read first
-          // The repair's vacuity control: an unread row in a demoting folder — its candidate.
-          const control = await w.seedMail({ folder: "ohmail/Screened", subject: "backlog" });
-          return { id, control };
+          return { id };
         },
         mutation: (_w, c) => ({ kind: "mark_seen", messageIds: [c.id as string], unread: true }),
         landed: (r, c) => {
@@ -623,18 +627,9 @@ export const VERB_MATRIX: Record<MutationKind, VerbEntry> = {
         },
         optimistic: "landed",
         pass: {
-          name: "readStateRetroPass",
-          run: async (w, c) => {
-            const r = await w.pass.readRetro();
-            // Teeth: the demoting-folder backlog row was marked read…
-            expect(r.marked, "vacuity: the repair marked nothing").toBeGreaterThanOrEqual(1);
-            await w.engine.syncOnce();
-            expect(msgOf(w.store, c.control as string)?.unread).toBe(false);
-            // …while the INBOX row is outside READ_RETRO_FOLDERS by the SQL's own scope —
-            // the runner re-asserts `landed` (still unread). NOTE the census-documented edge:
-            // inside the two demoting folders this repair DOES re-mark a user unread — that is
-            // its written contract (a one-shot operator CLI, not a cycle pass).
-          },
+          name: "every pass this world drives",
+          // The runner re-asserts `landed` afterwards: the letter is still unread.
+          run: runEveryPass,
         },
       },
     ],

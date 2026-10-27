@@ -260,14 +260,15 @@ export function ListDetail({
           back · reply · reply all · forward, Done · Park · Junk, ⋯ and nothing twice. */}
       <ReaderRailHost />
 
-      {/* The destinations drawer — over the list pane's region, never across the hinge. */}
+      {/* The destinations drawer — over the list pane's region, never across the hinge. It starts
+          past the rail's column: the rail is the root's and draws above every screen. */}
       {plan.drawer ? (
         <View
           pointerEvents="box-none"
           style={[
             StyleSheet.absoluteFill,
             split !== null && slots.axis === "row"
-              ? { right: undefined, width: pad.left + split.first }
+              ? { left: insets.left + pad.left - plan.gutter, right: undefined, width: plan.gutter + split.first }
               : null,
           ]}
         >

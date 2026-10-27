@@ -21,7 +21,7 @@ export {
   LEGACY_CUTOFF_WHEN, LEGACY_JOURNAL_WHENS,
   type AdoptionVerdict, type BaselineObjects, type JournalEntry, type JournalSpec,
 } from "./baseline.js";
-export { ensureSearchExtensions } from "./search-setup.js";
+export { ensureSearchExtensions, ensureWordIndex, WORD_INDEX_SPEC } from "./search-setup.js";
 /**
  * The pre-migration duplicate guard. On `/admin` beside the migrator because it runs at the
  * same moment and for the same audience — and exported rather than kept private because

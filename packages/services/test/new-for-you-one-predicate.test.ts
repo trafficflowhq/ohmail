@@ -155,8 +155,7 @@ describe("the read half of the Imbox holds out what the unread half does", () =>
  *
  * MEASURED BEFORE IT WAS BUILT: at this commit `packages/services/src` holds the conjunction
  * exactly once (`message-service.ts#newForYouFilters`) and `eq(messages.unread, true)` nowhere
- * else at all. `apps/worker/src` carries two — read-retro's "unread mail in this mailbox" — which
- * is a different question over a different scope and is not in this root.
+ * else at all.
  */
 const SRC = join(fileURLToPath(new URL("../src", import.meta.url)));
 const OWNER = "message-service.ts";

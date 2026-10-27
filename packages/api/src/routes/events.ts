@@ -131,6 +131,7 @@ export const eventsRoutes: Route[] = [
       /** The hub unsubscribe, once subscribed. Idempotent by the hub's contract. */
       let unhook: (() => void) | null = null;
       let replace: (() => void) | null = null;
+      let unlisten: (() => void) | null = null;
 
       const stop = (): void => {
         if (held !== null && replace !== null && heldByName.get(held) === replace) heldByName.delete(held);
@@ -140,6 +141,8 @@ export const eventsRoutes: Route[] = [
         lifetime = undefined;
         unhook?.();                                 // stop receiving pushed wakes at once
         unhook = null;
+        unlisten?.();
+        unlisten = null;
         wake?.();                                   // let the loop observe `closed` at once
         if (counted) { closeStream(accountId); counted = false; }
       };
@@ -178,6 +181,11 @@ export const eventsRoutes: Route[] = [
             replace = () => { send(RETRY_AFTER_FAILURE); finish(); };
             heldByName.set(held, replace);
           }
+
+          // The client left (the host aborts its request): its slot goes now, not at the lifetime.
+          if (req.signal.aborted) { finish(); return; }
+          req.signal.addEventListener("abort", finish, { once: true });
+          unlisten = () => req.signal.removeEventListener("abort", finish);
 
           send("retry: 3000\n\n");                       // EventSource reconnect hint
           let lastSeq: bigint;

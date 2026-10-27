@@ -205,7 +205,7 @@ type WorkerDb = Tx;
  * The organizer's drain — apply what a reader decided, or refuse it and SAY SO (0.14.1). The payload
  * is UNTRUSTED and so is the record itself: a request record is an RFC822 message another install
  * appended to `ohmail/_meta`, an ordinary IMAP folder, so anyone with APPEND rights could write one
- * (a forged record buys a `promoted` rule, a `contacts` whitelist, a mark-read). So the ORDER of the
+ * (a forged record buys a `promoted` rule, a `contacts` whitelist, a filing). So the ORDER of the
  * checks is the security property: bound the headers, refuse an unknown protocol/kind (LEAVE STANDING),
  * VERIFY THE SIGNATURE before any decode, refuse one naming ANOTHER row this store holds, refuse a
  * stale decision, only then decode/validate, and apply under a content-bound idempotency key. No key

@@ -1183,14 +1183,14 @@ export function threadSubject(reader: EntityReader, threadId: string): string | 
 export interface FeedPartition {
   /** The line this device draws, or null: no visit committed one, or its place is unknown. */
   waterline: WaterlineMeta | null;
-  /** Since the last visit, strictly ABOVE the line; with no line, dated after this device's first sync. */
+  /** Since the last visit, strictly ABOVE the line; before any visit, the whole pile. */
   fresh: EngineMessage[];
-  /** At and below the line; with no line, already in the mailbox when this device first caught up. */
+  /** At and below the line; with an unplaceable line, already in the mailbox at this device's first sync. */
   seen: EngineMessage[];
   /**
    * The stream's badge, one derivation for every surface: above this device's line AND unread on
    * the server (R10-5: a committed line outranks `\Seen`; two devices with different lines must
-   * agree the moment the mailbox does). With no line, `fresh` is cut at this device's first sync.
+   * agree the moment the mailbox does). Before any visit, every unread letter: new until read.
    */
   newCount: number;
 }
@@ -1200,14 +1200,15 @@ export interface FeedPartition {
  * row `feed_mark_seen` writes). The cut is EXCLUSIVE: `newestSeenId` was on screen at the last leave,
  * so it sits below the line. The line is the VISIT's, never a read flag's: a read letter moved in on
  * top of a pile used to become the line and zero the badge over unread mail. A line whose letter left
- * stands where the visit recorded it (`anchorAt`). With no line to place, the anchor is this device's
- * first completed sync (`FEED_SINCE_ID`) in the pile's own order, and no line is drawn.
+ * stands where the visit recorded it (`anchorAt`). Before any visit nothing is cut, so a first visit
+ * names the unread letters present at setup. A line that cannot be placed falls back to this device's
+ * first completed sync (`FEED_SINCE_ID`). Neither fallback draws a line.
  */
 export function feedPartition(reader: EntityReader, view: FeedView): FeedPartition {
   const all = messagesIn(reader, FOLDER_OF_VIEW[view]);
   const row = reader.get<WaterlineMeta>("view_meta", waterlineIdOf(view)) ?? null;
   const idx = row ? lineIndexOf(all, row) : -1;
-  const cut = idx >= 0 ? idx : sinceIndexOf(all, reader.get<FeedSinceMeta>("view_meta", FEED_SINCE_ID));
+  const cut = idx >= 0 ? idx : row ? sinceIndexOf(all, reader.get<FeedSinceMeta>("view_meta", FEED_SINCE_ID)) : -1;
   const fresh = cut < 0 ? all : all.slice(0, cut);
   const seen = cut < 0 ? [] : all.slice(cut);
   return { waterline: idx < 0 ? null : row, fresh, seen, newCount: fresh.filter((m) => m.unread).length };

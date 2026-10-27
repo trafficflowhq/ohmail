@@ -234,7 +234,7 @@ export function ReadsView({
    * the final screen — the contiguous run the reader scrolled through, including the last
    * screenful the exit-through-the-top observer can structurally never reach. Bounded by
    * the viewport, never the pile: what was below the final screen was not displayed and is
-   * not flipped, nor is a card a keyboard scroll in a letter carried past (`flownPast`). Refs,
+   * not flipped, nor is a card in the range the visit did not read by the rule (`read`). Refs,
    * because this fires while the view is unmounting.
    */
   const onStreamLeave = useCallback((s: StreamLeaveState) => {
@@ -247,7 +247,7 @@ export function ReadsView({
     const end = b >= a ? b : a;
     fn({
       upToId: s.newestSeenId,
-      messageIds: order.slice(a, end + 1).filter((m) => m.unread && !s.flownPast?.(m.id)).map((m) => m.id),
+      messageIds: order.slice(a, end + 1).filter((m) => m.unread && s.read(m.id)).map((m) => m.id),
     });
   }, []);
   /**
@@ -364,13 +364,13 @@ export function ReadsView({
    * asked for that message and nothing else. See {@link openLandedCard} for why the open happens
    * after the landing rather than with it.
    */
-  const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean; read?: boolean } | null>(null);
+  const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean; read?: boolean; enters?: boolean } | null>(null);
   const landedRead = useRef<{ id: string; stop: () => void } | null>(null);
-  const seenMarkRef = useRef<(id: string) => void>(() => {});
+  // Marked through the stream, so a Mark unread of this visit holds against it.
   const readLanded = useCallback((id: string) => {
     landedRead.current?.stop();
     const el = streamRef.current?.element();
-    landedRead.current = el ? { id, stop: readLandedCard({ scroller: el, id, onRead: (x) => seenMarkRef.current(x) }) } : null;
+    landedRead.current = el ? { id, stop: readLandedCard({ scroller: el, id, onRead: (x) => streamRef.current?.seen(x) }) } : null;
   }, []);
   useEffect(() => () => { landedRead.current?.stop(); landedRead.current = null; }, []);
   /**
@@ -412,8 +412,10 @@ export function ReadsView({
   useEffect(() => {
     // A stream not armed yet has no card to land on; the scroll waits for the arming.
     if (!pendingScroll || !streamArmed) return;
-    const { id, open, read } = pendingScroll;
-    streamRef.current?.scrollTo(id, open ? () => { openLandedCard(id); if (read) readLanded(id); } : undefined);
+    const { id, open, read, enters } = pendingScroll;
+    // A row opened from the list enters the visit once its card has landed; a step reads only its card, by the rule.
+    const landed = enters ? () => streamRef.current?.enter() : () => readLanded(id);
+    streamRef.current?.scrollTo(id, open ? () => { openLandedCard(id); if (read) readLanded(id); } : landed);
     setPendingScroll(null);
   }, [pendingScroll, openLandedCard, streamArmed]);
   /**
@@ -487,13 +489,14 @@ export function ReadsView({
   };
 
   // Row click / j/k: extend the mounted run through the card, then scroll to it once the commit
-  // has it in the DOM (see `pendingScroll` above). A step inside the pile moves the cursor and
-  // nothing else — `StreamCard` opens on its own click, and j/k has ↵ for the clamp.
-  const jump = (id: string) => {
-    seenMark(id);
+  // has it in the DOM (see `pendingScroll` above). Neither reads anything by itself. A step (j/k,
+  // ↓/↑) moves the cursor, and its card is read by the rule once it lands; a fast pass reads
+  // nothing. A row click (`enters`) is an open: the visit is entered once the card lands, and the
+  // rule reads it and the letters on screen with it.
+  const jump = (id: string, enters = false) => {
     onCur(id);
     stream.ensure(pileIndexOf(id));
-    setPendingScroll({ id, open: false });
+    setPendingScroll({ id, open: false, enters });
   };
 
   /**
@@ -505,7 +508,6 @@ export function ReadsView({
    * not a subscription to the pile: the latest callbacks and order are read through refs at fire
    * time.
    */
-  seenMarkRef.current = seenMark;
   const jumpRefs = useRef({ onCur, onJumped, jumpEnters });
   jumpRefs.current = { onCur, onJumped, jumpEnters };
   /* The jump effect is [jumpTo]-keyed and reads its collaborators through refs; the pile
@@ -702,11 +704,11 @@ export function ReadsView({
         <ThreadStrip
           channel={placed.walk}
           members={placed.members}
-          onOpen={() => jump(m.id)}
+          onOpen={() => jump(m.id, true)}
           conversationOf={answered.conversationOf}
         />
       ) : undefined}
-      onClick={() => jump(m.id)}
+      onClick={() => jump(m.id, true)}
     />
     );
   };
@@ -817,11 +819,7 @@ export function ReadsView({
             />
           ) : null
         }
-        onSeen={seenMark}
         scrollerRef={listScrollerRef}
-        /* Re-scan the seen-on-scroll observer as the window slides — a row that mounts on scroll
-           must still mark itself read when the reader scrolls past it. */
-        rescanKey={`${win.start}:${win.end}`}
         /* One affordance, not a legend — see `ShortcutHint`. The strip clipped in the split
            layout, and the row-jump sentence taught a click by writing it down; the click
            teaches itself. */
