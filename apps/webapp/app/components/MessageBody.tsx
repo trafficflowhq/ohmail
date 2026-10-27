@@ -4229,8 +4229,9 @@ export function MessageBody({
   // `imgSource !== null` is the third term and it is the same rule the sanitizer's `proxy` is
   // gated on: a button that consents to images the frame's policy will then refuse is a control
   // over a capability nothing can serve, which this file already refuses to render elsewhere.
-  const canLoad =
-    imageProxy != null && imgSource !== null && onLoadRemote != null && !remoteLoaded && !proseView;
+  // A door that fetches the pictures itself (`onRemoteImages`) needs no source: they arrive as `data:`.
+  const canLoad = imageProxy != null && (imgSource !== null || onRemoteImages != null) &&
+    onLoadRemote != null && !remoteLoaded && !proseView;
   /**
    * THE HOST SAYS IT, OR THE BAR DOES — never both, never neither. `onNotice` present means the
    * mounting surface states the blocking disclosure in its own chrome (a meta line: the stream

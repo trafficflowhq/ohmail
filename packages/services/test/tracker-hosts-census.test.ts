@@ -70,7 +70,7 @@ describe("the tracking-host census", () => {
 
   it.each(ROWS)("%s: through the proxy, the tracker is never fetched and the picture is drawn", async (_entry, trackerUrl, pictureUrl) => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    const messageId = await seedMessage(db, accountId, mailboxId);
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
     const r = remote();
     const svc = makePrivacyService({ remote: r, resolver: PUBLIC_DNS });
     const stub = await svc.proxyImage(ctx, { messageId, url: trackerUrl });
@@ -85,7 +85,7 @@ describe("the tracking-host census", () => {
 describe("the two readings the ruling named", () => {
   it("a Mailchimp logo on a default account: fetched once, drawn, and no tracker event", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    const messageId = await seedMessage(db, accountId, mailboxId);
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
     const r = remote();
     const out = await makePrivacyService({ remote: r, resolver: PUBLIC_DNS })
       .proxyImage(ctx, { messageId, url: "https://gallery.mailchimp.com/abc123/images/logo.png" });
@@ -97,7 +97,7 @@ describe("the two readings the ruling named", () => {
 
   it("a percent-encoded beacon on an unlisted host: never fetched", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    const messageId = await seedMessage(db, accountId, mailboxId);
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
     const r = remote();
     const svc = makePrivacyService({ remote: r, resolver: PUBLIC_DNS });
     await svc.proxyImage(ctx, { messageId, url: "https://t.example/%6Fpen?u=1" });
@@ -113,7 +113,7 @@ describe("the two readings the ruling named", () => {
     ["a root dot in upper case", "https://US1.LIST-MANAGE.COM./r/abc123.jpg"],
   ])("a listed host spelled with %s: never fetched, recorded under the host the gate dials", async (_l, url) => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    const messageId = await seedMessage(db, accountId, mailboxId);
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
     const r = remote();
     const out = await makePrivacyService({ remote: r, resolver: PUBLIC_DNS }).proxyImage(ctx, { messageId, url });
     expect(r.urls).toEqual([]);
@@ -127,7 +127,7 @@ describe("the two readings the ruling named", () => {
     ["a port", "https://us1.list-manage.com:8443/r/abc123.jpg", "port is not allowed"],
   ])("%s: never fetched — refused as a tracker, or by the gate once pixels load", async (_l, url, gate) => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    const messageId = await seedMessage(db, accountId, mailboxId);
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
     const r = remote();
     const svc = makePrivacyService({ remote: r, resolver: PUBLIC_DNS });
     expect((await svc.proxyImage(ctx, { messageId, url })).contentType).toBe("image/gif");
@@ -141,7 +141,7 @@ describe("the two readings the ruling named", () => {
     ["Mixpanel's EU endpoint", "https://api-eu.mixpanel.com/engage/?data=abc&img=1"],
   ])("%s: never fetched, recorded as the host's", async (_l, url) => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    const messageId = await seedMessage(db, accountId, mailboxId);
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
     const r = remote();
     await makePrivacyService({ remote: r, resolver: PUBLIC_DNS }).proxyImage(ctx, { messageId, url });
     expect(r.urls).toEqual([]);
@@ -151,7 +151,7 @@ describe("the two readings the ruling named", () => {
 
   it("a Mailchimp open pixel: never fetched, recorded as a pixel", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    const messageId = await seedMessage(db, accountId, mailboxId);
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
     const r = remote();
     await makePrivacyService({ remote: r, resolver: PUBLIC_DNS })
       .proxyImage(ctx, { messageId, url: "https://us1.list-manage.com/track/open.php?u=1&id=2&e=3" });

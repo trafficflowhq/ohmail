@@ -86,7 +86,7 @@ import { ListGoneProvider, useListGoneFacts } from "./list-view";
 import { AttachmentPreview } from "../components/AttachmentPreview";
 import { useMessageAttachments } from "./attachments";
 import { conversationOnScreen } from "./conversation-on-screen";
-import { useRemoteImages } from "./remote-images";
+import { useRemoteImages, type ImageDoor } from "./remote-images";
 import { useConsentState, windowOwnersOf, type ConsentTransport } from "./consent-state";
 import { FirstRun, type FirstRunDecideSubject } from "./FirstRun";
 import type { FirstRunHost } from "./first-run-host";
@@ -901,11 +901,11 @@ export function AppShell({
   consentTransport?: ConsentTransport;
   /**
    * FETCH ONE REMOTE PICTURE'S BYTES THROUGH THIS SHELL'S DOOR, as a `data:` URI, or `null`
-   * when the door refused. Supplied by a shell whose engine is reached over a pipe rather than
-   * a port, where no `<img src>` can name the proxy; absent on the hosted client, which names
-   * the proxy directly and is left exactly as it shipped.
+   * when the door refused, and store a Show images press there. Supplied by a shell whose engine
+   * is reached over a pipe rather than a port, where no `<img src>` can name the proxy; absent on
+   * the hosted client, which names the proxy directly and is left exactly as it shipped.
    */
-  imageWire?: (messageId: string, url: string) => Promise<string | null>;
+  imageWire?: ImageDoor;
   /**
    * A computer of the reader's own fetches the pictures (the desktop's local or host door). Its
    * engine also sends the one-click unsubscribe a screen-out asks for, so both unsubscribe notes
@@ -1134,13 +1134,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   awayOnHost?: string | null;
   profileImportTransport?: ProfileImportTransport;
   consentTransport?: ConsentTransport;
-  /**
-   * FETCH ONE REMOTE PICTURE'S BYTES THROUGH THIS SHELL'S DOOR, as a `data:` URI, or `null`
-   * when the door refused. Supplied by a shell whose engine is reached over a pipe rather than
-   * a port, where no `<img src>` can name the proxy; absent on the hosted client, which names
-   * the proxy directly and is left exactly as it shipped.
-   */
-  imageWire?: (messageId: string, url: string) => Promise<string | null>;
+  /** See the outer prop of the same name. */
+  imageWire?: ImageDoor;
   /** See the outer prop of the same name. */
   imagesFromComputer?: boolean;
   /** The reach-past body wire — see the outer prop of the same name. */
@@ -1869,8 +1864,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     /* THE PIPE-DOOR'S FETCHER. Supplied only by a shell whose engine has no origin a `src` can
        name (the desktop); absent here means the hosted mechanism, unchanged. It is what turns
        `apiConfigured()` from the question "can this client show a picture" into one of two
-       ways of answering it. */
-    fetchImage: imageWire,
+       ways of answering it. Its press goes down the same pipe: that door's Cloud client refuses. */
+    fetchImage: imageWire?.fetch,
+    recordRemote: imageWire?.record,
     // The pixel switch rides the same hook for the same reason `mode` does: the Settings row and
     // the open message read one `useConsentState`, so flipping it re-sanitizes what is on screen.
     // `blockTrackingPixels` rests TRUE, so every unknown arrives as "do not load".

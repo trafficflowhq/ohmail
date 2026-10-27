@@ -1595,8 +1595,8 @@
     },
     "images": {
       "title": "Load images in messages",
-      "on": "Pictures in a message load when you open it, through ohmail's proxy.",
-      "onComputer": "Pictures in a message load when you open it, fetched by your computer.",
+      "on": "Pictures in a message load when you open it, through ohmail's proxy. Mail in the Screener asks first.",
+      "onComputer": "Pictures in a message load when you open it, fetched by your computer. Mail in the Screener asks first.",
       "off": "Each message asks first. Press Show images to load them.",
       "microcopy": "Either way, images come through our proxy, so a sender never sees your address. Tracking pixels are a separate switch, below.",
       "microcopyComputer": "Either way, your computer fetches the images, so each sender sees its network address. Tracking pixels are a separate switch, below.",

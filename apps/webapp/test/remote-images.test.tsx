@@ -917,6 +917,14 @@ describe("the Settings copy names the machine that fetches the pictures", () => 
     expect(text).toContain(messages.settings.images.microcopy);
     expect(text).toContain(messages.settings.pixels.off);
   });
+
+  it("pictures ON says mail in the Screener asks first, on either door and in either language", async () => {
+    for (const locale of ["en", "de"] as const) {
+      for (const fromComputer of [false, true]) {
+        expect(await rows(fromComputer, locale), `${locale}, own computer ${fromComputer}`).toMatch(/Screener/);
+      }
+    }
+  });
 });
 
 /* ── THE PIPE-DOOR'S PICTURES ARE FETCHED ONCE ─────────────────────────────────────────── */

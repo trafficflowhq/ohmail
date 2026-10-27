@@ -1595,8 +1595,8 @@
     },
     "images": {
       "title": "Bilder in Nachrichten laden",
-      "on": "Bilder in einer Nachricht laden beim Öffnen, über den Proxy von ohmail.",
-      "onComputer": "Bilder in einer Nachricht laden beim Öffnen, geholt von deinem Computer.",
+      "on": "Bilder in einer Nachricht laden beim Öffnen, über den Proxy von ohmail. Nachrichten im Screener fragen zuerst.",
+      "onComputer": "Bilder in einer Nachricht laden beim Öffnen, geholt von deinem Computer. Nachrichten im Screener fragen zuerst.",
       "off": "Jede Nachricht fragt zuerst. Drück „Bilder anzeigen“, um sie zu laden.",
       "microcopy": "So oder so kommen Bilder über unseren Proxy, ein Absender sieht deine Adresse also nie. Tracking-Pixel haben unten ihren eigenen Schalter.",
       "microcopyComputer": "So oder so holt dein Computer die Bilder, jeder Absender sieht also dessen Netzwerkadresse. Tracking-Pixel haben unten ihren eigenen Schalter.",
