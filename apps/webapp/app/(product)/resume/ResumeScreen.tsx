@@ -129,7 +129,7 @@ function signOutPending(): boolean {
 
 type View = { kind: "working" } | { kind: "busy" } | { kind: "signedOut"; reason: SignedOutReason };
 
-export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | null }) {
+export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?: string | null; staleJar?: string }) {
   const t = useTranslations("resume");
   const [view, setView] = useState<View>({ kind: "working" });
   /** Past the loading grace the card says what it waits for; below it, the card alone. */
@@ -162,10 +162,11 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
    * One pass of the ladder: ask, then act on the answer. `resumeSession` consults `stillMine` inside
    * the lock, so no second check stands before the call. `landing`: a reload of this splash while
    * its renewal was out waits for that renewal's answer rather than presenting the token again.
+   * `staleJar`: the jar the edge judged stale; one another tab renewed past it is taken, not rotated again.
    */
   const attempt = useCallback(async (n: number): Promise<void> => {
     const before = lastRefreshReport();
-    const ok = await resumeSession({ mayProceed: stillMine, landing: true }) === "resumed";
+    const ok = await resumeSession({ mayProceed: stillMine, landing: true, staleJar }) === "resumed";
     const report = lastRefreshReport();
     // The door's own refusal clears the jar, tf_owner with it: that is this splash's answer.
     const owner = readOwnerCookie();
@@ -192,7 +193,7 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
     // busy card at once, whose Try again asks again. Never a sign-in — nothing was learned.
     if (n >= CONFIRM_ATTEMPTS || report?.timedOut !== undefined) { setView({ kind: "busy" }); return; }
     timer.current = setTimeout(() => void attempt(n + 1), nextConfirmDelay(n, report?.retryAfterMs ?? null));
-  }, [initialOwner, leave, stillMine]);
+  }, [initialOwner, leave, staleJar, stillMine]);
 
   useEffect(() => {
     if (started.current) return;

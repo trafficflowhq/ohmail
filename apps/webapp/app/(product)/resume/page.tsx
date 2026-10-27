@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { CSRF_COOKIE, csrfMark } from "../../csrf";
 import { cookieFromStore } from "../../shell/cookie-jar";
 import { OWNER_COOKIE } from "../../shell/owner-cookie";
 import { ResumeScreen } from "./ResumeScreen";
@@ -26,5 +27,8 @@ export default async function Page() {
    * the sign-in page.
    */
   const owner = cookieFromStore(await cookies(), OWNER_COOKIE);
-  return <ResumeScreen initialOwner={owner} />;
+  // And the jar it judged stale, as a mark: one another tab renews past it is taken, not rotated again.
+  // Only beside the marker: a cross-site navigation carries neither cookie, and the screen judges the jar.
+  const staleJar = owner === null ? undefined : csrfMark(cookieFromStore(await cookies(), CSRF_COOKIE));
+  return <ResumeScreen initialOwner={owner} staleJar={staleJar} />;
 }
