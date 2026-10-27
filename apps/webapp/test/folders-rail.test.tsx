@@ -324,7 +324,7 @@ describe("an empty folder is a question until the server has answered — the re
     await act(() =>
       root!.render(h(NextIntlClientProvider, {
         locale: "en", messages, timeZone: "Europe/Zurich",
-        children: h(FolderView, {
+        children: h(FolderView, { onMarkSeen: () => {},
           folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
           messages: [] as never[],
           older: older as never,
@@ -481,7 +481,7 @@ describe("the reach-past never lies beside the mirror", () => {
     const render = (fid: string) => act(() =>
       root!.render(h(NextIntlClientProvider, {
         locale: "en", messages, timeZone: "Europe/Zurich",
-        children: h(FolderView, {
+        children: h(FolderView, { onMarkSeen: () => {},
           folder: { id: fid, name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
           messages: [] as never[], older: older as never,
           tags: [], now: new Date("2026-08-04T12:00:00.000Z"),
@@ -592,7 +592,7 @@ describe("the folder view is windowed — a large folder never mounts whole", ()
           locale: "en",
           messages,
           timeZone: "Europe/Zurich",
-          children: h(FolderView, {
+          children: h(FolderView, { onMarkSeen: () => {},
             folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
             messages: many as never[],
             older: olderNone,
@@ -647,7 +647,7 @@ describe("the folder view is windowed — a large folder never mounts whole", ()
           locale: "en",
           messages,
           timeZone: "Europe/Zurich",
-          children: h(FolderView, {
+          children: h(FolderView, { onMarkSeen: () => {},
             folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
             messages: many as never[],
             locateId: "m400",
@@ -686,7 +686,7 @@ describe("the folder view is windowed — a large folder never mounts whole", ()
           locale: "en",
           messages,
           timeZone: "Europe/Zurich",
-          children: h(FolderView, {
+          children: h(FolderView, { onMarkSeen: () => {},
             folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
             messages: many as never[],
             locateId: null,
@@ -723,6 +723,7 @@ describe("the folder view is windowed — a large folder never mounts whole", ()
       triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-01T09:00:00.000Z",
     }));
     const props = (msgs: unknown[], locateId: string | null) => ({
+      onMarkSeen: () => {},
       folder: { id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.example" },
       messages: msgs as never[],
       locateId,

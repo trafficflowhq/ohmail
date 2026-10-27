@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
-  EVIDENCE_WINDOW_MS, THREAD_TOP_LINES, type LineBox, type ThreadPanel, type ThreadRead, type ThreadView,
+  EVIDENCE_WINDOW_MS, THREAD_TOP_LINES, createThreadRead,
+  type EngineMessage, type LineBox, type ThreadPanel, type ThreadRead, type ThreadView,
 } from "@ohmail/client-engine";
 import { SCROLL_KEYS, cssRect } from "@ohmail/ui";
 import { stampLive } from "./programmatic-scroll";
@@ -376,6 +377,8 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
 
 /** What a pane is handed where the rule runs: the visit's record and its two report-ups. */
 export interface ThreadReadWiring {
+  /** `"tint"`: the Ohbox's unread wash, squares and spoken "unread"; `"dot"`: the reader keeps its unread dot. */
+  look: "tint" | "dot";
   record: ThreadRead;
   onRead: (ids: string[]) => void;
   onEnter: () => void;
@@ -385,9 +388,57 @@ export interface ThreadReadWiring {
   walk?: ThreadWalkChannel;
 }
 
+/** The shell's `markSeen`, as a reader visit writes through it. */
+export type ReaderMarkSeen = (ids: string[], unread: boolean, via?: "glance", readRow?: string) => unknown;
+
 /**
- * The adapter, mounted per record and scroller. Absent `wiring` (every surface but the Ohbox's
- * column and its sheet) mounts nothing. `entered` re-looks once the visit is entered from outside
+ * THE VISIT OF A READER OFF THE OHBOX — Folder, History, a tag, the triage piles and the sheet over
+ * them. One record per shown message, unentered until `enter` (an open, ↵, → into the column) or the
+ * adapter's own press, wheel or hand scroll. Any change of the shown id ends the visit and coming back
+ * starts over; an `enter` for an id the next commit does not show is dropped. Reads go out as glances
+ * naming the shown message as the row read (`readRow`), so an Ohbox letter read here is an open read.
+ */
+export function useReaderVisit({ shown, markSeen }: {
+  shown: EngineMessage | null;
+  markSeen: ReaderMarkSeen;
+}): { wiring: ThreadReadWiring | null; enter: (id: string) => void } {
+  const records = useRef(new Map<string, ThreadRead>());
+  const [, bump] = useState(0);
+  const write = useRef(markSeen);
+  write.current = markSeen;
+  const shownId = shown?.id ?? null;
+  const recordFor = (id: string): ThreadRead => {
+    const r = records.current.get(id) ?? createThreadRead();
+    records.current.set(id, r);
+    return r;
+  };
+  useEffect(() => {
+    for (const id of [...records.current.keys()]) if (id !== shownId) records.current.delete(id);
+  });
+  const enter = useCallback((id: string) => {
+    const r = records.current.get(id) ?? createThreadRead();
+    records.current.set(id, r);
+    if (r.entered) return;
+    r.enter(threadReadTime.now());
+    bump((n) => n + 1);
+  }, []);
+  const record = shownId === null ? null : recordFor(shownId);
+  const wiring = useMemo<ThreadReadWiring | null>(() => (record === null || shownId === null ? null : {
+    look: "dot",
+    record,
+    onEnter: () => enter(shownId),
+    onRead: (ids) => { void write.current(ids, false, "glance", shownId); },
+    onMarkUnread: (id) => {
+      record.keepUnread(id);
+      void write.current([id], true);
+    },
+  }), [record, shownId, enter]);
+  return { wiring, enter };
+}
+
+/**
+ * The adapter, mounted per record and scroller. Absent `wiring` (Trash, the Screener's preview, the
+ * streams) mounts nothing. `entered` re-looks once the visit is entered from outside
  * (↵, a click on the row).
  */
 export function useThreadRead({

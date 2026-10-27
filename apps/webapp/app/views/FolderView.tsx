@@ -20,6 +20,7 @@ import { rowThreadOf } from "../shell/row-thread";
 import { presentsUnread, type EngineMessage, type FolderEntity, type TagDTO } from "@ohmail/client-engine";
 import { ListGroupLabel, ListPane, ListRows, MessageRow, Spinner } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
+import { useReaderVisit, type ReaderMarkSeen } from "../shell/reader-seen";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { folderLeafOf, folderParentOf } from "../shell/folders";
@@ -50,6 +51,9 @@ export function FolderView({
   onScreen,
   canDelete,
   canReplyAll,
+  onMarkSeen,
+  enterId = null,
+  onEntered,
 }: {
   folder: FolderEntity;
   /** The folder's mail, newest first — filtered by the shell on (mailboxId, name). */
@@ -93,6 +97,12 @@ export function FolderView({
   onScreen: (messageId: string, anchor: HTMLElement | null) => void;
   canDelete: (message: EngineMessage) => boolean;
   canReplyAll: (message: EngineMessage) => boolean;
+  /** The shell's `markSeen`: the column's read rule writes through it (`useReaderVisit`). */
+  onMarkSeen: ReaderMarkSeen;
+  /** A hit the person opened (Search, an address page): entered once the column shows it. */
+  enterId?: string | null;
+  /** The request is spent: entered, or the person moved on before it was shown. */
+  onEntered?: () => void;
 }) {
   const t = useTranslations("folder");
   const { row: senderCheckRow } = useSenderCheckWords();
@@ -119,6 +129,7 @@ export function FolderView({
     // Where the column is hidden the sheet is the only reading surface; where it is standing the
     // selection above is the whole open, and nothing leaves the screen.
     if (list.columnHidden()) onOpen(m);
+    else visit.enter(m.id);
   };
 
   // The standard grouping, the Ohbox's own labels: unread is what is unhandled here, read is
@@ -170,15 +181,28 @@ export function FolderView({
   useEffect(() => {
     if (shown) hydrateBody(shown.id);
   }, [shown?.id, hydrateBody]);
+  /* The column's visit: entered by an open, → or the person's own press or scroll in it. */
+  const visit = useReaderVisit({ shown, markSeen: onMarkSeen });
+  const readColRef = useRef<HTMLDivElement>(null);
+  /* A hit's open enters once the column shows it; a pick that moved on first drops it. Where the
+     column is hidden the sheet takes the request instead. */
+  const onEnteredRef = useRef(onEntered);
+  onEnteredRef.current = onEntered;
+  const enterShown = shown !== null && shown.id === enterId;
+  useEffect(() => {
+    if (enterId == null || list.columnHidden()) return;
+    if (enterShown) visit.enter(enterId);
+    else if (selectedId === enterId || (selectedId === null && locateId === enterId)) return; // not shown yet
+    onEnteredRef.current?.();
+  }, [enterId, enterShown, selectedId, locateId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * ↓/↑ WALK THE LIST AS RENDERED — the zone model's list zone (`zone-nav.tsx`), and this
    * view's first list keys (it never had j/k). The walk is the rows in the order the
    * scroller shows them: mirror rows first, the fetched older rows below. Selecting SHOWS —
-   * the column beside the list renders `shown` — and shows only: this view writes no read
-   * state on display, so a flick down a folder marks nothing by construction. → into the
-   * pane is a focus move; at widths where the column is hidden it is the sheet, the same
-   * answer a tap gets (`openRow`).
+   * the column beside the list renders `shown` — and shows only, a preview the read rule
+   * never counts, so a flick down a folder marks nothing. → into the pane enters it; at widths
+   * where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
    */
   const navOrder = [...ordered, ...olderRows].map((m) => m.id);
   const navAt = shown ? navOrder.indexOf(shown.id) : -1;
@@ -234,6 +258,7 @@ export function FolderView({
     reader: {
       selector: ".view-folder .read-col",
       disabled: shown == null,
+      onEnter: () => { if (shown) visit.enter(shown.id); },
       onHiddenEnter: () => {
         if (shown) onOpen(shown);
       },
@@ -403,6 +428,7 @@ export function FolderView({
            while a row is picked — the column's first-row fallback has nothing to close. */
         onClose={selectedId !== null ? () => { setSelectedId(null); onPick?.(null); } : undefined}
         closeLabel={tReader("closeColumn")}
+        scrollerRef={readColRef}
       >
         {(m) => (
           <MessagePane
@@ -411,6 +437,8 @@ export function FolderView({
             now={now}
             onAction={(a) => onAction(a, m)}
             onAddTag={onAddTag}
+            scroller={readColRef}
+            threadRead={visit.wiring ?? undefined}
           />
         )}
       </ListReadColumn>

@@ -1753,7 +1753,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
     setSenderMenu, setShortcutsOpen, setSubjectRule, sheetMessage, shortcutsOpen, startFR,
-    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, pileSetFor, selectOhboxRow, ohboxThreadRead, setOhboxThreadRead, ohboxEnter, setOhboxEnter,
+    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, pileSetFor, selectOhboxRow, setOhboxThreadRead, ohboxEnter, setOhboxEnter, sheetThreadRead, enterSheet, viewEnter, spendViewEnter,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
     allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
@@ -2925,10 +2925,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    `setReaderFor` and not `openMessage`, for History's reason: a parked message
                    presents in no pile, so "open it where it lives" would navigate away from the
                    view that was showing it. */
-                onOpen={(m) => setReaderFor(m.id)}
+                onOpen={(m) => { setReaderFor(m.id); enterSheet(m.id); }}
                 /* The URL's open message, and the pick it claims — see `reportPick`. */
                 locateId={route.messageId}
                 onPick={reportPick}
+                onMarkSeen={markSeen}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
@@ -2958,9 +2959,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                  * split layout reads it in the column instead — either way the tag stays up.
                  * The body hydrates through the `readerFor`-keyed effect, as History's does.
                  */
-                onOpen={(m) => setReaderFor(m.id)}
+                onOpen={(m) => { setReaderFor(m.id); enterSheet(m.id); }}
                 locateId={route.messageId}
                 onPick={reportPick}
+                onMarkSeen={markSeen}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
@@ -2996,8 +2998,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    mirror, and a reader that can only resolve mirror ids would stay closed on
                    exactly the mail the reach-past just fetched. The mirror's own row still wins
                    whenever it exists — see `readerMessageFor`. */
-                onOpen={(m) => { setReaderOffMirror(m); setReaderFor(m.id); }}
+                onOpen={(m) => { setReaderOffMirror(m); setReaderFor(m.id); enterSheet(m.id); }}
                 onPick={reportPick}
+                onMarkSeen={markSeen}
+                enterId={viewEnter}
+                onEntered={spendViewEnter}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
@@ -3024,9 +3029,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 /* IN PLACE, and the row TRAVELS with the open: a store page's row is not a mirror
                    row, and a reader resolving mirror ids alone would stay closed on it (the
                    folder view's reach-past rule; the mirror's own row still wins). */
-                onOpen={(m) => { setReaderOffMirror(m); setReaderFor(m.id); }}
+                onOpen={(m) => { setReaderOffMirror(m); setReaderFor(m.id); enterSheet(m.id); }}
                 locateId={route.messageId}
                 onPick={reportPick}
+                onMarkSeen={markSeen}
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
@@ -3611,17 +3617,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             now={now}
             onAction={(a) => onMessageAction(a, sheetMessage)}
             onAddTag={openTagPicker}
-            /* On the Ohbox the sheet's read slot is the conversation's (`readSetFor`) and the
-               sheet runs the visit's thread-read record (the sheet is an open); elsewhere the
-               per-message face and no rule. */
-            {...(route.view === "ohbox"
-              ? {
-                  readSet: readSetFor(sheetMessage.id),
-                  scroller: readerRef,
-                  // The visit is the Ohbox selection's: the sheet runs it only over that message.
-                  threadRead: ohboxThreadRead && selectedOhbox?.id === sheetMessage.id ? ohboxThreadRead : undefined,
-                }
-              : {})}
+            /* On the Ohbox the sheet's read slot is the conversation's (`readSetFor`); elsewhere the
+               per-message face. The read rule runs in the sheet on every view but Trash: over the
+               Ohbox's selection on the Ohbox's own record, else on the sheet's (`sheetThreadRead`). */
+            {...(route.view === "ohbox" ? { readSet: readSetFor(sheetMessage.id) } : {})}
+            scroller={readerRef}
+            threadRead={sheetThreadRead ?? undefined}
           />
         ) : readerGone ? (
           <MessageGone openTrash={openTrashWindow} />

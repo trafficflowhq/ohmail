@@ -95,7 +95,7 @@ const VIEWS: Array<[string, (gone: Set<string>) => React.ReactElement]> = [
   ["triage", (gone) => {
     const byId = new Map(rowsOf(gone).map((m) => [m.id, m]));
     return (
-      <TriageView settled owed={false}
+      <TriageView onMarkSeen={() => {}} settled owed={false}
         piles={{ replyLater: rowsOf(gone).map((m) => ({ messageId: m.id, title: m.id })), setAside: [], resurface: [] }}
         pile="reply" onPile={none} frDone={new Set()} onStartFR={none}
         messageOf={(id) => byId.get(id) ?? null}
@@ -104,7 +104,7 @@ const VIEWS: Array<[string, (gone: Set<string>) => React.ReactElement]> = [
     );
   }],
   ["folder", (gone) => (
-    <FolderView
+    <FolderView onMarkSeen={() => {}}
       folder={{ id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@example.com" } as never}
       messages={rowsOf(gone) as EngineMessage[]}
       older={{ available: false, items: [], loading: false, error: null, exhausted: true, loadMore: none } as never}

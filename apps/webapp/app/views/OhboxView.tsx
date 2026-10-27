@@ -1980,7 +1980,7 @@ export function OhboxView({
       marks={marksOf(threadId).marks}
     />;
   const wiring = useMemo<ThreadReadWiring | null>(
-    () => (record ? { record, onRead: readByRule, onEnter: enterSelected, onMarkUnread: markPanelUnread, walk } : null),
+    () => (record ? { look: "tint", record, onRead: readByRule, onEnter: enterSelected, onMarkUnread: markPanelUnread, walk } : null),
     [record, readByRule, enterSelected, markPanelUnread, walk],
   );
   const onThreadReadRef = useRef(onThreadRead);

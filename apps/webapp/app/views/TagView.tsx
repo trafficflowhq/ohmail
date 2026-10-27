@@ -21,6 +21,7 @@ import { rowThreadOf } from "../shell/row-thread";
 import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { Button, Kbd, ListPane, ListRows, MessageRow, TagDot, TextField } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
+import { useReaderVisit, type ReaderMarkSeen } from "../shell/reader-seen";
 import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { useZoneNav } from "../shell/zone-nav";
@@ -56,6 +57,7 @@ export function TagView({
   canDelete,
   canReplyAll,
   admin,
+  onMarkSeen,
 }: {
   tag: TagDTO;
   messages: EngineMessage[];
@@ -107,6 +109,8 @@ export function TagView({
    * the same discipline the Settings pane holds: a surface half-wired is worse than one not.
    */
   admin?: TagAdmin;
+  /** The shell's `markSeen`: the column's read rule writes through it (`useReaderVisit`). */
+  onMarkSeen: ReaderMarkSeen;
 }) {
   const t = useTranslations("tag");
   const { row: senderCheckRow } = useSenderCheckWords();
@@ -120,6 +124,9 @@ export function TagView({
   /** The column's row, or the gone notice for a pick another mail client took away — `useListView`. */
   const list = useListView({ rows: messages, settled, pending: owed, picked: selectedId });
   const shown = list.shown;
+  /* The column's visit: entered by an open, → or the person's own press or scroll in it. */
+  const visit = useReaderVisit({ shown, markSeen: onMarkSeen });
+  const readColRef = useRef<HTMLDivElement>(null);
   useColumnPick({
     picked: selectedId, shown: list.standsFor, locateId,
     located: locateId != null && messages.some((m) => m.id === locateId),
@@ -145,14 +152,14 @@ export function TagView({
     // Where the column is hidden the sheet is the only reading surface; where it is standing the
     // selection above is the whole open, and nothing leaves the screen.
     if (list.columnHidden()) onOpen(m);
+    else visit.enter(m.id);
   };
 
   /**
    * ↓/↑ WALK THE LIST AS RENDERED — the zone model's list zone (`zone-nav.tsx`), and this
-   * view's first list keys. Selecting SHOWS (the column renders `shown`) and shows only:
-   * this view writes no read state on display, so a flick down the tag marks nothing by
-   * construction. → into the pane is a focus move; where the column is hidden it is the
-   * sheet, the same answer a tap gets (`openRow`).
+   * view's first list keys. Selecting SHOWS (the column renders `shown`) and shows only: a
+   * preview the read rule never counts, so a flick down the tag marks nothing. → into the pane
+   * enters it; where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
    */
   const navAt = shown ? messages.findIndex((m) => m.id === shown.id) : -1;
   /** The list is a window (`useListWindow`): a tag has no upper bound, so it mounts the slice on screen. */
@@ -210,6 +217,7 @@ export function TagView({
     reader: {
       selector: ".view-tag .read-col",
       disabled: shown == null,
+      onEnter: () => { if (shown) visit.enter(shown.id); },
       onHiddenEnter: () => {
         if (shown) onOpen(shown);
       },
@@ -292,6 +300,7 @@ export function TagView({
            while a row is picked — the column's first-row fallback has nothing to close. */
         onClose={selectedId !== null ? () => { setSelectedId(null); onPick?.(null); } : undefined}
         closeLabel={tReader("closeColumn")}
+        scrollerRef={readColRef}
       >
         {(m) => (
           <MessagePane
@@ -300,6 +309,8 @@ export function TagView({
             now={now}
             onAction={(a) => onAction(a, m)}
             onAddTag={onAddTag}
+            scroller={readColRef}
+            threadRead={visit.wiring ?? undefined}
           />
         )}
       </ListReadColumn>

@@ -132,7 +132,7 @@ async function mount(engine: OhmailEngine): Promise<{ host: HTMLElement; scrolle
   await act(() => {
     root.render(
       <NextIntlClientProvider locale="en" messages={messages} now={FIXTURE_NOW} timeZone="UTC">
-        <HistoryView
+        <HistoryView onMarkSeen={() => {}}
           engine={engine} version={0} settled owed={false} tags={tags} now={FIXTURE_NOW}
           onOpen={() => {}} hydrateBody={() => {}} onAction={() => {}} onAddTag={() => {}} onScreen={() => {}}
           canDelete={() => true} canReplyAll={() => true}

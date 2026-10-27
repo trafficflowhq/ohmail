@@ -32,6 +32,7 @@ import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useListWindow } from "../shell/list-window";
 import { useColumnPick } from "../shell/column-pick";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
+import { useReaderVisit, type ReaderMarkSeen } from "../shell/reader-seen";
 import { TRIAGE_PILES, type TriagePileId } from "../shell/routing";
 
 
@@ -91,6 +92,7 @@ export function TriageView({
   onScreen = () => {},
   canDelete = () => false,
   canReplyAll = () => false,
+  onMarkSeen,
 }: {
   piles: TriagePiles;
   /** `MailState.settled` / `owed`: an empty pile is said only over a read mirror. */
@@ -151,6 +153,8 @@ export function TriageView({
   onScreen?: (messageId: string, anchor: HTMLElement | null) => void;
   canDelete?: (message: EngineMessage) => boolean;
   canReplyAll?: (message: EngineMessage) => boolean;
+  /** The shell's `markSeen`: the column's read rule writes through it (`useReaderVisit`). */
+  onMarkSeen: ReaderMarkSeen;
 }) {
   const t = useTranslations("triage");
   const rowBadge = useRowBadgeCopy();
@@ -179,6 +183,9 @@ export function TriageView({
   const picked = rowTarget(selectedId) ?? selectedId;
   const list = useListView({ rows: openable, settled, pending: owed, picked });
   const shown = list.shown;
+  /* The column's visit: entered by an open, → or the person's own press or scroll in it. */
+  const visit = useReaderVisit({ shown, markSeen: onMarkSeen });
+  const readColRef = useRef<HTMLDivElement>(null);
 
   /** The cursor is per-pile. Switching horizons must not leave the reader on the last pile's mail. */
   useEffect(() => setSelectedId(null), [pile]);
@@ -220,6 +227,7 @@ export function TriageView({
   const openRow = (m: EngineMessage) => {
     setSelectedId(m.id);
     if (list.columnHidden()) onOpen(m);
+    else visit.enter(m.id);
   };
 
   /**
@@ -227,7 +235,7 @@ export function TriageView({
    * view's first list-cursor keys. The walk is over `openable` — the entries a cursor can
    * stand on, the same order `shown` falls back through — so a demo orphan (an entry with no
    * message behind it) is never a keyboard stop, exactly as it is not a button. Selecting
-   * shows and shows only: triage writes nothing on display. → into the pane is a focus move;
+   * shows and shows only, a preview the read rule never counts. → into the pane enters it;
    * where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
    */
   const navAt = shown ? openable.findIndex((m) => m.id === shown.id) : -1;
@@ -281,6 +289,7 @@ export function TriageView({
     reader: {
       selector: ".view-triage .read-col",
       disabled: shown == null,
+      onEnter: () => { if (shown) visit.enter(shown.id); },
       onHiddenEnter: () => {
         if (shown) onOpen(shown);
       },
@@ -452,6 +461,7 @@ export function TriageView({
            while a row is picked — the column's first-row fallback has nothing to close. */
         onClose={selectedId !== null ? () => { setSelectedId(null); onPick?.(null); } : undefined}
         closeLabel={tReader("closeColumn")}
+        scrollerRef={readColRef}
       >
         {(m) => (
           <MessagePane
@@ -460,6 +470,8 @@ export function TriageView({
             now={now}
             onAction={(a) => onAction(a, m)}
             onAddTag={onAddTag}
+            scroller={readColRef}
+            threadRead={visit.wiring ?? undefined}
           />
         )}
       </ListReadColumn>

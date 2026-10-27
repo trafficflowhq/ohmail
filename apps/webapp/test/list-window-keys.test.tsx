@@ -84,7 +84,7 @@ describe("↓ reaches the next row through its slot", () => {
   it(`in a folder of ${COUNT} rows — past the measured floor, a window`, async () => {
     expect(COUNT).toBeGreaterThan(MEASURED_FULL_RANGE_MAX_ROWS);
     const scroller = await mount(
-      <FolderView
+      <FolderView onMarkSeen={() => {}}
         folder={{ id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@example.com" }}
         messages={rows as never[]}
         older={{ available: false, items: [], loading: false, error: null, exhausted: true, loadMore: none }}
