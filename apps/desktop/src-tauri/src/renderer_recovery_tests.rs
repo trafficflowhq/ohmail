@@ -208,3 +208,29 @@ fn a_browser_process_exit_offers_the_relaunch_once() {
     // …and a renderer death after it does not reload under the question.
     assert_eq!(d.on_death(t0 + Duration::from_secs(2)), Action::AlreadyOffered);
 }
+
+#[test]
+fn no_way_out_of_the_relaunch_question_quits() {
+    // The dialog plugin hands Escape and the close button back as the cancel button: a second
+    // button there is the answer a stray key gives.
+    match relaunch_buttons() {
+        tauri_plugin_dialog::MessageDialogButtons::OkCustom(only) => assert_eq!(only, RELAUNCH_BUTTON),
+        other => panic!("a cancel slot is where Escape lands: {other:?}"),
+    }
+}
+
+#[test]
+fn the_log_says_how_the_relaunch_question_was_answered() {
+    use tauri_plugin_dialog::MessageDialogResult as R;
+    // GTK hands the button back by its label, Windows as Ok; Escape and the close come back as Cancel.
+    assert_eq!(relaunch_answer(&R::Custom(RELAUNCH_BUTTON.into())), "relaunch");
+    assert_eq!(relaunch_answer(&R::Ok), "relaunch");
+    for other in [R::Cancel, R::No, R::Yes, R::Custom("Cancel".into())] {
+        assert_eq!(relaunch_answer(&other), "dismissed", "{other:?}");
+    }
+    assert_eq!(
+        answered_line(&R::Cancel),
+        r#"{"service":"shell","event":"relaunch_answered","answer":"dismissed"}"#
+    );
+    assert_eq!(RELAUNCH_RESTARTING, r#"{"service":"shell","event":"relaunch_restarting"}"#);
+}

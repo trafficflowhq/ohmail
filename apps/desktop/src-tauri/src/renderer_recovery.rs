@@ -184,7 +184,29 @@ pub fn line(reason: &str, action: Action, ctx: &Context) -> String {
 pub const RELAUNCH_TITLE: &str = "ohmail's window stopped";
 pub const RELAUNCH_MESSAGE: &str = "ohmail's window stopped again. Relaunch ohmail to open it.";
 pub const RELAUNCH_BUTTON: &str = "Relaunch";
-pub const QUIT_BUTTON: &str = "Quit";
+
+/// One button. The dialog plugin hands Escape and the close button back as the cancel button, so a
+/// Quit there was the answer a stray key gave; quitting stays the app's menu, tray and window close.
+pub fn relaunch_buttons() -> tauri_plugin_dialog::MessageDialogButtons {
+    tauri_plugin_dialog::MessageDialogButtons::OkCustom(RELAUNCH_BUTTON.into())
+}
+
+/// How the question ended, as a fixed word: the button, or Escape and the close (both relaunch).
+pub fn relaunch_answer(result: &tauri_plugin_dialog::MessageDialogResult) -> &'static str {
+    use tauri_plugin_dialog::MessageDialogResult as R;
+    match result {
+        R::Ok => "relaunch",
+        R::Custom(label) if label == RELAUNCH_BUTTON => "relaunch",
+        _ => "dismissed",
+    }
+}
+
+pub fn answered_line(result: &tauri_plugin_dialog::MessageDialogResult) -> String {
+    format!("{{\"service\":\"shell\",\"event\":\"relaunch_answered\",\"answer\":\"{}\"}}", relaunch_answer(result))
+}
+
+/// Written right before the restart, so a relaunch that never came up is told from one never tried.
+pub const RELAUNCH_RESTARTING: &str = "{\"service\":\"shell\",\"event\":\"relaunch_restarting\"}";
 
 fn emit(line: &str) {
     #[cfg(feature = "local-engine")]
@@ -198,25 +220,23 @@ fn emit(line: &str) {
 
 /// The relaunch, asked natively: it needs no renderer, so it cannot die the way the page did.
 fn offer_relaunch<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+    use tauri_plugin_dialog::DialogExt;
     let answer = app.clone();
     app.dialog()
         .message(RELAUNCH_MESSAGE)
         .title(RELAUNCH_TITLE)
-        .buttons(MessageDialogButtons::OkCancelCustom(RELAUNCH_BUTTON.into(), QUIT_BUTTON.into()))
-        .show(move |relaunch| {
-            // The quit waits for the engine after the loop (`leave_the_process`); a restart exits
-            // from inside it, so the relaunch waits for the engine first, as the update's does.
-            // Both wait for an install still writing (the install fence, `updater.rs`).
-            if relaunch {
-                crate::updater::after_the_engine(&answer, || {
-                    crate::inherited_fds::withhold_from_the_restart();
-                    crate::unclean_exit::clear();
-                    answer.request_restart();
-                });
-            } else {
-                crate::updater::quit(&answer, 0);
-            }
+        .buttons(relaunch_buttons())
+        // Every answer relaunches; the log says which one it was.
+        .show_with_result(move |result| {
+            emit(&answered_line(&result));
+            // A restart exits from inside the loop, so it waits for the engine first, as the
+            // update's does, and for an install still writing (the install fence, `updater.rs`).
+            crate::updater::after_the_engine(&answer, || {
+                crate::inherited_fds::withhold_from_the_restart();
+                emit(RELAUNCH_RESTARTING);
+                crate::unclean_exit::clear();
+                answer.request_restart();
+            });
         });
 }
 

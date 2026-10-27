@@ -2445,8 +2445,13 @@ describe("the auto-updater", () => {
     expect(install.indexOf(withhold)).toBeGreaterThan(-1);
     expect(install.indexOf(withhold)).toBeLessThan(install.indexOf("app.restart();"));
     const relaunch =
-      /if relaunch \{[\s\S]*?\}/.exec(code(read("src-tauri/src/renderer_recovery.rs")))?.[0] ?? "";
-    expect(relaunch, "the relaunch branch was not found").toContain("answer.request_restart();");
+      /\.show_with_result\(move \|result\| \{[\s\S]*?\}/.exec(code(read("src-tauri/src/renderer_recovery.rs")))?.[0] ?? "";
+    expect(relaunch, "the relaunch answer was not found").toContain("answer.request_restart();");
+    // The log tells a relaunch that never came up from a quit: the answer, then the restart.
+    expect(relaunch.indexOf("emit(&answered_line(&result));")).toBeGreaterThan(-1);
+    expect(relaunch.indexOf("emit(&answered_line(&result));")).toBeLessThan(relaunch.indexOf("after_the_engine("));
+    expect(relaunch.indexOf("emit(RELAUNCH_RESTARTING);")).toBeGreaterThan(relaunch.indexOf(withhold));
+    expect(relaunch.indexOf("emit(RELAUNCH_RESTARTING);")).toBeLessThan(relaunch.indexOf("answer.request_restart();"));
     expect(relaunch.indexOf(withhold)).toBeGreaterThan(-1);
     expect(relaunch.indexOf(withhold)).toBeLessThan(relaunch.indexOf("answer.request_restart();"));
 
@@ -2567,9 +2572,8 @@ describe("the auto-updater", () => {
     expect(rustCode(say), "the quit's sentence relabels the menu item on the thread that draws").not.toMatch(/relabel\(|set_text|lock\(&state\.item\)/);
     const quitWith = /pub\(crate\) fn quit_with\([\s\S]*?\n\}\n/.exec(updater)?.[0] ?? "";
     expect(quitWith, "quit_with was not found").toMatch(/if !fence\.must_wait\(\) \{\s*return exit\(\);\s*\}/);
-    // The doors: the tray, the relaunch card's Quit, and the close's last step.
+    // The doors: the tray and the close's last step.
     expect(read("src-tauri/src/host.rs")).toMatch(/TRAY_QUIT_ID => crate::updater::quit\(app, 0\),/);
-    expect(read("src-tauri/src/renderer_recovery.rs")).toMatch(/\} else \{\s*crate::updater::quit\(&answer, 0\);/);
     const engineSrc = read("src-tauri/src/engine.rs");
     expect(engineSrc).toMatch(/self\.leave_with\(\s*&crate::updater::FENCE,[\s\S]*?move \|\| crate::updater::quit\(&leaving, 0\),\s*\);/);
     // The close reads the fence before it hides the window.
