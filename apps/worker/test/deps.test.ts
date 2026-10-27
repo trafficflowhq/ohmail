@@ -495,6 +495,10 @@ describe("worker dependency boundary", () => {
       "rule-lock-order.pg.test.ts",
       "rule-press-settles-on-every-leg.test.ts",
       "rule-removed-on-the-other-computer.test.ts",
+      // A sender decision's press is `MessageService.move` with `pressRule` and `RulesService`'s create and
+      // update with `applyRetro`: the subject is that the press leaves `decided_at` alone, so a copy would
+      // test a copy. The import boundary still holds.
+      "rule-retro-leaves-a-decided-place.test.ts",
       // The PATCH racing a create behind the account's rule-key lock is `RulesService`'s own door,
       // on `rule-key-converges.pg.test.ts`'s argument. The import boundary still holds.
       "rule-twins-converge.pg.test.ts",

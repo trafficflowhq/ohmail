@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
-import { planPhoneRouting, releaseRules } from "../src/state/live";
+import { MemoryMirrorStore, type EngineMessage, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { planPhoneRouting, releaseRules, type PhoneMoveIntent } from "../src/state/live";
 
 /**
  * THE PHONE'S RELEASE AND MOVE OVER TWO COPIES OF ONE RULE ARE ONE WRITE (a review
@@ -16,11 +16,19 @@ function ruleRow(id: string, provenance: RuleDTO["provenance"]): RuleDTO {
   };
 }
 
-async function mirror(rules: RuleDTO[]): Promise<MemoryMirrorStore> {
+async function mirror(rules: RuleDTO[], letters: string[] = []): Promise<MemoryMirrorStore> {
   const store = new MemoryMirrorStore();
   await store.load();
   let seq = 0;
-  await store.applyChanges(rules.map((r): SyncChange => ({ type: "rule", op: "create", id: r.id, seq: ++seq, updatedAt: r.updatedAt, entity: r })));
+  await store.applyChanges([
+    ...rules.map((r): SyncChange => ({ type: "rule", op: "create", id: r.id, seq: ++seq, updatedAt: r.updatedAt, entity: r })),
+    ...letters.map((id): SyncChange => ({ type: "message", op: "create", id, seq: ++seq, updatedAt: "2026-08-01T09:00:00.000Z", entity: {
+      id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null, subject: id, from: { name: null, address: ADDR },
+      to: [], cc: [], date: "2026-08-01T09:00:00.000Z", folder: "ohmail/Screened", snippet: "", unread: true, hasAttachments: false,
+      attachmentCount: 0, sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+      triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-01T09:00:00.000Z",
+    } as EngineMessage })),
+  ]);
   return store;
 }
 
@@ -37,6 +45,16 @@ describe("the phone over two twins holding the sender at Screened", () => {
       v: 1, id: "p1", seedId: "m1", address: ADDR, scope: "sender", dest: "ohbox", messageIds: [], from: "ohmail/Screened", at: 0,
     });
     expect(writes).toEqual([{ kind: "rule_update", ruleId: "b", destination: "INBOX", applyRetro: false }]);
+  });
+
+  it("a press replayed after a kill moves its letter as the rule's, and a press with no rule as a plain move", async () => {
+    const store = await mirror([ruleRow("a", "manual")], ["m1"]);
+    const intent: PhoneMoveIntent = { v: 1, id: "p1", seedId: "m1", address: ADDR, scope: "sender", dest: "ohbox",
+      messageIds: ["m1"], from: "ohmail/Screened", found: "ohmail/Screened", retro: true, at: 0 };
+    expect(planPhoneRouting(store, intent).filter((w) => w.kind === "move"))
+      .toEqual([{ kind: "move", messageId: "m1", folder: "INBOX", pressRule: true }]);
+    expect(planPhoneRouting(store, { ...intent, holdsRule: false } as PhoneMoveIntent))
+      .toEqual([{ kind: "move", messageId: "m1", folder: "INBOX" }]);
   });
 
   it("a lone rule is one write (the positive arm)", async () => {

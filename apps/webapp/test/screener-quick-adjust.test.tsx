@@ -327,7 +327,7 @@ describe("quick-adjust — the decision on the row", () => {
     // …and, ruled, the row files what it shows: the rule asks no past-mail answer and the letter
     // the row listed moves by id — the pass is not asked for mail the row never showed.
     expect(rules[0]).toMatchObject({ destination: "ohmail/News", applyRetro: false });
-    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "stray1", folder: "ohmail/News", from: "INBOX" }]);
+    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "stray1", folder: "ohmail/News", from: "INBOX", pressRule: true }]);
   });
 
   it("a held sender gets no accept — only the five destinations", async () => {

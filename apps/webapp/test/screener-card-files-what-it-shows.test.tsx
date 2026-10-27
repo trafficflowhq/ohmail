@@ -147,7 +147,7 @@ describe("the Screener card's decision files what the card shows", () => {
     await press(get);
     const decide = sent.find((m) => m.kind === "screener_decide");
     expect(decide).toMatchObject({ senderId: "h1", dest: "reads", applyRetro: false });
-    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "i1", folder: "ohmail/News", from: "INBOX" }]);
+    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "i1", folder: "ohmail/News", from: "INBOX", pressRule: true }]);
   });
 
   it("a representative past the gate: the rule asks no past-mail answer either, and the letter moves", async () => {
@@ -155,7 +155,7 @@ describe("the Screener card's decision files what the card shows", () => {
     expect(get().waiting[0]?.held.map((x) => x.id)).toEqual(["i2"]);
     await press(get);
     expect(sent.find((m) => m.kind === "rule_create")).toMatchObject({ applyRetro: false });
-    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "i2", folder: "ohmail/News", from: "INBOX" }]);
+    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "i2", folder: "ohmail/News", from: "INBOX", pressRule: true }]);
   });
 
   it("a refused decision moves no letter by id, and says it was not saved", async () => {

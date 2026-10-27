@@ -561,6 +561,13 @@ const ONWARD_NONE: Onward = Object.freeze({ ask: -2, rows: [], cursor: undefined
 /** How many pages one press may walk past before it stops and offers the next press. */
 const ONWARD_HOPS = 8;
 
+/** A release that points the sender's rule somewhere; Back to Waiting only deletes it. */
+const writesTheRule = (ms: readonly EngineMutation[]): boolean =>
+  ms.some((m) => m.kind === "rule_update" || m.kind === "rule_create");
+
+const releaseMove = (messageId: string, folder: Folder, ruled: boolean): EngineMutation =>
+  ({ kind: "move", messageId, folder, ...(ruled ? { pressRule: true as const } : {}) });
+
 export function useScreenerState(
   engine: OhmailEngine,
   version: number,
@@ -858,12 +865,13 @@ export function useScreenerState(
    * for the organizing install counted as landed, so a release on a mailbox this install only
    * reads reported mail as released that had not moved. Three counts, because the three endings
    * are three different things to tell somebody. Empty ⇒ three zeros; a rejected promise is a
-   * refusal.
+   * refusal. `ruled`: the release rewrites the sender's rule, so its letters go as that rule's
+   * (`pressRule`) and the next decision about the sender moves them too.
    */
-  const moveAll = (ids: string[], folder: Folder): Promise<PressTally> =>
+  const moveAll = (ids: string[], folder: Folder, ruled: boolean): Promise<PressTally> =>
     Promise.all(
       ids.map((messageId) =>
-        engine.mutate({ kind: "move", messageId, folder }).then(pressVerdict, () => PRESS_THREW),
+        engine.mutate(releaseMove(messageId, folder, ruled)).then(pressVerdict, () => PRESS_THREW),
       ),
     ).then(tallyVerdicts);
 
@@ -890,7 +898,7 @@ export function useScreenerState(
     const rules = Promise.all(
       ruleMutations.map((m) => engine.mutate(m).then(pressVerdict, () => PRESS_THREW)),
     ).then(tallyVerdicts);
-    return Promise.all([rules, moveAll(moveIds, folder)]).then(([a, b]) => ({
+    return Promise.all([rules, moveAll(moveIds, folder, writesTheRule(ruleMutations))]).then(([a, b]) => ({
       applied: a.applied + b.applied,
       queued: a.queued + b.queued,
       refused: a.refused + b.refused,
@@ -938,7 +946,8 @@ export function useScreenerState(
     if (!releaseWindow || (ruleMutations.length === 0 && moveIds.length === 0)) return false;
     const wanted = FOLDER_OF_VIEW[dest];
     const pre = engine.verbRead();
-    const inverses = moveIds.flatMap((messageId) => inverseMutations(pre, { kind: "move", messageId, folder: wanted }));
+    const ruled = writesTheRule(ruleMutations);
+    const inverses = moveIds.flatMap((messageId) => inverseMutations(pre, releaseMove(messageId, wanted, ruled)));
     const address = sender.from.address;
     const held = ruleMutations.length > 0 && releaseWindow.hold({
       id: crypto.randomUUID(), seedId: sender.id, address,
@@ -948,7 +957,7 @@ export function useScreenerState(
         if (tally.refused > 0) { releaseSaid(tally, sender, segment); after?.(false); }
       },
     }).held;
-    void moveAll(moveIds, wanted).then((tally) => {
+    void moveAll(moveIds, wanted, ruled).then((tally) => {
       if (tally.refused > 0 && held) releaseWindow.cancel(address);
       const ok = releaseSaid(tally, sender, segment);
       after?.(ok);
@@ -1158,7 +1167,8 @@ export function useScreenerState(
     const heldIds = d.heldIds;
     const done = () => disarmScreenerIntent(id);
     /* THE CARD FILES WHAT IT SHOWS: no rule of this press reaches mail already
-       filed elsewhere, and the INBOX letters the card listed move by id beside the decision. A sheet
+       filed elsewhere, and the INBOX letters the card listed move by id beside the decision, marked as
+       its own (`pressRule`) so the next decision moves them too. A sheet
        press keeps its own past-mail answer, and a record from before the field the server's default. */
     const card = d.applyRetro === undefined && d.inboxIds !== undefined;
     const retroOf = card ? false : d.applyRetro;
@@ -1174,7 +1184,7 @@ export function useScreenerState(
     const cardFiled = card ? [...new Set(d.inboxIds ?? [])].filter(stillInInbox) : [];
     const cardMoves: Array<Extract<EngineMutation, { kind: "move" }>> = cardTo === FOLDER_OF_VIEW.ohbox
       ? []
-      : cardFiled.map((m) => ({ kind: "move" as const, messageId: m, folder: cardTo, from: FOLDER_OF_VIEW.ohbox }));
+      : cardFiled.map((m) => ({ kind: "move" as const, messageId: m, folder: cardTo, from: FOLDER_OF_VIEW.ohbox, pressRule: true as const }));
     /* A SHEET PRESS'S LETTER OUTSIDE THE BAG, while it is still where it was pressed: marked as the
        press's (`pressRule`), which writes the sender's rule through the decision. */
     const seedMoves: Array<Extract<EngineMutation, { kind: "move" }>> = (d.seed ? [d.seed] : [])

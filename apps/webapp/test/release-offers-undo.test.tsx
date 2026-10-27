@@ -54,12 +54,14 @@ const json = (status: number, body: unknown): Response =>
 
 let calls: string[] = [];
 let ruleBodies: Array<Record<string, unknown>> = [];
+let moveBodies: Array<{ url: string; body: Record<string, unknown> }> = [];
 const toasts: Array<{ message: string; onAction?: () => void }> = [];
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   calls = [];
   ruleBodies = [];
+  moveBodies = [];
   toasts.length = 0;
   localStorage.clear();
   globalThis.fetch = ((url: string, init?: RequestInit) => {
@@ -84,7 +86,10 @@ beforeEach(() => {
         changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "1", hasMore: false, serverTime: AT,
       }));
     }
-    if (method === "POST" && url.endsWith("/move")) return Promise.resolve(json(200, { ok: true }));
+    if (method === "POST" && url.endsWith("/move")) {
+      moveBodies.push({ url, body: JSON.parse(body) as Record<string, unknown> });
+      return Promise.resolve(json(200, { ok: true }));
+    }
     if (method === "PATCH" && url === "/api/rules/r1") return Promise.resolve(json(200, { ...rule("r1", "out@one.test", "INBOX") }));
     if (method === "DELETE" && url === "/api/rules/r2") return Promise.resolve(new Response(null, { status: 204 }));
     if (method === "POST" && url === "/api/rules") {
@@ -148,6 +153,9 @@ async function mount(engine: OhmailEngine): Promise<void> {
 }
 
 const ruleWrites = (): string[] => calls.filter((c) => c.includes("/api/rules"));
+/** Whether a letter's move to `folder` went as the press's own (`pressRule`), which decides no place of its own. */
+const markedMove = (id: string, folder: string): boolean | undefined =>
+  moveBodies.find((x) => x.url === `/api/messages/${id}/move` && x.body.folder === folder)?.body.pressRule === true;
 const windowCloses = async (): Promise<void> => {
   await act(async () => { window.dispatchEvent(new Event("pagehide")); });
   await flush();
@@ -164,6 +172,7 @@ describe("a release from Screened out", () => {
     await act(async () => { state.current!.allowScreened(sender!, "ohbox"); });
     await flush();
     expect(calls).toContain("POST /api/messages/m1/move INBOX");
+    expect(markedMove("m1", "INBOX"), "a release that rewrites the rule stamped its letters as filed by hand").toBe(true);
     expect(ruleWrites(), "the rule was written at the press").toEqual([]);
     const offer = toasts.find((x) => x.onAction !== undefined);
     expect(offer?.message, "the release offered no Undo").toBe(
@@ -188,6 +197,7 @@ describe("a release from Screened out", () => {
     await windowCloses();
 
     expect(calls).toContain("POST /api/messages/m1/move ohmail/Screened");
+    expect(markedMove("m1", "ohmail/Screened"), "Undo's move back is not the press's own").toBe(true);
     expect(ruleWrites(), "Undo left the rule change to be written").toEqual([]);
     expect(toasts.at(-1)?.message).toBe(messages.screening.toastRoutingUndoneRules);
   });
@@ -202,6 +212,7 @@ describe("a release from a domain rule", () => {
     await act(async () => { state.current!.allowScreened(sender, "ohbox"); });
     await flush();
     expect(ruleWrites()).toEqual([]);
+    expect(markedMove("m3", "INBOX"), "the address rule's release stamped its letter").toBe(true);
     await windowCloses();
     expect(ruleWrites()).toEqual(["POST /api/rules"]);
     expect(ruleBodies).toEqual([expect.objectContaining({ kind: "sender", match: "d@three.test", destination: "INBOX", applyRetro: true })]);
@@ -219,6 +230,8 @@ describe("Not spam, back to Waiting", () => {
     await act(async () => { state.current!.notSpamToWaiting(row!); });
     await flush();
     expect(calls).toContain("POST /api/messages/m2/move ohmail/Screener");
+    // Back to the gate writes no rule: its move is an ordinary one.
+    expect(markedMove("m2", "ohmail/Screener")).toBe(false);
     expect(ruleWrites(), "the rule was removed at the press").toEqual([]);
     expect(toasts.find((x) => x.onAction !== undefined)?.message).toBe("Not spam — spam@two.test is back in Waiting.");
 

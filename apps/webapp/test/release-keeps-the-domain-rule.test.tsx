@@ -208,7 +208,8 @@ describe("Allow on a screened-out sender", () => {
       { kind: "rule_create", ruleKind: "sender", match: PRESSED, destination: "INBOX", applyRetro: true },
     ]);
     expect(rulesTouched("r-dom"), "the domain rule was rewritten by one sender's press").toEqual([]);
-    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "p1", folder: "INBOX" }]);
+    // Marked as the press's own: a letter the rule's release files decides no place of its own.
+    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "p1", folder: "INBOX", pressRule: true }]);
     // The invariant, read where the cutline reads it: this sender files to the Ohbox, the rest of the domain does not.
     expect(decided(engine, PRESSED)).toBe("INBOX");
     expect(decided(engine, OTHER), "another sender at the domain was released").toBe(SCREENED);
@@ -228,6 +229,7 @@ describe("Allow on a screened-out sender", () => {
     await settle();
 
     expect(ruleWrites()).toEqual([{ kind: "rule_update", ruleId: "r-own", destination: "INBOX" }]);
+    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "p1", folder: "INBOX", pressRule: true }]);
     expect(decided(engine, PRESSED)).toBe("INBOX");
     expect(decided(engine, OTHER)).toBe(SCREENED);
     expect(lastToast()).toBe(fill(en.screener.toastReleasedRuled, {
@@ -330,7 +332,7 @@ describe("Not spam → Ohbox on a sender marked spam this session (the pinned re
       { kind: "rule_create", ruleKind: "sender", match: PRESSED, destination: "INBOX", applyRetro: true },
     ]);
     expect(rulesTouched("r-promoted"), "the domain spam rule was rewritten by one sender's rescue").toEqual([]);
-    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "h1", folder: "INBOX" }]);
+    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "h1", folder: "INBOX", pressRule: true }]);
     expect(decided(engine, PRESSED)).toBe("INBOX");
     expect(decided(engine, OTHER), "another sender at the domain was rescued").toBe(SPAM);
     expect(lastToast()).toBe(fill(en.screener.toastNotSpamOhboxAddress, { sender: PRESSED, domain: DOMAIN }));
@@ -342,6 +344,7 @@ describe("Not spam → Ohbox on a sender marked spam this session (the pinned re
     await settle();
 
     expect(ruleWrites()).toEqual([{ kind: "rule_update", ruleId: "r-promoted", destination: "INBOX" }]);
+    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "h1", folder: "INBOX", pressRule: true }]);
     expect(decided(engine, PRESSED)).toBe("INBOX");
     expect(lastToast()).toBe(fill(en.screener.toastNotSpamOhbox, { sender: PRESSED }));
   });

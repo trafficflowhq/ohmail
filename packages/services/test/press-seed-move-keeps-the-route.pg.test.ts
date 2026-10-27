@@ -6,7 +6,7 @@ import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  beltArm, claimedUndoArm, oneOverrideArm, patchArm, pauseArm, undoArm, unmarkedDemotes, world, type Db,
+  beltArm, claimedUndoArm, decidedArm, oneOverrideArm, patchArm, pauseArm, undoArm, unmarkedDemotes, world, type Db,
 } from "./_press-seed-move-route.js";
 
 /**
@@ -34,4 +34,5 @@ describe.skipIf(!PG_UP)("a sheet press's seed move is not an override of the rou
   it("an older client's PATCH naming a place switches the demoted row back on", async () => { await beltArm(await world(db)); });
   it("CONTROL: with one override only the rule stays on and moves", async () => { await oneOverrideArm(await world(db)); });
   it("CONTROL: a person's pause stays off under a destination PATCH", async () => { await pauseArm(await world(db)); });
+  it("a marked move decides no place of its own; a hand move does", async () => { await decidedArm(await world(db)); });
 });
