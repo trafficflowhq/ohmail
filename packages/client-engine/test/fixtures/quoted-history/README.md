@@ -1,6 +1,6 @@
 # Quoted-history corpus
 
-130 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
+131 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
 `<file>.expected.json` sidecar that says where the new message ends and the history begins. Built for the
 0.30.x thread reader, where thread members show their whole quoted history unfolded (report,
 2026-10-23: an Outlook-style `Von:/Datum:/An:/Cc:/Betreff: WG:` block in the body's own colour, never folded).
@@ -40,6 +40,8 @@ at its attribution.
 Fixture 124 is an Outlook reply whose answers sit inside the history in the body's own black ink, marked only
 by the writer's initials ('[AE] '); a mark two lines of one hop repeat ('[Ana Example] ') counts the same, a single
 '[EXTERNAL]' banner does not.
+Fixture 131 is a Thunderbird reply (ISO attribution) quoting an Outlook reply to a group: every quoted `An:`
+line runs past 400 characters, and its Von/Datum/An/Cc/Betreff blocks still count as header blocks.
 
 ## Sidecar schema (`*.expected.json`)
 
@@ -214,3 +216,4 @@ which belong to the new message and stay visible.
 | 128 | `128-apple-mail-de-forward-of-forward.eml` | apple | de | forward | 2 | none (forward: shown whole) | Apple Mail, German: Fwd: Fwd: with a note; the inner forward's 'zur Info', then a nested 'Anfang der weitergeleiteten Nachricht:' over the offer it delivers |
 | 129 | `129-gmail-en-forward-of-forward-thread.eml` | gmail | en | forward | 3 | trailing (from level 3) | Gmail, English: Fwd: Fwd: with a note; two nested 'Forwarded message' blocks, the inner one a reply whose 'On ... wrote:' quote folds |
 | 130 | `130-outlook-win-de-forward-of-forward-chain.eml` | outlook_win | de | forward | 3 | trailing (from level 3) | Outlook for Windows, German: WG: WG: with a note; the middle Von block's Betreff is WG: over 'z.K.', the supplier's AW: with the invoice stays open, the request it answers folds |
+| 131 | `131-thunderbird-en-iso-reply-to-outlook-mac-group.eml` | thunderbird | en | reply | 4 | trailing | Thunderbird, English: 'On 2026-10-20 07:44, ... wrote:' over an Outlook for Mac reply to twelve people; a two-line answer, then Von/Datum/An/Cc/Betreff blocks whose An: line is past 400 characters |

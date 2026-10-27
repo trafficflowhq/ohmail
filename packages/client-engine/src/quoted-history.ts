@@ -48,7 +48,7 @@ export const QUOTED_HISTORY_LIMITS = { chars: 524_288, lines: 32_768, nodes: 16_
 // ── the vocabulary (de, en, fr, it, es, nl) ───────────────────────────────────────────────
 
 const QUOTE_PREFIX = /^[ \t]{0,3}((?:>[ \t]?)+)/;
-/** Lines longer than this are prose, never a label, separator or attribution. */
+/** Lines longer than this are prose, never a label (a To or Cc list excepted), separator or attribution. */
 const MAX_LINE = 400;
 
 const SUBJECT_LABEL = /^(?:betreff|subject|objet|oggetto|asunto|onderwerp)\s?:\s*(.*)$/i;
@@ -173,7 +173,12 @@ function normalize(s: string): string {
 }
 
 function labelOf(text: string): Label | null {
-  if (text.length > MAX_LINE || text.indexOf(":") < 0) return null;
+  // A To or Cc list may run past MAX_LINE (a group's recipients); no other label line does.
+  if (text.length > MAX_LINE) {
+    const k = labelOf(text.slice(0, MAX_LINE));
+    return k === "to" || k === "cc" ? k : null;
+  }
+  if (text.indexOf(":") < 0) return null;
   for (const [label, re] of LABELS) {
     const m = re.exec(text);
     if (!m) continue;
