@@ -270,6 +270,22 @@ export const StreamShell = forwardRef<
   /** A judged scroll ran this visit; one is in flight, and the next measure bridges what it skipped. */
   const flewRef = useRef(false);
   const bridgeRef = useRef(false);
+  /** Content moved under the held anchor since the anchoring loop last ran (a letter's body landed above): the
+   *  px the loop, about to run, scrolls by to put that frame back on the next one, so nobody reads it. 0 for none. */
+  const pendingShift = (): number => {
+    const el = divRef.current;
+    const anchor = holdRef.current;
+    if (!el || !anchor || jumpRef.current || !holdRafRef.current) return 0;
+    const ac = el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(anchor.sid)}"]`);
+    if (!ac) return 0;
+    const drift = cssRect(ac).top - cssRect(el).top - (anchor.offset - (el.scrollTop - anchor.scrollTop));
+    return Math.abs(drift + holdAccRef.current) > 0.5 ? drift + holdAccRef.current : 0;
+  };
+  /** When the anchoring loop last put such a frame back: its frame's timestamp, and `performance.now()` as it did. */
+  const correctedRef = useRef({ frame: -Infinity, now: -Infinity });
+  /** Was an observer report recorded at `time` before that? WebKit and Firefox stamp a report with its frame's
+   *  timestamp, which the loop's frame shares; Chromium with the moment it is recorded, after the loop ran. */
+  const putBack = (time: number): boolean => time < correctedRef.current.now && time !== correctedRef.current.frame;
   const seenUnlessLanding = useCallback((id: string) => {
     if (landingRef.current) return;
     markedRef.current.add(id);
@@ -309,6 +325,8 @@ export const StreamShell = forwardRef<
     rootMargin: "0px 0px -62% 0px",
     onLanded: onEndLanded,
     onJudged,
+    pendingShift,
+    putBack,
   });
   // Read inside the []-deps scroll effect, so it must reach the LATEST observer by ref.
   const observerRef = useRef(observer);
@@ -344,6 +362,7 @@ export const StreamShell = forwardRef<
     if (cards.length === 0) return;
     const rootRect = cssRect(el);
     if (rootRect.height <= 0) return; // detached or unlaid-out: keep what we know
+    if (pendingShift() !== 0) return; // a frame the anchoring loop has not corrected yet
     let topVisible: string | null = null;
     let bottomVisible: string | null = null;
     for (const c of cards) {
@@ -614,7 +633,7 @@ export const StreamShell = forwardRef<
      */
     let activeUntil = 0;
     const hidden = () => typeof document !== "undefined" && document.hidden;
-    const frame = () => {
+    const frame = (ts: number) => {
       if (hidden() || Date.now() > activeUntil) { holdRafRef.current = 0; return; }
       holdRafRef.current = requestAnimationFrame(frame);
       const rootRect = cssRect(el);
@@ -640,9 +659,13 @@ export const StreamShell = forwardRef<
        */
       holdAccRef.current += drift;
       if (Math.abs(holdAccRef.current) > 0.5 && !jumpRef.current) {
-        // The stream's own correction: it neither starts nor extends a landing (`useSeenOnScroll`).
-        observerRef.current.own(() => el.scrollTo({ top: el.scrollTop + holdAccRef.current, behavior: "instant" }));
+        const by = holdAccRef.current;
+        // Taken in before the scroll, so anything read while it runs has nothing left to put back.
+        holdRef.current = { ...held, offset: held.offset + drift };
         holdAccRef.current = 0;
+        correctedRef.current = { frame: ts, now: performance.now() };
+        // The stream's own correction: it neither starts nor extends a landing (`useSeenOnScroll`).
+        observerRef.current.own(() => el.scrollTo({ top: el.scrollTop + by, behavior: "instant" }));
       }
       if (opened) {
         const oc = el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(opened.sid)}"]`);

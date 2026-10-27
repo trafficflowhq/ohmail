@@ -55,6 +55,8 @@ let pileSize = 10;
 let displayed = new Set<string>();
 /** Cards re-measured above: every card from index `from` on sits `by` px off its slot. */
 let shift = { from: Infinity, by: 0 };
+/** A letter that grows lengthens the pile; a shorter re-measure leaves its height as guessed. */
+const shiftBelow = (): number => (shift.from < pileSize ? Math.max(0, shift.by) : 0);
 
 function streamCards(stream: Element): HTMLElement[] {
   return [...stream.querySelectorAll<HTMLElement>(".scast[data-sid]")];
@@ -88,7 +90,7 @@ function rectFor(el: Element): DOMRect {
 }
 
 function setStreamScroll(stream: Element, next: number): void {
-  const max = Math.max(0, pileSize * CARD_H + grownAbove(stream, pileSize) - VIEW_H);
+  const max = Math.max(0, pileSize * CARD_H + shiftBelow() + grownAbove(stream, pileSize) - VIEW_H);
   scrollTops.set(stream, Math.min(Math.max(0, next), max));
   for (const c of streamCards(stream)) {
     const r = rectFor(c);
@@ -98,36 +100,51 @@ function setStreamScroll(stream: Element, next: number): void {
   for (const io of DeliveringIO.live) io.deliver(stream);
 }
 
+/** The timestamp the current frame's callbacks got (`stampFrames`). */
+let frameTs = 0;
+/** Every callback of one frame gets one timestamp on `performance.now()`'s clock, as a browser hands it. */
+function stampFrames(): void {
+  const raf = requestAnimationFrame;
+  let tick = NaN;
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => raf((ts) => {
+    if (ts !== tick) { tick = ts; frameTs = performance.now(); }
+    cb(frameTs);
+  }));
+}
+
 /** Reports what the browser would: every target when first observed, and after each move. */
 class DeliveringIO {
   static live = new Set<DeliveringIO>();
+  /** A report's `time`: when it is recorded (Chromium), or its frame's timestamp (WebKit, Firefox). */
+  static stamp: "now" | "frame" = "now";
   private targets = new Set<Element>();
   constructor(private cb: IntersectionObserverCallback, private opts: IntersectionObserverInit = {}) {
     DeliveringIO.live.add(this);
   }
   observe(t: Element): void {
     this.targets.add(t);
-    const root = this.opts.root as Element | undefined;
-    if (root) this.report(root, [t]);
+    if (this.opts.root) this.take(this.opts.root as Element, [t])();
   }
   unobserve(t: Element): void { this.targets.delete(t); }
   disconnect(): void { this.targets.clear(); }
   takeRecords(): IntersectionObserverEntry[] { return []; }
   deliver(root: Element): void {
-    if (this.opts.root === root) this.report(root, [...this.targets]);
+    this.take(root)();
   }
-  private report(root: Element, targets: Element[]): void {
-    const live = targets.filter((t) => t.isConnected);
-    if (live.length === 0) return;
+  /** Records this frame's report; the call it returns hands it over, as the browser's task does, maybe a frame later. */
+  take(root: Element, targets = [...this.targets]): () => void {
+    const live = this.opts.root === root ? targets.filter((t) => t.isConnected) : [];
     // Only the bottom margin is ever a percentage here ("0px 0px -62% 0px", "100% 0px").
     const m = (this.opts.rootMargin ?? "0px").trim().split(/\s+/);
     const cut = (v: string | undefined) => (v?.endsWith("%") ? (parseFloat(v) / 100) * VIEW_H : parseFloat(v ?? "0") || 0);
     const band = { top: -cut(m[0]), bottom: VIEW_H + cut(m[2] ?? m[0]) };
-    this.cb(live.map((target) => {
+    const time = DeliveringIO.stamp === "frame" ? frameTs : performance.now();
+    const entries = live.map((target) => {
       const b = rectFor(target);
       const isIntersecting = b.height > 0 && b.bottom > band.top && b.top < band.bottom;
-      return { target, boundingClientRect: b, rootBounds: { ...b, top: band.top, bottom: band.bottom }, isIntersecting } as unknown as IntersectionObserverEntry;
-    }), this as unknown as IntersectionObserver);
+      return { target, boundingClientRect: b, rootBounds: { ...b, top: band.top, bottom: band.bottom }, isIntersecting, time } as unknown as IntersectionObserverEntry;
+    });
+    return () => { if (entries.length > 0) this.cb(entries, this as unknown as IntersectionObserver); };
   }
 }
 
@@ -247,6 +264,9 @@ async function leapStream(...offsets: number[]): Promise<void> {
   }
 }
 
+/** Renders mountReadsLive's view again, as a body landing does. */
+let rerenderLive: () => void = () => {};
+
 /**
  * A view whose cursor and jump live in the shell, as AppShell holds them: `onCur` and
  * `onJumped` re-render, so the stream re-renders around a jump the way it does in the app.
@@ -270,6 +290,7 @@ async function mountReadsLive(rows: Row[], jump: string | null): Promise<void> {
     hydrateBody: () => {}, onAction: () => {},
     jumpTo, onJumped: () => { jumpTo = null; root?.render(tree()); },
   } as never), KeymapProvider);
+  rerenderLive = () => root?.render(tree());
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -299,6 +320,7 @@ beforeEach(() => {
   displayed = new Set();
   shift = { from: Infinity, by: 0 };
   DeliveringIO.live = new Set();
+  DeliveringIO.stamp = "now";
   // The port's own size, which the stream's jump reads to tell a near landing from a far one.
   const isStream = (el: Element) => (el as HTMLElement).classList?.contains("stream");
   streamSize = {
@@ -310,7 +332,7 @@ beforeEach(() => {
     configurable: true, get(this: Element) { return isStream(this) ? VIEW_H : 0; },
   });
   Object.defineProperty(Element.prototype, "scrollHeight", {
-    configurable: true, get(this: Element) { return isStream(this) ? pileSize * CARD_H + grownAbove(this, pileSize) : 0; },
+    configurable: true, get(this: Element) { return isStream(this) ? pileSize * CARD_H + shiftBelow() + grownAbove(this, pileSize) : 0; },
   });
   Object.defineProperty(Element.prototype, "scrollTop", {
     configurable: true,
@@ -578,17 +600,47 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
   });
 });
 
+const ids = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `r${from + i}`);
+
+/** The pane carried by keys the app never hears: one offset per `ms`, then a second to settle. */
+async function unheard(el: Element, offsets: number[], ms: number): Promise<void> {
+  for (const top of offsets) {
+    await act(async () => { setStreamScroll(el, top); });
+    await act(async () => { vi.advanceTimersByTime(ms); });
+  }
+  for (let i = 0; i < 10; i += 1) await act(async () => { vi.advanceTimersByTime(100); });
+}
+
+/** r35's letter lands after End rested: everything from r36 down moves 300px, and the next frame re-anchors. */
+async function aboveGrows(el: Element): Promise<void> {
+  shift = { from: 36, by: 300 };
+  await act(async () => { rerenderLive(); });
+  for (let i = 0; i < 5; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+  expect(scrollTops.get(el), "control: the stream re-anchored the resting screen").toBe(7700);
+}
+
+/** r<letter>'s body still landing: on every frame, after the stream's own, it grows `px` more. Returns its stop,
+ *  which leaves no frame callback behind (jsdom runs frames only while none was left over from a test before). */
+function stillLanding(letter: number, px: number): () => void {
+  let raf = 0;
+  const grow = (): void => {
+    shift = { from: letter + 1, by: (shift.from === letter + 1 ? shift.by : 0) + px };
+    raf = requestAnimationFrame(grow);
+  };
+  raf = requestAnimationFrame(grow);
+  return () => cancelAnimationFrame(raf);
+}
+
 describe("WebKit: a scroll from a letter the app cannot hear is judged by the read rule", () => {
   const FORTY: Row[] = Array.from({ length: 40 }, (_, i) => ({ id: `r${i}`, unread: true }));
-  const ids = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `r${from + i}`);
 
-  /** A wheel's read down to `top` (a wheel alone at 0), then focus in `card`'s letter, which runs no listener of the app's. */
-  async function deafReader(top: number, card = "r0"): Promise<Element> {
+  /** A wheel's read down to `top` (a wheel alone at 0, or none), then focus in `card`'s letter, which runs no listener of the app's. */
+  async function deafReader(top: number, card = "r0", { wheel = true } = {}): Promise<Element> {
     vi.stubGlobal("IntersectionObserver", DeliveringIO);
     await mountReadsLive(FORTY, null);
     const el = streamEl();
     if (top > 0) await wheelStream(top);
-    else await act(async () => { el.dispatchEvent(new Event("wheel", { bubbles: true })); });
+    else if (wheel) await act(async () => { el.dispatchEvent(new Event("wheel", { bubbles: true })); });
     await act(async () => { vi.advanceTimersByTime(400); });
     const frame = document.createElement("iframe");
     const doc = document.implementation.createHTMLDocument("letter");
@@ -601,17 +653,8 @@ describe("WebKit: a scroll from a letter the app cannot hear is judged by the re
     return el;
   }
 
-  /** The pane carried by keys the app never hears: one offset per `ms`, then a second to settle. */
-  async function unheard(el: Element, offsets: number[], ms: number): Promise<void> {
-    for (const top of offsets) {
-      await act(async () => { setStreamScroll(el, top); });
-      await act(async () => { vi.advanceTimersByTime(ms); });
-    }
-    for (let i = 0; i < 10; i += 1) await act(async () => { vi.advanceTimersByTime(100); });
-  }
-
-  it("ArrowDown held at a pace that keeps each letter's first lines 0.7s on screen marks them, and the leave covers them", async () => {
-    const el = await deafReader(0);
+  for (const wheel of [true, false]) it(`ArrowDown held at a pace that keeps each letter's first lines 0.7s on screen marks them, and the leave covers them${wheel ? "" : ", with no wheel before it"}`, async () => {
+    const el = await deafReader(0, "r0", { wheel });
     marked = [];
     await unheard(el, Array.from({ length: 50 }, (_, i) => 40 * (i + 1)), 100);
     expect(marked).toEqual(ids(2, 12));
@@ -619,8 +662,8 @@ describe("WebKit: a scroll from a letter the app cannot hear is judged by the re
     expect(commits).toEqual([{ upToId: "r0", messageIds: ids(0, 12) }]);
   });
 
-  it("End marks only the screen it rests on, and the leave covers none of the letters it flew past", async () => {
-    const el = await deafReader(0);
+  for (const wheel of [true, false]) it(`End marks only the screen it rests on, and the leave covers none of the letters it flew past${wheel ? "" : ", with no wheel before it"}`, async () => {
+    const el = await deafReader(0, "r0", { wheel });
     marked = [];
     await unheard(el, [222, 888, 2220, 4070, 5550, 6660, 7178, 7400], 16);
     expect({ curs, marked }).toEqual({ curs: ["r39"], marked: ["r37", "r38", "r39"] });
@@ -628,8 +671,8 @@ describe("WebKit: a scroll from a letter the app cannot hear is judged by the re
     expect(commits).toEqual([{ upToId: "r0", messageIds: [...ids(0, 2), ...ids(37, 39)] }]);
   });
 
-  it("PageDown pressed six times 120ms apart marks only what stayed 0.7s on screen", async () => {
-    const el = await deafReader(0);
+  for (const wheel of [true, false]) it(`PageDown pressed six times 120ms apart marks only what stayed 0.7s on screen${wheel ? "" : ", with no wheel before it"}`, async () => {
+    const el = await deafReader(0, "r0", { wheel });
     marked = [];
     // Each page (525px) animated over four frames, the next press as it ends.
     await unheard(el, Array.from({ length: 24 }, (_, i) => Math.round(131.25 * (i + 1))), 30);
@@ -644,6 +687,160 @@ describe("WebKit: a scroll from a letter the app cannot hear is judged by the re
     await unheard(el, [622, 1288, 2620, 4470, 5950, 6900, 7300, 7400], 16);
     await unmount();
     expect(commits).toEqual([{ upToId: "r0", messageIds: [...ids(0, 4), ...ids(37, 39)] }]);
+  });
+
+  it("a letter above the resting screen that grows as its body lands is not committed", async () => {
+    const el = await deafReader(400, "r3");
+    await unheard(el, [622, 1288, 2620, 4470, 5950, 6900, 7300, 7400], 16);
+    await aboveGrows(el);
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: [...ids(0, 4), ...ids(37, 39)] }]);
+  });
+
+  it("End's resting screen still turns read when its letters come due while a letter above it is still landing", async () => {
+    const el = await deafReader(0, "r0", { wheel: false });
+    marked = [];
+    for (const top of [222, 888, 2220, 4070, 5550, 6660, 7178, 7400]) {
+      await act(async () => { setStreamScroll(el, top); });
+      await act(async () => { vi.advanceTimersByTime(16); });
+    }
+    // The clocks started with the last scroll; r36 lands over the 0.7s they come due at, on each frame
+    // pushing r39's first lines off the foot until the stream puts the screen back. Frame by frame: the
+    // stream's window may mount the end cards only once the flight has rested.
+    for (let i = 0; i < 25; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    const stop = stillLanding(36, 80);
+    for (let i = 0; i < 15; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    stop();
+    for (let i = 0; i < 10; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect(marked).toEqual(ids(37, 39));
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: [...ids(0, 2), ...ids(37, 39)] }]);
+  });
+});
+
+describe("a scroll key the pane never hears, after a press in it", () => {
+  const FORTY: Row[] = Array.from({ length: 40 }, (_, i) => ({ id: `r${i}`, unread: true }));
+
+  it("PageDown with nothing focused reads like PageDown on the pane", async () => {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, null);
+    const el = streamEl();
+    await act(async () => { vi.advanceTimersByTime(400); });
+    await act(async () => { el.querySelector('.scast[data-sid="r0"] h3')!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+    marked = [];
+    await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true })); });
+    await unheard(el, [150, 300, 450, 600], 30);
+    await unmount();
+    expect({ marked, commits }).toEqual({ marked: ids(0, 3), commits: [{ upToId: "r0", messageIds: ids(0, 5) }] });
+  });
+
+  it("PageDown typed in a letter the app hears reads the same", async () => {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, null);
+    const el = streamEl();
+    await act(async () => { vi.advanceTimersByTime(400); });
+    const frame = document.createElement("iframe");
+    el.querySelector('.scast[data-sid="r0"]')!.appendChild(frame);
+    frame.focus();
+    marked = [];
+    const letter = frame.contentDocument!;
+    await act(async () => { letter.body.dispatchEvent(new (letter.defaultView as typeof window).KeyboardEvent("keydown", { key: "PageDown", bubbles: true })); });
+    await unheard(el, [150, 300, 450, 600], 30);
+    await unmount();
+    expect({ marked, commits }).toEqual({ marked: ids(0, 3), commits: [{ upToId: "r0", messageIds: ids(0, 5) }] });
+  });
+});
+
+describe("after End rests, a frame the stream has not re-anchored yet is nobody's read", () => {
+  const FORTY: Row[] = Array.from({ length: 40 }, (_, i) => ({ id: `r${i}`, unread: true }));
+
+  /** A wheel read down to r4, a pause, then End heard over frames, resting on r37-r39. */
+  async function wheelThenEnd(): Promise<Element> {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, null);
+    const el = streamEl();
+    await wheelStream(900);
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    await act(async () => { el.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })); });
+    await leapStream(1300, 2220, 4070, 5550, 6660, 7178, 7400);
+    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    return el;
+  }
+
+  it("a letter above the resting screen that grows as its body lands is not committed", async () => {
+    await aboveGrows(await wheelThenEnd());
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r37", messageIds: ids(37, 39) }]);
+  });
+
+  it("control: with no growth the leave commits the resting screen", async () => {
+    await wheelThenEnd();
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r37", messageIds: ids(37, 39) }]);
+  });
+
+  it("the band reported on that frame marks nothing", async () => {
+    const el = await wheelThenEnd();
+    marked = [];
+    // r34's letter lands: r35 on move 400px down, and the band is reported before the stream re-anchors.
+    shift = { from: 35, by: 400 };
+    await act(async () => { for (const io of DeliveringIO.live) io.deliver(el); });
+    for (let i = 0; i < 5; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect(scrollTops.get(el), "control: the stream re-anchored the resting screen").toBe(7800);
+    // The re-anchored frame's own report: r35 and r36 left the band, which they never stood in.
+    await act(async () => { for (const io of DeliveringIO.live) io.deliver(el); });
+    expect(marked.filter((id) => id === "r35" || id === "r36")).toEqual([]);
+  });
+
+  it("a report recorded on that frame and handed over after the stream re-anchored marks nothing", async () => {
+    const el = await wheelThenEnd();
+    marked = [];
+    shift = { from: 35, by: 400 };
+    const late = [...DeliveringIO.live].map((io) => io.take(el));
+    for (let i = 0; i < 5; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect(scrollTops.get(el), "control: the stream re-anchored the resting screen").toBe(7800);
+    await act(async () => { for (const deliver of late) deliver(); });
+    for (let i = 0; i < 5; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect(marked.filter((id) => id === "r35" || id === "r36")).toEqual([]);
+  });
+
+  /** A wheel read, then End heard over frames, with r36 still landing over End's rest: what is read meanwhile. */
+  async function endRestsWhileLanding(): Promise<string[]> {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, null);
+    const el = streamEl();
+    await wheelStream(900);
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    marked = [];
+    await act(async () => { el.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })); });
+    await leapStream(1300, 2220, 4070, 5550, 6660, 7178, 7400);
+    const stop = stillLanding(36, 2); // over End's rest, 150ms after its last scroll
+    for (let i = 0; i < 15; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    stop();
+    return [...marked];
+  }
+
+  it("the band's report at rest, on a frame while a letter above is still landing, is read once the stream re-anchors", async () => {
+    expect(await endRestsWhileLanding()).toEqual(["r37"]);
+  });
+
+  it("so it is where a report carries its frame's timestamp (WebKit, Firefox), the frame the stream re-anchors in", async () => {
+    stampFrames();
+    DeliveringIO.stamp = "frame";
+    expect(await endRestsWhileLanding()).toEqual(["r37"]);
+  });
+
+  it("content that moves while the stream's anchoring rests stays where it is, and the band reads that frame", async () => {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, null);
+    const el = streamEl();
+    await wheelStream(400);
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    marked = [];
+    shift = { from: 2, by: -180 }; // r1 lays out shorter (a late font), and nothing wakes the anchoring
+    await act(async () => { for (const io of DeliveringIO.live) io.deliver(el); });
+    for (let i = 0; i < 5; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect({ top: scrollTops.get(el), marked }).toEqual({ top: 400, marked: ["r3"] });
   });
 });
 
