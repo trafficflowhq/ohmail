@@ -64,7 +64,7 @@ async function render(store: MemoryMirrorStore): Promise<HTMLElement> {
     root.render(
       <NextIntlClientProvider locale="en" messages={messages} now={NOW} timeZone="UTC">
         <KeymapProvider><WithListGone>
-          <TriageView settled owed={false} piles={piles} pile="reply" onPile={() => {}} frDone={new Set<string>()}
+          <TriageView onMarkSeen={() => {}} settled owed={false} piles={piles} pile="reply" onPile={() => {}} frDone={new Set<string>()}
             onStartFR={() => {}} messageOf={(m) => store.get<EngineMessage>("message", m) ?? null}
             tags={[]} now={NOW} onOpen={() => {}} hydrateBody={() => {}} onAction={() => {}} onAddTag={() => {}} />
         </WithListGone></KeymapProvider>

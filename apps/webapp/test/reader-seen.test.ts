@@ -1,7 +1,12 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { THREAD_READ_HOLD_MS, createThreadRead } from "@ohmail/client-engine";
-import { EVIDENCE_WINDOW_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, panelsOf, pressEnters, viewOf } from "../app/shell/reader-seen";
+import * as React from "react";
+import { createRoot } from "react-dom/client";
+import type { EngineMessage } from "@ohmail/client-engine";
+import {
+  EVIDENCE_WINDOW_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, panelsOf, pressEnters, useReaderVisit, viewOf,
+} from "../app/shell/reader-seen";
 import { scrollProgrammatically } from "../app/shell/programmatic-scroll";
 import { readLandedCard } from "../app/shell/stream-landing-read";
 
@@ -568,5 +573,58 @@ describe("a stream card opened from a search hit (readLandedCard)", () => {
     stopLanded?.();
     pass(5 * THREAD_READ_HOLD_MS);
     expect(landedReads).toEqual([]);
+  });
+});
+
+describe("a reader's visit off the Ohbox (useReaderVisit)", () => {
+  const act = (React as unknown as { act: (cb: () => void) => void }).act;
+  (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const letter = (id: string) => ({ id }) as EngineMessage;
+  let visit: ReturnType<typeof useReaderVisit>;
+  const writes: unknown[][] = [];
+  const Probe = ({ shown }: { shown: EngineMessage | null }) => {
+    visit = useReaderVisit({ shown, markSeen: (...a: unknown[]) => { writes.push(a); } });
+    return null;
+  };
+  let root: ReturnType<typeof createRoot>;
+  const show = (shown: EngineMessage | null): void => { root.render(React.createElement(Probe, { shown })); };
+  beforeEach(() => {
+    writes.length = 0;
+    root = createRoot(document.createElement("div"));
+    act(() => show(null));
+  });
+  afterEach(() => { act(() => root.unmount()); });
+
+  it("an open entered in the same pass that shows the letter takes effect; it starts unentered and is the dot look", () => {
+    expect(visit.wiring).toBeNull();
+    act(() => { visit.enter("a"); show(letter("a")); });
+    expect(visit.wiring?.record.entered).toBe(true);
+    expect(visit.wiring?.look).toBe("dot");
+    act(() => show(letter("b")));
+    expect(visit.wiring?.record.entered, "a preview").toBe(false);
+  });
+
+  it("another letter shown ends the visit: coming back starts over, and an enter for a letter not shown is dropped", () => {
+    act(() => show(letter("a")));
+    act(() => visit.wiring!.onEnter());
+    expect(visit.wiring?.record.entered).toBe(true);
+    act(() => show(letter("b")));
+    act(() => show(letter("a")));
+    expect(visit.wiring?.record.entered, "back on a: a new visit").toBe(false);
+    act(() => visit.enter("c"));
+    act(() => show(letter("c")));
+    expect(visit.wiring?.record.entered, "c was not shown when it was entered").toBe(false);
+  });
+
+  it("reads go out as glances naming the shown letter as the row read; Mark unread is kept for the visit", () => {
+    act(() => show(letter("a")));
+    visit.wiring!.onRead(["a", "a0"]);
+    visit.wiring!.onMarkUnread("a0");
+    expect(writes).toEqual([[["a", "a0"], false, "glance", "a"], [["a0"], true]]);
+    act(() => visit.wiring!.onEnter());
+    const p = (id: string) => ({ id, ready: true, height: 100, first: { top: 0, bottom: 20 }, lead: { top: 20, bottom: 60 }, end: { top: 60, bottom: 60 } });
+    const r = visit.wiring!.record;
+    r.observe([p("a0")], { top: 0, bottom: 800 }, new Set(["a0"]), 0);
+    expect(r.observe([p("a0")], { top: 0, bottom: 800 }, new Set(["a0"]), THREAD_READ_HOLD_MS + 1), "kept unread").toEqual([]);
   });
 });

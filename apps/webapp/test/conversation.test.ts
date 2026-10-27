@@ -591,7 +591,7 @@ describe("the per-message actions menu", () => {
   const wire = async (): Promise<string[]> => {
     const { createThreadRead } = await import("@ohmail/client-engine");
     const marked: string[] = [];
-    threadRead = { record: createThreadRead(), onRead: () => {}, onEnter: () => {}, onMarkUnread: (id: string) => marked.push(id) };
+    threadRead = { look: "tint", record: createThreadRead(), onRead: () => {}, onEnter: () => {}, onMarkUnread: (id: string) => marked.push(id) };
     return marked;
   };
 

@@ -69,8 +69,8 @@ export function MessageHeader({
   /** Where the panel's tint says unread, the word says it to a screen reader. */
   srUnread?: boolean;
   /**
-   * The ⋯ menu's Mark unread for THIS message, after Reply, Reply all and Forward — wired on the
-   * Ohbox only, and offered only on a message that reads as read and is not the account's own.
+   * The ⋯ menu's Mark unread for THIS message, after Reply, Reply all and Forward — wired where the
+   * read rule runs, and offered only on a message that reads as read and is not the account's own.
    */
   onMarkUnread?: () => void;
   /**
@@ -308,11 +308,12 @@ export function MessageHeader({
  * the sandboxed frame, remote-content blocking and dark adaptation with nothing re-implemented.
  */
 /**
- * What a sibling panel is handed where the thread-read rule runs (the Ohbox's column and sheet): its
- * presence wears the tint, and the panel's ⋯ Mark unread reports up by id. The tint settles when the
- * read lands, which the rule writes only once the message's top was on screen for the dwell.
+ * What a sibling panel is handed where the thread-read rule runs: the panel's ⋯ Mark unread reports up
+ * by id, and `look` says whether it wears the Ohbox's tint or keeps its unread dot. Either settles when
+ * the read lands, which the rule writes only once the message's top was on screen for the dwell.
  */
 export interface PanelReadWiring {
+  look: "tint" | "dot";
   onMarkUnread: (id: string) => void;
 }
 
@@ -429,8 +430,8 @@ export function MessageCard({
           message={message}
           now={now}
           notice={notice}
-          unreadDot={!wiring}
-          srUnread={wiring !== undefined && message.unread}
+          unreadDot={wiring?.look !== "tint"}
+          srUnread={wiring?.look === "tint" && message.unread}
           onMarkUnread={wiring ? () => wiring.onMarkUnread(message.id) : undefined}
         />
         {/* Above and outside `.pm-body`, as in the focused pane (`InvitationNote`). */}

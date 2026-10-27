@@ -103,7 +103,7 @@ async function mountHistory(engine: OhmailEngine): Promise<Mounted> {
   await act(() => {
     root.render(
       <NextIntlClientProvider locale="en" messages={messages} now={FIXTURE_NOW} timeZone="UTC">
-        <HistoryView
+        <HistoryView onMarkSeen={() => {}}
           engine={engine} version={0} settled owed={false} tags={[]} now={FIXTURE_NOW}
           onOpen={() => {}} hydrateBody={() => {}} onAction={() => {}} onAddTag={() => {}} onScreen={() => {}}
           canDelete={() => true} canReplyAll={() => true}

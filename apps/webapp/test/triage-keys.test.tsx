@@ -372,7 +372,7 @@ describe("STA-F8 — the pile hint renders once", () => {
     const { WithListGone } = await import("./_list-gone.js");
     const container = await mount(
       h(KeymapProvider, {
-        children: h(WithListGone, { children: h(TriageView, {
+        children: h(WithListGone, { children: h(TriageView, { onMarkSeen: () => {},
           piles: { replyLater: [], setAside: [], resurface: [] },
           settled: true,
           owed: false,

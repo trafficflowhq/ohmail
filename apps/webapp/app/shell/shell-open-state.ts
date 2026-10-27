@@ -36,7 +36,7 @@ import { placeFirstRow, SHELL_CURSOR_VIEWS, useCursorHint, type CursorHost } fro
 import { useCursorPlacer } from "./keymap";
 import type { MessageBarPanel } from "./message-chrome";
 import { createReadSetMemo } from "./conversation-on-screen";
-import type { ThreadReadWiring } from "./reader-seen";
+import { useReaderVisit, type ThreadReadWiring } from "./reader-seen";
 import { readColumnHidden, watchNarrow } from "./narrow";
 import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
 import type { RichValue } from "./rich-text";
@@ -315,6 +315,11 @@ export function useShellOpenState({
   const [readerPending, setReaderPending] = useState<string | null>(null);
   /** A hit the person opened into the Ohbox: entered there once that row is shown (`OhboxView.enterId`). */
   const [ohboxEnter, setOhboxEnter] = useState<string | null>(null);
+  /**
+   * A hit the person opened into a folder or the sheet: spent by the first reader that shows it
+   * (`FolderView.enterId`, the sheet's visit), dropped once they move to another letter or view.
+   */
+  const [enterReq, setViewEnter] = useState<{ id: string; view: Route["view"] } | null>(null);
   /**
    * DOES THE COLUMN VIEW THE ROUTE NAMES LIST THIS MESSAGE — asked before a routed open is read in
    * that view's own column rather than the reader. The same lists the views render; History lists
@@ -688,6 +693,26 @@ export function useShellOpenState({
   });
 
   /**
+   * THE SHEET'S OWN VISIT — the read rule in the reader over every view, except over the Ohbox's own
+   * selection (the Ohbox's record runs there) and over Trash (tombstones: nothing there is marked
+   * read). Its own record, never a column's: a hidden column's looks would start its dwell over.
+   */
+  const sheetRuns = sheetMessage !== null && route.view !== "trash"
+    && !(route.view === "ohbox" && selectedOhbox?.id === sheetMessage.id);
+  const sheetVisit = useReaderVisit({ shown: sheetRuns ? sheetMessage : null, markSeen });
+  const sheetThreadRead: ThreadReadWiring | null = sheetRuns ? sheetVisit.wiring
+    : route.view === "ohbox" && sheetMessage !== null && selectedOhbox?.id === sheetMessage.id ? ohboxThreadRead : null;
+  const enterSheet = sheetVisit.enter;
+  const sheetShownId = sheetRuns ? sheetMessage.id : null;
+  useEffect(() => {
+    if (enterReq === null || sheetShownId === null) return;
+    if (sheetShownId === enterReq.id) enterSheet(enterReq.id);
+    else if (route.view !== enterReq.view) return; // on its way to the view it opens in
+    setViewEnter(null);
+  }, [enterReq, sheetShownId, route.view, enterSheet]);
+  const spendViewEnter = useStableCallback(() => setViewEnter(null));
+
+  /**
    * "Mark all read" for a whole view. Unlike {@link markSeen} it CHUNKS at
    * {@link MARK_SEEN_CHUNK} (a full view can exceed the route's 200-id
    * cap); each chunk is its own mutation and Idempotency-Key; `\Seen` lands
@@ -741,6 +766,7 @@ export function useShellOpenState({
       setReplyTo(null);
       if (route.view !== "screener") setScreenerFull(false);
       if (route.view !== "ohbox") setOhboxEnter(null);
+      if (route.view !== enterReq?.view) setViewEnter(null);
       // …and only then honour a pending Reply Run, so the clear above cannot undo it.
       if (route.view === "triage" && frPending) {
         setFrPending(false);
@@ -989,6 +1015,7 @@ export function useShellOpenState({
         // route↔open-state mirror then reads it in the folder's own column (the reader where
         // that column is hidden), so the message is on screen in the folder that holds it.
         setLocated(target.id);
+        setViewEnter(opts?.enter ? { id: target.id, view: "folder" } : null);
         replyAfter(route.view !== "folder");
         window.location.hash = `#/folder/${target.folderId}/m/${target.id}`;
         return;
@@ -1002,6 +1029,7 @@ export function useShellOpenState({
         // so this is only ever consulted for a message there is no other copy of.
         setReaderOffMirror(m);
         setReaderFor(target.id);
+        setViewEnter(opts?.enter ? { id: target.id, view: route.view } : null);
         replyAfter(false);
     }
   });
@@ -1407,5 +1435,9 @@ export function useShellOpenState({
     toggleAbsoluteTime,
     ohboxEnter,
     setOhboxEnter,
+    sheetThreadRead,
+    enterSheet,
+    viewEnter: enterReq?.view === "folder" ? enterReq.id : null,
+    spendViewEnter,
   };
 }

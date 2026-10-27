@@ -1426,8 +1426,8 @@ export function MessagePane({
   /**
    * The element that scrolls this pane's panels (the reading column's `.read-col`, the sheet's
    * `.reader`), and the thread-read rule's wiring (`reader-seen.ts`): the visit's record, the read
-   * and enter report-ups and the panels' Mark unread. Both absent off the Ohbox: the rule, the tint
-   * and the squares run there only.
+   * and enter report-ups and the panels' Mark unread. The tint and the squares are the Ohbox's
+   * (`look: "tint"`); every other reader keeps its unread dot. Absent, no rule runs (Trash).
    */
   scroller?: RefObject<HTMLElement | null>;
   threadRead?: ThreadReadWiring;
@@ -1649,7 +1649,7 @@ export function MessagePane({
   }, [message.id, showConversation, inStream]);
 
   /* THE THREAD-READ RULE over every panel, the opened one included — one adapter per record
-     (`reader-seen.ts`). Mounted only where the shell wires it (the Ohbox's column and its sheet). */
+     (`reader-seen.ts`). Mounted only where the shell wires it. */
   useThreadRead({
     scroller,
     wiring: threadRead,
@@ -1968,7 +1968,7 @@ export function MessagePane({
       now={now}
       onEnterReader={onEnterReader}
       notice={notice}
-      srUnread={threadRead !== undefined && message.unread}
+      srUnread={threadRead?.look === "tint" && message.unread}
       onMarkUnread={threadRead ? () => threadRead.onMarkUnread(message.id) : undefined}
     />
   );
@@ -1981,6 +1981,7 @@ export function MessagePane({
   };
 
   const bodyNoteFailed = body.state === "failed" || stalled;
+  const tinted = threadRead?.look === "tint";
 
   /**
    * THE PILL, BUILT ONCE AND MOUNTED ONCE — the same element in both layouts, so the bar the
@@ -2110,7 +2111,7 @@ export function MessagePane({
         bodyNoteFailed={bodyNoteFailed}
         actions={actionBar}
         reply={replyEditor}
-        articleData={{ ...panelData, "data-thread-read": threadRead ? "" : undefined }}
+        articleData={{ ...panelData, "data-thread-read": tinted ? "" : undefined }}
         articleRef={singleRef}
       >
         {focusedHeader}
@@ -2143,10 +2144,10 @@ export function MessagePane({
       role="group"
       aria-label={tc("conversationAria")}
       ref={convRef}
-      data-thread-read={threadRead ? "" : undefined}
+      data-thread-read={tinted ? "" : undefined}
       data-stream={stream ? "" : undefined}
     >
-      {threadRead ? (
+      {threadRead && tinted ? (
         <ThreadMarks
           messages={conversation.map((m) => (m.id === message.id ? message : m))}
           scroller={scroller}

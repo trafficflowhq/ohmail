@@ -17,6 +17,7 @@ import {
 } from "@ohmail/client-engine";
 import { InfoNote, ListPane, ListRows, MessageRow, cssRect } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
+import { useReaderVisit, type ReaderMarkSeen } from "../shell/reader-seen";
 import { useListWindow } from "../shell/list-window";
 import { useColumnPick } from "../shell/column-pick";
 import { useStoreTimeline } from "../shell/store-timeline";
@@ -65,6 +66,7 @@ export function HistoryView({
   canDelete,
   canReplyAll,
   held,
+  onMarkSeen,
 }: {
   /** The store's timeline and pages come through the engine's doors; the mirror paints first. */
   engine: OhmailEngine;
@@ -94,6 +96,8 @@ export function HistoryView({
   canReplyAll: (message: EngineMessage) => boolean;
   /** Rows inside a delete's undo window — gone from every list while the toast stands. */
   held?: ReadonlySet<string>;
+  /** The shell's `markSeen`: the column's read rule writes through it (`useReaderVisit`). */
+  onMarkSeen: ReaderMarkSeen;
 }) {
   const t = useTranslations("history");
   const { row: senderCheckRow } = useSenderCheckWords();
@@ -155,6 +159,10 @@ export function HistoryView({
     first: first !== null && first !== "gone" ? first : null,
   });
   const shown = list.shown;
+  /* The column's visit: entered by an open, → or the person's own press or scroll in it; ↓/↑ and
+     the first-row fallback stay previews. */
+  const visit = useReaderVisit({ shown, markSeen: onMarkSeen });
+  const readColRef = useRef<HTMLDivElement>(null);
   const shownAt = picked && shown?.id === picked.row.id ? picked.at : shown ? 0 : -1;
 
   useEffect(() => {
@@ -197,6 +205,7 @@ export function HistoryView({
     jumpPick.current = null;
     setPicked({ row: m, at });
     if (list.columnHidden()) onOpen(m);
+    else visit.enter(m.id);
   };
 
   /** Move the cursor to slot `i`: select the row there, or scroll to it so its page is fetched. */
@@ -242,6 +251,7 @@ export function HistoryView({
     reader: {
       selector: ".view-history .read-col",
       disabled: shown == null,
+      onEnter: () => { if (shown) visit.enter(shown.id); },
       onHiddenEnter: () => {
         if (shown) onOpen(shown);
       },
@@ -427,6 +437,7 @@ export function HistoryView({
            while a row is picked — the column's first-row fallback has nothing to close. */
         onClose={picked !== null ? () => { selectId(null); onPick?.(null); } : undefined}
         closeLabel={tReader("closeColumn")}
+        scrollerRef={readColRef}
       >
         {(m) => (
           <MessagePane
@@ -435,6 +446,8 @@ export function HistoryView({
             now={now}
             onAction={(a) => onAction(a, m)}
             onAddTag={onAddTag}
+            scroller={readColRef}
+            threadRead={visit.wiring ?? undefined}
           />
         )}
       </ListReadColumn>

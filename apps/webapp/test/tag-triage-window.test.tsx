@@ -63,6 +63,7 @@ async function mount(node: React.ReactElement): Promise<HTMLElement> {
 }
 
 const common = {
+  onMarkSeen: () => {},
   tags: [tag], now: NOW, onOpen: () => {}, hydrateBody: () => {}, onAction: () => {}, onAddTag: () => {},
 };
 

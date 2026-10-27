@@ -320,7 +320,7 @@ describe("a windowed list announces its true size and every row's true position"
   it("a folder of hundreds of rows, its two groups in one listbox", async () => {
     const rows = [...range(0, 60, { unread: true, folder: "Projects" as never }), ...range(60, N - 60, { folder: "Projects" as never })];
     const m = await mount(
-      <FolderView
+      <FolderView onMarkSeen={() => {}}
         folder={{ id: "fd1", name: "Projects", mailboxId: "mb", mailbox: "a@x.invalid" }}
         messages={rows as never[]}
         older={{ available: false, items: [], loading: false, error: null, exhausted: true, loadMore: none }}
@@ -356,7 +356,7 @@ describe("a windowed list announces its true size and every row's true position"
   it("History over a store of 600", async () => {
     const { engine } = await storeFixture(storeRows(N));
     const m = await mount(
-      <HistoryView engine={engine} version={0} settled owed={false} tags={tags} now={NOW}
+      <HistoryView onMarkSeen={() => {}} engine={engine} version={0} settled owed={false} tags={tags} now={NOW}
         onOpen={none} hydrateBody={none} onAction={none} onAddTag={none} onScreen={none}
         canDelete={() => true} canReplyAll={() => true} />,
     );
@@ -392,7 +392,7 @@ describe("a windowed list announces its true size and every row's true position"
     const all = range(0, N);
     const byId = new Map(all.map((x) => [x.id, x]));
     const m = await mount(
-      <TriageView settled owed={false}
+      <TriageView onMarkSeen={() => {}} settled owed={false}
         piles={{ replyLater: all.map((x) => ({ messageId: x.id, title: x.subject })), setAside: [], resurface: [] }}
         pile="reply" onPile={none} frDone={new Set<string>()} onStartFR={none}
         messageOf={(id) => byId.get(id) ?? null}
@@ -405,7 +405,7 @@ describe("a windowed list announces its true size and every row's true position"
   it("a tag of 600", async () => {
     const tag = { id: "t1", name: "Studio" } as TagDTO;
     const m = await mount(
-      <TagView settled owed={false} tag={tag} messages={range(0, N, { labels: ["t1"] })} onScreen={none} canDelete={() => true}
+      <TagView onMarkSeen={() => {}} settled owed={false} tag={tag} messages={range(0, N, { labels: ["t1"] })} onScreen={none} canDelete={() => true}
         canReplyAll={() => true} tags={[tag]} now={NOW} onOpen={none} hydrateBody={none} onAction={none} onAddTag={none} />,
     );
     expectHeard(await walk(m.host, m.scroller, N), { Studio: N }, (_, k) => indexOfKey(k) + 1);

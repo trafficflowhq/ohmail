@@ -7,7 +7,7 @@
  * took away is GONE, said, never swapped for the first row. The views keep their own rows, pages,
  * verbs, body hydration and meta; this renders only the empty pane and the column.
  */
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode, type Ref } from "react";
 import { listSurface, saysEmpty, type ListSurface } from "@ohmail/client-engine";
 import { ReadColumn, Spinner } from "@ohmail/ui";
 import { MessageGone } from "./MessagePane";
@@ -158,10 +158,12 @@ export function ListSentence({ glyph, title, status, children }: {
 }
 
 /** The reading column: the shown row, the gone notice, or nothing; `instead` is a view's own population (Trash's live rows). */
-export function ListReadColumn<M>({ list, regionLabel, instead, onClose, closeLabel, children }: {
+export function ListReadColumn<M>({ list, regionLabel, instead, onClose, closeLabel, scrollerRef, children }: {
   list: Pick<ListView<M>, "column" | "dismiss">;
   regionLabel: string;
   instead?: ReactNode;
+  /** The column's scroller, for the read rule (`useReaderVisit`). */
+  scrollerRef?: Ref<HTMLDivElement>;
   /** The column's own way out under a thumb in the two-pane band (`ReadColumn`); absent, no ✕. */
   onClose?: () => void;
   closeLabel?: string;
@@ -170,7 +172,7 @@ export function ListReadColumn<M>({ list, regionLabel, instead, onClose, closeLa
   const facts = useContext(ListGone);
   const c = list.column;
   return (
-    <ReadColumn regionLabel={regionLabel} onClose={onClose ? () => { list.dismiss(); onClose(); } : undefined} closeLabel={closeLabel}>
+    <ReadColumn regionLabel={regionLabel} scrollerRef={scrollerRef} onClose={onClose ? () => { list.dismiss(); onClose(); } : undefined} closeLabel={closeLabel}>
       {instead != null
         ? instead
         : c.kind === "message"
