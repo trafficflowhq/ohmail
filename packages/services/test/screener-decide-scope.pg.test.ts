@@ -103,7 +103,7 @@ describe.skipIf(!PG_UP)("decide covers the sender account-wide", () => {
   }, 120_000);
   afterAll(async () => { await client?.end({ timeout: 5 }); });
 
-  it("one decision re-routes the sender's held bag in BOTH organized mailboxes, one change pair per message", async () => {
+  it("one decision re-routes the sender's held bag in BOTH organized mailboxes, one move per message", async () => {
     const w = await world("organizer");
     const result = await new ScreenerService({}).decide(
       ctx(w.accountId), w.held.m1[0]!, { decision: "no" },
@@ -115,14 +115,13 @@ describe.skipIf(!PG_UP)("decide covers the sender account-wide", () => {
     expect(new Set(result.mailboxes?.filed)).toEqual(new Set([w.m1, w.m2]));
     expect(result.mailboxes?.requested).toEqual([]);
 
-    // The change pair per message, in BOTH mailboxes: a `move` (the re-route) and an `update`
-    // (the read-mark a `no` carries) — the echo a second surface re-derives the row from.
-    for (const op of ["move", "update"] as const) {
-      const rows = await db.select().from(changeLog).where(and(
-        eq(changeLog.accountId, w.accountId), eq(changeLog.entityType, "message"), eq(changeLog.op, op),
-      ));
-      expect(rows.map((r) => r.entityId).sort(), `missing ${op} rows`).toEqual([...all].sort());
-    }
+    // One `move` per message in BOTH mailboxes (the echo a second surface re-derives the row from),
+    // and no `update`: a screen-out marks nothing read.
+    const opRows = async (op: "move" | "update") => (await db.select().from(changeLog).where(and(
+      eq(changeLog.accountId, w.accountId), eq(changeLog.entityType, "message"), eq(changeLog.op, op),
+    ))).map((r) => r.entityId).sort();
+    expect(await opRows("move"), "missing move rows").toEqual([...all].sort());
+    expect(await opRows("update"), "the screen-out wrote a read update").toEqual([]);
 
     // ONE promoted rule for the whole account-wide decision, and nothing queued.
     const created = await db.select().from(rules).where(eq(rules.accountId, w.accountId));

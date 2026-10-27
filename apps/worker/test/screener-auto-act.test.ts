@@ -660,7 +660,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(await desiredOf(genuine), "the genuine letter rode the forgery's deny").toBe(SCREENER);
     expect(await accountRules(w), "a standing rule was written on a forgery's advice").toEqual([]);
     expect(await desiredOf(forged)).toBe(SPAM);
-    expect(await unreadOf(forged), "the filed letter is marked read, as a press marks it").toBe(false);
+    expect(await unreadOf(forged), "an automatic filing marked a letter read").toBe(true);
     expect(await accountContacts(w)).toEqual([]);
     expect(await accountSignals(w), "the act taught a pattern from a forgery").toEqual([]);
     expect(await movedIds(w)).toEqual([forged]);
@@ -1001,7 +1001,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(await accountRules(w), "a standing rule was written from other senders' mail").toEqual([]);
     for (const id of advised) {
       expect(await desiredOf(id)).toBe(SPAM);
-      expect(await unreadOf(id), "the filed letter is marked read, as a press marks it").toBe(false);
+      expect(await unreadOf(id), "an automatic filing marked a letter read").toBe(true);
     }
     expect(await desiredOf(older), "a letter rode advice bought on another").toBe(SCREENER);
     expect(await accountContacts(w)).toEqual([]);

@@ -370,7 +370,7 @@ export const VERB_MATRIX: Record<MutationKind, VerbEntry> = {
         },
       },
       {
-        name: "a No screens the sender out: held mail to ohmail/Screened, read, and a Screened rule",
+        name: "a No screens the sender out: held mail to ohmail/Screened, still unread, and a Screened rule",
         seed: async (w) => {
           const a = await w.seedHeld({ fromAddress: "paperbird@news.example", subject: "Issue 12" });
           const b = await w.seedHeld({
@@ -384,19 +384,14 @@ export const VERB_MATRIX: Record<MutationKind, VerbEntry> = {
           for (const id of [c.a as string, c.b as string]) {
             const m = msgOf(r, id);
             expect(m?.folder).toBe("ohmail/Screened");
-            // MARK_READ_ON_DECIDE: the screen-out marks read in the same transaction it files —
-            // BOTH halves, since this oracle also reads the pure overlay: the flag, and the
-            // reading stamp the two read-paths file "Earlier" by (review round 3).
-            expect(m?.unread).toBe(false);
-            expect(m?.lastReadAt, "the read-mark lost its timestamp half").toBeTruthy();
+            // A letter is read when the person read it: filing it out marks nothing, overlay and server alike.
+            expect(m?.unread, "the screen-out marked a letter read").toBe(true);
+            expect(m?.lastReadAt ?? null).toBeNull();
           }
           const rule = r.list<RuleDTO>("rule").find((x) => x.match === "paperbird@news.example");
           expect(rule?.destination).toBe("ohmail/Screened");
         },
-        // Full-field parity — INCLUDING the deny-side read-mark: the server's decide marks
-        // Screened/Quarantine mail read in its own transaction (MARK_READ_ON_DECIDE), and the
-        // derived overlay now mirrors it; an overlay preserving `unread` here was a real
-        // bold-row-unbolds-a-drain-later flip this leg caught (a review finding).
+        // Full-field parity, read state included: neither the overlay nor the server marks the letters read.
         optimistic: "landed",
         pass: {
           none: "the decide files inside its own transaction; the one worker interaction in this " +
@@ -461,15 +456,13 @@ export const VERB_MATRIX: Record<MutationKind, VerbEntry> = {
         landed: (r, c) => {
           const m = msgOf(r, c.a as string);
           expect(m?.folder).toBe("ohmail/Quarantine");
-          // The deny-side read-mark (MARK_READ_ON_DECIDE keys on the APPLIED folder, so the
-          // spam destination inherits it exactly as ohmail/Screened does) — flag AND stamp.
-          expect(m?.unread).toBe(false);
-          expect(m?.lastReadAt, "the read-mark lost its timestamp half").toBeTruthy();
+          expect(m?.unread, "the spam press marked a letter read").toBe(true);
+          expect(m?.lastReadAt ?? null).toBeNull();
           const rule = r.list<RuleDTO>("rule").find((x) => x.match === "blast@promo.example");
           expect(rule?.destination).toBe("ohmail/Quarantine");
         },
-        // Full-field parity, deny side: quarantine + read-mark + rule destination, all read
-        // off the pure overlay.
+        // Full-field parity, deny side: quarantine, the read state left as it was, and the rule
+        // destination, all read off the pure overlay.
         optimistic: "landed",
         pass: {
           none: "same transaction-filing argument as the screen-out scenario above; the physical " +
