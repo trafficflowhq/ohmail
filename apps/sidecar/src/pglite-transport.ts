@@ -107,10 +107,12 @@ function keepTransportInMemory(FS: EmFs, pgdata: string, names: ReadonlySet<stri
   };
 }
 
-/** The syncs the store's fsync has made since its filesystem was mounted. The open's guard reads it. */
+/** The syncs the store's fsync has made since its filesystem was mounted, and their time in ms. The open's guard reads it. */
 export interface StoreSyncCount {
   files: number;
   directories: number;
+  ms: number;
+  maxMs: number;
 }
 
 /* What a platform answers when it cannot sync a directory at all — Windows refuses one opened for
@@ -156,12 +158,18 @@ function installStoreFsync(FS: EmFs, count: StoreSyncCount, held: () => boolean)
     /* Held for a new store's tree sync (`holdSyncs`): touches nothing and counts nothing, so a
        hold placed before the open's commit proof makes the open refuse. */
     if (held()) return 0;
+    const began = performance.now();
     if (typeof stream.nfd === "number") {
       fs.fsyncSync(stream.nfd);
       count.files += 1;
     } else if (syncDirectory(nodefs.realPath(stream.node))) {
       count.directories += 1;
+    } else {
+      return 0;
     }
+    const took = performance.now() - began;
+    count.ms += took;
+    count.maxMs = Math.max(count.maxMs, took);
     return 0;
   });
   nodefs.stream_ops.fsync = fsync;
@@ -198,7 +206,7 @@ export function storeFsyncFault(installed: unknown, current: unknown, files: num
  * before Postgres starts. (A preRun would depend on Emscripten running that array in reverse.)
  */
 export class LocalStoreFs extends NodeFS {
-  readonly synced: StoreSyncCount = { files: 0, directories: 0 };
+  readonly synced: StoreSyncCount = { files: 0, directories: 0, ms: 0, maxMs: 0 };
   #fsync: StoreFsyncOp | undefined;
   #held = false;
 

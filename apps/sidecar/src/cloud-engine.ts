@@ -2195,7 +2195,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
        mirror rather than a mail pipeline, which makes it the closest thing to a control the
        measurement has. No-op when this install was given no logger. */
     const stopVitals = log
-      ? startEngineVitals(log, { storeBytes: () => opened.storeBytes() })
+      ? startEngineVitals(log, { storeBytes: () => opened.storeBytes(), storeSyncs: () => opened.storeSyncs() })
       : () => { /* nothing to write to */ };
 
     /* ONE SIGN-IN AT A TIME, queued at the door (`serialTail`): the password, code and approval

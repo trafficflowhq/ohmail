@@ -11,6 +11,7 @@ import {
 } from "./host-listener.js";
 import { maybeStartLanListener, type LanListener } from "./host-lan.js";
 import { createHostPower } from "./host-power.js";
+import { nodeLoopDelay } from "./loop-delay.js";
 import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
 import { createSidecarLog, createSidecarLogger, diagnosticFor, type Diagnostic } from "./log.js";
@@ -591,7 +592,7 @@ export async function runSidecar(): Promise<void> {
     // The power reader and the DKIM key lookup are this entry's to supply: the engine is also the
     // phone's, and must not import either.
     sidecar = await createSidecar({
-      ...configFromEnv(), log, logger, hostPower: createHostPower(), onPhase: bootPhaseEmitter(stdout),
+      ...configFromEnv(), log, logger, hostPower: createHostPower(), loopDelay: nodeLoopDelay, onPhase: bootPhaseEmitter(stdout),
       onStoreFatal: exitOnStoreFatal, dkimKeys: makeDnsDkimKeys(),
     });
   } catch (err) {

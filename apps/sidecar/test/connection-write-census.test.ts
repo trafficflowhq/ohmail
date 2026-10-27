@@ -73,11 +73,11 @@ function gatedRegion(src: string): string {
    * Each span is now bounded by markers of its OWN, and every marker is asserted, so a boundary
    * that slips announces itself instead of quietly shrinking the region. `slice` on a missing
    * marker returns something plausible; that is exactly how the first version failed. */
-  /* The signature wraps since the drain took the gate's ROLE as a fourth value, so the marker is
+  /* The signature wraps since the drain took the gate's ROLE as a fourth value (and #359's loop-delay reader as a fifth), so the marker is
      the wrapped form verbatim — an exact string still, which is what makes a moved boundary loud. */
   const drainFrom = src.indexOf(
     "const drain = async (\n"
-    + "        maxCycles: number, gen: number, conn: MailboxAdapter, organizing: boolean,\n"
+    + "        maxCycles: number, gen: number, conn: MailboxAdapter, organizing: boolean, turns: LoopDelayReader | null,\n"
     + "      ): Promise<number> => {");
   expect(drainFrom, "the drain's opening marker moved — this census is reading nothing")
     .toBeGreaterThan(-1);
