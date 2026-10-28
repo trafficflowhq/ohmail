@@ -4218,7 +4218,7 @@
     "savedByLocal": "Saved {when} by ohmail on another computer.",
     "savedByCloud": "Saved {when} by ohmail Cloud.",
     "savedBy": "Saved {when}.",
-    "willDo": "Importing adds them to this account's settings. Mail this ohmail held in the Screener from senders they screen out is filed where they say and marked read; nothing else in your mail changes. Until you choose, both stay in the mailbox: these settings beside the ones you make here.",
+    "willDo": "Importing adds them to this account's settings. Mail this ohmail held in the Screener from senders they screen out is filed where they say; nothing else in your mail changes. Until you choose, both stay in the mailbox: these settings beside the ones you make here.",
     "routingWhileOpen": "Until you answer, mail from senders these settings let through stays where it arrived; other new senders are screened as usual.",
     "import": "Import settings",
     "importing": "Importing…",

@@ -7,7 +7,6 @@ import { dialect } from "./dialect/index.js";
 import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
 import { readOrganizerRole } from "./organizer-role.js";
 import { recordLearningSignal } from "./learning-signal.js";
-import { upsertDesiredSeenMany } from "./flag-intent.js";
 import { ruleMatchKey, ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
 import { endOwedWalk, findRulesByKey, keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
 import { storedAuthScreens, unconfirmedSql } from "./screening-verdicts.js";
@@ -42,10 +41,10 @@ const ledger = (tx: Tx): LedgerTx => tx as unknown as LedgerTx;
 
 /**
  * The Screener decision's apply, on its own leaf — moved down the spine (0.14.1).
- * `ScreenerService.decide` is a promoted rule, a held-bag re-route and a mark-read in one
+ * `ScreenerService.decide` is a promoted rule and a held-bag re-route in one
  * transaction; 0.14.1 adds a second caller — a READER's decision drained from `ohmail/_meta` by
  * the worker, which may not import services at runtime. The transactional CORE (contacts, the
- * baseline stamp, the promoted rule, the guarded re-route, mark-read, `change_log`, the learning
+ * baseline stamp, the promoted rule, the guarded re-route, `change_log`, the learning
  * signal) lives here; `ScreenerService.applyDecision` is a thin wrapper. Not moved: the physical
  * IMAP move (a caller concern), the auto-unsubscribe courtesy (the drain does not perform it — a
  * named gap), and the idempotency claim-and-replay (each door keys its own).
@@ -82,18 +81,6 @@ export function canonicalNewsSpelling(folder: string): string {
 export const DECIDABLE_FOLDERS: ReadonlySet<string> = new Set([
   YES_FOLDER, NEWS_FOLDER, LEGACY_NEWS_FOLDER, "ohmail/Receipts", NO_FOLDER, "ohmail/Quarantine",
 ]);
-
-/**
- * The two "no" destinations whose mail a decision marks read, and the safety line. A screen-out
- * or a spam press is the user saying they are done with this sender, so the dismissed mail should
- * not sit unread forever. The membership IS the safety boundary: admitted mail is never touched —
- * admitting a sender is not reading their backlog — and `ohmail/Screener` is not decidable at
- * all, so mail waiting at the gate can never be pre-read. The `\Seen` write is additive and
- * reversible: `flag_state.desired_seen = true` with `last_set_by = 'us'`; no move, no delete, no
- * flag removed. It equals `decision === "no"` today, but is expressed as folder membership so a
- * future destination cannot silently inherit a read-mark by being wired to a `no`.
- */
-const MARK_READ_ON_DECIDE: ReadonlySet<string> = new Set([NO_FOLDER, "ohmail/Quarantine"]);
 
 /** `effectForDestination(dest) === "allow"` for the {@link DECIDABLE_FOLDERS} set, duplicated for the same reason. */
 export function admitsDestination(dest: string): boolean {
@@ -261,7 +248,7 @@ const senderIs = (address: string): SQL => sql`lower(${messages.fromAddress}) = 
  * One bag per mailbox, each mailbox's role read UNDER LOCK (`FOR SHARE`, `assertOrganizerRole`'s
  * lock) before a row moves, in SORTED mailbox order against the lease gate's exclusive lock. A row
  * is desired only while it is still the gate (a row that moved on keeps where it went), with a
- * `change_log` move, and marked read where the decision files it out of sight.
+ * `change_log` move. Its read state is the person's: nothing here marks a letter read.
  */
 async function rerouteHeldBag(
   tx: Tx, accountId: string, heldMail: readonly AppliedScreenerRow[], appliedFolder: string, now: Date,
@@ -286,12 +273,10 @@ async function rerouteHeldBag(
     writable.push(...bag);
   }
 
-  // IN SETS OF DECISION_BATCH_MAX, inside the one transaction: each set is one guarded upsert,
-  // one read-intent upsert and one `messages` update for the rows it moved, and one change-log
-  // append whose rows keep the per-message order (move, then its update). Nothing commits until
-  // the decision does, so the grouping is invisible to every reader.
+  // IN SETS OF DECISION_BATCH_MAX, inside the one transaction: each set is one guarded upsert and
+  // one change-log append of its moves. Nothing commits until the decision does. A decision files
+  // and never marks read: a letter is read when the person read it.
   let lastSeq: bigint | null = null;
-  const markRead = MARK_READ_ON_DECIDE.has(appliedFolder);
   for (let i = 0; i < writable.length; i += DECISION_BATCH_MAX) {
     const batch = writable.slice(i, i + DECISION_BATCH_MAX);
     const hits = await tx.insert(folderState).values(batch.map((m) => ({
@@ -312,20 +297,10 @@ async function rerouteHeldBag(
     if (moved.length === 0) continue;
     rerouted.push(...moved);
 
-    if (markRead) {
-      await upsertDesiredSeenMany(tx, moved.map((m) => ({ id: m.messageId, observedSeen: !m.unread })), true, now);
-      await tx.update(messages)
-        .set({ unread: false, lastReadAt: now, updatedAt: now })
-        .where(and(inArray(messages.id, moved.map((m) => m.messageId)), eq(messages.accountId, accountId)));
-    }
-    const changes: ChangeInput[] = [];
-    for (const m of moved) {
-      changes.push({
-        accountId, entityType: "message", entityId: m.messageId, op: "move",
-        meta: { from: m.observedFolder, to: appliedFolder },
-      });
-      if (markRead) changes.push({ accountId, entityType: "message", entityId: m.messageId, op: "update", meta: null });
-    }
+    const changes: ChangeInput[] = moved.map((m) => ({
+      accountId, entityType: "message", entityId: m.messageId, op: "move",
+      meta: { from: m.observedFolder, to: appliedFolder },
+    }));
     const seqs = await recordChanges(ledger(tx), changes);
     lastSeq = seqs[seqs.length - 1]!;
   }
@@ -625,7 +600,7 @@ export interface ApplyScreenerDecisionResult {
  * THE ONE IMPLEMENTATION. The screening baseline, the subject's ONE rule (the key converged onto
  * its acting row, or the promoted rule where it has none), contacts, the held-bag re-route
  * (guarded on `desired_folder = 'ohmail/Screener'`: a row that moved on keeps where it went),
- * mark-read-on-decide, `change_log` for every write, and the learning signal. The bag is read
+ * `change_log` for every write, and the learning signal. The bag is read
  * ACCOUNT-WIDE and written per mailbox behind a `FOR SHARE` role lock — only mailboxes this
  * install organizes move; the rest return as `heldElsewhere`. FENCES FIRST (it writes
  * `account_settings`, `erasure-fence.ts`'s rule), then the account's rule-key lock, before the

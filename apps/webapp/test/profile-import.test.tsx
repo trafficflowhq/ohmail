@@ -201,6 +201,7 @@ describe("the restore card", () => {
     expect(willDo, "the catalogue's sentence no longer says what not answering leaves in the mailbox")
       .toContain("Until you choose, both stay in the mailbox: these settings beside the ones you make here.");
     expect(el!.textContent, "the cost sentence is in the catalogue and not on the card").toContain(willDo);
+    expect(el!.textContent, "the card says an imported screen-out marks mail read").not.toMatch(/marked read/i);
   });
 
   it("the card says what routing does until the answer: admitted senders stay, other new senders are screened", async () => {

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { accounts, mailboxes, messages, folderState, flagState, changeLog } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
@@ -11,21 +11,10 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { ScreenerService, type ServiceContext } from "@trafficflow/services";
 
 /**
- * A SCREEN-OUT OR SPAM PRESS MARKS THE HELD MAIL READ, IN THE SAME TRANSACTION THAT
- * RE-ROUTES IT, AGAINST REAL POSTGRES.
- *
- * ## Why this is a `*.pg.test.ts`
- *
- * The whole claim is transactional: the `flag_state.desired_seen` write, the `messages.unread`
- * mirror and the `change_log` `update` delta all have to commit in the SAME transaction as the
- * `folder_state` re-route, so a client is never told mail moved without also being told it was
- * read — and vice versa. PGlite runs the statements but cannot observe the atomicity that matters
- * (a rival read between the folder write and the flag write), and CLAUDE.md requires the
- * transactional guarantees to be pinned on :5433.
- *
- * NO IMAP: the service is built with no adapter, exactly as the serverless API runs. This writes
- * DESIRED state — `desired_seen = true`, `pending` — and stops; the worker's `reconcileFlags`
- * adds `\Seen` on the real server (`apps/worker/src/sync.ts`). The write is ADDITIVE.
+ * A SCREEN-OUT, A SPAM PRESS OR AN ADMISSION FILES THE HELD MAIL AND MARKS NONE OF IT READ, AGAINST
+ * REAL POSTGRES. A letter is read when the person read it: the decision writes no `flag_state`
+ * intent, leaves `messages.unread` as it was and appends no `update` delta beside its moves, so
+ * the worker never adds `\Seen` for it. NO IMAP: the service runs with no adapter, as the API does.
  */
 const PG_UP = await realPgAvailable();
 
@@ -57,8 +46,7 @@ async function newWorld(each = 3): Promise<World> {
       subject: `Bulletin ${i}`, fromAddress: address,
       nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
     }).returning();
-    // No flag_state row — held mail has none at ingest, which is the INSERT branch the code seeds
-    // `observed_seen` for. Left implicit so the test exercises exactly that path.
+    // No flag_state row: held mail has none at ingest, so any row after the decision is its write.
     await db.insert(folderState).values({
       messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
@@ -76,7 +64,7 @@ const flagsOf = (ids: string[]) => db.select({
 const unreadOf = (ids: string[]) => db.select({ id: messages.id, unread: messages.unread })
   .from(messages).where(inArray(messages.id, ids));
 
-describe.skipIf(!PG_UP)("screen-out and spam mark the mail read in the reroute transaction", () => {
+describe.skipIf(!PG_UP)("a Screener decision files the held mail and leaves its read state alone", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
@@ -84,53 +72,20 @@ describe.skipIf(!PG_UP)("screen-out and spam mark the mail read in the reroute t
   }, 120_000);
   afterAll(async () => { await client?.end({ timeout: 5 }); });
 
-  /**
-   * THE ROW THIS SLICE EXISTS FOR. A `no` to either demoting folder marks every rerouted held
-   * message read: `flag_state.desired_seen = true` (`pending`, so the worker will `\Seen` it),
-   * `messages.unread = false`, and one `change_log` `update` delta per message beside the `move`.
-   *
-   * MUTATION-WATCHED: delete the `MARK_READ_ON_DECIDE.has(appliedFolder)` guard in
-   * `@trafficflow/db#screener-apply.ts`'s `applyScreenerDecision` (0.14.1 moved the write
-   * here from `screener-service.ts#decide` — see that function's own header) and both cases go
-   * red — `flag_state` is empty and `unread` stays true.
-   */
-  for (const dest of ["ohmail/Screened", "ohmail/Quarantine"] as const) {
-    it(`${dest} marks the rerouted mail read, additively and pending`, async () => {
+  const decisions = [
+    { dest: "ohmail/Screened", decision: "no" }, { dest: "ohmail/Quarantine", decision: "no" },
+    { dest: "INBOX", decision: "yes" }, { dest: "ohmail/News", decision: "yes" }, { dest: "ohmail/Receipts", decision: "yes" },
+  ] as const;
+  for (const { dest, decision } of decisions) {
+    it(`a ${decision} to ${dest} files the mail and marks none of it read`, async () => {
       const w = await newWorld(3);
-      await new ScreenerService({}).decide(ctx(w.accountId), w.held[0]!, { decision: "no", dest });
+      await new ScreenerService({}).decide(ctx(w.accountId), w.held[0]!, { decision, dest });
 
-      const flags = await flagsOf(w.held);
-      expect(flags).toHaveLength(3);
-      expect(flags.every((f) => f.desiredSeen === true)).toBe(true);
-      // Held mail was unread ⇒ observed_seen seeded false ⇒ pending ⇒ the worker will add \Seen.
-      expect(flags.every((f) => f.observedSeen === false)).toBe(true);
-      expect(flags.every((f) => f.status === "pending")).toBe(true);
-      expect(flags.every((f) => f.lastSetBy === "us")).toBe(true);
-
-      expect((await unreadOf(w.held)).every((r) => r.unread === false)).toBe(true);
-
-      // One `update` delta per rerouted message — the read-state half — beside each `move`.
-      const updates = await db.select().from(changeLog).where(and(
-        eq(changeLog.accountId, w.accountId), eq(changeLog.entityType, "message"), eq(changeLog.op, "update"),
-      )).orderBy(asc(changeLog.seq));
-      expect(updates.map((r) => r.entityId).sort()).toEqual([...w.held].sort());
-    });
-  }
-
-  /**
-   * ADMITTED MAIL IS NOT READ. A `yes` (any keep folder) writes NO read-mark and leaves every
-   * held message unread — the safety boundary `MARK_READ_ON_DECIDE` draws. Admitting a sender is
-   * not the same as having read their backlog.
-   *
-   * MUTATION-WATCHED: widen the block's guard to `decision === "no"` alone and this still passes
-   * (a yes is not a no); widen it to fire unconditionally and this goes red.
-   */
-  for (const dest of ["INBOX", "ohmail/News", "ohmail/Receipts"] as const) {
-    it(`${dest} (a yes) touches no read state`, async () => {
-      const w = await newWorld(3);
-      await new ScreenerService({}).decide(ctx(w.accountId), w.held[0]!, { decision: "yes", dest });
-      expect(await flagsOf(w.held)).toHaveLength(0);
-      expect((await unreadOf(w.held)).every((r) => r.unread === true)).toBe(true);
+      const filed = await db.select({ d: folderState.desiredFolder }).from(folderState)
+        .where(inArray(folderState.messageId, w.held));
+      expect(filed.map((r) => r.d)).toEqual([dest, dest, dest]);
+      expect(await flagsOf(w.held), "the decision wrote a read intent").toHaveLength(0);
+      expect((await unreadOf(w.held)).every((r) => r.unread === true), "the decision marked mail read").toBe(true);
       const updates = await db.select().from(changeLog).where(and(
         eq(changeLog.accountId, w.accountId), eq(changeLog.entityType, "message"), eq(changeLog.op, "update"),
       ));

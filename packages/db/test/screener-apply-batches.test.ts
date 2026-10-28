@@ -60,20 +60,16 @@ describe("a decision written in sets keeps every per-letter fact, on this store"
     expect(result.rerouted.map((r) => r.messageId)).toEqual(ids);
     const log = await db.select().from(changeLog).where(eq(changeLog.accountId, ACCOUNT)).orderBy(asc(changeLog.seq));
     expect(log.filter((r) => r.entityType === "message").map((r) => `${r.op}:${r.entityId}`))
-      .toEqual(ids.flatMap((id) => [`move:${id}`, `update:${id}`]));
+      .toEqual(ids.map((id) => `move:${id}`));
     const seqs = log.map((r) => BigInt(r.seq as never));
     expect(seqs.every((s, i) => i === 0 || s === seqs[i - 1]! + 1n)).toBe(true);
     expect(BigInt(result.lastSeq as never)).toBe(seqs[seqs.length - 1]);
 
     const moved = await db.select({ id: folderState.messageId, d: folderState.desiredFolder }).from(folderState);
     expect(moved.every((r) => r.d === "ohmail/Screened")).toBe(true);
-    const flags = new Map((await db.select().from(flagState)).map((r) => [r.messageId, r]));
-    expect(flags.size).toBe(HELD);
-    ids.forEach((id, i) => expect(flags.get(id), id).toMatchObject({
-      desiredSeen: true, observedSeen: !unread(i), reconcileStatus: unread(i) ? "pending" : "reconciled",
-    }));
+    expect(await db.select().from(flagState), "a screen-out wrote a read intent").toEqual([]);
     const still = await db.select({ id: messages.id }).from(messages).where(eq(messages.unread, true));
-    expect(still).toEqual([]);
+    expect(still.map((r) => r.id).sort()).toEqual(ids.filter((_id, i) => unread(i)).sort());
   }, 60_000);
 
   it("an empty set of read intents sends nothing", async () => {

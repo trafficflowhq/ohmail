@@ -113,26 +113,19 @@ describe.skipIf(!PG_UP)("a domain decision written in sets, on real Postgres", (
     expect(desired.get(victim)).toBe("ohmail/News");
     for (const id of kept) expect(desired.get(id)).toBe("ohmail/Screened");
 
-    // Every moved letter's move and then its read update, in the order the decision walked them.
+    // Every moved letter's move, in the order the decision walked them, and nothing else.
     const log = await db.select().from(changeLog)
       .where(eq(changeLog.accountId, w.accountId)).orderBy(asc(changeLog.seq));
     expect(log.filter((r) => r.entityType === "message").map((r) => `${r.op}:${r.entityId}`))
-      .toEqual(kept.flatMap((id) => [`move:${id}`, `update:${id}`]));
+      .toEqual(kept.map((id) => `move:${id}`));
     const seqs = log.map((r) => Number(r.seq));
     expect(seqs[seqs.length - 1]! - seqs[0]!).toBe(seqs.length - 1);
 
-    // Read for every moved letter, each intent against its own observed state; the skipped one untouched.
-    const flags = new Map((await db.select().from(flagState).where(inArray(flagState.messageId, w.ids)))
-      .map((r) => [r.messageId, r]));
-    expect(flags.has(victim)).toBe(false);
-    for (const id of kept) {
-      expect(flags.get(id)).toMatchObject({ desiredSeen: true, observedSeen: !w.unread.get(id),
-        reconcileStatus: w.unread.get(id) ? "pending" : "reconciled" });
-    }
+    // The screen-out marks nothing read: no read intent, every letter's unread as seeded.
+    expect(await db.select().from(flagState).where(inArray(flagState.messageId, w.ids))).toEqual([]);
     const unread = new Map((await db.select({ id: messages.id, u: messages.unread }).from(messages)
       .where(eq(messages.accountId, w.accountId))).map((r) => [r.id, r.u]));
-    expect(unread.get(victim)).toBe(w.unread.get(victim));
-    for (const id of kept) expect(unread.get(id)).toBe(false);
+    for (const id of w.ids) expect(unread.get(id), id).toBe(w.unread.get(id));
   }, 120_000);
 
   it("C: a last set the rival took whole still leaves the decision's seq on its idempotency row", async () => {

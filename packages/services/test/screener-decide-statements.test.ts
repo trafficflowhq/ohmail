@@ -18,7 +18,7 @@ import { makeCtx } from "./helpers.js";
  */
 
 /** Statements one further batch may cost: a ceiling that may only fall. */
-const PER_BATCH_CEILING = { no: 7, yes: 5 } as const;
+const PER_BATCH_CEILING = { no: 5, yes: 5 } as const;
 
 interface Doors { query: (...a: unknown[]) => Promise<unknown>; exec: (...a: unknown[]) => Promise<unknown> }
 interface PgliteClient extends Doors { transaction: (cb: (tx: Doors) => Promise<unknown>) => Promise<unknown> }
@@ -85,7 +85,7 @@ async function decideCost(held: number, decision: "yes" | "no"): Promise<number>
   expect(moved).toHaveLength(held);
   const rows = await db.select({ op: changeLog.op }).from(changeLog)
     .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityType, "message")));
-  expect(rows).toHaveLength(decision === "no" ? 2 * held : held);
+  expect(rows, "one move per letter and no read-mark").toHaveLength(held);
   return c.n;
 }
 
