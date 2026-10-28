@@ -34,11 +34,14 @@
  *  · `clearPin()` moved out of the try (or before the write) → the refusal test goes red;
  *  · `writeThemeFace` sending the whole settings object → the one-axis test goes red.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFoldersEnabled, writeThemeFace } from "../src/net/consent";
 import type { ConnectedSession } from "../src/net/pairing";
-import { faceScope } from "../src/state/face-scope";
-import type { FaceName } from "../src/theme/face";
+import {
+  accountFaceShown, faceMirrorStands, faceMirrorStore, faceScope, FACE_MIRROR_KEY, type FaceMirror,
+} from "../src/state/face-scope";
+import type { SecureKV } from "../src/state/servers";
+import { resolveFace, type FaceName } from "../src/theme/face";
 import { listen, mailServer } from "./helpers/mail-server";
 
 /** A minimal session for the consent seam: ONE origin, a plain fetch — the seam needs no more. */
@@ -77,8 +80,53 @@ function scopeWith(write: (face: FaceName) => Promise<FaceName | null>) {
       submitted.push(face);
       if (state.pin === face || state.pin === null) state.pin = null;
     },
+    pin: () => state.pin,
+    setPin: (face) => { state.pin = face; },
+    remember: () => {},
+    follows: false,
   });
   return { scope, adopted, submitted, state };
+}
+
+/** A keystore in memory; a relaunch is a new phone over the same rows. */
+function memoryKV(): SecureKV & { rows: Map<string, string> } {
+  const rows = new Map<string, string>();
+  return {
+    rows,
+    get: async (key) => rows.get(key) ?? null,
+    set: async (key, value) => { rows.set(key, value); },
+    remove: async (key) => { rows.delete(key); },
+  };
+}
+
+/**
+ * One phone on the real wire: its pin, the account face it adopted, the account look it keeps
+ * for the next launch (wired as `world.tsx` does), and what it shows.
+ */
+function phoneOn(origin: string, follows = true, kv: SecureKV = memoryKV(), owner = "account-1") {
+  const session = sessionFor(origin);
+  const state: { pin: FaceName | null; account: FaceName | null; known: boolean; mirror: FaceMirror | null } =
+    { pin: null, account: null, known: false, mirror: null };
+  const mirror = faceMirrorStore(kv, (m) => { state.mirror = m; });
+  const scope = faceScope({
+    write: (face) => writeThemeFace(session, face),
+    adopt: (face) => { state.account = face; state.known = true; },
+    clearPin: (face) => { if (state.pin === face || state.pin === null) state.pin = null; },
+    pin: () => state.pin,
+    setPin: (face) => { state.pin = face; },
+    remember: (face) => mirror.set(face === null ? null : { owner, face }),
+    follows,
+  });
+  /** The consent read the phone makes at start and after every drain (the settings doorbell). */
+  const read = async () => {
+    const apply = scope.beginRead();
+    const ans = await readFoldersEnabled(session);
+    apply(ans === null ? undefined : ans.themeFace);
+  };
+  /** What the phone wears; `signedIn` false is the launch before its session is live. */
+  const shows = (signedIn = true) =>
+    resolveFace(state.pin, accountFaceShown(state.account, state.known, state.mirror, signedIn ? owner : null));
+  return { scope, state, read, shows, boot: () => mirror.boot() };
 }
 
 /* ────────────────────────────────────────────────────────────────────────────── the wire */
@@ -320,5 +368,164 @@ describe("faceScope: the user wins, and reads settle in issue order", () => {
     gate.resolve("ohmarchy");
     expect(await press).toBe(true);
     expect(adopted).toEqual(["ohmarchy"]);
+  });
+});
+
+describe("the phone follows the account's look, as the web and the desktop do", () => {
+  it("two phones of one account: the newest choice wins on both, and an old pin retires", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    const a = phoneOn(origin);
+    const b = phoneOn(origin);
+    a.state.pin = "paper"; // left by an earlier build's "this device only" control
+    await a.read();
+    await b.read();
+    expect(a.shows(), "no account look yet: the old pin still decides").toBe("paper");
+
+    expect(await b.scope.choose("ohmarchy")).toBe(true);
+    expect(fake.themeFace(), "the choice is written to the account").toBe("ohmarchy");
+    expect(b.state.pin, "and leaves no pin behind").toBeNull();
+    expect(b.shows()).toBe("ohmarchy");
+
+    await a.read(); // start, or the drain after the settings doorbell
+    expect(a.state.pin, "the account holds a look, so the old pin retires").toBeNull();
+    expect(a.shows()).toBe("ohmarchy");
+
+    expect(await a.scope.choose("paper")).toBe(true);
+    await b.read();
+    expect(b.shows(), "and back the other way").toBe("paper");
+    expect(a.shows()).toBe("paper");
+    fake.server.close();
+  });
+
+  it("a press before the account answered shows at once and is written on the first read", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    fake.setThemeFace("paper");
+    const a = phoneOn(origin);
+    expect(await a.scope.choose("ohmarchy")).toBe(true);
+    expect(a.shows()).toBe("ohmarchy");
+    expect(fake.themeFace(), "nothing is written before the account's look is known").toBe("paper");
+    await a.read();
+    await vi.waitFor(() => expect(fake.themeFace()).toBe("ohmarchy"));
+    await vi.waitFor(() => expect(a.state.pin).toBeNull());
+    expect(a.shows()).toBe("ohmarchy");
+    fake.server.close();
+  });
+
+  it("a refused choice stays this phone's pin, and the next read does not take it away", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    fake.setThemeFace("paper");
+    const a = phoneOn(origin);
+    await a.read();
+    fake.failNext("PATCH", "/consent/settings");
+    expect(await a.scope.choose("ohmarchy")).toBe(false);
+    expect(a.state.pin).toBe("ohmarchy");
+    await a.read();
+    expect(a.shows(), "the person's press is not undone behind their back").toBe("ohmarchy");
+    // A later choice that the account takes governs again.
+    expect(await a.scope.choose("paper")).toBe(true);
+    expect(a.state.pin).toBeNull();
+    fake.server.close();
+  });
+
+  it("a standalone phone keeps its own pin: a choice writes nothing and no read retires it", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    fake.setThemeFace("ohmarchy");
+    const solo = phoneOn(origin, false);
+    expect(await solo.scope.choose("paper")).toBe(true);
+    await solo.read();
+    expect(solo.state.pin).toBe("paper");
+    expect(solo.shows()).toBe("paper");
+    expect(fake.seen.some((r) => r.method === "PATCH"), "no account write").toBe(false);
+    fake.server.close();
+  });
+});
+
+describe("a relaunch wears the account's last look, before any read and offline", () => {
+  it("a signed-in choice comes back on the first frame, and stays when the server is away", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    const kv = memoryKV();
+    const a = phoneOn(origin, true, kv);
+    await a.boot();
+    await a.read();
+    expect(await a.scope.choose("ohmarchy")).toBe(true);
+    expect(a.state.pin, "the account holds it, so no pin is left").toBeNull();
+    fake.server.close();
+
+    const again = phoneOn(origin, true, kv); // the cold start: only what the keystore kept
+    await again.boot();
+    expect(again.shows(false), "the first frame, before the session is live").toBe("ohmarchy");
+    expect(again.shows(), "the session up, its read not back").toBe("ohmarchy");
+    await again.read(); // could not ask
+    expect(again.shows(), "a failed read leaves it").toBe("ohmarchy");
+  });
+
+  it("the account's answer replaces the kept look, and 'no preference' clears it", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    const kv = memoryKV();
+    fake.setThemeFace("ohmarchy");
+    const a = phoneOn(origin, true, kv);
+    await a.read();
+    expect(JSON.parse(kv.rows.get(FACE_MIRROR_KEY)!)).toEqual({ owner: "account-1", face: "ohmarchy" });
+
+    fake.setThemeFace("paper"); // changed on a laptop
+    await a.read();
+    const b = phoneOn(origin, true, kv);
+    await b.boot();
+    expect(b.shows(false)).toBe("paper");
+    expect(b.state.mirror?.face).toBe("paper");
+
+    fake.setThemeFace(null);
+    await a.read();
+    expect(kv.rows.has(FACE_MIRROR_KEY)).toBe(false);
+    fake.server.close();
+  });
+
+  it("another account's kept look is not worn, and a standalone phone keeps none", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    const kv = memoryKV();
+    fake.setThemeFace("ohmarchy");
+    await phoneOn(origin, true, kv).read();
+    const other = phoneOn(origin, true, kv, "account-2");
+    await other.boot();
+    expect(other.shows(), "account 2 signed in, its read not back").toBe("paper");
+
+    const soloKV = memoryKV();
+    await phoneOn(origin, false, soloKV).read();
+    expect(soloKV.rows.size, "the standalone door writes no account look").toBe(0);
+    fake.server.close();
+  });
+
+  it("the kept look goes on sign-out, a mid-use end, another account or the standalone door", () => {
+    const kept: FaceMirror = { owner: "account-1", face: "ohmarchy" };
+    const live = (ownerKey: string, standalone = false) => ({ k: "live" as const, session: { ownerKey, standalone } });
+    expect(faceMirrorStands(kept, { k: "starting" })).toBe(true);
+    expect(faceMirrorStands(kept, { k: "connecting" })).toBe(true);
+    expect(faceMirrorStands(kept, live("account-1"))).toBe(true);
+    expect(faceMirrorStands(kept, { k: "idle" })).toBe(false);
+    expect(faceMirrorStands(kept, { k: "ended" })).toBe(false);
+    expect(faceMirrorStands(kept, live("account-2"))).toBe(false);
+    expect(faceMirrorStands(kept, live("account-1", true))).toBe(false);
+  });
+
+  it("a look adopted before the keystore answered is not overwritten by the older row", async () => {
+    let answer: (raw: string | null) => void = () => {};
+    const held = new Promise<string | null>((resolve) => { answer = resolve; });
+    const seen: (FaceMirror | null)[] = [];
+    const store = faceMirrorStore(
+      { get: () => held, set: async () => {}, remove: async () => {} },
+      (m) => seen.push(m),
+    );
+    const booting = store.boot();
+    store.set({ owner: "account-1", face: "paper" });
+    answer(JSON.stringify({ owner: "account-1", face: "ohmarchy" }));
+    await booting;
+    expect(seen).toEqual([{ owner: "account-1", face: "paper" }]);
   });
 });

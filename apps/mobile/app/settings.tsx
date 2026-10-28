@@ -260,6 +260,7 @@ function SettingsBody() {
             accountKnown={w.face.known}
             pending={w.face.pending}
             setPin={setFacePin}
+            choose={w.face.choose}
             applyAll={w.face.applyAll}
           />
         </Panel>
@@ -473,11 +474,11 @@ function DiagnosticPanel() {
 }
 
 /**
- * The face and its two scopes — the phone's half of OHMARCHY-PLAN.md §3a. The
- * segmented control is "only this device": it writes the device pin instantly,
- * no server involved. The quiet line, "apply on all devices", PATCHes the
- * account (`{themeFace}` alone), adopts the echo and clears the pin; a pinned
- * device ignores account changes. Apply-all is withheld, not disabled, when
+ * The face and its two scopes — the phone's half of OHMARCHY-PLAN.md §3a.
+ * Signed in, the segmented control writes the account, as on the web and the
+ * desktop (`face-scope.ts`'s `choose`); on the standalone door or with nothing
+ * connected it is the device pin. The quiet line, "apply on all devices",
+ * PATCHes the account (`{themeFace}` alone), adopts the echo and clears the pin. Apply-all is withheld, not disabled, when
  * nothing is connected or the face is not yet read ({@link World.face.known}):
  * pressing while unknown would PATCH paper over a real ohmarchy (the webapp
  * gates on `themeFaceKnown` too). A refused write leaves the real face shown.
@@ -1075,6 +1076,7 @@ function FacePanel({
   accountKnown,
   pending,
   setPin,
+  choose,
   applyAll,
 }: {
   pin: FaceName | null;
@@ -1082,6 +1084,7 @@ function FacePanel({
   accountKnown: boolean;
   pending: boolean;
   setPin: (face: FaceName | null) => void;
+  choose: ((face: FaceName) => Promise<boolean>) | null;
   applyAll: (face: FaceName) => Promise<boolean>;
 }) {
   const [failed, setFailed] = useState(false);
@@ -1096,11 +1099,11 @@ function FacePanel({
       <View style={{ paddingHorizontal: 16 }}>
         <Segmented<FaceName>
           value={face}
-          /* Device-local and instant — the "only this device" scope. Never the account. */
           onChange={(next) => {
             if (next === face) return;
             setFailed(false);
-            setPin(next);
+            if (choose === null) setPin(next);
+            else void choose(next).then((ok) => { if (!ok) setFailed(true); });
           }}
           segments={[
             { value: "paper", label: Copy.facePaper },
