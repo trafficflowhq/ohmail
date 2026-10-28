@@ -629,6 +629,32 @@ describe("a reader's visit off the Ohbox (useReaderVisit)", () => {
     r.observe([p("a0")], { top: 0, bottom: 800 }, new Set(["a0"]), 0);
     expect(r.observe([p("a0")], { top: 0, bottom: 800 }, new Set(["a0"]), THREAD_READ_HOLD_MS + 1), "kept unread").toEqual([]);
   });
+
+  it("a step key's landing rests: the wiring carries the rest and previews until stayed or entered", () => {
+    act(() => show(letter("a")));
+    expect(visit.wiring?.restMs, "shown by another path: no rest").toBeUndefined();
+    expect(visit.wiring?.previewing).toBeFalsy();
+    act(() => { visit.land("b"); show(letter("b")); });
+    expect(visit.wiring?.restMs).toBe(LANDING_REST_MS);
+    expect(visit.wiring?.previewing).toBe(true);
+    act(() => visit.wiring!.onStay!());
+    expect(visit.wiring?.previewing, "stayed: its pictures load").toBe(false);
+    expect(visit.wiring?.restMs).toBe(LANDING_REST_MS);
+    act(() => { visit.land("c"); show(letter("c")); });
+    act(() => visit.wiring!.onEnter());
+    expect(visit.wiring?.previewing, "entered").toBe(false);
+  });
+
+  it("a landing ends with its visit: back by another path is no landing, and a landing not shown is dropped", () => {
+    act(() => { visit.land("a"); show(letter("a")); });
+    act(() => show(letter("b")));
+    expect(visit.wiring?.restMs, "b came by another path").toBeUndefined();
+    act(() => show(letter("a")));
+    expect(visit.wiring?.restMs, "back on a: a new visit").toBeUndefined();
+    act(() => visit.land("c"));
+    act(() => show(letter("c")));
+    expect(visit.wiring?.restMs, "c was not shown when it was landed on").toBeUndefined();
+  });
 });
 
 describe("a landing rested on (LANDING_REST_MS) is entered; a command or a press ends the rest", () => {
@@ -648,7 +674,7 @@ describe("a landing rested on (LANDING_REST_MS) is entered; a command or a press
     dwell();
     expect(reads).toEqual([["a"]]);
   });
-  it("no rest given (a URL landing, every other reader): never entered", () => {
+  it("no rest given (a URL landing, a click, a reader the sheet shows): never entered", () => {
     panel("a", 0, 300);
     mount();
     pass(60_000);

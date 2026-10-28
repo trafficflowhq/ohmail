@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { createApp, apiRoutes, csrfTokenFor, type ApiDeps } from "@trafficflow/api";
+import { eq } from "drizzle-orm";
+import { createApp, apiRoutes, csrfTokenFor, ERASED_ANSWER_HEADER, type ApiDeps } from "@trafficflow/api";
 import { refreshTokens } from "@trafficflow/db";
 import { generateToken, hashToken } from "@trafficflow/services";
 import * as scan from "../../../scripts/lib/source-scan.mjs";
@@ -15,16 +16,20 @@ import { PNG_2X3 } from "../../core/test/fixtures/images.js";
    The census walks the package's source by a path built at runtime. */
 
 /**
- * A RESPONSE THAT ENDS A BROWSER SESSION EMPTIES THAT BROWSER'S HTTP CACHE. A proxied picture is
- * kept a day in it (`routes/privacy.ts`), where the web client's own wipe cannot reach, so every
- * response that expires `tf_session` carries `Clear-Site-Data: "cache"`: the sign-out, the erase,
- * and the refused refresh a browser signed out elsewhere meets next. Driven over the real route
- * table; the census below holds every jar-emptying call to the one helper.
+ * A RESPONSE THAT ENDS A BROWSER SESSION EMPTIES THE JAR AND NEVER CARRIES `Clear-Site-Data`.
+ * Chrome holds an answer carrying it, cookie clears included, until it has walked its whole disk
+ * cache: the resume splash waited on the refresh door's refusal, the sign-out press on its door's
+ * answer, the erase on its receipt. The HTTP cache still goes, a proxied picture is kept a day in
+ * it (`routes/privacy.ts`): the browser asks for the clear on its own (`x-ohmail-clear: cache`)
+ * once it holds the answer, and nothing waits for that. Driven over the real route table; the
+ * census below holds every jar-emptying call to one of the two helpers.
  */
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 const CLEARS = "clear-site-data";
+const PURGE = { "x-ohmail-clear": "cache" };
+const SESSION_COOKIES = ["tf_session", "tf_refresh", "tf_csrf", "tf_resume", "tf_owner"];
 
 /** The cookie jar a signed-in browser presents, CSRF header included. */
 function browser(token: string): { cookie: string; headers: Record<string, string> } {
@@ -43,12 +48,22 @@ async function seedRefresh(
   return refresh;
 }
 
+/** The whole jar cleared, and nothing a browser would hold the answer for. */
 function expectSessionEnded(res: Response, what: string): void {
-  expect(cookieMaxAge(res, "tf_session"), `${what}: the jar is emptied`).toBe(0);
-  expect(res.headers.get(CLEARS), `${what}: the browser's cache goes with it`).toBe('"cache"');
+  for (const name of SESSION_COOKIES) expect(cookieMaxAge(res, name), `${what}: ${name} is cleared`).toBe(0);
+  expect(res.headers.get(CLEARS), `${what}: a cache clear holds this answer in Chrome`).toBeNull();
 }
 
-describe("every response that ends a browser session clears the browser's cache", () => {
+/** The clear asked for alone: 202, the header, no body, no cookie. */
+async function expectPurged(res: Response, what: string): Promise<void> {
+  expect(res.status, what).toBe(202);
+  expect(res.headers.get(CLEARS), what).toBe('"cache"');
+  expect(res.headers.get("cache-control"), what).toBe("no-store");
+  expect(res.headers.getSetCookie(), `${what}: the purge sets no cookie`).toEqual([]);
+  expect(await res.text(), what).toBe("");
+}
+
+describe("every response that ends a browser session empties the jar, and none is held for a cache walk", () => {
   it("the sign-out", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
@@ -57,7 +72,7 @@ describe("every response that ends a browser session clears the browser's cache"
     expectSessionEnded(res, "POST /auth/logout");
   });
 
-  it("the web's sign-out door, its 204 and its own 401 alike", async () => {
+  it("the web's sign-out door, its 204 and its own 401 alike; the cache goes at the purge after them", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
     const refresh = await seedRefresh(db, s);
@@ -68,6 +83,7 @@ describe("every response that ends a browser session clears the browser's cache"
     const named = await H(req("POST", "/auth/refresh/logout"), deps);
     expect(named.status).toBe(401);
     expectSessionEnded(named, "the door's 401");
+    await expectPurged(await H(req("POST", "/auth/refresh", { headers: PURGE }), deps), "the purge after the sign-out");
   });
 
   it("the erase", async () => {
@@ -81,9 +97,10 @@ describe("every response that ends a browser session clears the browser's cache"
   /**
    * SIGNED OUT ELSEWHERE. Another session signs every device out; this browser's next request
    * answers 401 with the cache kept — that 401 also answers a live session whose access token
-   * another tab just rotated — and its refresh, refused, is where the session is found gone.
+   * another tab just rotated — and its refresh, refused, is where the session is found gone. The
+   * refusal clears the jar at once; the cache goes at the purge the browser sends after it.
    */
-  it("a session revoked from another device is told at its refused refresh", async () => {
+  it("a session revoked from another device is told at its refused refresh, and its cache goes at the purge", async () => {
     const { db, deps } = await makeDeps();
     const here = await seedSession(db, { now: FIXED_NOW });
     const refresh = await seedRefresh(db, here);
@@ -100,7 +117,47 @@ describe("every response that ends a browser session clears the browser's cache"
 
     const refused = await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${refresh}`, body: "{}" }), deps);
     expect(refused.status).toBe(401);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("refresh_revoked");
     expectSessionEnded(refused, "the refused refresh");
+    await expectPurged(await H(req("POST", "/auth/refresh", { headers: PURGE }), deps), "the purge after it");
+  });
+
+  it("an erased account's refresh is told so at once, with no cache clear on the answer", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const refresh = await seedRefresh(db, s);
+    expect((await H(req("DELETE", "/account", { bearer: s.token }), deps)).status).toBe(200);
+    const erased = await H(req("POST", "/auth/refresh", {
+      cookie: `tf_refresh=${refresh}`, headers: { [ERASED_ANSWER_HEADER]: "account_erased" }, body: "{}",
+    }), deps);
+    expect(erased.status).toBe(410);
+    expect(((await erased.json()) as { error: { code: string } }).error.code).toBe("account_erased");
+    expectSessionEnded(erased, "the erased account's refresh");
+  });
+
+  it("the purge reads no jar: a live session is neither rotated nor ended, and no cookie is set", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const refresh = await seedRefresh(db, s);
+    const jar = browser(s.token);
+    await expectPurged(await H(req("POST", "/auth/refresh", {
+      cookie: `${jar.cookie}; tf_refresh=${refresh}`, headers: { ...jar.headers, ...PURGE },
+    }), deps), "a purge with a live jar");
+    const [row] = await db.select({ consumedAt: refreshTokens.consumedAt, revokedAt: refreshTokens.revokedAt })
+      .from(refreshTokens).where(eq(refreshTokens.tokenHash, hashToken(refresh)));
+    expect(row?.consumedAt, "the purge rotated the refresh token").toBeNull();
+    expect(row?.revokedAt, "the purge ended the family").toBeNull();
+    // The same jar still renews: nothing the purge did reached the session.
+    expect((await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${refresh}`, body: "{}" }), deps)).status).toBe(204);
+  });
+
+  it("a bearer-only host has no browser cache to clear: the purge is the door's own refusal there", async () => {
+    const { deps } = await makeDeps();
+    const res = await H(req("POST", "/auth/refresh", { headers: PURGE }), { ...deps, allowCookieAuth: false });
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("refresh_missing");
+    expect(res.headers.get(CLEARS)).toBeNull();
+    expect(res.headers.getSetCookie()).toEqual([]);
   });
 
   it("a response that keeps the session keeps the cache (positive controls)", async () => {
@@ -143,8 +200,8 @@ describe("every response that ends a browser session clears the browser's cache"
   });
 });
 
-describe("the helper decides by the response's own cookies", () => {
-  it("only an expired tf_session line counts", async () => {
+describe("neither helper ever carries the clear", () => {
+  it("sessionEnded never carries the clear, whatever the cookies; status, body and cookies kept", async () => {
     const { sessionEnded } = await import("../src/session-end.js");
     const with_ = (...cookies: string[]): Response => {
       const h = new Headers();
@@ -152,19 +209,36 @@ describe("the helper decides by the response's own cookies", () => {
       return new Response(null, { status: 204, headers: h });
     };
     const stamped = (r: Response) => sessionEnded(r).headers.get(CLEARS);
-    expect(stamped(with_("tf_session=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0"))).toBe('"cache"');
+    expect(stamped(with_("tf_session=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0"))).toBeNull();
     expect(stamped(with_("tf_session=abc; HttpOnly; Path=/; Max-Age=900"))).toBeNull();
-    expect(stamped(with_("tf_session_other=; Path=/; Max-Age=0"))).toBeNull();
     expect(stamped(with_("tf_csrf=; Path=/; Max-Age=0"))).toBeNull();
-    expect(stamped(with_("tf_session=; Path=/; Max-Age=00"))).toBe('"cache"');
+    expect(stamped(with_("tf_session=; Path=/; Max-Age=00"))).toBeNull();
     expect(stamped(with_())).toBeNull();
-    const kept = sessionEnded(with_("tf_session=; Path=/; Max-Age=0", "tf_csrf=; Path=/; Max-Age=0"));
-    expect(kept.status).toBe(204);
-    expect(kept.headers.getSetCookie(), "the cookies ride through unchanged").toHaveLength(2);
+    const h = new Headers({ "Content-Type": "application/json", "Clear-Site-Data": '"cache"' });
+    h.append("Set-Cookie", "tf_session=; Path=/; Max-Age=0");
+    h.append("Set-Cookie", "tf_csrf=; Path=/; Max-Age=0");
+    const kept = sessionEnded(new Response('{"erased":true}', { status: 200, headers: h }));
+    expect(kept.status).toBe(200);
+    expect(kept.headers.get(CLEARS), "a clear the answer already carried").toBeNull();
+    expect(kept.headers.getSetCookie(), "the cookies ride through unchanged")
+      .toEqual(["tf_session=; Path=/; Max-Age=0", "tf_csrf=; Path=/; Max-Age=0"]);
+    expect(await kept.text()).toBe('{"erased":true}');
+  });
+
+  it("a refusal keeps its cookies, status and body, and never carries the clear", async () => {
+    const { sessionRefused } = await import("../src/session-end.js");
+    const h = new Headers({ "Content-Type": "application/json", "Clear-Site-Data": '"cache"' });
+    h.append("Set-Cookie", "tf_session=; Path=/; Max-Age=0");
+    h.append("Set-Cookie", "tf_csrf=; Path=/; Max-Age=0");
+    const refused = sessionRefused(new Response('{"error":{"code":"refresh_revoked"}}', { status: 401, headers: h }));
+    expect(refused.status).toBe(401);
+    expect(refused.headers.get(CLEARS)).toBeNull();
+    expect(refused.headers.getSetCookie()).toEqual(["tf_session=; Path=/; Max-Age=0", "tf_csrf=; Path=/; Max-Age=0"]);
+    expect(await refused.text()).toBe('{"error":{"code":"refresh_revoked"}}');
   });
 });
 
-/* ── THE CENSUS: the jar is emptied only inside `sessionEnded(` ─────────────────────────────── */
+/* ── THE CENSUS: the jar is emptied only inside `sessionEnded(` or `sessionRefused(` ─────────── */
 
 const SRC = join(import.meta.dirname, "..", "src");
 
@@ -175,44 +249,50 @@ function sources(dir: string): string[] {
   });
 }
 
-/** Every `clearSessionCookies(` call outside its definition, and whether a `sessionEnded(` encloses it. */
-function clearingCalls(files: Array<{ path: string; text: string }>): Array<{ at: string; wrapped: boolean }> {
-  const out: Array<{ at: string; wrapped: boolean }> = [];
+type Helper = "sessionEnded" | "sessionRefused";
+
+/** Every `clearSessionCookies(` call outside its definition, and which helper encloses it, if any. */
+function clearingCalls(files: Array<{ path: string; text: string }>): Array<{ at: string; wrapped: Helper | null }> {
+  const out: Array<{ at: string; wrapped: Helper | null }> = [];
   for (const f of files) {
     const code = scan.withoutCommentsAndLiterals(f.text);
-    const spans = [...code.matchAll(/\bsessionEnded\s*\(/g)]
-      .map((m) => scan.bracketSpan(code, m.index! + m[0].length - 1))
-      .filter((s) => s.closed);
+    const spans = [...code.matchAll(/\b(sessionEnded|sessionRefused)\s*\(/g)]
+      .map((m) => ({ helper: m[1] as Helper, span: scan.bracketSpan(code, m.index! + m[0].length - 1) }))
+      .filter((s) => s.span.closed);
     for (const m of code.matchAll(/\bclearSessionCookies\s*\(/g)) {
       if (/function\s+$/.test(code.slice(Math.max(0, m.index! - 16), m.index!))) continue;
       out.push({
         at: `${relative(SRC, f.path)}:${scan.lineOf(code, m.index!)}`,
-        wrapped: spans.some((s) => s.start <= m.index! && m.index! < s.end),
+        wrapped: spans.find((s) => s.span.start <= m.index! && m.index! < s.span.end)?.helper ?? null,
       });
     }
   }
   return out;
 }
 
-describe("census — every response that empties the jar goes through the helper", () => {
+describe("census — every response that empties the jar goes through a helper", () => {
   const files = sources(SRC).map((path) => ({ path, text: readFileSync(path, "utf8") }));
 
-  it("the six jar-emptying calls are all inside `sessionEnded(`", () => {
+  it("the six jar-emptying calls: four end a session, the refresh door's two refuse one", () => {
     const calls = clearingCalls(files);
-    // Sign-out, the erase, the refused refresh, the erased account's refresh (its 410), and the
-    // web's sign-out door (its 204 and its own 401).
-    expect(calls.map((c) => c.at.replace(/:\d+$/, "")).sort()).toEqual([
-      "routes/account.ts", "routes/session-lifecycle.ts", "routes/session-lifecycle.ts",
-      "routes/session-lifecycle.ts", "routes/session-lifecycle.ts", "routes/session-lifecycle.ts",
+    const by = (helper: Helper | null): string[] => calls.filter((c) => c.wrapped === helper).map((c) => c.at.replace(/:\d+$/, "")).sort();
+    // Sign-out, the erase, and the web's sign-out door (its 204 and its own 401): the browser purges
+    // once it holds the answer.
+    expect(by("sessionEnded")).toEqual([
+      "routes/account.ts", "routes/session-lifecycle.ts", "routes/session-lifecycle.ts", "routes/session-lifecycle.ts",
     ]);
-    expect(calls.filter((c) => !c.wrapped).map((c) => c.at), "a session-ending response without the header").toEqual([]);
+    // The refused refresh and the erased account's refresh (its 410): the browser purges on its own too.
+    expect(by("sessionRefused")).toEqual(["routes/session-lifecycle.ts", "routes/session-lifecycle.ts"]);
+    expect(by(null), "a response that empties the jar through neither helper").toEqual([]);
   });
 
-  it("…and a planted route that empties the jar without it reads red (control)", () => {
+  it("…and a planted route that empties the jar without either reads red (control)", () => {
     const bare = { path: join(SRC, "routes", "planted.ts"), text: "export const h = () => noContent(clearSessionCookies());\n" };
     const wrapped = { path: join(SRC, "routes", "planted2.ts"), text: "export const h = () => sessionEnded(noContent(clearSessionCookies()));\n" };
-    const calls = clearingCalls([bare, wrapped]);
-    expect(calls.filter((c) => !c.wrapped).map((c) => c.at)).toEqual(["routes/planted.ts:1"]);
-    expect(calls.find((c) => c.at === "routes/planted2.ts:1")?.wrapped).toBe(true);
+    const refused = { path: join(SRC, "routes", "planted3.ts"), text: "export const h = () => sessionRefused(noContent(clearSessionCookies()));\n" };
+    const calls = clearingCalls([bare, wrapped, refused]);
+    expect(calls.filter((c) => c.wrapped === null).map((c) => c.at)).toEqual(["routes/planted.ts:1"]);
+    expect(calls.find((c) => c.at === "routes/planted2.ts:1")?.wrapped).toBe("sessionEnded");
+    expect(calls.find((c) => c.at === "routes/planted3.ts:1")?.wrapped).toBe("sessionRefused");
   });
 });

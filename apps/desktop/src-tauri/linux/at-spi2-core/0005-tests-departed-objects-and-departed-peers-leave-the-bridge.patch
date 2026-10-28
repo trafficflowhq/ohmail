@@ -1,0 +1,650 @@
+From: ohmail
+Date: Wed, 28 Oct 2026 14:40:41 +0100
+Subject: [PATCH 5/5] tests: departed objects and departed peers leave the
+ bridge
+
+Two in-process tests that read the bridge's own state, with the bridge on a
+private bus (GTestDBus) that serves as the accessibility bus.
+
+cache-departed: an object queued for the cache that goes defunct before the
+queue drains is cached again from the queue; once it is finalized it must be
+gone from the cache, and Cache.GetItems must answer with live objects only.
+Red on 2.52.0, where the re-added entry outlives its object and GetItems refs
+freed memory (the class of at-spi2-core #178).
+
+direct-connection, second case: peers that open the application's p2p address,
+make one call and close must not stay in direct_connections. libdbus 1.14
+keeps no pidfd per peer, so the upstream case skips there; this one counts the
+connections the bridge holds.
+
+[ohmail: not upstream; carried with the backports above.]
+---
+ tests/at-spi2-atk/bridge-fixture.c         | 258 +++++++++++++++++++++
+ tests/at-spi2-atk/bridge-fixture.h         |  53 +++++
+ tests/at-spi2-atk/meson.build              |  32 ++-
+ tests/at-spi2-atk/test-cache-departed.c    | 106 +++++++++
+ tests/at-spi2-atk/test-direct-connection.c | 116 +++++++++
+ 5 files changed, 563 insertions(+), 2 deletions(-)
+ create mode 100644 tests/at-spi2-atk/bridge-fixture.c
+ create mode 100644 tests/at-spi2-atk/bridge-fixture.h
+ create mode 100644 tests/at-spi2-atk/test-cache-departed.c
+
+diff --git a/tests/at-spi2-atk/bridge-fixture.c b/tests/at-spi2-atk/bridge-fixture.c
+new file mode 100644
+index 0000000..bfcea00
+--- /dev/null
++++ b/tests/at-spi2-atk/bridge-fixture.c
+@@ -0,0 +1,258 @@
++/*
++ * AT-SPI - Assistive Technology Service Provider Interface
++ *
++ * In-process fixture for tests that read the bridge's own state.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ */
++
++#include "bridge-fixture.h"
++
++#include "accessible-cache.h"
++#include "bridge.h"
++#include <atk-bridge.h>
++#include <glib/gstdio.h>
++
++/* A node with a child list and a state set the test sets by hand. */
++
++typedef struct
++{
++  AtkObject parent;
++  GPtrArray *children;
++  AtkStateSet *states;
++} FixtureNode;
++
++typedef struct
++{
++  AtkObjectClass parent_class;
++} FixtureNodeClass;
++
++G_DEFINE_TYPE (FixtureNode, fixture_node, ATK_TYPE_OBJECT)
++
++#define FIXTURE_NODE(o) ((FixtureNode *) (o))
++
++static gint
++fixture_node_get_n_children (AtkObject *obj)
++{
++  return FIXTURE_NODE (obj)->children->len;
++}
++
++static AtkObject *
++fixture_node_ref_child (AtkObject *obj, gint i)
++{
++  FixtureNode *node = FIXTURE_NODE (obj);
++
++  if (i < 0 || (guint) i >= node->children->len)
++    return NULL;
++  return g_object_ref (g_ptr_array_index (node->children, i));
++}
++
++static AtkStateSet *
++fixture_node_ref_state_set (AtkObject *obj)
++{
++  return g_object_ref (FIXTURE_NODE (obj)->states);
++}
++
++static void
++fixture_node_finalize (GObject *obj)
++{
++  FixtureNode *node = FIXTURE_NODE (obj);
++
++  g_ptr_array_unref (node->children);
++  g_object_unref (node->states);
++  G_OBJECT_CLASS (fixture_node_parent_class)->finalize (obj);
++}
++
++static void
++fixture_node_init (FixtureNode *node)
++{
++  node->children = g_ptr_array_new_with_free_func (g_object_unref);
++  node->states = atk_state_set_new ();
++}
++
++static void
++fixture_node_class_init (FixtureNodeClass *klass)
++{
++  AtkObjectClass *atk_class = ATK_OBJECT_CLASS (klass);
++
++  G_OBJECT_CLASS (klass)->finalize = fixture_node_finalize;
++  atk_class->get_n_children = fixture_node_get_n_children;
++  atk_class->ref_child = fixture_node_ref_child;
++  atk_class->ref_state_set = fixture_node_ref_state_set;
++}
++
++AtkObject *
++fixture_node_new (void)
++{
++  AtkObject *node = g_object_new (fixture_node_get_type (), NULL);
++
++  atk_object_set_role (node, ATK_ROLE_PANEL);
++  return node;
++}
++
++void
++fixture_node_append (AtkObject *parent, AtkObject *child)
++{
++  g_ptr_array_add (FIXTURE_NODE (parent)->children, g_object_ref (child));
++  atk_object_set_parent (child, parent);
++}
++
++/* What a toolkit emits when the child appears; the bridge queues it. */
++void
++fixture_node_announce (AtkObject *parent, AtkObject *child)
++{
++  guint index;
++
++  g_assert_true (g_ptr_array_find (FIXTURE_NODE (parent)->children, child, &index));
++  g_signal_emit_by_name (parent, "children-changed::add", index, child);
++}
++
++void
++fixture_node_remove (AtkObject *parent, AtkObject *child)
++{
++  g_assert_true (g_ptr_array_remove (FIXTURE_NODE (parent)->children, child));
++}
++
++void
++fixture_node_set_defunct (AtkObject *node)
++{
++  atk_state_set_add_state (FIXTURE_NODE (node)->states, ATK_STATE_DEFUNCT);
++  atk_object_notify_state_change (node, ATK_STATE_DEFUNCT, TRUE);
++}
++
++/* The bridge: ATK's own AtkUtil listeners (emission hooks) and our root. */
++
++static AtkObject *fixture_root;
++
++static AtkObject *
++fixture_get_root (void)
++{
++  return fixture_root;
++}
++
++static gboolean
++deadline_passed (gpointer data)
++{
++  *(gboolean *) data = TRUE;
++  return G_SOURCE_REMOVE;
++}
++
++/* Runs the main loop until done() holds; FALSE when it never did. */
++gboolean
++fixture_iterate_until (gboolean (*done) (gpointer), gpointer data)
++{
++  gboolean expired = FALSE;
++  guint deadline = g_timeout_add_seconds (10, deadline_passed, &expired);
++
++  while (!done (data) && !expired)
++    g_main_context_iteration (NULL, TRUE);
++  if (!expired)
++    g_source_remove (deadline);
++  return done (data);
++}
++
++typedef struct
++{
++  gboolean finished;
++  GVariant *reply;
++  GError *error;
++} CallState;
++
++static gboolean
++call_finished (gpointer data)
++{
++  return ((CallState *) data)->finished;
++}
++
++static void
++call_done (GObject *source, GAsyncResult *res, gpointer data)
++{
++  CallState *state = data;
++
++  state->reply = g_dbus_connection_call_finish (G_DBUS_CONNECTION (source), res,
++                                                &state->error);
++  state->finished = TRUE;
++}
++
++/* A method call answered by the bridge in this process's main loop. */
++GVariant *
++fixture_call (GDBusConnection *connection,
++              const gchar *dest,
++              const gchar *path,
++              const gchar *iface,
++              const gchar *method,
++              const GVariantType *reply_type)
++{
++  CallState state = { 0 };
++
++  g_dbus_connection_call (connection, dest, path, iface, method, NULL,
++                          reply_type, G_DBUS_CALL_FLAGS_NONE, -1, NULL,
++                          call_done, &state);
++  g_assert_true (fixture_iterate_until (call_finished, &state));
++  g_assert_no_error (state.error);
++  return state.reply;
++}
++
++void
++fixture_up (BridgeFixture *fixture, AtkObject *root)
++{
++  gchar *argv_store[] = { "bridge-fixture", "--atspi-no-register", NULL };
++  gchar **argv = argv_store;
++  gint argc = 2;
++  AtkUtilClass *util;
++  GError *error = NULL;
++  GVariant *reply;
++
++  /* Only criticals are fatal: with no registry on the private bus the
++   * bridge warns about its registration replies. */
++  g_log_set_always_fatal (G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
++
++  fixture->runtime_dir = g_dir_make_tmp ("bridge-fixture-XXXXXX", &error);
++  g_assert_no_error (error);
++  g_setenv ("XDG_RUNTIME_DIR", fixture->runtime_dir, TRUE);
++
++  fixture->bus = g_test_dbus_new (G_TEST_DBUS_NONE);
++  g_test_dbus_up (fixture->bus);
++  g_setenv ("AT_SPI_BUS_ADDRESS", g_test_dbus_get_bus_address (fixture->bus), TRUE);
++
++  fixture_root = root;
++  util = g_type_class_ref (ATK_TYPE_UTIL);
++  util->get_root = fixture_get_root;
++  g_type_class_unref (util);
++
++  g_assert_cmpint (atk_bridge_adaptor_init (&argc, &argv), ==, 0);
++
++  fixture->client = g_dbus_connection_new_for_address_sync (
++      g_test_dbus_get_bus_address (fixture->bus),
++      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
++          G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
++      NULL, NULL, &error);
++  g_assert_no_error (error);
++
++  /* A client's first call makes the bridge build its cache and listen. */
++  fixture->app_name = g_strdup (dbus_bus_get_unique_name (spi_global_app_data->bus));
++  reply = fixture_call (fixture->client, fixture->app_name, FIXTURE_ROOT_PATH,
++                        "org.a11y.atspi.Application", "GetApplicationBusAddress",
++                        G_VARIANT_TYPE ("(s)"));
++  g_variant_get (reply, "(s)", &fixture->app_address);
++  g_variant_unref (reply);
++  g_assert_nonnull (spi_global_cache);
++}
++
++void
++fixture_down (BridgeFixture *fixture)
++{
++  g_dbus_connection_close_sync (fixture->client, NULL, NULL);
++  g_clear_object (&fixture->client);
++  atk_bridge_adaptor_cleanup ();
++  g_test_dbus_down (fixture->bus);
++  g_clear_object (&fixture->bus);
++  g_rmdir (fixture->runtime_dir);
++  g_clear_pointer (&fixture->runtime_dir, g_free);
++  g_clear_pointer (&fixture->app_name, g_free);
++  g_clear_pointer (&fixture->app_address, g_free);
++  fixture_root = NULL;
++}
+diff --git a/tests/at-spi2-atk/bridge-fixture.h b/tests/at-spi2-atk/bridge-fixture.h
+new file mode 100644
+index 0000000..389557e
+--- /dev/null
++++ b/tests/at-spi2-atk/bridge-fixture.h
+@@ -0,0 +1,53 @@
++/*
++ * AT-SPI - Assistive Technology Service Provider Interface
++ *
++ * In-process fixture for tests that read the bridge's own state: the
++ * bridge runs in the test process, on a private bus that serves as the
++ * accessibility bus, over a tree of plain AtkObjects the test controls.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ */
++
++#ifndef BRIDGE_FIXTURE_H
++#define BRIDGE_FIXTURE_H
++
++#include <atk/atk.h>
++#include <gio/gio.h>
++
++G_BEGIN_DECLS
++
++#define FIXTURE_ROOT_PATH "/org/a11y/atspi/accessible/root"
++
++typedef struct
++{
++  GTestDBus *bus;
++  gchar *runtime_dir;
++  GDBusConnection *client;
++  gchar *app_name;
++  gchar *app_address;
++} BridgeFixture;
++
++AtkObject *fixture_node_new (void);
++void fixture_node_append (AtkObject *parent, AtkObject *child);
++void fixture_node_announce (AtkObject *parent, AtkObject *child);
++void fixture_node_remove (AtkObject *parent, AtkObject *child);
++void fixture_node_set_defunct (AtkObject *node);
++
++void fixture_up (BridgeFixture *fixture, AtkObject *root);
++void fixture_down (BridgeFixture *fixture);
++
++GVariant *fixture_call (GDBusConnection *connection,
++                        const gchar *dest,
++                        const gchar *path,
++                        const gchar *iface,
++                        const gchar *method,
++                        const GVariantType *reply_type);
++
++gboolean fixture_iterate_until (gboolean (*done) (gpointer), gpointer data);
++
++G_END_DECLS
++
++#endif /* BRIDGE_FIXTURE_H */
+diff --git a/tests/at-spi2-atk/meson.build b/tests/at-spi2-atk/meson.build
+index 0c748a4..371e4aa 100644
+--- a/tests/at-spi2-atk/meson.build
++++ b/tests/at-spi2-atk/meson.build
+@@ -79,10 +79,38 @@ foreach t: tests
+   endif
+ endforeach
+ 
++# Tests that read the bridge's own state link its objects in: the shared
++# library exports only the three entry points.
++bridge_internals_objects = libatk_bridge.extract_all_objects(recursive: true)
++bridge_internals_deps = [
++  libatk_bridge_dep.partial_dependency(includes: true),
++  libatk_bridge_adaptors_dep,
++  libdroute_dep,
++  libdbus_dep,
++  gmodule_dep,
++  gobject_dep,
++  gio_dep,
++  libatk_dep,
++  atspi_dep,
++]
++
++cache_departed_test_bin = executable(
++  'cache-departed-test',
++  ['test-cache-departed.c', 'bridge-fixture.c'],
++  objects: bridge_internals_objects,
++  dependencies: bridge_internals_deps,
++  include_directories: root_inc,
++)
++
++test('cache-departed', cache_departed_test_bin, timeout: 30,
++     env: ['G_DEBUG=fatal-criticals'])
++
+ direct_connection_test_bin = executable(
+   'direct-connection-test',
+-  'test-direct-connection.c',
+-  dependencies: gio_dep,
++  ['test-direct-connection.c', 'bridge-fixture.c'],
++  objects: bridge_internals_objects,
++  dependencies: bridge_internals_deps,
++  include_directories: root_inc,
+   c_args: [
+     '-DTESTS_BUILD_DIR="@0@"'.format(meson.current_build_dir()),
+     '-DTESTS_DATA_DIR="@0@"'.format(join_paths(meson.current_source_dir(), 'data')),
+diff --git a/tests/at-spi2-atk/test-cache-departed.c b/tests/at-spi2-atk/test-cache-departed.c
+new file mode 100644
+index 0000000..cbbf513
+--- /dev/null
++++ b/tests/at-spi2-atk/test-cache-departed.c
+@@ -0,0 +1,106 @@
++/*
++ * AT-SPI - Assistive Technology Service Provider Interface
++ *
++ * An object that is queued for the cache, goes defunct, is cached again from
++ * the queue and is then finalized must leave the cache: Cache.GetItems refs
++ * and unrefs every entry, so an entry left behind is a use-after-free in
++ * every client that discovers the application.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ */
++
++#include "bridge-fixture.h"
++
++#include "accessible-cache.h"
++#include "accessible-register.h"
++
++static gboolean
++cached (gpointer obj)
++{
++  return spi_cache_in (spi_global_cache, G_OBJECT (obj));
++}
++
++static void
++mark_finalized (gpointer data, GObject *where_the_object_was)
++{
++  *(gboolean *) data = TRUE;
++}
++
++static void
++test_departed_object_leaves_cache (void)
++{
++  BridgeFixture fixture = { 0 };
++  AtkObject *root = fixture_node_new ();
++  AtkObject *live = fixture_node_new ();
++  AtkObject *departing = fixture_node_new ();
++  gboolean finalized = FALSE;
++  gpointer departed;
++  GVariant *reply, *items, *item;
++  GHashTable *paths;
++  gchar *live_path;
++  gsize i;
++
++  /* Both are in the tree before the bridge starts: an object the bridge
++   * reports while it is outside the cache is leased for 16 s, and the test
++   * needs the departing one finalized when it lets go of it. */
++  fixture_node_append (root, live);
++  fixture_node_append (root, departing);
++  fixture_up (&fixture, root);
++  g_assert_true (cached (live));
++  g_assert_true (cached (departing));
++
++  /* Queued again, then defunct before the queue drains: the defunct
++   * notice takes it out of the cache, the queue puts it back. */
++  fixture_node_announce (root, departing);
++  fixture_node_set_defunct (departing);
++  g_assert_false (cached (departing));
++  g_assert_true (fixture_iterate_until (cached, departing));
++
++  g_object_weak_ref (G_OBJECT (departing), mark_finalized, &finalized);
++  departed = departing;
++  fixture_node_remove (root, departing);
++  g_object_unref (departing);
++  g_assert_true (finalized);
++
++  g_assert_false (spi_cache_in (spi_global_cache, departed));
++
++  /* GetItems answers with the live objects only (and, under
++   * G_DEBUG=fatal-criticals, refs nothing that is gone). */
++  reply = fixture_call (fixture.client, fixture.app_name, "/org/a11y/atspi/cache",
++                        "org.a11y.atspi.Cache", "GetItems", NULL);
++  items = g_variant_get_child_value (reply, 0);
++  paths = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
++  for (i = 0; i < g_variant_n_children (items); i++)
++    {
++      const gchar *path;
++
++      item = g_variant_get_child_value (items, i);
++      g_variant_get_child (item, 0, "(&s&o)", NULL, &path);
++      g_hash_table_add (paths, g_strdup (path));
++      g_variant_unref (item);
++    }
++  live_path = spi_register_object_to_path (spi_global_register, G_OBJECT (live));
++  g_assert_cmpuint (g_variant_n_children (items), ==, 2);
++  g_assert_true (g_hash_table_contains (paths, FIXTURE_ROOT_PATH));
++  g_assert_true (g_hash_table_contains (paths, live_path));
++
++  g_free (live_path);
++  g_hash_table_unref (paths);
++  g_variant_unref (items);
++  g_variant_unref (reply);
++  fixture_down (&fixture);
++  g_object_unref (live);
++  g_object_unref (root);
++}
++
++int
++main (int argc, char **argv)
++{
++  g_test_init (&argc, &argv, NULL);
++  g_test_add_func ("/atk-bridge/cache/departed-object-leaves-cache",
++                   test_departed_object_leaves_cache);
++  return g_test_run ();
++}
+diff --git a/tests/at-spi2-atk/test-direct-connection.c b/tests/at-spi2-atk/test-direct-connection.c
+index 1fad3a7..15bbc57 100644
+--- a/tests/at-spi2-atk/test-direct-connection.c
++++ b/tests/at-spi2-atk/test-direct-connection.c
+@@ -9,6 +9,8 @@
+  * version 2.1 of the License, or (at your option) any later version.
+  */
+ 
++#include "bridge-fixture.h"
++#include "bridge.h"
+ #include <gio/gio.h>
+ #include <glib.h>
+ #include <signal.h>
+@@ -286,11 +288,125 @@ out:
+   g_spawn_close_pid (app_pid);
+ }
+ 
++/* The same property read in the bridge itself, where libdbus keeps no
++ * pidfd to count: the connections it still holds. */
++
++#define DEPARTING_PEERS 16
++
++static guint
++held_connections (void)
++{
++  return g_list_length (spi_global_app_data->direct_connections);
++}
++
++/* Every connection still held has seen its end and delivered it. */
++static gboolean
++departures_delivered (gpointer data)
++{
++  GList *l;
++
++  for (l = spi_global_app_data->direct_connections; l; l = l->next)
++    if (dbus_connection_get_is_connected (l->data) ||
++        dbus_connection_get_dispatch_status (l->data) != DBUS_DISPATCH_COMPLETE)
++      return FALSE;
++  return TRUE;
++}
++
++typedef struct
++{
++  GDBusConnection *peer;
++  GError *error;
++  gboolean finished;
++} PeerState;
++
++static gboolean
++peer_finished (gpointer data)
++{
++  return ((PeerState *) data)->finished;
++}
++
++static void
++peer_opened (GObject *source, GAsyncResult *res, gpointer data)
++{
++  PeerState *state = data;
++
++  state->peer = g_dbus_connection_new_for_address_finish (res, &state->error);
++  state->finished = TRUE;
++}
++
++static void
++peer_closed (GObject *source, GAsyncResult *res, gpointer data)
++{
++  PeerState *state = data;
++
++  g_dbus_connection_close_finish (G_DBUS_CONNECTION (source), res, &state->error);
++  state->finished = TRUE;
++}
++
++static void
++departed_peers_are_dropped (void)
++{
++  BridgeFixture fixture = { 0 };
++  AtkObject *root = fixture_node_new ();
++  guint i;
++
++  fixture_up (&fixture, root);
++  g_assert_cmpstr (fixture.app_address, !=, "");
++  g_assert_cmpuint (held_connections (), ==, 0);
++
++  for (i = 0; i < DEPARTING_PEERS; i++)
++    {
++      PeerState state = { 0 };
++      guint before = held_connections ();
++      GVariant *reply;
++
++      g_dbus_connection_new_for_address (fixture.app_address,
++                                         G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT,
++                                         NULL, NULL, peer_opened, &state);
++      g_assert_true (fixture_iterate_until (peer_finished, &state));
++      g_assert_no_error (state.error);
++
++      reply = fixture_call (state.peer, NULL, FIXTURE_ROOT_PATH,
++                            "org.a11y.atspi.Application", "GetApplicationBusAddress",
++                            G_VARIANT_TYPE ("(s)"));
++      g_variant_unref (reply);
++      g_assert_cmpuint (held_connections (), ==, before + 1);
++
++      state.finished = FALSE;
++      g_dbus_connection_close (state.peer, NULL, peer_closed, &state);
++      g_assert_true (fixture_iterate_until (peer_finished, &state));
++      g_assert_no_error (state.error);
++      g_clear_object (&state.peer);
++      g_assert_true (fixture_iterate_until (departures_delivered, NULL));
++    }
++
++  g_assert_cmpuint (held_connections (), ==, 0);
++
++  fixture_down (&fixture);
++  g_object_unref (root);
++}
++
++static void
++test_departed_peers_are_dropped (void)
++{
++  if (g_test_subprocess ())
++    {
++      departed_peers_are_dropped ();
++      return;
++    }
++  g_test_trap_subprocess (NULL, 0,
++                          G_TEST_SUBPROCESS_INHERIT_STDOUT |
++                              G_TEST_SUBPROCESS_INHERIT_STDERR);
++  g_test_trap_assert_passed ();
++}
++
+ int
+ main (int argc, char **argv)
+ {
+   g_test_init (&argc, &argv, NULL);
+   g_test_add_func ("/atk-bridge/direct-connection-is-released",
+                    test_direct_connection_is_released);
++  g_test_add_func ("/atk-bridge/departed-peers-are-dropped",
++                   test_departed_peers_are_dropped);
+   return g_test_run ();
+ }

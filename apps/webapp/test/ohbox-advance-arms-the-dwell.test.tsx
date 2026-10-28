@@ -335,6 +335,51 @@ describe("keys pressed as a browser dispatches them: the key that lands does not
   }, 30_000);
 });
 
+/** ↓/↑ scrolling the column is reading on, as → is: the landing it shows is entered. */
+describe("an arrow scroll of the reading column enters the landing", () => {
+  /** Five conversations, one unread letter each: New ["a", "b", "c", "d", "e"]. */
+  const five = () => ["a", "b", "c", "d", "e"].map((id, i) => msg(id, 40 - 10 * i, { threadId: `t-${id}` }));
+
+  it("j, →, j, then ↓ scrolling the column inside the rest: the conversation reads as an open read", async () => {
+    layout.restore();
+    layout = stubThreadLayout({ heights: { old: 2000 } });
+    await mountThread(three());
+    await keyAsBrowser("j");
+    await keyAsBrowser("ArrowRight");
+    await keyAsBrowser("j");
+    expect(selected()).toBe("old");
+    await keyAsBrowser("ArrowDown");
+    expect(col().scrollTop, "↓ scrolled the column").toBeGreaterThan(0);
+    expect(selected(), "and moved no cursor").toBe("old");
+    await idle();
+    expect(patches).toEqual([GLANCE]);
+  }, 30_000);
+
+  it("→ into the column, then j j j passing fast: only the one rested on reads", async () => {
+    await mountThread(five());
+    await keyAsBrowser("j");
+    await keyAsBrowser("ArrowRight");
+    await keyAsBrowser("j");
+    await keyAsBrowser("j");
+    await keyAsBrowser("j");
+    expect(selected()).toBe("d");
+    expect(patches, "nothing passed reads").toEqual([]);
+    await idle();
+    expect(patches).toEqual([{ ids: ["d"], unread: false, via: "glance", openRead: true }]);
+  }, 30_000);
+
+  it("↓ ↓ ↓ in the list passing fast: only the one rested on reads", async () => {
+    await mountThread(five());
+    await keyAsBrowser("ArrowDown");
+    await keyAsBrowser("ArrowDown");
+    await keyAsBrowser("ArrowDown");
+    expect(selected()).toBe("c");
+    expect(patches, "nothing passed reads").toEqual([]);
+    await idle();
+    expect(patches).toEqual([{ ids: ["c"], unread: false, via: "glance", openRead: true }]);
+  }, 30_000);
+});
+
 describe("a landing's embedded pictures: asked for once the cursor stays the rest, not while passing", () => {
   const HTML = '<table width="600"><tr><td><p>hello</p><img src="cid:logo@x" width="40" height="40" alt="logo"></td></tr></table>';
   const bodies = { first: { text: "hello", html: HTML }, old: { text: "hello", html: HTML } };

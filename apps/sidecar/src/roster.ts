@@ -416,6 +416,8 @@ export interface LocalMailboxRuntime {
   noteWorldMoved(): void;
   /** The doorbell: the ladder to base and one coalesced drain now, as an INBOX `exists` rings it. */
   ring(): void;
+  /** A read or unread was pressed: send the owed `\Seen` writes now, behind any drain. Never throws. */
+  pushSeen(): void;
   /** Stop this mailbox's timer, wait for the in-flight cycle and close its login. Leaves the
    *  store alone — the store is the install's, not this row's. `"restart"` (the install's stop
    *  the shell marked) keeps the claim for the relaunch; every other caller passes `"quit"`.

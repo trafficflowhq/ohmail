@@ -172,7 +172,7 @@ describe("a read the person asked for is not held by a full window", () => {
  */
 const DOORS: Record<string, { count: number; why: string }> = {
   "api-client.ts": { count: 3, why: "the two lane doors: `api()`'s attempt and the transport's first send; the transport's retry after a renewal is not admitted again" },
-  "session-refresh.ts": { count: 1, why: "exempt: the renewal writes the session cookies, so it never waits; its answer is reported (`noteAnswer`)" },
+  "session-refresh.ts": { count: 2, why: "exempt: the renewal writes the session cookies, so it never waits; its answer is reported (`noteAnswer`). And the cache purge after a refusal, a confirmed sign-out or an erase (`purgeSiteCache`): it reads no session, and nothing waits for it" },
   "shell/session-truth.ts": { count: 1, why: "exempt: the fallback when no transport is registered (no `api-client` loaded, the desktop)" },
   "shell/engine-config.ts": { count: 1, why: "exempt: the wake stream; on a return the scheduler dials it after the delta's lead (`afterLead`)" },
   "shell/build-watch.ts": { count: 1, why: "exempt: `/version` is the web host's own, off the API base" },

@@ -40,9 +40,10 @@ import type { ThreadWalkChannel } from "./thread-walk-channel";
 export { EVIDENCE_WINDOW_MS };
 
 /**
- * A LANDING THE PERSON RESTS ON IS ENTERED: the Ohbox's j/k, a verb's advance or an Undo put the
- * cursor here, and it stayed this long with the window in front, no page modal over it and no command
- * since. With the 0.7 s dwell, a message on screen reads 2 s after the cursor stopped.
+ * A LANDING THE PERSON RESTS ON IS ENTERED: the Ohbox's j/k, a verb's advance or an Undo, or ↓/↑
+ * (j/k in History) in a reader off the Ohbox, put the cursor here, and it stayed this long with the
+ * window in front, no page modal over it and no command since. With the 0.7 s dwell, a message on
+ * screen reads 2 s after the cursor stopped.
  */
 export const LANDING_REST_MS = 1300;
 
@@ -465,14 +466,16 @@ export type ReaderMarkSeen = (ids: string[], unread: boolean, via?: "glance", re
 /**
  * THE VISIT OF A READER OFF THE OHBOX — Folder, History, a tag, the triage piles and the sheet over
  * them. One record per shown message, unentered until `enter` (an open, ↵, → into the column) or the
- * adapter's own press, wheel or hand scroll. Any change of the shown id ends the visit and coming back
- * starts over; an `enter` for an id the next commit does not show is dropped. Reads go out as glances
- * naming the shown message as the row read (`readRow`), so an Ohbox letter read here is an open read.
+ * adapter's own press, wheel or hand scroll. `land` marks a visit a step key made (↓/↑, j/k): it is
+ * entered once the cursor rests on it ({@link LANDING_REST_MS}). Any change of the shown id ends the
+ * visit, its landing with it, and coming back starts over; an `enter` or a `land` for an id the next
+ * commit does not show is dropped. Reads go out as glances naming the shown message as the row read
+ * (`readRow`), so an Ohbox letter read here is an open read.
  */
 export function useReaderVisit({ shown, markSeen }: {
   shown: EngineMessage | null;
   markSeen: ReaderMarkSeen;
-}): { wiring: ThreadReadWiring | null; enter: (id: string) => void } {
+}): { wiring: ThreadReadWiring | null; enter: (id: string) => void; land: (id: string) => void } {
   const records = useRef(new Map<string, ThreadRead>());
   const [, bump] = useState(0);
   const write = useRef(markSeen);
@@ -493,7 +496,19 @@ export function useReaderVisit({ shown, markSeen }: {
     r.enter(threadReadTime.now());
     bump((n) => n + 1);
   }, []);
+  const landings = useRef(new WeakSet<ThreadRead>());
+  const land = useCallback((id: string) => {
+    const r = records.current.get(id) ?? createThreadRead();
+    records.current.set(id, r);
+    if (landings.current.has(r)) return;
+    landings.current.add(r);
+    bump((n) => n + 1);
+  }, []);
+  /** The landing the cursor stayed the rest's length on: its pictures load. */
+  const [stayed, setStayed] = useState<ThreadRead | null>(null);
   const record = shownId === null ? null : recordFor(shownId);
+  const landed = record !== null && landings.current.has(record);
+  const entered = record?.entered ?? false;
   const wiring = useMemo<ThreadReadWiring | null>(() => (record === null || shownId === null ? null : {
     look: "dot",
     record,
@@ -503,8 +518,9 @@ export function useReaderVisit({ shown, markSeen }: {
       record.keepUnread(id);
       void write.current([id], true);
     },
-  }), [record, shownId, enter]);
-  return { wiring, enter };
+    ...(landed ? { restMs: LANDING_REST_MS, previewing: !entered && stayed !== record, onStay: () => setStayed(record) } : {}),
+  }), [record, shownId, enter, landed, entered, stayed]);
+  return { wiring, enter, land };
 }
 
 /**

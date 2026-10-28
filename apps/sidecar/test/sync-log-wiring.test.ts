@@ -8,7 +8,7 @@ import type {
   OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
-import { flagState, folderState, messageInstances, messages } from "@trafficflow/db";
+import { flagState, folderState, messageInstances, messages, upsertDesiredSeen } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { createSidecarLogger } from "../src/log.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
@@ -178,13 +178,9 @@ describe("the standalone door's sync loop can be heard", () => {
       reconcileStatus: "reconciled",
     });
 
-    // The user reads it — through the real route the window sends.
-    const marked = await sidecar.handle(new Request("http://sidecar/messages", {
-      method: "PATCH",
-      headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ ids: [m!.id], unread: false }),
-    }));
-    expect(marked.status, await marked.text().catch(() => "")).toBe(200);
+    // The user read it while no push could run (the route's push would STORE before the sweep).
+    await sidecar.db.update(messages).set({ unread: false }).where(eq(messages.id, m!.id));
+    await upsertDesiredSeen(sidecar.db, m!.id, false, true, new Date());
 
     // …and then the folder it lived in is deleted on the server. The sweep's end state:
     await sidecar.db.update(messages)

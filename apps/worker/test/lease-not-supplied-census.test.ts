@@ -88,6 +88,8 @@ function sitesIn(rel: string, text: string): { handIns: Site[]; guards: Site[]; 
 const HAND_INS: Record<string, string> = {
   // The cycle's authority, from its own role: a reader, or the permit THIS gate took.
   "apps/sidecar/src/engine.ts:drain": `cycleWriteAuthority(organizing ? "organizer" : "reader", leasePermit)`,
+  // A read press's `\Seen` push: always the reader's entitlement, never the organizer's permit.
+  "apps/sidecar/src/engine.ts:pushSeen": `cycleWriteAuthority("reader", leasePermit)`,
   "apps/worker/src/index.ts:visitMailbox": "cycleWriteAuthority(rt.role, rt.leasePermit)",
   "apps/worker/src/reconcile-cron.ts:runReconcileCron": "cycleWriteAuthority(deps.role, permit)",
   // The passes inside a cycle ride the cycle's authority (folder ops, the rescue, the sweep port).

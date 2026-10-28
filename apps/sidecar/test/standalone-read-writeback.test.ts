@@ -8,7 +8,7 @@ import type {
   OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
-import { flagState, folderState, messageInstances, messages } from "@trafficflow/db";
+import { auditLog, flagState, folderState, messageInstances, messages } from "@trafficflow/db";
 import { HttpAdapter, OhmailEngine, type EngineMessage } from "@ohmail/client-engine";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
@@ -52,6 +52,7 @@ class MemoryMetaFolder implements LeaseIo {
     return this.claims.map((c) => ({ ...c }));
   }
   async appendClaim(raw: string): Promise<void> {
+    wire.appendClaim += 1;
     this.claims.push({ ref: this.nextUid++, raw });
   }
   async removeClaims(refs: readonly unknown[]): Promise<void> {
@@ -72,6 +73,12 @@ const EMPTY_BATCH: ChangeBatch = {
 /** Every `\Seen` write the reconciler asked the server to perform. */
 interface FlagWrite { locator: NativeLocator; seen: boolean | undefined }
 
+/** What else the mailbox was asked, in order, and a hook in front of each STORE. */
+const wire = {
+  changesSince: 0, appendClaim: 0, events: [] as string[],
+  beforeStore: null as ((seen: boolean | undefined) => Promise<void>) | null,
+};
+
 function recordingMailbox(sink: FlagWrite[]): (cfg: ImapConfig) => MailboxAdapter & { leaseIo(): LeaseIo } {
   const meta = new MemoryMetaFolder();
   return (_cfg) => ({
@@ -83,6 +90,7 @@ function recordingMailbox(sink: FlagWrite[]): (cfg: ImapConfig) => MailboxAdapte
     },
     async ensureFolders(): Promise<void> {},
     async changesSince(): Promise<ChangeBatch> {
+      wire.changesSince += 1;
       return { ...EMPTY_BATCH };
     },
     async move(locator: NativeLocator): Promise<NativeLocator> {
@@ -91,7 +99,12 @@ function recordingMailbox(sink: FlagWrite[]): (cfg: ImapConfig) => MailboxAdapte
     /* THE ASSERTION'S SUBJECT. `reconcileFlags` calls exactly this, and on a mailbox that is the
        user's own copy of their mail it is the only thing that makes a read durable. */
     async setFlags(locator: NativeLocator, flags: { seen?: boolean }): Promise<void> {
+      await wire.beforeStore?.(flags.seen);
       sink.push({ locator, seen: flags.seen });
+      wire.events.push(`setFlags ${String(flags.seen)}`);
+    },
+    async rearmWatch(): Promise<void> {
+      wire.events.push("rearmWatch");
     },
     async scanSentRecipients(): Promise<string[]> {
       return [];
@@ -113,6 +126,7 @@ describe("the standalone door writes read-state back to the mailbox", () => {
   const flagWrites: FlagWrite[] = [];
   afterEach(async () => {
     flagWrites.length = 0;
+    Object.assign(wire, { changesSince: 0, appendClaim: 0, events: [], beforeStore: null });
     for (const c of cleanups.splice(0).reverse()) await c();
   });
 
@@ -144,7 +158,7 @@ describe("the standalone door writes read-state back to the mailbox", () => {
   }
 
   /** One unread message sitting in the INBOX, with the locator a STORE needs to address it. */
-  async function seedUnread(sidecar: Sidecar, subject: string, uid: number): Promise<string> {
+  async function seedUnread(sidecar: Sidecar, subject: string, uid: number, folder = "INBOX"): Promise<string> {
     const dedup = `mid:${subject}@seen.test`;
     const [m] = await sidecar.db.insert(messages).values({
       accountId: sidecar.world.accountId,
@@ -155,7 +169,7 @@ describe("the standalone door writes read-state back to the mailbox", () => {
       subject,
       fromAddress: "someone@elsewhere.test",
       unread: true,
-      nativeLocator: { folder: "INBOX", ref: `1:${uid}` },
+      nativeLocator: { folder, ref: `1:${uid}` },
     }).returning();
     /* A WATCHED INSTANCE, or the cycle's mail-0065 reaper tombstones a locator-bearing message
        with no `message_instances` row as mail the server no longer holds. */
@@ -163,15 +177,15 @@ describe("the standalone door writes read-state back to the mailbox", () => {
       accountId: sidecar.world.accountId,
       mailboxId: sidecar.world.mailboxId,
       messageId: m!.id,
-      folder: "INBOX",
+      folder,
       uidvalidity: 1n,
       uid,
       isPrimary: true,
     });
     await sidecar.db.insert(folderState).values({
       messageId: m!.id,
-      desiredFolder: "INBOX",
-      observedFolder: "INBOX",
+      desiredFolder: folder,
+      observedFolder: folder,
       lastSetBy: "external",
       reconcileStatus: "reconciled",
     });
@@ -201,9 +215,8 @@ describe("the standalone door writes read-state back to the mailbox", () => {
     // And the INTENT was recorded, which is what the reconciler is owed.
     const [intent] = await sidecar.db.select().from(flagState).where(eq(flagState.messageId, id));
     expect(intent!.desiredSeen, "the read-state intent was not written").toBe(true);
-    expect(intent!.reconcileStatus).toBe("pending");
 
-    // One drain — the same pass the poll timer runs, and the same one the hosted worker runs.
+    // The press's own push may already have settled it; a drain after it must not STORE again.
     await sidecar.syncUntilQuiet();
 
     /* THE CLAIM. Read in ohmail ⇒ `\Seen` in the mailbox. Without this the message is bold again
@@ -302,5 +315,117 @@ describe("the standalone door writes read-state back to the mailbox", () => {
       flagWrites.map((w) => ({ ref: (w.locator as { ref?: unknown }).ref, seen: w.seen })),
       "a glance read never reached the mailbox",
     ).toEqual([{ ref: "1:44", seen: true }]);
+  });
+
+  /* ── THE READ GOES OUT AT ONCE ───────────────────────────────────────────────────────────
+     The boot polls hourly, so a STORE inside the bound can only come from the press's own push. */
+  const BOUND = { timeout: 1_000, interval: 10 };
+  const writes = () => flagWrites.map((w) => ({ ref: (w.locator as { ref?: unknown }).ref, seen: w.seen }));
+  async function settle(s: Sidecar): Promise<void> {
+    await s.syncUntilQuiet();
+    flagWrites.length = 0;
+    Object.assign(wire, { changesSince: 0, appendClaim: 0, events: [] });
+  }
+  const press = (s: Sidecar, path: string, body: unknown) => s.handle(new Request(`http://sidecar${path}`, {
+    method: "PATCH", headers: auth(s), body: JSON.stringify(body),
+  }));
+  const intentOf = async (s: Sidecar, id: string) =>
+    (await s.db.select().from(flagState).where(eq(flagState.messageId, id)))[0]!;
+
+  it("a read reaches the mailbox within a second of the press, with no drain and no lease gate", async () => {
+    const sidecar = await boot();
+    const id = await seedUnread(sidecar, "prompt-read", 51);
+    const glanced = await seedUnread(sidecar, "prompt-glance", 52);
+    await settle(sidecar);
+
+    expect((await press(sidecar, "/messages", { ids: [id], unread: false })).status).toBe(200);
+    await vi.waitFor(async () => {
+      expect(writes()).toEqual([{ ref: "1:51", seen: true }]);
+      expect((await intentOf(sidecar, id)).reconcileStatus).toBe("reconciled");
+    }, BOUND);
+
+    // The glance route, `PATCH /messages/:id`, pushes the same way.
+    expect((await press(sidecar, `/messages/${glanced}`, { unread: false, via: "glance" })).status).toBe(200);
+    await vi.waitFor(() => expect(writes()).toEqual([{ ref: "1:51", seen: true }, { ref: "1:52", seen: true }]), BOUND);
+
+    expect(wire.changesSince, "a drain carried the read, not the push").toBe(0);
+    expect(wire.appendClaim, "the push renewed the organizer claim").toBe(0);
+  });
+
+  it("a read taken in the client engine reaches the mailbox within a second of the mutate", async () => {
+    const sidecar = await boot();
+    const id = await seedUnread(sidecar, "prompt-engine", 53);
+    const engine = clientEngine(sidecar);
+    await engine.start();
+    await settle(sidecar);
+
+    const pressedAt = performance.now();
+    await engine.mutate({ kind: "mark_seen", messageIds: [id], unread: false });
+    await vi.waitFor(() => expect(writes()).toEqual([{ ref: "1:53", seen: true }]), BOUND);
+    expect(performance.now() - pressedAt).toBeLessThan(1_000);
+    expect(wire.changesSince).toBe(0);
+  });
+
+  it("read then unread over a slow STORE: both go out in order and the last press wins", async () => {
+    const sidecar = await boot();
+    const id = await seedUnread(sidecar, "prompt-order", 54);
+    await settle(sidecar);
+    let entered = 0;
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    wire.beforeStore = async () => { entered += 1; if (entered === 1) await held; };
+    try {
+      expect((await press(sidecar, "/messages", { ids: [id], unread: false })).status).toBe(200);
+      await vi.waitFor(() => expect(entered).toBe(1), BOUND);
+      expect((await press(sidecar, "/messages", { ids: [id], unread: true })).status).toBe(200);
+    } finally {
+      release();
+    }
+    await vi.waitFor(async () => {
+      expect(flagWrites.map((w) => w.seen)).toEqual([true, false]);
+      const row = await intentOf(sidecar, id);
+      expect([row.desiredSeen, row.observedSeen, row.reconcileStatus]).toEqual([false, false, "reconciled"]);
+    }, BOUND);
+  });
+
+  it("the push puts the INBOX watch back after a STORE in another folder", async () => {
+    const sidecar = await boot();
+    const id = await seedUnread(sidecar, "prompt-archived", 55, "Archive");
+    await settle(sidecar);
+
+    expect((await press(sidecar, "/messages", { ids: [id], unread: false })).status).toBe(200);
+    await vi.waitFor(() => expect(wire.events).toEqual(["setFlags true", "rearmWatch"]), BOUND);
+  });
+
+  it("a STORE the connection drops leaves the read owed, not deferred, and it goes out once on recovery", async () => {
+    const sidecar = await boot();
+    const id = await seedUnread(sidecar, "offline-read", 56);
+    const flip = await seedUnread(sidecar, "offline-flip", 57);
+    await settle(sidecar);
+    let offline = true;
+    let refused = 0;
+    wire.beforeStore = async () => {
+      if (!offline) return;
+      refused += 1;
+      throw Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
+    };
+
+    expect((await press(sidecar, "/messages", { ids: [id], unread: false })).status).toBe(200);
+    await vi.waitFor(() => expect(refused).toBe(1), BOUND);
+    await sidecar.syncUntilQuiet();             // queued behind the push: it has finished
+    const owed = await intentOf(sidecar, id);
+    expect([owed.reconcileStatus, owed.attempts, owed.nextAttemptAt]).toEqual(["pending", 0, null]);
+    const failed = (await sidecar.db.select().from(auditLog)).filter((a) => a.action === "reconcile.flags.failed");
+    expect(failed, "an outage was booked as this letter's failure").toEqual([]);
+
+    // Read then unread while still offline: nothing is owed for that letter.
+    expect((await press(sidecar, "/messages", { ids: [flip], unread: false })).status).toBe(200);
+    expect((await press(sidecar, "/messages", { ids: [flip], unread: true })).status).toBe(200);
+    await sidecar.syncUntilQuiet();
+    offline = false;
+    await sidecar.syncUntilQuiet();
+
+    expect(writes(), "after recovery: the owed read once, and nothing for the read taken back")
+      .toEqual([{ ref: "1:56", seen: true }]);
   });
 });

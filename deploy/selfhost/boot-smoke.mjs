@@ -657,9 +657,19 @@ async function main() {
   }
   assert(/Path=\/auth\/refresh(;|$)/.test(cleared.find((line) => line.startsWith("tf_refresh=")) ?? ""),
     "the refresh cookie's clear must name its own path, or a browser keeps the cookie");
+  assert(signedOut.headers.get("clear-site-data") === null,
+    "the sign-out must not carry Clear-Site-Data: Chrome holds such an answer for a walk of its whole cache");
   const renewAfter = await post("/auth/refresh", {}, jar);
   assert(renewAfter.status === 401, `the signed-out jar must not renew (got ${renewAfter.status})`);
-  ok("signed out through the proxy: 204, five cookies expired, and the session no longer renews");
+  assert(renewAfter.headers.get("clear-site-data") === null,
+    "the refused refresh must not carry Clear-Site-Data: Chrome holds such an answer for a walk of its whole cache");
+  // The cache clear the browser asks for after the sign-out: the clear alone, no cookie.
+  const purge = await fetch(`${BASE}/auth/refresh`, { method: "POST", headers: { "x-ohmail-clear": "cache" } });
+  await expectStatus(purge, 202, "the cache purge through the proxy");
+  assert(purge.headers.get("clear-site-data") === '"cache"', "the purge must carry Clear-Site-Data: \"cache\"",
+    purge.headers.get("clear-site-data"));
+  assert(purge.headers.getSetCookie().length === 0, "the purge must set no cookie");
+  ok("signed out through the proxy: 204, five cookies expired, the session no longer renews, the purge answers alone");
 
   process.stdout.write("\n✓ BOOT SMOKE GREEN — compose boots, migrates, signs in, syncs seeded mail, stages bytes, signs out.\n");
 }

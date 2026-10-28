@@ -141,6 +141,12 @@ export interface SyncDeps {
    * move; the tail `reconcileMailbox` still runs, and `\Seen` writes stay there.
    */
   fileBeforeWalk?: boolean;
+  /**
+   * THE `\Seen` WRITES ALONE: the tail's `reconcileMailbox` and nothing before it, no walk, no
+   * ingest, no other pass. Set by the local door right after a read or unread press, so the press
+   * reaches the server without waiting for a drain. Reader entitlement only: an organizer is refused.
+   */
+  seenOnly?: boolean;
   /** Optional AI classifier (design §5.3). Absent ⇒ Phase-0 routing (no AI branch). */
   classifier?: ClassifierPort;
   /**
@@ -911,6 +917,7 @@ async function fencedLiveGroup<T>(deps: LiveScope, fn: (repo: WorkerRepo) => Pro
 export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
   const at = freshCyclePages();
   try {
+    if (input.seenOnly === true) return await seenOnlyCycle(input, at);
     return await cycleWithKnownSet(input, at);
   } catch (err) {
     // ── THE CYCLE'S VERDICT WHEN THE MAILBOX CHANGED HANDS UNDER IT ────────────────────────────
@@ -949,6 +956,21 @@ export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boole
             + "it — the cycle stopped there and the next cycle's gate re-reads the lease" });
       }
     }
+    throw err;
+  }
+}
+
+/** {@link SyncDeps.seenOnly}. The memo is watched, not bracketed: no walk reads it here. */
+async function seenOnlyCycle(
+  input: SyncDeps, at: CyclePageCursor,
+): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
+  if (input.role !== "reader") throw new Error("a seen-only cycle runs with the reader's entitlement only");
+  const cache = input.knownSet;
+  try {
+    const { owesMore } = await reconcileMailbox(cache ? { ...input, repo: watchKnownSet(input.repo, cache) } : input, at);
+    return { hasBacklog: false, owesFiling: owesMore };
+  } catch (err) {
+    cache?.drop("cycle-threw");
     throw err;
   }
 }

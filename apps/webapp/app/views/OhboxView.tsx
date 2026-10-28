@@ -1737,8 +1737,8 @@ export function OhboxView({
   /**
    * THE ZONE MODEL — rail ← list → open message (`zone-nav.tsx`). ↓/↑ in the list are
    * `stepDown`/`stepUp`, the same closures `j`/`k` dispatch: previews under four keycaps.
-   * → into the pane is `engage` (it enters the conversation); at widths where the column is
-   * hidden it is `open`, the deliberate open the sheet answers.
+   * → into the pane is `engage` (it enters the conversation), and so is ↑/↓ scrolling it; at
+   * widths where the column is hidden → is `open`, the deliberate open the sheet answers.
    */
   useZoneNav({
     list: { up: stepUp, down: stepDown, followId: selected?.id ?? null },
@@ -1746,6 +1746,7 @@ export function OhboxView({
       selector: ".view-ohbox .read-col",
       disabled: selected == null,
       onEnter: () => selected && engage(selected),
+      onScrollKey: () => selected && engage(selected),
       onHiddenEnter: () => selected && open(selected),
     },
   });

@@ -181,6 +181,25 @@ describe("retry-infra.sh: cargo-exec-126 and hdiutil-busy", () => {
   });
 });
 
+describe("retry-infra.sh: download-network", () => {
+  const args = ["-fsSL", "-o", "x.tar.xz", "https://example.com/x.tar.xz"];
+
+  it("a reset mid-body is retried once; an HTTP status or a full disk is not", () => {
+    const reset = run("download-network", "curl", [{ out: "curl: (56) Recv failure: Connection reset by peer\n", code: 56 }, { out: "", code: 0 }], args);
+    expect(reset.status).toBe(0);
+    expect(runs(reset)).toBe(2);
+    expect(warnings(reset.stdout)).toEqual([
+      "::warning title=Retried once%3A download-network::curl: (56) Recv failure: Connection reset by peer (exit 56); running it once more",
+    ]);
+    for (const [out, code] of [["curl: (22) The requested URL returned error: 404\n", 22], ["curl: (23) Failure writing output to destination\n", 23]] as const) {
+      const r = run("download-network", "curl", [{ out, code }, { out: "", code: 0 }], args);
+      expect(r.status).toBe(code);
+      expect(runs(r)).toBe(1);
+      expect(warnings(r.stdout)).toEqual([]);
+    }
+  });
+});
+
 describe("retry-infra.sh: usage", () => {
   it.each([
     ["an unknown class", (bin: string) => ["npm-anything", "--", bin, "ci"]],

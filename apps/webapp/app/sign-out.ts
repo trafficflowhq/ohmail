@@ -19,8 +19,10 @@ import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "./shell/wall-lift";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 import {
   SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch, forgetSplashPresentation,
+  purgeSiteCache,
 } from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
+import { SHARED_NOTE_KEY } from "./(product)/resume/signed-out-note";
 import { postSignedOut } from "./signed-out-signal";
 import { forgetMailDocs } from "./components/mail-doc-cache";
 
@@ -214,6 +216,8 @@ export async function forgetThisBrowser(
     // `ohmail.access.<owner>` — where the service last found this account. Left behind it would
     // decide the next account's first paint on this browser from somebody else's standing.
     ACCESS_VERDICT_PREFIX,
+    // Why the splash sent a tab to the sign-in form, left for the other tabs: it goes with the session.
+    SHARED_NOTE_KEY,
     // The erased-account word, which names an erased account's id (`shell/account-erased.ts`).
     // The erased door writes it after this sweep, so its own sweep never removes it.
     ERASED_KEY,
@@ -344,6 +348,9 @@ export async function signOut(
     if (!alreadyGone && opts.mayProceed !== undefined && !opts.mayProceed()) return null;
     serverRefused = alreadyGone ? null : err instanceof Error ? err.message : String(err);
   }
+  // The door's answer cleared the jar and no longer carries the cache clear (a shared machine keeps a
+  // day of pictures there). Never after a refusal: the jar may be live, and an older API renews it.
+  if (serverRefused === null) purgeSiteCache();
   {
     // `revokeWake: false` — already done above, with the session that authorized it.
     // `serverHeld` carries the one fact the marker has to reflect: whether a session may still

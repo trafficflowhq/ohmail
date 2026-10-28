@@ -135,8 +135,12 @@ export function FolderView({
   // The standard grouping, the Ohbox's own labels: unread is what is unhandled here, read is
   // the folder's past. Both keys live in the `ohbox` namespace so the two lists can never
   // drift apart in copy. Flattened unread-first so ONE window covers both groups.
-  const unreadRows = messages.filter((m) => m.unread);
-  const readRows = messages.filter((m) => !m.unread);
+  // The cursor's row keeps the group it had when the cursor reached it: read while shown, it files
+  // under Earlier once left, so a ↓ walk through New is not moved under the cursor.
+  const [kept, setKept] = useState<{ id: string; unread: boolean } | null>(null);
+  const inNew = (m: EngineMessage): boolean => m.unread || (kept !== null && kept.unread && m.id === kept.id);
+  const unreadRows = messages.filter(inNew);
+  const readRows = messages.filter((m) => !inNew(m));
   const ordered = [...unreadRows, ...readRows];
   const win = useListWindow({ scrollerRef, count: ordered.length });
 
@@ -178,10 +182,12 @@ export function FolderView({
     first: (locateId ? messages.find((m) => m.id === locateId) : null) ?? messages[0] ?? older.items[0] ?? null,
   });
   const shown = list.shown;
+  if ((shown?.id ?? null) !== (kept?.id ?? null)) setKept(shown ? { id: shown.id, unread: shown.unread } : null);
   useEffect(() => {
     if (shown) hydrateBody(shown.id);
   }, [shown?.id, hydrateBody]);
-  /* The column's visit: entered by an open, → or the person's own press or scroll in it. */
+  /* The column's visit: entered by an open, → or the person's own press or scroll in it, or once a
+     step (↓/↑) is rested on. */
   const visit = useReaderVisit({ shown, markSeen: onMarkSeen });
   const readColRef = useRef<HTMLDivElement>(null);
   /* A hit's open enters once the column shows it; a pick that moved on first drops it. Where the
@@ -200,9 +206,9 @@ export function FolderView({
    * ↓/↑ WALK THE LIST AS RENDERED — the zone model's list zone (`zone-nav.tsx`), and this
    * view's first list keys (it never had j/k). The walk is the rows in the order the
    * scroller shows them: mirror rows first, the fetched older rows below. Selecting SHOWS —
-   * the column beside the list renders `shown` — and shows only, a preview the read rule
-   * never counts, so a flick down a folder marks nothing. → into the pane enters it; at widths
-   * where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
+   * the column beside the list renders `shown` — a preview until the cursor rests on it, so a
+   * flick down a folder marks nothing. → into the pane enters it; at widths where the column is
+   * hidden it is the sheet, the same answer a tap gets (`openRow`).
    */
   const navOrder = [...ordered, ...olderRows].map((m) => m.id);
   const navAt = shown ? navOrder.indexOf(shown.id) : -1;
@@ -225,6 +231,11 @@ export function FolderView({
       }
     });
   };
+  /** A step key's move: the row it lands on is entered once rested on (`useReaderVisit`'s `land`). */
+  const stepTo = (id: string): void => {
+    selectRow(id);
+    visit.land(id);
+  };
   /* THE NINE MESSAGE VERBS, over this view's own cursor. Without this declaration the
      shell's bindings register `disabled` here (they act on `focused`, which has no arm for
      a split view's local cursor) while the action bar goes on printing their keycaps —
@@ -243,14 +254,14 @@ export function FolderView({
       up: {
         disabled: navAt <= 0,
         run: () => {
-          if (navAt > 0) selectRow(navOrder[navAt - 1]!);
+          if (navAt > 0) stepTo(navOrder[navAt - 1]!);
         },
         label: to("keyPrev"),
       },
       down: {
         disabled: navAt >= navOrder.length - 1,
         run: () => {
-          if (navAt < navOrder.length - 1) selectRow(navOrder[navAt + 1]!);
+          if (navAt < navOrder.length - 1) stepTo(navOrder[navAt + 1]!);
         },
         label: to("keyNext"),
       },
@@ -259,6 +270,7 @@ export function FolderView({
       selector: ".view-folder .read-col",
       disabled: shown == null,
       onEnter: () => { if (shown) visit.enter(shown.id); },
+      onScrollKey: () => { if (shown) visit.enter(shown.id); },
       onHiddenEnter: () => {
         if (shown) onOpen(shown);
       },

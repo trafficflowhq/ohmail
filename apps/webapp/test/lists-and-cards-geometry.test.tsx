@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { Page } from "@playwright/test";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { renderedUiFont, skipUnlessMeasuredFont } from "./_measured-font.js";
 import { AddressText, Chip, MessageRow, StreamCard } from "@ohmail/ui";
@@ -631,5 +632,165 @@ describe("hand back 1: the keyboard, the accessibility tree, the Screener at 360
     expect(r.timeOut, "the time leaves its line").toBe(false);
     const pre = await onPage(doc(html, ".row-top .who{min-width:min(100%,12ch)}.sr-chips > .badge{display:inline-flex}"), read);
     expect(pre.chipBlock || !pre.timeOut, "red control: the replaced rules no longer show the defect").toBe(false);
+  }, 60_000);
+});
+
+/**
+ * THE SCREENER'S HEADS COVER NO LETTER AND NO ROW (a tester, 0.30.8: the newest held letter's subject
+ * half under the "Screened · N held" bar). The real `ScreenerView` on a mirror, bundled and mounted
+ * in Chromium: the newest letter's sender line lands below the sticky decision bar, and the list's
+ * first row below the list's head, in both looks and at every width, after the cursor's walk too.
+ */
+describe("the Screener: the newest letter clears the decision bar, the first row the list head", () => {
+  const SCREENER_SHEETS = [
+    "packages/tokens/src/tokens.css", "packages/tokens/src/faces.css", "packages/tokens/src/ohmarchy.css",
+    "packages/ui/src/base.css", "packages/ui/src/primitives/avatar.css", "packages/ui/src/primitives/address-text.css",
+    "packages/ui/src/composites/row.css", "packages/ui/src/composites/list-pane.css", "packages/ui/src/composites/message.css",
+    "packages/ui/src/composites/decision-bar.css", "apps/webapp/app/app.css",
+  ].map(css).join("\n");
+  let js = "";
+  beforeAll(async () => {
+    const { build } = await import("esbuild");
+    const out = await build({
+      stdin: {
+        resolveDir: resolve(process.cwd(), "apps/webapp"), loader: "tsx",
+        contents: `import { createElement as h, useEffect, useState } from "react"; import { createRoot } from "react-dom/client";
+          import { NextIntlClientProvider } from "next-intl"; import { OhmailEngine, MemoryMirrorStore } from "@ohmail/client-engine";
+          import { ThemeProvider } from "@ohmail/ui"; import messages from "./messages/en.json";
+          import { useScreenerState } from "./app/shell/screener-state"; import { ScreenerView } from "./app/views/ScreenerView";
+          import { KeymapProvider } from "./app/shell/keymap"; import { withBodyDoor } from "./test/_body-door";
+          const NOW = new Date("2026-08-10T12:00:00.000Z");
+          const msg = (s, i) => ({ id: "m" + s + "-" + i, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
+            subject: "Offer " + s + "/" + i + ": quarry invoice glacier review", from: { name: "Vane Offers " + s, address: "offers" + s + "@vane.invalid" },
+            to: [], cc: [], date: new Date(Date.parse("2026-08-10T11:00:00Z") - s * 3600e3 - i * 60e3).toISOString(), folder: "ohmail/Screened",
+            snippet: "s", unread: true, body: "Thistle review invoice garden beacon ember pantry glacier harbour. ".repeat(s + i === 0 ? 120 : 10),
+            hasAttachments: false,
+            attachmentCount: 0, sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+            triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-10T09:00:00.000Z" });
+          window.mountScreener = async (host, full) => {
+            const store = new MemoryMirrorStore(); await store.load(); let seq = 0;
+            const all = Array.from({ length: 24 }, (_, s) => Array.from({ length: s === 0 ? 80 : 2 }, (_, i) => msg(s, i))).flat();
+            await store.applyChanges(all.map((m) => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })));
+            const engine = new OhmailEngine({ store, now: () => NOW, adapter: {
+              sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString() }),
+              mutate: async () => ({ changes: [], seq: null }), withdrawSend: async () => ({ outcome: "unsupported" }),
+              fetchBody: async () => ({ text: "x", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }) } });
+            function Probe() {
+              const [v, setV] = useState(0);
+              useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
+              const state = useScreenerState(engine, v, () => {});
+              const [sel, setSel] = useState({ waiting: null, screened: null, spam: null });
+              return h(ScreenerView, { owed: false, state, segment: "screened", settled: true,
+                selection: { ...sel, screened: sel.screened ?? state.screenedOut[0]?.id ?? null },
+                onSelect: (s, id) => setSel((m) => ({ ...m, [s]: id })), hydrateBody: () => {}, hydrateBodies: () => {}, full, onFull: () => {} });
+            }
+            createRoot(host).render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW,
+              children: h(ThemeProvider, { storageKey: null, children: withBodyDoor(engine, h(KeymapProvider, { children: h(Probe) })) }) }));
+          };`,
+      },
+      bundle: true, write: false, format: "iife", platform: "browser", target: ["es2020"], jsx: "automatic",
+      loader: { ".css": "empty", ".svg": "empty" }, define: { "process.env.NODE_ENV": '"production"' }, logLevel: "error",
+    });
+    js = out.outputFiles[0]!.text;
+  }, 120_000);
+
+  type Box = { top: number; bottom: number };
+  type Heads = { bar: Box; line: Box; subject: Box; col: Box; head: Box | null; scroller: Box | null; row: Box | null; newest: string };
+  const readHeads = (): Heads => {
+    const box = (sel: string): Box | null => {
+      const r = document.querySelector(sel)?.getBoundingClientRect();
+      return r ? { top: r.top, bottom: r.bottom } : null;
+    };
+    const cards = document.querySelectorAll(".view-screener .scn-read .hmail");
+    const last = cards[cards.length - 1]!;
+    const r = (e: Element): Box => ({ top: e.getBoundingClientRect().top, bottom: e.getBoundingClientRect().bottom });
+    const listShown = (document.querySelector(".view-screener .list-col") as HTMLElement | null)?.offsetParent != null;
+    return {
+      bar: box(".view-screener .scn-read > .decide")!, line: r(last.querySelector(".hm-line")!), subject: r(last.querySelector("h2")!),
+      col: box(".view-screener .scn-read")!, head: listShown ? box(".view-screener .list-col .scn-head") : null,
+      scroller: listShown ? box(".view-screener .list-col .scroller") : null,
+      row: listShown ? box(".view-screener .list-col .row .row-top") : null, newest: last.querySelector("h2")!.textContent ?? "",
+    };
+  };
+  async function mount(width: number, height: number, face: string, theme: string): Promise<Page> {
+    const page = await browser!.newPage({ viewport: { width, height } });
+    const html = `<!doctype html><html data-theme="${theme}"${face === "ohmarchy" ? ' data-face="ohmarchy"' : ""}><head><meta charset="utf-8">
+      <style>${SCREENER_SHEETS}</style><style>body{margin:0;font-family:system-ui,sans-serif}#host{height:${height}px;display:flex}</style>
+      </head><body><div id="host"></div></body></html>`;
+    // A document with an origin: the view reads cookies, which about:blank refuses.
+    await page.route("http://screener.invalid/", (r) => r.fulfill({ contentType: "text/html", body: html }));
+    await page.goto("http://screener.invalid/");
+    await page.addScriptTag({ content: "window.process={env:{NODE_ENV:'production'}};" });
+    await page.addScriptTag({ content: js });
+    await page.evaluate((full) => (window as unknown as { mountScreener: (h: Element, f: boolean) => Promise<void> })
+      .mountScreener(document.getElementById("host")!, full), width < 700);
+    await page.waitForFunction(() => document.querySelectorAll(".view-screener .scn-read .hmail").length > 0);
+    // Settled: the bodies paint after the rows, and the column re-anchors as they grow.
+    await page.evaluate(() => new Promise<void>((done) => {
+      const read = document.querySelector(".view-screener .scn-read") as HTMLElement;
+      let last = "", same = 0, n = 0;
+      const tick = () => {
+        const now = `${read.scrollTop}:${read.scrollHeight}`;
+        same = now === last ? same + 1 : 0;
+        last = now;
+        if (same >= 10 || ++n > 300) done(); else requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }));
+    return page;
+  }
+  const clear = (h: Heads, where: string) => {
+    expect(h.newest, `${where}: premise: the newest letter is the last card`).toContain("Offer 0/0:");
+    expect(h.line.top, `${where}: the newest letter's sender line is under the decision bar`).toBeGreaterThanOrEqual(h.bar.bottom - 0.5);
+    expect(h.subject.bottom, `${where}: the newest letter's subject is below the column`).toBeLessThanOrEqual(h.col.bottom + 0.5);
+    if (h.row && h.head && h.scroller) {
+      expect(h.row.top, `${where}: the first row is under the list's head`).toBeGreaterThanOrEqual(h.head.bottom - 0.5);
+      expect(h.row.top, `${where}: the first row starts above the list's scrollport`).toBeGreaterThanOrEqual(h.scroller.top - 0.5);
+    }
+  };
+
+  const LOOKS: ReadonlyArray<[string, string]> = [["ohmarchy", "dark"], ["paper", "light"]];
+  const SIZES: ReadonlyArray<[number, number]> = [[390, 760], [800, 700], [1100, 800], [1920, 1080]];
+  for (const [face, theme] of LOOKS) {
+    for (const [width, height] of SIZES) {
+      it(`${face} ${theme} at ${width}px: the newest letter lands below the bar, the first row below the head`, async () => {
+        const page = await mount(width, height, face, theme);
+        try {
+          clear(await page.evaluate(readHeads), `${face} ${width}px`);
+        } finally {
+          await page.close();
+        }
+      }, 60_000);
+    }
+  }
+
+  it("the cursor walked down the list and back leaves the first row clear of the head", async () => {
+    const page = await mount(1100, 600, "ohmarchy", "dark");
+    try {
+      await page.locator(".view-screener .list-col .scroller").focus();
+      for (let i = 0; i < 23; i++) await page.keyboard.press("j");
+      const walked = await page.evaluate(() => document.querySelector(".view-screener .list-col .scroller")!.scrollTop);
+      expect(walked, "premise: the walk scrolled the list").toBeGreaterThan(0);
+      for (let i = 0; i < 23; i++) await page.keyboard.press("k");
+      clear(await page.evaluate(readHeads), "after the walk");
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it("red control: the 0.30.8 landing (the newest letter at the column's top) is read as covered", async () => {
+    const page = await mount(1920, 1080, "ohmarchy", "dark");
+    try {
+      const covered = await page.evaluate(() => {
+        const read = document.querySelector(".view-screener .scn-read") as HTMLElement;
+        const cards = read.querySelectorAll(".hmail");
+        const last = cards[cards.length - 1]!;
+        read.scrollTop += last.getBoundingClientRect().top - read.getBoundingClientRect().top - 14;
+        return last.querySelector(".hm-line")!.getBoundingClientRect().top < read.querySelector(":scope > .decide")!.getBoundingClientRect().bottom;
+      });
+      expect(covered, "red control: the measurement does not see a letter under the bar").toBe(true);
+    } finally {
+      await page.close();
+    }
   }, 60_000);
 });

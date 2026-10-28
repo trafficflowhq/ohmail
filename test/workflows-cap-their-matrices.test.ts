@@ -148,8 +148,10 @@ describe("the hosted jobs each event starts", () => {
 
   const QUICK = ["dco.yml: sign-off @ubuntu-latest", "guard.yml: guard @ubuntu-latest"];
   const APK = "android.yml: apk @ubuntu-latest", SMOKE = "selfhost-smoke.yml: boot-smoke @ubuntu-latest";
+  /** ci.yml's nightly-only job: the search budget, judged alone on a hosted runner of its own. */
+  const BUDGET = "ci.yml: search-budget @ubuntu-24.04";
   const ENGINE = ["build.yml: engine @ubuntu-latest", "build.yml: engine-ui-smoke @ubuntu-latest"];
-  const DESKTOP = ["macos @macos-15", "macos-sign @macos-15", "windows @windows-latest", "linux @ubuntu-latest", "linux-arm64 @ubuntu-24.04-arm",
+  const DESKTOP = ["macos @macos-15", "macos-sign @macos-15", "windows @windows-latest", "linux @ubuntu-24.04", "linux-arm64 @ubuntu-24.04-arm",
     "linux-rpm-install @ubuntu-latest", "linux-flatpak @ubuntu-latest"].map((j) => `build.yml: ${j}`);
   const CI = ["plan", "suite (0)", "suite (1)", "alone (a.test.ts)", "sqlite (0)", "proxy-e2e", "webapp-build", "typecheck", "desktop"]
     .map((j) => `ci.yml: ${j} @ubuntu-latest`);
@@ -192,7 +194,7 @@ describe("the hosted jobs each event starts", () => {
   it("a v* tag: 22, build.yml's 10 and ghcr-images.yml's 12", () => {
     expect(hosted("push", "refs/tags/v0.30.7")).toEqual([
       "build.yml: macos @macos-15", "build.yml: macos-sign @macos-15", "build.yml: macos-signed-check @macos-15", "build.yml: windows @windows-latest",
-      "build.yml: linux @ubuntu-latest", "build.yml: linux-arm64 @ubuntu-24.04-arm", "build.yml: linux-rpm-install @ubuntu-latest",
+      "build.yml: linux @ubuntu-24.04", "build.yml: linux-arm64 @ubuntu-24.04-arm", "build.yml: linux-rpm-install @ubuntu-latest",
       "build.yml: linux-flatpak @ubuntu-latest", ...ENGINE,
       "ghcr-images.yml: version @ubuntu-latest", "ghcr-images.yml: mirror-images @ubuntu-latest",
       "ghcr-images.yml: build-push (ohmail-server, amd64, ubuntu-latest, apps/server/Dockerfile) @ubuntu-latest",
@@ -210,8 +212,8 @@ describe("the hosted jobs each event starts", () => {
     expect(hosted("push", "refs/tags/android-v0.30.7")).toEqual(["android.yml: build @ubuntu-latest", "android.yml: sign @ubuntu-latest"]);
   });
 
-  it("the nightly: 9, every platform, the APK and the self-host smoke", () => {
-    expect(nightly()).toEqual([APK, ...DESKTOP, SMOKE]);
+  it("the nightly: 10, every platform, the APK, the search budget judged and the self-host smoke", () => {
+    expect(nightly()).toEqual([APK, ...DESKTOP, BUDGET, SMOKE]);
   });
 
   it("the weekly fresh-clone run: 11", () => {
@@ -234,7 +236,9 @@ describe("the hosted jobs each event starts", () => {
     };
     expect(push(BATCH, planted(" && !startsWith(github.head_ref, 'pr/batch-')", "")), "the batch clause dropped").toEqual(QUICK);
     expect(push({}, planted("needs.changes.result != 'skipped' && ", "")), "a skipped `changes` read as unread").toEqual([APK, ...DESKTOP, SMOKE, ...QUICK]);
-    expect(nightly(planted('  schedule:\n    - cron: "41 0 * * *"\n', "", "build.yml")), "build.yml's schedule dropped").toEqual([APK, SMOKE]);
+    expect(nightly(planted('  schedule:\n    - cron: "41 0 * * *"\n', "", "build.yml")), "build.yml's schedule dropped").toEqual([APK, BUDGET, SMOKE]);
+    expect(push({}, planted("    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'\n", "", "ci.yml")),
+      "the search budget's nightly clause dropped").toEqual([BUDGET, ...QUICK]);
     expect(matricesOf(text("ghcr-images.yml").replace("      max-parallel: 3\n", ""))[0]).toEqual({ job: "build-push", bound: undefined });
   });
 });

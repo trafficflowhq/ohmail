@@ -57,6 +57,8 @@ let refreshDoor: "answer" | "slow" = "answer";
 const SLOW_REFRESH_MS = 20_000;
 /** Every request the API saw: method, path, status ("held" / "dropped" for the faults), a refusal's code. */
 let heard: Array<{ method: string; path: string; status: number | "held" | "dropped"; code?: string }> = [];
+/** The path {@link heard} files a cache purge under (`x-ohmail-clear: cache` on the refresh path). */
+const PURGE_PATH = "/auth/refresh (purge)";
 /** When each request below the refresh path ARRIVED (ms since `receivedFrom`) and which cookies it carried, by name. */
 let received: Array<{ ms: number; path: string; cookies: string[] }> = [];
 let receivedFrom = Date.now();
@@ -91,9 +93,11 @@ async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
     else if (v !== undefined) headers.set(k, v);
   }
   const body = method === "GET" || method === "HEAD" || chunks.length === 0 ? undefined : Buffer.concat(chunks);
+  // The cache purge after a confirmed sign-out presents nothing: logged apart, never as a renewal.
+  const path = headers.get("x-ohmail-clear") === "cache" ? PURGE_PATH : url.pathname;
   if (url.pathname.startsWith("/auth/refresh")) {
     const names = (headers.get("cookie") ?? "").split(";").map((c) => c.split("=")[0]!.trim()).filter((n) => n.startsWith("tf_"));
-    received.push({ ms: Date.now() - receivedFrom, path: url.pathname, cookies: names.sort() });
+    received.push({ ms: Date.now() - receivedFrom, path, cookies: names.sort() });
   }
   const fault = url.pathname === "/auth/refresh/logout" && signOutDoor !== "answer" && doorFaultsLeft > 0;
   if (fault) doorFaultsLeft -= 1;
@@ -111,7 +115,7 @@ async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const code = answer.status >= 400
     ? await answer.clone().json().then((b: { error?: { code?: string } }) => b?.error?.code, () => undefined)
     : undefined;
-  heard.push({ method, path: url.pathname, status: answer.status, ...(code ? { code } : {}) });
+  heard.push({ method, path, status: answer.status, ...(code ? { code } : {}) });
   res.statusCode = answer.status;
   answer.headers.forEach((v, k) => { if (k !== "set-cookie") res.setHeader(k, v); });
   const cookies = answer.headers.getSetCookie();
@@ -424,6 +428,8 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     await button.click();
     await page.waitForTimeout(8_000);
     expect(heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status)).toEqual([204]);
+    // The door's 204 no longer carries the cache clear: the browser asked for it once, after it.
+    expect(heard.filter((h) => h.path === PURGE_PATH).map((h) => h.status), "the cache clear after the sign-out").toEqual([202]);
     expect(await familyLive(j.familyId)).toBe(false);
     expect(await jarNames(ctx)).toEqual([]);
     const again = await ctx.newPage();

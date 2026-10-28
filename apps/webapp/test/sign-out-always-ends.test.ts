@@ -8,6 +8,12 @@
  * its deadline with the local half done and the server half named as unconfirmed.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
+import { apiRoutes, createApp, csrfTokenFor } from "@trafficflow/api";
+import { refreshTokens, sessions } from "@trafficflow/db";
+import { generateToken, hashToken } from "@trafficflow/services";
+import { FIXED_NOW, makeDeps, seedSession } from "../../../packages/api/test/helpers.js";
+import { withNodeBlobs } from "./fixtures/node-blobs";
 
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
@@ -127,4 +133,126 @@ describe("sign out ends, and asks the server even behind a renewal", () => {
     expect(out.value?.serverRefused, "an unanswered sign-out was reported as confirmed").not.toBeNull();
     expect(document.cookie, "the local half did not run").toContain("tf_owner=signed_out_pending");
   });
+});
+
+/**
+ * THE BROWSER OVER THE REAL ROUTES, holding what Chrome holds. `fetch` reaches `createApp(apiRoutes)`
+ * on PGlite through the web's rewrites (`/api/*`, the bare refresh path) with a jar: the HttpOnly
+ * cookies here, the others in `document.cookie`, each sent where its path reaches. An answer carrying
+ * `Clear-Site-Data` is held as Chrome 151 was measured holding one while it walks its disk cache: it
+ * settles at `release()` and its cookie clears apply then; an abort before that rejects with
+ * AbortError and drops them. Real timers: PGlite may stall under fake ones.
+ */
+async function heldBrowser(): Promise<{
+  account: string; refresh: string; revoked: () => Promise<boolean>; httpOnly: Map<string, { value: string; path: string }>;
+  sent: Array<{ url: string; init: RequestInit }>; held: Array<{ url: string; release: () => void }>; releaseAll: () => void;
+}> {
+  const { db, deps } = await withNodeBlobs(() => makeDeps());
+  const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+  const [row] = await db.select({ familyId: sessions.familyId }).from(sessions).where(eq(sessions.id, s.sessionId));
+  const refresh = generateToken();
+  await db.insert(refreshTokens).values({
+    accountId: s.accountId, userId: s.userId, sessionId: s.sessionId, familyId: row!.familyId,
+    tokenHash: hashToken(refresh), expiresAt: new Date(FIXED_NOW.getTime() + 2 * 60 * 60 * 1000), createdAt: FIXED_NOW,
+  });
+  const httpOnly = new Map([
+    ["tf_session", { value: s.token, path: "/" }], ["tf_refresh", { value: refresh, path: "/auth/refresh" }],
+    ["tf_resume", { value: "1", path: "/" }],
+  ]);
+  document.cookie = `tf_csrf=${csrfTokenFor(s.token)}; Path=/`;
+  document.cookie = `tf_owner=${s.accountId}; Path=/`;
+  const apply = (lines: string[]): void => {
+    for (const line of lines) {
+      const [pair = "", ...attrs] = line.split(";").map((a) => a.trim());
+      const name = pair.slice(0, pair.indexOf("="));
+      const value = pair.slice(pair.indexOf("=") + 1);
+      const gone = attrs.some((a) => /^max-age=0$/i.test(a));
+      if (attrs.some((a) => /^httponly$/i.test(a))) {
+        if (gone) httpOnly.delete(name);
+        else httpOnly.set(name, { value, path: attrs.find((a) => /^path=/i.test(a))?.slice(5) ?? "/" });
+      } else document.cookie = gone ? `${name}=; Path=/; Max-Age=0` : `${name}=${value}; Path=/`;
+    }
+  };
+  const app = createApp(apiRoutes);
+  const sent: Array<{ url: string; init: RequestInit }> = [];
+  const held: Array<{ url: string; release: () => void }> = [];
+  globalThis.fetch = vi.fn((input: unknown, init: RequestInit = {}) => {
+    const url = String(input);
+    sent.push({ url, init });
+    const headers = new Headers(init.headers);
+    const jar = [...httpOnly].filter(([, c]) => c.path === "/" || url === c.path || url.startsWith(`${c.path}/`))
+      .map(([n, c]) => `${n}=${c.value}`).concat(document.cookie ? document.cookie.split("; ") : []);
+    if (jar.length > 0) headers.set("cookie", jar.join("; "));
+    const request = new Request(`http://localhost${url.replace(/^\/api\//, "/")}`, {
+      method: init.method ?? "GET", headers, body: init.body as BodyInit | undefined,
+    });
+    return new Promise<Response>((resolve, reject) => {
+      let aborted = false;
+      const abort = (): void => { aborted = true; reject(new DOMException("The operation was aborted.", "AbortError")); };
+      if (init.signal?.aborted) return abort();
+      init.signal?.addEventListener("abort", abort, { once: true });
+      void app.handle(request, { ...deps, session: null, idempotency: null }).then((res) => {
+        const settle = (): void => {
+          if (aborted) return;
+          init.signal?.removeEventListener("abort", abort);
+          apply(res.headers.getSetCookie());
+          resolve(res);
+        };
+        if (res.headers.get("clear-site-data") === null) settle();
+        else held.push({ url, release: settle });
+      }, reject);
+    });
+  }) as unknown as typeof globalThis.fetch;
+  (await import("../app/api-client.js")).bindApiOwner(s.accountId);
+  const revoked = async (): Promise<boolean> => {
+    const [r] = await db.select({ revokedAt: refreshTokens.revokedAt }).from(refreshTokens)
+      .where(eq(refreshTokens.tokenHash, hashToken(refresh)));
+    return r?.revokedAt instanceof Date;
+  };
+  return { account: s.accountId, refresh, revoked, httpOnly, sent, held, releaseAll: () => { for (const h of held) h.release(); } };
+}
+
+describe("an answer Chrome holds for its cache walk never holds the sign-out or the erase", () => {
+  it("the sign-out press is confirmed at once, the jar cleared, and one purge sent that nothing awaits", async () => {
+    vi.useRealTimers();
+    const world = await heldBrowser();
+    try {
+      const { signOut } = await import("../app/sign-out.js");
+      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const started = Date.now();
+      const out = await signOut(world.account);
+      const took = Date.now() - started;
+      const purges = world.sent.filter((s) => s.url === "/auth/refresh"
+        && new Headers(s.init.headers).get("x-ohmail-clear") === "cache");
+      expect({
+        withinTwoSeconds: took < 2_000, serverRefused: out.serverRefused, marker: readOwnerMarker().kind,
+        refreshKept: world.httpOnly.has("tf_refresh"), familyRevoked: await world.revoked(), purges: purges.length,
+      }, `a confirmed sign-out read as unconfirmed (${took} ms)`).toEqual({
+        withinTwoSeconds: true, serverRefused: null, marker: "absent", refreshKept: false, familyRevoked: true, purges: 1,
+      });
+      expect(purges[0]!.init).toMatchObject({ method: "POST", keepalive: true, cache: "no-store", credentials: "same-origin" });
+      expect(purges[0]!.init.body).toBeUndefined();
+      // The purge's own answer carries the clear and is still held: the press never waited on it.
+      expect(world.held.map((h) => h.url)).toEqual(["/auth/refresh"]);
+    } finally {
+      world.releaseAll();
+    }
+  }, 30_000);
+
+  it("account.erase() resolves at once with its receipt and the jar cleared", async () => {
+    vi.useRealTimers();
+    const world = await heldBrowser();
+    const { account } = await import("../app/api-client.js");
+    const erase = account.erase();
+    try {
+      const answer = await Promise.race([erase, new Promise<"held">((r) => setTimeout(() => r("held"), 2_000))]);
+      expect(answer, "the receipt was held for a cache walk").not.toBe("held");
+      expect(answer).toMatchObject({ erased: true });
+      expect([...world.httpOnly.keys()], "the erase's cookie clears").toEqual([]);
+      expect(document.cookie).not.toContain("tf_owner=");
+    } finally {
+      world.releaseAll();
+      await erase.catch(() => undefined);
+    }
+  }, 30_000);
 });

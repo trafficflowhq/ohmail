@@ -235,7 +235,7 @@ export function TriageView({
    * view's first list-cursor keys. The walk is over `openable` — the entries a cursor can
    * stand on, the same order `shown` falls back through — so a demo orphan (an entry with no
    * message behind it) is never a keyboard stop, exactly as it is not a button. Selecting
-   * shows and shows only, a preview the read rule never counts. → into the pane enters it;
+   * shows, a preview until the cursor rests on it. → into the pane enters it;
    * where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
    */
   const navAt = shown ? openable.findIndex((m) => m.id === shown.id) : -1;
@@ -261,6 +261,11 @@ export function TriageView({
       }
     });
   };
+  /** A step key's move: the row it lands on is entered once rested on (`useReaderVisit`'s `land`). */
+  const stepTo = (id: string): void => {
+    selectRow(id);
+    visit.land(id);
+  };
   /* The message verbs over this view's cursor, from the one table Folder, Tag and History use:
      the global ones act on the shell's `focused`, which has no arm for this view. */
   useMessageVerbs({
@@ -274,14 +279,14 @@ export function TriageView({
       up: {
         disabled: navAt <= 0,
         run: () => {
-          if (navAt > 0) selectRow(openable[navAt - 1]!.id);
+          if (navAt > 0) stepTo(openable[navAt - 1]!.id);
         },
         label: to("keyPrev"),
       },
       down: {
         disabled: navAt >= openable.length - 1,
         run: () => {
-          if (navAt < openable.length - 1) selectRow(openable[navAt + 1]!.id);
+          if (navAt < openable.length - 1) stepTo(openable[navAt + 1]!.id);
         },
         label: to("keyNext"),
       },
@@ -290,6 +295,7 @@ export function TriageView({
       selector: ".view-triage .read-col",
       disabled: shown == null,
       onEnter: () => { if (shown) visit.enter(shown.id); },
+      onScrollKey: () => { if (shown) visit.enter(shown.id); },
       onHiddenEnter: () => {
         if (shown) onOpen(shown);
       },

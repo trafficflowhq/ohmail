@@ -50,6 +50,8 @@ function serve(url: string, init?: RequestInit): Promise<Response> {
   const h = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)
     .map(([k, v]) => [k.toLowerCase(), v]));
   const method = (init?.method ?? "GET").toUpperCase();
+  // The cache purge after a refusal presents nothing: not a request this file counts.
+  if (h["x-ohmail-clear"] !== undefined) return Promise.resolve(new Response(null, { status: 202 }));
   const carried = { ...jar };
   const row: Sent = {
     at: Date.now(), url, method, status: null, csrf: h["x-csrf-token"] ?? null, key: h["idempotency-key"] ?? null,

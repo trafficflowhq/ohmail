@@ -79,9 +79,10 @@ describe("every cycle's authority is composed from its own role, by one function
   it("the three composing roots are the known ones, and each composes through the one function", () => {
     expect({ refused: found.filter((c) => c.verdict !== "ok").map((c) => `${c.where}: ${c.verdict}`) })
       .toEqual({ refused: [] });
-    // Four calls in three roots: the hosted worker, the reconcile backstop (two cycles), the local engine.
+    // Five calls in three roots: the hosted worker, the reconcile backstop (two cycles), the local
+    // engine (its drain, and a read press's `\Seen`-only cycle).
     expect(found.map((c) => c.where.replace(/:\d+$/, "")).sort()).toEqual([
-      "apps/sidecar/src/engine.ts", "apps/worker/src/index.ts",
+      "apps/sidecar/src/engine.ts", "apps/sidecar/src/engine.ts", "apps/worker/src/index.ts",
       "apps/worker/src/reconcile-cron.ts", "apps/worker/src/reconcile-cron.ts",
     ]);
   });

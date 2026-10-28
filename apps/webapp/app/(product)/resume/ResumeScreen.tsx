@@ -21,7 +21,9 @@ import { storageOwner } from "../../shell/storage-owner";
 import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
 import { useLoadingGrace } from "../../shell/loading-grace";
-import { REASON_BODY, isSignedOutReason, leaveSignedOutNote, type SignedOutReason } from "./signed-out-note";
+import {
+  REASON_BODY, isSignedOutReason, leaveSignedOutNote, shareSignedOutNote, takeSharedSignedOutNote, type SignedOutReason,
+} from "./signed-out-note";
 
 /**
  * Survives the reload a successful resume performs; scoped to this tab AND to the account, so a
@@ -155,8 +157,16 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
   /** The jar is not this splash's: a pending sign-out goes to `/login`, anything else to the edge again. */
   const leave = useCallback((): void => {
     if (signOutPending()) { window.location.replace("/login"); return; }
+    // The edge saw this account and the jar names none: another tab heard the door. Straight to the
+    // sign-in form with that tab's sentence; the gate would show the landing, or this splash again.
+    if (initialOwner !== null && readOwnerCookie() === null) {
+      const heard = takeSharedSignedOutNote();
+      if (heard !== null) leaveSignedOutNote(heard);
+      window.location.replace("/login");
+      return;
+    }
     window.location.reload();
-  }, []);
+  }, [initialOwner]);
 
   /**
    * One pass of the ladder: ask, then act on the answer. `resumeSession` consults `stillMine` inside
@@ -186,6 +196,7 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
       // already in the fragment, and a redirect parameter is an open-redirect surface.
       writeStamp(answer);
       leaveSignedOutNote(answer);
+      shareSignedOutNote(answer);
       window.location.replace("/login");
       return;
     }
