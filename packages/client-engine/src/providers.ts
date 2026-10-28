@@ -55,7 +55,9 @@ export const PROVIDERS: ProviderPreset[] = [
       "Gmail signs in only with an App Password, not your Google password. Turn on 2-Step " +
       "Verification first, or the App Passwords page says it is not available. Give the App Password " +
       "any name, then paste its 16 letters here, with or without the spaces. Some work, school and " +
-      "Advanced Protection accounts cannot create App Passwords; ohmail cannot connect those yet.",
+      "Advanced Protection accounts, and accounts that sign in with security keys only, cannot create App " +
+      "Passwords; ohmail cannot connect those yet: ask your administrator to allow App Passwords, or " +
+      "connect another address.",
     helpUrl: "https://myaccount.google.com/apppasswords",
     helpLabel: "Google App Passwords",
     prereqUrl: "https://myaccount.google.com/signinoptions/twosv",
