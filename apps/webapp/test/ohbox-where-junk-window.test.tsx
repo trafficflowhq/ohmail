@@ -116,3 +116,38 @@ describe("the where-line's spam count follows what the Screener's third segment 
     await waitFor(() => (el.textContent ?? "").includes(PEDLAR.name), "the counted letter's sender on the Spam pile");
   });
 });
+
+describe("the Screener reads the Junk window before the Spam click", () => {
+  it("opening the Screener asks the page and the preview; the click draws both in its own commit", async () => {
+    const calls: string[] = [];
+    const release: Array<() => void> = [];
+    const later = <T,>(name: string, v: T): Promise<T> => {
+      calls.push(name);
+      return new Promise((r) => { release.push(() => r(v)); });
+    };
+    const wire: JunkWire = {
+      ...JUNK_WIRE,
+      list: () => later("list", {
+        mailboxes: [{ id: "mb1", address: "me@example.invalid", window: "ok" as const }], nextCursor: null,
+        items: [{
+          mailboxId: "mb1", uid: 7, uidValidity: "1", subject: "A provider-filed offer",
+          from: { name: "Provider junk", address: "junk@provider.example.invalid" },
+          date: "2026-09-16T08:40:00.000Z", messageIdHeader: "<j7@x>", seen: false, origin: "provider" as const,
+        }],
+      }),
+      sweepPreview: () => later("sweepPreview", { mailboxes: [], movable: 0, pending: false, held: { ids: ["q1"], truncated: false } }),
+    };
+    const { engine } = await seeded();
+    const el = await mount(engine, { folders: true, junkWire: wire }, "#/screener");
+    await waitFor(() => segments(el).includes("Junk"), "the Screener's Junk segment");
+    expect(calls.sort(), "the Screener opened and the Junk window was not read").toEqual(["list", "sweepPreview"]);
+    await act(async () => { for (const r of release) r(); });
+    const tab = [...el.querySelectorAll(".scn-seg [role=\"tab\"]")].find((b) => (b.textContent ?? "").includes("Junk"));
+    await click(tab ?? null, "the Junk tab");
+    const pane = el.querySelector(".view-screener")?.textContent ?? "";
+    expect(pane).toContain("A provider-filed offer");
+    expect(pane, "the Quarantine shelf waited on the click's own read").toContain(PEDLAR.name);
+    expect(pane).not.toContain(messages.screener.junkLoading);
+    expect(calls).toHaveLength(2);
+  });
+});

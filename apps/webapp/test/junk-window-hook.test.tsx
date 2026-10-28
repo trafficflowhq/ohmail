@@ -80,16 +80,21 @@ let control: import("../app/shell/junk-window").JunkWindowControl | null = null;
 let toasts: string[] = [];
 /** The `active` flag the probe renders with; `setActive` flips it live (segment left / returned). */
 let setActive: ((v: boolean) => void) | null = null;
+/** The `warm` flag (the Screener on screen, the segment maybe not). */
+let setWarm: ((v: boolean) => void) | null = null;
 
 async function mountHook(
   initiallyActive = true,
   hostWire?: import("../app/shell/junk-window").JunkWire,
+  initiallyWarm = false,
 ): Promise<void> {
   const { useJunkWindow } = await import("../app/shell/junk-window");
   function Probe(): null {
     const [active, set] = React.useState(initiallyActive);
+    const [warm, setW] = React.useState(initiallyWarm);
     setActive = set;
-    control = useJunkWindow(active, ((msg: string) => { toasts.push(msg); }) as never, hostWire);
+    setWarm = setW;
+    control = useJunkWindow(active, ((msg: string) => { toasts.push(msg); }) as never, hostWire, warm);
     return null;
   }
   host = document.createElement("div");
@@ -122,6 +127,7 @@ beforeEach(() => {
   configured.value = true;
   toasts = [];
   setActive = null;
+  setWarm = null;
   try { window.localStorage.clear(); } catch { /* jsdom without storage */ }
 });
 
@@ -791,6 +797,96 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
     await act(async () => { vi.advanceTimersByTime(JUNK_SWEEP_POLL_MS * 3); });
     await settle();
     expect(junkList).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-entry past the age keeps the page on screen while it is read again", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    let answer: (p: JunkPageWire) => void = () => {};
+    junkList.mockResolvedValueOnce(pageWire(two, null))
+      .mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    await mountHook();
+    await reenter(JUNK_FIRST_PAGE_FRESH_MS);
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(control!.phase, "a re-read hid the shown page behind the loading state").toBe("ready");
+    expect(control!.visible).toHaveLength(2);
+    await act(async () => { answer(pageWire([item(3, "7", "2026-10-19T11:03:00.000Z"), ...two], null)); });
+    await settle();
+    expect(control!.visible.map((i) => i.uid)).toEqual([3, 2, 1]);
+  });
+
+  it("a failed page is re-read as loading, never left saying failed while the retry is out", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    junkList.mockRejectedValueOnce(new Error("503")).mockImplementationOnce(() => new Promise(() => {}));
+    await mountHook();
+    expect(control!.phase).toBe("failed");
+    await reenter(JUNK_FIRST_PAGE_FRESH_MS);
+    expect(control!.phase).toBe("loading");
+  });
+
+  it("the Screener's entry (warm) reads the page and the preview before the segment is entered", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    junkList.mockResolvedValue(pageWire(two, null));
+    junkSweepPreview.mockResolvedValue({ ...NO_SWEEP, held: { ids: ["q1"], truncated: false } });
+    await mountHook(false, undefined, true);
+    expect(junkList).toHaveBeenCalledTimes(1);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(1);
+    // The Spam click inside the age: the page and the shelf's ids are there, nothing is asked.
+    await act(async () => { setActive!(true); });
+    await settle();
+    expect(control!.phase).toBe("ready");
+    expect(control!.visible).toHaveLength(2);
+    expect([...control!.held!.ids]).toEqual(["q1"]);
+    expect(junkList).toHaveBeenCalledTimes(1);
+    // Leaving the Screener and opening it again past the age reads once more.
+    await act(async () => { setActive!(false); setWarm!(false); });
+    nowMs += JUNK_FIRST_PAGE_FRESH_MS;
+    await act(async () => { setWarm!(true); });
+    await settle();
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it("an answer without its arrays is a failed read, never a render throw (STOP #417)", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    const bad = { ok: true } as never;
+    junkList.mockResolvedValue(bad);
+    junkSweepPreview.mockResolvedValue(bad);
+    junkSweepRequest.mockResolvedValue(bad);
+    await mountHook(false, undefined, true);
+    await act(async () => { setActive!(true); });
+    await settle();
+    expect(control!.phase).toBe("failed");
+    expect(control!.visible).toEqual([]);
+    expect(control!.search.localCount).toBe(0);
+    expect(control!.sweep.phase).toBe("unknown");
+    expect(control!.sweep.preview).toBeNull();
+    expect(control!.held).toBeNull();
+    // A press answered without its arrays says it failed; a search so answered is failed too.
+    await act(async () => { control!.sweep.request(); });
+    await settle();
+    expect(control!.sweep.phase).toBe("failed");
+    expect(control!.sweep.preview).toBeNull();
+    // A good page, then an older page and a search answered without arrays: kept, and said.
+    junkList.mockResolvedValueOnce(pageWire(two, "c1")).mockResolvedValueOnce(bad);
+    junkSearch.mockResolvedValue(bad);
+    nowMs += JUNK_FIRST_PAGE_FRESH_MS;
+    await reenter(0);
+    expect(control!.visible).toHaveLength(2);
+    await act(async () => { control!.loadOlder(); });
+    await settle();
+    expect(control!.items).toHaveLength(2);
+    expect(toasts).toContain(messages.screener.junkFailed);
+    await act(async () => { control!.search.setQuery("nothing-matches"); });
+    await act(async () => { control!.search.searchServer(); });
+    await settle();
+    expect(control!.search.phase).toBe("failed");
+    expect(control!.visible).toEqual([]);
+  });
+
+  it("neither flag up reads nothing", async () => {
+    await mountHook(false, undefined, false);
+    expect(junkList).not.toHaveBeenCalled();
+    expect(junkSweepPreview).not.toHaveBeenCalled();
   });
 
   it("staying on the segment for ten times the age makes no extra read", async () => {

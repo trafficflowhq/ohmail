@@ -115,6 +115,7 @@ export function useHeldWindow({
   read,
   anchoredAt,
   reanchor,
+  ready = true,
 }: {
   /** The selected sender's whole bag, oldest to newest. */
   count: number;
@@ -126,6 +127,8 @@ export function useHeldWindow({
   anchoredAt: MutableRefObject<number | null>;
   /** Put the newest letter at the top again (the anchor's own pass). */
   reanchor: () => void;
+  /** False while the letters are drawn without their bodies: their heights say nothing yet. */
+  ready?: boolean;
 }): { from: number; busy: boolean } {
   const opening = Math.max(0, count - HELD_OPENING);
   const [win, setWin] = useState<HeldWindowState>({ key: resetKey, from: opening, count, busy: false });
@@ -139,6 +142,9 @@ export function useHeldWindow({
 
   const live = useRef({ from, resetKey });
   live.current = { from, resetKey };
+  // Committed, not rendered: the bodies arrive in a transition, whose render may yield before it commits.
+  const drawn = useRef(ready);
+  useLayoutEffect(() => { drawn.current = ready; }, [ready]);
   const readRef = useRef(read);
   readRef.current = read;
   const reanchorRef = useRef(reanchor);
@@ -150,7 +156,7 @@ export function useHeldWindow({
   sampleRef.current = () => {
     const el = readRef.current();
     const { from: at, resetKey: key } = live.current;
-    if (!el || at <= 0 || keep.current !== null) return;
+    if (!el || at <= 0 || !drawn.current || keep.current !== null) return;
     const first = el.querySelector(".scn-mails .hmail");
     if (!first) return;
     const sliceTop = cssRect(first).top - cssRect(el).top;
