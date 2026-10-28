@@ -9,9 +9,9 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accounts, accountStorage, bodyBytesOf, changeLog, eraseOwedMailbox, mailboxes, messageBodies,
   messageInstances, messages, recomputeAccountStorage, recordChanges, stampMailboxErasure,
-  EVICT_LOW_WATER_RATIO, type LedgerTx, type Tx,
+  EVICT_LOW_WATER_RATIO, type EntitlementsPort, type LedgerTx, type Tx,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { schema, STORAGE_DROP_GRACE_MS, utcDayCeil } from "@trafficflow/db/cloud";
 import {
   UNMETERED_STORAGE_CAP, createLogger, fingerprintDedupKey, messageFingerprint, normalizeMime,
   prepareHtmlForStorage, type StorageCap,
@@ -19,6 +19,7 @@ import {
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { storageEvictPass } from "../src/storage-evict.js";
+import { makeStorageCapResolver } from "../src/storage-cap.js";
 import {
   REFILL_ABSENT_RETRY_MS, REFILL_EVERY_MS, newRefillState, storageRefillPass, type StorageRefillDeps,
 } from "../src/storage-refill.js";
@@ -299,6 +300,43 @@ describe.skipIf(!AVAILABLE)("the storage refill against real Postgres", () => {
       state: newRefillState(), planLimitBytes: floor, at: new Date(START.getTime() + 2 * MIN),
     });
     expect({ restored: over.restored, waited: over.waited }).toEqual({ restored: 0, waited: "no_room" });
+  }, 60_000);
+
+  it("a lower limit empties nothing for 14 days, then down to nine tenths of it; a re-upgrade empties nothing", async () => {
+    const DAY = 86_400_000;
+    const later = (days: number) => new Date(START.getTime() + days * DAY);
+    for (const upgradeBack of [false, true]) {
+      const w = await seed(30, () => 1_000);
+      const total = w.letters.reduce((n, l) => n + l.bytes, 0);
+      let limit = total * 2;
+      let clock = START;
+      const port = {
+        access: async () => ({ ok: true, limits: { mailboxes: null, storageBytes: limit, canAddMailbox: true, aiEnabled: true } }),
+      } as unknown as EntitlementsPort;
+      // The production resolver, asked afresh at every pass.
+      const storageCap = makeStorageCapResolver(port, db as unknown as Tx, { warn: () => {} }, { ttlMs: 0, now: () => clock });
+      const pass = async (now: Date) => {
+        clock = now;
+        for (let i = 0; i < 10; i++) {
+          if (!(await storageEvictPass(db as unknown as Tx, { accountId: w.accountId, storageCap }, now)).capped) return;
+        }
+      };
+      const ids = w.letters.map((l) => l.id);
+      await pass(START);
+      limit = Math.floor(total / 3);
+      await pass(later(1));
+      await pass(later(13));
+      expect((await cappedOf(ids)).size, "a letter was emptied inside the 14 days").toBe(0);
+      if (upgradeBack) limit = total * 2;
+      await pass(later(5));
+      await pass(new Date(utcDayCeil(later(1).getTime() + STORAGE_DROP_GRACE_MS)));
+      if (upgradeBack) {
+        expect((await cappedOf(ids)).size, "the cancelled drop emptied letters on its old date").toBe(0);
+      } else {
+        expect((await cappedOf(ids)).size).toBeGreaterThan(0);
+        expect((await realOf(w.accountId)).bytes).toBeLessThanOrEqual(Math.floor(limit * EVICT_LOW_WATER_RATIO));
+      }
+    }
   }, 60_000);
 
   it("after a mailbox is erased, the other mailbox gets its letters back up to the mark", async () => {

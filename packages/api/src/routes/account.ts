@@ -1,9 +1,10 @@
 import { deleteAccount, erasureOutcome, throttleKeysFor } from "@trafficflow/services";
-import { planHintOf, storageEmptyingNow, storageFactsOf, storageUpgradeOf, type ReleaseOutcome } from "@trafficflow/db";
+import { planHintOf, storageEmptyingNow, storageFactsOf, storageUpgradeOf, type ReleaseOutcome, type Tx } from "@trafficflow/db";
 /* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
    and deliberately NOT by the local door ("deleting the data directory IS the erasure"), so the
    cloud table the reopening reads never enters a standalone bundle. */
 import { reopenedCatchUp, resumeAfterReopen } from "../account-reopen.js";
+import { heldStorageLimitOf } from "@trafficflow/db/cloud";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies } from "../cookies.js";
@@ -184,14 +185,14 @@ export const accountRoutes: Route[] = [
       const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx) : null;
       if (caughtUp !== "fault") await resumeAfterReopen(deps, ctx);
       // THE PERSON'S OWN STORAGE, where a cap is a number: one primary-key read of their counter
-      // row. A failed read leaves the block out (nothing drawn); it never fails the wall's read.
-      const cap = verdict.limits.storageBytes;
-      const storage = typeof cap === "number"
-        ? await storageFactsOf(ctx.db, ctx.accountId).then((f) => ({ ...f, limitBytes: cap }), () => null)
+      // row, and the limit as every cap reader applies it (a lower one held 14 days, cloud 0055). A
+      // failed read leaves the block out (nothing drawn); it never fails the wall's read.
+      const storage = typeof verdict.limits.storageBytes === "number"
+        ? await storageFactsOf(ctx.db, ctx.accountId).then(async (f) => {
+          const limit = await heldStorageLimitOf(ctx.db as unknown as Tx, ctx.accountId, verdict, deps.now());
+          return limit === null ? null : { ...f, limitBytes: limit.capBytes, plan: limit };
+        }).catch(() => null)
         : null;
-      // The trial's floor: the plan's own, lower limit and when it applies again.
-      const carry = storage !== null && verdict.trialStorage && verdict.trialStorage.planBytesLimit < storage.limitBytes
-        ? verdict.trialStorage : null;
       return json({
         metered: true,
         access: "open",
@@ -210,9 +211,11 @@ export const accountRoutes: Route[] = [
           storage: {
             usedBytes: storage.usedBytes, limitBytes: storage.limitBytes, emptiedForSpace: storage.emptiedForSpace,
             firstEmptiedAt: storage.firstEmptiedAt, keptFrom: storage.keptFrom, withheldOnArrival: storage.withheldOnArrival,
-            upgrade: storageUpgradeOf(carry?.planBytesLimit ?? storage.limitBytes),
+            upgrade: storageUpgradeOf(storage.plan.planBytes ?? storage.limitBytes),
             emptyingNow: storageEmptyingNow(storage, storage.limitBytes, deps.now()),
-            ...(carry !== null ? { planLimitBytes: carry.planBytesLimit, limitDropsAt: carry.until } : {}),
+            // The trial's floor or a held drop: the plan's own, lower limit and when it applies.
+            ...(storage.plan.planBytes !== null
+              ? { planLimitBytes: storage.plan.planBytes, limitDropsAt: storage.plan.dropsAt } : {}),
           },
         } : {}),
       }, 200);

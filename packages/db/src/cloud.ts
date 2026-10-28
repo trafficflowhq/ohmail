@@ -144,6 +144,12 @@ export {
   type AlertReaders,
 } from "./at-cap-reader.js";
 
+/* A lower storage limit waits 14 days (cloud 0055): every metered cap reader applies the hold. */
+export {
+  heldStorageLimitOf, nextStorageHold, planOwn, storageHoldsOf, storageLimitFrom, utcDayCeil,
+  STORAGE_DROP_GRACE_MS, type StorageHold, type StorageLimit,
+} from "./storage-hold.js";
+
 /* The billing plane's own failures (`POST /v1/ops`): the reader the alert drivers run and the parser
  * that holds its answer to the wire contract. CLOUD-ONLY: the reader dials the program. */
 export {

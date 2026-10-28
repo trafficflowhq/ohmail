@@ -1,10 +1,21 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, vi } from "vitest";
-import { UNMETERED, type EntitlementsPort } from "@trafficflow/db";
+import { UNMETERED, accounts, type EntitlementsPort, type Tx } from "@trafficflow/db";
+import { makeTestDb } from "@trafficflow/db/testing";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { makeStorageCapResolver } from "../src/storage-cap.js";
+
+const db = await makeTestDb();
+const tx = db as unknown as Tx;
+/** A real account row: the hold (cloud 0055) is written under its fence. */
+async function acct(): Promise<string> {
+  const id = randomUUID();
+  await db.insert(accounts).values({ id, name: "Cap" });
+  return id;
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -53,44 +64,82 @@ describe("makeStorageCapResolver", () => {
   it("a metered account resolves to its NUMBER, cached for the TTL", async () => {
     const { port, calls } = portFor([5_000_000_000]);
     let t = 0;
-    const resolve = makeStorageCapResolver(port, silent, { ttlMs: 30_000, now: () => new Date(t) });
-    expect(await resolve("a1")).toBe(5_000_000_000);
+    const resolve = makeStorageCapResolver(port, tx, silent, { ttlMs: 30_000, now: () => new Date(t) });
+    const a1 = await acct();
+    expect(await resolve(a1)).toBe(5_000_000_000);
     t = 29_000;
-    expect(await resolve("a1")).toBe(5_000_000_000);
+    expect(await resolve(a1)).toBe(5_000_000_000);
     expect(calls()).toBe(1);              // the cache held within the TTL
     t = 31_000;
-    await resolve("a1");
+    await resolve(a1);
     expect(calls()).toBe(2);              // …and expired past it
   });
 
   it("an UNBOUNDED limit (null) maps to the typed unmetered value", async () => {
     const { port } = portFor([null]);
-    const resolve = makeStorageCapResolver(port, silent);
+    const resolve = makeStorageCapResolver(port, tx, silent);
     expect(await resolve("a2")).toBe(UNMETERED_STORAGE_CAP);
   });
 
   it("an UNMETERED host resolves unmetered without dialling anything", async () => {
-    const resolve = makeStorageCapResolver(UNMETERED, silent);
+    const resolve = makeStorageCapResolver(UNMETERED, tx, silent);
     expect(await resolve("a2b")).toBe(UNMETERED_STORAGE_CAP);
   });
 
   it("a read FAULT resolves unmetered for THIS resolution only — logged, never cached", async () => {
     const { port } = portFor(["throw", 1_000]);
     const lines: string[] = [];
-    const resolve = makeStorageCapResolver(port, { warn: (e: string) => { lines.push(e); } });
+    const resolve = makeStorageCapResolver(port, tx, { warn: (e: string) => { lines.push(e); } });
+    const a3 = await acct();
     // The blip must not start withholding a paying customer's bodies…
-    expect(await resolve("a3")).toBe(UNMETERED_STORAGE_CAP);
+    expect(await resolve(a3)).toBe(UNMETERED_STORAGE_CAP);
     expect(lines).toContain("storage_cap_read_failed");
     // …and must not stick: the next resolution asks again and gets the real cap.
-    expect(await resolve("a3")).toBe(1_000);
+    expect(await resolve(a3)).toBe(1_000);
+  });
+
+  it("a lower limit is held: the previous cap for 14 days, the plan's own limit as the refill's mark", async () => {
+    const { port } = portFor([10_000_000_000, 2_000_000_000]);
+    let t = Date.parse("2026-10-27T15:30:00.000Z");
+    const resolve = makeStorageCapResolver(port, tx, silent, { ttlMs: 30_000, now: () => new Date(t) });
+    const id = await acct();
+    expect(await resolve(id)).toBe(10_000_000_000);
+    t += 31_000;
+    expect(await resolve(id)).toBe(10_000_000_000);
+    expect(await resolve.planLimit(id)).toBe(2_000_000_000);
+    // Past the next 00:00 UTC 14 days on, the plan's own limit.
+    t = Date.parse("2026-11-11T00:00:00.000Z");
+    expect(await resolve(id)).toBe(2_000_000_000);
+    expect(await resolve.planLimit(id)).toBeNull();
+  });
+
+  it("a hold that cannot be read resolves unmetered, logged, never cached, and never the lower limit", async () => {
+    const { port, calls } = portFor([2_000_000_000]);
+    const lines: string[] = [];
+    let fail = true;
+    const flaky = new Proxy(tx, {
+      get: (target, key, recv) => {
+        if (fail && key === "select") throw new Error("pooler blip");
+        return Reflect.get(target, key, recv);
+      },
+    });
+    const resolve = makeStorageCapResolver(port, flaky, { warn: (e: string) => { lines.push(e); } });
+    const id = await acct();
+    expect(await resolve(id)).toBe(UNMETERED_STORAGE_CAP);
+    expect(await resolve.planLimit(id)).toBeNull();
+    expect(lines).toContain("storage_cap_read_failed");
+    fail = false;
+    expect(await resolve(id)).toBe(2_000_000_000);
+    expect(calls(), "a fault was cached").toBe(3);
   });
 
   it("inside a trial's storage floor the plan's own limit rides the same read; none at or above the cap", async () => {
+    const [solo, plus, paid, blip] = [await acct(), await acct(), await acct(), await acct()];
     const answers = new Map<string, { storageBytes: number; plan?: number } | "throw">([
-      ["solo-trial", { storageBytes: 4_000_000_000, plan: 2_000_000_000 }],
-      ["plus-trial", { storageBytes: 5_000_000_000, plan: 5_000_000_000 }],
-      ["paid", { storageBytes: 2_000_000_000 }],
-      ["blip", "throw"],
+      [solo, { storageBytes: 4_000_000_000, plan: 2_000_000_000 }],
+      [plus, { storageBytes: 5_000_000_000, plan: 5_000_000_000 }],
+      [paid, { storageBytes: 2_000_000_000 }],
+      [blip, "throw"],
     ]);
     let calls = 0;
     const { port: base } = portFor([null]);
@@ -106,14 +155,14 @@ describe("makeStorageCapResolver", () => {
         };
       },
     };
-    const resolve = makeStorageCapResolver(port, silent);
-    expect(await resolve("solo-trial")).toBe(4_000_000_000);
-    expect(await resolve.planLimit("solo-trial")).toBe(2_000_000_000);
+    const resolve = makeStorageCapResolver(port, tx, silent);
+    expect(await resolve(solo)).toBe(4_000_000_000);
+    expect(await resolve.planLimit(solo)).toBe(2_000_000_000);
     expect(calls, "the plan's limit asked the program again").toBe(1);
-    expect(await resolve.planLimit("plus-trial")).toBeNull();
-    expect(await resolve.planLimit("paid")).toBeNull();
+    expect(await resolve.planLimit(plus)).toBeNull();
+    expect(await resolve.planLimit(paid)).toBeNull();
     // A fault answers no plan limit, beside the unmetered cap that refills nothing.
-    expect(await resolve.planLimit("blip")).toBeNull();
+    expect(await resolve.planLimit(blip)).toBeNull();
   });
 });
 
