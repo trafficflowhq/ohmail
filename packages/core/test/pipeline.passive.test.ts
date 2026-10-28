@@ -109,7 +109,7 @@ describe("passive presence — the customer's own folders", () => {
 
   it("writes last_set_by 'external' — the gate every retro pass reads", async () => {
     // This one word is the SECOND structural gate, independent of the early return: `rule-retro`,
-    // `ohbox-tidy`, `screener-auto` and `read-retro` all carry `eq(folderState.lastSetBy, "us")` in
+    // `ohbox-tidy` and `screener-auto` all carry `eq(folderState.lastSetBy, "us")` in
     // their candidate predicates, and `reconcileFolders` skips a non-`'us'` row outright. Change
     // `p.passive ? "external" : "us"` back to a bare `"us"` in `commitChange` and this goes red
     // while every other test in this file stays green — which is the point of asserting it here.

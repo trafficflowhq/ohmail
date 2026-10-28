@@ -813,10 +813,8 @@ interface ScreenerRow {
   nativeLocator: NativeLocator;
   updatedAt: Date;
   /**
-   * The server's current `\Seen` as the mirror last recorded it, `!unread`. Read by `decide`'s
-   * read-mark step to seed `flag_state.observed_seen` on the INSERT branch — held mail has no
-   * `flag_state` row at ingest, so a wrong observed value would queue a needless (idempotent) IMAP
-   * STORE. Not surfaced to any list; the DTO does not carry it.
+   * The server's current `\Seen` as the mirror last recorded it, `!unread`. A decision leaves it
+   * as it is. Not surfaced to any list; the DTO does not carry it.
    */
   unread: boolean;
   /** The instant the queue sorted this row by (`heldSortKey`) — what the page's cursor carries. */
@@ -1265,7 +1263,7 @@ export class ScreenerReadService {
    * THE ORGANIZER'S DIRECT WRITE — `decide`'s pre-0.14.1 transaction, its core moved to
    * `@trafficflow/db#applyScreenerDecision` (contacts, the screening baseline, the promoted
    * rule, the held-bag re-route guarded on `desired_folder = 'ohmail/Screener'`,
-   * mark-read-on-decide, the learning signal) so the organizer's own door and its request drain
+   * the learning signal) so the organizer's own door and its request drain
    * are ONE implementation. Everything that stays HERE is either HTTP-specific (the idempotency
    * claim-and-replay) or needs a dependency the drain does not have (the injected IMAP adapter,
    * the unsubscribe courtesy).
