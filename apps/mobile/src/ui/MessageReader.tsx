@@ -23,7 +23,7 @@ import { useBodyStamp, useFilesStamp, useWorld, useWorldToast } from "../state/w
 import { openConfirmedLink } from "../mail/frame-nav";
 import { endMark } from "../engine/ui-marks";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
-import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt } from "./base";
+import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt, useListInsets } from "./base";
 import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { BodyPages } from "./BodyPages";
@@ -48,7 +48,7 @@ import {
   MARK_HOLD_MS, RAIL_HIT_SLOP, RAIL_MORE, RAIL_PITCH, RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railItemsMemo, readerChromeOverlap, slotOf,
   readerGroups, type RailItem,
 } from "./reader-marks";
-import { hideVisit, showVisit, visitRecordFor } from "./visit-records";
+import { hideVisit, showVisit, visitKnew, visitRecordFor } from "./visit-records";
 import { threadHeading } from "./thread-heading";
 import { MARK_RING, MarkRing, MarkSheet, MarkSquare, ringRest, useMarkHold, useSquaresWindow, type MarkHold } from "./MarkSquare";
 import {
@@ -161,6 +161,17 @@ export function MessageReader({
     return () => hideVisit(id);
   }, [id]);
   const inOhbox = m ? standsInOhboxMail(m) : false;
+  /* AN ARRIVAL NEVER MOVES THE READER: the anchor and the kept place stand in the members the visit knew;
+     a member drawn below later is not. Known in render, before the new panel's layout reports. */
+  const ids = m ? [id, ...m.earlier.map((h) => h.id)] : [];
+  const idsRef = useRef(ids);
+  idsRef.current = ids;
+  const knewRef = useRef<Set<string> | null>(null);
+  knewRef.current = m ? visitKnew(id, () => ids, Date.now()) : null;
+  const arrivedRef = useRef(false);
+  arrivedRef.current = m ? readerGroups(m, inOhbox).below.some((h) => knewRef.current?.has(h.id) === false) : false;
+  const padRef = useRef(0);
+  padRef.current = useListInsets().paddingBottom;
   /* A REPLY THAT ARRIVES INTO THE OPEN READER is asked its text, as the open asked every member it
      found: a snippet is never ready, and the rule could not read it however long it was on screen. */
   const hydrateHeld = w.actions.hydrateHeld;
@@ -231,6 +242,7 @@ export function MessageReader({
       active: () => shown.current && readerSees(AppState.currentState) && anchorRef.current?.settling !== true,
       onHere: setHere,
       start: paneScrollOf(`msg:${id}`),
+      knew: (mid) => mid === id || (knewRef.current?.has(mid) ?? true),
     }),
     [id, record],
   );
@@ -275,7 +287,7 @@ export function MessageReader({
     recordPaneScroll(scrollKey, y);
     const a = anchorRef.current;
     if (a !== null && (!a.holding || a.settled)) {
-      const p = placeAt(seen.layout(id), y, box.current);
+      const p = placeAt(seen.layout(id), y, knewBox());
       /* Only the person's own scroll keeps the content's end; a landing keeps its message. */
       const q = p === null || !p.end || !a.holding || place.current?.end === true ? p : { id: p.id, dy: p.dy, h: p.h };
       if (q !== null) { place.current = q; recordPanePlace(scrollKey, q); }
@@ -290,6 +302,12 @@ export function MessageReader({
     seen.onScroll(y, jumpEnd.current !== null || anchorRef.current?.moving === true);
   };
   const box = useRef({ content: 0, view: 0 });
+  /** The extent as the visit knew it: the content ends at its known foot plus the column's bottom padding. */
+  const knewBox = (): { content: number; view: number } => {
+    const b = box.current;
+    const foot = arrivedRef.current ? seen.knewFoot() : null;
+    return foot === null ? b : { content: Math.min(b.content, foot + padRef.current), view: b.view };
+  };
   /** An animated jump's last frames may never reach `onScroll`: once it is done, the reader stands where it ends. */
   const jumpEnd = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (jumpEnd.current) clearTimeout(jumpEnd.current); }, []);
@@ -322,9 +340,9 @@ export function MessageReader({
   /** Where the open aims: the pressed member, the kept place, or the opened message's top less its air. */
   const openTarget = (): number | null => {
     const l = landingOf();
-    if (l !== null) return seen.scrollFor(l);
+    if (l !== null) return seen.scrollFor(l, arrivedRef.current ? knewBox().content : undefined);
     if (place.current !== null) {
-      const y = placeY(seen.layout(id), place.current, box.current);
+      const y = placeY(seen.layout(id), place.current, knewBox());
       /* A kept place whose message left the conversation gives way to the open's own landing. */
       if (y !== null || place.current.end === true || facts.current.has(place.current.id)) return y;
     }
@@ -336,7 +354,7 @@ export function MessageReader({
       holding: !hasPaneScroll(scrollKey) || place.current !== null,
       applies: () => landingOf() !== null || place.current !== null || (facts.current.inOhbox && aboveCount.current > 0),
       target: () => openTarget(),
-      extent: () => box.current,
+      extent: () => knewBox(),
       scrollTo: (y) => { seen.asked(y); scrollRef.current?.scrollTo({ y, animated: false }); },
       stand: (y) => standRef.current(y),
       onPlaced: () => {
@@ -365,6 +383,8 @@ export function MessageReader({
   };
   const handOver = (): void => {
     handed.current = id;
+    /* The person's own scroll or press: what is drawn now is what the visit knows. */
+    for (const mid of idsRef.current) knewRef.current?.add(mid);
     anchor.handOver();
     if (jumpEnd.current) { clearTimeout(jumpEnd.current); jumpEnd.current = null; }
   };
@@ -530,7 +550,7 @@ export function MessageReader({
               {above.map((h) => memberPanel(h, "above"))}
             </View>
           ) : null}
-          <View onLayout={(e) => { seen.offset("opened", e.nativeEvent.layout.y); anchor.layout(); }}>
+          <View onLayout={(e) => { seen.offset("opened", e.nativeEvent.layout.y, e.nativeEvent.layout.height); anchor.layout(); }}>
           {/* The opened message's unread tint, under its section (the Ohbox only). */}
           {inOhbox ? (
             <ReadTint unread={m.unread === true} style={{ top: -18, left: -20, right: -20, height: openedEndY + 32 }} />

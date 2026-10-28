@@ -43,7 +43,12 @@ export interface PhoneThreadRead {
    * An enclosing view's y inside its parent: `padded` (the reader's column in the scroll content);
    * inside it `opened` (the opened message's section), `above` and `below` (the members' lists).
    */
-  offset: (which: "padded" | "opened" | PhoneGroup, y: number) => void;
+  offset: (which: "padded" | "opened" | PhoneGroup, y: number, height?: number) => void;
+  /**
+   * The foot of the conversation as the visit knew it, in content px: the opened section's foot, or the last
+   * known member's below it, less the members it did not know drawn between; `null` before the opened section's layout.
+   */
+  knewFoot: () => number | null;
   /** The opened message's sender row (y, height), where its body starts, and its end marker, in its section. */
   openedFrom: (y: number, height: number) => void;
   openedBody: (y: number) => void;
@@ -64,8 +69,8 @@ export interface PhoneThreadRead {
   asked: (y: number) => void;
   /** A square pressed or the open's landing: that message is the ring until the person scrolls (`pin(null)`, `onScroll`). */
   pin: (id: string | null) => void;
-  /** The scroll that puts this message's top on the walk's reading line; `null` before its layout. */
-  scrollFor: (id: string) => number | null;
+  /** The scroll that puts this message's top on the walk's reading line; `null` before its layout. With `knewContent`, over the known panels and that content. */
+  scrollFor: (id: string, knewContent?: number) => number | null;
   /** Look again in the next frame (a read state or a body changed, the app came back). */
   poke: () => void;
   /** A new width reflowed every panel: every dwell under way starts over. */
@@ -97,6 +102,8 @@ export interface PhoneThreadReadOptions {
   frame?: (run: () => void) => () => void;
   after?: (ms: number, run: () => void) => () => void;
   now?: () => number;
+  /** Did the visit know this member (its open drew it, or the person's own act since)? Absent, every one. */
+  knew?: (id: string) => boolean;
 }
 
 /** A line of body text where the reader names none: the stream body's, 14.5 at 1.7. */
@@ -132,6 +139,9 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
   let dwell: (() => void) | null = null;
   let here: string | null = null;
   let contentH = 0;
+  /** The opened section's own height (its foot, files included), from its layout. */
+  let openedH: number | null = null;
+  const knew = o.knew ?? (() => true);
   let pinned: string | null = null;
   let asked = o.start ?? 0;
   /** The walk over the last layout; `null` once a layout report changed it. */
@@ -257,7 +267,23 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
     restart,
     viewport: (h) => { height = h; moved(); },
     chrome: (overlap) => { chrome = Math.max(0, overlap); moved(); },
-    offset: (which, v) => { offsets[which] = v; known[which] = true; moved(); },
+    offset: (which, v, h) => { offsets[which] = v; known[which] = true; if (which === "opened" && h !== undefined) openedH = h; moved(); },
+    knewFoot: () => {
+      if (!known.padded || !known.opened || openedH === null) return null;
+      let foot = offsets.padded + offsets.opened + openedH;
+      if (!known.below) return foot;
+      /* A run of unknown members before a known one pushed it down by the run: its top less the run's. */
+      let run: number | null = null;
+      let skipped = 0;
+      for (const [mid, m] of listed("below")) {
+        if (!m.laid) continue;
+        const top = topOfMember(m);
+        if (!knew(mid)) { run ??= top; continue; }
+        if (run !== null) { skipped += top - run; run = null; }
+        foot = top + m.h - skipped;
+      }
+      return foot;
+    },
     openedFrom: (fy, fh) => { from = { y: fy, h: fh }; poke(); },
     openedBody: (by) => { body = by; poke(); },
     openedEnd: (ey) => { end = ey; poke(); },
@@ -273,15 +299,25 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
     },
     asked: (ay) => { asked = ay; },
     pin: (id) => { pinned = id; poke(); },
-    scrollFor: (id) => {
+    scrollFor: (id, knewContent) => {
       if (height <= 0 || contentH <= 0) return null;
+      if (knewContent !== undefined) {
+        const opened = o.openedId();
+        const all = panels().filter((p) => p.panel.id === opened || knew(p.panel.id));
+        const ids = all.map((p) => p.panel.id);
+        const i = ids.indexOf(id);
+        return i < 0 ? null : threadWalk({
+          tops: all.map((p) => p.top), max: Math.max(0, knewContent - height), view: height - chrome,
+          opened: opened === null ? -1 : ids.indexOf(opened),
+        }).scrollFor(i);
+      }
       const { ids, w } = walkNow();
       const i = ids.indexOf(id);
       return i < 0 ? null : w.scrollFor(i);
     },
     poke,
     layout: (openedId) => {
-      const boxes = (group: PhoneGroup) => (known.padded && known[group] ? listed(group).filter(([, m]) => m.laid).map(([id, m]) => ({ id, top: topOfMember(m), height: m.h })) : []);
+      const boxes = (group: PhoneGroup) => (known.padded && known[group] ? listed(group).filter(([mid, m]) => m.laid && knew(mid)).map(([id, m]) => ({ id, top: topOfMember(m), height: m.h })) : []);
       const opened = known.padded && known.opened ? [{ id: openedId, top: offsets.padded + offsets.opened, height: end ?? 0 }] : [];
       return [...boxes("above"), ...opened, ...boxes("below")];
     },
