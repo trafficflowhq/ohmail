@@ -153,7 +153,7 @@ describe("DesktopCta is controlled — dismissal is the parent's fact", () => {
   it("the × reports to onDismiss and the component does NOT hide itself", async () => {
     const onDismiss = vi.fn();
     const c = await mount(
-      h(DesktopCta, { href: "/#download", label: "Get ohmail for desktop", dismissLabel: "Dismiss", onDismiss }),
+      h(DesktopCta, { href: "https://github.com/trafficflowhq/ohmail/releases/latest", label: "Get ohmail for desktop", dismissLabel: "Dismiss", onDismiss }),
     );
     const x = c.querySelector<HTMLButtonElement>(".rail-desktop-cta-x");
     expect(x).not.toBeNull();
@@ -180,5 +180,17 @@ describe("the desktop rail's foot names the version it runs, and the line stands
     await act(async () => announceUpdate({ kind: "ready", version: "0.30.6", act: () => {}, key: "ready:0.30.6" }));
     expect(c.querySelector(".rail-update .upd-line")!.textContent).toContain("0.30.6 ready");
     expect(c.querySelector(".rail-mail .rail-version")!.textContent).toBe("ohmail 0.30.5");
+  });
+});
+
+describe("the browser's desktop prompt leads to the downloads, not back into the app", () => {
+  it("links to the public latest-release page in a new tab", async () => {
+    const props = { composeLabel: "Compose", mailboxesLabel: "Mailboxes", ariaLabel: "Main", groups: [], offerDesktopCta: true };
+    const c = await mount(h(NextIntlClientProvider, { locale: "en", messages: en as never, children: h(ShellRail, props) }));
+    const link = c.querySelector<HTMLAnchorElement>("a.rail-desktop-cta-link");
+    expect(link, "the signed-in browser offered no desktop link").not.toBeNull();
+    // "/#download" on the app's own origin opened a second signed-in tab at the Ohbox.
+    expect(link!.getAttribute("href")).toBe("https://github.com/trafficflowhq/ohmail/releases/latest");
+    expect(link!.getAttribute("target")).toBe("_blank");
   });
 });
