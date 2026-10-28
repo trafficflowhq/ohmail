@@ -365,7 +365,7 @@ jobs:
           node -e 'const n=require("./build/ci-alone.json").testResults.length;if(n!==1){console.error("expected the one file, the report holds "+n);process.exit(1)}'
 
   # The second store's run, in measured shards of its own (test/support/ci-shards-sqlite.json): as one
-  # job it was 1828 s of serial file time and outran this bound; the longest shard is one 529 s file.
+  # job it was 2811 s of serial file time and outran this bound; five shards of about 560 s each.
   sqlite:
     name: suite · sqlite (${{ matrix.shard }})
     needs: plan

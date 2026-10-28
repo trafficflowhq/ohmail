@@ -151,14 +151,18 @@ export function gatedFiles(report, root = ROOT) {
 
 /* ── THE SQLITE RUN'S SHARDS ─────────────────────────────────────────────────────────────────────
  * The second store's run (`vitest.sqlite.config.ts`) is one serial job of its own, and it outgrew its
- * 20-minute bound: measured at 1828 s of serial file time over 170 files, 529 s of it one file
- * (apps/sidecar/test/phone-claim-own.imap.test.ts, whose renew windows are real time by design) and
- * 1100 s more in eleven other sidecar IMAP files. Four shards, packed the way the main map is, hold
- * the longest at that one file and the rest near 430 s each. Its own map, because its file set is the
- * sqlite project's include list, not the default walk: a job reads that set with `vitest list` and
- * hands it here. A listed file the map does not name runs in the shard its path hashes to. */
+ * 20-minute bound: measured at 2811 s of serial file time over 202 files on the maintainers' runners,
+ * 524 s of it one file (apps/sidecar/test/phone-claim-own.imap.test.ts, whose renew windows are real
+ * time by design) and 467 s another (phone-gap-after-stop.imap.test.ts). Five shards, packed the way
+ * the main map is, hold each near 560 s; four held 700 s, which a loaded pool pushed past the job's
+ * bound. The map records each shard's packed seconds, and --check refuses one over SQLITE_BUDGET_S.
+ * Its own map, because its file set is the sqlite project's include list, not the default walk: a job
+ * reads that set with `vitest list` and hands it here. A listed file the map does not name runs in the
+ * shard its path hashes to. */
 export const SQLITE_MAP = "test/support/ci-shards-sqlite.json";
-export const SQLITE_SHARDS = 4;
+export const SQLITE_SHARDS = 5;
+/** Twelve minutes of measured tests a shard: setup and a loaded runner fit in the 20-minute job. */
+export const SQLITE_BUDGET_S = 720;
 
 export function readSqliteMap(root = ROOT) {
   return JSON.parse(readFileSync(join(root, SQLITE_MAP), "utf8"));
@@ -192,6 +196,10 @@ export function checkSqliteMap(root = ROOT, map = readSqliteMap(root)) {
       seen.add(f);
     }
   }
+  if (map.seconds?.length !== map.shards.length) problems.push(`UNMEASURED the sqlite map records no seconds for its ${map.shards.length} shards`);
+  for (const [i, s] of (map.seconds ?? []).entries()) {
+    if (s > SQLITE_BUDGET_S) problems.push(`OVER sqlite shard ${i} packs ${s} s, over the ${SQLITE_BUDGET_S} s budget: raise SQLITE_SHARDS`);
+  }
   return problems;
 }
 
@@ -211,10 +219,8 @@ export function packSqlite(cost, measuredAt) {
     bin.files.push(it.f);
     bin.ms += it.ms;
   }
-  return {
-    map: { measuredAt, shards: bins.map((b) => b.files.sort()) },
-    seconds: bins.map((b) => Math.round(b.ms / 1000)),
-  };
+  const seconds = bins.map((b) => Math.round(b.ms / 1000));
+  return { map: { measuredAt, shards: bins.map((b) => b.files.sort()), seconds }, seconds };
 }
 
 /** Per-file cost from vitest JSON reports: the file's own span plus the gap before it in a serial run
@@ -233,6 +239,15 @@ export function measuredCosts(root, reports) {
     }
   }
   return cost;
+}
+
+/** measuredCosts over reports another checkout wrote: rows read as this tree's files, unknown ones dropped. */
+export function treeCosts(root, reports) {
+  const known = new Set(testFiles(root));
+  return measuredCosts(root, reports.map((report) => ({
+    testResults: report.testResults.map((r) => ({ ...r, name: treeFile(r.name, known) })).filter((r) => r.name !== null)
+      .map((r) => ({ ...r, name: join(root, r.name) })),
+  })));
 }
 
 /* ── A PULL REQUEST'S SELECTED RUN (.github/scripts/ci-select.mjs) ─────────────────────────────────
@@ -259,11 +274,9 @@ export function treeFile(name, known) {
 
 /** Per-file costs from one whole run's reports: `ci-sqlite-*.json` are the SQLite run's, the rest the suite's. */
 export function costsFrom(root, named, measuredAt) {
-  const known = new Set(testFiles(root));
   const out = { measuredAt, suite: {}, sqlite: {} };
   for (const { path, report } of named) {
-    const rows = report.testResults.map((r) => ({ ...r, name: treeFile(r.name, known) })).filter((r) => r.name !== null);
-    const cost = measuredCosts(root, [{ testResults: rows.map((r) => ({ ...r, name: join(root, r.name) })) }]);
+    const cost = treeCosts(root, [report]);
     const into = /(^|\/)ci-sqlite-[^/]*\.json$/.test(path.split("\\").join("/")) ? out.sqlite : out.suite;
     for (const [f, ms] of cost) into[f] = Math.round(ms);
   }
@@ -299,7 +312,7 @@ function main(argv) {
     const measuredAt = at >= 0 ? rest[at + 1] : "unknown";
     const inputs = rest.filter((a, i) => i !== at && i !== at + 1);
     if (!inputs.length) throw new Error("--pack takes one or more vitest JSON reports");
-    const { map, seconds } = pack(ROOT, measuredCosts(ROOT, inputs.map((p) => JSON.parse(readFileSync(p, "utf8")))), measuredAt);
+    const { map, seconds } = pack(ROOT, treeCosts(ROOT, inputs.map((p) => JSON.parse(readFileSync(p, "utf8")))), measuredAt);
     writeFileSync(join(ROOT, MAP), `${JSON.stringify(map, null, 2)}\n`);
     process.stdout.write(`PACKED ${map.shards.flat().length} file(s) into ${SHARDS} shards; seconds ${seconds.join(" ")}; dovecot ${map.pins.dovecot.length}\n`);
     return 0;
@@ -309,7 +322,7 @@ function main(argv) {
     const measuredAt = at >= 0 ? rest[at + 1] : "unknown";
     const inputs = rest.filter((a, i) => i !== at && i !== at + 1);
     if (!inputs.length) throw new Error("--pack-sqlite takes one or more vitest JSON reports of the sqlite run");
-    const { map, seconds } = packSqlite(measuredCosts(ROOT, inputs.map((p) => JSON.parse(readFileSync(p, "utf8")))), measuredAt);
+    const { map, seconds } = packSqlite(treeCosts(ROOT, inputs.map((p) => JSON.parse(readFileSync(p, "utf8")))), measuredAt);
     writeFileSync(join(ROOT, SQLITE_MAP), `${JSON.stringify(map, null, 2)}\n`);
     process.stdout.write(`PACKED ${map.shards.flat().length} sqlite file(s) into ${SQLITE_SHARDS} shards; seconds ${seconds.join(" ")}\n`);
     return 0;
