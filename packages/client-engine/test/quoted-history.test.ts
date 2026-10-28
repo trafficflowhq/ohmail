@@ -548,6 +548,9 @@ describe("an announcement in the lead reads every common wording", () => {
   });
 });
 
+/** Twelve recipients: an `An: ` line past 400 characters. */
+const GROUP = Array.from({ length: 12 }, (_, i) => `Person${i + 1} Example <person${i + 1}@example.org>`).join("; ");
+
 describe("a pasted mail or a memo is the writer's letter, not history", () => {
   const paste = ["Hi Tom,", "the supplier sent this yesterday:", "From: Bob Supplier <bob@example.com>", "Sent: Tuesday, October 20, 2026 4:12 PM",
     "To: Dave Example <dave@example.org>", "Subject: Price change", "", "Prices go up 5% from 1 December.", "",
@@ -564,6 +567,19 @@ describe("a pasted mail or a memo is the writer's letter, not history", () => {
   it("a memo whose label run opens with To stays whole", () => {
     expect(foldText(memo)).toBeNull();
     expect(htmlCase(asHtml(memo)).r).toBeNull();
+    // To a group: a To line past 400 characters is still the memo's first label.
+    const big = memo.replace("To: All staff", `To: ${GROUP}`);
+    expect(foldText(big)).toBeNull();
+    expect(htmlCase(asHtml(big)).r).toBeNull();
+  });
+
+  it("an Outlook reply to a group (its An: line past 400 characters) folds at its header block, on both parts", () => {
+    const fx = fixture("01");
+    const html = fx.html!.replace("<b>An:</b> Ben Sample &lt;ben.sample@example.org&gt;", `<b>An:</b> ${GROUP.replace(/</g, "&lt;").replace(/>/g, "&gt;")}`);
+    const text = fx.text.replace("An: Ben Sample <ben.sample@example.org>", `An: ${GROUP}`);
+    expect(html).not.toBe(fx.html);
+    expect(htmlCase(html).historyText).toMatch(/^Von: Ana Example/);
+    expect(text.split("\n")[foldText(text, { html: verdictOf(html) })!.start]).toMatch(/^Von: Ana Example/);
   });
 
   it("comments under a pasted message stay open, whatever the lead says", () => {
