@@ -1576,6 +1576,9 @@ export const DE: Deck = {
   lettersKept: (n: number) => (n === 1
     ? "Eine Nachricht, die du geschrieben hast, als ohmail beendet wurde, liegt in den Entwürfen."
     : `${n} Nachrichten, die du geschrieben hast, als ohmail beendet wurde, liegen in den Entwürfen.`),
+  lettersKeptChangedElsewhere: (n: number) => (n === 1
+    ? "Eine Nachricht, die du geschrieben hast, als ohmail beendet wurde, liegt als neuer Entwurf in den Entwürfen, weil ihr Entwurf auf einem anderen Gerät geändert wurde. Diese Fassung bleibt ebenfalls erhalten."
+    : `${n} Nachrichten, die du geschrieben hast, als ohmail beendet wurde, liegen als neue Entwürfe in den Entwürfen, weil ihre Entwürfe auf einem anderen Gerät geändert wurden. Diese Fassungen bleiben ebenfalls erhalten.`),
   lettersKeptWithout: (n: number, names: string) => (n === 1
     ? `Eine Nachricht, die du geschrieben hast, als ohmail beendet wurde, liegt in den Entwürfen, ohne ${names}: mehr, als dieses Handy bei Entwürfen behält.`
     : `${n} Nachrichten, die du geschrieben hast, als ohmail beendet wurde, liegen in den Entwürfen, ohne ${names}: mehr, als dieses Handy bei Entwürfen behält.`),

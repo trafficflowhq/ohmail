@@ -2281,6 +2281,9 @@ const TABLE = {
   lettersKept: (n: number) => (n === 1
     ? "A letter you were writing when ohmail stopped is in Drafts."
     : `${n} letters you were writing when ohmail stopped are in Drafts.`),
+  lettersKeptChangedElsewhere: (n: number) => (n === 1
+    ? "A letter you were writing when ohmail stopped is in Drafts as a new draft, because its draft was changed on another device. That version is kept too."
+    : `${n} letters you were writing when ohmail stopped are in Drafts as new drafts, because their drafts were changed on another device. Those versions are kept too.`),
   lettersKeptWithout: (n: number, names: string) => (n === 1
     ? `A letter you were writing when ohmail stopped is in Drafts, without ${names}: past what this phone keeps with drafts.`
     : `${n} letters you were writing when ohmail stopped are in Drafts, without ${names}: past what this phone keeps with drafts.`),
