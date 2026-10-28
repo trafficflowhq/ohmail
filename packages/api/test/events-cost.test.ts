@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { createApp, apiRoutes, type ApiDeps, type SseConfig } from "@trafficflow/api";
 import { resetSseCounters, sseLiveCounts } from "../src/routes/events.js";
 import { SSE_DISABLED_REFUSAL } from "@trafficflow/services";
-import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedSessionFor, req, FIXED_NOW } from "./helpers.js";
 
 /**
  * `GET /events` as a COST surface (risk 9), not just a protocol.
@@ -68,17 +68,18 @@ describe("SSE is off unless the SERVER enables it", () => {
 });
 
 describe("SSE concurrency caps", () => {
-  it("the (N+1)th stream for one ACCOUNT is 429, and the count is released when streams close", async () => {
+  it("the (N+1)th device's stream for one ACCOUNT is 429, and the count is released when streams close", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
+    const [s2, s3] = await Promise.all([0, 1].map(() => seedSessionFor(db, { accountId: s.accountId, userId: s.userId, now: FIXED_NOW })));
     const cfg: SseConfig = { heartbeatMs: 50, pollMs: 50, lifetimeMs: 400, maxPerAccount: 2 };
 
     const a = await H(req("GET", "/events", { bearer: s.token }), deps, cfg);
-    const b = await H(req("GET", "/events", { bearer: s.token }), deps, cfg);
+    const b = await H(req("GET", "/events", { bearer: s2!.token }), deps, cfg);
     expect([a.status, b.status]).toEqual([200, 200]);
     expect(sseLiveCounts().total).toBe(2);
 
-    const third = await H(req("GET", "/events", { bearer: s.token }), deps, cfg);
+    const third = await H(req("GET", "/events", { bearer: s3!.token }), deps, cfg);
     expect(third.status).toBe(429);
     expect((await third.json()).error.code).toBe("sse_too_many_streams");
 
@@ -179,6 +180,16 @@ describe("the poll is one serialized, caught loop", () => {
     const text = await drain(res);               // returns EARLY: the failure closed the stream
     expect(text).toContain("event: sync_failed");
     expect(sseLiveCounts().total).toBe(0);       // and released its slot
+  }, 20_000);
+
+  it("the server ends a stream within its lifetime of opening, even when its first read is slow", async () => {
+    // A first read held by a busy pool must not push the end past the platform's maxDuration.
+    const { deps } = await makeDeps();
+    const db = pollDb(() => new Promise((r) => setTimeout(() => r([{ max: null, live: true }]), 400)));
+    const t0 = Date.now();
+    await drain(await HS({ ...deps, db }, { heartbeatMs: 60_000, pollMs: 60_000, lifetimeMs: 200 }));
+    expect(Date.now() - t0).toBeLessThan(400);
+    expect(sseLiveCounts().total).toBe(0);
   }, 20_000);
 
   it("a stream whose FIRST read fails still closes cleanly and releases its slot", async () => {
