@@ -41,6 +41,7 @@ import {
   presentsUnread,
   oneRowPerKey,
   pressOverTwins,
+  pressRuleId,
   pressRules,
   outrankCoveringDomains,
   readsPartition,
@@ -2367,9 +2368,10 @@ function ruleMatchesSender(rule: RuleDTO, address: string): boolean {
  * Mirrored from `apps/webapp/app/shell/sender-screening.ts#holdingRules` (the reference):
  * plain sender/domain rules only; a subject- or body-termed rule is a narrower claim a
  * release must not silently widen. Which of them a press may rewrite is {@link releaseRules}'.
+ * `over` is the phone's own: the web refuses releases where a change travels to the organizer.
  */
-function holdingRules(reader: EntityReader, address: string, folder: Folder): RuleDTO[] {
-  return rulesList(reader).filter(
+function holdingRules(reader: EntityReader, address: string, folder: Folder, over?: readonly RuleDTO[]): RuleDTO[] {
+  return (over ?? rulesList(reader)).filter(
     (r) =>
       r.enabled &&
       r.destination === canonicalDestination(folder) &&
@@ -2390,12 +2392,17 @@ export type ReleaseRules =
   | { kind: "retarget" | "none"; mutations: EngineMutation[] }
   | { kind: "address" | "stands"; mutations: EngineMutation[]; domain: string };
 
-export function releaseRules(reader: EntityReader, address: string, from: Folder, wanted: Folder): ReleaseRules {
-  const holding = holdingRules(reader, address, from);
+export function releaseRules(
+  reader: EntityReader, address: string, from: Folder, wanted: Folder, over?: readonly RuleDTO[],
+): ReleaseRules {
+  const holding = holdingRules(reader, address, from, over);
   const own = holding.filter((r) => r.kind === "sender");
   if (own.length > 0) {
     // One write per key (the web's reason): a PATCH per twin names a row the first one deleted.
-    return { kind: "retarget", mutations: oneRowPerKey(own).map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted })) };
+    return {
+      kind: "retarget",
+      mutations: oneRowPerKey(own).map((r) => ({ kind: "rule_update", ruleId: over ? pressRuleId(r, over) : r.id, destination: wanted })),
+    };
   }
   const wide = holding.filter((r) => r.kind !== "sender");
   if (wide.length === 0) return { kind: "none", mutations: [] };
@@ -2407,7 +2414,7 @@ export function releaseRules(reader: EntityReader, address: string, from: Folder
     return { kind: "stands", mutations: [], domain };
   }
   // Already written (a re-plan, or the mirror behind the press): a second rule would decide nothing new.
-  const standing = rulesList(reader).some((r) => r.enabled && r.kind === "sender" && r.destination === wanted
+  const standing = (over ?? rulesList(reader)).some((r) => r.enabled && r.kind === "sender" && r.destination === wanted
     && (r.subjectContains ?? "").trim() === "" && (r.bodyContains ?? "").trim() === "" && ruleMatchesSender(r, address));
   return {
     kind: "address",
@@ -2425,13 +2432,13 @@ export function releaseRules(reader: EntityReader, address: string, from: Folder
  * SHOWN (`move`'s own note).
  */
 export function planPhoneRouting(
-  reader: EntityReader, intent: RoutingIntent,
+  reader: EntityReader, intent: RoutingIntent, over?: readonly RuleDTO[],
 ): EngineMutation[] {
   const folder = FOLDER_OF_VIEW[intent.dest];
   if (!folder || intent.from === undefined) return [];
   // A press that decided no rule (our own letter among them) commits none: its sentence said so.
   const ruled = (intent as PhoneMoveIntent).holdsRule === false
-    ? [] : releaseRules(reader, intent.address, intent.from as Folder, folder).mutations;
+    ? [] : releaseRules(reader, intent.address, intent.from as Folder, folder, over).mutations;
   const rules = (intent as PhoneMoveIntent).retro === true ? [...ruled] : withoutBacklog(ruled);
   /* THE LETTER'S HALF, for a kill between the press's record and the letter's dispatch: a letter the
      press named, still in the folder the press found it in, moves with the rule. A dispatched move
@@ -2474,8 +2481,11 @@ function withoutBacklog(writes: readonly EngineMutation[]): EngineMutation[] {
  * back to where it filed and at the priority it had, each created rule deleted once the mirror
  * holds it — none of them re-arming a backlog pass, so the way back moves no mail either.
  */
-export function routingReversal(read: () => EntityReader, writes: readonly EngineMutation[]): () => EngineMutation[] {
-  const prior = new Map(rulesList(read()).map((r) => [r.id, r] as const));
+export function routingReversal(
+  read: () => EntityReader, writes: readonly EngineMutation[], over?: readonly RuleDTO[],
+): () => EngineMutation[] {
+  // The press list's row wins for an id: a retarget there names the organizer's rule.
+  const prior = new Map([...rulesList(read()), ...(over ?? [])].map((r) => [r.id, r] as const));
   const back: EngineMutation[] = writes.flatMap((w): EngineMutation[] => {
     const r = w.kind === "rule_update" ? prior.get(w.ruleId) : undefined;
     // An undo, not a press: the rule goes back as it was read, provenance included (the Move's own
@@ -2512,7 +2522,7 @@ export function planHeldRouting(
   over?: readonly RuleDTO[],
 ): EngineMutation[] {
   if (intent.v === 3) return liftedOver(over, planDecideCommit(reader, intent, over));
-  if (intent.v !== 2) return planPhoneRouting(reader, intent);
+  if (intent.v !== 2) return liftedOver(over, planPhoneRouting(reader, intent, over));
   const out = planScreenCommit(reader, intent, over);
   onChanged?.(out.changed);
   return liftedOver(over, out.writes);
@@ -3913,6 +3923,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return row.organizerState === "stopped" ? refuse("readerPressRefusedNobody") : refuse("readerPressRefusedUnknown");
   };
 
+  /** The roster's live holder of a mailbox this device only reads, by name; else `null`. */
+  const liveHolder = (mailboxId: string | undefined): string | null => {
+    const row = mailboxId === undefined ? null : deps.readsOnly?.(mailboxId) ?? null;
+    if (row === null || !holderIsLive({ by: row.organizedBy, state: row.organizerState })) return null;
+    return row.organizedBy?.name?.trim() || null;
+  };
+
   /** The same, answered: a cancelled verb is `true` — nothing was sent, so nothing failed. */
   const gatedSaid = async (
     messageId: string,
@@ -4438,8 +4455,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
          decide through `pressOverTwins` with no past-mail answer, and the card's INBOX letters move
          by id below: the card files what it shows and nothing filed elsewhere. */
       const match = scope === "domain" ? domainOf(row.address).toLowerCase() : row.address.trim().toLowerCase();
-      const { writes } = pressOverTwins(rulesList(raw), scope, match, FOLDER_OF_VIEW[dest as ScreenDest], false);
-      landed = Promise.all(writes.map((w) => watched(engine.mutate(w)))).then(oneVerdict);
+      const over = planOver(raw);
+      const { writes } = pressOverTwins(over ?? rulesList(raw), scope, match, FOLDER_OF_VIEW[dest as ScreenDest], false);
+      landed = Promise.all(liftedOver(over, writes).map((w) => watched(engine.mutate(w)))).then(oneVerdict);
     }
     const cardMoves = cardInboxMoves(raw, [...row.held.map((h) => h.id), ...alsoStill(raw, also, "")], dest as ScreenDest);
     // "&read" stays a separate batch, exactly as the wire has it: `POST /screener/:id`
@@ -4500,12 +4518,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const raw = engine.read();
     const segFolder = segment === "spam" ? FOLDER_OF_VIEW.spam : FOLDER_OF_VIEW.screened;
     const wanted = FOLDER_OF_VIEW[dest];
-    const rules = releaseRules(raw, row.address, segFolder, wanted);
+    const over = planOver(raw);
+    const rules = releaseRules(raw, row.address, segFolder, wanted, over);
     if (rules.kind === "stands") {
       toast(refuse("liveReleaseRuleStands", row.address, rules.domain));
       return false;
     }
-    const retargets = rules.mutations;
+    const retargets = liftedOver(over, rules.mutations);
     // Moves cover ONLY mail physically in the segment's folder. Everything else is where the
     // rule change alone re-presents; a move for mail already at its destination is the
     // engine's local 404 with nothing sent — the deterministic half of the bare-move bug.
@@ -4558,9 +4577,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("liveReleaseFailed", row.address));
       return false;
     }
-    const waits = answered !== null && answered.queued > 0;
+    // A rule that travels to the organizer waits for it too, with or without a letter queued.
+    const waits = answered !== null && (answered.queued > 0 || (retargets.length > 0 && over !== undefined));
+    const holder = answered?.holder ?? liveHolder(firstId === undefined ? undefined : messageOf(firstId)?.mailboxId);
     const heldSentence = !waits ? sentence
-      : answered.holder ? refuse("pressQueuedForOrganizer", answered.holder) : refuse("pressQueuedForOrganizerUnknown");
+      : holder ? refuse("pressQueuedForOrganizer", holder) : refuse("pressQueuedForOrganizerUnknown");
     toast(heldSentence, {
       holdMs: UNDO_MS,
       shown: () => { restartRouting(subject); },
@@ -4950,13 +4971,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        LAST so that, reading back, it is the first queued answer found and names its own holder. */
     /* OUR OWN LETTER TEACHES NOTHING: a rule about our own address is refused at the door and
        decides none of our mail, so it moves with no rule and the plain sentence (`isOwn`). */
-    const routing = row.presentedFolder === folder || isOwn(messageId) ? null : releaseRules(raw, m.from.address, row.presentedFolder, folder);
+    const over = planOver(raw);
+    const routing = row.presentedFolder === folder || isOwn(messageId) ? null : releaseRules(raw, m.from.address, row.presentedFolder, folder, over);
     // A DOMAIN rule this sender cannot be moved out from under: said, and nothing is sent.
     if (routing?.kind === "stands") {
       toast(refuse("liveReleaseRuleStands", m.from.address, routing.domain));
       return false;
     }
-    const writes: EngineMutation[] = routing ? withoutBacklog(routing.mutations) : [];
+    const writes: EngineMutation[] = routing ? withoutBacklog(liftedOver(over, routing.mutations)) : [];
     if (m.folder !== folder) writes.push({ kind: "move", messageId, folder });
     /* A FOLDED ROW MOVES ITS WHOLE CONVERSATION; the rule is the open letter's sender's. */
     for (const id of membersOf(messageId, members)) {
@@ -5030,7 +5052,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        next poll (`withPullKick`). Once per press, never awaited by the sentence; never throws. */
     if (unsent.length > 0) void engine.requestPull({ mailboxIds: [m.mailboxId] });
     const queued = [...answers].reverse().find((r) => r?.status === "awaiting_organizer");
-    const holder = queued?.queuedWith?.name ?? null;
+    const holder = queued?.queuedWith?.name ?? (over !== undefined ? liveHolder(m.mailboxId) : null);
     /* THE LETTER WAITS ON THE ORGANIZER AND, WHERE THE PRESS DECIDES THE SENDER, ITS RULE GOES TOO
        (the web's shape): the held routing commits at the window's close and travels as a rule
        request, below, like any Move's. A press that decides no rule says the letter alone. */
@@ -5064,7 +5086,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const queuedSaid = holder
       ? refuse("toastMoveQueuedWithRule", moveTargetLabel(dest), holder)
       : refuse("toastMoveQueuedWithRuleUnknown", moveTargetLabel(dest));
-    const decides = queued ? queuedSaid
+    // A rule that travels to the organizer is its request, whether or not a letter went with it.
+    const decides = queued || over !== undefined ? queuedSaid
       : mail.length > 0
         ? refuse("toastRuledMoved", moveTargetLabel(dest), mail.length, who)
         : refuse("toastRuledFuture", moveTargetLabel(dest), who);

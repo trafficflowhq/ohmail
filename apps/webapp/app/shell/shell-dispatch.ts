@@ -503,8 +503,8 @@ export function useShellDispatch({
   const cancelRelease = useStableCallback((address: string) => routing.undo(routing.subjectOf(address)));
   const restartRelease = useStableCallback((address: string) => routing.restart(routing.subjectOf(address)));
   const screenerRelease = useMemo<ScreenerReleaseWindow | undefined>(() => (demo ? undefined : {
-    hold: routing.holdRelease, cancel: cancelRelease, restart: restartRelease, toastWithUndo,
-  }), [demo, routing.holdRelease, cancelRelease, restartRelease, toastWithUndo]);
+    hold: routing.holdRelease, cancel: cancelRelease, restart: restartRelease, toastWithUndo, planOver: routing.planOver,
+  }), [demo, routing.holdRelease, cancelRelease, restartRelease, toastWithUndo, routing.planOver]);
 
   return {
     fileAndRefresh,

@@ -14,9 +14,12 @@ import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { closeRoutingSession, openRoutingSession } from "../src/state/held-routing";
 import { destDone } from "../src/state/model";
 import {
+  dispatchHeldRouting,
   liveActions,
   liveMessage,
   liveScreener,
+  moveTargetLabel,
+  phonePressRules,
   planHeldRouting,
   planPhoneRouting,
   presentedOf,
@@ -40,11 +43,21 @@ const deps: MobileEngineDeps = { openExecutor: world.open, deleteDatabase: world
 
 type Fake = ReturnType<typeof mailServer>;
 
-async function scene(rules: RuleDTO[], extra: ReturnType<typeof dto>[] = []) {
+/** `copy`: the organizer's published rules; `rulesTravel`: a change made here travels to it; `holder`: the live organizer this device reads under. */
+async function scene(
+  rules: RuleDTO[], extra: ReturnType<typeof dto>[] = [],
+  opts: { copy?: RuleDTO[]; rulesTravel?: boolean; letterFolder?: string; holder?: string } = {},
+) {
   const fake = mailServer();
   const origin = await listen(fake.server);
   for (const r of rules) fake.addRule(r);
-  fake.addMessage(dto("q1", { subject: "Pressed", folder: QUARANTINE, from: PRESSED }));
+  if (opts.copy) {
+    const at = "2026-08-19T09:00:00Z";
+    fake.push("mailbox_profile", "create", "mb-1", {
+      mailboxId: "mb-1", rules: opts.copy, asOf: at, from: { kind: "local", name: "Laptop", since: null }, updatedAt: at, applied: [],
+    });
+  }
+  fake.addMessage(dto("q1", { subject: "Pressed", folder: opts.letterFolder ?? QUARANTINE, from: PRESSED }));
   fake.addMessage(dto("o1", { subject: "Other", folder: QUARANTINE, from: OTHER, date: "2026-08-19T07:00:00Z" }));
   for (const m of extra) fake.addMessage(m);
   const boot = await bootEngine(deps, { origin, token: "tok-1", accountId: "acct-1" });
@@ -55,7 +68,8 @@ async function scene(rules: RuleDTO[], extra: ReturnType<typeof dto>[] = []) {
   let lastOpts: ToastOpts | undefined;
   let lastUndo: (() => void) | undefined;
   const actions = liveActions({
-    engine: boot.engine, uuid: deps.uuid, zone: "UTC",
+    engine: boot.engine, uuid: deps.uuid, zone: "UTC", ...(opts.rulesTravel ? { rulesTravel: () => true } : {}),
+    ...(opts.holder ? { readsOnly: () => ({ organizedBy: { kind: "local", name: opts.holder! }, organizerState: "held" as const }) } : {}),
     toast: (m, o) => { toasts.push(sayArg(m)); lastOpts = o; if (o?.undo) lastUndo = o.undo; },
   });
   return { fake, ...boot, actions, toasts, lastOpts: () => lastOpts, lastUndo: () => lastUndo };
@@ -279,3 +293,77 @@ describe("Not spam inside the routing window", () => {
   });
 });
 
+
+/* A READER-ONLY PHONE: this device's row says Screened, the organizer's copy files them to Spam. */
+describe("Not spam and Move where a rule change travels to the organizer", () => {
+  const stale = () => scene([ruleDto("r-own", "sender", PRESSED.address, "ohmail/Screened")], [],
+    { copy: [ruleDto("profile:mb-1:0", "sender", PRESSED.address, QUARANTINE)], rulesTravel: true });
+  const patches = (fake: Fake) => ruleWire(fake).map((r) => `${r.method} ${r.url} ${JSON.parse(r.body || "{}").destination ?? ""}`);
+
+  it("Not spam rewrites the rule the organizer files them by", async () => {
+    const s = await stale();
+    try {
+      expect(await s.actions.release(spamRow(s), "ohbox", "spam")).toBe(true);
+      expect(patches(s.fake)).toEqual(["PATCH /rules/r-own INBOX"]);
+    } finally { s.store.close(); s.fake.server.close(); }
+  });
+
+  it("Move out of Spam rewrites it too", async () => {
+    const s = await stale();
+    try {
+      const m = liveMessage(s.engine, "q1", view);
+      expect(m?.presentedFolder).toBe(QUARANTINE);
+      expect(await s.actions.move(m!, "ohbox")).toBe(true);
+      expect(patches(s.fake)).toEqual(["PATCH /rules/r-own INBOX"]);
+    } finally { s.store.close(); s.fake.server.close(); }
+  });
+
+  /* The letter already in the Inbox, shown in Spam only by the copy: the press is the rule alone, and
+     that is a request the organizer has not made yet. */
+  const ruleOnly = () => scene([], [], {
+    copy: [ruleDto("profile:mb-1:0", "sender", PRESSED.address, QUARANTINE)], rulesTravel: true, letterFolder: "INBOX", holder: "Laptop",
+  });
+  const readerWindow = (s: Awaited<ReturnType<typeof scene>>): Promise<void> => {
+    let landed!: () => void;
+    const dispatched = new Promise<void>((r) => { landed = r; });
+    openRoutingSession({
+      windowMs: 30,
+      journal: s.store,
+      plan: (i) => planHeldRouting(s.engine.read(), i, undefined, phonePressRules(s.engine, true, new Date())),
+      dispatch: async (m, i) => {
+        const out = await dispatchHeldRouting(s.engine, m, i, { answered: () => false, refused: () => {} });
+        landed();
+        return out;
+      },
+    });
+    return dispatched;
+  };
+
+  it("Not spam over the rule alone says it waits for the organizer", async () => {
+    const s = await ruleOnly();
+    try {
+      s.fake.queueNextForOrganizer("PATCH", "/rules/", "Laptop");
+      const dispatched = readerWindow(s);
+      await s.actions.release(spamRow(s), "ohbox", "spam");
+      expect(moveWire(s.fake), "a letter already in the Inbox was moved").toEqual([]);
+      expect(s.toasts).toEqual([Copy.pressQueuedForOrganizer("Laptop")]);
+      await dispatched;
+      expect(patches(s.fake)).toEqual([`PATCH /rules/00000000-0000-0000-0000-000000000000 INBOX`]);
+    } finally { s.store.close(); s.fake.server.close(); }
+  });
+
+  it("Move over the rule alone says it waits for the organizer", async () => {
+    const s = await ruleOnly();
+    try {
+      s.fake.queueNextForOrganizer("PATCH", "/rules/", "Laptop");
+      const dispatched = readerWindow(s);
+      const m = liveMessage(s.engine, "q1", view);
+      expect(m?.presentedFolder, "the premise: the copy shows the letter in Spam").toBe(QUARANTINE);
+      expect(await s.actions.move(m!, "ohbox")).toBe(true);
+      expect(moveWire(s.fake)).toEqual([]);
+      expect(s.toasts).toEqual([Copy.toastMoveQueuedWithRule(moveTargetLabel("ohbox"), "Laptop")]);
+      await dispatched;
+      expect(patches(s.fake)).toEqual([`PATCH /rules/00000000-0000-0000-0000-000000000000 INBOX`]);
+    } finally { s.store.close(); s.fake.server.close(); }
+  });
+});

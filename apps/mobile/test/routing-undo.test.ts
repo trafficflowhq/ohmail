@@ -194,8 +194,14 @@ describe("the phone's Move press opens the window rather than sending the rules"
     expect(sheet, "the sheet press keeps two clocks").toContain("shown: () => { restartRouting(subjectKey); }");
     const world = readFileSync(join(LIVE, "..", "world.tsx"), "utf8");
     // A Move (v1) alone has a way back; a sheet press and a Screener decision have none.
-    expect(world, "the session is opened with no way back from a committed Move")
-      .toContain("reverse: (mutations, intent) => (intent.v === 1 ? routingReversal(() => engine.read(), mutations) : null)");
+    // The way back reads the same press list as the session's `plan:`.
+    expect(world.replace(/\s+/g, " "), "the session is opened with no way back from a committed Move").toContain(
+      "reverse: (mutations, intent) => (intent.v === 1 ? routingReversal(() => engine.read(), mutations, "
+      + "phonePressRules(engine, phoneRulesTravel(mailboxesNow.current ?? []), new Date())) : null)",
+    );
+    expect(world.replace(/\s+/g, " ")).toContain(
+      "(changed) => noteScreenChanged(intent.id, changed), phonePressRules(engine, phoneRulesTravel(mailboxesNow.current ?? []), new Date()))",
+    );
   });
 
   it("Undo cancels the held rules before it reverses the mail", () => {

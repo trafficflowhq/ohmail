@@ -17,6 +17,7 @@ import {
   cardReach,
   inverseMutations,
   oneRowPerKey,
+  outrankCoveringDomains,
   physicalFolderOf,
   heldReleaseDismissedOf,
   heldReleaseFingerprintOf,
@@ -43,6 +44,7 @@ import {
   type OhmailEngine,
   type PressTally,
   type RoutingOpen,
+  type RuleDTO,
   type ScreenDest,
   type ScreenerSegments,
   type ScreenerSenderDTO,
@@ -119,6 +121,8 @@ export interface ScreenerReleaseWindow {
     inverses: readonly EngineMutation[],
     held?: { cancel: () => boolean; undone: string },
   ) => void;
+  /** The rules a press past the gate plans over (`pressRules`), the routing window's; unset, the local rows. */
+  planOver?: { current: ((reader: EntityReader) => readonly RuleDTO[]) | null };
 }
 import {
   DECISION_QUIET,
@@ -1278,7 +1282,8 @@ export function useScreenerState(
       // Fed from the RAW-reader `senderScreening`, and the mutations are
       // AWAITED so the toast is the one the server earned — never the
       // unawaited "Ruled" over nothing this bug was.
-      const sender = senderScreening(engine.read(), id);
+      const over = releaseWindow?.planOver?.current?.(engine.read());
+      const sender = senderScreening(engine.read(), id, undefined, undefined, over);
       if (sender) {
         const dest = d.dest;
         const plan = planScreeningChange(sender, dest, d.scope, true, retroOf);
@@ -1292,7 +1297,7 @@ export function useScreenerState(
         let refused: Parameters<typeof organizerRefusalOf>[0] = undefined;
         // A card press moves the INBOX letters it showed, a sheet press its own letter; a sheet's
         // backlog is the server pass's. Beside a decide they wait for its answer.
-        void dispatchScreeningChange(plan, [...cardMoves, ...seedMoves], (m) => engine.mutate(m).then((r) => {
+        void dispatchScreeningChange(plan, [...cardMoves, ...seedMoves], (m) => engine.mutate(over ? outrankCoveringDomains(over, m) : m).then((r) => {
           if (r.status === "rolled_back" && refused === undefined) refused = r.error;
           return r;
         }), card ? cardFiled.length : seedMoves.length, card || plan.ruleState === "promoted").then((key) => {

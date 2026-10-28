@@ -1400,7 +1400,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       }),
       /* A MOVE'S WAY BACK once its window has sent the rules; a sheet press's rules can carry the
          backlog pass the person asked for, and a Screener decision has no inverse at all. */
-      reverse: (mutations, intent) => (intent.v === 1 ? routingReversal(() => engine.read(), mutations) : null),
+      reverse: (mutations, intent) => (intent.v === 1
+        ? routingReversal(() => engine.read(), mutations, phonePressRules(engine, phoneRulesTravel(mailboxesNow.current ?? []), new Date()))
+        : null),
       onReplayed: (replay) => { for (const say of sayRoutingReplay(replay)) showToast(say); },
     });
     /* THE DELETE WINDOW'S SESSION, beside it and on the same journal: the deletes a killed session
