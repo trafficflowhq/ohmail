@@ -4118,7 +4118,12 @@ export function MessageBody({
    * is also what those renders have always said: no bar.
    */
   const okMail = mail && mail.state === "ok" ? mail : null;
-  const remote = okMail && shown ? shown.blocked : NO_ASSETS;
+  const named = okMail && shown ? shown.blocked : NO_ASSETS;
+  // A door that fetches pictures itself (`onRemoteImages`; `tauri://localhost`, where `proxy` is null) shows only
+  // what arrived: a CSS `url()` or a picture past its part cap stays blank, so it stays blocked.
+  const remote = proxy === null && remoteLoaded && imageProxy != null && onRemoteImages != null
+    ? named.filter((b) => b.pixel || !(b.via === "img" && resolvedRemoteImages?.has(b.url)))
+    : named;
   const sheets = okMail ? okMail.sheets : NO_SHEETS;
   const pixels = remote.filter((b) => b.pixel).length;
   /**
