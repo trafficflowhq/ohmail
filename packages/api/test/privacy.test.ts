@@ -105,7 +105,7 @@ describe("GET /img is mounted, and answers only as a bounded image", () => {
     expect(served.status).toBe(200);
     expect(served.headers.get("cache-control"), "a served image's lifetime").toBe("private, max-age=86400");
     // …keyed on the session (IMG-CACHE-KEPT-WHERE-CLEAR-SITE-DATA-IS-IGNORED): a browser that
-    // ignores the sign-out's Clear-Site-Data keeps a picture only until the cookie rotates.
+    // ignores the purge after a sign-out, or never sent it, keeps a picture only until the cookie rotates.
     expect(served.headers.get("vary"), "a served image does not vary on the session").toBe("Cookie");
     const refusedOwner = await H(req("GET", `/img?mid=${a.id}&u=${u}`, { bearer: a.other }), png.deps);
 

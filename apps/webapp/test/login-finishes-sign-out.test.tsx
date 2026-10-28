@@ -87,6 +87,8 @@ beforeEach(() => {
       const answer = doorScript[Math.min(count("door"), doorScript.length) - 1]!();
       return answer === null ? held("door") : answer;
     }
+    // The cache purge after a confirmed sign-out presents nothing: answered apart, never a renewal.
+    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") { wire.push("purge"); return new Response(null, { status: 202 }); }
     if (url.endsWith("/auth/refresh")) { wire.push("refresh"); return revoked(); }
     if (url.includes("/auth/session")) {
       wire.push("session");
@@ -208,6 +210,7 @@ describe("a pending sign-out is finished behind the sign-in form", () => {
     expect(text(el), "the page does not say why it is showing").toContain(R.pendingBody);
     expect(replaced, "the finished sign-out navigated").toEqual([]);
     expect(document.cookie, "a confirmed sign-out left the marker behind").not.toContain(PENDING);
+    expect(count("purge"), "the finished sign-out's cache clear").toBe(1);
   });
 
   it("the family already ended (the door's coded 401): finished at the first ask", async () => {
@@ -252,6 +255,7 @@ describe("a pending sign-out is finished behind the sign-in form", () => {
     await tick(120_000);
     expect(count("door"), "the ladder kept asking after it ended").toBe(CONFIRM_ATTEMPTS);
     expect(count("session") + count("refresh"), "a refused sign-out was resumed").toBe(0);
+    expect(count("purge"), "a cache clear over a sign-out the server never confirmed").toBe(0);
     expect(document.cookie, "the next visit has nothing left to finish it by").toContain(PENDING);
     // The splash said this before the sign-in page finished the sign-out, and nothing did after:
     // the person left a shared computer believing the session was ended.

@@ -38,6 +38,7 @@ import { SELF_HOST_BUILD } from "../../hello";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
 import { forgetThisBrowser, signOut } from "../../sign-out";
+import { purgeSiteCache } from "../../session-refresh";
 import { signOutTrouble } from "../../sign-out-trouble";
 import { markAccountErased } from "../../shell/account-erased";
 import {
@@ -193,6 +194,8 @@ export function AccountSection() {
     setStepUpDiscarded(false);
     try {
       const out = await account.erase();
+      // The receipt no longer carries the cache clear (Chrome held it for a walk of its whole cache).
+      purgeSiteCache();
       // The account is gone: this tab asks nothing more under it. The binding the wipe below keeps
       // would otherwise read the cleared marker as a lost name on every later request.
       markAccountErased(owner);

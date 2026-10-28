@@ -57,9 +57,12 @@ const json = (body: unknown, status = 200, account: string | null = OWNER): Resp
     },
   });
 
-/** `erase` answers each DELETE in turn; the first is a closed step-up window, as it nearly always is. */
-interface Rig { erase: () => Response; asked: string[]; windowClosed: boolean }
-const rig: Rig = { erase: () => json({}), asked: [], windowClosed: true };
+/**
+ * `erase` answers each DELETE in turn; the first is a closed step-up window, as it nearly always is.
+ * `purges`: the cache clears asked for (`x-ohmail-clear: cache`), never answered here.
+ */
+interface Rig { erase: () => Response; asked: string[]; windowClosed: boolean; purges: number }
+const rig: Rig = { erase: () => json({}), asked: [], windowClosed: true, purges: 0 };
 const stepUpRequired = (): Response =>
   json({ error: { code: "step_up_required", message: "recent two-factor authentication required" } }, 403);
 
@@ -80,6 +83,7 @@ beforeEach(async () => {
   document.cookie = "tf_csrf=csrf-under-test; Path=/";
   rig.asked = [];
   rig.windowClosed = true;
+  rig.purges = 0;
   rig.erase = () => {
     clearReadableCookies();
     return json(RECEIPT);
@@ -89,6 +93,10 @@ beforeEach(async () => {
     const url = String(input);
     const method = init?.method ?? "GET";
     rig.asked.push(`${method} ${url}`);
+    if (url === "/auth/refresh" && method === "POST" && new Headers(init?.headers).get("x-ohmail-clear") === "cache") {
+      rig.purges += 1;
+      return new Promise<Response>(() => {});
+    }
     if (url === "/api/auth/session") {
       return json({
         user: { accountId: OWNER, email: EMAIL, twofaEnrolled: { webauthn: false, totp: true } }, scope: "full",
@@ -172,6 +180,7 @@ async function eraseThroughThePane(locale: "en" | "de" = "en"): Promise<HTMLElem
   await type(container.querySelector<HTMLInputElement>("#acct-typed")!, EMAIL);
   await submit(container.querySelector("form.acct-confirm")!);
   await waitFor(() => container.querySelector("#stepup-code") != null, "the step-up prompt");
+  expect(rig.purges, "a cache clear after the step-up refusal").toBe(0);
   await type(container.querySelector<HTMLInputElement>("#stepup-code")!, "123456");
   await submit(container.querySelector("#stepup-code")!.closest("form")!);
   await waitFor(() => rig.asked.filter((a) => a === "DELETE /api/account").length === 2, "the parked erase");
@@ -221,6 +230,10 @@ describe("Delete your account wipes this browser's copy of that account", () => 
     expect(await mirrorsLeft(), "the erased account's mirror is still in this browser").toEqual([]);
     expect(seeded.keys.filter((k) => localStorage.getItem(k) !== null), "account-keyed storage survived").toEqual([]);
     expect(document.cookie.includes("tf_owner="), "the name went with the mail").toBe(false);
+    // The receipt no longer carries the cache clear: the browser asks for it once, and the receipt
+    // shows while that request is still unanswered.
+    expect(rig.purges, "the cache clear after the erase").toBe(1);
+    expect(rig.asked.filter((a) => a === "POST /auth/refresh"), "a request on the refresh door other than the purge").toHaveLength(1);
   }, 30_000);
 
   it("THE CENSUS: zero entities and zero keys for the erased account; another account's copy survives", async () => {
@@ -295,9 +308,10 @@ describe("a refused erase says so, and the next press can erase", () => {
     expect(c.textContent, "the server's own words reached the person").not.toContain("internal error");
     expect(c.querySelector("#stepup-code"), "left on a prompt for a window that is open").toBeNull();
     expect(c.querySelector<HTMLInputElement>("#acct-typed")?.value, "not back at the top, address kept").toBe(EMAIL);
-    // The account still exists, so this browser keeps it.
+    // The account still exists, so this browser keeps it, and its cache.
     expect(await mirrorsLeft()).toEqual([`ohmail-mirror:${OWNER}`]);
     expect(seeded.keys.filter((k) => localStorage.getItem(k) === null)).toEqual([]);
+    expect(rig.purges, "a cache clear after a refused erase").toBe(0);
 
     // The window the factor opened is still open: the next press erases with no prompt and no sign-in.
     rig.erase = () => { clearReadableCookies(); return json(RECEIPT); };
@@ -306,6 +320,7 @@ describe("a refused erase says so, and the next press can erase", () => {
     expect(rig.asked.filter((a) => a === "POST /api/auth/login")).toEqual([]);
     expect(rig.asked.filter((a) => a === "POST /api/auth/step-up/totp")).toHaveLength(1);
     expect(await mirrorsLeft()).toEqual([]);
+    expect(rig.purges, "the erase that went through asks for the cache clear once").toBe(1);
     seeded.close();
   }, 30_000);
 
@@ -320,6 +335,7 @@ describe("a refused erase says so, and the next press can erase", () => {
     expect(said, "an unanswered request must not claim nothing was deleted").not.toBe(en.account.eraseRefused);
     expect(said).toContain("We could not reach ohmail");
     expect(c.querySelector("#acct-typed"), "back at the top").not.toBeNull();
+    expect(rig.purges, "a cache clear after an erase nobody answered").toBe(0);
   }, 30_000);
 
   it("a platform 5xx with no envelope of ours (the function cut mid-erasure) is unconfirmed, never nothing removed", async () => {
@@ -334,8 +350,9 @@ describe("a refused erase says so, and the next press can erase", () => {
     const said = c.querySelector("[role=alert]")!.textContent!;
     expect(said, "an outcome nobody confirmed").toBe(en.account.eraseUnconfirmed);
     expect(c.querySelector("#acct-typed"), "back at the top").not.toBeNull();
-    // Nothing proves the account is gone, so this browser keeps its copy.
+    // Nothing proves the account is gone, so this browser keeps its copy, and its cache.
     expect(await mirrorsLeft()).toEqual([`ohmail-mirror:${OWNER}`]);
+    expect(rig.purges, "a cache clear after an unconfirmed erase").toBe(0);
     seeded.close();
   }, 30_000);
 });

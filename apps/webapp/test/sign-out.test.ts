@@ -343,16 +343,34 @@ describe("the sign-out CONTROL is wired", () => {
 });
 
 /**
+ * Every request that leaves while a case runs, none ever answered. Only the cache purge goes out
+ * here (the door is the mocked `auth.logout`), and a confirmed sign-out must still resolve.
+ */
+const sent: Array<{ url: string; init?: RequestInit }> = [];
+const purgesSent = (): number => sent.filter((s) => s.url === "/auth/refresh"
+  && new Headers(s.init?.headers).get("x-ohmail-clear") === "cache").length;
+function holdEveryRequest(): void {
+  sent.length = 0;
+  globalThis.fetch = vi.fn((input: unknown, init?: RequestInit) => {
+    sent.push({ url: String(input), init });
+    return new Promise<Response>(() => {});
+  }) as unknown as typeof globalThis.fetch;
+}
+
+/**
  * THE DOOR'S ANSWER IS THE VERDICT, driven through the real `signOut` with only `auth` replaced.
  * A 204 or OUR 401 ends the session here; everything else — an uncoded 401, a bare `{ status }`
  * double, offline, a 403 — is a refusal: the pending marker, the blocked client, the pane's
  * sentence. The doubles say `coded` out loud, because a 401 without it must read as refused.
+ * A confirmed answer asks for the cache clear once (the door's answer no longer carries it); a
+ * refused one never does: on an older API the purge is a renewal, and the jar may still be live.
  */
 describe("the door's answer is the verdict", () => {
   const ACCOUNT = "11111111-1111-4111-8111-111111111111";
 
   beforeEach(async () => {
     mockLogout.mockReset();
+    holdEveryRequest();
     localStorage.clear();
     // jsdom has no IndexedDB: a factory that holds nothing, so the wipe completes and is not the subject.
     (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = {
@@ -374,16 +392,20 @@ describe("the door's answer is the verdict", () => {
     const client = await import("../app/api-client");
     client.bindApiOwner(ACCOUNT);
     const { signOut } = await import("../app/sign-out");
+    const before = purgesSent();
     const out = await signOut(ACCOUNT);
     const { readOwnerMarker } = await import("../app/shell/owner-cookie");
     return {
       serverRefused: out.serverRefused, marker: readOwnerMarker().kind,
       binding: client.apiOwnerBinding().kind, verdict: client.apiOwnerVerdict("/mailboxes"),
+      purges: purgesSent() - before,
     };
   }
 
-  const ENDED = { serverRefused: null, marker: "absent", binding: "public", verdict: "holds" };
-  const REFUSED = { serverRefused: expect.any(String), marker: "signed-out", binding: "blocked", verdict: "signed-out" };
+  const ENDED = { serverRefused: null, marker: "absent", binding: "public", verdict: "holds", purges: 1 };
+  const REFUSED = {
+    serverRefused: expect.any(String), marker: "signed-out", binding: "blocked", verdict: "signed-out", purges: 0,
+  };
 
   it("a 204 ends it", async () => {
     expect(await signOutAnswered("ok")).toEqual(ENDED);
@@ -450,6 +472,7 @@ describe("the finisher's predicate", () => {
 
   beforeEach(async () => {
     mockLogout.mockReset();
+    holdEveryRequest();
     localStorage.clear();
     (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = {
       databases: async () => [],
@@ -482,6 +505,7 @@ describe("the finisher's predicate", () => {
     expect(await signOut(undefined, { mayProceed: pending }), "a refusal about somebody else's jar was reported").toBeNull();
     expect(document.cookie, "the other tab's session was marked pending").toContain(`tf_owner=${OTHER}`);
     expect(localStorage.getItem(`${JOURNAL}${OTHER}`), "the other tab's stores were swept").toBe("[]");
+    expect(purgesSent(), "a purge over the other tab's live jar").toBe(0);
   });
 
   it("THE CONTROL — the same refusal over the jar it started on is reported, marked and swept as ever", async () => {
@@ -506,10 +530,12 @@ describe("the finisher's predicate", () => {
         document.cookie = "tf_owner=; Path=/; Max-Age=0";
         if (answer !== "ok") throw answer;
       });
+      const before = purgesSent();
       const out = await signOut(undefined, { mayProceed: pending });
       expect(out, `${answer === "ok" ? "a 204" : "a coded 401"} was read as a jar that moved`).not.toBeNull();
       expect(out!.serverRefused).toBeNull();
       expect(localStorage.getItem(`${JOURNAL}acct_left`), "the local half did not run").toBeNull();
+      expect(purgesSent() - before, "the finished sign-out's cache clear").toBe(1);
     }
   });
 
