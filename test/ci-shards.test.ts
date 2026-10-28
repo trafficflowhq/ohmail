@@ -131,7 +131,7 @@ describe("the suite workflow", () => {
     expect(workflowProblems(workflowText, composeText)).toEqual([]);
     // The census has subjects: the jobs it judged really run vitest, and the services are really there.
     const vitestJobs = Object.entries(wf.jobs).filter(([, j]) => j.steps.some((s) => /\bvitest run\b/.test(s.run ?? ""))).map(([id]) => id);
-    expect(vitestJobs.sort()).toEqual(["alone", "desktop", "proxy-e2e", "sqlite", "suite"]);
+    expect(vitestJobs.sort()).toEqual(["alone", "desktop", "proxy-e2e", "search-budget", "sqlite", "suite"]);
     expect(Object.keys(wf.jobs.suite.services ?? {}).sort()).toEqual(["greenmail", "postgres"]);
   });
 

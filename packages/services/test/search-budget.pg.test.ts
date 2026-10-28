@@ -1,6 +1,6 @@
 // @postpush: alone
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { loadavg } from "node:os";
+import { availableParallelism, loadavg } from "node:os";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql, type SQL } from "drizzle-orm";
@@ -12,7 +12,7 @@ import { pgTestUrl } from "@trafficflow/db/testing";
 import { searchIndexProgress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
-import { LOADED_CEILING, QUIET_RATIO, isQuiet, quietLimit, verdicts, type Round, type Verdict } from "./_budget-clock.js";
+import { LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, mustJudge, outcomeOf, verdicts, windowOf, type Round, type Verdict, type Window } from "./_budget-clock.js";
 
 /**
  * SEARCH IS MILLISECONDS: the first page of a search answers inside 100 ms of server time at p95
@@ -293,63 +293,83 @@ const p95Of = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b
  * THE QUIET CLOCK: a budget figure is read in up to ROUNDS rounds of its whole sample set. Before each
  * round the server's CPU is read through a fixed statement that touches no search code; while it runs
  * over QUIET_RATIO times the run's quietest reading the round waits, up to QUIET_WAIT_MS, then runs
- * anyway, and the reference is read again after it. A figure passes when any round reads it inside
- * BUDGET_MS, fails when a quiet round (`_budget-clock.ts`) reads it over, and is unjudged, a warning
- * and never red, when no round was quiet, unless it reads past LOADED_CEILING times the budget, which
- * load alone has never reached: a slower path is slow on a quiet clock too, and a clock the
- * reference cannot tell from a slow product judges nothing. Every round prints its figures, the
- * reference before and after, quiet or loaded, the limit, the wait and the load. The budget never moves.
+ * anyway. Inside the round the reference is read once beside every sample (`tick`), and again after it.
+ * A figure passes when any round reads it inside BUDGET_MS, fails when a quiet round (`_budget-clock.ts`:
+ * both ends, and the inside readings' median and p95, at their limits, the host's load average at most a
+ * quarter of its CPUs) reads it over, and is unjudged,
+ * a SKIPPED-LOADED warning and never red, when no round was quiet, unless it reads past LOADED_CEILING
+ * times the budget, which load alone has never reached; under OHMAIL_BUDGET_MUST_JUDGE=1 (ci.yml's nightly job
+ * "suite · search budget · judged", on a hosted runner of its own) it fails instead, and the wait before a round is for the
+ * host's load average too. Every round prints its figures, the reference
+ * at both ends and inside, quiet or loaded, the limits, the wait and the load. The budget never moves.
  */
 const ROUNDS = 3;
 const QUIET_WAIT_MS = 45_000;
+/** The run's quietest reference: the lowest median of any window of readings. */
 let quietest = Infinity;
-/** The reference: the median of five runs of one fixed CPU-bound statement, in ms. */
+/** One run of the fixed CPU-bound statement, in ms. */
+async function refSample(): Promise<number> {
+  const t = performance.now();
+  await base.execute(sql`select count(*) from generate_series(1, 200000)`);
+  return performance.now() - t;
+}
+/** A window of reference readings; its median may lower the run's quietest. */
+function noted(xs: number[]): Window {
+  const w = windowOf(xs);
+  quietest = Math.min(quietest, w.median);
+  return w;
+}
+/** The median of five readings, in ms. */
 async function referenceMs(): Promise<number> {
   const xs: number[] = [];
-  for (let i = 0; i < 5; i++) {
-    const t = performance.now();
-    await base.execute(sql`select count(*) from generate_series(1, 200000)`);
-    xs.push(performance.now() - t);
-  }
-  const ms = [...xs].sort((a, b) => a - b)[2]!;
-  quietest = Math.min(quietest, ms);
-  return ms;
+  for (let i = 0; i < 5; i++) xs.push(await refSample());
+  return noted(xs).median;
 }
 async function quietClock(): Promise<{ ref: number; waited: number }> {
   const t0 = Date.now();
   let ref = await referenceMs();
-  while (ref > quietest * QUIET_RATIO && Date.now() - t0 < QUIET_WAIT_MS) {
+  // Where the budget must be judged, the wait is for the host's load too (the seeding's own load decays over a minute).
+  const busy = () => ref > quietest * QUIET_RATIO || (MUST_JUDGE && loadavg()[0]! > clockOf(quietest, CPUS).load);
+  while (busy() && Date.now() - t0 < QUIET_WAIT_MS) {
     await new Promise((r) => setTimeout(r, 1_000));
     ref = await referenceMs();
   }
   return { ref, waited: Date.now() - t0 };
 }
-async function bestOfRounds(label: string, round: () => Promise<Record<string, number>>): Promise<Record<string, Verdict>> {
+const fixed = (n: number): string => n.toFixed(1);
+const CPUS = availableParallelism();
+const MUST_JUDGE = mustJudge();
+async function bestOfRounds(label: string, round: (tick: () => Promise<void>) => Promise<Record<string, number>>): Promise<Record<string, Verdict>> {
   const rounds: Round[] = [];
   for (let i = 1; i <= ROUNDS; i++) {
     const before = await quietClock();
-    const figures = await round();
+    const loadBefore = loadavg()[0]!;
+    const inside: number[] = [];
+    const figures = await round(async () => { inside.push(await refSample()); });
     const after = await referenceMs();
-    const r: Round = { before: before.ref, after, figures };
+    const r: Round = { before: before.ref, after, during: noted(inside), load: Math.max(loadBefore, loadavg()[0]!), figures };
     rounds.push(r);
-    const limit = quietLimit(quietest);
-    console.log(`search-budget ${label} round ${i}/${ROUNDS} ${isQuiet(r, limit) ? "quiet" : "loaded"} ref ${before.ref.toFixed(1)}/${after.toFixed(1)} ms `
-      + `(limit ${limit.toFixed(1)}, quietest ${quietest.toFixed(1)}, waited ${before.waited} ms) `
-      + `load ${loadavg()[0]!.toFixed(2)}: ${Object.entries(figures).map(([k, v]) => `${k} ${v} ms`).join(", ")}`);
+    const clock = clockOf(quietest, CPUS);
+    console.log(`search-budget ${label} round ${i}/${ROUNDS} ${isQuiet(r, clock) ? "quiet" : "loaded"} ref ${fixed(before.ref)}/${fixed(after)} ms, `
+      + `inside median ${fixed(r.during.median)} p95 ${fixed(r.during.p95)} of ${inside.length} (limit ${fixed(clock.limit)}, spike ${fixed(clock.spike)}, `
+      + `quietest ${fixed(quietest)}, waited ${before.waited} ms) `
+      + `load ${r.load.toFixed(2)} (limit ${clock.load} on ${CPUS} CPUs): ${Object.entries(figures).map(([k, v]) => `${k} ${v} ms`).join(", ")}`);
     if (Object.keys(figures).every((k) => Math.min(...rounds.map((x) => x.figures[k]!)) <= BUDGET_MS)) break;
   }
-  return verdicts(rounds, BUDGET_MS, quietLimit(quietest));
+  return verdicts(rounds, BUDGET_MS, clockOf(quietest, CPUS));
 }
-/** A figure inside the budget, or over it on a quiet round (red); over on no quiet round warns. */
+/** A figure inside the budget, or over it on a quiet round (red); over on no quiet round warns, or fails where it must be judged. */
 function judge(v: Verdict, what: string): void {
-  const limit = quietLimit(quietest);
-  if (v.kind === "unjudged") {
-    console.log(`::warning title=search budget CLASSIFY-ASK RUNNER::${what} p95 ${v.ms} ms over ${BUDGET_MS} ms with no quiet round `
-      + `(limit ${limit.toFixed(1)} ms, the run's quietest reference ${quietest.toFixed(1)} ms): unjudged`);
+  const clock = clockOf(quietest, CPUS);
+  const limits = `limit ${fixed(clock.limit)} ms, spike ${fixed(clock.spike)} ms, load limit ${clock.load} on ${CPUS} CPUs, the run's quietest reference ${fixed(quietest)} ms`;
+  if (outcomeOf(v, MUST_JUDGE) === "skipped-loaded") {
+    console.log(`::warning title=search budget SKIPPED-LOADED::${what} p95 ${v.ms} ms over ${BUDGET_MS} ms with no quiet round (${limits}): not judged on this host`);
     return;
   }
-  const how = v.kind !== "over" ? `the best of ${ROUNDS} rounds`
-    : v.round ? `on a quiet round (reference ${v.round.before.toFixed(1)}/${v.round.after.toFixed(1)} ms, limit ${limit.toFixed(1)} ms): search over budget`
+  const how = v.kind === "unjudged" ? `with no quiet round (${limits}) on a host that must judge the budget (OHMAIL_BUDGET_MUST_JUDGE=1)`
+    : v.kind !== "over" ? `the best of ${ROUNDS} rounds`
+    : v.round ? `on a quiet round (reference ${fixed(v.round.before)}/${fixed(v.round.after)} ms, inside ${fixed(v.round.during.median)}/${fixed(v.round.during.p95)} ms, `
+      + `limit ${fixed(clock.limit)}/${fixed(clock.spike)} ms, load ${v.round.load.toFixed(2)} of ${clock.load}): search over budget`
     : `past ${LOADED_CEILING * BUDGET_MS} ms with no quiet round, slower than load alone has ever read: search over budget`;
   expect(v.ms, `${what} p95 ${how}`).toBeLessThanOrEqual(BUDGET_MS);
 }
@@ -397,7 +417,11 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       h.q = h.q ?? (await vocabWord(h.k!));
     }
     await base.execute(sql`reset statement_timeout`);
-    for (let i = 0; i < 10; i++) await referenceMs();
+    for (let i = 0; i < 5; i++) {
+      const xs: number[] = [];
+      for (let j = 0; j < 20; j++) xs.push(await refSample());
+      noted(xs);
+    }
   }, 900_000);
 
   afterAll(async () => {
@@ -410,9 +434,12 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     it(`"${q}": the first page inside ${BUDGET_MS} ms at p95, and no statement scans a table`, async () => {
       const svc = new SearchService();
       await svc.search(ctx(), { q, parts: "page" });
-      const best = await bestOfRounds(q, async () => {
+      const best = await bestOfRounds(q, async (tick) => {
         const ms: number[] = [];
-        for (let i = 0; i < 20; i++) ms.push((await svc.search(ctx(), { q, parts: "page" })).ms);
+        for (let i = 0; i < 20; i++) {
+          ms.push((await svc.search(ctx(), { q, parts: "page" })).ms);
+          await tick();
+        }
         ms.sort((a, b) => a - b);
         return { p50: ms[10]!, p95: ms[18]! };
       });
@@ -436,7 +463,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const svc = new SearchService();
     const QS = ["w3000 w1", "w2000 w2500"];
     for (const q of QS) await svc.search(ctx(), { q, parts: "page" });
-    const best = await bestOfRounds("before two words", async () => {
+    const best = await bestOfRounds("before two words", async (tick) => {
       const figures: Record<string, number> = {};
       for (const q of QS) {
         const page: number[] = [];
@@ -444,6 +471,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
         for (let i = 0; i < 20; i++) {
           page.push((await svc.search(ctx(), { q, parts: "page" })).ms);
           count.push((await svc.search(ctx(), { q, parts: "estimate" })).ms);
+          await tick();
         }
         figures[`${q} page`] = p95Of(page);
         figures[`${q} count`] = p95Of(count);
@@ -468,13 +496,14 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const at = { ...ctx(), db: far as never };
     const QS = ["w1", "w40", "w3000", "axa", "w100", "myax"];
     for (const q of QS) await svc.search(at, { q, parts: "page" });
-    const best = await bestOfRounds("far", async () => {
+    const best = await bestOfRounds("far", async (tick) => {
       const p95: Record<string, number> = {};
       for (const q of QS) {
         const ms: number[] = [];
         for (let i = 0; i < 20; i++) {
           count.n = 0;
           ms.push((await svc.search(at, { q, parts: "page" })).ms);
+          await tick();
         }
         p95[q] = p95Of(ms);
       }
@@ -503,7 +532,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
     // Every round's answers and statement counts, for the class's shape: a round is judged whole.
     const seenOf = HARNESS.map(() => ({ statements: [] as number[], items: [] as number[] }));
-    const best = await bestOfRounds("harness", async () => {
+    const best = await bestOfRounds("harness", async (tick) => {
       const reads = HARNESS.map(() => ({ page: [] as number[], count: [] as number[] }));
       for (let pass = 0; pass < 5; pass++) {
         for (const [i, h] of HARNESS.entries()) {
@@ -513,6 +542,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
           reads[i]!.page.push(page.ms);
           seenOf[i]!.items.push(page.tier === "exact" ? page.items.length : -page.items.length);
           reads[i]!.count.push((await svc.search(at, { q: h.q!, parts: "estimate" })).ms);
+          await tick();
         }
       }
       // Each query's page and count medians, so a red class names the query that made it.
@@ -587,7 +617,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     // The same round trips a page whatever the direction: begin, settings, count, commit, page, rows.
     for (const c of ADDRESS_CLASSES) expect(statements[c.cls], `${c.cls} statements`).toBe(statements.from);
     expect(statements.from).toBeLessThanOrEqual(6);
-    const best = await bestOfRounds("address", async () => {
+    const best = await bestOfRounds("address", async (tick) => {
       const figures: Record<string, number> = {};
       for (const c of ADDRESS_CLASSES) {
         const ms: number[] = [];
@@ -595,6 +625,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
           const t = performance.now();
           await svc.searchByAddress(ctx(), { address: c.address, direction: c.direction });
           ms.push(Math.round(performance.now() - t));
+          await tick();
         }
         figures[c.cls] = p95Of(ms);
       }
