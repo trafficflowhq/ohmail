@@ -78,6 +78,28 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.11" date="2026-10-28">
+      <description>
+        <ul>
+          <li>Scrolling the News list no longer marks letters read</li>
+          <li>Screened out and Spam show their list on the first click</li>
+          <li>News and Receipts name their unread letters on your first visit</li>
+          <li>The reply editor in News and Receipts no longer covers the end of the letter</li>
+          <li>A screen reader is told when the desktop window was reloaded</li>
+          <li>The Look follows your account on every signed-in device</li>
+          <li>The phone's Look follows your account too</li>
+          <li>Compose and mail links keep the message you are writing</li>
+          <li>A send you cancel on the phone with no network is in Drafts at once</li>
+          <li>The phone's sidebar opens beside the rail on a foldable</li>
+          <li>The settings document in ohmail/_meta names the app version that wrote it</li>
+          <li>Gmail setup says what to do when an account cannot create an App Password</li>
+          <li>The server no longer ships a command that marks screened-out mail read</li>
+          <li>A lower storage limit on Cloud waits 14 days before old letters are emptied</li>
+          <li>Search answers faster for words in a few percent of your mail</li>
+          <li>A closed tab no longer holds a live-update stream on ohmail Cloud</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.10" date="2026-10-28">
       <description>
         <ul>
@@ -174,27 +196,6 @@
           <li>A letter filed elsewhere while another device reads its Inbox shows in its new folder</li>
           <li>Back from a letter at phone width keeps the cursor on that letter</li>
           <li>Embedded pictures draw from servers that answer nested parts' headers wrongly</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.6" date="2026-10-26">
-      <description>
-        <ul>
-          <li>A foldable keeps your place and marks nothing read when a pane change shortens the conversation</li>
-          <li>Parked and Answer later hold a conversation as one row</li>
-          <li>News and Receipts mark only what you saw after a jump</li>
-          <li>Forward on the web and the desktop lists the original's files</li>
-          <li>Forward on the phone lists the letter's files, and sends only the ones you keep</li>
-          <li>A forward trimmed on the phone sends only the kept files from any device</li>
-          <li>The Screener keeps the sender you are reading, and Mark all spam asks first</li>
-          <li>The keyboard ring stays on the message your next key acts on</li>
-          <li>A big first import keeps setup's promises about the Screener</li>
-          <li>A message sent just before closing keeps its Sent copy when the mail server was slow or had stopped answering</li>
-          <li>ohmail Cloud brings back the text of emptied letters when there is room again</li>
-          <li>Importing saved settings no longer fails a press made at the same moment</li>
-          <li>A press made beside a mailbox change no longer fails</li>
-          <li>A folder change made beside a Screener decision no longer fails</li>
-          <li>The web app runs Next.js 15.5.28</li>
         </ul>
       </description>
     </release>
