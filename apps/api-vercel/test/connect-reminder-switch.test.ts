@@ -29,6 +29,18 @@ describe("TF_CONNECT_REMINDER on the managed host", () => {
     }
   });
 
+  it("TF_CONNECT_ATTEMPTS: record composes the connect recorder; unset, empty or any other word composes none", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    for (const [value, mode] of [
+      [null, "off"], ["", "off"], ["1", "off"], ["RECORD", "off"], ["on", "off"], ["record", "record"], [" record ", "record"],
+    ] as const) {
+      const cfg = cfgWith(value === null ? {} : { TF_CONNECT_ATTEMPTS: value });
+      expect(cfg.connectAttempts, String(value)).toBe(mode);
+      expect(typeof buildDeps(new Request("https://ohmail.app/mailboxes/probe"), cfg).connectAttempts, String(value))
+        .toBe(mode === "record" ? "function" : "undefined");
+    }
+  });
+
   it("TF_CONNECT_REMINDER_SINCE reaches the pass as written, trimmed, and null unset or blank; the pass judges it", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     for (const [value, since] of [

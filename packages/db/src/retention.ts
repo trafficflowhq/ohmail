@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { accountSyncState } from "./schema-mail.js";
-import { authEvents } from "./schema-cloud.js";
+import { authEvents, connectAttempts } from "./schema-cloud.js";
 import type { Tx } from "./change-log.js";
 import { RETENTION_DELETE_BATCH, affected } from "./change-log-retention.js";
 
@@ -23,6 +23,9 @@ export {
 /** auth_events keeps 180 days — the alert windows read hours, the user's own history a page.
  *  It carries `ip` and `device`, so keeping less is the point, not a saving. */
 export const AUTH_EVENTS_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
+
+/** connect_attempts keeps 30 days (cloud 0054): what /privacy states, and what the console reads. */
+export const CONNECT_ATTEMPTS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Sign-in records, codes, staff sessions and unused invitations go this long past their expiry,
  *  and a session this long after it ended. Past the 30-day history the staff console reads and the
@@ -67,6 +70,24 @@ export async function pruneAuthEvents(
       select ${authEvents.id} from ${authEvents}
        where ${authEvents.at} < ${cut.toISOString()}::timestamptz
        order by ${authEvents.at}
+       limit ${batch}
+    )
+  `);
+  return affected(res);
+}
+
+/** One bounded batch of the connect_attempts fixed-age prune, on its full key; loop while full. */
+export async function pruneConnectAttempts(
+  db: Tx, now: Date, retentionMs: number = CONNECT_ATTEMPTS_RETENTION_MS,
+  batch: number = RETENTION_DELETE_BATCH,
+): Promise<number> {
+  const cut = new Date(now.getTime() - retentionMs);
+  const res = await db.execute(sql`
+    delete from ${connectAttempts}
+     where (${connectAttempts.accountId}, ${connectAttempts.at}, ${connectAttempts.id}) in (
+      select ${connectAttempts.accountId}, ${connectAttempts.at}, ${connectAttempts.id} from ${connectAttempts}
+       where ${connectAttempts.at} < ${cut.toISOString()}::timestamptz
+       order by ${connectAttempts.at}
        limit ${batch}
     )
   `);

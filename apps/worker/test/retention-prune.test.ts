@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { retentionPrunePass, signInRetentionPass } from "../src/retention-prune.js";
 import { accounts, users, type Tx } from "@trafficflow/db";
-import { loginTokens } from "@trafficflow/db/cloud";
+import { connectAttempts, loginTokens } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { createLogger } from "@trafficflow/core";
 import type { Logger } from "@trafficflow/core/mail";
@@ -53,7 +53,28 @@ describe("retentionPrunePass never throws", () => {
     await expect(retentionPrunePass(db, new Date(), log)).resolves.toBeUndefined();
     // One warn per failing account, one per failing fixed-age prune — never a throw.
     expect(events.filter((e) => e === "retention_prune_account_failed")).toHaveLength(1);
-    expect(events.filter((e) => e === "retention_prune_failed")).toHaveLength(2);
+    expect(events.filter((e) => e === "retention_prune_failed")).toHaveLength(3);
+  });
+});
+
+describe("retentionPrunePass ages out connect attempts at 30 days (cloud 0054)", () => {
+  it("a 31-day-old row goes, a 29-day-old one stays, and another account's row is untouched", async () => {
+    const db = await makeTestDb();
+    const now = new Date("2026-10-27T12:00:00.000Z");
+    const ago = (days: number): Date => new Date(now.getTime() - days * 86_400_000);
+    const [a] = await db.insert(accounts).values({ name: "A" }).returning();
+    const [b] = await db.insert(accounts).values({ name: "B" }).returning();
+    const row = { door: "test", preset: "imap", outcome: "ok" } as const;
+    await db.insert(connectAttempts).values([
+      { ...row, accountId: a!.id, at: ago(31) }, { ...row, accountId: a!.id, at: ago(29) },
+      { ...row, accountId: b!.id, at: ago(29) },
+    ]);
+    const { log, events } = collectingLog();
+    await retentionPrunePass(db as unknown as Tx, now, log);
+    const left = await db.select({ accountId: connectAttempts.accountId, at: connectAttempts.at }).from(connectAttempts);
+    expect(left.map((r) => [r.accountId, r.at.getTime()]).sort()).toEqual(
+      [[a!.id, ago(29).getTime()], [b!.id, ago(29).getTime()]].sort());
+    expect(events).toContain("retention_prune_connect_attempts");
   });
 });
 

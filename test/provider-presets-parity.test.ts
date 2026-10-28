@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  DISCOVER_MX_PRESETS, DISCOVER_PROTON_MX, discoverMailHosting, type MailDnsResolver,
+  CONNECT_PRESET_IMAP_HOSTS, DISCOVER_MX_PRESETS, DISCOVER_PROTON_MX, discoverMailHosting, presetOfImapHost,
+  type MailDnsResolver,
 } from "@trafficflow/api";
+import { accounts } from "@trafficflow/db";
+import { CONNECT_DOORS, CONNECT_PRESETS, CONNECT_REASONS, connectAttempts } from "@trafficflow/db/cloud";
+import { makeTestDb } from "@trafficflow/db/testing";
 import { PROTON, PROVIDERS, providerById, readDiscovery } from "@ohmail/client-engine";
 import en from "../apps/webapp/messages/en.json";
 import de from "../apps/webapp/messages/de.json";
@@ -44,6 +48,43 @@ describe("the lookup and the preset table", () => {
       .toEqual({ preset: null, proton: true, imap: null, smtp: null });
     expect(PROVIDERS.some((p) => p.label === PROTON.label)).toBe(false);
     expect(DISCOVER_MX_PRESETS.some((row) => /proton/i.test(row.preset))).toBe(false);
+  });
+});
+
+describe("the connect record's presets and words (cloud 0054)", () => {
+  it("every preset's IMAP host is recorded as that preset, and any other host as imap", () => {
+    const named = PROVIDERS.filter((p) => !p.manual);
+    for (const p of named) {
+      expect(presetOfImapHost(p.imap.host), p.id).toBe(p.id);
+      expect(presetOfImapHost(` ${p.imap.host.toUpperCase()}. `), p.id).toBe(p.id);
+    }
+    expect(presetOfImapHost("imap.googlemail.com")).toBe("gmail");
+    expect([...new Set(Object.values(CONNECT_PRESET_IMAP_HOSTS))].sort()).toEqual(named.map((p) => p.id).sort());
+    for (const other of ["mail.praxis-sonnhalde.ch", "imap.gmail.com.example.net", "", undefined, 993]) {
+      expect(presetOfImapHost(other), String(other)).toBe("imap");
+    }
+  });
+
+  it("0054's CHECKs admit every word the recorder can write, and refuse anything a person typed", async () => {
+    const db = await makeTestDb();
+    const [account] = await db.insert(accounts).values({ name: "words" }).returning();
+    const row = { accountId: account!.id, door: "test", preset: "imap", outcome: "ok" };
+    for (const preset of CONNECT_PRESETS) await db.insert(connectAttempts).values({ ...row, preset });
+    for (const door of CONNECT_DOORS) await db.insert(connectAttempts).values({ ...row, door });
+    for (const reason of CONNECT_REASONS) {
+      for (const transport of [null, "imap", "smtp"]) {
+        await db.insert(connectAttempts).values({ ...row, outcome: "refused", reason, transport });
+      }
+    }
+    expect(await db.select().from(connectAttempts)).toHaveLength(CONNECT_PRESETS.length + CONNECT_DOORS.length + CONNECT_REASONS.length * 3);
+    for (const bad of [
+      { preset: "mila@lichtgrat.example" }, { preset: "imap.gmail.com" }, { preset: "Gmail" },
+      { outcome: "refused", reason: "The server said: invalid credentials" }, { outcome: "refused", reason: "a".repeat(33) },
+      { reason: "auth" }, { outcome: "refused" }, { outcome: "failed", reason: "auth" },
+      { door: "discover" }, { outcome: "refused", reason: "auth", transport: "pop3" },
+    ]) {
+      await expect(db.insert(connectAttempts).values({ ...row, ...bad }), JSON.stringify(bad)).rejects.toThrow();
+    }
   });
 });
 

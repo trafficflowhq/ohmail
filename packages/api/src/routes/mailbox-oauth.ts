@@ -12,6 +12,7 @@ import {
 } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
 import { defaultOrigin, ServiceError, withAccountTx } from "@trafficflow/services/mail";
+import { noteConnectAttempt } from "../connect-attempt-note.js";
 import { serviceContext } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import { makeImapProbe } from "../imap-probe.js";
@@ -271,87 +272,94 @@ export const mailboxOAuthRoutes: Route[] = [
      */
     cost: "work",
     replay: "ephemeral",
+    // How it ended is recorded on the managed host (cloud 0054); the answer is unchanged.
     handler: async (req, deps) => {
-      const cfg = await resolveConfig(deps);
-      const redirectUri = webRedirectUri(cfg);
-      // THE SAME PREDICATE the capability read publishes, so the Outlook door and this refusal can
-      // never disagree. When it says no, name WHICH half is missing: `unconfigured(cfg)` carries the
-      // resolver's own gap (`disabled`, `not_configured`, a missing field), except the one case the
-      // resolver reports as usable and this still refuses — a junk tenant on an otherwise complete,
-      // enabled registration — which is reported here. (The tenant is validated at the URL builder
-      // too; this keeps a bad one from surfacing as a 500 instead of a configuration gap.)
-      // `|| !redirectUri` is redundant with the predicate (an `enabled` config always has a web
-      // redirect) and is kept only so the compiler narrows `redirectUri` to `string` past this point.
-      if (!microsoftOAuthAvailable(cfg) || !redirectUri) {
-        if (cfg.enabled && redirectUri) throw unconfigured({ ...cfg, gap: "tenant_missing" });
-        throw unconfigured(cfg);
-      }
+      try {
+        const cfg = await resolveConfig(deps);
+        const redirectUri = webRedirectUri(cfg);
+        // THE SAME PREDICATE the capability read publishes, so the Outlook door and this refusal can
+        // never disagree. When it says no, name WHICH half is missing: `unconfigured(cfg)` carries the
+        // resolver's own gap (`disabled`, `not_configured`, a missing field), except the one case the
+        // resolver reports as usable and this still refuses — a junk tenant on an otherwise complete,
+        // enabled registration — which is reported here. (The tenant is validated at the URL builder
+        // too; this keeps a bad one from surfacing as a 500 instead of a configuration gap.)
+        // `|| !redirectUri` is redundant with the predicate (an `enabled` config always has a web
+        // redirect) and is kept only so the compiler narrows `redirectUri` to `string` past this point.
+        if (!microsoftOAuthAvailable(cfg) || !redirectUri) {
+          if (cfg.enabled && redirectUri) throw unconfigured({ ...cfg, gap: "tenant_missing" });
+          throw unconfigured(cfg);
+        }
 
-      const ctx = serviceContext(deps, req);
-      const body = await readBody<StartBody>(req).catch(() => ({} as StartBody));
+        const ctx = serviceContext(deps, req);
+        const body = await readBody<StartBody>(req).catch(() => ({} as StartBody));
 
-      // The hint, and the OWNERSHIP CHECK that has to precede reading it. `mailbox(deps).get` is
-      // account-scoped and 404s a cross-account id, so a guessed uuid cannot turn this route into a
-      // "does this mailbox exist" oracle — the same reason `GET /mailboxes/:id/organizer` does its
-      // ownership read before it dials.
-      let loginHint: string | undefined;
-      if (typeof body.mailboxId === "string" && body.mailboxId.length > 0) {
-        const dto = await mailbox(deps).get(ctx, body.mailboxId);
-        loginHint = dto.address;
-      }
+        // The hint, and the OWNERSHIP CHECK that has to precede reading it. `mailbox(deps).get` is
+        // account-scoped and 404s a cross-account id, so a guessed uuid cannot turn this route into a
+        // "does this mailbox exist" oracle — the same reason `GET /mailboxes/:id/organizer` does its
+        // ownership read before it dials.
+        let loginHint: string | undefined;
+        if (typeof body.mailboxId === "string" && body.mailboxId.length > 0) {
+          const dto = await mailbox(deps).get(ctx, body.mailboxId);
+          loginHint = dto.address;
+        }
 
-      const state = oauthState(randomBytes);
-      const pkce = pkcePair(randomBytes);
-      const enc = await deps.keyProvider.encrypt(pkce.verifier);
-      const returnTo = safeReturnPath(body.returnTo, appOrigin(deps));
+        const state = oauthState(randomBytes);
+        const pkce = pkcePair(randomBytes);
+        const enc = await deps.keyProvider.encrypt(pkce.verifier);
+        const returnTo = safeReturnPath(body.returnTo, appOrigin(deps));
 
-      /*
-       * THROUGH THE FENCED DOOR, for the device ceremony's reason next door: the row is
-       * account-owned and the Art. 17 sweep deletes it, while `accounts` SURVIVES erasure — so
-       * nothing structural refuses an insert that lands after the sweep, and what it would put
-       * back is sealed PKCE ceremony state, a live way into a mailbox on an erased account. The
-       * window is narrower than the device flow's and narrower is not closed: the config resolve,
-       * the hint read and the encrypt all sit between the session check and this write.
-       * `withAccountTx` reads `accounts.erased_at FOR SHARE` first and refuses 410; the encrypt
-       * stays outside it — no key work in a transaction.
-       */
-      await withAccountTx(ctx, async (tx) => {
-        await createOAuthCeremony(tx as unknown as Tx, {
+        /*
+         * THROUGH THE FENCED DOOR, for the device ceremony's reason next door: the row is
+         * account-owned and the Art. 17 sweep deletes it, while `accounts` SURVIVES erasure — so
+         * nothing structural refuses an insert that lands after the sweep, and what it would put
+         * back is sealed PKCE ceremony state, a live way into a mailbox on an erased account. The
+         * window is narrower than the device flow's and narrower is not closed: the config resolve,
+         * the hint read and the encrypt all sit between the session check and this write.
+         * `withAccountTx` reads `accounts.erased_at FOR SHARE` first and refuses 410; the encrypt
+         * stays outside it — no key work in a transaction.
+         */
+        await withAccountTx(ctx, async (tx) => {
+          await createOAuthCeremony(tx as unknown as Tx, {
+            state,
+            accountId: ctx.accountId,
+            provider: MICROSOFT_PROVIDER,
+            codeVerifierEnc: enc.ciphertext,
+            codeVerifierKeyVersion: enc.keyVersion,
+            returnTo,
+            now: deps.now(),
+          });
+        });
+
+        /* OPPORTUNISTIC PRUNE, and its failure is swallowed on purpose: a ceremonies table that grew
+         * by one row is not a reason to refuse somebody's connect. See `pruneOAuthCeremonies` for why
+         * this is not a cron. */
+        await pruneOAuthCeremonies(deps.db, { now: deps.now() })
+          .catch((err: unknown) => {
+            (deps.logger ?? silentLogger).warn?.("oauth_ceremony_prune_failed", { err });
+          });
+
+        const authorizeUrl = buildMicrosoftAuthorizeUrl({
+          tenant: cfg.tenant,
+          clientId: cfg.clientId,
+          redirectUri,
+          scopes: cfg.scopes,
           state,
-          accountId: ctx.accountId,
-          provider: MICROSOFT_PROVIDER,
-          codeVerifierEnc: enc.ciphertext,
-          codeVerifierKeyVersion: enc.keyVersion,
-          returnTo,
-          now: deps.now(),
-        });
-      });
-
-      /* OPPORTUNISTIC PRUNE, and its failure is swallowed on purpose: a ceremonies table that grew
-       * by one row is not a reason to refuse somebody's connect. See `pruneOAuthCeremonies` for why
-       * this is not a cron. */
-      await pruneOAuthCeremonies(deps.db, { now: deps.now() })
-        .catch((err: unknown) => {
-          (deps.logger ?? silentLogger).warn?.("oauth_ceremony_prune_failed", { err });
+          codeChallenge: pkce.challenge,
+          ...(loginHint ? { loginHint } : {}),
         });
 
-      const authorizeUrl = buildMicrosoftAuthorizeUrl({
-        tenant: cfg.tenant,
-        clientId: cfg.clientId,
-        redirectUri,
-        scopes: cfg.scopes,
-        state,
-        codeChallenge: pkce.challenge,
-        ...(loginHint ? { loginHint } : {}),
-      });
-
-      /* The URL is returned as JSON for the client to navigate to, rather than answered as a 303.
-       * A fetch cannot follow a redirect to a different origin AND change the top-level document,
-       * and it must be top-level: Microsoft's consent screen sets `X-Frame-Options`, so an iframe
-       * is not an option, and a popup is blocked in the common case. So the client does
-       * `window.location.assign(authorizeUrl)`. `state` is echoed so the client can hold it for the
-       * complete step without having to parse it back out of the URL it navigated to. */
-      return jsonResponse({ authorizeUrl, state }, { status: 201 });
+        /* The URL is returned as JSON for the client to navigate to, rather than answered as a 303.
+         * A fetch cannot follow a redirect to a different origin AND change the top-level document,
+         * and it must be top-level: Microsoft's consent screen sets `X-Frame-Options`, so an iframe
+         * is not an option, and a popup is blocked in the common case. So the client does
+         * `window.location.assign(authorizeUrl)`. `state` is echoed so the client can hold it for the
+         * complete step without having to parse it back out of the URL it navigated to. */
+        await noteConnectAttempt(deps, { door: "oauth_start" });
+        return jsonResponse({ authorizeUrl, state }, { status: 201 });
+      } catch (err) {
+        await noteConnectAttempt(deps, { door: "oauth_start", error: err });
+        throw err;
+      }
     },
   },
   {
@@ -404,143 +412,150 @@ export const mailboxOAuthRoutes: Route[] = [
      */
     cost: "work",
     replay: "guarded",
+    // Recorded as `start` is; the address from the `id_token` never reaches the record.
     handler: async (req, deps) => {
-      const ctx = serviceContext(deps, req);
-      const body = await readBody<{ state?: unknown; code?: unknown }>(req);
-      const state = typeof body.state === "string" ? body.state : "";
-      const code = typeof body.code === "string" ? body.code : "";
-      if (!URL_SAFE_STATE.test(state) || !URL_SAFE_CODE.test(code)) {
-        throw new ServiceError("validation_failed", 400, "state and code are required", { reason: "state_invalid" });
-      }
-
-      // ── (1) SINGLE-USE CONSUME. First, before anything expensive, and before any decision. ──
-      const spent = await consumeOAuthCeremony(deps.db, { state, now: deps.now() });
-      if (spent.outcome === "unknown") {
-        // A `state` that never existed and one already spent are ONE answer, deliberately: telling
-        // them apart is an oracle for whether a given 256-bit value was ever issued. 400 rather than
-        // 403 — nothing here is a statement about the caller's authorisation, only about the value.
-        throw new ServiceError(
-          "oauth_state_invalid", 400,
-          "That Outlook connection link is no longer valid. Start again from Settings.",
-          { reason: "state_invalid" },
-        );
-      }
-      if (spent.outcome === "expired") {
-        throw new ServiceError(
-          "oauth_state_expired", 400,
-          "That took too long to complete. Start again from Settings.",
-          { reason: "state_expired" },
-        );
-      }
-      const row = spent.row;
-
-      // ── (2) INVARIANT 9 — THE SESSION'S ACCOUNT IS THE CEREMONY'S ACCOUNT. ──────────────────
-      //
-      // Before the exchange, so a `state` belonging to somebody else is refused without this process
-      // POSTing to Microsoft. The ceremony row is the only thing that knows which account began the
-      // flow; the session is the only thing that knows who is finishing it; and a mailbox may only
-      // ever be attached to the account that asked for it. The row IS consumed by the step above, so
-      // a stolen `state` is burnt rather than left usable — which is the right direction: the
-      // legitimate owner starting again gets a fresh one.
-      if (row.accountId !== ctx.accountId) {
-        throw new ServiceError(
-          "forbidden", 403,
-          "That Outlook connection was started by a different account.",
-          { reason: "account_mismatch" },
-        );
-      }
-
-      const cfg = await resolveConfig(deps);
-      const redirectUri = webRedirectUri(cfg);
-      if (!cfg.enabled || !redirectUri) throw unconfigured(cfg);
-
-      const verifier = await deps.keyProvider.decrypt(row.codeVerifierEnc, row.codeVerifierKeyVersion);
-
-      // ── (3) THE CODE EXCHANGE. Confidential client: id + secret + verifier + the EXACT uri. ──
-      let tokens;
       try {
-        tokens = await exchangeAuthorizationCode({
-          code,
-          codeVerifier: verifier,
-          redirectUri,
-          tenant: cfg.tenant,
-          clientId: cfg.clientId,
-          clientSecret: cfg.clientSecret,
-          scopes: cfg.scopes,
-          fetch: tokenFetch(deps),
-        });
-      } catch (err) {
-        // THREE DIFFERENT FACTS, THREE DIFFERENT SENTENCES, and the split is the point.
+        const ctx = serviceContext(deps, req);
+        const body = await readBody<{ state?: unknown; code?: unknown }>(req);
+        const state = typeof body.state === "string" ? body.state : "";
+        const code = typeof body.code === "string" ? body.code : "";
+        if (!URL_SAFE_STATE.test(state) || !URL_SAFE_CODE.test(code)) {
+          throw new ServiceError("validation_failed", 400, "state and code are required", { reason: "state_invalid" });
+        }
+
+        // ── (1) SINGLE-USE CONSUME. First, before anything expensive, and before any decision. ──
+        const spent = await consumeOAuthCeremony(deps.db, { state, now: deps.now() });
+        if (spent.outcome === "unknown") {
+          // A `state` that never existed and one already spent are ONE answer, deliberately: telling
+          // them apart is an oracle for whether a given 256-bit value was ever issued. 400 rather than
+          // 403 — nothing here is a statement about the caller's authorisation, only about the value.
+          throw new ServiceError(
+            "oauth_state_invalid", 400,
+            "That Outlook connection link is no longer valid. Start again from Settings.",
+            { reason: "state_invalid" },
+          );
+        }
+        if (spent.outcome === "expired") {
+          throw new ServiceError(
+            "oauth_state_expired", 400,
+            "That took too long to complete. Start again from Settings.",
+            { reason: "state_expired" },
+          );
+        }
+        const row = spent.row;
+
+        // ── (2) INVARIANT 9 — THE SESSION'S ACCOUNT IS THE CEREMONY'S ACCOUNT. ──────────────────
         //
-        // `OAuthProviderUnavailableError` means we could not ask — a retry is the right advice and
-        // nothing about this deployment or this person is wrong. `OAuthConfigError` means OUR tenant
-        // is unusable. `OAuthExchangeFailedError` carries Microsoft's own closed-vocabulary verdict,
-        // and `invalid_client` inside it means OUR client secret was rejected, which is an operator
-        // problem that must never be rendered as the user's fault.
-        if (err instanceof OAuthProviderUnavailableError) {
+        // Before the exchange, so a `state` belonging to somebody else is refused without this process
+        // POSTing to Microsoft. The ceremony row is the only thing that knows which account began the
+        // flow; the session is the only thing that knows who is finishing it; and a mailbox may only
+        // ever be attached to the account that asked for it. The row IS consumed by the step above, so
+        // a stolen `state` is burnt rather than left usable — which is the right direction: the
+        // legitimate owner starting again gets a fresh one.
+        if (row.accountId !== ctx.accountId) {
           throw new ServiceError(
-            "upstream_unavailable", 503,
-            "Microsoft could not be reached. Try connecting again in a moment.",
-            { reason: "provider_unavailable" }, true,
+            "forbidden", 403,
+            "That Outlook connection was started by a different account.",
+            { reason: "account_mismatch" },
           );
         }
-        if (err instanceof OAuthConfigError) throw unconfigured({ ...cfg, gap: "tenant_missing" });
-        if (err instanceof OAuthExchangeFailedError) {
-          (deps.logger ?? silentLogger).warn?.("oauth_exchange_failed", {
-            // The OAuth2 `error` code only. Never the description, never the code, never the state.
-            oauthError: err.oauthError, httpStatus: err.httpStatus,
+
+        const cfg = await resolveConfig(deps);
+        const redirectUri = webRedirectUri(cfg);
+        if (!cfg.enabled || !redirectUri) throw unconfigured(cfg);
+
+        const verifier = await deps.keyProvider.decrypt(row.codeVerifierEnc, row.codeVerifierKeyVersion);
+
+        // ── (3) THE CODE EXCHANGE. Confidential client: id + secret + verifier + the EXACT uri. ──
+        let tokens;
+        try {
+          tokens = await exchangeAuthorizationCode({
+            code,
+            codeVerifier: verifier,
+            redirectUri,
+            tenant: cfg.tenant,
+            clientId: cfg.clientId,
+            clientSecret: cfg.clientSecret,
+            scopes: cfg.scopes,
+            fetch: tokenFetch(deps),
           });
+        } catch (err) {
+          // THREE DIFFERENT FACTS, THREE DIFFERENT SENTENCES, and the split is the point.
+          //
+          // `OAuthProviderUnavailableError` means we could not ask — a retry is the right advice and
+          // nothing about this deployment or this person is wrong. `OAuthConfigError` means OUR tenant
+          // is unusable. `OAuthExchangeFailedError` carries Microsoft's own closed-vocabulary verdict,
+          // and `invalid_client` inside it means OUR client secret was rejected, which is an operator
+          // problem that must never be rendered as the user's fault.
+          if (err instanceof OAuthProviderUnavailableError) {
+            throw new ServiceError(
+              "upstream_unavailable", 503,
+              "Microsoft could not be reached. Try connecting again in a moment.",
+              { reason: "provider_unavailable" }, true,
+            );
+          }
+          if (err instanceof OAuthConfigError) throw unconfigured({ ...cfg, gap: "tenant_missing" });
+          if (err instanceof OAuthExchangeFailedError) {
+            (deps.logger ?? silentLogger).warn?.("oauth_exchange_failed", {
+              // The OAuth2 `error` code only. Never the description, never the code, never the state.
+              oauthError: err.oauthError, httpStatus: err.httpStatus,
+            });
+            throw new ServiceError(
+              "oauth_exchange_failed", 502,
+              err.oauthError === "invalid_client"
+                ? "This deployment's Microsoft credentials were rejected. An operator has to fix the registration."
+                : "That Outlook connection could not be completed. Start again from Settings.",
+              { reason: "exchange_failed" },
+            );
+          }
+          throw err;
+        }
+
+        if (!tokens.refreshToken) {
+          // No `offline_access` in the GRANTED scopes. The tokens are valid and useless to us: an
+          // access token lasts an hour and there would be nothing to renew it with. A configuration
+          // fault, named as one, rather than a mailbox stored to fail in sixty minutes.
           throw new ServiceError(
-            "oauth_exchange_failed", 502,
-            err.oauthError === "invalid_client"
-              ? "This deployment's Microsoft credentials were rejected. An operator has to fix the registration."
-              : "That Outlook connection could not be completed. Start again from Settings.",
-            { reason: "exchange_failed" },
+            "oauth_no_refresh_token", 502,
+            "Microsoft did not grant long-term access, so this mailbox cannot be kept in sync. "
+            + "An operator has to add the offline_access permission.",
+            { reason: "no_refresh_token" },
           );
         }
+
+        // ── (4) THE ADDRESS COMES FROM THE `id_token`. THE USER NEVER TYPES IT. ─────────────────
+        const address = addressFromIdToken(tokens.idToken);
+        if (!address) {
+          throw new ServiceError(
+            "oauth_no_address", 502,
+            "Microsoft did not say which mailbox was connected, so nothing was saved.",
+            { reason: "no_address" },
+          );
+        }
+
+        // ── (5) PROBE, THEN STORE — the service owns the ordering. ──────────────────────────────
+        const result = await mailbox(deps).connectOAuth(ctx, {
+          provider: MS_MAILBOX_PRESET.provider,
+          address,
+          oauth: {
+            provider: MICROSOFT_PROVIDER,
+            tenant: cfg.tenant,
+            refreshToken: tokens.refreshToken,
+            accessToken: tokens.accessToken,
+            imap: MS_MAILBOX_PRESET.imap,
+            smtp: MS_MAILBOX_PRESET.smtp,
+          },
+        }, { probe: makeImapProbe(deps) });
+
+        await noteConnectAttempt(deps, { door: "oauth_complete" });
+        return jsonResponse(
+          { mailbox: result.mailbox, created: result.created, returnTo: row.returnTo },
+          { status: result.created ? 201 : 200 },
+        );
+      } catch (err) {
+        await noteConnectAttempt(deps, { door: "oauth_complete", error: err });
         throw err;
       }
-
-      if (!tokens.refreshToken) {
-        // No `offline_access` in the GRANTED scopes. The tokens are valid and useless to us: an
-        // access token lasts an hour and there would be nothing to renew it with. A configuration
-        // fault, named as one, rather than a mailbox stored to fail in sixty minutes.
-        throw new ServiceError(
-          "oauth_no_refresh_token", 502,
-          "Microsoft did not grant long-term access, so this mailbox cannot be kept in sync. "
-          + "An operator has to add the offline_access permission.",
-          { reason: "no_refresh_token" },
-        );
-      }
-
-      // ── (4) THE ADDRESS COMES FROM THE `id_token`. THE USER NEVER TYPES IT. ─────────────────
-      const address = addressFromIdToken(tokens.idToken);
-      if (!address) {
-        throw new ServiceError(
-          "oauth_no_address", 502,
-          "Microsoft did not say which mailbox was connected, so nothing was saved.",
-          { reason: "no_address" },
-        );
-      }
-
-      // ── (5) PROBE, THEN STORE — the service owns the ordering. ──────────────────────────────
-      const result = await mailbox(deps).connectOAuth(ctx, {
-        provider: MS_MAILBOX_PRESET.provider,
-        address,
-        oauth: {
-          provider: MICROSOFT_PROVIDER,
-          tenant: cfg.tenant,
-          refreshToken: tokens.refreshToken,
-          accessToken: tokens.accessToken,
-          imap: MS_MAILBOX_PRESET.imap,
-          smtp: MS_MAILBOX_PRESET.smtp,
-        },
-      }, { probe: makeImapProbe(deps) });
-
-      return jsonResponse(
-        { mailbox: result.mailbox, created: result.created, returnTo: row.returnTo },
-        { status: result.created ? 201 : 200 },
-      );
     },
   },
 ];

@@ -62,6 +62,7 @@ import {
   alertState,
   authEvents,
   authThrottle,
+  connectAttempts,
   creditRefundObligations,
   credentials,
   invites,
@@ -194,6 +195,7 @@ const ADMIN_ROUTE_SWEEP: Readonly<Record<string, RouteSweep>> = {
   "GET /admin/storage": { send: "read", ops: 200 },
   "GET /admin/staff-activity": { send: "read", ops: 200 },
   "GET /admin/alerts/history": { send: "read", ops: 200 },
+  "GET /admin/connect-attempts": { send: "read", ops: 200 },
   // POST reads: the session rides in the header (the staff list) or the body (the registration).
   "POST /admin/staff/list": { send: "read", ops: 403 },
   "POST /admin/oauth/microsoft": { send: "read", ops: 200 },
@@ -245,6 +247,10 @@ const QUERY_FORMS: Readonly<Record<string, (t: SweepTerms) => string[]>> = {
     `from=${new Date(Date.now() - 30 * DAY_MS).toISOString()}&to=${new Date(Date.now() + DAY_MS).toISOString()}`,
   ],
   "GET /admin/staff-activity": () => ["reads=1"],
+  // One account's rows besides the counts, around the wall clock for the funnel's reason.
+  "GET /admin/connect-attempts": (t) => [
+    `account=${t.accountId}&from=${new Date(Date.now() - 30 * DAY_MS).toISOString()}&to=${new Date(Date.now() + DAY_MS).toISOString()}`,
+  ],
 };
 
 /** What a POST the sweeps send carries beside the session token. */
@@ -404,6 +410,13 @@ const REFUSED_BY_CONSTRAINT: readonly string[] = [
   // a lifecycle notice's kind and an owed reversal's reason are closed sets behind a CHECK.
   "account_lifecycle_notices.kind",
   "credit_refund_obligations.reason",
+  // cloud 0054 — every text column of a connect record is a closed set or a lower-case word by CHECK,
+  // so the sweep's marker is refused by the database. The connect-attempt read projects all five.
+  "connect_attempts.door",
+  "connect_attempts.preset",
+  "connect_attempts.outcome",
+  "connect_attempts.reason",
+  "connect_attempts.transport",
   // …and an owed reversal's `action`, a `SpendAction` word this repository writes, bounded by a
   // length CHECK the sweep's marker exceeds. Not projected by any staff read either.
   "credit_refund_obligations.action",
@@ -1824,6 +1837,8 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   await db.insert(authEvents).values({ event: "login", accountId, userId: session.userId });
   // Cloud 0047's account page reads both: seeded so the sweep taints what it projects.
   await db.insert(accountLifecycleNotices).values({ accountId, kind: "closed", anchor: FIXED_NOW });
+  // Cloud 0054's read projects this table: seeded, its rows at the database's own `now()`.
+  await db.insert(connectAttempts).values({ accountId, door: "test", preset: "gmail", outcome: "refused", reason: "auth", transport: "imap" });
   await db.insert(creditRefundObligations).values({
     accountId, action: `act-${tag}`, attemptKey: `ak-${tag}`, attempt: `att-${tag}`,
     reason: "drafter_failed", lastFault: `fault-${tag}`,

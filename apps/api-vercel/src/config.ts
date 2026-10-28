@@ -252,6 +252,11 @@ export interface HostConfig {
    */
   connectReminderSince: string | null;
   /**
+   * `TF_CONNECT_ATTEMPTS`: how connecting a mailbox ended is recorded (cloud 0054) only when this reads
+   * `record`. Unset, and every other value, is `off`: nothing is recorded.
+   */
+  connectAttempts: "off" | "record";
+  /**
    * The absolute origin the OAuth bounce redirects a browser to. `TF_APP_URL`
    * through {@link assertAppUrl}: it is a redirect target, so it is validated
    * like one — an arbitrary string here is an open redirect on a high-trust
@@ -947,6 +952,8 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     // Customer mail ships log-only: a mistyped value logs, it never sends.
     connectReminder: env.TF_CONNECT_REMINDER?.trim() === "send" ? "send" : "log",
     connectReminderSince: env.TF_CONNECT_REMINDER_SINCE?.trim() || null,
+    // Records only on the exact word, as the reminder sends only on its own.
+    connectAttempts: env.TF_CONNECT_ATTEMPTS?.trim() === "record" ? "record" : "off",
     // Validated by assertAppUrl (a redirect target). A value it REFUSES falls back to
     // `defaultOrigin(authConfig)` rather than failing boot: this is not a new reason for a host to
     // refuse to start, and the fallback is itself a boot-validated first-party origin.

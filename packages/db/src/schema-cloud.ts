@@ -997,6 +997,30 @@ export const erasedBearers = pgTable("erased_bearers", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
 
+/**
+ * HOW CONNECTING A MAILBOX ENDED (cloud 0054): one row per Test, Connect and Microsoft sign-in start
+ * or finish on the managed deployment, written by `recordConnectAttempt` alone. Closed words and an
+ * instant: no address, host, server text, IP or mailbox id. The migration's CHECKs are the full set.
+ */
+export const connectAttempts = pgTable("connect_attempts", {
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  at: timestamp("at", { withTimezone: true }).defaultNow().notNull(),
+  id: uuid("id").defaultRandom().notNull(),
+  door: text("door").notNull(),
+  preset: text("preset").notNull(),
+  outcome: text("outcome").notNull(),
+  reason: text("reason"),
+  transport: text("transport"),
+}, (t) => ({
+  pk: primaryKey({ name: "connect_attempts_pk", columns: [t.accountId, t.at, t.id] }),
+  ckDoor: check("connect_attempts_door_closed", sql`${t.door} in ('test', 'connect', 'oauth_start', 'oauth_complete')`),
+  ckPreset: check("connect_attempts_preset_word", sql`${t.preset} ~ '^[a-z]{1,16}$'`),
+  ckOutcome: check("connect_attempts_outcome_closed", sql`${t.outcome} in ('ok', 'refused')`),
+  ckReason: check("connect_attempts_reason_word", sql`${t.reason} is null or ${t.reason} ~ '^[a-z][a-z_]{0,31}$'`),
+  ckReasonIff: check("connect_attempts_reason_iff_refused", sql`(${t.outcome} = 'refused') = (${t.reason} is not null)`),
+  ckTransport: check("connect_attempts_transport_closed", sql`${t.transport} is null or ${t.transport} in ('imap', 'smtp')`),
+}));
+
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
@@ -1004,5 +1028,5 @@ export const cloudSchema = {
   waitlist, staffUsers, staffSessions, staffAuditLog, staffRoleGrants, staffAuditEvents,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,
-  creditRefundObligations, screenerSuggestOwed, accountLifecycleNotices, erasedBearers,
+  creditRefundObligations, screenerSuggestOwed, accountLifecycleNotices, erasedBearers, connectAttempts,
 };

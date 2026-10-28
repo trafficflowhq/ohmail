@@ -247,6 +247,8 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // audit, which the console reads here and the API writes on its runtime connection.
   "public.account_lifecycle_notices": ["account_id", "kind", "anchor", "sent_at"],
   "public.credit_refund_obligations": ["account_id", "owed_at", "settled_at", "tries", "last_fault"],
+  // How connecting a mailbox ended (cloud 0054): closed words and an instant, read-only. Never `id`.
+  "public.connect_attempts": ["account_id", "at", "door", "preset", "outcome", "reason", "transport"],
   "public.staff_audit_events": [
     "id", "at", "request_id", "staff_user_id", "staff_session_id", "actor_label", "roles",
     "action", "target_account_id", "target_user_id", "target_mailbox_id", "outcome",

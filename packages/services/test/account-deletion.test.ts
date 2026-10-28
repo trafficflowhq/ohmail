@@ -22,6 +22,7 @@ import {
 import {
   attachmentStaging,
   authThrottle,
+  connectAttempts,
   credentials,
   erasedBearers,
   invites,
@@ -196,6 +197,9 @@ describe("account deletion — Art. 17 erasure by anonymisation", () => {
      */
     expect(result.deleted.mailbox_oauth_device_ceremonies).toBe(1);
     expect(await db.select().from(mailboxOauthDeviceCeremonies)).toHaveLength(0);
+    // How connecting a mailbox ended (cloud 0054): by count and by row, for the reason above.
+    expect(result.deleted.connect_attempts).toBe(1);
+    expect(await db.select().from(connectAttempts)).toHaveLength(0);
   });
 
   it("brings staged attachment tickets forward to expire NOW, rather than orphaning the bytes", async () => {
