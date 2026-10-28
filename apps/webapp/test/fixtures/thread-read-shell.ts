@@ -6,6 +6,7 @@
  * 200 ids (413) and an id it does not hold (404). `arriveLater` hands one later drain a reply.
  */
 import { expect, vi } from "vitest";
+import { flushSync } from "react-dom";
 import { ISO, act, answerStoreWith, answerSyncWith, mailbox, mountShell, tick } from "./live-walk-shell.js";
 import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
 
@@ -119,6 +120,23 @@ export const key = async (k: string, init: KeyboardEventInit = {}): Promise<void
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
+  await settle();
+};
+/**
+ * A person's key as a browser dispatches it: React renders the key map's update, and runs a sync
+ * commit's effects, in the microtask checkpoint after the key map's document listener, before the
+ * same key reaches the window. `key` dispatches inside one act(), where nothing runs in between.
+ */
+export const keyAsBrowser = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
+  const checkpoint = (): void => { flushSync(() => {}); };
+  document.addEventListener("keydown", checkpoint); // after the key map's own
+  try {
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+    });
+  } finally {
+    document.removeEventListener("keydown", checkpoint);
+  }
   await settle();
 };
 /** The conversation's one Ohbox row. */

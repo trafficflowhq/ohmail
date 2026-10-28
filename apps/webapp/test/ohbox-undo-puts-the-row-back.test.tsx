@@ -360,8 +360,8 @@ const sleep = (ms: number) => act(async () => { await new Promise((r) => setTime
 const seen = (): number => sent.filter((m) => m.kind === "mark_seen").length;
 
 /**
- * Put w8 on screen — `open` by a click (the read rule reads it), `preview` by j (nothing is read,
- * nothing held) — wait `ms`, take it away with key `k`, press the toast's Undo.
+ * Put w8 on screen — `open` by a click (the read rule reads it), `preview` by j (nothing is read
+ * or held unless the cursor rests there) — wait `ms`, take it away with key `k`, press the toast's Undo.
  */
 async function pressAndUndo(ms: number, k: string, how: "open" | "preview" = "open"): Promise<HTMLElement> {
   const c = await shell(ORGANIZER_ROSTER);
@@ -380,16 +380,23 @@ async function pressAndUndo(ms: number, k: string, how: "open" | "preview" = "op
 }
 
 describe("a held Delete, undone", () => {
-  for (const ms of [300, 2300]) {
-    it(`a preview (${ms} ms): back at the top of New, selected, still unread, nothing sent`, async () => {
-      const c = await pressAndUndo(ms, "Backspace", "preview");
-      expect(where(c, "w8")).toBe(`${NEW}#0`);
-      expect(selectedRow(c)).toBe("w8");
-      expect(seen()).toBe(0);
-      expect(toastText()).toContain(messages.ohbox.deleteUndone);
-      expect(deletes()).toEqual([]);
-    }, 30000);
-  }
+  it("a preview (300 ms): back at the top of New, selected, still unread, nothing sent", async () => {
+    const c = await pressAndUndo(300, "Backspace", "preview");
+    expect(where(c, "w8")).toBe(`${NEW}#0`);
+    expect(selectedRow(c)).toBe("w8");
+    expect(seen()).toBe(0);
+    expect(toastText()).toContain(messages.ohbox.deleteUndone);
+    expect(deletes()).toEqual([]);
+  }, 30000);
+
+  it("a preview rested on (2300 ms): back at the top of New and selected, the rest's read standing", async () => {
+    const c = await pressAndUndo(2300, "Backspace", "preview");
+    expect(where(c, "w8")).toBe(`${NEW}#0`);
+    expect(selectedRow(c)).toBe("w8");
+    expect(seen()).toBe(1);
+    expect(toastText()).toContain(messages.ohbox.deleteUndone);
+    expect(deletes()).toEqual([]);
+  }, 30000);
   for (const ms of [300, 1500, 3000]) {
     it(`after opening it (${ms} ms): back at the top of New and selected, the read standing`, async () => {
       const c = await pressAndUndo(ms, "Backspace");

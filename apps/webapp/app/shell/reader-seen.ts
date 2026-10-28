@@ -6,6 +6,7 @@ import {
   type EngineMessage, type LineBox, type ThreadPanel, type ThreadRead, type ThreadView,
 } from "@ohmail/client-engine";
 import { SCROLL_KEYS, cssRect } from "@ohmail/ui";
+import { pageModal } from "./modal-gate";
 import { stampLive } from "./programmatic-scroll";
 import type { ThreadWalkChannel } from "./thread-walk-channel";
 
@@ -32,10 +33,18 @@ import type { ThreadWalkChannel } from "./thread-walk-channel";
  * The evidence code only ENTERS a preview: a press or touch on a message's own panel or on the
  * scroller's box (never on a verb, a menu or a field: `pressEnters`), a wheel, and a scroll the person made (a free scroll key, or the frame clause: pointer on a framed body, the
  * document focused, no key, focus or selection move just before). A stamped app scroll, one while
- * the geometry moved, or one within a second of a resize never enters.
+ * the geometry moved, or one within a second of a resize never enters. A landing given `restMs` is
+ * also entered once the cursor rests on it ({@link LANDING_REST_MS}).
  */
 
 export { EVIDENCE_WINDOW_MS };
+
+/**
+ * A LANDING THE PERSON RESTS ON IS ENTERED: the Ohbox's j/k, a verb's advance or an Undo put the
+ * cursor here, and it stayed this long with the window in front, no page modal over it and no command
+ * since. With the 0.7 s dwell, a message on screen reads 2 s after the cursor stopped.
+ */
+export const LANDING_REST_MS = 1300;
 
 /**
  * The rule's clock and its dwell timer. Production reads the wall clock; a test that lays the reader
@@ -67,6 +76,12 @@ export interface ThreadReadDomOptions {
   frame?: (run: () => void) => () => void;
   /** The dwell's timer: run once `ms` from now. */
   after?: (ms: number, run: () => void) => () => void;
+  /** A landing: an unentered visit is entered after this long attended, unless a command came first. */
+  restMs?: number;
+  /** What the rest calls (default `onEnter`). */
+  onRest?: () => void;
+  /** The cursor stayed `restMs` on this landing, whatever came in between (its pictures may load). */
+  onStay?: () => void;
 }
 
 export interface ThreadReadDom {
@@ -259,6 +274,37 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
     poke();
   };
 
+  /* THE REST (`restMs`): a landing looked at and not acted on is entered. A command — a key the app
+     took, a press on a control — ends it for this landing; the window going away starts it over; a
+     page modal standing over it (the palette, a dialog) keeps it from entering. */
+  let resting = o.restMs !== undefined;
+  let rest: (() => void) | null = null;
+  const restable = (): boolean =>
+    resting && live && !record.entered && visible() && documentFocused() && pageModal(doc) === null;
+  /* The rest's and the stay's own timer, the wall clock's: never the dwell's (`after`), which a test passes by hand. */
+  const wait = (ms: number, run: () => void): (() => void) => {
+    const t = setTimeout(run, ms);
+    return () => clearTimeout(t);
+  };
+  const armRest = (): void => {
+    rest?.();
+    rest = null;
+    if (!restable()) return;
+    rest = wait(o.restMs!, () => {
+      rest = null;
+      const v = viewOf(scroller);
+      if (!restable() || v.bottom - v.top <= 0) return;
+      resting = false;
+      (o.onRest ?? o.onEnter)();
+      poke();
+    });
+  };
+  const endRest = (): void => {
+    resting = false;
+    rest?.();
+    rest = null;
+  };
+
   let lastEvidence = never;
   let lastFocus = never;
   let lastSelection = never;
@@ -281,10 +327,13 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
   };
   /* Bubbling on the window, after the app's own key map: a key it took is not a native scroll. */
   const onKeyFree = (e: KeyboardEvent): void => {
-    if (!e.defaultPrevented && SCROLL_KEYS.has(e.key) && !editable(e.target) && !e.ctrlKey && !e.metaKey && !e.altKey) lastEvidence = now();
+    // Only a key this adapter saw begin: the key that made the landing renders it mid-dispatch.
+    if (e.defaultPrevented) { if (began.has(e)) endRest(); }
+    else if (SCROLL_KEYS.has(e.key) && !editable(e.target) && !e.ctrlKey && !e.metaKey && !e.altKey) lastEvidence = now();
   };
   /* A key, a focus move or a selection change voids the evidence: what scrolls next may be theirs. */
-  const onKeyAny = (): void => { lastKey = now(); lastEvidence = never; poke(); };
+  const began = new WeakSet<Event>();
+  const onKeyAny = (e: Event): void => { began.add(e); lastKey = now(); lastEvidence = never; poke(); };
   const onFocus = (e: FocusEvent): void => {
     if (e.target === scroller) return;
     lastFocus = now();
@@ -303,8 +352,8 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
   };
   const onSelection = (): void => { lastSelection = now(); lastSel = selection(); lastEvidence = never; };
   const onResize = (): void => { lastResize = now(); poke(); };
-  const onVisibility = (): void => poke();
-  const onWindowFocus = (): void => poke();
+  const onVisibility = (): void => { armRest(); poke(); };
+  const onWindowFocus = (): void => { armRest(); poke(); };
   const onScroll = (): void => {
     const t = now();
     if (selectionMoved()) { lastSelection = t; lastEvidence = never; }
@@ -320,6 +369,12 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
 
   const onPress = (e: Event): void => { if (pressEnters(scroller, e.target)) enter(); };
   const onTouch = (e: Event): void => { if (pressEnters(scroller, e.target)) onHand(); };
+  /* A press on a control in the reader, or anywhere outside it (the list, a drag, the rail), ends the rest. */
+  const onAnyPress = (e: Event): void => {
+    const t = e.target;
+    const inside = t instanceof Node && scroller.contains(t);
+    if (!inside || (t instanceof Element && t.closest(PRESS_CONTROL) !== null)) endRest();
+  };
   /* A drag enters through the scroll it makes, so a tap's jitter on the bar enters nothing. */
   const onDrag = (): void => { lastEvidence = now(); };
 
@@ -331,6 +386,8 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
   scroller.addEventListener("scroll", onScroll, passive);
   win.addEventListener("keydown", onKeyFree);
   win.addEventListener("keydown", onKeyAny, true);
+  doc.addEventListener("pointerdown", onAnyPress, true);
+  doc.addEventListener("touchstart", onAnyPress, true);
   doc.addEventListener("focusin", onFocus, true);
   doc.addEventListener("selectionchange", onSelection);
   doc.addEventListener("visibilitychange", onVisibility);
@@ -345,6 +402,8 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
     poke();
   });
   mutated?.observe(scroller, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-unseen", "data-body-ready"] });
+  armRest();
+  let stay = o.restMs === undefined || !o.onStay ? null : wait(o.restMs, () => { stay = null; o.onStay!(); });
   poke();
 
   return {
@@ -356,6 +415,10 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
       pending = null;
       dwell?.();
       dwell = null;
+      rest?.();
+      rest = null;
+      stay?.();
+      stay = null;
       resized?.disconnect();
       mutated?.disconnect();
       scroller.removeEventListener("wheel", onHand);
@@ -365,6 +428,8 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
       scroller.removeEventListener("scroll", onScroll);
       win.removeEventListener("keydown", onKeyFree);
       win.removeEventListener("keydown", onKeyAny, true);
+      doc.removeEventListener("pointerdown", onAnyPress, true);
+      doc.removeEventListener("touchstart", onAnyPress, true);
       doc.removeEventListener("focusin", onFocus, true);
       doc.removeEventListener("selectionchange", onSelection);
       doc.removeEventListener("visibilitychange", onVisibility);
@@ -386,6 +451,12 @@ export interface ThreadReadWiring {
   onMarkUnread: (id: string) => void;
   /** The conversation's place, shared by the reader's squares and its list row's (`thread-walk-channel.ts`). */
   walk?: ThreadWalkChannel;
+  /** A landing the rest may enter ({@link LANDING_REST_MS}); absent, only an open, a press or a hand scroll enters. */
+  restMs?: number;
+  /** A landing not entered yet: the panels ask for no embedded picture (a mailbox connection each). */
+  previewing?: boolean;
+  /** The cursor stayed the rest's length on this landing, entered or not. */
+  onStay?: () => void;
 }
 
 /** The shell's `markSeen`, as a reader visit writes through it. */
@@ -454,6 +525,7 @@ export function useThreadRead({
   const human = useRef(onHumanScroll);
   human.current = onHumanScroll;
   const record = wiring?.record;
+  const restMs = wiring?.restMs;
   const core = useRef<ThreadReadDom | null>(null);
   useEffect(() => {
     const el = scroller?.current;
@@ -464,13 +536,16 @@ export function useThreadRead({
       onRead: (ids) => latest.current?.onRead(ids),
       onEnter: () => latest.current?.onEnter(),
       onHumanScroll: () => human.current?.(),
+      restMs,
+      onRest: () => { if (latest.current?.record === record) latest.current.onEnter(); },
+      onStay: () => { if (latest.current?.record === record) latest.current.onStay?.(); },
     });
     core.current = c;
     return () => {
       if (core.current === c) core.current = null;
       c.dispose();
     };
-  }, [scroller, record, active]);
+  }, [scroller, record, active, restMs]);
   const entered = record?.entered ?? false;
   useEffect(() => {
     if (entered) core.current?.poke();

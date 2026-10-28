@@ -160,14 +160,25 @@ const two = (): Row[] => [{ id: "a", unread: true, date: "2026-08-02T09:01:00.00
 describe("the selection taken away from outside is a departure", () => {
   // The URL carries the open message, so Back on `#/ohbox/m/A` clears the SHELL's selection while
   // this view stays mounted — a way of leaving that none of the in-view departures can see.
-  it("Back from a preview: nothing is ever written for A", async () => {
+  it("Back from a preview within the rest: nothing is ever written for A", async () => {
     await mount(two());
     await press("j");          // a preview of "a"
-    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     sel = null;
     await draw();
     await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
-    expect(marked, "a preview is not reading, however long it stood").toEqual([]);
+    expect(marked, "a preview left before the rest is not reading").toEqual([]);
+  });
+
+  it("Back from a preview rested on: its read stands, Back writes nothing more", async () => {
+    await mount(two());
+    await press("j");
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(marked).toEqual([{ ids: ["a"], unread: false }]);
+    sel = null;
+    await draw();
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(marked).toEqual([{ ids: ["a"], unread: false }]);
   });
 
   it("an open saves the read; Back after it writes nothing more", async () => {
@@ -200,15 +211,20 @@ describe("the open message's read state is the account's", () => {
     expect(host!.textContent).toContain("1 unread");
   });
 
-  it("a preview shows the message as it is: bold, the verb Mark read, nothing saved", async () => {
+  it("a preview shows the message as it is: bold, the verb Mark read, nothing saved; rested on, it reads", async () => {
     await mount(two());
     await press("j");
-    await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     await draw();
     expect(rowEl("a").dataset.unseen, "a preview is not a reading").toBe("1");
     expect(verb()).toContain("Mark read");
     expect(marked).toEqual([]);
     expect(host!.querySelector(".read-col [data-conv-id='a']")?.hasAttribute("data-unseen"), "the opened panel wears its unread state").toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
+    await draw();
+    expect(marked).toEqual([{ ids: ["a"], unread: false }]);
+    expect(rowEl("a").dataset.unseen).toBeUndefined();
+    expect(verb()).toContain("Mark unread");
   });
 
   it("`u` on the read message re-bolds it in place, the verb offers Mark read again, and it is not read back", async () => {

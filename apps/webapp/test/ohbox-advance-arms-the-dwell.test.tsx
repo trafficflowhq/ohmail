@@ -1,16 +1,17 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
-import { click, key, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { OhmailEngine } from "@ohmail/client-engine";
+import { act, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
+import { click, key, keyAsBrowser, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
 import { AFTER_VERB_STORAGE_KEY } from "../app/shell/after-verb.js";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
- * THE AFTER-VERB ADVANCE IS A PREVIEW. The message a verb's advance shows is a cursor landing like
- * j: it reads nothing however long it rests. Entering it (↵, a click, a wheel in the column) reads
- * what is on screen, as an open read: held in New while shown and at the top of Earlier once left
- * (owner 2026-10-21: "should be at the top when it was my last action"). An Undo restores the row
- * as it stood and reads nothing either. The reader is laid out (`fixtures/thread-layout.ts`).
+ * A LANDING RESTED ON IS ENTERED. j, k, a verb's advance and an Undo put the cursor on a message as a
+ * preview: moved on within the rest (1.3 s), it reads nothing. Rested on, with the window in front and
+ * no command since, it is entered like ↵, a click or a wheel in the column: what is on screen reads
+ * as an open read, held in New while shown and at the top of Earlier once left (owner 2026-10-21:
+ * "should be at the top when it was my last action"). The reader is laid out (`fixtures/thread-layout.ts`).
  */
 
 const openReads = () => patches.filter((p) => (p as { openRead?: boolean }).openRead === true);
@@ -25,8 +26,16 @@ const three = () => [
   msg("first", 20, { threadId: "t-first" }), msg("old", 0, { threadId: "t-old" }),
   msg("newer", 30, { threadId: "t-newer", unread: false }),
 ];
-/** Three seconds of nothing: longer than the dwell that used to read. */
+/** Three seconds of nothing but Shift (a key the app does not take): past the rest and the dwell. */
 const idle = async (): Promise<void> => { for (let i = 0; i < 10; i++) await key("Shift"); };
+/** Less than the rest: the cursor moves on before it. */
+const brief = (): Promise<void> => tick(900);
+const four = () => [msg("p1", 0), msg("p2", 10), msg("p3", 20), msg("p4", 30)];
+const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
+const press = async (el: Element | null | undefined): Promise<void> => {
+  expect(el).toBeTruthy();
+  await act(async () => { el!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+};
 const GLANCE = { ids: ["old"], unread: false, via: "glance", openRead: true };
 const undo = () => click(document.querySelector(".toast .toast-act"), "Undo");
 
@@ -54,11 +63,11 @@ async function deleteFirst(): Promise<void> {
   expect(selected(), "the verb advanced to the next row").toBe("old");
 }
 
-describe("the advance's landing is a preview; entering it reads", () => {
-  it("a verb, then rest on the next message: nothing is read; ↵ reads it as an open read, top of Earlier once left", async () => {
+describe("the advance's landing is a preview until rested on; entering it reads", () => {
+  it("a verb, then within the rest nothing is read; ↵ reads it as an open read, top of Earlier once left", async () => {
     await deleteFirst();
-    await idle();
-    expect(patches, "base: the dwell read it").toEqual([]);
+    await brief();
+    expect(patches).toEqual([]);
     await key("Enter");
     await layout.passDwell(); // its top on screen for the dwell
     await settle();
@@ -68,11 +77,22 @@ describe("the advance's landing is a preview; entering it reads", () => {
     expect(ids("Earlier"), "left, it takes the top of Earlier").toEqual(["old", "newer"]);
   }, 30_000);
 
-  it("the advance starts no further advance and reads nothing, however long it rests", async () => {
+  it("a verb, then rest on the next message: it reads as an open read, top of Earlier once left", async () => {
     await deleteFirst();
     await idle();
-    await idle();
+    expect(patches).toEqual([GLANCE]);
+    expect(ids("New"), "it keeps its place while on screen").toEqual(["old"]);
+    await click(rowOf("newer"), "move on");
+    expect(ids("Earlier")).toEqual(["old", "newer"]);
+  }, 30_000);
+
+  it("the advance starts no further advance; resting reads the landing alone", async () => {
+    await deleteFirst();
+    await brief();
     expect(patches).toEqual([]);
+    await idle();
+    await idle();
+    expect(patches).toEqual([GLANCE]);
     expect(selected()).toBe("old");
   }, 30_000);
 });
@@ -114,10 +134,10 @@ describe("CONTROLS: what the advance must not read", () => {
     await idle();
     expect(naming("old"), "old was read while the cursor was on first").toEqual([]);
     expect(ids("New"), "first keeps its place in New").toEqual(["first", "old"]);
-    // j onto old is a preview; ↵ enters it and reads it.
+    // j onto old is a preview until the rest; ↵ enters it and reads it.
     await key("j");
     expect(selected()).toBe("old");
-    await idle();
+    await brief();
     expect(naming("old")).toEqual([]);
     await key("Enter");
     await layout.passDwell();
@@ -155,14 +175,195 @@ describe("CONTROLS: what the advance must not read", () => {
     expect(openReads().flatMap((p) => p.ids)).not.toContain("a");
   }, 30_000);
 
-  it("j/k, resting or not, reads nothing", async () => {
+  it("j/k passing reads nothing; the one rested on reads", async () => {
     await mountThread(three());
     await key("j");
     await key("j");
     await key("k");
-    await tick(1500);
+    await brief();
     await key("j");
+    await brief();
+    expect(patches).toEqual([]);
+    await tick(2000);
+    expect(patches).toEqual([GLANCE]);
+  }, 30_000);
+});
+
+describe("a landing by j, k, the advance or Undo is entered once rested on", () => {
+  it("j and rest: the newest on screen reads as an open read, held in New, top of Earlier once left", async () => {
+    await mountThread(three());
+    await key("j");
+    await idle();
+    expect(patches).toEqual([{ ids: ["first"], unread: false, via: "glance", openRead: true }]);
+    expect(ids("New")).toEqual(["first", "old"]);
+    await click(rowOf("newer"), "move on");
+    expect(ids("Earlier")).toEqual(["first", "newer"]);
+  }, 30_000);
+
+  it("a conversation of four: only its newest, the one on screen, reads", async () => {
+    await mountThread(four());
+    await key("j");
+    await idle();
+    expect(patches).toEqual([{ ids: ["p4"], unread: false, via: "glance", openRead: true }]);
+  }, 30_000);
+
+  it("eighteen unread members: only the newest reads (the others' tops never came on screen)", async () => {
+    await mountThread(Array.from({ length: 18 }, (_, i) => msg(`m${i + 1}`, i)));
+    await key("j");
+    await idle();
+    expect(patches.flatMap((p) => p.ids)).toEqual(["m18"]);
+  }, 30_000);
+
+  it("Undo puts the row back under the cursor; resting there reads it, not the advance's landing", async () => {
+    await mountThread(three());
+    await key("j");
+    await key("Backspace");
+    expect(selected()).toBe("old");
+    await undo();
+    expect(selected()).toBe("first");
+    await idle();
+    expect(naming("first")).toEqual([{ ids: ["first"], unread: false, via: "glance", openRead: true }]);
+    expect(naming("old")).toEqual([]);
+  }, 30_000);
+
+  it("the window away for the rest reads nothing; back, the rest starts over", async () => {
+    await mountThread(four());
+    await key("j");
+    layout.focused = false;
+    await act(async () => { window.dispatchEvent(new Event("blur")); });
     await tick(5000);
     expect(patches).toEqual([]);
+    layout.focused = true;
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await tick(1000);
+    expect(patches, "the rest started over at the focus").toEqual([]);
+    await idle();
+    expect(naming("p4")).toHaveLength(1);
+  }, 30_000);
+});
+
+describe("CONTROLS: a command or a press ends the rest", () => {
+  it("m opens Move on the landing: its strip open past the rest, nothing is read", async () => {
+    await mountThread(four());
+    await key("j");
+    await key("m");
+    await tick(5000);
+    expect(patches).toEqual([]);
+  }, 30_000);
+
+  it("a held press on the bar's Later reads nothing", async () => {
+    await mountThread(four());
+    await key("j");
+    await press(col().querySelector(".abar .abar-later"));
+    await tick(5000);
+    expect(patches).toEqual([]);
+  }, 30_000);
+
+  it("a press on the list reads nothing", async () => {
+    await mountThread(four());
+    await key("j");
+    await press(document.querySelector('[role="listbox"]'));
+    await tick(5000);
+    expect(patches).toEqual([]);
+  }, 30_000);
+
+  it("⇧J builds a pick: resting reads nothing", async () => {
+    await mountThread(three());
+    await key("J", { shiftKey: true });
+    await tick(5000);
+    expect(patches).toEqual([]);
+  }, 30_000);
+
+  it("a URL landing rests and reads nothing", async () => {
+    await mountThread(three());
+    window.location.hash = "#/ohbox/m/old";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await settle();
+    expect(selected()).toBe("old");
+    await tick(5000);
+    expect(patches).toEqual([]);
+  }, 30_000);
+});
+
+describe("keys pressed as a browser dispatches them: the key that lands does not end its own rest", () => {
+  const FIRST = { ids: ["first"], unread: false, via: "glance", openRead: true };
+  for (const k of ["j", "ArrowDown"]) {
+    it(`${k} and rest: the landing reads`, async () => {
+      await mountThread(three());
+      await keyAsBrowser(k);
+      expect(selected()).toBe("first");
+      await idle();
+      expect(patches).toEqual([FIRST]);
+    }, 30_000);
+  }
+
+  it("Delete's advance and rest: the landing reads", async () => {
+    await mountThread(three());
+    await keyAsBrowser("j");
+    await keyAsBrowser("Backspace");
+    expect(selected()).toBe("old");
+    await idle();
+    expect(naming("old")).toEqual([GLANCE]);
+  }, 30_000);
+
+  it("Undo by z and rest: the row put back reads, the advance's landing does not", async () => {
+    await mountThread(three());
+    await keyAsBrowser("j");
+    await keyAsBrowser("Backspace");
+    await keyAsBrowser("z");
+    expect(selected()).toBe("first");
+    await idle();
+    expect(naming("first")).toEqual([FIRST]);
+    expect(naming("old")).toEqual([]);
+  }, 30_000);
+
+  it("j j k pressed fast reads only the one rested on", async () => {
+    await mountThread(three());
+    await keyAsBrowser("j");
+    await keyAsBrowser("j");
+    await keyAsBrowser("k");
+    await idle();
+    expect(patches).toEqual([FIRST]);
+  }, 30_000);
+
+  it("j then m: its strip open past the rest, nothing reads", async () => {
+    await mountThread(four());
+    await keyAsBrowser("j");
+    await keyAsBrowser("m");
+    await tick(5000);
+    expect(patches).toEqual([]);
+  }, 30_000);
+});
+
+describe("a landing's embedded pictures: asked for once the cursor stays the rest, not while passing", () => {
+  const HTML = '<table width="600"><tr><td><p>hello</p><img src="cid:logo@x" width="40" height="40" alt="logo"></td></tr></table>';
+  const bodies = { first: { text: "hello", html: HTML }, old: { text: "hello", html: HTML } };
+  let asks: string[] = [];
+  beforeEach(() => {
+    asks = [];
+    vi.spyOn(OhmailEngine.prototype, "loadInlineImages").mockImplementation(async (id: string) => { asks.push(id); });
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  for (const verb of [["x"], ["I", { shiftKey: true }]] as const) {
+    it(`j, then ${verb[0]} at once: the picture is asked for once the rest's length has passed`, async () => {
+      await mountThread(three(), { bodies });
+      await keyAsBrowser("j");
+      await keyAsBrowser(verb[0], verb[1]);
+      expect(selected()).toBe("first");
+      expect(asks, "not before the rest's length").toEqual([]);
+      await tick(5000);
+      expect(asks).toContain("first");
+    }, 30_000);
+  }
+
+  it("j j passing: the passed landing asks for nothing", async () => {
+    await mountThread(three(), { bodies });
+    await keyAsBrowser("j");
+    await brief();
+    await keyAsBrowser("j");
+    await tick(5000);
+    expect(asks).not.toContain("first");
+    expect(asks).toContain("old");
   }, 30_000);
 });

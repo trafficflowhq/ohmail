@@ -16,7 +16,7 @@ import {
   presentsUnread, saysEmpty,
 } from "@ohmail/client-engine";
 import type { ListSurface, ThreadMark, ThreadRead } from "@ohmail/client-engine";
-import type { ThreadReadWiring } from "../shell/reader-seen";
+import { LANDING_REST_MS, type ThreadReadWiring } from "../shell/reader-seen";
 import { createThreadWalkChannel } from "../shell/thread-walk-channel";
 import { ThreadStrip, useWalkedRow } from "../shell/ThreadStrip";
 import type { EngineMessage, ResurfacedThreadRow, TagDTO } from "@ohmail/client-engine";
@@ -748,9 +748,10 @@ export function OhboxView({
     const landing = next == null ? null : (navRows.find((r) => r.key === next)?.openTarget.id ?? null);
     if (landing != null) {
       verbAdvance.current = landing;
-      // The landing is a preview, like j. Not `selectByUser`, which would let go of the acted
-      // row's hold and spend its Undo.
+      // The landing is a preview, like j, until rested on. Not `selectByUser`, which would let
+      // go of the acted row's hold and spend its Undo.
       onSelect(landing);
+      setLandedOn(landing);
     }
   });
 
@@ -959,6 +960,11 @@ export function OhboxView({
    */
   const visit = useRef(new Map<string, ThreadRead>());
   const [, setEntered] = useState(0);
+  /** The message j/k, a verb's advance or an Undo put the cursor on: resting there enters it (`LANDING_REST_MS`). */
+  const [landedOn, setLandedOn] = useState<string | null>(null);
+  useEffect(() => { if (landedOn !== null && selectedId !== null && selectedId !== landedOn) setLandedOn(null); }, [selectedId, landedOn]);
+  /** The landing the cursor stayed the rest's length on, a command or not: its pictures load. */
+  const [stayedOn, setStayedOn] = useState<ThreadRead | null>(null);
 
   /** Leaving the held message: its place is released and the visit's record ends. Writes nothing. */
   const leaveRead = useCallback(() => {
@@ -971,8 +977,8 @@ export function OhboxView({
    * column, or a press, a hand scroll or a square inside it. A row still waiting (an unread message,
    * or an unread letter anywhere in its conversation: it opens on its newest, read or not) takes its hold at once and
    * nothing is written: what turns read is the rule's (`reader-seen.ts`). A read conversation holds
-   * nothing, as before. A preview never comes through here — j/k, the after-verb advance, a URL landing,
-   * an Undo — and nothing is read in one.
+   * nothing, as before. A preview (j/k, the after-verb advance, a URL landing, an Undo) reads nothing,
+   * except that a landing by j/k, the advance or an Undo comes through here once rested on (`landedOn`).
    */
   const waitingRef = useRef((_m: EngineMessage): boolean => false);
   waitingRef.current = (x) => navRows[rowIndexOf(x.id)]?.members.some((y) => y.unread && !isOwnSent(y)) ?? false;
@@ -1108,7 +1114,7 @@ export function OhboxView({
    * UNDO PUTS IT BACK AS IT STOOD AT THE PRESS — asked by the shell before the reversal is sent.
    * `ask` re-takes the hold, so the row lands in New; `settle` restores the cursor and the sheet
    * only when THAT row's reversal took, and lets the hold go when it did not. The restore is a
-   * preview: nothing is read by it.
+   * landing: nothing is read by it unless the cursor rests there.
    */
   useEffect(() => {
     if (!undoLink) return;
@@ -1126,6 +1132,7 @@ export function OhboxView({
         suspended.current = null;
         if (s.held) hold(s.id);
         onSelectRef.current(s.id);
+        setLandedOn(s.id);
         if (s.reader) onEnterReaderRef.current(s.id);
       },
       left: (ids) => {
@@ -1342,9 +1349,13 @@ export function OhboxView({
     return k < 0 ? -1 : navRows.length + k;
   };
   const at = orderIndexOf(selected?.id ?? null);
+  const landByKey = (id: string): void => {
+    selectByUser(id);
+    setLandedOn(id);
+  };
   /**
    * ONE WALK, FOUR KEYCAPS. ↓/↑ are `j`/`k` — same steps, same entry moves, same
-   * `selectByUser`: a preview, which reads nothing, however long it rests.
+   * `landByKey`: a preview, which reads nothing while passed and is entered once rested on.
    * Extracted so the letter bindings below and the zone hook's arrow bindings dispatch ONE
    * pair of closures — a second copy is how two keys presented as aliases drift apart.
    */
@@ -1354,15 +1365,15 @@ export function OhboxView({
     // non-empty list, so the step comes in at the top. See `stepUp` for the other half.
     disabled: at >= order.length - 1,
     run: () => {
-      if (at < order.length - 1) selectByUser(order[at + 1]!);
+      if (at < order.length - 1) landByKey(order[at + 1]!);
     },
     label: t("keyNext"),
   };
   const stepUp = {
     disabled: order.length === 0 || at === 0,
     run: () => {
-      if (at < 0) selectByUser(order[order.length - 1]!);
-      else if (at > 0) selectByUser(order[at - 1]!);
+      if (at < 0) landByKey(order[order.length - 1]!);
+      else if (at > 0) landByKey(order[at - 1]!);
     },
     label: t("keyPrev"),
   };
@@ -1984,9 +1995,15 @@ export function OhboxView({
       conversationOf={conversationOf}
       marks={marksOf(threadId).marks}
     />;
+  const landed = selected != null && landedOn === selected.id;
+  const entered = record?.entered ?? false;
   const wiring = useMemo<ThreadReadWiring | null>(
-    () => (record ? { look: "tint", record, onRead: readByRule, onEnter: enterSelected, onMarkUnread: markPanelUnread, walk } : null),
-    [record, readByRule, enterSelected, markPanelUnread, walk],
+    () => (record ? {
+      look: "tint", record, onRead: readByRule, onEnter: enterSelected, onMarkUnread: markPanelUnread, walk,
+      restMs: landed ? LANDING_REST_MS : undefined, previewing: landed && !entered && stayedOn !== record,
+      onStay: () => setStayedOn(record),
+    } : null),
+    [record, readByRule, enterSelected, markPanelUnread, walk, landed, entered, stayedOn],
   );
   const onThreadReadRef = useRef(onThreadRead);
   onThreadReadRef.current = onThreadRead;
