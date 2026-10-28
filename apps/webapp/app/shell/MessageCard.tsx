@@ -315,6 +315,8 @@ export function MessageHeader({
 export interface PanelReadWiring {
   look: "tint" | "dot";
   onMarkUnread: (id: string) => void;
+  /** A landing not entered yet: ask for no embedded picture. */
+  previewing?: boolean;
 }
 
 export function MessageCard({
@@ -458,7 +460,7 @@ export function MessageCard({
             resolvedRemoteImages={chrome.remoteImages?.resolvedFor(message.id)}
             onRemoteImages={onRemoteImages}
             cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
-            onCidImages={chrome.attachments ? onCidImages : undefined}
+            onCidImages={chrome.attachments && !wiring?.previewing ? onCidImages : undefined}
             onNotice={onNotice}
           />
         </div>

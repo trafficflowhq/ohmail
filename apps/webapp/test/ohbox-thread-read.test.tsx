@@ -229,20 +229,30 @@ describe("fifteen messages, the last three unread, opened at the end", () => {
   }, 60_000);
 });
 
-describe("a preview reads nothing", () => {
-  it("j and the dwell's worth of looks write nothing; a wheel in the column then reads", async () => {
+describe("a preview reads nothing until rested on", () => {
+  it("j and a second of looks write nothing; a wheel in the column then reads", async () => {
     bodies(["p1", "p2", "p3", "p4"]);
     await mountThread(four());
     await key("j");
-    await dwell();
+    await tick(500);
     await act(async () => { window.dispatchEvent(new Event("focus")); }); // a look, with the time passed
-    await dwell();
-    expect(patches, "no write for a preview, however long it rests").toEqual([]);
+    await tick(500);
+    expect(patches, "no write for a preview left within the rest").toEqual([]);
     expect(squares()).toEqual(["unread", "unread", "unread", "unread"]);
     await layout.handScroll(layout.topOf("p4") - 14);
     await settle();
     await dwell();
     expect(glances()).toEqual([["p4"]]);
+  }, 30_000);
+
+  it("j and a rest: what is on screen reads, as after a click", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    await tick(2400);
+    await settle();
+    expect(glances()).toEqual([["p4"]]);
+    expect(squares()).toEqual(["unread", "unread", "unread", "read"]);
   }, 30_000);
 
   it("a click on the row enters it: what is on screen reads after the dwell", async () => {

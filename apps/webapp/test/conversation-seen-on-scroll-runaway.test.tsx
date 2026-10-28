@@ -7,9 +7,9 @@ import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js
 /**
  * NOTHING IS READ IN A PREVIEW, IN THE SHIPPED SHELL — the class, guarded at the reader. A six-member
  * thread previewed with `j` lands on its newest, wholly on screen: the anchor, a ResizeObserver
- * tick, a bare `scroll` and ten seconds write nothing. A wheel in the column enters the visit, and
- * then what is on screen reads. A visit entered in one conversation does not carry into the next
- * one previewed. The reader is laid out by `fixtures/thread-layout.ts` (800px, panels 400 + 20).
+ * tick and a bare `scroll` write nothing within the rest (1.3 s); after it, only what is on screen
+ * reads. A wheel in the column enters the visit, and then what is on screen reads. A visit entered
+ * in one conversation does not carry into the next one previewed. The reader is laid out by `fixtures/thread-layout.ts` (800px, panels 400 + 20).
  * Mutations: the entered gate dropped (the preview reads), the record kept across conversations
  * (the second one reads) — each red here.
  */
@@ -53,14 +53,17 @@ async function previewSix(): Promise<void> {
 }
 
 describe("nothing but a person's act enters a visit, and nothing is read before it", () => {
-  it("in a preview the anchor, a ResizeObserver tick, a bare scroll and 10 s write nothing", async () => {
+  it("in a preview the anchor, a ResizeObserver tick and a bare scroll write nothing; the rest then reads what is on screen", async () => {
     await previewSix();
     await act(async () => { for (const tickObserver of observers) tickObserver(); });
     await bareScroll(layout.topOf("p5") - 10);
     await bareScroll(layout.topOf("p6") - 14);
-    await tick(10_000);
+    await tick(600);
     await settle();
     expect(glances(), "base: the dwell read p6").toEqual([]);
+    await tick(10_000);
+    await settle();
+    expect(glances()).toEqual([["p6"]]);
   }, 30_000);
 
   it("the control: a wheel in the column enters, and then each message whose top stays on screen reads", async () => {
@@ -93,9 +96,12 @@ describe("nothing but a person's act enters a visit, and nothing is read before 
     await act(async () => { for (const tickObserver of observers) tickObserver(); });
     await bareScroll(100);
     await bareScroll(layout.topOf("q3") - 14);
+    await tick(600);
+    await settle();
+    expect(glances(), "nothing in the second before its rest").toEqual([["p6"]]);
     await tick(10_000);
     await settle();
-    expect(glances(), "nothing in the second").toEqual([["p6"]]);
+    expect(glances()).toEqual([["p6"], ["q3"]]);
     expect(vi.isFakeTimers()).toBe(true);
   }, 30_000);
 });
