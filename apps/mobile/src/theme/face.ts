@@ -3,8 +3,8 @@
  * dimension, orthogonal to light/dark (OHMARCHY-PLAN.md §3a): light/dark decides which
  * palette, the face decides which SET of palettes, radii, lifts and easings (`./ohmarchy.ts`).
  * Pure and renderer-free, driven by `test/ohmarchy-face.test.ts`. Resolution: (1) `pin` — this
- * device's explicit choice, which outranks the account here because that is what the scope
- * option promised; (2) `account` — `GET /consent`'s `themeFace`, where `null` means "no
+ * device's pin, which outranks the account (signed in, a pin retires once the account holds a
+ * look, `state/face-scope.ts`, so there it is only a press not yet stored); (2) `account` — `GET /consent`'s `themeFace`, where `null` means "no
  * preference", never "paper"; (3) `paper`. Deliberately no device-detection arm: the web's
  * Linux default would flip every Android phone (a Linux kernel) to a face nobody asked for. On a phone the face is opt-in only.
  */

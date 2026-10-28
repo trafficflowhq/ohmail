@@ -103,7 +103,7 @@ const TABLE = {
    * and behind the fourth the phone is the organizer — so the final clause was dropped rather
    * than being true of three doors out of four. The list is the catalogue's own (`leave.note`),
    * shortened to the three a phone shows, and it does not say "settings" unqualified: the Look
-   * setting is per-device on purpose (`faceScopeDevice`), and triage piles and Resurface timers
+   * setting travels with the account rather than the mailbox, and triage piles and Resurface timers
    * stay with the install that made them.
    */
   doorsTravel:

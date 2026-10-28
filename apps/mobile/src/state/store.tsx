@@ -15,6 +15,7 @@ import type { SecureKV } from "./servers";
 import { appearanceStore, DEFAULT_APPEARANCE, type StoredAppearance } from "./appearance-store";
 import { DEFAULT_IMAGE_QUALITY_LEVEL, type ImageQualityLevel } from "../compose/attach";
 import { pictureQualityStore } from "./picture-quality-store";
+import { faceMirrorStore, type FaceMirror } from "./face-scope";
 
 export interface Prefs {
   themePref: ThemePref;
@@ -27,6 +28,9 @@ export interface Prefs {
   facePin: FaceName | null;
   /** Pin this device's face, or pass `null` to hand it back to the account. Instant, local. */
   setFacePin: (face: FaceName | null) => void;
+  /** The account's look as last adopted here, kept across launches (`face-scope.ts`). */
+  faceMirror: FaceMirror | null;
+  setFaceMirror: (mirror: FaceMirror | null) => void;
   /** How much a picked picture is shrunk before it is attached — the web's dial, kept here. */
   pictureQuality: ImageQualityLevel;
   setPictureQuality: (level: ImageQualityLevel) => void;
@@ -47,12 +51,16 @@ export function PrefsProvider({ kv, children }: { kv?: SecureKV; children: React
   const store = useMemo(() => appearanceStore(kv, setState), []);
   const [pictureQuality, setPictureQualityState] = useState<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
   const pictures = useMemo(() => pictureQualityStore(kv, setPictureQualityState), []);
+  const [faceMirror, setFaceMirrorState] = useState<FaceMirror | null>(null);
+  const mirror = useMemo(() => faceMirrorStore(kv, setFaceMirrorState), []);
 
   useEffect(() => {
     void store.boot();
     void pictures.boot();
-    return () => { store.dispose(); pictures.dispose(); };
-  }, [store, pictures]);
+    void mirror.boot();
+    return () => { store.dispose(); pictures.dispose(); mirror.dispose(); };
+  }, [store, pictures, mirror]);
+  const setFaceMirror = useCallback((m: FaceMirror | null) => mirror.set(m), [mirror]);
   const setPictureQuality = useCallback((level: ImageQualityLevel) => pictures.set(level), [pictures]);
 
   const setTheme = useCallback((pref: ThemePref) => store.setTheme(pref), [store]);
@@ -62,10 +70,10 @@ export function PrefsProvider({ kv, children }: { kv?: SecureKV; children: React
 
   const value = useMemo<Prefs>(
     () => ({
-      themePref: state.themePref, setTheme, facePin: state.facePin, setFacePin,
+      themePref: state.themePref, setTheme, facePin: state.facePin, setFacePin, faceMirror, setFaceMirror,
       pictureQuality, setPictureQuality,
     }),
-    [state, setTheme, setFacePin, pictureQuality, setPictureQuality],
+    [state, setTheme, setFacePin, faceMirror, setFaceMirror, pictureQuality, setPictureQuality],
   );
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
 }
