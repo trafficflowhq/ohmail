@@ -63,6 +63,8 @@ export interface CloudSessionReading {
   code: string | null;
   /** When this state began, ISO. */
   since: string;
+  /** A refusal that was a reuse sweep's own ({@link REUSE_CAUSE}); absent on every other reading. */
+  cause?: typeof REUSE_CAUSE;
 }
 
 /**
@@ -73,6 +75,13 @@ export interface CloudSessionReading {
 export const REFUSAL_CODES: ReadonlySet<string> = new Set([
   "refresh_missing", "refresh_expired", "refresh_revoked", "unauthorized",
 ]);
+
+/**
+ * WHY A REFUSAL WAS A REUSE SWEEP: the sweep's own 401 says it in `details.cause`. The client
+ * engine's `REFRESH_REUSE_CAUSE`, kept here as a twin for {@link REFUSAL_CODES}' reason. A cause,
+ * never a code: the session ends on the code as before.
+ */
+export const REUSE_CAUSE = "reuse";
 
 /**
  * A CREDENTIAL'S OWN VERDICT (a wrong code or passkey), said apart from a lapsed session's
@@ -238,6 +247,8 @@ export interface CloudAuthConfig {
   keyProvider?: KeyProvider;
   /** Where the sealed token pair lives — `<dataDir>/cloud-tokens.seal`. Absent ⇒ no seal. */
   sealPath?: string;
+  /** The computer every seal this session writes is bound to (`machine-binding.ts`); null writes unbound. */
+  machine?: string | null;
   now?: () => Date;
   log?: Diagnostic;
   /**
@@ -251,11 +262,12 @@ export interface CloudAuthConfig {
   requestDeadlineMs?: number;
   /**
    * Called at most once, when the refresh door REFUSED — a 401 carrying a code in
-   * {@link REFUSAL_CODES} — or any answer said {@link ACCOUNT_ERASED}, with that code. The
-   * engine's cue to end the session. Nothing else calls it: a 403, an uncoded 401, a 5xx or a
-   * dead network is retried and the session stays.
+   * {@link REFUSAL_CODES} — or any answer said {@link ACCOUNT_ERASED}, with that code, and the
+   * reuse sweep's {@link REUSE_CAUSE} when the refusal named it. The engine's cue to end the
+   * session. Nothing else calls it: a 403, an uncoded 401, a 5xx or a dead network is retried and
+   * the session stays.
    */
-  onSessionRefused?: (code: string) => void;
+  onSessionRefused?: (code: string, cause?: typeof REUSE_CAUSE) => void;
   /** Told each new {@link CloudSessionReading}, and each fault's retry, for `/health` and the log. */
   onSessionState?: (reading: CloudSessionReading, next: { attempt: number; retryInMs: number | null }) => void;
   /** The jitter's source, injectable so a test can pin the schedule. */
@@ -313,75 +325,124 @@ interface SealedTokenFile {
 }
 
 /**
+ * A seal bound to a computer: its sealed pair also names the computer. No `ciphertext` member, so a
+ * reader that predates the binding (0.30.12 and earlier, or a revert) opens nothing in it.
+ */
+interface BoundTokenFile {
+  v: 2;
+  sealed: string;
+  keyVersion: number;
+}
+
+/**
  * Seal a token pair under the install's key and write it beside the cursor.
  *
  * The same envelope shape the IMAP credential uses (`mailbox_credentials.secret_enc`), so one
  * key ring wraps both. Mode `0600`: the file is a live credential and no other user may read it.
+ * With a `machine` the pair is bound to that computer ({@link BoundTokenFile}); null writes the
+ * unbound file, byte for byte the older one.
  */
 export async function sealTokens(
   path: string, keyProvider: KeyProvider, tokens: CloudTokens, now: Date = new Date(),
-  stillWanted: () => boolean = () => true,
+  stillWanted: () => boolean = () => true, machine: string | null = null,
 ): Promise<boolean> {
-  const sealed = await keyProvider.encrypt(JSON.stringify(withExpiry(tokens, now.getTime())));
+  const pair = withExpiry(tokens, now.getTime());
+  const sealed = await keyProvider.encrypt(JSON.stringify(machine === null ? pair : { ...pair, machine }));
   // Asked BESIDE the synchronous write, after the encrypt: a stop that lands while the key works
   // writes nothing, because no sign-out can run between this check and the write below.
   if (!stillWanted()) return false;
   /* STAGED AND RENAMED (`fs-atomic.ts`), never written in place. This file is the only credential
-     a relaunch has: a process killed mid-write left a prefix of one envelope, which `loadSealed-
+     a relaunch has: a process killed mid-write left a prefix of one envelope, which `openSealed-
      Tokens` reads as "this key does not open that file" — a session lost for a write that was
      interrupted rather than refused. The previous complete seal survives instead. */
   writeAtomic(
     path,
-    JSON.stringify({ ciphertext: sealed.ciphertext, keyVersion: sealed.keyVersion } satisfies SealedTokenFile),
+    machine === null
+      ? JSON.stringify({ ciphertext: sealed.ciphertext, keyVersion: sealed.keyVersion } satisfies SealedTokenFile)
+      : JSON.stringify({ v: 2, sealed: sealed.ciphertext, keyVersion: sealed.keyVersion } satisfies BoundTokenFile),
     0o600,
   );
   return true;
 }
 
 /**
- * Read the sealed token pair, or null when there is none / it cannot be opened.
- *
- * A row this key cannot decrypt is `null`, not an error: the recovery is the same as the IMAP
- * side's — the shell supplies a fresh token in the environment and the launch re-seals it. Nothing
- * is logged from here; the thrown value comes from AES-GCM via a provider that also carries key
- * material, and the only fact the caller needs is "this key does not open that file".
+ * What a launch finds in the seal. `elsewhere` is a seal bound to another computer: a copied or
+ * synced home carried it here, and presenting it would meet the server's reuse rule, which ends that
+ * sign-in on both computers. It is said only when both computers are known and differ.
  */
-export async function loadSealedTokens(path: string, keyProvider: KeyProvider): Promise<CloudTokens | null> {
+export type SealOpen =
+  | { kind: "none" }
+  | { kind: "unreadable" }
+  | { kind: "elsewhere" }
+  | { kind: "opened"; tokens: CloudTokens; bound: boolean };
+
+/**
+ * Open the sealed token pair on the computer `machine` names (null: one that cannot name itself).
+ *
+ * A file this key cannot decrypt is `unreadable`, not an error. Nothing is logged from here; the
+ * thrown value comes from AES-GCM via a provider that also carries key material, and the only fact
+ * the caller needs is "this key does not open that file".
+ */
+export async function openSealedTokens(
+  path: string, keyProvider: KeyProvider, machine: string | null,
+): Promise<SealOpen> {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
-  } catch {
-    return null;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "none" } : { kind: "unreadable" };
   }
   try {
-    const file = JSON.parse(raw) as SealedTokenFile;
-    const plain = await keyProvider.decrypt(file.ciphertext, file.keyVersion);
-    const tokens = JSON.parse(plain) as CloudTokens;
-    if (typeof tokens.accessToken === "string" && typeof tokens.refreshToken === "string") return pairOf(tokens);
-    return null;
+    const file = JSON.parse(raw) as Partial<SealedTokenFile & BoundTokenFile>;
+    const bound = file.v === 2;
+    const ciphertext = bound ? file.sealed : file.ciphertext;
+    const plain = await keyProvider.decrypt(String(ciphertext), Number(file.keyVersion));
+    const tokens = JSON.parse(plain) as CloudTokens & { machine?: unknown };
+    if (typeof tokens.accessToken !== "string" || typeof tokens.refreshToken !== "string") return { kind: "unreadable" };
+    // A bound file always names its computer and an unbound one never does; anything else is damaged.
+    if (bound !== (typeof tokens.machine === "string")) return { kind: "unreadable" };
+    if (bound && machine !== null && tokens.machine !== machine) return { kind: "elsewhere" };
+    return { kind: "opened", tokens: pairOf(tokens), bound };
   } catch {
-    return null;
+    return { kind: "unreadable" };
   }
+}
+
+/** The sealed token pair this computer may present, or null. */
+export async function loadSealedTokens(
+  path: string, keyProvider: KeyProvider, machine: string | null = null,
+): Promise<CloudTokens | null> {
+  const opened = await openSealedTokens(path, keyProvider, machine);
+  return opened.kind === "opened" ? opened.tokens : null;
 }
 
 /** One renewal's outcome. `fault` keeps the session; only `refused` ends it. */
 type Renewal =
   | { kind: "minted"; expiresInMs: number | null }
-  | { kind: "refused"; code: string }
+  | { kind: "refused"; code: string; cause?: typeof REUSE_CAUSE }
   | { kind: "fault"; state: "renewing" | "unreachable" | "seal_failed"; code: string; retryAfterMs: number | null };
 
 /** A code fit for a state line: our envelope's vocabulary shape. Anything else is dropped. */
 const CODE_SHAPE = /^[a-z][a-z0-9_]{0,47}$/;
 
-/** The error code our envelope names, or null — an HTML page, an empty body, a foreign shape. */
-async function envelopeCode(res: Response): Promise<string | null> {
+/**
+ * The error code our envelope names, or null — an HTML page, an empty body, a foreign shape — and
+ * {@link REUSE_CAUSE} when `details.cause` is exactly that; any other cause says nothing.
+ */
+async function envelopeRefusal(res: Response): Promise<{ code: string | null; cause?: typeof REUSE_CAUSE }> {
   try {
-    const body = (await res.json()) as { error?: { code?: unknown } } | null;
+    const body = (await res.json()) as { error?: { code?: unknown; details?: { cause?: unknown } | null } } | null;
     const code = body?.error?.code;
-    return typeof code === "string" && CODE_SHAPE.test(code) ? code : null;
+    if (typeof code !== "string" || !CODE_SHAPE.test(code)) return { code: null };
+    return body?.error?.details?.cause === REUSE_CAUSE ? { code, cause: REUSE_CAUSE } : { code };
   } catch {
-    return null;
+    return { code: null };
   }
+}
+
+/** The error code our envelope names, or null. */
+async function envelopeCode(res: Response): Promise<string | null> {
+  return (await envelopeRefusal(res)).code;
 }
 
 /** `Retry-After` in milliseconds — seconds or an HTTP date — or null when absent or unreadable. */
@@ -439,6 +500,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
   const deadlineMs = cfg.requestDeadlineMs ?? REQUEST_DEADLINE_MS;
   const now = cfg.now ?? ((): Date => new Date());
   const random = cfg.random ?? Math.random;
+  const machine = cfg.machine ?? null;
   let tokens = withExpiry(cfg.tokens, now().getTime());
   /** The clone defence, single-flight: one in-flight renewal serves every caller. */
   let renewing: Promise<Renewal> | null = null;
@@ -498,11 +560,11 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     return bodyEnds(res, ended);
   };
 
-  const tellSessionRefused = (code: string): void => {
+  const tellSessionRefused = (code: string, cause?: typeof REUSE_CAUSE): void => {
     if (sessionRefusedTold) return;
     sessionRefusedTold = true;
     try {
-      cfg.onSessionRefused?.(code);
+      cfg.onSessionRefused?.(code, cause);
     } catch {
       /* the cue must never break the fetch it rode in on */
     }
@@ -514,7 +576,7 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     try {
       // A STOPPED SESSION WRITES NOTHING, asked beside the write itself: the stop is the sign-out,
       // and a pair sealed after it would sign this install back in on the next launch.
-      if (!(await sealTokens(cfg.sealPath, cfg.keyProvider, next, new Date(), () => !stopped))) return false;
+      if (!(await sealTokens(cfg.sealPath, cfg.keyProvider, next, new Date(), () => !stopped, machine))) return false;
       sealFailure = null;
       return true;
     } catch (err) {
@@ -553,8 +615,10 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
       /* THE ONE VERDICT: a 401 naming one of our refusal codes. A 403 here is a platform's (the
          native refresh takes no CSRF), and an uncoded 401 or a 5xx is not a statement about this
          session — each is retried with the attempt's name, so a retry is a replay, not a reuse. */
-      const code = await envelopeCode(res);
-      if (res.status === 401 && code !== null && REFUSAL_CODES.has(code)) return { kind: "refused", code };
+      const { code, cause } = await envelopeRefusal(res);
+      if (res.status === 401 && code !== null && REFUSAL_CODES.has(code)) {
+        return { kind: "refused", code, ...(cause ? { cause } : {}) };
+      }
       if (res.status === 410 && code === ACCOUNT_ERASED) return { kind: "refused", code };
       return {
         kind: "fault", state: "renewing", code: code ?? `http_${res.status}`,
@@ -607,9 +671,11 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     timer.unref?.();
   };
 
-  const report = (state: CloudSessionState, code: string | null, retryInMs: number | null): void => {
+  const report = (
+    state: CloudSessionState, code: string | null, retryInMs: number | null, cause?: typeof REUSE_CAUSE,
+  ): void => {
     const changed = reading.state !== state || reading.code !== code;
-    if (changed) reading = { state, code, since: now().toISOString() };
+    if (changed) reading = { state, code, since: now().toISOString(), ...(cause ? { cause } : {}) };
     if (!changed && retryInMs === null) return;
     try {
       cfg.onSessionState?.(reading, { attempt: faults, retryInMs });
@@ -629,8 +695,8 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     }
     if (r.kind === "refused") {
       clearTimer();
-      report("refused", r.code, null);
-      tellSessionRefused(r.code);
+      report("refused", r.code, null, r.cause);
+      tellSessionRefused(r.code, r.cause);
       return;
     }
     faults += 1;

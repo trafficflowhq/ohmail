@@ -912,6 +912,11 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // address it was trying to establish.
   cloud_identity_unresolved: "info",
   cloud_seal_removal_failed: "error",
+  // A seal made on another computer: nothing presented, the dialog asks this one for its own sign-in.
+  // A `reason` alone, never either computer's binding.
+  cloud_seal_elsewhere: "info",
+  // An older install's seal could not be bound to this computer at launch; the next renewal writes it.
+  cloud_seal_bind_failed: "error",
   // engine.ts
   stale_sessions_revoked: "info",
   install_key_absent: "info",

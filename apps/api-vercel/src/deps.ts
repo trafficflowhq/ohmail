@@ -35,7 +35,7 @@ import {
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
   attachmentsService, kbService, tagsService, FolderOpsService, draftsService, makeDraftingService, sendService,
   scheduleService,
-  SEND_ATTACHMENT_MAX_TOTAL_BYTES,
+  SEND_ATTACHMENT_MAX_TOTAL_BYTES, OWED_COPY_CLOUD,
   makeAttachmentStagingPort,
   workflowsService, proposalsService,
   MailService, ResendMailer, mailAlertSink, dbFreeMailAlertSink, dbRecipientLimiter, makeWaitlistService,
@@ -150,6 +150,9 @@ function buildServices(cfg: HostConfig): ApiServices {
     // submission server announced. Declared even though it equals the default: the absent case
     // exists for a host that has not been read, and this deployment has been.
     sendSurfaceMaxTotalBytes: SEND_ATTACHMENT_MAX_TOTAL_BYTES,
+    // A delivered letter's Sent copy is kept until filed, for letters WITHOUT files only: the
+    // published promise is that attachment bytes are never written down here.
+    sendKeepOwedCopy: OWED_COPY_CLOUD,
     // THE METERED STORAGE CAP — this is the hosted deployment, the one composition that reads
     // the subscription row instead of typing UNMETERED_STORAGE_CAP. It feeds the send route's
     // sent-copy projection; the sync worker threads the same read into ordinary ingest, so

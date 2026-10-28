@@ -98,7 +98,9 @@ import {
   type ScreenDest,
   type ScreenerSenderDTO,
   type StayedWhy,
+  feedLineUndo,
   inverseMutations,
+  pileRowIdsOf,
   undoInOrder,
   routingSubject,
   type CardReach,
@@ -155,6 +157,7 @@ import {
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
 import { blobToBase64 } from "../mail/blob-base64";
+import { drawnText, htmlWords } from "../mail/html-words";
 import { logAttachmentRefusal, logLaunchReplay } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import type { LetterDoor } from "../compose/letter-store";
@@ -509,6 +512,8 @@ export type WorldEarlier = Held & {
   later?: true;
   /** Its body is final (full, withheld, protected): the read rule may take its end as its end. */
   ready?: true;
+  /** Its html holds no words it can draw: the card draws its files and a line that opens it, the reader asks their list, and only its own open reads it. */
+  wordless?: true;
   /** The account's own message: a hollow square, and no Mark unread. */
   mine?: true;
   /** Who wrote it, for its square's name in the reader's rail. */
@@ -813,7 +818,7 @@ function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: Mes
     ...(m.invitationWithoutEvent === true ? { invitationWithoutEvent: true as const } : {}),
     subject: m.subject,
     time: messageDisplayTime(m, v.now, v.zone, v.locale ?? "en"),
-    body: body.text,
+    body: drawnText(body.text, body.html),
     bodyState: body.state,
     ...(body.state === "withheld" && body.withheld ? { bodyWithheld: body.withheld } : {}),
     ...(isJunkHuskLeaving(body, physical) ? { bodyJunkLeaving: true as const } : {}),
@@ -2046,21 +2051,27 @@ export function liveMessage(
         ? member.to.map((a) => a.name || a.address).filter((n) => n.length > 0).join(", ")
         : "";
       const b = bodyOf(pres, member);
+      // With an html part, its html alone says whether it draws: a stored text can be a placeholder.
+      const wordless = !!b.html && htmlWords(b.html).trim() === "";
+      const body = wordless ? "" : drawnText(b.text, b.html);
+      const files = filesField(engine, member.id);
       return {
         id: member.id,
         subject: member.subject,
         time: messageDisplayTime(member, v.now, v.zone, v.locale ?? "en"),
-        body: b.text,
+        body,
         ...(b.html ? { html: b.html } : {}),
         seen: !member.unread,
         ...(isResurfaced(member) ? { resurfaced: true as const } : {}),
         ...(later ? { later: true as const } : {}),
-        ...(bodyReady(b.state, member) ? { ready: true as const } : {}),
+        ...(wordless ? { wordless: true as const } : {}),
+        // Word-less, nothing on screen is its body (its files are not): only its own open reads it.
+        ...(bodyReady(b.state, member) && !wordless ? { ready: true as const } : {}),
         ...(isOwnOutbound(member) ? { mine: true as const } : {}),
         sender: member.from.name || member.from.address,
         date: shownDateOf(member),
         ...(forwardedTo ? { face: Copy.forwardedTo(forwardedTo) } : {}),
-        ...filesField(engine, member.id),
+        ...files,
       };
     });
   // The reading view's own facts, attached here and not in `toMail`: a list row never pays
@@ -3122,6 +3133,16 @@ export function noteQueuedSend(engine: OhmailEngine, r: MutationResult, m: Engin
   if (r.status === "queued" && m.kind === "mail_send") queuedSendsOf(engine).set(r.key, queuedMetaOf(m));
 }
 
+/** The letter each reply answers, by key and engine: its confirmation pays Answer Later (`releaseConfirmed`). */
+const repliesOwed = new WeakMap<OhmailEngine, Map<string, string>>();
+
+function noteReply(engine: OhmailEngine, key: string, m: EngineMutation): void {
+  if (m.kind !== "mail_send" || !m.inReplyTo) return;
+  let known = repliesOwed.get(engine);
+  if (known === undefined) repliesOwed.set(engine, (known = new Map()));
+  known.set(key, m.inReplyTo);
+}
+
 /**
  * IS A RECONNECT FLUSH OWED? An answer waiting with no caller always is (`hasLateResults`: a
  * dispatch that outlived its deadline answered after the queue let go of it); otherwise a pending
@@ -3158,6 +3179,7 @@ export async function flushQueued(
   const left = restoredKeysOf(engine);
   const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
   for (const p of [...engine.pendingMutations(), ...wire]) if ("restored" in p && p.restored === true) left.add(p.key);
+  for (const p of [...engine.pendingMutations(), ...wire]) noteReply(engine, p.key, p.mutation);
   const offQueue = queuedSendsOf(engine);
   for (const [key, meta] of kinds) if (meta.kind === "mail_send") offQueue.set(key, meta);
   const outcomes = new Map<string, FlushedOutcome>();
@@ -4874,7 +4896,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * it — never an id, never an address.
    */
   const markAllSeen = async (ids: string[], feed?: { place: FeedView; upToId: string }): Promise<boolean> => {
-    const inv = chunkMarkSeen(inverseMutations(engine.verbRead(), { kind: "mark_seen", messageIds: ids, unread: false }));
+    const pre = engine.verbRead();
+    const inv = chunkMarkSeen(inverseMutations(pre, { kind: "mark_seen", messageIds: ids, unread: false }));
+    if (feed !== undefined && inv.length > 0) inv.push(feedLineUndo(pre, feed.place));
     const parts: Promise<PressVerdict>[] = [];
     for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) {
       parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_CHUNK), unread: false })));
@@ -4952,7 +4976,24 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       const filed = await applySendAndDone(release, async (m) => (await watched(engine.mutate(m))).kind === "applied");
       if (filed) said.set(r.key, { say: refuse("toastSentAndDone"), opts: undoable(release.undo) });
     }
+    for (const r of results) if (r.status === "confirmed") replyLanded(r.key);
     return said;
+  };
+
+  /**
+   * A CONFIRMED REPLY PAYS ITS LETTER'S ANSWER LATER, the web's `settle`: read now, never at the press;
+   * the conversation's other letters queued there go too. A refused or unverified send pays nothing.
+   */
+  const replyLanded = (key: string): void => {
+    const owed = repliesOwed.get(engine);
+    const to = owed?.get(key);
+    if (to === undefined) return;
+    owed!.delete(key);
+    const reader = engine.read();
+    if (reader.get<EngineMessage>("message", to)?.triage?.state !== "reply_later") return;
+    for (const messageId of new Set([to, ...pileRowIdsOf(reader, to, "replyLater")])) {
+      void engine.mutate({ kind: "triage_set", messageId, state: "none" }).catch(() => undefined);
+    }
   };
 
   /**
@@ -5293,6 +5334,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // The flush replays the WHOLE queue; only THIS send's own result — matched by the
       // Idempotency-Key the first dispatch minted — may settle this send. An unrelated
       // mutation confirming is not this message delivering.
+      for (const q of engine.pendingMutations()) noteReply(engine, q.key, q.mutation);
       const flushed = await engine.flushPending().catch(() => []);
       done = await releaseConfirmed(flushed);
       keepStrays(engine, flushed, first.key, done);
@@ -5389,6 +5431,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       ...(andDone !== null ? { andDone } : {}),
     }).then((r) => {
       noteQueuedSend(engine, r, m);
+      noteReply(engine, r.key, m);
       return r;
     });
   };
@@ -6334,6 +6377,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     async retryAbandoned(id) {
       // The RESULT is returned, not swallowed: on the phone the sheet row is the only owner of an
       // owner-settled verb, so a `send_unverified` answer said nowhere is said to nobody.
+      const row = engine.abandoned().find((x) => x.id === id);
+      if (row) noteReply(engine, row.key, row.mutation);
       const res = await engine.retryAbandoned(id);
       // A Send + Done tried again from the strip files its source once it is confirmed.
       const said = (await releaseConfirmed([res])).get(res.key);

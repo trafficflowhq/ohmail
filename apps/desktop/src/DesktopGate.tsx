@@ -53,6 +53,7 @@ import { DesktopAbout } from "./DesktopAbout.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
 import { MailboxSelfCheck } from "../../webapp/app/shell/MailboxSelfCheck";
+import { ReuseSweepNotice } from "../../webapp/app/shell/ReuseSweepNotice";
 import { MailboxFilings } from "../../webapp/app/shell/MailboxFilings";
 import { filingsOverBridge } from "./local-filings.js";
 import { checkMailboxHere } from "./local-self-check.js";
@@ -66,7 +67,7 @@ import { BUILD_PLATFORM } from "./platform.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { linksOutToBilling } from "./distribution.js";
-import { DesktopSubscription, useDesktopManageOffer, useHostedAccountId } from "./DesktopSubscription.js";
+import { DesktopSubscription, useDesktopManageOffer, useHostedSession } from "./DesktopSubscription.js";
 import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { useDesktopFirstPaint } from "./desktop-first-paint.js";
@@ -80,6 +81,7 @@ import {
 import { DesktopDevices } from "./DesktopDevices.js";
 import { awayOverBridge } from "./local-away.js";
 import { organizerNoticeOverBridge } from "./local-organizer-notice.js";
+import { reuseSweepsOverBridge } from "./reuse-sweeps-wire.js";
 import { gapLettersOverBridge } from "./local-gap-letters.js";
 import { profileImportOverBridge } from "./local-profile-import.js";
 import { localImageDoor } from "./local-images.js";
@@ -513,7 +515,7 @@ export function DesktopGate() {
    * gates the ask as well as the mount: a door with no hosted account has nothing to ask.
    */
   const { manageOffered, withdrawManage, storage, lifecycleState } = useDesktopManageOffer(accountDoor);
-  const hostedAccountId = useHostedAccountId(accountDoor);
+  const { accountId: hostedAccountId, reuseSweeps } = useHostedSession(accountDoor);
   /** The Subscription pane is offered AND this build may point at a purchase (not the Mac App Store). */
   const billingLinksOut = accountDoor && manageOffered && linksOutToBilling();
 
@@ -1317,15 +1319,23 @@ export function DesktopGate() {
            switch could not be turned on and nothing on the pane said why. See `notify-host.ts`. */
         notificationHost={desktopNotificationHost}
         /* THE STORAGE NOTICE, on the Cloud door only: the same answer the Subscription offer
-           reads carries the storage block. Standalone has none and draws nothing. */
-        {...(accountDoor && storage !== null
+           reads carries the storage block. Standalone has none and draws nothing. Beside it, the
+           reuse sweeps the account's session read lists, acknowledged over the bridge. */
+        {...(accountDoor && (storage !== null || reuseSweeps.length > 0)
           ? {
               accountNotice: (
-                <DesktopStorageNotice
-                  facts={storage}
-                  lifecycleState={lifecycleState}
-                  linksOut={billingLinksOut}
-                />
+                <>
+                  {storage !== null ? (
+                    <DesktopStorageNotice
+                      facts={storage}
+                      lifecycleState={lifecycleState}
+                      linksOut={billingLinksOut}
+                    />
+                  ) : null}
+                  {reuseSweeps.length > 0
+                    ? <ReuseSweepNotice sweeps={reuseSweeps} onAcknowledge={reuseSweepsOverBridge} />
+                    : null}
+                </>
               ),
             }
           : {})}

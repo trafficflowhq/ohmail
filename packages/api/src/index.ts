@@ -47,7 +47,7 @@ export { staffSigningKeyOf, type StaffSigningKey } from "./staff-assertion.js";
 // and the router cannot disagree about it; a suite on the host side pins the agreement.
 export {
   ALERT_CRON_PATH, SESSIONS_REAP_CRON_PATH, SMTP_SIZE_CRON_PATH,
-  SCHEDULED_SEND_CRON_PATH, SEND_RECONCILE_CRON_PATH, UNSUB_DRAIN_CRON_PATH,
+  SCHEDULED_SEND_CRON_PATH, SEND_RECONCILE_CRON_PATH, SENT_COPIES_CRON_PATH, UNSUB_DRAIN_CRON_PATH,
 } from "./routes/internal.js";
 
 // The pager's standing per-arm health, for the host to inject as `HealthConfig.alertSinks`. It

@@ -20,18 +20,21 @@ export const SHARED_NOTE_KEY = "ohmail.signed-out-reason.shared";
 export const SHARED_NOTE_MS = 15_000;
 
 /**
- * The three refusals the refresh door names (`refresh_revoked` / `_expired` / `_missing`), and
- * `pending`: a sign-out this browser asked for that the server never confirmed, which `/login` reads
- * off `tf_owner` itself and never from a note.
+ * The three refusals the refresh door names (`refresh_revoked` / `_expired` / `_missing`); `reused`,
+ * a `refresh_revoked` that was a reuse sweep's own (its `details.cause`); and `pending`: a sign-out
+ * this browser asked for that the server never confirmed, which `/login` reads off `tf_owner` itself
+ * and never from a note.
  */
-export type SignedOutReason = "revoked" | "expired" | "absent" | "pending";
+export type SignedOutReason = "revoked" | "reused" | "expired" | "absent" | "pending";
 
-/** The reasons a note may carry: the refresh door's three. */
-const REASONS: readonly SignedOutReason[] = ["revoked", "expired", "absent"];
+/** The reasons a note may carry: the refresh door's. */
+const REASONS: readonly SignedOutReason[] = ["revoked", "reused", "expired", "absent"];
 
 /** The `resume.*` sentence each reason is told with, on the splash card and on `/login`. */
-export const REASON_BODY: Record<SignedOutReason, "revokedBody" | "expiredBody" | "absentBody" | "pendingBody"> = {
-  revoked: "revokedBody", expired: "expiredBody", absent: "absentBody", pending: "pendingBody",
+export const REASON_BODY: Record<
+  SignedOutReason, "revokedBody" | "reusedBody" | "expiredBody" | "absentBody" | "pendingBody"
+> = {
+  revoked: "revokedBody", reused: "reusedBody", expired: "expiredBody", absent: "absentBody", pending: "pendingBody",
 };
 
 export function isSignedOutReason(v: unknown): v is SignedOutReason {

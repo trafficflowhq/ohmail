@@ -426,7 +426,8 @@ export const draftsRoutes: Route[] = [
           surfaceMaxTotalBytes: deps.services?.sendSurfaceMaxTotalBytes,
           // WHERE THE SENT COPY IS WAITED FOR: inside the request on Cloud, in memory where the host outlives it.
           ...(deps.services?.sendCopyOutlivesAnswer === true ? { copyOutlivesAnswer: true } : {}),
-          ...(deps.services?.sendKeepOwedCopy === true ? { keepOwedCopy: true } : {}),
+          ...(deps.services?.sendKeepOwedCopy !== undefined && deps.services.sendKeepOwedCopy !== false
+            ? { keepOwedCopy: deps.services.sendKeepOwedCopy } : {}),
           ...(deps.services?.sendSubmissionCeilingMs !== undefined
             ? { submissionCeilingMs: deps.services.sendSubmissionCeilingMs } : {}),
           ...(deps.services?.sendHoldOffer ? { holdOffer: deps.services.sendHoldOffer } : {}),

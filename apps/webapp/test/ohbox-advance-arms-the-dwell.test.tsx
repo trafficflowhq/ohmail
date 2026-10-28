@@ -2,7 +2,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { OhmailEngine } from "@ohmail/client-engine";
 import { act, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
-import { click, key, keyAsBrowser, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
+import { arriveLater, click, key, keyAsBrowser, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
 import { AFTER_VERB_STORAGE_KEY } from "../app/shell/after-verb.js";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
@@ -332,6 +332,150 @@ describe("keys pressed as a browser dispatches them: the key that lands does not
     await keyAsBrowser("m");
     await tick(5000);
     expect(patches).toEqual([]);
+  }, 30_000);
+});
+
+/** ↓/↑ scrolling the column is reading on, as → is: the landing it shows is entered. */
+describe("an arrow scroll of the reading column enters the landing", () => {
+  /** Five conversations, one unread letter each: New ["a", "b", "c", "d", "e"]. */
+  const five = () => ["a", "b", "c", "d", "e"].map((id, i) => msg(id, 40 - 10 * i, { threadId: `t-${id}` }));
+
+  it("j, →, j, then ↓ scrolling the column inside the rest: the conversation reads as an open read", async () => {
+    layout.restore();
+    layout = stubThreadLayout({ heights: { old: 2000 } });
+    await mountThread(three());
+    await keyAsBrowser("j");
+    await keyAsBrowser("ArrowRight");
+    await keyAsBrowser("j");
+    expect(selected()).toBe("old");
+    await keyAsBrowser("ArrowDown");
+    expect(col().scrollTop, "↓ scrolled the column").toBeGreaterThan(0);
+    expect(selected(), "and moved no cursor").toBe("old");
+    await idle();
+    expect(patches).toEqual([GLANCE]);
+  }, 30_000);
+
+  it("→ into the column, then j j j passing fast: only the one rested on reads", async () => {
+    await mountThread(five());
+    await keyAsBrowser("j");
+    await keyAsBrowser("ArrowRight");
+    await keyAsBrowser("j");
+    await keyAsBrowser("j");
+    await keyAsBrowser("j");
+    expect(selected()).toBe("d");
+    expect(patches, "nothing passed reads").toEqual([]);
+    await idle();
+    expect(patches).toEqual([{ ids: ["d"], unread: false, via: "glance", openRead: true }]);
+  }, 30_000);
+
+  it("↓ ↓ ↓ in the list passing fast: only the one rested on reads", async () => {
+    await mountThread(five());
+    await keyAsBrowser("ArrowDown");
+    await keyAsBrowser("ArrowDown");
+    await keyAsBrowser("ArrowDown");
+    expect(selected()).toBe("c");
+    expect(patches, "nothing passed reads").toEqual([]);
+    await idle();
+    expect(patches).toEqual([{ ids: ["c"], unread: false, via: "glance", openRead: true }]);
+  }, 30_000);
+});
+
+/**
+ * A MARK UNREAD HOLDS FOR THE VISIT (found on 0.30.12: u, j, k back, hands off, read again at +5.3 s).
+ * News keeps its Mark unread for the visit (#415). A conversation marked unread while the
+ * Ohbox stays open is not entered again by a landing's rest or an arrow scroll of the column; ↵, a
+ * click, a press or a wheel in it still read it.
+ */
+describe("a Mark unread holds for the visit: no landing reads it back", () => {
+  const FIRST = { ids: ["first"], unread: false, via: "glance", openRead: true };
+  const UNREAD = { ids: ["first"], unread: true };
+  /** first opened and read, then u: unread again, the cursor on it. */
+  async function readThenMarkUnread(): Promise<void> {
+    await mountThread(three());
+    await click(rowOf("first"), "open first");
+    await layout.passDwell();
+    await settle();
+    expect(naming("first")).toEqual([FIRST]);
+    await keyAsBrowser("u");
+    expect(naming("first")).toEqual([FIRST, UNREAD]);
+  }
+
+  it("u, j away, k back and six seconds' rest: it stays unread; ↵ then reads it", async () => {
+    await readThenMarkUnread();
+    await keyAsBrowser("j");
+    expect(selected()).toBe("old");
+    await keyAsBrowser("k");
+    expect(selected()).toBe("first");
+    await idle();
+    await idle();
+    expect(naming("first"), "the landing's rest read it back").toEqual([FIRST, UNREAD]);
+    await key("Enter");
+    await layout.passDwell();
+    await settle();
+    expect(naming("first")).toEqual([FIRST, UNREAD, FIRST]);
+  }, 30_000);
+
+  it("u, then →, j, k and ↓ scrolling the column: it stays unread; a wheel in it then reads it", async () => {
+    layout.restore();
+    layout = stubThreadLayout({ heights: { first: 2000 } });
+    await readThenMarkUnread();
+    await keyAsBrowser("ArrowRight");
+    await keyAsBrowser("j");
+    await keyAsBrowser("k");
+    expect(selected()).toBe("first");
+    await keyAsBrowser("ArrowDown");
+    expect(col().scrollTop, "↓ scrolled the column").toBeGreaterThan(0);
+    await idle();
+    await idle();
+    expect(naming("first"), "the arrow scroll read it back").toEqual([FIRST, UNREAD]);
+    await layout.handScroll(0);
+    await layout.passDwell();
+    await settle();
+    expect(naming("first")).toEqual([FIRST, UNREAD, FIRST]);
+  }, 30_000);
+
+  it("a pick marked unread with u, one of them not on screen then: k onto it and a long rest leave it unread", async () => {
+    await mountThread(three());
+    await click(rowOf("newer"), "open newer");
+    await keyAsBrowser("x");
+    await keyAsBrowser("k");
+    expect(selected()).toBe("old");
+    await keyAsBrowser("x");
+    await keyAsBrowser("u");
+    expect(patches.filter((p) => p.unread).flatMap((p) => p.ids), "the pick marked unread").toContain("newer");
+    expect(ids("New"), "newer is back in New, above the cursor").toEqual(["newer", "first", "old"]);
+    await keyAsBrowser("k");
+    await keyAsBrowser("k");
+    expect(selected()).toBe("newer");
+    await idle();
+    await idle();
+    expect(naming("newer").filter((p) => !p.unread), "the landing's rest read it back").toEqual([]);
+  }, 30_000);
+
+  it("marked unread on another device while shown: j away, k back and a long rest leave it unread; ↵ then reads it", async () => {
+    await mountThread(three());
+    await click(rowOf("first"), "open first");
+    await layout.passDwell();
+    await settle();
+    expect(naming("first"), "a read on the wire: the drains now serve what arrives").toEqual([FIRST]);
+    await click(rowOf("newer"), "open newer, read from the start");
+    // Above every seq a mount serves: an update the mirror must not take for a stale one.
+    arriveLater([{ ...msg("newer", 30, { threadId: "t-newer", unread: true }), seq: 100_000 }], ["newer"], "t-newer");
+    await tick(20_000);
+    await settle();
+    expect(col().querySelector('[data-conv-id="newer"]')?.hasAttribute("data-unseen"), "the other device's unread, shown").toBe(true);
+    expect(selected()).toBe("newer");
+    await keyAsBrowser("j");
+    expect(selected()).not.toBe("newer");
+    await keyAsBrowser("k");
+    expect(selected()).toBe("newer");
+    await idle();
+    await idle();
+    expect(naming("newer"), "the landing's rest read it back").toEqual([]);
+    await key("Enter");
+    await layout.passDwell();
+    await settle();
+    expect(naming("newer").filter((p) => !p.unread)).toHaveLength(1);
   }, 30_000);
 });
 

@@ -1,12 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { createApp, apiRoutes, SEND_RECONCILE_CRON_PATH, type ApiDeps } from "@trafficflow/api";
+import { createApp, apiRoutes, SEND_RECONCILE_CRON_PATH, SENT_COPIES_CRON_PATH, type ApiDeps } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
-import { drafts, mailboxes, outboundSends } from "@trafficflow/db";
+import { drafts, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
+import { UNMETERED_STORAGE_CAP, type SendAdapter } from "@trafficflow/core";
+import { runOwedSentCopyPass } from "@trafficflow/services";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { admittedFilingAdapter } from "../src/routes/internal.js";
 import { makeDeps, req } from "./helpers.js";
 
 /**
@@ -133,9 +136,10 @@ describe("the abandonment seam reaches production, not just the spies", () => {
     const live = src.split("\n")
       .filter((l) => !l.trimStart().startsWith("//") && !l.trimStart().startsWith("*"))
       .join("\n");
+    // Four callers: the reconciler and the late Sent-copy pass, on each of the two hosts.
     expect(live.match(/timeouts:\s*SEND_RECONCILE_NET_TIMEOUTS/g) ?? [],
       "every production caller of the pass must thread them",
-    ).toHaveLength(2);
+    ).toHaveLength(4);
   });
 });
 
@@ -208,5 +212,136 @@ describe("the admission wrapper's refusal is a DEFER, never a terminal answer", 
     expect(taken).toBe(1);
     expect(given, "a slot taken and not returned is a mailbox that quietly stops being dialable")
       .toBe(1);
+  });
+});
+
+/** A delivered send whose Sent copy is owed and due now. */
+async function owedCopy(deps: ApiDeps, db: Awaited<ReturnType<typeof makeDeps>>["db"]) {
+  const accountId = randomUUID();
+  const [mb] = await db.insert(mailboxes).values({
+    accountId, provider: "imap", address: `owed-${randomUUID().slice(0, 8)}@rec.test`, status: "connected",
+  }).returning();
+  const minted = `<${randomUUID()}@rec.test>`;
+  const [s] = await db.insert(outboundSends).values({
+    accountId, idempotencyKey: randomUUID(), mintedMessageId: minted, providerMessageId: minted, status: "sent",
+  }).returning();
+  await db.insert(outboundSentCopies).values({
+    sendId: s!.id, accountId, mailboxId: mb!.id, rawB64: Buffer.from("raw").toString("base64"), nextAttemptAt: deps.now(),
+  });
+  return { accountId, mailboxId: mb!.id, sendId: s!.id };
+}
+
+describe("`GET /internal/sends/sent-copies/run` — the late Sent-copy pass's door", () => {
+  it("is mounted on apiRoutes only; 404 unarmed, 401 on a wrong secret, 200 with the pass's counts", async () => {
+    const key = (r: { method: string; pattern: string }): string => `${r.method} ${r.pattern}`;
+    expect(apiRoutes.map(key)).toContain(`GET ${SENT_COPIES_CRON_PATH}`);
+    expect(localRoutes.map(key)).not.toContain(`GET ${SENT_COPIES_CRON_PATH}`);
+    const { deps } = await armed();
+    expect((await H(req("GET", SENT_COPIES_CRON_PATH), { ...deps, alerts: undefined })).status).toBe(404);
+    expect((await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: "wrong" }), deps)).status).toBe(401);
+    const res = await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: SECRET }), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ claimed: 0, filed: 0, remaining: 0 });
+  });
+
+  it("a mailbox at its connection ceiling defers the copy, no attempt spent and nothing dialled", async () => {
+    const { db, deps } = await armed();
+    const w = await owedCopy(deps, db);
+    let asked = 0;
+    deps.services!.imapAdmission = {
+      acquire: async () => { asked += 1; return false; },
+      release: async () => { /* nothing was taken */ },
+    };
+    const body = await (await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: SECRET }), deps)).json() as Record<string, number>;
+    expect({ asked, claimed: body.claimed, deferred: body.deferred, filed: body.filed, remaining: body.remaining })
+      .toEqual({ asked: 1, claimed: 1, deferred: 1, filed: 0, remaining: 1 });
+    const [row] = await db.select().from(outboundSentCopies).where(eq(outboundSentCopies.sendId, w.sendId));
+    expect(row!.attempts, "a refused dial is no attempt").toBe(0);
+  });
+
+  it("gives the admission slot back exactly once when the dial fails", async () => {
+    const { db, deps } = await armed();
+    await owedCopy(deps, db);
+    let taken = 0;
+    let given = 0;
+    deps.services!.imapAdmission = {
+      acquire: async () => { taken += 1; return true; },
+      release: async () => { given += 1; },
+    };
+    // Admitted, then `makeSendAdapter` finds no credentials.
+    const res = await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: SECRET }), deps);
+    expect({ status: res.status, taken, given }).toEqual({ status: 200, taken: 1, given: 1 });
+  });
+
+  it("an injected transport is asked to file the copy and never to send", async () => {
+    const { db, deps } = await armed();
+    const w = await owedCopy(deps, db);
+    const seen = { sends: 0, filed: [] as string[] };
+    deps.services!.sendAdapter = async () => ({
+      async send() { seen.sends += 1; return { providerMessageId: "x" }; },
+      async messageInSent() { return false; },
+      async fileSentCopy(_raw: Buffer, id: string) { seen.filed.push(id); return null; },
+      async close() { /* nothing held */ },
+    });
+    const body = await (await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: SECRET }), deps)).json() as Record<string, number>;
+    expect({ filed: body.filed, remaining: body.remaining, sends: seen.sends, copies: seen.filed.length }).toEqual({ filed: 1, remaining: 0, sends: 0, copies: 1 });
+    expect(await db.select().from(outboundSentCopies).where(eq(outboundSentCopies.sendId, w.sendId))).toEqual([]);
+  });
+
+  it.each([
+    ["a lost connection", false],
+    ["the breach that retired it, no lost-connection code: only isLive tells", true],
+  ] as const)("a refusal that ends the connection redials through the door for the probe (later commands answer %s): the 4 other copies are filed in the same pass", async (_label, breach) => {
+    const { db, deps } = await armed();
+    deps.services!.imapAdmission = { acquire: async () => true, release: async () => { /* nothing counted */ } };
+    const accountId = randomUUID();
+    const [mb] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `owed-${randomUUID().slice(0, 8)}@rec.test`, status: "connected",
+    }).returning();
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const minted = `<${randomUUID()}@rec.test>`;
+      const [s] = await db.insert(outboundSends).values({
+        accountId, idempotencyKey: randomUUID(), mintedMessageId: minted, providerMessageId: minted, status: "sent",
+      }).returning();
+      await db.insert(outboundSentCopies).values({
+        sendId: s!.id, accountId, mailboxId: mb!.id, rawB64: Buffer.from("raw").toString("base64"),
+        nextAttemptAt: deps.now(), createdAt: new Date(deps.now().getTime() - (5 - i) * 1000),
+      });
+      ids.push(minted);
+    }
+    const seen = { dials: 0, filed: [] as string[] };
+    const open = async (): Promise<SendAdapter> => {
+      seen.dials += 1;
+      let alive = true;
+      let later: Error | null = null;
+      return {
+        async send() { throw new Error("never"); },
+        async messageInSent() { return false; },
+        async fileSentCopy(_raw: Buffer, id: string) {
+          if (later !== null) throw later;
+          if (id === ids[0]) {
+            alive = false;
+            if (breach) {
+              // The APPEND overran its bound: the adapter retires the connection and answers every later command so.
+              later = Object.assign(new Error("the APPEND overran its read deadline"), { code: "EIMAPBOUND" });
+              throw later;
+            }
+            // The oldest copy is refused, and the server hangs up after saying so.
+            later = Object.assign(new Error("Connection not available"), { code: "NoConnection" });
+            throw Object.assign(new Error("NO [LIMIT] refused"), { responseStatus: "NO", serverResponseCode: "LIMIT" });
+          }
+          seen.filed.push(id);
+          return null;
+        },
+        isLive: () => alive,
+        async close() { alive = false; },
+      };
+    };
+    const r = await runOwedSentCopyPass(db, {
+      openSendAdapter: (mailboxId) => admittedFilingAdapter(deps, mailboxId, open),
+      resolveStorageCap: async () => UNMETERED_STORAGE_CAP, now: deps.now, budgetMs: 60_000,
+    });
+    expect({ filed: r.filed, dials: seen.dials }).toEqual({ filed: 4, dials: 2 });
   });
 });

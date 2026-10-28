@@ -21,6 +21,7 @@ import {
   senderKey,
   VIEW_OF_FOLDER,
   waterlineIdOf,
+  feedLineUndo,
   type ConsentPartition,
   type EngineMessage,
   type EntityReader,
@@ -40,7 +41,7 @@ import type { MessageBarPanel } from "./message-chrome";
 import { createReadSetMemo } from "./conversation-on-screen";
 import { useReaderVisit, type ThreadReadWiring } from "./reader-seen";
 import { readColumnHidden, watchNarrow } from "./narrow";
-import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
+import { dispatchMarkAllRead, dispatchMarkAllUndo } from "./read-all";
 import type { RichValue } from "./rich-text";
 import { canonicalHash, go, goScreener, goSettings, reflectMessage, type Route, type ScreenerSegmentId } from "./routing";
 import type { ScreenerState } from "./screener-state";
@@ -726,18 +727,22 @@ export function useShellOpenState({
    * confirm — the product's pattern for a verb that is usually meant: the
    * undo flips exactly the ids this press flipped, so mail already read
    * before the press stays read (a blanket "mark everything unread" would
-   * not). Held longer than the default toast.
+   * not). Held longer than the default toast. In a stream the press also moves the line (the view's
+   * `onLeaveSeen`, right after this), so the Undo puts the line back as it stands now.
    */
-  const markAllRead = useStableCallback((ids: string[]) => {
+  const markAllRead = useStableCallback((ids: string[], feed?: FeedView) => {
     if (ids.length === 0) return;
+    const line = feed === undefined ? null : feedLineUndo(engine.read(), feed);
     dispatchMarkAllRead((m) => engine.mutate(m), ids);
     toast(t("markAll.done", { count: ids.length }), {
       action: t("markAll.undo"),
       undo: true,
-      onAction: () => { dispatchMarkAll((m) => engine.mutate(m), ids, true); },
+      onAction: () => { dispatchMarkAllUndo((m) => engine.mutate(m), ids, line); },
       duration: 6000,
     });
   });
+  const markAllReadsRead = useStableCallback((ids: string[]) => markAllRead(ids, "reads"));
+  const markAllReceiptsRead = useStableCallback((ids: string[]) => markAllRead(ids, "receipts"));
 
   /* ── route transitions: overlays close, pending screener work lands ── */
   const prevRoute = useRef(route);
@@ -1380,6 +1385,8 @@ export function useShellOpenState({
     frValues,
     jump,
     markAllRead,
+    markAllReadsRead,
+    markAllReceiptsRead,
     markSeen,
     mirrorHolds,
     verbHolds,

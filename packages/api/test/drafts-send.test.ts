@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { drafts, outboundSends, outboundSendFingerprints } from "@trafficflow/db";
+import { drafts, outboundSends, outboundSendFingerprints, outboundSentCopies } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SEND_STALE_AFTER_MS, sendContentFingerprint } from "@trafficflow/services";
+import {
+  SEND_STALE_AFTER_MS, sendContentFingerprint, OWED_COPY_CLOUD, OWED_COPY_SELF_HOST, SEND_COPY_DEADLINE_MS, SEND_COPY_OWED_SETTLE_MS,
+} from "@trafficflow/services";
 import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
@@ -175,7 +177,7 @@ describe("POST /drafts/:id/send — gated idempotent send (Phase 3c)", () => {
  * retried on a host that outlives it (`sendCopyOutlivesAnswer`).
  */
 describe("POST /drafts/:id/send — `sentCopy`", () => {
-  function filingAdapter(copy: "files" | "hangs") {
+  function filingAdapter(copy: "files" | "hangs" | "refused") {
     const filed: string[] = [];
     const factory: OpenSendAdapter = async () => ({
       async send(msg: OutboundMessage, opts?: { copy?: string; beforeRelease?: () => Promise<void> }) {
@@ -184,6 +186,7 @@ describe("POST /drafts/:id/send — `sentCopy`", () => {
       },
       async fileSentCopy(_raw: Buffer, id: string) {
         if (copy === "hangs") await new Promise(() => undefined);
+        if (copy === "refused") throw new Error("NO [OVERQUOTA] mailbox full");
         filed.push(id);
         return null;
       },
@@ -213,6 +216,34 @@ describe("POST /drafts/:id/send — `sentCopy`", () => {
     const res = await H(req("POST", `/drafts/${draftId}/send`, { bearer: s.token, headers: { "idempotency-key": "copy-2" } }), deps);
     expect(await res.json()).toMatchObject({ status: "sent", sentCopy: "pending" });
   }, 15_000);
+
+  it("the server doors keep a copy that cannot land: one row, due when each door's pass may take it", async () => {
+    for (const [bag, due] of [
+      [{ sendKeepOwedCopy: OWED_COPY_CLOUD }, FIXED_NOW.getTime() + SEND_COPY_DEADLINE_MS + SEND_COPY_OWED_SETTLE_MS],
+      [{ sendKeepOwedCopy: OWED_COPY_SELF_HOST, sendCopyOutlivesAnswer: true }, FIXED_NOW.getTime()],
+    ] as const) {
+      const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: filingAdapter("refused").factory });
+      deps.services = { ...deps.services!, ...bag };
+      const s = await seedSession(db, { now: FIXED_NOW });
+      const draftId = await seedDraft(db, s.accountId, await seedMailbox(db, { accountId: s.accountId }));
+      const res = await H(req("POST", `/drafts/${draftId}/send`, { bearer: s.token, headers: { "idempotency-key": "owed-1" } }), deps);
+      expect(await res.json()).toMatchObject({ status: "sent", sentCopy: "pending" });
+      expect((await db.select().from(outboundSentCopies)).map((r) => r.nextAttemptAt.getTime())).toEqual([due]);
+    }
+  });
+
+  it("Cloud keeps no copy of a letter with an attachment: `missing`, and no row", async () => {
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: filingAdapter("refused").factory });
+    deps.services = { ...deps.services!, sendKeepOwedCopy: OWED_COPY_CLOUD };
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const draftId = await seedDraft(db, s.accountId, await seedMailbox(db, { accountId: s.accountId }));
+    const res = await H(req("POST", `/drafts/${draftId}/send`, {
+      bearer: s.token, headers: { "idempotency-key": "owed-2" },
+      body: JSON.stringify({ attachments: [{ filename: "a.csv", contentType: "text/csv", contentBase64: Buffer.from("a\n1\n").toString("base64") }] }),
+    }), deps);
+    expect(await res.json()).toMatchObject({ status: "sent", sentCopy: "missing" });
+    expect(await db.select().from(outboundSentCopies)).toEqual([]);
+  });
 });
 
 /**

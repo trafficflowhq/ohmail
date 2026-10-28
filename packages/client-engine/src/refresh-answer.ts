@@ -17,6 +17,13 @@ export const SESSION_REFUSAL_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * WHY A `refresh_revoked` WAS A REUSE SWEEP: `details.cause` on the sweep's own 401 only
+ * (`packages/services/src/auth/session-lifecycle.ts`). A cause, not a code: every client still ends
+ * the session on the code, and the sidecar keeps a twin beside its `REFUSAL_CODES`.
+ */
+export const REFRESH_REUSE_CAUSE = "reuse";
+
+/**
  * A CREDENTIAL'S OWN VERDICT (a wrong password, code or passkey), said apart from a lapsed
  * session's `unauthorized`. Its 401 is the answer, so no client renews and re-sends on it; each
  * client's path list stays for servers older than this code. The server's constant

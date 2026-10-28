@@ -183,8 +183,11 @@ export const sessionLifecycleRoutes: Route[] = [
             ));
           }
           const refusal = err as ServiceError;
+          // `details` as `errorResponse` sends it: a reuse sweep's own cause rides there.
+          const error: { code: string; message: string; details?: unknown } = { code: refusal.code, message: refusal.message };
+          if (refusal.details !== undefined) error.details = refusal.details;
           return sessionRefused(json(
-            { error: { code: refusal.code, message: refusal.message } },
+            { error },
             refusal.httpStatus,
             failure === "session_refused" ? clearSessionCookies() : [],
           ));

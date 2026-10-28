@@ -155,6 +155,13 @@ const EN = {
   cloudLeadRevoked: (machine: string) =>
     `This ${machine} was signed out — from another device, or after a security check. The copy `
     + "of your mail here is where you left it.",
+  /* A reuse sweep's own refusal: this install presented a sign-in already renewed. The server
+     cannot tell another device from this one's own older state, so neither is named. */
+  cloudLeadReused: (machine: string) =>
+    `This ${machine} used a sign-in that had already been renewed. That is what a restored backup, `
+    + "a copied home folder or a stolen sign-in looks like, so ohmail ended this sign-in everywhere. "
+    + "Sign in again. If you did not restore or copy anything, change your password. The copy of "
+    + "your mail here is where you left it.",
   cloudLeadExpired: (machine: string) =>
     `Your sign-in on this ${machine} expired after a long time without use. The copy of your mail `
     + "here is where you left it.",
@@ -918,6 +925,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   serverReached: ["server", "address"],
   cloudLeadSignIn: ["machine"],
   cloudLeadRevoked: ["machine"],
+  cloudLeadReused: ["machine"],
   cloudLeadExpired: ["machine"],
   cloudLeadSealFailed: ["machine"],
   cloudSealPausedTitle: ["machine"],

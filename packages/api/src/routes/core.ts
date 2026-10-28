@@ -4,7 +4,7 @@ import { jarCookie, ownerCookie } from "../cookies.js";
 import type { ApiDeps } from "../deps.js";
 import { withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
-import { cookieSurface, json, parseCookies, readBody } from "./shared.js";
+import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
 import { auth, enrollmentSession } from "./shared-cloud.js";
 // The carved lifecycle pair — `/auth/logout` + `/auth/refresh` — spread back in below at their
 // old positions, as the same objects. See `session-lifecycle.ts` for the carve.
@@ -148,6 +148,19 @@ export const coreRoutes: Route[] = [
       // `enrollmentCookies` keeps on the way in.
       const heal = result.scope === "full" ? healOwnerMarker(req, deps, result.user.accountId) : [];
       return json(result, 200, heal);
+    },
+  },
+  {
+    // OK on the reuse sweeps `GET /auth/session` listed. `ceremony`: one listing and at most twenty
+    // audit rows. Kept off `/auth/refresh` (the cookie's path) and the clients' never-renew prefixes.
+    method: "POST",
+    pattern: "/auth/reuse-sweeps/ack",
+    relay: true,
+    cost: "ceremony",
+    handler: async (req, deps) => {
+      const body = await readBody<{ ids?: unknown }>(req);
+      await auth(deps).acknowledgeReuseSweeps(serviceContext(deps, req), body);
+      return noContent();
     },
   },
   // `/auth/logout` and `/auth/refresh` — CARVED into `session-lifecycle.ts` (Phase 3), spread

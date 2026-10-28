@@ -12,7 +12,7 @@ import {
   runAwayResponderPass,
   reapStaleWebSessions, runPlatformSignalPass,
   runAccountLifecyclePass, eraseOneDueAccount, throttleKeysFor,
-  runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
+  runScheduledSendPass, runSendReconcilePass, runOwedSentCopyPass, SEND_RECONCILE_NET_TIMEOUTS,
   startDrainBudget,
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
@@ -138,6 +138,13 @@ export const UNSUB_DRAIN_CRON_PATH = "/internal/unsubscribe/drain";
 export const SEND_RECONCILE_CRON_PATH = "/internal/sends/reconcile/run";
 
 /**
+ * `GET /internal/sends/sent-copies/run` — the late pass for owed Sent copies: a delivered send whose
+ * copy the request could not file (`OwedCopyPolicy`). Its own route for the reconciler's budget
+ * reason; `runOwedSentCopyPass` holds the policy, and nothing on this path can submit.
+ */
+export const SENT_COPIES_CRON_PATH = "/internal/sends/sent-copies/run";
+
+/**
  * The away responder's clock. A SEPARATE route from the scheduled sender's, not a second pass
  * folded into it: that invocation already budgets its own sends against this platform's 60-second
  * ceiling, and a slow away run sharing it would eat the appointment clock's margin. Two routes,
@@ -251,6 +258,66 @@ async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<Se
     // and its own failure path already logs. Losing it leaves the mailbox one unit short until the
     // stale-window reclaim, which is the bounded direction; blocking here would reintroduce the
     // hang this method exists to escape.
+    ...(adapter.forceClose ? {
+      forceClose: (): void => {
+        adapter.forceClose!();
+        void release();
+      },
+    } : {}),
+  };
+}
+
+/**
+ * The late Sent-copy pass's dial: {@link admittedSendAdapter}'s admission and deadlines, and it
+ * may file a copy and look in Sent, never submit. The slot comes back exactly once. `open` is a
+ * test seam.
+ */
+export async function admittedFilingAdapter(
+  deps: ApiDeps, mailboxId: string, open: typeof makeSendAdapter = makeSendAdapter,
+): Promise<SendAdapter> {
+  const now = (): Date => deps.now?.() ?? new Date();
+  let admitted: boolean;
+  try {
+    admitted = await imapAdmission(deps).acquire(deps.db, { mailboxId, max: MAX_IMAP_PER_MAILBOX, now: now() });
+  } catch (err) {
+    deps.logger?.error?.("send_sent_copy_admission_failed", { mailboxId, err });
+    throw new TransientDialRefusal(mailboxId, "the IMAP admission counter could not be consulted");
+  }
+  if (!admitted) throw new TransientDialRefusal(mailboxId, "this mailbox is at its connection ceiling; the copy waits");
+  let released = false;
+  const release = async (): Promise<void> => {
+    if (released) return;
+    released = true;
+    try {
+      await imapAdmission(deps).release(deps.db, mailboxId, now());
+    } catch (err) {
+      deps.logger?.warn?.("imap_slot_release_failed", { mailboxId, err });
+    }
+  };
+  let adapter: SendAdapter;
+  try {
+    adapter = await open(deps, mailboxId, { timeouts: SEND_RECONCILE_NET_TIMEOUTS });
+  } catch (err) {
+    await release();
+    throw err;
+  }
+  return {
+    send: () => {
+      throw new Error("owed Sent copies: this door may never submit — the message was delivered; only its copy is filed");
+    },
+    messageInSent: (messageId) => adapter.messageInSent(messageId),
+    ...(adapter.fileSentCopy
+      ? { fileSentCopy: (raw: Buffer, messageId: string, o?: { look?: boolean }) => adapter.fileSentCopy!(raw, messageId, o) }
+      : {}),
+    // A refusal that ends the connection is read here, so the pass dials again to tell whose it was.
+    ...(adapter.isLive ? { isLive: () => adapter.isLive!() } : {}),
+    close: async () => {
+      try {
+        await adapter.close();
+      } finally {
+        await release();
+      }
+    },
     ...(adapter.forceClose ? {
       forceClose: (): void => {
         adapter.forceClose!();
@@ -732,7 +799,7 @@ export const internalRoutes: Route[] = [
   {
     /**
      * `GET /internal/sessions/reap` — the web-session reaper's clock: revokes plain browser
-     * sessions (`device_id IS NULL`, scope `full`) unseen for over sixty days, families included;
+     * sessions (`device_id IS NULL`, scope `full`) past their own idle window, families included;
      * paired devices are structurally out of reach (`reapStaleWebSessions`). The alert cron's
      * shape verbatim: GET (a crawler cannot present a bearer token), either secret, 404 unarmed —
      * where the hygiene then does not run; the live acceptance curls the armed route. On
@@ -937,6 +1004,8 @@ export const internalRoutes: Route[] = [
           // cycle after the account reads open — see `accountEligibleFrom` for why the network
           // read is safe where a database read through the outer handle was the deadlock.
           ...(eligible ? { accountEligible: eligible } : {}),
+          // The send door's own owed-copy policy (`OWED_COPY_CLOUD` here).
+          ...(deps.services?.sendKeepOwedCopy !== undefined ? { keepOwedCopy: deps.services.sendKeepOwedCopy } : {}),
           // The platform ends this invocation at 60 s: a send that could not finish is not started.
           budgetMs: 60_000,
           log,
@@ -998,6 +1067,53 @@ export const internalRoutes: Route[] = [
         // are already absorbed inside the pass — this catches only the claim itself.
         log.error("send_reconcile_pass_failed", { err });
         return json(503, { error: { code: "send_reconcile_pass_failed" } });
+      }
+    },
+  },
+  {
+    /**
+     * `GET /internal/sends/sent-copies/run` — the late pass for owed Sent copies; the reconciler's
+     * route shape for shape. Overlapping pokes are safe: the claim is `FOR UPDATE SKIP LOCKED` with
+     * a lease, and every copy looks in Sent first. Dials go through admission; a refusal defers.
+     */
+    method: "GET",
+    pattern: SENT_COPIES_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => {
+      const log = (deps.logger ?? silentLogger).child({ route: SENT_COPIES_CRON_PATH });
+      const cfg = deps.alerts;
+      if (!cfg || cfg.secret.trim().length === 0) {
+        return json(404, { error: { code: "not_found" } });
+      }
+      const cron = cfg.cronSecret?.trim();
+      const authorized = presentsSecret(req, cfg.secret)
+        || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+      if (!authorized) {
+        log.warn("send_sent_copy_pass_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      try {
+        const eligible = accountEligibleFrom(deps);
+        const storageCapOf = deps.services?.storageCapOf;
+        const result = await runOwedSentCopyPass(deps.db, {
+          openSendAdapter: deps.services?.sendAdapter
+            ?? ((mailboxId: string) => admittedFilingAdapter(deps, mailboxId)),
+          // Absent, the projection refuses and the Sent-folder watch writes the row.
+          resolveStorageCap: storageCapOf ?? (async () => {
+            throw new Error("no storage-cap policy is configured for this host");
+          }),
+          ...(eligible ? { accountEligible: eligible } : {}),
+          budgetMs: 60_000,
+          log,
+          now: deps.now,
+        });
+        if (result.claimed + result.dropped > 0) log.info("send_sent_copy_pass", { ...result });
+        return json(200, { now: deps.now().toISOString(), ...result });
+      } catch (err) {
+        log.error("send_sent_copy_pass_failed", { err });
+        return json(503, { error: { code: "send_sent_copy_pass_failed" } });
       }
     },
   },

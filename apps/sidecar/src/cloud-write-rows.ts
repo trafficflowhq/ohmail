@@ -66,6 +66,7 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /auth/2fa/webauthn/register/verify": none,
   "POST /auth/logout": none,
   "POST /auth/password": none,
+  "POST /auth/reuse-sweeps/ack": none,
   "POST /auth/step-up/totp": none,
   "POST /auth/step-up/webauthn/options": none,
   "POST /auth/step-up/webauthn/verify": none,

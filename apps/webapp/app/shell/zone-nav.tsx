@@ -332,6 +332,8 @@ export interface ZoneNavConfig {
     onEnter?: () => void;
     /** The pane is hidden at this width; → means the view's deliberate open instead. */
     onHiddenEnter?: () => void;
+    /** ↑/↓ scrolled the view's own column (never the sheet): the person reading on, as → is. */
+    onScrollKey?: () => void;
   };
   /** Where "back to the list" lands focus. Default: the selected row. */
   listFocusSelector?: string;
@@ -424,7 +426,9 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
     const r = latest.current.reader;
     const el =
       sheet ?? (r ? queryVisible<HTMLElement>(r.scrollSelector ?? r.selector) : null);
-    if (el) scrollProgrammatically(el, el.scrollTop + dir * READER_SCROLL_STEP);
+    if (!el) return;
+    scrollProgrammatically(el, el.scrollTop + dir * READER_SCROLL_STEP);
+    if (!sheet) r?.onScrollKey?.();
   };
 
   /**

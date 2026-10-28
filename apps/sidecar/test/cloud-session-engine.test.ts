@@ -1,6 +1,9 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { REFRESH_REUSE_CAUSE } from "@ohmail/client-engine";
+import { StaticKeyProvider } from "@trafficflow/core";
+import { loadSealedTokens } from "../src/cloud-auth.js";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { DataDirLockedError, LOCK_FILE } from "../src/db.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
@@ -79,7 +82,7 @@ function host(refresh: () => Response): Host {
 }
 
 function boot(dataDir: string, h: Host, over: {
-  keks?: Record<number, Buffer>; address?: string; tokens?: boolean;
+  keks?: Record<number, Buffer>; address?: string; tokens?: boolean; machine?: string | null;
 } = {}): Promise<CloudSidecar> {
   if (closing) return Promise.reject(new Error("boot after teardown began"));
   const run = (async () => {
@@ -89,6 +92,7 @@ function boot(dataDir: string, h: Host, over: {
       address: over.address ?? "me@ohmail.test",
       ...(over.tokens === false ? {} : { tokens: { accessToken: "access-1", refreshToken: "refresh-1" } }),
       keks: over.keks ?? ring(),
+      ...(over.machine !== undefined ? { machineBinding: over.machine } : {}),
       fetchImpl: h.fetchImpl,
       log: (event) => { h.logged.push(event); },
       pollIntervalMs: 40,
@@ -103,7 +107,7 @@ function boot(dataDir: string, h: Host, over: {
 
 type Health = {
   signedIn: boolean; sessionExpired: boolean;
-  session: { state: string; code: string | null; since: string } | null;
+  session: { state: string; code: string | null; since: string; cause?: string } | null;
 };
 const health = async (s: CloudSidecar): Promise<Health> =>
   (await s.handle(new Request("http://sidecar/health"))).json() as never;
@@ -121,6 +125,10 @@ async function until(s: CloudSidecar, want: (h: Health) => boolean, what: string
 const html403 = (): Response =>
   new Response("<html>Access denied</html>", { status: 403, headers: { "content-type": "text/html" } });
 const revoked401 = (): Response => new Response(JSON.stringify({ error: { code: "refresh_revoked" } }), { status: 401 });
+/** A reuse sweep's own refusal, its cause spelled by the client engine's constant the sidecar twins. */
+const reuse401 = (): Response => new Response(JSON.stringify({
+  error: { code: "refresh_revoked", message: "refresh token reuse detected", details: { cause: REFRESH_REUSE_CAUSE } },
+}), { status: 401 });
 
 const call = (s: CloudSidecar, method: string, path: string, body?: unknown): Promise<Response> =>
   s.handle(new Request(`http://sidecar${path}`, {
@@ -130,8 +138,8 @@ const call = (s: CloudSidecar, method: string, path: string, body?: unknown): Pr
   }));
 
 /** A run whose session the server refuses, kept until the refusal's teardown removed the seal, then stopped. */
-async function refusedRun(dataDir: string, keks: Record<number, Buffer>): Promise<void> {
-  const h = host(revoked401);
+async function refusedRun(dataDir: string, keks: Record<number, Buffer>, refusal = revoked401): Promise<void> {
+  const h = host(refusal);
   const s = await boot(dataDir, h, { keks });
   h.expired = true;
   await until(s, (x) => x.sessionExpired, "the engine never took the refusal");
@@ -178,11 +186,22 @@ describe("the cloud engine's session through /health", () => {
     h.expired = true;
     const got = await until(sidecar, (x) => x.sessionExpired, "the engine never took the refusal");
     expect(got).toMatchObject({ signedIn: false, session: { state: "refused", code: "refresh_revoked" } });
+    expect(got.session, "a plain refusal names no cause").not.toHaveProperty("cause");
     const deadline = Date.now() + 10_000;
     while (existsSync(join(dataDir, "cloud-tokens.seal"))) {
       if (Date.now() > deadline) throw new Error("the refused seal was never removed");
       await new Promise((r) => setTimeout(r, 25));
     }
+  });
+
+  it("a reuse sweep's refusal: the same refusal, and why", { timeout: 40_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-reused-");
+    dirs.push(dataDir);
+    const h = host(reuse401);
+    const sidecar = await boot(dataDir, h);
+    h.expired = true;
+    const got = await until(sidecar, (x) => x.sessionExpired, "the engine never took the refusal");
+    expect(got.session).toMatchObject({ state: "refused", code: "refresh_revoked", cause: "reuse" });
   });
 });
 
@@ -202,6 +221,7 @@ describe("a refusal heard by an earlier run", () => {
     expect(await health(again)).toMatchObject({
       signedIn: false, sessionExpired: false, session: { state: "refused_before", code: "refresh_revoked" },
     });
+    expect((await health(again)).session).not.toHaveProperty("cause");
     const signIn = await call(again, "POST", "/cloud/signin", { email: "me@ohmail.test", password: "pw", totp: "123456" });
     expect(signIn.status, await signIn.clone().text()).toBe(200);
     expect((await health(again)).session).toMatchObject({ state: "live" });
@@ -226,6 +246,15 @@ describe("a refusal heard by an earlier run", () => {
     await again.stop();
     sidecars.splice(0);
     expect((await health(await relaunch(dataDir, keks))).session, "a sign-out left the refusal to be said again").toBeNull();
+  });
+
+  it("a reuse sweep's cause is said at the next launch too", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-reused-before-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await refusedRun(dataDir, keks, reuse401);
+    expect((await health(await relaunch(dataDir, keks))).session)
+      .toMatchObject({ state: "refused_before", code: "refresh_revoked", cause: "reuse" });
   });
 
   it("is not carried to another account", { timeout: 60_000 }, async () => {
@@ -281,6 +310,103 @@ describe("a seal on disk this key cannot open", () => {
     // The positive control: the key that wrote it opens it, and the launch is signed in.
     const same = await boot(dataDir, host(html403), { keks, tokens: false });
     expect(await health(same)).toMatchObject({ signedIn: true, session: { state: "live" } });
+  });
+});
+
+/**
+ * A SEAL BELONGS TO THE COMPUTER THAT WROTE IT. Carried to another by a copied or synced home, it
+ * reads unreadable there and presents nothing, so the server's reuse rule never meets it; the
+ * computer that owns the sign-in keeps it.
+ */
+describe("a seal belongs to the computer that wrote it", () => {
+  const SEAL_UNREADABLE = { signedIn: false, sessionExpired: false, session: { state: "seal_failed", code: "seal_unreadable" } };
+
+  it("carried to another computer: unreadable there, nothing presented, the file kept; its own computer stays signed in", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-elsewhere-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await (await boot(dataDir, host(html403), { keks, machine: "machine-a" })).stop();
+    sidecars.splice(0);
+
+    const h = host(html403);
+    const other = await boot(dataDir, h, { keks, tokens: false, machine: "machine-b" });
+    expect(await health(other)).toMatchObject(SEAL_UNREADABLE);
+    expect(h.seen, "the other computer presented nothing").toEqual([]);
+    expect(h.logged).toContain("cloud_seal_elsewhere");
+    await other.stop();
+    sidecars.splice(0);
+
+    const same = await boot(dataDir, host(html403), { keks, tokens: false, machine: "machine-a" });
+    expect(await health(same)).toMatchObject({ signedIn: true, session: { state: "live" } });
+  });
+
+  it("an unbound seal (an older install's) stays signed in on upgrade and is bound at that launch", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-unbound-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await (await boot(dataDir, host(html403), { keks, machine: null })).stop();
+    sidecars.splice(0);
+
+    const upgraded = await boot(dataDir, host(html403), { keks, tokens: false, machine: "machine-a" });
+    expect(await health(upgraded), "no sign-out on upgrade").toMatchObject({ signedIn: true, session: { state: "live" } });
+    await upgraded.stop();
+    sidecars.splice(0);
+
+    const h = host(html403);
+    expect(await health(await boot(dataDir, h, { keks, tokens: false, machine: "machine-b" }))).toMatchObject(SEAL_UNREADABLE);
+    expect(h.seen).toEqual([]);
+  });
+
+  it("a bind that will not write keeps the launch signed in and says so", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-bind-refused-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await (await boot(dataDir, host(html403), { keks, machine: null })).stop();
+    sidecars.splice(0);
+    // A real refusal: a directory where the atomic write stages the seal.
+    mkdirSync(join(dataDir, `cloud-tokens.seal.${process.pid}.tmp`));
+
+    const h = host(html403);
+    expect(await health(await boot(dataDir, h, { keks, tokens: false, machine: "machine-a" }))).toMatchObject({
+      signedIn: true, session: { state: "live" },
+    });
+    expect(h.logged).toContain("cloud_seal_bind_failed");
+  });
+
+  it("a renewal seals for the computer it ran on", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-renewal-bound-");
+    dirs.push(dataDir);
+    const keks = ring();
+    const a = host(() => new Response(JSON.stringify({ tokens: { accessToken: "access-2", refreshToken: "refresh-2" } })));
+    const first = await boot(dataDir, a, { keks, machine: "machine-a" });
+    a.expired = true;
+    const sealPath = join(dataDir, "cloud-tokens.seal");
+    const deadline = Date.now() + 20_000;
+    while ((await loadSealedTokens(sealPath, new StaticKeyProvider(keks)))?.refreshToken !== "refresh-2") {
+      if (Date.now() > deadline) throw new Error("the renewal was never sealed");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    await first.stop();
+    sidecars.splice(0);
+
+    const h = host(html403);
+    expect(await health(await boot(dataDir, h, { keks, tokens: false, machine: "machine-b" }))).toMatchObject(SEAL_UNREADABLE);
+    expect(h.seen).toEqual([]);
+  });
+
+  it("a sign-in seals for the computer it was made on", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-signin-bound-");
+    dirs.push(dataDir);
+    const keks = ring();
+    const first = await boot(dataDir, host(html403), { keks, tokens: false, machine: "machine-a" });
+    const signIn = await call(first, "POST", "/cloud/signin", { email: "me@ohmail.test", password: "pw", totp: "123456" });
+    expect(signIn.status, await signIn.clone().text()).toBe(200);
+    await first.stop();
+    sidecars.splice(0);
+
+    const h = host(html403);
+    expect(await health(await boot(dataDir, h, { keks, tokens: false, machine: "machine-b" }))).toMatchObject(SEAL_UNREADABLE);
+    expect(h.seen).toEqual([]);
   });
 });
 

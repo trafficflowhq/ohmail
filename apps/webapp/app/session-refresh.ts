@@ -9,7 +9,7 @@
  * — `next.config.mjs` carries the dedicated rewrite (`REFRESH_PATH`).
  */
 
-import { CREDENTIAL_REFUSED, REFRESH_MISSING, isSessionRefusal } from "@ohmail/client-engine";
+import { CREDENTIAL_REFUSED, REFRESH_MISSING, REFRESH_REUSE_CAUSE, isSessionRefusal } from "@ohmail/client-engine";
 import { csrfMark, csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./shell/durable";
@@ -76,6 +76,8 @@ export interface RefreshReport {
   retryAfterMs: number | null;
   /** A deadline of ours ended the wait: the request's ({@link RENEWAL_DEADLINE_MS}) or the lock's. */
   timedOut?: "request" | "lock";
+  /** A refusal that was a reuse sweep's own ({@link REFRESH_REUSE_CAUSE}): this jar presented a renewed token. */
+  cause?: typeof REFRESH_REUSE_CAUSE;
 }
 
 /**
@@ -686,10 +688,12 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       }
       // Read ONCE, for both facts: whether the envelope is ours, and which code it names. Only the
       // refresh door's own refusal is a verdict (`isSessionRefusal`, the phone's reading too).
-      const code = res.status === 401 ? await refusalCode(res) : null;
+      const { code, cause } = res.status === 401 ? await refusalOf(res) : NO_REFUSAL;
       if (isSessionRefusal(res.status, code)) {
         settleAttempt();
-        recordRefresh({ outcome: "revoked", status: 401, code, errorClass: null, retryAfterMs: null });
+        recordRefresh({
+          outcome: "revoked", status: 401, code, errorClass: null, retryAfterMs: null, ...(cause ? { cause } : {}),
+        });
         // No token presented is every signed-out visit's answer (`/login` asks too): no cache walk for it.
         if (code !== REFRESH_MISSING) purgeSiteCache();
         markSessionDead();
@@ -795,24 +799,31 @@ function superseded(err: unknown): "refused" {
   return "refused";
 }
 
+/** What a refusal named: its code, and the one cause this build tells apart. */
+interface Refusal { code: string | null; cause?: typeof REFRESH_REUSE_CAUSE }
+
+const NO_REFUSAL: Refusal = { code: null };
+
 /**
  * The refusal's own code, when this came from OUR envelope — `{error: {code}}` — rather than
  * from a platform. `null` means the answer was not ours, which is what keeps a deployment
- * protection page or a proxy interstitial from counting as the server's verdict.
+ * protection page or a proxy interstitial from counting as the server's verdict. `cause` is set
+ * only for a reuse sweep's own refusal (`details.cause`); any other value says nothing.
  */
-async function refusalCode(res: Response): Promise<string | null> {
+async function refusalOf(res: Response): Promise<Refusal> {
   try {
-    const body = (await res.json()) as { error?: { code?: unknown } } | null;
+    const body = (await res.json()) as { error?: { code?: unknown; details?: { cause?: unknown } | null } } | null;
     const code = body?.error?.code;
-    return typeof code === "string" ? code : null;
+    if (typeof code !== "string") return NO_REFUSAL;
+    return body?.error?.details?.cause === REFRESH_REUSE_CAUSE ? { code, cause: REFRESH_REUSE_CAUSE } : { code };
   } catch {
-    return null;
+    return NO_REFUSAL;
   }
 }
 
 /** The same read on a NON-verdict answer: a fault's code is for the log, never for a decision. */
 async function faultCode(res: Response): Promise<string | null> {
-  return res.bodyUsed ? null : refusalCode(res);
+  return res.bodyUsed ? null : (await refusalOf(res)).code;
 }
 
 /**

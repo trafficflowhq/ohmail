@@ -187,6 +187,41 @@ describe("auth — session, logout, refresh", () => {
     expect(dead.status).toBe(401);
   });
 
+  it("GET /auth/session tells a full session minted after a sweep, once; POST /auth/reuse-sweeps/ack takes it off", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const id = await register(deps, "gil@x.example");
+    const secret = await enrollTotp(deps, db, clock, id);
+    clock.advance(30_000);
+    const first = setCookieMap(await loginWithTotp(deps, clock, "gil@x.example", secret));
+    const read = (access: string): Promise<Response> => H(req("GET", "/auth/session", { cookie: `tf_session=${access}` }), deps);
+    // Nothing to tell: the answer keeps its old shape.
+    expect(Object.keys(await (await read(first.tf_session!)).json()).sort()).toEqual(["scope", "user"]);
+
+    const r2 = setCookieMap(await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${first.tf_refresh}` }), deps)).tf_refresh!;
+    clock.advance(1_000);
+    await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${r2}` }), deps);
+    clock.advance(deps.authConfig.refreshReuseGraceMs + 1_000);
+    expect((await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${first.tf_refresh}` }), deps)).status).toBe(401);
+
+    clock.advance(30_000);
+    const access = setCookieMap(await loginWithTotp(deps, clock, "gil@x.example", secret)).tf_session!;
+    const told = (await (await read(access)).json()) as { reuseSweeps?: Array<Record<string, unknown>> };
+    expect(told.reuseSweeps).toHaveLength(1);
+    expect(Object.keys(told.reuseSweeps![0]!).sort(), "no evidence on the wire").toEqual(["at", "client", "id"]);
+    expect(told.reuseSweeps![0]!.client).toBe("web");
+
+    const ack = (body: unknown, cookie = `tf_session=${access}; tf_csrf=${CSRF(access)}`): Promise<Response> =>
+      H(req("POST", "/auth/reuse-sweeps/ack", { cookie, headers: { "x-csrf-token": CSRF(access) }, body: JSON.stringify(body) }), deps);
+    for (const bad of [{}, { ids: [] }, { ids: ["not-a-uuid"] }, { ids: "x" }]) {
+      const res = await ack(bad);
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+      expect((await res.json()).error.code).toBe("validation_failed");
+    }
+    expect((await ack({ ids: [told.reuseSweeps![0]!.id] }, "")).status, "no session").toBe(401);
+    expect((await ack({ ids: [told.reuseSweeps![0]!.id] })).status).toBe(204);
+    expect(await (await read(access)).json()).not.toHaveProperty("reuseSweeps");
+  });
+
   it("POST /auth/refresh: a stale cookie whose rotation response was LOST recovers the session (204)", async () => {
     // The lid-close shape, end to end over the cookie handler: a rotation commits server-side,
     // its Set-Cookie never lands, and the browser re-presents the old token half an hour later.

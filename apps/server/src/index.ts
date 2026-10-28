@@ -5,8 +5,8 @@ import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core";
 import { aiBootFields } from "@trafficflow/core/ai-provider-env";
 import { makeSendAdapter, sendConnections } from "@trafficflow/api";
 import {
-  runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
-  type AuthService,
+  runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, runOwedSentCopyPass, SEND_RECONCILE_NET_TIMEOUTS,
+  OWED_COPY_SELF_HOST, type AuthService,
 } from "@trafficflow/services";
 import { COLLAPSED_SENTENCE, PROXY_PEER_HEADER, loadServerConfig } from "./config.js";
 import {
@@ -211,6 +211,24 @@ async function main(): Promise<void> {
       logger.error("send_reconcile_pass_failed", { err });
     }
   };
+  /**
+   * The owed Sent copies (`OWED_COPY_SELF_HOST`): a delivered letter whose copy a restart or an
+   * IMAP outage kept out of Sent is filed here, after the reconciler, on both arms. Its own `try`.
+   */
+  const fileOwedSentCopies = async (): Promise<void> => {
+    try {
+      const passDeps = buildDeps(new Request(cfg.origin), rt);
+      const r = await runOwedSentCopyPass(owned.db, {
+        openSendAdapter: (mailboxId) =>
+          makeSendAdapter(passDeps, mailboxId, { timeouts: SEND_RECONCILE_NET_TIMEOUTS }),
+        resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
+        log: logger,
+      });
+      if (r.claimed + r.dropped > 0) logger.info("send_sent_copy_pass", { ...r });
+    } catch (err) {
+      logger.error("send_sent_copy_pass_failed", { err });
+    }
+  };
   const armSendClock = (delayMs: number): void => {
     if (sendClockStopped) return;
     sendClock = setTimeout(() => {
@@ -220,6 +238,7 @@ async function main(): Promise<void> {
           const r = await runScheduledSendPass(owned.db, {
             openSendAdapter: (mailboxId) => makeSendAdapter(passDeps, mailboxId),
             resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
+            keepOwedCopy: OWED_COPY_SELF_HOST,
             log: logger,
           });
           if (r.claimed > 0) {
@@ -242,6 +261,7 @@ async function main(): Promise<void> {
            * never projects a sent copy and never assembles a body.
            */
           await reconcileStrandedSends();
+          await fileOwedSentCopies();
 
           /**
            * THE AWAY RESPONDER, ON THE SAME TICK (mail 0087) — one always-on process, one clock.
@@ -299,6 +319,7 @@ async function main(): Promise<void> {
           // resolved — that pairing would take out both halves of the send path's recovery at
           // once, and the second half is the one nothing else can do.
           await reconcileStrandedSends();
+          await fileOwedSentCopies();
         } finally {
           sendPassInFlight = null;
           armSendClock(SCHEDULED_SEND_EVERY_MS);

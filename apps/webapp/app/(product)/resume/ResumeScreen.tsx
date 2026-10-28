@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { REFRESH_REUSE_CAUSE } from "@ohmail/client-engine";
 import { REFRESH_ENDPOINT, lastRefreshReport, resumeSession, type RefreshReport } from "../../session-refresh";
 import { readOwnerCookie, readOwnerMarker } from "../../shell/owner-cookie";
 import { storageOwner } from "../../shell/storage-owner";
@@ -53,11 +54,13 @@ export type ResumeAnswer = "minted" | SignedOutReason | "unavailable";
 /**
  * THE ONE SWITCH. A refusal is a coded 401 (`outcome: "revoked"` in the report) and names its kind
  * by code; everything else — 5xx, 429, status 0, an uncoded 401 — is a fault and decides nothing.
- * A code this build does not know (the legacy `unauthorized` included) reads as revoked.
+ * A code this build does not know (the legacy `unauthorized` included) reads as revoked. A reuse
+ * sweep's own refusal says so by its cause, before any code.
  */
 export function answerOf(ok: boolean, report: RefreshReport | null): ResumeAnswer {
   if (ok) return "minted";
   if (report === null || report.outcome !== "revoked") return "unavailable";
+  if (report.cause === REFRESH_REUSE_CAUSE) return "reused";
   if (report.code === "refresh_expired") return "expired";
   if (report.code === "refresh_missing") return "absent";
   return "revoked";

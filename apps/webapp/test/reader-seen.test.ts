@@ -5,10 +5,12 @@ import * as React from "react";
 import { createRoot } from "react-dom/client";
 import type { EngineMessage } from "@ohmail/client-engine";
 import {
-  EVIDENCE_WINDOW_MS, LANDING_REST_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, panelsOf, pressEnters, useReaderVisit, viewOf,
+  EVIDENCE_WINDOW_MS, LANDING_REST_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, createUnreadHold, panelsOf, pressEnters, useReaderVisit,
+  useThreadRead, viewOf, type ThreadReadDomOptions,
 } from "../app/shell/reader-seen";
 import { scrollProgrammatically } from "../app/shell/programmatic-scroll";
 import { readLandedCard } from "../app/shell/stream-landing-read";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout";
 
 /**
  * THE THREAD-READ ADAPTER over the DOM (owner ruling 2026-10-23: the top of a message read is the
@@ -82,7 +84,7 @@ function bar(topY: number): void {
   el.getBoundingClientRect = rect("bar");
   scroller.appendChild(el);
 }
-function mount(restMs?: number): void {
+function mount(restMs?: number, more: Partial<ThreadReadDomOptions> = {}): void {
   core = createThreadReadDom({
     scroller, record, restMs,
     onRead: (ids) => reads.push(ids),
@@ -91,6 +93,7 @@ function mount(restMs?: number): void {
     visible: () => shown, frameHovered: () => false, documentFocused: () => focused,
     now: () => Date.now(),
     frame: (run) => { frames.push(run); return () => { frames = frames.filter((f) => f !== run); }; },
+    ...more,
   });
 }
 /** One frame. */
@@ -581,7 +584,15 @@ describe("a stream card opened from a search hit (readLandedCard)", () => {
 describe("a reader's visit off the Ohbox (useReaderVisit)", () => {
   const act = (React as unknown as { act: (cb: () => void) => void }).act;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const letter = (id: string) => ({ id }) as EngineMessage;
+  const letter = (id: string, unread = false) => ({ id, unread }) as EngineMessage;
+  /** A column showing `id` unread, as the hold reads it. */
+  const showing = (id: string): HTMLElement => {
+    const col = document.createElement("div");
+    const a = col.appendChild(document.createElement("article"));
+    a.dataset.convId = id;
+    a.setAttribute("data-unseen", "");
+    return col;
+  };
   let visit: ReturnType<typeof useReaderVisit>;
   const writes: unknown[][] = [];
   const Probe = ({ shown }: { shown: EngineMessage | null }) => {
@@ -629,6 +640,172 @@ describe("a reader's visit off the Ohbox (useReaderVisit)", () => {
     r.observe([p("a0")], { top: 0, bottom: 800 }, new Set(["a0"]), 0);
     expect(r.observe([p("a0")], { top: 0, bottom: 800 }, new Set(["a0"]), THREAD_READ_HOLD_MS + 1), "kept unread").toEqual([]);
   });
+
+  it("a step key's landing rests: the wiring carries the rest and previews until stayed or entered", () => {
+    act(() => show(letter("a")));
+    expect(visit.wiring?.restMs, "shown by another path: no rest").toBeUndefined();
+    expect(visit.wiring?.previewing).toBeFalsy();
+    act(() => { visit.land("b"); show(letter("b")); });
+    expect(visit.wiring?.restMs).toBe(LANDING_REST_MS);
+    expect(visit.wiring?.previewing).toBe(true);
+    act(() => visit.wiring!.onStay!());
+    expect(visit.wiring?.previewing, "stayed: its pictures load").toBe(false);
+    expect(visit.wiring?.restMs).toBe(LANDING_REST_MS);
+    act(() => { visit.land("c"); show(letter("c")); });
+    act(() => visit.wiring!.onEnter());
+    expect(visit.wiring?.previewing, "entered").toBe(false);
+  });
+
+  it("a landing ends with its visit: back by another path is no landing, and a landing not shown is dropped", () => {
+    act(() => { visit.land("a"); show(letter("a")); });
+    act(() => show(letter("b")));
+    expect(visit.wiring?.restMs, "b came by another path").toBeUndefined();
+    act(() => show(letter("a")));
+    expect(visit.wiring?.restMs, "back on a: a new visit").toBeUndefined();
+    act(() => visit.land("c"));
+    act(() => show(letter("c")));
+    expect(visit.wiring?.restMs, "c was not shown when it was landed on").toBeUndefined();
+  });
+
+  it("an arrow scroll of the column enters the letter, never while the column shows it held unread (⋯ Mark unread)", () => {
+    const col = document.createElement("div");
+    const a = col.appendChild(document.createElement("article"));
+    a.dataset.convId = "a";
+    a.setAttribute("data-unseen", "");
+    act(() => { visit.land("a"); show(letter("a")); });
+    act(() => visit.wiring!.onMarkUnread("a"));
+    act(() => show(letter("b")));
+    act(() => { visit.land("a"); show(letter("a")); });
+    act(() => visit.keyScroll("a", col));
+    expect(visit.wiring?.record.entered, "held: a new visit of a, not entered").toBe(false);
+    a.removeAttribute("data-unseen");
+    act(() => visit.keyScroll("a", col));
+    expect(visit.wiring?.record.entered, "read since: the hold has nothing to keep").toBe(true);
+  });
+
+  it("the shown letter's own flag turning unread (another device) holds it; a letter shown unread after a read one is not held", () => {
+    act(() => show(letter("a")));
+    act(() => show(letter("a", true)));
+    act(() => show(letter("b")));
+    act(() => { visit.land("a"); show(letter("a", true)); });
+    act(() => visit.keyScroll("a", showing("a")));
+    expect(visit.wiring?.record.entered, "a turned unread while shown: held").toBe(false);
+    act(() => show(letter("c", true)));
+    act(() => show(letter("b")));
+    act(() => { visit.land("c"); show(letter("c", true)); });
+    act(() => visit.keyScroll("c", showing("c")));
+    expect(visit.wiring?.record.entered, "c came unread: nobody marked it").toBe(true);
+  });
+
+  it("the bar's Mark unread (holdUnread) holds the letter, though the next step showed another before it turned", () => {
+    act(() => show(letter("a")));
+    act(() => { visit.holdUnread("a"); show(letter("b")); });
+    act(() => { visit.land("a"); show(letter("a", true)); });
+    act(() => visit.keyScroll("a", showing("a")));
+    expect(visit.wiring?.record.entered).toBe(false);
+  });
+});
+
+/**
+ * A MARK UNREAD HOLDS FOR THE VIEW'S VISIT (found on 0.30.12: u, j away, k back, and the rest
+ * read the conversation again). A message the view marked unread, or whose own flag turned unread
+ * while shown, is held (`UnreadHold`, News's kept set of #415 for the readers), and a landing showing
+ * it unread is not entered by its rest; a press or a wheel in it still is, and the dwell reads it.
+ */
+describe("a Mark unread holds for the visit (UnreadHold)", () => {
+  it("the hold shows a held message only while a panel shows it unread", () => {
+    const hold = createUnreadHold();
+    const a = panel("a", 0, 300);
+    hold.add(["b"]);
+    expect(hold.shows(scroller), "b is not on screen").toBe(false);
+    hold.add(["a"]);
+    expect(hold.shows(scroller)).toBe(true);
+    a.removeAttribute("data-unseen");
+    expect(hold.shows(scroller), "read since").toBe(false);
+    expect(hold.shows(null)).toBe(false);
+  });
+
+  it("a landing showing a held message is never entered by its rest; a press in it is, and the dwell reads it", () => {
+    const a = panel("a", 0, 300);
+    mount(LANDING_REST_MS, { held: () => true });
+    pass(60_000);
+    expect(enters).toBe(0);
+    a.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(enters).toBe(1);
+    flush();
+    dwell();
+    expect(reads).toEqual([["a"]]);
+  });
+});
+
+/**
+ * A SWITCH OF THE SHOWN LETTER HOLDS NOTHING (#448's review). The single-letter reader's one article
+ * is reused across letters (`ReadingPane`), and a switch React renders on its own scheduler (an Undo's
+ * answer, a link, Back: no key's dispatch around it) reached the adapter's observer as that article
+ * turning unread: the new letter, which nobody marked unread, was held and its landing never read.
+ * Real timers, outside act, as a browser renders it.
+ */
+describe("a switch of the shown letter over the reader's reused article holds nothing", () => {
+  type Shown = { id: string; unread: boolean };
+  const view: { show?: (m: Shown) => void; visit?: ReturnType<typeof useReaderVisit> } = {};
+  let written: string[][] = [];
+  function Reader({ first }: { first: Shown }): React.ReactElement {
+    const [shown, show] = React.useState(first);
+    const visit = useReaderVisit({
+      shown: shown as unknown as EngineMessage,
+      markSeen: (ids, unread) => { if (!unread) written.push(ids); },
+    });
+    const ref = React.useRef<HTMLDivElement>(null);
+    useThreadRead({ scroller: ref, wiring: visit.wiring ?? undefined, active: true });
+    view.show = show;
+    view.visit = visit;
+    // ReadingPane's shape: one article carrying the letter's panel data, not keyed by the letter.
+    return React.createElement("div", { ref, className: "read-col" }, React.createElement("article", {
+      className: "msg", "data-conv-id": shown.id, "data-unseen": shown.unread ? "" : undefined, "data-body-ready": "",
+    }, React.createElement("div", { className: "msg-from" }, "Lena"), React.createElement("div", { className: "msg-body" }, "hello")));
+  }
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  /** A key's dispatch, as the views take their keys: `run` inside it. */
+  const inKey = (k: string, run: () => void): void => {
+    document.addEventListener("keydown", run, { once: true });
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  };
+  const step = (m: Shown): void => inKey("j", () => { view.visit!.land(m.id); view.show!(m); });
+  const env = globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean };
+  let layout: ThreadLayout;
+  let root: ReturnType<typeof createRoot>;
+  let host: HTMLElement;
+  beforeEach(() => {
+    vi.useRealTimers();
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    layout = stubThreadLayout();
+    written = [];
+    host = document.body.appendChild(document.createElement("div"));
+    root = createRoot(host);
+  });
+  afterEach(async () => {
+    root.unmount();
+    host.remove();
+    layout.restore();
+    env.IS_REACT_ACT_ENVIRONMENT = true;
+    await sleep(20);
+  });
+
+  for (const outside of [true, false]) {
+    it(`a read letter, then an unread one shown ${outside ? "by an answer, outside a key" : "inside a key (CONTROL)"}: k's landing on it, rested on, reads it`, async () => {
+      root.render(React.createElement(Reader, { first: { id: "a", unread: false } }));
+      await sleep(60);
+      const b = { id: "b", unread: true };
+      if (outside) await new Promise<void>((done) => { setTimeout(() => { view.show!(b); done(); }, 0); });
+      else inKey("x", () => view.show!(b));
+      await sleep(80);
+      step({ id: "c", unread: false });
+      await sleep(80);
+      step(b);
+      await sleep(LANDING_REST_MS + THREAD_READ_HOLD_MS + 1500);
+      expect(written, "b was never marked unread: its landing's rest reads it").toEqual([["b"]]);
+    }, 20_000);
+  }
 });
 
 describe("a landing rested on (LANDING_REST_MS) is entered; a command or a press ends the rest", () => {
@@ -648,7 +825,7 @@ describe("a landing rested on (LANDING_REST_MS) is entered; a command or a press
     dwell();
     expect(reads).toEqual([["a"]]);
   });
-  it("no rest given (a URL landing, every other reader): never entered", () => {
+  it("no rest given (a URL landing, a click, a reader the sheet shows): never entered", () => {
     panel("a", 0, 300);
     mount();
     pass(60_000);

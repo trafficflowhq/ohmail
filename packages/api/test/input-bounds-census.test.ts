@@ -46,7 +46,7 @@ import {
   OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_MESSAGES_MAX,
 } from "../../services/src/ohbox-unscreened-service.js";
 import { MAX_TAG_NAME_CHARS } from "../../services/src/tags-service.js";
-import { OAUTH_STATE_MAX_CHARS, PASSWORD_MAX_LENGTH } from "../../services/src/auth/auth-service.js";
+import { OAUTH_STATE_MAX_CHARS, PASSWORD_MAX_LENGTH, REUSE_SWEEPS_MAX } from "../../services/src/auth/auth-service.js";
 import {
   SNAPSHOT_CURSOR_MAX_CHARS, SNAPSHOT_DRAFT_PAGE, SNAPSHOT_WINDOW, SYNC_CURSOR_MAX_CHARS,
 } from "../../services/src/sync-service.js";
@@ -228,6 +228,8 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // `SEND_RECONCILE_BATCH`, the staleness cutoff and the give-up are constants in the pass, and
   // the route reads no query and no body at all — the secret is the entire request.
   "GET /internal/sends/reconcile/run",
+  // The late Sent-copy pass: the reconciler's bucket — no query, no body, the secret is the request.
+  "GET /internal/sends/sent-copies/run",
   // mail 0087 — the away responder's clock. Its sibling's bucket exactly: a scheduler pokes it
   // with a shared secret and NO body, no query and no path parameter, so there is no channel for a
   // caller-chosen count or size. What one call may cause is bounded inside the pass by constants
@@ -538,6 +540,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // The password change: the new password on the signup rule, the current one on sign-in's
   // maximum only; both refused before the throttle and before scrypt.
   "POST /auth/password": { bounds: [PASSWORD_MAX_LENGTH] },
+  // OK on the reuse sweeps: at most REUSE_SWEEPS_MAX ids, each refused unless a uuid, before any read.
+  "POST /auth/reuse-sweeps/ack": { bounds: [REUSE_SWEEPS_MAX] },
   "POST /auth/verify-email": { scalarsOnly: true },
   "POST /auth/logout": { scalarsOnly: true },
   "POST /auth/refresh": { scalarsOnly: true },
@@ -1635,6 +1639,10 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // `voidPendingGrants`, the password change's void: the two `login_tokens` purposes it spends. A
   // literal pair; nothing chooses its length.
   "auth/auth-service.ts :: [\"login\", DESKTOP_LINK_PURPOSE]": { origin: "constant", count: 1 },
+  // The reuse sweeps' listing: one name per sweep row it read (`limit`ed by REUSE_SWEEPS_SCAN), and
+  // the swept sessions of the at most REUSE_SWEEPS_MAX it keeps.
+  "auth/auth-service.ts :: ackDevices": { origin: { bounded: "one per sweep row the listing read, `limit`ed by REUSE_SWEEPS_SCAN" }, count: 1 },
+  "auth/auth-service.ts :: sweptSessions": { origin: { bounded: "the swept sessions of the at most REUSE_SWEEPS_MAX sweeps the listing keeps" }, count: 1 },
   "auth/session-lifecycle.ts :: families.slice(i, i + 500)": { origin: { bounded: "sliced into 500-family chunks by the caller, explicitly" }, count: 1 },
   "auth/session-lifecycle.ts :: live.map((r) => r.familyId)": { origin: { bounded: "the live families of ONE session's chain, which the refresh ladder bounds" }, count: 1 },
   "auth/session-reaper.ts :: [...new Set(rows.map((c) => c.familyId))]": { origin: { bounded: "the reaper's own claim batch, `limit`ed by its pass size" }, count: 1 },

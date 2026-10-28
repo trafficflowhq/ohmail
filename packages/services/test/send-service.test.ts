@@ -6,12 +6,15 @@ import { and, eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, drafts, outboundSends, outboundSentCopies, messages, threads } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions } from "@trafficflow/core";
+import { SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions, type StorageCap } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import {
   SendService, SEND_COPY_OWED_MAX_ATTEMPTS, SEND_COPY_OWED_WAITS_MS, SEND_STALE_AFTER_MS, SEND_UPLOAD_DROPPED_SENTENCE,
+  OWED_COPY_CLOUD, OWED_COPY_SELF_HOST, SEND_COPY_OWED_DEFER_MS, SEND_COPY_OWED_HOLD_MS, SEND_COPY_OWED_SETTLE_MS,
+  runOwedSentCopyPass,
 } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
+import { SENT_COPY_MAILBOX_WAITS_MS, SENT_COPY_TURN_MAX, SENT_COPY_TURN_UNIT } from "../src/sent-copy-pass.js";
 
 const svc = new SendService();
 const NOW = new Date("2026-07-28T12:00:00Z");
@@ -452,9 +455,13 @@ describe("SendService — reply threading (RFC 5322 §3.6.4)", () => {
  * message waits for `beforeRelease`, the IMAP leg dialled before SMTP idles out while the 250 is
  * slow (its `isLive` reads false and every command throws `NoConnection`), and a fresh dial works.
  */
-function slowSmtp(o: { copyDiesOnFirst?: boolean; dropMidUpload?: boolean; lostReply?: boolean; reopenUnreachable?: boolean; bodyBytes?: number } = {}) {
+function slowSmtp(o: {
+  copyDiesOnFirst?: boolean; dropMidUpload?: boolean; lostReply?: boolean; reopenUnreachable?: boolean; bodyBytes?: number;
+  /** The first connection's APPEND never answers: before it lands, or after. */
+  appendHangs?: "before" | "after";
+} = {}) {
   const sentFolder: string[] = [];
-  const state = { dials: 0, released: 0, delivered: 0, looks: [] as boolean[], probes: 0, raws: [] as Buffer[], filed: [] as Buffer[] };
+  const state = { dials: 0, released: 0, delivered: 0, looks: [] as boolean[], probes: 0, raws: [] as Buffer[], filed: [] as Buffer[], forceCloses: 0 };
   const dead = () => Object.assign(new Error("Connection not available"), { code: "NoConnection" });
   const factory: OpenSendAdapter = async () => {
     state.dials += 1;
@@ -482,14 +489,17 @@ function slowSmtp(o: { copyDiesOnFirst?: boolean; dropMidUpload?: boolean; lostR
         if (!live) throw dead();
         state.looks.push(look?.look === true);
         if (look?.look === true && sentFolder.includes(id)) return null;
+        if (n === 1 && o.appendHangs === "before") return new Promise<never>(() => undefined);
         sentFolder.push(id);
         state.filed.push(raw);
+        if (n === 1 && o.appendHangs === "after") return new Promise<never>(() => undefined);
         return { locator: { folder: "Sent", ref: `9:${sentFolder.length}` }, raw };
       },
       // The old adapter's answer on a dead connection: "not there".
       async messageInSent(id: string) { state.probes += 1; if (!live && n > 1) throw dead(); return live && sentFolder.includes(id); },
       isLive: () => live,
       async close() { live = false; },
+      forceClose() { state.forceCloses += 1; live = false; },
     };
   };
   return { factory, state, sentFolder };
@@ -629,19 +639,87 @@ describe("a slow submission: the Sent copy follows every accepted send exactly o
  * and filed once by the late pass of a later engine (a new `SendService` stands in for the restart).
  */
 describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
-  const cap = async () => UNMETERED_STORAGE_CAP;
+  const cap = async (): Promise<StorageCap> => UNMETERED_STORAGE_CAP;
   const owedRows = async (db: Awaited<ReturnType<typeof setup>>["db"]) => db.select().from(outboundSentCopies);
   /** Delivered, its copy dead on the lease and the re-dial refused: answered, the copy owed. */
-  async function owedSend(more: Record<string, unknown> = { keepOwedCopy: true, copyOutlivesAnswer: true }, bodyBytes = 0) {
+  async function owedSend(
+    more: Record<string, unknown> = { keepOwedCopy: true, copyOutlivesAnswer: true }, bodyBytes = 0,
+    mail: Parameters<typeof slowSmtp>[0] = {}, input: Record<string, unknown> = {},
+  ) {
     const w = await setup();
     const draftId = await w.newDraft();
-    const opts = { copyDiesOnFirst: true, reopenUnreachable: true, bodyBytes };
+    const opts = { copyDiesOnFirst: true, reopenUnreachable: true, bodyBytes, ...mail };
     const smtp = slowSmtp(opts);
+    const sentAt = Date.now();
     const res = await svc.send(w.ctx, draftId, `owed-${randomUUID()}`, {
       openSendAdapter: smtp.factory, resolveStorageCap: cap, copyTiming: { graceMs: 2_000, deadlineMs: 2_000, waitsMs: [0] }, ...more,
-    });
-    return { ...w, draftId, smtp, res, reachable: () => { opts.reopenUnreachable = false; } };
+    }, input as never);
+    const forceClosedBy = smtp.state.forceCloses;
+    return { ...w, draftId, smtp, res, sentAt, forceClosedBy, reachable: () => { opts.reopenUnreachable = false; } };
   }
+  /** The server's late pass, as a restarted host runs it (a new `SendService`). */
+  const serverPass = (o: Awaited<ReturnType<typeof owedSend>>, more: Partial<Parameters<typeof runOwedSentCopyPass>[1]> = {}) =>
+    runOwedSentCopyPass(o.db, { openSendAdapter: o.smtp.factory, resolveStorageCap: cap, sends: new SendService(), now: () => NOW, ...more });
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+  /** Cloud's clock: the next poke is armed five minutes and its jitter after the last one started. */
+  const POKE_MS = 5 * MIN + 15_000;
+  /** The first `steps` waits of a mailbox's ladder (its last repeats), each with the poke after it. */
+  const ladderSteps = (steps: number): number => Array.from({ length: steps }, (_, i) =>
+    SENT_COPY_MAILBOX_WAITS_MS[Math.min(i, SENT_COPY_MAILBOX_WAITS_MS.length - 1)]! + POKE_MS).reduce((s, ms) => s + ms, 0);
+  /** A NO as imapflow raises it: the response code on the error, not only in its text. */
+  const refusedWith = (code: string): Error =>
+    Object.assign(new Error(`NO [${code}] refused`), { responseStatus: "NO", serverResponseCode: code });
+  /** An owed copy as a send door leaves it: `sent`, recorded `i` seconds after NOW, due at NOW (or `due`). */
+  const oweRow = async (
+    w: Awaited<ReturnType<typeof setup>>, i: number, o: { due?: number; accountId?: string; mailboxId?: string } = {},
+  ): Promise<string> => {
+    const id = `<${randomUUID()}@lichtgrat.example>`;
+    const accountId = o.accountId ?? w.A;
+    const [s] = await w.db.insert(outboundSends).values({
+      accountId, idempotencyKey: `owed-${randomUUID()}`, mintedMessageId: id, providerMessageId: id, status: "sent",
+    }).returning();
+    await w.db.insert(outboundSentCopies).values({
+      sendId: s!.id, accountId, mailboxId: o.mailboxId ?? w.mailboxId, nextAttemptAt: new Date(o.due ?? NOW.getTime()),
+      createdAt: new Date(NOW.getTime() + i * 1000), rawB64: Buffer.from(`Message-ID: ${id}\r\n\r\nThanks\r\n`).toString("base64"),
+    });
+    return id;
+  };
+  /**
+   * The server's pokes from `clock.at`: one {@link POKE_MS} after the last started, or when the next owed row or
+   * letter is due, whichever is later (`cadence`: the first of Cloud's pokes, every {@link POKE_MS}, at or after
+   * it). A letter (`letters`, its time) is recorded owed when its time comes, due a minute later as Cloud's door
+   * leaves it, its id added to `recorded` then. Until nothing is owed and no letter is left, or past `until`.
+   */
+  const pokeUntilFiled = async (
+    w: Awaited<ReturnType<typeof setup>>, open: OpenSendAdapter, clock: { at: number },
+    more: Partial<Parameters<typeof runOwedSentCopyPass>[1]> = {},
+    o: { letters?: number[]; until?: number; cadence?: boolean; recorded?: string[] } = {},
+  ) => {
+    const sum = { passes: 0, gaveUp: 0, dropped: 0, letters: o.recorded ?? [] };
+    const letters = [...(o.letters ?? [])];
+    while (sum.passes < 2_000) {
+      while (letters.length > 0 && letters[0]! <= clock.at) {
+        const at = letters.shift()!;
+        sum.letters.push(await oweRow(w, (at - NOW.getTime()) / 1000, { due: at + MIN }));
+      }
+      const started = clock.at;
+      const r = await runOwedSentCopyPass(w.db, {
+        openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock.at), ...more,
+      });
+      sum.passes += 1;
+      sum.gaveUp += r.gaveUp;
+      sum.dropped += r.dropped;
+      const due = (await owedRows(w.db)).filter((row) => row.seq === 0).map((row) => row.nextAttemptAt.getTime());
+      if (due.length === 0 && letters.length === 0) break;
+      const next = Math.min(...due, letters[0] ?? Infinity);
+      clock.at = o.cadence === true
+        ? started + POKE_MS * Math.max(1, Math.ceil((next - started) / POKE_MS))
+        : Math.max(started + POKE_MS, next);
+      if (o.until !== undefined && clock.at > o.until) break;
+    }
+    return sum;
+  };
 
   it("is answered `pending`, and a later engine files it once with the delivered bytes, projected", async () => {
     const o = await owedSend();
@@ -749,11 +827,657 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
     expect({ files: tries.files, sends: tries.sends }).toEqual({ files: SEND_COPY_OWED_MAX_ATTEMPTS, sends: 0 });
   });
 
-  it("on Cloud's deps nothing is recorded and a copy that cannot land is `missing`", async () => {
+  it("deps that keep no owed copy record nothing and a copy that cannot land is `missing`", async () => {
     const o = await owedSend({});
     expect({ status: o.res.status, sentCopy: o.res.sentCopy }).toEqual({ status: "sent", sentCopy: "missing" });
     expect(await owedRows(o.db)).toEqual([]);
   });
+
+  it("self-host: a restart between the accept and the APPEND, then the server's pass files it once", async () => {
+    const o = await owedSend({ keepOwedCopy: OWED_COPY_SELF_HOST, copyOutlivesAnswer: true });
+    expect({ status: o.res.status, sentCopy: o.res.sentCopy }).toEqual({ status: "sent", sentCopy: "pending" });
+    const rows = await owedRows(o.db);
+    expect(rows.map((r) => ({ seq: r.seq, due: r.nextAttemptAt.getTime() }))).toEqual([{ seq: 0, due: NOW.getTime() }]);
+    o.reachable();
+    const out = await serverPass(o);
+    expect(out).toEqual({ claimed: 1, filed: 1, dropped: 0, failed: 0, onLadder: 0, deferred: 0, gaveUp: 0, remaining: 0 });
+    expect(o.smtp.state.looks.at(-1), "it looks in Sent first").toBe(true);
+    expect(o.smtp.sentFolder).toEqual([o.res.providerMessageId]);
+    expect(o.smtp.state.filed[0]!.equals(o.smtp.state.raws[0]!), "the delivered bytes").toBe(true);
+    expect(o.smtp.state.released, "the pass never submits").toBe(1);
+    const mirrored = await o.db.select({ id: messages.id }).from(messages)
+      .where(eq(messages.messageIdHeader, o.res.providerMessageId!.replace(/[<>]/g, "")));
+    expect(mirrored, "projected once").toHaveLength(1);
+    expect(await owedRows(o.db)).toEqual([]);
+    const dials = o.smtp.state.dials;
+    expect((await serverPass(o)).claimed).toBe(0);
+    expect(o.smtp.state.dials, "a second pass does not dial").toBe(dials);
+  });
+
+  it("Cloud: a hung APPEND is abandoned at the deadline, and a new instance files it once a minute later", async () => {
+    const o = await owedSend({ keepOwedCopy: OWED_COPY_CLOUD, copyTiming: { graceMs: 200, deadlineMs: 200, waitsMs: [0] } }, 0,
+      { copyDiesOnFirst: false, appendHangs: "before" });
+    expect({ status: o.res.status, sentCopy: o.res.sentCopy }).toEqual({ status: "sent", sentCopy: "pending" });
+    expect(o.forceClosedBy, "the hung APPEND's connection is torn down before the answer").toBe(1);
+    expect(Date.now() - o.sentAt, "answered by the deadline").toBeLessThan(2_000);
+    const due = NOW.getTime() + 200 + SEND_COPY_OWED_SETTLE_MS;
+    expect((await owedRows(o.db)).map((r) => r.nextAttemptAt.getTime())).toEqual([due]);
+    o.reachable();
+    const early = await serverPass(o, { now: () => new Date(due - 1) });
+    expect({ claimed: early.claimed, dials: o.smtp.state.dials }).toEqual({ claimed: 0, dials: 1 });
+    const out = await serverPass(o, { now: () => new Date(due) });
+    expect({ filed: out.filed, folder: o.smtp.sentFolder }).toEqual({ filed: 1, folder: [o.res.providerMessageId] });
+    expect(await owedRows(o.db)).toEqual([]);
+  });
+
+  it("Cloud: an APPEND that landed before it was abandoned is found in Sent, and nothing is appended", async () => {
+    const o = await owedSend({ keepOwedCopy: OWED_COPY_CLOUD, copyTiming: { graceMs: 200, deadlineMs: 200, waitsMs: [0] } }, 0,
+      { copyDiesOnFirst: false, appendHangs: "after" });
+    expect(o.res.sentCopy).toBe("pending");
+    o.reachable();
+    const out = await serverPass(o, { now: () => new Date(NOW.getTime() + 200 + SEND_COPY_OWED_SETTLE_MS) });
+    expect({ filed: out.filed, appended: o.smtp.state.filed.length, folder: o.smtp.sentFolder.length }).toEqual({ filed: 1, appended: 1, folder: 1 });
+    expect(await owedRows(o.db)).toEqual([]);
+  });
+
+  it("Cloud: a letter with a photo writes no row, and a copy that cannot land is `missing`", async () => {
+    const photo = { filename: "photo.jpg", contentType: "image/jpeg", content: Buffer.alloc(1024, 7) };
+    const o = await owedSend({ keepOwedCopy: OWED_COPY_CLOUD }, 0, {}, { attachments: [photo] });
+    expect({ status: o.res.status, sentCopy: o.res.sentCopy }).toEqual({ status: "sent", sentCopy: "missing" });
+    expect(await owedRows(o.db)).toEqual([]);
+    const plain = await owedSend({ keepOwedCopy: OWED_COPY_CLOUD });
+    expect({ sentCopy: plain.res.sentCopy, rows: (await owedRows(plain.db)).length }).toEqual({ sentCopy: "pending", rows: 1 });
+  });
+
+  it("the server's pass drops past the hold or on a disabled mailbox, and dials no `error`, stamped, parked or unsent row", async () => {
+    const policy = { keepOwedCopy: OWED_COPY_SELF_HOST, copyOutlivesAnswer: true };
+    const old = await owedSend(policy);
+    await old.db.update(outboundSentCopies).set({ createdAt: new Date(NOW.getTime() - SEND_COPY_OWED_HOLD_MS - 1) });
+    const disabled = await owedSend(policy);
+    await disabled.db.update(mailboxes).set({ status: "disabled" });
+    for (const o of [old, disabled]) {
+      o.reachable();
+      expect(await serverPass(o)).toMatchObject({ dropped: 1, filed: 0, remaining: 0 });
+      expect({ dials: o.smtp.state.dials, folder: o.smtp.sentFolder }).toEqual({ dials: 2, folder: [] });
+    }
+    const failing = await owedSend(policy);
+    await failing.db.update(mailboxes).set({ status: "error" });
+    const stamped = await owedSend(policy);
+    await stamped.db.update(mailboxes).set({ erasedAt: NOW });
+    for (const o of [failing, stamped]) {
+      o.reachable();
+      expect(await serverPass(o)).toMatchObject({ claimed: 0, dropped: 0, remaining: 1 });
+      expect(o.smtp.state.dials).toBe(2);
+    }
+    const parked = await owedSend(policy);
+    parked.reachable();
+    expect(await serverPass(parked, { accountEligible: async () => false })).toMatchObject({ claimed: 1, deferred: 1, filed: 0 });
+    expect({ dials: parked.smtp.state.dials, due: (await owedRows(parked.db))[0]!.nextAttemptAt.getTime() })
+      .toEqual({ dials: 2, due: NOW.getTime() + SEND_COPY_OWED_DEFER_MS });
+    const unsent = await owedSend(policy);
+    unsent.reachable();
+    await unsent.db.update(outboundSends).set({ status: "unverified" }).where(eq(outboundSends.draftId, unsent.draftId));
+    expect(await serverPass(unsent)).toMatchObject({ claimed: 1, dropped: 1, filed: 0, remaining: 0 });
+    expect({ dials: unsent.smtp.state.dials, folder: unsent.smtp.sentFolder }).toEqual({ dials: 2, folder: [] });
+  });
+
+  it("the server's pass gives a copy the server refuses for itself (TOOBIG) up at its eighth refusal, its own wait between", async () => {
+    const o = await owedSend({ keepOwedCopy: OWED_COPY_SELF_HOST, copyOutlivesAnswer: true });
+    let clock = NOW.getTime();
+    let files = 0;
+    const tooBig: OpenSendAdapter = async () => ({
+      async send() { throw new Error("never"); },
+      async fileSentCopy() { files += 1; throw refusedWith("TOOBIG"); },
+      async messageInSent() { return false; },
+      async close() { /* nothing held */ },
+    });
+    const pass = () => serverPass(o, { openSendAdapter: tooBig, now: () => new Date(clock) });
+    for (let n = 1; n < SEND_COPY_OWED_MAX_ATTEMPTS; n += 1) {
+      expect(await pass()).toMatchObject({ claimed: 1, failed: 1 });
+      const next = (await owedRows(o.db))[0]!.nextAttemptAt.getTime();
+      expect(next - clock, `its own wait after refusal ${n}`).toBe(SEND_COPY_OWED_WAITS_MS[Math.min(n, SEND_COPY_OWED_WAITS_MS.length) - 1]);
+      clock = next;
+    }
+    expect(await pass()).toMatchObject({ gaveUp: 1, remaining: 0 });
+    expect(files).toBe(SEND_COPY_OWED_MAX_ATTEMPTS);
+  });
+
+  it("a lone copy its mailbox refuses spends none of its attempts: it waits 1 min, 10 min, 1 h, 6 h, then a day at a time", async () => {
+    const o = await owedSend({ keepOwedCopy: OWED_COPY_SELF_HOST, copyOutlivesAnswer: true });
+    let clock = NOW.getTime();
+    let files = 0;
+    const full: OpenSendAdapter = async () => ({
+      async send() { throw new Error("never"); },
+      async fileSentCopy() { files += 1; throw refusedWith("OVERQUOTA"); },
+      async messageInSent() { return false; },
+      async close() { /* nothing held */ },
+    });
+    const waits: number[] = [];
+    for (let n = 0; n < 10; n += 1) {
+      expect(await serverPass(o, { openSendAdapter: full, now: () => new Date(clock) })).toMatchObject({ claimed: 1, failed: 1, gaveUp: 0 });
+      const next = (await owedRows(o.db))[0]!.nextAttemptAt.getTime();
+      waits.push((next - clock) / MIN);
+      clock = next;
+    }
+    expect(waits, "minutes until the next try").toEqual([1, 10, 60, 360, 1440, 1440, 1440, 1440, 1440, 1440]);
+    expect({ files, owed: (await owedRows(o.db)).length }, "ten refusals and the copy is still owed").toEqual({ files: 10, owed: 1 });
+  });
+
+  it.each([["its APPEND"], ["its dial"]] as const)(
+    "a mailbox refusing %s backs off as one: another account's copy waits one poke, and the mailbox is dialled 4 times in 2 hours",
+    async (refused) => {
+      const w = await setup();
+      const [mbB] = await w.db.insert(mailboxes).values({ accountId: w.B, provider: "imap", address: "jon@lichtgrat.example" }).returning();
+      const owe = async (ctx: ServiceContext, mailboxId: string) => {
+        const [d] = await w.db.insert(drafts).values({
+          accountId: ctx.accountId, mailboxId, subject: "Re: hi", body: `Thanks ${randomUUID()}`, to: [{ name: null, address: "you@example.com" }], status: "draft",
+        }).returning();
+        const smtp = slowSmtp({ copyDiesOnFirst: true, reopenUnreachable: true });
+        const res = await svc.send(ctx, d!.id, `owed-${randomUUID()}`, {
+          openSendAdapter: smtp.factory, resolveStorageCap: cap, keepOwedCopy: OWED_COPY_SELF_HOST, copyOutlivesAnswer: true,
+          copyTiming: { graceMs: 0, deadlineMs: 0, waitsMs: [0] },
+        });
+        expect(res.sentCopy).toBe("pending");
+      };
+      for (let i = 0; i < 9; i += 1) await owe(w.ctx, w.mailboxId);
+      await owe(w.ctxB, mbB!.id);
+      const seen = { dials: 0, appends: 0, filedB: 0 };
+      const open: OpenSendAdapter = async (mailboxId) => {
+        const refusing = mailboxId === w.mailboxId;
+        if (refusing) seen.dials += 1;
+        if (refusing && refused === "its dial") throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+        return {
+          async send() { throw new Error("never"); },
+          async fileSentCopy(raw: Buffer) {
+            if (refusing) { seen.appends += 1; throw new Error("NO [OVERQUOTA] mailbox full"); }
+            seen.filedB += 1;
+            return { locator: { folder: "Sent", ref: "9:1" }, raw };
+          },
+          async messageInSent() { return false; },
+          async close() { /* nothing held */ },
+        };
+      };
+      let clock = NOW.getTime();
+      const poke = () => runOwedSentCopyPass(w.db, { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock) });
+      await poke();
+      clock += POKE_MS;
+      await poke();
+      expect(seen.filedB, "the other account's copy is filed at the next poke").toBe(1);
+      for (let i = 2; i < 24; i += 1) { clock += POKE_MS; await poke(); }
+      expect(seen.dials, "two hours of pokes: the ladder's first four steps").toBeLessThanOrEqual(4);
+      expect((await owedRows(w.db)).filter((r) => r.seq === 0), "the refused copies are still owed").toHaveLength(9);
+    },
+  );
+
+  it.each([12, 40, 80])("%i owed copies of a refusing mailbox hold no other account's copy: it is filed at the next poke", async (count) => {
+    const w = await setup();
+    const [mbB] = await w.db.insert(mailboxes).values({ accountId: w.B, provider: "imap", address: "jon@lichtgrat.example" }).returning();
+    for (let i = 0; i < count; i += 1) await oweRow(w, i);
+    await oweRow(w, count, { accountId: w.B, mailboxId: mbB!.id });
+    const seen = { dialsA: 0, filedBAtPoke: 0 };
+    let poke = 0;
+    const open: OpenSendAdapter = async (mailboxId) => {
+      const refusing = mailboxId === w.mailboxId;
+      if (refusing) seen.dialsA += 1;
+      return {
+        async send() { throw new Error("never"); },
+        async fileSentCopy() {
+          if (refusing) throw refusedWith("OVERQUOTA");
+          seen.filedBAtPoke = poke;
+          return null;
+        },
+        async messageInSent() { return false; },
+        async close() { /* nothing held */ },
+      };
+    };
+    for (poke = 1; poke <= 24; poke += 1) {
+      await runOwedSentCopyPass(w.db, {
+        openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(NOW.getTime() + (poke - 1) * POKE_MS),
+      });
+    }
+    expect(seen.filedBAtPoke, "the poke that filed the other account's copy").toBe(2);
+    expect(seen.dialsA, "two hours of pokes: the ladder's first four steps").toBeLessThanOrEqual(4);
+    expect((await owedRows(w.db)).filter((r) => r.seq === 0), "the refused copies are all still owed").toHaveLength(count);
+  });
+
+  it.each([1, 3])(
+    "%i copies the server refuses for themselves (TOOBIG) hold no other copy: the rest are filed at the first poke, each refused one given up at its eighth refusal",
+    async (refused) => {
+      const w = await setup();
+      const ids: string[] = [];
+      for (let i = 0; i < refused + 4; i += 1) ids.push(await oweRow(w, i));
+      const clock = { at: NOW.getTime() };
+      const filedAt = new Map<string, number>();
+      const tries = new Map<string, number>();
+      const open: OpenSendAdapter = async () => ({
+        async send() { throw new Error("never"); },
+        async fileSentCopy(_raw: Buffer, id: string) {
+          if (ids.indexOf(id) < refused) {
+            tries.set(id, (tries.get(id) ?? 0) + 1);
+            throw refusedWith("TOOBIG");
+          }
+          filedAt.set(id, clock.at);
+          return null;
+        },
+        async messageInSent() { return false; },
+        async close() { /* nothing held */ },
+      });
+      const sum = await pokeUntilFiled(w, open, clock);
+      expect(ids.slice(refused).map((id) => filedAt.get(id)), "filed at the first poke").toEqual(ids.slice(refused).map(() => NOW.getTime()));
+      expect(ids.slice(0, refused).map((id) => tries.get(id)), "each refused copy is tried 8 times").toEqual(ids.slice(0, refused).map(() => SEND_COPY_OWED_MAX_ATTEMPTS));
+      expect({ gaveUp: sum.gaveUp, dropped: sum.dropped }).toEqual({ gaveUp: refused, dropped: 0 });
+    },
+  );
+
+  it.each([8, 10])(
+    "%i copies refused for a reason the server does not name, older than 4 healthy ones: the probe tries the newest first and the 4 are in Sent within the hour",
+    async (poisons) => {
+      const w = await setup();
+      const ids: string[] = [];
+      for (let i = 0; i < poisons + 4; i += 1) ids.push(await oweRow(w, i));
+      const clock = { at: NOW.getTime() };
+      const filedAt = new Map<string, number>();
+      const open: OpenSendAdapter = async () => ({
+        async send() { throw new Error("never"); },
+        async fileSentCopy(_raw: Buffer, id: string) {
+          if (ids.indexOf(id) < poisons) throw refusedWith("OVERQUOTA");
+          filedAt.set(id, clock.at);
+          return null;
+        },
+        async messageInSent() { return false; },
+        async close() { /* nothing held */ },
+      });
+      await pokeUntilFiled(w, open, clock, {}, { until: NOW.getTime() + 2 * HOUR });
+      const after = ids.slice(poisons).map((id) => (filedAt.get(id) ?? Infinity) - NOW.getTime());
+      expect(Math.max(...after) / MIN, "minutes until the last healthy copy is in Sent").toBeLessThan(60);
+    },
+  );
+
+  it.each([["says so", true], ["cannot say so", false]] as const)(
+    "a refusal that ends a connection that %s: the probe dials once more, and the 4 healthy copies are filed at the first poke",
+    async (_label, saysSo) => {
+      const w = await setup();
+      const ids: string[] = [];
+      for (let i = 0; i < 5; i += 1) ids.push(await oweRow(w, i));
+      const seen = { dials: 0, filed: 0 };
+      const open: OpenSendAdapter = async () => {
+        seen.dials += 1;
+        let alive = true;
+        return {
+          async send() { throw new Error("never"); },
+          async fileSentCopy(_raw: Buffer, id: string) {
+            if (!alive) throw Object.assign(new Error("Connection not available"), { code: "NoConnection" });
+            // The oldest copy is refused, and the server hangs up after saying so.
+            if (id === ids[0]) { alive = false; throw refusedWith("LIMIT"); }
+            seen.filed += 1;
+            return null;
+          },
+          async messageInSent() { return false; },
+          async close() { alive = false; },
+          ...(saysSo ? { isLive: () => alive } : {}),
+        };
+      };
+      const r = await runOwedSentCopyPass(w.db, { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => NOW });
+      expect({ filed: r.filed, dials: seen.dials, onLadder: r.onLadder }).toEqual({ filed: 4, dials: 2, onLadder: 0 });
+    },
+  );
+
+  it("a mailbox refusing every copy for thirty hours backs off as one: 5 dials in its first day, no attempt spent, then each copy filed", async () => {
+    const w = await setup();
+    const ids: string[] = [];
+    for (let i = 0; i < 9; i += 1) ids.push(await oweRow(w, i));
+    const clock = { at: NOW.getTime() };
+    const seen = { dialsFirstDay: 0, filed: [] as string[] };
+    const open: OpenSendAdapter = async () => {
+      if (clock.at < NOW.getTime() + 24 * HOUR) seen.dialsFirstDay += 1;
+      return {
+        async send() { throw new Error("never"); },
+        async fileSentCopy(_raw: Buffer, id: string) {
+          if (clock.at < NOW.getTime() + 30 * HOUR) throw new Error("NO [OVERQUOTA] mailbox full");
+          seen.filed.push(id);
+          return null;
+        },
+        async messageInSent() { return false; },
+        async close() { /* nothing held */ },
+      };
+    };
+    const sum = await pokeUntilFiled(w, open, clock);
+    expect(seen.dialsFirstDay, "the mailbox's ladder, not each copy's").toBeLessThanOrEqual(5);
+    expect({ filed: seen.filed.sort(), gaveUp: sum.gaveUp, dropped: sum.dropped }).toEqual({ filed: [...ids].sort(), gaveUp: 0, dropped: 0 });
+  });
+
+  it("on Cloud, a whole-mailbox refusal answered 11 s into the pass: the same 5 dials its first day, no attempt spent, each copy filed after", async () => {
+    const w = await setup();
+    const ids: string[] = [];
+    for (let i = 0; i < 9; i += 1) ids.push(await oweRow(w, i));
+    const clock = { at: NOW.getTime() };
+    const seen = { dialsFirstDay: 0, filed: [] as string[] };
+    const open: OpenSendAdapter = async () => {
+      if (clock.at < NOW.getTime() + 24 * HOUR) seen.dialsFirstDay += 1;
+      return {
+        async send() { throw new Error("never"); },
+        async fileSentCopy(_raw: Buffer, id: string) {
+          // Answered past the pass's dial deadline: no other copy can be started to tell whose it is.
+          if (clock.at < NOW.getTime() + 30 * HOUR) { clock.at += 11_000; throw refusedWith("OVERQUOTA"); }
+          seen.filed.push(id);
+          return null;
+        },
+        async messageInSent() { return false; },
+        async close() { /* nothing held */ },
+      };
+    };
+    const sum = await pokeUntilFiled(w, open, clock, { budgetMs: 60_000 });
+    expect(seen.dialsFirstDay, "the mailbox's ladder, not each copy's").toBeLessThanOrEqual(5);
+    expect({ filed: seen.filed.sort(), gaveUp: sum.gaveUp, dropped: sum.dropped }).toEqual({ filed: [...ids].sort(), gaveUp: 0, dropped: 0 });
+  });
+
+  it.each([[1, 11_000], [2, 11_000], [1, 1_000], [2, 1_000]] as const)(
+    "on Cloud, over quota 6 days with %i letter(s) a day refused after %i ms: 0 copies deleted, each filed within one ladder step of recovery",
+    async (perDay, slowMs) => {
+      const w = await setup();
+      const healAt = NOW.getTime() + 6 * 24 * HOUR;
+      const letters: number[] = [];
+      for (let at = NOW.getTime(); at < healAt; at += (24 / perDay) * HOUR) letters.push(at);
+      const clock = { at: NOW.getTime() };
+      const filedAt = new Map<string, number>();
+      const open: OpenSendAdapter = async () => ({
+        async send() { throw new Error("never"); },
+        async fileSentCopy(_raw: Buffer, id: string) {
+          if (clock.at < healAt) { clock.at += slowMs; throw refusedWith("OVERQUOTA"); }
+          filedAt.set(id, clock.at);
+          return null;
+        },
+        async messageInSent() { return false; },
+        async close() { /* nothing held */ },
+      });
+      const sum = await pokeUntilFiled(w, open, clock, { budgetMs: 60_000 }, { letters });
+      expect({ letters: sum.letters.length, filed: filedAt.size, gaveUp: sum.gaveUp, dropped: sum.dropped })
+        .toEqual({ letters: 6 * perDay, filed: 6 * perDay, gaveUp: 0, dropped: 0 });
+      expect((Math.max(...filedAt.values()) - healAt) / HOUR, "hours from recovery to the last copy in Sent").toBeLessThanOrEqual(24);
+    },
+  );
+
+  it("a filed copy starts its mailbox's ladder over: after it, a refusal waits a minute again, not a day", async () => {
+    const w = await setup();
+    for (let i = 0; i < 3; i += 1) await oweRow(w, i);
+    const clock = { at: NOW.getTime() };
+    const blipAt = NOW.getTime() + 31 * HOUR;
+    let took = false;
+    const asked: number[] = [];
+    const open: OpenSendAdapter = async () => ({
+      async send() { throw new Error("never"); },
+      async fileSentCopy() {
+        if (asked.at(-1) !== clock.at) asked.push(clock.at);
+        // At its first look after `blipAt` the mailbox takes one copy, and is full again.
+        if (clock.at >= blipAt && !took) { took = true; return null; }
+        throw refusedWith("OVERQUOTA");
+      },
+      async messageInSent() { return false; },
+      async close() { /* nothing held */ },
+    });
+    await pokeUntilFiled(w, open, clock, {}, { until: blipAt + 3 * HOUR });
+    const after = asked.filter((t) => t >= blipAt);
+    expect(took).toBe(true);
+    expect((after[2]! - after[0]!) / MIN, "minutes from the filed copy to the second look after it").toBeLessThan(20);
+  });
+
+  it("a mailbox refusing every copy past 7 days spends no attempt: each copy's last try comes in its last hour, and it is deleted at 7 days", async () => {
+    const w = await setup();
+    const ids = [await oweRow(w, 0), await oweRow(w, 2 * 3600)];
+    const bounds = ids.map((_, i) => NOW.getTime() + i * 2 * HOUR + SEND_COPY_OWED_HOLD_MS);
+    const clock = { at: NOW.getTime() };
+    const tries = new Map<string, number[]>();
+    const open: OpenSendAdapter = async () => ({
+      async send() { throw new Error("never"); },
+      async fileSentCopy(_raw: Buffer, id: string) {
+        tries.set(id, [...(tries.get(id) ?? []), clock.at]);
+        throw refusedWith("OVERQUOTA");
+      },
+      async messageInSent() { return false; },
+      async close() { /* nothing held */ },
+    });
+    const sum = await pokeUntilFiled(w, open, clock, {}, { until: bounds[1]! });
+    // A poke a minute past the second copy's seventh day, whatever its mailbox's ladder says.
+    const last = await runOwedSentCopyPass(w.db, {
+      openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(bounds[1]! + MIN),
+    });
+    expect({ gaveUp: sum.gaveUp + last.gaveUp, dropped: sum.dropped + last.dropped, owed: (await owedRows(w.db)).length })
+      .toEqual({ gaveUp: 0, dropped: 2, owed: 0 });
+    const lastTry = ids.map((id, i) => (bounds[i]! - Math.max(...tries.get(id)!)) / MIN);
+    expect(lastTry.map((m) => m > 0 && m <= 60), `minutes from each copy's last try to its seventh day: ${lastTry}`).toEqual([true, true]);
+  });
+
+  it("on Cloud, a copy the server refuses for itself 11 s into the pass waits alone: the healthy ones are filed within the hour, it is given up at its eighth", async () => {
+    const w = await setup();
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i += 1) ids.push(await oweRow(w, i));
+    const clock = { at: NOW.getTime() };
+    const filedAt = new Map<string, number>();
+    const open: OpenSendAdapter = async () => ({
+      async send() { throw new Error("never"); },
+      async fileSentCopy(_raw: Buffer, id: string) {
+        // Refused slowly: past the pass's dial deadline, so no other copy is started after it.
+        if (id === ids[0]) { clock.at += 11_000; throw refusedWith("TOOBIG"); }
+        filedAt.set(id, clock.at);
+        return null;
+      },
+      async messageInSent() { return false; },
+      async close() { /* nothing held */ },
+    });
+    const sum = await pokeUntilFiled(w, open, clock, { budgetMs: 60_000 });
+    const last = Math.max(...ids.slice(1).map((id) => filedAt.get(id) ?? Infinity));
+    expect((last - NOW.getTime()) / MIN, "minutes until the healthy copies are in Sent").toBeLessThan(60);
+    expect({ gaveUp: sum.gaveUp, dropped: sum.dropped }).toEqual({ gaveUp: 1, dropped: 0 });
+  });
+
+  it.each([
+    [1, 4, "owed with it", 1, false],
+    // Written after its first refusal, they are due after it: it is tried first once more.
+    [1, 4, "written a minute apart after it", 2, true],
+    [2, 4, "owed with them", 2, false],
+    // More than one claim takes: the copies left out of a claim keep their turn.
+    [1, 10, "owed with it", 2, false],
+    [2, 7, "owed with them", 3, false],
+    [2, 10, "owed with them", 3, false],
+    [3, 6, "owed with them", 4, false],
+    [5, 4, "owed with them", 6, false],
+  ] as const)(
+    "on Cloud, the %i oldest copies refused 'NO [LIMIT]' 11 s into the pass, %i healthy ones %s: these are in Sent within %i step(s) of the ladder, and each refused one is kept to its seventh day, never given up",
+    async (refusing, healthyCount, _label, steps, later) => {
+      const w = await setup();
+      const refused: string[] = [];
+      for (let i = 0; i < refusing; i += 1) refused.push(await oweRow(w, i));
+      const healthy: string[] = [];
+      if (!later) for (let k = 1; k <= healthyCount; k += 1) healthy.push(await oweRow(w, k * 20));
+      const clock = { at: NOW.getTime() };
+      const filedAt = new Map<string, number>();
+      const open: OpenSendAdapter = async () => ({
+        async send() { throw new Error("never"); },
+        async fileSentCopy(_raw: Buffer, id: string) {
+          // A code that names no letter, answered past the dial deadline: whose refusal it is cannot be told.
+          if (refused.includes(id)) { clock.at += 11_000; throw refusedWith("LIMIT"); }
+          filedAt.set(id, clock.at);
+          return null;
+        },
+        async messageInSent() { return false; },
+        async close() { /* nothing held */ },
+      });
+      const letters = later ? Array.from({ length: healthyCount }, (_, k) => NOW.getTime() + (k + 1) * MIN) : [];
+      const sum = await pokeUntilFiled(w, open, clock, { budgetMs: 60_000 }, { letters, cadence: true });
+      healthy.push(...sum.letters);
+      const last = Math.max(...healthy.map((id) => filedAt.get(id) ?? Infinity));
+      expect((last - NOW.getTime()) / MIN, "minutes until the healthy copies are in Sent").toBeLessThanOrEqual(ladderSteps(steps) / MIN);
+      // Once the mailbox takes one, those the claim left out follow at the next poke: their turn outlasts the ladder's.
+      const first = Math.min(...healthy.map((id) => filedAt.get(id)!));
+      expect((last - first) / MIN, "minutes from the first healthy copy in Sent to the last").toBeLessThanOrEqual(POKE_MS / MIN);
+      expect({ gaveUp: sum.gaveUp, dropped: sum.dropped, owed: (await owedRows(w.db)).length })
+        .toEqual({ gaveUp: 0, dropped: refusing, owed: 0 });
+    },
+  );
+
+  it("on Cloud, an outage piles up 9 letters half an hour apart, then the 2 oldest are refused 'NO [OVERQUOTA]' 11 s into the pass: the 7 others are in Sent within three steps of the ladder, not at the seventh day", async () => {
+    const w = await setup();
+    const outageEnd = NOW.getTime() + 5 * HOUR;
+    const ids: string[] = [];
+    const clock = { at: NOW.getTime() };
+    const filedAt = new Map<string, number>();
+    const open: OpenSendAdapter = async () => {
+      if (clock.at < outageEnd) throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+      return {
+        async send() { throw new Error("never"); },
+        async fileSentCopy(_raw: Buffer, id: string) {
+          // The two oldest no longer fit the nearly full mailbox; the server says so slowly and names no letter.
+          if (id === ids[0] || id === ids[1]) { clock.at += 11_000; throw refusedWith("OVERQUOTA"); }
+          filedAt.set(id, clock.at);
+          return null;
+        },
+        async messageInSent() { return false; },
+        async close() { /* nothing held */ },
+      };
+    };
+    const letters = Array.from({ length: 9 }, (_, j) => NOW.getTime() + j * 30 * MIN);
+    const sum = await pokeUntilFiled(w, open, clock, { budgetMs: 60_000 }, { letters, cadence: true, recorded: ids });
+    const last = Math.max(...ids.slice(2).map((id) => filedAt.get(id) ?? Infinity));
+    // The outage climbed the ladder to its day-long step; past it the 2 refused copies take one step each.
+    expect((last - outageEnd) / HOUR, "hours from the outage's end to the last healthy copy in Sent").toBeLessThanOrEqual(3 * 24 + 1);
+    expect({ gaveUp: sum.gaveUp, dropped: sum.dropped, owed: (await owedRows(w.db)).length }).toEqual({ gaveUp: 0, dropped: 2, owed: 0 });
+  });
+
+  it("a mailbox's turns at the column's limit are numbered again: the copy refused goes behind the other, which is filed at the next try", async () => {
+    const w = await setup();
+    const refused = await oweRow(w, 0);
+    const healthy = await oweRow(w, 1);
+    // Both on a long run of refusals; the refused copy tried a turn before the healthy one, at the limit.
+    const run = 50 * 100;
+    await w.db.update(outboundSentCopies).set({ attempts: run + (SENT_COPY_TURN_MAX - 1) * SENT_COPY_TURN_UNIT })
+      .where(eq(outboundSentCopies.createdAt, NOW));
+    await w.db.update(outboundSentCopies).set({ attempts: run + SENT_COPY_TURN_MAX * SENT_COPY_TURN_UNIT })
+      .where(eq(outboundSentCopies.createdAt, new Date(NOW.getTime() + 1000)));
+    const clock = { at: NOW.getTime() };
+    const filedAt = new Map<string, number>();
+    const open: OpenSendAdapter = async () => ({
+      async send() { throw new Error("never"); },
+      async fileSentCopy(_raw: Buffer, id: string) {
+        if (id === refused) { clock.at += 11_000; throw refusedWith("LIMIT"); }
+        filedAt.set(id, clock.at);
+        return null;
+      },
+      async messageInSent() { return false; },
+      async close() { /* nothing held */ },
+    });
+    await pokeUntilFiled(w, open, clock, { budgetMs: 60_000 }, { cadence: true, until: NOW.getTime() + 3 * 24 * HOUR });
+    expect(((filedAt.get(healthy) ?? Infinity) - NOW.getTime()) / HOUR, "hours until the healthy copy is in Sent").toBeLessThanOrEqual(25);
+  });
+
+  it("a mailbox's wait moves no copy earlier: another pass's lease and a door row's settle stand, and each copy is appended once", async () => {
+    const w = await setup();
+    const inFlight = await oweRow(w, 0);
+    const refused = await oweRow(w, 1, { due: NOW.getTime() + 1_000 });
+    // As Cloud's door leaves it: first due after its settle.
+    const settling = await oweRow(w, 2, { due: NOW.getTime() + 85_000 });
+    const clock = { at: NOW.getTime() };
+    const appended: string[] = [];
+    const filedAt = new Map<string, number>();
+    let reached!: () => void;
+    const atAppend = new Promise<void>((r) => { reached = r; });
+    let land!: () => void;
+    const landed = new Promise<void>((r) => { land = r; });
+    let slow = true;
+    const open: OpenSendAdapter = async () => ({
+      async send() { throw new Error("never"); },
+      async fileSentCopy(_raw: Buffer, id: string) {
+        if (appended.includes(id)) return null;
+        // The first pass's APPEND, looked for in Sent before it is answered, lands late.
+        if (id === inFlight && slow) { slow = false; reached(); await landed; }
+        else if (clock.at < NOW.getTime() + MIN) throw refusedWith("OVERQUOTA");
+        appended.push(id);
+        filedAt.set(id, clock.at);
+        return null;
+      },
+      async messageInSent(id: string) { return appended.includes(id); },
+      async close() { /* nothing held */ },
+    });
+    const pass = (at: number) => runOwedSentCopyPass(w.db, {
+      openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(at),
+    });
+    const firstPass = pass(NOW.getTime());
+    await atAppend;
+    clock.at = NOW.getTime() + 1_000;
+    await pass(clock.at);
+    clock.at = NOW.getTime() + 62_000;
+    await pass(clock.at);
+    land();
+    await firstPass;
+    clock.at = NOW.getTime() + 85_000;
+    await pass(clock.at);
+    expect([...appended].sort(), "each copy appended once").toEqual([inFlight, refused, settling].sort());
+    expect((filedAt.get(settling) ?? 0) - NOW.getTime(), "ms until the door's row is filed").toBeGreaterThanOrEqual(85_000);
+  });
+
+  it("a copy charged in the pass keeps its own wait when its mailbox then waits on its ladder", async () => {
+    const w = await setup();
+    const tooBig = await oweRow(w, 0);
+    const other = await oweRow(w, 1);
+    // Its fourth refusal of its own comes next: six hours of its own wait follow.
+    await w.db.update(outboundSentCopies).set({ attempts: 3 });
+    const clock = { at: NOW.getTime() };
+    const tries = new Map<string, number>();
+    const open: OpenSendAdapter = async () => ({
+      async send() { throw new Error("never"); },
+      async fileSentCopy(_raw: Buffer, id: string) {
+        tries.set(id, (tries.get(id) ?? 0) + 1);
+        if (id === tooBig) throw refusedWith("TOOBIG");
+        // The other is refused past the dial deadline: its mailbox waits.
+        if (clock.at < NOW.getTime() + MIN) { clock.at += 11_000; throw refusedWith("OVERQUOTA"); }
+        return null;
+      },
+      async messageInSent() { return false; },
+      async close() { /* nothing held */ },
+    });
+    const pass = () => runOwedSentCopyPass(w.db, {
+      openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock.at), budgetMs: 60_000,
+    });
+    await pass();
+    clock.at = NOW.getTime() + POKE_MS;
+    await pass();
+    expect({ tooBig: tries.get(tooBig), other: tries.get(other), owed: (await owedRows(w.db)).map((r) => r.nextAttemptAt.getTime()) })
+      .toEqual({ tooBig: 1, other: 2, owed: [NOW.getTime() + SEND_COPY_OWED_WAITS_MS[3]!] });
+  });
+
+  it.each([["files it", true], ["is refused", false]] as const)(
+    "a copy past its seventh day that another pass is filing is not deleted under it: that pass %s, and a pass after it deletes what is left",
+    async (_label, takes) => {
+      const w = await setup();
+      // Recorded half a minute short of seven days before NOW: past its hold a minute later.
+      await oweRow(w, 30 - SEND_COPY_OWED_HOLD_MS / 1000);
+      let reached!: () => void;
+      const atAppend = new Promise<void>((r) => { reached = r; });
+      let answer!: () => void;
+      const answered = new Promise<void>((r) => { answer = r; });
+      const open: OpenSendAdapter = async () => ({
+        async send() { throw new Error("never"); },
+        async fileSentCopy() {
+          reached();
+          await answered;
+          if (!takes) throw refusedWith("OVERQUOTA");
+          return null;
+        },
+        async messageInSent() { return false; },
+        async close() { /* nothing held */ },
+      });
+      const pass = (at: number) => runOwedSentCopyPass(w.db, {
+        openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(at),
+      });
+      const filing = pass(NOW.getTime());
+      await atAppend;
+      const meanwhile = await pass(NOW.getTime() + MIN);
+      answer();
+      const filer = await filing;
+      const after = await pass(NOW.getTime() + 2 * MIN);
+      expect({ meanwhile: meanwhile.dropped, filed: filer.filed, after: after.dropped, owed: (await owedRows(w.db)).length })
+        .toEqual({ meanwhile: 0, filed: takes ? 1 : 0, after: takes ? 0 : 1, owed: 0 });
+    },
+  );
 
   // The desktop's store (PGlite) has no autovacuum; SQLite reuses freed pages on its own.
   const tableBytes = async (db: Awaited<ReturnType<typeof setup>>["db"]) => Number(((await db.execute(
@@ -782,6 +1506,17 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
     const out = await new SendService().fileOwedCopies(o.ctx, o.mailboxId, { openSendAdapter: o.smtp.factory, resolveStorageCap: cap });
     expect(out.filed).toBe(1);
     expect(await tableBytes(o.db), "dead space left behind").toBeLessThan(MB);
+  }, 60_000);
+
+  it.skipIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")("a server's store is left to its own vacuum: no VACUUM after a filed copy", async () => {
+    const w = await setup();
+    const empty = await tableBytes(w.db);
+    const res = await svc.send(w.ctx, await w.newDraft(), "owed-server", {
+      openSendAdapter: slowSmtp({ bodyBytes: 4 * MB }).factory, resolveStorageCap: cap,
+      keepOwedCopy: OWED_COPY_SELF_HOST, copyOutlivesAnswer: true, copyTiming: { graceMs: 30_000, deadlineMs: 30_000, waitsMs: [0] },
+    });
+    expect({ sentCopy: res.sentCopy, rows: await owedRows(w.db) }).toEqual({ sentCopy: "filed", rows: [] });
+    expect(await tableBytes(w.db) - empty, "the deleted bytes' space is not reclaimed here").toBeGreaterThan(2 * MB);
   }, 60_000);
 });
 

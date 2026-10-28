@@ -1,6 +1,6 @@
 import { filedOutOfOhbox, pinsSpentBy } from "./ohbox-rows.js";
 import type { EntityReader } from "./store.js";
-import type { EngineMessage, EngineMutation, MutationKind } from "./types.js";
+import { waterlineIdOf, type EngineMessage, type EngineMutation, type FeedView, type MutationKind, type WaterlineMeta } from "./types.js";
 
 /**
  * How a user verb is taken back — the one classification every surface reads. "inverse":
@@ -154,4 +154,14 @@ export function undoInOrder(inverses: readonly EngineMutation[]): EngineMutation
   const last = new Map<string, number>();
   inverses.forEach((m, i) => { const k = keyOf(m); if (k !== null) last.set(k, i); });
   return inverses.filter((m, i) => { const k = keyOf(m); return k === null || last.get(k) === i; });
+}
+
+/**
+ * THE UNDO OF A STREAM'S MARK ALL READ PUTS ITS LINE BACK, read off the mirror before the press: the
+ * press moves the line to the top, and an Undo that gave back only the unread flags left the letters
+ * unread but no longer new. Dispatched after the flags' reversal; empty `messageIds` flips nothing.
+ */
+export function feedLineUndo(reader: EntityReader, view: FeedView): EngineMutation {
+  const line = reader.get<WaterlineMeta>("view_meta", waterlineIdOf(view)) ?? null;
+  return { kind: "feed_mark_seen", view, messageIds: [], line };
 }

@@ -3,6 +3,7 @@ import {
   MemoryMirrorStore,
   FEED_SINCE_ID,
   feedPartition,
+  feedLineUndo,
   mutationEffects,
   waterlineIdOf,
   type EngineMessage,
@@ -266,6 +267,28 @@ describe("the line never moves back", () => {
     await leave(store, "reads", "future");
     await leave(store, "reads", "n2");
     expect(feedPartition(store, "reads").waterline?.newestSeenId).toBe("n2");
+  });
+
+  it("only a Mark all read's Undo puts it back, exactly as it was, or takes away a line that was not there", async () => {
+    const store = await mirrorOf([1, 2, 3].map((i) => msg({ id: `n${i}`, date: at(9, i), unread: true, folder: "ohmail/News" })));
+    await firstSync(store, at(8));
+    const apply = async (m: unknown): Promise<void> => {
+      for (const e of mutationEffects(store, m as never, { now: () => new Date(at(12)), uuid: () => "u" })) {
+        await store.putLocal(e.type, e.id, e.entity);
+      }
+    };
+    const none = feedLineUndo(store, "reads");
+    await leave(store, "reads", "n1");
+    const held = store.get<WaterlineMeta>("view_meta", waterlineIdOf("reads"));
+    const back = feedLineUndo(store, "reads");
+    await leave(store, "reads", "n3");
+    expect(feedPartition(store, "reads").newCount).toBe(0);
+    await apply(back);
+    expect(store.get<WaterlineMeta>("view_meta", waterlineIdOf("reads"))).toEqual(held);
+    expect(feedPartition(store, "reads").newCount).toBe(2);
+    await apply(none);
+    expect(store.get("view_meta", waterlineIdOf("reads"))).toBeUndefined();
+    expect(feedPartition(store, "reads").newCount).toBe(3);
   });
 });
 

@@ -16,8 +16,8 @@ import {
   type QuotedVerdict,
 } from "@ohmail/client-engine";
 
-/** The text half, for the body renderer (`BodyPages`). */
-export { QUOTED_HISTORY_LIMITS, quotedHistoryOfText, type QuotedVerdict } from "@ohmail/client-engine";
+/** The text half, for the body renderer (`BodyPages`); the html bound, for a member's words (`html-words.ts`). */
+export { MAIL_MAX_HTML_CHARS, QUOTED_HISTORY_LIMITS, quotedHistoryOfText, type QuotedVerdict } from "@ohmail/client-engine";
 
 /**
  * Tags whose CONTENT goes with them when the tag is refused — DOMPurify's `FORBID_CONTENTS`

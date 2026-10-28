@@ -217,11 +217,17 @@ const UNAUTHENTICATED = [
    * account cannot park mail for this clock to send. Sorted `mailboxes` < `sends` < `sessions`.
    */
   "GET /internal/sends/scheduled/run",
+  /**
+   * The late pass for owed Sent copies: the reconciler's terms exactly — the worker's api-cron with
+   * a shared secret, no session; it files a copy of a letter already sent and never submits, bounded
+   * by the pass's constants. Sorted `reconcile` < `scheduled` < `sent-copies`.
+   */
+  "GET /internal/sends/sent-copies/run",
   // The web-session reaper's platform-cron entry (DEVICES hygiene). `GET /internal/alerts/run`'s
   // exact class and exact reasoning: the caller is a scheduler holding a shared secret, not an
   // account — ANONYMOUS_PIPELINE resolves no session, so no other class is representable — and
   // an unauthenticated GET is a 401 that reaps nothing. What it revokes is bounded structurally
-  // inside `reapStaleWebSessions` (device-less, full-scope, >60d idle), never by anything on
+  // inside `reapStaleWebSessions` (device-less, full-scope, past its window), never by anything on
   // the wire. Sorted after `alerts/run` (`alerts` < `sessions`).
   "GET /internal/sessions/reap",
   // The screened-out unsubscribe DRAIN, on the away clock's and the send reconciler's exact
@@ -385,6 +391,10 @@ const CEREMONY = [
   // updates and an audit row, no work. Sorted after `refresh` (`refresh` < `refresh/logout`).
   "POST /auth/refresh/logout",
   "POST /auth/register",
+  // Putting away the reuse sweeps the session read listed: one listing and at most twenty audit
+  // rows, nothing to spend, and what tells a person their sign-in was ended must not wait on a
+  // verified address. Sorted between `register` and `step-up` (`reg` < `reu` < `s`).
+  "POST /auth/reuse-sweeps/ack",
   // The step-up RE-verification ceremony (DEVICES) — the sign-in second factor, re-run against
   // the session the caller already holds so a stale five-minute window stops being a dead end.
   // `ceremony` on `POST /auth/2fa/totp/verify`'s exact reasoning: identity lifecycle, no work,
@@ -957,7 +967,11 @@ describe("the route table declares what every handler causes", () => {
     // a name the caller chose), so it joins the gated remainder.
     // 257 -> 258: `GET /admin/connect-attempts` (cloud 0054), `unauthenticated` like its siblings, so
     // it joins `UNAUTHENTICATED` and this total together and the gated remainder is unchanged.
-    expect(apiRoutes).toHaveLength(258);
+    // 258 -> 259: `GET /internal/sends/sent-copies/run`, `unauthenticated`, so it joins
+    // `UNAUTHENTICATED` and this total together and the gated remainder is unchanged.
+    // 259 -> 260: `POST /auth/reuse-sweeps/ack`, a `ceremony`, so it joins `CEREMONY` and this total
+    // together and the gated remainder is unchanged.
+    expect(apiRoutes).toHaveLength(260);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1191,7 +1205,9 @@ describe("the route table declares what every handler causes", () => {
     // remainder by two.
     // 256 -> 257 with the mail-domain lookup, a `connection`: the remainder grows by one.
     // 257 -> 258 with the connect-attempt read, `unauthenticated`: the remainder does not move.
-    expect(gated.length).toBe(258 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 258 -> 259 with the late Sent-copy pass, `unauthenticated`: the remainder does not move.
+    // 259 -> 260 with the reuse sweeps' acknowledgement, a `ceremony`: the remainder does not move.
+    expect(gated.length).toBe(260 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

@@ -16,10 +16,11 @@ import {
 import { ensureLocalWorld, type LocalWorld } from "./identity.js";
 import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
 import {
-  createCloudAuth, loadSealedTokens, sealTokens, ACCOUNT_ERASED, REFUSAL_CODES,
-  type CloudAuth, type CloudSessionReading, type CloudTokens,
+  createCloudAuth, openSealedTokens, sealTokens, ACCOUNT_ERASED, REFUSAL_CODES,
+  REUSE_CAUSE, type CloudAuth, type CloudSessionReading, type CloudTokens, type SealOpen,
 } from "./cloud-auth.js";
 import { writeAtomic } from "./fs-atomic.js";
+import { readMachineBinding } from "./machine-binding.js";
 import {
   cloudIdentity,
   cloudSignIn,
@@ -119,6 +120,12 @@ export interface CloudSidecarConfig {
   displayName?: string;
   /** The per-install key ring, for the token seal. Absent ⇒ tokens live in memory for this launch. */
   keks?: Record<number, Buffer>;
+  /**
+   * A TEST SEAM: the computer the seal is bound to, null for one that cannot name itself. Absent,
+   * the engine reads the platform's (`machine-binding.ts`). Never from the environment, the bridge
+   * or `main.ts`.
+   */
+  machineBinding?: string | null;
   log?: Diagnostic;
   now?: () => Date;
   /** Injected for tests; production dials the real hosted API. */
@@ -670,18 +677,19 @@ export function clearMirrorErased(dataDir: string): void {
 
 /**
  * THE REFUSAL AN EARLIER RUN HEARD, for the next launch: its teardown removes the seal, so that
- * launch is pre-auth and would greet the person as a first run. The code and its time, nothing more.
+ * launch is pre-auth and would greet the person as a first run. The code, its time and a reuse
+ * sweep's cause, nothing more.
  */
 const SESSION_REFUSED_FILE = "cloud-session-refused.json";
 
-/** The kept refusal, or null; a file that does not read as one says nothing. */
-function readSessionRefused(dataDir: string): { code: string; since: string } | null {
+/** The kept refusal, or null; a file that does not read as one says nothing, and only {@link REUSE_CAUSE} is a cause. */
+function readSessionRefused(dataDir: string): { code: string; since: string; cause?: typeof REUSE_CAUSE } | null {
   try {
     const raw = readFileSync(join(dataDir, SESSION_REFUSED_FILE), "utf8");
-    const v = JSON.parse(raw) as { code?: unknown; since?: unknown } | null;
+    const v = JSON.parse(raw) as { code?: unknown; since?: unknown; cause?: unknown } | null;
     if (typeof v?.code !== "string" || !REFUSAL_CODES.has(v.code)) return null;
     if (typeof v.since !== "string" || !Number.isFinite(Date.parse(v.since))) return null;
-    return { code: v.code, since: v.since };
+    return { code: v.code, since: v.since, ...(v.cause === REUSE_CAUSE ? { cause: REUSE_CAUSE } : {}) };
   } catch {
     return null;
   }
@@ -748,6 +756,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
   // mailbox" by then: the window waits on this whole function, so the total has to include the
   // mirror-owner check, and on a launch that DOES discard a foreign mirror it includes the delete.
   const tBoot = Date.now();
+  // Read beside the store's open; awaited only where the seal is opened.
+  const machineRead = config.machineBinding !== undefined
+    ? Promise.resolve(config.machineBinding) : readMachineBinding();
 
   // The mirror belongs to exactly one hosted account ON ONE SERVER; discard it whole if either has
   // changed. Run UNDER the data directory's lock and before the database opens — a second engine
@@ -846,11 +857,25 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       try { rmSync(refusedPath, { force: true }); } catch { /* the next sign-in or sign-out removes it */ }
     };
 
-    const sealed = keyProvider ? await loadSealedTokens(sealPath, keyProvider) : null;
+    const machine = await machineRead;
+    const sealOpen: SealOpen = keyProvider
+      ? await openSealedTokens(sealPath, keyProvider, machine)
+      : existsSync(sealPath) ? { kind: "unreadable" } : { kind: "none" };
+    const sealed = sealOpen.kind === "opened" ? sealOpen.tokens : null;
     /* A SEAL ON DISK THAT THIS KEY CANNOT OPEN is the one seal fault a sign-in is owed for — the
        key ring changed or the file was damaged — and the dialog says so rather than greeting the
-       person as a first run. Read before anything else can write the path. */
-    const sealUnreadable = sealed === null && existsSync(sealPath);
+       person as a first run. Read before anything else can write the path. A seal bound to another
+       computer reads the same: it is never presented here, and this computer's sign-in replaces it. */
+    const sealUnreadable = sealOpen.kind === "unreadable" || sealOpen.kind === "elsewhere";
+    if (sealOpen.kind === "elsewhere") {
+      log?.("cloud_seal_elsewhere", {
+        reason: "the saved sign-in was made on another computer, so this one presents nothing and asks for its own",
+      });
+    }
+    /** Every seal this launch writes is bound to this computer. */
+    const writeSeal = async (tokens: CloudTokens): Promise<void> => {
+      if (keyProvider) await sealTokens(sealPath, keyProvider, tokens, now(), undefined, machine);
+    };
 
     /**
      * THE AUTHED HALF, assembled from a token pair — at construction when there is one, and from
@@ -991,6 +1016,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
         ...(keyProvider ? { keyProvider } : {}),
         sealPath,
+        machine,
         now,
         ...(log ? { log } : {}),
         onSessionState: (reading, next) => {
@@ -1001,7 +1027,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // BACK FROM A FAULT: the mirror's own backoff may be minutes long by now.
           if (reading.state === "live") authed?.mirror.kick();
         },
-        onSessionRefused: (code) => {
+        onSessionRefused: (code, cause) => {
           // The refresh door REFUSED; nothing this process can send will renew it. Tear down to the
           // pre-auth state (stop the pulls, drop the spent seal) so the window renders the sign-in
           // surface. Fire-and-forget: this fires from inside a pull's own refresh, and the
@@ -1012,7 +1038,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // Kept for the next launch, which finds no seal; a failed write loses only the sentence.
           else if (REFUSAL_CODES.has(code)) {
             try {
-              writeAtomic(refusedPath, JSON.stringify({ code, since: now().toISOString() }), 0o600);
+              writeAtomic(refusedPath, JSON.stringify({ code, since: now().toISOString(), ...(cause ? { cause } : {}) }), 0o600);
             } catch { /* see above */ }
           }
           log?.("cloud_session_renewal_failed", {
@@ -1087,7 +1113,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // FIRST LAUNCH: seal the environment token so no later launch needs one. Skipped without a
       // key, and skipped when a sealed pair already exists — which keeps this idempotent.
       if (!sealed && keyProvider) {
-        await sealTokens(sealPath, keyProvider, launchTokens, now());
+        await writeSeal(launchTokens);
+      } else if (sealOpen.kind === "opened" && !sealOpen.bound && machine !== null) {
+        // An older install's unbound seal is bound here, before anything renews from it.
+        try {
+          await writeSeal(launchTokens);
+        } catch (err) {
+          log?.("cloud_seal_bind_failed", {
+            err, reason: "the saved sign-in could not be bound to this computer; the next renewal writes it bound",
+          });
+        }
       }
       // NO IDENTITY ROUND TRIP HERE, and that is a decision rather than an omission. The mirror-owner
       // check the sign-in path runs (see `POST /cloud/signin`) would have to dial the hosted
@@ -1691,7 +1726,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // pair that could not be written to disk is a session that survives until the next quit and
         // then silently is not there — better to say so now, while the person who typed the
         // password is still looking at the app.
-        if (keyProvider) await sealTokens(sealPath, keyProvider, tokens, now());
+        await writeSeal(tokens);
         /* THE PENDING ENGINE STOPS AT THE SEAL. Its world was built with no address, so its ready
            frame named no mailbox and it cannot mount mail; the window relaunches it behind the door
            just written, and that engine activates from this seal and runs the first drain. */
@@ -1858,7 +1893,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
              record is stamped and the next launch performs it (`enforceMirrorOwner`); the pair sealed
              below is spared, because it belongs to the world being arrived at. NOTHING IS ACTIVATED —
              reads stay `409 not_signed_in` until the relaunch. */
-          if (keyProvider) await sealTokens(sealPath, keyProvider, redeemed.tokens, now());
+          await writeSeal(redeemed.tokens);
           writeFileSync(
             join(config.dataDir, MIRROR_OWNER_FILE),
             encodeMirrorRecord(config.address, cloudBase, redeemed.accountId, true),
@@ -1930,7 +1965,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // reasons exactly: a pair belonging to another world must not be written into this
         // directory even briefly, and a pair that could not reach the disk is a session that
         // silently is not there after the next quit.
-        if (keyProvider) await sealTokens(sealPath, keyProvider, redeemed.tokens, now());
+        await writeSeal(redeemed.tokens);
         /* THE BINDING IS WRITTEN ONLY WHEN THE HOST NAMED ONE. A composition that names no account
            leaves the field as it was rather than stamping `null` over a recorded id — "this answer
            carried no header" is not evidence about whose mail is here. */

@@ -339,7 +339,7 @@ describe("startApiCron", () => {
     expect(API_CRON_TARGETS.map((t) => t.target))
       .toEqual([ "sessions_reap", "smtp_size", "scheduled_send",
         "send_reconcile", "away_responder", "platform_signals", "unsubscribe_drain",
-        "account_lifecycle", "security_notices",
+        "account_lifecycle", "security_notices", "sent_copies",
       ]);
     /* ADDRESSED BY NAME FROM HERE DOWN, and the change is the lesson: three targets left the
      * MIDDLE of this table, and every `API_CRON_TARGETS[n]` below then pointed at somebody
@@ -355,6 +355,12 @@ describe("startApiCron", () => {
     // promise on paper. Every five minutes, the jitter a tenth of that, the route its door's.
     expect(byName("security_notices")).toMatchObject({
       route: "/internal/security-notices/run", everyMs: 5 * 60 * 1000, jitterMs: 30 * 1000,
+    });
+    // 12 → 13, APPENDED: `sent_copies`, the late pass for owed Sent copies; its rows wait days, so
+    // five minutes, and its body's `remaining` reaches the health row.
+    expect(byName("sent_copies")).toMatchObject({
+      route: "/internal/sends/sent-copies/run", everyMs: 5 * 60 * 1000, jitterMs: 30 * 1000,
+      firstDelayMs: 2 * 60 * 1000, timeoutMs: 60 * 1000, readsRemaining: true,
     });
     for (const n of ["sessions_reap", "smtp_size"]) {
       expect(byName(n).everyMs, `${n} is daily`).toBe(24 * 60 * 60 * 1000);

@@ -195,7 +195,7 @@ import { useMayHandOffFor } from "./send-handoff";
 import { HostConnectionLine } from "./HostConnectionLine";
 import type { HostConnection } from "./host-connection";
 import { UnsavedChanges } from "./UnsavedChanges";
-import { RailVersion, SendWaitsRelay, UpdateDot, UpdateLine, useRunningVersion, useUpdateOffer } from "./UpdateLine";
+import { SendWaitsRelay, UpdateDot, UpdateLine, useUpdateOffer } from "./UpdateLine";
 import { DurabilityNotice } from "./DurabilityNotice";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
@@ -570,13 +570,9 @@ export function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...
     />
   ) : null;
   const host = hostConnection ? <HostConnectionLine connection={hostConnection} /> : null;
-  // The version the desktop's shell runs, at the foot; a tab has none to name.
-  const running = useRunningVersion();
-  const version = running !== null ? <RailVersion version={running} /> : null;
-  const fullFooter = footer || version || cta || host ? (
+  const fullFooter = footer || cta || host ? (
     <>
       {footer}
-      {version}
       {host}
       {cta}
     </>
@@ -1720,7 +1716,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   const {
     absoluteTime, barPanel, chipState, closeCard, commitReadsSeen, commitReceiptsSeen, enterReader,
-    focused, fr, frDone, frValues, jump, markAllRead, markSeen, mirrorHolds, verbHolds, ohboxGone, openMessage,
+    focused, fr, frDone, frValues, jump, markAllRead, markAllReadsRead, markAllReceiptsRead, markSeen,
+    mirrorHolds, verbHolds, ohboxGone, openMessage,
     picker, pickerIds, previewFor, railOpen, readerCrossed, readerFor, readerGone, readerMessage, readSetFor, readsCur,
     readsMarkSeen, reportPick, receiptsCur, receiptsMarkSeen, ribbonGone, scnSel, screenerFull, searchFrom,
     searchQuery, selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setChipState, setCloseCard,
@@ -2715,7 +2712,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 closeTo={closeCard?.view === "reads" ? closeCard.id : null}
                 onClosed={() => setCloseCard(null)}
                 onAction={onMessageAction}
-                onMarkAllRead={markAllRead}
+                onMarkAllRead={markAllReadsRead}
                 onPick={reportPick}
               />
                   ),
@@ -2763,7 +2760,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 closeTo={closeCard?.view === "receipts" ? closeCard.id : null}
                 onClosed={() => setCloseCard(null)}
                 onAction={onMessageAction}
-                onMarkAllRead={markAllRead}
+                onMarkAllRead={markAllReceiptsRead}
                 onPick={reportPick}
               />
                   ),

@@ -37,6 +37,18 @@ describe("the window's reading of /health.session", () => {
     expect(sessionOf({ state: "renewing", since: 5 })).toBeNull();
     expect(sessionOf({ state: "renewing", code: "http_403", since: "2026-09-23T00:00:00.000Z" }))
       .toEqual({ state: "renewing", code: "http_403", since: "2026-09-23T00:00:00.000Z" });
+    // A reuse sweep's cause is kept; any other value is not a cause.
+    const since = "2026-10-28T18:32:49.000Z";
+    expect(sessionOf({ state: "refused", code: "refresh_revoked", since, cause: "reuse" }))
+      .toEqual({ state: "refused", code: "refresh_revoked", since, cause: "reuse" });
+    expect(sessionOf({ state: "refused", code: "refresh_revoked", since, cause: "copied" }))
+      .toEqual({ state: "refused", code: "refresh_revoked", since });
+  });
+
+  it("names a reuse sweep apart from a plain revocation, now and at the next launch", () => {
+    expect(signInCauseOf({ ...reading("refused", "refresh_revoked"), cause: "reuse" })).toBe("reused");
+    expect(signInCauseOf({ ...reading("refused_before", "refresh_revoked"), cause: "reuse" })).toBe("reused");
+    expect(signInCauseOf({ ...reading("renewing", "refresh_revoked"), cause: "reuse" })).toBeNull();
   });
 
   it("names a cause only for the two refusals and the unreadable seal", () => {
@@ -103,13 +115,20 @@ const EMPTY_SNAPSHOT = JSON.stringify({ asOfSeq: 0, changes: [], nextCursor: nul
  * `/cloud/session/wait` as the engine does until `move()`; `reads` refuses the window's pulls
  * with that status (409 is the engine's `not_signed_in` after a refusal) and counts them.
  */
-function fakeShell(health: Record<string, unknown>, opts: { wait?: boolean; reads?: number; status?: EngineStatus } = {}): {
+function fakeShell(health: Record<string, unknown>, opts: {
+  wait?: boolean; reads?: number; status?: EngineStatus;
+  /** The hosted `GET /auth/session` answer, relayed on the account door; absent answers no account. */
+  hosted?: Record<string, unknown>;
+} = {}): {
   move(next: Record<string, unknown>): void;
   refusedReads(): number;
+  /** Every `POST /auth/reuse-sweeps/ack` body the window sent over the bridge. */
+  acks(): unknown[];
 } {
   let next = 1;
   let current = health;
   let refused = 0;
+  const acks: unknown[] = [];
   const held: Array<() => void> = [];
   host.__TAURI_INTERNALS__ = {
     transformCallback: () => next++,
@@ -119,6 +138,11 @@ function fakeShell(health: Record<string, unknown>, opts: { wait?: boolean; read
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
         if (url === "/health") return encode(200, JSON.stringify(current));
+        if (url === "/auth/session" && opts.hosted) return encode(200, JSON.stringify(opts.hosted));
+        if (url === "/auth/reuse-sweeps/ack" && payload?.method === "POST") {
+          acks.push(JSON.parse(new TextDecoder().decode(new Uint8Array(payload.body as number[]))));
+          return encode(204, "");
+        }
         if (url.startsWith("/cloud/session/wait") && opts.wait) {
           // As the engine does: a reading that already differs from the one named is answered.
           const named = new URLSearchParams(url.split("?")[1] ?? "").get("state");
@@ -140,6 +164,7 @@ function fakeShell(health: Record<string, unknown>, opts: { wait?: boolean; read
   return {
     move: (n) => { current = n; for (const r of held.splice(0)) r(); },
     refusedReads: () => refused,
+    acks: () => acks,
   };
 }
 
@@ -236,6 +261,14 @@ describe("the gate over each session state", () => {
       expect(engineDown(el), "a refused session is not the engine-down notice").toBe(false);
     });
   }
+
+  it("a reuse sweep's refusal: the dialog says what happened and what to do, not the plain revocation", async () => {
+    fakeShell({ signedIn: false, sessionExpired: true, session: { ...reading("refused", "refresh_revoked"), cause: "reuse" } });
+    const el = await render();
+    expect(dialog(el)).toBe(true);
+    expect(text(el)).toContain(DOOR_COPY.cloudLeadReused(machineWord()));
+    expect(text(el)).not.toContain(DOOR_COPY.cloudLeadRevoked(machineWord()));
+  });
 
   it("a seal this key cannot open: the dialog at launch says so, not the first-run sentence", async () => {
     fakeShell({ signedIn: false, sessionExpired: false, session: reading("seal_failed", "seal_unreadable") });
@@ -391,5 +424,38 @@ describe("the card, the rail and the strip read one session state", () => {
   }
   it("a refused reading silences the strip even before /health's verdict flag says so", () => {
     expect(sessionReaders(reading("refused", "refresh_revoked"), false, true).strip).toBe(false);
+  });
+});
+
+/**
+ * THE SIGN-IN THAT FOLLOWS A SWEEP IS TOLD OF IT. The account door's one hosted session read
+ * carries the sweeps; the strip says them once over the mail, and OK puts them away on the server
+ * over the bridge. Nothing listed, nothing drawn.
+ */
+describe("the reuse sweeps a new sign-in is told of", () => {
+  const SWEEP = { id: "5d0c6f6e-2a39-4b49-9b8e-1d6b0b8f7a01", at: "2026-10-28T18:32:49.000Z", client: "desktop-linux" };
+  const hosted = (sweeps?: unknown[]): Record<string, unknown> =>
+    ({ scope: "full", user: { accountId: "acct-hosted-7" }, ...(sweeps ? { reuseSweeps: sweeps } : {}) });
+  const S = (messages as { settings: Record<string, string> }).settings;
+  const okButton = (el: HTMLElement): HTMLButtonElement | undefined =>
+    [...el.querySelectorAll("button")].find((b) => b.textContent === S.reuseSweepsOk);
+
+  it("is shown once, acknowledged over the bridge with its id, and goes", async () => {
+    const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { hosted: hosted([SWEEP]) });
+    const el = await render();
+    expect(await within(2_000, () => text(el).includes(S.reuseClientLinux!)), "the strip never came").not.toBeNull();
+    expect(text(el).split(S.reuseClientLinux!).length - 1, "said once").toBe(1);
+    await act(async () => { okButton(el)!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(await within(1_000, () => shell.acks().length > 0)).not.toBeNull();
+    expect(shell.acks()).toEqual([{ ids: [SWEEP.id] }]);
+    expect(text(el)).not.toContain(S.reuseClientLinux);
+    expect(mounted(el)).toBe(true);
+  });
+
+  it("the control: nothing listed, nothing drawn", async () => {
+    fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { hosted: hosted() });
+    const el = await render();
+    expect(mounted(el)).toBe(true);
+    expect(okButton(el)).toBeUndefined();
   });
 });
