@@ -271,7 +271,7 @@ function tauriProxyFor(id: string): (url: string) => string {
 }
 
 /** `MessagePane`'s lines for one held letter, over the desktop's wires. */
-function Pane({ tauri, failed }: { tauri: boolean; failed: string[] }) {
+function Pane({ tauri, failed, notices, html }: { tauri: boolean; failed: string[]; notices: (string | null)[]; html: string }) {
   const real = useRemoteImages({
     onFailed: (sentence) => { failed.push(sentence); }, mode: "auto", loadPixels: false,
     fetchImage: localImageWire, recordRemote: localLoadRemote,
@@ -279,13 +279,14 @@ function Pane({ tauri, failed }: { tauri: boolean; failed: string[] }) {
   const chrome = React.useMemo(() => (real && tauri ? { ...real, proxyFor: tauriProxyFor } : real), [real, tauri]);
   const onRemoteImages = React.useCallback((urls: string[]) => chrome?.needRemote(HELD.id, urls), [chrome]);
   return h(MessageBody, {
-    messageId: HELD.id, text: "plain", html: ONE_PICTURE,
+    messageId: HELD.id, text: "plain", html,
     remoteLoaded: autoLoadsImages(chrome, HELD) || (chrome?.consented(HELD.id) ?? false),
     imageProxy: chrome ? chrome.proxyFor(HELD.id) : null,
     onLoadRemote: chrome && !autoLoadsImages(chrome, HELD) ? () => chrome.consent(HELD.id) : undefined,
     loadTrackingPixels: chrome?.loadPixels ?? false,
     resolvedRemoteImages: chrome?.resolvedFor(HELD.id),
     onRemoteImages,
+    onNotice: (n: { caption: string } | null) => { notices.push(n?.caption ?? null); },
   });
 }
 
@@ -306,11 +307,11 @@ async function rounds(n: number): Promise<void> {
   }
 }
 
-async function openHeld(tauri: boolean, failed: string[]) {
+async function openHeld(tauri: boolean, failed: string[], notices: (string | null)[] = [], html = ONE_PICTURE) {
   mounted = document.createElement("div");
   document.body.appendChild(mounted);
   root = createRoot(mounted);
-  await act(async () => { root!.render(h(Pane, { tauri, failed })); });
+  await act(async () => { root!.render(h(Pane, { tauri, failed, notices, html })); });
   await rounds(3);
   return {
     show: () => [...mounted!.querySelectorAll("button")].find((b) => b.textContent === COPY.show) ?? null,
@@ -324,8 +325,10 @@ describe("a held letter's Show images on the desktop", () => {
     it(`${door}: nothing on open; the press is stored down the pipe, then the picture arrives`, async () => {
       const asked = engineBehindThePipe();
       const failed: string[] = [];
-      const pane = await openHeld(tauri, failed);
+      const notices: (string | null)[] = [];
+      const pane = await openHeld(tauri, failed, notices);
       expect(asked, "a held sender's picture was asked for on open").toEqual([]);
+      expect(notices.at(-1), "the held letter did not say its pictures are blocked").toBe(COPY.imagesCaption);
       expect(pane.show(), "the held letter offers no Show images").not.toBeNull();
       await act(async () => { pane.show()!.click(); });
       await rounds(6);
@@ -334,7 +337,28 @@ describe("a held letter's Show images on the desktop", () => {
         `GET /img?mid=${HELD.id}&u=${encodeURIComponent(PICTURE)}`,
       ]);
       expect(pane.drawn(), "the picture never reached the frame").toBe(1);
+      expect(notices.at(-1), "the shown picture is still said to be blocked").toBeNull();
       expect(failed).toEqual([]);
+    });
+  }
+
+  /* The pipe fetches `<img>` pictures only, at most INLINE_IMAGE_MAX_PARTS a letter: what it leaves blank stays said. */
+  const BACKGROUND = `https://${SENDER}/banner.jpg`;
+  for (const [what, html, gets] of [
+    ["a CSS background", `<table width="600"><tr><td style="background-image:url(${BACKGROUND})"><p>hello</p></td></tr></table>`, 0],
+    ["a CSS background beside a picture", `<table width="600"><tr><td style="background-image:url(${BACKGROUND})">${ONE_PICTURE}</td></tr></table>`, 1],
+    ["14 pictures", `<table width="600"><tr><td><p>hello</p>${
+      Array.from({ length: 14 }, (_, i) => `<img src="${PICTURE}?n=${i}" width="600" height="200">`).join("")}</td></tr></table>`, 12],
+  ] as const) {
+    it(`tauri://localhost: ${what} the pipe cannot draw keeps the letter's Images blocked`, async () => {
+      const asked = engineBehindThePipe();
+      const notices: (string | null)[] = [];
+      const pane = await openHeld(true, [], notices, html);
+      await act(async () => { pane.show()!.click(); });
+      await rounds(8);
+      expect(asked.filter((a) => a.startsWith("GET ")).length).toBe(gets);
+      expect(pane.drawn()).toBe(gets);
+      expect(notices.at(-1), "a blank picture was said to be shown").toBe(COPY.imagesCaption);
     });
   }
 
