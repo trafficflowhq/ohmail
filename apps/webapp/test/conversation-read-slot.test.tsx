@@ -148,7 +148,7 @@ describe("the reader's read slot covers the conversation on screen", () => {
     const undo = deliberate().slice(2);
     expect(undo.map((p) => [p.ids.length, p.unread]), "the landed chunk's ids back, nothing for the refused one").toEqual([[200, true]]);
     expect(undo[0]!.ids).not.toContain("s200");
-  }, 120_000);
+  }, 60_000);
 
   it("a render whose mirror has not moved walks the mirror for the read set no more", async () => {
     const { readSetWalks } = await import("../app/shell/conversation-on-screen.js");
@@ -175,7 +175,7 @@ describe("the reader's read slot covers the conversation on screen", () => {
     await click(document.querySelector(".toast .toast-act"), "Undo");
     expect(deliberate().slice(2).map((p) => [p.ids.length, p.unread])).toEqual([[200, true], [1, true]]);
     expect(patches.every((p) => p.ids.length <= 200), "nothing the route refuses").toBe(true);
-  }, 120_000);
+  }, 60_000);
 });
 
 describe("the reader sheet over the Ohbox", () => {
