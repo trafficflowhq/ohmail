@@ -21,6 +21,124 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.10] — 2026-10-28
+
+### A reply to a large group folds its earlier messages
+
+A reply whose quoted Outlook header lists a dozen or more recipients showed its whole quoted history,
+because a `To:` or `Cc:` line that long was not read as part of the header. Such replies now fold their
+earlier messages behind the toggle like any other reply, on desktop, web and phone, whether the header
+sits at the top of the reply or inside a quote (as when Thunderbird answers an Outlook message).
+
+### ohmail on Linux keeps running when an accessibility tool stops while you type
+
+On the Linux desktop app, a screen reader or another accessibility tool that quit or restarted while
+you were typing could take the whole app down with it: GTK freed the tool's key listener while it was
+still handing that key press to it. ohmail now holds such a removal until GTK has finished with the key,
+then completes it. Every key still reaches every running tool once, as before, and accessibility stays on.
+
+### A message sent just before ohmail closed gets its copy in Sent when ohmail starts again
+
+When the mail server took a message and ohmail then closed, crashed or lost the connection before the
+copy reached the Sent folder, the message went out but never appeared in Sent or in its conversation.
+ohmail now keeps that copy on the device until it is filed, and puts it in Sent once, at the next start
+or when the connection is back (desktop, and the phone on its own).
+
+### Pictures from a sender you have not let in wait for Show images
+
+Mail in the Screener, Screened out and Spam no longer loads its pictures on open or in a preview, even
+with Load images in messages on, so a first-time sender cannot learn that you saw their message before
+you decided. Show images still loads one message's pictures; once you let a sender in, their mail
+follows the setting. Web, desktop, ohmail Cloud and your own server; the phone app already asked first.
+
+On the desktop, Show images now works: it was missing on macOS and Linux and did nothing on Windows.
+
+### Screening a sender out or marking them as spam leaves their letters unread
+
+Screened out and Spam used to mark every letter the sender had waiting in the Screener as read on your
+mail server, so letters you never opened showed as read in your other mail apps too. ohmail now files
+them and leaves them as they were: a letter turns read when you read it. The same holds for letters the
+Screener files on its own when you let it act on its suggestions, and for screen-outs that arrive with
+imported settings, whose card no longer says they are marked read. The Ohbox badge and the Screener's
+counts are unchanged; they never counted Screened out or Spam. Letters marked read this way before stay
+read. This is on the web, the desktop app and the phone; on ohmail Cloud and your own server it needs the
+server updated with the apps.
+
+### On a device that only reads your mail, every rule can be changed, and a takeover drops removed rules
+
+When another install organizes your mail, Settings → Rules lists that install's rules. A rule made there had
+no Change or Revoke here and asked you to change it on the other install. Every rule on the page can now be
+changed, removed, lifted over its domain's rule or included in Revoke all; the change goes to the install
+that organizes your mail, and the page says it waits until that install has made it.
+
+On such a device the sender sheet now decides a press by the rules that install files your mail by, not by
+this device's own copy. A press to where an old local rule pointed no longer reads as already done while
+the mail goes somewhere else, and Remove can take that install's own subject rule. A second press made
+before that install has carried out the first one is decided over the first, so pressing back to where
+the mail was always filed is sent too and wins.
+
+When this device takes over organizing ("Organize here instead") and imports the other install's settings,
+a rule this device still held but that the other install had removed is no longer brought back to file
+mail. Rules made on this device during the takeover stay, and so do this device's rules when you chose
+"Not now" first and organized with them, or when it also organizes a mailbox you removed. Desktop, web
+and phone.
+
+### Closing a reply or forward under a letter saves it to Drafts at once
+
+A reply or a forward typed under a letter and closed with Esc, Cancel or the Reply button before the
+usual pause, or left by switching to another view, stayed only in this browser: Drafts on your account
+never got it. The same happened when you pressed Send before the pause and then cancelled the send while
+it was still waiting to go. Both now save it as a draft right away, and only once: a cancelled send that
+had already made its draft keeps the words in that draft, also when you cancel it in another window. A
+new message whose cancel is answered later keeps its draft the same way, instead of leaving a second
+one. Words typed while an earlier save was still on its way are saved once that save lands, instead of
+waiting for the next change (web, desktop).
+
+### A letter the phone restores after a stop no longer overwrites a draft changed on another device
+
+When ohmail on the phone stopped while you were editing a draft, and the same draft was then changed on
+another device, the next launch could put the phone's words over the newer ones, and those were lost. The
+phone now restores the letter as a new draft beside the other version, with its attachments, and says so.
+Android and iOS alike.
+
+### The reading column stays inside its frame in the Ohmarchy look
+
+In the Ohmarchy look, a scrolled conversation or News and Receipts stream no longer runs above the other
+columns' top edge up to the window border, and the focus ring's top line no longer crosses its text. In
+Screened out, Spam and Waiting, the newest letter now opens below the decision bar instead of half under it.
+Desktop and web.
+
+### Live mail with a browser tab and the desktop app open together
+
+On ohmail Cloud, a browser tab and the paired desktop app open at the same time could use up the
+account's live-update streams: each time the tab came back to the front or the desktop app reconnected,
+the stream it left kept its place for minutes, and after a few switches the next one was refused, so
+new mail waited for the regular check instead of arriving at once. A reconnecting tab or desktop app
+now ends the stream it left, so both keep their live stream.
+
+### The first sync after launch no longer holds the desktop app for most of a second
+
+On a large mailbox the first sync after the app starts read every message location the mailbox holds in one
+query, and the desktop app could not answer anything else while it parsed the result (74,000 locations held it
+for about 0.9 s). The read now goes in pages of 5,000, so each pause is short (about 60 ms at that size), and
+the desktop store takes the statistics that read needs once, so the pages use the index instead of sorting
+the mailbox again for each one. The same paged read runs on the phone, the self-hosted worker and ohmail
+Cloud.
+
+### Cloud can record how connecting a mailbox ended
+
+On ohmail Cloud, each press of Test or Connect, and each start or finish of the Microsoft sign-in, can
+leave one record of how it ended: which of these it was, the provider from the setup list or "another",
+whether it worked, if not why as one word from a fixed list (such as a refused password or a server that
+did not answer), which side refused (incoming or outgoing mail), and the time. A record holds no address,
+no server name, nothing the mail server said, no IP address and no browser details. It is kept for 30
+days and deleted at once with the account. Staff can read the counts and one account's records over the
+console's content-blind connection, and nothing else of it.
+
+Recording starts off: an operator sets `TF_CONNECT_ATTEMPTS=record` on the API once
+[ohmail.app/privacy](https://ohmail.app/privacy) describes it. A self-hosted server and the desktop app
+record nothing of the kind; a self-hosted server's next migration creates the table and leaves it empty.
+
 ## [0.30.9] — 2026-10-27
 
 ### Pressing End in News no longer makes the Linux desktop window reload
@@ -14612,7 +14730,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.9...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.10...HEAD
+[0.30.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.10
 [0.30.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.9
 [0.30.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.8
 [0.30.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.7
