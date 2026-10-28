@@ -4075,6 +4075,7 @@
     "faultOffline": "Couldn't reach ohmail — check your connection",
     "faultSignedOut": "Your session ended — sign in again",
     "faultRetry": "try again",
+    "faultRetrying": "trying again shortly",
     "tooLarge": "{size} · too large to fetch",
     "listFailed": "Couldn't load this message's files.",
     "listOffline": "Couldn't reach ohmail — check your connection.",

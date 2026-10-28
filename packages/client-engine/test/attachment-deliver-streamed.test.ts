@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { OhmailEngine, type StagedPreview } from "../src/engine.js";
 import { MutationRejectedError } from "../src/types.js";
 import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
@@ -93,6 +93,30 @@ describe("deliverAttachment — a save by id", () => {
     await engine.deliverAttachment("m1", "a1", async () => { asked += 1; return true; }, { retry: true });
     expect(asked).toBe(1);
     expect(stateOf(engine)).toBe("idle");
+  });
+
+  it("a save refused busy waits for a connection and lands, never shown as failed", async () => {
+    vi.useFakeTimers();
+    try {
+      const engine = new OhmailEngine({ adapter: makeAdapter([]) });
+      await engine.loadAttachments("m1");
+      const states: string[] = [];
+      const stop = engine.subscribe(() => states.push(stateOf(engine) ?? "none"));
+      let calls = 0;
+      const save = engine.deliverAttachment("m1", "a1", async () => {
+        calls += 1;
+        if (calls === 1) throw new MutationRejectedError("busy", { status: 429, code: "mailbox_busy", retryable: true, retryAfterMs: 1000 });
+        return true as const;
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      stop();
+      expect(await save).toBe(true);
+      expect(calls).toBe(2);
+      expect(states).not.toContain("failed");
+      expect(stateOf(engine)).toBe("idle");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a second press while one is saving is not a second save", async () => {

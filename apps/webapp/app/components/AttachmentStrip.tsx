@@ -59,6 +59,8 @@ export interface AttachmentItem {
   previewTooLarge?: boolean;
   /** A desktop save of this `ready` part is running; the tile and the preview's Download read busy. */
   saving?: boolean;
+  /** A failed embedded picture the engine asks for again on its own, shortly. */
+  reasking?: boolean;
 }
 
 /**
@@ -170,6 +172,8 @@ const EN = {
   faultOffline: "Couldn't reach ohmail — check your connection",
   faultSignedOut: "Your session ended — sign in again",
   faultRetry: "try again",
+  /** en.json: follows the sentence while the engine's timed re-ask is armed. */
+  faultRetrying: "trying again shortly",
   /** en.json: "{size} · too large to fetch" */
   tooLarge: (size: string) => `${size} · too large to fetch`,
 
@@ -421,7 +425,9 @@ function Tile({
         {COPY.loading}
       </>
     ) : item.state === "failed" ? (
-      fileRetryIsOffered(item) ? `${fileFaultSentence(item)} — ${COPY.faultRetry}` : fileFaultSentence(item)
+      item.reasking === true
+        ? `${fileFaultSentence(item)} — ${COPY.faultRetrying}`
+        : fileRetryIsOffered(item) ? `${fileFaultSentence(item)} — ${COPY.faultRetry}` : fileFaultSentence(item)
     ) : item.state === "too_large" ? (
       COPY.tooLarge(size)
     ) : item.state === "ready" ? (

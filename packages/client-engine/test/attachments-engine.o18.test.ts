@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { HttpAdapter } from "../src/adapters/http-adapter.js";
 import { OhmailEngine } from "../src/engine.js";
+import { MutationRejectedError } from "../src/types.js";
 import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
@@ -373,5 +374,32 @@ describe("nothing is stored", () => {
     // opening PDFs accumulates every one of them in the tab.
     expect(revoked.sort()).toEqual(minted.sort());
     expect(engine.attachmentsOf("m1")).toEqual({ state: "loading" });
+  });
+});
+
+describe("a press finds a connection while pictures draw", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("a file pressed while two letters draw their pictures lands ready, not busy", async () => {
+    vi.useFakeTimers();
+    // The API's door: two slots per mailbox, the overflow refused busy.
+    let held = 0;
+    const fetchAttachment = async (): Promise<Blob> => {
+      if (held >= 2) throw new MutationRejectedError("busy", { status: 429, code: "mailbox_busy", retryable: true, retryAfterMs: 1000 });
+      held += 1;
+      try { await new Promise((r) => setTimeout(r, 2_000)); return new Blob(["x"], { type: "image/png" }); } finally { held -= 1; }
+    };
+    const pic = (m: string) => ({ ...wire({ id: `${m}-p`, contentType: "image/png", sizeBytes: 10, inline: true, messageId: m }), contentId: `${m}-c` });
+    const lists: Record<string, AttachmentWire[]> = { m1: [pic("m1")], m2: [pic("m2")], m3: [wire({ id: "f", messageId: "m3" })] };
+    const engine = new OhmailEngine({ adapter: makeAdapter({ listAttachments: async (id) => lists[id] ?? [], fetchAttachment }) });
+    void engine.loadInlineImages("m1", ["m1-c"]);
+    void engine.loadInlineImages("m2", ["m2-c"]);
+    await vi.advanceTimersByTimeAsync(10);
+    await engine.loadAttachments("m3");
+    const press = engine.openAttachment("m3", "f");
+    await vi.advanceTimersByTimeAsync(5_000);
+    await press;
+    const held3 = engine.attachmentsOf("m3");
+    expect(held3.state === "ready" ? held3.items[0]?.state : undefined).toBe("ready");
   });
 });

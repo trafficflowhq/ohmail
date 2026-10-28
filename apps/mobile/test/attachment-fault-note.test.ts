@@ -74,3 +74,18 @@ describe("a tap re-asks the mail server only where the refusal said it could hel
     expect(openAttachment).toHaveBeenCalledWith("m1", "a1", { retry: true });
   });
 });
+
+describe("a picture the engine will ask for again says so", () => {
+  it.each([
+    ["mailbox_busy", 429, "ohmail already has this mailbox's connections open. Trying again shortly.", "ohmail hat die Verbindungen zu diesem Postfach schon offen. Wird gleich nochmal versucht."],
+    ["mail_server_unreachable", 424, "Your mail server didn't answer. Trying again shortly.", "Dein Mailserver hat nicht geantwortet. Wird gleich nochmal versucht."],
+  ] as const)("%s", (code, status, sayEn, sayDe) => {
+    expect(attachmentFaultNote({ code, status, retryable: true, reasking: true })).toBe(sayEn);
+    setActiveLocale("de");
+    expect(attachmentFaultNote({ code, status, retryable: true, reasking: true })).toBe(sayDe);
+  });
+
+  it("control: without the re-ask the tap is offered as before", () => {
+    expect(attachmentFaultNote({ code: "mailbox_busy", status: 429, retryable: true })).toBe("ohmail already has this mailbox's connections open. Tap to try again.");
+  });
+});

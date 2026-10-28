@@ -1280,6 +1280,7 @@ export const DE: Deck = {
   attachmentFaultOffline: "ohmail war nicht erreichbar. Prüf deine Verbindung.",
   attachmentFaultSignedOut: "Deine Sitzung ist beendet. Melde dich neu an.",
   attachmentTapToRetry: "Tippe, um es nochmal zu versuchen.",
+  attachmentRetryingSoon: "Wird gleich nochmal versucht.",
   attachmentShareRefused: "Nichts auf diesem Handy kann diese Datei öffnen.",
   mailFrameLabel: "Nachrichteninhalt",
 

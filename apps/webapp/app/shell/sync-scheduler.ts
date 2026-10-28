@@ -1786,6 +1786,7 @@ export function startSyncScheduler(
       if (stopped) return;
       // What waits on the organizer is read on this cadence, floor-bounded; the engine owns no timer.
       engine.pollWaitingOnOrganizer?.();
+      engine.reaskDueParts?.();
       // A drain that SUCCEEDED disproves the refusal, so the claim is withdrawn. `arm()` refuses
       // to set a timer while `terminal`, which is why this clears it BEFORE arming. A drain can
       // only have run with the gate holding, so there is no identity cause left to clear —

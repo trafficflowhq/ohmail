@@ -809,8 +809,11 @@ export {
   INLINE_IMAGE_MAX_BYTES,
   INLINE_IMAGE_MAX_PARTS,
   INLINE_IMAGE_MAX_TOTAL_BYTES,
+  PART_REASK_DELAYS_MS,
   type KeptAsNewDraft,
 } from "./engine.js";
+/** One mailbox's byte asks in line: never more at once than the API's per-mailbox door admits. */
+export { PART_FETCHES_PER_MAILBOX, BUSY_PATIENCE_MS } from "./part-lane.js";
 
 /* THE MIRROR'S BOUNDS TABLE — total over every entity type, so a type added without an answer
    fails this package's build. Exported so a census outside the package can drive its claims. */

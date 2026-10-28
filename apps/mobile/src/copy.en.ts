@@ -1914,6 +1914,7 @@ const TABLE = {
   attachmentFaultOffline: "Couldn't reach ohmail. Check your connection.",
   attachmentFaultSignedOut: "Your session ended. Sign in again.",
   attachmentTapToRetry: "Tap to try again.",
+  attachmentRetryingSoon: "Trying again shortly.",
   attachmentShareRefused: "Nothing on this phone can open this file.",
   /** The frame's accessible name — what a screen reader calls the document region. */
   mailFrameLabel: "Message content",
