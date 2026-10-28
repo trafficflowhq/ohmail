@@ -799,6 +799,17 @@ export interface Dialect {
     /** See {@link UnindexedMailArms}. */
     unindexed(q: string, opts: { trigram: boolean; threshold: number }): UnindexedMailArms | null;
     /**
+     * The document `s` is `accountId`'s, spelled as the account-keyed word index's own expression
+     * (`message_search_words_idx`), or `null` on a store without that index.
+     */
+    wordKey(accountId: string): SQL | null;
+    /**
+     * The letter {@link words}' straddling `text` reads, as terms to be OR-ed, each one read of the
+     * word index: every split of each `or` group's operands between head and text. `null` past
+     * three operands in a group, for a quoted or an excluded operand, or on a store without vectors.
+     */
+    letterTerms(q: string): SQL[] | null;
+    /**
      * `address` among message `m`'s To or Cc, an EQUALITY folded by `lower()` in SQL, within
      * `accountId` (mail 0154). The server's is the expression index's own call over `m` with the
      * account in the key; the device's reads its trigger-kept side table. Never a substring.

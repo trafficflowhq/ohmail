@@ -45,10 +45,10 @@ const TEARDOWN_HOOKS = ["afterAll", "afterEach"] as const;
  * moment ago, and therefore the whole of both journals — or an index build over the rows earlier
  * files left in a shared database.
  */
-const BUILDS = /\b(?:create\s+database|CREATE\s+DATABASE|prepareIsolatedDb\s*\(|setupProdDatabase\s*\(|ensureSearchExtensions\s*\(|ensureHotPathIndexes\s*\(|ensureConcurrentIndexes\s*\(|ensureWithheldProvenanceIndex\s*\()/;
+const BUILDS = /\b(?:create\s+database|CREATE\s+DATABASE|prepareIsolatedDb\s*\(|setupProdDatabase\s*\(|ensureSearchExtensions\s*\(|ensureWordIndex\s*\(|ensureHotPathIndexes\s*\(|ensureConcurrentIndexes\s*\(|ensureWithheldProvenanceIndex\s*\()/;
 
 /** The index builders that have a plain mode: a hook passes it, since a concurrent build waits on every older snapshot. */
-const PLAIN_BUILDERS = ["ensureSearchExtensions", "ensureHotPathIndexes", "ensureConcurrentIndexes"] as const;
+const PLAIN_BUILDERS = ["ensureSearchExtensions", "ensureWordIndex", "ensureHotPathIndexes", "ensureConcurrentIndexes"] as const;
 const REMOVES = /\b(?:drop\s+database|DROP\s+DATABASE)\b/;
 
 /**

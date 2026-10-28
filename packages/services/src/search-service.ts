@@ -78,6 +78,18 @@ const SEARCH_TYPO_WALK_FACTOR = 40;
  * the walk ~6 µs a letter (8 000 at most, ~45 ms).
  */
 const SEARCH_EXCLUSION_WALK_FACTOR = 40;
+/**
+ * On the account-keyed word index a bounded arm walks at most this many cuts of the newest mail
+ * before it reads its matches as a set: a walked letter costs about 5 µs for its body vector.
+ */
+const SEARCH_WALK_NEED_CUTS = 15;
+/** A word set of fewer than this many cuts is dated one lookup a member; a larger one is walked against History. */
+const SEARCH_SET_DATED_CUTS = 4;
+/**
+ * A set's History walk stops after this many letters a member, then dates every member instead: a
+ * walked letter is a fraction of a microsecond off the index, a member's lookup a few.
+ */
+const SEARCH_SET_WALK_FACTOR = 20;
 /** How many senders the sender facet returns. */
 const SENDER_FACET_LIMIT = 10;
 
@@ -307,30 +319,46 @@ const MARKER_MEMO_MAX = 10_000;
 const progressRead = new WeakMap<object, Map<string, { at: number; p: { done: number; total: number } }>>();
 const INDEX_PROGRESS_FRESH_MS = 30_000;
 
-// pg_trgm presence is a property of the physical database, not the request: asked once per
-// handle, and a "no" asked again after a while (`storeProbe`), so a later install is seen.
+// pg_trgm and the word index are properties of the physical database, not the request: asked once
+// per handle, and a "no" to either asked again after a while (`storeProbe`), so a later install is seen.
 const trgmProbe = storeProbe();
-function hasTrgm(db: Db): Promise<boolean> {
+const indexFacts = new WeakMap<object, { readonly trigram: boolean; readonly words: boolean }>();
+const NO_INDEXES = { trigram: false, words: false } as const;
+function storeIndexes(db: Db): Promise<{ readonly trigram: boolean; readonly words: boolean }> {
   // ASKED ONLY OF A STORE THAT COULD ANSWER. `to_regprocedure` is a server function, so composing
   // this for the device store would not return `false` — it would fail to parse, during a search.
   // The seam puts this probe in the caller by contract, because one dialect runs against a
   // database that HAS the extension and one that does not; the device is neither, and its answer
   // is a fact about the store.
-  if (dialect(db).name !== "pg") return Promise.resolve(false);
-  return trgmProbe(db as unknown as object, () =>
-    /* A DECLARED POSTGRES-ONLY ARM, and it is unreachable above: the guard one line up answers
-       `false` for any store that is not the server, so this statement is never composed there.
+  if (dialect(db).name !== "pg") return Promise.resolve(NO_INDEXES);
+  const key = db as unknown as object;
+  return trgmProbe(key, () =>
+    /* A DECLARED POSTGRES-ONLY ARM, and it is unreachable elsewhere: the guard above answers no
+       for any store that is not the server, so this statement is never composed there.
        It stays in the caller by the seam's own contract — the fuzzy member IS the trigram arm,
        and whether THIS deployment has the extension is a fact about the deployment, not about
        the dialect, which is why the seam takes it as an argument rather than guessing it. The
        question has no second spelling: `to_regprocedure` reads a Postgres catalog. */
-    // scoped-by: reads a Postgres catalog only — an extension probe, no account rows
-    db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as ok`))
-      .then((r) => Boolean(rowsOf<{ ok: boolean }>(r)[0]?.ok)));
+    // scoped-by: reads a Postgres catalog only — an extension and an index probe, no account rows
+    db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as trigram,
+        exists (select 1 from pg_index x where x.indexrelid = to_regclass('public.message_search_words_idx')
+          and x.indisvalid and x.indisready) as words`))
+      .then((r) => {
+        const row = rowsOf<{ trigram: boolean; words: boolean }>(r)[0];
+        const facts = { trigram: Boolean(row?.trigram), words: Boolean(row?.words) };
+        indexFacts.set(key, facts);
+        return facts.trigram && facts.words;
+      })).then(() => indexFacts.get(key) ?? NO_INDEXES);
 }
 
-/** What the store says before a search composes its arms: the backfill marker and pg_trgm. */
-interface StoreFacts { readonly built: boolean; readonly trigram: boolean }
+/** Wheres {@link SearchService.whereSql} wrote with a filter: there a bounded arm reads as it always did. */
+const filteredWheres = new WeakSet<SQL>();
+
+/**
+ * What the store says before a search composes its arms: the backfill marker, pg_trgm, and the
+ * account-keyed word index (`message_search_words_idx`).
+ */
+interface StoreFacts { readonly built: boolean; readonly trigram: boolean; readonly words: boolean }
 
 /** One branch of an arm: an index-served predicate and the rank the arm orders by. */
 interface Branch {
@@ -347,6 +375,8 @@ interface Branch {
    * which {@link SearchService.boundedRead} asks of the newest mail to choose a deeper walk or the index.
    */
   readonly pos?: SQL;
+  /** The branch's matches as terms, each one read of the word index under the arm's key ({@link SearchService.boundedRead}). */
+  readonly set?: readonly SQL[];
 }
 /**
  * An arm: its branches (one per index), cut at its top-K after they are merged. `ranked`: ordered
@@ -356,6 +386,10 @@ interface Arm {
   readonly name: string; readonly ranked: boolean; readonly branches: readonly Branch[];
   /** A recency arm whose selectivity the planner cannot see: see {@link SEARCH_PART_WALK_FACTOR}. */
   readonly bounded?: boolean;
+  /** Bounded for the word index only: a filtered search reads it unbounded, as before. */
+  readonly keyedOnly?: boolean;
+  /** The account as the word index's key, where the store has it: {@link SearchService.boundedRead} may read a set. */
+  readonly key?: SQL;
   /** Read by {@link SearchService.localRead} for this account: the desktop's own store, documents built. */
   readonly local?: { readonly account: string };
   /** The typo arm's walk test, a cheap necessary condition first: read by {@link SearchService.typoRead}. */
@@ -491,6 +525,10 @@ export class SearchService {
       return [{ ...arm, typo: { walkPred, vectors: excluded !== undefined } }];
     }
     const local = this.opts.localStore === true && d.name === "pg" && documents && legacy === null;
+    // The server's documents under the account-keyed word index: the recency arms may read sets.
+    const key = d.name === "pg" && documents && store.words && this.opts.localStore !== true && legacy === null
+      ? d.search.wordKey(ctx.accountId) : null;
+    const keyed = (b: Branch, set: readonly SQL[] | null | undefined): Branch => (key !== null && set ? { ...b, set } : b);
     const words = d.search.words(q);
     // An excluded word: on the server's documents asked of each arm's cut rows only (its check reads
     // the body), elsewhere in the arm's predicate. There the text arm reads, per `or` group, what the
@@ -501,13 +539,16 @@ export class SearchService {
       : { ...b, pred: sql`(${b.pred} and ${keep})`, ...(b.raw ? { raw: sql`(${b.raw} and ${keep})` } : {}) });
     const alone = late && words.alone ? words.alone : null;
     const rank = words.text.rank;
+    const across = words.across === true;
     const text = alone
       ? alone.flatMap((g) => [{ ...own({ pred: g.pred, rank }), pos: g.letter }, ...(g.whole ? [] : [{ ...held(own({ pred: g.letter, rank })), pos: g.letter }])])
-      : [held(own(words.text))];
+      : [keyed(held(own(words.text)), keep !== undefined ? null : across ? d.search.letterTerms(q) : [words.text.pred])];
+    const on = key !== null ? { key } : {};
     const out: Arm[] = [
       { name: "head", ranked: true, branches: [held(own(words.head)), ...(legacy ? [bare(legacy.words.head)] : [])] },
       {
-        name: "text", ranked: false, ...(words.across === true && d.name === "pg" ? { bounded: true } : {}),
+        name: "text", ranked: false,
+        ...(across && d.name === "pg" ? { bounded: true, ...on } : key !== null && !q.includes('"') ? { bounded: true, keyedOnly: true, ...on } : {}),
         branches: [...text, ...(legacy ? [bare(legacy.words.text)] : [])],
       },
     ];
@@ -519,14 +560,15 @@ export class SearchService {
     const old = legacy?.part ?? null;
     if (part !== null && part.across === true) {
       // Words that may straddle the letter's parts: one predicate over the whole letter.
+      // No set: a common word's prefix over every account would be read.
       out.push({
-        name: "part", ranked: false, ...(d.name === "pg" ? { bounded: true } : {}),
+        name: "part", ranked: false, ...(d.name === "pg" ? { bounded: true, ...on } : {}),
         branches: [own(part.text), ...(old ? [bare(old.head), bare(old.text)] : [])],
       });
     } else if (part !== null && d.name === "pg") {
       out.push({
-        name: "part", ranked: false, bounded: true,
-        branches: [own(part.head), own(part.text), ...(old ? [bare(old.head), bare(old.text)] : [])],
+        name: "part", ranked: false, bounded: true, ...on,
+        branches: [keyed(own(part.head), [part.head.pred]), keyed(own(part.text), [part.text.pred]), ...(old ? [bare(old.head), bare(old.text)] : [])],
       });
     } else if (part !== null) {
       out.push(
@@ -564,7 +606,7 @@ export class SearchService {
       : capped ? sql`(select r.*, 0 as x from ${read(b)} r)` : read(b));
     const merged = arm.local && walk ? this.localRead(where, arm, k, cut, walk)
       : arm.typo ? this.typoRead(where, arm.branches[0]!, arm.typo, k)
-      : arm.bounded ? this.boundedRead(where, arm.branches, k)
+      : arm.bounded && !(arm.keyedOnly && filteredWheres.has(where)) ? this.boundedRead(where, arm.branches, k, arm.key)
       : arm.branches.length === 1 ? branch(arm.branches[0]!)
       : sql`(select id, date, max(rank) as rank${capped ? sql`, max(x) as x` : sql``}
           from (${sql.join(arm.branches.map(branch), sql` union all `)}) u group by id, date)`;
@@ -636,7 +678,7 @@ export class SearchService {
    * branch's matches are read instead, under a sort key no index serves (`date is null` first is
    * `nulls last`), so off its GIN. Exactly one of the two answers.
    */
-  private boundedRead(where: SQL, branches: readonly Branch[], k: number): SQL {
+  private boundedRead(where: SQL, branches: readonly Branch[], k: number, key?: SQL): SQL {
     const newestOf = (n: number): SQL => sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
       where ${where} order by m.date desc nulls last, m.id desc limit ${n}`;
     // Every branch the document's own: each walked row asks its document alone. The walk's row is
@@ -655,7 +697,9 @@ export class SearchService {
     const read = (b: Branch): SQL => sql`select id, date from (select m.id as id, m.date as date ${this.from}
       where ${where} and ${b.pred} order by (m.date is null), m.date desc, m.id desc limit ${k}) r`;
     const matched = sql`select id, date from (${sql.join(branches.map(read), sql` union all `)}) u group by id, date`;
-    if (branches.every((b) => b.after === undefined && b.pos === undefined)) {
+    const plain = branches.every((b) => b.after === undefined && b.pos === undefined);
+    if (key !== undefined && plain && docOnly && !filteredWheres.has(where)) return this.keyedRead(where, branches, k, key, newestOf, hit, matched);
+    if (plain) {
       return sql`(with pw as (${walked})
       select id, date, 0 as rank from pw where (select count(*) from pw) >= ${k}
       union all
@@ -719,6 +763,58 @@ export class SearchService {
       union all
       select null, null, 0, 1 where ${short} and ${full} and (case when ${walkOn}
         then (select count(*) from pw) + (select count(*) from pd) >= ${page} or ${count(1, far)} > 0 else ${readFull} end))`;
+  }
+
+  /**
+   * A bounded arm on the account-keyed word index, unfiltered. The newest K are asked first (`pp`),
+   * and their hits `h` say how many letters hold K matches: 1.5·K²/h are walked (`pw`) when that is
+   * at most {@link SEARCH_WALK_NEED_CUTS} cuts, stopping at K. Short of K, the last cut of that bound
+   * is asked too (`pf`): a word missing from the newest mail but dense by then is walked for over the
+   * whole bound (`pb`). Still short, each branch's matches are read as a set (`ps`), one keyed index
+   * read a term, never an OR inside one: a large set is walked against History newest first for at
+   * most {@link SEARCH_SET_WALK_FACTOR} letters a member (`ph`), and when that walk or a small set
+   * leaves K unfilled every member is dated, one lookup each (`pd`). A branch without a set reads its
+   * matches as {@link boundedRead} does. Every walk and lookup is under `where`.
+   */
+  private keyedRead(where: SQL, branches: readonly Branch[], k: number, key: SQL, newestOf: (n: number) => SQL, hit: SQL, matched: SQL): SQL {
+    const minHits = Math.ceil((3 * k) / (2 * SEARCH_WALK_NEED_CUTS));
+    const reach = SEARCH_WALK_NEED_CUTS * k;
+    const history = sql`select m.id as id, m.date as date from messages m where ${where} order by m.date desc nulls last, m.id desc`;
+    const pw = sql`pp as (select count(*) as h from (${newestOf(k)}) w where ${hit}),
+      pw as (select w.id as id, w.date as date from (${history}
+          limit (select case when h >= ${minHits} then (${3 * k * k} + 2 * h - 1) / (2 * h) else 0 end from pp)) w
+        where ${hit} order by w.date desc nulls last, w.id desc limit ${k})`;
+    if (!branches.every((b) => b.set !== undefined)) {
+      return sql`(with ${pw}
+      select id, date, 0 as rank from pw where (select count(*) from pw) >= ${k}
+      union all
+      select id, date, 0 as rank from (${matched}) pm where (select count(*) from pw) < ${k})`;
+    }
+    const terms = branches.flatMap((b) => b.set!.map((t) => sql`select s.message_id as id from message_search s where ${key} and ${t} and (select v from pr)`));
+    const dated = SEARCH_SET_DATED_CUTS * k;
+    return sql`(with ${pw},
+      pq as (select (select count(*) from pw) < ${k} as v),
+      pf as materialized (select count(*) as h from (${history}
+          limit (select case when v then ${k} else 0 end from pq) offset ${reach - k}) w where ${hit}),
+      pb as (select w.id as id, w.date as date from (${history}
+          limit (select case when h >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)} then ${reach} else 0 end from pf)) w
+        where ${hit} order by w.date desc nulls last, w.id desc limit ${k}),
+      pr as (select (select v from pq) and (select count(*) from pb) < ${k} as v),
+      ps as materialized (${sql.join(terms, sql` union `)}),
+      pn as (select count(*) as n from ps),
+      ph as (select w.id as id, w.date as date from (${history}
+          limit (select case when n >= ${dated} then ${SEARCH_SET_WALK_FACTOR} * n else 0 end from pn)) w
+        where (w.id in (select id from ps)) is true order by w.date desc nulls last, w.id desc limit ${k}),
+      pd as (select t.id as id, x.date as date from ps t
+        cross join lateral (select m.date as date from messages m where m.id = t.id and ${where} offset 0) x
+        where (select count(*) from ph) < ${k})
+      select id, date, 0 as rank from pw where not (select v from pq)
+      union all
+      select id, date, 0 as rank from pb where (select v from pq) and not (select v from pr)
+      union all
+      select id, date, 0 as rank from ph where (select count(*) from ph) >= ${k}
+      union all
+      select id, date, 0 as rank from (select id, date from pd order by (date is null), date desc, id desc limit ${k}) d)`;
   }
 
   /** `after` holds for the message `id`: one document lookup, asked by itself. */
@@ -1272,12 +1368,12 @@ export class SearchService {
     const sup = ctx.searchSupersede;
     const gate = sup === undefined ? null : followUp ? () => sup.turn() : async () => sup.check();
     // Before the transaction: the probe runs on the handle, and memoized, once per handle.
-    const trigram = await hasTrgm(ctx.db);
+    const { trigram, words } = await storeIndexes(ctx.db);
     const setup = d.search.searchSession({ typoThreshold: FUZZY_THRESHOLD, preferIndexes: true });
     if (setup === null) {
       if (gate) await gate();
       const [built, open] = await Promise.all([searchIndexBuilt(ctx.db as never, ctx.accountId), storeStillImporting(ctx)]);
-      return covered(await fn(ctx.db, { built, trigram }), open);
+      return covered(await fn(ctx.db, { built, trigram, words }), open);
     }
     const handle = ctx.db as unknown as object;
     const known = markerWritten.get(handle) ?? new Set<string>();
@@ -1288,7 +1384,7 @@ export class SearchService {
       const warm = sql`select ${importOpen(d, ctx.accountId, ctx.now(), { inline: true })} as importing, s.* from (${setup}) s`;
       return tx.transaction(async (t) => {
         if (gate) await gate();
-        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram }));
+        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram, words }));
         return covered(out, truthy(settings[0]?.[0]));
       });
     }
@@ -1303,7 +1399,7 @@ export class SearchService {
         if (known.size >= MARKER_MEMO_MAX) known.clear();
         known.add(ctx.accountId);
       }
-      return covered(await fn(t, { built, trigram }), truthy(row?.[1]));
+      return covered(await fn(t, { built, trigram, words }), truthy(row?.[1]));
     });
   }
 
@@ -1425,7 +1521,9 @@ export class SearchService {
     if (f.dateTo !== undefined) {
       preds.push(sql`m.date <= ${d.ts(SearchService.instantOr400(f.dateTo, "dateTo"))}`);
     }
-    return sql.join(preds, sql` and `);
+    const out = sql.join(preds, sql` and `);
+    if (preds.length > 2) filteredWheres.add(out);
+    return out;
   }
 }
 

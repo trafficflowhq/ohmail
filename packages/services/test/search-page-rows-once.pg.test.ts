@@ -81,7 +81,8 @@ async function keyLookups(q: string): Promise<{ outside: number; probes: number;
   const isArm = (n: Node): boolean => /^CTE s?a\d+$/.test(String(n["Subplan Name"] ?? ""));
   const holdsWalk = (n: Node): boolean => String(n["Subplan Name"] ?? "") === "CTE pw" || kids(n).some(holdsWalk);
   const visit = (n: Node, inArm: boolean, inPart: boolean): void => {
-    if (n["Index Name"] === "messages_account_msg_order_idx") walked += Number(n["Actual Rows"]) * Number(n["Actual Loops"]);
+    // What a walk kept, whichever scan of History fed it (a keyed walk's limit is a parameter).
+    if (n["Subplan Name"] === "CTE pw") walked = Math.max(walked, Number(n["Actual Rows"]));
     const arm = inArm || isArm(n);
     const part = inPart || (isArm(n) && holdsWalk(n));
     if (part && n["Parent Relationship"] === "SubPlan") { probes += lookupsIn(n); return; }

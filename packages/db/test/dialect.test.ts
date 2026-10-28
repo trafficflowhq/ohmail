@@ -6,6 +6,7 @@ import {
   boolLiteral, brandDialect, dialect, dialectOf, pgDialect, sqliteDialect,
   assertSqliteCapabilities, onLocalNotify,
 } from "../src/dialect/index.js";
+import { WORD_INDEX_SPEC } from "../src/search-setup.js";
 
 describe("the dialect brand", () => {
   it("refuses a handle no factory has branded", () => {
@@ -213,6 +214,24 @@ describe("the two arms answer the same questions differently", () => {
     const rendered = asSqlite(sqliteDialect().ilike(sql`subject`, "%Ä%"));
     expect(rendered.match(/lower\(/g)).toHaveLength(2);
     expect(asPg(pgDialect().ilike(sql`subject`, "%Ä%"))).toContain("ilike");
+  });
+
+  it("keys a document as the word index does, and reads a letter as one index term a split", () => {
+    const key = pgDialect().search.wordKey("00000000-0000-4000-8000-000000000001")!;
+    // The key's left side is the index's first expression over the document, `s`.
+    expect(asPg(WORD_INDEX_SPEC.ddl)).toContain("gin (((account_id)::text), head_tsv, text_tsv)");
+    expect(asPg(key)).toMatch(/^\(\(s\.account_id\)::text = \(\$1::uuid\)::text\)$/);
+    const terms = pgDialect().search.letterTerms("heron kestrel")!;
+    expect(terms.map(asPg)).toEqual([
+      "(s.text_tsv @@ (websearch_to_tsquery($1, $2) && websearch_to_tsquery($3, $4)))",
+      "(s.head_tsv @@ (websearch_to_tsquery($1, $2)) and s.text_tsv @@ (websearch_to_tsquery($3, $4)))",
+      "(s.head_tsv @@ (websearch_to_tsquery($1, $2)) and s.text_tsv @@ (websearch_to_tsquery($3, $4)))",
+      "(s.head_tsv @@ (websearch_to_tsquery($1, $2) && websearch_to_tsquery($3, $4)))",
+    ]);
+    expect(pgDialect().search.letterTerms("heron or kestrel")).toHaveLength(4);
+    for (const q of ["heron kestrel plover egret", '"heron" kestrel', "heron -kestrel"]) expect(pgDialect().search.letterTerms(q), q).toBeNull();
+    expect(sqliteDialect().search.wordKey("00000000-0000-4000-8000-000000000001")).toBeNull();
+    expect(sqliteDialect().search.letterTerms("heron kestrel")).toBeNull();
   });
 
   it("delivers a local announcement in-process, since that is the whole audience", async () => {
