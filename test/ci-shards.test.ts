@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  ALONE_MARKER, SERVICE_GATE_PREFIX, SHARDS, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, costsFrom, dovecotPinned, hashShard, readMap, readSqliteMap,
-  shardFiles, sqliteShardFiles, testFiles, verifyList, verifyReport, verifySqliteReport,
+  ALONE_MARKER, SERVICE_GATE_PREFIX, SHARDS, SQLITE_BUDGET_S, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, costsFrom, dovecotPinned, hashShard, packSqlite,
+  readMap, readSqliteMap, shardFiles, sqliteShardFiles, testFiles, treeCosts, verifyList, verifyReport, verifySqliteReport,
   type ShardMap, type SqliteShardMap,
 } from "./support/ci-shards.mjs";
 import { publicRel } from "./support/public-root.mjs";
@@ -524,6 +524,11 @@ describe("the SQLite shard map of this tree", () => {
     expect(map.measuredAt).toMatch(/^[0-9a-f]{40}$/);
   });
 
+  it("was packed with every shard's measured time inside the budget, so a loaded runner still ends inside the job's bound", () => {
+    expect(map.seconds).toHaveLength(SQLITE_SHARDS);
+    for (const s of map.seconds ?? []) expect(s).toBeLessThanOrEqual(SQLITE_BUDGET_S);
+  });
+
   it("runs every file of the sqlite project exactly once, and names no file outside it", async () => {
     const config = (await import("../vitest.sqlite.config.ts")).default as { test: { include: string[] } };
     const listed = [...config.test.include].sort();
@@ -562,5 +567,24 @@ describe("the SQLite map's rules, on a planted list", () => {
     expect(verifySqliteReport(1, listed, { testResults: [] }, ROOT, map).missing).toEqual(want);
     expect(verifySqliteReport(1, listed, { testResults: [...want, "packages/p/test/s0.test.ts"].map(row) }, ROOT, map).extra)
       .toEqual(["packages/p/test/s0.test.ts"]);
+  });
+
+  it("packs a run's reports named by the runner's checkout as this tree's files, and refuses a shard over the budget", () => {
+    const files = testFiles(ROOT).filter((f) => f.startsWith("test/")).slice(0, SQLITE_SHARDS + 1);
+    const runner = "/home/runner/actions-runner/_work/ohmail/ohmail";
+    const long = (SQLITE_BUDGET_S + 60) * 1000;
+    let t = 0;
+    const testResults = files.map((f, i) => {
+      const startTime = t;
+      t += i === 0 ? long : 10_000;
+      return { name: join(runner, f), startTime, endTime: t };
+    });
+    const { map: packed, seconds } = packSqlite(treeCosts(ROOT, [{ testResults: [...testResults, { name: join(runner, "gone/x.test.ts"), startTime: t, endTime: t + 1 }] }]), "1".repeat(40));
+    expect(packed.shards.flat().sort()).toEqual([...files].sort());
+    expect(packed.seconds).toEqual(seconds);
+    expect(Math.max(...seconds)).toBe(SQLITE_BUDGET_S + 60);
+    expect(checkSqliteMap(ROOT, packed)).toEqual([`OVER sqlite shard ${packed.shards.findIndex((s) => s.includes(files[0]!))} packs ${SQLITE_BUDGET_S + 60} s, over the ${SQLITE_BUDGET_S} s budget: raise SQLITE_SHARDS`]);
+    const unmeasured: SqliteShardMap = { measuredAt: packed.measuredAt, shards: packed.shards };
+    expect(checkSqliteMap(ROOT, unmeasured)).toEqual([`UNMEASURED the sqlite map records no seconds for its ${SQLITE_SHARDS} shards`]);
   });
 });
