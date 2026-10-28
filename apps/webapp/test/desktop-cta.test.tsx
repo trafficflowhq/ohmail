@@ -63,7 +63,7 @@ describe("the prompt component", () => {
       const [dismissed, setDismissed] = usePersistedFlag(DESKTOP_CTA_DISMISSED, false);
       if (dismissed) return null;
       return h(DesktopCta, {
-        href: "/#download",
+        href: "https://github.com/trafficflowhq/ohmail/releases/latest",
         label: "Get ohmail for desktop",
         dismissLabel: "Dismiss",
         onDismiss: () => setDismissed(true),
@@ -81,7 +81,7 @@ describe("the prompt component", () => {
     await mount();
     const link = host!.querySelector<HTMLAnchorElement>("a.rail-desktop-cta-link");
     expect(link, "no download link in the prompt").not.toBeNull();
-    expect(link!.getAttribute("href"), "the prompt no longer points at the download section").toBe("/#download");
+    expect(link!.getAttribute("href"), "the prompt no longer points at the download section").toBe("https://github.com/trafficflowhq/ohmail/releases/latest");
     expect(link!.getAttribute("target"), "the download opens over the reader's mailbox").toBe("_blank");
     expect(link!.textContent).toContain("Get ohmail for desktop");
   });
@@ -129,7 +129,7 @@ describe("the prompt is wired into the rail footer on the platform branch", () =
       /showDesktopCta\(\{\s*demo,\s*desktop:\s*desktopSection != null\s*\}\)/,
     );
     expect(shell, "the footer no longer renders the desktop prompt").toMatch(
-      /<DesktopCta[\s\S]*href="\/#download"/,
+      /<DesktopCta[\s\S]*href=\{DESKTOP_DOWNLOAD_URL\}/,
     );
   });
 });

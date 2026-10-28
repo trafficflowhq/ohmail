@@ -6,7 +6,7 @@ import { createPhoneThreadRead, type PhoneThreadRead } from "../src/ui/reader-se
 import {
   openedBodyFinal, readerChromeOverlap,
 } from "../src/ui/reader-marks";
-import { VISIT_HANDOFF_MS, hideVisit, resetVisitsForTests, showVisit, visitRecordFor } from "../src/ui/visit-records";
+import { VISIT_HANDOFF_MS, hideVisit, resetVisitsForTests, showVisit, visitKnew, visitRecordFor } from "../src/ui/visit-records";
 import {
   coverReader, onReaderCover, readerSees, resetReaderCoverForTests, setReaderWindowFocused,
 } from "../src/ui/reader-cover";
@@ -33,6 +33,7 @@ let ready = (_id: string): boolean => true;
 let opened: string | null = "open";
 let active = true;
 let record: ThreadRead;
+let knew: ((id: string) => boolean) | undefined;
 const flush = (): void => { for (let i = 0; i < 10 && frames.length > 0; i++) { const run = frames; frames = []; for (const f of run) f(); } };
 /** Time passes by `ms` (the looks already asked for run first): the dwell's timers that fall due run, and the looks they ask for. */
 const pass = (ms: number): void => {
@@ -58,6 +59,7 @@ function core(): PhoneThreadRead {
     now: () => clock,
     frame: (run) => { frames.push(run); return () => { frames = frames.filter((f) => f !== run); }; },
     after: (ms, run) => { const t = { at: clock + ms, run }; timers.push(t); return () => { timers = timers.filter((x) => x !== t); }; },
+    knew,
   });
 }
 function member(c: PhoneThreadRead, id: string, y: number, h = 400, group: "above" | "below" = "below"): void {
@@ -86,6 +88,7 @@ beforeEach(() => {
   ready = () => true;
   record = createThreadRead();
   record.enter(clock);
+  knew = undefined;
 });
 
 describe("a message turns read once its top has been in view for the dwell", () => {
@@ -624,12 +627,73 @@ describe("a fold keeps the visit (the reader remounts for the same message)", ()
     expect(visitRecordFor("open", clock)).not.toBe(first);
   });
 
+  it("the members a visit knew at its open: a fold keeps them, the next visit takes its own", () => {
+    showVisit("open", clock);
+    const first = visitKnew("open", () => ["open", "m1"], clock);
+    hideVisit("open", after);
+    showVisit("open", clock + 50);
+    expect(visitKnew("open", () => ["open", "m1", "m2"], clock + 50), "the remount's").toBe(first);
+    expect([...first]).toEqual(["open", "m1"]);
+    hideVisit("open", after);
+    showVisit("other", clock);
+    expect([...visitKnew("open", () => ["open", "m1", "m2"], clock)]).toEqual(["open", "m1", "m2"]);
+  });
+
   it("opening another message ends a visit nobody shows at once", () => {
     const first = visitRecordFor("open", clock);
     showVisit("open", clock);
     hideVisit("open", after);
     showVisit("other", clock);
     expect(visitRecordFor("open", clock)).not.toBe(first);
+  });
+});
+
+describe("the conversation as the visit knew it: an arrival below is no part of where the reader stands", () => {
+  /** The opened section 380 high at the column's top; m1 at 400..800 and m2 at 820..1220 below it. */
+  const known = (...ids: string[]): void => { knew = (id) => ids.includes(id); };
+  function laid(c: PhoneThreadRead): void {
+    c.viewport(800);
+    c.chrome(0);
+    c.offset("padded", 0);
+    c.offset("opened", 0, 380);
+    c.openedFrom(0, 40);
+    c.openedBody(100);
+    c.openedEnd(300);
+    c.offset("below", 400);
+    member(c, "m1", 0);
+    member(c, "m2", 420);
+  }
+
+  it("no foot before the opened section's layout has reported its height", () => {
+    known();
+    const c = core();
+    expect(c.knewFoot()).toBeNull();
+    c.offset("padded", 0);
+    c.offset("opened", 0);
+    expect(c.knewFoot(), "a y without its height").toBeNull();
+  });
+
+  it("every member below unknown: the opened section's foot", () => {
+    known();
+    const c = core();
+    laid(c);
+    expect(c.knewFoot()).toBe(380);
+    expect(c.layout("open").map((b) => b.id), "the arrivals are not in its layout").toEqual(["open"]);
+  });
+
+  it("a trailing unknown run: the last known member's foot", () => {
+    known("m1");
+    const c = core();
+    laid(c);
+    expect(c.knewFoot()).toBe(800);
+    expect(c.layout("open").map((b) => b.id)).toEqual(["open", "m1"]);
+  });
+
+  it("an unknown run drawn between: the known member's foot, less the run it was pushed down by", () => {
+    known("m2");
+    const c = core();
+    laid(c);
+    expect(c.knewFoot(), "m2 ends at 1220; m1's 420 before it").toBe(800);
   });
 });
 

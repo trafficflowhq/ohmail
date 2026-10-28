@@ -93,6 +93,7 @@ vi.mock("../src/ui/base", async () => {
     Scroller,
     Tap: (p: any) => React.createElement("div", { "data-rn": "Tap", "data-test": p.testID, ref: keep(p) }, p.children),
     Txt: (p: any) => React.createElement("span", null, p.children),
+    useListInsets: () => ({ paddingLeft: 0, paddingRight: 0, paddingBottom: 100 }),
   };
 });
 
@@ -1267,5 +1268,206 @@ describe("the squares walk the conversation", () => {
     pass(3000);
     flushNative();
     expect(world.glanced.flat(), "the newest was never on screen").not.toContain("p4");
+  });
+});
+
+/**
+ * AN ARRIVAL NEVER MOVES THE READER: the open held at the conversation's end (a short newest under two tall
+ * members) re-aimed on every layout, so a reply drawn below it loosened the clamp, scrolled the reader and
+ * read the reply with no input. The anchor and every kept place stand in the conversation the visit knew.
+ */
+describe("a reply that arrives below the opened message never moves the reader or reads itself", () => {
+  const G: Geo = { width: 700, view: 900, heights: [150, 1500, 1500], opened: 60 };
+  const NARROWER: Geo = { width: 620, view: 900, heights: [170, 1700, 1700], opened: 60 };
+  const endOf = (g: Geo): number => tops(g).content - g.view;
+  const settle = (ms = 300): void => {
+    for (let i = 0; i < ms; i += 16) { flushNative(); act(() => { vi.advanceTimersByTime(16); }); }
+    flushNative();
+  };
+  const conversation = (extra: { id: string; seen?: boolean }[] = []) => ({
+    ...mailOf("p4", [
+      ...["p1", "p2", "p3"].map((id) => ({ ...memberOf(id, "Mara"), later: false })),
+      ...extra.map((x) => ({ ...memberOf(x.id, "Person 04"), later: true, seen: x.seen ?? false })),
+    ]),
+    unread: true,
+  });
+  const dragTo = (y: number): void => {
+    act(() => { native.props!.onScrollBeginDrag?.(); });
+    native.offset = y;
+    act(() => { native.props!.onScroll?.({ nativeEvent: { contentOffset: { x: 0, y } } }); });
+    act(() => { native.props!.onScrollEndDrag?.({ nativeEvent: { contentOffset: { x: 0, y } } }); });
+  };
+  /** Members below the opened message, top down, in a device's order: the content first, then the column. */
+  const layBelow = (el: HTMLElement, g: Geo, rows: [string, number][]): void => {
+    const belowY = tops(g).opened + g.opened + 34;
+    const inner = rows.reduce((s, [, hh], i) => s + hh + (i > 0 ? 12 : 0), 0);
+    native.content = belowY + inner + 100;
+    act(() => { native.props!.onContentSizeChange?.(g.width, native.content); });
+    lay(views(el).padded, { y: 0, height: native.content - 100, width: g.width });
+    lay(views(el).below, { y: belowY, height: inner, width: g.width });
+    let y = 0;
+    for (const [mid, hh] of rows) {
+      const p = views(el).member(mid);
+      lay(p.panel, { y, height: hh, width: g.width - 40 });
+      lay(p.header, { y: 18, height: 22 });
+      lay(p.body, { y: 50, height: 0 });
+      lay(p.end, { y: hh - 18, height: 0 });
+      y += hh + 12;
+    }
+  };
+  const rerender = (mail: unknown): void => {
+    world.mail = mail;
+    act(() => root!.render(h(MessageReader, { id: "p4" })));
+  };
+  /** A fresh open at G, untouched: it lands clamped at the end. */
+  const openAtEnd = (): HTMLElement => {
+    forgetPaneScroll("msg:p4");
+    world.mail = conversation();
+    const el = mountReader("p4");
+    layAt(el, G);
+    settle(1000);
+    expect(native.offset, "the premise: the open lands at the end").toBe(endOf(G));
+    return el;
+  };
+  const quiet = (): void => { pass(3000); flushNative(); };
+
+  it("an untouched open at the end: the reply is drawn, the reader stays and the reply stays unread", () => {
+    const el = openAtEnd();
+    quiet();
+    const asked0 = native.asked.length;
+    rerender(conversation([{ id: "p5" }]));
+    layBelow(el, G, [["p5", 600]]);
+    settle(1000);
+    quiet();
+    expect(native.offset, "the reader moved by itself").toBe(endOf(G));
+    expect(native.asked.slice(asked0).filter((y) => y !== endOf(G)), "no scroll asked away from where it stands").toEqual([]);
+    expect(world.glanced.flat(), "the reply read with no input").not.toContain("p5");
+  });
+
+  it("the reply's panel reported before the content: still no move", () => {
+    const el = openAtEnd();
+    const asked0 = native.asked.length;
+    rerender(conversation([{ id: "p5" }]));
+    const belowY = tops(G).opened + G.opened + 34;
+    const p5 = views(el).member("p5");
+    lay(views(el).below, { y: belowY, height: 600, width: G.width });
+    lay(p5.panel, { y: 0, height: 600, width: G.width - 40 });
+    lay(p5.header, { y: 18, height: 22 });
+    lay(p5.body, { y: 50, height: 0 });
+    lay(p5.end, { y: 582, height: 0 });
+    native.content = belowY + 600 + 100;
+    act(() => { native.props!.onContentSizeChange?.(G.width, native.content); });
+    lay(views(el).padded, { y: 0, height: native.content - 100, width: G.width });
+    settle(1000);
+    quiet();
+    expect(native.offset).toBe(endOf(G));
+    expect(native.asked.slice(asked0).filter((y) => y !== endOf(G))).toEqual([]);
+    expect(world.glanced.flat()).not.toContain("p5");
+  });
+
+  it("a reply drawn between the opened message and a later member it knew: the reader stays", () => {
+    forgetPaneScroll("msg:p4");
+    world.mail = conversation([{ id: "p6", seen: true }]);
+    const el = mountReader("p4");
+    layAt(el, G);
+    layBelow(el, G, [["p6", 200]]);
+    settle(1000);
+    const before = native.offset;
+    expect(before, "the premise: landed at the end").toBe(native.content - G.view);
+    quiet();
+    rerender(conversation([{ id: "p5" }, { id: "p6", seen: true }]));
+    layBelow(el, G, [["p5", 600], ["p6", 200]]);
+    settle(1000);
+    quiet();
+    // In view by layout alone (drawn between members on screen), so it reads by the shipped rule.
+    expect(native.offset).toBe(before);
+  });
+
+  it("the person's own scroll to the very end, a reply, then a new width: the end the visit knew, the reply unread", () => {
+    forgetPaneScroll("msg:p4");
+    world.mail = conversation();
+    const el = mountReader("p4");
+    layAt(el, G);
+    settle(1000);
+    dragTo(tops(G).p2);
+    settle(100);
+    dragTo(endOf(G));
+    settle(300);
+    rerender(conversation([{ id: "p5" }]));
+    layBelow(el, G, [["p5", 600]]);
+    settle(1000);
+    quiet();
+    expect(native.offset).toBe(endOf(G));
+    layAt(el, NARROWER);
+    layBelow(el, NARROWER, [["p5", 680]]);
+    settle(1000);
+    quiet();
+    expect(native.offset, "the known end at the new width").toBe(endOf(NARROWER));
+    expect(world.glanced.flat(), "the reply read after a new width, never scrolled to").not.toContain("p5");
+  });
+
+  it("an untouched open at the end, a reply, then a remount at another width and back: the known end, the reply unread", () => {
+    let el = openAtEnd();
+    rerender(conversation([{ id: "p5" }]));
+    layBelow(el, G, [["p5", 600]]);
+    settle(1000);
+    const out: number[] = [];
+    for (const [g, reply] of [[NARROWER, 680], [G, 600]] as const) {
+      act(() => root?.unmount());
+      host?.remove();
+      pass(300);
+      el = mountReader("p4");
+      layAt(el, g);
+      layBelow(el, g, [["p5", reply]]);
+      settle(1000);
+      quiet();
+      out.push(native.offset);
+    }
+    expect(out).toEqual([endOf(NARROWER), endOf(G)]);
+    expect(world.glanced.flat()).not.toContain("p5");
+  });
+
+  it("a strip landing on the newest, untouched, then a reply: the reader stays, the reply unread", () => {
+    world.mail = conversation();
+    place.publishThreadPlace([{ id: "p1", kind: "unread", sender: "Mara" }, { id: "p2", kind: "unread", sender: "Mara" },
+      { id: "p3", kind: "unread", sender: "Mara" }, { id: "p4", kind: "unread", sender: "Ben" }], "p3");
+    expect(place.pressThreadPlace("p4")).toBe(false);
+    forgetPaneScroll("msg:p4");
+    const el = mountReader("p4");
+    layAt(el, G);
+    settle(1000);
+    const before = native.offset;
+    rerender(conversation([{ id: "p5" }]));
+    layBelow(el, G, [["p5", 600]]);
+    settle(1000);
+    quiet();
+    expect(native.offset).toBe(before);
+    expect(world.glanced.flat()).not.toContain("p5");
+  });
+
+  it("control: dragged up into the third member first, the arrival leaves the reader there and the reply unread", () => {
+    const el = openAtEnd();
+    const y = tops(G).p3 + 400;
+    dragTo(y);
+    settle(300);
+    rerender(conversation([{ id: "p5" }]));
+    layBelow(el, G, [["p5", 600]]);
+    settle(1000);
+    quiet();
+    expect(native.offset).toBe(y);
+    expect(world.glanced.flat()).not.toContain("p5");
+  });
+
+  it("control: after the arrival the person's own drag reaches the reply, and it reads", () => {
+    const el = openAtEnd();
+    rerender(conversation([{ id: "p5" }]));
+    layBelow(el, G, [["p5", 600]]);
+    settle(1000);
+    quiet();
+    expect(world.glanced.flat(), "the premise: not read before the drag").not.toContain("p5");
+    dragTo(native.content - G.view);
+    settle(300);
+    quiet();
+    expect(world.glanced.flat()).toContain("p5");
   });
 });

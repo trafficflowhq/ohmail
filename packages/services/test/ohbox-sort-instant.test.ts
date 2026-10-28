@@ -37,6 +37,13 @@ describe("sortAtOf — the clamp, both directions, and the null contract", () =>
     expect(sortAtOf(future, NOW)).toBe(NOW.toISOString());
   });
 
+  it("a header ahead of a known arrival never decides, inside the tolerance too", () => {
+    // The tester's letter: Date two days ahead, appended seconds later, so just inside 48 h.
+    for (const ahead of [1, SORT_TOLERANCE_MS - 4000, SORT_TOLERANCE_MS]) {
+      expect(sortAtOf(new Date(NOW.getTime() + ahead), NOW), `+${ahead} ms`).toBe(NOW.toISOString());
+    }
+  });
+
   it("exactly at the tolerance boundary the header still decides; one ms past it does not", () => {
     const atEdge = new Date(NOW.getTime() - SORT_TOLERANCE_MS);
     const pastEdge = new Date(NOW.getTime() - SORT_TOLERANCE_MS - 1);

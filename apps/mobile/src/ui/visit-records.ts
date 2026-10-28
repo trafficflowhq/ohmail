@@ -20,6 +20,16 @@ interface Visit {
   record: ThreadRead;
   shown: number;
   end: (() => void) | null;
+  /** The members this visit knew: drawn at its open, or by the person's own scroll or press since. */
+  knew: Set<string> | null;
+}
+
+/** The visit's known members, taken from `members` on its first ask (its open); a remount keeps them. */
+export function visitKnew(id: string, members: () => readonly string[], now: number): Set<string> {
+  visitRecordFor(id, now);
+  const v = visits.get(id)!;
+  v.knew ??= new Set(members());
+  return v.knew;
 }
 
 const visits = new Map<string, Visit>();
@@ -36,7 +46,7 @@ export function visitRecordFor(id: string, now: number): ThreadRead {
   if (!v) {
     const record = createThreadRead();
     record.enter(now);
-    v = { record, shown: 0, end: null };
+    v = { record, shown: 0, end: null, knew: null };
     visits.set(id, v);
   }
   return v.record;

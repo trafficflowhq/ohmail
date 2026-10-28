@@ -6,6 +6,8 @@ export interface AttachmentFault {
   code: string | null;
   retryable: boolean;
   status: number | null;
+  /** The engine asks for this picture again on its own, shortly. */
+  reasking?: boolean;
 }
 
 /**
@@ -29,5 +31,6 @@ export function attachmentFaultNote(f: AttachmentFault): string {
     signed_out: Copy.attachmentFaultSignedOut,
   };
   const said = by[attachmentFaultClass(f.code, f.status)];
+  if (f.reasking === true) return `${said} ${Copy.attachmentRetryingSoon}`;
   return f.retryable ? `${said} ${Copy.attachmentTapToRetry}` : said;
 }

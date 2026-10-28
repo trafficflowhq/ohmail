@@ -13,7 +13,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AddressText, Avatar, Badge, Button, Icon } from "@ohmail/ui";
-import { forwardOffered, isForwardedByUs, isOwnOutbound, isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
+import { forwardOffered, isForwardedByUs, isOwnOutbound, isProtectedMessage, shownDateOf, type EngineMessage } from "@ohmail/client-engine";
 import { AwayMark } from "./AwayMark";
 import { MessageBody } from "../components/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
@@ -251,7 +251,7 @@ export function MessageHeader({
             >
               {/* `title` and `dateTime` stay on the `<time>` itself — hover over the stamp shows
                   whichever form is NOT on screen, and the machine value is the element's own. */}
-              <time dateTime={message.date ?? undefined} title={(showAbs ? rel : abs) || undefined}>
+              <time dateTime={shownDateOf(message) ?? undefined} title={(showAbs ? rel : abs) || undefined}>
                 {showAbs ? abs : rel}
               </time>
             </button>
@@ -315,6 +315,8 @@ export function MessageHeader({
 export interface PanelReadWiring {
   look: "tint" | "dot";
   onMarkUnread: (id: string) => void;
+  /** A landing not entered yet: ask for no embedded picture. */
+  previewing?: boolean;
 }
 
 export function MessageCard({
@@ -458,7 +460,7 @@ export function MessageCard({
             resolvedRemoteImages={chrome.remoteImages?.resolvedFor(message.id)}
             onRemoteImages={onRemoteImages}
             cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
-            onCidImages={chrome.attachments ? onCidImages : undefined}
+            onCidImages={chrome.attachments && !wiring?.previewing ? onCidImages : undefined}
             onNotice={onNotice}
           />
         </div>

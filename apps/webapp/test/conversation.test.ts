@@ -1592,3 +1592,22 @@ describe("a sibling tile's eye dispatches the preview for the SIBLING's message"
     expect(previewed).toContain("mine:att-9");
   });
 });
+
+describe("a landing not entered yet asks for no embedded picture", () => {
+  it("previewing: no ask; entered: the focused panel and its siblings ask", async () => {
+    const asked: Array<[string, string[]]> = [];
+    attachmentsChrome = { ...readyAttachments({}), needCidImages: (id: string, cids: string[]) => { asked.push([id, cids]); } };
+    bodyHtml = '<table width="600"><tr><td><p>hello there</p><img src="cid:logo@x" width="40" height="40" alt="logo"></td></tr></table>';
+    const { createThreadRead } = await import("@ohmail/client-engine");
+    const wiring = { look: "tint", record: createThreadRead(), onRead: () => {}, onEnter: () => {}, onMarkUnread: () => {} };
+    threadRead = { ...wiring, previewing: true };
+    conversation = [A, B, C];
+    await mountPane(C);
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+    expect(asked, "a preview asks for no picture").toEqual([]);
+    threadRead = { ...wiring, previewing: false };
+    await rerender!();
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+    expect([...new Set(asked.map(([id]) => id))].sort()).toEqual(["a", "b", "c"]);
+  });
+});

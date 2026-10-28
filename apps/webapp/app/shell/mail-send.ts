@@ -455,6 +455,21 @@ export function standingSendKey(engine: OhmailEngine, lane: string): string | nu
   return null;
 }
 
+/**
+ * THE ROW THE LANE'S STANDING SEND NAMES OR MADE (`createdRow ?? draftId`), whichever window pressed it: this
+ * engine's waiting entry first, then the durable outbox row. `null` before it has one, `undefined` when none stands.
+ */
+export function standingSendRow(engine: OhmailEngine, lane: string): string | null | undefined {
+  const key = standingSendKey(engine, lane);
+  if (key === null) return undefined;
+  const own = typeof engine.waitingSends === "function" ? engine.waitingSends().find((w) => w.key === key)?.draftId : undefined;
+  if (own) return own;
+  const disk = typeof engine.read === "function" ? engine.read().list(OUTBOX_TYPE) : [];
+  const r = (disk as ReadonlyArray<OutboxRow & { createdRow?: { id?: unknown }; mutation?: { draftId?: string | null } }>)
+    .find((x) => x.key === key && pendingSendRow(x));
+  return (typeof r?.createdRow?.id === "string" ? r.createdRow.id : null) ?? r?.mutation?.draftId ?? null;
+}
+
 /** Whether a send of this lane still on its way (queued, on the wire or on disk) goes from this row. */
 export function sendNamesRow(engine: OhmailEngine, lane: string, row: string): boolean {
   const names = (m: { kind?: string } | undefined): boolean => m?.kind === "mail_send"

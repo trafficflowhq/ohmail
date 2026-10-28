@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import {
   OhmailEngine,
   MemoryMirrorStore,
@@ -10,10 +10,12 @@ import {
   consentPartition,
   mutationEffects,
   presentationReader,
+  pressRules,
   type EngineMessage,
   type EngineMutation,
   type Folder,
   type MirrorStore,
+  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
@@ -51,11 +53,11 @@ function msg(id: string, folder: Folder, from = "s@letters.example", over: Parti
   };
 }
 
-async function mirror(ms: EngineMessage[] = [msg("h1", "ohmail/Screener"), msg("i1", "INBOX")]): Promise<MirrorStore> {
+async function mirror(ms: EngineMessage[] = [msg("h1", "ohmail/Screener"), msg("i1", "INBOX")], more: SyncChange[] = []): Promise<MirrorStore> {
   const store = new MemoryMirrorStore();
   await store.load();
-  await store.applyChanges(ms.map((m): SyncChange => (
-    { type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })));
+  await store.applyChanges([...ms.map((m): SyncChange => (
+    { type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })), ...more]);
   return store;
 }
 
@@ -234,5 +236,67 @@ describe("a whole-domain card names and files every waiting letter at the domain
     await act(async () => { await vi.advanceTimersByTimeAsync(COMMIT_MS + 50); });
     await act(async () => { await Promise.resolve(); });
     expect(sent.filter((m) => m.kind === "move" && m.messageId === "c1")).toEqual([]);
+  });
+});
+
+/* A READER-ONLY INSTALL: the card's press past the gate plans over the organizer's copy (`pressRules`),
+   handed in by the shell's routing window as the sender sheet's presses read it. */
+describe("the card's press past the gate where a rule change travels to the organizer", () => {
+  const FROM = "s@letters.example";
+  const AT = "2026-10-09T09:00:00.000Z";
+  // This install's row, written long ago; the organizer has since removed the rule.
+  const stale = {
+    id: "r-stale", kind: "sender", match: FROM, destination: "ohmail/News", priority: 0, provenance: "manual", enabled: true,
+    subjectContains: null, bodyContains: null, stats: { hits: 0, lastHitAt: null, demotions: 0 }, createdAt: AT, updatedAt: AT,
+  } as RuleDTO;
+  const readerMirror = () => mirror([msg("i2", "INBOX")], [
+    { type: "rule", op: "create", id: "r-stale", seq: ++seq, updatedAt: AT, entity: stale },
+    { type: "mailbox_profile", op: "create", id: "mb", seq: ++seq, updatedAt: AT, entity: {
+      mailboxId: "mb", rules: [], asOf: AT, from: { kind: "local", name: "Laptop", since: null }, updatedAt: AT, applied: [],
+    } },
+  ] as SyncChange[]);
+
+  async function mountShell(engine: OhmailEngine, travels: boolean): Promise<() => StateLike> {
+    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useShellDispatch } = await import("../app/shell/shell-dispatch.js");
+    let latest: StateLike | null = null;
+    function Probe(): null {
+      const [v, setV] = React.useState(0);
+      React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
+      const raw = engine.read();
+      const d = useShellDispatch({ engine, reader: raw, t: useTranslations(), demo: false, refreshFacts: () => {}, toast: () => {} });
+      // As the shell's verbs set it.
+      d.routing.planOver.current = travels
+        ? (read) => pressRules(read, { travels: true, queued: [], applied: [], unsettled: [], now: NOW }) : null;
+      latest = useScreenerState(
+        engine, v, ((m: string) => { said.push(m); }) as never, undefined, presentationReader(raw, consentPartition(raw, { now: NOW })),
+        true, undefined, [], [], undefined, d.screenerRelease,
+      ) as unknown as StateLike;
+      return null;
+    }
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "UTC", now: NOW, children: h(Probe) }));
+    });
+    await settleFirstPaint();
+    return () => latest!;
+  }
+
+  it("over the copy the press writes the sender's rule; over this install's row, none", async () => {
+    for (const travels of [false, true]) {
+      sent = [];
+      const get = await mountShell(engineOver(await readerMirror()), travels);
+      expect(get().waiting.map((w) => w.from.address), "the sender is not waiting").toEqual([FROM]);
+      await press(get);
+      const rules = sent.filter((m) => m.kind.startsWith("rule_"));
+      expect(rules, `travels ${travels}`).toEqual(travels
+        ? [expect.objectContaining({ kind: "rule_create", ruleKind: "sender", match: FROM, destination: "ohmail/News", applyRetro: false })]
+        : []);
+      await act(async () => root!.unmount());
+      host?.remove();
+      root = null;
+    }
   });
 });

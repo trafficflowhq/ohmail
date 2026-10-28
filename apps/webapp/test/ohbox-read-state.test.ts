@@ -10,8 +10,8 @@ import messages from "../messages/en.json";
 /**
  * READ-STATE IN THE OHBOX. Two judgements pull against each other: an open (Enter, a click on a
  * row, a mobile tap) ENTERS the conversation, and a j/k sweep past a row is a preview that
- * establishes NOTHING, however long it rests — get that wrong and a keyboard user empties their
- * own Ohbox by scrolling through it. In an entered conversation a message turns read once its
+ * establishes NOTHING until the cursor rests on it — get that wrong and a keyboard user empties
+ * their own Ohbox by scrolling through it. In an entered conversation a message turns read once its
  * first and last line have been on screen (the thread-read rule), and that read is SAVED at once.
  * What still waits for the way out (a cursor move, unmount, the sheet closing where it was the
  * reading, Back) is the row's PLACE, so nothing re-sorts under the reader. The reading column has
@@ -33,7 +33,7 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-/** The old dwell, kept as a length of rest: a preview resting this long still reads nothing. */
+/** j's old dwell: a preview left within it reads nothing (the 1.3 s rest and the 0.7 s dwell take longer). */
 const DWELL_MS = 2000;
 
 interface Msg {
@@ -557,7 +557,7 @@ describe("opening a message enters it: what is on screen is read and SAVED; leav
   });
 });
 
-describe("a preview reads nothing — j/k is navigating, however long it rests", () => {
+describe("a preview passed reads nothing — j/k is navigating; one rested on reads", () => {
   it("a j/k sweep past several rows commits NOTHING", async () => {
     // THE GUARD that matters most here. Make `selectByUser` enter the conversation and this goes
     // red: every row the sweep touched is marked read, i.e. a keyboard user empties their own
@@ -575,15 +575,20 @@ describe("a preview reads nothing — j/k is navigating, however long it rests",
     expect(marked).toEqual([]);
   });
 
-  it("a preview resting forty seconds saves nothing, with the message on screen", async () => {
-    // Base: the 2 s dwell saved it. A preview is never a read, so nobody's mail turns read by a
-    // cursor left on it.
+  it("a preview left within the rest saves nothing, with the message on screen; ↵ reads it", async () => {
+    await mount([{ id: "a", subject: "A", unread: true }, { id: "b", subject: "B", unread: true }]);
+    await key("j");
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(marked).toEqual([]);
+    await key("Enter");
+    await layout.passDwell();
+    expect(marked).toEqual([glance("b")]);
+  });
+
+  it("a preview rested on forty seconds saves it once", async () => {
     await mount([{ id: "a", subject: "A", unread: true }, { id: "b", subject: "B", unread: true }]);
     await key("j");
     await idle(20);
-    expect(marked).toEqual([]);
-    await key("Enter");                     // …and entering it is what reads
-    await layout.passDwell();
     expect(marked).toEqual([glance("b")]);
   });
 
@@ -594,7 +599,7 @@ describe("a preview reads nothing — j/k is navigating, however long it rests",
       { id: "c", subject: "C", unread: true },
     ]);
     await key("j");
-    await act(async () => { vi.advanceTimersByTime(DWELL_MS); });
+    await act(async () => { vi.advanceTimersByTime(DWELL_MS - 100); });
     await key("j");
     expect(marked).toEqual([]);
   });

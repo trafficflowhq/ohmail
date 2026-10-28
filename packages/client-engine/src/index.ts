@@ -384,6 +384,7 @@ export {
   dateClock,
   fullDateTime,
   messageStamp,
+  shownDateOf,
   weekdayClock,
   weekdayDateClock,
 } from "./stamp.js";
@@ -492,6 +493,8 @@ export {
 export {
   foldOhboxRows,
   pileSubjectIds,
+  doneSubjectIds,
+  pinsSpentBy,
   ohboxRows,
   ohboxUnreadIds,
   ownFaceOfRow,
@@ -544,7 +547,7 @@ export {
 export { forwardOffered, forwardPress, type ForwardAsk, type ForwardPress } from "./forward-offer.js";
 
 // Undo semantics — every verb's undo class, and the wire's own reversal for the "inverse" kinds.
-export { inverseMutations, UNDO_CLASS, type UndoClass, type UndoSubject } from "./undo.js";
+export { inverseMutations, undoInOrder, UNDO_CLASS, type UndoClass, type UndoSubject } from "./undo.js";
 // One chunk size for a read pressed over a set and for its Undo (the route caps a PATCH at 200 ids).
 export { MARK_SEEN_CHUNK, chunkMarkSeen } from "./mark-seen-chunk.js";
 // The thread-read rule both readers share: when a message in an entered conversation turns read.
@@ -809,8 +812,11 @@ export {
   INLINE_IMAGE_MAX_BYTES,
   INLINE_IMAGE_MAX_PARTS,
   INLINE_IMAGE_MAX_TOTAL_BYTES,
+  PART_REASK_DELAYS_MS,
   type KeptAsNewDraft,
 } from "./engine.js";
+/** One mailbox's byte asks in line: never more at once than the API's per-mailbox door admits. */
+export { PART_FETCHES_PER_MAILBOX, BUSY_PATIENCE_MS } from "./part-lane.js";
 
 /* THE MIRROR'S BOUNDS TABLE — total over every entity type, so a type added without an answer
    fails this package's build. Exported so a census outside the package can drive its claims. */

@@ -94,10 +94,11 @@ import {
   REPLY_DRAFT_PREFIX,
   REPLY_META_PREFIX,
   SEND_IN_FLIGHT_PHASES,
-  sendKeyOf,
   sendLockOwed,
   sendPendingInDurableOutbox,
   sendPendingInOutbox,
+  standingSendKey,
+  standingSendRow,
   useMailSend,
   writeReplyDraft,
   writeReplyMeta,
@@ -116,7 +117,7 @@ import { go, type Route } from "./routing";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { documentHidden } from "./document-hidden";
 import { RESTART_FLUSH_MS, holdFilesForRestart, holdForRestart } from "./app-update";
-import { attachSendLockDraft, discardDecision, holdOf, releaseSendLockForRow, sendRecordsNaming } from "./send-lock";
+import { attachSendLockDraft, discardDecision, holdOf, recordForEndedSend, releaseSendLockForRow, sendRecordsNaming } from "./send-lock";
 import { setComposeDoor } from "./compose-door";
 import { releaseSendAndDone } from "./send-release";
 import type { DiscardRefusal } from "../views/DraftsView";
@@ -657,10 +658,11 @@ export function useShellCompose({
     if (target === null) { setReplyTo(null); return; }
     const lane = replyModeRef.current === "forward" ? inlineForwardKey(target) : target;
     const waitedToGo = mailSend.stateOf(lane).phase === "queued";
-    // The row the waiting send names or made (a press with none makes one first), kept while its Cancel is owed.
-    const listed = waitingRowOf(lane);
-    const made = listed !== undefined ? listed : cancelledRows.current.get(lane) ?? null;
-    if (made !== null) cancelledRows.current.set(lane, made); else cancelledRows.current.delete(lane);
+    // The row the lane's standing send names or made, pressed here or in another window, read before the Cancel ends it.
+    // A send another surface pressed (the composer's forward of this message) keeps its row.
+    const standing = standingSendKey(engine, lane);
+    const pressedOnLane = standing !== null && recordForEndedSend(standing)?.lane === lane;
+    const made = waitedToGo || pressedOnLane ? standingSendRow(engine, lane) : undefined;
     void (async () => {
       const said = await mailSend.withdraw(lane);
       if (said === "already_sent") {
@@ -682,11 +684,10 @@ export function useShellCompose({
         toast(t("compose.cancelUnreachable"));
         return;
       }
-      cancelledRows.current.delete(lane);
-      // A send withdrawn before the wire: the words it took from the outbox's create are a draft again.
+      // A send withdrawn before the wire: its words are a draft again in the row it named or made, bound
+      // before the close writes, never a second one beside it.
+      if (made != null) takeWithdrawnRow(lane, made);
       if (waitedToGo) {
-        // …in the row it named or made, bound before the close writes, never a second one beside it.
-        if (made !== null) takeWithdrawnRow(lane, made);
         // Withdrawn as an outcome would end it: a create the press held is the reply's again.
         replyAutosave.notSent(lane);
         replyAutosave.cancelled(lane);
@@ -1151,20 +1152,6 @@ export function useShellCompose({
   const takeWithdrawnRow = useStableCallback((lane: string, rowId: string) => {
     if (replyRows.current.get(lane)?.row !== rowId) takeLaneRow(lane, rowId);
   });
-  /**
-   * THE ROW A LANE'S WAITING SEND NAMES OR MADE (`WaitingSend.draftId`): `null` before it has one,
-   * `undefined` when no send of the lane waits — nor one whose Cancel is owed its answer.
-   */
-  const waitingRowOf = (lane: string): string | null | undefined => {
-    const surface = lane.startsWith("fwd:") ? "inline" : "compose";
-    return (typeof engine.waitingSends === "function" ? engine.waitingSends() : [])
-      .find((w) => sendKeyOf(w.mutation as unknown as MailSendMutation, surface) === lane)?.draftId;
-  };
-  /**
-   * Per lane: the row its waiting send named or made, seen at a Cancel the server has not answered yet. Only
-   * for a Cancel answered at once (`closeReply`), which no ending names it for: a later ending names its own.
-   */
-  const cancelledRows = useRef(new Map<string, string>());
   /** The lane's row while the hold leaves it free to send from; forgotten once the mirror loses it. */
   const laneRowOf = useStableCallback((lane: string): string | null => {
     const held = replyRows.current.get(lane);
@@ -1473,8 +1460,6 @@ export function useShellCompose({
     // The row a refusal left is the lane's own: the Drafts door to it gets the press back too.
     const owed = handedPress.current.get(key);
     if (!accepted && owed !== undefined && leftRow !== undefined) owed.row = leftRow.rowId;
-    // The send ended: the row its Cancel saw is spent with it.
-    cancelledRows.current.delete(key);
     // Withdrawn before the wire (a Cancel answered late, or pressed in another window): the words are a
     // draft again, in the row the send named or made, which its ending names.
     if (!accepted && phase === "idle") {

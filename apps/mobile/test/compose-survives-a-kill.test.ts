@@ -13,6 +13,7 @@ import type { LetterWords } from "../src/compose/letter-keeper";
 import { dto, listen, mailServer } from "./helpers/mail-server";
 import { deviceDisk } from "./helpers/device-disk";
 import { wordsOf } from "../src/compose/letter-store";
+import { baseAfter, baseFor, waitedFor, type DraftBase } from "../src/ui/compose-keep";
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 const holdTheClock = (): void => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); };
@@ -50,9 +51,12 @@ async function launch(
   const { letterDoor } = await import("../src/compose/letter-store");
   let dead = false;
   /** cut: every write fails as a network error; swallow: a PUT reaches the origin, its answer never comes back. */
-  const net = { offline: opts.offline === true, cut: false, swallow: false };
+  /** held: the first request of that method waits for `until` (a link slower than the replay deadline). */
+  const net = { offline: opts.offline === true, cut: false, swallow: false, held: null as null | { method: string; until: Promise<void> } };
   const fetch = (url: string, init?: RequestInit): Promise<Response> => {
     if (dead) return never();
+    const held = net.held;
+    if (held && init?.method === held.method) { net.held = null; return held.until.then(() => fetch(url, init)); }
     if (net.offline && init?.method === "POST") return Promise.reject(new TypeError("Network request failed"));
     if (net.cut && (init?.method ?? "GET") !== "GET") return Promise.reject(new TypeError("Network request failed"));
     if (net.swallow && init?.method === "PUT") { void globalThis.fetch(url, init).catch(() => undefined); return never(); }
@@ -91,6 +95,7 @@ async function launch(
     firstSync: () => engine.syncOnce().then(() => undefined),
     afterFlush: () => { asked(); return new Promise<void>((r) => { flushWaiters.push(r); }); },
     parse: live.keptRecipients,
+    keptAsNew: () => engine.keptAsNewDrafts(),
   };
   /** `world.tsx`'s restore, as the session runs it. */
   const restore = async () => {
@@ -104,6 +109,7 @@ async function launch(
     const settled = await live.flushQueued(engine, actions.releaseConfirmed);
     const loose = restoring.settleLetters(letters, keeping.ownedLetters(), settled);
     for (const go of flushWaiters.splice(0)) go();
+    for (const say of live.sayFlushedSaves(settled)) toast(say);
     if (loose.length > 0) {
       const r = await restoring.restoreLetters({ ...restoreDeps, owned: keeping.ownedLetters(), only: new Set(loose.map((x) => x.letter)) });
       toast(refuse(r.kept > 0 ? "replyChangedElsewhere" : "replyChangedElsewhereLater"));
@@ -758,5 +764,210 @@ describe("a letter being written survives a hard stop", () => {
           .toEqual({ body: "Typed on the phone, and more while it saved", rows: 1, said: [sayArg(refuse("lettersKept", 1))] });
       } finally { fake.server.close(); }
     }, 60_000);
+
+    /** The sheet's quiet save of d-9, as MessageActions drives it: `letter.saved` once kept. */
+    const sheetSave = async (
+      first: Awaited<ReturnType<typeof launch>>, letter: ReturnType<Awaited<ReturnType<typeof launch>>["compose"]>,
+      base: { current: DraftBase }, body: string,
+    ) => {
+      let row = "d-9";
+      const answer = await first.actions.draftKeep({
+        mode: "new", messageId: null, mailboxId: "mb-1", to: TO, cc: [], bcc: [], subject: "Plans", body, files: 0, draftId: "d-9", quiet: true,
+        revision: baseFor(base.current, "d-9"), waited: waitedFor(base.current, "d-9"), forked: () => undefined, rebind: () => undefined,
+        row: (r) => { if (r.draftId !== null) row = r.draftId; base.current = baseAfter(base.current, r); },
+      });
+      if (answer === "kept") letter.saved(row, wordsOf({ ...WORDS, body }), baseFor(base.current, row));
+      return answer;
+    };
+    /** Opened from Drafts at rev-0, typed offline, the sheet's save queued; `then` runs before the kill. */
+    const queuedThenKilled = async (
+      fake: ReturnType<typeof mailServer>, origin: string, disk: ReturnType<typeof deviceDisk>,
+      then: (letter: ReturnType<Awaited<ReturnType<typeof launch>>["compose"]>) => void = () => undefined,
+    ) => {
+      const first = await launch(disk, origin, { revisionOf: versionOf(fake) });
+      await first.engine.syncOnce();
+      holdTheClock();
+      const letter = first.compose({ draftId: "d-9", savedAs: wordsOf(OPENED), revision: "rev-0", words: OPENED });
+      then(letter);
+      letter.edit({ ...WORDS, body: "Typed offline" });
+      vi.advanceTimersByTime(500);
+      first.net.cut = true;
+      expect(await sheetSave(first, letter, { current: { row: "d-9", rev: "rev-0" } }, "Typed offline")).toBe("kept");
+      return { first, letter };
+    };
+    /** `world.tsx`'s launch: the restore starts, the reconnect flush runs, the restore ends. */
+    const relaunch = async (disk: ReturnType<typeof deviceDisk>, origin: string, fake: ReturnType<typeof mailServer>) => {
+      const next = await launch(disk, origin, { revisionOf: versionOf(fake) });
+      const restored = next.restore();
+      await Promise.race([restored, next.waitsOnFlush]);
+      await next.flush();
+      await restored;
+      await next.letters.landed();
+      return next;
+    };
+
+    it("an autosave queued offline, killed, the desktop saved it since: the phone's words are a new draft, said as kept, never as failed", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const { first } = await queuedThenKilled(fake, origin, disk);
+        await first.letters.landed();
+        kill(first, disk);
+        expect((await rewrite(origin, DESKTOP, "rev-0")).status).toBe(200);
+
+        const next = await relaunch(disk, origin, fake);
+        const mine = drafts(fake).find((d) => d.id !== "d-9");
+        expect({ theirs: fake.draft("d-9")?.body, mine: mine?.body, rows: drafts(fake).length, sent: sends(fake).length, said: next.said })
+          .toEqual({ theirs: DESKTOP, mine: "Typed offline", rows: 2, sent: 0, said: [sayArg(refuse("lettersKeptChangedElsewhere", 1))] });
+        expect(next.letters.letters()).toEqual([]);
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    it("the same with a file: the file goes with the phone's words, not with the desktop's version", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const { first } = await queuedThenKilled(fake, origin, disk, (letter) => {
+          letter.addFile({ filename: "plan.pdf", contentType: "application/pdf", contentBase64: PHOTO, sizeBytes: 2048 });
+        });
+        await first.letters.landed();
+        kill(first, disk);
+        expect((await rewrite(origin, DESKTOP, "rev-0")).status).toBe(200);
+
+        const next = await relaunch(disk, origin, fake);
+        const mine = drafts(fake).find((d) => d.id !== "d-9");
+        expect(next.letters.filesOf(String(mine?.id)).map((f) => f.filename), "the file did not follow the phone's words").toEqual(["plan.pdf"]);
+        expect(next.letters.filesOf("d-9"), "the phone's file stayed on the desktop's version").toEqual([]);
+        expect({ mine: mine?.body, rows: drafts(fake).length, said: next.said })
+          .toEqual({ mine: "Typed offline", rows: 2, said: [sayArg(refuse("lettersKeptChangedElsewhere", 1))] });
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    it("typed on after the queued autosave, killed, the desktop saved it since: one new draft with the newest words, one sentence", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const { first, letter } = await queuedThenKilled(fake, origin, disk);
+        letter.edit({ ...WORDS, body: "Typed offline, and on" });
+        vi.advanceTimersByTime(500);
+        await first.letters.landed();
+        kill(first, disk);
+        expect((await rewrite(origin, DESKTOP, "rev-0")).status).toBe(200);
+
+        const next = await relaunch(disk, origin, fake);
+        const mine = drafts(fake).find((d) => d.id !== "d-9");
+        expect({ theirs: fake.draft("d-9")?.body, mine: mine?.body, rows: drafts(fake).length, sent: sends(fake).length, said: next.said })
+          .toEqual({ theirs: DESKTOP, mine: "Typed offline, and on", rows: 2, sent: 0, said: [sayArg(refuse("lettersKeptChangedElsewhere", 1))] });
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    it("the sheet still open, its autosave queued offline, the desktop saved it since: the reconnect says the words were kept", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const first = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await first.engine.syncOnce();
+        const letter = first.compose({ draftId: "d-9", savedAs: wordsOf(OPENED), revision: "rev-0", words: OPENED });
+        letter.edit({ ...WORDS, body: "Typed offline" });
+        first.net.cut = true;
+        expect(await sheetSave(first, letter, { current: { row: "d-9", rev: "rev-0" } }, "Typed offline")).toBe("kept");
+        expect((await rewrite(origin, DESKTOP, "rev-0")).status).toBe(200);
+        first.net.cut = false;
+        await first.flush();
+        expect({ theirs: fake.draft("d-9")?.body, rows: drafts(fake).length, said: first.said })
+          .toEqual({ theirs: DESKTOP, rows: 2, said: [sayArg(refuse("composeKeptChangedElsewhere"))] });
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    it("an autosave queued offline, killed, nothing changed elsewhere: written in place, nothing said", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const { first } = await queuedThenKilled(fake, origin, disk);
+        await first.letters.landed();
+        kill(first, disk);
+
+        const next = await relaunch(disk, origin, fake);
+        expect({ body: fake.draft("d-9")?.body, rows: drafts(fake).length, said: next.said }).toEqual({ body: "Typed offline", rows: 1, said: [] });
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    /** The relaunch on a slow link: the `method` request outlives the replay deadline, its answer read by the next flush. */
+    const lateRelaunch = async (disk: ReturnType<typeof deviceDisk>, origin: string, fake: ReturnType<typeof mailServer>, method: string) => {
+      const next = await launch(disk, origin, { revisionOf: versionOf(fake) });
+      let release = (): void => undefined;
+      next.net.held = { method, until: new Promise<void>((r) => { release = r; }) };
+      const restored = next.restore();
+      await Promise.race([restored, next.waitsOnFlush]);
+      holdTheClock();
+      const first = next.flush();
+      await settle();
+      vi.advanceTimersByTime(10_001);
+      await first;
+      vi.useRealTimers();
+      release();
+      for (let i = 0; i < 400 && !next.engine.hasLateResults(); i++) await settle(5);
+      expect(next.engine.hasLateResults(), "no late answer").toBe(true);
+      await next.flush();
+      await restored;
+      await next.letters.landed();
+      return next;
+    };
+
+    it("the queued save answered past the replay deadline: still said as kept, and the file follows the phone's words", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const { first } = await queuedThenKilled(fake, origin, disk, (letter) => {
+          letter.addFile({ filename: "plan.pdf", contentType: "application/pdf", contentBase64: PHOTO, sizeBytes: 2048 });
+        });
+        await first.letters.landed();
+        kill(first, disk);
+        expect((await rewrite(origin, DESKTOP, "rev-0")).status).toBe(200);
+
+        const next = await lateRelaunch(disk, origin, fake, "PUT");
+        const mine = drafts(fake).find((d) => d.id !== "d-9");
+        expect({ mine: mine?.body, rows: drafts(fake).length, sent: sends(fake).length, said: next.said })
+          .toEqual({ mine: "Typed offline", rows: 2, sent: 0, said: [sayArg(refuse("lettersKeptChangedElsewhere", 1))] });
+        expect(next.letters.filesOf(String(mine?.id)).map((f) => f.filename)).toEqual(["plan.pdf"]);
+        expect(next.letters.filesOf("d-9")).toEqual([]);
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    it("the new draft's create answered past the replay deadline: still said as kept, and the file follows", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const { first } = await queuedThenKilled(fake, origin, disk, (letter) => {
+          letter.addFile({ filename: "plan.pdf", contentType: "application/pdf", contentBase64: PHOTO, sizeBytes: 2048 });
+        });
+        await first.letters.landed();
+        kill(first, disk);
+        expect((await rewrite(origin, DESKTOP, "rev-0")).status).toBe(200);
+
+        const next = await lateRelaunch(disk, origin, fake, "POST");
+        const mine = drafts(fake).find((d) => d.id !== "d-9");
+        expect({ mine: mine?.body, rows: drafts(fake).length, said: next.said })
+          .toEqual({ mine: "Typed offline", rows: 2, said: [sayArg(refuse("lettersKeptChangedElsewhere", 1))] });
+        expect(next.letters.filesOf(String(mine?.id)).map((f) => f.filename)).toEqual(["plan.pdf"]);
+        expect(next.letters.filesOf("d-9")).toEqual([]);
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    it("any other refused save or move is still said as failed, once each", async () => {
+      const { sayFlushedSaves } = await import("../src/state/live");
+      const o = { forward: false, fresh: false, sendAt: null, earlierWent: false, done: null };
+      expect(sayFlushedSaves([
+        ["k1", { ...o, status: "rolled_back", kind: "draft_save" }], ["k2", { ...o, status: "rolled_back", kind: "move" }],
+        ["k3", { ...o, status: "rolled_back", kind: "mail_send" }], ["k4", { ...o, status: "confirmed", kind: "draft_save" }],
+      ]).map(sayArg)).toEqual([sayArg(refuse("liveSaveFailed")), sayArg(refuse("liveSaveFailed"))]);
+    });
   });
 });

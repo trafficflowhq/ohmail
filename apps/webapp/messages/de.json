@@ -4078,6 +4078,7 @@
     "faultOffline": "ohmail war nicht erreichbar — prüf deine Verbindung",
     "faultSignedOut": "Deine Sitzung ist beendet — melde dich neu an",
     "faultRetry": "versuch es nochmal",
+    "faultRetrying": "wird gleich nochmal versucht",
     "tooLarge": "{size} · zu groß, um sie zu holen",
     "listFailed": "Die Dateien dieser Nachricht ließen sich nicht laden.",
     "listOffline": "ohmail war nicht erreichbar — prüf deine Verbindung.",

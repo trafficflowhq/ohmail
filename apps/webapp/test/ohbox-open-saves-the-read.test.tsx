@@ -222,11 +222,11 @@ describe("the Ohbox saves a read when it shows one", () => {
     expect(count(), "the count still counts the message the row shows as read").toBe("1");
   });
 
-  it("a j preview saves nothing however long it rests; a click on the row then reads it", async () => {
+  it("a j preview left within the rest saves nothing; a click on the row then reads it", async () => {
     await mount([A, B, C]);
     await key("j");
-    await wait(DWELL_MS * 5);
-    expect(marked, "base: the 2 s dwell saved it").toEqual([]);
+    await wait(1000);
+    expect(marked).toEqual([]);
     expect(looksUnread("a")).toBe(true);
     await click("a");
     await layout.passDwell();
@@ -235,6 +235,16 @@ describe("the Ohbox saves a read when it shows one", () => {
     expect(looksUnread("a")).toBe(false);
     expect(count()).toBe("1");
     expect(sel, "still the message on screen").toBe("a");
+  });
+
+  it("a j preview rested on saves the read and the row shows it", async () => {
+    await mount([A, B, C]);
+    await key("j");
+    await wait(DWELL_MS * 5);
+    await draw();
+    expect(marked).toEqual([glance("a")]);
+    expect(looksUnread("a")).toBe(false);
+    expect(count()).toBe("1");
   });
 
   it("walking past a row is not a read, and the row never claimed one", async () => {

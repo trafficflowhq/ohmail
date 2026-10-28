@@ -8,6 +8,7 @@ import { authThrottle } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { ServiceError } from "@trafficflow/services";
 import { makeOpenAdapter, MAX_IMAP_PER_MAILBOX } from "../src/attachments-adapter.js";
+import { PART_FETCHES_PER_MAILBOX } from "../../client-engine/src/part-lane.js";
 import type { ApiDeps } from "../src/deps.js";
 
 /**
@@ -126,6 +127,10 @@ beforeEach(() => { track = trackConnections(); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("concurrent IMAP logins per mailbox are capped", () => {
+  it("the client engine never asks one mailbox for more parts at once than this door admits", () => {
+    expect(PART_FETCHES_PER_MAILBOX).toBeLessThanOrEqual(MAX_IMAP_PER_MAILBOX);
+  });
+
   it("six simultaneous opens on ONE mailbox never exceed the cap", async () => {
     const { deps, mailboxId } = await seed();
 

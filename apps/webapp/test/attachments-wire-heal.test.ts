@@ -2,9 +2,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MutationRejectedError, OhmailEngine, REASK_MAX, type EngineAdapter, threadOf } from "@ohmail/client-engine";
+import { MutationRejectedError, OhmailEngine, PART_REASK_DELAYS_MS, REASK_MAX, type EngineAdapter, threadOf } from "@ohmail/client-engine";
 import { AttachmentStrip } from "../app/components/AttachmentStrip.js";
 import { useMessageAttachments } from "../app/shell/attachments.js";
+import { POLL_MS, startSyncScheduler } from "../app/shell/sync-scheduler.js";
 
 /**
  * the reader's half. After a short connection drop the open letter kept "Couldn't
@@ -92,5 +93,67 @@ describe("a file list the wire failed heals when the server answers again", () =
     await mount(engine);
     await drain(engine);
     expect(listAttachments).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("an embedded picture the mail server did not serve", () => {
+  it("reads that it is tried again shortly, on the reader's own strip", async () => {
+    const picture = { id: "p1", filename: "logo.png", contentType: "image/png", sizeBytes: 8, inline: true, contentId: "logo@corp", messageId: "m1" };
+    const engine = new OhmailEngine({
+      adapter: {
+        sync: async () => ({ changes: [], cursor: "1", hasMore: false }) as never,
+        mutate: async () => ({ changes: [], seq: null }),
+        withdrawSend: async () => ({ outcome: "unsupported" as const }),
+        fetchBody: async () => null,
+        listAttachments: async () => [picture],
+        fetchAttachment: async () => { throw new MutationRejectedError("no answer", { status: 424, code: "mail_server_unreachable", retryable: true }); },
+      } as EngineAdapter,
+    });
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const Strip = () => {
+      const a = useMessageAttachments(engine, "m1", { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+      return a ? h(AttachmentStrip, { items: a.itemsOf("m1", { includeInlineParts: true }), onOpen: () => {}, onDownloadAll: () => {}, downloadingAll: false }) : null;
+    };
+    await act(async () => root!.render(h(Strip)));
+    await act(async () => { await engine.loadInlineImages("m1", ["logo@corp"]); });
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+    expect(host.textContent).toContain("Your mail server didn't answer — trying again shortly");
+    engine.releaseAllAttachments();
+  });
+
+  it("is asked again on the sync loop's tick once its re-ask is due, and drawn", async () => {
+    vi.useFakeTimers();
+    const picture = { id: "p1", filename: "logo.png", contentType: "image/png", sizeBytes: 8, inline: true, contentId: "logo@corp", messageId: "m1" };
+    let down = true;
+    const fetchAttachment = vi.fn(async () => {
+      if (down) throw new MutationRejectedError("no answer", { status: 424, code: "mail_server_unreachable", retryable: true });
+      return new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: "image/png" });
+    });
+    const engine = new OhmailEngine({
+      adapter: {
+        sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "1", hasMore: false, serverTime: new Date().toISOString() }) as never,
+        mutate: async () => ({ changes: [], seq: null }),
+        withdrawSend: async () => ({ outcome: "unsupported" as const }),
+        fetchBody: async () => null,
+        listAttachments: async () => [picture],
+        fetchAttachment,
+      } as EngineAdapter,
+    });
+    await engine.loadInlineImages("m1", ["logo@corp"]);
+    down = false;
+    const quiet = { addEventListener(): void {}, removeEventListener(): void {} };
+    const stop = startSyncScheduler(engine, { report: () => {}, visibility: { ...quiet, visibilityState: "visible" }, online: quiet, random: () => 0 });
+    try {
+      await vi.advanceTimersByTimeAsync(PART_REASK_DELAYS_MS[0]! + 2 * POLL_MS);
+      expect(fetchAttachment).toHaveBeenCalledTimes(2);
+      const held = engine.attachmentsOf("m1", { includeInlineParts: true });
+      expect(held.state === "ready" ? held.items[0] : null).toMatchObject({ state: "ready" });
+    } finally {
+      stop();
+      engine.releaseAllAttachments();
+      vi.useRealTimers();
+    }
   });
 });

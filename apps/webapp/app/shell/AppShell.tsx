@@ -94,7 +94,7 @@ import { importOverOf, type OnboardingFacts } from "./onboarding";
 import { firstRunImportOver, useFirstRunQueueSettle } from "./first-run-queue-settle";
 import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
-import { useJunkWindow, type JunkWire } from "./junk-window";
+import { useJunkPileKey, useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
 import { syncMayRead } from "./sync-scheduler";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
@@ -458,6 +458,15 @@ export function showDesktopCta(opts: { demo: boolean; desktop: boolean }): boole
 export const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
 
 /**
+ * Where the browser's desktop prompt leads: the latest release page, which lists every platform's
+ * installer and serves a self-hosted web app the same. `undefined` in the desktop window build
+ * (`NEXT_PUBLIC_DESKTOP` is "1" there), which never shows the prompt: the address folds out of the
+ * binary, whose inspection in build.yml admits only its named first-party endpoints.
+ */
+export const DESKTOP_DOWNLOAD_URL: string | undefined =
+  process.env.NEXT_PUBLIC_DESKTOP === "1" ? undefined : "https://github.com/trafficflowhq/ohmail/releases/latest";
+
+/**
  * HOW LONG THE CURSOR HINT STANDS — re-exported from the module that owns the placement
  * (`cursor-placer.ts`), so the constant sits with the one line it times and every caller and
  * guard still reads it from here.
@@ -466,7 +475,7 @@ export { CURSOR_HINT_MS };
 
 /**
  * A subtle, dismissible line at the foot of the rail: "Get ohmail for
- * desktop", linking to the site's download section in a new tab.
+ * desktop", linking to the latest release page in a new tab.
  * CONTROLLED — the dismissal state lives in `AppShell`
  * (`usePersistedFlag`), and that placement is a fix: when this component
  * owned the flag it answered dismissal by rendering `null`, but `AppShell`
@@ -552,9 +561,9 @@ export function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...
      empty fragment — when neither the account line nor a live prompt will render. The old
      arrangement had `DesktopCta` answer its dismissal with `null` from inside the slot, and
      the box stood empty under the Command row (measured live at 14px). */
-  const cta = offerDesktopCta && !ctaDismissed ? (
+  const cta = offerDesktopCta && !ctaDismissed && DESKTOP_DOWNLOAD_URL !== undefined ? (
     <DesktopCta
-      href="/#download"
+      href={DESKTOP_DOWNLOAD_URL}
       label={t("rail.getDesktop")}
       dismissLabel={t("rail.getDesktopDismiss")}
       onDismiss={() => dismissCta(true)}
@@ -1629,16 +1638,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   /**
    * THE LIVE JUNK WINDOW (FOLDERS-SPEC.md §16.2) — the Screener's third segment, flag-on.
    *
-   * The hook is called unconditionally (it is a hook); what is CONDITIONAL is `active` and `warm`:
-   * the page and the preview are read when the Screener opens, so the segment's first entry draws
-   * them at once; nothing is fetched while "Use folders" is off, in the demo, or away from the
-   * Screener. The PROP below is gated the same way plus on `autoOptIn.supported` (the shell's
+   * The hook is called unconditionally (it is a hook); what is CONDITIONAL is its flags: the page and
+   * the preview are read when the shell comes up and after a letter enters or leaves the spam pile
+   * (`keep`), so no Screener or Spam entry waits on a dial; nothing is read with "Use folders" off or
+   * in the demo. The PROP below is gated the same way plus on `autoOptIn.supported` (the shell's
    * one answer to "is there a server to ask", the same read the suggest control uses): absent,
    * `ScreenerView` renders the flag-off segment byte-identically to before the window existed
    * (§16.7).
    */
-  const junkOnScreener = !demo && consent.foldersEnabled && !seedOwed && route.view === "screener";
-  const junkWindow = useJunkWindow(junkOnScreener && route.screenerSegment === "spam", toast, junkWire, junkOnScreener);
+  const junkOn = !demo && consent.foldersEnabled && !seedOwed;
+  const junkOnScreener = junkOn && route.view === "screener";
+  const junkKeep = { on: junkOn, moved: useJunkPileKey(junkOn) };
+  const junkWindow = useJunkWindow(junkOnScreener && route.screenerSegment === "spam", toast, junkWire, junkOnScreener, junkKeep);
   /**
    * WHAT TO SAY ABOUT THE PROVIDER'S JUNK FOLDER, and whether to offer the way in — the honest
    * half of JUNK-INVISIBLE, read by the rail's folders group and by search's empty state. The
@@ -1717,7 +1728,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
     setSenderMenu, setShortcutsOpen, setSubjectRule, sheetMessage, shortcutsOpen, startFR,
-    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, pileSetFor, selectOhboxRow, setOhboxThreadRead, ohboxEnter, setOhboxEnter, sheetThreadRead, enterSheet, viewEnter, spendViewEnter,
+    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, pileSetFor, doneSetFor, pinsSpentFor, selectOhboxRow, setOhboxThreadRead, ohboxEnter, setOhboxEnter, sheetThreadRead, enterSheet, viewEnter, spendViewEnter,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
     allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
@@ -1939,7 +1950,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor,
-    pileSetFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+    pileSetFor, doneSetFor, pinsSpentFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
   });

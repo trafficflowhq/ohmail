@@ -5,7 +5,8 @@ import {
   MemoryMirrorStore, OhmailEngine, ohboxRows, triagePiles, type EngineAdapter, type EngineMessage, type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 import { createProjector, type ProjectionInputs, type Projected } from "../src/state/world-projection";
-import { SCREENING_UNSUPPLIED, liveActions, type WorldActions, type WorldMail } from "../src/state/live";
+import { closeRoutingSession, openRoutingSession } from "../src/state/held-routing";
+import { SCREENING_UNSUPPLIED, liveActions, planHeldRouting, type ToastOpts, type WorldActions, type WorldMail } from "../src/state/live";
 import { paneRouteFor } from "../src/ui/pane-routes";
 import { readFaceOf } from "../src/ui/row-swipe";
 import { derivePosture, type PostureInput } from "../src/ui/posture/derive";
@@ -48,28 +49,42 @@ const laterX2: Record<string, Partial<EngineMessage>> = {
 };
 const rowA1 = () => msg("a1", AT, { unread: true, hasAttachments: true, attachmentCount: 1 });
 
-/** Lena is a sender the account decided about, so her mail stands in the Ohbox. */
-const consent = (): SyncChange => create("rule", "rule_lena", {
-  id: "rule_lena", kind: "sender", match: LENA.address, destination: "INBOX", priority: 0, provenance: "seeded-from-sent",
+/** Lena is a sender the account decided about, so her mail stands in the Ohbox (`domain`: through her domain's rule). */
+const consent = (kind: "sender" | "domain" = "sender"): SyncChange => create("rule", "rule_lena", {
+  id: "rule_lena", kind, match: kind === "sender" ? LENA.address : "example.test", destination: "INBOX", priority: 0, provenance: "seeded-from-sent",
   enabled: true, stats: { hits: 0, lastHitAt: null, demotions: 0 }, createdAt: new Date(AT).toISOString(), updatedAt: new Date(AT).toISOString(),
 });
 
 /** The provider, renderer-free: one engine, one projector, the inputs the app passes. */
-async function phone(first: SyncChange[]) {
+async function phone(first: SyncChange[], rule = consent()) {
   let seq = 1000;
-  const pages: SyncChange[][] = [[consent(), ...first].map((c) => ({ ...c, seq: seq++ }))];
+  const pages: SyncChange[][] = [[rule, ...first].map((c) => ({ ...c, seq: seq++ }))];
   const posted: string[] = [];
+  /* The server's rows: a move or a triage write is answered with the row it left (the read-your-writes
+     echo), a move spending its own pin, so a confirmed write stays on screen. */
+  const rows = new Map(first.filter((c) => c.type === "message").map((c) => [c.id, c.entity as EngineMessage]));
+  const echoOf = (m: { kind: string; messageId?: string; state?: string; folder?: string }): SyncChange[] => {
+    const row = m.messageId === undefined ? undefined : rows.get(m.messageId);
+    if (!row || (m.kind !== "move" && m.kind !== "triage_set")) return [];
+    const at = new Date(AT).toISOString();
+    const next = m.kind === "move"
+      ? { ...row, folder: m.folder as EngineMessage["folder"], ...(row.triage?.state === "resurfaced" ? { triage: { ...row.triage, state: "none" } as never } : {}) }
+      : { ...row, triage: { messageId: row.id, state: m.state, bubbleUpAt: null, setAt: at, updatedAt: at } as never };
+    rows.set(row.id, next);
+    return [{ ...create("message", row.id, next), seq: seq++ }];
+  };
   const adapter = {
     sync: async (): Promise<SyncResponse> => ({
       changes: { creates: pages.shift() ?? [], updates: [], moves: [], deletes: [] },
       cursor: `c${seq}`, hasMore: false, serverTime: new Date(AT).toISOString(),
     }),
-    mutate: async (m: { kind: string; messageId?: string; messageIds?: string[]; state?: string; unread?: boolean }) => {
+    mutate: async (m: { kind: string; messageId?: string; messageIds?: string[]; state?: string; unread?: boolean; folder?: string }) => {
       posted.push(`${m.kind}:${m.messageId ?? (m.messageIds ?? []).join(",")}${m.state ? `:${m.state}` : ""}${m.unread === true ? ":unread" : ""}`);
-      return { ok: true as const, changes: [] };
+      return { ok: true as const, changes: echoOf(m) };
     },
   } as unknown as EngineAdapter;
-  const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore(), storePolicy: { mode: "full" } });
+  const store = new MemoryMirrorStore();
+  const engine = new OhmailEngine({ adapter, store, storePolicy: { mode: "full" } });
   await engine.start();
   const projector = createProjector();
   const inputs = (): ProjectionInputs => ({
@@ -81,8 +96,11 @@ async function phone(first: SyncChange[]) {
     rememberResurfaceTime: () => undefined, signatures: null, resurfaceTime: null, screenerServer: null, relayed: null, mailboxes: null,
   } as unknown as ProjectionInputs);
   const world = (): Projected => projector.project(inputs());
-  const actions = liveActions({ engine, toast: () => undefined, uuid: () => "00000000-0000-4000-8000-000000000001", zone: "UTC" });
-  return { engine, world, actions, posted };
+  /** Every Undo a press offered, newest last. */
+  const offers: ToastOpts[] = [];
+  const toast = (_m: unknown, o?: ToastOpts) => { if (o?.undo) offers.push(o); };
+  const actions = liveActions({ engine, toast, uuid: () => "00000000-0000-4000-8000-000000000001", zone: "UTC" });
+  return { engine, store, world, actions, posted, offers };
 }
 
 /** The Ohbox row a press on `member`'s conversation is made on: its own id, which is its target. */
@@ -156,6 +174,62 @@ describe("a conversation opened from its Ohbox row on the phone", () => {
     expect(w.message(shown)?.pile, "Done is offered on what the reader shows").toBe("resurfaced");
     await p.actions.resurfaceDone(shown);
     expect(p.world().ohbox.resurfaced, "Done in the reader left the conversation Resurfaced").toEqual([]);
+  });
+
+  /** The letter and our own reply, both pinned: a conversation Resurface booked whole, back. */
+  const bothPinned = () => {
+    const pinnedAt = new Date(AT + 7_200_000).toISOString();
+    const pin = (id: string) => ({ messageId: id, state: "resurfaced", bubbleUpAt: null, setAt: pinnedAt, updatedAt: pinnedAt }) as never;
+    return phone([
+      create("message", "a1", msg("a1", AT, { triage: pin("a1") })),
+      create("message", "r2", msg("r2", AT + 3_600_000, { ...laterX2["our own reply"], triage: pin("r2") })),
+    ]);
+  };
+  it("the letter and our reply both pinned: the reader's Done releases both, and the row leaves", async () => {
+    const p = await bothPinned();
+    const w = p.world();
+    await p.actions.resurfaceDone(mount(w, press(w, "a1")));
+    expect(p.posted).toEqual(["mark_seen:a1,r2"]);
+    expect(p.world().ohbox.resurfaced).toEqual([]);
+  });
+  it("the letter and our reply both pinned: the row swipe's Done, with its members, spends our reply's pin too", async () => {
+    const p = await bothPinned();
+    const row = p.world().ohbox.resurfaced[0]!;
+    await p.actions.resurfaceDone(row.id, row.memberIds);
+    expect(p.posted).toEqual(["mark_seen:a1,r2"]);
+    expect(p.world().ohbox.resurfaced).toEqual([]);
+  });
+  it("the letter and our reply both pinned: the row swipe's Junk moves the letter and spends our reply's pin", async () => {
+    const p = await bothPinned();
+    const row = p.world().ohbox.resurfaced[0]!;
+    expect(await p.actions.move(row, "spam", row.memberIds)).toBe(true);
+    expect(p.posted).toContain("triage_set:r2:none");
+    expect(p.posted.some((x) => x.startsWith("move:r2")), "our reply stays where it is").toBe(false);
+    expect(p.world().ohbox.resurfaced).toEqual([]);
+  });
+  it("the letter and our reply both pinned: deleting the letter spends our reply's pin", async () => {
+    const p = await bothPinned();
+    expect(await p.actions.deleteMessage("a1", { quiet: true })).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(p.posted).toEqual(["message_delete:a1", "triage_set:r2:none"]);
+    expect(p.world().ohbox.resurfaced).toEqual([]);
+  });
+  it("the letter and our reply both pinned: the sheet's Move it too files the letter and spends our reply's pin", async () => {
+    const p = await bothPinned();
+    expect(await p.actions.moveStayed(["a1"], "receipts")).toBe(true);
+    for (let i = 0; i < 20 && p.posted.length < 2; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(p.posted).toEqual(["move:a1", "triage_set:r2:none"]);
+    expect(p.world().ohbox.resurfaced).toEqual([]);
+  });
+  it("CONTROL: one pin, our reply unpinned: Junk spends nothing more", async () => {
+    const pinnedAt = new Date(AT + 7_200_000).toISOString();
+    const p = await phone([
+      create("message", "a1", msg("a1", AT, { triage: { messageId: "a1", state: "resurfaced", bubbleUpAt: null, setAt: pinnedAt, updatedAt: pinnedAt } as never })),
+      create("message", "r2", msg("r2", AT + 3_600_000, laterX2["our own reply"])),
+    ]);
+    const row = p.world().ohbox.resurfaced[0]!;
+    await p.actions.move(row, "spam", row.memberIds);
+    expect(p.posted.filter((x) => x.startsWith("triage_set"))).toEqual([]);
   });
 
   it("the reader reads a2 and the row's own target stays on it while the older a1 waits: every remount stays on a2", async () => {
@@ -365,7 +439,7 @@ describe("an answered conversation marked unread from its row still stands for t
   });
 });
 
-describe("Answer later and Parked hold a conversation as one row", () => {
+describe("Answer later, Parked and Resurface hold a conversation as one row", () => {
   const IDS = ["m1", "m2", "m3", "m4", "m5", "m6", "x7"];
   const filedAt = new Date(AT).toISOString();
   const seven = (state: string) => IDS.map((id, i) => create("message", id, msg(id, AT + i * 60_000, {
@@ -381,6 +455,12 @@ describe("Answer later and Parked hold a conversation as one row", () => {
     expect(w.pilesMeta).toBe("1 item");
   });
 
+  it("a booked seven-message conversation is one Resurface item, carrying every id", async () => {
+    const w = (await phone(seven("bubbled_up"))).world();
+    expect(pile(w, "resurface").map((i) => [i.messageId, i.memberIds])).toEqual([["m6", ["x7", "m6", "m5", "m4", "m3", "m2", "m1"]]]);
+    expect(w.pilesMeta).toBe("1 item");
+  });
+
   it("the reader's Park on the parked row takes all seven out; Later moves all seven; Resurface Now brings all seven back", async () => {
     for (const [verb, state] of [["setAside", "none"], ["replyLater", "reply_later"]] as const) {
       const p = await phone(seven("set_aside"));
@@ -390,6 +470,65 @@ describe("Answer later and Parked hold a conversation as one row", () => {
     const p = await phone(seven("reply_later"));
     await p.actions.resurfaceNow("m3");
     expect([...p.posted].sort()).toEqual(IDS.map((id) => `triage_set:${id}:resurfaced`));
+  });
+
+  const triaged = (p: Awaited<ReturnType<typeof phone>>, state: string) =>
+    p.posted.filter((x) => x.startsWith("triage_set:") && x.endsWith(`:${state}`)).sort();
+  /** Filed m6, and every other pin of the row spent beside it, my reply's too. */
+  const spentBeside = async (p: Awaited<ReturnType<typeof phone>>): Promise<void> => {
+    for (let i = 0; i < 20 && triaged(p, "none").length < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(p.posted.filter((x) => x.startsWith("move:"))).toEqual(["move:m6"]);
+    expect(triaged(p, "none")).toEqual(IDS.filter((id) => id !== "m6").map((id) => `triage_set:${id}:none`));
+    expect(p.world().ohbox.resurfaced).toEqual([]);
+  };
+
+  it("a booked seven back pinned whole: the sheet's Receipts files the letter and spends every other pin; its Undo puts every pin back", async () => {
+    const p = await phone(seven("resurfaced"));
+    // The window `world.tsx` opens, long enough that the press is still held at the Undo.
+    openRoutingSession({ windowMs: 60_000, journal: p.store, plan: (i) => planHeldRouting(p.engine.read(), i), dispatch: async () => true });
+    try {
+      expect(await p.actions.screenSender("m6", "receipts", "sender")).toBe(true);
+      await spentBeside(p);
+      p.offers.at(-1)!.undo!();
+      for (let i = 0; i < 20 && triaged(p, "resurfaced").length < 7; i++) await new Promise((r) => setTimeout(r, 0));
+      expect(triaged(p, "resurfaced")).toEqual(IDS.map((id) => `triage_set:${id}:resurfaced`));
+      expect(p.world().ohbox.resurfaced.map((r) => r.id)).toEqual(["m6"]);
+    } finally { closeRoutingSession(); }
+  });
+
+  it("a booked seven back pinned whole, let in by Lena's domain: the sheet's Receipts for the domain, sent at once, spends every other pin too", async () => {
+    const p = await phone(seven("resurfaced"), consent("domain"));
+    expect(await p.actions.screenSender("m6", "receipts", "domain")).toBe(true);
+    await spentBeside(p);
+  });
+
+  it("a booked seven back pinned whole, Lena let in at the gate and a newer letter of hers waiting there: the sheet's Receipts decides her, files the letter and spends every other pin", async () => {
+    const someoneElse = create("rule", "rule_other", {
+      id: "rule_other", kind: "sender", match: "someone@else.test", destination: "INBOX", priority: 0, provenance: "seeded-from-sent",
+      enabled: true, stats: { hits: 0, lastHitAt: null, demotions: 0 }, createdAt: filedAt, updatedAt: filedAt,
+    });
+    const admitted = seven("resurfaced").map((c) => (c.id === "x7" ? c : { ...c, entity: { ...(c.entity as EngineMessage), placeDecided: true } }));
+    const waiting = create("message", "k8", msg("k8", AT + 30 * 60_000, { threadId: "K", subject: "Another thing", folder: "ohmail/Screener" as EngineMessage["folder"], unread: true }));
+    const p = await phone([...admitted, waiting], someoneElse);
+    expect(await p.actions.screenSender("m6", "receipts", "sender")).toBe(true);
+    await spentBeside(p);
+  });
+
+  it("a booked seven back pinned whole: the row's move to Receipts files its letters and spends my reply's pin; its Undo puts every pin back once", async () => {
+    const p = await phone(seven("resurfaced"));
+    openRoutingSession({ windowMs: 60_000, journal: p.store, plan: (i) => planHeldRouting(p.engine.read(), i), dispatch: async () => true });
+    try {
+      const row = p.world().ohbox.resurfaced[0]!;
+      expect(await p.actions.move(row, "receipts", row.memberIds)).toBe(true);
+      for (let i = 0; i < 20 && triaged(p, "none").length < 1; i++) await new Promise((r) => setTimeout(r, 0));
+      expect(p.posted.filter((x) => x.startsWith("move:")).sort()).toEqual(IDS.filter((id) => id !== "x7").map((id) => `move:${id}`));
+      expect(triaged(p, "none")).toEqual(["triage_set:x7:none"]);
+      expect(p.world().ohbox.resurfaced).toEqual([]);
+      p.offers.at(-1)!.undo!();
+      for (let i = 0; i < 20 && triaged(p, "resurfaced").length < 7; i++) await new Promise((r) => setTimeout(r, 0));
+      expect(triaged(p, "resurfaced")).toEqual(IDS.map((id) => `triage_set:${id}:resurfaced`));
+      expect(p.world().ohbox.resurfaced.map((r) => r.id)).toEqual(["m6"]);
+    } finally { closeRoutingSession(); }
   });
 });
 

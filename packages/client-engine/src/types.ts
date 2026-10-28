@@ -337,7 +337,7 @@ export interface EngineMessage extends EngineMessageExtras {
   /**
    * THE INSTANT THE ROW SORTS BY — the server's clamp of {@link date} against the mailbox's own
    * recorded arrival (`materialize.ts#sortAtOf`, mail 0119): the header while it lies within
-   * tolerance of a KNOWN arrival, else that arrival. OPTIONAL for {@link lastReadAt}'s reason:
+   * tolerance before a KNOWN arrival, else that arrival. OPTIONAL for {@link lastReadAt}'s reason:
    * absent on every row whose arrival was never recorded and on a server older than the field,
    * and absent means "the header decides" — the exact order every mirror had before. Every date
    * comparator reads `sortAt ?? date` through ONE derivation ({@link selectors.ts#tsOf}).

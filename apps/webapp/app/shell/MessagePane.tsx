@@ -1796,7 +1796,7 @@ export function MessagePane({
         resolvedRemoteImages={chrome.remoteImages?.resolvedFor(message.id)}
         onRemoteImages={onRemoteImages}
         cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
-        onCidImages={chrome.attachments ? onCidImages : undefined}
+        onCidImages={chrome.attachments && !threadRead?.previewing ? onCidImages : undefined}
         onNotice={onNotice}
         />
       </div>

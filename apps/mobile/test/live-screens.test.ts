@@ -54,7 +54,8 @@ import {
 import type { ServerWaitingSender } from "../src/net/screener";
 import { GroupedSweepLedger } from "../src/state/sweep";
 import { mailRowSpoken, threadOfRow } from "../src/ui/row-spoken";
-import { dto, listen, mailServer, ruleDto } from "./helpers/mail-server";
+import { railItemsOf } from "../src/ui/reader-marks";
+import { dto, listen, mailServer, ruleDto, type Dto } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 import { arrived, CASE_MS } from "./helpers/arrived";
 
@@ -131,6 +132,46 @@ describe("the world reads the engine's mirror", () => {
       expect(threadOfRow(row!)).toBe(3);
       // The squares say the length (one per message, all three unread), so the count steps back.
       expect(mailRowSpoken(row!)).toContain("3 messages, oldest first: 3 unread");
+      live.store.close();
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("a letter dated after it arrived, or with no Date, is placed and timed by its arrival", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    try {
+      fake.addRule(ruleDto("r-allow", "sender", "sender@fake.test", "INBOX"));
+      const at = (id: string, date: string | null, sortAt: string) =>
+        fake.addMessage({ ...dto(id), date: date as string, sortAt } as Dto);
+      at("newer", "2026-08-19T11:00:00Z", "2026-08-19T11:00:00Z");
+      at("ahead", "2026-08-21T10:00:00Z", "2026-08-19T10:00:00Z");
+      at("undated", null, "2026-08-19T09:00:00Z");
+      const live = await liveWorldOn(fake, origin);
+      const box = liveOhbox(presentedOf(live.engine.read(), view.now), view);
+      expect(box.fresh.map((m) => [m.id, m.time])).toEqual([["newer", "11:00"], ["ahead", "10:00"], ["undated", "09:00"]]);
+      live.store.close();
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("a held square of a letter dated after it arrived, or undated, dates its arrival", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    try {
+      fake.addRule(ruleDto("r-allow", "sender", "sender@fake.test", "INBOX"));
+      const at = (id: string, date: string | null, sortAt: string) =>
+        fake.addMessage({ ...dto(id, { subject: "Plan" }), threadId: "T-arr", date: date as string, sortAt } as Dto);
+      at("undated", null, "2026-08-19T09:00:00Z");
+      at("ahead", "2026-08-21T10:00:00Z", "2026-08-19T10:00:00Z");
+      at("newer", "2026-08-19T11:00:00Z", "2026-08-19T11:00:00Z");
+      const live = await liveWorldOn(fake, origin);
+      const squares = (id: string) => Object.fromEntries(railItemsOf(liveMessage(live.engine, id, view)!).map((s) => [s.id, s.at]));
+      const arrivals = { undated: "2026-08-19T09:00:00Z", ahead: "2026-08-19T10:00:00Z", newer: "2026-08-19T11:00:00Z" };
+      expect(squares("newer")).toEqual(arrivals);
+      expect(squares("ahead")).toEqual(arrivals);
       live.store.close();
     } finally {
       fake.server.close();
@@ -1316,6 +1357,31 @@ describe("the phone sheet plans a press over the organizer's copy where the chan
       travels.store.close();
     } finally {
       fake.server.close();
+    }
+  });
+
+  it("a Screener press past the gate plans over the copy: a stale row here at News, none there", async () => {
+    const from = { name: "Letters", address: "s@letters.example" };
+    for (const rulesTravel of [false, true]) {
+      const fake = mailServer();
+      const origin = await listen(fake.server);
+      try {
+        fake.addRule({ ...ruleDto("r-stale", "sender", from.address, "ohmail/News"), provenance: "manual" });
+        fake.addMessage(dto("i1", { subject: "Letter", folder: "INBOX", from }));
+        const at = "2026-08-19T08:00:00Z";
+        fake.push("mailbox_profile", "create", "mb-1", {
+          mailboxId: "mb-1", rules: [], asOf: at, from: { kind: "local", name: "Laptop", since: null }, updatedAt: at, applied: [],
+        });
+        const live = await liveWorldOn(fake, origin, { rulesTravel: () => rulesTravel });
+        const row = liveScreener(presentedOf(live.engine.read(), view.now), view).waiting.find((r) => r.address === from.address);
+        expect(row, "the sender is not waiting").toBeTruthy();
+        await live.actions.decide(row!, "reads", false, "sender");
+        const rules = fake.seen.filter((r) => r.url.startsWith("/rules") && r.method !== "GET").map((r) => `${r.method} ${r.url}`);
+        expect(rules, `rulesTravel ${rulesTravel}`).toEqual(rulesTravel ? ["POST /rules"] : []);
+        live.store.close();
+      } finally {
+        fake.server.close();
+      }
     }
   });
 

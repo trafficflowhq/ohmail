@@ -47,7 +47,7 @@ async function planOf(s: { query: string; params: unknown[] }): Promise<string> 
 /** The index node's own lines: its header and the detail lines under it, up to the next node. */
 function indexNode(plan: string): string {
   const lines = plan.split("\n");
-  const at = lines.findIndex((l) => l.includes("messages_account_arrival_order_idx"));
+  const at = lines.findIndex((l) => l.includes("messages_account_arrival_key_idx"));
   expect(at, `the page did not walk the arrival index:\n${plan}`).toBeGreaterThanOrEqual(0);
   const depth = lines[at]!.search(/\S/);
   const out = [lines[at]!];
@@ -132,7 +132,7 @@ describe.skipIf(!PG_UP)("the arrival order's deep page is one range of its index
       expect(stmts.length, "the rail issued no per-month probe").toBeGreaterThan(0);
       for (const st of stmts) {
         const plan = await planOf(st);
-        expect(plan, `a rail probe does not use the arrival index:\n${plan}`).toContain("messages_account_arrival_order_idx");
+        expect(plan, `a rail probe does not use the arrival index:\n${plan}`).toContain("messages_account_arrival_key_idx");
       }
     },
   );
@@ -146,12 +146,12 @@ describe.skipIf(!PG_UP)("the arrival order's deep page is one range of its index
     // Dropped inside a transaction that is always rolled back: the plan leaves by the thrown value.
     class RolledBack extends Error { constructor(readonly plan: string) { super("rolled back on purpose"); } }
     const plan = await client.begin(async (tx) => {
-      await tx.unsafe('drop index "messages_account_arrival_order_idx"');
+      await tx.unsafe('drop index "messages_account_arrival_key_idx"');
       const rows = await tx.unsafe(`explain (costs off) ${stmt.query}`, stmt.params as never[]);
       throw new RolledBack(rows.map((r) => Object.values(r)[0] as string).join("\n"));
     }).then(() => "", (e: unknown) => { if (e instanceof RolledBack) return e.plan; throw e; });
     expect(plan, "the control read no plan").not.toBe("");
-    expect(plan).not.toContain("messages_account_arrival_order_idx");
+    expect(plan).not.toContain("messages_account_arrival_key_idx");
     expect(plan, "without the index the page is not a sort").toMatch(/Sort Key/);
   });
 });

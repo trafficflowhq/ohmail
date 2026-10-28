@@ -5,7 +5,7 @@ import * as React from "react";
 import { createRoot } from "react-dom/client";
 import type { EngineMessage } from "@ohmail/client-engine";
 import {
-  EVIDENCE_WINDOW_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, panelsOf, pressEnters, useReaderVisit, viewOf,
+  EVIDENCE_WINDOW_MS, LANDING_REST_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, panelsOf, pressEnters, useReaderVisit, viewOf,
 } from "../app/shell/reader-seen";
 import { scrollProgrammatically } from "../app/shell/programmatic-scroll";
 import { readLandedCard } from "../app/shell/stream-landing-read";
@@ -27,6 +27,7 @@ let shown = true;
 let focused = true;
 let reads: string[][] = [];
 let enters = 0;
+let stays = 0;
 let frames: Array<() => void> = [];
 let core: ReturnType<typeof createThreadReadDom> | null = null;
 let record = createThreadRead();
@@ -81,11 +82,12 @@ function bar(topY: number): void {
   el.getBoundingClientRect = rect("bar");
   scroller.appendChild(el);
 }
-function mount(): void {
+function mount(restMs?: number): void {
   core = createThreadReadDom({
-    scroller, record,
+    scroller, record, restMs,
     onRead: (ids) => reads.push(ids),
     onEnter: () => { enters += 1; record.enter(Date.now()); },
+    onStay: () => { stays += 1; },
     visible: () => shown, frameHovered: () => false, documentFocused: () => focused,
     now: () => Date.now(),
     frame: (run) => { frames.push(run); return () => { frames = frames.filter((f) => f !== run); }; },
@@ -109,7 +111,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-22T09:00:00Z"));
   at = { scroller: { top: 0, bottom: 800 } };
-  shown = true; focused = true; reads = []; enters = 0; frames = []; top = 0;
+  shown = true; focused = true; reads = []; enters = 0; stays = 0; frames = []; top = 0;
   record = createThreadRead();
   scroller = document.createElement("div");
   Object.defineProperty(scroller, "clientHeight", { get: () => 800 });
@@ -626,5 +628,142 @@ describe("a reader's visit off the Ohbox (useReaderVisit)", () => {
     const r = visit.wiring!.record;
     r.observe([p("a0")], { top: 0, bottom: 800 }, new Set(["a0"]), 0);
     expect(r.observe([p("a0")], { top: 0, bottom: 800 }, new Set(["a0"]), THREAD_READ_HOLD_MS + 1), "kept unread").toEqual([]);
+  });
+});
+
+describe("a landing rested on (LANDING_REST_MS) is entered; a command or a press ends the rest", () => {
+  const key = (k: string, taken: boolean): void => {
+    const e = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
+    if (taken) document.addEventListener("keydown", (ev) => ev.preventDefault(), { once: true });
+    document.body.dispatchEvent(e);
+  };
+  it("after the rest, attended: entered once, and the dwell then reads; not a moment before", () => {
+    panel("a", 0, 300);
+    mount(LANDING_REST_MS);
+    flush();
+    pass(LANDING_REST_MS - 10);
+    expect(enters).toBe(0);
+    pass(20);
+    expect(enters).toBe(1);
+    dwell();
+    expect(reads).toEqual([["a"]]);
+  });
+  it("no rest given (a URL landing, every other reader): never entered", () => {
+    panel("a", 0, 300);
+    mount();
+    pass(60_000);
+    expect(enters).toBe(0);
+    expect(reads).toEqual([]);
+  });
+  it("a key the app took ends it; a key it did not take does not", () => {
+    panel("a", 0, 300);
+    mount(LANDING_REST_MS);
+    key("Shift", false);
+    pass(LANDING_REST_MS + 10);
+    expect(enters).toBe(1);
+    core?.dispose();
+    record = createThreadRead(); enters = 0;
+    mount(LANDING_REST_MS);
+    key("m", true);
+    pass(60_000);
+    expect(enters).toBe(0);
+  });
+  it("a press that does not enter, here or outside the reader, ends it; a press in the message enters at once", () => {
+    const el = panel("a", 0, 300);
+    bar(700);
+    mount(LANDING_REST_MS);
+    scroller.querySelector(".msg-actions")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    pass(60_000);
+    expect(enters).toBe(0);
+    core?.dispose();
+    record = createThreadRead();
+    mount(LANDING_REST_MS);
+    const outside = document.createElement("div");
+    document.body.appendChild(outside);
+    outside.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    pass(60_000);
+    expect(enters).toBe(0);
+    el.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(enters).toBe(1);
+    outside.remove();
+  });
+  it("the window away starts it over; back, the whole rest again", () => {
+    panel("a", 0, 300);
+    mount(LANDING_REST_MS);
+    pass(LANDING_REST_MS - 100);
+    focused = false;
+    window.dispatchEvent(new Event("blur"));
+    pass(60_000);
+    expect(enters).toBe(0);
+    focused = true;
+    window.dispatchEvent(new Event("focus"));
+    pass(LANDING_REST_MS - 100);
+    expect(enters).toBe(0);
+    pass(200);
+    expect(enters).toBe(1);
+  });
+  it("a reader laid out nowhere (the column hidden) is not entered", () => {
+    scroller.remove();
+    scroller = document.createElement("div");
+    Object.defineProperty(scroller, "clientHeight", { get: () => 0 });
+    Object.defineProperty(scroller, "clientWidth", { get: () => 0 });
+    Object.defineProperty(scroller, "scrollHeight", { get: () => 0 });
+    at.scroller = { top: 0, bottom: 0 };
+    scroller.getBoundingClientRect = rect("scroller");
+    document.body.appendChild(scroller);
+    panel("a", 0, 300);
+    mount(LANDING_REST_MS);
+    pass(60_000);
+    expect(enters).toBe(0);
+  });
+  it("a page modal standing over it (one that came by no key or press) keeps the rest from entering", () => {
+    panel("a", 0, 300);
+    mount(LANDING_REST_MS);
+    const modal = document.createElement("div");
+    modal.setAttribute("aria-modal", "true");
+    document.body.appendChild(modal);
+    pass(60_000);
+    expect(enters).toBe(0);
+    modal.remove();
+    core?.dispose();
+    record = createThreadRead();
+    document.body.appendChild(modal);
+    mount(LANDING_REST_MS); // landed while it stood
+    pass(60_000);
+    expect(enters).toBe(0);
+    modal.remove();
+  });
+  it("the key that made the landing (its adapter born inside that key's dispatch) does not end the rest", () => {
+    panel("a", 0, 300);
+    document.addEventListener("keydown", (ev) => { ev.preventDefault(); mount(LANDING_REST_MS); }, { once: true });
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
+    pass(LANDING_REST_MS + 10);
+    expect(enters).toBe(1);
+  });
+  it("the rest's length on it is reported (its pictures load) even after a command ended the rest", () => {
+    panel("a", 0, 300);
+    mount(LANDING_REST_MS);
+    key("x", true);
+    pass(LANDING_REST_MS - 10);
+    expect(stays).toBe(0);
+    pass(20);
+    expect([stays, enters]).toEqual([1, 0]);
+    core?.dispose();
+    stays = 0;
+    mount(LANDING_REST_MS);
+    pass(LANDING_REST_MS - 10);
+    core?.dispose();
+    core = null;
+    pass(60_000);
+    expect(stays, "moved on before it: nothing").toBe(0);
+  });
+  it("disposed (the cursor moved on) before the rest: never entered", () => {
+    panel("a", 0, 300);
+    mount(LANDING_REST_MS);
+    pass(LANDING_REST_MS - 10);
+    core?.dispose();
+    core = null;
+    pass(60_000);
+    expect(enters).toBe(0);
   });
 });

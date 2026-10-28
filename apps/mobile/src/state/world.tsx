@@ -70,7 +70,7 @@ import {
   connectionSay, firstSyncSay, setAsideSaid,
   autoUnsubscribeConfirms,
   dispatchHeldRouting,
-  answersWaiting, confirmedSendSay, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
+  answersWaiting, confirmedSendSay, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, sayFlushedSaves, type SendSettlement,
   keptRecipients,
   liveActions,
   planHeldRouting,
@@ -1400,7 +1400,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       }),
       /* A MOVE'S WAY BACK once its window has sent the rules; a sheet press's rules can carry the
          backlog pass the person asked for, and a Screener decision has no inverse at all. */
-      reverse: (mutations, intent) => (intent.v === 1 ? routingReversal(() => engine.read(), mutations) : null),
+      reverse: (mutations, intent) => (intent.v === 1
+        ? routingReversal(() => engine.read(), mutations, phonePressRules(engine, phoneRulesTravel(mailboxesNow.current ?? []), new Date()))
+        : null),
       onReplayed: (replay) => { for (const say of sayRoutingReplay(replay)) showToast(say); },
     });
     /* THE DELETE WINDOW'S SESSION, beside it and on the same journal: the deletes a killed session
@@ -1488,6 +1490,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     firstSync: () => engine.syncOnce().then(() => undefined),
     afterFlush: () => new Promise<void>((r) => { flushWaiters.push(r); }),
     parse: keptRecipients,
+    keptAsNew: () => (typeof engine.keptAsNewDrafts === "function" ? engine.keptAsNewDrafts() : []),
   } : null), [engine, acts, letters, flushWaiters]);
   /* THE LETTERS A HARD STOP LEFT become drafts, once per session, and are said once; never sent. */
   useEffect(() => {
@@ -1609,10 +1612,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
             }
             else if (o.status === "unverified") showToast(refuse("replyUnverified"));
             else if (!loose.some((x) => x.key === key)) showToast(refusedSendSay(o.failure));
-          } else if (o.status === "rolled_back") {
-            showToast(refuse("liveSaveFailed"));
           }
         }
+        for (const say of sayFlushedSaves(settled)) showToast(say);
         if (settled.size > 0 || heardNow) setOutcomeSeq((n) => n + 1);
       })
       .finally(() => {

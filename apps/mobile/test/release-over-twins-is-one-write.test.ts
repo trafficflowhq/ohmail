@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type EngineMessage, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
-import { planPhoneRouting, releaseRules, type PhoneMoveIntent } from "../src/state/live";
+import { MemoryMirrorStore, heldRuleId, pressRules, type EngineMessage, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
+import { planHeldRouting, planPhoneRouting, releaseRules, routingReversal, type PhoneMoveIntent } from "../src/state/live";
 
 /**
  * THE PHONE'S RELEASE AND MOVE OVER TWO COPIES OF ONE RULE ARE ONE WRITE (a review
@@ -60,5 +60,68 @@ describe("the phone over two twins holding the sender at Screened", () => {
   it("a lone rule is one write (the positive arm)", async () => {
     const store = await mirror([ruleRow("a", "manual")]);
     expect(releaseRules(store, ADDR, "ohmail/Screened", "INBOX").mutations).toHaveLength(1);
+  });
+});
+
+/* A READER-ONLY PHONE plans over the organizer's published copy (`pressRules`), as the sheet does. */
+describe("the phone's release and Move over the organizer's copy", () => {
+  const AT = "2026-10-28T09:00:00.000Z";
+  const KEY = { kind: "sender" as const, match: ADDR, subjectContains: null, bodyContains: null };
+  const copyRule = (id: string, destination: string, over: Partial<RuleDTO> = {}): RuleDTO =>
+    ({ ...ruleRow(id, "manual"), destination, ...over }) as RuleDTO;
+  let seq = 900;
+  const profile = (mailboxId: string, rules: RuleDTO[]): SyncChange => ({
+    type: "mailbox_profile", op: "create", id: mailboxId, seq: ++seq, updatedAt: AT,
+    entity: { mailboxId, rules, asOf: AT, from: { kind: "local", name: "Laptop", since: null }, updatedAt: AT, applied: [] },
+  } as SyncChange);
+  async function withCopies(...copies: SyncChange[]): Promise<MemoryMirrorStore> {
+    const store = await mirror([], ["m1"]);
+    await store.applyChanges(copies);
+    return store;
+  }
+  const overOf = (store: MemoryMirrorStore) =>
+    pressRules(store, { travels: true, queued: [], applied: [], unsettled: [], now: new Date(AT) });
+
+  it("a rule only the organizer holds is retargeted by its key, and the window's commit writes it", async () => {
+    const store = await withCopies(profile("mb", [copyRule("profile:mb:0", "ohmail/Screened")]));
+    const over = overOf(store);
+    expect(releaseRules(store, ADDR, "ohmail/Screened", "INBOX"), "over this device's rows").toEqual({ kind: "none", mutations: [] });
+    expect(releaseRules(store, ADDR, "ohmail/Screened", "INBOX", over))
+      .toEqual({ kind: "retarget", mutations: [{ kind: "rule_update", ruleId: heldRuleId(KEY), destination: "INBOX" }] });
+    const intent: PhoneMoveIntent = { v: 1, id: "p1", seedId: "m1", address: ADDR, scope: "sender", dest: "ohbox",
+      messageIds: ["m1"], from: "ohmail/Screened", found: "ohmail/Screened", retro: true, at: 0 };
+    expect(planHeldRouting(store, intent, undefined, over)).toEqual([
+      { kind: "rule_update", ruleId: heldRuleId(KEY), destination: "INBOX" },
+      { kind: "move", messageId: "m1", folder: "INBOX", pressRule: true },
+    ]);
+  });
+
+  it("twins across two copies: Not spam names the key's addressable row, never its #1 twin", async () => {
+    const store = await withCopies(
+      profile("mb-1", [copyRule("profile:mb-1:0", "ohmail/Quarantine", { provenance: "promoted" })]),
+      profile("mb-2", [copyRule("profile:mb-2:0", "ohmail/Screened")]),
+    );
+    expect(releaseRules(store, ADDR, "ohmail/Quarantine", "INBOX", overOf(store)).mutations)
+      .toEqual([{ kind: "rule_update", ruleId: heldRuleId(KEY), destination: "INBOX" }]);
+  });
+
+  it("a domain rule in the copy: an address rule, or it stands at a higher priority", async () => {
+    const dom = (priority: number) => copyRule("profile:mb:0", "ohmail/Screened", { kind: "domain", match: "atelier.example", priority });
+    const low = await withCopies(profile("mb", [dom(0)]));
+    expect(releaseRules(low, ADDR, "ohmail/Screened", "INBOX", overOf(low))).toEqual({
+      kind: "address", domain: "atelier.example",
+      mutations: [{ kind: "rule_create", ruleKind: "sender", match: ADDR, destination: "INBOX", applyRetro: true }],
+    });
+    const high = await withCopies(profile("mb", [dom(5)]));
+    expect(releaseRules(high, ADDR, "ohmail/Screened", "INBOX", overOf(high)).kind).toBe("stands");
+  });
+
+  it("a Move's way back after the commit puts the keyed rule back where the organizer filed", async () => {
+    const store = await withCopies(profile("mb", [copyRule("profile:mb:0", "ohmail/News", { provenance: "promoted" })]));
+    const back = routingReversal(() => store, [{ kind: "rule_update", ruleId: heldRuleId(KEY), destination: "INBOX" }], overOf(store));
+    expect(back()).toEqual([{
+      kind: "rule_update", ruleId: heldRuleId(KEY), destination: "ohmail/News", priority: 0, applyRetro: false,
+      keepProvenance: true, restoreProvenance: "promoted",
+    }]);
   });
 });

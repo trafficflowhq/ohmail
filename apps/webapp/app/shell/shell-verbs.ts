@@ -190,6 +190,10 @@ export interface ShellVerbsInput {
   ownFaceFor?: ShellOpenState["ownFaceFor"];
   /** What a pile press acts on: the message's pile row, or in the Ohbox (`!offOhbox`) its Ohbox row (`pileSubjectIds`). */
   pileSetFor?: ShellOpenState["pileSetFor"];
+  /** What Done on a message releases: its Resurfaced row's pins, or its booked Resurface row (`doneSubjectIds`). */
+  doneSetFor?: ShellOpenState["doneSetFor"];
+  /** The pins a delete spends at the press (`pinsSpentBy`); the engine spends every other filing's. */
+  pinsSpentFor?: ShellOpenState["pinsSpentFor"];
   /** The open reader's id: a delete or restore closes the sheet only over ITS own message. */
   readerFor: ShellOpenState["readerFor"];
   setReaderFor: ShellOpenState["setReaderFor"];
@@ -219,7 +223,7 @@ export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesTravel = false,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
-  markSeen, readSetFor, offOhbox = false, ownFaceFor, pileSetFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+  markSeen, readSetFor, offOhbox = false, ownFaceFor, pileSetFor, doneSetFor, pinsSpentFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
 }: ShellVerbsInput) {
@@ -447,6 +451,22 @@ export function useShellVerbs({
       subject: sender.scopes[scope].messages, scope, match: ruleMatchOf(sender, scope),
     });
   });
+
+  /**
+   * A DELETE WAITS OUT ITS WINDOW, and the engine spends a filed pin's row when the delete is sent; the
+   * row is spent at the press instead, so it leaves with the letter, and the window's Undo puts it back.
+   */
+  const removeSpending = (targets: Array<{ id: string; mailboxId?: string | null | undefined }>): boolean => {
+    const spent = (pinsSpentFor?.(targets.map((x) => x.id)) ?? [])
+      .map((messageId): EngineMutation => ({ kind: "triage_set", messageId, state: "none" }));
+    const pre = engine.verbRead();
+    const back = spent.flatMap((mu) => inverseMutations(pre, mu));
+    const acted = deleting.remove(targets, back.length === 0 ? undefined : () => {
+      for (const mu of back) void fileAndRefresh(engine.mutate(mu));
+    });
+    if (acted) for (const mu of spent) void fileAndRefresh(engine.mutate(mu));
+    return acted;
+  };
 
   /**
    * AN ADDRESS PRESS PAST THE GATE, HELD IN THE ROUTING WINDOW. The mail the list will show at the
@@ -1062,11 +1082,11 @@ export function useShellVerbs({
   /** Every id a verb here acted on this session: a tombstone one of them left is this tab's own, not "gone". */
   const actedIds = useRef<Set<string>>(new Set());
 
-  /** Resurface on a message; on a pile row (Answer later, Parked) every message of the row, as one press. */
+  /** Resurface on a message; on a pile row, or in the Ohbox on its row, every message of the row, as one press. */
   const resurfaceRow = (
     messageId: string, state: "bubbled_up" | "resurfaced", when: string | null, said: string,
   ): void => {
-    const set = pileSetFor?.(messageId, false) ?? [messageId];
+    const set = pileSetFor?.(messageId, !offOhbox) ?? [messageId];
     const ms = (set.length > 1 ? set : [messageId]).map((id) => ({
       kind: "triage_set" as const, messageId: id, state, ...(when ? { bubbleUpAt: when } : {}),
     }));
@@ -1191,6 +1211,14 @@ export function useShellVerbs({
           // silently re-dating it — the toggle rule above, and the only way to take back a
           // resurface that the popover's picker cannot offer (it has no "cancel this" row).
           if (m.triage?.state === "bubbled_up") {
+            const row = pileSetFor?.(m.id, false) ?? [m.id];
+            if (row.length > 1) {
+              void mutateSetAndReport(
+                row.map((messageId) => ({ kind: "triage_set" as const, messageId, state: "none" as const })),
+                () => t("ohbox.toastResurfaceCleared"),
+              );
+              break;
+            }
             void mutateAndReport(
               { kind: "triage_set", messageId: m.id, state: "none" },
               t("ohbox.toastResurfaceCleared"),
@@ -1231,7 +1259,7 @@ export function useShellVerbs({
              a refused reader delete closed the reading sheet over the very message it had just
              declined to touch — the person is left looking at a list, told nothing moved, with
              the message they were reading gone from the screen (review finding). */
-          if (deleting.remove({ id: m.id, mailboxId: m.mailboxId }) && readerFor === m.id) {
+          if (removeSpending([{ id: m.id, mailboxId: m.mailboxId }]) && readerFor === m.id) {
             setReaderFor(null);
           }
           break;
@@ -1272,6 +1300,9 @@ export function useShellVerbs({
           resurfaceRow(m.id, "resurfaced", null, t("ohbox.toastResurfaceNow"));
           break;
         case "resurface_done": {
+          // A conversation's pins, or its booked row: the row Done's release over all of them.
+          const released = doneSetFor?.(m.id) ?? [m.id];
+          if (released.length > 1) { onBulkAction("done", released); break; }
           /**
            * THE DELIBERATE RELEASE, NAMED — "Done" on a resurfaced or scheduled message. FOR A PINNED MESSAGE IT IS
            * ONE MUTATION AND IT ALREADY EXISTED: a deliberate `mark_seen` (no `via`) spends the pin in the same act
@@ -1393,7 +1424,7 @@ export function useShellVerbs({
            does not repeat it: two spellings of one verdict is the drift that helper exists to
            end. The ASK — the confirm strip for `d` and the menu item, nothing for ⌫/⌦ — has
            already happened in the view; the window is still the only dispatch site. */
-        return deleting.remove(ids.map((id) => ({ id, mailboxId: rowOf(id)?.mailboxId })));
+        return removeSpending(ids.map((id) => ({ id, mailboxId: rowOf(id)?.mailboxId })));
       }
       if (action === "read" || action === "unread") {
         // The batch mutation: one request per 200 ids (the route's cap), one intent — and the
@@ -1465,9 +1496,9 @@ export function useShellVerbs({
         // The same default the single-message verb uses — the picker's first dated preset, at
         // the account's own hour (mail 0110).
         const when = action === "resurface" ? tomorrowAt(nowAt(), consent.resurfaceTime).iso : null;
-        // A folded row hands in every member. Park and Answer later in the Ohbox file what the key
-        // files, each row whole (our reply too); otherwise the letter is filed and our reply stays.
-        const subjects = action !== "resurface" && !offOhbox && pileSetFor
+        // A folded row hands in every member. Park, Answer later and Resurface in the Ohbox file what
+        // the key files, each row whole (our reply too); otherwise the letter is filed and our reply stays.
+        const subjects = !offOhbox && pileSetFor
           ? [...new Set(ids.flatMap((id) => pileSetFor(id, true)))]
           : triageSubjectIds(setRead(), ids);
         void mutateSetAndReport(

@@ -24,7 +24,7 @@ import { Icon } from "@ohmail/ui";
 import type { EngineMessage } from "@ohmail/client-engine";
 import type { BlockNotice } from "../components/BlockNotice";
 import { ContactPopover, type ContactPopoverState } from "./ContactPopover";
-import { fullDateTime, recipientRows, type RecipientRowChip } from "./format";
+import { recipientRows, writtenDateTime, writtenInstant, type RecipientRowChip } from "./format";
 import { displayAddress } from "./idn";
 import { useMessageChrome } from "./message-chrome";
 import { placePicker } from "./TagPicker";
@@ -79,7 +79,7 @@ export function MessageRecipients({
   // supplies it (default `[]`), so on every live path this is exactly `chrome.ownAddresses`.
   const ownAddresses = chrome.ownAddresses ?? [];
   const rows = recipientRows(message, ownAddresses);
-  const abs = fullDateTime(message);
+  const abs = writtenDateTime(message);
 
   /**
    * The cap, normalised at the boundary — because `slice` reads a negative as "from the end".
@@ -95,8 +95,8 @@ export function MessageRecipients({
   /**
    * WHAT THE DISCLOSURE WILL ACTUALLY REVEAL — because the accessible name is a CLAIM.
    *
-   * Both `<dd>`s below are conditional: `fullDateTime` answers "" for a message with no `Date:`
-   * header (a routine production path — spam and scripts omit it, see `format.ts`), and
+   * Both `<dd>`s below are conditional: `writtenDateTime` answers "" for a message with no `Date:`
+   * header and no arrival (a routine production path — spam and scripts omit it, see `format.ts`), and
    * `physicalFolder` is optional on the wire. The name said "the exact date and where this
    * message sits" regardless, so on such a message a screen-reader user was promised two things
    * and given one, or none.
@@ -283,7 +283,7 @@ export function MessageRecipients({
           {abs ? (
             <div>
               <dd>
-                <time dateTime={message.date ?? undefined}>{abs}</time>
+                <time dateTime={writtenInstant(message) ?? undefined}>{abs}</time>
               </dd>
             </div>
           ) : null}

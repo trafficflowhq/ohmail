@@ -82,19 +82,25 @@ let toasts: string[] = [];
 let setActive: ((v: boolean) => void) | null = null;
 /** The `warm` flag (the Screener on screen, the segment maybe not). */
 let setWarm: ((v: boolean) => void) | null = null;
+type Keep = import("../app/shell/junk-window").JunkKeep;
+/** The kept page's input (the shell up with folders on, and its spam pile's key). */
+let setKeep: ((v: Keep) => void) | null = null;
 
 async function mountHook(
   initiallyActive = true,
   hostWire?: import("../app/shell/junk-window").JunkWire,
   initiallyWarm = false,
+  initialKeep?: Keep,
 ): Promise<void> {
   const { useJunkWindow } = await import("../app/shell/junk-window");
   function Probe(): null {
     const [active, set] = React.useState(initiallyActive);
     const [warm, setW] = React.useState(initiallyWarm);
+    const [keep, setK] = React.useState(initialKeep);
     setActive = set;
     setWarm = setW;
-    control = useJunkWindow(active, ((msg: string) => { toasts.push(msg); }) as never, hostWire, warm);
+    setKeep = setK;
+    control = useJunkWindow(active, ((msg: string) => { toasts.push(msg); }) as never, hostWire, warm, keep);
     return null;
   }
   host = document.createElement("div");
@@ -128,6 +134,7 @@ beforeEach(() => {
   toasts = [];
   setActive = null;
   setWarm = null;
+  setKeep = null;
   try { window.localStorage.clear(); } catch { /* jsdom without storage */ }
 });
 
@@ -900,5 +907,198 @@ describe("useJunkWindow — re-entry re-reads a page past its age", () => {
     }
     expect(junkList).toHaveBeenCalledTimes(1);
     expect(junkSweepPreview).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * THE KEPT PAGE: the page and the preview are read when
+ * the shell comes up with folders on, so the Spam entry paints them and never waits on a dial; a
+ * change of the mirror's spam pile, or a "Not junk" press, reads both again once the organizer has
+ * had its cycle, so the next paint shows the letter that moved.
+ */
+describe("useJunkWindow — the kept page: no dial on the Spam entry's path", () => {
+  const START = Date.UTC(2026, 9, 28, 12, 0, 0);
+  let nowMs = START;
+  let clock: { mockRestore: () => void } | null = null;
+  beforeEach(() => {
+    nowMs = START;
+    clock = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+  });
+  afterEach(() => { clock?.mockRestore(); clock = null; vi.useRealTimers(); });
+  const two = [item(2, "7", "2026-10-28T11:02:00.000Z"), item(1, "7", "2026-10-28T11:01:00.000Z")];
+  const settleTimers = async (ms: number): Promise<void> => {
+    await act(async () => { vi.advanceTimersByTime(ms); });
+    await settle();
+  };
+
+  it("the shell's start reads both; the Screener and the Spam entry paint them and ask nothing", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    junkList.mockResolvedValue(pageWire(two, null));
+    junkSweepPreview.mockResolvedValue({ ...NO_SWEEP, held: { ids: ["q1"], truncated: false } });
+    await mountHook(false, undefined, false, { on: true, moved: 1 });
+    expect(junkList, "nothing was read before the Screener opened").toHaveBeenCalledTimes(1);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(1);
+    nowMs += JUNK_FIRST_PAGE_FRESH_MS - 1;
+    await act(async () => { setWarm!(true); });
+    await act(async () => { setActive!(true); });
+    expect(control!.phase).toBe("ready");
+    expect(control!.visible).toHaveLength(2);
+    expect([...control!.held!.ids]).toEqual(["q1"]);
+    await settle();
+    expect(junkList).toHaveBeenCalledTimes(1);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("past the age the entry reads again behind the kept page, which stays painted", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    junkList.mockResolvedValueOnce(pageWire(two, null)).mockImplementationOnce(() => new Promise(() => {}));
+    await mountHook(false, undefined, false, { on: true, moved: 0 });
+    nowMs += JUNK_FIRST_PAGE_FRESH_MS * 4;
+    await act(async () => { setWarm!(true); setActive!(true); });
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(control!.phase).toBe("ready");
+    expect(control!.visible).toHaveLength(2);
+  });
+
+  it("a letter moved into the pile is read after the settle; the next Spam entry paints it and reads once behind it", async () => {
+    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const filed = item(3, "7", "2026-10-28T11:03:00.000Z");
+    junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValue(pageWire([filed, ...two], null));
+    await mountHook(false, undefined, false, { on: true, moved: 1 });
+    await act(async () => { setKeep!({ on: true, moved: 2 }); });
+    await settleTimers(JUNK_MOVE_SETTLE_MS - 1);
+    expect(junkList, "read before the organizer's cycle could file it").toHaveBeenCalledTimes(1);
+    await settleTimers(1);
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(2);
+    await act(async () => { setWarm!(true); setActive!(true); });
+    expect(control!.phase).toBe("ready");
+    expect(control!.visible.map((i) => i.uid)).toEqual([3, 2, 1]);
+    await settle();
+    expect(junkList).toHaveBeenCalledTimes(3);
+  });
+
+  it("a letter the organizer files after the settle read is listed by the next entry inside the age", async () => {
+    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const filed = item(3, "7", "2026-10-28T11:03:00.000Z");
+    junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValueOnce(pageWire(two, null))
+      .mockResolvedValue(pageWire([filed, ...two], null));
+    await mountHook(false, undefined, false, { on: true, moved: 1 });
+    await act(async () => { setKeep!({ on: true, moved: 2 }); });
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    expect(junkList).toHaveBeenCalledTimes(2);
+    nowMs += 7_000;
+    await act(async () => { setWarm!(true); });
+    await act(async () => { setActive!(true); });
+    expect(control!.phase, "the kept page is painted first").toBe("ready");
+    await settle();
+    expect(junkList).toHaveBeenCalledTimes(3);
+    expect(control!.visible.map((i) => i.uid)).toEqual([3, 2, 1]);
+  });
+
+  it("on the segment the settle keeps the older rows the reader loaded; the next entry reads", async () => {
+    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const page1 = [item(10, "7", "2026-10-28T11:10:00.000Z"), item(9, "7", "2026-10-28T11:09:00.000Z")];
+    const page2 = [item(8, "7", "2026-10-28T11:08:00.000Z"), item(7, "7", "2026-10-28T11:07:00.000Z")];
+    junkList.mockResolvedValueOnce(pageWire(page1, "c1")).mockResolvedValueOnce(pageWire(page2, null))
+      .mockResolvedValue(pageWire(page1, "c1"));
+    await mountHook(true, undefined, true, { on: true, moved: 1 });
+    await act(async () => { control!.loadOlder(); });
+    await settle();
+    expect(control!.items.map((i) => i.uid)).toEqual([10, 9, 8, 7]);
+    await act(async () => { setKeep!({ on: true, moved: 2 }); });
+    await settleTimers(JUNK_MOVE_SETTLE_MS + 1);
+    expect(control!.items.map((i) => i.uid)).toEqual([10, 9, 8, 7]);
+    expect(control!.nextCursor).toBeNull();
+    expect(junkList).toHaveBeenCalledTimes(2);
+    await act(async () => { setActive!(false); });
+    await act(async () => { setActive!(true); });
+    await settle();
+    expect(junkList).toHaveBeenCalledTimes(3);
+  });
+
+  it("a failed read behind a kept page keeps it on screen, never the failed sentence", async () => {
+    const { JUNK_FIRST_PAGE_FRESH_MS } = await import("../app/shell/junk-window");
+    junkList.mockResolvedValueOnce(pageWire(two, null)).mockRejectedValueOnce(new Error("503"));
+    await mountHook(false, undefined, false, { on: true, moved: 0 });
+    nowMs += JUNK_FIRST_PAGE_FRESH_MS * 4;
+    await act(async () => { setWarm!(true); setActive!(true); });
+    await settle();
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(control!.phase).toBe("ready");
+    expect(control!.visible).toHaveLength(2);
+  });
+
+  it("after a failed settle read off the segment, the next entry paints the kept rows and reads behind them", async () => {
+    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    junkList.mockResolvedValueOnce(pageWire(two, null)).mockRejectedValueOnce(new Error("503"))
+      .mockImplementation(() => new Promise(() => {}));
+    await mountHook(false, undefined, false, { on: true, moved: 1 });
+    await act(async () => { setKeep!({ on: true, moved: 2 }); });
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(control!.phase).toBe("ready");
+    await act(async () => { setWarm!(true); setActive!(true); });
+    expect(control!.phase, "no spinner over the kept rows").toBe("ready");
+    expect(control!.visible).toHaveLength(2);
+    expect(junkList).toHaveBeenCalledTimes(3);
+  });
+
+  it("a letter moved out: a Spam entry inside the settle reads at once behind the page; the settle reads only the preview under the reader", async () => {
+    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValue(pageWire([two[1]!], null));
+    await mountHook(false, undefined, false, { on: true, moved: 2 });
+    await act(async () => { setKeep!({ on: true, moved: 1 }); });
+    await act(async () => { setWarm!(true); setActive!(true); });
+    expect(control!.phase, "the entry hid the kept page").toBe("ready");
+    expect(junkList).toHaveBeenCalledTimes(2);
+    await settle();
+    expect(control!.visible.map((i) => i.uid)).toEqual([1]);
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(3);
+  });
+
+  it("a Not junk press keeps the queued row under the reader; the next entry reads it gone", async () => {
+    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValue(pageWire([two[1]!], null));
+    await mountHook(true, undefined, true, { on: true, moved: 0 });
+    await act(async () => { control!.rescue(two[0]!); });
+    await settle();
+    expect(control!.visible.map((i) => i.rescue ?? null)).toEqual(["queued", null]);
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    expect(junkList).toHaveBeenCalledTimes(1);
+    await act(async () => { setActive!(false); });
+    await act(async () => { setActive!(true); });
+    await settle();
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(control!.visible.map((i) => i.uid)).toEqual([1]);
+  });
+
+  it("a kept read that failed off the segment is read again on the next entry, inside the age", async () => {
+    junkList.mockRejectedValueOnce(new Error("503")).mockResolvedValue(pageWire(two, null));
+    await mountHook(false, undefined, false, { on: true, moved: 0 });
+    expect(junkList).toHaveBeenCalledTimes(1);
+    nowMs += 1_000;
+    await act(async () => { setWarm!(true); });
+    await settle();
+    expect(junkList).toHaveBeenCalledTimes(2);
+    expect(control!.phase).toBe("ready");
+  });
+
+  it("with keep off nothing is read, and a pile change reads nothing", async () => {
+    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await mountHook(false, undefined, false, { on: false, moved: 1 });
+    await act(async () => { setKeep!({ on: false, moved: 2 }); });
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    expect(junkList).not.toHaveBeenCalled();
+    expect(junkSweepPreview).not.toHaveBeenCalled();
   });
 });

@@ -118,6 +118,17 @@ describe("every store order is the client's arrival order", () => {
     expect(tail.items.map((m) => m.id)).toEqual([undated]);
   });
 
+  it("a letter dated two days ahead sits at its arrival, below newer arrivals", async () => {
+    const w = await makeCtx(NOW);
+    const ahead = await seedMessage(w.db, w.accountId, w.mailboxId, { folder: "INBOX", date: new Date(h(3).getTime() + 47 * 3600e3) });
+    await w.db.update(messages).set({ arrivedAt: h(3) }).where(eq(messages.id, ahead));
+    const newer = await seedMessage(w.db, w.accountId, w.mailboxId, { folder: "INBOX", date: h(1) });
+    await w.db.update(messages).set({ arrivedAt: h(1) }).where(eq(messages.id, newer));
+    const all = await new MessageService().list(w.ctx, { view: "all" });
+    expect(all.items.map((m) => m.id)).toEqual([newer, ahead]);
+    expect(all.items[1]!.sortAt).toBe(h(3).toISOString());
+  });
+
   it("a v1 snapshot cursor (a header-date position) is refused, so the client restarts the window", async () => {
     const { ctx } = await sevenRows();
     const v1 = Buffer.from(JSON.stringify({ v: 1, s: "0", n: 2, d: h(3).getTime(), i: randomUUID() }), "utf8").toString("base64url");
@@ -182,6 +193,7 @@ describe("the SQL key is sortAtOf, row for row", () => {
       ["equal", h(1), h(1)],
       ["-48h exactly", new Date(NOW.getTime() - TOL), NOW],
       ["+48h exactly", new Date(NOW.getTime() + TOL), NOW],
+      ["+1ms", new Date(NOW.getTime() + 1), NOW],
       ["-48h -1ms", new Date(NOW.getTime() - TOL - 1), NOW],
       ["+48h +1ms", new Date(NOW.getTime() + TOL + 1), NOW],
       ["no header", null, h(2)],
@@ -210,11 +222,11 @@ describe("the SQL key is sortAtOf, row for row", () => {
 /**
  * THE DEVICE STORE TAKES THE SAME INDEX (`pnpm test:sqlite`; on PGlite in the default project). The
  * History page statement is the one `MessageService.list` built — captured from its own builder and
- * planned with its own parameters — and the plan names mail 0139's index with no sort above it.
+ * planned with its own parameters — and the plan names mail 0171's index with no sort above it.
  * The server's range-and-no-filter reading is the lane-db pin in `message-order-arrival.pg.test.ts`.
  */
 describe("the store a phone carries walks the arrival index too", () => {
-  it("a deep History page is planned on messages_account_arrival_order_idx, with no sort", async () => {
+  it("a deep History page is planned on messages_account_arrival_key_idx, with no sort", async () => {
     const w = await makeCtx(NOW);
     const rows = Array.from({ length: 3000 }, (_, g) => ({
       accountId: w.accountId, mailboxId: w.mailboxId, messageIdHeader: `mid:${g}`, bodyHash: `h${g}`,
@@ -245,7 +257,7 @@ describe("the store a phone carries walks the arrival index too", () => {
     const page = built.map((b) => b.toSQL()).filter((q) => /order by \(case when "messages"\."arrived_at"/i.test(q.sql));
     expect(page, "the page issued no arrival-ordered select").toHaveLength(1);
     const plan = (await d.exec(w.db, sql`explain ${sql.raw(dialectOf(w.db) === "sqlite" ? "query plan " : "")}${bound(page[0]!)}`)).flat().join("\n");
-    expect(plan, plan).toContain("messages_account_arrival_order_idx");
+    expect(plan, plan).toContain("messages_account_arrival_key_idx");
     expect(plan, "the page sorted the account instead of walking the index").not.toMatch(/TEMP B-TREE FOR ORDER BY|Sort Key/);
   });
 });

@@ -13,8 +13,8 @@ import { stubThreadLayout, type ThreadLayout } from "../../webapp/test/fixtures/
  * client's `AppShell` with an engine the window built (`DesktopGate`: `demo={false}` plus `engine`),
  * so they share the Ohbox's thread-read rule, and this is that shape: an open puts the glance read
  * of the message on screen on the outbox and the wire once its top was on screen for the dwell,
- * while it is still open, and the count follows it; a j preview writes nothing. The window's reader
- * is laid out (`thread-layout.ts`).
+ * while it is still open, and the count follows it; a j preview passed within the rest writes nothing,
+ * one rested on reads. The window's reader is laid out (`thread-layout.ts`).
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -91,18 +91,25 @@ async function mountWindow(store: LaterTaskDisk): Promise<void> {
 }
 
 describe("the desktop window's Ohbox", () => {
-  it("an open saves the read to the outbox and the wire while the message is still open; a preview writes nothing", async () => {
+  it("an open saves the read to the outbox and the wire while the message is still open; a preview rested on reads too", async () => {
     const store = new LaterTaskDisk();
     await mountWindow(store);
 
-    const row = host.querySelector<HTMLElement>('.row[data-unseen="1"][data-id]');
-    expect(row, "the fixture Ohbox shows no unread row").not.toBeNull();
-    const id = row!.dataset.id!;
-    const before = count();
-    // A preview: the first row on screen, resting well past the old dwell. Nothing is written.
+    const first = host!.querySelector<HTMLElement>('.row[data-unseen="1"][data-id]');
+    expect(first, "the fixture Ohbox shows no unread row").not.toBeNull();
+    // A preview: the first row on screen, resting well past the rest, the window in front. Rested on,
+    // it reads (owner 2026-10-28: "no it stays like that and does not fade, that's the issue").
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true })); });
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    expect(wire.filter((w) => w.kind === "mark_seen"), "a preview wrote a read").toEqual([]);
+    expect(wire.filter((w) => w.kind === "mark_seen"), "the rested preview wrote no read")
+      .toEqual([{ kind: "mark_seen", ids: [first!.dataset.id!], unread: false, via: "glance" }]);
+    // The open, of the next unread row: what it writes alone.
+    wire = [];
+    store.disk.length = 0;
+    const row = host!.querySelector<HTMLElement>('.row[data-unseen="1"][data-id]');
+    expect(row, "the fixture Ohbox shows no second unread row").not.toBeNull();
+    const id = row!.dataset.id!;
+    const before = count();
     await act(async () => { rowOf(id).click(); });       // a click is the open
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
     expect(wire.filter((w) => w.kind === "mark_seen"), "the write waits for the dwell").toEqual([]);
@@ -113,6 +120,19 @@ describe("the desktop window's Ohbox", () => {
     expect(store.disk.some((d) => d.startsWith("put ")), "the outbox row never reached the disk").toBe(true);
     expect(rowOf(id).dataset.unseen).toBeUndefined();
     expect(count(), "the count and the row disagree").toBe(before - 1);
+  });
+
+  it("a preview passed within the rest writes nothing, however long after", async () => {
+    await mountWindow(new LaterTaskDisk());
+    const passed = host!.querySelector<HTMLElement>(".row[data-id]")!.dataset.id!;
+    expect(rowOf(passed).dataset.unseen, "the first row is not unread").toBe("1");
+    const j = () => act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true })); });
+    await j();
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    await j(); // on, before the 1.3 s rest
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(wire.filter((w) => w.kind === "mark_seen" && w.ids.includes(passed)), "a passed preview wrote a read").toEqual([]);
+    expect(rowOf(passed).dataset.unseen).toBe("1");
   });
 
   /**

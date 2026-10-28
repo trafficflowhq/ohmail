@@ -1,6 +1,10 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MutationRejectedError, draftsList, type EngineDraft, type EngineMutation } from "@ohmail/client-engine";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import {
+  MutationRejectedError, OUTBOX_TYPE, draftsList, type EngineDraft, type EngineLocks, type EngineMutation, type IndexedDbMirrorStore,
+} from "@ohmail/client-engine";
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
@@ -420,6 +424,41 @@ describe("a forward typed inline is a draft on the account", () => {
     expect(sends(s)[0]!.body, "the send carried the dock's older words").toContain("Composer words");
   }, 90_000);
 
+  it.each([false, true])("the composer's forward waiting, Cancel in the Forward dock keeps the composer's words and To (hand-off %s)", async (handOff) => {
+    const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true, handOff, versions: true });
+    await fill(s);
+    await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
+    const row = forwards(s)[0]!.id;
+    await key("Escape");
+    await route("#/drafts");
+    await waitFor(() => s.el.querySelector(`.draft-row[data-id='${row}'] .draft-open`) != null, "the forward in Drafts");
+    await press(s.el.querySelector(`.draft-row[data-id='${row}'] .draft-open`), "the forward draft");
+    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer", 400);
+    const n = saves(s).length;
+    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")!, "Composer words, "); });
+    await waitFor(() => saves(s).length > n, "the composer's save", PAUSE_ROUNDS);
+    await rounds(10);
+    s.refuseSend.on = true;
+    s.refuseSend.retryableFirst = 1000;
+    const send = [...s.el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]
+      .find((b) => /^Send(?!.*later)/i.test((b.textContent ?? "").trim()))!;
+    await act(async () => { send.click(); });
+    await waitFor(() => s.engine.waitingSends().some((w) => w.draftId === row), "the composer's send waits", PAUSE_ROUNDS);
+    await route("#/ohbox");
+    await rounds(4);
+    await forwardOn(s);
+    await waitFor(() => dock(s) != null, "the forward dock");
+    await rounds(10);
+    s.withdrawAnswer.outcome = "withdrawn";
+    await act(async () => {
+      [...dock(s)!.querySelectorAll<HTMLButtonElement>(".reply-actions button")].find((b) => (b.textContent ?? "").trim().startsWith("Cancel"))!.click();
+    });
+    await waitFor(() => dock(s) == null, "the dock closed", PAUSE_ROUNDS);
+    await rounds(120);
+    const kept = s.store.get<EngineDraft>("draft", row);
+    expect({ body: kept?.body?.includes("Composer words"), to: kept?.to.map((a) => a.address) }).toEqual({ body: true, to: [TO] });
+  }, 90_000);
+
   it("a forward sent from another device while its dock is open closes the dock, says so, and is not sent again", async () => {
     const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
     await fill(s);
@@ -664,5 +703,108 @@ describe("a reply, forward or letter whose Send made its row, cancelled while it
     const other = await server.device();
     expect({ account: held(server), other: other.read().list<EngineDraft>("draft").map((d) => [d.status, d.body]) })
       .toEqual({ account: [["draft", BODY]], other: [["draft", BODY]] });
+  }, 60_000);
+
+  it("a reply whose Cancel could not be asked, pressed again and answered withdrawn: one draft, no second create", async () => {
+    const server = new DraftServer();
+    const s = await mountShell("#/ohbox", [message("m1")], [], { server });
+    sendMakesItsRow(s, server);
+    await openReplyOn(s, "m1");
+    await act(async () => { typeInto(replySurface(s.el)!, BODY); });
+    await act(async () => { button(s, "Send").click(); });
+    await waitFor(() => server.rows.size === 1
+      && (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "the press's row, Not sent yet", PAUSE_ROUNDS);
+    await act(async () => { button(s, "Cancel").click(); });
+    await waitFor(() => [...document.querySelectorAll(".toast, .toast-held")].some((n) => n.textContent?.includes(en.compose.cancelUnreachable)), "the owed Cancel");
+    await act(async () => { s.withdrawAnswer.outcome = "withdrawn"; button(s, "Cancel").click(); });
+    await waitFor(() => s.el.querySelector(".reply[data-reply-for]") == null, "the dock closed", PAUSE_ROUNDS);
+    for (let i = 0; i < 40; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
+    expect({ account: held(server), creates: saves(s).filter((m) => m.draftId === null).length })
+      .toEqual({ account: [["draft", BODY]], creates: 0 });
+  }, 60_000);
+});
+
+describe("two windows over one disk: a waiting send cancelled in the window that did not press it", () => {
+  const BODY = "Thirty-two characters of a reply";
+  const MORE = `${BODY}, and two more`;
+  const button = (s: DraftShell, word: string): HTMLButtonElement =>
+    [...s.el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")].find((b) => (b.textContent ?? "").trim().startsWith(word))!;
+  const status = (s: DraftShell): string => s.el.querySelector(".reply .send-status")?.textContent ?? "";
+  const held = (server: DraftServer): Array<[string, string | null]> => [...server.rows.values()].map((d) => [d.status, d.body]);
+  const settle = async (n: number): Promise<void> => { for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); }); };
+  let windows: DraftShell[] = [];
+
+  beforeEach(() => {
+    const fake = createRequire(resolve("packages/client-engine/package.json"))("fake-indexeddb") as { IDBFactory: new () => IDBFactory; IDBKeyRange: unknown };
+    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();
+    (globalThis as { IDBKeyRange?: unknown }).IDBKeyRange = fake.IDBKeyRange;
+  });
+  afterEach(async () => {
+    await unmountAll();
+    for (const w of windows) (w.store as IndexedDbMirrorStore).close();
+    windows = [];
+  });
+
+  /** One browser's Web Locks, shared by both windows. */
+  const lockRegistry = (): EngineLocks => {
+    const taken = new Set<string>();
+    return {
+      async request(name, _o, cb) { taken.add(name); return cb({ name }); },
+      async query() { return { held: [...taken].map((name) => ({ name })) }; },
+    } as EngineLocks;
+  };
+
+  // Each window is driven only inside its own `el`: both listen on `document` and share one route.
+  it.each(["reply", "forward"])("a %s, whose dock opened before that window's mirror held the send's row: one draft", async (what) => {
+    const fwd = what === "forward";
+    const server = new DraftServer();
+    const locks = lockRegistry();
+    const msgs = [message("m1", (fwd ? { hasAttachments: true, attachmentCount: 3 } : {}) as never)];
+    const A = await mountShell("#/ohbox", msgs, [], { server, parts: fwd, locks });
+    const B = await mountShell("#/ohbox", msgs, [], { server, parts: fwd, locks });
+    windows = [A, B];
+    B.syncHeld.on = true;
+    sendMakesItsRow(A, server);
+    if (fwd) await fillForward(A, "colleague@example.net", BODY);
+    else {
+      await press(A.el.querySelector(".view-ohbox .row[data-id='m1']"), "A's row");
+      await press(A.el.querySelector(".read-col .abar-reply"), "A's Reply");
+      await waitFor(() => replySurface(A.el) != null, "A's reply editor");
+      await act(async () => { typeInto(replySurface(A.el)!, BODY); });
+    }
+    await act(async () => { button(A, "Send").click(); });
+    await waitFor(() => server.rows.size === 1 && status(A).includes(en.reply.statusQueued), "A: the press's row, Not sent yet", PAUSE_ROUNDS);
+    const sendKey = A.engine.pendingMutations().find((p) => p.mutation.kind === "mail_send")!.key;
+    await waitFor(() => B.store.entries<{ key: string; createdRow?: unknown }>(OUTBOX_TYPE)
+      .some((e) => e.entity.key === sendKey && e.entity.createdRow !== undefined), "B reads A's send and its row off the disk", PAUSE_ROUNDS);
+    if (fwd) await openForward(B);
+    else {
+      await press(B.el.querySelector(".view-ohbox .row[data-id='m1']"), "B's row");
+      await press(B.el.querySelector(".read-col .abar-reply"), "B's Reply");
+    }
+    await waitFor(() => B.el.querySelector(".reply[data-reply-for]") != null, "B's dock", PAUSE_ROUNDS);
+    // B's dock holds A's send, while B's mirror has no draft and B's engine queued nothing.
+    const before = { queued: status(B).includes(en.reply.statusQueued), rows: B.store.list<EngineDraft>("draft").length, mine: B.engine.pendingMutations().length };
+    B.withdrawAnswer.outcome = "withdrawn";
+    await act(async () => { button(B, "Cancel").click(); });
+    await waitFor(() => B.el.querySelector(".reply[data-reply-for]") == null, "B's dock closed", PAUSE_ROUNDS);
+    await waitFor(() => A.el.querySelector(".reply[data-reply-for]") == null, "A's dock closed on the notice", PAUSE_ROUNDS);
+    await settle(40);
+    B.syncHeld.on = false;
+    await act(async () => { await B.engine.syncOnce().catch(() => undefined); });
+    await act(async () => { await A.engine.syncOnce().catch(() => undefined); });
+    await settle(20);
+    expect({ before, account: held(server), creates: saves(B).filter((m) => m.draftId === null).length })
+      .toEqual({ before: { queued: true, rows: 0, mine: 0 }, account: [["draft", BODY]], creates: 0 });
+    // Later, in B: open it again, more words, Cancel: still that one row.
+    if (fwd) await openForward(B);
+    else await press(B.el.querySelector(".read-col .abar-reply"), "B's Reply again");
+    const surface = (): HTMLElement | null => B.el.querySelector<HTMLElement>(".reply[data-reply-for] .rte-surface");
+    await waitFor(() => (surface()?.textContent ?? "").includes(BODY), "B's words again", PAUSE_ROUNDS);
+    await act(async () => { typeInto(surface()!, MORE); });
+    await act(async () => { button(B, "Cancel").click(); });
+    await waitFor(() => held(server).some(([, body]) => body === MORE), "the newest words on the account", PAUSE_ROUNDS);
+    await settle(20);
+    expect(held(server)).toEqual([["draft", MORE]]);
   }, 60_000);
 });

@@ -134,7 +134,7 @@ export interface MessageDTO {
    */
   arrivedAt: ISODateTime;
   /**
-   * THE INSTANT THE ROW SORTS BY — the sender's {@link date} while it lies within tolerance of
+   * THE INSTANT THE ROW SORTS BY — the sender's {@link date} while it lies within tolerance before
    * the mailbox's own arrival (`messages.arrived_at`, the IMAP INTERNALDATE), else that arrival
    * (a header months from arrival took a position months from where the reader watched
    * the row). Computed in ONE place, `materialize.ts#sortAtOf`; the client keys its date order on

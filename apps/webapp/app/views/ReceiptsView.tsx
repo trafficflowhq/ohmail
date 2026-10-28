@@ -36,7 +36,7 @@ import { useKeyPanelOpensCard, useStreamBar } from "../shell/stream-bar";
 import { readLandedCard } from "../shell/stream-landing-read";
 import { useBodyStamp } from "../shell/body-slice";
 import { useStreamNear } from "../shell/stream-near";
-import { afterPaint, useVisit } from "../shell/visit";
+import { afterPaint, useCursorFollowsTop, useVisit } from "../shell/visit";
 import { useStreamInPlace } from "../shell/stream-in-place";
 import { ThreadStrip } from "../shell/ThreadStrip";
 
@@ -361,6 +361,7 @@ export function ReceiptsView({
      drops the jump. The latest callbacks and order are read through refs at fire time. */
   const jumpRefs = useRef({ onCur, onJumped, jumpEnters });
   jumpRefs.current = { onCur, onJumped, jumpEnters };
+  useCursorFollowsTop(cur, jumpTo, all[0]?.id ?? null, onCur);
   /* The jump effect is [jumpTo]-keyed and reads its collaborators through refs; the pile
      index joins them for the same reason (a fresh Map identity per delta must not re-arm it). */
   const pileIndexOfRef = useRef(pileIndexOf);
