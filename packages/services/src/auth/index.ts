@@ -49,7 +49,7 @@ export { resolveSession, type ResolvedSessionCore, type SessionScope } from "./r
 export type {
   AuthConfig, AuthDeps,
   SessionUser, TwofaEnrolled, LoginChallenge, SessionEstablished, OAuthTokens,
-  RecoveryCodesResp, Device, AuthAuditEvent,
+  RecoveryCodesResp, Device, AuthAuditEvent, ReuseSweep,
   // The enrollment-scoped first session.
   EnrollmentSessionEstablished, RegistrationResult, LoginResult,
   // The public register path's constant acknowledgement, and the two shapes

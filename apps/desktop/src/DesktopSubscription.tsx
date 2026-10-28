@@ -17,6 +17,7 @@ import { ACCESS_REFUSED_STATUS, ACCOUNT_ACCESS_PATH, bridgeFetch } from "./bridg
 import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "../../webapp/app/shell/wall-lift.js";
 import { linkHref, useRenderedLinks } from "../../webapp/app/shell/rendered-links";
 import { storageFactsOf, type StorageFacts } from "../../webapp/app/shell/storage-state";
+import { reuseSweepLinesOf, type ReuseSweepLine } from "../../webapp/app/shell/reuse-sweeps";
 
 /**
  * The hosted route this pane addresses, root-relative like every path in this window.
@@ -135,27 +136,40 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
   return { manageOffered: state === "offered", withdrawManage, storage, lifecycleState };
 }
 
+/** What the account door's one session read says: whose account, and the reuse sweeps to tell. */
+export interface HostedSessionRead {
+  accountId: string | null;
+  reuseSweeps: readonly ReuseSweepLine[];
+}
+
+const NO_HOSTED_SESSION: HostedSessionRead = { accountId: null, reuseSweeps: [] };
+
 /**
- * The hosted account's id, for Help & contact's diagnostics: one `GET /auth/session`, forwarded on
- * the account door. `null` on any other door and until the account answers; never an address.
+ * The hosted account's id, for Help & contact's diagnostics, and the reuse sweeps this sign-in is
+ * told of: one `GET /auth/session`, forwarded on the account door. Nothing on any other door and
+ * until the account answers; never an address.
  */
-export function useHostedAccountId(accountDoor: boolean): string | null {
-  const [id, setId] = useState<string | null>(null);
+export function useHostedSession(accountDoor: boolean): HostedSessionRead {
+  const [read, setRead] = useState<HostedSessionRead>(NO_HOSTED_SESSION);
   useEffect(() => {
-    setId(null);
+    setRead(NO_HOSTED_SESSION);
     if (!accountDoor) return undefined;
     let live = true;
     void (async () => {
       try {
         const res = await bridgeFetch("/auth/session");
-        const body = res.ok ? ((await res.json()) as { user?: { accountId?: unknown } } | null) : null;
+        const body = res.ok
+          ? ((await res.json()) as { user?: { accountId?: unknown }; reuseSweeps?: unknown } | null)
+          : null;
         const named = body?.user?.accountId;
-        if (live && typeof named === "string" && named !== "") setId(named);
+        if (live && typeof named === "string" && named !== "") {
+          setRead({ accountId: named, reuseSweeps: reuseSweepLinesOf(body?.reuseSweeps) });
+        }
       } catch { /* no answer: the block says none */ }
     })();
     return () => { live = false; };
   }, [accountDoor]);
-  return id;
+  return read;
 }
 
 /** Nothing drawn yet. */

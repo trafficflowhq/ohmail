@@ -63,6 +63,8 @@ export interface CloudSessionReading {
   code: string | null;
   /** When this state began, ISO. */
   since: string;
+  /** A refusal that was a reuse sweep's own ({@link REUSE_CAUSE}); absent on every other reading. */
+  cause?: typeof REUSE_CAUSE;
 }
 
 /**
@@ -73,6 +75,13 @@ export interface CloudSessionReading {
 export const REFUSAL_CODES: ReadonlySet<string> = new Set([
   "refresh_missing", "refresh_expired", "refresh_revoked", "unauthorized",
 ]);
+
+/**
+ * WHY A REFUSAL WAS A REUSE SWEEP: the sweep's own 401 says it in `details.cause`. The client
+ * engine's `REFRESH_REUSE_CAUSE`, kept here as a twin for {@link REFUSAL_CODES}' reason. A cause,
+ * never a code: the session ends on the code as before.
+ */
+export const REUSE_CAUSE = "reuse";
 
 /**
  * A CREDENTIAL'S OWN VERDICT (a wrong code or passkey), said apart from a lapsed session's
@@ -251,11 +260,12 @@ export interface CloudAuthConfig {
   requestDeadlineMs?: number;
   /**
    * Called at most once, when the refresh door REFUSED — a 401 carrying a code in
-   * {@link REFUSAL_CODES} — or any answer said {@link ACCOUNT_ERASED}, with that code. The
-   * engine's cue to end the session. Nothing else calls it: a 403, an uncoded 401, a 5xx or a
-   * dead network is retried and the session stays.
+   * {@link REFUSAL_CODES} — or any answer said {@link ACCOUNT_ERASED}, with that code, and the
+   * reuse sweep's {@link REUSE_CAUSE} when the refusal named it. The engine's cue to end the
+   * session. Nothing else calls it: a 403, an uncoded 401, a 5xx or a dead network is retried and
+   * the session stays.
    */
-  onSessionRefused?: (code: string) => void;
+  onSessionRefused?: (code: string, cause?: typeof REUSE_CAUSE) => void;
   /** Told each new {@link CloudSessionReading}, and each fault's retry, for `/health` and the log. */
   onSessionState?: (reading: CloudSessionReading, next: { attempt: number; retryInMs: number | null }) => void;
   /** The jitter's source, injectable so a test can pin the schedule. */
@@ -367,21 +377,30 @@ export async function loadSealedTokens(path: string, keyProvider: KeyProvider): 
 /** One renewal's outcome. `fault` keeps the session; only `refused` ends it. */
 type Renewal =
   | { kind: "minted"; expiresInMs: number | null }
-  | { kind: "refused"; code: string }
+  | { kind: "refused"; code: string; cause?: typeof REUSE_CAUSE }
   | { kind: "fault"; state: "renewing" | "unreachable" | "seal_failed"; code: string; retryAfterMs: number | null };
 
 /** A code fit for a state line: our envelope's vocabulary shape. Anything else is dropped. */
 const CODE_SHAPE = /^[a-z][a-z0-9_]{0,47}$/;
 
-/** The error code our envelope names, or null — an HTML page, an empty body, a foreign shape. */
-async function envelopeCode(res: Response): Promise<string | null> {
+/**
+ * The error code our envelope names, or null — an HTML page, an empty body, a foreign shape — and
+ * {@link REUSE_CAUSE} when `details.cause` is exactly that; any other cause says nothing.
+ */
+async function envelopeRefusal(res: Response): Promise<{ code: string | null; cause?: typeof REUSE_CAUSE }> {
   try {
-    const body = (await res.json()) as { error?: { code?: unknown } } | null;
+    const body = (await res.json()) as { error?: { code?: unknown; details?: { cause?: unknown } | null } } | null;
     const code = body?.error?.code;
-    return typeof code === "string" && CODE_SHAPE.test(code) ? code : null;
+    if (typeof code !== "string" || !CODE_SHAPE.test(code)) return { code: null };
+    return body?.error?.details?.cause === REUSE_CAUSE ? { code, cause: REUSE_CAUSE } : { code };
   } catch {
-    return null;
+    return { code: null };
   }
+}
+
+/** The error code our envelope names, or null. */
+async function envelopeCode(res: Response): Promise<string | null> {
+  return (await envelopeRefusal(res)).code;
 }
 
 /** `Retry-After` in milliseconds — seconds or an HTTP date — or null when absent or unreadable. */
@@ -498,11 +517,11 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     return bodyEnds(res, ended);
   };
 
-  const tellSessionRefused = (code: string): void => {
+  const tellSessionRefused = (code: string, cause?: typeof REUSE_CAUSE): void => {
     if (sessionRefusedTold) return;
     sessionRefusedTold = true;
     try {
-      cfg.onSessionRefused?.(code);
+      cfg.onSessionRefused?.(code, cause);
     } catch {
       /* the cue must never break the fetch it rode in on */
     }
@@ -553,8 +572,10 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
       /* THE ONE VERDICT: a 401 naming one of our refusal codes. A 403 here is a platform's (the
          native refresh takes no CSRF), and an uncoded 401 or a 5xx is not a statement about this
          session — each is retried with the attempt's name, so a retry is a replay, not a reuse. */
-      const code = await envelopeCode(res);
-      if (res.status === 401 && code !== null && REFUSAL_CODES.has(code)) return { kind: "refused", code };
+      const { code, cause } = await envelopeRefusal(res);
+      if (res.status === 401 && code !== null && REFUSAL_CODES.has(code)) {
+        return { kind: "refused", code, ...(cause ? { cause } : {}) };
+      }
       if (res.status === 410 && code === ACCOUNT_ERASED) return { kind: "refused", code };
       return {
         kind: "fault", state: "renewing", code: code ?? `http_${res.status}`,
@@ -607,9 +628,11 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     timer.unref?.();
   };
 
-  const report = (state: CloudSessionState, code: string | null, retryInMs: number | null): void => {
+  const report = (
+    state: CloudSessionState, code: string | null, retryInMs: number | null, cause?: typeof REUSE_CAUSE,
+  ): void => {
     const changed = reading.state !== state || reading.code !== code;
-    if (changed) reading = { state, code, since: now().toISOString() };
+    if (changed) reading = { state, code, since: now().toISOString(), ...(cause ? { cause } : {}) };
     if (!changed && retryInMs === null) return;
     try {
       cfg.onSessionState?.(reading, { attempt: faults, retryInMs });
@@ -629,8 +652,8 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     }
     if (r.kind === "refused") {
       clearTimer();
-      report("refused", r.code, null);
-      tellSessionRefused(r.code);
+      report("refused", r.code, null, r.cause);
+      tellSessionRefused(r.code, r.cause);
       return;
     }
     faults += 1;

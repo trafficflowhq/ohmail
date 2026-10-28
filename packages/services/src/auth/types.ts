@@ -155,6 +155,18 @@ export interface Device {
   pushToken?: { transport: "apns" | "webpush"; registeredAt: string } | null;
 }
 
+/**
+ * A refresh-reuse sweep of the caller's own account, told to a full session minted after it (`GET
+ * /auth/session`): the sweep row's id, which the acknowledgement names, when it happened, and what
+ * kind of client the swept session was (`null` when that is no longer known). No family, session,
+ * depth or address: the person needs the fact, and the evidence stays in `auth_events`.
+ */
+export interface ReuseSweep {
+  id: string;
+  at: string;
+  client: DeviceKind | null;
+}
+
 export interface AuthAuditEvent {
   at: string;
   event:
@@ -191,6 +203,10 @@ export interface AuthAuditEvent {
     // machine-readable half an investigation starts from — instead of a user agent, which the
     // reuse presentation does not reliably have. Then `depth=<n> tail_age_s=<s>`, evidence only.
     | "refresh_reuse_revoked"
+    // The person pressed OK on a sweep a full session minted after it was told of (`POST
+    // /auth/reuse-sweeps/ack`); `device` carries `ack=<the sweep row's id>` and nothing else, and
+    // `GET /auth/session` lists no sweep that has one.
+    | "refresh_reuse_acknowledged"
     // The LOST-RESPONSE RECOVERY in `rotateRefresh` re-admitted a stale cookie presentation:
     // a consumed token was re-presented outside the concurrency grace, but its family's tail
     // had NEVER been used — the shape a browser leaves when a rotation committed server-side

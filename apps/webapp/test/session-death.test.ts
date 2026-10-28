@@ -355,6 +355,17 @@ describe("the refresh reports what it met — class and code", () => {
     expect(warn.mock.calls[0]![1]).toMatchObject({ outcome: "revoked", status: 401, code: "unauthorized" });
   });
 
+  it("a REUSE SWEEP's own refusal reports why beside its code", async () => {
+    answerWith(() => new Response(
+      JSON.stringify({ error: { code: "refresh_revoked", message: "refresh token reuse detected", details: { cause: "reuse" } } }),
+      { status: 401, headers: { "content-type": "application/json" } },
+    ));
+    await refreshOnce();
+    expect(report()).toEqual({
+      outcome: "revoked", status: 401, code: "refresh_revoked", errorClass: null, retryAfterMs: null, cause: "reuse",
+    });
+  });
+
   it("a FAULT reports its status and code — the other state, told apart", async () => {
     answerWith(() => new Response(
       JSON.stringify({ error: { code: "db_busy", message: "busy" } }),

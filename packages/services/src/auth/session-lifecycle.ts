@@ -12,7 +12,6 @@ import type { AuthConfig } from "./types.js";
 import type {
   SessionEstablished, OAuthTokens, Device, DeviceKind, SessionUser, TwofaEnrolled, AuthAuditEvent,
 } from "./types.js";
-import type { SessionScope } from "./resolve-session.js";
 
 /**
  * A live session for one account may not present a credential for another. The sign-in and token
@@ -80,6 +79,12 @@ export type RefreshFailure = "session_refused" | "request_refused" | "fault";
  * one. Unknown and revoked share a code on purpose: a probe must not learn whether a token was
  * ever minted. The messages stay as they were; the phone keys on the reuse sentence.
  */
+
+/**
+ * WHY A REUSE SWEEP'S OWN REFUSAL SAID SO: `details.cause` on that one 401, so the copy that
+ * presented a renewed token can be told. Every later presentation answers without it (no oracle).
+ */
+export const REFRESH_REUSE_CAUSE = "reuse";
 
 export function classifyRefreshFailure(err: unknown): RefreshFailure {
   if (!(err instanceof ServiceError) || err.httpStatus >= 500) return "fault";
@@ -810,13 +815,6 @@ export class SessionLifecycle {
       ));
   }
 
-  /** The caller's own session scope, read from the row (informational — see getSession). */
-  protected async sessionScope(db: Tx, sessionId?: string | null): Promise<SessionScope> {
-    if (!sessionId) return "full";
-    const s = (await db.select({ scope: sessions.scope }).from(sessions).where(eq(sessions.id, sessionId)).limit(1))[0];
-    return s?.scope === "enrollment" ? "enrollment" : "full";
-  }
-
   /**
    * Rotate a refresh token — the CLAIM decides, never a read of the token before it. SELECT →
    * check → UPDATE defeats the reuse detection it implements: two concurrent presentations both
@@ -1010,6 +1008,8 @@ export class SessionLifecycle {
    * THE SWEEP, one body for both of its events: the family revoked and the row written in ONE
    * transaction, redone ALONE if it cannot commit (the block above its first call says why).
    * `refresh_attempt_revoked` carries `cause=attempt_mismatch`; `refresh_reuse_revoked` no cause.
+   * Only the reuse sweep's refusal names {@link REFRESH_REUSE_CAUSE}: an attempt mismatch is most
+   * often one client's own late answer, where "used again from a copy" would be false.
    */
   private async sweepFamily(
     ctx: ServiceContext, existing: typeof refreshTokens.$inferSelect, now: Date,
@@ -1032,7 +1032,8 @@ export class SessionLifecycle {
       // The audit write must not block the security action: reuse still revokes the family.
       await this.revokeFamily(db, existing.familyId, now);
     }
-    return new ServiceError("refresh_revoked", 401, "refresh token reuse detected");
+    return new ServiceError("refresh_revoked", 401, "refresh token reuse detected",
+      event === "refresh_reuse_revoked" ? { cause: REFRESH_REUSE_CAUSE } : undefined);
   }
 
   /**

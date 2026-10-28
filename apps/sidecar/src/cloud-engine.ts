@@ -17,7 +17,7 @@ import { ensureLocalWorld, type LocalWorld } from "./identity.js";
 import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
 import {
   createCloudAuth, loadSealedTokens, sealTokens, ACCOUNT_ERASED, REFUSAL_CODES,
-  type CloudAuth, type CloudSessionReading, type CloudTokens,
+  REUSE_CAUSE, type CloudAuth, type CloudSessionReading, type CloudTokens,
 } from "./cloud-auth.js";
 import { writeAtomic } from "./fs-atomic.js";
 import {
@@ -670,18 +670,19 @@ export function clearMirrorErased(dataDir: string): void {
 
 /**
  * THE REFUSAL AN EARLIER RUN HEARD, for the next launch: its teardown removes the seal, so that
- * launch is pre-auth and would greet the person as a first run. The code and its time, nothing more.
+ * launch is pre-auth and would greet the person as a first run. The code, its time and a reuse
+ * sweep's cause, nothing more.
  */
 const SESSION_REFUSED_FILE = "cloud-session-refused.json";
 
-/** The kept refusal, or null; a file that does not read as one says nothing. */
-function readSessionRefused(dataDir: string): { code: string; since: string } | null {
+/** The kept refusal, or null; a file that does not read as one says nothing, and only {@link REUSE_CAUSE} is a cause. */
+function readSessionRefused(dataDir: string): { code: string; since: string; cause?: typeof REUSE_CAUSE } | null {
   try {
     const raw = readFileSync(join(dataDir, SESSION_REFUSED_FILE), "utf8");
-    const v = JSON.parse(raw) as { code?: unknown; since?: unknown } | null;
+    const v = JSON.parse(raw) as { code?: unknown; since?: unknown; cause?: unknown } | null;
     if (typeof v?.code !== "string" || !REFUSAL_CODES.has(v.code)) return null;
     if (typeof v.since !== "string" || !Number.isFinite(Date.parse(v.since))) return null;
-    return { code: v.code, since: v.since };
+    return { code: v.code, since: v.since, ...(v.cause === REUSE_CAUSE ? { cause: REUSE_CAUSE } : {}) };
   } catch {
     return null;
   }
@@ -1001,7 +1002,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // BACK FROM A FAULT: the mirror's own backoff may be minutes long by now.
           if (reading.state === "live") authed?.mirror.kick();
         },
-        onSessionRefused: (code) => {
+        onSessionRefused: (code, cause) => {
           // The refresh door REFUSED; nothing this process can send will renew it. Tear down to the
           // pre-auth state (stop the pulls, drop the spent seal) so the window renders the sign-in
           // surface. Fire-and-forget: this fires from inside a pull's own refresh, and the
@@ -1012,7 +1013,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // Kept for the next launch, which finds no seal; a failed write loses only the sentence.
           else if (REFUSAL_CODES.has(code)) {
             try {
-              writeAtomic(refusedPath, JSON.stringify({ code, since: now().toISOString() }), 0o600);
+              writeAtomic(refusedPath, JSON.stringify({ code, since: now().toISOString(), ...(cause ? { cause } : {}) }), 0o600);
             } catch { /* see above */ }
           }
           log?.("cloud_session_renewal_failed", {

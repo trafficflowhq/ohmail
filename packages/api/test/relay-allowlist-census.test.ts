@@ -107,7 +107,9 @@ describe("the projection the sidecar reads matches the table", () => {
     // 186 -> 187 with `GET /screener/waiting/count`, relayed like the decision count beside it.
     // 187 -> 190 with the waiting filings' read and its two presses, answered on the server that
     // holds the rows, like the gap offer's answer beside them.
-    expect(RELAY_ALLOWLIST.length).toBe(190);
+    // 190 -> 191 with `POST /auth/reuse-sweeps/ack`: the account's own notice, put away on the server
+    // that listed it, like `GET /auth/session` beside it.
+    expect(RELAY_ALLOWLIST.length).toBe(191);
   });
 
   it("every pattern in the projection is a real route", () => {

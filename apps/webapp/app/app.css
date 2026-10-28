@@ -1109,6 +1109,12 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   margin: 0 0 4px;
   line-height: 1.55;
 }
+.acct-note-list {
+  margin: 0 0 4px;
+  padding-left: 18px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
 
 /* ================= the same sentence, in the rail =================
    The rail's own copy of the sync line — `SyncBar variant="rail"`, rendered into the slot

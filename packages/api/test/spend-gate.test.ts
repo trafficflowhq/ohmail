@@ -391,6 +391,10 @@ const CEREMONY = [
   // updates and an audit row, no work. Sorted after `refresh` (`refresh` < `refresh/logout`).
   "POST /auth/refresh/logout",
   "POST /auth/register",
+  // Putting away the reuse sweeps the session read listed: one listing and at most twenty audit
+  // rows, nothing to spend, and what tells a person their sign-in was ended must not wait on a
+  // verified address. Sorted between `register` and `step-up` (`reg` < `reu` < `s`).
+  "POST /auth/reuse-sweeps/ack",
   // The step-up RE-verification ceremony (DEVICES) — the sign-in second factor, re-run against
   // the session the caller already holds so a stale five-minute window stops being a dead end.
   // `ceremony` on `POST /auth/2fa/totp/verify`'s exact reasoning: identity lifecycle, no work,
@@ -965,7 +969,9 @@ describe("the route table declares what every handler causes", () => {
     // it joins `UNAUTHENTICATED` and this total together and the gated remainder is unchanged.
     // 258 -> 259: `GET /internal/sends/sent-copies/run`, `unauthenticated`, so it joins
     // `UNAUTHENTICATED` and this total together and the gated remainder is unchanged.
-    expect(apiRoutes).toHaveLength(259);
+    // 259 -> 260: `POST /auth/reuse-sweeps/ack`, a `ceremony`, so it joins `CEREMONY` and this total
+    // together and the gated remainder is unchanged.
+    expect(apiRoutes).toHaveLength(260);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1200,7 +1206,8 @@ describe("the route table declares what every handler causes", () => {
     // 256 -> 257 with the mail-domain lookup, a `connection`: the remainder grows by one.
     // 257 -> 258 with the connect-attempt read, `unauthenticated`: the remainder does not move.
     // 258 -> 259 with the late Sent-copy pass, `unauthenticated`: the remainder does not move.
-    expect(gated.length).toBe(259 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 259 -> 260 with the reuse sweeps' acknowledgement, a `ceremony`: the remainder does not move.
+    expect(gated.length).toBe(260 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });
