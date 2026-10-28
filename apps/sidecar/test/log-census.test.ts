@@ -1524,6 +1524,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // one, which is the mistake the worker already made once.
   local_wake_unarmed: "info",
   local_wake_rearm_failed: "error",
+  // A read press sent at once (`withSeenPush`): how long it queued behind a drain and how long the
+  // push took. Two durations, a flag and the mailbox id; the failure is `error` by the naming rule.
+  seen_push: "info",
+  seen_push_failed: "error",
   // first-sync.ts — HOW LONG A FIRST IMPORT TOOK, from both doors. `info` on `sync_drain`'s
   // reading: a measurement, not a judgement, and there is no bar for the numbers to be above.
   // Three counts and a duration; no address, no folder, no message — WHICH mail arrived is a

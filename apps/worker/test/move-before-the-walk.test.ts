@@ -26,6 +26,8 @@ interface Opts {
   goneOnMove?: boolean;
   /** Nothing pending; the special-folder reads and the adapter's capabilities are counted here. */
   idle?: { special: number; caps: number };
+  /** One owed `\Seen` write of ours. */
+  seen?: boolean;
 }
 
 function repoOf(calls: string[], o: Opts): WorkerRepo {
@@ -47,7 +49,12 @@ function repoOf(calls: string[], o: Opts): WorkerRepo {
         { messageId: "m-1", desiredFolder: "ohmail/News", observedFolder: "INBOX", lastSetBy: "us" as const, nativeLocator: LOC("INBOX", "42:1") },
       ];
     },
-    listPendingFlagStates: async () => [],
+    listPendingFlagStates: async () => {
+      if (o.seen !== true) return [];
+      calls.push("listPendingFlags");
+      return [{ messageId: "m-2", desiredSeen: true, observedSeen: false, lastSetBy: "us" as const, nativeLocator: LOC("INBOX", "42:2") }];
+    },
+    completeFlagState: async () => { calls.push("completeFlagState"); return true; },
     updateLocator: async () => {},
     upsertFolderState: async () => {},
     completeFolderState: async () => { calls.push("completeFolderState"); return true; },
@@ -170,5 +177,27 @@ describe("a move pending at the drain's start reaches the wire before the folder
     expect(local).toEqual(hosted);
     const pending = (calls: readonly string[]) => calls.filter((c) => c === "listPending").length;
     expect(pending(b.calls)).toBe(pending(a.calls) + 1);
+  });
+});
+
+/* THE LOCAL DOOR'S PUSH AFTER A READ PRESS: the tail's `\Seen` writes alone, as a reader. */
+describe("a seen-only cycle", () => {
+  const reader = { role: "reader", writeAuthority: { noLease: "reader" } as SyncDeps["writeAuthority"] } as const;
+
+  it("sends the owed \\Seen write and nothing else: no walk, no move, no other pass", async () => {
+    const { calls, err } = await order({ ...reader, seenOnly: true }, { seen: true });
+    expect(err).toBeNull();
+    expect(calls).toEqual(["listPendingFlags", "setFlags", "completeFlagState"]);
+  });
+
+  it("a reader cycle without the flag still walks first", async () => {
+    const { calls } = await order({ ...reader }, { seen: true });
+    expect(calls.indexOf("changesSince")).toBeLessThan(calls.indexOf("setFlags"));
+  });
+
+  it("is refused for an organizer before anything reaches the wire", async () => {
+    const { calls, err } = await order({ seenOnly: true }, { seen: true });
+    expect(err).toBeInstanceOf(Error);
+    expect(calls).toEqual([]);
   });
 });

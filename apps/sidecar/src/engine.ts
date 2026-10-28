@@ -2109,6 +2109,27 @@ export function withPullKick(
   });
 }
 
+/**
+ * A READ OR UNREAD PRESS IS SENT AT ONCE. The routes write `desired_seen` and answer; on this door
+ * the engine is in-process, so the press asks every runtime for one `\Seen`-only push behind its
+ * drains instead of waiting for the next poll. Fire-and-forget: the answer never waits on IMAP.
+ * A 202 on `/messages/:id` still landed its `unread` half locally.
+ */
+export function withSeenPush(
+  routes: readonly Route[],
+  runtimesFor: () => Iterable<{ pushSeen(): void }>,
+): Route[] {
+  return routes.map((r) => {
+    const batch = r.method === "PATCH" && r.pattern === "/messages";
+    if (!batch && !(r.method === "PATCH" && r.pattern === "/messages/:id")) return r;
+    return { ...r, handler: async (req, deps, params) => {
+      const res = await r.handler(req, deps, params);
+      if (res.status === 200 || (!batch && res.status === 202)) for (const rt of runtimesFor()) rt.pushSeen();
+      return res;
+    } };
+  });
+}
+
 /** The mailboxes a pull names, or `null` when it names none. Bounded; anything else is none. */
 async function pullMailboxIds(req: Request): Promise<string[] | null> {
   try {
@@ -2394,7 +2415,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          the closure is only ever CALLED from a request handler, long after it exists. Local
          composition only — the hosted door proxies its resync to a worker and has no runtime
          here to force. */
-      ...withPullKick(withImportHandover(withForcedRedial(localRoutes, (id) => runtimes.get(id), log), (id) => runtimes.get(id)), () => runtimes.all(), (id) => runtimes.get(id), (id) => gapOwed.add(id)),
+      ...withSeenPush(withPullKick(withImportHandover(withForcedRedial(localRoutes, (id) => runtimes.get(id), log), (id) => runtimes.get(id)), () => runtimes.all(), (id) => runtimes.get(id), (id) => gapOwed.add(id)), () => runtimes.all()),
       ...localAiRoutes(ai),
       ...localAutoSuggestRoutes({ db, accountId: world.accountId, ai, now }),
       // Which addresses this machine could serve same-network access on — the LAN ceremony's
@@ -2416,7 +2437,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * pairing mint) are structurally absent from it.
      */
     const hostApp: App | null = hostMode
-      ? createApp(withPullKick(withImportHandover(desktopHostRoutes, (id) => runtimes.get(id)), () => runtimes.all(), (id) => runtimes.get(id), (id) => gapOwed.add(id))) : null;
+      ? createApp(withSeenPush(withPullKick(withImportHandover(desktopHostRoutes, (id) => runtimes.get(id)), () => runtimes.all(), (id) => runtimes.get(id), (id) => gapOwed.add(id)), () => runtimes.all())) : null;
     /**
      * The static half of the same door — the browser client the QR sends a phone to. Probed NOW,
      * awaited, so `host_assets_missing` lands in the boot log where somebody debugging an
@@ -3946,6 +3967,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * — see {@link ConnectionReplacedError}.
        */
       let generation = 0;
+      /** The dial whose login `dialAndGate` opened; behind {@link generation} while a re-dial connects. */
+      let loginGeneration = 0;
       /**
        * WHICH DIAL THE RECORDED DEATH BELONGS TO, and whether it was a read bound retiring it. A
        * re-dial's own connection can die inside its gate while the previous death is still on
@@ -4782,6 +4805,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /** A kick FIRED and its drain is waiting to start: every ring until then is that drain. A
        *  drain that starts sees everything pressed before it, so the flag clears at its start. */
       let ringQueued = false;
+      /** A `\Seen` push is queued and has not started: it reads every press committed before it. */
+      let seenPushQueued = false;
       /** WHEN THE ARMED TIMER IS DUE, so a reset can tell "sooner" from "later" rather than
        *  re-arming blind: re-arming a timer that has already waited 100 s of its 120 pushes the
        *  drain FURTHER away, which is the opposite of what every caller of it wants. */
@@ -7632,6 +7657,47 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
+       * A READ PRESS GOES TO THE SERVER NOW — see {@link withSeenPush}. One `\Seen`-only pass with
+       * the reader's entitlement (no lease read, no folder walk, no move), queued behind this
+       * mailbox's drains so a read and a later unread never cross on the wire. The latch clears
+       * when the push STARTS, so a press during it queues exactly one more and the last press wins.
+       * Anything that stops a drain stops this too; the next drain then carries the rows.
+       */
+      const pushSeen = (): void => {
+        if (stopped || handedBack || seenPushQueued) return;
+        seenPushQueued = true;
+        const askedAt = monotonic();
+        void serialize(async () => {
+          seenPushQueued = false;
+          if (stopped || handedBack) return;
+          if ((await repo.listPendingFlagStates(mb.id, 1)).length === 0) return;
+          if (stopped || handedBack || signedOutSinceDial() || launchSkipped || credentialBlock !== null
+            || connectionDeadSince !== null) return;
+          const gen = generation;
+          const conn = adapter;
+          if (loginGeneration !== gen) { onMailboxSignal(); return; }   // no login on this dial yet
+          const startedAt = monotonic();
+          assertSameConnection(gen, conn);
+          const { owesFiling: owesMore } = await runSyncCycle({
+            ...syncDeps, adapter: conn, repo, knownSet, signatures: null, seenOnly: true,
+            role: "reader", writeAuthority: cycleWriteAuthority("reader", leasePermit),
+          });
+          await restOnInbox(gen, conn, null);
+          log("seen_push", {
+            mailboxId: mb.id, waitedMs: Math.round(startedAt - askedAt),
+            totalMs: Math.round(monotonic() - startedAt), more: owesMore,
+          });
+          if (owesMore) onMailboxSignal();
+        }).catch((err: unknown) => {
+          log("seen_push_failed", {
+            mailboxId: mb.id, err,
+            reason: "a read or unread press could not be sent at once; it stays owed and the next "
+              + "drain sends it",
+          });
+        });
+      };
+
+      /**
        * ══ ARM THE DOORBELL — the channel this door has always had and never used ══
        *
        * `watch` is required of every `MailboxAdapter` and the hosted worker has run on it since
@@ -7718,6 +7784,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           await conn.close().catch(() => { /* already going away */ });
           return { leaseRead: false };
         }
+        loginGeneration = gen;
         // Everything below runs on an AUTHENTICATED socket, so it is wrapped. `connect()` logs in
         // then LISTs, and `main.ts` answers a rejected `start()` by logging and serving the mirror
         // anyway — so a throw from the lease gate, `ensureFolders` or the first drain left an
@@ -8780,6 +8847,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          */
         noteWorldMoved,
         ring: onMailboxSignal,
+        pushSeen,
         /* Only while this connection can ask: an adapter with no date read never fills them. */
         arrivalsWithheld: async () => arrivals !== null
           && typeof (adapter as Partial<ArrivalReader>).readArrivals === "function" && await arrivals.withholds(),
