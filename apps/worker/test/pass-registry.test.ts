@@ -102,7 +102,6 @@ const IN_WORKER_PASSES: readonly string[] = [
   "ohbox-tidy.ts::ohboxTidyPass",
   "proposal-cron.ts::proposalGeneratePass",
   "proposal-cron.ts::runProposalCron",
-  "read-retro.ts::readStateRetroPass",
   "reconcile-cron.ts::runReconcileCron",
   "redacted-restore.ts::redactedRestorePass",
   "rule-retro.ts::ruleRetroPass",

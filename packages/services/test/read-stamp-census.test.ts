@@ -65,9 +65,10 @@ describe("read-stamp census", () => {
     expect(offenders).toEqual([]);
     // The paths this census exists for, counted so a writer FALLING OUT of the scan (a rename,
     // a refactor into a helper) is a red rather than a silently smaller sweep: the singular
-    // read, the batch read, the \Seen adoption, the retro pass.
+    // read, the batch read, the \Seen adoption.
     // 5 -> 4 (#401): the deny-side decide flips nothing; screened-out and spam mail is filed unread.
-    expect(flips).toBeGreaterThanOrEqual(4);
+    // 4 -> 3: the read-state retro command, which marked that mail read after the fact, is retired.
+    expect(flips).toBeGreaterThanOrEqual(3);
   });
 
   it("the mirror's replication upsert carries the stamp beside the flag — pinned by name", () => {

@@ -13,8 +13,8 @@ import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
  * THE ONE SPELLING'S OWN CONTRACT, against real Postgres — the branch its consumers' suites do
  * not reach.
  *
- * The INSERT branch is proven where it is used (`read-retro.pg.test.ts`,
- * `screener-read-state.pg.test.ts` both went red when it was mutated — watched, 2026-08-30).
+ * The INSERT branch was proven where it was used (watched red under mutation, 2026-08-30, by the
+ * read-state retro and the Screener's read-mark, both since retired).
  * The CONFLICT branch was not: mutating the update arm's `case when observed_seen = desired`
  * recompute to a constant `'reconciled'` left both green, because their scenarios always insert
  * fresh rows. This file pins that arm directly, because it carries the writer's two promises:

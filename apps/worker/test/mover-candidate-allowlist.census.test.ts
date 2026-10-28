@@ -23,9 +23,9 @@ import { ORGANIZED_FOLDERS } from "@trafficflow/core";
  *
  * ── WHY THIS IS A CENSUS AND NOT A CLAUSE IN EACH PASS ────────────────────────────────────
  *
- * The property is already TRUE of all five sites, and adding a redundant clause to each would be
+ * The property is already TRUE of all four sites, and adding a redundant clause to each would be
  * a condition whose contrary state is unreachable — a guard nobody can watch fail, which the next
- * reader takes for a guarantee. What is NOT guaranteed is that the SIXTH mover, written by
+ * reader takes for a guarantee. What is NOT guaranteed is that the FIFTH mover, written by
  * somebody who has not read that comment, keeps the shape. That is the thing worth pinning, and
  * this is the only form that pins it: the allow-list is a property of the SELECTION, so it is
  * asserted over the selection's source.
@@ -42,20 +42,18 @@ import { ORGANIZED_FOLDERS } from "@trafficflow/core";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const src = (rel: string): string => readFileSync(`${HERE}../../../${rel}`, "utf8");
 
-/** The five candidate selections, by the file that owns each. */
+/** The four candidate selections, by the file that owns each. */
 /* `passName`, not `pass`: the push gate reads a quoted value under a `pass` key as a password. */
 const MOVERS: ReadonlyArray<{ passName: string; file: string }> = [
   { passName: "screener-auto", file: "apps/worker/src/screener-auto.ts" },
   { passName: "ohbox-tidy", file: "apps/worker/src/ohbox-tidy.ts" },
   { passName: "rule-retro", file: "apps/worker/src/rule-retro.ts" },
-  { passName: "read-retro", file: "apps/worker/src/read-retro.ts" },
   { passName: "junk-sweep", file: "packages/db/src/junk-sweep.ts" },
 ];
 
 /** Where an operand's own string literals are declared, when not in the mover's own file. */
 const VOCABULARY_SOURCES: ReadonlyArray<string> = [
   "packages/core/src/types.ts",
-  "apps/worker/src/read-retro.ts",
   "packages/db/src/junk-sweep.ts",
 ];
 
@@ -64,7 +62,7 @@ type Constraint = { readonly polarity: "positive" | "negative"; readonly operand
 /**
  * Every constraint on `folderState.desiredFolder` in one source, with its polarity.
  *
- * A real parse, not a regex: two of the five sites express the clause inside a raw `sql`
+ * A real parse, not a regex: two of the four sites express the clause inside a raw `sql`
  * template, and one of those holds `sql.join` over a mapped list — shapes a line-oriented match
  * reads wrongly in both directions. `ts.preProcessFile` is not usable here for the reason
  * recorded against `box-files.mjs`: it is a token scanner and reads sequences out of template
@@ -86,7 +84,7 @@ export function desiredFolderConstraints(text: string): Constraint[] {
     if (ts.isIdentifier(n)) return n.text;
     if (ts.isStringLiteral(n)) return JSON.stringify(n.text);
     if (ts.isArrayLiteralExpression(n)) {
-      // `[...READ_RETRO_FOLDERS]` — the spread's own operand is the vocabulary.
+      // `[...DEMOTING_FOLDERS]` — the spread's own operand is the vocabulary.
       const spread = n.elements.find(ts.isSpreadElement);
       if (spread) return operandOf(spread.expression);
     }
@@ -231,7 +229,7 @@ describe("a mover's candidate set is an allow-list over the folders ohmail organ
     // text that stands for the two real shapes, so the discriminator is watched rather than
     // trusted: the allow-list form is recognised, and the denylist form rule-retro.ts used to
     // carry is NOT.
-    const allow = `const f = [inArray(folderState.desiredFolder, [...READ_RETRO_FOLDERS])];`;
+    const allow = `const f = [inArray(folderState.desiredFolder, [...DEMOTING_FOLDERS])];`;
     expect(desiredFolderConstraints(allow).map((c) => c.polarity)).toEqual(["positive"]);
 
     const deny = "const f = [sql`${folderState.desiredFolder} <> ${rule.destination}`];";
@@ -240,7 +238,7 @@ describe("a mover's candidate set is an allow-list over the folders ohmail organ
     expect(denyOnly.every((c) => c.polarity === "negative"),
       "the denylist form was read as an allow-list").toBe(true);
 
-    // And the `eq` form, which three of the five sites use.
+    // And the `eq` form, which two of the four sites use.
     const eqForm = `const f = [eq(folderState.desiredFolder, SCREENER)];`;
     expect(desiredFolderConstraints(eqForm)).toEqual([{ polarity: "positive", operand: "SCREENER" }]);
   });

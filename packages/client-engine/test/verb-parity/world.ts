@@ -25,7 +25,6 @@ import {
   awayReplyFlagRedeliverPass, type AwayReplyRedeliverResult,
 } from "../../../../apps/worker/src/away-reply-flag-redeliver.js";
 import { ohboxTidyPass } from "../../../../apps/worker/src/ohbox-tidy.js";
-import { readStateRetroPass } from "../../../../apps/worker/src/read-retro.js";
 import { FIXED_NOW, makeDeps, seedMessage, seedScreenerHeld, seedSession, type TestClock } from "../../../api/test/helpers.js";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, OUTBOX_TYPE,
@@ -47,9 +46,8 @@ import {
                    between a verb's optimistic half and its wire half reads as a row changing
                    under the cursor — the reported "screen twice, mark read twice" class.
      (c) SURVIVES THE WORKER — where a standing pass touches the same state (`bubbleUpPass`,
-                   `ruleRetroPass`, `ohboxTidyPass`, the scheduled-send clock, the read-retro
-                   repair), the REAL pass runs against the same database and the verb's effect
-                   still stands afterwards (user-intent-wins). Every pass leg carries its own
+                   `ruleRetroPass`, `ohboxTidyPass`, the scheduled-send clock), the REAL pass
+                   runs against the same database and the verb's effect still stands afterwards (user-intent-wins). Every pass leg carries its own
                    vacuity control — a sibling row the pass DOES act on — because a pass that
                    considered nothing proves nothing (the cold-account lesson).
 
@@ -177,7 +175,6 @@ export interface VerbWorld {
     ruleRetro(): Promise<{ moved: number; completed: number }>;
     ohboxTidy(): Promise<{ ran: boolean; examined: number; moved: number; kept: number }>;
     scheduledSend(at: Date): Promise<{ claimed: number; sent: number }>;
-    readRetro(): Promise<{ examined: number; marked: number }>;
     /**
      * The one-time `autoReplyByUs` re-delivery — see `away-reply-flag-redeliver.ts`.
      *
@@ -457,9 +454,6 @@ export async function verbWorld(): Promise<VerbWorld> {
       },
       async scheduledSend(at) {
         return runScheduledSendPass(db, { openSendAdapter: sendAdapter, now: () => at });
-      },
-      async readRetro() {
-        return readStateRetroPass(db as unknown as Tx, { accountId: s.accountId }, clock.now());
       },
     },
   };
