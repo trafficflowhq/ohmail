@@ -157,9 +157,9 @@ export function TagView({
 
   /**
    * ↓/↑ WALK THE LIST AS RENDERED — the zone model's list zone (`zone-nav.tsx`), and this
-   * view's first list keys. Selecting SHOWS (the column renders `shown`) and shows only: a
-   * preview the read rule never counts, so a flick down the tag marks nothing. → into the pane
-   * enters it; where the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
+   * view's first list keys. Selecting SHOWS (the column renders `shown`): a preview until the
+   * cursor rests on it, so a flick down the tag marks nothing. → into the pane enters it; where
+   * the column is hidden it is the sheet, the same answer a tap gets (`openRow`).
    */
   const navAt = shown ? messages.findIndex((m) => m.id === shown.id) : -1;
   /** The list is a window (`useListWindow`): a tag has no upper bound, so it mounts the slice on screen. */
@@ -184,6 +184,11 @@ export function TagView({
       }
     });
   };
+  /** A step key's move: the row it lands on is entered once rested on (`useReaderVisit`'s `land`). */
+  const stepTo = (id: string): void => {
+    selectRow(id);
+    visit.land(id);
+  };
   /* THE NINE MESSAGE VERBS, over this view's own cursor. Without this declaration the
      shell's bindings register `disabled` here (they act on `focused`, which has no arm for
      a split view's local cursor) while the action bar goes on printing their keycaps —
@@ -202,14 +207,14 @@ export function TagView({
       up: {
         disabled: navAt <= 0,
         run: () => {
-          if (navAt > 0) selectRow(messages[navAt - 1]!.id);
+          if (navAt > 0) stepTo(messages[navAt - 1]!.id);
         },
         label: to("keyPrev"),
       },
       down: {
         disabled: navAt >= messages.length - 1,
         run: () => {
-          if (navAt < messages.length - 1) selectRow(messages[navAt + 1]!.id);
+          if (navAt < messages.length - 1) stepTo(messages[navAt + 1]!.id);
         },
         label: to("keyNext"),
       },
@@ -218,6 +223,7 @@ export function TagView({
       selector: ".view-tag .read-col",
       disabled: shown == null,
       onEnter: () => { if (shown) visit.enter(shown.id); },
+      onScrollKey: () => { if (shown) visit.keyScroll(shown.id, readColRef.current); },
       onHiddenEnter: () => {
         if (shown) onOpen(shown);
       },
@@ -307,7 +313,11 @@ export function TagView({
             message={m.unread === presentsUnread(m) ? m : { ...m, unread: presentsUnread(m) }}
             tags={tags}
             now={now}
-            onAction={(a) => onAction(a, m)}
+            onAction={(a) => {
+              // The bar's Mark unread (the read switch on a read letter): held for the visit.
+              if (a === "unread" && !m.unread) visit.holdUnread(m.id);
+              onAction(a, m);
+            }}
             onAddTag={onAddTag}
             scroller={readColRef}
             threadRead={visit.wiring ?? undefined}

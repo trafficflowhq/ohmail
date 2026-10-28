@@ -16,7 +16,7 @@ import {
   presentsUnread, saysEmpty,
 } from "@ohmail/client-engine";
 import type { ListSurface, ThreadMark, ThreadRead } from "@ohmail/client-engine";
-import { LANDING_REST_MS, type ThreadReadWiring } from "../shell/reader-seen";
+import { LANDING_REST_MS, createUnreadHold, useUnreadTurn, type ThreadReadWiring } from "../shell/reader-seen";
 import { createThreadWalkChannel } from "../shell/thread-walk-channel";
 import { ThreadStrip, useWalkedRow } from "../shell/ThreadStrip";
 import type { EngineMessage, ResurfacedThreadRow, TagDTO } from "@ohmail/client-engine";
@@ -464,6 +464,11 @@ export function OhboxView({
   const newOrder = useRef<string[]>([]);
   /** Slides in flight, id → timer handle. Cancelled by `returnToNew` and by unmount. */
   const slideTimers = useRef<Map<string, number>>(new Map());
+  /**
+   * What was marked unread while the Ohbox is open, by id: `returnToNew`'s doors and the open row's own turn
+   * (`useUnreadTurn`). No landing's rest or arrow scroll reads it back (`UnreadHold`).
+   */
+  const [unreadHold] = useState(createUnreadHold);
 
   /**
    * Record an explicit "this is unread again" for one or more ids. The slide timer is torn up and
@@ -471,9 +476,11 @@ export function OhboxView({
    * so a completed slide cannot keep filtering it out of New. WHERE it re-enters is not decided
    * here: `reconcile` merges it at the selector's arrival rank, so the surface that pressed and every
    * surface that received the change list it in one place (leading New with it kept the pressing
-   * surface disagreeing with every other for the rest of the session).
+   * surface disagreeing with every other for the rest of the session). The ids are held unread for
+   * the visit.
    */
   const returnToNew = useCallback((ids: readonly string[]) => {
+    unreadHold.add(ids);
     for (const id of ids) {
       const timer = slideTimers.current.get(id);
       if (timer === undefined) continue;
@@ -492,7 +499,7 @@ export function OhboxView({
       for (const id of ids) next.delete(id);
       return next;
     });
-  }, []);
+  }, [unreadHold]);
 
   const ohboxAll = useMemo(
     () => [...resurfaced, ...newForYou, ...previouslySeen],
@@ -693,6 +700,8 @@ export function OhboxView({
    * state the product can be in rather than a message it chose for somebody.
    */
   const selected = shown.find((m) => m.id === selectedId) ?? null;
+  /** The open row's own flag turning unread while it stays open (another device's) holds it, as `u` does. */
+  useUnreadTurn(unreadHold, selected);
 
   /**
    * AFTER A VERB: when MY verb takes the open row out of the list, apply the after-verb
@@ -1737,8 +1746,9 @@ export function OhboxView({
   /**
    * THE ZONE MODEL — rail ← list → open message (`zone-nav.tsx`). ↓/↑ in the list are
    * `stepDown`/`stepUp`, the same closures `j`/`k` dispatch: previews under four keycaps.
-   * → into the pane is `engage` (it enters the conversation); at widths where the column is
-   * hidden it is `open`, the deliberate open the sheet answers.
+   * → into the pane is `engage` (it enters the conversation), and so is ↑/↓ scrolling it unless it
+   * shows a message marked unread this visit (`unreadHold`); at widths where the column is hidden →
+   * is `open`, the deliberate open the sheet answers.
    */
   useZoneNav({
     list: { up: stepUp, down: stepDown, followId: selected?.id ?? null },
@@ -1746,6 +1756,7 @@ export function OhboxView({
       selector: ".view-ohbox .read-col",
       disabled: selected == null,
       onEnter: () => selected && engage(selected),
+      onScrollKey: () => { if (selected && !unreadHold.shows(readColRef.current)) engage(selected); },
       onHiddenEnter: () => selected && open(selected),
     },
   });
@@ -2004,11 +2015,11 @@ export function OhboxView({
   const entered = record?.entered ?? false;
   const wiring = useMemo<ThreadReadWiring | null>(
     () => (record ? {
-      look: "tint", record, onRead: readByRule, onEnter: enterSelected, onMarkUnread: markPanelUnread, walk,
+      look: "tint", record, onRead: readByRule, onEnter: enterSelected, onMarkUnread: markPanelUnread, walk, hold: unreadHold,
       restMs: landed ? LANDING_REST_MS : undefined, previewing: landed && !entered && stayedOn !== record,
       onStay: () => setStayedOn(record),
     } : null),
-    [record, readByRule, enterSelected, markPanelUnread, walk, landed, entered, stayedOn],
+    [record, readByRule, enterSelected, markPanelUnread, walk, unreadHold, landed, entered, stayedOn],
   );
   const onThreadReadRef = useRef(onThreadRead);
   onThreadReadRef.current = onThreadRead;
