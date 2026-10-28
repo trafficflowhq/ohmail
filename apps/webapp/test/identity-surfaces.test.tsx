@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import { MessageRow, ThemeProvider } from "@ohmail/ui";
 import { notifiedSenderName, type EngineMessage } from "@ohmail/client-engine";
+import { HELD_FOLDERS } from "@trafficflow/core/destinations";
 import { autoLoadsImages } from "../app/shell/remote-images.js";
 import { senderCheckFact, senderCheckSentence } from "../app/shell/sender-check.js";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
@@ -226,5 +227,13 @@ describe("the identity fact on the web", () => {
   it("an unconfirmed line holds nothing back: the pictures load as the account says", () => {
     expect(autoLoadsImages({ auto: true }, { senderCheck: UNVERIFIED })).toBe(true);
     expect(autoLoadsImages({ auto: false }, { senderCheck: UNVERIFIED })).toBe(false);
+  });
+
+  it("a sender not let in waits for a press: held where it is shown or where it is filed", () => {
+    for (const folder of HELD_FOLDERS) expect(autoLoadsImages({ auto: true }, { folder }), folder).toBe(false);
+    // Shown as filed in a press's undo window, still held on the server.
+    expect(autoLoadsImages({ auto: true }, { folder: "INBOX", physicalFolder: "ohmail/Screener" })).toBe(false);
+    expect(autoLoadsImages({ auto: true }, { folder: "INBOX" })).toBe(true);
+    expect(autoLoadsImages({ auto: true }, { folder: "ohmail/News", physicalFolder: "INBOX" })).toBe(true);
   });
 });

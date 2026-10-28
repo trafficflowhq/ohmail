@@ -9,6 +9,7 @@
  * transport and adds no policy of its own.
  */
 
+import type { ImageDoor } from "../../webapp/app/shell/remote-images";
 import { bridgeFetch } from "./bridge-fetch.js";
 
 /** What `GET /img` is willing to have been. Anything else is a refusal, not a picture. */
@@ -56,3 +57,23 @@ export async function localImageWire(messageId: string, url: string): Promise<st
     return null;
   }
 }
+
+/**
+ * Store a Show images press for one message through this window's engine, the door's own
+ * `POST /messages/:id/load-remote`; `/img` serves that message's pictures from then on. Rejects
+ * with the engine's own sentence, or the status line when it composed none.
+ */
+export async function localLoadRemote(messageId: string): Promise<void> {
+  const res = await bridgeFetch(`/messages/${encodeURIComponent(messageId)}/load-remote`, { method: "POST" });
+  if (res.ok) return;
+  let said: string | undefined;
+  try {
+    said = ((await res.json()) as { error?: { message?: string } }).error?.message;
+  } catch {
+    /* Not JSON, or an empty body. The status is all there is. */
+  }
+  throw new Error(said ?? `the mail engine answered ${res.status}`);
+}
+
+/** Both halves, as `AppShell`'s `imageWire` takes them. */
+export const localImageDoor: ImageDoor = { fetch: localImageWire, record: localLoadRemote };

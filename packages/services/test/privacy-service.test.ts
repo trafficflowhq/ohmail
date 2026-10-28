@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { describe, it, expect, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { accountSettings, mailboxes, messageBodies, trackerEvents } from "@trafficflow/db";
+import { HELD_FOLDERS } from "@trafficflow/core/destinations";
 import {
   makePrivacyService, makeNodeRemoteFetch, isBlockedAddress, ServiceError,
   PROXY_URL_MAX_CHARS,
@@ -207,7 +208,7 @@ describe("PrivacyService.proxyImage", () => {
    */
   it("serves the account default (auto) without a press", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    const messageId = await seedMessage(db, accountId, mailboxId, { from: "spy@sender.example" });
+    const messageId = await seedMessage(db, accountId, mailboxId, { from: "spy@sender.example", folder: "INBOX" });
     // No settings row, body present, nothing pressed: the product default, an ordinary picture.
     await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
     const realBytes = PNG_2X3;
@@ -235,7 +236,7 @@ describe("PrivacyService.proxyImage", () => {
    */
   it("refuses a server-known tracker the fetch itself while pixel-blocking stands", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    const messageId = await seedMessage(db, accountId, mailboxId, { from: "spy@sender.example" });
+    const messageId = await seedMessage(db, accountId, mailboxId, { from: "spy@sender.example", folder: "INBOX" });
     await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
     const remote = mockRemote({ body: GIF_1x1 });
     const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
@@ -278,7 +279,7 @@ describe("PrivacyService.proxyImage", () => {
   it("fetches the tracker once the account opted into pixels, and the feed says so", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     await db.insert(accountSettings).values({ accountId, loadTrackingPixelsAt: new Date() });
-    const messageId = await seedMessage(db, accountId, mailboxId, { from: "spy@sender.example" });
+    const messageId = await seedMessage(db, accountId, mailboxId, { from: "spy@sender.example", folder: "INBOX" });
     await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
     const remote = mockRemote({ body: GIF_1x1 });
     const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
@@ -302,6 +303,44 @@ describe("PrivacyService.proxyImage", () => {
     await expect(svc.proxyImage(ctx, { messageId, url: "https://cdn.acme-com.example/photo.png" }))
       .rejects.toMatchObject({ httpStatus: 403 });
     expect(remote.calls).toHaveLength(0);
+  });
+
+  /** A sender not let in (the Screener, Screened out, Spam) waits for the press on an auto account too. */
+  it.each(HELD_FOLDERS)("refuses an auto account's letter held in %s until the press, then serves it", async (folder) => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder });
+    await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
+    const remote = mockRemote({ contentType: "image/png", body: PNG_2X3 });
+    const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
+    const url = "https://cdn.acme-com.example/photo.png";
+    await expect(svc.proxyImage(ctx, { messageId, url }))
+      .rejects.toMatchObject({ httpStatus: 403, code: "remote_content_not_loaded", retryable: false });
+    expect(remote.calls.length, "a held sender's picture was fetched before the press").toBe(0);
+    await svc.loadRemote(ctx, messageId);
+    expect((await svc.proxyImage(ctx, { messageId, url })).body).toEqual(PNG_2X3);
+  });
+
+  it("CONTROL: a letter let in at the press is served under auto before the mailbox files it", async () => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "ohmail/Screener", desired: "INBOX" });
+    await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
+    const remote = mockRemote({ contentType: "image/png", body: PNG_2X3 });
+    const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
+    await svc.proxyImage(ctx, { messageId, url: "https://cdn.acme-com.example/photo.png" });
+    expect(remote.calls.length, "the folder the letter is going to did not decide").toBe(1);
+  });
+
+  it("the feed calls a held letter's tracker blocked under auto with pixels on, until the press", async () => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    await db.insert(accountSettings).values({ accountId, loadTrackingPixelsAt: new Date() });
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "ohmail/Screener" });
+    await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
+    await db.insert(trackerEvents).values({ accountId, messageId, kind: "pixel", trackerHost: "spy.example" });
+    const svc = makePrivacyService({ remote: mockRemote({ body: GIF_1x1 }), resolver: PUBLIC_DNS });
+    const blocked = async () => (await svc.listTrackerEvents(ctx, { messageId })).items[0]!.blocked;
+    expect(await blocked(), "the feed called a refused fetch loaded").toBe(true);
+    await svc.loadRemote(ctx, messageId);
+    expect(await blocked()).toBe(false);
   });
 
   it("rejects a non-http url (400)", async () => {

@@ -45,7 +45,7 @@ const ORDER: ReadonlyArray<{ hook: string; frame: string }> = [
  * the glue the ruling leaves in it. The whole file's line ceiling is retired: it counted
  * lines four legitimate rows added and measured no behaviour.
  */
-const CEILINGS = { shellInnerLogic: 1112 } as const; // raised 2026-10-25 from 1100: the setup resume's one call (`setup-resume.ts` holds its logic); from 1101: a forward's kept files, one destructured pair and one reader prop (`forward-files.ts` holds their logic); 2026-10-26 from 1104: the Rules pane's reader-only list, its posture flag and two memos (`rulesShown` in client-engine holds their logic); from 1111: the in-place reply host's one call (`stream-in-place.tsx` holds its logic)
+const CEILINGS = { shellInnerLogic: 1113 } as const; // raised 2026-10-25 from 1100: the setup resume's one call (`setup-resume.ts` holds its logic); from 1101: a forward's kept files, one destructured pair and one reader prop (`forward-files.ts` holds their logic); 2026-10-26 from 1104: the Rules pane's reader-only list, its posture flag and two memos (`rulesShown` in client-engine holds their logic); from 1111: the in-place reply host's one call (`stream-in-place.tsx` holds its logic); 2026-10-27 from 1112: the pipe door's Show images press, one prop line (`remote-images.ts` holds its logic)
 
 /**
  * WHICH CONTROL MEASURES WHICH FRAME'S MOVED CODE. The golden render test is DOM identity, so it

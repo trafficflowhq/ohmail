@@ -26,6 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   INLINE_IMAGE_MAX_BYTES, INLINE_IMAGE_MAX_PARTS, INLINE_IMAGE_MAX_TOTAL_BYTES,
 } from "@ohmail/client-engine";
+import { isHeldFolder } from "@trafficflow/core/destinations";
 import { API_BASE, apiConfigured, messageOf, privacy } from "../api-client";
 
 /**
@@ -33,10 +34,13 @@ import { API_BASE, apiConfigured, messageOf, privacy } from "../api-client";
  * sender's name claims a company the address does not belong to (`MessageDTO.senderCheck`): its
  * pictures wait for a press, and the bar says they were held back. The one default-read term. An
  * `unverified` line holds nothing back: it is the company's own address, unconfirmed.
+ * Nor for a sender not let in: held where it is shown or where it is filed, as `GET /img` holds it.
  */
 export function autoLoadsImages(
-  chrome: Pick<RemoteImagesChrome, "auto"> | undefined, m: { senderCheck?: unknown },
+  chrome: Pick<RemoteImagesChrome, "auto"> | undefined,
+  m: { senderCheck?: unknown; folder?: string; physicalFolder?: string },
 ): boolean {
+  if (isHeldFolder(m.folder) || isHeldFolder(m.physicalFolder)) return false;
   const reason = (m.senderCheck as { reason?: unknown } | null | undefined)?.reason;
   return (chrome?.auto ?? false) && (!m.senderCheck || reason === "unverified");
 }
@@ -62,7 +66,8 @@ export interface RemoteImagesChrome {
   /**
    * Does this account load remote images without being asked? The account setting, carried on the
    * chrome so the two surfaces that render a message (`MessagePane`, `Conversation`) read one
-   * answer. `true` ⇒ pictures come through the proxy on open and there is no per-message button;
+   * answer. `true` ⇒ pictures come through the proxy on open and there is no per-message button
+   * (a sender not let in still waits for one, {@link autoLoadsImages});
    * `false` ⇒ the bar counts what was blocked and offers "Show images". It changes NOTHING about
    * pixels — a beacon or 1×1 is refused in both modes, inside the sanitizer; {@link loadPixels} is
    * the one thing that can lift that. Deliberately not folded into {@link consented}: that answers
@@ -153,6 +158,18 @@ export interface RemoteImagesOptions {
    * no state, {@link proxyFor} as the only mechanism, exactly as it shipped.
    */
   fetchImage?: (messageId: string, url: string) => Promise<string | null>;
+  /**
+   * RECORD A SHOW IMAGES PRESS THROUGH THE SAME DOOR (`POST /messages/:id/load-remote`): that door's
+   * `api-client` is the refusing stub, so `privacy.loadRemote` cannot. Rejects with the sentence to
+   * show. Absent is the hosted client.
+   */
+  recordRemote?: (messageId: string) => Promise<void>;
+}
+
+/** A pipe door's pictures as a shell takes them: one picture's bytes, and the press that admits them. */
+export interface ImageDoor {
+  fetch: (messageId: string, url: string) => Promise<string | null>;
+  record: (messageId: string) => Promise<void>;
 }
 
 /**
@@ -226,6 +243,9 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
 
   const consented = useCallback((messageId: string) => allowed.has(messageId), [allowed]);
 
+  const recordRemoteRef = useRef(opts.recordRemote);
+  recordRemoteRef.current = opts.recordRemote;
+
   const consent = useCallback(
     (messageId: string): void => {
       // One write per message. A second press while the first is in flight would spend a
@@ -233,13 +253,15 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
       if (allowed.has(messageId) || pending.has(messageId)) return;
       setPending((p) => new Set(p).add(messageId));
       void (async () => {
+        const record = recordRemoteRef.current;
         try {
-          await privacy.loadRemote(messageId);
+          await (record ? record(messageId) : privacy.loadRemote(messageId));
           setAllowed((a) => new Set(a).add(messageId));
         } catch (err) {
           // Nothing is admitted. See the header: a local flag the server did not record is a
           // message that shows images once and never again, with no explanation either time.
-          onFailedRef.current(messageOf(err));
+          // A door's wire words its own refusal; `messageOf` is the Cloud client's.
+          onFailedRef.current(record ? (err instanceof Error ? err.message : String(err)) : messageOf(err));
         } finally {
           setPending((p) => {
             const next = new Set(p);

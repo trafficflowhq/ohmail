@@ -6,8 +6,9 @@
  * re-renders every mounted card — thousands per poll, most of an idle tab's CPU. A reference memo on `m`
  * is quietly wrong: the pile is the consent projection (`presentationReader`), which returns a FRESH
  * object for every relocated message, so exactly those cards would re-render forever. The comparator keys
- * on the facts the card draws: `m.id` for the immutable fields; the four mutable ones (`unread`,
- * `triage`, `sensitivity.no_forward`, `folder`) each compared; the body as primitives; callbacks stable.
+ * on the facts the card draws: `m.id` for the immutable fields; the five mutable ones (`unread`,
+ * `triage`, `sensitivity.no_forward`, `folder`, `physicalFolder`) each compared; the body as
+ * primitives; callbacks stable.
  * The guard is `test/stream-rerender.test.tsx`, driven through `presentationReader`.
  */
 
@@ -262,6 +263,8 @@ function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
     a.m.triage?.state === b.m.triage?.state &&
     a.m.sensitivity?.no_forward === b.m.sensitivity?.no_forward &&
     a.m.folder === b.m.folder &&
+    // The body's pictures read it (`autoLoadsImages`): a let-in shown in place moves only this.
+    a.m.physicalFolder === b.m.physicalFolder &&
     a.now === b.now &&
     a.current === b.current &&
     a.expanded === b.expanded &&

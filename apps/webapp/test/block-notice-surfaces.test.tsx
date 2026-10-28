@@ -18,6 +18,8 @@
  *  3. THE CONTROLS. A message with nothing refused wears no glyph and prints no sentence; German
  *     reads the German caption and sentence. The bare-mount fallback is `tracking-notice.test.tsx`'s
  *     and is not restated here.
+ *  4. THE HELD SENDER. A letter in the Screener, Screened out or Spam loads no picture on open on an
+ *     auto account; the held card keeps Show images, and an Ohbox letter's pictures load.
  *
  * Mutation-proven at authoring time (each reddens the case named and no other):
  *   · drop `onNotice={onNotice}` from `MessagePane`'s mount           → census + the pane render
@@ -45,6 +47,7 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { COPY } from "../app/components/MessageBody";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";
+import { imageProxyUrl, useRemoteImages, type RemoteImagesChrome } from "../app/shell/remote-images";
 import { settleFirstPaint } from "./_first-paint.js";
 import { withBodyDoor } from "./_body-door.js";
 
@@ -122,7 +125,7 @@ afterEach(async () => {
  */
 async function mountPane(
   open: EngineMessage,
-  opts: { conversation?: EngineMessage[]; html?: string; locale?: "en" | "de" } = {},
+  opts: { conversation?: EngineMessage[]; html?: string; locale?: "en" | "de"; remoteImages?: RemoteImagesChrome } = {},
 ): Promise<HTMLDivElement> {
   await unmount();
   const { MessagePane } = await import("../app/shell/MessagePane.js");
@@ -160,6 +163,7 @@ async function mountPane(
             hydrateThread: () => {},
             openReply: () => {},
             forward: () => {},
+            remoteImages: opts.remoteImages,
           },
           children: h(MessagePane as never, {
             message: open, tags: [], now: NOW, onAction: () => {}, onAddTag: () => {}, onAttachment: () => {},
@@ -179,7 +183,9 @@ async function mountPane(
  * beacon document, then the view — so a held card's `MessageBody` frames html the way a live
  * account's does.
  */
-async function mountScreener(html: string): Promise<HTMLDivElement> {
+async function mountScreener(
+  html: string, remoteImages?: RemoteImagesChrome | (() => RemoteImagesChrome | undefined),
+): Promise<HTMLDivElement> {
   await unmount();
   const held = [
     msg("m1", { from: { name: null, address: "lena@atelier.example" }, folder: "ohmail/Screener" } as Partial<EngineMessage>),
@@ -219,11 +225,13 @@ async function mountScreener(html: string): Promise<HTMLDivElement> {
     useKeyBindings([{ chord: "?", group: "app", label: "Keyboard shortcuts", run: () => {} }], "global");
     const state = useScreenerState(engine, v, (() => {}) as never);
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
+    // A hook is the shell's own chrome, called here as `AppShell` calls it.
+    const chrome = typeof remoteImages === "function" ? remoteImages() : remoteImages;
     return h(ScreenerView, {
       owed: false,
       state, segment: "waiting", selection: sel as never,
       onSelect: (seg: string, id: string | null) => setSel((m) => ({ ...m, [seg]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
+      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {}, remoteImages: chrome,
     } as never);
   }
 
@@ -432,5 +440,91 @@ describe("the Screener's held card", () => {
     const cards = [...el.querySelectorAll(".view-screener .hmail")];
     expect(cards.length).toBeGreaterThan(0);
     for (const card of cards) expect(glyphIn(card.querySelector(".hm-line"))).toBeNull();
+  });
+});
+
+/* ── 4. a sender not let in: its pictures wait for a press, on an account that loads them on open ──── */
+
+const PICTURED = canvas(`<img src="https://${SENDER}/hero.png" width="600" height="200">`);
+const NO_PICTURES: ReadonlyMap<string, string> = new Map();
+
+/** An account that loads pictures on open, through the proxy on this origin; each Show images press lands in `pressed`. */
+function autoChrome(pressed: string[] = []): RemoteImagesChrome {
+  const proxies = new Map<string, (url: string) => string>();
+  return {
+    auto: true, loadPixels: false,
+    proxyFor: (id) => {
+      if (!proxies.has(id)) proxies.set(id, (url) => imageProxyUrl("/api", window.location.origin, id, url));
+      return proxies.get(id)!;
+    },
+    consented: () => false,
+    consent: (id) => { pressed.push(id); },
+    resolvedFor: () => NO_PICTURES,
+    needRemote: () => {},
+  };
+}
+
+/** Every proxied picture the frames under `el` name, parked or live. */
+function proxiedIn(el: Element): string[] {
+  return [...el.querySelectorAll("iframe")].flatMap((f) =>
+    [...new DOMParser().parseFromString(f.getAttribute("srcdoc") ?? "", "text/html").querySelectorAll("img")]
+      .map((img) => img.getAttribute("data-ohmail-src") ?? img.getAttribute("src") ?? "")
+      .filter((src) => src.includes("/api/img")));
+}
+
+describe("a sender not let in", () => {
+  it("the Screener's held cards name no proxied picture and offer Show images, which asks for that letter", async () => {
+    const pressed: string[] = [];
+    const el = await mountScreener(PICTURED, autoChrome(pressed));
+    const card = el.querySelector<HTMLElement>(".view-screener .hmail[data-sid]");
+    expect(card, "the premise: a held letter is on screen").not.toBeNull();
+    expect(proxiedIn(el), "a held sender's picture was asked for on open").toEqual([]);
+    const show = [...card!.querySelectorAll("button")].find((b) => b.textContent === COPY.show);
+    expect(show, "the held card offers no Show images").toBeTruthy();
+    await act(async () => { show!.click(); });
+    expect(pressed).toEqual([card!.dataset.sid]);
+  });
+
+  it("on a door that fetches its own pictures, a held card's Show images loads them into the card", async () => {
+    const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const recorded: string[] = [];
+    const fetched: string[] = [];
+    const proxies = new Map<string, (url: string) => string>();
+    const el = await mountScreener(PICTURED, function useDesktopChrome() {
+      const real = useRemoteImages({
+        onFailed: () => {}, mode: "auto", loadPixels: false,
+        fetchImage: async (id, url) => { fetched.push(`${id} ${url}`); await new Promise((r) => setTimeout(r, 0)); return PNG; },
+        recordRemote: async (id) => { recorded.push(id); },
+      });
+      // The desktop's `tauri://localhost` window (macOS, Linux): no proxy source a frame could name.
+      const tauri = (id: string) => {
+        if (!proxies.has(id)) proxies.set(id, (url) => imageProxyUrl("", "tauri://localhost", id, url));
+        return proxies.get(id)!;
+      };
+      return React.useMemo(() => real && { ...real, proxyFor: tauri }, [real]);
+    });
+    const sid = el.querySelector<HTMLElement>(".view-screener .hmail[data-sid]")?.dataset.sid;
+    const card = () => el.querySelector<HTMLElement>(`.view-screener .hmail[data-sid="${sid}"]`)!;
+    expect(sid, "the premise: a held letter is on screen").toBeTruthy();
+    const show = [...card().querySelectorAll("button")].find((b) => b.textContent === COPY.show);
+    expect(show, "the held card offers no Show images").toBeTruthy();
+    expect(fetched, "a held sender's picture was fetched on open").toEqual([]);
+    await act(async () => { show!.click(); });
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => { await new Promise((r) => setTimeout(r, 2)); });
+      await settle();
+    }
+    expect(recorded).toEqual([sid]);
+    expect(fetched).toEqual([`${sid} https://${SENDER}/hero.png`]);
+    const drawn = [...new DOMParser().parseFromString(card().querySelector("iframe")?.getAttribute("srcdoc") ?? "", "text/html")
+      .querySelectorAll("img")].filter((img) => img.getAttribute("src") === PNG);
+    expect(drawn.length, "the fetched picture never reached the card").toBe(1);
+  });
+
+  it("the reading pane holds a screened-out letter's pictures; an Ohbox letter's load (control)", async () => {
+    const held = await mountPane(msg("p1", { folder: "ohmail/Screened" }), { html: PICTURED, remoteImages: autoChrome() });
+    expect(proxiedIn(held), "a screened-out sender's picture was asked for on open").toEqual([]);
+    const ohbox = await mountPane(msg("p2"), { html: PICTURED, remoteImages: autoChrome() });
+    expect(proxiedIn(ohbox).length, "CONTROL: the Ohbox letter asked for none").toBeGreaterThan(0);
   });
 });
