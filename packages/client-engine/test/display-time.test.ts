@@ -18,7 +18,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { messageDisplayTime } from "../src/selectors.js";
-import { appointmentStamp } from "../src/stamp.js";
+import { appointmentStamp, shownDateOf } from "../src/stamp.js";
 
 // A Wednesday, so every weekday boundary below is easy to read off by hand.
 const NOW = new Date("2026-08-02T12:00:00Z");
@@ -104,6 +104,22 @@ describe("messageDisplayTime", () => {
   it("answers empty for a missing or unparseable date rather than 'Invalid Date'", () => {
     expect(messageDisplayTime({} as never, NOW, "UTC")).toBe("");
     expect(at("not-a-date")).toBe("");
+  });
+
+  it("a letter with no Date header, or one dated after it arrived, shows its arrival", () => {
+    // `sortAt` is the arrival for both (`sortAtOf`): a header two days ahead is not when it came.
+    const arrived = "2026-08-02T09:07:00Z";
+    const show = (date: string | null) => messageDisplayTime({ date, sortAt: arrived } as never, NOW, "UTC");
+    expect(show(null)).toBe("09:07");
+    expect(show("not-a-date")).toBe("09:07");
+    expect(show("2026-08-04T09:07:00Z")).toBe("09:07");
+    // A header at or before its sort instant is still what the row shows, a week-old one included.
+    expect(show("2026-08-02T09:05:00Z")).toBe("09:05");
+    expect(show("2026-07-26T09:00:00Z")).toBe("26 Jul");
+    // The exact forms and the rail date the same instant (`shownDateOf`).
+    expect(shownDateOf({ date: "2026-08-04T09:07:00Z", sortAt: arrived })).toBe(arrived);
+    expect(shownDateOf({ date: null, sortAt: arrived })).toBe(arrived);
+    expect(shownDateOf({ date: "2026-08-02T09:05:00Z", sortAt: arrived })).toBe("2026-08-02T09:05:00Z");
   });
 
   it("reads the same instant differently in a different zone — the parameter is load-bearing", () => {

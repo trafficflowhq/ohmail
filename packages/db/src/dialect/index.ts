@@ -747,8 +747,8 @@ export interface Dialect {
 
   /**
    * THE ARRIVAL KEY — the one order every store read of messages takes, and `sortAtOf(date,
-   * arrivedAt) ?? date ?? epoch` in SQL: the header while it lies within 48 h of a known arrival,
-   * else the arrival; an undated row with no arrival at the epoch, as the client's `tsOf` reads
+   * arrivedAt) ?? date ?? epoch` in SQL: the header while it lies at most 48 h before a known
+   * arrival (never after it), else the arrival; an undated row with no arrival at the epoch, as the client's `tsOf` reads
    * it. Spelled with LITERALS and no member: a bound parameter never matches an index expression,
    * and this text is byte-equal to both journals' arrival index (a test holds the three equal).
    */

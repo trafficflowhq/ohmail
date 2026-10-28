@@ -1168,6 +1168,10 @@ describe("the chip's words", () => {
     expect(words(chipMarkup(at("2026-10-23T12:40:00.000Z", { folder: "Sent" }), "left", "de"))).toEqual(["du", expect.stringMatching(/^gestern \d\d:40$/), "See you at ten"]);
     expect(words(chipMarkup(at("2026-10-24T09:12:00.000Z", { snippet: "" }), "left")), "no first line, no second line").toHaveLength(2);
   });
+  it("a letter dated after it arrived, or undated, is named by its arrival", () => {
+    expect(words(chipMarkup(at("2026-10-26T09:12:00.000Z", { sortAt: "2026-10-24T09:12:00.000Z" }), "left"))[1]).toMatch(/^today \d\d:12$/);
+    expect(words(chipMarkup(at("", { date: null, sortAt: "2026-10-23T12:40:00.000Z" }), "left"))[1]).toMatch(/^yesterday \d\d:40$/);
+  });
 });
 
 describe("the chip names a square, beside the rail or under the strip, over no message", () => {

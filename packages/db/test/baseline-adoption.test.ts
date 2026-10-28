@@ -904,6 +904,8 @@ describe("the baseline cutoff is frozen", () => {
       "0169_mailboxes_organized_through",
       // A delivered send's owed Sent copy: one CREATE TABLE IF NOT EXISTS, no data. Safe over any history.
       "0170_outbound_sent_copies",
+      // The arrival index on its new key: CREATE INDEX IF NOT EXISTS, no data. Safe over any history.
+      "0171_messages_arrival_key",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

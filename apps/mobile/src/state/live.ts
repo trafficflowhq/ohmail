@@ -27,6 +27,7 @@ import {
   replySubject,
   appointmentStamp,
   messageDisplayTime,
+  shownDateOf,
   composeZonedWallClock,
   firstDayOffset,
   morningDayOffset,
@@ -511,7 +512,7 @@ export type WorldEarlier = Held & {
   mine?: true;
   /** Who wrote it, for its square's name in the reader's rail. */
   sender?: string;
-  /** Its date (the wire's), for a held square's sheet. */
+  /** The instant its stamp dates (`shownDateOf`), for a held square's sheet. */
   date?: string | null;
   /** Its html part: the text's fold follows that part's own reading of its history. */
   html?: string;
@@ -521,7 +522,7 @@ export type WorldMail = Omit<Mail, "earlier"> & {
   /** The rest of the conversation, oldest → newest, each member with its files; a member newer
    *  than this message carries `later`. */
   earlier: WorldEarlier[];
-  /** Its date (the wire's), for a held square's sheet; attached by {@link liveMessage} alone. */
+  /** The instant its stamp dates (`shownDateOf`), for a held square's sheet; attached by {@link liveMessage} alone. */
   date?: string | null;
   attachments?: WorldAttachment[];
   /** The events its calendar parts carry, once each; absent where none. */
@@ -2056,7 +2057,7 @@ export function liveMessage(
         ...(bodyReady(b.state, member) ? { ready: true as const } : {}),
         ...(isOwnOutbound(member) ? { mine: true as const } : {}),
         sender: member.from.name || member.from.address,
-        date: member.date,
+        date: shownDateOf(member),
         ...(forwardedTo ? { face: Copy.forwardedTo(forwardedTo) } : {}),
         ...filesField(engine, member.id),
       };
@@ -2072,7 +2073,7 @@ export function liveMessage(
   const owa = owaInvitationOf(hydrated);
   if (owa !== undefined) row.owaInvitation = owa;
   row.inlineImages = engine.inlineImagesOf(id);
-  row.date = m.date;
+  row.date = shownDateOf(m);
   Object.assign(row, filesField(engine, id));
   return row;
 }

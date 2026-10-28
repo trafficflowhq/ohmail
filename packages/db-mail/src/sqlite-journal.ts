@@ -584,5 +584,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "CREATE TABLE IF NOT EXISTS \"outbound_sent_copies\" (\n  \"send_id\" text NOT NULL,\n  \"seq\" integer NOT NULL DEFAULT 0,\n  \"account_id\" text NOT NULL,\n  \"mailbox_id\" text NOT NULL,\n  \"raw_b64\" text NOT NULL,\n  \"attempts\" integer NOT NULL DEFAULT 0,\n  \"next_attempt_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  \"created_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  CONSTRAINT \"outbound_sent_copies_account_id_send_id_seq_pk\" PRIMARY KEY (\"account_id\", \"send_id\", \"seq\"),\n  CONSTRAINT \"outbound_sent_copies_send_account_fk\" FOREIGN KEY (\"send_id\", \"account_id\")\n    REFERENCES \"outbound_sends\" (\"id\", \"account_id\") ON DELETE CASCADE\n);"
     ]
+  },
+  {
+    "name": "0171_messages_arrival_key.sql",
+    "statements": [
+      "DROP INDEX IF EXISTS \"messages_account_arrival_order_idx\";",
+      "CREATE INDEX IF NOT EXISTS \"messages_account_arrival_key_idx\" ON \"messages\" (\"account_id\", (case when \"arrived_at\" is null then coalesce(\"date\", 0) when \"date\" is null then \"arrived_at\" when \"date\" <= \"arrived_at\" and \"arrived_at\" - \"date\" <= 172800000 then \"date\" else \"arrived_at\" end) DESC, \"id\" DESC) WHERE \"deleted_at\" IS NULL;"
+    ]
   }
 ] as const;

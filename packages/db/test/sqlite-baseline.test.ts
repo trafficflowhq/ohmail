@@ -216,6 +216,8 @@ describe("the SQLite journal, applied", () => {
       "0169_mailboxes_organized_through.sql",
       // A delivered send's owed Sent copy, the pg table's twin.
       "0170_outbound_sent_copies.sql",
+      // The arrival index on its new key, replacing 0139's.
+      "0171_messages_arrival_key.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -360,6 +362,8 @@ describe("the SQLite journal, applied", () => {
       "0169_mailboxes_organized_through.sql",
       // A delivered send's owed Sent copy, the pg table's twin.
       "0170_outbound_sent_copies.sql",
+      // The arrival index on its new key, replacing 0139's.
+      "0171_messages_arrival_key.sql",
     ]);
   });
 

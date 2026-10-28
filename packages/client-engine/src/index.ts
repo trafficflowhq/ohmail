@@ -384,6 +384,7 @@ export {
   dateClock,
   fullDateTime,
   messageStamp,
+  shownDateOf,
   weekdayClock,
   weekdayDateClock,
 } from "./stamp.js";

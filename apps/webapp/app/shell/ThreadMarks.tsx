@@ -25,7 +25,7 @@
 import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
-import { clock, fullDateTime, isOwnOutbound, threadWalk, weekdayDateClock, zonedDayNumber, zonedFields, type EngineMessage, type Walk } from "@ohmail/client-engine";
+import { clock, fullDateTime, isOwnOutbound, shownDateOf, threadWalk, weekdayDateClock, zonedDayNumber, zonedFields, type EngineMessage, type Walk } from "@ohmail/client-engine";
 import { Icon, cssRect, squaresWindow } from "@ohmail/ui";
 import { senderName } from "./format";
 import { activeFormatLocale, activeFormatZone } from "./locale";
@@ -302,8 +302,9 @@ export function tipAt(place: TipPlace, button: Rect, square: Rect, railW: number
 }
 
 /** The chip's date (o10): today 09:12 · yesterday 17:40 · Tue 21 Oct, 14:05, the year outside this one. */
-export function tipWhen(m: Pick<EngineMessage, "date">, now: Date, words: { today: (time: string) => string; yesterday: (time: string) => string }): string {
-  const d = m.date ? new Date(m.date) : null;
+export function tipWhen(m: Pick<EngineMessage, "date" | "sortAt">, now: Date, words: { today: (time: string) => string; yesterday: (time: string) => string }): string {
+  const at = shownDateOf(m);
+  const d = at ? new Date(at) : null;
   if (!d || Number.isNaN(d.getTime())) return "";
   const zone = activeFormatZone();
   const locale = activeFormatLocale();

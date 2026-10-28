@@ -5,7 +5,7 @@ import { ensureWithheldProvenanceIndex } from "../src/search-setup.js";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 /**
- * MAIL 0139's INDEX IS BUILT AHEAD OF THE MIGRATOR, NOT BY IT. A plain CREATE INDEX over `messages`
+ * MAIL 0171's INDEX (0139's, on the new key) IS BUILT AHEAD OF THE MIGRATOR, NOT BY IT. A plain CREATE INDEX over `messages`
  * inside the migrator's transaction blocks every write for the build, so the setup command's
  * pre-migration session builds it CONCURRENTLY first (0071's and 0125's pattern) and 0139's
  * `if not exists` statement finds it there. Measured on this lane's own database with the real
@@ -32,11 +32,11 @@ function recorder(columnPresent: boolean) {
   return { ran, fake };
 }
 
-describe("mail 0139's index is built ahead of the migrator", () => {
+describe("mail 0171's index is built ahead of the migrator", () => {
   it("the pre-migration prebuild builds it CONCURRENTLY on public.messages where arrived_at exists", async () => {
     const { ran, fake } = recorder(true);
     await ensureWithheldProvenanceIndex(fake);
-    const mine = ran.filter((s) => s.includes("messages_account_arrival_order_idx"));
+    const mine = ran.filter((s) => s.includes("messages_account_arrival_key_idx"));
     expect(mine.some((s) => s.includes("create index concurrently if not exists")), "no concurrent build of the arrival index").toBe(true);
     expect(mine.join("\n")).toContain("on public.messages");
   });
@@ -44,7 +44,7 @@ describe("mail 0139's index is built ahead of the migrator", () => {
   it("a store without arrived_at (below mail 0119) defers it: no DDL for this index", async () => {
     const { ran, fake } = recorder(false);
     await ensureWithheldProvenanceIndex(fake);
-    expect(ran.filter((s) => s.includes("create index") && s.includes("messages_account_arrival_order_idx"))).toEqual([]);
+    expect(ran.filter((s) => s.includes("create index") && s.includes("messages_account_arrival_key_idx"))).toEqual([]);
   });
 
   it("setupProdDatabase runs that prebuild BEFORE the migrator", () => {

@@ -974,6 +974,9 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   ["folder_state_outstanding_idx", "ON public.folder_state USING btree (outstanding_account_id, message_id) WHERE ((reconcile_status = 'pending'::text) AND (last_set_by = 'us'::text) AND (desired_folder <> observed_folder))"],
   // mail 0161_mailboxes_account_idx. The SILENT kind: without it the list read walks every mailbox.
   ["mailboxes_account_idx", "ON public.mailboxes USING btree (account_id, id)"],
+  // mail 0171_messages_arrival_key. The SILENT kind, 0139's on the key every page walks since: a
+  // header after its arrival no longer decides. The needle is that clamp arm.
+  ["messages_account_arrival_key_idx", "WHEN ((date <= arrived_at) AND ((arrived_at - date) <= '48:00:00'::interval)) THEN date"],
 ];
 
 /**
@@ -1301,7 +1304,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0170_outbound_sent_copies";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0171_messages_arrival_key";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

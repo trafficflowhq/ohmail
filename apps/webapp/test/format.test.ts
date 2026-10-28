@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { appointmentStamp, type EmailAddress, type EngineMessage } from "@ohmail/client-engine";
-import { fullDateTime, recipientRows, waterlineStamp } from "../app/shell/format";
+import { fullDateTime, recipientRows, rowStamp, waterlineStamp, writtenDateTime } from "../app/shell/format";
 import { setActiveFormatZone } from "../app/shell/locale";
 
 /**
@@ -115,6 +115,19 @@ describe("fullDateTime", () => {
   it("says nothing for a message with no Date header, rather than `Invalid Date`", () => {
     expect(fullDateTime(msg({ date: null }))).toBe("");
     expect(fullDateTime(msg({ date: "not-a-date" }))).toBe("");
+  });
+
+  it("names the arrival for a letter dated after it, or undated; the details keep the header", () => {
+    const arrived = "2026-10-28T10:00:05.000Z";
+    const ahead = msg({ date: "2026-10-30T10:00:00.000Z", sortAt: arrived });
+    const now = new Date("2026-10-28T10:05:00.000Z");
+    expect(fullDateTime(ahead)).toBe("Wed 28 Oct 2026, 10:00");
+    expect(rowStamp(ahead, now, true)).toMatchObject({ time: "Wed 28 Oct 2026, 10:00", timeSpoken: "Wed 28 Oct 2026, 10:00" });
+    expect(rowStamp(ahead, now, false)).toMatchObject({ time: "10:00", timeTitle: "Wed 28 Oct 2026, 10:00" });
+    const undated = msg({ date: null, sortAt: arrived });
+    expect(rowStamp(undated, now, true).time).toBe("Wed 28 Oct 2026, 10:00");
+    expect(writtenDateTime(ahead)).toBe("Fri 30 Oct 2026, 10:00");
+    expect(writtenDateTime(undated)).toBe("Wed 28 Oct 2026, 10:00");
   });
 });
 
