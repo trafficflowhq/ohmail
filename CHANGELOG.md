@@ -21,6 +21,129 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.12] — 2026-10-29
+
+### A conversation you stop on with j or k turns read
+
+In the Ohbox on the desktop and the web, a conversation shown by j or k, or by the cursor moving on after Park, Answer later, Resurface or Delete (or back after Undo), stayed unread however long you read it; only a click, ↵ or a scroll in it read it. Now a conversation the cursor stays on for 1.3 seconds with the window in front counts as opened, and each message whose first lines then stay on screen for 0.7 seconds turns read, so what you see turns read about 2 seconds after you stop. Moving on sooner reads nothing, so passing rows with j and k still marks nothing. A key that does something, or a click outside the message, before then leaves it unread until you open it. Its embedded pictures load once you stop on it or open it, not while you pass. This replaces the 0.30.0 rule that j and k read nothing however long the cursor rests.
+
+### Embedded pictures wait for a free connection instead of failing
+
+Opening a conversation with several letters that carry embedded pictures could show "ohmail already has
+this mailbox's connections open" in place of some pictures, because every letter asked for its pictures
+at once and ohmail opens at most two connections to one mailbox. The apps now ask one mailbox for no
+more than that, keep a free connection for the file you press, and wait when the mailbox is busy, so
+the pictures arrive. A picture your mail server could not serve says so and is tried again on its own
+a few times. On web, desktop and phone.
+
+### Resurface takes the whole conversation out of the Ohbox
+
+Resurface (`b`, or the Resurface button and its Tomorrow, Next week, Pick a date and Now) on a conversation
+in the Ohbox booked only its newest message, so the rest of the conversation stayed in the Ohbox, often
+moving down among older mail. Resurface now books every message of the conversation the Ohbox shows as one
+row, your own reply included, the way Park and Answer later do: the row leaves, the next one is selected,
+and one Undo (`z`) brings it all back. The Resurface pile lists a conversation as one row, dated by its
+soonest return, and Done or a new date on that row acts on all of it. When the conversation comes back,
+Done or Mark as read on it releases every message that came back with it. So does any way of filing one of
+those messages: moving it, marking it as junk, deleting it, sending its sender somewhere from the sender
+sheet (also while that sender waits in the Screener), and the sheet's Move them and Move it too. A message
+of the conversation booked for a later return keeps its time, and mail of the conversation filed elsewhere
+stays where it is. This is the same on desktop, web and phone.
+
+### The Linux desktop window no longer freezes when an accessibility client is slow to answer keys
+
+On the Linux desktop app, with a screen reader or another accessibility client running, the window could stop
+repainting for good while you typed: each key waited on the accessibility service, and keys arrived faster than
+it answered. Keys are now offered to accessibility clients within a time budget. A client that answers in time
+still gets every key; one that answers late stops getting keys for a few seconds, and longer each time it stays
+late, so the window keeps answering you.
+
+### j after coming back to News starts from the letter on screen
+
+Coming back to News or Receipts opens the stream at its top, on the newest letter, but the first j
+jumped to the letter after the one you had reached on your last visit, skipping every letter that had
+arrived since. The cursor now moves to the letter the stream opens on, so j steps to the next one, and
+the highlight and the message keys follow it too. Opening a letter from search or a link still lands on
+that letter. Desktop and web.
+
+### Spam shows your Junk folder at once, without waiting for the mail server
+
+With Use folders on, Spam lists your mail server's Junk folder. ohmail used to read it when you opened the
+Screener, so a click on Spam right after that could wait most of a second. ohmail now reads it when it
+starts and keeps that page, so Spam shows it on the click. A letter that ohmail sets aside as spam or lets
+back out with Not junk is read again a few seconds later, once the mail server has moved it, and once
+more when you next open Spam, so that page shows it there or gone. Only a click on Spam in the first
+second or so after ohmail starts can still wait for the mail server. Web and desktop with an ohmail Cloud or own-server account.
+
+### The web app's "Get ohmail for desktop" link opens the download page
+
+On the web, the link at the foot of the sidebar opened a second ohmail tab at the Ohbox instead of a
+download. It now opens the latest release page on GitHub, which lists the installers for every platform,
+in a new tab.
+
+### On a device that only reads your mail, the Screener and Move change the organizer's rule
+
+When another install organizes your mail, the phone's Allow and Not spam in the Screener, and Move, now
+decide by the rules that install files your mail by, as the sender sheet already did. Before, they read
+this device's own copy: a rule made on the other install was left in place, so the mail came back to
+Screened or Spam and the sender's next letters were filed there again. Undo after such a Move puts that
+rule back where it was. When the press changes only that rule, the phone says it waits for the other
+install's next pass, rather than that it is done.
+
+On every app, a Screener press for a sender whose mail is already in the Inbox now does the same. An old
+rule on this device no longer makes the press read as already done while the sender stays undecided.
+
+### A reply cancelled from another window keeps one draft
+
+A reply or forward still waiting to send, cancelled from a second window that had opened it before that
+window caught up, could leave two drafts with the same words. Cancelling it now keeps the words in the one
+draft the send made, in whichever window you press Cancel (web, desktop).
+
+### The desktop drops "Images blocked" once a letter's pictures are shown
+
+On the desktop app for macOS and Linux, pressing Show images on a letter from a sender you have not let in
+loaded the pictures but kept the "Images blocked" label on the letter. The label now goes away once every
+picture has arrived, as it does on the web; a background picture the desktop cannot draw keeps it.
+
+### The ✓ beside Screen out and Spam on the phone marks the mail read again
+
+On the phone, the sender sheet's "Screened out, and mark read" and "Spam, and mark read" filed the letters
+but left them unread since Screener decisions stopped marking mail read. They now mark the letters the sheet
+shows read, the same way the ✓ beside News does. The plain Screen out and Spam presses still only file, and
+web and desktop have no ✓ on those two.
+
+### The phone says a draft changed elsewhere was kept, not that saving failed
+
+On the phone (Android and iOS), a draft edited offline whose save was still waiting when another device
+changed the same draft is kept as a new draft beside the other version, as before. The phone now says so
+("A letter you were writing when ohmail stopped is in Drafts as a new draft…", or the composer's own
+sentence while the sheet is still open), on a slow connection too, instead of "That change could not be saved. Try it again.". The
+phone's attachments go with its words to the new draft rather than staying on the other version, and words
+typed after the waiting save join that same new draft instead of making a third one.
+
+### A reply arriving into an open conversation on the phone no longer moves the reader or turns read
+
+On the phone, a conversation opened on its newest message and left untouched could scroll by itself when a
+reply arrived, and the reply then turned read without being looked at. The reader now stays where it stands:
+the reply is drawn below with its square on the rail and stays unread until you scroll to it. The same holds
+after a rotation, a fold or a press on the list row's squares.
+
+### A letter dated after it arrived, or with no date, is listed by its arrival
+
+A letter whose Date header lies in the future (two days ahead, say) no longer sits above every newer
+letter until that day comes: it takes its place by when your mail server received it, and its row,
+reader and conversation squares show that time instead of the future date, in the exact form too. The
+reader's details still give the Date header as the sender wrote it. A letter with no Date header now
+shows the time it arrived, in the list and in the reader, where it showed none. On the phone, the web app, the desktop app,
+Cloud and your own server. A store updates its arrival index on the first start of this version.
+
+### The SQLite test run splits into five measured shards
+
+For contributors: the second store's test run in `ci.yml` now runs in five shards of about nine minutes
+of tests each, packed from a recent whole run, instead of four whose longest had grown to over sixteen
+minutes and ran into its job's 20-minute bound on a busy runner. The shard map records each shard's
+measured time, and `node test/support/ci-shards.mjs --check` refuses a shard over twelve minutes.
+
 ## [0.30.11] — 2026-10-28
 
 ### Scrolling the News list no longer marks letters read
@@ -14880,7 +15003,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.11...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.12...HEAD
+[0.30.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.12
 [0.30.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.11
 [0.30.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.10
 [0.30.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.9

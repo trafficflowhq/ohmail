@@ -78,6 +78,27 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.12" date="2026-10-29">
+      <description>
+        <ul>
+          <li>A conversation you stop on with j or k turns read</li>
+          <li>Embedded pictures wait for a free connection instead of failing</li>
+          <li>Resurface takes the whole conversation out of the Ohbox</li>
+          <li>The Linux desktop window no longer freezes when an accessibility client is slow to answer keys</li>
+          <li>j after coming back to News starts from the letter on screen</li>
+          <li>Spam shows your Junk folder at once, without waiting for the mail server</li>
+          <li>The web app's "Get ohmail for desktop" link opens the download page</li>
+          <li>On a device that only reads your mail, the Screener and Move change the organizer's rule</li>
+          <li>A reply cancelled from another window keeps one draft</li>
+          <li>The desktop drops "Images blocked" once a letter's pictures are shown</li>
+          <li>The ✓ beside Screen out and Spam on the phone marks the mail read again</li>
+          <li>The phone says a draft changed elsewhere was kept, not that saving failed</li>
+          <li>A reply arriving into an open conversation on the phone no longer moves the reader or turns read</li>
+          <li>A letter dated after it arrived, or with no date, is listed by its arrival</li>
+          <li>The SQLite test run splits into five measured shards</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.11" date="2026-10-28">
       <description>
         <ul>
@@ -175,27 +196,6 @@
           <li>Adding a mailbox another install organizes never takes it over without asking</li>
           <li>Tests that migrate a database refuse the shared test database</li>
           <li>A maintainer's dispatched test run uses the maintainers' own runners</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.7" date="2026-10-26">
-      <description>
-        <ul>
-          <li>A message you read turns read, under a long To list or with its sender line scrolled off</li>
-          <li>A letter to many people no longer fills the reader with addresses</li>
-          <li>Typing a reply in the reader no longer flickers the window</li>
-          <li>A picture in the attachment preview fits the window whole</li>
-          <li>A long conversation's squares in the list are whole, and the older ones are counted</li>
-          <li>The phone's list rows say how many squares a long conversation leaves out</li>
-          <li>The Omarchy frame matches Hyprland's gaps</li>
-          <li>Drafts open on two devices keep both versions, and Discard cancels a send that waits</li>
-          <li>Folding the phone keeps the conversation you are reading</li>
-          <li>The phone's account notices stay clear of the status bar and the rail, and a draft sent from Drafts › Edit leaves its page</li>
-          <li>A waiting send you cancel or discard on the phone stays the way you left it</li>
-          <li>The phone says when it cannot keep a mailbox's settings</li>
-          <li>A letter filed elsewhere while another device reads its Inbox shows in its new folder</li>
-          <li>Back from a letter at phone width keeps the cursor on that letter</li>
-          <li>Embedded pictures draw from servers that answer nested parts' headers wrongly</li>
         </ul>
       </description>
     </release>
