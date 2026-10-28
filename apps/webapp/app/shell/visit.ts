@@ -12,7 +12,7 @@
  * any passive effect of the same commit; `end` runs as that effect is destroyed (the pile hidden or
  * unmounted). Both are read through a ref, so callers pass plain closures.
  */
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 export function useVisit(start: () => void, end: () => void): void {
   const ref = useRef({ start, end });
@@ -20,6 +20,20 @@ export function useVisit(start: () => void, end: () => void): void {
   useLayoutEffect(() => {
     ref.current.start();
     return () => ref.current.end();
+  }, []);
+}
+
+/**
+ * A VISIT OPENS THE STREAM AT ITS TOP, so a cursor the last visit left behind moves to the letter shown
+ * there and the first j steps from it, not from a letter far below the screen. A visit that arrives on a
+ * jump keeps it: the jump places the cursor. Passive, after the paint of the press that shows the pile.
+ */
+export function useCursorFollowsTop(cur: string | null, jumpTo: string | null, top: string | null, onCur: (id: string) => void): void {
+  const ref = useRef({ cur, jumpTo, top, onCur });
+  ref.current = { cur, jumpTo, top, onCur };
+  useEffect(() => {
+    const { cur: held, jumpTo: asked, top: shown, onCur: move } = ref.current;
+    if (held && !asked && shown && held !== shown) move(shown);
   }, []);
 }
 
