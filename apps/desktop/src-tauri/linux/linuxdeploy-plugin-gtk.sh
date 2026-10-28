@@ -7,7 +7,7 @@
 # branch, into `~/.cache/tauri/linuxdeploy-plugin-gtk.sh`, and then uses whatever it got. That is
 # the recipe for our Linux artifacts tracking somebody else's moving branch, so the workflow copies
 # this file into that cache path first and the bundler finds it already there and downloads
-# nothing. Pinning it is worth as much as the four changes below.
+# nothing. Pinning it is worth as much as the five changes below.
 #
 # The changes, each marked `ohmail:` at the line it touches:
 #
@@ -40,6 +40,13 @@
 #  4. **The launcher takes `OHMAIL_SYSTEM_WEBKIT`.** Set it and the app runs against the host's
 #     GTK and WebKitGTK instead of the bundled ones — one command for a machine where the bundled
 #     stack cannot start, and a way to tell the two apart in a bug report.
+#
+#  5. **The AT-SPI bridge is the one `OHMAIL_ATK_BRIDGE` names.** at-spi2-core 2.52.0's bridge keeps
+#     cache entries for objects that are gone, and every accessibility client that discovers the
+#     app then refs freed memory: the app dies on SIGSEGV. CI builds the same version with the
+#     upstream fixes (`src-tauri/linux/at-spi2-core/build-bridge.sh`) and names it here; it replaces
+#     the build host's copy at the END of this script, after the libwayland-client removal. Unset,
+#     the host's bridge stays and the script says so.
 #
 # GTK3 environment variables: https://docs.gtk.org/gtk3/running.html
 # GTK4 environment variables: https://docs.gtk.org/gtk4/running.html
@@ -442,3 +449,25 @@ for excluded in libwayland-client.so.0; do
         rm -f "$found"
     done < <(find "$APPDIR" -name "$excluded" -print0 2>/dev/null)
 done
+
+# ── ohmail: THE AT-SPI BRIDGE ─────────────────────────────────────────────────────────────────
+#
+# The host's at-spi2-core 2.52.0 bridge caches a defunct object again with nothing watching it, so
+# once the object is finalized every Cache.GetItems call (one per accessibility client that
+# discovers the app) refs and unrefs freed memory. `OHMAIL_ATK_BRIDGE` names the same version built
+# with the upstream fixes. It goes where linuxdeploy put the host's copy, with the RUNPATH every
+# bundled library has, so it loads the bundled libatk and libatspi beside it. Last, like the
+# removal above: nothing after this can deploy the host's copy again.
+if [ -n "${OHMAIL_ATK_BRIDGE:-}" ]; then
+    want_machine="$(readelf -h "$APPDIR/usr/bin/ohmail" 2>/dev/null | sed -n 's/^ *Machine: *//p')"
+    got_machine="$(readelf -h "$OHMAIL_ATK_BRIDGE" 2>/dev/null | sed -n 's/^ *Machine: *//p')"
+    if [ -z "$want_machine" ] || [ "$got_machine" != "$want_machine" ]; then
+        echo "ohmail: OHMAIL_ATK_BRIDGE ($OHMAIL_ATK_BRIDGE) is not an ELF for '$want_machine' (it reads '$got_machine')" >&2
+        exit 1
+    fi
+    install -m 0644 "$OHMAIL_ATK_BRIDGE" "$APPDIR/usr/lib/libatk-bridge-2.0.so.0"
+    patchelf --set-rpath '$ORIGIN' "$APPDIR/usr/lib/libatk-bridge-2.0.so.0"
+    echo "ohmail: bundled the AT-SPI bridge $OHMAIL_ATK_BRIDGE, build-id $(readelf -n "$APPDIR/usr/lib/libatk-bridge-2.0.so.0" | sed -n 's/^ *Build ID: *//p')"
+else
+    echo "ohmail: OHMAIL_ATK_BRIDGE is unset, so the AppImage bundles the build host's AT-SPI bridge"
+fi

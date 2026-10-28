@@ -16,10 +16,12 @@
 #                    execute binary file"); the scripts named are cleaned first so cargo relinks
 #                    them instead of running the same files again.
 #   hdiutil-busy     hdiutil: ... - Resource busy.
+#   download-network curl's own transport errors (resolve, connect, timeout, TLS handshake, a
+#                    reset or short read mid-body). Never an HTTP status (22) or a write error.
 #
 # Bash 3.2 (macOS) and Git Bash (Windows). Exit 2 on bad usage, without running anything.
 
-usage() { echo "usage: retry-infra.sh npm-network|cargo-exec-126|hdiutil-busy -- COMMAND [ARG...]" >&2; exit 2; }
+usage() { echo "usage: retry-infra.sh npm-network|cargo-exec-126|hdiutil-busy|download-network -- COMMAND [ARG...]" >&2; exit 2; }
 
 [ $# -ge 3 ] || usage
 cls=$1
@@ -35,6 +37,9 @@ case "$cls" in
     pause=0 ;;
   hdiutil-busy)
     sig='hdiutil: .*- Resource busy'
+    pause=5 ;;
+  download-network)
+    sig='^curl: \((6|7|18|28|35|52|56|92)\) '
     pause=5 ;;
   *) usage ;;
 esac
