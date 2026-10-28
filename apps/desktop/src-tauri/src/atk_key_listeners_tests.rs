@@ -163,6 +163,128 @@ fn a_removed_listener_is_not_called_before_the_sweep_and_a_live_one_gets_gtks_ev
 fn the_lines_carry_only_fixed_words_and_counts() {
     assert_eq!(held_line(2), r#"{"service":"shell","event":"atk_key_listener","held":2}"#);
     assert_eq!(UNARMED_LINE, r#"{"service":"shell","event":"atk_key_guard","armed":false,"reason":"no_toolkit"}"#);
+    assert_eq!(
+        paused_line(ms(450), Duration::from_secs(2)),
+        r#"{"service":"shell","event":"atk_key_paused","ms":450,"pause_ms":2000}"#
+    );
+    assert_eq!(resumed_line(7), r#"{"service":"shell","event":"atk_key_resumed","held_back":7}"#);
+}
+
+fn ms(n: u64) -> Duration {
+    Duration::from_millis(n)
+}
+
+fn reset_budget() {
+    BUDGET.with(|b| b.set(Budget::default()));
+    CLOCK.with(|c| c.set(None));
+}
+
+#[test]
+fn a_listener_answering_in_milliseconds_is_offered_every_key() {
+    let mut budget = Budget::default();
+    let start = Instant::now();
+    for i in 0..300u64 {
+        let at = start + ms(i * 1000 / 30);
+        assert!(budget.admit(at), "key {i}");
+        assert_eq!(budget.charge(at + ms(5), ms(5)), None);
+    }
+    assert_eq!(budget.resumed(start + ms(10_000)), None);
+}
+
+#[test]
+fn pauses_double_to_thirty_seconds_and_one_reply_in_time_resets_them() {
+    let mut budget = Budget::default();
+    let mut at = Instant::now();
+    let mut pauses = Vec::new();
+    for _ in 0..6 {
+        while !budget.admit(at) {
+            at += ms(100);
+        }
+        at += ms(450);
+        pauses.push(budget.charge(at, ms(450)).unwrap().as_secs());
+    }
+    assert_eq!(pauses, [2, 4, 8, 16, 30, 30]);
+    assert!(!budget.admit(at + ms(29_000)));
+    assert!(budget.admit(at + ms(30_000)));
+    assert_eq!(budget.charge(at + ms(30_005), ms(5)), None);
+    assert_eq!(budget.charge(at + ms(30_500), ms(450)), Some(Duration::from_secs(2)));
+}
+
+#[test]
+fn back_to_back_slowish_replies_hold_the_thread_at_most_half_the_time_after_a_burst() {
+    let mut budget = Budget::default();
+    let start = Instant::now();
+    let (mut at, mut charged) = (start, Duration::ZERO);
+    while at < start + Duration::from_secs(10) {
+        if budget.admit(at) {
+            at += ms(90);
+            assert_eq!(budget.charge(at, ms(90)), None);
+            charged += ms(90);
+        } else {
+            at += ms(1);
+        }
+    }
+    assert!(charged <= ms(5_500 + 90), "{charged:?}");
+    assert!(charged >= ms(5_000), "{charged:?}");
+}
+
+#[test]
+fn the_held_back_count_comes_right_after_a_pause_and_otherwise_once_a_minute() {
+    let mut budget = Budget::default();
+    let at = Instant::now();
+    assert!(budget.admit(at));
+    assert_eq!(budget.charge(at + ms(450), ms(450)), Some(Duration::from_secs(2)));
+    assert!(!budget.admit(at + ms(1_000)));
+    assert!(!budget.admit(at + ms(2_000)));
+    assert!(budget.admit(at + ms(2_500)));
+    assert_eq!(budget.resumed(at + ms(2_500)), Some(2));
+    // Held back by the debt alone, within the minute: counted, not yet said.
+    for step in [3_000, 3_300, 3_600] {
+        assert!(budget.admit(at + ms(step)));
+        assert_eq!(budget.resumed(at + ms(step)), None);
+        budget.charge(at + ms(step), ms(300));
+    }
+    assert!(!budget.admit(at + ms(3_700)));
+    assert!(budget.admit(at + ms(4_000)));
+    assert_eq!(budget.resumed(at + ms(4_000)), None);
+    assert!(budget.admit(at + ms(62_500)));
+    assert_eq!(budget.resumed(at + ms(62_500)), Some(1));
+    assert_eq!(budget.resumed(at + ms(62_600)), None);
+}
+
+thread_local! {
+    static KEYS: RefCell<Vec<(c_int, u16)>> = const { RefCell::new(Vec::new()) };
+}
+
+unsafe extern "C" fn keys(event: *mut AtkKeyEventStruct, _: gpointer) -> c_int {
+    KEYS.with(|k| k.borrow_mut().push(((*event).type_, (*event).keycode)));
+    0
+}
+
+#[test]
+fn a_release_is_offered_exactly_when_its_press_was() {
+    reset_budget();
+    let at = Instant::now();
+    CLOCK.with(|c| c.set(Some(at)));
+    let forward = Forward::new(Some(keys), data(31));
+    let to = &*forward as *const Forward as gpointer;
+    let press_release = |type_: c_int, code: u16| {
+        let mut event = key(type_, code);
+        assert_eq!(unsafe { trampoline(&mut event, to) }, 0);
+    };
+    press_release(0, 50);
+    assert_eq!(with_budget(|b| b.charge(at, SLOW)), Some(FIRST_PAUSE));
+    press_release(0, 51);
+    press_release(1, 51);
+    press_release(1, 50);
+    press_release(1, 50);
+    CLOCK.with(|c| c.set(Some(at + Duration::from_secs(3))));
+    press_release(0, 52);
+    press_release(0, 52);
+    press_release(1, 52);
+    press_release(1, 52);
+    assert_eq!(KEYS.with(|k| k.take()), vec![(0, 50), (1, 50), (0, 52), (0, 52), (1, 52)]);
+    reset_budget();
 }
 
 // GTK 3's listener list, faithfully: append on add; remove unlinks and frees, here marks dead; the
@@ -316,14 +438,56 @@ unsafe extern "C" fn modal(event: *mut AtkKeyEventStruct, data: gpointer) -> c_i
     0
 }
 
-#[test]
-fn a_listener_that_leaves_during_its_delivery_is_removed_after_gtks_loop_has_moved_on() {
-    unsafe {
+/// GTK's hooks are process-wide: stub them, then wrap them, once for every hook-level test.
+fn install_stub_toolkit() {
+    static STUBBED: Once = Once::new();
+    STUBBED.call_once(|| unsafe {
         let class = gtk::glib::gobject_ffi::g_type_class_ref(gtk::atk::ffi::atk_util_get_type()) as *mut AtkUtilClass;
         (*class).add_key_event_listener = Some(toolkit_add);
         (*class).remove_key_event_listener = Some(toolkit_remove);
-    }
+    });
     guard();
+}
+
+fn key(type_: c_int, keycode: u16) -> AtkKeyEventStruct {
+    let mut event: AtkKeyEventStruct = unsafe { std::mem::zeroed() };
+    event.type_ = type_;
+    event.keycode = keycode;
+    event
+}
+
+fn count(name: &str) -> usize {
+    calls().iter().filter(|(n, _, _)| *n == name).count()
+}
+
+unsafe extern "C" fn late_once(event: *mut AtkKeyEventStruct, data: gpointer) -> c_int {
+    call("late_once", event, data);
+    if count_late() == 1 {
+        std::thread::sleep(Duration::from_millis(450));
+    }
+    0
+}
+
+fn count_late() -> usize {
+    CALLS.with(|c| c.borrow().iter().filter(|(n, _, _)| *n == "late_once").count())
+}
+
+#[test]
+fn a_reply_that_comes_too_late_gets_its_release_and_not_the_next_key() {
+    install_stub_toolkit();
+    reset_budget();
+    unsafe { atk_add_key_event_listener(Some(late_once), data(21)) };
+    for (type_, keycode) in [(0, 38), (1, 38), (0, 39), (1, 39)] {
+        let mut event = key(type_, keycode);
+        assert_eq!(deliver(&mut event), 0);
+    }
+    assert_eq!(count("late_once"), 2);
+}
+
+#[test]
+fn a_listener_that_leaves_during_its_delivery_is_removed_after_gtks_loop_has_moved_on() {
+    install_stub_toolkit();
+    reset_budget();
     let mut event: AtkKeyEventStruct = unsafe { std::mem::zeroed() };
     let ev = &mut event as *mut AtkKeyEventStruct;
     let idle = || MainContext::default().iteration(false);
