@@ -12,11 +12,13 @@ import { NextIntlClientProvider } from "next-intl";
 import { vi } from "vitest";
 import {
   CursorExpiredError,
+  IndexedDbMirrorStore,
   MemoryMirrorStore,
   MutationRejectedError,
   OhmailEngine,
   mutationEffects,
   type EngineDraft,
+  type EngineLocks,
   type EngineMessage,
   type EngineMutation,
   type MirrorStore,
@@ -92,6 +94,8 @@ export interface DraftShell {
   refuseSave: Set<string>;
   /** The host's mail-link seam: `open` hands the shell a parsed `mailto:`; `seeded` counts the shell's takes. */
   mailto: { open: (d: ComposePrefill) => Promise<void>; seeded: number };
+  /** While on, `/sync` answers an empty page at the same cursor: this window's mirror learns nothing new. */
+  syncHeld: { on: boolean };
 }
 
 let roots: Root[] = [];
@@ -148,8 +152,7 @@ export const replyDraft = (id: string, parent: string, body: string): EngineDraf
   createdAt: "2026-09-27T08:40:00.000Z", updatedAt: "2026-09-27T08:40:00.000Z",
 } as unknown as EngineDraft);
 
-async function storeWith(messagesIn: EngineMessage[], drafts: EngineDraft[]): Promise<MirrorStore> {
-  const s = new MemoryMirrorStore();
+async function storeWith(messagesIn: EngineMessage[], drafts: EngineDraft[], s: MirrorStore = new MemoryMirrorStore()): Promise<MirrorStore> {
   await s.load();
   const changes: SyncChange[] = [];
   for (const m of messagesIn) {
@@ -295,14 +298,20 @@ function engineOver(
   server?: DraftServer,
   refuseSave: Set<string> = new Set(),
   parts = false,
+  locks: EngineLocks | null = null,
+  syncHeld: DraftShell["syncHeld"] = { on: false },
 ): OhmailEngine {
   const delivered = new Set<string>();
   return new OhmailEngine({
     store: s,
     now: () => NOW,
     ...(replayDeadlineMs !== undefined ? { outboxReplayDeadlineMs: replayDeadlineMs } : {}),
+    ...(locks !== null ? { locks } : {}),
     adapter: {
       sync: async () => {
+        if (syncHeld.on) {
+          return { changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: s.getCursor(), hasMore: false, serverTime: NOW.toISOString() };
+        }
         if (resync.armed) {
           resync.armed = false;
           resync.phase = 1;
@@ -584,6 +593,8 @@ export async function mountShell(
     remoteAtStart?: SyncChange[];
     /** No mailbox connected: the roster reads empty, so nothing can be sent or saved as a new row. */
     noMailbox?: boolean;
+    /** Another window of this browser: an IndexedDB mirror on the one disk (`indexedDB`), under these Web Locks. */
+    locks?: EngineLocks;
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
@@ -593,7 +604,9 @@ export async function mountShell(
   if (versions !== null) for (const d of drafts) versions.set(d.id, d.contentRevision ?? `rev-${d.id}`);
   const seeded = options.server !== undefined ? [...options.server.rows.values()]
     : versions === null ? drafts : drafts.map((d) => ({ ...d, contentRevision: versions.get(d.id)! }));
-  const store = options.store ?? await storeWith(messagesIn, seeded);
+  const store = options.store ?? await storeWith(messagesIn, seeded,
+    options.locks !== undefined ? new IndexedDbMirrorStore({ owner: "draft-shell" }) : undefined);
+  const syncHeld: DraftShell["syncHeld"] = { on: false };
   const sent: EngineMutation[] = [];
   const refuseSend: DraftShell["refuseSend"] = { on: false };
   const saveGate: DraftShell["saveGate"] = { wait: null };
@@ -610,6 +623,7 @@ export async function mountShell(
   const engine = engineOver(
     store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow, withdrawAnswer,
     versions, loseSendAnswer, options.outboxReplayDeadlineMs, options.server, refuseSave, options.parts === true,
+    options.locks ?? null, syncHeld,
   );
   const handOff: DraftShell["handOff"] = { on: options.handOff === true };
   const outboxHeld = engine.outboxHeld.bind(engine);
@@ -660,7 +674,7 @@ export async function mountShell(
   };
   return {
     el, engine, store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow,
-    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere, loseSendAnswer, refuseSave, mailto,
+    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere, loseSendAnswer, refuseSave, mailto, syncHeld,
   };
 }
 
