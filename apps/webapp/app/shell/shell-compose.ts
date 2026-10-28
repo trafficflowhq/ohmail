@@ -83,8 +83,10 @@ import { attachmentBytes, useForwardFiles, type ForwardFilesPlan } from "./forwa
 import {
   clearReplyLane,
   COMPOSE_SEND_KEY,
+  composeRowWaits,
   heldRowUnverified,
   inlineForwardKey,
+  pressSavedRow,
   promoteOrphanedReplyLane,
   readReplyDraft,
   readReplyMeta,
@@ -113,8 +115,9 @@ import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text
 import { go, type Route } from "./routing";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { documentHidden } from "./document-hidden";
-import { holdFilesForRestart, holdForRestart } from "./app-update";
-import { attachSendLockDraft, discardDecision, holdOf, releaseSendLockForRow } from "./send-lock";
+import { RESTART_FLUSH_MS, holdFilesForRestart, holdForRestart } from "./app-update";
+import { attachSendLockDraft, discardDecision, holdOf, releaseSendLockForRow, sendRecordsNaming } from "./send-lock";
+import { setComposeDoor } from "./compose-door";
 import { releaseSendAndDone } from "./send-release";
 import type { DiscardRefusal } from "../views/DraftsView";
 import {
@@ -460,6 +463,9 @@ export function useShellCompose({
   }, [onComposeView]);
   /** `autosave.restored`, late-bound like {@link settleComposeRef} below. */
   const restoredRef = useRef<() => void>(() => {});
+  /** The restore below has been applied and committed: a door may read the form now. */
+  const [composerReady, setComposerReady] = useState(false);
+  const readyWaiters = useRef<Array<() => void> | null>([]);
   useEffect(() => whenComposerReady(() => {
     const saved = readComposeDraft();
     if (saved.to || saved.subject || saved.body) {
@@ -469,7 +475,18 @@ export function useShellCompose({
       setComposeResumed(true);
     }
     if (takeRecoveredComposer()) toast(t("compose.recoveredFromClosedTab"));
+    setComposerReady(true);
   }), []);
+  useEffect(() => {
+    if (!composerReady || readyWaiters.current === null) return;
+    const waiting = readyWaiters.current;
+    readyWaiters.current = null;
+    for (const done of waiting) done();
+  }, [composerReady]);
+  /** Resolves once the form holds what the last session left, so nothing replaces it unread. */
+  const composerSettled = useStableCallback((): Promise<void> => (readyWaiters.current === null
+    ? Promise.resolve()
+    : new Promise<void>((done) => { readyWaiters.current!.push(done); })));
   /**
    * THE INLINE REPLY.
    *
@@ -1313,7 +1330,7 @@ export function useShellCompose({
    * left, with its own press's files (`m`): the composer stands for it only while it holds that row.
    * Never into the composer over a different message being written.
    */
-  const openNotSent = useStableCallback((lane: string, left: RefusedRow | undefined, m?: MailSendMutation): boolean => {
+  const openNotSent = useStableCallback((lane: string, left: RefusedRow | undefined, m?: MailSendMutation, live = false): boolean => {
     const row = left === undefined ? undefined : drafts.find((d) => d.id === left.rowId);
     const blocked = (): boolean => {
       if (row === undefined || !composerHoldsOther(row.id)) return false;
@@ -1321,6 +1338,15 @@ export function useShellCompose({
       return true;
     };
     if (lane === COMPOSE_SEND_KEY) {
+      /* A SEND STILL ON ITS WAY opens its own letter: the composer while it holds it, else the row
+         the press went from, with its files. Never the next letter under the first one's line. */
+      if (live) {
+        if (mailSend.pressHere(COMPOSE_SEND_KEY)) { go("compose"); return true; }
+        const own = m?.draftId == null ? undefined : drafts.find((d) => d.id === m.draftId);
+        if (own === undefined) { go("drafts"); return true; }
+        openDraft(own, m?.attachments);
+        return true;
+      }
       if (row === undefined || autosave.draftId === row.id) {
         go("compose");
         return true;
@@ -1986,6 +2012,17 @@ export function useShellCompose({
    */
   const composeHandedOff = useRef(false);
   /**
+   * WHETHER A SEND CARRIES THE LETTER ON SCREEN, asked of this letter only: its own press on its way,
+   * a send from the last session holding it, or a send still naming the row it holds. A send of
+   * another letter on the lane leaves this one writable; only its Send waits for the lane's lock.
+   */
+  const pressedHere = mailSend.pressHere(COMPOSE_SEND_KEY) && SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(COMPOSE_SEND_KEY).phase);
+  const restoredHere = mailSend.restoredPending(COMPOSE_SEND_KEY);
+  const rowWaits = composeRowWaits(engine, readComposeRow());
+  const sendCarriesThis = pressedHere || restoredHere || rowWaits;
+  /** Read-only for a send this mount did not press here: the last session's, or the row's. */
+  const composeHeldBySend = restoredHere || (rowWaits && !pressedHere);
+  /**
    * THE COMPOSE FORM IS A ROW ON THE ACCOUNT — see `compose-autosave.ts`.
    *
    * `active` is the route, so a timer armed by the last keystroke cannot write a draft after the
@@ -2011,13 +2048,10 @@ export function useShellCompose({
        and no reason to wait — and the timer created the second row while the replay was still
        carrying the first. `derived` is in this component's render path, so the read re-runs as the
        queue drains. */
-    sendInFlight: SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(COMPOSE_SEND_KEY).phase)
-      || sendPendingInOutbox(engine, COMPOSE_SEND_KEY)
-      /* AND THE WINDOW NEITHER OF THOSE CAN SEE: a send restored from the last session leaves the
-         queue BEFORE it is dispatched, so the outbox reads empty for the whole replay — measured —
-         while the composer holds the text whose fate is being decided. The record answers it and
-         releases itself at the settle. */
-      || mailSend.restoredPending(COMPOSE_SEND_KEY),
+    /* PER MESSAGE: the press of the letter on screen; a send restored from the last session, which
+       leaves the queue BEFORE it is dispatched (the record answers it, and releases itself at the
+       settle); and a send the durable outbox holds that names or made this letter's row. */
+    sendInFlight: sendCarriesThis,
     /* THE SURFACE HALF OF INVARIANT T's CLEAR. The hook owns the binding and ends it; emptying
        the form, dropping the reading selection and arriving at the list are this component's
        state, so they are passed in rather than moved. A SEND-LATER confirm lands on the Drafts
@@ -2054,6 +2088,105 @@ export function useShellCompose({
   releaseDraftIdRef.current = autosave.draftId;
   releaseBindingRef.current = autosave.release;
   composeNotSentRef.current = autosave.notSent;
+  /**
+   * RULE W: a letter whose own send is on its way gives way to another only once an account row
+   * holds exactly its words, asked of this letter alone — the composer's own confirmed save of
+   * what is on screen, or this press's own save, found by its send key. A waiting send alone
+   * never counts: offline, or pressed before its save landed, the words are on no row. A press
+   * already confirmed (its sent beat) has gone, and holds nothing back. `null` when it may give way,
+   * else the sentence why not.
+   */
+  const waitingHold = useStableCallback((): "compose.waitingNotSaved" | "compose.waitingUntilSent" | null => {
+    if (pressedHere && mailSend.stateOf(COMPOSE_SEND_KEY).phase === "sent") return null;
+    const row = readComposeRow();
+    const pressRows = sendRecordsNaming(COMPOSE_SEND_KEY, row, composeSessionId())
+      .map((r) => pressSavedRow(engine, r.key, r.fp)).filter((id): id is string => id !== null);
+    /* A row bound after a press that carried none (its first create landed after it) is no row the
+       send names or made: a copy only this composer's ending drops, so the letter stays until then. */
+    if (row !== null && !composeRowWaits(engine, row) && !pressRows.includes(row)) return "compose.waitingUntilSent";
+    return autosave.rowHoldsOnScreen() || pressRows.length > 0 ? null : "compose.waitingNotSaved";
+  });
+  /** The rows the waiting letter on screen is: the one it holds, and the one its press saved. */
+  const waitingRows = useStableCallback((): ReadonlySet<string> => {
+    const rows = new Set<string>();
+    const held = readComposeRow();
+    if (held !== null) rows.add(held);
+    for (const r of sendRecordsNaming(COMPOSE_SEND_KEY, held, composeSessionId())) {
+      const saved = pressSavedRow(engine, r.key, r.fp);
+      if (saved !== null) rows.add(saved);
+    }
+    return rows;
+  });
+  /** Why a door left the waiting letter on screen; said only while a send carries it. */
+  const [waitNote, setWaitNote] = useState<string | null>(null);
+  useEffect(() => { if (!sendCarriesThis) setWaitNote(null); }, [sendCarriesThis]);
+  /** The last compose press's message, for the files a letter let go of while it waits (no row stores them). */
+  const lastComposePress = useRef<MailSendMutation | null>(null);
+  /** The waiting letter is let go of: its binding ends, and its files stay with its press. */
+  const letGoOfWaiting = useStableCallback(() => {
+    autosave.endWaiting();
+    const pressed = lastComposePress.current;
+    if ((composeRef.current.attachments?.length ?? 0) > 0 && pressed !== null && !handedPress.current.has(COMPOSE_SEND_KEY)) {
+      handedPress.current.set(COMPOSE_SEND_KEY, { m: pressed, row: null });
+    }
+  });
+  /**
+   * A NEW LETTER IN THE COMPOSER — writeTo's identity move, for every door that starts one. The row a
+   * parked send's record names by session alone is bound first, so the park stays reachable by row;
+   * then the binding is let go, and the form, the buffer and the session are the new letter's.
+   */
+  const replaceComposer = useStableCallback((seeded: ComposeFields) => {
+    const outgoing = readComposeRow();
+    const held = holdOf(engine, {
+      lane: COMPOSE_SEND_KEY, draftId: outgoing, session: composeSessionId(),
+    });
+    if (held.kind === "parked" && held.session !== null) {
+      attachSendLockDraft(COMPOSE_SEND_KEY, [`compose:${held.session}`], outgoing);
+    }
+    if (sendCarriesThis) letGoOfWaiting();
+    autosave.release();
+    setCompose(seeded);
+    // A NEW message, so a new compose session — see `openDraft` and `compose.ts`.
+    clearComposeDraft();
+    writeComposeDraft(seeded);
+    // One editor at a time: an open inline reply would sit under the composer.
+    setReplyTo(null);
+    composeSeeded.current = true;
+    setComposeResumed(false);
+    setWaitNote(null);
+  });
+  /**
+   * MAY A DOOR PUT ANOTHER LETTER WHERE THIS ONE IS? A waiting letter by Rule W, kept on screen with
+   * its sentence when refused; any other with words on screen once its own save holds them.
+   */
+  const mayReplace = useStableCallback((seeded: ComposeFields): boolean | Promise<boolean> => {
+    if (sendCarriesThis) {
+      const why = waitingHold();
+      if (why === null) return true;
+      setWaitNote(t(why));
+      go("compose");
+      return false;
+    }
+    if (!reopenWouldOverwrite(composeRef.current, seeded)) return true;
+    return autosave.flush().then(() => {
+      if (autosave.holdsOnScreen()) return true;
+      toast(t("drafts.reopenBlockedUnsaved"));
+      return false;
+    });
+  });
+  /** COMPOSE: a new letter, unless the waiting one on screen may not be let go of yet. */
+  const composeNew = useStableCallback(() => {
+    if (sendCarriesThis) {
+      const why = waitingHold();
+      if (why === null) replaceComposer(EMPTY_COMPOSE);
+      else setWaitNote(t(why));
+    }
+    go("compose");
+  });
+  useEffect(() => {
+    setComposeDoor(composeNew);
+    return () => setComposeDoor(null);
+  }, [composeNew]);
   /**
    * THE BLOCK STATE FOLLOWS THE ROW. While autosave holds a row, the compose
    * form's signature state mirrors into the editor meta under `draft:<rowId>` — the handle a
@@ -2191,6 +2324,19 @@ export function useShellCompose({
         openMessageRef.current(parent, { reply: true });
         return;
       }
+      /* OVER A LETTER WHOSE SEND IS ON ITS WAY: its own row just shows it; another row opens only
+         once an account row holds the waiting letter's words (`waitingHold`). */
+      const waiting = sendCarriesThis;
+      if (waiting && waitingRows().has(d.id)) {
+        composeSeeded.current = true;
+        go("compose");
+        return;
+      }
+      const why = waiting ? waitingHold() : null;
+      if (why !== null) {
+        toast(t(why));
+        return;
+      }
       /* THE ROW A HANDED-OFF SEND'S REFUSAL LEFT gets that press's files back: no row stores them,
          and the composer that held them has moved on (or holds them still, and is replaced here). */
       const owedFiles = [...handedPress.current].find(([, p]) => p.row === d.id);
@@ -2268,11 +2414,12 @@ export function useShellCompose({
        * reopen is REFUSED and says why. Only against unsaved text, and only for a row this composer is not already
        * holding: reopening the very row on screen changes nothing about it.
        */
-      if (parked && reopenWouldOverwrite(composeRef.current, seeded)) {
+      if (!waiting && parked && reopenWouldOverwrite(composeRef.current, seeded)) {
         toast(t("drafts.heldReopenBlocked"));
         return;
       }
       const openSeeded = (): void => {
+        if (waiting) letGoOfWaiting();
         setCompose(seeded);
         /**
          * A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved send (`compose.ts`),
@@ -2289,7 +2436,8 @@ export function useShellCompose({
          * `unknown` keeps the session for the same reason, on weaker evidence: this browser cannot read its own record,
          * so it cannot say the message is new either.
          */
-        if (!parked) clearComposeDraft();
+        // Over a waiting letter its identity ends first, or the held row would speak for that send.
+        if (!parked || waiting) clearComposeDraft();
         writeComposeDraft(seeded);
         if (parked) {
           /**
@@ -2348,7 +2496,7 @@ export function useShellCompose({
       };
       /* WORDS ON SCREEN NO SAVE HOLDS (a refused save): the composer's own save goes first. Still unheld,
          the row they are bound to opens with them on screen, and another row is not opened over them. */
-      if (!parked && reopenWouldOverwrite(composeRef.current, seeded)) {
+      if (!waiting && !parked && reopenWouldOverwrite(composeRef.current, seeded)) {
         void autosave.flush().then(() => {
           if (autosave.holdsOnScreen()) openSeeded();
           else if (readComposeRow() === d.id) { composeSeeded.current = true; go("compose"); }
@@ -2772,6 +2920,7 @@ export function useShellCompose({
       : undefined;
     // The send carries the words and makes its own row: a create the pause left on the outbox goes.
     if (mailSend.send(withWhen(withSignature(plan.mutation, sigText, sigHtml)), handOff ? { handOff } : undefined)) {
+      lastComposePress.current = plan.mutation;
       autosave.sending();
       handedPress.current.delete(COMPOSE_SEND_KEY);
       composeHandedOff.current = false;
@@ -2913,59 +3062,42 @@ export function useShellCompose({
         // raw text in the input — the same rule as `openDraft`.
         to: formatRecipientChips([{ name: name ?? null, address }]),
       };
-      /* ── A NEW-MESSAGE DOOR MUST NOT ORPHAN A HELD MESSAGE ───────────────────────────────
-         This re-mints the compose session (below), which is right for a new message and is how a
-         held one loses a name: a send pressed before the first save is recorded as
-         `compose:<session>` alone, so once that session is replaced the record names nothing this
-         browser can find, the row sits in Drafts looking ordinary, and reopening it takes the
-         ordinary door with Send live. Binding the row the surface is holding onto the record
-         first leaves the park reachable by ROW, which is the name that survives every door. */
-      const openNew = (): void => {
-        const outgoing = readComposeRow();
-        const held = holdOf(engine, {
-          lane: COMPOSE_SEND_KEY, draftId: outgoing, session: composeSessionId(),
-        });
-        if (held.kind === "parked" && held.session !== null) {
-          attachSendLockDraft(COMPOSE_SEND_KEY, [`compose:${held.session}`], outgoing);
-        }
-        autosave.release();
-        setCompose(seeded);
-        // A NEW message, so a new compose session — see `openDraft` and `compose.ts`. Without it
-        // this message inherited the identity of whatever the form last held, and an unresolved
-        // send of THAT message parked this one: the unconfirmed warning, and Send refused, over a
-        // message nobody had ever pressed Send on.
-        clearComposeDraft();
-        writeComposeDraft(seeded);
-        // An open inline reply would otherwise sit under the compose the route change opens —
-        // one editor at a time.
-        setReplyTo(null);
-        composeSeeded.current = true;
+      /* A NEW-MESSAGE DOOR MUST NOT ORPHAN A HELD MESSAGE, nor replace words no row holds: the
+         identity move is `replaceComposer`, and `mayReplace` decides first. */
+      const open = (): void => {
+        replaceComposer(seeded);
         go("compose");
       };
-      // Words on screen no save holds are not replaced: `openDraft`'s rule.
-      if (reopenWouldOverwrite(composeRef.current, seeded)) {
-        void autosave.flush().then(() => {
-          if (!autosave.holdsOnScreen()) { toast(t("drafts.reopenBlockedUnsaved")); return; }
-          openNew();
-        });
-        return;
-      }
-      openNew();
+      const may = mayReplace(seeded);
+      if (may === true) open();
+      else if (may !== false) void may.then((ok) => { if (ok) open(); });
     },
   );
 
   /**
-   * A MAILTO CLICK, DELIVERED — the host's `mailtoDraft` prop becoming the compose form. The same five steps as
-   * `writeTo`, for the same reasons, one field at a time: release first (or the plan still carries an unrelated
-   * draft's id and the send overwrites that row), drop any recovery, seed, persist, close an open inline reply,
-   * navigate. Recipients go through the chip formatter so a prefilled address opens settled rather than as raw text;
-   * the body is plain text and `html` stays empty, `openDraft`'s rule for a body with no stored HTML. An EFFECT
-   * rather than a handler because the trigger is a prop from outside this tree — the OS handed the host a link, the
-   * host handed the fields down. `onMailtoDraftSeeded` tells the host to drop its copy, so a remount cannot seed the
-   * same click twice over whatever the person typed since.
+   * WHETHER A MAIL LINK WAITS: only over something to protect (a waiting letter that may not give
+   * way yet, or words no save holds), and only while the launch has not answered what a save needs:
+   * the row the last session held adopted, and the mailboxes read. Never for a mailbox to appear.
    */
+  const linkWaits = useStableCallback((seeded: ComposeFields): boolean => {
+    const atRisk = sendCarriesThis ? waitingHold() !== null
+      : reopenWouldOverwrite(composeRef.current, seeded) && !autosave.holdsOnScreen();
+    return atRisk && (!autosave.adoptionAnswered() || (composeMailbox === null && facts === null));
+  });
+
+  /**
+   * A MAILTO CLICK, DELIVERED — the host's `mailtoDraft` prop becoming the compose form, by `writeTo`'s
+   * door, opened by the operating system rather than by a click inside the app. Recipients go through
+   * the chip formatter so a prefilled address opens settled; the body is plain text and `html` stays
+   * empty. An EFFECT because the trigger is a prop from outside this tree. Each link is taken once
+   * (`onMailtoDraftSeeded` tells the host to drop its copy), once the composer holds what the last
+   * session left and can say whether a row holds it; what is on screen is saved first, and a link
+   * refused for words no row holds is not tried again.
+   */
+  const takenLink = useRef<ComposePrefill | null>(null);
   useEffect(() => {
-    if (!mailtoDraft) return;
+    if (!mailtoDraft || takenLink.current === mailtoDraft) return;
+    takenLink.current = mailtoDraft;
     const chips = (list: string[]): string =>
       formatRecipientChips(list.map((address) => ({ name: null, address })));
     const seeded: ComposeFields = {
@@ -2976,25 +3108,18 @@ export function useShellCompose({
       subject: mailtoDraft.subject,
       body: mailtoDraft.body,
     };
-    // The same binding `writeTo` does, for the same reason and in the same order — this door is
-    // that one, opened by the operating system rather than by a click inside the app.
-    const outgoing = readComposeRow();
-    const held = holdOf(engine, {
-      lane: COMPOSE_SEND_KEY, draftId: outgoing, session: composeSessionId(),
-    });
-    if (held.kind === "parked" && held.session !== null) {
-      attachSendLockDraft(COMPOSE_SEND_KEY, [`compose:${held.session}`], outgoing);
-    }
-    autosave.release();
-    setCompose(seeded);
-    // A new compose session, for the reason `writeTo` states — this door is the same one, opened
-    // by the operating system rather than by a click inside the app.
-    clearComposeDraft();
-    writeComposeDraft(seeded);
-    setReplyTo(null);
-    composeSeeded.current = true;
-    go("compose");
-    onMailtoDraftSeeded?.();
+    void (async () => {
+      await composerSettled();
+      /* Bounded, and only over something to protect (`linkWaits`); otherwise at once, a mailbox or
+         none: with none the composer opens with the link's fields and the shell says what is missing. */
+      for (let waited = 0; waited < RESTART_FLUSH_MS && linkWaits(seeded); waited += 50) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      onMailtoDraftSeeded?.();
+      if (!(await mayReplace(seeded))) return;
+      replaceComposer(seeded);
+      go("compose");
+    })();
   }, [mailtoDraft, autosave, go, onMailtoDraftSeeded]);
 
   /** Settings › Help & contact's Write to us: `writeTo`'s door, with the subject and the block. */
@@ -3022,7 +3147,9 @@ export function useShellCompose({
     closeCompose,
     closeReply,
     compose,
+    composeHeldBySend,
     composeResumed,
+    composeWaitNote: sendCarriesThis ? waitNote : null,
     composeCloseRefusal,
     confirmForward,
     forwardAsk,

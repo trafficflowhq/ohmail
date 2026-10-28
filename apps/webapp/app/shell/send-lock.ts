@@ -838,6 +838,33 @@ export function sendRecordNames(
 }
 
 /**
+ * THE SENDS THIS BROWSER RECORDED FOR ONE MESSAGE — by row or by compose session — as their keys
+ * and fingerprints (the sent one, and the buffer's {@link SendLock.bfp}) and whether each came back
+ * unverified, for the question "did this message's own press save its words". Read only, this
+ * build's format only; a jar that cannot be read names none.
+ */
+export function sendRecordsNaming(
+  lane: string, draftId: string | null, session: string | null, owner: string | null = storageOwner(),
+): Array<{ key: string; fp: string; bfp?: string; unverified: boolean }> {
+  // The jar as stored, not through `load`: a reader that sweeps would write.
+  let parsed: unknown;
+  try {
+    const raw = window.localStorage.getItem(sendLocksKey(owner));
+    parsed = raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const names = new Set<string>();
+  if (draftId !== null) names.add(`draft:${draftId}`);
+  if (session !== null) names.add(`compose:${session}`);
+  return parsed.filter(isLock)
+    .filter((r) => r.lane === lane && r.v === SEND_LOCK_FORMAT && !retired(r)
+      && ((draftId !== null && r.draftId === draftId) || lockSubjects(r).some((n) => names.has(n))))
+    .map((r) => ({ key: r.key, fp: r.fp, ...(r.bfp === undefined ? {} : { bfp: r.bfp }), unverified: r.unverified === true }));
+}
+
+/**
  * THE SERVER SAYS THIS ROW WAS SENT, SO THE RECORD ABOUT IT IS SETTLED — release it.
  *
  * The confirmed path releases a record through {@link releaseSendLock}, keyed by the fingerprint

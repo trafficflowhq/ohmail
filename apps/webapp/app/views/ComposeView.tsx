@@ -92,6 +92,7 @@ export function ComposeView({
   saveRefused = false,
   onSendAsNew,
   resumed = false,
+  waitNote = null,
   onClose,
   closeNote = null,
   heldResolve = null,
@@ -189,6 +190,8 @@ export function ComposeView({
   onSendAsNew?: () => void;
   /** `true` when the plain compose door opened on a message left unfinished — see `composeResumed`. */
   resumed?: boolean;
+  /** Why a door for another letter left this one, whose send waits, on screen. */
+  waitNote?: string | null;
   /**
    * LEAVE, KEEPING THE MESSAGE — Escape and the close control, the exits that are not a discard.
    * The shell flushes the pending autosave before it navigates, so what is on screen is on the
@@ -653,9 +656,9 @@ export function ComposeView({
   useEffect(() => {
     if (!tooLong) setLongNote(false);
   }, [tooLong]);
-  /* Another message's send on the lane (`SendState.previous`) freezes this one too, and its line says
-     why: while the lane sends, a first save is refused, so typing here would be kept nowhere. */
-  const inFlight = send.phase === "sending" || send.phase === "queued" || held !== null;
+  /* Another message's send on the lane (`SendState.previous`) leaves this one writable: its saves are
+     its own row's. Only its Send waits for the lane's one lock, and its line says so. */
+  const inFlight = (send.previous !== true && (send.phase === "sending" || send.phase === "queued")) || held !== null;
   /* CANCEL IS NOT AN INPUT, and a queued send is not on the wire — see `canCancel`, which is
      deliberately NOT the same question as `inFlight`. */
   const cancelBlocked = !canCancel(send, held !== null);
@@ -1150,7 +1153,7 @@ export function ComposeView({
                 disabled={sendBlocked && !needsContent && !tooLong}
                 aria-disabled={needsContent || tooLong || undefined}
                 title={needsContent ? t("needContent") : tooLong ? t("sendTooLong", sendLineValues()) : undefined}
-                aria-busy={send.phase === "sending" || undefined}
+                aria-busy={(send.phase === "sending" && send.previous !== true) || undefined}
                 // See `sendVerb` — the same attribute and the same word as the inline dock.
                 data-send={verb.attr}
                 onClick={() => {
@@ -1230,9 +1233,12 @@ export function ComposeView({
               {held ? (
                 <span className="send-note" role="status">{held.sentence}</span>
               ) : null}
+              {waitNote !== null ? (
+                <span className="send-note" role="status">{waitNote}</span>
+              ) : null}
               {/* A RESUMED MESSAGE IS SAID AS ONE, so a person who meant a new message knows this is
                   the old one. A held message's own sentence says more, and this gives way to it. */}
-              {resumed && !held && elsewhere === null && shown.phase !== "unverified" ? (
+              {resumed && !inFlight && elsewhere === null && shown.phase !== "unverified" ? (
                 <span className="send-note" role="status">{t("resumedNote")}</span>
               ) : null}
               {/* THE CLOSE THAT DID NOT HAPPEN, and why — a composer that stayed open after

@@ -91,9 +91,10 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
   // TEN: a promoted lane asks it of the row it would write its words into.
   // ELEVEN: the row a reply stored before a door bound its own create's row goes only while free.
   // TWELVE: a dock reads the row its lane last wrote, at its open and while open: one sent from another device ends the lane.
-  ["shell-compose.ts", 12,
-    "openDraft (above the reply arm, so a held reply takes the held view), writeTo, the mailto "
-    + "seam, the Drafts list's Delete, replySendState (the reply editor's own lane, row "
+  // ELEVEN AGAIN: writeTo and the mailto seam became one door, `replaceComposer`, which Compose takes too.
+  ["shell-compose.ts", 11,
+    "openDraft (above the reply arm, so a held reply takes the held view), replaceComposer (the "
+    + "new-letter door: Compose, Write-to, a mail link), the Drafts list's Delete, replySendState (the reply editor's own lane, row "
     + "included), the orphaned-lane promotion (a dead parent's reply becoming a row), the "
     + "composer's Discard (what it will do with its row), laneRowOf (the row a refused "
     + "reply left, before a press sends from it), accountReplyRow (the draft Reply opens), "
@@ -104,7 +105,7 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
 ];
 
 /** The SUM, apart from the rows: a split that loses part of a count cannot pass on the rows alone. */
-const CALL_SITES_TOTAL = 20;
+const CALL_SITES_TOTAL = 19;
 
 describe("the send hold is answered in one place, and every write site asks", () => {
   it("(a) the call-site count per file", () => {
@@ -643,8 +644,8 @@ describe("a compose's ending is written in one place", () => {
   it("(b) no FATE site releases the binding on its own, and the identity doors still do", () => {
     /*
      * `autosave.release()` forgets which message the compose is bound to. That is right at a door
-     * that REPLACES the message — the reopen, Write-to, a mail link are identity moves and keep
-     * it — and wrong at a fate, where the ending has to be the whole ending. `discardDraft` had it
+     * that REPLACES the message — the reopen, Compose, Write-to, a mail link are identity moves and
+     * keep it — and wrong at a fate, where the ending has to be the whole ending. `discardDraft` had it
      * unconditionally, before the server had answered: the 409 then restored the row while the
      * binding was already gone, and the next pause wrote a second one.
      *
@@ -661,8 +662,8 @@ describe("a compose's ending is written in one place", () => {
     expect(
       codeReleases.length,
       "the doors that replace the message on screen are the only places that forget the binding: "
-      + "the reopen's parked arm, Write-to, and the mailto seam",
-    ).toBe(3);
+      + "the reopen's parked arm, and replaceComposer (Compose, Write-to, a mail link)",
+    ).toBe(2);
 
     /* The Drafts list's Delete empties every editor bound to the row before the request goes, by
        design (`compose-draft-gone-elsewhere.test.tsx` drives it): a refusal leaves the row in Drafts
@@ -1131,12 +1132,14 @@ describe("every write site, under every answer the predicate can give", { timeou
       "an empty queue refuses — a first compose could then never reach the account",
     ).toBe(false);
 
-    /* AND THE SURFACE READS IT BESIDE THE PHASE, not instead of it: the phase covers the live tab,
-       the outbox covers the one that died. */
+    /* AND THE SURFACE READS IT BESIDE THE PHASE, not instead of it, per message: the phase covers
+       the live tab's own press, the last session's record (`restoredPending`, which this queue
+       cannot see for a restored send) the tab that died, and the durable outbox the row a waiting
+       send names or made. A lane-wide read here froze every other letter on the lane. */
     expect(
       SHELL("shell-compose.ts"),
       "the shell reads only the phase again, so a reload inside the send window is unguarded",
-    ).toMatch(/SEND_IN_FLIGHT_PHASES\.has\(mailSend\.stateOf\(COMPOSE_SEND_KEY\)\.phase\)\s*\n\s*\|\| sendPendingInOutbox\(engine, COMPOSE_SEND_KEY\)/);
+    ).toMatch(/const sendCarriesThis = pressedHere \|\| restoredHere \|\| rowWaits;[\s\S]*sendInFlight: sendCarriesThis,/);
   });
 
   it("the CREATE arm: nothing is created while a send of this message is on the wire", async () => {

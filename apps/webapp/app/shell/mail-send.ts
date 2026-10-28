@@ -462,7 +462,9 @@ export function sendNamesRow(engine: OhmailEngine, lane: string, row: string): b
   const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
   if ([...engine.pendingMutations(), ...wire].some((p) => names(p.mutation))) return true;
   const disk = typeof engine.read === "function" ? engine.read().list(OUTBOX_TYPE) : [];
-  return (disk as ReadonlyArray<OutboxRow>).some((r) => pendingSendRow(r) && names(r.mutation));
+  // …or the row its own save made, which the mutation does not name.
+  return (disk as ReadonlyArray<OutboxRow>).some((r) => pendingSendRow(r)
+    && (names(r.mutation) || (r.createdRow?.id === row && sendKeyOf(r.mutation as unknown as MailSend) === lane)));
 }
 
 /**
@@ -495,6 +497,8 @@ const outboxLanesCache = new WeakMap<EntityReader, { at: number } & DurableSends
  */
 type OutboxRow = {
   mutation?: { kind?: string }; withdrawn?: boolean; withdrawOwed?: boolean; wired?: boolean; confirmed?: boolean; key?: string;
+  /** The row the send's own save made or wrote, as the adapter reported it before the send. */
+  createdRow?: { id?: unknown; fingerprint?: unknown };
 };
 
 /**
@@ -504,11 +508,16 @@ type OutboxRow = {
 const pendingSendRow = (r: OutboxRow): boolean => r.mutation?.kind === "mail_send" && r.confirmed !== true
   && (r.withdrawn !== true || (r.withdrawOwed === true && r.wired === true));
 
-/** The durable outbox's pending sends: their lanes as the press derives them, and their keys. */
-type DurableSends = { lanes: Set<string>; keys: Set<string> };
+/**
+ * The durable outbox's pending sends: their lanes as the press derives them, their keys, the rows
+ * they name or made (`rows`), and each key's reported save (`saved`: the row and the words' fingerprint).
+ */
+type DurableSends = {
+  lanes: Set<string>; keys: Set<string>; rows: Set<string>; saved: Map<string, { row: string; fp: string }>;
+};
 
 function indexDurableSends(reader: EntityReader): DurableSends {
-  const out: DurableSends = { lanes: new Set(), keys: new Set() };
+  const out: DurableSends = { lanes: new Set(), keys: new Set(), rows: new Set(), saved: new Map() };
   for (const r of reader.list(OUTBOX_TYPE) as ReadonlyArray<OutboxRow>) {
     if (!pendingSendRow(r)) continue;
     const m = r.mutation as unknown as MailSend;
@@ -516,12 +525,18 @@ function indexDurableSends(reader: EntityReader): DurableSends {
     // A forward is on the inline dock's lane as well: the row does not say which surface sent it.
     if (m.forwardOf != null) out.lanes.add(inlineForwardKey(m.forwardOf));
     if (typeof r.key === "string") out.keys.add(r.key);
+    if (typeof m.draftId === "string" && m.draftId !== "") out.rows.add(m.draftId);
+    const made = r.createdRow;
+    if (typeof made?.id === "string") {
+      out.rows.add(made.id);
+      if (typeof r.key === "string" && typeof made.fingerprint === "string") out.saved.set(r.key, { row: made.id, fp: made.fingerprint });
+    }
   }
   return out;
 }
 
 function durableSends(engine: OhmailEngine): DurableSends {
-  if (typeof engine.read !== "function") return { lanes: new Set(), keys: new Set() };
+  if (typeof engine.read !== "function") return { lanes: new Set(), keys: new Set(), rows: new Set(), saved: new Map() };
   const reader = engine.read();
   // A hand-rolled partial reader has no stamp to invalidate on; it gets the honest uncached read.
   if (typeof reader.stampOf !== "function") return indexDurableSends(reader);
@@ -626,6 +641,20 @@ function endedAsSent(engine: OhmailEngine, key: string): boolean {
 
 export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): boolean {
   return durableSends(engine).lanes.has(lane);
+}
+
+/** Whether a send still on its way names this row or made it: the letter it holds is waiting. */
+export function composeRowWaits(engine: OhmailEngine, row: string | null): boolean {
+  return row !== null && durableSends(engine).rows.has(row);
+}
+
+/**
+ * THE ROW THIS PRESS'S OWN SAVE WROTE, found by its send key: the save the adapter reported before
+ * the send, and only when it carried exactly the pressed words (`fp`, the key's record). `null` otherwise.
+ */
+export function pressSavedRow(engine: OhmailEngine, key: string, fp: string): string | null {
+  const saved = durableSends(engine).saved.get(key);
+  return saved !== undefined && saved.fp === fp ? saved.row : null;
 }
 
 /**
