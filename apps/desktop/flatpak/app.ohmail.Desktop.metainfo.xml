@@ -78,6 +78,24 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.10" date="2026-10-28">
+      <description>
+        <ul>
+          <li>A reply to a large group folds its earlier messages</li>
+          <li>ohmail on Linux keeps running when an accessibility tool stops while you type</li>
+          <li>A message sent just before ohmail closed gets its copy in Sent when ohmail starts again</li>
+          <li>Pictures from a sender you have not let in wait for Show images</li>
+          <li>Screening a sender out or marking them as spam leaves their letters unread</li>
+          <li>On a device that only reads your mail, every rule can be changed, and a takeover drops removed rules</li>
+          <li>Closing a reply or forward under a letter saves it to Drafts at once</li>
+          <li>A letter the phone restores after a stop no longer overwrites a draft changed on another device</li>
+          <li>The reading column stays inside its frame in the Ohmarchy look</li>
+          <li>Live mail with a browser tab and the desktop app open together</li>
+          <li>The first sync after launch no longer holds the desktop app for most of a second</li>
+          <li>Cloud can record how connecting a mailbox ended</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.9" date="2026-10-27">
       <description>
         <ul>
@@ -177,29 +195,6 @@
           <li>A press made beside a mailbox change no longer fails</li>
           <li>A folder change made beside a Screener decision no longer fails</li>
           <li>The web app runs Next.js 15.5.28</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.5" date="2026-10-25">
-      <description>
-        <ul>
-          <li>Every conversation's row has rounded squares in the paper look</li>
-          <li>The open conversation's row shows one strip of squares and one box</li>
-          <li>Search finds a letter when your words sit in different parts of it</li>
-          <li>A message sent from another device no longer comes back in Compose</li>
-          <li>A draft saved while offline belongs to its message when it reaches your account</li>
-          <li>ohmail Cloud says when storage is nearly full, and what adds room on your plan</li>
-          <li>Connecting a mailbox starts with your address</li>
-          <li>A forward shows the message it forwards, and folds only the thread below it</li>
-          <li>Send again looks in Sent first and sends the same message, with its files</li>
-          <li>Shortcut keys do what the sheet says, and "Tomorrow" after midnight means this morning</li>
-          <li>A letter held at the gate is dated by when it arrived</li>
-          <li>Changing where a rule files mail moves only the mail it filed</li>
-          <li>Every press that needs a fresh second factor asks for it in place</li>
-          <li>The desktop app asks about an update in its own window</li>
-          <li>The desktop columns keep an even frame on Omarchy</li>
-          <li>Cloud erases a closed account only after its erasure warning was delivered</li>
-          <li>Cloud can remind a new trial once to connect its mailbox</li>
         </ul>
       </description>
     </release>
