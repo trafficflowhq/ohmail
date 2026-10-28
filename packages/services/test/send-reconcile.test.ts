@@ -13,6 +13,7 @@ import {
   SEND_RECONCILE_SCAN_FACTOR, SEND_STALE_AFTER_MS,
   SEND_UNVERIFIED_RECHECK_MS, SEND_UNVERIFIED_MIRROR_MS, SEND_UNVERIFIED_PROBE_AT_MS, SEND_UNVERIFIED_PROBE_WINDOW_MS,
   inUnverifiedProbeWindow,
+  SEND_COPY_OWED_CALL_CEILING_MS, SEND_COPY_OWED_DIAL_DEADLINE_MS,
 } from "../src/index.js";
 
 /**
@@ -394,6 +395,15 @@ describe("runSendReconcilePass — the claim", () => {
     const worst = SEND_RECONCILE_DIAL_DEADLINE_MS
       + t.connectionMs + t.greetingMs + t.socketMs
       + SEND_RECONCILE_CALL_CEILING_MS
+      + SEND_RECONCILE_CLOSE_CEILING_MS;
+    expect(worst, "the derived worst case must fit the 60-second invocation").toBeLessThan(60_000);
+  });
+
+  it("the late Sent-copy pass's worst case is derived the same way and fits the invocation too", async () => {
+    const t = SEND_RECONCILE_NET_TIMEOUTS;
+    const worst = SEND_COPY_OWED_DIAL_DEADLINE_MS
+      + t.connectionMs + t.greetingMs + t.socketMs
+      + SEND_COPY_OWED_CALL_CEILING_MS
       + SEND_RECONCILE_CLOSE_CEILING_MS;
     expect(worst, "the derived worst case must fit the 60-second invocation").toBeLessThan(60_000);
   });

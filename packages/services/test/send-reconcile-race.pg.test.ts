@@ -3,13 +3,14 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { eq, lt } from "drizzle-orm";
-import { drafts, mailboxes, outboundSends } from "@trafficflow/db";
+import { eq, lt, lte } from "drizzle-orm";
+import { drafts, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SendService, runSendReconcilePass, SEND_STALE_AFTER_MS } from "../src/index.js";
+import { UNMETERED_STORAGE_CAP } from "@trafficflow/core";
+import { SendService, runSendReconcilePass, runOwedSentCopyPass, SEND_STALE_AFTER_MS } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -287,5 +288,52 @@ describe.skipIf(!PG_UP)("the reconciling pass racing the client's own retry", ()
     const [d] = await dbA.select().from(drafts).where(eq(drafts.id, w.draftId));
     expect(d!.status, "but the draft is left exactly where it was found").toBe("draft");
     expect(delivered).toEqual([]);
+  }, 60_000);
+});
+
+describe.skipIf(!PG_UP)("two late Sent-copy passes over one owed copy", () => {
+  beforeEach(async () => {
+    await dbA.delete(outboundSentCopies).where(lte(outboundSentCopies.nextAttemptAt, NOW));
+  });
+
+  it("one dial and one APPEND, whichever claims first", async () => {
+    const accountId = randomUUID();
+    const tag = randomUUID().slice(0, 8);
+    const [mb] = await dbA.insert(mailboxes).values({
+      accountId, provider: "imap", address: `owed-${tag}@race.test`, status: "connected",
+    }).returning();
+    const minted = `<${randomUUID()}@race.test>`;
+    const [s] = await dbA.insert(outboundSends).values({
+      accountId, idempotencyKey: `owed-${tag}`, mintedMessageId: minted, providerMessageId: minted, status: "sent",
+    }).returning();
+    await dbA.insert(outboundSentCopies).values({
+      sendId: s!.id, accountId, mailboxId: mb!.id, rawB64: Buffer.from(`Message-ID: ${minted}\r\n\r\nhi\r\n`).toString("base64"),
+      nextAttemptAt: NOW,
+    });
+    const folder: string[] = [];
+    const seen = { dials: 0, appends: 0, sends: 0 };
+    const open: OpenSendAdapter = async () => {
+      seen.dials += 1;
+      return {
+        async send() { seen.sends += 1; return { providerMessageId: "x" }; },
+        async messageInSent(id: string) { return folder.includes(id); },
+        async fileSentCopy(raw: Buffer, id: string, o?: { look?: boolean }) {
+          if (o?.look && folder.includes(id)) return null;
+          await sleep(200);
+          seen.appends += 1;
+          folder.push(id);
+          return null;
+        },
+        async close() { /* nothing held */ },
+      };
+    };
+    const pass = (db: typeof dbA) => runOwedSentCopyPass(db, {
+      openSendAdapter: open, resolveStorageCap: async () => UNMETERED_STORAGE_CAP, sends: new SendService(), now: () => NOW,
+    });
+    const [a, b] = await Promise.all([pass(dbA), pass(dbB)]);
+    expect(a.filed + b.filed).toBe(1);
+    expect(seen).toEqual({ dials: 1, appends: 1, sends: 0 });
+    expect(folder).toEqual([minted]);
+    expect(await dbA.select().from(outboundSentCopies).where(eq(outboundSentCopies.sendId, s!.id))).toEqual([]);
   }, 60_000);
 });

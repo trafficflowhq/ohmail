@@ -13,7 +13,7 @@ import type {
   ContactsService, SnippetsService, NotifyRulesService, AwayResponderService,
   AttachmentsService, KbService, TagsService, FolderOpsService, DraftsService, DraftingService, SendService,
   ScheduleService,
-  WorkflowsService, ProfileImportService, HostResolver,
+  WorkflowsService, ProfileImportService, HostResolver, SendDeps,
 } from "@trafficflow/services/mail";
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
  * host, including the shipped local engine, and the root barrel's export surface reaches the model
@@ -337,8 +337,11 @@ export interface ApiServices {
    * waited for briefly and then retried in memory (`SendDeps.copyOutlivesAnswer`). Absent on Cloud.
    */
   sendCopyOutlivesAnswer?: boolean;
-  /** The local engine keeps a delivered send's owed Sent copy on disk until filed (`SendDeps.keepOwedCopy`). */
-  sendKeepOwedCopy?: boolean;
+  /**
+   * A delivered send's owed Sent copy is kept in the store until filed (`SendDeps.keepOwedCopy`):
+   * `true` on the local engine, `OWED_COPY_SELF_HOST` / `OWED_COPY_CLOUD` on the server doors.
+   */
+  sendKeepOwedCopy?: SendDeps["keepOwedCopy"];
   /** The upload ceiling of a host that keeps running (`SendDeps.submissionCeilingMs`); absent elsewhere. */
   sendSubmissionCeilingMs?: number;
   /** The local engine leaving: a press whose transport opens too late is held (`SendDeps.holdOffer`). */

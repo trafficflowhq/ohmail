@@ -9,7 +9,9 @@ import { API_FAULT_RECORD_BUDGET_MS } from "@trafficflow/api";
 import { createLogger } from "@trafficflow/core";
 import { hostState, resetHostState } from "../../api-vercel/src/config.js";
 import { handleApiRequest } from "../../api-vercel/src/handler.js";
-import { resetServices as resetManagedServices } from "../../api-vercel/src/deps.js";
+import { buildDeps as buildManagedDeps, resetServices as resetManagedServices } from "../../api-vercel/src/deps.js";
+import { loadHostConfig } from "../../api-vercel/src/config.js";
+import { OWED_COPY_CLOUD, OWED_COPY_SELF_HOST } from "@trafficflow/services";
 import { loadServerConfig } from "../src/config.js";
 import { buildServerServices, oauthProviderFor } from "../src/deps.js";
 import { handleServerRequest } from "../src/handler.js";
@@ -171,5 +173,23 @@ describe("the session door under a held pool", () => {
     const owned = makeOwnedDb("postgres://held:unused@127.0.0.1:1/never_dialed");
     cleanups.push(() => owned.close());
     expect(acquireCeilingHandle(owned.db, SESSION_ACQUIRE_TIMEOUT_MS)).not.toBe(owned.db);
+  });
+});
+
+describe("each host's send door keeps its owed Sent copies", () => {
+  it("self-host keeps every letter's; the managed host only a letter's without files", () => {
+    const cfg = loadServerConfig({
+      OHMAIL_ORIGIN: "https://mail.example.com", DATABASE_URL: "postgres://held:unused@127.0.0.1:1/never_dialed", [KEY_RING_V1]: KEK,
+    } as NodeJS.ProcessEnv);
+    const owned = makeOwnedDb(cfg.databaseUrl);
+    cleanups.push(() => owned.close());
+    expect(buildServerServices(cfg, owned.db).sendKeepOwedCopy).toEqual(OWED_COPY_SELF_HOST);
+    resetManagedServices();
+    cleanups.push(() => resetManagedServices());
+    const managed = buildManagedDeps(new Request("https://api.ohmail.app/drafts"), loadHostConfig({
+      DATABASE_URL_POOLED: "postgres://held:unused@127.0.0.1:1/never_dialed", [KEY_RING_V1]: KEK,
+    } as NodeJS.ProcessEnv));
+    expect(managed.services?.sendKeepOwedCopy).toEqual(OWED_COPY_CLOUD);
+    expect(OWED_COPY_CLOUD.files, "Cloud never writes attachment bytes down").toBe(false);
   });
 });
