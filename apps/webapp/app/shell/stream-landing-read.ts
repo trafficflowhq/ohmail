@@ -117,6 +117,10 @@ export interface StreamReadOptions {
   /** "blind": nobody reads this frame (a flight); "again": look on the next frame instead. */
   hold?: () => "blind" | "again" | null;
   onRead: (ids: string[]) => void;
+  /** Cards whose body is not in (`.pend`) that met the rule as if it were: never written live, read by the leave. */
+  onReadPending?: (ids: string[]) => void;
+  /** A card turned unread during the visit. */
+  onUnread?: (id: string) => void;
   now?: () => number;
   frame?: (run: () => void) => () => void;
   after?: (ms: number, run: () => void) => () => void;
@@ -126,8 +130,13 @@ export interface StreamReadOptions {
 export interface StreamRead {
   /** The reader opened a card by keyboard: the visit is entered. */
   enter: () => void;
+  /** Have this card's first lines been wholly on screen at a look someone could see, this visit? */
+  shown: (id: string) => boolean;
   stop: () => void;
 }
+
+const inView = (line: LineBox | null, view: { top: number; bottom: number }): boolean =>
+  line !== null && line.top >= view.top - 0.5 && line.bottom <= view.bottom + 0.5;
 
 /** A press here is a verb, not reading: the card's actions, notices, files, links, fields and menus. */
 const VERB = ".msg-actions, .sc-notice, .sc-files, .sc-lead, a[href], input, textarea, select, [contenteditable], [role='menu'], [role='menuitem']";
@@ -152,6 +161,8 @@ export function readStreamCards(o: StreamReadOptions): StreamRead {
   let pending: (() => void) | null = null;
   let dwell: (() => void) | null = null;
   let lastHand = Number.NEGATIVE_INFINITY;
+  const pend = createThreadRead();
+  const firstShown = new Set<string>();
   // Nothing is looked at before the visit is entered: an idle stream queues no frame.
   const poke = (): void => {
     if (live && !pending && (record.entered || o.driven())) pending = frame(look);
@@ -159,13 +170,14 @@ export function readStreamCards(o: StreamReadOptions): StreamRead {
   const enter = (): void => {
     lastHand = now();
     record.enter(lastHand);
+    pend.enter(lastHand);
     poke();
   };
   const schedule = (): void => {
     dwell?.();
     dwell = null;
-    const due = record.due;
-    if (due !== null && live) dwell = after(Math.max(0, due - now()) + 1, () => { dwell = null; poke(); });
+    const due = Math.min(record.due ?? Infinity, pend.due ?? Infinity);
+    if (due !== Infinity && live) dwell = after(Math.max(0, due - now()) + 1, () => { dwell = null; poke(); });
   };
   function look(): void {
     pending = null;
@@ -173,15 +185,16 @@ export function readStreamCards(o: StreamReadOptions): StreamRead {
     const held = o.hold?.() ?? null;
     const t = now();
     record.enter(t); // a drive enters the visit at its first look
+    pend.enter(t);
     // A flight, or a frame the stream is about to put back: nobody reads it; look again on the next one.
     if (held !== null) {
-      if (held === "blind") record.observe([], null, new Set(), t);
+      if (held === "blind") for (const r of [record, pend]) r.observe([], null, new Set(), t);
       poke();
       return;
     }
     const attended = visible() && (documentFocused() || t - lastHand <= EVIDENCE_WINDOW_MS) && scroller.clientHeight > 0;
     if (!attended) {
-      record.observe([], null, new Set(), t);
+      for (const r of [record, pend]) r.observe([], null, new Set(), t);
       schedule();
       return;
     }
@@ -193,11 +206,15 @@ export function readStreamCards(o: StreamReadOptions): StreamRead {
       const r = cssRect(card);
       if (r.bottom <= view.top || r.top >= view.bottom) continue;
       const id = card.dataset.sid!;
-      panels.push(cardPanel(card, id));
+      const p = cardPanel(card, id);
+      panels.push(p);
+      if (inView(p.lead, view)) firstShown.add(id);
       if (card.hasAttribute("data-unseen")) unread.add(id);
     }
     const ids = record.observe(panels, view, unread, t);
     if (ids.length > 0) o.onRead(ids);
+    const waiting = pend.observe(panels.filter((p) => !p.ready).map((p) => ({ ...p, ready: true })), view, unread, t);
+    if (waiting.length > 0) o.onReadPending?.(waiting);
     schedule();
   }
   const onPress = (e: Event): void => { if (pressReads(scroller, e.target)) enter(); };
@@ -216,6 +233,8 @@ export function readStreamCards(o: StreamReadOptions): StreamRead {
       const card = r.target as HTMLElement;
       if (r.attributeName === "data-unseen" && r.oldValue === null && card.hasAttribute("data-unseen") && card.matches(".scast[data-sid]")) {
         record.keepUnread(card.dataset.sid!);
+        pend.keepUnread(card.dataset.sid!);
+        o.onUnread?.(card.dataset.sid!);
       }
     }
     poke();
@@ -244,5 +263,5 @@ export function readStreamCards(o: StreamReadOptions): StreamRead {
     win.removeEventListener("focus", poke);
     win.removeEventListener("blur", onBlur);
   };
-  return { enter, stop };
+  return { enter, shown: (id) => firstShown.has(id), stop };
 }

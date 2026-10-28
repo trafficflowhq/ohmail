@@ -95,12 +95,12 @@ function typeIn(letter: HTMLElement, key: string, init: KeyboardEventInit = {}):
   fireEvent.keyDown((letter as HTMLIFrameElement).contentDocument!.body, { key, ...init });
 }
 
-function entryFor(el: Element, bottom: number, rootBottom = 400, isIntersecting = true) {
+function entryFor(el: Element, bottom: number, rootBottom = 400, isIntersecting = true, top = Math.min(0, bottom)) {
   return {
     target: el,
     isIntersecting,
-    boundingClientRect: { bottom } as DOMRectReadOnly,
-    rootBounds: { bottom: rootBottom } as DOMRectReadOnly,
+    boundingClientRect: { top, bottom } as DOMRectReadOnly,
+    rootBounds: { top: 0, bottom: rootBottom } as DOMRectReadOnly,
   };
 }
 
@@ -231,6 +231,17 @@ describe("useSeenOnScroll", () => {
     io.callback([entryFor(io.observed[0], -50, 400, false)]);
     expect(onSeen).not.toHaveBeenCalled();
     io.callback([entryFor(io.observed[0], 100, 400, true)]);
+    expect(onSeen).toHaveBeenCalledWith("f1");
+  });
+
+  it("never marks a row uncovered from above, its top never inside the band", () => {
+    const onSeen = vi.fn();
+    const { getByTestId } = render(<Harness onSeen={onSeen} />);
+    const io = MockIntersectionObserver.instances.at(-1)!;
+    fireEvent.wheel(getByTestId("scroller"));
+    io.callback([entryFor(io.observed[0], 14, 400, true, -186)]);
+    expect(onSeen, "only its foot was on screen").not.toHaveBeenCalled();
+    io.callback([entryFor(io.observed[0], 100, 400, true, 0)]);
     expect(onSeen).toHaveBeenCalledWith("f1");
   });
 
@@ -613,5 +624,28 @@ describe("useSeenOnScroll", () => {
     fireEvent.wheel(getByTestId("scroller"));
     io.callback([entryFor(io.observed[0], -50, 400, false)]); // now above the band
     expect(onSeen).not.toHaveBeenCalled();
+  });
+
+  it("moved(): what the app's move passes is never shown, and what it rests on is read only once a hand moves it", () => {
+    vi.useFakeTimers();
+    try {
+      const onSeen = vi.fn();
+      let observer: SeenObserver | null = null;
+      const { getByTestId } = render(<Harness onSeen={onSeen} onObserver={(o) => { observer = o; }} />);
+      const io = MockIntersectionObserver.instances.at(-1)!;
+      const [f1, f2] = io.observed;
+      fireEvent.wheel(getByTestId("scroller")); // the reader armed the pane earlier
+      observer!.moved(); // a j step: f1 is carried through the band, f2 into it
+      io.callback([entryFor(f1!, 100), entryFor(f2!, 300, 400, true, 100)]);
+      fireEvent.scroll(getByTestId("scroller"));
+      vi.advanceTimersByTime(LANDING_QUIET_MS);
+      io.callback([entryFor(f2!, 300, 400, true, 100)]); // at rest, observed afresh
+      expect(onSeen, "the move read nothing by itself").not.toHaveBeenCalled();
+      fireEvent.wheel(getByTestId("scroller"));
+      io.callback([entryFor(f2!, 200, 400, true, 0), entryFor(f1!, 20, 400, true, -180)]);
+      expect(onSeen.mock.calls, "f2 rose by hand; f1, only passed, shows its foot").toEqual([["f2"]]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

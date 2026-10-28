@@ -120,6 +120,12 @@ export interface SeenObserver {
    * event it causes neither starts nor extends a landing.
    */
   own: (scroll: () => void) => void;
+  /**
+   * The app is carrying this pane to a card (a j/k step, a row open, a search open). What the move passes
+   * is not taken as shown; the screen it rests on is, once the pane has been quiet for LANDING_QUIET_MS, but
+   * nothing is marked until a wheel, a touch or a scroll key moves the pane again.
+   */
+  moved: () => void;
 }
 
 export function useSeenOnScroll({
@@ -153,6 +159,9 @@ export function useSeenOnScroll({
   const ownTopRef = useRef(NaN);
   /** The read rule's look while the scroller's effect is mounted (see `observe`). */
   const lookRef = useRef<(start: boolean) => void>(() => {});
+  /** An app move (`moved`): "flying" until the pane is quiet, then "resting" until a hand moves it. */
+  const movedRef = useRef<"flying" | "resting" | null>(null);
+  const moveRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     const el = root.current;
@@ -160,10 +169,18 @@ export function useSeenOnScroll({
 
     // The user-intent guard: nothing is marked until a human moves this scroller.
     userDrove.current = false;
+    movedRef.current = null;
+    let settle = 0;
+    /** The person's own wheel, touch or scroll key: an app move (`moved`) is over. */
+    const handMoves = () => {
+      movedRef.current = null;
+      window.clearTimeout(settle);
+    };
     /** A wheel or touch on the pane owns its scrolls until the pane has been quiet for LANDING_QUIET_MS. */
     let handUntil = 0;
     const arm = () => {
       userDrove.current = true;
+      handMoves();
       handUntil = Date.now() + LANDING_QUIET_MS;
       // A judged scroll (below) that a hand joins was the hand's own scroll, its event late: a read.
       if (judgingRef.current) {
@@ -186,6 +203,7 @@ export function useSeenOnScroll({
       if (typeof t?.closest === "function" && t.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) return;
       if (t?.isContentEditable) return;
       userDrove.current = true;
+      handMoves();
     };
     // Both listeners sit on the scroller, so they only ever see input aimed at
     // THIS pane — the list and the stream each keep their own guard, and a wheel
@@ -242,11 +260,13 @@ export function useSeenOnScroll({
     };
     const io = new IntersectionObserver(
       (reported) => {
-        if (landingRef.current) return;
+        // An app move in flight passes cards nobody reads; at rest they are shown, and read once a hand moves them.
+        if (landingRef.current || movedRef.current === "flying") return;
         const entries = settledOf(reported);
         const shown = shownRef.current;
-        for (const en of entries) if (en.isIntersecting) shown.add(en.target);
-        if (!userDrove.current) return;
+        // Shown once a report has its top inside the band: a card uncovered from above showed only its foot.
+        for (const en of entries) if (en.isIntersecting && en.rootBounds && en.boundingClientRect.top >= en.rootBounds.top - 0.5) shown.add(en.target);
+        if (!userDrove.current || movedRef.current === "resting") return;
         for (const en of entries) {
           const t = en.target as HTMLElement;
           if (!shown.has(t) || !t.hasAttribute("data-unseen") || !en.rootBounds) continue;
@@ -301,6 +321,23 @@ export function useSeenOnScroll({
       judgingRef.current = false;
       held = null;
       hold();
+    };
+    /* An app move rests LANDING_QUIET_MS after its last scroll: the screen it rests on is observed afresh. */
+    const settleMove = () => {
+      settle = 0;
+      if (movedRef.current !== "flying") return;
+      movedRef.current = "resting";
+      io.disconnect();
+      for (const n of el.querySelectorAll(selector)) io.observe(n);
+    };
+    const holdMove = () => {
+      window.clearTimeout(settle);
+      settle = window.setTimeout(settleMove, LANDING_QUIET_MS);
+    };
+    moveRef.current = () => {
+      movedRef.current = "flying";
+      shownRef.current = new WeakSet();
+      holdMove();
     };
 
     /* The read rule's clocks: since when each unseen letter's first lines have been on screen, unbroken.
@@ -398,11 +435,14 @@ export function useSeenOnScroll({
         if (landingRef.current) {
           moved = true;
           hold();
+        } else if (movedRef.current === "flying") {
+          holdMove();
         } else if (judgingRef.current || (!byHand && unheard())) {
           if (!judgingRef.current) held = new Set();
           judgingRef.current = true;
           // The reader's own keys in their letter moved it: the visit is driven, and the read rule judges it.
           userDrove.current = true;
+          handMoves();
           hold();
           look(true);
           return;
@@ -433,12 +473,15 @@ export function useSeenOnScroll({
       }
       window.clearTimeout(quiet);
       window.clearTimeout(tick);
+      window.clearTimeout(settle);
       if (againFrame) cancelAnimationFrame(againFrame);
       landingRef.current = false;
       judgingRef.current = false;
+      movedRef.current = null;
       io.disconnect();
       ioRef.current = null;
       lookRef.current = () => {};
+      moveRef.current = () => {};
     };
   }, [root, selector, rootMargin]);
 
@@ -476,5 +519,7 @@ export function useSeenOnScroll({
     [root],
   );
 
-  return { observe, userHasDriven, restart, landing, judging, own };
+  const appMoved = useCallback(() => moveRef.current(), []);
+
+  return { observe, userHasDriven, restart, landing, judging, own, moved: appMoved };
 }
