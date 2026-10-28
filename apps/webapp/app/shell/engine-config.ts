@@ -96,7 +96,18 @@ export function cloudWakeStream(
   if (typeof EventSource === "undefined") return null;
   // Same-origin (`/api/events` through the rewrite), so the session cookie rides along without
   // `withCredentials` — the same reason every other engine request needs no auth wiring here.
-  return () => new EventSource(`${base}/events`);
+  // One name per page: each re-dial names the stream it left, and the server ends that one.
+  const name = wakeStreamName();
+  const url = name === null ? `${base}/events` : `${base}/events?stream=${name}`;
+  return () => new EventSource(url);
+}
+
+function wakeStreamName(): string | null {
+  try {
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -10,6 +10,8 @@ import type { Diagnostic } from "./log.js";
  * then OFF; a drop AFTER success ⇒ reconnect on backoff for ever.
  */
 export const NEVER_CONNECTED_ATTEMPTS = 3;
+/** One door per session: a reconnect or a relaunch names the stream it left, and the server ends it. */
+export const WAKE_STREAM_NAME = "cloud-door";
 /** Reconnect after a HEALTHY stream ends when the server named no `retry:` — the stream cycling. */
 export const WAKE_RECYCLE_DELAY_MS = 1_000;
 /** The bounds a server's `retry:` field is honoured within: a hint, not a command. */
@@ -165,7 +167,7 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
     let res: Response;
     try {
       aborter = new AbortController();
-      res = await cfg.auth.authedFetch("/events", {
+      res = await cfg.auth.authedFetch(`/events?stream=${WAKE_STREAM_NAME}`, {
         headers: { accept: "text/event-stream" },
         signal: aborter.signal,
       });

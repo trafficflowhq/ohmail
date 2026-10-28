@@ -167,6 +167,22 @@ describe("the subscription is released with the stream", () => {
     expect(f.live(ACCT), "an EventSource that navigated away stays subscribed for ever").toBe(0);
     expect(sseLiveCounts().total).toBe(0);
   });
+
+  it("a stream cancelled while its first read is out never holds a wake subscription", async () => {
+    const { deps } = await makeDeps();
+    const f = fakeHub();
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    const db = pollDb(async () => { await held; return [{ max: null, live: true }]; });
+
+    const res = await HS({ ...deps, db }, { heartbeatMs: 60_000, pollMs: 60_000, lifetimeMs: 60_000 }, f.hub);
+    await res.body!.cancel();
+    release();
+    await sleep(20);
+
+    expect(f.live(ACCT), "a cancelled stream subscribed after its first read").toBe(0);
+    expect(sseLiveCounts().total).toBe(0);
+  });
 });
 
 describe("the hub is a hint, never a dependency", () => {

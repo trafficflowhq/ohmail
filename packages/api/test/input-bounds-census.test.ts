@@ -279,7 +279,6 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   "DELETE /pair/:id",
   "GET /pair",
   "POST /sync/pull",
-  "GET /events",
   "GET /push/vapid-key",
   "DELETE /push/subscriptions/:id",
   "GET /mailboxes/:id",
@@ -608,6 +607,7 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
 
   // `?counts=1` alone: a closed-set switch that turns on the sender counts, nothing a caller sizes.
   "GET /consent": { scalarsOnly: true },
+  "GET /events": { scalarsOnly: true },
 
   // ── mailboxes ───────────────────────────────────────────────────────────────────────────
   "GET /mailboxes": { scalarsOnly: true },
@@ -1220,6 +1220,7 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "routes/attachments.ts#q": "request-line",
   "routes/attachments.ts#type": "closed-set",
   "routes/consent.ts#counts": "closed-set",
+  "routes/events.ts#stream": "identifier",
   // The lifecycle sweep's keyset position and the erase door's account: canonical uuids or a 400.
   "routes/internal.ts#after": "identifier",
   // A drill's ack token (cloud 0051): 43 base64url characters or the fixed 404, read by the page
