@@ -11,7 +11,7 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { mintMessageId, normalizeMessageId } from "@trafficflow/core/mail";
-import { drafts, mailboxes, messages, outboundSends } from "@trafficflow/db";
+import { drafts, mailboxes, messages, outboundSends, outboundSentCopies } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 
 /**
@@ -84,10 +84,15 @@ const EMPTY_BATCH: ChangeBatch = {
 /**
  * A mailbox that cannot send and cannot be dialled for a part. Both throws are assertions rather
  * than stubs: the mirror arm must settle this reservation without a network, and the pass's own
- * adapter wrapper must make `send` unreachable — the structural double-send proof.
+ * adapter wrapper must make `send` unreachable — the structural double-send proof. A case that
+ * presses Send itself sets `server.delivers`.
  */
 function quietMailbox(meta: MemoryMetaFolder) {
   const sends: OutboundMessage[] = [];
+  /** The Sent copies filed through this mailbox's send connection: the id, and whether it looked first. */
+  const filed: Array<{ id: string; look: boolean; raw: string }> = [];
+  /** `delivers`: a press is taken and its Sent copy left to the caller. `refusesCopies`: every APPEND is refused. */
+  const server = { delivers: false, refusesCopies: false };
   const factory = (_cfg: ImapConfig): MailboxAdapter & { leaseIo(): LeaseIo } => ({
     leaseIo: () => meta,
     async connect(): Promise<void> {},
@@ -112,15 +117,23 @@ function quietMailbox(meta: MemoryMetaFolder) {
     async watch(): Promise<() => Promise<void>> {
       return async () => {};
     },
-    async send(m: OutboundMessage): Promise<SendResult> {
+    async send(m: OutboundMessage, o?: { beforeRelease?: () => Promise<void> }): Promise<SendResult> {
       sends.push(m);
-      throw new Error("the reconciler must never send — its adapter's `send` is wrapped to throw");
+      if (!server.delivers) throw new Error("the reconciler must never send — its adapter's `send` is wrapped to throw");
+      await o?.beforeRelease?.();
+      return { providerMessageId: m.messageId!, sentLocator: null, raw: null, unfiledCopy: Buffer.from(`Message-ID: ${m.messageId}\r\n\r\n${m.text}\r\n`) };
     },
     async fetchPart(): Promise<FetchedPart> {
       throw new Error("this mailbox cannot fetchPart");
     },
+    async fileSentCopy(raw: Buffer, id: string, o?: { look?: boolean }): Promise<null> {
+      if (server.refusesCopies) throw new Error("NO [OVERQUOTA] the Sent folder is full");
+      filed.push({ id, look: o?.look === true, raw: raw.toString("utf8") });
+      return null;
+    },
+    async messageInSent(): Promise<boolean> { return false; },
   });
-  return { factory, sends };
+  return { factory, sends, filed, server };
 }
 
 const HOUR = 60 * 60 * 1000;
@@ -138,13 +151,14 @@ describe("the standalone drain settles a send this install stranded", () => {
     return dir;
   }
 
-  async function boot(dir: string, mailbox: ReturnType<typeof quietMailbox>): Promise<Sidecar> {
+  async function boot(dir: string, mailbox: ReturnType<typeof quietMailbox>, signedIn = false): Promise<Sidecar> {
     const sidecar = await createSidecar({
       dataDir: dir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
         auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
       },
+      ...(signedIn ? { keks: { 1: Buffer.alloc(32, 7) } } : {}),
       address: "owner@trafficflow.test",
       machineName: "this computer",
       pollIntervalMs: 60 * HOUR,
@@ -279,5 +293,87 @@ describe("the standalone drain settles a send this install stranded", () => {
     expect((await sendRow(next, s.sendId)).status, "the next start left it for the stale window").toBe("sent");
     expect((await draftRow(next, s.draftId)).status).toBe("sent");
     expect(mailbox.sends).toHaveLength(0);
+  }, 60_000);
+
+  /** A delivered send whose Sent copy the last run left owed: the first drain files it, looking first. */
+  async function owedCopy(sidecar: Sidecar): Promise<{ sendId: string; minted: string }> {
+    const minted = mintMessageId("reconcile.test");
+    const [s] = await sidecar.db.insert(outboundSends).values({
+      accountId: sidecar.world.accountId, idempotencyKey: randomUUID(), draftId: null,
+      mintedMessageId: minted, providerMessageId: minted, status: "sent", sentAt: new Date(),
+    }).returning();
+    await sidecar.db.insert(outboundSentCopies).values({
+      sendId: s!.id, accountId: sidecar.world.accountId, mailboxId: sidecar.world.mailboxId,
+      rawB64: Buffer.from(`Message-ID: ${minted}\r\nSubject: owed\r\n\r\nThe words.\r\n`).toString("base64"),
+    });
+    return { sendId: s!.id, minted };
+  }
+
+  it.each(["organizer", "reader"] as const)("files a Sent copy the last run owed at the first drain, as %s", async (role) => {
+    const mailbox = quietMailbox(new MemoryMetaFolder());
+    const sidecar = await boot(await dataDir(), mailbox, true);
+    await sidecar.db.update(mailboxes).set({ organizerRole: role }).where(eq(mailboxes.id, sidecar.world.mailboxId));
+    const o = await owedCopy(sidecar);
+
+    await sidecar.syncUntilQuiet();
+
+    expect(mailbox.filed.map((f) => ({ id: f.id, look: f.look }))).toEqual([{ id: o.minted, look: true }]);
+    expect(mailbox.filed[0]!.raw).toContain("The words.");
+    expect(await sidecar.db.select().from(outboundSentCopies)).toEqual([]);
+    expect(mailbox.sends).toHaveLength(0);
+  }, 60_000);
+
+  /** A press through this engine, delivered, whose Sent copy the server refuses: answered, the copy owed. */
+  async function pressOwed(sidecar: Sidecar, mailbox: ReturnType<typeof quietMailbox>): Promise<string> {
+    Object.assign(mailbox.server, { delivers: true, refusesCopies: true });
+    const post = (path: string, body: unknown, key?: string) => sidecar.handle(new Request(`http://local${path}`, {
+      method: "POST", body: JSON.stringify(body),
+      headers: {
+        authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json", ...(key ? { "idempotency-key": key } : {}),
+      },
+    }));
+    const created = await post("/drafts", {
+      mailboxId: sidecar.world.mailboxId, subject: "owed", body: "The words.", to: [{ name: null, address: "you@example.com" }],
+    });
+    expect(created.status, await created.clone().text()).toBe(201);
+    const sent = await post(`/drafts/${(await created.json() as { id: string }).id}/send`, {}, randomUUID());
+    const answer = await sent.json() as { status?: string; sentCopy?: string; providerMessageId?: string };
+    expect(answer, "the premise: delivered, the copy owed").toMatchObject({ status: "sent", sentCopy: "pending" });
+    expect(await sidecar.db.select().from(outboundSentCopies)).toHaveLength(1);
+    return answer.providerMessageId!;
+  }
+
+  it("files the copy a send left owed after a drain read none owed, past a failed filing's wait", async () => {
+    const mailbox = quietMailbox(new MemoryMetaFolder());
+    const sidecar = await boot(await dataDir(), mailbox, true);
+    await sidecar.syncUntilQuiet();
+    const id = await pressOwed(sidecar, mailbox);
+
+    await sidecar.syncUntilQuiet();
+    expect((await sidecar.db.select().from(outboundSentCopies))[0]!.attempts, "the next drain tried it").toBe(1);
+    await sidecar.syncUntilQuiet(); // nothing due: the copy waits its minute
+    mailbox.server.refusesCopies = false;
+    await sidecar.db.update(outboundSentCopies).set({ nextAttemptAt: new Date(Date.now() - 1) }); // the minute passes
+    await sidecar.syncUntilQuiet();
+
+    expect(mailbox.filed.map((f) => ({ id: f.id, look: f.look }))).toEqual([{ id, look: true }]);
+    expect(await sidecar.db.select().from(outboundSentCopies)).toEqual([]);
+    expect(mailbox.sends, "a drain never sends").toHaveLength(1);
+  }, 60_000);
+
+  it("a relaunch files at its first drain the copy the last run left owed", async () => {
+    const dir = await dataDir();
+    const mailbox = quietMailbox(new MemoryMetaFolder());
+    const first = await boot(dir, mailbox, true);
+    await first.syncUntilQuiet();
+    const id = await pressOwed(first, mailbox);
+    await first.stop();
+
+    mailbox.server.refusesCopies = false;
+    const next = await boot(dir, mailbox, true);
+    await next.syncUntilQuiet();
+
+    expect(mailbox.filed.map((f) => ({ id: f.id, look: f.look }))).toEqual([{ id, look: true }]);
+    expect(await next.db.select().from(outboundSentCopies)).toEqual([]);
   }, 60_000);
 });

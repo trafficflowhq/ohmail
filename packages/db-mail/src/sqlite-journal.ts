@@ -578,5 +578,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"organized_through\" integer;",
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"held_elsewhere_until\" integer;"
     ]
+  },
+  {
+    "name": "0170_outbound_sent_copies.sql",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"outbound_sent_copies\" (\n  \"send_id\" text NOT NULL,\n  \"seq\" integer NOT NULL DEFAULT 0,\n  \"account_id\" text NOT NULL,\n  \"mailbox_id\" text NOT NULL,\n  \"raw_b64\" text NOT NULL,\n  \"attempts\" integer NOT NULL DEFAULT 0,\n  \"next_attempt_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  \"created_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  CONSTRAINT \"outbound_sent_copies_account_id_send_id_seq_pk\" PRIMARY KEY (\"account_id\", \"send_id\", \"seq\"),\n  CONSTRAINT \"outbound_sent_copies_send_account_fk\" FOREIGN KEY (\"send_id\", \"account_id\")\n    REFERENCES \"outbound_sends\" (\"id\", \"account_id\") ON DELETE CASCADE\n);"
+    ]
   }
 ] as const;

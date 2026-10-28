@@ -1,10 +1,11 @@
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
-import { openLocalDb, reclaimBodyBloat, type OpenLocalDb } from "../src/db.js";
+import { openLocalDb, OWED_COPY_RECLAIM_FLOOR_BYTES, reclaimBodyBloat, type OpenLocalDb } from "../src/db.js";
 import { armFirstPageGate, noteFirstPageServed, resetFirstPageGate } from "../src/first-page-gate.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
@@ -129,6 +130,29 @@ describe("the store open before it serves", () => {
     const { seen } = await reopenedWithMail();
     await new Promise((r) => setTimeout(r, 300));
     expect(seen.filter((s) => FULL_TABLE.test(s))).toEqual([]);
+  });
+});
+
+describe("owed Sent copies deleted without a VACUUM", () => {
+  it("leave no dead space after the next open", async () => {
+    const dir = await freshDataDir("ohmail-launch-owed-");
+    dirs.push(dir);
+    const first = await openLocalDb(dir);
+    const one = async (q: ReturnType<typeof sql>) => rows(await first.db.execute(q))[0];
+    const accountId = (await one(sql`insert into accounts (name) values ('owed') returning id`)).id;
+    const mailboxId = (await one(sql`insert into mailboxes (account_id, provider, address) values (${accountId}, 'imap', 'owed@mail.example') returning id`)).id;
+    const sendId = (await one(sql`insert into outbound_sends (account_id, idempotency_key, minted_message_id) values (${accountId}, 'k', '<m@mail.example>') returning id`)).id;
+    const b64 = randomBytes(3 * 1024 * 1024).toString("base64");
+    await first.db.execute(sql`insert into outbound_sent_copies (send_id, account_id, mailbox_id, raw_b64) values (${sendId}, ${accountId}, ${mailboxId}, ${b64})`);
+    // The mailbox removal's delete: no VACUUM follows it.
+    await first.db.execute(sql`delete from outbound_sent_copies where mailbox_id = ${mailboxId}`);
+    const size = async (o: OpenLocalDb) => Number(rows(await o.db.execute(
+      sql`select pg_total_relation_size('outbound_sent_copies')::text as n`))[0].n);
+    expect(await size(first), "the deleted copy's bytes are still on disk").toBeGreaterThan(OWED_COPY_RECLAIM_FLOOR_BYTES);
+    await first.close();
+    const again = await openLocalDb(dir);
+    opened.push(again);
+    expect(await size(again)).toBeLessThan(OWED_COPY_RECLAIM_FLOOR_BYTES);
   });
 });
 

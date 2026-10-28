@@ -15,7 +15,7 @@ import {
   accountSettings, approvals, attachments, auditLog, awayReplies, awayResponderSent, changeLog, drafts, flagState, folderOps, folderState,
   junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, mailboxes, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
-  outboundSendFingerprints, outboundSends, REMOVED_MAILBOX_SEND_SENTENCE, routingDecisions, sessions, tags,
+  outboundSendFingerprints, outboundSentCopies, outboundSends, REMOVED_MAILBOX_SEND_SENTENCE, routingDecisions, sessions, tags,
   threadNotes, threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
@@ -1928,6 +1928,8 @@ async function seedEveryOwedTable(s: Sidecar): Promise<void> {
     { accountId, mailboxId, fingerprint: "ab".repeat(32), sendId: send!.id },
     { accountId, mailboxId, fingerprint: "cd".repeat(32), sendId: sent!.id },
   ]);
+  /* An owed Sent copy on the send that stays: only the mailbox key takes it. */
+  await db.insert(outboundSentCopies).values({ sendId: send!.id, accountId, mailboxId, rawB64: "b3dlZA==" });
   const [record] = await db.insert(unsubscribeRecords).values({
     accountId, mailboxId, listKey: `list-${randomUUID().slice(0, 6)}`, state: "sent", httpStatus: 202, messageId,
   }).returning();

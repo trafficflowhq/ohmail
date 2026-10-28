@@ -2402,6 +2402,18 @@ export const outboundSendFingerprints = sqliteTable("outbound_send_fingerprints"
   ),
 }));
 
+/** Mail 0170: a delivered send's Sent copy, owed until filed — the pg table's twin. */
+export const outboundSentCopies = sqliteTable("outbound_sent_copies", {
+  sendId: text("send_id").notNull().references(() => outboundSends.id, { onDelete: "cascade" }),
+  seq: integer("seq").notNull().default(0),
+  accountId: text("account_id").notNull(),
+  mailboxId: text("mailbox_id").notNull(),
+  rawB64: text("raw_b64").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.sendId, t.seq] }) }));
+
 /**
  * The mail-domain half as one object, for `drizzle(client, { schema })`.
  *

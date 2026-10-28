@@ -323,6 +323,8 @@ export interface ApiServices {
    * waited for briefly and then retried in memory (`SendDeps.copyOutlivesAnswer`). Absent on Cloud.
    */
   sendCopyOutlivesAnswer?: boolean;
+  /** The local engine keeps a delivered send's owed Sent copy on disk until filed (`SendDeps.keepOwedCopy`). */
+  sendKeepOwedCopy?: boolean;
   /** The upload ceiling of a host that keeps running (`SendDeps.submissionCeilingMs`); absent elsewhere. */
   sendSubmissionCeilingMs?: number;
   /** The local engine leaving: a press whose transport opens too late is held (`SendDeps.holdOffer`). */

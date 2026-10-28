@@ -873,6 +873,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // held stretch (`held_elsewhere_until`), one transaction. LOUD: the mailbox reads select the row
   // whole. Deploy order migration → API → worker.
   ["mailboxes", "organized_through"],
+  // mail 0170_outbound_sent_copies — a delivered send's Sent copy, owed by the local engine until filed.
+  ["outbound_sent_copies", "send_id"],
 ] as const;
 
 /**
@@ -1299,7 +1301,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0169_mailboxes_organized_through";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0170_outbound_sent_copies";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

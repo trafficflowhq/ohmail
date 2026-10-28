@@ -55,6 +55,7 @@ import {
   organizerRequests,
   mailboxProfileMirror,
   outboundSendFingerprints,
+  outboundSentCopies,
   outboundSends,
   pairingTokens,
   refreshTokens,
@@ -519,6 +520,10 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   await db.insert(messageTags).values({ accountId, messageId, tagId: tag!.id });
   await db.insert(outboundSendFingerprints).values({
     accountId, mailboxId, fingerprint: "ab".repeat(32), sendId: send!.id,
+  });
+  // A delivered message's owed Sent copy (mail 0170): its bytes, deleted by the account and the mailbox.
+  await db.insert(outboundSentCopies).values({
+    sendId: send!.id, accountId, mailboxId, rawB64: Buffer.from("Subject: owed\r\n\r\nwords").toString("base64"),
   });
   const [unsubRecord] = await db.insert(unsubscribeRecords).values({
     accountId, mailboxId, listKey: `list-${u}`, state: "sent", httpStatus: 202, messageId,

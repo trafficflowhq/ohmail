@@ -1143,6 +1143,8 @@ function localServices(
     // This process outlives every answer: the Sent copy is retried in memory, and an upload on a
     // slow link may run up to the ceiling, which ends it before a resolver may decide its row.
     sendCopyOutlivesAnswer: true,
+    // And a delivered send's owed Sent copy is kept on disk, so a quit or a crash does not lose it.
+    sendKeepOwedCopy: true,
     sendSubmissionCeilingMs: SEND_SUBMISSION_CEILING_MS,
     // A press offered after it could not end before the store closes is held for the next start.
     sendHoldOffer: holdOffer,
@@ -6360,6 +6362,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * own and a reader's are left for whoever organizes it. */
             mailboxIds: [mb.id],
             resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
+            keepOwedCopy: true,
             now,
           });
           if (r.claimed > 0) {
@@ -6513,6 +6516,36 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
       };
 
+      /** `SendService.owedCopiesRecorded` when this mailbox last read none owed; null before its first read. */
+      let noneOwedAt: number | null = null;
+      /**
+       * File the Sent copies this mailbox still owes (`SendService.fileOwedCopies`): a delivered
+       * send's copy that a quit, a crash or an outage left unfiled. Ungated like the reconciler: the
+       * copy is of a letter THIS install delivered, and the pass only files, looking in Sent first.
+       * The store is asked only while one may be owed: at this runtime's first drain, and once this
+       * process records one after a read found none. An idle drain asks nothing here.
+       */
+      const fileOwedSentCopies = async (): Promise<void> => {
+        const recorded = sendService.owedCopiesRecorded(mb.id);
+        if (noneOwedAt === recorded) return;
+        const ctx = { db: db as never, accountId: world.accountId, userId: null, now, requestId: "owed-copies" };
+        try {
+          if (await sendService.owesSentCopies(ctx, mb.id)) {
+            await sendService.fileOwedCopies(
+              ctx, mb.id, { openSendAdapter: openLocalSend, resolveStorageCap: async () => UNMETERED_STORAGE_CAP },
+            );
+            if (await sendService.owesSentCopies(ctx, mb.id)) return;
+          }
+          // Counted before the reads: a copy recorded since moved the count, and the next drain reads again.
+          noneOwedAt = recorded;
+        } catch (err) {
+          log("sent_copy_owed_pass_failed", {
+            err,
+            reason: "no owed Sent copy was filed this drain; each stays recorded and the next drain tries again",
+          });
+        }
+      };
+
       /**
        * The drain itself. Never called from outside this closure, and — since the mailbox-removal design — reached
        * by a READER as well as by an organizer; the `organizing` the GATE handed this pass is what
@@ -6640,6 +6673,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            ever, since no other install holds that reservation. After the sender, because the
            sender is the only thing on this door that creates one. */
         await reconcileStrandedSends();
+        await fileOwedSentCopies();
         let cycles = 0;
         /** Did a cycle report an empty backlog, or did the loop simply run out of cycles? */
         let drained = false;

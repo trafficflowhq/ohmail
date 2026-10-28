@@ -214,6 +214,8 @@ describe("the SQLite journal, applied", () => {
       "0168_drafts_forward_parts.sql",
       // Where a hand-back's gap window starts: the pg column's twin.
       "0169_mailboxes_organized_through.sql",
+      // A delivered send's owed Sent copy, the pg table's twin.
+      "0170_outbound_sent_copies.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -356,6 +358,8 @@ describe("the SQLite journal, applied", () => {
       "0168_drafts_forward_parts.sql",
       // Where a hand-back's gap window starts: the pg column's twin.
       "0169_mailboxes_organized_through.sql",
+      // A delivered send's owed Sent copy, the pg table's twin.
+      "0170_outbound_sent_copies.sql",
     ]);
   });
 

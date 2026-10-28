@@ -136,7 +136,8 @@ describe("the schema split matches the journal split", () => {
     // that stores the message builds and searches it. Per-table justification in `MAIL_TABLES`.
     // 56 → 57 for mail 0150's `list_addresses` — read by every store's own gate, MAIL. Per-table
     // justification in `MAIL_TABLES`.
-    expect(declaredTables("schema-mail.ts").size).toBe(57);
+    // 57 → 58 for mail 0170's `outbound_sent_copies` — a delivered send's owed Sent copy, MAIL.
+    expect(declaredTables("schema-mail.ts").size).toBe(58);
     // 25 since cloud 0009 put `mailbox_oauth_ceremonies` and `oauth_provider_config` on the
     // private half — the OAuth ceremony store and the one Entra registration this deployment
     // signs with. Both are Cloud-only by construction: the ceremony is a ninety-second row in

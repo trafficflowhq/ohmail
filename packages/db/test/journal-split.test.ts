@@ -128,6 +128,9 @@ const MAIL_TABLES = [
   // idempotency key it would otherwise rely on belongs to the client, so a reinstall or a cleared
   // store leaves nothing between a second press and a second copy in somebody's inbox.
   "outbound_send_fingerprints",
+  // A DELIVERED SEND'S OWED SENT COPY (mail 0170) — MAIL: the bytes of the user's own outgoing
+  // message, kept by the local engine until its Sent copy is filed. Never the hosted service's.
+  "outbound_sent_copies",
   // THE JUNK RESCUE'S DESIRED STATE (mail 0115) — MAIL, and structurally so. The row is a command
   // about a message in the user's OWN IMAP Junk folder, recorded by the door the person pressed and
   // executed by whichever install organizes that mailbox — the hosted worker, a desktop engine or a
@@ -3135,6 +3138,10 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
     "fd56fd127356a859",   // ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS organized_through timestamptz
     "226222b2fb200da9",   // ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS held_elsewhere_until timestamptz
   ],
+  // A DELIVERED SEND'S OWED SENT COPY — one new table keyed to its send. No DML, no grant.
+  "0170_outbound_sent_copies": [
+    "97732a369767210f",   // CREATE TABLE IF NOT EXISTS outbound_sent_copies ((account, send, seq) PK; (send, account) key cascades)
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4156,6 +4163,8 @@ describe("the two journals are well-formed", () => {
   // above 0167_rules_refile's.
   // 169 → 170 for `0169_mailboxes_organized_through` (idx 169): its `when` (1791602600073) is strictly
   // above 0168_drafts_forward_parts's.
+  // 170 → 171 for `0170_outbound_sent_copies` (idx 170): its `when` (1791602600074) is strictly above
+  // 0169_mailboxes_organized_through's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
@@ -4163,7 +4172,7 @@ describe("the two journals are well-formed", () => {
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
   // cloud 37 → 38 for `0052_lifecycle_notice_delivered`: its `when` (1792886819380) is strictly above 0051's.
   // cloud 38 → 39 for `0053_connect_reminder_notices`: its `when` (1792901976213) is strictly above 0052's.
-  it.each([["mail", MAIL_DIR, 170], ["cloud", CLOUD_DIR, 39]] as const)(
+  it.each([["mail", MAIL_DIR, 171], ["cloud", CLOUD_DIR, 39]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);
@@ -4305,10 +4314,11 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 102 → 103 for `list_addresses` (mail 0150) — the addresses lists post as, MAIL.
     // 103 → 104 for `alert_driver_gaps` (cloud 0048) — the alert drivers' gap history, CLOUD.
     // 104 → 105 for `alert_drills` (cloud 0051) — alert drills and their acknowledgements, CLOUD.
-    expect(SIDE.size).toBe(105);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
+    // 105 → 106 for `outbound_sent_copies` (mail 0170) — a delivered send's owed Sent copy, MAIL.
+    expect(SIDE.size).toBe(106);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
     // 44 → 45 and 27 → 26 for `refresh_tokens` (mail 0060) — the first MOVE in the partition's
     // history rather than an addition, so the total stayed 71 while both halves changed together.
-    expect(MAIL_TABLES).toHaveLength(57);   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
+    expect(MAIL_TABLES).toHaveLength(58);   // 57 → 58: outbound_sent_copies (mail 0170)   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
     // 30 → 33: credit_usage_daily + credit_usage_totals + credit_rollup_runs (cloud 0028)
     // 33 → 36: billing_invoices + platform_costs + ai_usage_daily (cloud 0029)
     // 36 → 38: alert_pass_runs + platform_signals (cloud 0030)

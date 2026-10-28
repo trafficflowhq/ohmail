@@ -1191,6 +1191,13 @@
       "when": 1791602600073,
       "tag": "0169_mailboxes_organized_through",
       "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "7",
+      "when": 1791602600074,
+      "tag": "0170_outbound_sent_copies",
+      "breakpoints": true
     }
   ]
 }

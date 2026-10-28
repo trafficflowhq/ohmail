@@ -129,6 +129,9 @@ const CASES: readonly Case[] = [
   { id: "outbound_send_fingerprints~sends", table: "outbound_send_fingerprints", foreign: "sendId",
     row: (p, o) => ({ account_id: o.accountId, send_id: p("sendId"), mailbox_id: p("mailboxId"),
       fingerprint: hex64() }) },
+  // A delivered send's owed Sent copy (mail 0170), keyed to its send as the claim above is.
+  { id: "outbound_sent_copies~sends", table: "outbound_sent_copies", foreign: "sendId",
+    row: (p, o) => ({ account_id: o.accountId, send_id: p("sendId"), mailbox_id: p("mailboxId"), raw_b64: "aXNv" }) },
   { id: "workflow_runs~workflows", table: "workflow_runs", foreign: "workflowId",
     row: (p, o) => ({ account_id: o.accountId, workflow_id: p("workflowId") }) },
   // ── the away responder and the organizer, which carried parent ids with NO key at all ──────
@@ -262,10 +265,10 @@ describe.skipIf(!HAVE_PG)("account isolation is a database constraint (real Post
 
   it("covers every pair the isolation audit derived, and says so by count", () => {
     // The audit's 39 LESS `outbound_send_fingerprints~mailboxes`, plus the one case only the
-    // mailbox-scoped key refuses, plus the forward key. A case removed silently is a pair
-    // nobody measures, so the number is asserted rather than counted by eye.
-    expect(CASES.length).toBe(40);
-    expect(new Set(CASES.map((c) => c.id)).size).toBe(40);
+    // mailbox-scoped key refuses, plus the forward key, plus the owed Sent copy (mail 0170). A case
+    // removed silently is a pair nobody measures, so the number is asserted rather than counted by eye.
+    expect(CASES.length).toBe(41);
+    expect(new Set(CASES.map((c) => c.id)).size).toBe(41);
   });
 
   it("REFUSES a webauthn challenge naming a user that does not exist", async () => {

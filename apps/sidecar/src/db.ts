@@ -1184,6 +1184,31 @@ export async function reclaimBodyBloat(
   }
 }
 
+/** Below this the owed Sent copies' table is left alone at open: an empty one is a few pages. */
+export const OWED_COPY_RECLAIM_FLOOR_BYTES = 1024 * 1024;
+
+/**
+ * Hand back the space of owed Sent copies deleted without a VACUUM behind them (a mailbox removal,
+ * an account erasure, a quit between the delete and its VACUUM): PGlite has no autovacuum, and the
+ * table holds whole messages, attachments included. One size read on a healthy store; silent, and
+ * the next open tries again. True when it ran.
+ */
+export async function reclaimOwedCopySpace(client: PGlite): Promise<boolean> {
+  try {
+    const r = await client.query<{ bytes: string }>(
+      `SELECT pg_total_relation_size(c.oid)::text AS bytes
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+       WHERE c.relname = 'outbound_sent_copies'`,
+    );
+    if (Number(r.rows[0]?.bytes ?? 0) < OWED_COPY_RECLAIM_FLOOR_BYTES) return false;
+    await client.exec(`VACUUM outbound_sent_copies`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** WAL segment files in a data directory. `pg_wal` also holds `archive_status/`, which is not one. */
 function walSegments(pgDataDir: string): number {
   try {
@@ -2299,6 +2324,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // the gate that keeps a healthy launch's cost at one catalog read.
     const tCompact = Date.now();
     await reclaimBodyBloat(client, log, opts.onPhase);
+    await reclaimOwedCopySpace(client);
     const compactMs = Date.now() - tCompact;
     // AFTER the migrator (the indexed tables must exist) and BEFORE serving, like the compaction.
     const tSearch = Date.now();
