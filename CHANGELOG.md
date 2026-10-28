@@ -21,6 +21,156 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.11] — 2026-10-28
+
+### Scrolling the News list no longer marks letters read
+
+In News and Receipts, scrolling the list of letters with the mouse wheel, a touch or the keyboard marked
+read every unread letter whose row passed by, while the reading stream beside it stayed where it was and
+never showed them. Scrolling the list now marks nothing, as in the Ohbox.
+
+j and k, and ↓ and ↑ in the list, marked each letter read the moment they stepped onto it, a quick pass
+included, though the 0.30.9 note said j and k mark nothing. A step now marks nothing by itself. The
+letter it stops on turns read by the rule of 0.30.9, once its first lines have been on screen for 0.7
+seconds and its sender line or the end of its text has been on screen; a letter you step past stays
+unread. The other letters on screen follow the same rule only once you have opened a letter with a click
+or ↵, pressed in the stream or scrolled it yourself, and a step counts as none of these.
+
+A click, ↵ or Space on a row no longer marks its letter read at once either. It opens the letter, and
+that letter and the ones shown whole below it turn read by the same rule; before, the ones below stayed
+unread until you scrolled.
+
+Leaving News or Receipts marked read the letter resting at the foot of the screen with only its sender
+line and subject showing. Leaving now marks only letters the visit itself read.
+
+A letter you mark unread stays unread until you leave, as the 0.30.9 note said. Before, stepping back
+onto it, resting on it or leaving could mark it read again; now it stays unread for the rest of the
+visit unless you mark it read yourself.
+
+A letter showing only its bottom edge at the top of the stream, after a jump or while scrolling back up,
+could turn read while it rested there. It now stays unread until its first lines have been on screen.
+Desktop and web.
+
+### Screened out and Spam show their list on the first click
+
+The first click on Screened out or Spam after starting ohmail drew the list only once the newest sender's
+letters had been cleaned and laid out, a fifth of a second or more on the desktop. The list and the letters'
+headers now show in the click's own frame, and the letters' bodies follow a moment later. The same holds when
+you move from one sender to the next. Desktop and web.
+
+With Use folders on, Spam lists your mail server's Junk folder, which ohmail reads from the server each time.
+That read now starts when you open the Screener instead of on the Spam click, and coming back to Spam shows
+what was read last while it is read again. A click on Spam in the first second or two after opening the
+Screener can still wait for the server. Web and desktop with an ohmail Cloud or own-server account.
+
+### News and Receipts name their unread letters on your first visit
+
+On a new device, News and Receipts said "Nothing new since you were here", with no count beside them in
+the sidebar, while letters that were already in the mailbox at setup were still unread. Until your first
+visit to a pile, every unread letter in it now counts as new: the header and the sidebar show the same
+number on desktop, web and phone. Once you have visited, the count works as before.
+
+### The reply editor in News and Receipts no longer covers the end of the letter
+
+Answering a letter in place in News or Receipts docks the reply editor at the foot of the stream. A letter that grew after the editor opened, such as a newsletter whose layout sized itself late or an editor gaining lines, slid its last lines under the editor. The stream now follows that growth, so the end of the letter stays above the editor, until you scroll away yourself. On desktop and web.
+
+### A screen reader is told when the desktop window was reloaded
+
+On the desktop, "ohmail's window stopped and was reloaded." now stays until you press its Dismiss button
+instead of leaving after eight seconds, and the accessibility tree shows it as a status named by its sentence.
+Every other notice and Undo capsule, on the desktop and the web, is named by its sentence the same way.
+
+### The Look follows your account on every signed-in device
+
+Choosing paper or ohmarchy in Settings → General → Look on the web or the desktop now stores it on your
+account, and your other signed-in devices take it when they start and while they are open, so the newest
+choice wins. Before, the choice stayed on the device where it was made, although Settings said it applied
+on all your devices; a look kept for one device by an earlier version gives way to the account's look.
+Until a look is chosen, a Linux device still starts in ohmarchy, and Settings now says that this is the
+device's own default. The phone keeps its separate "this device only" choice.
+
+### The phone's Look follows your account too
+
+On a phone signed in to ohmail Cloud or your own server, choosing paper or ohmarchy in Settings → Look now
+stores it on your account, and the phone takes the account's look when it starts and after each sync, so
+the newest choice made on any of your devices wins. The phone keeps the account's look for its next start,
+so it opens in that look at once, offline too. A look kept for the phone alone by an earlier version
+gives way once your account holds one, and a choice the account could not save stays on the phone and says
+so. A phone running on its own, with no account, keeps its look to itself.
+
+### Compose and mail links keep the message you are writing
+
+A mail link opened while you were writing a message, or one that started the app over a message left
+unsaved, replaced what you had written. ohmail now saves those words to your drafts first, and if they
+cannot be saved (words typed after a send we could not confirm included) it leaves them where they are
+and says so. A link that starts the desktop app now opens over a message that is already in your drafts.
+
+While a message waits to be sent, Compose now opens a new one beside it as soon as the waiting message
+is in your drafts. The new message can be written and saved at once; its Send waits until the first
+has gone, and says so. A waiting message that is not in your drafts yet (written and sent offline)
+stays on screen with a sentence saying why, and a draft of it reopened from Drafts is read-only until
+its send ends. A message sent while its first save was still on its way stays on screen until its send
+ends, so no copy of it is left in Drafts to be sent twice (web, Cloud, desktop).
+
+### A send you cancel on the phone with no network is in Drafts at once
+
+On the phone app, Cancel send on a message waiting for the network said it was in Drafts, but Drafts listed it
+only once the network was back or the app restarted. It is now listed at once, as one draft with its files
+and with the words you sent, also when you changed a draft from Drafts just before pressing Send.
+
+### The phone's sidebar opens beside the rail on a foldable
+
+On a foldable or tablet showing two panes, the sidebar opened under the floating rail, which covered the start
+of Ohbox, Screener, News, Receipts and Answer Later. The sidebar now opens past the rail's column and covers
+the list pane to its edge. Phone app.
+
+### The settings document in ohmail/_meta names the app version that wrote it
+
+The phone and the desktop app wrote `0.0.0` as the writer's version in the "ohmail settings for this mailbox"
+document they keep in `ohmail/_meta`. They now write their own app version, so another device can tell which
+build saved the settings.
+
+### Gmail setup says what to do when an account cannot create an App Password
+
+Gmail connects only with an App Password, and some Google accounts cannot create one: work or school
+accounts whose administrator turned App Passwords off, Advanced Protection accounts, and accounts that sign
+in with security keys only. The Gmail note on
+the mailbox step and Google's refusal after a failed sign-in now say that ohmail cannot connect those
+accounts yet, and what to do instead: ask the administrator to allow App Passwords, or connect another
+address. The refusal Google gives most often, for any password it does not accept, says so too. In English
+and German, on the web, the desktop app, your own server and the phone.
+
+### The server no longer ships a command that marks screened-out mail read
+
+The worker carried a one-off operator command that marked every unread letter in Screened out and Spam as
+read, a cleanup for the time when a Screener decision itself marked letters read. Since screening out and
+Spam leave letters as they were, running it would have undone that, so the command is gone. Nothing changes
+for anyone who never ran it; on your own server it leaves with the next server update.
+
+### A lower storage limit on Cloud waits 14 days before old letters are emptied
+
+On ohmail Cloud, moving to a plan with less storage or removing the storage add-on used to lower the
+limit at once, and the next trim emptied the text of old letters without a word. Now ohmail keeps the
+previous limit for 14 days after the change, and the storage notice in the app says until when it keeps
+it and what the plan keeps from then on, with the way to more room. Going back to the bigger plan or the
+add-on inside the 14 days cancels the change, and nothing is emptied. Your own server and the desktop and
+phone apps have no storage limit and are unchanged.
+
+### Search answers faster for words in a few percent of your mail
+
+Search answers faster for words in a few percent of your mail, two-word searches and file-name parts;
+another account's mail no longer slows yours. The server's setup builds one new search index, without
+holding up mail while it builds. On ohmail Cloud and your own server.
+
+### A closed tab no longer holds a live-update stream on ohmail Cloud
+
+On ohmail Cloud, a browser tab that was closed or reloaded, or a desktop app that restarted, kept its
+live-update stream for up to four and a half minutes after it left. With a tab and the desktop app open,
+the next connection could be refused in that time, and new mail waited for the regular check instead of
+arriving at once. Cloud now ends a stream within seconds of the app on the other side going away, which
+frees its place for the next connection. Your own server already ended such streams at once and is
+unchanged.
+
 ## [0.30.10] — 2026-10-28
 
 ### A reply to a large group folds its earlier messages
@@ -14730,7 +14880,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.10...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.11...HEAD
+[0.30.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.11
 [0.30.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.10
 [0.30.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.9
 [0.30.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.8
