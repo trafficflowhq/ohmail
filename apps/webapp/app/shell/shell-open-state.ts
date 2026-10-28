@@ -12,7 +12,9 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { useTranslations } from "next-intl";
 import {
+  doneSubjectIds,
   isResurfaced,
+  pinsSpentBy,
   pileSubjectIds,
   ownFaceOfRow,
   rowOpenTarget,
@@ -606,6 +608,10 @@ export function useShellOpenState({
   /** What a pile press on a message acts on (`pileSubjectIds`): its pile row, or (`ohboxRow`) its Ohbox row. */
   const pileSetFor = useStableCallback((messageId: string, ohboxRow: boolean): string[] =>
     pileSubjectIds(presented, messageId, engine.openRowHeld(), ohboxRow));
+  /** What Done on a message releases (`doneSubjectIds`): every pin of its Resurfaced row, or its booked row. */
+  const doneSetFor = useStableCallback((messageId: string): string[] => doneSubjectIds(presented, messageId));
+  /** The pins a delete spends at the press (`pinsSpentBy`); the engine spends every other filing's. */
+  const pinsSpentFor = useStableCallback((filed: readonly string[]): string[] => pinsSpentBy(presented, filed));
   /**
    * The sheet's message, with read state as the list behind it draws it (`presentsUnread`): a
    * RESURFACED message reads unread whatever its stored flag says (owner ruling 2026-08-31), so the
@@ -1358,6 +1364,8 @@ export function useShellOpenState({
     forwardTargetFor,
     ownFaceFor,
     pileSetFor,
+    doneSetFor,
+    pinsSpentFor,
     selectOhboxRow,
     absoluteTime,
     barPanel,

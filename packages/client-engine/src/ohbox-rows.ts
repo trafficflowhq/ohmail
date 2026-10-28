@@ -18,7 +18,7 @@ import {
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { isHeldFolder } from "@trafficflow/core/destinations";
 import type { EntityReader } from "./store.js";
-import { FOLDER_OF_VIEW, type EngineMessage } from "./types.js";
+import { FOLDER_OF_VIEW, type EngineMessage, type EngineMutation } from "./types.js";
 
 /*
  * ONE ROW PER CONVERSATION, ACROSS SECTIONS (owner 2026-09-28). The Ohbox draws a conversation at
@@ -199,8 +199,8 @@ export function triageSubjectIds(reader: EntityReader, ids: readonly string[]): 
 }
 
 /**
- * What a pile press (Park, Answer later, and in a pile Resurface) on `messageId` acts on. In Answer later
- * or Parked: that pile's row for its conversation ({@link pileRowIdsOf}), the pressed id first. Standing
+ * What a pile press (Park, Answer later, Resurface) on `messageId` acts on. Filed in Answer later, Parked
+ * or Resurface: that pile's row for its conversation ({@link pileRowIdsOf}), the pressed id first. Standing
  * in an Ohbox row (`ohboxRow`): every member of it that stands in the Ohbox, our own reply included, so
  * the row leaves (a Resurfaced row's pins, and its INBOX and own Sent members not filed in a pile); a
  * reply still on its way (`local`) has no server id and is left out. Otherwise: itself.
@@ -230,6 +230,63 @@ export function pileSubjectIds(
     return standing.includes(messageId) ? standing : [messageId];
   }
   return [messageId];
+}
+
+/**
+ * What Done on `messageId` releases. A member of a Resurfaced row: every member carrying a pin, our own
+ * reply included, the pressed id first, when the pressed one carries one. A booked message: its Resurface
+ * row, the pressed id first. Otherwise: itself.
+ */
+export function doneSubjectIds(reader: EntityReader, messageId: string): string[] {
+  for (const row of resurfacedThreads(reader)) {
+    if (!row.members.some((x) => x.id === messageId)) continue;
+    const pins = row.pinned.map((x) => x.id);
+    return pins.includes(messageId) ? [messageId, ...pins.filter((id) => id !== messageId)] : [messageId];
+  }
+  if (winningStates(reader).get(messageId)?.state === "bubbled_up") {
+    return [messageId, ...pileRowIdsOf(reader, messageId, "resurface").filter((id) => id !== messageId)];
+  }
+  return [messageId];
+}
+
+/**
+ * The pins filing `filed` spends beyond its own. The server spends the pin of each message it
+ * re-files; the rest of that Resurfaced row, our own reply included, goes with it, or the row stays
+ * at the top faced by a letter filed elsewhere. Only pins that are back now: a booking keeps its time.
+ */
+export function pinsSpentBy(reader: EntityReader, filed: readonly string[]): string[] {
+  const claims = winningStates(reader);
+  const rows = new Set<string>();
+  for (const id of filed) {
+    const m = reader.get<EngineMessage>("message", id);
+    if (m && claims.get(id)?.state === "resurfaced") rows.add(conversationKeyOf(m));
+  }
+  return rowPinsBackNow(reader, rows, new Set(filed));
+}
+
+/** The members of the Resurfaced rows keyed `rows` whose pin is back now (`resurfaced`), less `filed`. */
+export function rowPinsBackNow(reader: EntityReader, rows: ReadonlySet<string>, filed: ReadonlySet<string>): string[] {
+  if (rows.size === 0) return [];
+  const claims = winningStates(reader);
+  const out: string[] = [];
+  for (const row of resurfacedThreads(reader)) {
+    if (!rows.has(row.key)) continue;
+    for (const x of row.pinned) if (!filed.has(x.id) && claims.get(x.id)?.state === "resurfaced") out.push(x.id);
+  }
+  return out;
+}
+
+/**
+ * The letter `m` files out of the Ohbox: a delete, or a move to any other place that changes its
+ * folder. Its pin, if it carries one, takes the rest of its Resurfaced row along (`OhmailEngine.mutate`,
+ * and `inverseMutations` for the way back). A move into the Ohbox, an Undo's, files nothing.
+ */
+export function filedOutOfOhbox(reader: EntityReader, m: EngineMutation): EngineMessage | null {
+  if (m.kind === "move") {
+    if (canonicalDestination(m.folder) === canonicalDestination(FOLDER_OF_VIEW.ohbox)) return null;
+  } else if (m.kind !== "message_delete") return null;
+  const msg = reader.get<EngineMessage>("message", m.messageId);
+  return msg && (m.kind === "message_delete" || msg.folder !== m.folder) ? msg : null;
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   PRESS_THREW,
   pressVerdict,
   tallyVerdicts,
+  undoInOrder,
   type EngineMutation,
   type EntityReader,
   type MutationRejectedError,
@@ -397,10 +398,12 @@ export function useShellDispatch({
    */
   const toastWithUndo = useStableCallback((
     sentence: string,
-    inverses: readonly EngineMutation[],
+    given: readonly EngineMutation[],
     held?: { cancel: () => boolean; undone: string },
     claim?: UndoClaim,
   ) => {
+    // Several verbs' reversals name a row's pins more than once: each goes back up once, after the moves.
+    const inverses = undoInOrder(given);
     if (inverses.length === 0 && !held) { if (claim) door.drop(claim); toast(sentence); return; }
     const fire = () => {
       /* THE CANCEL GOES FIRST, and synchronously: the window is racing a timer, and a cancel

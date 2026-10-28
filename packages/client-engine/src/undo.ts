@@ -1,3 +1,4 @@
+import { filedOutOfOhbox, pinsSpentBy } from "./ohbox-rows.js";
 import type { EntityReader } from "./store.js";
 import type { EngineMessage, EngineMutation, MutationKind } from "./types.js";
 
@@ -96,7 +97,16 @@ export function inverseMutations(reader: EntityReader, m: EngineMutation): Engin
       }];
       /* The move spends a resurfaced pin in the same transaction; the reversal re-pins AFTER
          the move back, so the row returns to the exact group it left. */
-      if (spendsPin(msg)) out.push({ kind: "triage_set", messageId: msg.id, state: "resurfaced" });
+      if (spendsPin(msg)) {
+        out.push({ kind: "triage_set", messageId: msg.id, state: "resurfaced" });
+        // Filed out of the Ohbox, it took the rest of its Resurfaced row's pins along (`OhmailEngine.mutate`).
+        if (filedOutOfOhbox(reader, m) !== null) {
+          for (const id of pinsSpentBy(reader, [msg.id])) {
+            const other = reader.get<EngineMessage>("message", id);
+            if (other) out.push(triageRestore(other));
+          }
+        }
+      }
       return out;
     }
     case "triage_set": {
@@ -131,4 +141,17 @@ export function inverseMutations(reader: EntityReader, m: EngineMutation): Engin
     default:
       return [];
   }
+}
+
+/**
+ * ONE UNDO OVER SEVERAL VERBS: each identical `triage_set` once, at its last place. Moving several of
+ * a Resurfaced row's letters names the row's other pins in every letter's reversal; the last place is
+ * after that letter's own move back, which would otherwise spend the pin again.
+ */
+export function undoInOrder(inverses: readonly EngineMutation[]): EngineMutation[] {
+  const keyOf = (m: EngineMutation): string | null =>
+    (m.kind === "triage_set" ? `${m.messageId}\u0000${m.state}\u0000${m.bubbleUpAt ?? ""}` : null);
+  const last = new Map<string, number>();
+  inverses.forEach((m, i) => { const k = keyOf(m); if (k !== null) last.set(k, i); });
+  return inverses.filter((m, i) => { const k = keyOf(m); return k === null || last.get(k) === i; });
 }

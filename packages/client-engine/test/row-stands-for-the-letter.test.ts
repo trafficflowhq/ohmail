@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  FOLDER_OF_VIEW, pileSubjectIds, ohboxRows, ownFaceOfRow, resurfacedFocus, rowOpenTarget, triageSubjectIds,
-  type EngineMessage, type EntityReader, type MessageStateDTO, type OhboxRow,
+  FOLDER_OF_VIEW, MemoryMirrorStore, OhmailEngine, doneSubjectIds, inverseMutations, pileSubjectIds, pinsSpentBy, ohboxRows, ownFaceOfRow,
+  resurfacedFocus, resurfacedThreads, rowOpenTarget, triageSubjectIds,
+  type EngineAdapter, type EngineMessage, type EngineMutation, type EntityReader, type MessageStateDTO, type OhboxRow,
+  type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 
 /**
@@ -235,7 +237,15 @@ describe("pileSubjectIds: what a pile press on a row's message files", () => {
     const reader = readerOf([filed(letter, "set_aside"), filed(reply, "reply_later"), filed(kai, "bubbled_up")]);
     expect(pileSubjectIds(reader, "a1")).toEqual(["a1"]);
     expect(pileSubjectIds(reader, "r2")).toEqual(["r2"]);
-    expect(pileSubjectIds(reader, "b2"), "Resurface stays per message").toEqual(["b2"]);
+    expect(pileSubjectIds(reader, "b2"), "booked alone: a row of one").toEqual(["b2"]);
+  });
+  it("booked in Resurface: the pile's row from any member, the pressed id first, our reply included", () => {
+    const reader = readerOf([filed(letter, "bubbled_up"), filed(reply, "bubbled_up"), filed(kai, "bubbled_up")]);
+    for (const id of ["a1", "b2", "r2"]) {
+      const set = pileSubjectIds(reader, id, null, false);
+      expect(set[0]).toBe(id);
+      expect([...set].sort()).toEqual(["a1", "b2", "r2"]);
+    }
   });
   it("off the Ohbox, a message standing in an Ohbox row is itself", () => {
     const reader = readerOf([letter, reply]);
@@ -251,5 +261,154 @@ describe("pileSubjectIds: what a pile press on a row's message files", () => {
   it("our reply still on its way (a local copy) is left out of the Ohbox row's set", () => {
     const local = own("l3", "2026-09-20T10:00:00.000Z", { local: true });
     expect(pileSubjectIds(readerOf([letter, reply, local]), "a1").sort()).toEqual(["a1", "r2"]);
+  });
+});
+
+describe("doneSubjectIds: what Done on a message releases", () => {
+  const kai = msg({ id: "b2", at: "2026-09-20T08:30:00.000Z", from: KAI });
+  const booked = (m: EngineMessage): EngineMessage =>
+    ({ ...m, triage: { messageId: m.id, state: "bubbled_up", bubbleUpAt: "2026-09-27T07:00:00.000Z", setAt: SET_AT, updatedAt: SET_AT } });
+
+  it("a Resurfaced row: every pinned member, our reply too, the pressed id first", () => {
+    const reader = readerOf([pinned(letter), pinned(kai), pinned(reply)]);
+    for (const id of ["a1", "b2", "r2"]) {
+      const set = doneSubjectIds(reader, id);
+      expect(set[0]).toBe(id);
+      expect([...set].sort()).toEqual(["a1", "b2", "r2"]);
+    }
+  });
+  it("a booked row in the Resurface pile: the pile's row, the pressed id first", () => {
+    const reader = readerOf([booked(letter), booked(kai), booked(reply)]);
+    expect(doneSubjectIds(reader, "b2")[0]).toBe("b2");
+    expect([...doneSubjectIds(reader, "b2")].sort()).toEqual(["a1", "b2", "r2"]);
+  });
+  it("one pin: itself; an unpinned or archived member of the row: itself", () => {
+    const archived = msg({ id: "o1", at: "2026-09-20T06:00:00.000Z", folder: "Archive" as EngineMessage["folder"] });
+    const reader = readerOf([archived, letter, pinned(kai)]);
+    expect(doneSubjectIds(reader, "b2")).toEqual(["b2"]);
+    expect(doneSubjectIds(reader, "a1")).toEqual(["a1"]);
+    expect(doneSubjectIds(reader, "o1")).toEqual(["o1"]);
+  });
+  it("no Resurfaced row and no booking: itself", () => {
+    expect(doneSubjectIds(readerOf([letter, reply]), "a1")).toEqual(["a1"]);
+    expect(doneSubjectIds(readerOf([letter]), "gone")).toEqual(["gone"]);
+  });
+});
+
+describe("pinsSpentBy: the pins a filing press spends beyond the ones it files", () => {
+  const kai = msg({ id: "b2", at: "2026-09-20T08:30:00.000Z", from: KAI });
+  const reader = readerOf([pinned(letter), pinned(kai), pinned(reply)]);
+  it("filing one pin of a Resurfaced row spends the rest, our reply included", () => {
+    expect([...pinsSpentBy(reader, ["b2"])].sort()).toEqual(["a1", "r2"]);
+    expect(pinsSpentBy(reader, ["a1", "b2"])).toEqual(["r2"]);
+    expect(pinsSpentBy(reader, ["a1", "b2", "r2"])).toEqual([]);
+  });
+  const booked = (m: EngineMessage): EngineMessage =>
+    ({ ...m, triage: { messageId: m.id, state: "bubbled_up", bubbleUpAt: "2026-09-27T07:00:00.000Z", setAt: SET_AT, updatedAt: SET_AT } });
+  it("a row with one pin, an unpinned member, a booking or no row: nothing more", () => {
+    expect(pinsSpentBy(readerOf([letter, pinned(kai)]), ["b2"])).toEqual([]);
+    expect(pinsSpentBy(readerOf([letter, pinned(kai), pinned(reply)]), ["a1"])).toEqual([]);
+    expect(pinsSpentBy(readerOf([booked(letter), booked(kai)]), ["b2"])).toEqual([]);
+    expect(pinsSpentBy(readerOf([letter, reply]), ["a1"])).toEqual([]);
+  });
+  it("a member booked for later keeps its booking: only the pins that are back now are spent", () => {
+    expect(pinsSpentBy(readerOf([pinned(letter), booked(kai), pinned(reply)]), ["a1"])).toEqual(["r2"]);
+    expect(pinsSpentBy(readerOf([pinned(letter), booked(kai), booked(reply)]), ["a1"])).toEqual([]);
+  });
+});
+
+/**
+ * THE ENGINE SPENDS THE ROW, whatever door filed the letter: a `move` out of the Ohbox or a delete
+ * of a pinned letter spends the rest of its Resurfaced row's pins in the same turn, and the
+ * filing's reversal (`inverseMutations`) puts them back. Through a real engine and its wire.
+ */
+describe("a letter filed with its pin takes the rest of its Resurfaced row with it, in the engine", () => {
+  const kai = msg({ id: "b2", at: "2026-09-20T08:30:00.000Z", from: KAI });
+  const RECEIPTS = "ohmail/Receipts" as EngineMessage["folder"];
+  const booked = (m: EngineMessage): EngineMessage =>
+    ({ ...m, triage: { messageId: m.id, state: "bubbled_up", bubbleUpAt: "2026-09-27T07:00:00.000Z", setAt: SET_AT, updatedAt: SET_AT } });
+
+  /** An engine over `rows`, its wire recorded as `kind:id[:state|folder]`; the server answers with the row it leaves. */
+  async function engineOver(rows: EngineMessage[]) {
+    let seq = 0;
+    const server = new Map(rows.map((m) => [m.id, m]));
+    const change = (m: EngineMessage): SyncChange => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: SET_AT, entity: m });
+    let first: SyncChange[] = rows.map(change);
+    const wire: string[] = [];
+    const adapter = {
+      sync: async (): Promise<SyncResponse> => {
+        const creates = first;
+        first = [];
+        return { changes: { creates, updates: [], moves: [], deletes: [] }, cursor: `c${seq}`, hasMore: false, serverTime: SET_AT };
+      },
+      mutate: async (m: EngineMutation) => {
+        const id = "messageId" in m ? m.messageId : "";
+        wire.push(`${m.kind}:${id}${m.kind === "triage_set" ? `:${m.state}` : m.kind === "move" ? `:${m.folder}` : ""}`);
+        const row = server.get(id);
+        if (!row || (m.kind !== "move" && m.kind !== "triage_set")) return { changes: [], seq: null };
+        const spent = row.triage?.state === "resurfaced" ? { triage: { ...row.triage, state: "none" } } : {};
+        const next = (m.kind === "move" ? { ...row, folder: m.folder, ...spent }
+          : { ...row, triage: { messageId: id, state: m.state, bubbleUpAt: null, setAt: SET_AT, updatedAt: SET_AT } }) as EngineMessage;
+        server.set(id, next);
+        return { changes: [change(next)], seq: null };
+      },
+      fetchBody: async () => null,
+    } as unknown as EngineAdapter;
+    const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore(), now: () => new Date(SET_AT), storePolicy: { mode: "full" } });
+    await engine.start();
+    const settled = async (n: number) => { for (let i = 0; i < 40 && wire.length < n; i++) await new Promise((r) => setTimeout(r, 0)); };
+    return { engine, wire, settled, server };
+  }
+  const rowsOf = (engine: OhmailEngine) => resurfacedThreads(engine.read()).map((r) => r.key);
+  const spends = (wire: string[]) => wire.filter((w) => w.startsWith("triage_set:") && w.endsWith(":none")).sort();
+
+  it("a move out of the Ohbox spends the other pins, our reply's too, in the press's own turn; its reversal puts them back", async () => {
+    const p = await engineOver([pinned(letter), pinned(kai), pinned(reply)]);
+    const move: EngineMutation = { kind: "move", messageId: "b2", folder: RECEIPTS };
+    const back = inverseMutations(p.engine.verbRead(), move);
+    const done = p.engine.mutate(move);
+    await Promise.resolve();
+    expect(rowsOf(p.engine), "the row left in the press's own turn").toEqual([]);
+    expect((await done).status).toBe("confirmed");
+    await p.settled(3);
+    expect(p.wire[0]).toBe(`move:b2:${RECEIPTS}`);
+    expect(spends(p.wire)).toEqual(["triage_set:a1:none", "triage_set:r2:none"]);
+    for (const mu of back) await p.engine.mutate(mu);
+    expect(rowsOf(p.engine), "the reversal brings the row back").toEqual(["T"]);
+    expect(resurfacedThreads(p.engine.read())[0]!.pinned.map((m) => m.id).sort()).toEqual(["a1", "b2", "r2"]);
+  });
+
+  it("several of the row's letters filed in one turn spend only the pins they leave behind", async () => {
+    const p = await engineOver([pinned(letter), pinned(kai), pinned(reply)]);
+    const done = [p.engine.mutate({ kind: "move", messageId: "a1", folder: RECEIPTS }), p.engine.mutate({ kind: "move", messageId: "b2", folder: RECEIPTS })];
+    await Promise.all(done);
+    await p.settled(3);
+    expect(spends(p.wire)).toEqual(["triage_set:r2:none"]);
+    expect(rowsOf(p.engine)).toEqual([]);
+  });
+
+  it("a delete spends the other pins too", async () => {
+    const p = await engineOver([pinned(letter), pinned(kai), pinned(reply)]);
+    await p.engine.mutate({ kind: "message_delete", messageId: "a1" });
+    await p.settled(3);
+    expect(p.wire[0]).toBe("message_delete:a1");
+    expect(spends(p.wire)).toEqual(["triage_set:b2:none", "triage_set:r2:none"]);
+    expect(rowsOf(p.engine)).toEqual([]);
+  });
+
+  it("CONTROLS: a lone pin, an unpinned letter, a member booked for later and a move into the Ohbox spend nothing more", async () => {
+    for (const [rows, move] of [
+      [[letter, pinned(kai), reply], { kind: "move", messageId: "b2", folder: RECEIPTS }],
+      [[letter, pinned(kai), pinned(reply)], { kind: "move", messageId: "a1", folder: RECEIPTS }],
+      [[pinned(letter), booked(kai), booked(reply)], { kind: "move", messageId: "a1", folder: RECEIPTS }],
+      [[pinned({ ...letter, folder: RECEIPTS }), pinned(kai), pinned(reply)], { kind: "move", messageId: "a1", folder: FOLDER_OF_VIEW.ohbox }],
+    ] as Array<[EngineMessage[], Extract<EngineMutation, { kind: "move" }>]>) {
+      const p = await engineOver(rows);
+      const back = inverseMutations(p.engine.verbRead(), move);
+      await p.engine.mutate(move);
+      await p.settled(2);
+      expect(spends(p.wire), JSON.stringify(move)).toEqual([]);
+      expect(back.filter((mu) => mu.kind === "triage_set" && mu.messageId !== move.messageId)).toEqual([]);
+    }
   });
 });

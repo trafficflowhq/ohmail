@@ -125,11 +125,12 @@ describe("bubbled_up: soonest return first, arrival breaking a tie", () => {
 });
 
 /**
- * A CONVERSATION IS ONE ROW in Answer later and Parked: a parked seven-message conversation drew seven
- * rows, each "7 messages in this conversation". The row faces and is ordered by the newest letter
- * somebody else wrote, and lists every member the pile holds. Both delivery paths fold alike.
+ * A CONVERSATION IS ONE ROW in Answer later, Parked and Resurface: a parked seven-message conversation
+ * drew seven rows, each "7 messages in this conversation". The row faces the newest letter somebody
+ * else wrote and lists every member the pile holds; a Resurface row is dated by its soonest booking.
+ * Both delivery paths fold alike.
  */
-describe("Answer later and Parked: one row per conversation", () => {
+describe("Answer later, Parked and Resurface: one row per conversation", () => {
   const ME = { name: "Me", address: "me@example.invalid" };
   const at = (h: string) => `2026-08-26T${h}:00.000Z`;
   const conv = (id: string, when: string, over: Partial<EngineMessage> = {}): EngineMessage => ({
@@ -141,15 +142,18 @@ describe("Answer later and Parked: one row per conversation", () => {
   ];
   const lone = conv("z9", "06:30", { threadId: null });
   const NEWEST_FIRST_IDS = ["r7", "m6", "m5", "m4", "m3", "m2", "m1"];
-  const st = (id: string, state: PileState, i = 0): MessageStateDTO => ({
-    messageId: id, state, bubbleUpAt: null, setAt: `2026-08-28T09:0${i % 10}:00.000Z`, updatedAt: `2026-08-28T09:0${i % 10}:00.000Z`,
+  const st = (id: string, state: PileState, i = 0, back: string | null = null): MessageStateDTO => ({
+    messageId: id, state, bubbleUpAt: back, setAt: `2026-08-28T09:0${i % 10}:00.000Z`, updatedAt: `2026-08-28T09:0${i % 10}:00.000Z`,
   });
-  async function fold(ms: EngineMessage[], stateOf: (id: string) => PileState, carried: boolean): Promise<EntityReader> {
+  async function fold(
+    ms: EngineMessage[], stateOf: (id: string) => PileState, carried: boolean, backOf: (id: string) => string | null = () => null,
+  ): Promise<EntityReader> {
     const store = new MemoryMirrorStore();
     await store.load();
+    const claimOf = (m: EngineMessage, i: number) => st(m.id, stateOf(m.id), i, backOf(m.id));
     await store.applyChanges([
-      ...ms.map((m, i) => change("message", m.id, carried ? { ...m, triage: st(m.id, stateOf(m.id), i) } : m)),
-      ...(carried ? [] : ms.map((m, i) => change("message_state", `row-${m.id}`, st(m.id, stateOf(m.id), i)))),
+      ...ms.map((m, i) => change("message", m.id, carried ? { ...m, triage: claimOf(m, i) } : m)),
+      ...(carried ? [] : ms.map((m, i) => change("message_state", `row-${m.id}`, claimOf(m, i)))),
     ]);
     return oneSourceReader(store);
   }
@@ -169,10 +173,27 @@ describe("Answer later and Parked: one row per conversation", () => {
     expect(piles.setAside.map((e) => [e.messageId, e.memberIds])).toEqual([["m6", ["r7", "m6", "m5", "m4", "m3"]]]);
   });
 
-  it("a held member stays a row of its own; Resurface stays per message", async () => {
+  it("a held member stays a row of its own; a lone booked member is a Resurface row of one", async () => {
     const held = conv("h8", "08:00", { folder: "ohmail/Screener" as EngineMessage["folder"] });
     const piles = triagePiles(await fold([...SEVEN, held], (id) => (id === "m1" ? "bubbled_up" : "set_aside"), false));
     expect(piles.setAside.map((e) => e.memberIds)).toEqual([["h8"], ["r7", "m6", "m5", "m4", "m3", "m2"]]);
     expect(piles.resurface.map((e) => [e.messageId, e.memberIds])).toEqual([["m1", ["m1"]]]);
+  });
+
+  it.each(["web", "desktop"] as const)("bubbled_up on the %s path: seven booked and a lone booked letter are two rows, dated", async (path) => {
+    const back = (id: string) => (id === "z9" ? "2026-09-02T07:00:00.000Z" : "2026-09-01T07:00:00.000Z");
+    const piles = triagePiles(await fold([...SEVEN, lone], () => "bubbled_up", path === "desktop", back));
+    expect(piles.resurface.map((e) => [e.messageId, e.resurfaceAt])).toEqual([
+      ["m6", "2026-09-01T07:00:00.000Z"], ["z9", "2026-09-02T07:00:00.000Z"],
+    ]);
+    expect(piles.resurface[0]!.memberIds).toEqual(NEWEST_FIRST_IDS);
+  });
+
+  it("mixed bookings: the row is dated and ordered by its soonest", async () => {
+    const back = (id: string) => (id === "z9" ? "2026-09-02T07:00:00.000Z" : id === "m3" ? "2026-09-01T07:00:00.000Z" : "2026-09-05T07:00:00.000Z");
+    const piles = triagePiles(await fold([...SEVEN, lone], () => "bubbled_up", false, back));
+    expect(piles.resurface.map((e) => [e.messageId, e.resurfaceAt])).toEqual([
+      ["m6", "2026-09-01T07:00:00.000Z"], ["z9", "2026-09-02T07:00:00.000Z"],
+    ]);
   });
 });

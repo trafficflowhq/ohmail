@@ -97,6 +97,7 @@ import {
   type ScreenerSenderDTO,
   type StayedWhy,
   inverseMutations,
+  undoInOrder,
   routingSubject,
   type CardReach,
   type DecideIntent,
@@ -123,6 +124,7 @@ import {
   resurfacedThreads,
   ohboxRows,
   pileSubjectIds,
+  doneSubjectIds,
   ohboxUnreadIds,
   rowOpenTarget,
   threadSubject,
@@ -4722,15 +4724,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return triage(lead, off ? "none" : state, say, undefined, changed, own);
   };
 
-  /** A message in Answer later or Parked resurfaces with its pile row, as one press. */
+  /** Resurface takes the message's pile row, or the Ohbox row it stands in, my reply too, as one press. */
   const pileRowOf = (messageId: string): string[] | undefined => {
-    const row = pileSubjectIds(presentedReader(), messageId, engine.openRowHeld(), false);
+    const row = pileSubjectIds(presentedReader(), messageId, engine.openRowHeld());
     return row.length > 1 ? row : undefined;
   };
+  /** The press holds the slot of a letter it writes, never my reply's (`pileToggle`'s lead). */
+  const leadOf = (messageId: string, row: readonly string[] | undefined): string =>
+    [messageId, ...(row ?? [])].find((id) => !isOwn(id)) ?? messageId;
 
   const resurfaceAt = (messageId: string, iso: string): Promise<boolean> => {
     const row = pileRowOf(messageId);
-    return triage(messageId, "bubbled_up", refuse("toastResurface", setTimeLabel(iso, now(), zone)), iso, row, row !== undefined);
+    return triage(leadOf(messageId, row), "bubbled_up", refuse("toastResurface", setTimeLabel(iso, now(), zone)), iso, row, row !== undefined);
   };
 
   const resurfaceToggle = async (messageId: string): Promise<boolean> => {
@@ -4738,13 +4743,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (!m) return false;
     // A message already scheduled: the horizon-less verb CLEARS the booking rather than
     // silently re-dating it — the webapp's `resurface` arm, verbatim in intent.
-    if (triageStateOf(engine.read(), m) === "bubbled_up") return triage(messageId, "none", refuse("toastResurfaceCleared"));
+    if (triageStateOf(engine.read(), m) === "bubbled_up") {
+      const row = pileRowOf(messageId);
+      return triage(leadOf(messageId, row), "none", refuse("toastResurfaceCleared"), undefined, row, row !== undefined);
+    }
     return resurfaceAt(messageId, tomorrowAt(now(), resurfaceAtClock(), zone).at.toISOString());
   };
 
   const resurfaceNow = (messageId: string): Promise<boolean> => {
     const row = pileRowOf(messageId);
-    return triage(messageId, "resurfaced", refuse("toastResurfaceNow"), undefined, row, row !== undefined);
+    return triage(leadOf(messageId, row), "resurfaced", refuse("toastResurfaceNow"), undefined, row, row !== undefined);
   };
 
   const markSeenAs = async (
@@ -4828,7 +4836,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const resurfaceDone = async (messageId: string, members?: readonly string[]): Promise<boolean> => {
     const m = messageOf(messageId);
     if (!m) return false;
-    const ids = membersOf(messageId, members);
+    // Every pin of its Resurfaced row, or its booked row, my reply included: the row Done's set.
+    const ids = [...new Set([...membersOf(messageId, members), ...doneSubjectIds(presentedReader(), messageId)])];
     // A SCHEDULED message's release has an extra half: the booking is cleared first (the same
     // un-triage the toggles use), then the same deliberate read files it under Earlier.
     /* Both halves' inverses, off the pre-press mirror — the webapp release's own composition:
@@ -4970,7 +4979,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // A press that writes the sender's rule rewrites the route: its moves are no override of it.
     const ruled = rules.some((w) => w.kind === "rule_create" || w.kind === "rule_update");
     const mail = writes.filter((w) => w.kind === "move").map((w) => (ruled ? { ...w, pressRule: true as const } : w));
-    const inv = mail.flatMap((w) => inverseMutations(engine.verbRead(), w));
+    // A row's letters filed together each name its other pins: Undo puts each back once.
+    const inv = undoInOrder(mail.flatMap((w) => inverseMutations(engine.verbRead(), w)));
     const pressId = deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`;
     const subject = routingSubject({ scope: "sender", address: m.from.address });
     /* THE PRESS IS ON DISK BEFORE ANYTHING SHOWS OR LEAVES, rule or none: its place is drawn once
