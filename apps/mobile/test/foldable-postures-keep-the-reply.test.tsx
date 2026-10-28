@@ -77,6 +77,7 @@ const { TabFocused } = (await import("expo-router")) as unknown as { TabFocused:
 const { usePaneMove } = await import("../src/ui/pane-move");
 const { usePaneChrome } = await import("../src/ui/pane-chrome");
 const { act } = await import("react");
+const { railHome, scaffoldPlan } = await import("../src/ui/scaffold/plan");
 
 const vertical = (x: number, h: number, state: "flat" | "half"): FoldFeature =>
   ({ bounds: { x, y: 0, w: 0, h }, state, orientation: "vertical", occlusion: "none" });
@@ -89,6 +90,7 @@ const POSES = {
   book: { width: 718, height: 897, folds: [vertical(359, 897, "half")] },
   tabletop: { width: 897, height: 718, folds: [horizontal(359, 897)] },
   book674: { width: 674, height: 841, folds: [vertical(337, 841, "half")] },
+  landscape: { width: 897, height: 718, folds: [] as FoldFeature[] },
 } as const;
 type Pose = keyof typeof POSES;
 
@@ -368,5 +370,26 @@ describe("system Back closes the reading pane before it leaves the app", () => {
     const one = mount(<Pair tick={tick++} />);
     expect(pressBack()).toBe(false);
     one.unmount();
+  });
+});
+
+/* The rail is the root's, drawn above every screen: a sidebar under it lost its labels. */
+describe("the sidebar opens beside the floating rail, never under it", () => {
+  it("two panes, landscape (897 x 718): the open sidebar starts past the rail and ends with the list", () => {
+    const p = setPose("landscape");
+    nav.params = { open: "" };
+    let chrome: ReturnType<typeof usePaneChrome> = null;
+    function Toggle() { chrome = usePaneChrome(); return null; }
+    const r = mount(<ListDetail open={null} onClose={() => undefined} toRoute={(id) => `/message/${id}`}
+      list={<Toggle />} renderDetail={(id) => <Reader id={id} />} />);
+    act(() => chrome!.openDrawer());
+    const drawer = r.el.querySelector('[data-testid="screen"]')!.lastElementChild as HTMLElement;
+    expect(drawer.textContent).toBe("sidebar");
+    const rail = railHome(scaffoldPlan(p, "android"), { top: 24, bottom: 16, left: 0, right: 0 }, { w: 897, h: 718 }, null);
+    const d = styleOf(drawer) as { left: number; width: number };
+    expect(d.left, "the sidebar's edge clears the rail's column").toBeGreaterThanOrEqual(rail.x + rail.width);
+    const box = styleOf(r.el.querySelector('[data-testid="screen"] > div > div'));
+    expect(d.left + d.width, "it covers the list pane to its edge").toBe((box.paddingLeft as number) + (styleOf(slot(r.el, 0)).width as number));
+    r.unmount();
   });
 });
