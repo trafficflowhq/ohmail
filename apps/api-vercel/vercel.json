@@ -6,6 +6,10 @@
     }
   ],
   "functions": {
+    "app/events/route.ts": {
+      "memory": 1024,
+      "supportsCancellation": true
+    },
     "app/**/route.ts": {
       "memory": 1024
     }

@@ -2,8 +2,8 @@ import { apiRoutes, bodyCeilingFor, normalizePathname, readBodyWithin } from "@t
 import { HOSTED_LARGE_BODY_MAX_BYTES } from "./prefix.js";
 
 /**
- * Rebuild `req` on its canonical path; method, headers, query and body are preserved. The
- * body is buffered, not streamed: a stream body needs `duplex: "half"`, and
+ * Rebuild `req` on its canonical path; method, headers, query, body and abort signal are
+ * preserved. The body is buffered, not streamed: a stream body needs `duplex: "half"`, and
  * `withIdempotency` reads the whole body to hash it anyway. An empty body is dropped, not
  * forwarded as a zero-length buffer — undici gives an empty-body Request a non-null `body`,
  * and `withRequestGuard` treats "body present" as "JSON `Content-Type` mandatory", so a
@@ -21,6 +21,7 @@ export async function normalizeRequest(req: Request): Promise<Request> {
   return new Request(url, {
     method: req.method,
     headers: req.headers,
+    signal: req.signal,   // a client's leave reaches the route (`/events` frees its stream slot)
     ...(body === undefined ? {} : { body }),
   });
 }
