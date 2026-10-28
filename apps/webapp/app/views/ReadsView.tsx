@@ -42,7 +42,7 @@ import { useStreamWindow } from "../shell/stream-window";
 import { useKeyPanelOpensCard, useStreamBar } from "../shell/stream-bar";
 import { useBodyStamp } from "../shell/body-slice";
 import { useStreamNear } from "../shell/stream-near";
-import { afterPaint, useVisit } from "../shell/visit";
+import { afterPaint, useCursorFollowsTop, useVisit } from "../shell/visit";
 import { readLandedCard } from "../shell/stream-landing-read";
 import { waterlineStamp } from "../shell/format";
 import { useStreamInPlace } from "../shell/stream-in-place";
@@ -510,6 +510,7 @@ export function ReadsView({
    */
   const jumpRefs = useRef({ onCur, onJumped, jumpEnters });
   jumpRefs.current = { onCur, onJumped, jumpEnters };
+  useCursorFollowsTop(cur, jumpTo, all[0]?.id ?? null, onCur);
   /* The jump effect is [jumpTo]-keyed and reads its collaborators through refs; the pile
      index joins them for the same reason (a fresh Map identity per delta must not re-arm it). */
   const pileIndexOfRef = useRef(pileIndexOf);

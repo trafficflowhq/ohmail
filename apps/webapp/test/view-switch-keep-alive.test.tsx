@@ -153,6 +153,11 @@ let commits: Record<Pile, Array<{ upToId: string; messageIds: string[] }>> = { r
 /** What the list sweep (and a card's own dwell) marked, per pile. */
 let marked: Record<Pile, string[]> = { reads: [], receipts: [] };
 let render: (active: Pile | null, rows: Row[], jump?: { pile: Pile; id: string } | null) => Promise<void> = async () => {};
+/** Each pile's cursor, held as the shell holds it, for the cases that set `holdCur`; null and inert otherwise. */
+let curs: Record<Pile, string | null> = { reads: null, receipts: null };
+let holdCur = false;
+/** Every cursor move in order, for the same cases. */
+let curMoves: string[] = [];
 
 async function mountPiles(rows: Row[]): Promise<void> {
   const { ReadsView } = await import("../app/views/ReadsView.js");
@@ -162,35 +167,39 @@ async function mountPiles(rows: Row[]): Promise<void> {
   document.body.appendChild(host);
   root = createRoot(host);
   const bodyOf = (m: { snippet: string }) => ({ text: m.snippet, state: "snippet" });
+  let paint = (): void => {};
+  const onCurOf = (p: Pile) => (id: string) => { if (holdCur) { curs[p] = id; curMoves.push(id); paint(); } };
   render = async (active, list, jump = null) => {
-    const reads = h(ReadsView as never, {
-      settled: true, owed: false,
-      partition: { waterline: null, fresh: list.map((r) => msg(r, "ohmail/News")), seen: [], newCount: 0 },
-      tags: [], now: NOW, cur: null, onCur: () => {},
-      aiChip: null, chipState: null, onChipState: () => {}, markSeen: (id: string) => { marked.reads.push(id); },
-      onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.reads.push(c); },
-      bodyOf, hydrateBody: () => {}, onAction: () => {},
-      jumpTo: jump?.pile === "reads" ? jump.id : null, onJumped: () => {},
-    } as never);
-    const receipts = h(ReceiptsView as never, {
-      settled: true, owed: false, messages: list.map((r) => msg(r, "ohmail/Receipts")),
-      tags: [], now: NOW, cur: null, onCur: () => {},
-      unreadCount: list.filter((r) => r.unread).length, isUnread: (m: { unread: boolean }) => m.unread,
-      markSeen: (id: string) => { marked.receipts.push(id); },
-      onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.receipts.push(c); },
-      bodyOf, hydrateBody: () => {}, onAction: () => {},
-      jumpTo: jump?.pile === "receipts" ? jump.id : null, onJumped: () => {},
-    } as never);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
+    const tree = () => {
+      const reads = h(ReadsView as never, {
+        settled: true, owed: false,
+        partition: { waterline: null, fresh: list.map((r) => msg(r, "ohmail/News")), seen: [], newCount: 0 },
+        tags: [], now: NOW, cur: curs.reads, onCur: onCurOf("reads"),
+        aiChip: null, chipState: null, onChipState: () => {}, markSeen: (id: string) => { marked.reads.push(id); },
+        onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.reads.push(c); },
+        bodyOf, hydrateBody: () => {}, onAction: () => {},
+        jumpTo: jump?.pile === "reads" ? jump.id : null, onJumped: () => {},
+      } as never);
+      const receipts = h(ReceiptsView as never, {
+        settled: true, owed: false, messages: list.map((r) => msg(r, "ohmail/Receipts")),
+        tags: [], now: NOW, cur: curs.receipts, onCur: onCurOf("receipts"),
+        unreadCount: list.filter((r) => r.unread).length, isUnread: (m: { unread: boolean }) => m.unread,
+        markSeen: (id: string) => { marked.receipts.push(id); },
+        onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.receipts.push(c); },
+        bodyOf, hydrateBody: () => {}, onAction: () => {},
+        jumpTo: jump?.pile === "receipts" ? jump.id : null, onJumped: () => {},
+      } as never);
+      return h(NextIntlClientProvider, {
         locale: "en", messages, timeZone: "UTC", now: NOW,
         children: h(KeymapProvider as never, {
           children: h(React.Fragment, null,
             h(Activity, { mode: active === "reads" ? "visible" : "hidden", children: reads }),
             h(Activity, { mode: active === "receipts" ? "visible" : "hidden", children: receipts })),
         } as never),
-      }));
-    });
+      });
+    };
+    paint = () => root!.render(tree());
+    await act(async () => { paint(); });
     await act(async () => { vi.advanceTimersByTime(40); });
     const shown = active ? stream(active) : null;
     if (shown) note(shown);
@@ -242,6 +251,9 @@ beforeEach(() => {
   vi.stubGlobal("IntersectionObserver", MockIO);
   commits = { reads: [], receipts: [] };
   marked = { reads: [], receipts: [] };
+  curs = { reads: null, receipts: null };
+  holdCur = false;
+  curMoves = [];
   listGeometry = false;
   displayed = new Set();
   originalGetRect = Element.prototype.getBoundingClientRect;
@@ -326,6 +338,29 @@ for (const pile of ["reads", "receipts"] as const) {
       await render(other, TEN);
       await render(pile, TEN);
       expect(scrollTops.get(stream(pile)) ?? 0, "the revisit opened where the last visit left off").toBe(0);
+    });
+
+    it("the first j of a revisit steps from the letter the stream opens on, not the last visit's", async () => {
+      holdCur = true;
+      const press = async () => {
+        await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true })); });
+        await act(async () => { vi.advanceTimersByTime(100); });
+      };
+      await mountPiles(TEN);
+      await render(pile, TEN);
+      for (let i = 0; i < 3; i += 1) await press();
+      expect(curs[pile], "control: j steps the cursor").toBe("r3");
+      await render(other, TEN);
+      const later: Row[] = [...Array.from({ length: 5 }, (_, i) => ({ id: `n${i}`, unread: true })), ...TEN];
+      await render(other, later);
+      await render(pile, later);
+      expect(onScreen(stream(pile))[0], "control: the revisit opens on the newest letter").toBe("n0");
+      await press();
+      expect(curs[pile], "j continued from the last visit's cursor, past the new letters").toBe("n1");
+      await render(other, later);
+      curMoves = [];
+      await render(pile, later, { pile, id: "r6" });
+      expect(curMoves, "a revisit that arrives on a jump moved the cursor elsewhere first").toEqual(["r6"]);
     });
 
     it("pagehide commits the pile on screen once, and nothing for a hidden one", async () => {
