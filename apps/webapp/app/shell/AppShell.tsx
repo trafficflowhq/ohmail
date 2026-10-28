@@ -119,7 +119,7 @@ import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import { OhboxWhereLine } from "./OhboxWhereLine";
 import { useOhboxVisitMark } from "./ohbox-visit";
-import type { ApplyFaceAllDevices } from "./FaceRow";
+import { useFaceFollowsAccount, type ApplyFaceAllDevices } from "./FaceRow";
 import {
   ProfileImportCard, SavedProfileSection, settingsDoorbell, useProfileImport, type ProfileImportTransport,
 } from "./ProfileImportCard";
@@ -1322,36 +1322,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     void adoptLocale(accountLocale);
   }, [adoptLocale, accountLocale, activeLocale]);
   /**
-   * The account's face, adopted the same way — same `GET /consent` read, into
-   * `adoptAccountFace` (which mirrors it to storage so the next boot's init script stamps it
-   * pre-paint). Never a write: PATCHing back a value that came from the account is the loop
-   * `adoptLocale` warns about. Two deliberate differences from the locale effect: null IS
-   * adopted once known — it clears the device's mirror of a previous account answer, else a
-   * revoked choice keeps re-skinning this device from a stale copy; and the device's own
-   * explicit pin still outranks what is adopted (the provider's resolution order).
-   */
-  const adoptAccountFace = theme.adoptAccountFace;
-  const accountThemeFace = consent.themeFace;
-  /* `themeFaceKnown`, NOT `known` (review-caught): the boot cache can make `known` true with
-     the face still resting null, and adopting THAT null would wipe this device's mirror of
-     the account's real answer on every warm boot whose live read is slow. */
-  const themeFaceKnown = consent.themeFaceKnown;
-  const consentStandalone = consent.standalone;
-  useEffect(() => {
-    /* A STANDALONE door has no account, so it may not wear one (review-caught, desktop):
-       the provider outlives the desktop's door switch, and the departed cloud account's
-       adopted face — in memory AND in the `ohmail.face.account` mirror — would otherwise
-       skin the standalone mailbox, and the next relaunch, with an answer nobody on this
-       door ever gave. Adopting null clears both. The web never takes this arm (its cloud
-       client is always reachable); the device's own pin is untouched either way. */
-    if (consentStandalone) {
-      adoptAccountFace(null);
-      return;
-    }
-    if (!themeFaceKnown) return;
-    adoptAccountFace(accountThemeFace);
-  }, [adoptAccountFace, accountThemeFace, themeFaceKnown, consentStandalone]);
-  /**
    * Being woken, reconciled at boot — the sign-in counterpart of the sign-out revoke. Sign-out
    * drops this browser's push row; the channels in localStorage and the OS permission survive it
    * (a per-install preference), so signing back in showed every switch ON over no registration,
@@ -1399,7 +1369,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * no transport — the device pin is the whole of its appearance choice.
    */
   const applyFaceAllDevices: ApplyFaceAllDevices | null =
-    !demo && themeFaceKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;
+    !demo && consent.themeFaceKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;
+  const holdFaceForAccount = useFaceFollowsAccount(consent, applyFaceAllDevices); // the account's look (FaceRow.tsx)
   /**
    * REMEMBER THE RESURFACE TIME (mail 0110) — the account write the horizon chooser makes after
    * it has dispatched, folded to one nullable callback. Null on the demo (no session) and on a
@@ -3242,6 +3213,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
               <Suspense fallback={null}>
               <SettingsView
                 applyFaceAllDevices={applyFaceAllDevices}
+                holdFaceForAccount={holdFaceForAccount}
                 notifications={notifications}
                 tags={tags}
                 tagCounts={Object.fromEntries(

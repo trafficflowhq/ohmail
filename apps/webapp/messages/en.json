@@ -1548,6 +1548,7 @@
     "faceOhmarchy": "ohmarchy",
     "faceScopeAll": "Applies on all your devices.",
     "faceScopeDevice": "Applies on this device only.",
+    "faceScopeDefault": "This device's default until you choose a look.",
     "faceApplyAll": "Apply on all devices",
     "faceFailed": "Couldn't save that — try again.",
     "textSize": "Text size",

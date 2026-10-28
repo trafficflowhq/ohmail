@@ -9,14 +9,14 @@
  */
 
 /**
- * The segmented control is "only this device": it writes the DEVICE PIN through the ThemeProvider, instantly, no
- * server — identical on the demo, the desktop and a broken connection. The quiet line under it is "apply for all
- * devices": one press PATCHes the account, adopts the echo, and CLEARS the pin; a pinned device deliberately ignores
- * account changes made elsewhere, and the scope line says which state this device is in. The device flip cannot fail;
- * the account write rejects into a toast with the control still showing the device's real face.
+ * Signed in, the segmented control writes the ACCOUNT (one PATCH): the choice shows at once, the device pin is
+ * cleared, and every device of the account adopts it at start and on the settings doorbell, so the newest choice
+ * wins. A refused write puts the previous look back and says so. With no account wire (demo, standalone) the
+ * control is the device pin, as before. The one per-device behaviour left is the default before anybody chose
+ * (ohmarchy on Linux), and the scope line says so.
  */
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow, useTheme, useToast, type FaceName } from "@ohmail/ui";
 import { readOwner } from "./owner-cookie";
@@ -24,23 +24,111 @@ import { readOwner } from "./owner-cookie";
 /** The account write — `useConsentState().setThemeFace`, or null where no wire can store one. */
 export type ApplyFaceAllDevices = (face: FaceName) => Promise<FaceName | null>;
 
-export function FaceRow({ applyAllDevices }: { applyAllDevices: ApplyFaceAllDevices | null }) {
+/** What the shell's consent read says about the look. */
+type ConsentFace = { themeFace: FaceName | null; themeFaceKnown: boolean; standalone: boolean };
+
+/**
+ * The account's face, adopted from the `GET /consent` the shell already makes (and re-makes on
+ * the settings doorbell) into `adoptAccountFace`, which mirrors it for the next boot's pre-paint
+ * stamp. Never a write: PATCHing back a value read from the account is the loop `adoptLocale`
+ * warns about. Null IS adopted once known — it clears the mirror of a revoked choice. Where the
+ * account holds a look and this device can write it, the account governs: a pin an older build's
+ * control left retires. A press made before the account answered is the newest choice, so it is
+ * written to the account once it can be (a refused write keeps it as this device's pin). Returns
+ * the hold FaceRow reports such a press to.
+ */
+export function useFaceFollowsAccount(
+  consent: ConsentFace, apply: ApplyFaceAllDevices | null,
+): (face: FaceName) => void {
+  const t = useTranslations("settings");
+  const toast = useToast();
+  const { adoptAccountFace, accountFace, facePreference, setFace } = useTheme();
+  const { themeFace, themeFaceKnown, standalone } = consent;
+  useEffect(() => {
+    /* A STANDALONE door has no account, so it may not wear one (review-caught, desktop): the
+       provider outlives the desktop's door switch, and the departed account's face would skin
+       the standalone mailbox. `themeFaceKnown`, NOT `known` (review-caught): the boot cache can
+       make `known` true with the face still resting null, and adopting that null would wipe the
+       mirror on every warm boot whose live read is slow. */
+    if (standalone) adoptAccountFace(null);
+    else if (themeFaceKnown) adoptAccountFace(themeFace);
+  }, [adoptAccountFace, themeFace, themeFaceKnown, standalone]);
+  /** A press while the account could not be written, owed to it. */
+  const held = useRef<FaceName | null>(null);
+  /** That press after its write was refused: a pin that stays. */
+  const kept = useRef<FaceName | null>(null);
+  const latestAccount = useRef(accountFace);
+  latestAccount.current = accountFace;
+  const standaloneRef = useRef(standalone);
+  standaloneRef.current = standalone;
+  const hold = useCallback((face: FaceName) => {
+    held.current = standaloneRef.current ? null : face;
+  }, []);
+  useEffect(() => {
+    if (apply === null) return;
+    const owed = held.current;
+    held.current = null;
+    if (owed !== null && owed === facePreference) {
+      setFace(null);
+      if (owed === themeFace) return;
+      const owner = readOwner();
+      adoptAccountFace(owed);
+      apply(owed).catch(() => {
+        // A sign-out or a newer press since makes this refusal stale.
+        if (readOwner() !== owner || latestAccount.current !== owed) return;
+        adoptAccountFace(themeFace);
+        kept.current = owed;
+        setFace(owed);
+        toast(t("faceFailed"));
+      });
+      return;
+    }
+    if (facePreference === null) kept.current = null;
+    else if (themeFace !== null && facePreference !== kept.current) setFace(null);
+  }, [apply, themeFace, facePreference, setFace, adoptAccountFace, toast, t]);
+  return hold;
+}
+
+export function FaceRow({ applyAllDevices, holdForAccount }: {
+  applyAllDevices: ApplyFaceAllDevices | null;
+  /** From {@link useFaceFollowsAccount}: a device press it writes to the account once it can. */
+  holdForAccount?: (face: FaceName) => void;
+}) {
   const t = useTranslations("settings");
   const toast = useToast();
   const { face, facePreference, accountFace, setFace, adoptAccountFace } = useTheme();
   /** Local, so a rejection can be reported without any shared flag owning the message. */
   const [saving, setSaving] = useState(false);
-  /* The CURRENT pin, readable at completion time (review-caught): the success handler runs
-     whenever the PATCH resolves, and the closure's `face` is the value at press time — a
-     newer segmented-control choice or a sign-out may have moved the world since. */
-  const pinNow = useRef<FaceName | null>(facePreference);
-  pinNow.current = facePreference;
+  /** The newest press; an older write's completion applies nothing. */
+  const press = useRef(0);
 
   /* "Applies on all your devices" may only be claimed when the account really governs this
-     device: the stored account face matches AND no device pin outranks it. A pin equal to the
-     account's value still pins — an account change made elsewhere would not reach here — so it
-     keeps the apply-all affordance, which normalises the redundancy away. */
+     device: the stored account face matches AND no device pin outranks it. */
   const accountGoverns = accountFace === face && facePreference === null;
+
+  const writeAccount = (apply: ApplyFaceAllDevices, submitted: FaceName): void => {
+    const mine = ++press.current;
+    const owner = readOwner();
+    const before = { account: accountFace, pin: facePreference };
+    adoptAccountFace(submitted);
+    setFace(null);
+    setSaving(true);
+    /* A sign-out (the sweep cleared the mirror) or a newer press makes this completion stale. */
+    const current = (): boolean => press.current === mine && readOwner() === owner;
+    apply(submitted)
+      .then((stored) => {
+        if (current()) adoptAccountFace(stored); // the echo, not the argument
+      })
+      .catch(() => {
+        if (!current()) return;
+        adoptAccountFace(before.account);
+        setFace(before.pin);
+        toast(t("faceFailed"));
+      })
+      .finally(() => {
+        if (press.current === mine) setSaving(false);
+      });
+  };
 
   return (
     <>
@@ -51,10 +139,12 @@ export function FaceRow({ applyAllDevices }: { applyAllDevices: ApplyFaceAllDevi
           <SegmentedControl<FaceName>
             ariaLabel={t("faceAria")}
             value={face}
-            /* Device-local and instant — the "only this device" scope. Never the account. */
             onChange={(next) => {
               if (next === face) return;
-              setFace(next);
+              if (applyAllDevices === null) {
+                setFace(next);
+                holdForAccount?.(next);
+              } else writeAccount(applyAllDevices, next);
             }}
             className="face-seg"
             options={[
@@ -70,37 +160,12 @@ export function FaceRow({ applyAllDevices }: { applyAllDevices: ApplyFaceAllDevi
         </div>
       ) : (
         <div className="face-scope">
-          <span>{t("faceScopeDevice")}</span>
+          <span>{t(accountFace === null && facePreference === null ? "faceScopeDefault" : "faceScopeDevice")}</span>
           <button
             type="button"
             disabled={saving}
             onClick={() => {
-              if (saving) return;
-              setSaving(true);
-              const submitted = face;
-              const owner = readOwner();
-              applyAllDevices(submitted)
-                .then((stored) => {
-                  /* STALE COMPLETIONS APPLY NOTHING (review-caught). Two ways this resolve
-                     can be late: the person signed out (the sweep already cleared the face
-                     mirror — recreating it would hand the next account the departed one's
-                     answer), or they made a NEWER device choice while the PATCH flew (a
-                     `setFace(null)` now would erase a choice this write knows nothing
-                     about). The write itself happened on the server either way; only this
-                     device's state refuses the echo. */
-                  if (readOwner() !== owner) return;
-                  /* The ECHO, then the pin: adopt what the database now holds (also mirrored
-                     for the next boot's pre-paint stamp), and clear the pin so the account
-                     governs here too — but only the pin this press was made under. */
-                  adoptAccountFace(stored);
-                  if (pinNow.current === submitted || pinNow.current === null) setFace(null);
-                })
-                .catch(() => {
-                  toast(t("faceFailed"));
-                })
-                .finally(() => {
-                  setSaving(false);
-                });
+              if (!saving) writeAccount(applyAllDevices, face);
             }}
           >
             {t("faceApplyAll")}

@@ -1548,6 +1548,7 @@
     "faceOhmarchy": "ohmarchy",
     "faceScopeAll": "Gilt auf allen deinen Geräten.",
     "faceScopeDevice": "Gilt nur auf diesem Gerät.",
+    "faceScopeDefault": "Standard dieses Geräts, bis du einen Stil wählst.",
     "faceApplyAll": "Auf allen Geräten anwenden",
     "faceFailed": "Das ließ sich nicht speichern — versuch es nochmal.",
     "textSize": "Textgröße",
