@@ -94,7 +94,7 @@ import { importOverOf, type OnboardingFacts } from "./onboarding";
 import { firstRunImportOver, useFirstRunQueueSettle } from "./first-run-queue-settle";
 import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
-import { useJunkWindow, type JunkWire } from "./junk-window";
+import { useJunkPileKey, useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
 import { syncMayRead } from "./sync-scheduler";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
@@ -1629,16 +1629,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   /**
    * THE LIVE JUNK WINDOW (FOLDERS-SPEC.md §16.2) — the Screener's third segment, flag-on.
    *
-   * The hook is called unconditionally (it is a hook); what is CONDITIONAL is `active` and `warm`:
-   * the page and the preview are read when the Screener opens, so the segment's first entry draws
-   * them at once; nothing is fetched while "Use folders" is off, in the demo, or away from the
-   * Screener. The PROP below is gated the same way plus on `autoOptIn.supported` (the shell's
+   * The hook is called unconditionally (it is a hook); what is CONDITIONAL is its flags: the page and
+   * the preview are read when the shell comes up and after a letter enters or leaves the spam pile
+   * (`keep`), so no Screener or Spam entry waits on a dial; nothing is read with "Use folders" off or
+   * in the demo. The PROP below is gated the same way plus on `autoOptIn.supported` (the shell's
    * one answer to "is there a server to ask", the same read the suggest control uses): absent,
    * `ScreenerView` renders the flag-off segment byte-identically to before the window existed
    * (§16.7).
    */
-  const junkOnScreener = !demo && consent.foldersEnabled && !seedOwed && route.view === "screener";
-  const junkWindow = useJunkWindow(junkOnScreener && route.screenerSegment === "spam", toast, junkWire, junkOnScreener);
+  const junkOn = !demo && consent.foldersEnabled && !seedOwed;
+  const junkOnScreener = junkOn && route.view === "screener";
+  const junkKeep = { on: junkOn, moved: useJunkPileKey(junkOn) };
+  const junkWindow = useJunkWindow(junkOnScreener && route.screenerSegment === "spam", toast, junkWire, junkOnScreener, junkKeep);
   /**
    * WHAT TO SAY ABOUT THE PROVIDER'S JUNK FOLDER, and whether to offer the way in — the honest
    * half of JUNK-INVISIBLE, read by the rail's folders group and by search's empty state. The
