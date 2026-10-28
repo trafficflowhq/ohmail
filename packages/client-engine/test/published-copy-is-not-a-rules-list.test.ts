@@ -9,10 +9,11 @@ import { lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 /**
  * THE ORGANIZER'S PUBLISHED COPY IS NOT A RULES LIST (ARCH-RULES-PAGE-INVARIANT §0, amended): a
- * press names only local entities. `mailbox_profile` decides whose rules a HELD mailbox's mail is
- * judged by (the consent index and the press readings built on it), and one reader lists it for a
- * reader-only Rules page, `rules-shown.ts`, which hands every row a local id or none (doorless) and
- * lays the device's applied presses over it. Any other surface listing the published copy as rules
+ * press names a local entity or, reader-only, a published rule by its key, relayed with nothing
+ * written here. `mailbox_profile` decides whose rules a HELD mailbox's mail is judged by (the
+ * consent index and the press readings built on it), and one reader lists it for a reader-only
+ * Rules page and the presses planned over it, `rules-shown.ts`, which hands every row a local id
+ * or its key and lays the device's applied presses over it. Any other surface listing the published copy as rules
  * is the false state VERIFY-026 measured, so every reader is named here with its reason, and the
  * rules page, the phone's UI and `enrich` are refused outright. Read in one pass, comments blanked;
  * a planted view proves the refusal.
@@ -25,7 +26,7 @@ const SKIP = new Set(["node_modules", "dist", ".next"]);
 const ADMITTED: Record<string, string> = {
   "packages/client-engine/src/consent-cutline.ts": "the definition, and the consent index judging a held mailbox's mail",
   "packages/client-engine/src/press-forecast.ts": "a press's forecast through the consent index",
-  "packages/client-engine/src/rules-shown.ts": "a reader-only Rules page's list: the copy, local ids or doorless rows, applied presses laid over it",
+  "packages/client-engine/src/rules-shown.ts": "a reader-only Rules page's list and the presses planned over it: the copy, local ids or, reader-only, a published rule by its key, applied presses laid over it",
   "apps/webapp/app/shell/press-verdict.ts": "what a press did, read through `pressOutcome`'s consent reading",
   "apps/webapp/app/shell/sender-screening.ts": "the sender sheet's consent index (where the sender's mail is judged)",
   "apps/mobile/src/state/live.ts": "`pressOutcome`'s `profiles:`, the consent reading of a press",

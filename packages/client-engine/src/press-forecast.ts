@@ -10,6 +10,7 @@ import {
 import { mutationEffects, type MutationEffect } from "./mutations.js";
 import type { ScreenIntent } from "./routing-intents.js";
 import { oneRowPerKey, pressOverTwins, ruleTwins, twinWinner } from "./rule-twins.js";
+import { pressRuleId } from "./rules-shown.js";
 import { rulesList, senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import { FOLDER_OF_VIEW, type EngineMessage, type EngineMutation, type Folder, type RuleDTO } from "./types.js";
@@ -150,6 +151,8 @@ export interface PressInput {
   /** The letter the press was made on: it moves itself at the press ({@link PressOutcomeForecast.seedMove}). */
   seedId?: string;
   now: Date;
+  /** The rules the press plans over (`pressRules`); absent, the local rows. */
+  rules?: readonly RuleDTO[];
 }
 
 /**
@@ -198,7 +201,7 @@ export interface PressForecast {
  * `consentPartition` and attributed by its `messagePlacement`.
  */
 export function pressForecast(input: PressInput): PressForecast {
-  const rules = rulesList(input.reader);
+  const rules = input.rules ?? rulesList(input.reader);
   const place = canonicalDestination(input.wanted);
   const base: EngineMutation[] = input.decide
     ? [input.decide]
@@ -240,7 +243,7 @@ function simulate(input: PressInput, writes: readonly EngineMutation[]): Simulat
   let reader = input.reader;
   const sent: EngineMutation[] = [];
   for (const w of writes) {
-    const lifted = outrankCoveringDomains(rulesList(reader), w);
+    const lifted = outrankCoveringDomains(input.rules ?? rulesList(reader), w);
     sent.push(w);
     reader = readerWithEffects(reader, mutationEffects(reader, lifted, ctx));
   }
@@ -402,10 +405,12 @@ function resolutionWrites(groups: readonly ConflictGroup[], input: PressInput): 
   const out: EngineMutation[] = [];
   for (const rule of oneRowPerKey(writable.map((g) => g.rule))) {
     const t = ruleTerms(rule);
+    // A copy's rule is named as the press list names it: a local row, or its key.
+    const ruleId = input.rules ? pressRuleId(rule, input.rules) : rule.id;
     if (causeOfRule.get(rule.id) === "own-rule-inside" && t.subject === null && t.body === null) {
-      out.push({ kind: "rule_update", ruleId: rule.id, destination: input.wanted, applyRetro: input.applyRetro });
+      out.push({ kind: "rule_update", ruleId, destination: input.wanted, applyRetro: input.applyRetro });
     } else {
-      out.push({ kind: "rule_delete", ruleId: rule.id });
+      out.push({ kind: "rule_delete", ruleId });
     }
   }
   return out;
@@ -529,8 +534,10 @@ export function rulesInPlay(input: {
  */
 export function planScreenCommit(
   reader: EntityReader, intent: ScreenIntent,
+  /** The rules the press plans over (`pressRules`): a shown rule is found by id, then by what it said. */
+  over?: readonly RuleDTO[],
 ): { writes: EngineMutation[]; changed: string[] } {
-  const rules = rulesList(reader);
+  const rules = over ?? rulesList(reader);
   const wanted = FOLDER_OF_VIEW[intent.dest];
   const match = senderKey(intent.address);
   const writes: EngineMutation[] = intent.makeRule
@@ -540,7 +547,7 @@ export function planScreenCommit(
   if (intent.resolution === "remove") {
     const removable: RuleDTO[] = [];
     for (const s of intent.shown) {
-      const r = rules.find((x) => x.id === s.id);
+      const r = rules.find((x) => x.id === s.id) ?? (over ? rules.find((x) => ruleFingerprint(x) === s.fp) : undefined);
       if (!r || ruleFingerprint(r) !== s.fp) { changed.push(s.id); continue; }
       // Only a term rule about this address is the press's to remove; anything else shown stays.
       const t = ruleTerms(r);
@@ -548,7 +555,7 @@ export function planScreenCommit(
       removable.push(r);
     }
     // A DELETE takes every row under its key: one per key.
-    for (const r of oneRowPerKey(removable)) writes.push({ kind: "rule_delete", ruleId: r.id });
+    for (const r of oneRowPerKey(removable)) writes.push({ kind: "rule_delete", ruleId: over ? pressRuleId(r, rules) : r.id });
   }
   return { writes, changed };
 }

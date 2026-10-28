@@ -252,6 +252,7 @@ export {
   type RuleDTO,
   type WaitingRequestWire,
   type WaitingTargetWire,
+  type RuleKeyAddress,
   type ScreenerHeldMail,
   type ScreenerSegment,
   type ScreenerSenderDTO,
@@ -314,6 +315,8 @@ export {
   ruleTwins,
   twinWinner,
   oneRowPerKey,
+  heldRuleId,
+  heldRuleKey,
   type TwinPress,
   type TwinPressState,
 } from "./rule-twins.js";
@@ -749,6 +752,7 @@ export {
   // A rule verb waiting on this client's queue, for the rules surface.
   type QueuedRuleWrite,
   type AppliedRuleRequest,
+  type UnsettledRulePress,
   type WaitingOnOrganizerView,
   // Cancel's vocabulary: what a withdrawal found, and the refusal code a withdrawn verb settles
   // with — a surface reads the code to say nothing rather than "it failed".
@@ -982,7 +986,7 @@ export { outrankCoveringDomains } from "./address-rank.js";
 // A rule's `match` as every reader keys it — the router's and the queue SQL's key, spaces only.
 export { ruleMatchKey } from "@trafficflow/core/rule-order";
 export { PROFILE_APPLIED_MAX, PROFILE_RULES_SENT_MAX } from "./profile-bound.js";
-export { rulesShown, type RulesShown } from "./rules-shown.js";
+export { pressRuleId, pressRules, rulesShown, type RulesShown } from "./rules-shown.js";
 export {
   pressGained,
   pressOutcome,

@@ -43,6 +43,7 @@ import {
   liveReads,
   liveReceipts,
   liveScreener,
+  phoneRulesTravel,
   presentedOf,
   stableActions,
   waitingAfterDecide,
@@ -1291,5 +1292,38 @@ describe("the sheet's rules on a mailbox this install only reads", () => {
     } finally {
       fake.server.close();
     }
+  });
+});
+
+describe("the phone sheet plans a press over the organizer's copy where the change travels there", () => {
+  it("a stale row here says Ohbox, the organizer files News: the Ohbox press rewrites the rule", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    try {
+      fake.addRule({ ...ruleDto("local-1", "sender", "sender@fake.test", "INBOX"), provenance: "manual" });
+      fake.addMessage(dto("m1", { subject: "Letter", folder: "ohmail/News" }));
+      const at = "2026-08-19T09:00:00Z";
+      fake.push("mailbox_profile", "create", "mb-1", {
+        mailboxId: "mb-1", rules: [ruleDto("profile:mb-1:0", "sender", "sender@fake.test", "ohmail/News")],
+        asOf: at, from: { kind: "local", name: "Laptop", since: null }, updatedAt: at, applied: [],
+      });
+      const here = await liveWorldOn(fake, origin);
+      expect(here.actions.screeningForecast("m1", "ohbox", "sender", false)?.keep.writes, "over this device's row").toEqual([]);
+      here.store.close();
+      const travels = await liveWorldOn(fake, origin, { rulesTravel: () => true });
+      expect(travels.actions.screeningForecast("m1", "ohbox", "sender", false)?.keep.writes)
+        .toEqual([{ kind: "rule_update", ruleId: "local-1", destination: "INBOX", applyRetro: false }]);
+      travels.store.close();
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("phoneRulesTravel: every mailbox read here with a live holder, and nothing else", () => {
+    const held = { organizerRole: "reader" as const, organizedBy: { kind: "local", name: "Laptop" }, organizerState: "held" as const };
+    expect(phoneRulesTravel([held, held])).toBe(true);
+    expect(phoneRulesTravel([held, { ...held, organizerRole: "organizer" as const }])).toBe(false);
+    expect(phoneRulesTravel([{ ...held, organizerState: "stopped" as const }])).toBe(false);
+    expect(phoneRulesTravel([])).toBe(false);
   });
 });

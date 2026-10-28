@@ -7,13 +7,14 @@ import {
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
 import {
-  MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, RULE_PRIORITY_MAX, ruleMatchKey, sharedProviderAllowRefusal,
+  MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS, PUBLISHED_RULE_ID, RULE_PRIORITY_MAX, compareTwins,
+  effectForDestination, ruleMatchKey, sharedProviderAllowRefusal,
 } from "@trafficflow/core/rule-order";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
 import { dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
-import { materializeRule } from "./dto/materialize.js";
+import { mailboxProfileRowToDTO, mailboxProfileRows, materializeRule } from "./dto/materialize.js";
 import {
   planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutRefusal,
 } from "./reader-request.js";
@@ -90,6 +91,11 @@ export type PatchRuleBody = Partial<CreateRuleBody> & {
    * else (`rule-retro.ts`, the refile walk). Only with `applyRetro: false` and a destination.
    */
   refile?: boolean;
+  /**
+   * A PUBLISHED RULE'S KEY, only at {@link PUBLISHED_RULE_ID}: a reader-only install's change of a
+   * rule the organizer's copy lists and this install holds no row for. Relayed, never written here.
+   */
+  key?: unknown;
 };
 
 /**
@@ -279,6 +285,29 @@ function keyFields(r: { kind: string; match: string; subjectContains: string | n
 
 function sameRuleKey(a: RuleKey, b: RuleKey): boolean {
   return a.kind === b.kind && a.match === b.match && a.subjectContains === b.subjectContains && a.bodyContains === b.bodyContains;
+}
+
+/**
+ * THE PUBLISHED RULE UNDER A KEY: among the entries of every organizer copy this install reads
+ * (account-scoped on both tables), the first in twin order. Its spelling is what travels.
+ */
+async function publishedRuleUnderKey(db: Db, accountId: string, key: RuleKeyFields): Promise<RuleDTO | null> {
+  const want = keyFields(key);
+  const found: RuleDTO[] = [];
+  for (const row of await mailboxProfileRows(db, accountId)) {
+    for (const r of mailboxProfileRowToDTO(row)?.rules ?? []) {
+      const k = keyFields({ ...r, subjectContains: r.subjectContains ?? null, bodyContains: r.bodyContains ?? null });
+      if (sameRuleKey(k, want)) found.push(r);
+    }
+  }
+  const ordered = (r: RuleDTO) => ({ ...r, effect: effectForDestination(canonicalDestination(r.destination)) });
+  found.sort((a, b) => compareTwins(ordered(a), ordered(b)));
+  return found[0] ?? null;
+}
+
+/** A key press where this install organizes a mailbox: its rows are the rule, so the id door is the one. */
+function ruleRunsHere(): ServiceError {
+  return new ServiceError("rule_runs_here", 409, "this install organizes a mailbox of the account; change the rule by its id");
 }
 
 /**
@@ -508,6 +537,44 @@ export class RulesService {
   }
 
   /**
+   * THE KEY A PUBLISHED-RULE PRESS NAMES, checked in the door's order: only where nothing is
+   * written here (409 `rule_runs_here`, never a 404 an adapter reads as a done delete), only at
+   * {@link PUBLISHED_RULE_ID}, and only a well-formed four-field key (400).
+   */
+  private keyAddress(plan: AccountFanOut, id: string, raw: unknown): RuleKeyFields {
+    if (plan.writeLocally) throw ruleRunsHere();
+    const bad = (why: string) => new ServiceError("validation_failed", 400, why);
+    if (id !== PUBLISHED_RULE_ID) throw bad("a rule key is accepted only at the published rule's address");
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw bad("key must name kind, match, subjectContains and bodyContains");
+    const k = raw as Record<string, unknown>;
+    const kind = this.validKind(k.kind);
+    if (typeof k.match !== "string" || ruleMatchKey(k.match) === "") throw bad("key.match is required");
+    const term = (v: unknown, max: number, name: string): string | null => {
+      if (v === undefined || v === null) return null;
+      if (typeof v !== "string" || v.trim() === "" || v.length > max) throw bad(`key.${name} must be null or a term of at most ${max} characters`);
+      if (kind !== "sender") throw bad(`key.${name} is only valid on a sender rule`);
+      return v;
+    };
+    return {
+      kind, match: k.match,
+      subjectContains: term(k.subjectContains, MAX_SUBJECT_CONTAINS_CHARS, "subjectContains"),
+      bodyContains: term(k.bodyContains, MAX_BODY_CONTAINS_CHARS, "bodyContains"),
+    };
+  }
+
+  /** The published rule a key names, in the copy's spelling, or 404 when no copy this install reads lists it. */
+  private async publishedUnder(
+    tx: Tx, ctx: ServiceContext, key: RuleKeyFields,
+  ): Promise<RuleKeyFields & { destination: string; enabled: boolean }> {
+    const r = await publishedRuleUnderKey(asDb(tx), ctx.accountId, key);
+    if (!r) throw new ServiceError("not_found", 404, "no organizer's copy lists this rule");
+    return {
+      kind: r.kind, match: r.match, subjectContains: r.subjectContains ?? null, bodyContains: r.bodyContains ?? null,
+      destination: r.destination, enabled: r.enabled,
+    };
+  }
+
+  /**
    * A retried PATCH used to re-run the UPDATE, append a SECOND `change_log` row and
    * answer a DIFFERENT `X-Sync-Seq`. It cannot duplicate a rule (it addresses an existing
    * id), so the damage is churn rather than data: every synced client is woken for a delta
@@ -562,11 +629,37 @@ export class RulesService {
      */
     const retroAsked = patch.applyRetro === true;
     const refile = this.validRefile(patch);
+    const keyed = id === PUBLISHED_RULE_ID || patch.key !== undefined;
 
     return withAccountTx(ctx, async (tx) => {
       // Fence, then the rule-key lock before the first `rules` statement: this door reads the key's
       // rows to decide which of them go, and the create door reconciles them under the same lock.
       await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
+      if (keyed) {
+        /* A PUBLISHED RULE BY ITS KEY: relayed to every holder, nothing written here. */
+        const plan = await planAccountFanOut(bridgeTx(tx), ctx.accountId, "rule.update");
+        const key = this.keyAddress(plan, id, patch.key);
+        assertSetIsNotAKeyChange(set);
+        const before = await this.publishedUnder(tx, ctx, key);
+        if ((set.enabled ?? before.enabled) === true && (set.enabled === true || set.destination !== undefined)) {
+          refuseSharedProviderAllowRule({
+            kind: before.kind, match: before.match, destination: (set.destination as string | undefined) ?? before.destination,
+          });
+        }
+        const pauseOnly = patch.enabled === false && !retroAsked
+          && Object.keys(set).every((k) => k === "updatedAt" || k === "enabled");
+        if (!pauseOnly) await refuseOwnAddressRule(bridgeTx(tx), ctx.accountId, before);
+        const travel = await fanOutRuleEdit(
+          bridgeTx(tx), ctx, plan, "rule.update",
+          ruleRequestPayload(before, {
+            ...(set.destination === undefined ? {} : { destination: ruleDestinationWord(set.destination as string) }),
+            ...(set.priority === undefined ? {} : { priority: set.priority }),
+            ...(set.enabled === undefined ? {} : { enabled: set.enabled }),
+          }, patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance, refile),
+          at,
+        );
+        return this.claimRequestReplay(tx, ctx, opts, { pending: true, travel });
+      }
       /**
        * A READER'S ACCOUNT WRITES NO RULES (mail 0083). A rule is not a note: `evaluateRules`
        * routes and `rule-retro.ts` re-files, both on the organizer's authority — a rule written
@@ -839,12 +932,19 @@ export class RulesService {
    */
   async remove(
     ctx: ServiceContext, id: string,
-    opts: { idempotency?: RuleIdempotency | null } = {},
+    opts: { idempotency?: RuleIdempotency | null; key?: unknown } = {},
   ): Promise<RuleRemoval | RuleRequestResult> {
     const at = ctx.now();
     const out = await withAccountTx(ctx, async (tx): Promise<RuleRemoval | RuleRequestResult> => {
       // Fence, then the rule-key lock before the first `rules` statement — every writer's order.
       await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
+      if (id === PUBLISHED_RULE_ID || opts.key !== undefined) {
+        /* A PUBLISHED RULE BY ITS KEY: the removal is asked of every holder, nothing removed here. */
+        const plan = await planAccountFanOut(bridgeTx(tx), ctx.accountId, "rule.delete");
+        const before = await this.publishedUnder(tx, ctx, this.keyAddress(plan, id, opts.key));
+        const travel = await fanOutRuleEdit(bridgeTx(tx), ctx, plan, "rule.delete", ruleRequestPayload(before), at);
+        return this.claimRequestReplay(bridgeTx(tx), ctx, opts, { pending: true, travel });
+      }
       /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (0083, then 0094) -----
        *
        * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog

@@ -74,6 +74,8 @@ import {
   keptRecipients,
   liveActions,
   planHeldRouting,
+  phonePressRules,
+  phoneRulesTravel,
   presentedOptions,
   routingReversal,
   sayRoutingReplay,
@@ -1351,7 +1353,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     openRoutingSession({
       windowMs: UNDO_MS,
       journal,
-      plan: (intent) => planHeldRouting(engine.read(), intent, (changed) => noteScreenChanged(intent.id, changed)),
+      plan: (intent) => planHeldRouting(engine.read(), intent, (changed) => noteScreenChanged(intent.id, changed),
+        phonePressRules(engine, phoneRulesTravel(mailboxesNow.current ?? []), new Date())),
       dispatch: (mutations, intent) => dispatchHeldRouting(engine, mutations, intent, {
         // A sheet press reads its list back itself, and says the refusal with it.
         answered: (answers) => answerScreenPress(intent.id, mutations, answers),
@@ -1397,6 +1400,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         locale: () => activeLocale(),
         ownAddresses: () => addressesNow.current,
         /* A READER ROW ON THIS ROSTER: piles and tags there wait for the server's answer. */
+        rulesTravel: () => phoneRulesTravel(mailboxesNow.current ?? []),
         readsOnly: (mailboxId) => {
           const row = mailboxesNow.current?.find((m) => m.id === mailboxId);
           return row?.organizerRole === "reader"

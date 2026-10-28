@@ -3972,7 +3972,6 @@
     "profileBound": "Deine anderen Computer bekommen deine neuesten {max, number} Regeln; {count, plural, one {1 ältere bleibt} other {# ältere bleiben}} auf diesem.",
     "introHeld": "{holder} organisiert deine Mails; das sind die Regeln, nach denen dort abgelegt wird. Was du hier änderst, geht an {holder}.",
     "introCopy": "Das sind die Regeln, die {holder} zuletzt veröffentlicht hat.",
-    "madeOnHolder": "Auf {holder} erstellt; dort änderst oder hebst du sie auf.",
     "profileBoundHeld": "Von {holder} kommen die neuesten {max, number} Regeln; ältere sind hier nicht aufgeführt."
   },
   "drafts": {

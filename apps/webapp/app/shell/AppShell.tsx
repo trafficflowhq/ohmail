@@ -1966,7 +1966,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
     revokeRule, rulePastMailOf, screeningForecast, screeningRules, tagAdmin, toggleTag,
   } = useShellVerbs({
-    engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesReaderOnly,
+    engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesTravel: rulesPosture.mode === "pending",
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor,
@@ -3250,7 +3250,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 rules={{
                   items: shownRules.rules, waiting: rulesWaiting, queued: rulesQueued, mailboxLabel: mailboxLabelOf, onRevoke: revokeRule,
                   onRetarget: retargetRule, pastMail: rulePastMailOf, posture: rulesPosture,
-                  source: shownRules.source, doorless: shownRules.doorless, holder: shownRules.holder,
+                  source: shownRules.source, holder: shownRules.holder,
                 }}
                 /* Rename and delete. Not gated on `demo`, unlike the four injected panes:
                    both are ordinary engine mutations, so the FixturesAdapter serves them out

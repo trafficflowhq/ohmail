@@ -245,17 +245,13 @@ export interface RulesViewProps {
   queued?: readonly QueuedRuleWrite[];
   /** `published`: `rules` is the organizer's copy (`rulesShown`), made and changed on `holder`. */
   source?: "local" | "published";
-  /** Rows no press here can name: listed, without controls. */
-  doorless?: ReadonlySet<string>;
   /** The organizer's name, where it has one. */
   holder?: string | null;
 }
 
-const NO_ROWS: ReadonlySet<string> = new Set();
-
 export function RulesView({
   rules: allRules, onRevoke, onRetarget, pastMail, posture, waiting = [], mailboxLabel, queued = [],
-  source = "local", doorless = NO_ROWS, holder = null,
+  source = "local", holder = null,
 }: RulesViewProps) {
   const published = source === "published";
   /* ONE ROW PER KEY, the twin the router runs; the rest are counted on it and go with it. */
@@ -567,8 +563,8 @@ export function RulesView({
 
   const showSearch = rules.length >= 2;
   const showFacets = groups.length >= 2;
-  /* A rule whose verb is still queued here is not revoked again by the bulk press, nor one no press names. */
-  const bulkable = filtered.filter((r) => !queuedOn.has(r.id) && !doorless.has(r.id));
+  /* A rule whose verb is still queued here is not revoked again by the bulk press. */
+  const bulkable = filtered.filter((r) => !queuedOn.has(r.id));
   const showBulk = bulkable.length >= 2;
 
   /** One rule's row and its confirm. `index` is its slot; `size`/`position` place it in its group. */
@@ -590,7 +586,6 @@ export function RulesView({
     const twins = copies.get(rule.id) ?? 0;
     const behind = others.get(rule.id) ?? [];
     const inert = sharedProviderInert(rule);
-    const held = doorless.has(rule.id);
     // Twins filing elsewhere, or paused where this row runs, are rules of their own: named, not counted.
     const twinNote = twins === 0 ? null : twinsDiffer(rule, behind)
       ? t("otherTwins", {
@@ -601,7 +596,7 @@ export function RulesView({
     return (
       <Fragment key={rule.id}>
         <div
-          className={`rules-item${openHere ? " editing" : ""}${waits || queuedLine || rank || twins > 0 || inert || held ? " noted" : ""}`}
+          className={`rules-item${openHere ? " editing" : ""}${waits || queuedLine || rank || twins > 0 || inert ? " noted" : ""}`}
           data-rule-id={rule.id}
           data-index={index}
           role="listitem"
@@ -619,7 +614,7 @@ export function RulesView({
               </span>
             ) : null}
             {/* The way back sits under the sentence it answers, not beside Change and Revoke. */}
-            {rank?.kind === "outranked" && !held ? (
+            {rank?.kind === "outranked" ? (
               <Button variant="ghost" className="rules-lift" disabled={lockedWhy !== null || q !== undefined} onClick={() => lift(rule)}>
                 {t("liftAction")}
               </Button>
@@ -630,13 +625,12 @@ export function RulesView({
               </span>
             ) : null}
             {twinNote ? <span className="meta rules-copies">{twinNote}</span> : null}
-            {held ? <span className="meta rules-held" data-held="">{t("madeOnHolder", { holder: holderName })}</span> : null}
             {waits ? <span className="meta rules-waits" role="status">{waits}</span> : null}
             {queuedLine ? (
               <span className="meta rules-waits" role="status" data-queued={q!.serverFailed ? "failing" : "unsent"}>{queuedLine}</span>
             ) : null}
           </span>
-          {held ? null : <span className="acts">
+          <span className="acts">
             <Button
               variant="ghost"
               disabled={lockedWhy !== null || q !== undefined}
@@ -668,7 +662,7 @@ export function RulesView({
             >
               {t("revoke")}
             </Button>
-          </span>}
+          </span>
         </div>
 
         {openHere && open.mode === "revoke" ? (

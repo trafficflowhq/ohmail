@@ -5,11 +5,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  MemoryMirrorStore, consentPartition, rulesInPlay, type EngineMessage, type RuleDTO, type SyncChange,
+  MemoryMirrorStore, consentPartition, heldRuleId, pressRules, rulesInPlay, type EngineMessage, type RuleDTO, type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { ruleMatchOf, senderScreening, type ScreeningScope } from "../app/shell/sender-screening";
+import { planScreeningChange, ruleMatchOf, senderScreening, type ScreeningScope } from "../app/shell/sender-screening";
 
 /**
  * WHERE A SENDER'S MAIL GOES IS THEIR RULE, NOT WHERE THEIR LETTERS SIT. Tester round 24: two of
@@ -118,5 +118,41 @@ describe("the sender sheet reads the sender's rule", () => {
     );
     expect(marked(el)).toEqual(["reads"]);
     expect(el.querySelector(".sm-rules"), "a single rule that places everything says nothing new").toBeNull();
+  });
+});
+
+describe("on a reader-only install the sheet plans over the organizer's copy", () => {
+  it("a stale row of this device says the Ohbox, the organizer files News: the Ohbox press rewrites the rule", async () => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const copy = { mailboxId: "mb", rules: [rule("profile:mb:0", "ohmail/News")], asOf: NOW.toISOString(), from: { kind: "local", name: "Host", since: null }, updatedAt: NOW.toISOString(), applied: [] };
+    await store.applyChanges([
+      { type: "message", op: "create", id: "a", seq: ++seq, updatedAt: NOW.toISOString(), entity: msg("a", "ohmail/News") },
+      { type: "rule", op: "create", id: "local-1", seq: ++seq, updatedAt: NOW.toISOString(), entity: rule("local-1", "INBOX") },
+      { type: "mailbox_profile", op: "create", id: "mb", seq: ++seq, updatedAt: NOW.toISOString(), entity: copy },
+    ] as SyncChange[]);
+    const placeOf = consentPartition(store, { now: NOW }).placeOf;
+    const stale = planScreeningChange(senderScreening(store, "a", undefined, placeOf)!, "ohbox", "sender", true, false);
+    expect(stale.ruleState, "over the device's own row").toBe("already");
+    const over = pressRules(store, { travels: true, queued: [], applied: [], unsettled: [], now: NOW });
+    const plan = planScreeningChange(senderScreening(store, "a", undefined, placeOf, over)!, "ohbox", "sender", true, false);
+    expect(plan.ruleState).toBe("retargeted");
+    expect(plan.ruleMutations).toEqual([{ kind: "rule_update", ruleId: "local-1", destination: "INBOX", applyRetro: false }]);
+  });
+
+  it("a Move back to the copy's place while a press to the Ohbox waits on the organizer retargets after it", async () => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const copy = { mailboxId: "mb", rules: [rule("profile:mb:0", "ohmail/News")], asOf: NOW.toISOString(), from: { kind: "local", name: "Host", since: null }, updatedAt: NOW.toISOString(), applied: [] };
+    await store.applyChanges([
+      { type: "message", op: "create", id: "a", seq: ++seq, updatedAt: NOW.toISOString(), entity: msg("a", "INBOX") },
+      { type: "mailbox_profile", op: "create", id: "mb", seq: ++seq, updatedAt: NOW.toISOString(), entity: copy },
+    ] as SyncChange[]);
+    const key = { kind: "sender", match: ADDR, subjectContains: null, bodyContains: null };
+    const move = (unsettled: Parameters<typeof pressRules>[1]["unsettled"]) => planScreeningChange(senderScreening(store, "a", undefined, undefined,
+      pressRules(store, { travels: true, queued: [], applied: [], unsettled, now: NOW }))!, "reads", "sender", true, false);
+    expect(move([]).ruleState, "the copy alone").toBe("already");
+    const plan = move([{ kind: "rule.update", key, destination: "INBOX" }]);
+    expect(plan.ruleMutations).toEqual([{ kind: "rule_update", ruleId: heldRuleId(key), destination: "ohmail/News", applyRetro: false }]);
   });
 });

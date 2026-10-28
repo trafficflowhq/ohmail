@@ -1325,17 +1325,18 @@ export class OrganizerProfileSync {
     }
     const doc = read.doc;
     // Account row shared (exclusive deadlocks writers that read it after the counter); the mailbox row is the merge's.
+    let retiredRules = 0;
     await fencedAccountWrite(deps.db, { accountId: deps.accountId }, async (tx) => {
       await lockAccountRuleKeys(tx as Tx, deps.accountId);
-      await applyOrganizerProfile(tx as LedgerTx, {
+      ({ retiredRules } = await applyOrganizerProfile(tx as LedgerTx, {
         accountId: deps.accountId, mailboxId: deps.mailboxId, doc, fingerprint, now,
-      });
+      }));
       // THE SETTINGS DOORBELL: the card waiting on this press re-asks at the drain that carries it.
       await recordChanges(tx as LedgerTx, [
         { accountId: deps.accountId, entityType: "settings", entityId: deps.accountId, op: "update" },
       ]);
     });
-    log("organizer_profile_import_answered", { mailboxId: deps.mailboxId, accountId: deps.accountId, outcome: "imported" });
+    log("organizer_profile_import_answered", { mailboxId: deps.mailboxId, accountId: deps.accountId, outcome: "imported", retiredRules });
   }
 
   /** Answer an ask with a refusal (compare-and-set on its ticket) and ring the settings doorbell. */

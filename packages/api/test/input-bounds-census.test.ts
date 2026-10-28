@@ -656,15 +656,19 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // ── rules ───────────────────────────────────────────────────────────────────────────────
   // The DELETE reads the raw body only to HASH it for `Idempotency-Key`, never to interpret it;
   // nothing iterates it and nothing stores it, so its cost is one sha256 over what the door let
-  // in. It reads the query string for the same hash, through `canonicalQuery`.
-  "DELETE /rules/:id": { door: "the body is read once to compute the idempotency request hash" },
+  // in. It reads the query string for the same hash, through `canonicalQuery`. At the published
+  // rule's address it also reads `key`, compared with the organizer's copy and never stored.
+  "DELETE /rules/:id": {
+    bounds: [MAX_SUBJECT_CONTAINS_CHARS, MAX_BODY_CONTAINS_CHARS],
+    door: "the body is read once to compute the idempotency request hash, and at the published rule's address for its key",
+  },
   "POST /rules": {
     bounds: [MAX_SUBJECT_CONTAINS_CHARS, MAX_BODY_CONTAINS_CHARS],
     door: "`match` is stored on one column and compared for equality at routing time",
   },
   "PATCH /rules/:id": {
     bounds: [MAX_SUBJECT_CONTAINS_CHARS, MAX_BODY_CONTAINS_CHARS],
-    door: "`match` is stored on one column and compared for equality at routing time",
+    door: "`match` is stored on one column and compared for equality at routing time; a published rule's `key` is compared with the organizer's copy, never stored",
   },
 
   // ── messages ────────────────────────────────────────────────────────────────────────────
