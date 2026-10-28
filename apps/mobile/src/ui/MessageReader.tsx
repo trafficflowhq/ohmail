@@ -873,7 +873,7 @@ const RAIL_JUMP_SETTLE_MS = 450;
 const ANCHOR_PLACE_BOUND_MS = 400;
 
 /**
- * THE UNREAD TINT under a message: the wash and a 3dp accent edge while unread; once read (its top
+ * THE UNREAD TINT under a message: a 3dp accent edge while unread, no panel of its own; once read (its top
  * was on screen for the dwell) it settles over the fade; back to unread it returns quicker. Reduced
  * motion: instant.
  */
@@ -898,7 +898,7 @@ function ReadTint({ unread, style }: { unread: boolean; style: object }) {
       style={[
         StyleSheet.absoluteFill,
         style,
-        { opacity: v, backgroundColor: t.c.unreadWash, borderLeftWidth: 3, borderLeftColor: t.c.accent },
+        { opacity: v, borderLeftWidth: 3, borderLeftColor: t.c.accent },
       ]}
     />
   );

@@ -121,10 +121,8 @@
     const accStruct = ensure(accSrc, bg, 3, fg);
     if (accStruct.walked) note("--accent", `structural accent walked ${accStruct.walked}% toward foreground (was ${contrast(accSrc, bg).toFixed(2)}:1 vs panel)`);
 
-    /* An unread message's panel. Light: the panel taken toward its own ink by Omarchy's hover
-       fill (.08), no hue of its own, and the text below floors on it too. Dark: 11% accent in. */
-    const wash = mode === "light" ? mix(bg, fg, 0.08) : mix(bg, accStruct.value, 0.11);
-    const text = mode === "light" ? [bg, wash] : bg;
+    /* Light: the text below floors on the panel and on Omarchy's hover fill over it (.08). */
+    const text = mode === "light" ? [bg, mix(bg, fg, 0.08)] : bg;
 
     /* Text accent: links, active labels. Floor 4.5:1, same walk. */
     const accText = ensure(accSrc, text, 4.5, fg);
@@ -205,8 +203,7 @@
       "--accent-soft": alpha(accSrc, 0.12),
       "--accent-hair": alpha(accSrc, 0.42),
       "--accent-wash": alpha(accSrc, 0.06),
-      /* the thread-read squares and tint: the unread panel, and a read / own square's opacity */
-      "--unread-wash": wash,
+      /* the thread-read squares: a read / own square's opacity */
       "--mark-read": mode === "light" ? "0.46" : "0.42",
       "--mark-mine": mode === "light" ? "0.66" : "0.62",
       "--on-accent": onAccent,

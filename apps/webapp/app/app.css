@@ -6211,10 +6211,10 @@ input.set-tag-input {
 }
 
 /* ── THE THREAD-READ TINT AND SQUARES — the Ohbox's column and sheet only (`data-thread-read`) ──
-   An unread message sits on the unread wash with a 3px accent edge; once read (its top was on
-   screen for the 0.7s dwell, `reader-seen.ts`) it settles to the panel over 850ms; turning unread
-   brings the wash back in 320ms. A single message's panel is the column itself, so the column
-   carries its tint. Reduced motion: instant. */
+   An unread message wears a 3px accent edge on its own panel; once read (its top was on
+   screen for the 0.7s dwell, `reader-seen.ts`) the edge fades over 850ms; turning unread
+   brings it back in 320ms. A single message's panel is the column itself, so the column
+   carries the edge. Reduced motion: instant. */
 .tr-sr {
   position: absolute;
   width: 1px;
@@ -6238,19 +6238,16 @@ input.set-tag-input {
   box-shadow: inset 0 0 0 0 transparent, var(--lift-1);
 }
 .conv[data-thread-read] > article.pm[data-unseen] {
-  background: var(--unread-wash);
   box-shadow: inset 3px 0 0 0 var(--accent), var(--lift-1);
   transition-duration: 320ms;
   transition-delay: 0s;
 }
 .reader .msg[data-thread-read][data-unseen] {
-  background: var(--unread-wash);
   box-shadow: inset 3px 0 0 0 var(--accent), var(--lift-3);
   transition-duration: 320ms;
   transition-delay: 0s;
 }
 .read-col:has(> .msg[data-thread-read][data-unseen]) {
-  background: var(--unread-wash);
   box-shadow: inset 3px 0 0 0 var(--accent), var(--lift-1);
   transition-duration: 320ms;
   transition-delay: 0s;

@@ -33,9 +33,7 @@
   --accent-soft: oklch(0.60 0.13 45 / .09);
   --accent-hair: oklch(0.55 0.13 45 / .38);
   --on-accent:   oklch(0.995 0.004 85);
-  /* the thread-read tint and squares: an unread message's panel (the accent's hue, pale), and the
-     opacity of a read square and of the account's own (hollow) one */
-  --unread-wash: oklch(0.955 0.022 42);
+  /* the thread-read squares: the opacity of a read square and of the account's own (hollow) one */
   --mark-read: .46;
   --mark-mine: .66;
   /* the warning ink ("stop and read"): the face's --danger where it has one (ohmarchy), else
@@ -116,7 +114,6 @@
   --accent-soft: oklch(0.75 0.115 55 / .12);
   --accent-hair: oklch(0.75 0.115 55 / .42);
   --on-accent:   oklch(0.19 0.035 50);
-  --unread-wash: oklch(0.277 0.025 56);
   --mark-read: .42;
   --mark-mine: .62;
   --danger-ink:  color-mix(in oklab, var(--danger, oklch(0.75 0.12 25)) 85%, var(--ink));
@@ -180,7 +177,6 @@
     --accent-soft: oklch(0.75 0.115 55 / .12);
     --accent-hair: oklch(0.75 0.115 55 / .42);
     --on-accent:   oklch(0.19 0.035 50);
-    --unread-wash: oklch(0.277 0.025 56);
     --mark-read: .42;
     --mark-mine: .62;
     --danger-ink:  color-mix(in oklab, var(--danger, oklch(0.75 0.12 25)) 85%, var(--ink));
