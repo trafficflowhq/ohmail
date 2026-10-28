@@ -87,17 +87,35 @@ export function stubThreadLayout(opts: {
   const hiddenCol = (el: Element): boolean => (opts.columnHidden?.() ?? false) && el.matches(".read-col");
   const isScroller = (el: Element): boolean => el.matches(SCROLLERS) && !hiddenCol(el);
   const scrollerOf = (el: Element): HTMLElement | null => el.closest<HTMLElement>(SCROLLERS);
-  const panelsIn = (sc: Element): HTMLElement[] => [...sc.querySelectorAll<HTMLElement>("[data-conv-id]")];
+  /**
+   * A scroller's panels in order, kept until its subtree changes: one look measures every panel
+   * several times, and a fresh query per measure made a long thread cost minutes in jsdom.
+   * `takeRecords()` reads the mutations synchronously, so the list is never stale.
+   */
+  const panelLists = new Map<Element, { watch: MutationObserver; panels: HTMLElement[]; at: Map<HTMLElement, number> }>();
+  const panelsOf = (sc: Element): { panels: HTMLElement[]; at: Map<HTMLElement, number> } => {
+    let held = panelLists.get(sc);
+    if (!held) {
+      held = { watch: new MutationObserver(() => {}), panels: [], at: new Map() };
+      held.watch.observe(sc, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-conv-id"] });
+      panelLists.set(sc, held);
+    } else if (held.watch.takeRecords().length === 0) {
+      return held;
+    }
+    held.panels = [...sc.querySelectorAll<HTMLElement>("[data-conv-id]")];
+    held.at = new Map(held.panels.map((p, i) => [p, i]));
+    return held;
+  };
+  const panelsIn = (sc: Element): HTMLElement[] => panelsOf(sc).panels;
   const heightOf = (p: HTMLElement): number => heights[p.dataset.convId!] ?? defaultHeight;
   /** A panel's top in content coordinates. */
   const contentTop = (p: HTMLElement): number => {
     const sc = scrollerOf(p);
     if (!sc) return 0;
+    const { panels, at } = panelsOf(sc);
+    const end = at.get(p) ?? panels.length;
     let y = 0;
-    for (const q of panelsIn(sc)) {
-      if (q === p) return y;
-      y += heightOf(q) + GAP;
-    }
+    for (let i = 0; i < end; i++) y += heightOf(panels[i]!) + GAP;
     return y;
   };
   const contentHeight = (sc: Element): number => panelsIn(sc).reduce((n, p) => n + heightOf(p) + GAP, 0) + 80;
@@ -194,6 +212,8 @@ export function stubThreadLayout(opts: {
       threadReadTime.now = clock.now;
       threadReadTime.after = clock.after;
       for (const e of owed) owed.delete(e);
+      for (const { watch } of panelLists.values()) watch.disconnect();
+      panelLists.clear();
       Element.prototype.getBoundingClientRect = saved.rect;
       for (const k of ["clientHeight", "scrollHeight", "scrollTop"] as const) {
         const d = saved[k];
