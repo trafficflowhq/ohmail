@@ -93,10 +93,11 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
       where "desired_folder" = 'ohmail/Screener' and "last_set_by" = 'us'`,
   },
   {
-    // THE READING ORDER since mail 0139 — `key desc, id desc` over `Dialect.arrivalKey`, which is
+    // THE READING ORDER since mail 0171 — `key desc, id desc` over `Dialect.arrivalKey`, which is
     // `msgOrder` in message-service.ts, the snapshot walk and History. PARTIAL like the one above;
-    // unconditional for the same reason. The DDL is shared with the pre-migration build.
-    name: "messages_account_arrival_order_idx",
+    // unconditional for the same reason. The DDL is shared with the pre-migration build. Replaces
+    // `messages_account_arrival_order_idx` (a later migration drops it).
+    name: "messages_account_arrival_key_idx",
     table: "messages",
     ddl: ARRIVAL_ORDER_INDEX_DDL,
   },

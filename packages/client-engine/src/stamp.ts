@@ -114,15 +114,16 @@ export function fullDateTime(instant: Date, zone: string, locale = "en"): string
  */
 
 /**
- * No `Date:` header answers "" — spam and scripts routinely omit it, and there is no instant to format; callers
- * render no stamp rather than an empty one. A FUTURE date (a resurfaced or scheduled row) takes the dated branch:
+ * The stamp dates the `Date:` header, unless it is missing, unreadable or later than the row's sort instant (a header
+ * after its arrival, `sortAtOf`): then the sort instant, which is the arrival. With neither the answer is "" — there
+ * is no instant to format; callers render no stamp rather than an empty one. A FUTURE date (a resurfaced or scheduled row) takes the dated branch:
  * `daysAgo` goes negative, and a weekday for something that has not happened reads as the past. The zone is REQUIRED
  * and has no default: every band is a statement about the reader's calendar, and a defaulted call site would render a
  * plausible, well-formatted, two-hours-wrong stamp with nothing in the type system, the suite or the screen saying
  * so.
  */
 export function messageStamp(
-  m: Pick<EngineMessage, "time" | "date">,
+  m: Pick<EngineMessage, "time" | "date" | "sortAt">,
   now: Date,
   /** The IANA zone the reader is in. REQUIRED — see above. */
   zone: string,
@@ -130,8 +131,9 @@ export function messageStamp(
   locale = "en",
 ): string {
   if (m.time) return m.time;
-  if (!m.date) return "";
-  const d = new Date(m.date);
+  const shown = shownDateOf(m);
+  if (!shown) return "";
+  const d = new Date(shown);
   if (Number.isNaN(d.getTime())) return "";
 
   const ago = daysAgo(d, now, zone);
@@ -141,4 +143,12 @@ export function messageStamp(
   const f = zonedFields(d, zone);
   const stamp = `${f.day} ${named(locale, { month: "short" }, d, zone)}`;
   return f.year === zonedFields(now, zone).year ? stamp : `${stamp} ${f.year}`;
+}
+
+/** The instant every stamp of a message dates: the header while it is at or before the sort instant, else that. */
+export function shownDateOf(m: Pick<EngineMessage, "date" | "sortAt">): string | null {
+  const sorted = m.sortAt == null ? Number.NaN : Date.parse(m.sortAt);
+  if (!Number.isFinite(sorted)) return m.date;
+  const header = m.date == null ? Number.NaN : Date.parse(m.date);
+  return Number.isFinite(header) && header <= sorted ? m.date : m.sortAt!;
 }

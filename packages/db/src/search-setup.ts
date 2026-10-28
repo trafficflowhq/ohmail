@@ -136,22 +136,37 @@ export const HISTORY_ORDER_PREBUILD_SPEC: ConcurrentIndexSpec = {
  * rule admits exactly these, and only in their spec's spelling minus `concurrently`.
  */
 /**
- * Mail 0139's arrival index, spelled ONCE: the key is the dialect's own text (no parameter, so the
- * planner matches the query's expression), and both journals carry it byte-equal (a test).
+ * Mail 0171's arrival index, spelled ONCE: the key is the dialect's own text (no parameter, so the
+ * planner matches the query's expression), and both journals carry it byte-equal (a test). It
+ * replaces 0139's `messages_account_arrival_order_idx`, whose key let a header up to 48 h after
+ * its arrival decide; a later migration drops that one on Postgres.
  */
-export const ARRIVAL_ORDER_INDEX_DDL = sql`create index concurrently if not exists "messages_account_arrival_order_idx"
+export const ARRIVAL_ORDER_INDEX_DDL = sql`create index concurrently if not exists "messages_account_arrival_key_idx"
       on public.messages using btree ("account_id",${pgDialect().arrivalKey(sql`"date"`, sql`"arrived_at"`)} desc,"id" desc)
       where "deleted_at" is null`;
 
 /**
- * Mail 0139's arrival index, built CONCURRENTLY ahead of the migrator on 0125's pattern, from the
+ * Mail 0171's arrival index, built CONCURRENTLY ahead of the migrator on 0125's pattern, from the
  * one DDL the hot-path spec also builds. The prerequisite is the column the key reads.
  */
 export const ARRIVAL_ORDER_PREBUILD_SPEC: ConcurrentIndexSpec = {
-  name: "messages_account_arrival_order_idx",
+  name: "messages_account_arrival_key_idx",
   table: "messages",
   requiresColumn: "arrived_at",
   ddl: ARRIVAL_ORDER_INDEX_DDL,
+};
+
+/**
+ * Mail 0139's arrival index on its own (superseded) key, still built ahead of the migrator so a
+ * store below 0139 does not build it blocking in the journal. No reader walks it since 0171.
+ */
+export const ARRIVAL_ORDER_0139_PREBUILD_SPEC: ConcurrentIndexSpec = {
+  name: "messages_account_arrival_order_idx",
+  table: "messages",
+  requiresColumn: "arrived_at",
+  ddl: sql`create index concurrently if not exists "messages_account_arrival_order_idx"
+      on public.messages using btree ("account_id",(case when "arrived_at" is null then coalesce("date", 'epoch'::timestamptz) when "date" is null then "arrived_at" when "date" - "arrived_at" <= interval '48 hours' and "arrived_at" - "date" <= interval '48 hours' then "date" else "arrived_at" end) desc,"id" desc)
+      where "deleted_at" is null`,
 };
 
 /**
@@ -230,7 +245,8 @@ export const MAILBOXES_ACCOUNT_PREBUILD_SPEC: ConcurrentIndexSpec = {
 };
 
 export const PREMIGRATION_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
-  WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC, RECIPIENT_KEYS_PREBUILD_SPEC,
+  WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_0139_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC,
+  RECIPIENT_KEYS_PREBUILD_SPEC,
   SENDER_DATE_PREBUILD_SPEC, FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC,
 ];
 

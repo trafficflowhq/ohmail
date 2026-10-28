@@ -243,6 +243,21 @@ describe("the stamp shows relative, exact on hover, and flips ALL stamps on clic
     expect(q<HTMLButtonElement>(".msg-from .stamp-toggle")!.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("a letter dated after it arrived is dated by its arrival in both forms", async () => {
+    const { setActiveFormatZone } = await import("../app/shell/locale.js");
+    setActiveFormatZone("UTC");
+    try {
+      await mountPane(msg({ date: "2026-08-04T09:00:00.000Z", sortAt: "2026-08-02T09:07:00.000Z" }), []);
+      const stamp = (): HTMLElement => q<HTMLElement>(".msg-from .stamp-toggle time")!;
+      expect(stamp().getAttribute("datetime")).toBe("2026-08-02T09:07:00.000Z");
+      expect(stamp().getAttribute("title")).toBe("Sun 2 Aug 2026, 09:07");
+      await act(async () => { q<HTMLButtonElement>(".msg-from .stamp-toggle")!.click(); });
+      expect(stamp().textContent).toBe("Sun 2 Aug 2026, 09:07");
+    } finally {
+      setActiveFormatZone(null);
+    }
+  });
+
   it("the flip is reset on a view switch — a `route.view`-keyed effect clears it", () => {
     // The reset lives in the shell (mounting the whole shell here would prove nothing the runtime
     // click above does not); this pins that the shell clears the flag when the view id changes,

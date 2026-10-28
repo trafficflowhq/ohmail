@@ -15,6 +15,7 @@ import {
   fullDateTime as stampFullDateTime,
   messageDisplayTime,
   morningDayOffset,
+  shownDateOf,
   VIEW_OF_FOLDER,
   zonedFields,
   zonedInstant,
@@ -134,7 +135,7 @@ export function clockOf(iso: string): string {
  * fixture behind them; this stays as the app-side name every view already imports, and
  * delegates so the two can never drift apart.
  */
-export function displayTime(m: Pick<EngineMessage, "time" | "date">, now: Date): string {
+export function displayTime(m: Pick<EngineMessage, "time" | "date" | "sortAt">, now: Date): string {
   /* The active locale, so "Mon" reads "Mo" for a German reader, and the active ZONE, so the bands
      ("today", "this week", dated) fall on the reader's midnights. The engine defaults the locale to
      English — it has no catalogue and its own tests assert the English stamps — and defaults the
@@ -555,20 +556,34 @@ export function firstName(m: EngineMessage): string {
  * instant, so it carries the year and never abbreviates to a weekday. The reader's zone, like every other formatter
  * in this file (`clockOf`, `resurfaceLabel`, `displayTime`) — this is the value a reader opens precisely to check an
  * exact time against their own clock, so it is the one place a UTC render would be most obviously wrong. Note the
- * DATE moves with it, not only the hour: 22:10 UTC on the 4th is 00:10 on the 5th in Zurich. Empty string for a
- * message with no `Date:` header — there is no instant to name, exactly as `displayTime` answers "" — so a caller
- * interpolating it prints nothing rather than "Invalid Date".
+ * DATE moves with it, not only the hour: 22:10 UTC on the 4th is 00:10 on the 5th in Zurich. It names the instant
+ * `displayTime` dates (`shownDateOf`): the arrival for a header later than it, or for no header. Empty string with
+ * no instant at all — exactly as `displayTime` answers "" — so a caller interpolating it prints nothing rather than
+ * "Invalid Date".
  */
 /*
- * `Pick<…, "date">` and not the whole message, because `date` is all it reads. The away-answer
+ * `Pick<…, "date" | "sortAt">` and not the whole message, because that is all it reads. The away-answer
  * mark needs the absolute form of an instant that is NOT the message's arrival — the responder's
  * `awayRepliedAt` — and the alternative was to spread a message with the field swapped in, which
  * costs a copy per render and reads as though some other field mattered. `displayTime` above
  * already takes a `Pick` for the same reason.
  */
-export function fullDateTime(m: Pick<EngineMessage, "date">): string {
-  if (!m.date) return "";
-  const d = new Date(m.date);
+export function fullDateTime(m: Pick<EngineMessage, "date" | "sortAt">): string {
+  return exactForm(shownDateOf(m));
+}
+
+/** The `Date:` header as written, for the reader's details; the arrival when there is none. */
+export function writtenInstant(m: Pick<EngineMessage, "date" | "sortAt">): string | null {
+  return exactForm(m.date) ? m.date : shownDateOf(m);
+}
+
+export function writtenDateTime(m: Pick<EngineMessage, "date" | "sortAt">): string {
+  return exactForm(writtenInstant(m));
+}
+
+function exactForm(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return stampFullDateTime(d, activeFormatZone(), activeFormatLocale());
 }
@@ -579,7 +594,7 @@ export function fullDateTime(m: Pick<EngineMessage, "date">): string {
  * and the rule for which form is on screen, which is on hover, and whether the date may be pressed lives here rather
  * than seven times over. Which form is shown is the caller's `absolute` — one boolean the shell owns for the whole
  * session, so every row (and the open message) flips together and none holds its own state. The title is always the
- * other form, so hovering says something new either way. A message with no `Date:` header gets no flip:
+ * other form, so hovering says something new either way. A message with no instant (no header, no arrival) gets no flip:
  * `fullDateTime` answers "" (no instant to name), so the row is handed no title and no `onToggleTime` — a date that
  * cannot be exact must not offer to be.
  */
@@ -597,7 +612,7 @@ export interface RowStampProps {
    * `fullDateTime` the title above already is. A row's own label replaces everything inside it, so
    * without this the arrival instant reached the accessibility tree nowhere; and a spoken "Sat"
    * would be the one reading that cannot say which Saturday. Falls back to the relative form for a
-   * message with no `Date:` header, which has no absolute instant to name.
+   * message with no instant, which has no absolute form to name.
    */
   timeSpoken: string;
   /** The flip, passed on only when there are two forms to flip between. */

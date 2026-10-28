@@ -3147,6 +3147,11 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0170_outbound_sent_copies": [
     "97732a369767210f",   // CREATE TABLE IF NOT EXISTS outbound_sent_copies ((account, send, seq) PK; (send, account) key cascades)
   ],
+  // THE ARRIVAL INDEX ON THE KEY A HEADER AFTER ITS ARRIVAL NO LONGER DECIDES — prebuilt
+  // CONCURRENTLY by setup on 0139's pattern. One statement, no DML.
+  "0171_messages_arrival_key": [
+    "6e8e0864c211299e",   // create index if not exists messages_account_arrival_key_idx (the hot-path spelling)
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4180,6 +4185,8 @@ describe("the two journals are well-formed", () => {
   // above 0168_drafts_forward_parts's.
   // 170 → 171 for `0170_outbound_sent_copies` (idx 170): its `when` (1791602600074) is strictly above
   // 0169_mailboxes_organized_through's.
+  // 171 → 172 for `0171_messages_arrival_key` (idx 171): its `when` (1791602600075) is strictly above
+  // 0170_outbound_sent_copies's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
@@ -4189,7 +4196,7 @@ describe("the two journals are well-formed", () => {
   // cloud 38 → 39 for `0053_connect_reminder_notices`: its `when` (1792901976213) is strictly above 0052's.
   // cloud 39 → 40 for `0054_connect_attempts`: its `when` (1793059413550) is strictly above 0053's.
   // cloud 40 → 41 for `0055_account_storage_holds`: its `when` (1793139772651) is strictly above 0054's.
-  it.each([["mail", MAIL_DIR, 171], ["cloud", CLOUD_DIR, 41]] as const)(
+  it.each([["mail", MAIL_DIR, 172], ["cloud", CLOUD_DIR, 41]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

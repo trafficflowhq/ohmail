@@ -199,16 +199,17 @@ export function tagRowToDTO(t: typeof tags.$inferSelect): TagDTO {
  * to hours. A `Date:` further than this from a KNOWN arrival is not "when this mail happened":
  * calendar systems stamp an event's creation era, forwards and re-sends carry the original's
  * date, and a stranger writes whatever they like. Position follows arrival then; the header is
- * still what every surface SHOWS.
+ * still what every surface SHOWS, unless it is later than the sort instant (`messageDisplayTime`).
  */
 export const SORT_TOLERANCE_MS = 48 * 60 * 60 * 1000;
 
 /**
  * The row's sorting instant — {@link MessageDTO.sortAt}. `undefined` when arrival was never
  * recorded (rows before mail 0119): the header keeps deciding, exactly the pre-field order.
- * With a known arrival: the header while it agrees with arrival within {@link SORT_TOLERANCE_MS}
- * (the sender's finer, meaningful instant), else the arrival itself. Both directions clamp — a
- * future-dated header is a lie outright, a months-old one is a calendar stamp or a re-send.
+ * With a known arrival: the header while it lies at or before the arrival and within
+ * {@link SORT_TOLERANCE_MS} of it (the sender's finer, meaningful instant), else the arrival
+ * itself. A header after its arrival is a lie outright (no letter is written after it arrived,
+ * the IMAP adapter's own `arrivalKey` rule); a months-old one is a calendar stamp or a re-send.
  * Pure and exported so the clamp is watchable without a database round trip.
  */
 export function sortAtOf(date: Date | null | undefined, arrivedAt: Date | null | undefined): string | undefined {
@@ -216,7 +217,8 @@ export function sortAtOf(date: Date | null | undefined, arrivedAt: Date | null |
   // absent must mean exactly what NULL means — "arrival not recorded", never a throw.
   if (arrivedAt == null || Number.isNaN(arrivedAt.getTime())) return undefined;
   if (date == null || Number.isNaN(date.getTime())) return arrivedAt.toISOString();
-  return Math.abs(date.getTime() - arrivedAt.getTime()) <= SORT_TOLERANCE_MS
+  const behind = arrivedAt.getTime() - date.getTime();
+  return behind >= 0 && behind <= SORT_TOLERANCE_MS
     ? date.toISOString()
     : arrivedAt.toISOString();
 }

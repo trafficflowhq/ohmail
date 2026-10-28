@@ -149,8 +149,8 @@ describe.skipIf(!PG_UP)("what the production spec table declares", () => {
       "folder_state_screener_held_floor_idx",
       // Mail 0161's list read — the caller's mailboxes by account.
       "mailboxes_account_idx",
-      // Mail 0139's arrival order — the order every list, History and snapshot page walks.
-      "messages_account_arrival_order_idx",
+      // Mail 0171's arrival order — the order every list, History and snapshot page walks.
+      "messages_account_arrival_key_idx",
       "messages_account_date_order_idx",
       "messages_account_msg_order_idx",
       // Mail 0157's sender-date index — the Screener cutline probe's key.

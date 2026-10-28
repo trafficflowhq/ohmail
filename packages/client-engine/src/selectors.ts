@@ -65,7 +65,7 @@ import {
 const stampMemo = new WeakMap<object, { key: string; out: string }>();
 
 export function messageDisplayTime(
-  m: Pick<EngineMessage, "time" | "date">, now: Date, zone: string, locale = "en",
+  m: Pick<EngineMessage, "time" | "date" | "sortAt">, now: Date, zone: string, locale = "en",
 ): string {
   if (m.time) return m.time;
   const key = `${zonedDayNumber(now, zone)}|${zone}|${locale}`;
