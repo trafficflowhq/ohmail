@@ -31,11 +31,11 @@ export function takeReloadedMark(place: Place = location, entries: Entries = his
   return true;
 }
 
-/** The one sentence. Inside the toast host (a polite live region) and the language provider. */
+/** The one sentence, standing until dismissed. Inside the toast host (a polite live region) and the language provider. */
 export function RendererReloaded({ reloaded }: { reloaded: boolean }): null {
   const toast = useToast();
   useEffect(() => {
-    if (reloaded) toast(DOOR_COPY.rendererReloaded, { duration: 8000 });
+    if (reloaded) toast(DOOR_COPY.rendererReloaded, { dismiss: DOOR_COPY.rendererReloadedDismiss });
   }, [reloaded, toast]);
   return null;
 }

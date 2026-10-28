@@ -4425,6 +4425,7 @@
     "cancel": "Cancel",
     "reload": "Reload",
     "rendererReloaded": "ohmail's window stopped and was reloaded.",
+    "rendererReloadedDismiss": "Dismiss",
     "updateClosing": "Installing the update. ohmail closes when it is done.",
     "mailboxLabel": "Mailbox",
     "mailboxesLabel": "Mailboxes",
