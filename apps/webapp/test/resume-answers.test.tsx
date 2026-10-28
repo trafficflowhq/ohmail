@@ -14,6 +14,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { resumeOnceKey } from "../app/(product)/resume/ResumeScreen.js";
+import { shareSignedOutNote } from "../app/(product)/resume/signed-out-note.js";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,7 +42,10 @@ const platform401 = (): Response => new Response("<html>401</html>", { status: 4
 const minted = (): Response => new Response(null, { status: 204 });
 
 let script: Array<() => Response> = [];
+/** Presentations of the refresh token; the cache purge after a refusal is counted apart. */
 let refreshes = 0;
+let purges = 0;
+let purgeAnswer: () => Promise<Response> = async () => new Response(null, { status: 202 });
 let reloads = 0;
 let replaced: string[] = [];
 let priorFetch: typeof globalThis.fetch;
@@ -58,9 +62,12 @@ beforeEach(async () => {
   vi.spyOn(Math, "random").mockReturnValue(1);
   script = [minted];
   refreshes = 0;
+  purges = 0;
+  purgeAnswer = async () => new Response(null, { status: 202 });
   reloads = 0;
   replaced = [];
   sessionStorage.clear();
+  localStorage.clear();
   document.cookie = "tf_owner=acct_A; Path=/";
   Object.defineProperty(window, "location", {
     configurable: true,
@@ -71,8 +78,12 @@ beforeEach(async () => {
     },
   });
   priorFetch = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown) => {
+  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
+    if (url.includes("/auth/refresh") && new Headers(init?.headers).has("x-ohmail-clear")) {
+      purges += 1;
+      return purgeAnswer();
+    }
     if (url.includes("/auth/refresh")) {
       refreshes += 1;
       return script[Math.min(refreshes, script.length) - 1]!();
@@ -87,6 +98,8 @@ afterEach(async () => {
   globalThis.fetch = priorFetch;
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
   sessionStorage.clear();
+  localStorage.clear();
+  Reflect.deleteProperty(globalThis.navigator as unknown as Record<string, unknown>, "locks");
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -217,6 +230,85 @@ describe("(d) the door's refusals go to /login on the FIRST attempt, with the se
   it("the control: a refusal that lands under another account's jar reloads, with no sentence", async () => {
     script = [() => { document.cookie = "tf_owner=acct_B; Path=/"; return refused("refresh_revoked")(); }];
     await mountResume();
+    expect(reloads).toBe(1);
+    expect(replaced).toEqual([]);
+    expect(sessionStorage.getItem(NOTE_KEY)).toBeNull();
+  });
+
+  it("the sign-in form does not wait for the cache purge the refusal sends", async () => {
+    // Chrome held a refusal carrying Clear-Site-Data for a walk of its whole disk cache.
+    purgeAnswer = () => new Promise<Response>(() => {});
+    script = [refusedClearing("refresh_expired")];
+    await mountResume();
+    expect(purges, "the refusal asked for no cache clear").toBe(1);
+    expect(replaced).toEqual(["/login"]);
+    expect(sessionStorage.getItem(NOTE_KEY)).toBe("expired");
+    expect(refreshes).toBe(1);
+  });
+
+  it("an erased account's 410, on a splash that registers no erased door: one purge, then /login", async () => {
+    script = [() => {
+      document.cookie = "tf_owner=; Path=/; Max-Age=0";
+      return json({ error: { code: "account_erased", message: "deleted" } }, 410, { "X-Ohmail-Account": "acct_A" });
+    }];
+    await mountResume();
+    expect(purges, "the erased account's cached files stay on this browser's disk").toBe(1);
+    expect(refreshes).toBe(1);
+    expect(replaced).toEqual(["/login"]);
+  });
+});
+
+/**
+ * TWO TABS ON THE SPLASH. Tab A presents and hears the refusal while this tab (B) waits on the
+ * cross-tab lock; A's answer clears the jar, `tf_owner` with it, and A leaves its sentence for the
+ * other tabs. B presents nothing and must not reload into the gate, which sent every reload back
+ * here while the clears were held: it goes to the sign-in form with A's sentence.
+ */
+describe("(e) another tab heard the door while this one waited", () => {
+  /** The lock manager B queues on; `meanwhile` is what tab A does before B's grant. */
+  function lockedBehindTabA(meanwhile: () => void): void {
+    Object.defineProperty(globalThis.navigator, "locks", {
+      configurable: true,
+      value: {
+        request: async (_n: string, _o: unknown, fn: () => Promise<unknown>) => {
+          meanwhile();
+          return fn();
+        },
+      },
+    });
+  }
+
+  it("tab A's refusal empties the jar: B presents nothing, does not reload, and says A's sentence", async () => {
+    lockedBehindTabA(() => {
+      document.cookie = "tf_owner=; Path=/; Max-Age=0";
+      shareSignedOutNote("expired");
+    });
+    await mountResume();
+    expect(refreshes, "B presented a token tab A had just heard refused").toBe(0);
+    expect(reloads, "B reloaded into the gate").toBe(0);
+    expect(replaced).toEqual(["/login"]);
+    expect(sessionStorage.getItem(NOTE_KEY)).toBe("expired");
+  });
+
+  it("the control: a sentence older than the window is not taken — the sign-in form alone", async () => {
+    lockedBehindTabA(() => {
+      shareSignedOutNote("revoked");
+      vi.setSystemTime(Date.now() + 16_000);
+      document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    });
+    await mountResume();
+    expect(refreshes).toBe(0);
+    expect(replaced).toEqual(["/login"]);
+    expect(sessionStorage.getItem(NOTE_KEY)).toBeNull();
+  });
+
+  it("the control: another account signed in meanwhile — B reloads, with no sentence", async () => {
+    lockedBehindTabA(() => {
+      shareSignedOutNote("expired");
+      document.cookie = "tf_owner=acct_B; Path=/";
+    });
+    await mountResume();
+    expect(refreshes).toBe(0);
     expect(reloads).toBe(1);
     expect(replaced).toEqual([]);
     expect(sessionStorage.getItem(NOTE_KEY)).toBeNull();

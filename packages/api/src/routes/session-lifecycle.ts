@@ -6,7 +6,7 @@ import { csrfTokenFor } from "../csrf.js";
 import type { ApiDeps } from "../deps.js";
 import { accountErasedResponse, erasedAccountBearer, withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
-import { sessionEnded } from "../session-end.js";
+import { sessionEnded, sessionRefused, withCachePurge } from "../session-end.js";
 import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
 
 /**
@@ -113,7 +113,10 @@ export const sessionLifecycleRoutes: Route[] = [
     cost: "ceremony",
     // A busy pool answers this door fast — see `withSessionAcquireCeiling` — and says a replay is
     // safe: the rotation re-answers a repeated attempt id and converges a cookie retry in its grace.
-    options: { public: true, credentialSubject: true, replaySafe: true, middleware: [withSessionAcquireCeiling] },
+    // `withCachePurge` first: the cache clear a refusal no longer carries is answered before the jar is read.
+    options: {
+      public: true, credentialSubject: true, replaySafe: true, middleware: [withCachePurge, withSessionAcquireCeiling],
+    },
     handler: async (req, deps) => {
       const jar = parseCookies(req.headers.get("cookie"));
       const cookieRefresh = presentedRefreshCookie(jar, deps);
@@ -172,14 +175,15 @@ export const sessionLifecycleRoutes: Route[] = [
           // AN ERASED ACCOUNT'S REFRESH is told so, the native branch's rule below: past the access
           // window this is the only door a browser can hear it at. The jar is cleared as for any
           // refusal; `erasedAccountBearer` names the account on `deps`, and `nameTheAccount` stamps it.
+          // Both refusals go out WITHOUT the cache clear (`sessionRefused`): the browser asks for it next.
           if (failure === "session_refused" && await erasedAccountBearer(req, deps, cookieRefresh)) {
-            return sessionEnded(json(
+            return sessionRefused(json(
               { error: { code: "account_erased", message: "this account has been deleted" } },
               410, clearSessionCookies(),
             ));
           }
           const refusal = err as ServiceError;
-          return sessionEnded(json(
+          return sessionRefused(json(
             { error: { code: refusal.code, message: refusal.message } },
             refusal.httpStatus,
             failure === "session_refused" ? clearSessionCookies() : [],

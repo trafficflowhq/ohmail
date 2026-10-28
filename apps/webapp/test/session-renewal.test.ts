@@ -77,7 +77,9 @@ beforeEach(() => {
       },
     },
   });
-  globalThis.fetch = vi.fn(async (input: unknown) => {
+  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+    // The cache purge after a refusal presents nothing, and is not counted as a renewal.
+    if (new Headers(init?.headers).has("x-ohmail-clear")) return new Response(null, { status: 202 });
     if (String(input).includes("/auth/refresh")) {
       refreshes += 1;
       return answers[Math.min(refreshes, answers.length) - 1]!();

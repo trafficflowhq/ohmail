@@ -343,6 +343,32 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
       // the host at all (the per-host decision is unit-tested exhaustively in host-config.test.ts).
       expect((await handleApiRequest(cookieReq("api.ohmail.app"))).status).toBe(401);
     });
+
+    /**
+     * THE REFUSED REFRESH IS ANSWERED WITHOUT `Clear-Site-Data`: Chrome holds such an answer, its
+     * cookie clears with it, until it has walked its whole disk cache, and the resume splash waits
+     * on it. The cache clear is the purge the browser sends next, answered alone.
+     */
+    it("on the web's rewrite, a refused refresh clears the jar with no cache clear; the purge answers alone", async () => {
+      install(envFor({ TF_COOKIE_HOSTS: "api.ohmail.app,ohmail.app" }));
+      const browser = { origin: "https://ohmail.app", "x-forwarded-host": "ohmail.app" };
+      const refused = await handleApiRequest(at("/auth/refresh", {
+        method: "POST", body: "{}",
+        headers: { ...browser, "content-type": "application/json", cookie: `tf_refresh=${"r".repeat(43)}` },
+      }));
+      expect(refused.status).toBe(401);
+      expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("refresh_revoked");
+      expect(refused.headers.getSetCookie().filter((c) => /Max-Age=0/.test(c)).map((c) => c.split("=")[0]).sort())
+        .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+      expect(refused.headers.get("clear-site-data"), "the refusal is held for a cache walk").toBeNull();
+
+      const purge = await handleApiRequest(at("/auth/refresh", {
+        method: "POST", headers: { ...browser, "x-ohmail-clear": "cache" },
+      }));
+      expect(purge.status).toBe(202);
+      expect(purge.headers.get("clear-site-data")).toBe('"cache"');
+      expect(purge.headers.getSetCookie()).toEqual([]);
+    });
   });
 });
 

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { RESUME_COOKIE, RESUME_ROUTE, resolveSurface } from "../app/session-gate.js";
 import { isRecoverable, mayRefreshFor, REFRESH_ENDPOINT, RENEWAL_DEADLINE_MS, resumeSession } from "../app/session-refresh.js";
 import { OWN_PATHS, REFRESH_PATH } from "../next.config.mjs";
+import type { ErasedVerdict } from "../app/shell/account-erased.js";
 
 /**
  * THE LOCKOUT, AND THE THREE THINGS THAT CAUSED IT.
@@ -527,6 +528,146 @@ describe("the refresh client", () => {
     expect(recovery, "the catch never calls `api` again — that is the loop this pins out")
       .not.toMatch(/\bapi<T>\(/);
     expect(recovery, "the retry no longer goes through `attempt`").toMatch(/attempt<T>\(path, opts/);
+  });
+});
+
+/**
+ * A REFUSAL HEARD ASKS FOR THE CACHE CLEAR ON ITS OWN, AND NOTHING WAITS FOR IT. The refusal used to
+ * carry `Clear-Site-Data`, and Chrome held that answer, cookie clears included, until it had walked
+ * its whole disk cache: "Checking your sign-in…" for a minute on a long-used profile. Each case runs
+ * in fresh modules against a stubbed door; a purge is a request naming `x-ohmail-clear`, and it is
+ * never answered here.
+ */
+describe("a refusal heard sends one cache purge, which nothing waits for", () => {
+  type Door = (signal: AbortSignal | undefined) => Promise<Response>;
+  const coded = (status: number, code: string, headers: Record<string, string> = {}): Door => async () =>
+    new Response(JSON.stringify({ error: { code, message: "refused" } }), {
+      status, headers: { "content-type": "application/json", ...headers },
+    });
+
+  /** Install the door; presentations and purges are counted apart. */
+  function door(answer: Door): { presented: RequestInit[]; purges: Array<{ url: string; init: RequestInit }> } {
+    const presented: RequestInit[] = [];
+    const purges: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("document", { cookie: "tf_csrf=abc" });
+    vi.stubGlobal("fetch", vi.fn((url: unknown, init: RequestInit = {}) => {
+      if (new Headers(init.headers).has("x-ohmail-clear")) {
+        purges.push({ url: String(url), init });
+        return new Promise<Response>(() => {});
+      }
+      presented.push(init);
+      return answer(init.signal ?? undefined);
+    }));
+    return { presented, purges };
+  }
+
+  async function fresh(): Promise<typeof import("../app/session-refresh.js")> {
+    vi.resetModules();
+    return import("../app/session-refresh.js");
+  }
+
+  const cleanUp = (): void => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetModules(); };
+
+  it.each(["refresh_expired", "refresh_revoked", "unauthorized"])(
+    "a coded %s: refused at once while its one purge is still out",
+    async (code) => {
+      try {
+        const wire = door(coded(401, code));
+        const { resumeSession } = await fresh();
+        await expect(resumeSession(), "the refusal waited on the purge").resolves.toBe("refused");
+        expect(wire.presented).toHaveLength(1);
+        expect(wire.purges.map((p) => p.url)).toEqual([REFRESH_ENDPOINT]);
+        const { init } = wire.purges[0]!;
+        expect({ method: init.method, body: init.body, keepalive: init.keepalive, cache: init.cache, credentials: init.credentials })
+          .toEqual({ method: "POST", body: undefined, keepalive: true, cache: "no-store", credentials: "same-origin" });
+      } finally {
+        cleanUp();
+      }
+    },
+  );
+
+  // The door's 410 cleared the jar whatever the erased door makes of it, so the cache goes in every case.
+  it.each([
+    ["the erased door took", "erased", "acct_A", "refused"],
+    ["naming another account than the jar's", "not-ours", "acct_A", "unavailable"],
+    ["for an account this browser holds no copy of", "nothing-here", "acct_A", "unavailable"],
+    ["on a page with no erased door (the resume splash, /login)", null, "acct_A", "unavailable"],
+    ["naming no account", "erased", null, "unavailable"],
+  ] as Array<[string, ErasedVerdict | null, string | null, string]>)(
+    "an erased account's 410 %s: one purge",
+    async (_what, verdict, named, answer) => {
+      try {
+        const wire = door(coded(410, "account_erased", named === null ? {} : { "X-Ohmail-Account": named }));
+        const { resumeSession } = await fresh();
+        const { registerErasedDoor } = await import("../app/shell/account-erased.js");
+        if (verdict !== null) registerErasedDoor({ capture: () => null, hear: () => verdict });
+        await expect(resumeSession()).resolves.toBe(answer);
+        expect(wire.presented).toHaveLength(1);
+        expect(wire.purges, "the erased account's cached files stay on this browser's disk").toHaveLength(1);
+      } finally {
+        cleanUp();
+      }
+    },
+  );
+
+  it.each([
+    ["refresh_missing", coded(401, "refresh_missing"), "refused"],
+    ["a 503", coded(503, "db_busy"), "unavailable"],
+    ["an uncoded 401", async () => new Response("{}", { status: 401 }), "unavailable"],
+    ["an HTML 401", async () => new Response("<html>401</html>", { status: 401, headers: { "content-type": "text/html" } }), "unavailable"],
+    ["a network error", async () => { throw new TypeError("Failed to fetch"); }, "unavailable"],
+    ["a mint", async () => new Response(null, { status: 204 }), "resumed"],
+  ] as Array<[string, Door, string]>)("%s sends no purge", async (_what, answer, resumed) => {
+    try {
+      const wire = door(answer);
+      const { resumeSession } = await fresh();
+      await expect(resumeSession()).resolves.toBe(resumed);
+      expect(wire.presented).toHaveLength(1);
+      expect(wire.purges).toHaveLength(0);
+    } finally {
+      cleanUp();
+    }
+  });
+
+  it("the request's own deadline, and a sign-in that superseded it, send no purge", async () => {
+    try {
+      vi.useFakeTimers();
+      const held: Door = (signal) => new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+      });
+      const wire = door(held);
+      const { resumeSession, withSessionCookieLock } = await fresh();
+      const timedOut = resumeSession();
+      await vi.advanceTimersByTimeAsync(RENEWAL_DEADLINE_MS);
+      await expect(timedOut).resolves.toBe("unavailable");
+      const superseded = resumeSession();
+      await vi.advanceTimersByTimeAsync(0);
+      await withSessionCookieLock(async () => { (globalThis.document as { cookie: string }).cookie = "tf_csrf=minted"; });
+      await expect(superseded).resolves.toBe("refused");
+      expect(wire.presented).toHaveLength(2);
+      expect(wire.purges).toHaveLength(0);
+    } finally {
+      cleanUp();
+    }
+  });
+
+  it("the purge the client sends is answered by the real route table with the clear alone", async () => {
+    try {
+      const wire = door(coded(401, "refresh_revoked"));
+      const { resumeSession } = await fresh();
+      expect(await resumeSession()).toBe("refused");
+      const [{ url, init }] = wire.purges;
+      const { createApp, apiRoutes } = await import("@trafficflow/api");
+      const { makeDeps } = await import("../../../packages/api/test/helpers.js");
+      const { deps } = await makeDeps();
+      const res = await createApp(apiRoutes).handle(new Request(new URL(url, "http://localhost"), init),
+        { ...deps, session: null, idempotency: null });
+      expect(res.status).toBe(202);
+      expect(res.headers.get("clear-site-data")).toBe('"cache"');
+      expect(res.headers.getSetCookie()).toEqual([]);
+    } finally {
+      cleanUp();
+    }
   });
 });
 

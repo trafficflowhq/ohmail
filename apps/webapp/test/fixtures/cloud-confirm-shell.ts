@@ -253,6 +253,8 @@ export function installConfirmEnv(): void {
       return serve(logoutScript, logoutAt);
     }
     if (url.includes("/auth/refresh/")) return json({ error: { code: "not_found", message: "no route" } }, 404);
+    // The cache purge after a refusal presents nothing: answered apart, never counted as a renewal.
+    if (new Headers(init?.headers).has("x-ohmail-clear")) return new Response(null, { status: 202 });
     // The BARE path, not `/api/auth/refresh` — `session-refresh.ts` explains why the refresh
     // cookie is only ever in scope for that one URL, and a stub that matched the prefixed form
     // would let a wrong-path regression pass.

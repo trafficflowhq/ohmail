@@ -342,4 +342,21 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
     expect(hello.status).toBe(200);
     expect(midlifeMints).toEqual([]);
   });
+
+  it("signed out elsewhere: the refused refresh clears the jar with no cache clear; the purge answers alone", async () => {
+    // Last, because it ends the first account's session. Chrome holds an answer carrying
+    // Clear-Site-Data, cookie clears included, for a walk of its whole disk cache.
+    expect((await post("/auth/refresh/logout", {}, firstJar)).status).toBe(204);
+    const refused = await post("/auth/refresh", {}, firstJar);
+    expect(refused.status).toBe(401);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("refresh_revoked");
+    expect(refused.headers.getSetCookie().filter((c) => /Max-Age=0/.test(c)).map((c) => c.split("=")[0]).sort())
+      .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+    expect(refused.headers.get("clear-site-data"), "the refusal is held for a cache walk").toBeNull();
+
+    const purge = await fetch(at("/auth/refresh"), { method: "POST", headers: { "x-ohmail-clear": "cache" } });
+    expect(purge.status).toBe(202);
+    expect(purge.headers.get("clear-site-data")).toBe('"cache"');
+    expect(purge.headers.getSetCookie()).toEqual([]);
+  });
 });

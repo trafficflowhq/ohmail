@@ -36,6 +36,7 @@ export {
   isCredentialRefusal,
   isSessionRefusal,
   readRefreshAnswer,
+  REFRESH_MISSING,
   SESSION_REFUSAL_CODES,
   type RefreshAnswer,
 } from "./refresh-answer.js";

@@ -402,6 +402,14 @@ describe("the door's answer is the verdict", () => {
     expect(notes(), "a late-answer watch note survived the sign-out").toEqual([]);
   });
 
+  it("the splash's sentence left for the other tabs goes with the session", async () => {
+    const { SHARED_NOTE_KEY, shareSignedOutNote, takeSharedSignedOutNote } = await import("../app/(product)/resume/signed-out-note");
+    shareSignedOutNote("expired");
+    expect(takeSharedSignedOutNote(), "the control: the sentence is there to take").toBe("expired");
+    expect(await signOutAnswered("ok")).toEqual(ENDED);
+    expect(localStorage.getItem(SHARED_NOTE_KEY), "the shared sentence survived the sign-out").toBeNull();
+  });
+
   it("OUR 401 ends it — the door found nothing live to end and cleared the jar", async () => {
     const { ApiError } = await import("../app/api-client");
     expect(await signOutAnswered(new ApiError(401, "unauthorized", "nothing to sign out", undefined, { coded: true })))
