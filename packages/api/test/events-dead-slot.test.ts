@@ -97,6 +97,29 @@ describe("GET /events frees the slot of a stream nobody reads", () => {
     expect((await fifth.json()).error.code).toBe("sse_too_many_streams");
   });
 
+  it("a request whose client left (its signal aborted) frees its slot at once", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const slow: SseConfig = { ...CFG, heartbeatMs: 60_000 };
+    const left = new AbortController();
+    const r = new Request(req("GET", "/events", { bearer: s.token }), { signal: left.signal });
+    await openTab(await H(r, deps, slow), true);
+    expect(countFor(s.accountId)).toBe(1);
+    left.abort();
+    await sleep(0);
+    expect(countFor(s.accountId), "the left stream still holds its slot").toBe(0);
+  });
+
+  it("a request already aborted when its stream opens holds no slot", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const r = new Request(req("GET", "/events", { bearer: s.token }), { signal: AbortSignal.abort() });
+    const res = await H(r, deps, CFG);
+    await res.body?.getReader().read().catch(() => {});
+    await sleep(0);
+    expect(countFor(s.accountId)).toBe(0);
+  });
+
   it("CONTROL: a client that goes away through the self-host adapter frees its slot at once", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });

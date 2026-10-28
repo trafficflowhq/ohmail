@@ -7,6 +7,7 @@ import { sha256 } from "@trafficflow/services";
 // is `packages/api`'s, and duplicating it would be a second, drifting copy of the wiring.
 import { makeDeps, seedSession, req, FIXED_NOW } from "../../../packages/api/test/helpers.js";
 import { canonicalQuery } from "../../../packages/api/src/middleware.js";
+import { resetSseCounters, sseLiveCounts } from "../../../packages/api/src/routes/events.js";
 /* The canonicalizer comes from the package that DEFINES it; `API_PREFIX` from this host, so a
    drift between the two spellings is a red here and not a silent 404. */
 import { MalformedPathError, normalizeEscapes, normalizePathname } from "@trafficflow/api";
@@ -126,6 +127,25 @@ describe("normalizeRequest — the rebuilt Request", () => {
     expect(new URL(n.url).pathname).toBe("/auth/logout");
     expect(n.body).toBeNull();
     expect(n.headers.get("content-type")).toBeNull();
+  });
+
+  it("carries the client's leave: an aborted /api/events request frees its stream slot", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const left = new AbortController();
+    const original = new Request(req("GET", "/api/events", { bearer: s.token }), { signal: left.signal });
+    const sse = { heartbeatMs: 60_000, pollMs: 60_000, lifetimeMs: 60_000, maxPerAccount: 1 };
+    try {
+      const res = await app.handle(await normalizeRequest(original), { ...deps, session: null, idempotency: null, sse });
+      expect(res.status).toBe(200);
+      await res.body!.getReader().read();
+      expect(sseLiveCounts().byAccount[s.accountId]).toBe(1);
+      left.abort();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(sseLiveCounts().byAccount[s.accountId], "the left stream still holds its slot").toBeUndefined();
+    } finally {
+      resetSseCounters();
+    }
   });
 
   it("does not attach a body to GET/HEAD", async () => {
