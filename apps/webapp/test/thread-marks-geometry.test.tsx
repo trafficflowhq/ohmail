@@ -352,8 +352,23 @@ describe("the seam under the desktop feed's live gaps stays even", () => {
  * as the rail stands from the list's ring, and no line of it crosses the seam list | rail | paper. Read from the painted pixels (the ring in a
  * marker colour), whatever draws it.
  */
+const FOCUSED = css("apps/webapp/app/shell/zone-cursor.css") + "html[data-face][data-theme]{--focus:#f0f}";
+/** The columns of one painted row in a marker colour (each channel full or none), decoded in the engine. */
+async function marked(page: Page, y: number, width: number, [r, g, b]: [number, number, number]): Promise<number[]> {
+  const png = (await page.screenshot({ clip: { x: 0, y: Math.floor(y), width, height: 1 } })).toString("base64");
+  return page.evaluate(async ([b64, want]) => {
+    const img = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+    const g2 = new OffscreenCanvas(img.width, 1).getContext("2d")!;
+    g2.drawImage(img, 0, 0);
+    const d = g2.getImageData(0, 0, img.width, 1).data;
+    const on = (v: number, w: number) => (w ? v > 200 : v < 80);
+    return [...Array(img.width).keys()].filter((x) => want.every((w, i) => on(d[4 * x + i]!, w)));
+  }, [png, [r, g, b]] as const);
+}
+const MAGENTA: [number, number, number] = [255, 0, 255];
+const GREEN: [number, number, number] = [0, 255, 0];
+
 describe("the focused reader's ring clears the rail", () => {
-  const FOCUSED = css("apps/webapp/app/shell/zone-cursor.css") + "html[data-face][data-theme]{--focus:#f0f}";
   async function ringRows(viewport: number, list: number, face: "ohmarchy" | "paper") {
     const page = await browser!.newPage({ viewport: { width: viewport, height: 800 } });
     try {
@@ -365,18 +380,7 @@ describe("the focused reader's ring clears the rail", () => {
         return { listRight: r(".list-col").right, railLeft: sq[0]!.left + 5 - 9, railRight: sq[0]!.left + 5 + 9, paper: r("article.pm").left,
           top: r(".view.split").top, squareY: sq[1]!.top + sq[1]!.height / 2 };
       });
-      // The marker colour's columns on one painted row (the screenshot decoded in the engine).
-      const marked = async (y: number): Promise<number[]> => {
-        const png = (await page.screenshot({ clip: { x: 0, y: Math.floor(y), width: viewport, height: 1 } })).toString("base64");
-        return page.evaluate(async (b64) => {
-          const img = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
-          const g = new OffscreenCanvas(img.width, 1).getContext("2d")!;
-          g.drawImage(img, 0, 0);
-          const d = g.getImageData(0, 0, img.width, 1).data;
-          return [...Array(img.width).keys()].filter((x) => d[4 * x]! > 200 && d[4 * x + 1]! < 80 && d[4 * x + 2]! > 200);
-        }, png);
-      };
-      return { ...m, squares: await marked(m.squareY), topLine: await marked(m.top - 1) };
+      return { ...m, squares: await marked(page, m.squareY, viewport, MAGENTA), topLine: await marked(page, m.top - 1, viewport, MAGENTA) };
     } finally {
       await page.close();
     }
@@ -395,6 +399,56 @@ describe("the focused reader's ring clears the rail", () => {
   it("paper: the reader zone paints no ring", async () => {
     const m = await ringRows(1440, 634, "paper");
     expect([...m.squares, ...m.topLine]).toEqual([]);
+  }, 60_000);
+});
+
+/**
+ * THE SCROLLED READER STAYS UNDER ITS TILE'S TOP LINE (a tester on 0.30.8, ohmarchy look): the thread column
+ * and the reading streams reclaim the deck's frame so paper scrolls to the window's edge; in ohmarchy
+ * the text ran over the other tiles' top line up to the window border and the focus ring's top line
+ * crossed it. Panels in a marker colour, scrolled under the top, read from the painted rows.
+ */
+describe("the scrolled reader stays under its tile's top line", () => {
+  const thread = (face: "ohmarchy" | "paper", zone: boolean, squares = true): string => {
+    const html = split_(1440, 634, face, css("packages/ui/src/composites/list-pane.css") + FOCUSED + ".pm{min-height:600px;background:#0f0!important}")
+      .replace('data-theme="light"', `data-theme="dark"${zone ? ' data-zone="reader"' : ""}`).replace("margin:0 var(--gap-edge)", "margin:var(--gap-edge)");
+    return squares ? html : html.replace(' data-thread-read=""', "");
+  };
+  const stream = (face: "ohmarchy" | "paper"): string =>
+    `<!doctype html><html data-theme="dark"${face === "ohmarchy" ? ' data-face="ohmarchy"' : ""}><head><meta charset="utf-8"><style>${SHEETS}${css("packages/ui/src/composites/stream.css")}</style>
+     <style>body{margin:0}.stream{scroll-behavior:auto}</style></head><body><section class="view view-reads" style="height:700px;margin:var(--gap-edge)">
+     <div class="stream" style="flex:1"><article class="scast" style="height:2400px;background:#0f0"></article></div></section></body></html>`;
+  async function rows(html: string, scroller: string) {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 800 } });
+    try {
+      await page.setContent(html);
+      const m = await page.evaluate((sel) => {
+        const col = document.querySelector<HTMLElement>(sel)!;
+        col.scrollTop = 300;
+        return { scrolled: col.scrollTop, top: document.querySelector(".view")!.getBoundingClientRect().top };
+      }, scroller);
+      expect(m.scrolled, "the column did not scroll: this proves nothing").toBe(300);
+      return { above: await marked(page, m.top - 8, 1440, GREEN), ring: await marked(page, m.top - 1, 1440, MAGENTA), onRing: await marked(page, m.top - 1, 1440, GREEN) };
+    } finally {
+      await page.close();
+    }
+  }
+  it("ohmarchy: a scrolled thread paints nothing above the tiles' top line", async () => {
+    expect((await rows(thread("ohmarchy", false), ".read-col")).above).toEqual([]);
+  }, 60_000);
+  for (const squares of [true, false])
+    it(`ohmarchy, the reader focused${squares ? " beside squares" : ""}: the ring's top line lies over the text, nothing above it`, async () => {
+      const r = await rows(thread("ohmarchy", true, squares), ".read-col");
+      expect(r.ring.length, "the focused reader wears a ring").toBeGreaterThan(400);
+      expect(r.onRing, "text crosses the ring's top line").toEqual([]);
+      expect(r.above, "text above the ring").toEqual([]);
+    }, 60_000);
+  it("ohmarchy: a scrolled reading stream paints nothing above the tiles' top line", async () => {
+    expect((await rows(stream("ohmarchy"), ".stream")).above).toEqual([]);
+  }, 60_000);
+  it("paper keeps scrolling to the window's edge, and the measurement sees it", async () => {
+    expect((await rows(thread("paper", false), ".read-col")).above.length).toBeGreaterThan(400);
+    expect((await rows(stream("paper"), ".stream")).above.length).toBeGreaterThan(400);
   }, 60_000);
 });
 
