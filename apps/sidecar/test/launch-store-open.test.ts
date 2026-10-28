@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
-import { openLocalDb, OWED_COPY_RECLAIM_FLOOR_BYTES, reclaimBodyBloat, type OpenLocalDb } from "../src/db.js";
+import {
+  analyzeKnownSetIfNever, analyzeNeverAnalyzed, openLocalDb, OWED_COPY_RECLAIM_FLOOR_BYTES, reclaimBodyBloat, type OpenLocalDb,
+} from "../src/db.js";
+import { makeDrizzleRepo, KNOWN_LOCATOR_PAGE_ROWS } from "@trafficflow/core/adapters/drizzle-repo";
+import { KnownSetCache, watchKnownSet } from "@trafficflow/worker/known-set";
 import { armFirstPageGate, noteFirstPageServed, resetFirstPageGate } from "../src/first-page-gate.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
@@ -187,4 +191,101 @@ describe("the deferred statistics look", () => {
     const at = counts.map((s) => Number(s.split("|")[0]));
     expect(new Set(at).size, "the loop never turned between two counts").toBe(4);
   });
+});
+
+/* ── THE FIRST KNOWN-SET READ ─────────────────────────────────────────────────────────────── */
+
+/**
+ * Two mailboxes holding the same locator keys. A's are the measured 74,003: two epochs of Archive
+ * (the first page ends exactly at the epoch edge; the second reuses its UIDs one along, so a cursor
+ * without the epoch ends a page between two rows of one UID) and INBOX, plus INBOX copies of a
+ * Sent row the known set leaves out. Few messages: instances are what is read.
+ */
+async function locatorStore(archive: number, inbox: number): Promise<{ o: OpenLocalDb; c: PGlite; a: string; b: string }> {
+  const dir = await freshDataDir("ohmail-known-pages-");
+  dirs.push(dir);
+  const o = await openLocalDb(dir);
+  opened.push(o);
+  const c = (o.db as unknown as { $client: PGlite }).$client;
+  const one = async (q: string): Promise<string> => (await c.query<{ id: string }>(q)).rows[0]!.id;
+  const acc = await one(`insert into accounts (name) values ('pages') returning id`);
+  const mb = async (n: string): Promise<string> => one(`insert into mailboxes (account_id, provider, address) values ('${acc}', 'imap', '${n}@mail.example') returning id`);
+  const a = await mb("a"), b = await mb("b");
+  const msg = async (box: string, key: string, folder: string): Promise<string> => one(`insert into messages
+    (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, to_addresses, cc_addresses, native_locator, message_id_header)
+    values ('${acc}', '${box}', 'h', '${key}', 's', 'x@mail.example', now(), '[]'::jsonb, '[]'::jsonb, '{"folder":"${folder}","ref":"1:1"}'::jsonb, '<${key}@x>') returning id`);
+  const put = async (box: string, m: string, folder: string, uv: string, n: number, from = 1): Promise<void> => {
+    await c.exec(`insert into message_instances (account_id, mailbox_id, message_id, folder, uidvalidity, uid, is_primary)
+      select '${acc}', '${box}', '${m}', '${folder}', ${uv}, g, false from generate_series(${from}, ${from + n - 1}) g`);
+  };
+  for (const [box, tag] of [[a, "a"], [b, "b"]] as const) {
+    const m = await msg(box, tag, "INBOX");
+    await put(box, m, "Archive", "3000000000", archive);
+    await put(box, m, "Archive", "3000000001", archive, 2);
+    await put(box, m, "INBOX", "1", inbox);
+    await put(box, await msg(box, `${tag}-sent`, "Sent"), "INBOX", "2", 3);
+  }
+  return { o, c, a, b };
+}
+
+type PlanNode = Record<string, unknown> & { Plans?: PlanNode[] };
+const nodesOf = (p: PlanNode, out: PlanNode[] = []): PlanNode[] => { out.push(p); for (const k of p.Plans ?? []) nodesOf(k, out); return out; };
+
+describe("the first known-set read after launch", () => {
+  it("reads 74,003 locators in keyset pages, a turn of the loop each, and the memo equals the whole set", async () => {
+    const pages: Array<{ turn: number; text: string; params: unknown[]; rows: number }> = [];
+    let turns = 0;
+    // On the prototype BEFORE the open: the store's wrappers bind the methods they find there.
+    const orig = PGlite.prototype.query;
+    vi.spyOn(PGlite.prototype, "query").mockImplementation(async function (this: PGlite, text: unknown, params?: unknown[], ...rest: unknown[]) {
+      const at = turns;
+      const r = await (orig as any).call(this, text, params, ...rest);
+      if (/^select "message_instances"\."folder"/.test(String(text))) pages.push({ turn: at, text: String(text), params: [...(params ?? [])], rows: r.rows.length });
+      return r;
+    } as any);
+    const { o, c, a } = await locatorStore(5_000, 64_003);
+    expect(await o.analyzeKnownSetIfNever()).toBe("analyzed");
+    const watched = watchKnownSet(makeDrizzleRepo(o.db as never), new KnownSetCache(a));
+    let spinning = true;
+    const spin = (): void => { turns += 1; if (spinning) setImmediate(spin); };
+    setImmediate(spin);
+    let first;
+    try { first = await watched.listKnownLocators(a); } finally { spinning = false; }
+
+    const keys = first.map((k) => `${k.folder}|${k.uidValidity}|${k.uid}`);
+    const want = new Set<string>();
+    for (let u = 1; u <= 5_000; u += 1) want.add(`Archive|3000000000|${u}`).add(`Archive|3000000001|${u + 1}`);
+    for (let u = 1; u <= 64_003; u += 1) want.add(`INBOX|1|${u}`);
+    const got = new Set(keys);
+    expect({
+      rows: keys.length, duplicates: keys.length - got.size,
+      missing: [...want].filter((k) => !got.has(k)).length, extra: [...got].filter((k) => !want.has(k)).slice(0, 5),
+      foreign: first.filter((k) => k.messageId !== "<a@x>").length,
+    }).toEqual({ rows: 74_003, duplicates: 0, missing: 0, extra: [], foreign: 0 });
+
+    expect(pages.map((p) => p.rows)).toEqual([...Array(14).fill(KNOWN_LOCATOR_PAGE_ROWS), 4_003]);
+    expect(new Set(pages.map((p) => p.turn)).size, "two pages were read on one turn of the loop").toBe(pages.length);
+
+    const again = await watched.listKnownLocators(a);
+    expect(pages, "the second read went to the store").toHaveLength(15);
+    expect(again).toEqual(first);
+
+    for (const p of [pages[0]!, pages[1]!]) {
+      const raw = Object.values((await c.query(`explain (format json) ${p.text}`, p.params)).rows[0] as object)[0];
+      const nodes = nodesOf(((typeof raw === "string" ? JSON.parse(raw) : raw) as { Plan: PlanNode }[])[0]!.Plan);
+      expect(nodes.filter((n) => /Sort/.test(String(n["Node Type"]))), "a page sorts the mailbox").toEqual([]);
+      expect(nodes.some((n) => /Index/.test(String(n["Node Type"])) && n["Index Name"] === "message_instances_locator_uq")).toBe(true);
+    }
+  }, 240_000);
+
+  it("analyzes the locator table that a rewrite left with a row count and no statistics, once", async () => {
+    const { o, c } = await locatorStore(10, 10);
+    await c.exec("BEGIN; DELETE FROM public.message_instances");
+    expect(await analyzeKnownSetIfNever(c), "an empty table answered for good").toBe("pending");
+    await c.exec("ROLLBACK");
+    await c.exec("VACUUM public.message_instances");
+    expect(await analyzeNeverAnalyzed(c, ["message_instances"])).toEqual(["message_instances"]);
+    expect(await analyzeNeverAnalyzed(c, ["message_instances"])).toEqual([]);
+    expect(await o.analyzeKnownSetIfNever()).toBe("already");
+  }, 120_000);
 });

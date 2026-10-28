@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DrizzleRepo, type KnownLocator } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  KnownSetCache, KNOWN_SET_NEUTRAL, dirtyMethodsOf, estimateWireBytes, watchKnownSet,
+  KnownSetBudget, KnownSetCache, KNOWN_SET_NEUTRAL, dirtyMethodsOf, estimateWireBytes, watchKnownSet,
 } from "../src/known-set.js";
 
 /**
@@ -292,6 +292,35 @@ describe("known-set memo: what it serves and what drops it", () => {
 
     expect(calls.listKnownLocators).toBe(3);
     expect(cache.warm).toBe(true);          // the other mailbox's read did not disturb this memo
+  });
+
+  /* A read in pages yields the loop, so a drop or a committed insert can land while it is out.
+     The set it returns predates that write: handed back, never kept, never charged. */
+  it.each([
+    ["a drop", (c: KnownSetCache) => c.drop("leader lock lost")],
+    ["an insert", (c: KnownSetCache) => c.noteInserted(loc("INBOX", 3))],
+    ["a move", (c: KnownSetCache) => c.noteMoved(loc("INBOX", 1), loc("Archive", 1))],
+  ] as const)("%s during a cold read leaves the memo cold and charges nothing", async (_name, write) => {
+    const budget = new KnownSetBudget(1 << 20);
+    const cache = new KnownSetCache("mb-1", budget);
+    let release!: () => void;
+    let reads = 0;
+    const read = async (): Promise<KnownLocator[]> => {
+      reads += 1;
+      if (reads === 1) await new Promise<void>((r) => { release = r; });
+      return [loc("INBOX", 1), loc("INBOX", 2)];
+    };
+    const pending = cache.list(read, "mb-1");
+    await Promise.resolve();
+    write(cache);
+    release();
+    expect(await pending).toEqual([loc("INBOX", 1), loc("INBOX", 2)]);
+    expect(cache.warm).toBe(false);
+    expect(budget.chargedBytes).toBe(0);
+    expect(cache.census().droppedBy).not.toBeNull();
+    await cache.list(read, "mb-1");
+    expect(reads).toBe(2);
+    expect(cache.warm).toBe(true);
   });
 
   it("an explicit drop names its reason, which is what reaches the log", () => {

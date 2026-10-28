@@ -2210,6 +2210,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const db = opened.db;
     // The search's planner statistics after a drain took mail — PGlite has no autovacuum.
     const statisticsUpkeep = createStatisticsUpkeep(() => opened.analyzeSearchIfStale());
+    /* The known-set read's statistics, before a drain reads it: without them every page sorts the
+       rest of the mailbox. Kept once answered; an empty table or a refusal is asked again next drain. */
+    let knownSetStatistics: Promise<void> | null = null;
+    const knownSetStatisticsOnce = (): Promise<void> => {
+      if (knownSetStatistics !== null) return knownSetStatistics;
+      const step: Promise<void> = Promise.resolve()
+        .then(() => opened.analyzeKnownSetIfNever())
+        .catch(() => "pending" as const)
+        .then((s) => { if (s === "pending" && knownSetStatistics === step) knownSetStatistics = null; });
+      return (knownSetStatistics = step);
+    };
     /* THE WAIT FOR THE WINDOW'S FIRST PAGE, one spelling for the poll's drain and the launch's
        (`first-page-gate.ts`). TWO LINES, NOT ONE WITH A FIELD: a rig greps for an event, and the
        drain yielded and got its page, or the bound fired and it went anyway. A wait of nothing
@@ -6723,6 +6734,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            writes a change row. It is RECORDED at the drain's end as the value read HERE — a route
            that wrote while the drain ran would otherwise be folded into the end reading and drop
            nothing. An unreadable mark is an UNKNOWN and takes the drop path. */
+        await knownSetStatisticsOnce();
         const markAtStart = await changeLogMark();
         if (markAtStart === null || knownSetMark === null || markAtStart !== knownSetMark) {
           knownSet.drop("the store moved outside the drain");
@@ -7873,9 +7885,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              failure, or our own refusal of a replaced connection, closes it. */
           let drainError: unknown;
           /* THE LAUNCH DRAIN WAITS FOR THE WINDOW'S FIRST PAGE TOO: its first cycle reads every
-             locator of the mailbox in one statement whose result blocks the loop (74,003 rows, 4 to
-             6 s on a measured install), and only the poll's drain asked the gate. Bounded by the
-             grace armed at serving; a re-dial after the page, or after the grace, waits nothing and
+             locator of the mailbox (in pages, a turn of the loop each, but the whole mailbox), and
+             only the poll's drain asked the gate. Bounded by the grace armed at serving; a re-dial
+             after the page, or after the grace, waits nothing and
              logs nothing. Only where a door armed it: the phone serves no such page. A stop during
              the wait drains nothing; `detach()` gives the claim back. */
           if (firstPageDoorArmed()) await yieldToFirstPage();
