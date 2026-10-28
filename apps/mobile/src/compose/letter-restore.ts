@@ -55,6 +55,8 @@ export interface RestoreDeps {
   only?: ReadonlySet<string>;
   /** The typed recipients that parse. */
   parse: (typed: string) => LetterAddress[];
+  /** Waiting edits the engine kept as new drafts this session (`keptAsNewDrafts`). */
+  keptAsNew?: () => readonly { from: string; row: string | null; revision?: string }[];
   now?: () => Date;
 }
 
@@ -194,6 +196,12 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
     return true;
   };
 
+  /** The new draft the engine kept this letter's refused waiting save in: from its row, or the row itself. */
+  const keptRow = (l: Letter) => {
+    if (l.draftId === null || !d.keptAsNew) return undefined;
+    const all = d.keptAsNew();
+    return all.find((k) => k.row !== null && k.row === l.draftId) ?? all.filter((k) => k.from === l.draftId).at(-1);
+  };
   let later: string[] = [];
   const restore = async (l: Letter): Promise<void> => {
     if (d.owned.has(l.id) || (d.only !== undefined && !d.only.has(l.id))) return;
@@ -237,6 +245,17 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
     }
     const worth = l.draftId !== null || l.body.trim() !== "" || (l.mode === "new" && l.subject.trim() !== "") || l.files.length > 0;
     if (!worth) { d.door.drop(l.id); return; }
+    const kept = keptRow(l);
+    if (kept !== undefined && kept.row === null) { later.push(l.id); return; }
+    if (kept !== undefined && kept.row !== null) {
+      // Its words went to that draft and the flush said so: the letter follows them, silently.
+      const own = l.draftId === kept.row;
+      const at: Letter = { ...l, draftId: kept.row, revision: own ? l.revision ?? null : kept.revision ?? null };
+      if (at.savedAs === wordsOf(at)) { if (!own) bind(at, kept.row, at.revision); return; }
+      const before = out.changed;
+      if (await keep(at) && out.changed > before) out.kept += 1;
+      return;
+    }
     if (l.draftId !== null && l.savedAs === wordsOf(l)) return;
     if (waits(l)) { later.push(l.id); return; }
     if (await keep(l)) out.kept += 1;
@@ -261,7 +280,10 @@ export function sayLetterRestore(r: LetterRestore): Refusal | null {
 }
 
 /** A flushed outcome, as `flushQueued` reports it. */
-export interface LetterOutcome { status: string; kind: string; draftId?: string; createdDraftId?: string; changed?: boolean }
+export interface LetterOutcome {
+  status: string; kind: string; draftId?: string; createdDraftId?: string; changed?: boolean;
+  keptAsNew?: { from: string; row: string | null; revision?: string };
+}
 
 /**
  * THE FLUSH SETTLES THE LETTERS WAITING ON ITS KEYS: a queued keep binds to the row it made, a
@@ -276,7 +298,15 @@ export function settleLetters(
   // An open composer settles its own letter.
   const letters = door.letters().filter((l) => !owned.has(l.id));
   for (const [key, o] of settled) {
+    const into = o.keptAsNew;
     for (const l of letters) {
+      // The engine kept this letter's refused waiting save as a new draft: the letter, its files with it, follows.
+      if (into?.row && l.draftId === into.from && l.send === null) {
+        const next = { ...l, draftId: into.row, revision: into.revision ?? null, ...(l.keep?.key === key ? { savedAs: wordsOf(l), keep: null } : {}) };
+        if (rowHoldsLetter(next) && next.savedAs === wordsOf(next)) door.drop(l.id);
+        else door.put({ ...next, updatedAt: now().toISOString() });
+        continue;
+      }
       if (l.keep?.key === key && o.kind === "draft_save") {
         if (o.status === "confirmed" && o.createdDraftId) {
           const next = { ...l, draftId: o.createdDraftId, savedAs: wordsOf(l), keep: null };

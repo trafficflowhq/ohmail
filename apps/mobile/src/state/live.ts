@@ -2982,11 +2982,31 @@ export interface FlushedOutcome {
   failure?: FailedSendCopy;
   /** A mail_send refused because its row was changed elsewhere: that row holds the other version. */
   changed?: true;
+  /** A draft_save refused because its row changed elsewhere, its words re-issued by the engine as a new draft (`restored`: left by an earlier session). */
+  keptAsNew?: { from: string; row: string | null; revision?: string; restored: boolean };
   /**
    * mail_send only: the Send + Done release this confirmation ran, as the sentence it earned
    * ({@link ReleaseConfirmed}) — said INSTEAD of the ordinary one, one sentence per press.
    */
   done: DoneSaid | null;
+}
+
+/** What a flush says of its saves (every kind but a send): a refused one failed; an edit the engine kept as a new draft was kept. */
+export function sayFlushedSaves(settled: Iterable<[string, Pick<FlushedOutcome, "status" | "kind" | "keptAsNew">]>): Refusal[] {
+  const says: Refusal[] = [];
+  const restored = new Set<string>();
+  let here = false;
+  for (const [, o] of settled) {
+    if (o.kind === "mail_send") continue;
+    if (o.status === "rolled_back") {
+      if (o.keptAsNew === undefined) says.push(refuse("liveSaveFailed"));
+      else if (o.keptAsNew.restored) restored.add(o.keptAsNew.from);
+      else here = true;
+    }
+  }
+  if (restored.size > 0) says.push(refuse("lettersKeptChangedElsewhere", restored.size));
+  else if (here) says.push(refuse("composeKeptChangedElsewhere"));
+  return says;
 }
 
 /**
@@ -3038,6 +3058,15 @@ const sendsOffTheQueue = new WeakMap<OhmailEngine, Map<string, QueuedMeta>>();
 function queuedSendsOf(engine: OhmailEngine): Map<string, QueuedMeta> {
   let known = sendsOffTheQueue.get(engine);
   if (known === undefined) sendsOffTheQueue.set(engine, (known = new Map()));
+  return known;
+}
+
+/** Keys an earlier session left on the outbox, by engine, kept until their answer is read (late or stray ones too). */
+const restoredKeys = new WeakMap<OhmailEngine, Set<string>>();
+
+function restoredKeysOf(engine: OhmailEngine): Set<string> {
+  let known = restoredKeys.get(engine);
+  if (known === undefined) restoredKeys.set(engine, (known = new Set()));
   return known;
 }
 
@@ -3113,6 +3142,9 @@ export async function flushQueued(
   onRearmed?: (key: string) => void,
 ): Promise<Map<string, FlushedOutcome>> {
   const kinds = new Map(engine.pendingMutations().map((p) => [p.key, queuedMetaOf(p.mutation)]));
+  const left = restoredKeysOf(engine);
+  const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
+  for (const p of [...engine.pendingMutations(), ...wire]) if ("restored" in p && p.restored === true) left.add(p.key);
   const offQueue = queuedSendsOf(engine);
   for (const [key, meta] of kinds) if (meta.kind === "mail_send") offQueue.set(key, meta);
   const outcomes = new Map<string, FlushedOutcome>();
@@ -3120,6 +3152,7 @@ export async function flushQueued(
   strayAnswers.delete(engine);
   const results = [...strays.map((x) => x.r), ...await engine.flushPending().catch(() => [])];
   const released = await release(results);
+  const keptNew = typeof engine.keptAsNewDrafts === "function" ? engine.keptAsNewDrafts() : [];
   /* A stray was released by the press's flush, which kept its sentence for this road to say. */
   const done = new Map(released);
   for (const x of strays) if (x.done !== null && !done.has(x.r.key)) done.set(x.r.key, x.done);
@@ -3140,20 +3173,25 @@ export async function flushQueued(
     if (r.error?.code === OUTBOX_WITHDRAWN_CODE) { offQueue.delete(r.key); continue; }
     const meta = kinds.get(r.key) ?? offQueue.get(r.key) ?? { kind: "mark_seen" as const, forward: false, fresh: false, sendAt: null };
     offQueue.delete(r.key);
+    const restored = left.delete(r.key);
     const status =
       r.status === "confirmed" ? ("confirmed" as const)
         : r.error?.code === "send_unverified" ? ("unverified" as const)
           : ("rolled_back" as const);
     const earlierWent = earlierVersionWent(r);
     const refusedSend = status === "rolled_back" && meta.kind === "mail_send";
+    // Only draft_save edits are listed there: a late or stray answer has lost its kind off the queue.
+    const asNew = status === "rolled_back" && !refusedSend && r.error?.code === "draft_changed"
+      ? keptNew.find((k) => k.key === r.key) : undefined;
     outcomes.set(r.key, {
-      status, kind: meta.kind, forward: meta.forward, fresh: meta.fresh, sendAt: meta.sendAt, earlierWent,
+      status, kind: asNew ? "draft_save" : meta.kind, forward: meta.forward, fresh: meta.fresh, sendAt: meta.sendAt, earlierWent,
       ...(refusedSend ? { failure: failedSendCopy(r) } : {}),
       ...(refusedSend && r.error?.code === "draft_changed" ? { changed: true as const } : {}),
       // A row changed elsewhere holds the other version: never the composer's to bind.
       ...((refusedSend || (status === "unverified" && meta.kind === "mail_send")) && r.entityId && r.error?.code !== "draft_changed"
         ? { draftId: r.entityId } : {}),
       ...(status === "confirmed" && meta.kind === "draft_save" && r.entityId ? { createdDraftId: r.entityId } : {}),
+      ...(asNew ? { keptAsNew: { from: asNew.from, row: asNew.row, ...(asNew.revision ? { revision: asNew.revision } : {}), restored } } : {}),
       done: done.get(r.key) ?? null,
     });
   }

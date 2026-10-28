@@ -70,7 +70,7 @@ import {
   connectionSay, firstSyncSay, setAsideSaid,
   autoUnsubscribeConfirms,
   dispatchHeldRouting,
-  answersWaiting, confirmedSendSay, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
+  answersWaiting, confirmedSendSay, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, sayFlushedSaves, type SendSettlement,
   keptRecipients,
   liveActions,
   planHeldRouting,
@@ -1453,6 +1453,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     firstSync: () => engine.syncOnce().then(() => undefined),
     afterFlush: () => new Promise<void>((r) => { flushWaiters.push(r); }),
     parse: keptRecipients,
+    keptAsNew: () => (typeof engine.keptAsNewDrafts === "function" ? engine.keptAsNewDrafts() : []),
   } : null), [engine, acts, letters, flushWaiters]);
   /* THE LETTERS A HARD STOP LEFT become drafts, once per session, and are said once; never sent. */
   useEffect(() => {
@@ -1574,10 +1575,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
             }
             else if (o.status === "unverified") showToast(refuse("replyUnverified"));
             else if (!loose.some((x) => x.key === key)) showToast(refusedSendSay(o.failure));
-          } else if (o.status === "rolled_back") {
-            showToast(refuse("liveSaveFailed"));
           }
         }
+        for (const say of sayFlushedSaves(settled)) showToast(say);
         if (settled.size > 0 || heardNow) setOutcomeSeq((n) => n + 1);
       })
       .finally(() => {
