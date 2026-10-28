@@ -140,3 +140,24 @@ describe("Try again is offered where asking again can help, and only there", () 
     expect(fileRetryIsOffered({})).toBe(true);
   });
 });
+
+describe("a picture the engine will ask for again says so", () => {
+  it.each([
+    ["mailbox_busy", 429, "ohmail already has this mailbox's connections open — trying again shortly", "ohmail hat die Verbindungen zu diesem Postfach schon offen — wird gleich nochmal versucht"],
+    ["mail_server_unreachable", 424, "Your mail server didn't answer — trying again shortly", "Dein Mailserver hat nicht geantwortet — wird gleich nochmal versucht"],
+  ] as const)("%s", async (code, status, sayEn, sayDe) => {
+    await mount(strip(failed({ code, status, retryable: true, reasking: true })));
+    expect(host!.querySelector(".att-state")!.textContent).toBe(sayEn);
+    await act(async () => root!.unmount());
+    host!.remove();
+    root = null;
+    setActiveCatalog("de", fillFrom(en as never, de as never) as never);
+    await mount(strip(failed({ code, status, retryable: true, reasking: true })));
+    expect(host!.querySelector(".att-state")!.textContent).toBe(sayDe);
+  });
+
+  it("control: without the re-ask the line reads as before", async () => {
+    await mount(strip(failed({ code: "mailbox_busy", status: 429, retryable: true })));
+    expect(host!.querySelector(".att-state")!.textContent).toBe("ohmail already has this mailbox's connections open — try again");
+  });
+});

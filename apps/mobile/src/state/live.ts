@@ -441,7 +441,7 @@ export function presentedOf(
 export type WorldAttachmentBytes =
   | { state: "ready"; base64: string; mime: string; filename: string }
   /** The engine item's refusal facts: the tile's sentence names the side, `retryable` its tap. */
-  | { state: "failed"; code: string | null; retryable: boolean; status: number | null }
+  | { state: "failed"; code: string | null; retryable: boolean; status: number | null; reasking?: boolean }
   | { state: "too_large" | "unavailable" };
 
 /** One attachment tile: the engine's item (fallback name applied), size as words. */
@@ -4198,7 +4198,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const blob = engine.attachmentBlobOf(messageId, attachmentId);
     if (item.state !== "ready" || !blob) {
       logAttachmentRefusal("bytes_failed");
-      return { state: "failed", code: item.code ?? null, retryable: item.retryable !== false, status: item.status ?? null };
+      return {
+        state: "failed", code: item.code ?? null, retryable: item.retryable !== false, status: item.status ?? null,
+        ...(item.reasking === true ? { reasking: true } : {}),
+      };
     }
     try {
       return { state: "ready", base64: await blobToBase64(blob), mime: item.mimeType, filename: item.filename };

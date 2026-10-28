@@ -52,6 +52,8 @@ import {
 } from "./adapters/refusal-shape.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { REASK_MAX, wireFailed } from "./wire-reask.js";
+import { attachmentFaultClass } from "./attachment-fault.js";
+import { PartLane, LANE_DROPPED } from "./part-lane.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
 import {
   MemoryMirrorStore, OUTBOX_PROTOCOL, type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices,
@@ -1711,6 +1713,8 @@ export interface AttachmentItem {
    * and the bytes stay as they are, so a preview showing them stays too; a control may read busy.
    */
   saving?: boolean;
+  /** A `failed` embedded picture the engine will ask for again on its own, on a timer now armed. */
+  reasking?: true;
   /** The server's own sentence when `state` is `failed` or `too_large`. */
   error?: string;
   /**
@@ -1861,6 +1865,12 @@ export const INLINE_IMAGE_MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 const NO_INLINE_IMAGES: ReadonlyMap<string, string> = new Map();
 /** A pass that re-asks no failed part — every pass but a drain's. */
 const NO_RETRY: ReadonlySet<string> = new Set();
+
+/**
+ * When an embedded picture the mail server could not serve (busy past the wait, no answer) is due
+ * to be asked again: one step per re-ask, within the per-part {@link REASK_MAX}.
+ */
+export const PART_REASK_DELAYS_MS: readonly number[] = [15_000, 60_000, 240_000];
 
 /**
  * The per-part ceiling on an AUTOMATICALLY fetched calendar part, in bytes — 256 KiB.
@@ -3201,6 +3211,10 @@ export class OhmailEngine {
    * pass: one would spend the per-pass budget again on the parts past {@link INLINE_IMAGE_MAX_PARTS}.
    */
   private readonly inlinePassParts = new Set<string>();
+  /** Every byte ask this engine makes, in line per mailbox ({@link PartLane}). */
+  private readonly partLane = new PartLane();
+  /** A letter's due re-ask of its embedded pictures ({@link PART_REASK_DELAYS_MS}): when, and which parts. */
+  private readonly partReasksDue = new Map<string, { at: number; parts: string[] }>();
   /**
    * `attachmentId → decoded ics text` per message — what an event-preview surface parses and
    * renders. Text, not a parsed structure: the engine holds bytes and their decodings, and the
@@ -3835,6 +3849,8 @@ export class OhmailEngine {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.partLane.dropAll();
+    this.partReasksDue.clear();
     this.unlistenDisk?.();
     this.unlistenDisk = null;
     this.notices = null;
@@ -11304,6 +11320,18 @@ export class OhmailEngine {
    * key.)
    */
   async openAttachment(messageId: string, attachmentId: string, opts: { retry?: boolean } = {}): Promise<void> {
+    return this.fetchPartBytes(messageId, attachmentId, { retry: opts.retry });
+  }
+
+  /** The mailbox a letter's byte asks wait in line for. */
+  private laneKeyOf(messageId: string): string {
+    return this.store.get<EngineMessage>("message", messageId)?.mailboxId ?? "*";
+  }
+
+  /** {@link openAttachment}'s work; `auto` for an embedded picture or an invitation nobody pressed. */
+  private async fetchPartBytes(
+    messageId: string, attachmentId: string, opts: { retry?: boolean; auto?: boolean },
+  ): Promise<void> {
     const fetchOne = this.adapter.fetchAttachment;
     if (!fetchOne) return;
 
@@ -11315,7 +11343,10 @@ export class OhmailEngine {
     // two messages, which is the rare case; the double-click on one message stays one fetch.
     const flightKey = `${messageId}:${attachmentId}`;
     const inFlight = this.attachmentRequests.get(flightKey);
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      if (!opts.auto) this.partLane.promote(flightKey);
+      return inFlight;
+    }
 
     const current = this.itemOf(messageId, attachmentId);
     if (!current) return;
@@ -11332,8 +11363,11 @@ export class OhmailEngine {
       state: "loading", error: undefined, code: undefined, retryable: undefined, status: undefined,
     });
 
-    const request = fetchOne.call(this.adapter, attachmentId)
+    const task = { key: this.laneKeyOf(messageId), messageId, flight: flightKey, kind: opts.auto ? "auto" as const : "press" as const };
+    const request = this.partLane.run(task, () => fetchOne.call(this.adapter, attachmentId))
       .then((blob) => {
+        // Released while it waited in line: nothing was asked, and nothing is left to patch.
+        if (blob === LANE_DROPPED) return;
         // REVOKE BEFORE RE-MINTING. A retry over a `failed` item that had somehow minted a URL,
         // or any second pass, would otherwise leak the old one for the life of the document.
         this.revokeItem(messageId, attachmentId);
@@ -11404,6 +11438,7 @@ export class OhmailEngine {
     const flightKey = `${messageId}:${attachmentId}`;
     // A second press during a save is not a second save; a press during a preview's fetch waits for it.
     if (this.attachmentDeliveries.has(flightKey)) return undefined;
+    if (this.attachmentRequests.has(flightKey)) this.partLane.promote(flightKey);
     await this.attachmentRequests.get(flightKey);
     if (this.attachmentRequests.has(flightKey) || this.attachmentDeliveries.has(flightKey)) return undefined;
     const current = this.itemOf(messageId, attachmentId);
@@ -11414,8 +11449,12 @@ export class OhmailEngine {
       state: "loading", error: undefined, code: undefined, retryable: undefined, status: undefined,
     });
     let answer: T | undefined;
-    const request = deliver().then(
-      (got) => { answer = got; this.patchAttachment(messageId, attachmentId, { state: "idle" }); },
+    const request = this.partLane.run(this.pressOn(messageId, flightKey), deliver).then(
+      (got) => {
+        if (got === LANE_DROPPED) return;
+        answer = got;
+        this.patchAttachment(messageId, attachmentId, { state: "idle" });
+      },
       (err: unknown) => this.refuseAttachment(messageId, attachmentId, err),
     ).finally(() => { this.attachmentRequests.delete(flightKey); this.attachmentDeliveries.delete(flightKey); });
     this.attachmentRequests.set(flightKey, request);
@@ -11436,7 +11475,8 @@ export class OhmailEngine {
     this.attachmentDeliveries.add(flightKey);
     this.patchAttachment(messageId, attachmentId, { saving: true });
     try {
-      return await deliver();
+      const got = await this.partLane.run(this.pressOn(messageId, flightKey), deliver);
+      return got === LANE_DROPPED ? undefined : got;
     } catch (err) {
       return refused?.(err);
     } finally {
@@ -11457,7 +11497,10 @@ export class OhmailEngine {
   ): Promise<void> {
     const flightKey = `${messageId}:${attachmentId}`;
     const inFlight = this.attachmentRequests.get(flightKey);
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      this.partLane.promote(flightKey);
+      return inFlight;
+    }
     const current = this.itemOf(messageId, attachmentId);
     if (!current || current.state === "too_large") return;
     if (current.state === "ready" && (current.blob !== undefined || current.objectUrl || current.previewTooLarge)) return;
@@ -11465,8 +11508,9 @@ export class OhmailEngine {
     this.patchAttachment(messageId, attachmentId, {
       state: "loading", error: undefined, code: undefined, retryable: undefined, status: undefined,
     });
-    const request = stage()
+    const request = this.partLane.run(this.pressOn(messageId, flightKey), stage)
       .then((staged) => {
+        if (staged === LANE_DROPPED) return;
         this.revokeItem(messageId, attachmentId);
         if (staged.kind === "url") {
           this.objectUrls.adopt(messageId, staged.url, staged.release);
@@ -11543,7 +11587,8 @@ export class OhmailEngine {
     const fetchAll = this.adapter.fetchAllAttachments;
     if (!fetchAll) return null;
     try {
-      return await fetchAll.call(this.adapter, messageId);
+      const got = await this.partLane.run(this.pressOn(messageId, `${messageId}:*`), () => fetchAll.call(this.adapter, messageId));
+      return got === LANE_DROPPED ? null : got;
     } catch {
       return null;
     }
@@ -11596,6 +11641,8 @@ export class OhmailEngine {
         if (asked?.again) {
           asked.again = false;
           void this.runInlineImages(messageId, asked.cids, NO_RETRY);
+        } else {
+          this.armPartReask(messageId);
         }
       });
     this.inlineImageRequests.set(messageId, request);
@@ -11640,6 +11687,62 @@ export class OhmailEngine {
     }
   }
 
+  /**
+   * A PICTURE THE MAIL SERVER COULD NOT SERVE IS ASKED AGAIN, once due: busy past the lane's wait,
+   * or no answer. Never a refusal the server answered, and at most {@link REASK_MAX} per part,
+   * shared with the drain's re-ask; the item says `reasking` while the re-ask is due. The engine
+   * owns no timer: {@link OhmailEngine.reaskDueParts} on the surface's cadence asks.
+   */
+  private armPartReask(messageId: string): void {
+    if (this.disposed) return;
+    const asked = this.inlineImageAsks.get(messageId);
+    const held = this.attachmentLists.get(messageId);
+    if (!asked || held?.state !== "ready" || this.partReasksDue.has(messageId)) return;
+    const parts: string[] = [];
+    let step = 0;
+    for (const cid of new Set(asked.cids)) {
+      const item = held.items.find((i) => i.contentId === cid);
+      if (item?.state !== "failed" || item.retryable === false) continue;
+      const side = attachmentFaultClass(item.code, item.status);
+      if (side !== "busy" && side !== "unreachable" && side !== "server_busy") continue;
+      const spent = asked.reasks.get(item.id) ?? 0;
+      if (spent >= REASK_MAX) continue;
+      asked.reasks.set(item.id, spent + 1);
+      step = Math.max(step, spent);
+      parts.push(item.id);
+    }
+    if (parts.length === 0) return;
+    for (const id of parts) this.patchAttachment(messageId, id, { reasking: true });
+    const delay = PART_REASK_DELAYS_MS[Math.min(step, PART_REASK_DELAYS_MS.length - 1)]!;
+    this.partReasksDue.set(messageId, { at: this.now().getTime() + delay, parts });
+  }
+
+  /**
+   * THE SURFACE'S CADENCE ASKS the embedded pictures whose re-ask is due: the web scheduler's tick
+   * and the phone's drain round call this after their sync, beside {@link OhmailEngine.pollWaitingOnOrganizer}.
+   */
+  reaskDueParts(): void {
+    if (this.disposed || this.partReasksDue.size === 0) return;
+    const now = this.now().getTime();
+    for (const [messageId, due] of [...this.partReasksDue]) {
+      if (due.at > now) continue;
+      this.partReasksDue.delete(messageId);
+      for (const id of due.parts) this.patchAttachment(messageId, id, { reasking: undefined });
+      const asked = this.inlineImageAsks.get(messageId);
+      if (asked) void this.runInlineImages(messageId, asked.cids, new Set(due.parts));
+    }
+  }
+
+  /** A letter's due re-ask and its asks still in line go with the letter. */
+  private stopPartAsks(messageId: string): void {
+    this.partReasksDue.delete(messageId);
+    this.partLane.drop(messageId);
+  }
+
+  private pressOn(messageId: string, flight: string) {
+    return { key: this.laneKeyOf(messageId), messageId, flight, kind: "press" as const };
+  }
+
   /** The working half of {@link OhmailEngine.loadInlineImages}, behind its single-flight gate. */
   private async fetchInlineImages(messageId: string, contentIds: readonly string[], retry: ReadonlySet<string>): Promise<void> {
     await this.loadAttachments(messageId);
@@ -11678,7 +11781,7 @@ export class OhmailEngine {
       const part = `${messageId}:${item.id}`;
       this.inlinePassParts.add(part);
       try {
-        await this.openAttachment(messageId, item.id, retry.has(item.id) ? { retry: true } : {});
+        await this.fetchPartBytes(messageId, item.id, { retry: retry.has(item.id), auto: true });
       } finally {
         this.inlinePassParts.delete(part);
       }
@@ -11781,7 +11884,7 @@ export class OhmailEngine {
 
     const decoded: Array<[string, string]> = [];
     for (const item of wanted) {
-      await this.openAttachment(messageId, item.id);
+      await this.fetchPartBytes(messageId, item.id, { auto: true });
       const blob = this.attachmentBlobOf(messageId, item.id);
       // The REAL byte gate — `sizeBytes` above was only the sender's claim.
       if (!blob || blob.size === 0 || blob.size > CALENDAR_TEXT_MAX_BYTES) continue;
@@ -11873,6 +11976,8 @@ export class OhmailEngine {
     this.keptListFailures.clear();
     const ids = new Set([...this.attachmentLists.keys(), ...this.sentAttachmentSeeds.keys()]);
     for (const messageId of ids) this.forceReleaseAttachments(messageId);
+    for (const messageId of [...this.partReasksDue.keys()]) this.stopPartAsks(messageId);
+    this.partLane.dropAll();
     // Whatever the per-message passes could not name: a URL whose fetch is still in flight, and
     // one minted for a message whose entry and seed are both already gone.
     this.objectUrls.releaseAll();
@@ -11898,6 +12003,7 @@ export class OhmailEngine {
    */
   private keepListFailure(messageId: string): void {
     const held = this.attachmentLists.get(messageId);
+    this.stopPartAsks(messageId);
     this.objectUrls.releaseOwner(messageId);
     this.inlineImages.delete(messageId);
     this.inlineImageAsks.delete(messageId);
@@ -11917,6 +12023,7 @@ export class OhmailEngine {
   /** The unconditional half of {@link OhmailEngine.releaseAttachments}. */
   private forceReleaseAttachments(messageId: string): void {
     this.keptListFailures.delete(messageId);
+    this.stopPartAsks(messageId);
     // ONE drain of the ledger, not a walk of the entries: it holds the seed's compose URLs (a
     // forward still waiting on its parent publishes no list to find them under), the ready items'
     // URLs, and any minted for this message while its entry was already gone. Each is revoked

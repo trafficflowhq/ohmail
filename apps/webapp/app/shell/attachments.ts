@@ -296,8 +296,8 @@ function attachmentsFingerprint(engine: OhmailEngine, ids: Iterable<string>): st
     if (held.state === "ready") {
       const maps = `img${serialOf(engine.inlineImagesOf(id))}:cal${serialOf(engine.calendarTextsOf(id))}`;
       // A failed item's code too: the sentence names the side, and a re-ask can fail on another.
-      // A desktop save of a part on screen moves `saving` alone.
-      parts.push(`${id}:ready:${held.items.map((i) => `${i.id}=${i.state}${i.saving === true ? "+saving" : ""}${i.state === "failed" ? `:${i.code ?? ""}` : ""}`).join(",")}:${maps}`);
+      // A desktop save of a part on screen moves `saving` alone; an armed re-ask `reasking` alone.
+      parts.push(`${id}:ready:${held.items.map((i) => `${i.id}=${i.state}${i.saving === true ? "+saving" : ""}${i.state === "failed" ? `:${i.code ?? ""}${i.reasking === true ? "+reasking" : ""}` : ""}`).join(",")}:${maps}`);
     } else if (held.state === "failed") {
       parts.push(`${id}:failed:${held.code ?? ""}`);
     } else if (held.state === "loading") {
