@@ -126,6 +126,11 @@ mod webview_budget;
 #[cfg(target_os = "linux")]
 mod gtk_text_dpi;
 
+// Key listeners an accessibility client leaves mid-delivery are removed once GTK's delivery has
+// returned. Always compiled: every Linux build runs GTK's accessibility bridge.
+#[cfg(target_os = "linux")]
+mod atk_key_listeners;
+
 // The window opens hidden and is shown on its own canvas once the page has composed its first
 // frame, or at a bound. Always compiled: every build opens the same hidden window.
 mod launch_window;
@@ -176,6 +181,7 @@ fn main() {
                 settings.set_gtk_xft_dpi(dpi);
             }
         }
+        atk_key_listeners::guard();
     }
 
     let mut builder = tauri::Builder::default();

@@ -651,7 +651,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these fifty-two files and no others", () => {
+  it("is these fifty-four files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -668,6 +668,9 @@ describe("the Rust side", () => {
       // build's AppImage press replaces by rename. `updater.rs` still writes nothing itself.
       "appimage_stage.rs",
       "appimage_stage_tests.rs",
+      // ATK key listeners, under gtk_text_dpi's rules: Linux only, ALWAYS compiled, not feature-gated.
+      "atk_key_listeners.rs",
+      "atk_key_listeners_tests.rs",
       // THE IN-APP PREVIEW'S BYTES, KEPT OUT OF THE WINDOW'S SCRIPT: the staged-image table, the
       // `attachment-preview` scheme that serves it by token (main window, GET, four raster types,
       // real parent == the staging folder), and the two commands. Compiled only under
