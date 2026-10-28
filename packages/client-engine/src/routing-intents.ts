@@ -86,7 +86,7 @@ export interface DecideIntent {
   address: string;
   scope: "sender" | "domain";
   dest: ScreenDest;
-  /** The "&read" answer: a let-in files the held mail seen. */
+  /** The ✓: marks the card's held letters seen, at every destination. */
   read: boolean;
   /** The held ids — the overlay's set and the read batch's. */
   messageIds: string[];

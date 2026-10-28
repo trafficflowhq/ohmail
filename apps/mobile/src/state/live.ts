@@ -2641,7 +2641,7 @@ function reachRows(row: ScreenerRow, peers: readonly ScreenerRow[]): Array<{ add
  * WHAT A HELD SCREENER DECISION COMMITS, re-read at the close and never replayed from the record:
  * a representative still held at the gate, or one only the store holds, is decided with
  * `screener_decide`; one past the gate is ruled through the twins ladder. Neither reaches mail
- * already filed elsewhere: the card's INBOX letters move by id. A let-in's "&read" batch rides behind.
+ * already filed elsewhere: the card's INBOX letters move by id. The ✓'s read batch rides behind, at every destination.
  */
 export function planDecideCommit(reader: EntityReader, intent: DecideIntent, over?: readonly RuleDTO[]): EngineMutation[] {
   const rep = reader.get<EngineMessage>("message", intent.seedId);
@@ -2659,7 +2659,7 @@ export function planDecideCommit(reader: EntityReader, intent: DecideIntent, ove
       FOLDER_OF_VIEW[intent.dest], false,
     ).writes;
   out.push(...cardInboxMoves(reader, [...intent.messageIds, ...alsoStill(reader, intent.alsoIds ?? [], intent.id)], intent.dest));
-  if (intent.read && decision === "yes") {
+  if (intent.read) {
     for (let i = 0; i < intent.messageIds.length; i += MARK_SEEN_CHUNK) {
       out.push({ kind: "mark_seen", messageIds: intent.messageIds.slice(i, i + MARK_SEEN_CHUNK), unread: false });
     }
@@ -4352,7 +4352,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const also = scope === "domain" ? reachOf(row, peers, scope).inboxIds.filter((id) => !own.has(id)) : [];
     const intent: DecideIntent = {
       v: 3, verb: "decide", id: deps.uuid ? deps.uuid() : `${row.id}:${now().getTime()}`, seedId: row.id,
-      address: row.address, scope, dest: dest as ScreenDest, read: read && decision === "yes",
+      address: row.address, scope, dest: dest as ScreenDest, read,
       messageIds: row.held.map((h) => h.id), ...(also.length > 0 ? { alsoIds: also } : {}), at: now().getTime(),
     };
     const decidedSaid = refuse("liveDecided", destDone(dest), target);
@@ -4408,8 +4408,6 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   ): Promise<boolean> => {
     const raw = engine.read();
     const rep = raw.get<EngineMessage>("message", row.id);
-    // Demote-stays-unread: filing to Screen out or Spam never carries a read verb.
-    const readFlag = read && dest !== "screened" && dest !== "spam";
     // A derived row's spam verdict rides the NO branch — `yes` is the verb that ADMITS a
     // sender, and the server refuses `{decision:"yes", dest:spam}` outright (400).
     const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
@@ -4440,7 +4438,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         senderId: row.id,
         decision,
         dest: dest as ScreenDest,
-        ...(decision === "yes" ? { read: readFlag } : {}),
+        ...(decision === "yes" ? { read } : {}),
         scope,
         applyRetro: false,
       }).then(
@@ -4462,10 +4460,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const cardMoves = cardInboxMoves(raw, [...row.held.map((h) => h.id), ...alsoStill(raw, also, "")], dest as ScreenDest);
     // "&read" stays a separate batch, exactly as the wire has it: `POST /screener/:id`
     // carries no read field, so the seen half is the same `PATCH /messages` everyone uses.
-    // Deliberately unwatched (the webapp's one deliberate `void mutate`): the DECISION has
-    // landed; only the seen flag on now-filed mail can be lost, which is visible where it
-    // happened and undone by reading.
-    if (decision === "yes" && readFlag && row.held.length > 0) {
+    // Deliberately unwatched and sent beside the decision, not after it: a refused decision can
+    // leave the shown letters read where they were, which is visible and undone by reading.
+    if (read && row.held.length > 0) {
       const ids = row.held.map((h) => h.id);
       for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) {
         void engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_CHUNK), unread: false });

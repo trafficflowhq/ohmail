@@ -52,6 +52,17 @@ describe("the phone card's decision files what the card shows", () => {
     expect(out.filter((m) => m.kind === "move")).toEqual([]);
   });
 
+  it("the ✓ beside Screen out and Spam reads the card's letters; the plain press only files", async () => {
+    const r = await reader(msg("h1", "ohmail/Screener"), msg("h2", "ohmail/Screener"));
+    for (const dest of ["screened", "spam"] as const) {
+      const read = planDecideCommit(r, { ...intent("h1", ["h1", "h2"]), dest, read: true });
+      expect(read.find((m) => m.kind === "screener_decide")).not.toHaveProperty("read");
+      expect(read.filter((m) => m.kind === "mark_seen")).toEqual([{ kind: "mark_seen", messageIds: ["h1", "h2"], unread: false }]);
+      const plain = planDecideCommit(r, { ...intent("h1", ["h1", "h2"]), dest });
+      expect(plain.filter((m) => m.kind === "mark_seen")).toEqual([]);
+    }
+  });
+
   it("CONTROL: a card of held letters alone moves nothing by id", async () => {
     const out = planDecideCommit(await reader(msg("h1", "ohmail/Screener")), intent("h1", ["h1"]));
     expect(out.filter((m) => m.kind === "move")).toEqual([]);

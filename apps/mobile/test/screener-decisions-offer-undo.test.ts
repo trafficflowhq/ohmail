@@ -71,6 +71,9 @@ const CLASSES: Array<{ name: string; folder: string; dest: Destination; read: bo
   { name: "let in, at the gate", folder: "ohmail/Screener", dest: "ohbox", read: false, scope: "sender", sent: ["POST /screener/s1"] },
   { name: "let in and read, at the gate", folder: "ohmail/Screener", dest: "ohbox", read: true, scope: "sender", sent: ["POST /screener/s1", "PATCH /messages"] },
   { name: "screen out, at the gate", folder: "ohmail/Screener", dest: "screened", read: false, scope: "sender", sent: ["POST /screener/s1"] },
+  { name: "screen out and read, at the gate", folder: "ohmail/Screener", dest: "screened", read: true, scope: "sender", sent: ["POST /screener/s1", "PATCH /messages"] },
+  { name: "spam, at the gate", folder: "ohmail/Screener", dest: "spam", read: false, scope: "sender", sent: ["POST /screener/s1"] },
+  { name: "spam and read, at the gate", folder: "ohmail/Screener", dest: "spam", read: true, scope: "sender", sent: ["POST /screener/s1", "PATCH /messages"] },
   { name: "a domain press, at the gate", folder: "ohmail/Screener", dest: "ohbox", read: false, scope: "domain", sent: ["POST /screener/s1"] },
   { name: "let in, past the gate", folder: "INBOX", dest: "ohbox", read: false, scope: "sender", sent: ["POST /rules"] },
   { name: "screen out, past the gate", folder: "INBOX", dest: "screened", read: false, scope: "sender", sent: ["POST /rules", "POST /messages/s1/move"] },
@@ -165,6 +168,18 @@ describe("a Screener decision on the phone is held with Undo", () => {
       expect(await press(s, "screened", false, "sender")).toBe(true);
       expect(s.wire()).toEqual(["POST /screener/s1"]);
       expect(s.said.at(-1)?.opts?.undo).toBeUndefined();
+    } finally { s.close(); }
+  }, 30_000);
+
+  it("with no session open, the ✓ beside Screen out files and marks the shown letter read", async () => {
+    const s = await scene("ohmail/Screener");
+    try {
+      closeRoutingSession();
+      expect(await press(s, "screened", true, "sender")).toBe(true);
+      await tick(WINDOW_MS * 5);
+      expect(s.wire()).toEqual(["POST /screener/s1", "PATCH /messages"]);
+      const patch = JSON.parse(s.fake.seen.find((r) => r.method === "PATCH")!.body) as Record<string, unknown>;
+      expect(patch).toMatchObject({ ids: ["s1"], unread: false });
     } finally { s.close(); }
   }, 30_000);
 });
