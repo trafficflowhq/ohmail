@@ -41,6 +41,8 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 const NOW = new Date("2026-09-04T09:00:00.000Z");
 let roots: Root[] = [];
 let seq = 0;
+/** What the next `/sync` page carries: another device's work, applied by the engine's own drain. */
+let pending: SyncChange[] = [];
 
 beforeEach(() => {
   window.location.hash = "";
@@ -71,6 +73,7 @@ beforeEach(() => {
   };
   vi.spyOn(console, "error").mockImplementation(() => {});
   seq = 0;
+  pending = [];
 });
 
 afterEach(async () => {
@@ -128,10 +131,14 @@ function engineOver(store: MirrorStore, older: EngineMessage[] = []): OhmailEngi
     store,
     now: () => NOW,
     adapter: {
-      sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
-        cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
-      }),
+      sync: async () => {
+        const page = pending;
+        pending = [];
+        return {
+          changes: { creates: [], updates: [], moves: [], deletes: page },
+          cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
+        };
+      },
       mutate: async (m: EngineMutation) => {
         const changes = mutationEffects(store, m, { now: () => NOW, uuid: () => `id-${++seq}` })
           .map((e) => ({
@@ -168,7 +175,7 @@ const ROSTER: MailboxFacts[] = [{
 
 async function shell(
   specs: (string | Spec)[] = ["m1", "m2", "m3"], older: EngineMessage[] = [],
-): Promise<{ container: HTMLElement; store: MirrorStore }> {
+): Promise<{ container: HTMLElement; store: MirrorStore; engine: OhmailEngine }> {
   const { AppShell } = await import("../app/shell/AppShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const store = await storeWith(specs, older);
@@ -192,7 +199,7 @@ async function shell(
     }));
   });
   await waitFor(() => rowIds(container).length > 0, "rows in the Ohbox");
-  return { container, store };
+  return { container, store, engine };
 }
 
 const key = async (k: string): Promise<void> => {
@@ -349,17 +356,15 @@ describe("after a verb, on the shipped shell", () => {
   });
 
   it("a removal MY verb did not cause moves nothing — the marker is the difference", async () => {
-    const { container, store } = await shell();
+    const { container, engine } = await shell();
     await key("j");
     await waitFor(() => selId(container) != null, "the cursor to stand");
     const first = selId(container)!;
     // Another device's work arrives through the sync feed: the selected row is deleted with no
     // verb pressed here. The pane must rest, never pick a message nobody asked for.
-    await act(async () => {
-      await store.applyChanges([
-        { type: "message", op: "delete", id: first, seq: ++seq, updatedAt: NOW.toISOString(), entity: null },
-      ] as SyncChange[]);
-    });
+    // Through the drain, which notifies; a bare store write showed only at the 8 s poll.
+    pending = [{ type: "message", op: "delete", id: first, seq: ++seq, updatedAt: NOW.toISOString(), entity: null } as SyncChange];
+    await act(async () => { await engine.syncOnce(); });
     await waitFor(() => !rowIds(container).includes(first), "the row to leave with the drain");
     await settle();
     expect(selId(container)).toBeNull();
