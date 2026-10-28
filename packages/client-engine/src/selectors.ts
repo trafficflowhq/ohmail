@@ -2074,7 +2074,7 @@ const PILE_ORDER: Record<keyof TriagePiles, (a: Filed, b: Filed) => number> = {
 };
 
 /** The piles that hold a conversation as ONE row: a press on it acts on every member the pile holds. */
-export const FOLDED_PILES: ReadonlySet<keyof TriagePiles> = new Set<keyof TriagePiles>(["replyLater", "setAside"]);
+export const FOLDED_PILES: ReadonlySet<keyof TriagePiles> = new Set<keyof TriagePiles>(["replyLater", "setAside", "resurface"]);
 
 type PileRows = Map<keyof TriagePiles, Map<string, EngineMessage[]>>;
 const pileRowsCache = new WeakMap<EntityReader, { v: number; rows: PileRows }>();
@@ -2148,11 +2148,20 @@ export function triagePiles(reader: EntityReader): TriagePiles {
     if (msg === undefined) continue;
     filed[name].push({ msg, entry: entryOf(msg, [msg.id], st.bubbleUpAt) });
   }
-  // A folded pile's row faces, opens and is dated by its newest letter somebody else wrote.
+  // A folded pile's row faces and opens at its newest letter somebody else wrote; a Resurface row
+  // comes back at its soonest booking.
+  const claims = winningStates(reader);
   for (const [name, rows] of pileRowsOf(reader)) {
     for (const members of rows.values()) {
       const target = resurfacedFocus(members);
-      filed[name].push({ msg: target, entry: entryOf(target, members.map((m) => m.id)) });
+      let back: string | null = null;
+      if (name === "resurface") {
+        for (const m of members) {
+          const at = claims.get(m.id)?.bubbleUpAt ?? null;
+          if (at !== null && (back === null || Date.parse(at) < Date.parse(back))) back = at;
+        }
+      }
+      filed[name].push({ msg: target, entry: entryOf(target, members.map((m) => m.id), back) });
     }
   }
   for (const item of reader.list<TriageItemDTO>("triage_item")) {

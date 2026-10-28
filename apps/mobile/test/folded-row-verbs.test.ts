@@ -342,6 +342,57 @@ describe("Park on a message of a folded Ohbox row", () => {
   });
 });
 
+/* Resurface on one member booked it alone; the rest stayed in the Ohbox as the same row. The reader's
+   Resurface names no members; it takes the row its message stands in, as its Park does. */
+describe("Resurface on a message of a folded Ohbox row", () => {
+  const OTHER = { name: "Other", address: "other@fake.test" };
+  const ME = { name: "Me", address: "owner@fake.test" };
+  const sceneAnswered = () => scene([], [
+    { ...dto("m1", { subject: "Weekly", from: SENDER, date: "2026-08-19T08:00:00Z" }), threadId: "t1" },
+    { ...dto("m3", { subject: "Re: Weekly", folder: "Sent", unread: false, from: ME, date: "2026-08-19T08:30:00Z" }), threadId: "t1" },
+    { ...dto("m2", { subject: "Re: Weekly", from: OTHER, date: "2026-08-19T09:00:00Z" }), threadId: "t1" },
+    { ...dto("m9", { subject: "Garden", from: OTHER, date: "2026-08-18T08:00:00Z" }), threadId: "t9" },
+  ]);
+  const triaged = (s: Scene, before: number) => writes(s).slice(before)
+    .filter((r) => r.url.endsWith("/triage")).map((r) => `${r.url.split("/")[2]} ${(JSON.parse(r.body) as { state: string }).state}`).sort();
+  const all = (state: string) => ["m1", "m2", "m3"].map((id) => `${id} ${state}`);
+
+  it("the reader's Resurface books every member, my reply too, with one pill; the row leaves and the pile holds one item; Undo brings it all back", async () => {
+    const s = await sceneAnswered();
+    try {
+      const before = writes(s).length; const said = s.said.length;
+      expect(await s.actions.resurfaceAt("m2", "2026-08-26T07:00:00.000Z")).toBe(true);
+      await until("three bookings on the wire", () => triaged(s, before).length >= 3);
+      expect(triaged(s, before)).toEqual(all("bubbled_up"));
+      expect(pills(s, said)).toHaveLength(1);
+      const box = liveOhbox(s.engine.read(), view);
+      expect([...box.resurfaced, ...box.fresh, ...box.seen].map((r) => r.id), "the row left the Ohbox").toEqual(["m9"]);
+      const pile = livePiles(s.engine.read(), view).find((p) => p.kind === "resurface")!.items;
+      expect(pile.map((i) => [i.messageId, i.memberIds])).toEqual([["m2", ["m2", "m3", "m1"]]]);
+      offer(s).opts!.undo!();
+      await until("all back on the wire", () => triaged(s, before).length >= 6);
+      expect(triaged(s, before).filter((x) => x.endsWith(" none"))).toEqual(all("none"));
+    } finally { s.close(); }
+  });
+
+  it("the toggle on a conversation booked whole clears all of it; Now pins all of it", async () => {
+    const s = await sceneAnswered();
+    try {
+      let before = writes(s).length;
+      await s.actions.resurfaceAt("m2", "2026-08-26T07:00:00.000Z");
+      await until("three bookings", () => triaged(s, before).length >= 3);
+      before = writes(s).length;
+      expect(await s.actions.resurfaceToggle("m1")).toBe(true);
+      await until("three clears", () => triaged(s, before).length >= 3);
+      expect(triaged(s, before)).toEqual(all("none"));
+      before = writes(s).length;
+      expect(await s.actions.resurfaceNow("m1")).toBe(true);
+      await until("three pins", () => triaged(s, before).length >= 3);
+      expect(triaged(s, before)).toEqual(all("resurfaced"));
+    } finally { s.close(); }
+  });
+});
+
 /* THE ROW'S HALF, read as CODE: every verb `MailRow`'s press sends carries the row's members. */
 describe("MailRow's press", () => {
   const src = withoutCommentsAndLiterals(readFileSync(fileURLToPath(new URL("../src/ui/MailRow.tsx", import.meta.url)), "utf8"));

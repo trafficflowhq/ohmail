@@ -201,9 +201,9 @@ export interface DeleteUndo {
    * each other, only the last undoable, and a tab closed mid-way would delete an arbitrary prefix.
    * Returns whether the press ACTED: `false` is a refusal or no-op, and the caller must not run its
    * own side effects on it — a refused delete once closed the sheet over the message it had just
-   * declined to touch.
+   * declined to touch. `undone` runs when Undo takes this press back inside its window.
    */
-  remove: (target: DeleteTarget | readonly DeleteTarget[]) => boolean;
+  remove: (target: DeleteTarget | readonly DeleteTarget[], undone?: () => void) => boolean;
   /** Take back the press holding this message. Silent for an id in no open window. */
   undo: (messageId: string) => void;
   /** Commit every open window at once, without waiting. Unmount, and `pagehide`. */
@@ -219,7 +219,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
   const mintPress = deps.pressId ?? (() => crypto.randomUUID());
 
   /** One entry per OPEN PRESS. The ids it holds, and the timer that will commit them. */
-  interface Press { ids: string[]; timer: ReturnType<typeof setTimeout>; ends: AbortController }
+  interface Press { ids: string[]; timer: ReturnType<typeof setTimeout>; ends: AbortController; undone?: (() => void) | undefined }
   const open = new Map<string, Press>();
   /** Which press holds a message — the reverse index idempotence and Undo both need. */
   const heldBy = new Map<string, string>();
@@ -294,6 +294,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
     if (!press) return false;
     const count = press.ids.length;
     const ids = forget(pressId);
+    press.undone?.();
     disarmDeleteIntent(pressId);
     const left = deps.onUndone?.(ids) === true;
     publish();
@@ -304,7 +305,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
   };
 
   return {
-    remove: (target) => {
+    remove: (target, undone) => {
       const targets = Array.isArray(target)
         ? (target as readonly DeleteTarget[])
         : [target as DeleteTarget];
@@ -351,7 +352,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
       }
       const timer = arm(() => commit(pressId), windowMs);
       const ends = new AbortController();
-      open.set(pressId, { ids, timer, ends });
+      open.set(pressId, { ids, timer, ends, undone });
       for (const id of ids) heldBy.set(id, pressId);
       publish();
       deps.toast(say(deps.copy.deleted, deps.copy.deletedMany, ids.length), {
@@ -660,7 +661,7 @@ export function deleteKeyBindings(input: {
  */
 export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   held: ReadonlySet<string>;
-  remove: (target: DeleteTarget | readonly DeleteTarget[]) => boolean;
+  remove: (target: DeleteTarget | readonly DeleteTarget[], undone?: () => void) => boolean;
 } {
   const [held, setHeld] = useState<ReadonlySet<string>>(EMPTY);
   /* THE DEPS ARE READ THROUGH A REF, never closed over: `refusal`, `toast` and `copy` change
@@ -701,7 +702,7 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   }, [queue]);
   return {
     held,
-    remove: useCallback((t: DeleteTarget | readonly DeleteTarget[]) => queue.remove(t), [queue]),
+    remove: useCallback((t: DeleteTarget | readonly DeleteTarget[], undone?: () => void) => queue.remove(t, undone), [queue]),
   };
 }
 

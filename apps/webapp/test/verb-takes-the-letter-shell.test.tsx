@@ -3,14 +3,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
+import { COMMIT_MS } from "../app/shell/screener-state";
 import en from "../messages/en.json";
 
 /**
  * TRIAGE VERBS ON AN ANSWERED CONVERSATION ACT AT THE LETTER, through the shipped shell and the
  * real engine. `a1` is Lena's letter, read; `x2` is our own newer reply, so the row wears the reply.
- * Resurface on the row sends one `POST /messages/a1/triage` and nothing for `x2`. Park and Answer
- * later take the whole row, our reply too, so the row leaves the Ohbox; the pile shows it as one row
- * facing the letter.
+ * Park, Answer later and Resurface take the whole row, our reply too, so the row leaves the Ohbox;
+ * the pile shows it as one row facing the letter.
  */
 
 const ME = "walker@example.invalid";
@@ -175,7 +175,7 @@ describe("an answered conversation's row in the shipped shell", () => {
     expect(sortedPosts()).toEqual([["a1", "set_aside"], ["x2", "set_aside"]]);
   }, 60_000);
 
-  it("opened, the bar's Resurface Tomorrow acts on the letter", async () => {
+  it("opened, the bar's Resurface Tomorrow takes the row", async () => {
     const host = await mount(answered());
     await openRow(host);
     await click(bar(host, "abar-resurface"));
@@ -183,7 +183,7 @@ describe("an answered conversation's row in the shipped shell", () => {
       .find((b) => b.textContent?.trim() === en.ohbox.resurfaceTomorrow);
     expect(tomorrow, "the strip's Tomorrow").toBeTruthy();
     await click(tomorrow!);
-    expect(triagePosts()).toEqual([["a1", "bubbled_up"]]);
+    expect(sortedPosts()).toEqual([["a1", "bubbled_up"], ["x2", "bubbled_up"]]);
   }, 60_000);
 
   it("at phone width, the sheet's Later takes the row", async () => {
@@ -207,7 +207,7 @@ describe("an answered conversation's row in the shipped shell", () => {
     expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
   }, 60_000);
 
-  it("the palette's Resurface selection acts on the letter", async () => {
+  it("the palette's Resurface selection takes the row", async () => {
     const host = await mount(answered());
     await click(theRow(host));
     await key("k", { ctrlKey: true });
@@ -215,7 +215,7 @@ describe("an answered conversation's row in the shipped shell", () => {
       .find((li) => (li.textContent ?? "").includes(en.palette.resurfaceSel));
     expect(option, "the palette's Resurface selection").toBeTruthy();
     await click(option!);
-    expect(triagePosts()).toEqual([["a1", "bubbled_up"]]);
+    expect(sortedPosts()).toEqual([["a1", "bubbled_up"], ["x2", "bubbled_up"]]);
   }, 60_000);
 
   it("a pick of the row (x), then `a`, files the row", async () => {
@@ -487,12 +487,15 @@ describe("CONTROLS", () => {
   }, 60_000);
 });
 
-describe("Answer later and Parked hold a conversation as one row", () => {
+describe("Answer later, Parked and Resurface hold a conversation as one row", () => {
   /** T: six letters from Lena and Kai, then our reply x7; z9 a lone letter below. */
   const FILED = { setAt: ISO, updatedAt: ISO, bubbleUpAt: null };
+  const BACK = "2026-08-10T08:00:00.000Z";
   const IDS = ["m1", "m2", "m3", "m4", "m5", "m6", "x7"];
   const seven = (stateOf: (id: string) => string | null = () => null) => {
-    const filed = (id: string) => (stateOf(id) ? { triage: { messageId: id, state: stateOf(id), ...FILED } } : {});
+    const filed = (id: string) => (stateOf(id)
+      ? { triage: { messageId: id, state: stateOf(id), ...FILED, ...(stateOf(id) === "bubbled_up" ? { bubbleUpAt: BACK } : {}) } }
+      : {});
     return [
       consent(LENA.address), consent(KAI.address),
       ...IDS.slice(0, 6).map((id, i) => message(id, `2026-08-03T0${i + 1}:00:00.000Z`, { ...(i % 2 ? { from: KAI } : {}), ...filed(id) })),
@@ -528,6 +531,31 @@ describe("Answer later and Parked hold a conversation as one row", () => {
         const c = held.get(`message:${id}`);
         const at = new Date().toISOString();
         if (c) held.set(`message:${id}`, { ...c, entity: { ...c.entity, triage: { messageId: id, state: b.state, bubbleUpAt: b.bubbleUpAt ?? null, setAt: at, updatedAt: at } } });
+      }
+      // A move or a delete re-files the message and spends its own pin, as the server does.
+      const filing = /\/messages\/([^/?]+)(\/move)?$/.exec(String(input));
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (filing && (filing[2] ? method === "POST" : method === "DELETE")) {
+        const c = held.get(`message:${decodeURIComponent(filing[1]!)}`);
+        const tri = c?.entity.triage as { state?: string } | null | undefined;
+        const folder = filing[2] ? (JSON.parse(String(init!.body)) as { folder: string }).folder : "Trash";
+        if (c) held.set(c.type + ":" + c.id, { ...c, entity: { ...c.entity, folder, ...(tri?.state === "resurfaced" ? { triage: { ...tri, state: "none" } } : {}) } });
+      }
+      if (/\/messages(\?|$)/.test(String(input)) && (init?.method ?? "GET").toUpperCase() === "PATCH") {
+        // The server's deliberate read (no `via`) spends a resurface pin.
+        const b = JSON.parse(String(init!.body)) as { ids: string[]; unread: boolean; via?: string };
+        for (const id of b.ids) {
+          const c = held.get(`message:${id}`);
+          const tri = c?.entity.triage as { state?: string } | null | undefined;
+          const spend = !b.unread && !b.via && tri?.state === "resurfaced";
+          if (c) held.set(`message:${id}`, { ...c, entity: { ...c.entity, unread: b.unread, ...(spend ? { triage: { ...tri, state: "none" } } : {}) } });
+        }
+      }
+      // Why a finished pass left a row where it is: every row asked stayed for its pin.
+      const stayed = /\/screener\/stayed\?ids=([^&]*)/.exec(String(input));
+      if (stayed) {
+        const asked = decodeURIComponent(stayed[1]!).split(",").filter(Boolean);
+        return new Response(JSON.stringify({ stayed: asked.map((id) => ({ id, why: "set-aside" })) }), { status: 200, headers: { "content-type": "application/json" } });
       }
       return (inner as unknown as (i: unknown, n?: RequestInit) => Promise<Response>)(input, init);
     }) as unknown as typeof globalThis.fetch;
@@ -678,5 +706,359 @@ describe("Answer later and Parked hold a conversation as one row", () => {
     await click(rows(host)[0]!);
     await key("e");
     expect(triagePosts()).toEqual([["s1", "none"]]);
+  }, 60_000);
+
+  const fetchCalls = () => (globalThis.fetch as unknown as { mock: { calls: Array<[unknown, RequestInit?]> } }).mock.calls;
+  /** Every deliberate read the engine sent, as its sorted ids. */
+  const reads = (): string[][] => fetchCalls().flatMap(([u, init]) => {
+    if ((init?.method ?? "GET").toUpperCase() !== "PATCH" || !/\/messages(\?|$)/.test(String(u))) return [];
+    const b = JSON.parse(String(init!.body)) as { ids: string[]; unread: boolean; via?: string };
+    return b.unread || b.via ? [] : [[...b.ids].sort()];
+  });
+  /** The instants the bookings named. */
+  const instants = (): Set<string> => new Set(fetchCalls().flatMap(([u, init]) => {
+    if (!/\/triage/.test(String(u)) || (init?.method ?? "GET").toUpperCase() !== "POST") return [];
+    const b = JSON.parse(String(init!.body)) as { state: string; bubbleUpAt?: string };
+    return b.state === "bubbled_up" && b.bubbleUpAt ? [b.bubbleUpAt] : [];
+  }));
+  const resurfacedRows = (host: HTMLElement): HTMLElement[] =>
+    [...host.querySelectorAll<HTMLElement>(`[role="listbox"][aria-label="${en.ohbox.resurfacedGroup}"] .row[data-id]`)];
+  const strip = async (host: HTMLElement, label: string): Promise<void> => {
+    await click(bar(host, "abar-resurface"));
+    const b = [...host.querySelectorAll<HTMLElement>(".read-col .abar-panel button")].find((x) => x.textContent?.trim() === label);
+    expect(b, `the strip's ${label}`).toBeTruthy();
+    await click(b!);
+  };
+
+  it("`b` books all seven at one instant, the row leaves and the cursor moves on; Resurface lists one row; `z` brings it back", async () => {
+    const host = await mount(seven());
+    await click(rows(host)[0]!);
+    await key("b");
+    expect(sortedPosts()).toEqual(all("bubbled_up"));
+    expect(instants().size, "one instant for the whole conversation").toBe(1);
+    expect(ids(host), "the row left the Ohbox").toEqual(["z9"]);
+    expect(selRow(host)).toBe("z9");
+    expect(railCount(host, "triage-resurface")).toBe("1");
+    await key("z");
+    expect(posted("none")).toEqual(all("none"));
+    expect(ids(host), "the row is back").toEqual(["m6", "z9"]);
+    await click(rows(host)[0]!);
+    await key("b");
+    await goTo("#/triage/resurface");
+    expect(ids(host), "one row, facing the newest letter").toEqual(["m6"]);
+    expect(host.querySelector(".triage-seg")?.textContent).toContain(`${en.triage.resurface} 1`);
+  }, 60_000);
+
+  it("a pick (x) then `b`, or the row dragged onto the rail's Resurface, books the same set", async () => {
+    let host = await mount(seven());
+    await click(rows(host)[0]!);
+    await key("x");
+    await key("b");
+    expect(sortedPosts()).toEqual(all("bubbled_up"));
+    await teardownShellEnv();
+    installShellEnv(); seq = 0; window.location.hash = "#/ohbox";
+    host = await mount(seven());
+    await pointer("pointerdown", rows(host)[0]!, 10, 10);
+    const pile = host.querySelector('[data-rail-id="triage-resurface"]');
+    expect(pile, "the rail's Resurface").toBeTruthy();
+    (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () => pile;
+    await pointer("pointermove", window, 60, 60);
+    await pointer("pointerup", window, 60, 60);
+    await settle();
+    expect(sortedPosts()).toEqual(all("bubbled_up"));
+  }, 120_000);
+
+  it("in Resurface, the row's Done clears all seven bookings and reads all seven at once; the row leaves", async () => {
+    window.location.hash = "#/triage/resurface";
+    const host = await mount(seven(() => "bubbled_up"));
+    expect(ids(host)).toEqual(["m6"]);
+    const done = host.querySelector<HTMLElement>(".view-triage .rsf-done");
+    expect(done, "the row's Done").toBeTruthy();
+    await click(done!);
+    expect(sortedPosts()).toEqual(all("none"));
+    expect(reads()).toEqual([[...IDS].sort()]);
+    expect(ids(host)).toEqual([]);
+  }, 60_000);
+
+  it("in Resurface, the strip's Tomorrow and Now each take all seven", async () => {
+    window.location.hash = "#/triage/resurface";
+    const host = await mount(seven(() => "bubbled_up"));
+    await click(rows(host)[0]!);
+    await strip(host, en.ohbox.resurfaceTomorrow);
+    expect(posted("bubbled_up")).toEqual(all("bubbled_up"));
+    await strip(host, en.ohbox.resurfaceNow);
+    expect(posted("resurfaced")).toEqual(all("resurfaced"));
+  }, 60_000);
+
+  /** The server's pass flips every booked member to `resurfaced`; the syncs after it serve that. */
+  const passBringsBack = async (): Promise<void> => {
+    const at = new Date().toISOString();
+    for (const id of IDS) {
+      const c = held.get(`message:${id}`)!;
+      held.set(`message:${id}`, { ...c, entity: { ...c.entity, triage: { messageId: id, state: "resurfaced", bubbleUpAt: null, setAt: at, updatedAt: at } } });
+    }
+    for (let i = 0; i < 8; i++) await tick(15_000);
+    await settle();
+  };
+
+  it("the pass brings the conversation back as one Resurfaced row; the bar's Done reads all seven at once and the row leaves", async () => {
+    const host = await mount(seven());
+    await click(rows(host)[0]!);
+    await key("b");
+    await passBringsBack();
+    expect(resurfacedRows(host).map((r) => r.dataset.id)).toEqual(["m6"]);
+    expect(resurfacedRows(host)[0]!.dataset.ids?.split(" ").sort()).toEqual([...IDS].sort());
+    await openRow(host);
+    await click(bar(host, "abar-done"));
+    expect(reads()).toEqual([[...IDS].sort()]);
+    expect(resurfacedRows(host)).toEqual([]);
+  }, 180_000);
+
+  it("a Resurfaced row of seven pins: ⇧I reads all seven at once and the row leaves", async () => {
+    const host = await mount(seven(() => "resurfaced"));
+    expect(resurfacedRows(host).map((r) => r.dataset.id)).toEqual(["m6"]);
+    await openRow(host);
+    await key("I", { shiftKey: true });
+    expect(reads()).toEqual([[...IDS].sort()]);
+    expect(resurfacedRows(host)).toEqual([]);
+  }, 60_000);
+
+  /** The ids the engine filed with a move or a delete. */
+  const filedIds = (): string[] => fetchCalls().flatMap(([u, init]) => {
+    const method = (init?.method ?? "GET").toUpperCase();
+    const hit = /\/messages\/([^/?]+)(\/move)?$/.exec(new URL(String(u), "https://h.invalid").pathname);
+    return hit && (hit[2] ? method === "POST" : method === "DELETE") ? [decodeURIComponent(hit[1]!)] : [];
+  });
+  /** Every member is filed by the press or has its pin spent beside it. */
+  const spentWhole = (): void => {
+    const filed = filedIds();
+    expect(filed.length, "the press filed something").toBeGreaterThan(0);
+    expect([...new Set([...filed, ...posted("none").map(([id]) => id)])].sort()).toEqual([...IDS].sort());
+    expect(posted("none").map(([id]) => id), "our reply's pin is spent").toContain("x7");
+  };
+  const moveToReceipts = async (host: HTMLElement): Promise<void> => {
+    await click(bar(host, "abar-move"));
+    const receipts = [...host.querySelectorAll<HTMLElement>(".read-col .abar-panel button")].find((b) => (b.textContent ?? "").includes("→ Receipts"));
+    expect(receipts, "the strip's Receipts").toBeTruthy();
+    await click(receipts!);
+  };
+  const dragTo = async (host: HTMLElement, from: HTMLElement, railId: string): Promise<void> => {
+    await pointer("pointerdown", from, 10, 10);
+    const target = host.querySelector(`[data-rail-id="${railId}"]`);
+    expect(target, `the rail's ${railId}`).toBeTruthy();
+    (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () => target;
+    await pointer("pointermove", window, 60, 60);
+    await pointer("pointerup", window, 60, 60);
+    await settle();
+  };
+
+  /** The press spent every pin and the row left Resurfaced; `z` puts every pin back and the row returns. */
+  const spentThenBack = async (host: HTMLElement): Promise<void> => {
+    spentWhole();
+    expect(resurfacedRows(host), "the row left Resurfaced").toEqual([]);
+    await key("z");
+    expect(posted("resurfaced"), "every pin back").toEqual(all("resurfaced"));
+    expect(resurfacedRows(host).map((r) => r.dataset.id)).toEqual(["m6"]);
+  };
+  /** The face's sender sheet, from a Resurfaced row's avatar (the first, or the one `face` faces); `ruleOff` turns its rule switch off first. */
+  const sheetTo = async (host: HTMLElement, dest: string, ruleOff = false, face?: string): Promise<void> => {
+    const av = (face ? resurfacedRows(host).find((r) => r.dataset.id === face) : resurfacedRows(host)[0])?.querySelector<HTMLElement>(".av");
+    expect(av, "the row's avatar").toBeTruthy();
+    await click(av!);
+    if (ruleOff) await click(document.querySelector<HTMLElement>("#sender-sheet .sm-rule")!);
+    const option = document.querySelector<HTMLElement>(`#sender-sheet [data-dest="${dest}"]`);
+    expect(option, `the sheet's ${dest}`).toBeTruthy();
+    await click(option!);
+  };
+
+  it("a Resurfaced row of seven pins: the bar's Move to Receipts spends every pin and the row leaves Resurfaced; `z` puts every pin back", async () => {
+    const host = await mount(seven(() => "resurfaced"));
+    await openRow(host);
+    await moveToReceipts(host);
+    await spentThenBack(host);
+  }, 60_000);
+
+  it("`b`, the pass brings all seven back, then the sender sheet's Receipts spends every pin; `z` puts every pin back", async () => {
+    const host = await mount(seven());
+    await click(rows(host)[0]!);
+    await key("b");
+    await passBringsBack();
+    expect(resurfacedRows(host).map((r) => r.dataset.id)).toEqual(["m6"]);
+    await sheetTo(host, "receipts");
+    await spentThenBack(host);
+  }, 240_000);
+
+  it("a Resurfaced row of seven pins: the sender sheet's Spam spends every pin; `z` puts every pin back", async () => {
+    const host = await mount(seven(() => "resurfaced"));
+    await sheetTo(host, "spam");
+    await spentThenBack(host);
+  }, 60_000);
+
+  it("a Resurfaced row of seven pins: the sender sheet's Receipts with its rule switched off spends every pin", async () => {
+    const host = await mount(seven(() => "resurfaced"));
+    await sheetTo(host, "receipts", true);
+    spentWhole();
+    expect(resurfacedRows(host)).toEqual([]);
+  }, 60_000);
+
+  it("CONTROL: a pick (x) of a Resurfaced row of seven pins, screened to Receipts, files no pinned letter, so the row stays whole", async () => {
+    const host = await mount(seven(() => "resurfaced"));
+    await click(resurfacedRows(host)[0]!);
+    await key("x");
+    await key("s");
+    const foot = () => [...host.querySelectorAll<HTMLElement>(".view-ohbox .list-foot .abar-panel button")];
+    const receipts = foot().find((b) => (b.textContent ?? "").includes("→ Receipts"));
+    expect(receipts, "the pick's Receipts").toBeTruthy();
+    await click(receipts!);
+    const commit = foot().find((b) => b.classList.contains("primary"));
+    expect(commit, "the pick's commit").toBeTruthy();
+    await click(commit!);
+    // A screening move leaves mail with a triage state where it is; Lena's untriaged z9 moves.
+    expect(filedIds()).toEqual(["z9"]);
+    expect(triagePosts()).toEqual([]);
+    expect(resurfacedRows(host)[0]?.dataset.ids?.split(" ").sort()).toEqual([...IDS].sort());
+  }, 60_000);
+
+  it("a Resurfaced row of seven pins dragged onto the rail's Receipts spends our reply's pin too; `z` puts every pin back once", async () => {
+    const host = await mount(seven(() => "resurfaced"));
+    await dragTo(host, resurfacedRows(host)[0]!, "receipts");
+    await spentThenBack(host);
+  }, 60_000);
+
+  /** T pinned whole, Kai let in at the gate (no rule of his), and a newer letter of his, k8, waiting there. */
+  const kaiAtTheGate = () => [
+    ...seven(() => "resurfaced")
+      .filter((c) => c.id !== `rule_${KAI.address}`)
+      .map((c) => ((c.entity as { from?: unknown }).from === KAI ? { ...c, entity: { ...c.entity, placeDecided: true } } : c)),
+    message("k8", "2026-08-04T07:00:00.000Z", { threadId: "K", subject: "Another thing", from: KAI, folder: "ohmail/Screener", unread: true }),
+  ];
+
+  it("the face's sender waits at the gate: the sheet's Receipts decides him, and the decision files the face and spends every other pin", async () => {
+    const host = await mount(kaiAtTheGate());
+    await sheetTo(host, "receipts");
+    expect(filedIds(), "nothing is filed inside the decision's window").toEqual([]);
+    await tick(COMMIT_MS + 1000);
+    await settle();
+    expect(filedIds()).toEqual(["m6"]);
+    expect(posted("none")).toEqual(all("none").filter(([id]) => id !== "m6"));
+    expect(resurfacedRows(host)).toEqual([]);
+  }, 120_000);
+
+  it("the face's sender waits at the gate: Undo inside the decision's window files nothing and spends nothing, and the row stays whole", async () => {
+    const host = await mount(kaiAtTheGate());
+    await sheetTo(host, "receipts");
+    await key("z");
+    await tick(COMMIT_MS + 1000);
+    await settle();
+    expect(filedIds()).toEqual([]);
+    expect(triagePosts()).toEqual([]);
+    expect(resurfacedRows(host)[0]?.dataset.ids?.split(" ").sort()).toEqual([...IDS].sort());
+  }, 120_000);
+
+  /** T, and Kai's other conversation U back too: his letter u1 and our reply u2. */
+  const andU = () => {
+    const pin = (id: string) => ({ triage: { messageId: id, state: "resurfaced", ...FILED } });
+    return [
+      ...seven(() => "resurfaced"),
+      message("u1", "2026-08-02T10:00:00.000Z", { threadId: "U", subject: "Budget", from: KAI, ...pin("u1") }),
+      message("u2", "2026-08-02T11:00:00.000Z", { ...OURS, to: [KAI], threadId: "U", subject: "Re: Budget", ...pin("u2") }),
+      thread("U", ["u1", "u2"]),
+    ];
+  };
+  const waitFor = async <T,>(find: () => T | undefined | null, what: string): Promise<T> => {
+    let found = find() ?? undefined;
+    for (let i = 0; i < 60 && found === undefined; i++) { await tick(500); found = find() ?? undefined; }
+    expect(found, what).toBeTruthy();
+    return found!;
+  };
+
+  it("the sheet's Receipts on Kai's other conversation, then the read-back's Move them, files the letters he left in T and spends the rest of T's pins", async () => {
+    const host = await mount(andU());
+    await sheetTo(host, "receipts", false, "u1");
+    const moveThem = await waitFor(
+      () => [...document.querySelectorAll<HTMLElement>(".toast-act")].find((b) => b.textContent?.trim() === "Move them"),
+      "the read-back's Move them",
+    );
+    await click(moveThem);
+    expect(filedIds().filter((id) => id !== "u1").sort()).toEqual(["m2", "m4", "m6"]);
+    expect(posted("none").map(([id]) => id)).toEqual(["m1", "m3", "m5", "u2", "x7"]);
+    expect(resurfacedRows(host)).toEqual([]);
+  }, 120_000);
+
+  it("Kai's rule left his letters in T for their pins: the sheet's Move them too files them and spends the rest of T's pins", async () => {
+    const host = await mount(seven(() => "resurfaced").map((c) => (c.id === `rule_${KAI.address}`
+      ? { ...c, entity: { ...c.entity, destination: "ohmail/Receipts", retro: { requestedAt: ISO, doneAt: ISO } } }
+      : c)));
+    await click(resurfacedRows(host)[0]!.querySelector<HTMLElement>(".av")!);
+    await click(await waitFor(() => document.querySelector<HTMLElement>("#sender-sheet .sm-stayed-move"), "the sheet's Move them too"));
+    expect(filedIds().sort()).toEqual(["m2", "m4", "m6"]);
+    expect(posted("none").map(([id]) => id)).toEqual(["m1", "m3", "m5", "x7"]);
+    expect(resurfacedRows(host)).toEqual([]);
+  }, 120_000);
+
+  it("the face came back and the rest is booked for later: the sheet's Receipts files the face and keeps every booking; `z` brings the face back", async () => {
+    const host = await mount(seven((id) => (id === "m6" ? "resurfaced" : "bubbled_up")));
+    const booked = () => IDS.filter((id) => (held.get(`message:${id}`)!.entity.triage as { state?: string } | null)?.state === "bubbled_up");
+    await sheetTo(host, "receipts");
+    expect(filedIds()).toEqual(["m6"]);
+    expect(triagePosts(), "no booking is cleared").toEqual([]);
+    expect(booked()).toEqual(IDS.filter((id) => id !== "m6"));
+    expect(resurfacedRows(host)).toEqual([]);
+    await key("z");
+    expect(triagePosts(), "the face's pin alone goes back up").toEqual([["m6", "resurfaced"]]);
+    expect(ids(host), "the face is back in the Ohbox").toContain("m6");
+    expect(booked()).toEqual(IDS.filter((id) => id !== "m6"));
+  }, 60_000);
+
+  it("a Resurfaced row of seven pins: ⌫ deletes its face and spends the other pins; `z` brings the row back whole", async () => {
+    const host = await mount(seven(() => "resurfaced"));
+    await click(resurfacedRows(host)[0]!);
+    await key("Backspace");
+    expect(sortedPosts()).toEqual(all("none").filter(([id]) => id !== "m6"));
+    expect(resurfacedRows(host)).toEqual([]);
+    await key("z");
+    expect(posted("resurfaced")).toEqual(all("resurfaced").filter(([id]) => id !== "m6"));
+    expect(resurfacedRows(host).map((r) => r.dataset.id)).toEqual(["m6"]);
+  }, 60_000);
+
+  it("CONTROL: a Resurfaced row with one pin: ⌫, the bar's Move or the sender sheet's Receipts takes it out and spends nothing more", async () => {
+    const one = () => seven((id) => (id === "m6" ? "resurfaced" : null));
+    let host = await mount(one());
+    await click(resurfacedRows(host)[0]!);
+    await key("Backspace");
+    expect(resurfacedRows(host)).toEqual([]);
+    for (const press of [(h: HTMLElement) => openRow(h).then(() => moveToReceipts(h)), (h: HTMLElement) => sheetTo(h, "receipts")]) {
+      await teardownShellEnv();
+      installShellEnv(); seq = 0; window.location.hash = "#/ohbox";
+      host = await mount(one());
+      await press(host);
+      expect(filedIds()).toEqual(["m6"]);
+      expect(resurfacedRows(host)).toEqual([]);
+      expect(triagePosts()).toEqual([]);
+    }
+  }, 180_000);
+
+  it("CONTROLS: a lone letter's `b` books it alone; a Resurfaced row with one pin is read alone", async () => {
+    const host = await mount(seven());
+    await click(rows(host)[1]!);
+    await key("b");
+    expect(triagePosts()).toEqual([["z9", "bubbled_up"]]);
+    await teardownShellEnv();
+    installShellEnv(); seq = 0; window.location.hash = "#/ohbox";
+    const one = await mount(seven((id) => (id === "m6" ? "resurfaced" : null)));
+    expect(resurfacedRows(one).map((r) => r.dataset.id)).toEqual(["m6"]);
+    await openRow(one);
+    await click(bar(one, "abar-done"));
+    expect(reads()).toEqual([["m6"]]);
+    expect(triagePosts()).toEqual([]);
+  }, 120_000);
+
+  it("CONTROL: off the Ohbox, in a tag, `b` books the message alone", async () => {
+    window.location.hash = "#/tag/tag_1";
+    const host = await mount([TAG, ...seven().map((c) => (c.id === "m6" ? { ...c, entity: { ...c.entity, labels: ["tag_1"] } } : c))]);
+    expect(ids(host)).toEqual(["m6"]);
+    await click(rows(host)[0]!);
+    await key("b");
+    expect(triagePosts()).toEqual([["m6", "bubbled_up"]]);
   }, 60_000);
 });

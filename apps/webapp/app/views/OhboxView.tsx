@@ -1171,7 +1171,12 @@ export function OhboxView({
   const markConversationRead = useCallback((m: EngineMessage) => {
     const floor = readSetForRef.current(m.id);
     const set = readSetRef.current.filter((id) => floor.includes(id));
-    // A resurfaced open message keeps its own key: ⇧I is its deliberate read, the pin's way out.
+    // A resurfaced open message keeps its own key: ⇧I is its deliberate read, the pin's way out,
+    // over every pin of its row as the row's Done.
+    const pins = isResurfaced(m)
+      ? resurfacedRows.find((r) => r.members.some((x) => x.id === m.id))?.pinned.map((x) => x.id) ?? []
+      : [];
+    if (pins.length > 1) { bulk.run("done", pins); return; }
     if (isResurfaced(m) || set.length === 0 || (set.length === 1 && set[0] === m.id)) {
       markRead(m);
       return;
@@ -1181,7 +1186,7 @@ export function OhboxView({
     // of Earlier when left.
     if (heldRead.current !== m.id) hold(m.id);
     bulk.run("read", set);
-  }, [markRead, bulk, hold]);
+  }, [markRead, bulk, hold, resurfacedRows]);
 
   /**
    * ═══ DEPARTURES #2, #3 AND #4 ═════════════════════════════════════════════════════════════

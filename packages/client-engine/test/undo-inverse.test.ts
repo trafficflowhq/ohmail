@@ -144,6 +144,30 @@ describe("move", () => {
     ]);
   });
 
+  it("a pinned letter of a Resurfaced row: the row's other pins go back up after the move back, our reply's too", async () => {
+    const T = { threadId: "T" };
+    const reader = await seeded([
+      msg("m1", { ...T, triage: pin("m1", "resurfaced") }),
+      msg("m2", { ...T, triage: pin("m2", "resurfaced") }),
+      msg("r3", { ...T, folder: "Sent" as EngineMessage["folder"], triage: pin("r3", "resurfaced") }),
+      msg("b4", { ...T, triage: pin("b4", "bubbled_up", "2026-09-26T09:00:00.000Z") }),
+    ]);
+    const inv = inverseMutations(reader, { kind: "move", messageId: "m1", folder: "ohmail/Receipts" });
+    expect(inv.slice(0, 2)).toEqual([
+      { kind: "move", messageId: "m1", folder: "INBOX" },
+      { kind: "triage_set", messageId: "m1", state: "resurfaced" },
+    ]);
+    expect(inv.slice(2).map((mu) => (mu.kind === "triage_set" ? `${mu.messageId}:${mu.state}` : mu.kind)).sort(), "a booking is never spent")
+      .toEqual(["m2:resurfaced", "r3:resurfaced"]);
+    // Any place but the Ohbox takes the row; a letter moved back into the Ohbox goes back up alone.
+    expect(inverseMutations(reader, { kind: "move", messageId: "m1", folder: "Archive" as EngineMessage["folder"] }).length).toBe(4);
+    const filed = await seeded([msg("m1", { ...T, folder: "ohmail/Receipts", triage: pin("m1", "resurfaced") }), msg("m2", { ...T, triage: pin("m2", "resurfaced") })]);
+    expect(inverseMutations(filed, { kind: "move", messageId: "m1", folder: "INBOX" })).toEqual([
+      { kind: "move", messageId: "m1", folder: "ohmail/Receipts" },
+      { kind: "triage_set", messageId: "m1", state: "resurfaced" },
+    ]);
+  });
+
   it("round-trips through the real effects", async () => {
     const store = await seeded([msg("m1", { triage: pin("m1", "resurfaced") })]);
     const before = visible(store, "m1");

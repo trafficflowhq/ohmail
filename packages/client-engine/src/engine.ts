@@ -27,7 +27,8 @@ import {
   type AddressResult,
   type LocalSearchResult,
 } from "./search.js";
-import { conversationKeyOf, isOwnSent, ohboxView, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
+import { conversationKeyOf, isOwnSent, isResurfaced, ohboxView, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
+import { filedOutOfOhbox, rowPinsBackNow } from "./ohbox-rows.js";
 import { OHBOX_VISIT_ID, ohboxVisitMark, type OhboxVisitMeta } from "./ohbox-where.js";
 import { outrankCoveringDomains } from "./address-rank.js";
 import { heldRuleKey } from "./rule-twins.js";
@@ -7298,6 +7299,7 @@ export class OhmailEngine {
       onDurable?: () => void;
     } = {},
   ): Promise<MutationResult> {
+    this.noteFiling(m);
     const result = await this.mutateOnce(m, opts);
     // A verb that may travel to another install re-reads what waits — on a 202 AND on an applied
     // answer, since a mixed account's rule removal is applied here and asked there.
@@ -7310,6 +7312,33 @@ export class OhmailEngine {
       this.reaskScreenerWaiting();
     }
     return result;
+  }
+
+  /** What this turn has filed out of the Ohbox, and the Resurfaced rows of the letters that carried their pin. */
+  private filingTurn: { filed: Set<string>; rows: Set<string> } | null = null;
+
+  /**
+   * A LETTER FILED WITH ITS PIN TAKES ITS RESURFACED ROW ALONG, and every door files through here: Move
+   * and Junk, the sender sheet and its gate decision, Move them, Move it too and Delete, on every surface.
+   * The server spends the pin of the letter it files (`MessageService.spendResurface`); the row's other
+   * pins that are back now, our own reply's included, are spent at the end of the turn, once for all the
+   * turn filed, so a row filed whole spends only what it leaves. `inverseMutations` puts them back.
+   */
+  private noteFiling(m: EngineMutation): void {
+    const letter = filedOutOfOhbox(this.verbView, m);
+    if (letter === null) return;
+    if (this.filingTurn === null) {
+      const turn = { filed: new Set<string>(), rows: new Set<string>() };
+      this.filingTurn = turn;
+      void Promise.resolve().then(() => {
+        if (this.filingTurn === turn) this.filingTurn = null;
+        for (const messageId of rowPinsBackNow(this.verbView, turn.rows, turn.filed)) {
+          void this.mutate({ kind: "triage_set", messageId, state: "none" }).catch(() => undefined);
+        }
+      });
+    }
+    this.filingTurn.filed.add(letter.id);
+    if (isResurfaced(letter)) this.filingTurn.rows.add(conversationKeyOf(letter));
   }
 
   /** A verb's paint: a `draft_save` create's row carries its key ({@link EngineDraft.pendingCreate}). */
