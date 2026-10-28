@@ -40,7 +40,7 @@ vi.mock("react-native", async () => {
     Text: (props: any) => React.createElement("span", null, props.children),
     ScrollView: (props: any) => React.createElement("div", { "data-rn": "RailScroll", ref: keep(props) }, props.children),
     Animated: {
-      View: (props: any) => React.createElement("div", { "data-rn": "Animated" }, props.children),
+      View: (props: any) => React.createElement("div", { "data-rn": "Animated", ref: keep(props) }, props.children),
       Value: class { constructor(_v: number) {} setValue() {} },
       timing: () => ({ start: () => undefined }),
     },
@@ -1267,5 +1267,20 @@ describe("the squares walk the conversation", () => {
     pass(3000);
     flushNative();
     expect(world.glanced.flat(), "the newest was never on screen").not.toContain("p4");
+  });
+});
+
+describe("an unread member is marked by its accent edge alone", () => {
+  it("the tint under an unread member and the opened one draws the 3dp edge on no background of its own", () => {
+    world.mail = mailOf("p2", [memberOf("p1", "Ada")]);
+    const el = mountReader("p2");
+    const tints = all(el).filter((x) => x.getAttribute("data-rn") === "Animated")
+      .map((x) => Object.assign({}, ...[x.__props?.style].flat(2).filter(Boolean)))
+      .filter((s) => s.borderLeftWidth === 3);
+    expect(tints.length, "both unread messages wear the tint").toBe(2);
+    for (const s of tints) {
+      expect(s.borderLeftColor).toBeDefined();
+      expect(s.backgroundColor, "no unread wash").toBeUndefined();
+    }
   });
 });

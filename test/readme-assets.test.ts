@@ -79,15 +79,4 @@ describe("the README's two faces", () => {
     expect(headings(twin)).toEqual(headings(paper));
     expect(headings(paper).length).toBeGreaterThanOrEqual(10);
   });
-
-  it("the ohmarchy light captures show the unread wash the apps ship", () => {
-    // The ohmarchy light pictures were taken with the unread panel at #ece9de. Should the token move
-    // again, the pictures are re-shot with it; until then this says they are stale.
-    const css = readFileSync(join(ROOT, "packages/tokens/src/ohmarchy.css"), "utf8");
-    const phone = readFileSync(join(ROOT, "apps/mobile/src/theme/ohmarchy.ts"), "utf8");
-    expect(css).toMatch(/--unread-wash:\s*#ece9de;/i);
-    expect(phone).toMatch(/unreadWash:\s*"#ece9de"/i);
-    expect(css).not.toMatch(/#e7f1ff/i);
-    expect(phone).not.toMatch(/#e7f1ff/i);
-  });
 });

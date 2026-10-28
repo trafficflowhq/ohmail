@@ -83,7 +83,6 @@ const COLOURS = [
   ["accentHair", "--accent-hair"],
   ["onAccent", "--on-accent"],
   ["scrim", "--scrim"],
-  ["unreadWash", "--unread-wash"],
 ];
 
 /** Number slot → mobile `Palette` key: the thread-read squares' opacities. */

@@ -52,8 +52,6 @@ export interface Palette {
   readonly accentHair: string;
   readonly onAccent: string;
   readonly scrim: string;
-  /** An unread message's panel in the reader (`--unread-wash`). */
-  readonly unreadWash: string;
   /** A read square's opacity, and the account's own (hollow) square's (`--mark-read`, `--mark-mine`). */
   readonly markRead: number;
   readonly markMine: number;
@@ -131,12 +129,12 @@ export const glassAuthored: Record<SchemeName, { glass: Oklch; brd: Oklch; flat:
 };
 
 /**
- * The thread-read tint and squares, verbatim from `@ohmail/tokens` (`color[scheme].unreadWash`,
- * `threadMark`): beside `authored`, whose sources do not carry them.
+ * The thread-read squares, verbatim from `@ohmail/tokens` (`--mark-read`, `--mark-mine`):
+ * beside `authored`, whose sources do not carry them.
  */
-export const threadReadAuthored: Record<SchemeName, { wash: Oklch; read: number; mine: number }> = {
-  light: { wash: oklch(0.955, 0.022, 42), read: 0.46, mine: 0.66 }, //   #feece5
-  dark: { wash: oklch(0.277, 0.025, 56), read: 0.42, mine: 0.62 }, //    #32251c
+export const threadReadAuthored: Record<SchemeName, { read: number; mine: number }> = {
+  light: { read: 0.46, mine: 0.66 },
+  dark: { read: 0.42, mine: 0.62 },
 };
 
 /**
@@ -185,7 +183,6 @@ function build(scheme: SchemeName): Palette {
     accentHair: css(a.accentHair),
     onAccent: css(a.onAccent),
     scrim: css(a.scrim),
-    unreadWash: css(threadReadAuthored[scheme].wash),
     markRead: threadReadAuthored[scheme].read,
     markMine: threadReadAuthored[scheme].mine,
     glass: css(glassAuthored[scheme].glass),

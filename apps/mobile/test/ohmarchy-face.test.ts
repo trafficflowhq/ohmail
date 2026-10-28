@@ -119,7 +119,6 @@ describe("the face is GENERATED from the web face, and the committed file proves
         accentHair: slot(scheme, "--accent-hair"),
         onAccent: slot(scheme, "--on-accent"),
         scrim: slot(scheme, "--scrim"),
-        unreadWash: slot(scheme, "--unread-wash"),
         markRead: Number(slot(scheme, "--mark-read")),
         markMine: Number(slot(scheme, "--mark-mine")),
         tag: {
@@ -171,9 +170,9 @@ describe("the face is GENERATED from the web face, and the committed file proves
           layers.map((l, i) => [`lift.${level}[${i}]`, l.color] as [string, string]),
         ),
       ];
-      // 17 colour slots + the three derived glass values + 10 tag hues × 2 + 6 lift levels × 1 flat ring each
+      // 16 colour slots + the three derived glass values + 10 tag hues × 2 + 6 lift levels × 1 flat ring each
       // (the two mark opacities are numbers, not colours).
-      expect(values.length).toBe(46);
+      expect(values.length).toBe(45);
       for (const [key, value] of values) {
         expect(normalize(value), `${scheme}.${key} = ${value}`).not.toBeNull();
       }
