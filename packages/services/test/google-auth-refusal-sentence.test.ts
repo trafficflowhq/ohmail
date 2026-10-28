@@ -51,7 +51,13 @@ describe("Google's sentences", () => {
     for (const h of GOOGLE_AUTH_HINTS) expect(GOOGLE_AUTH_REFUSAL[h], h).toMatch(/Google/);
     expect(GOOGLE_AUTH_REFUSAL.app_password_required).toMatch(/2-Step Verification/);
     expect(GOOGLE_AUTH_REFUSAL.app_password_required).toMatch(/with or without the spaces/);
-    expect(GOOGLE_AUTH_REFUSAL.app_password_required).toMatch(/cannot connect yet/);
+    expect(GOOGLE_AUTH_REFUSAL.app_password_required).toMatch(/cannot connect those yet/);
+    // Accounts that cannot create an App Password hear it on either refusal, with the way out.
+    for (const h of ["app_password_required", "invalid"] as const) {
+      expect(GOOGLE_AUTH_REFUSAL[h], h).toMatch(/Advanced Protection/);
+      expect(GOOGLE_AUTH_REFUSAL[h], h).toMatch(/accounts that sign in with security keys only/);
+      expect(GOOGLE_AUTH_REFUSAL[h], h).toMatch(/ask your administrator to allow (App Passwords|them), or connect another address\.$/);
+    }
     expect(GOOGLE_AUTH_REFUSAL.web_login).toMatch(/password may be right/);
     expect(GOOGLE_AUTH_REFUSAL.imap_disabled).toMatch(/password may be right/);
   });

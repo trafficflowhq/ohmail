@@ -697,11 +697,14 @@ export type GoogleAuthHint = "app_password_required" | "web_login" | "imap_disab
 export const GOOGLE_AUTH_REFUSAL: Record<GoogleAuthHint, string> = {
   app_password_required: "Google refused your Google password: Gmail signs in only with an App Password. "
     + "Turn on 2-Step Verification, then create an App Password with any name and paste its 16 letters here, "
-    + "with or without the spaces. Work, school and Advanced Protection accounts that cannot create one "
-    + "cannot connect yet.",
+    + "with or without the spaces. Some work, school and Advanced Protection accounts, and accounts that "
+    + "sign in with security keys only, cannot create App Passwords; ohmail cannot connect those yet: ask "
+    + "your administrator to allow App Passwords, or connect another address.",
   invalid: "Google did not accept that password. Gmail needs an App Password, not your Google password: "
     + "create one and paste its 16 letters here. Changing your Google password ends every App Password, "
-    + "so a new one is needed after that.",
+    + "so a new one is needed after that. Some work, school and Advanced Protection accounts, and accounts "
+    + "that sign in with security keys only, cannot create App Passwords; ohmail cannot connect those yet: "
+    + "ask your administrator to allow App Passwords, or connect another address.",
   web_login: "Google wants this sign-in confirmed in a web browser first. Sign in to Gmail in a browser "
     + "once, then try again here. The password may be right.",
   imap_disabled: "Google says IMAP is turned off for this account. An administrator turns it on in the "

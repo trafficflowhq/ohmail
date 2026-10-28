@@ -61,6 +61,26 @@ describe("Google's refused sign-in, said alike everywhere", () => {
     expect(DE.standaloneProviderHelpLink(preset.account!)).toBe(dp[`help_${preset.id}`]);
   });
 
+  it("an account that cannot create an App Password is told it cannot connect yet, and what to do instead", () => {
+    const dp = de.providerPicker as unknown as Record<string, string>;
+    const en_ = [preset.note, GOOGLE_AUTH_REFUSAL.app_password_required, GOOGLE_AUTH_REFUSAL.invalid,
+      EN.standaloneProviderNote(...names), EN.standaloneAuthAppOnly(...names), EN.standaloneAuthInvalid(...names)];
+    for (const s of en_) {
+      expect(s).toMatch(/Advanced Protection/);
+      expect(s).toMatch(/accounts that sign in with security keys only/);
+      expect(s).toMatch(/cannot connect (those|it)? ?yet/);
+      expect(s).toMatch(/ask your administrator to allow (App Passwords|them), or connect another address\.$/);
+    }
+    const de_ = [dp[`note_${preset.id}`]!, DM[`probe_auth_${preset.id}_app_password_required`]!, DM[`probe_auth_${preset.id}_invalid`]!,
+      DE.standaloneProviderNote(...names), DE.standaloneAuthAppOnly(...names), DE.standaloneAuthInvalid(...names)];
+    for (const s of de_) {
+      expect(s).toMatch(/Advanced.Protection/);
+      expect(s).toMatch(/nur mit Sicherheitsschlüsseln/);
+      expect(s).toMatch(/noch nicht verbinden/);
+      expect(s).toMatch(/Bitte deine Administratorin oder deinen Administrator, App-Passwörter zu erlauben, oder verbinde eine andere Adresse\.$/);
+    }
+  });
+
   it("every claim the sentences make is one the dial keeps", () => {
     // "with or without the spaces" holds because the dial joins a 16-letter App Password.
     for (const s of [preset.note, GOOGLE_AUTH_REFUSAL.app_password_required]) expect(s).toMatch(/with or without the spaces/);

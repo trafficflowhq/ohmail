@@ -211,12 +211,19 @@ export const DE: Deck = {
   standaloneAuthAppOnly: (provider: string, account: string) =>
     `${account} hat dein ${account}-Passwort abgelehnt: ${provider} meldet sich nur mit einem App-Passwort an. `
     + "Schalte die Bestätigung in zwei Schritten ein, erstell dann ein App-Passwort mit einem beliebigen Namen und "
-    + "füg hier seine 16 Buchstaben ein, mit oder ohne Leerzeichen. Arbeits-, Schul- und Advanced-Protection-Konten, "
-    + "die keines erstellen können, lassen sich noch nicht verbinden.",
+    + "füg hier seine 16 Buchstaben ein, mit oder ohne Leerzeichen. "
+    + "Manche Arbeits-, Schul- und Advanced-Protection-Konten sowie Konten, die sich nur mit "
+    + "Sicherheitsschlüsseln anmelden, können keine App-Passwörter erstellen; die kann ohmail noch nicht verbinden. "
+    + "Bitte deine Administratorin oder deinen Administrator, App-Passwörter zu erlauben, oder verbinde eine andere "
+    + "Adresse.",
   standaloneAuthInvalid: (provider: string, account: string) =>
     `${account} hat dieses Passwort nicht akzeptiert. ${provider} braucht ein App-Passwort, nicht dein `
     + `${account}-Passwort: Erstell eines und füg hier seine 16 Buchstaben ein. Wenn du dein ${account}-Passwort `
-    + "änderst, enden alle App-Passwörter, danach brauchst du also ein neues.",
+    + "änderst, enden alle App-Passwörter, danach brauchst du also ein neues. Bei manchen Arbeits- und "
+    + "Schuladressen, mit Advanced Protection und bei einer Anmeldung nur mit Sicherheitsschlüsseln lassen sich "
+    + "keine App-Passwörter erstellen; die kann ohmail "
+    + "noch nicht verbinden. Bitte deine Administratorin oder deinen Administrator, App-Passwörter zu "
+    + "erlauben, oder verbinde eine andere Adresse.",
   standaloneAuthWebLogin: (provider: string, account: string) =>
     `${account} möchte diese Anmeldung zuerst in einem Webbrowser bestätigt haben. Melde dich einmal im Browser bei `
     + `${provider} an und versuch es dann hier erneut. Das Passwort kann richtig sein.`,
@@ -226,9 +233,11 @@ export const DE: Deck = {
   standaloneProviderNote: (provider: string, account: string) =>
     `${provider} meldet sich nur mit einem App-Passwort an, nicht mit deinem ${account}-Passwort. Schalte zuerst die `
     + "Bestätigung in zwei Schritten ein, sonst sagt die Seite App-Passwörter, dass sie nicht verfügbar sind. Gib dem "
-    + "App-Passwort einen beliebigen Namen und füg hier seine 16 Buchstaben ein, mit oder ohne Leerzeichen. Manche "
-    + "Arbeits-, Schul- und Advanced-Protection-Konten können keine App-Passwörter erstellen; die kann ohmail noch "
-    + "nicht verbinden.",
+    + "App-Passwort einen beliebigen Namen und füg hier seine 16 Buchstaben ein, mit oder ohne Leerzeichen. "
+    + "Manche Arbeits-, Schul- und Advanced-Protection-Konten sowie Konten, die sich nur mit "
+    + "Sicherheitsschlüsseln anmelden, können keine App-Passwörter erstellen; die kann ohmail noch nicht verbinden. "
+    + "Bitte deine Administratorin oder deinen Administrator, App-Passwörter zu erlauben, oder verbinde eine andere "
+    + "Adresse.",
   standaloneProviderHelpLink: (account: string) => `${account} App-Passwörter`,
   standalonePrereqLink: "Bestätigung in zwei Schritten einschalten",
   standaloneNoEncryption:
