@@ -5321,6 +5321,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     });
   };
 
+  /** A withdrawn send's row holds its words: the mirror takes them now, not at a drain an offline phone skips.
+      Pulled even when the mirror holds the row: the press may have written newer words onto it. */
+  const listRow = async (): Promise<void> => {
+    await engine.syncOnce().catch(() => undefined);
+  };
+
   /**
    * CANCEL CANCELS — the composer's press, on the intent rather than on the screen. The engine
    * marks the queued row withdrawn (durably, and by the key at the moment of sending), so
@@ -5328,7 +5334,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * and the caller says so; this arm says no sentence of its own, because the surface that
    * pressed Cancel is the one that knows what to render.
    */
-  const withdrawSend = (key: string): Promise<WithdrawOutcome> => engine.withdrawQueued(key);
+  const withdrawSend = async (key: string): Promise<WithdrawOutcome> => {
+    // Read before the withdrawal ends the waiting send: the row its press wrote.
+    const row = engine.waitingSends().find((x) => x.key === key)?.draftId ?? null;
+    const answer = await engine.withdrawQueued(key);
+    if (answer === "withdrawn" && row !== null) await listRow();
+    return answer;
+  };
 
   const leaveSend = (key: string): void => { sendsLeftOf(engine).add(key); };
 
@@ -5365,9 +5377,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       if (kept && r !== null && v.kind !== "silent") await settleLetterOf(key, v.kind === "applied" && r.entityId ? r.entityId : { keep: r.key });
       return { said: answer, kept: kept ? "kept" : "notKept" };
     }
-    if (answer === "withdrawn" && w.draftId !== null && !engine.read().get("draft", w.draftId)) {
-      await engine.syncOnce().catch(() => undefined);
-    }
+    if (answer === "withdrawn" && w.draftId !== null) await listRow();
     return { said: answer, kept: null };
   };
 

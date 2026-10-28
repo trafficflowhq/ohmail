@@ -397,3 +397,35 @@ describe.runIf(ON_DEVICE_STORE)("a Send the server offered again, then held offl
     expect(s.rows()).toEqual([{ status: "sent", attempts: 2 }]);
   }, 60_000);
 });
+
+describe.runIf(ON_DEVICE_STORE)("a Send cancelled with no network, on the phone's own app", () => {
+  it("Cancel send with no network lists the letter in Drafts at once: one row, nothing sent on the return", async () => {
+    const s = await appScene();
+    s.door.set("offline");
+    const res = await s.actions.sendNew(s.mailboxId, [{ name: "R", address: "peer@example.test" }], "Second thoughts", "One letter");
+    expect(res.outcome).toBe("queued");
+    const row = s.app.waitingSends().find((w) => w.key === res.key)?.draftId ?? null;
+    expect(row, "the press wrote no row").not.toBeNull();
+    expect(await s.actions.withdrawSend(res.key!)).toBe("withdrawn");
+    expect(s.app.read().get("draft", row!), "Drafts did not list the cancelled letter before a drain").toBeDefined();
+    s.door.set("online");
+    await flushQueued(s.app, s.actions.releaseConfirmed);
+    expect(s.net.sent, "a cancelled send went on the return").toBe(0);
+    expect(s.drafts().map((d) => d.status)).toEqual(["draft"]);
+  }, 60_000);
+
+  it("a draft from Drafts, changed and sent with no network, then cancelled, is listed with the words sent", async () => {
+    const s = await appScene();
+    const to = [{ name: "R", address: "peer@example.test" }];
+    const letter = { mode: "new", messageId: null, mailboxId: s.mailboxId, to, subject: "Second thoughts", files: 0, quiet: true } as const;
+    expect(await s.actions.draftKeep({ ...letter, body: "First words." })).toBe("kept");
+    await s.app.syncOnce();
+    const row = s.app.read().entries("draft")[0]!.id;
+    const mirrored = () => s.app.read().get<{ body: string; contentRevision?: string }>("draft", row)!;
+    s.door.set("offline");
+    const words = "First words. And the last sentence.";
+    const res = await s.actions.sendNew(s.mailboxId, to, "Second thoughts", words, null, null, [], row, undefined, mirrored().contentRevision ?? null);
+    expect(await s.actions.withdrawSend(res.key!)).toBe("withdrawn");
+    expect(mirrored().body, "Drafts listed the words before the send").toBe(words);
+  }, 60_000);
+});

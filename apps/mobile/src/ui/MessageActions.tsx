@@ -100,7 +100,7 @@ import { KEPT_FILES_MAX_BYTES } from "../compose/letter-store";
 import { forwardFilesPlan } from "../compose/forward-files";
 import { sayRefusal, type Refusal } from "../refusal";
 import { usePrefs } from "../state/store";
-import { cancelAct, cancelSendOffered, cancelSendPress, keptSay } from "./send-cancel";
+import { cancelAct, cancelSendOffered, cancelSendPress, keptSay, waitingRowOf } from "./send-cancel";
 import { autosaveKeep, baseAfter, baseFor, keepAct, unmountKeep, waitedFor, worthKeeping, type DraftBase } from "./compose-keep";
 import { composeSenderOf } from "./compose-sender";
 import { editWhileIdle } from "./compose-edit";
@@ -1734,15 +1734,17 @@ export function ComposeSheet({
     }
     void (async () => {
       const key = queuedKey!;
+      // Read before the withdrawal ends the waiting send: the row its press wrote.
+      const row = waitingRowOf(w.drafts, key);
       const end = await cancelSendPress({
         asking: withdrawing, withdraw: () => w.actions.withdrawSend(key), verdict: () => w.sendOutcome(key),
-        standalone: w.standalone, bound: draftId !== null,
+        standalone: w.standalone && row !== null, bound: draftId !== null,
       });
       if (end === null) return;
       if (end.said === "close") {
         if (end.say !== null) toast.say(end.say);
         /* Withdrawn: the files stay with the row that holds the words, if one does. */
-        if (end.say !== null) keeper?.cancelled(draftId);
+        if (end.say !== null) keeper?.cancelled(draftId ?? row);
         else keeper?.release();
         leave();
       }

@@ -19,7 +19,7 @@ import { answersWaiting, confirmedSendSay, flushQueued, keptRecipients, liveActi
 import { openLetterKeeper, ownedLetters } from "../src/compose/letter-keeper";
 import { restoreLetters } from "../src/compose/letter-restore";
 import { letterDoor, type LetterFile } from "../src/compose/letter-store";
-import { cancelAct, cancelSendPress, keptSay, type CloseRoad, type SendVerdict } from "../src/ui/send-cancel";
+import { cancelAct, cancelSendPress, keptSay, waitingRowOf, type CloseRoad, type SendVerdict } from "../src/ui/send-cancel";
 import { Copy } from "../src/copy";
 import { sayArg } from "../src/refusal";
 import { dto, listen, mailServer } from "./helpers/mail-server";
@@ -539,6 +539,64 @@ describe("a waiting send in Drafts", () => {
     expect(sendsOf(s.fake), "a cancelled send went on the return").toHaveLength(0);
     p.store.close();
   }, 60_000);
+
+  it("Cancel send in the sheet with no network lists the letter in Drafts at once, as one draft with its files", async () => {
+    const s = await scene();
+    s.fake.stampDrafts();
+    s.net.set("offline");
+    const letter = openLetterKeeper({ door: s.letters, id: uuid(), newFileId: uuid, words: {
+      mode: "new", messageId: null, mailboxId: "mb-1", to: "bo@fake.test", cc: "", bcc: "", subject: "Second thoughts", body: "Maybe not.", envelope: null,
+    } });
+    letter.addFile({ ...PLAN, sizeBytes: 16 });
+    const res = await letter.sendVia(() => s.actions.sendNew("mb-1", TO, "Second thoughts", "Maybe not.", null, null, [PLAN]));
+    const now = { now: new Date(), zone: "UTC", locale: "en" } as never;
+    const row = waitingRowOf(liveDrafts(s.engine.read(), now, s.engine.waitingSends()), res.key!);
+    expect(row, "the sheet did not find the row its press wrote").toBe(rowOf(s, res.key!));
+    const end = await cancelSendPress({
+      asking: { current: false }, withdraw: () => s.actions.withdrawSend(res.key!), verdict: () => "unknown", standalone: row !== null, bound: false,
+    });
+    expect(end?.say && sayArg(end.say)).toBe(Copy.sendCancelledInDrafts);
+    letter.cancelled(row);
+    const drafts = liveDrafts(s.engine.read(), now, s.engine.waitingSends());
+    expect(drafts.map((d) => [d.id, d.state, d.subject]), "Drafts did not list the cancelled letter before a drain")
+      .toEqual([[row, "open", "Second thoughts"]]);
+    expect(s.letters.filesOf(row!).map((f) => f.filename), "the file left with the sheet").toEqual(["plan.pdf"]);
+    const p = await s.relaunch();
+    expect(await p.restore(), "the restore kept the cancelled letter a second time").toEqual({ kept: 0, unclear: 0, unconfirmed: 0, changed: 0, notKept: [] });
+    expect(listed(p)).toEqual([["Second thoughts", "open"]]);
+    s.net.set("online");
+    await flushQueued(p.engine, p.actions.releaseConfirmed);
+    expect(sendsOf(s.fake), "a cancelled send went on the return").toHaveLength(0);
+    expect(s.fake.draftRows(), "the cancel left two rows").toHaveLength(1);
+    p.store.close();
+  }, 60_000);
+
+  for (const door of ["sheet", "Drafts page"] as const) {
+    it(`a draft from Drafts, changed and sent with no network, cancelled on the ${door}: Drafts lists the words sent, and the next save and send keep them`, async () => {
+      const s = await scene();
+      s.fake.stampDrafts();
+      const letter = { mode: "new", messageId: null, mailboxId: "mb-1", to: TO, subject: "Second thoughts", files: 0, quiet: true } as const;
+      expect(await s.actions.draftKeep({ ...letter, body: "First words." })).toBe("kept");
+      await s.engine.syncOnce();
+      const row = (s.fake.draftRows()[0] as { id: string }).id;
+      const mirrored = () => s.engine.read().get<{ body: string; contentRevision?: string }>("draft", row)!;
+      s.net.set("offline");
+      const words = "First words. And the last sentence.";
+      const res = await s.actions.sendNew("mb-1", TO, "Second thoughts", words, null, null, [], row, undefined, mirrored().contentRevision ?? null);
+      expect(res.outcome).toBe("queued");
+      const said = door === "sheet" ? await s.actions.withdrawSend(res.key!) : (await s.actions.cancelWaitingSend(res.key!)).said;
+      expect(said).toBe("withdrawn");
+      expect(mirrored().body, "Drafts listed the words before the send").toBe(words);
+      expect(await s.actions.draftKeep({ ...letter, body: `${mirrored().body} PS.`, draftId: row, revision: mirrored().contentRevision })).toBe("kept");
+      expect((s.fake.draft(row) as { body: string }).body, "the reopened draft's save lost the sentence").toBe(`${words} PS.`);
+      await s.engine.syncOnce();
+      s.net.set("online");
+      const again = await s.actions.sendNew("mb-1", TO, "Second thoughts", mirrored().body, null, null, [], row, undefined, mirrored().contentRevision ?? null);
+      await flushQueued(s.engine, s.actions.releaseConfirmed);
+      expect({ outcome: again.outcome, sent: s.fake.draft(row) }).toMatchObject({ sent: { status: "sent", body: `${words} PS.` } });
+      s.store.close();
+    }, 60_000);
+  }
 
   it("Discard over a send already on the wire deletes nothing and says it is on its way; it is sent", async () => {
     const s = await scene();

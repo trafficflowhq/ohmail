@@ -117,3 +117,8 @@ export async function cancelSendPress(o: {
     o.asking.current = false;
   }
 }
+
+/** The row a waiting send's press wrote, as Drafts lists it (`WorldDraft.waiting`); `null` before it has one. */
+export const waitingRowOf = (
+  drafts: readonly { id: string; waiting: { key: string; rowless: boolean } | null }[], key: string,
+): string | null => drafts.find((d) => d.waiting?.key === key && !d.waiting.rowless)?.id ?? null;
