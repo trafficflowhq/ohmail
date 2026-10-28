@@ -169,7 +169,7 @@ export function useReplyAutosave(
   const watchRef = useRef<() => void>(() => {});
   /** Lanes whose creates a send took back — owed a write again should that send be cancelled. */
   const taken = useRef(new Set<string>());
-  /** Lanes whose send was cancelled after it took their creates back: the close's write may create. */
+  /** Lanes whose send was cancelled after it took their creates back: even the shell going away may create. */
   const owed = useRef(new Set<string>());
   /** Lanes whose save was refused over a row changed elsewhere: their words go to a new draft next. */
   const forkOwed = useRef(new Set<string>());
@@ -337,27 +337,41 @@ export function useReplyAutosave(
 
   const signature = form === null ? null : signatureOf(form);
   const lane = form?.lane ?? null;
+  /** The lane's write on the wire carries older words: waited out, with a fork or carry it starts. */
+  const wireClear = useCallback(async (l: string): Promise<void> => {
+    for (let i = 0; i < 8 && writes.current.has(l); i++) await writes.current.get(l)!.catch(() => false);
+  }, []);
   useEffect(() => {
     const f = formRef.current;
     if (f === null || lane === null || !writable(f, true)) return;
     const timer = window.setTimeout(() => {
-      const now = formRef.current;
-      if (now !== null && now.lane === lane) void writeNow(now, true);
+      void wireClear(lane).then(() => {
+        const now = formRef.current;
+        if (now !== null && now.lane === lane) void writeNow(now, true);
+      });
     }, AUTOSAVE_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [lane, signature, writable, writeNow]);
+  }, [lane, signature, writable, writeNow, wireClear]);
 
-  /* The pending write of a CLOSED editor goes now, to the row it holds; a close never creates, but
-     for words a cancelled send had taken from a create (`cancelled`). */
+  /* A CLOSED EDITOR'S WORDS GO NOW, as its pause would write them, a row made when it holds none.
+     The shell going away (the editor still shows the lane) writes only a row it holds or one `owed`. */
   useEffect(() => {
     if (lane === null) return;
     return () => {
-      const last = lastOf.current.get(lane);
-      // A create of this message still on its way is its row once it lands: the close makes no second.
-      const live = [...(claims.current.get(lane) ?? [])].some(([k, c]) => c.binding === bindingOf(lane) && createLive(engine, k));
-      if (last) void writeNow(last, owed.current.delete(lane) && !live);
+      const closed = formRef.current?.lane !== lane;
+      const owes = owed.current.delete(lane);
+      void (async () => {
+        await wireClear(lane);
+        const f = formRef.current?.lane === lane ? formRef.current : lastOf.current.get(lane);
+        if (f === undefined || f === null) return;
+        // A create of this message still on its way is its row once it lands: the close makes no second.
+        const live = [...(claims.current.get(lane) ?? [])].some(([k, c]) => c.binding === bindingOf(lane) && createLive(engine, k));
+        // A message gone elsewhere is the promotion's to write (`promoteLanesOf`).
+        const gone = engine.messageIsGone(f.forwardOf ?? f.lane);
+        await writeNow(f, (closed || owes) && !live && !gone);
+      })();
     };
-  }, [lane, writeNow, engine]);
+  }, [lane, writeNow, wireClear, engine]);
 
   const seal = useCallback((l: string) => {
     const before = sealed.current.get(l);
@@ -381,8 +395,9 @@ export function useReplyAutosave(
     for (const key of mine) takeBack(l, key, true);
   }, [takeBack]);
   const cancelled = useCallback((l: string) => {
-    if (!taken.current.delete(l)) return;
+    // The send never left: its words are no longer the press's, even when it took no create back.
     sealed.current.delete(l);
+    if (!taken.current.delete(l)) return;
     saved.current.delete(l);
     owed.current.add(l);
   }, []);
@@ -401,6 +416,8 @@ export function useReplyAutosave(
     taken.current.delete(l);
     owed.current.delete(l);
     quiet.current.delete(l);
+    // Its last words are spent with it: no close writes them again.
+    lastOf.current.delete(l);
     reached.current.delete(l);
     confirmedSig.current.delete(l);
     bound.current.set(l, was + 1);
