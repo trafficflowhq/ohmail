@@ -1319,6 +1319,31 @@ describe("the phone sheet plans a press over the organizer's copy where the chan
     }
   });
 
+  it("a Screener press past the gate plans over the copy: a stale row here at News, none there", async () => {
+    const from = { name: "Letters", address: "s@letters.example" };
+    for (const rulesTravel of [false, true]) {
+      const fake = mailServer();
+      const origin = await listen(fake.server);
+      try {
+        fake.addRule({ ...ruleDto("r-stale", "sender", from.address, "ohmail/News"), provenance: "manual" });
+        fake.addMessage(dto("i1", { subject: "Letter", folder: "INBOX", from }));
+        const at = "2026-08-19T08:00:00Z";
+        fake.push("mailbox_profile", "create", "mb-1", {
+          mailboxId: "mb-1", rules: [], asOf: at, from: { kind: "local", name: "Laptop", since: null }, updatedAt: at, applied: [],
+        });
+        const live = await liveWorldOn(fake, origin, { rulesTravel: () => rulesTravel });
+        const row = liveScreener(presentedOf(live.engine.read(), view.now), view).waiting.find((r) => r.address === from.address);
+        expect(row, "the sender is not waiting").toBeTruthy();
+        await live.actions.decide(row!, "reads", false, "sender");
+        const rules = fake.seen.filter((r) => r.url.startsWith("/rules") && r.method !== "GET").map((r) => `${r.method} ${r.url}`);
+        expect(rules, `rulesTravel ${rulesTravel}`).toEqual(rulesTravel ? ["POST /rules"] : []);
+        live.store.close();
+      } finally {
+        fake.server.close();
+      }
+    }
+  });
+
   it("phoneRulesTravel: every mailbox read here with a live holder, and nothing else", () => {
     const held = { organizerRole: "reader" as const, organizedBy: { kind: "local", name: "Laptop" }, organizerState: "held" as const };
     expect(phoneRulesTravel([held, held])).toBe(true);
