@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { OHBOX_VISIT_ID, type MirrorStore, type OhmailEngine } from "@ohmail/client-engine";
+import { OHBOX_VISIT_ID, type MirrorStore, type OhmailEngine, type SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { JunkWire } from "../app/shell/junk-window";
 import type { MailboxFacts } from "../app/shell/mail-state";
@@ -149,5 +149,67 @@ describe("the Screener reads the Junk window before the Spam click", () => {
     expect(pane, "the Quarantine shelf waited on the click's own read").toContain(PEDLAR.name);
     expect(pane).not.toContain(messages.screener.junkLoading);
     expect(calls).toHaveLength(2);
+  });
+});
+
+describe("the shell keeps the Junk page from its start", () => {
+  const junkRow = (uid: number, subject: string) => ({
+    mailboxId: "mb1", uid, uidValidity: "1", subject, from: { name: "Provider junk", address: "junk@provider.example.invalid" },
+    date: "2026-09-16T08:40:00.000Z", messageIdHeader: `<j${uid}@x>`, seen: false, origin: "provider" as const,
+  });
+  const page = (...items: ReturnType<typeof junkRow>[]) =>
+    ({ mailboxes: [{ id: "mb1", address: "me@example.invalid", window: "ok" as const }], nextCursor: null, items });
+  const junkTab = (el: HTMLElement) =>
+    [...el.querySelectorAll(".scn-seg [role=\"tab\"]")].find((b) => (b.textContent ?? "").includes("Junk")) ?? null;
+
+  it("opened on the Ohbox, the page is read at once; the Screener's Junk click paints it and asks nothing", async () => {
+    const calls: string[] = [];
+    const wire: JunkWire = {
+      ...JUNK_WIRE,
+      list: async () => { calls.push("list"); return page(junkRow(7, "A provider-filed offer")); },
+      sweepPreview: async () => { calls.push("sweepPreview"); return { mailboxes: [], movable: 0, pending: false, held: { ids: ["q1"], truncated: false } }; },
+    };
+    const { engine } = await seeded();
+    const el = await mount(engine, { folders: true, junkWire: wire });
+    await waitFor(() => calls.length === 2, "the Junk page read from the Ohbox");
+    const { go } = await import("../app/shell/routing.js");
+    await act(async () => { go("screener"); });
+    await waitFor(() => junkTab(el) !== null, "the Screener's Junk segment");
+    await click(junkTab(el), "the Junk tab");
+    const pane = el.querySelector(".view-screener")?.textContent ?? "";
+    expect(pane).toContain("A provider-filed offer");
+    expect(pane).toContain(PEDLAR.name);
+    expect(pane).not.toContain(messages.screener.junkLoading);
+    expect(calls.sort()).toEqual(["list", "sweepPreview"]);
+  });
+
+  it("a letter set aside into the spam pile reads the page again after the settle; the Junk click paints it", async () => {
+    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    const pages = [page(junkRow(7, "A provider-filed offer")), page(junkRow(8, "The letter just filed"), junkRow(7, "A provider-filed offer"))];
+    let lists = 0;
+    const wire: JunkWire = { ...JUNK_WIRE, list: async () => pages[Math.min(lists++, 1)]! };
+    const { engine } = await seeded();
+    const el = await mount(engine, { folders: true, junkWire: wire });
+    await waitFor(() => lists === 1, "the Junk page read from the Ohbox");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      S.pending = [{
+        type: "message", op: "create", id: "q2", seq: ++S.seq, updatedAt: NOW.toISOString(),
+        entity: msg("q2", { folder: "ohmail/Quarantine", from: PEDLAR, date: "2026-09-16T08:50:00.000Z", updatedAt: NOW.toISOString() }),
+      } as unknown as SyncChange];
+      await act(async () => { await engine.syncOnce(); });
+      await act(async () => { vi.advanceTimersByTime(JUNK_MOVE_SETTLE_MS); });
+    } finally {
+      vi.useRealTimers();
+    }
+    await waitFor(() => lists === 2, "the page read again after the pile changed");
+    const { go } = await import("../app/shell/routing.js");
+    await act(async () => { go("screener"); });
+    await waitFor(() => junkTab(el) !== null, "the Screener's Junk segment");
+    await click(junkTab(el), "the Junk tab");
+    const pane = el.querySelector(".view-screener")?.textContent ?? "";
+    expect(pane).toContain("The letter just filed");
+    expect(pane).not.toContain(messages.screener.junkLoading);
+    await waitFor(() => lists === 3, "the entry after a move reads once behind the painted page");
   });
 });

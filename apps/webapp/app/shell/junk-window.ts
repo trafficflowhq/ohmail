@@ -38,7 +38,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { createSessionBodyDoor, type SessionBodyHeld } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, createSessionBodyDoor, type EntityReader, type EngineMessage, type SessionBodyHeld } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
   ApiError, apiConfigured, screener as screenerApi,
@@ -46,6 +46,7 @@ import {
   type JunkSearchWire, type JunkSweepWire,
 } from "../api-client";
 import { durableSet } from "./durable";
+import { useDerivedVersion, useEngine } from "./engine";
 
 /**
  * One row's stable key. EPOCH-SCOPED: a UID names a message only within one UIDVALIDITY, so a
@@ -236,6 +237,42 @@ export function junkRowMatches(item: JunkItemWire, query: string): boolean {
  * again. Only an entry re-reads; staying on the segment never does.
  */
 export const JUNK_FIRST_PAGE_FRESH_MS = 30_000;
+/**
+ * How long after the spam pile changes, or a "Not junk" press, the kept page is read again: the
+ * organizer files on its next cycle, so a read at the press would find Junk as it was.
+ */
+export const JUNK_MOVE_SETTLE_MS = 5_000;
+
+/**
+ * THE KEPT PAGE. `on`: the shell is up with the window readable (folders on, no demo); its rise
+ * reads the page and the preview, so no Screener or Spam entry waits on a dial. `moved`: the
+ * mirror's spam pile ({@link junkPileKeyOf}); a change reads both again after the settle.
+ */
+export interface JunkKeep { on: boolean; moved: number }
+
+/**
+ * The mirror letters in the spam pile as ONE NUMBER, their count and an order-free hash of their
+ * ids: it changes when a letter enters or leaves, and a scalar pins no list in the shell's frame.
+ */
+export function junkPileKeyOf(reader: EntityReader): number {
+  let count = 0;
+  let sum = 0;
+  for (const m of reader.list<EngineMessage>("message")) {
+    if (m.folder !== FOLDER_OF_VIEW.spam) continue;
+    let h = 0x811c9dc5;
+    for (let i = 0; i < m.id.length; i++) h = Math.imul(h ^ m.id.charCodeAt(i), 0x01000193);
+    sum = (sum + (h >>> 0)) >>> 0;
+    count += 1;
+  }
+  return count * 0x1_0000_0000 + sum;
+}
+
+/** {@link junkPileKeyOf} over the shell's mirror, read again on each mirror change while `on`. */
+export function useJunkPileKey(on: boolean): number {
+  const engine = useEngine();
+  const derived = useDerivedVersion();
+  return useMemo(() => (on ? junkPileKeyOf(engine.read()) : 0), [on, engine, derived]);
+}
 /** How long a typed query rests before the server is asked for it. */
 export const JUNK_SEARCH_DEBOUNCE_MS = 450;
 /** How often the queued sweep re-reads its preview, and for how long, before it stops asking. */
@@ -266,9 +303,12 @@ function readDismissed(key: string): number {
  * the first page loads lazily on entry, and a later entry reads it again once it is
  * {@link JUNK_FIRST_PAGE_FRESH_MS} old. `warm` is "the Screener is on screen": its entry reads the
  * page and the preview too, so the first Spam click draws what they answered instead of waiting on
- * a provider dial. Nothing is fetched while the flag is off or the view is elsewhere.
+ * a provider dial. `keep` ({@link JunkKeep}) reads them once the shell is up and again after a move.
+ * Nothing is fetched while every flag is down.
  */
-export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWire, warm = false): JunkWindowControl {
+export function useJunkWindow(
+  active: boolean, toast: ToastFn, hostWire?: JunkWire, warm = false, keep?: JunkKeep,
+): JunkWindowControl {
   const t = useTranslations("screener");
   const wire = useMemo(() => checkedWire(hostWire ?? cloudWire), [hostWire]);
   const supported = hostWire !== undefined || apiConfigured();
@@ -297,6 +337,13 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   const listInFlight = useRef(false);
   /** A stale page must not land over a newer reload's answer. */
   const generation = useRef(0);
+  /** A move was seen, or a read failed off the segment, since the last entry read: the next entry reads whatever the age. */
+  const moved = useRef(false);
+  /** A page is on screen: a read behind it keeps it, and its failure is no new answer. */
+  const pageShown = useRef(false);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onSegment = useRef(active);
+  useEffect(() => { onSegment.current = active; }, [active]);
 
   const fetchFirst = useCallback((keep = false) => {
     if (!supported) {
@@ -306,14 +353,20 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
       return;
     }
     const gen = ++generation.current;
+    moved.current = false;
     listAskedAt.current = Date.now();
     listInFlight.current = true;
-    // An entry's re-read keeps a shown page on screen until the answer replaces it.
-    setPhase((p) => (keep && p === "ready" ? p : "loading"));
+    // A re-read behind a shown page keeps it on screen until the answer replaces it.
+    const behind = keep && pageShown.current;
+    if (!behind) {
+      pageShown.current = false;
+      setPhase("loading");
+    }
     void wire.list().then(
       (page) => {
         if (generation.current !== gen) return;
         listInFlight.current = false;
+        pageShown.current = true;
         setItems(page.items);
         setBoxes(page.mailboxes);
         setNextCursor(page.nextCursor);
@@ -322,6 +375,8 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
       () => {
         if (generation.current !== gen) return;
         listInFlight.current = false;
+        if (behind || !onSegment.current) moved.current = true;
+        if (behind) return;
         // FAILED, not empty — the §16.2 rule. The retry is the human's or the next entry's.
         setPhase("failed");
       },
@@ -486,6 +541,9 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     return [...localKept, ...hits.filter((h) => !have.has(junkKeyOf(h)))];
   }, [items, query, localKept, hits]);
 
+  /** Set below, once the preview's read exists; the rescue calls it through this ref. */
+  const rereadAfterMove = useRef<() => void>(() => {});
+
   /* ── THE RESCUE (both verbs) ───────────────────────────────────────────────────────────── */
   /**
    * THE ROW STAYS AND SAYS WHAT IT IS WAITING FOR. Recorded, not applied: the message is still in
@@ -507,6 +565,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
       () => {
         setBusy((cur) => { const n = new Set(cur); n.delete(key); return n; });
         markQueued(key);
+        rereadAfterMove.current();
         toast(t(allow ? "junkRescueQueuedAllowed" : "junkRescueQueued"));
       },
       () => {
@@ -587,22 +646,50 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     );
   }, [wire, absorbPreview]);
 
-  /* ENTRY: on each rising edge of `active` or `warm`, the page and the preview are read if never asked, or
-     if the last ask is at least the age old and none is out. An edge, never a timer: staying on
-     the segment, or a tab coming back into view, reads nothing. */
+  /* ENTRY: on each rising edge of `active`, `warm` or `keep.on`, the page and the preview are read if never
+     asked, after a move, or if the last ask is at least the age old and none is out. An edge, never a
+     timer: staying on the segment, or a tab coming back into view, reads nothing. */
+  const kept = keep?.on === true;
   const wasActive = useRef(false);
   const wasWarm = useRef(false);
+  const wasKept = useRef(false);
   useEffect(() => {
-    const entered = (active && !wasActive.current) || (warm && !wasWarm.current);
+    const entered = (active && !wasActive.current) || (warm && !wasWarm.current) || (kept && !wasKept.current);
     wasActive.current = active;
     wasWarm.current = warm;
+    wasKept.current = kept;
     if (!entered) return;
     const now = Date.now();
+    const stale = moved.current;
     const due = (at: number | null, inFlight: boolean): boolean =>
-      at === null || (!inFlight && now - at >= JUNK_FIRST_PAGE_FRESH_MS);
+      at === null || stale || (!inFlight && now - at >= JUNK_FIRST_PAGE_FRESH_MS);
     if (due(listAskedAt.current, listInFlight.current)) fetchFirst(true);
     if (supported && due(previewAskedAt.current, previewInFlight.current)) readPreview();
-  }, [active, warm, supported, fetchFirst, readPreview]);
+  }, [active, warm, kept, supported, fetchFirst, readPreview]);
+
+  /* A MOVE: the next entry reads, whatever the age. After the settle both are read in the background
+     for that entry to paint, the list only off the segment: it would drop the rows a reader loaded. */
+  const readAfterMove = useCallback(() => {
+    moved.current = true;
+    if (settleTimer.current !== null) clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(() => {
+      settleTimer.current = null;
+      if (!onSegment.current) fetchFirst(true);
+      if (supported) readPreview();
+      // The organizer may file it after this read: the entry still reads.
+      moved.current = true;
+    }, JUNK_MOVE_SETTLE_MS);
+  }, [fetchFirst, readPreview, supported]);
+  useEffect(() => { rereadAfterMove.current = readAfterMove; }, [readAfterMove]);
+  const pile = keep?.moved ?? 0;
+  const lastPile = useRef<number | null>(null);
+  useEffect(() => {
+    // The first key while kept is the baseline the kept read already covers, never a move.
+    const before = kept ? lastPile.current : null;
+    lastPile.current = kept ? pile : null;
+    if (before !== null && before !== pile) readAfterMove();
+  }, [kept, pile, readAfterMove]);
+  useEffect(() => () => { if (settleTimer.current !== null) clearTimeout(settleTimer.current); }, []);
 
   // While a press is outstanding, re-read the preview on a slow beat until the pile is empty
   // (or the beat runs out — the offer then keeps saying "queued", which is still true).
