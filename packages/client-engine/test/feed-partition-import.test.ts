@@ -11,14 +11,14 @@ import {
 } from "@ohmail/client-engine";
 
 /**
- * THE WARM-IMPORT PARTITION — before any visit, the anchor is this device's first completed sync.
+ * THE WARM-IMPORT PARTITION — before any visit, an unread letter is new until it is read.
  *
  * A live mirror has NO waterline row until the first leave-commit writes one (`/sync` has no
- * `view_meta` entity type). Over a mirror built from an EXISTING mailbox, mail that was already
- * there when this device first caught up is never "new since you were here", read or unread: an
- * import of old unread newsletters reads "Nothing new". Mail dated after that sync counts while
- * unread. Read state never places the line: a junction at "the newest already-read message" let a
- * read letter moved in on top zero the badge over unread mail. No line is drawn.
+ * `view_meta` entity type). Before that first visit nothing is cut: a News pile imported with
+ * unread letters names them on the first visit ("8 new since you were here"), and the rail says
+ * the same number. It once read "Nothing new" over them. Read state never places the line: a
+ * junction at "the newest already-read message" let a read letter moved in on top zero the badge
+ * over unread mail. No line is drawn.
  */
 
 let seq = 0;
@@ -78,7 +78,7 @@ async function importedAt(messages: EngineMessage[], iso: string): Promise<Memor
 const d = (i: number): string => `2026-08-${String(10 - i).padStart(2, "0")}${"T"}09:00:00.000Z`;
 
 describe("no visit yet (a mirror built from an existing mailbox)", () => {
-  it("an imported pile of old mail, read and unread, is 'nothing new' and draws no line", async () => {
+  it("an imported pile names its unread letters on the first visit, and draws no line", async () => {
     // A warm pile, interleaved exactly as a real mailbox is; all of it predates the first sync.
     const pile = [
       msg({ id: "new1", date: d(0), unread: true }),
@@ -88,13 +88,12 @@ describe("no visit yet (a mirror built from an existing mailbox)", () => {
     ];
     const part = feedPartition(await importedAt(pile, d(-1)), "reads");
     expect(part.waterline).toBeNull();
-    // Guard 1 (the report): nothing that was in the mailbox before this device caught up
-    // is counted "new since you were here" — not the read mail, and not old unread mail either.
-    expect(part.newCount).toBe(0);
-    expect(part.fresh).toEqual([]);
+    // The report: "Nothing new" over unread letters present at setup. Read mail is not new.
+    expect(part.newCount).toBe(2);
+    expect(part.fresh.map((m) => m.id)).toEqual(["new1", "read1", "skip1", "read2"]);
   });
 
-  it("mail that arrives after the first sync counts as new", async () => {
+  it("an unread letter counts whether it came before or after the first sync", async () => {
     const pile = [
       msg({ id: "new2", date: d(0), unread: true }),
       msg({ id: "new1", date: d(1), unread: true }),
@@ -102,9 +101,8 @@ describe("no visit yet (a mirror built from an existing mailbox)", () => {
       msg({ id: "old1", date: d(3), unread: true }),
     ];
     const part = feedPartition(await importedAt(pile, d(2)), "reads");
-    // Guard 2: both arrivals after the sync count; the old unread letter does not.
-    expect(part.newCount).toBe(2);
-    expect(part.fresh.map((m) => m.id)).toEqual(["new2", "new1"]);
+    expect(part.newCount).toBe(3);
+    expect(part.seen).toEqual([]);
     expect(part.waterline).toBeNull();
   });
 
@@ -176,14 +174,16 @@ describe("a committed waterline still outranks \\Seen (R10-5's model is untouche
   });
 
   it("each view cuts ITS OWN folder only", async () => {
-    // Receipts' cut must come from receipts mail — News mail may not cut the receipts pile.
+    // A News visit's line may not cut the receipts pile, which no visit has cut yet.
     const pile = [
       msg({ id: "rcpt1", date: d(0), unread: true, folder: "ohmail/Receipts" }),
       msg({ id: "read1", date: d(1), unread: false, folder: "ohmail/News" }),
       msg({ id: "rcpt2", date: d(2), unread: true, folder: "ohmail/Receipts" }),
     ];
-    const part = feedPartition(await importedAt(pile, d(1)), "receipts");
-    expect(part.fresh.map((m) => m.id)).toEqual(["rcpt1"]);
-    expect(part.seen.map((m) => m.id)).toEqual(["rcpt2"]);
+    const store = await importedAt(pile, d(1));
+    await store.putLocal("view_meta", waterlineIdOf("reads"), { newestSeenId: "read1" });
+    const part = feedPartition(store, "receipts");
+    expect(part.fresh.map((m) => m.id)).toEqual(["rcpt1", "rcpt2"]);
+    expect(part.newCount).toBe(2);
   });
 });

@@ -1068,9 +1068,9 @@ export function waterlineIdOf(view: FeedView): string {
 }
 
 /**
- * `view_meta` id of THIS DEVICE's first completed sync, written once by the engine's drain. It is
- * both reading streams' anchor before any visit: mail dated at or before it was already in the
- * mailbox when this device first caught up, so it is never "new since you were here" (`feedPartition`).
+ * `view_meta` id of THIS DEVICE's first completed sync, written once by the engine's drain. A
+ * reading stream whose line cannot be placed cuts here (`feedPartition`); before any visit nothing
+ * is cut, and an unread letter is new until read.
  */
 export const FEED_SINCE_ID = "feed_since";
 export interface FeedSinceMeta {

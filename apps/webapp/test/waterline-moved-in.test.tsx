@@ -230,12 +230,12 @@ describe("no visit yet in this browser: a read letter filed on top", () => {
     expect(host!.querySelector("button.mark-all-read")).toBeNull();
   });
 
-  it("an imported pile of old unread mail says nothing is new, and draws no line", async () => {
+  it("an imported pile of old unread mail names it on the first visit, and draws no line", async () => {
     const store = await mirrorOf(Array.from({ length: 30 }, (_, i) =>
       msg({ id: `old${i}`, date: at(1, i), unread: true, folder: "ohmail/News" })));
     await firstSync(store, at(9));
     await mountReads(feedPartition(store, "reads"));
-    expect(metaText()).toBe("Nothing new since you were here");
+    expect(metaText()).toBe("30 new since you were here");
     expect(lines()).toBe(0);
   });
 
