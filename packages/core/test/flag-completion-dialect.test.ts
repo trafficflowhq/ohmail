@@ -79,6 +79,30 @@ describe("the flag completion answers the same question on both stores", () => {
     expect(r.desiredSeen).toBe(false);
     expect(r.observedSeen).toBe(false);
   });
+
+  it("an unanswered STORE records the doubt and reopens our row, moving no observation", async () => {
+    const { repo, row } = await seeded(false, false);
+    await repo.completeFlagState(MESSAGE, { expectDesiredSeen: false, observedSeen: false, lastSetBy: "us" });
+    expect((await row()).reconcileStatus).toBe("reconciled");
+
+    await repo.markFlagUnanswered(MESSAGE);
+
+    expect(await row()).toMatchObject({
+      desiredSeen: false, observedSeen: false, reconcileStatus: "pending", conflict: true, attempts: 0,
+    });
+  });
+
+  it("the walk's report on a doubted row is recorded as the server's flag, and the doubt clears", async () => {
+    const { repo, row } = await seeded(true, false);
+    await repo.markFlagUnanswered(MESSAGE);
+
+    expect(await repo.applyExternalFlag(MAILBOX, { folder: "INBOX", ref: "1:10" }, true))
+      .toEqual({ messageId: MESSAGE, applied: false, changed: false });
+
+    expect(await row()).toMatchObject({
+      desiredSeen: true, observedSeen: true, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    });
+  });
 });
 
 /* WATCHED FAIL: `desired_seen = (${expect})::boolean` — the server's own spelling — dies

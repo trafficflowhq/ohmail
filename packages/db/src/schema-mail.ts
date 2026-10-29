@@ -997,6 +997,7 @@ export const flagState = pgTable("flag_state", {
   observedSeen: boolean("observed_seen").notNull(),
   lastSetBy: text("last_set_by").notNull(),   // 'us' | 'external'
   reconcileStatus: text("reconcile_status").notNull().default("pending"),
+  /** A STORE of ours left and its answer was lost; `observed_seen` is in doubt. */
   conflict: boolean("conflict").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /** Refusals recorded for this `\Seen` write — `folder_state`'s pair, same rules. */

@@ -435,6 +435,12 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * list at all. Returns whether the witness still matched; false means a newer press owns the row.
    */
   completeFlagState(messageId: string, c: FlagCompletion): Promise<boolean>;
+  /**
+   * A `\Seen` STORE of ours left and its answer was lost: set `conflict` and reopen the row, on any
+   * desire (a press that landed while the STORE was on the wire is owed too). Moves neither
+   * `observed_seen`, `updated_at` nor the backoff; the next landed STORE or walk report clears it.
+   */
+  markFlagUnanswered(messageId: string): Promise<void>;
   /** `foldersOff`: switched off under "Use folders" at this read — a per-press pass asks it fresh. */
   getMailbox(mailboxId: string): Promise<
     {
@@ -832,7 +838,8 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * write is still pending (`last_set_by = 'us'` and desired ≠ observed) the external value is
    * IGNORED and `applied` comes back false. Without that check a reconcile cycle would read the
    * pre-write flag back off the server and overwrite the intent the user expressed two seconds
-   * ago — the optimistic flip would visibly snap back.
+   * ago — the optimistic flip would visibly snap back. A row whose STORE answer was lost
+   * (`conflict`) records the report as the server's flag instead, and `applied` is false too.
    */
   applyExternalFlag(
     mailboxId: string, locator: NativeLocator, seen: boolean,
@@ -2177,6 +2184,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       RETURNING CASE WHEN desired_seen = ${expect} THEN 'yes' ELSE 'no' END AS "matched"
     `);
     return String(result[0]?.[0] ?? "") === "yes";
+  }
+
+  /** {@link WorkerRepo.markFlagUnanswered}. The boolean is a literal, as in {@link completeFlagState}. */
+  async markFlagUnanswered(messageId: string): Promise<void> {
+    await this.db.update(flagState)
+      .set({ conflict: sql`TRUE`, reconcileStatus: "pending" })
+      .where(and(eq(flagState.messageId, messageId), eq(flagState.lastSetBy, "us")));
   }
 
   /** {@link upsertFolderState}'s read-state twin, backoff reset included and for its reasons. */
@@ -3819,6 +3833,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       desiredSeen: flagState.desiredSeen,
       observedSeen: flagState.observedSeen,
       lastSetBy: flagState.lastSetBy,
+      conflict: flagState.conflict,
     }).from(messages)
       .leftJoin(flagState, eq(flagState.messageId, messages.id))
       .where(and(
@@ -3827,6 +3842,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         sql`${messages.nativeLocator}->>'ref' = ${locator.ref}`,
       )).limit(1);
     if (!row) return null;
+
+    // OUR STORE's answer was lost, so this report is the server's flag: record it, keep the intent.
+    if (row.lastSetBy === "us" && row.desiredSeen != null && row.conflict === true) {
+      await this.completeFlagState(row.id, {
+        expectDesiredSeen: row.desiredSeen, observedSeen: seen, lastSetBy: "us", physicalObservation: true,
+      });
+      return { messageId: row.id, applied: false, changed: false };
+    }
 
     // OUR write is still in flight → the user's intent outranks the stale value the server is
     // still reporting. Leave everything; the reconcile pass below this one will push it.

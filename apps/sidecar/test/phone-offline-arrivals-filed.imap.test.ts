@@ -12,9 +12,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { connect, createServer, type AddressInfo, type Server, type Socket } from "node:net";
+import { ImapFlow } from "imapflow";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  Cable, DELIVER_AT_MS, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, OUTAGE_MS, PORT, bootPhone, cables, deliver, dirs, eventsSince, folderOnServer, open, post, relaunch, rowOf, seedMailboxId,
+  Cable, DELIVER_AT_MS, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, OUTAGE_MS, PASS, PORT, bootPhone, cables, deliver, dirs, eventsSince, folderOnServer, open, post, relaunch, rowOf, seedMailboxId,
   untilIngested, untilScreened, withServer, type Phone,
 } from "./_phone-offline-rig.js";
 import { serviceUp } from "@trafficflow/db/testing";
@@ -136,3 +138,119 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a filing into ohmail's folder anot
   }, 600_000);
 });
 
+
+/** Passes everything; armed, it forwards the next `\Seen` STORE and ends the phone's side on the answer. */
+class LosesStoreAnswer {
+  port = 0;
+  /* The server it stands in front of, held as the rig's Cable holds it. */
+  private readonly target = { host: HOST, port: PORT };
+  armed = false;
+  fired = false;
+  unseenStores = 0;
+  private server: Server | null = null;
+  private live = new Set<Socket>();
+  async open(): Promise<void> {
+    this.server = createServer((inbound) => {
+      const outbound = connect(this.target);
+      this.live.add(inbound).add(outbound);
+      const end = (): void => { inbound.destroy(); outbound.destroy(); this.live.delete(inbound); this.live.delete(outbound); };
+      inbound.on("error", end).on("close", end);
+      outbound.on("error", end).on("close", end);
+      let cutOnAnswer = false;
+      outbound.on("data", (b: Buffer) => {
+        if (cutOnAnswer) { outbound.destroy(); inbound.end(); this.fired = true; return; }
+        if (!inbound.destroyed) inbound.write(b);
+      });
+      inbound.on("data", (b: Buffer) => {
+        const line = b.toString("latin1");
+        if (/ STORE /i.test(line) && /\\Seen/i.test(line)) {
+          if (/-FLAGS/i.test(line)) this.unseenStores += 1;
+          if (this.armed) { this.armed = false; cutOnAnswer = true; }
+        }
+        if (!outbound.destroyed) outbound.write(b);
+      });
+    });
+    await new Promise<void>((r) => this.server!.listen(0, "127.0.0.1", r));
+    this.port = (this.server.address() as AddressInfo).port;
+  }
+  async close(): Promise<void> {
+    for (const s of [...this.live]) s.destroy();
+    await new Promise<void>((r) => this.server!.close(() => r()));
+  }
+}
+
+async function until(done: () => Promise<boolean> | boolean, ms: number): Promise<boolean> {
+  for (const t0 = Date.now(); Date.now() - t0 < ms; await new Promise((r) => setTimeout(r, 100))) if (await done()) return true;
+  return false;
+}
+
+/** The letter's `\\Seen` on the server, read by a client of its own (`null`: no such letter). */
+async function seenOnServer(user: string, subject: string): Promise<boolean | null> {
+  for (let attempt = 1; ; attempt += 1) {
+    const c = new ImapFlow({ host: HOST, port: PORT, secure: false, auth: { user, pass: PASS }, logger: false });
+    c.on("error", () => undefined); // a reset socket's error event; the pending command rejects anyway
+    try {
+      await c.connect();
+      const lock = await c.getMailboxLock("INBOX");
+      try {
+        const hits = await c.search({ header: { subject } }, { uid: true });
+        if (!Array.isArray(hits) || hits.length === 0) return null;
+        const m = await c.fetchOne(String(hits[0]), { flags: true }, { uid: true });
+        return m ? (m.flags?.has("\\Seen") ?? false) : null;
+      } finally { lock.release(); }
+    } catch (err) {
+      // GreenMail can drop a connection whose SELECT races a write to that folder; read again on a fresh one.
+      if ((err as { code?: unknown }).code !== "NoConnection" || attempt === 3) throw err;
+    } finally {
+      await c.logout().catch(() => undefined);
+    }
+  }
+}
+
+/* The read push's STORE reaches the server and the connection ends before its answer; the person
+   presses Mark unread before the re-dial. That unread is owed: the read may have landed. */
+describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a read whose STORE answer is lost, then Mark unread", () => {
+  it("ends unread on the server and in the app, with one unread STORE", async () => {
+    const door = new LosesStoreAnswer();
+    await door.open();
+    try {
+      const user = `seen-lost-${randomUUID()}@trafficflow.test`;
+      const subject = `lost answer ${randomUUID()}`;
+      await deliver(user, "someone@elsewhere.example", subject);
+      const phone = await bootPhone({ user, file: join(storeDir(), "engine.db"), cable: door as unknown as Cable });
+      expect(await post(phone, `/local/mailboxes/${seedMailboxId(phone)}/organize`)).toBe(200);
+      let id = "";
+      expect(await until(async () => {
+        await phone.engine.resume();
+        id = String((await phone.exec.all("select id from messages where subject = ?", [subject])).rows[0]?.[0] ?? "");
+        return id !== "";
+      }, 120_000), "the letter was never ingested").toBe(true);
+      for (let i = 0; i < 3; i++) await phone.engine.resume();
+      const press = async (unread: boolean): Promise<number> => (await phone.engine.handle(new Request("http://sidecar/messages", {
+        method: "PATCH",
+        headers: { authorization: `Bearer ${phone.engine.sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ ids: [id], unread }),
+      }))).status;
+      const unreadInApp = async (): Promise<boolean> =>
+        Boolean((await phone.exec.all("select unread from messages where id = ?", [id])).rows[0]?.[0]);
+
+      door.armed = true;
+      expect(await press(false)).toBe(200);
+      expect(await until(() => door.fired, 15_000), "the read push sent no STORE").toBe(true);
+      expect(await until(async () => (await seenOnServer(user, subject)) === true, 15_000), "the server did not apply the read").toBe(true);
+      await new Promise((r) => setTimeout(r, 1_000));
+      expect(await press(true)).toBe(200);
+
+      await until(async () => {
+        await phone.engine.resume();
+        return (await seenOnServer(user, subject)) === false && await unreadInApp();
+      }, 30_000);
+      for (let i = 0; i < 2; i++) await phone.engine.resume();
+      expect({ server: await seenOnServer(user, subject), app: await unreadInApp() }, `events ${eventsSince(phone, 0)}`)
+        .toEqual({ server: false, app: true });
+      expect(door.unseenStores, "the unread went out exactly once").toBe(1);
+    } finally {
+      await door.close();
+    }
+  }, 240_000);
+});

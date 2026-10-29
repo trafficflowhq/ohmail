@@ -2,7 +2,7 @@ import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { changeLog, flagState, mailboxes, messageInstances, messages, type Tx } from "@trafficflow/db";
+import { auditLog, changeLog, flagState, mailboxes, messageInstances, messages, upsertDesiredSeen, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -288,5 +288,127 @@ describe("inbound flagChanges — a message read elsewhere converges here", () =
     await runSyncCycle({ writeAuthority: FIXTURE_LEASE, repo: w.repo, adapter: w.adapter, accountId: w.accountId, mailboxId: w.mailboxId, storageCap: UNMETERED_STORAGE_CAP });
 
     expect(await unreadOf(w.db, victim)).toBe(true);
+  });
+});
+
+describe("a read whose STORE answer was lost — the next press is still sent", () => {
+  type W = Awaited<ReturnType<typeof world>>;
+  const pass = (w: W) => reconcileMailbox({ writeAuthority: FIXTURE_LEASE, repo: w.repo, adapter: w.adapter, accountId: w.accountId, mailboxId: w.mailboxId });
+  const cycle = (w: W) => runSyncCycle({ writeAuthority: FIXTURE_LEASE, repo: w.repo, adapter: w.adapter, accountId: w.accountId, mailboxId: w.mailboxId, storageCap: UNMETERED_STORAGE_CAP });
+  /** The person's press, as the door writes it: the read model and the intent. */
+  const press = async (w: W, id: string, seen: boolean) => {
+    await w.db.update(messages).set({ unread: !seen }).where(eq(messages.id, id));
+    await upsertDesiredSeen(w.db, id, !seen, seen, new Date());
+  };
+  /** A read pressed and not yet on the server. */
+  const readPending = (w: W, ref: string) => seedMessage(w.db, {
+    accountId: w.accountId, mailboxId: w.mailboxId, unread: false, ref,
+    flag: { desiredSeen: true, observedSeen: false, lastSetBy: "us" },
+  });
+  const seenWrites = (w: W) => w.fleet.flagWrites.map((f) => f.seen);
+  const audits = async (w: W) => (await w.db.select({ action: auditLog.action }).from(auditLog)
+    .where(eq(auditLog.accountId, w.accountId))).map((a) => a.action);
+
+  it("lost answer, unread, then the walk reports \\Seen: the unread reaches the server and stands", async () => {
+    const w = await world();
+    const id = await readPending(w, "1:2001");
+    w.fleet.flagStoreFaults.set("1:2001", [{ answer: "unanswered" }]);
+    await pass(w);
+    expect(await flagRowOf(w.db, id), "the doubt is recorded").toMatchObject({ conflict: true, reconcileStatus: "pending", observedSeen: false });
+    await press(w, id, false);
+    w.fleet.behave(w.mailboxId, { flagChanges: [{ ref: "1:2001", seen: true }] });
+
+    await cycle(w);
+
+    expect(await unreadOf(w.db, id), "the last press stands in the app").toBe(true);
+    expect(seenWrites(w)).toEqual([true, false]);
+    expect(await flagRowOf(w.db, id)).toMatchObject({
+      desiredSeen: false, observedSeen: false, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    });
+  });
+
+  it("lost answer, unread, no walk: the unread is sent at desired = observed", async () => {
+    const w = await world();
+    const id = await readPending(w, "1:2002");
+    w.fleet.flagStoreFaults.set("1:2002", [{ answer: "unanswered" }]);
+    await pass(w);
+    await press(w, id, false);
+    await pass(w);
+    expect(seenWrites(w)).toEqual([true, false]);
+    expect(await flagRowOf(w.db, id)).toMatchObject({ reconcileStatus: "reconciled", conflict: false, observedSeen: false });
+  });
+
+  it("an unread pressed while the read's STORE is on the wire is still sent", async () => {
+    const w = await world();
+    const id = await readPending(w, "1:2003");
+    w.fleet.flagStoreFaults.set("1:2003", [{ answer: "unanswered", during: () => press(w, id, false) }]);
+    await pass(w);
+    expect(await flagRowOf(w.db, id)).toMatchObject({ desiredSeen: false, conflict: true, reconcileStatus: "pending" });
+    await pass(w);
+    expect(seenWrites(w)).toEqual([true, false]);
+    expect(await flagRowOf(w.db, id)).toMatchObject({ reconcileStatus: "reconciled", conflict: false });
+  });
+
+  it("a read taken back before its STORE ever left adopts another client's read, and sends nothing", async () => {
+    const w = await world();
+    const id = await readPending(w, "1:2004");
+    w.fleet.flagStoreFaults.set("1:2004", [{ answer: "unsent" }]);
+    await pass(w);
+    await press(w, id, false);
+    expect(await flagRowOf(w.db, id)).toMatchObject({ conflict: false, reconcileStatus: "reconciled" });
+    w.fleet.behave(w.mailboxId, { flagChanges: [{ ref: "1:2004", seen: true }] });
+
+    await cycle(w);
+
+    expect(await unreadOf(w.db, id), "another client's read is adopted").toBe(false);
+    expect(seenWrites(w)).toEqual([]);
+    expect(await flagRowOf(w.db, id)).toMatchObject({ lastSetBy: "external", observedSeen: true });
+  });
+
+  it("a refused read, then undo: the row settles and no unread is sent", async () => {
+    const w = await world();
+    const id = await readPending(w, "1:2005");
+    w.fleet.flagStoreFaults.set("1:2005", [{ answer: "refused" }]);
+    await pass(w);
+    expect(await audits(w)).toEqual(["reconcile.flags.failed"]);
+    expect(await flagRowOf(w.db, id)).toMatchObject({ conflict: false, attempts: 1 });
+    await press(w, id, false);
+    await pass(w);
+    expect(seenWrites(w)).toEqual([true]);
+    expect(await flagRowOf(w.db, id)).toMatchObject({ desiredSeen: false, observedSeen: false, reconcileStatus: "reconciled" });
+  });
+
+  it("lost answer, unread, and the server refuses the re-send: the row retires and the walk's \\Seen is adopted", async () => {
+    const w = await world();
+    const id = await readPending(w, "1:2006");
+    w.fleet.flagStoreFaults.set("1:2006", [{ answer: "unanswered" }, { answer: "refused" }]);
+    await pass(w);
+    await press(w, id, false);
+    await pass(w);
+    expect(seenWrites(w)).toEqual([true, false]);
+    expect(await audits(w)).toEqual(["reconcile.flags.retired"]);
+    expect(await flagRowOf(w.db, id)).toMatchObject({ reconcileStatus: "reconciled", conflict: false, attempts: 0 });
+
+    w.fleet.behave(w.mailboxId, { flagChanges: [{ ref: "1:2006", seen: true }] });
+    await cycle(w);
+    expect(await unreadOf(w.db, id), "the server's state is adopted").toBe(false);
+    expect(await flagRowOf(w.db, id)).toMatchObject({ lastSetBy: "external", observedSeen: true, reconcileStatus: "reconciled" });
+    expect(seenWrites(w)).toEqual([true, false]);
+  });
+
+  it("lost answer and no press: the walk's \\Seen settles the row without a second STORE", async () => {
+    const w = await world();
+    const id = await readPending(w, "1:2007");
+    w.fleet.flagStoreFaults.set("1:2007", [{ answer: "unanswered" }]);
+    await pass(w);
+    w.fleet.behave(w.mailboxId, { flagChanges: [{ ref: "1:2007", seen: true }] });
+
+    await cycle(w);
+
+    expect(seenWrites(w)).toEqual([true]);
+    expect(await unreadOf(w.db, id)).toBe(false);
+    expect(await flagRowOf(w.db, id)).toMatchObject({
+      desiredSeen: true, observedSeen: true, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ImapAdapter, EpochUnknownError, MessageGoneError, makeRef } from "../../src/adapters/imap.js";
+import { ImapAdapter, EpochUnknownError, MessageGoneError, StoreRefusedError, StoreUnansweredError, makeRef } from "../../src/adapters/imap.js";
 import { FIXTURE_DOOR } from "./_door.js";
 
 /**
@@ -190,6 +190,27 @@ describe("setFlags — `UID STORE` never runs against a recycled UID", () => {
     const { adapter, client } = await adapterOver({ epochs: { Junk: 9n } });
     await adapter.setFlags(LOC("Junk", 9, 2), { seen: true }, FIXTURE_DOOR);
     expect(client.writes).toEqual(["flagsAdd [2]"]);
+  });
+
+  it("a `false` answer on a usable connection is a refusal, not a gone message", async () => {
+    const { adapter, client } = await adapterOver({ epochs: { Junk: 9n } });
+    client.messageFlagsAdd = async () => false;
+    await expect(adapter.setFlags(LOC("Junk", 9, 2), { seen: true }, FIXTURE_DOOR))
+      .rejects.toBeInstanceOf(StoreRefusedError);
+  });
+
+  it("a `false` answer after the connection closed is an unanswered STORE: it may have landed", async () => {
+    const { adapter, client } = await adapterOver({ epochs: { Junk: 9n } });
+    client.messageFlagsRemove = async () => { client.usable = false; return false; };
+    await expect(adapter.setFlags(LOC("Junk", 9, 2), { seen: false }, FIXTURE_DOOR))
+      .rejects.toBeInstanceOf(StoreUnansweredError);
+  });
+
+  it("a probe that finds no message is still the one gone signal, and nothing is stored", async () => {
+    const { adapter, client } = await adapterOver({ epochs: { Junk: 9n }, present: [] });
+    await expect(adapter.setFlags(LOC("Junk", 9, 2), { seen: true }, FIXTURE_DOOR))
+      .rejects.toBeInstanceOf(MessageGoneError);
+    expect(client.writes).toEqual([]);
   });
 
   it("marking UNREAD is guarded identically — the destructive direction is not special-cased", async () => {

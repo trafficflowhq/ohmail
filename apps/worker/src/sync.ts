@@ -6,7 +6,7 @@ import {
   type StorageCap,
 } from "@trafficflow/core/mail";
 import {
-  WATCHED_FOLDERS, OHMAIL_FOLDERS, MessageGoneError, SameFolderMoveError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
+  WATCHED_FOLDERS, OHMAIL_FOLDERS, MessageGoneError, SameFolderMoveError, StoreRefusedError, StoreUnansweredError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
   isDestinationMissing, isRefusedCommand, type MoveManyResult,
   epochOf, epochOfRef, epochVerdict, sameEpoch, UNKNOWN_EPOCH, isImapBoundExceeded, makeRef, type Epoch,
   type BudgetStop, type NativeLocator, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
@@ -3138,7 +3138,9 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
   const pending = owesMore ? due.slice(0, RECONCILE_FLAGS_PER_CYCLE) : due;
   for (const p of pending) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external \Seen
-    if (p.desiredSeen === p.observedSeen) {
+    // Pending at equal is reachable only through an unanswered STORE (`conflict`): the observation
+    // may be stale, so the idempotent STORE goes out again. With no locator there is nowhere to send it.
+    if (p.desiredSeen === p.observedSeen && !p.nativeLocator) {
       await fencedLiveGroup(deps, (r) => r.completeFlagState(p.messageId, { expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" }));
       continue;
     }
@@ -3154,6 +3156,29 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
       // A lost lease — this shard's or this mailbox's — is never evidence about this message. Those
       // are the throws that still leave this loop, and they must leave it unreclassified.
       rethrowRefusal(err);
+      if (err instanceof StoreUnansweredError) {
+        // The STORE may have landed: mark the observation in doubt so the next press is sent and the
+        // walk's next report is recorded as the server's flag. No deferral: nothing was refused.
+        await fencedLiveGroup(deps, (r) => r.markFlagUnanswered(p.messageId));
+        log?.warn("reconcile_flag_unanswered", {
+          mailboxId, accountId, messageId: p.messageId, seen: p.desiredSeen,
+          reason: "the connection ended before the server answered the read-state STORE, which may "
+            + "have landed; the row stays owed until a STORE lands or the walk reports the flag",
+        });
+        continue;
+      }
+      if (err instanceof StoreRefusedError && p.desiredSeen === p.observedSeen) {
+        // A doubted row's re-send, refused: retire it, and the walk adopts what the server holds.
+        await fencedLiveGroup(deps, async (r) => {
+          await r.recordAudit(
+            accountId, "reconcile.flags.retired",
+            { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen, error: `${err.name}: ${err.message}` },
+            null,
+          );
+          await r.completeFlagState(p.messageId, { expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+        });
+        continue;
+      }
       if (err instanceof MessageGoneError) {
         // A STALE EPOCH first tries the copy on record under the folder's live epoch.
         const stale = !err.absent && err.liveEpoch !== null;

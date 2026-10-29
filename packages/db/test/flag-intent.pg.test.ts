@@ -77,7 +77,7 @@ describe.skipIf(!PG_UP)("upsertDesiredSeen — the read-state intent's one spell
     // The worker has observed \Seen on the real mailbox.
     await db.insert(flagState).values({
       messageId: id, desiredSeen: true, observedSeen: true,
-      lastSetBy: "them", reconcileStatus: "reconciled", conflict: true,
+      lastSetBy: "them", reconcileStatus: "reconciled", conflict: false,
     });
 
     // The caller's guess says unread (`observedSeen: false` — stale by definition on the
@@ -94,6 +94,31 @@ describe.skipIf(!PG_UP)("upsertDesiredSeen — the read-state intent's one spell
     await upsertDesiredSeen(db as unknown as Tx, id, true, false, new Date());
     expect(await rowOf(id)).toMatchObject({
       desiredSeen: false, observedSeen: true, reconcileStatus: "pending",
+    });
+  });
+
+  it("CONFLICT on a doubted row (a STORE of ours unanswered): a press stays pending and keeps the doubt", async () => {
+    const id = await seedMessage();
+    await db.insert(flagState).values({
+      messageId: id, desiredSeen: true, observedSeen: false,
+      lastSetBy: "us", reconcileStatus: "pending", conflict: true,
+    });
+    // The read may have landed, so the unread is owed although it equals the observation.
+    await upsertDesiredSeen(db as unknown as Tx, id, true, false, new Date());
+    expect(await rowOf(id)).toMatchObject({
+      desiredSeen: false, observedSeen: false, reconcileStatus: "pending", conflict: true,
+    });
+  });
+
+  it("CONFLICT with no doubt: a read taken back before its STORE left reconciles", async () => {
+    const id = await seedMessage();
+    await db.insert(flagState).values({
+      messageId: id, desiredSeen: true, observedSeen: false,
+      lastSetBy: "us", reconcileStatus: "pending", conflict: false,
+    });
+    await upsertDesiredSeen(db as unknown as Tx, id, true, false, new Date());
+    expect(await rowOf(id)).toMatchObject({
+      desiredSeen: false, observedSeen: false, reconcileStatus: "reconciled", conflict: false,
     });
   });
 });

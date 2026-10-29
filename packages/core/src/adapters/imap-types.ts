@@ -1177,7 +1177,9 @@ export interface MailboxAdapter {
    * flag is a no-op on every server, so a crash between the IMAP write and the `observed_seen`
    * update costs one redundant STORE. `{ seen }` rather than a flag bag: `\Seen` is the only flag
    * the product has an opinion about. Throws {@link MessageGoneError} when the locator no longer
-   * resolves — the same signal `move` raises.
+   * resolves — the same signal `move` raises. Once the STORE has left: `StoreRefusedError` when the
+   * server answered and did not apply it, `StoreUnansweredError` when the answer was lost and it may
+   * have landed. Any other throw means the STORE never left.
    */
   setFlags(locator: NativeLocator, flags: { seen: boolean }, door: WriteDoor): Promise<void>;
   /**
