@@ -13,6 +13,7 @@ import { useTranslations } from "next-intl";
 import { SettingsNote, SettingsRow, SettingsSection, Switch } from "@ohmail/ui";
 
 import { bridgeFetch } from "./bridge-fetch.js";
+import { useWindowReturn } from "./window-return.js";
 
 /**
  * The hosted route this pane addresses, root-relative like every path in this window.
@@ -30,24 +31,29 @@ export function DesktopAiAccount() {
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
-  useEffect(() => {
+  const writing = useRef(false);
+  const load = useCallback((quiet: boolean) => {
     void (async () => {
       try {
         const res = await bridgeFetch(ACCOUNT_AI_PATH);
-        if (!alive.current) return;
-        if (!res.ok) { setProblem(t("aiUnreadable")); return; }
+        if (!alive.current || (quiet && writing.current)) return;
+        if (!res.ok) { if (!quiet) setProblem(t("aiUnreadable")); return; }
         const body = (await res.json()) as { aiEnabled?: unknown };
-        if (alive.current && typeof body.aiEnabled === "boolean") setEnabled(body.aiEnabled);
+        if (alive.current && !(quiet && writing.current) && typeof body.aiEnabled === "boolean") setEnabled(body.aiEnabled);
       } catch {
-        if (alive.current) setProblem(t("aiUnreadable"));
+        if (alive.current && !quiet) setProblem(t("aiUnreadable"));
       }
     })();
   }, [t]);
+  useEffect(() => { load(false); }, [load]);
+  /* A switch flipped on another device reaches the open pane; a failed re-read says nothing new. */
+  useWindowReturn(useCallback(() => load(true), [load]));
 
   const toggle = useCallback((next: boolean) => {
     setProblem(null);
     const previous = enabled;
     setEnabled(next);
+    writing.current = true;
     void (async () => {
       try {
         const res = await bridgeFetch(ACCOUNT_AI_PATH, {
@@ -64,6 +70,8 @@ export function DesktopAiAccount() {
         if (!alive.current) return;
         setEnabled(previous);
         setProblem(t("aiUnreadable"));
+      } finally {
+        writing.current = false;
       }
     })();
   }, [enabled, t]);

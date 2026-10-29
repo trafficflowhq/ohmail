@@ -10,6 +10,7 @@ import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import baseMessages from "../messages/en.json";
 import { SettingsView } from "../app/views/SettingsView";
 import { filterRules, groupByDestination, ruleDate } from "../app/views/RulesView";
+import { setActiveFormatZone } from "../app/shell/locale";
 
 /**
  * THE RULES SURFACE, AS A USER MEETS IT.
@@ -239,7 +240,10 @@ const PRODUCTION_RULE: RuleDTO = {
 };
 
 describe("against a row the production API actually returned", () => {
+  afterEach(() => setActiveFormatZone(null));
+
   it("renders it whole, and still claims no count", async () => {
+    setActiveFormatZone("UTC"); // 23:05Z is the next day east of UTC
     await renderSettings({ items: [PRODUCTION_RULE] });
     await openRulesPane();
 
@@ -417,9 +421,19 @@ describe("an unwired shell gets no pane at all", () => {
 });
 
 describe("ruleDate", () => {
+  afterEach(() => setActiveFormatZone(null));
+
   it("always carries the year — a standing decision outlives the current one", () => {
+    setActiveFormatZone("UTC");
     expect(ruleDate("2025-01-09T23:30:00.000Z")).toBe("9 Jan 2025");
     expect(ruleDate("2026-08-04T00:00:00.000Z")).toBe("4 Aug 2026");
+  });
+
+  it("dates a rule by the reader's day: made at 00:59 in Zurich it reads that day, not UTC's", () => {
+    setActiveFormatZone("Europe/Zurich");
+    expect(ruleDate("2026-10-22T22:59:00.000Z")).toBe("23 Oct 2026");
+    setActiveFormatZone("America/New_York");
+    expect(ruleDate("2026-01-01T03:00:00.000Z")).toBe("31 Dec 2025");
   });
 
   it("renders nothing for an unparseable stamp rather than 'Invalid Date'", () => {
