@@ -432,6 +432,21 @@ export interface ResumeOptions {
    * live page has renewed past it, for the same account, is taken inside the lock and nothing is presented.
    */
   staleJar?: string;
+  /**
+   * THE DOOR'S REFUSAL, told INSIDE the cross-tab lock: what this writes for other tabs is there before
+   * the next tab's grant. Across processes a holder can hear its own release after that tab has run.
+   */
+  onRefused?: (report: RefreshReport) => void;
+}
+
+/** A refusal recorded and told to the caller's hook; a hook that throws costs only what it would have said. */
+function recordRefusal(r: RefreshReport, onRefused: ResumeOptions["onRefused"]): void {
+  recordRefresh(r);
+  try {
+    onRefused?.(r);
+  } catch {
+    /* the sentence only */
+  }
 }
 
 /**
@@ -792,10 +807,12 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
         purgeSiteCache();
         const heard = hearAccountErased(erased.named, erasedBefore) === "erased";
         if (heard) await settleAttempt();
-        recordRefresh({
+        const said: RefreshReport = {
           outcome: heard ? "revoked" : "unavailable", status: 410, code: "account_erased", errorClass: null,
           retryAfterMs: null,
-        });
+        };
+        if (heard) recordRefusal(said, opts.onRefused);
+        else recordRefresh(said);
         return heard ? "refused" : "unavailable";
       }
       // Read ONCE, for both facts: whether the envelope is ours, and which code it names. Only the
@@ -803,9 +820,9 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       const { code, cause } = res.status === 401 ? await refusalOf(res) : NO_REFUSAL;
       if (isSessionRefusal(res.status, code)) {
         await settleAttempt();
-        recordRefresh({
+        recordRefusal({
           outcome: "revoked", status: 401, code, errorClass: null, retryAfterMs: null, ...(cause ? { cause } : {}),
-        });
+        }, opts.onRefused);
         // No token presented is every signed-out visit's answer (`/login` asks too): no cache walk for it.
         if (code !== REFRESH_MISSING) purgeSiteCache();
         refusedJar = sessionMarks();

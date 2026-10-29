@@ -66,6 +66,14 @@ export function answerOf(ok: boolean, report: RefreshReport | null): ResumeAnswe
   return "revoked";
 }
 
+/**
+ * AN EMPTY JAR WHILE ANOTHER TAB'S REASON IS YOUNG is that tab's refusal: it cleared the jar this tab
+ * then presented. Its reason, so every tab says the same; past the window, the empty jar's own.
+ */
+function sameAsOtherTabs(answer: ResumeAnswer): ResumeAnswer {
+  return answer === "absent" ? takeSharedSignedOutNote() ?? answer : answer;
+}
+
 interface Stamp { at: number; answer: ResumeAnswer | null; reloads: number }
 
 function isAnswer(v: unknown): v is ResumeAnswer {
@@ -172,6 +180,19 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
   }, [initialOwner]);
 
   /**
+   * THE REFUSAL, FOR THE OTHER TABS, written inside the lock (`onRefused`): one queued behind this tab
+   * reads it at its grant. Not under another account's jar, and an empty jar never overwrites a reason.
+   */
+  const tellOtherTabs = useCallback((report: RefreshReport): void => {
+    const owner = readOwnerCookie();
+    if (owner !== null && owner !== initialOwner) return;
+    const heard = answerOf(false, report);
+    if (heard === "unavailable" || heard === "minted") return;
+    if (heard === "absent" && takeSharedSignedOutNote() !== null) return;
+    shareSignedOutNote(heard);
+  }, [initialOwner]);
+
+  /**
    * One pass of the ladder: ask, then act on the answer. `resumeSession` consults `stillMine` inside
    * the lock, so no second check stands before the call. `landing`: a reload of this splash while
    * its renewal was out waits for that renewal's answer rather than presenting the token again.
@@ -179,7 +200,7 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
    */
   const attempt = useCallback(async (n: number): Promise<void> => {
     const before = lastRefreshReport();
-    const ok = await resumeSession({ mayProceed: stillMine, landing: true, staleJar }) === "resumed";
+    const ok = await resumeSession({ mayProceed: stillMine, landing: true, staleJar, onRefused: tellOtherTabs }) === "resumed";
     const report = lastRefreshReport();
     // The door's own refusal clears the jar, tf_owner with it: that is this splash's answer.
     const owner = readOwnerCookie();
@@ -187,7 +208,7 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
       && (owner === null || owner === initialOwner);
     // The jar changed while this waited for the lock: somebody else's session, or its own sign-out.
     if (!ok && !refusedHere && !stillMine()) { leave(); return; }
-    const answer = answerOf(ok, report);
+    const answer = sameAsOtherTabs(answerOf(ok, report));
     if (answer === "minted") {
       // Stamped BEFORE the reload: the next pass reads it to tell the gate refusing a live jar.
       writeStamp("minted");
@@ -199,7 +220,6 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
       // already in the fragment, and a redirect parameter is an open-redirect surface.
       writeStamp(answer);
       leaveSignedOutNote(answer);
-      shareSignedOutNote(answer);
       window.location.replace("/login");
       return;
     }
@@ -207,7 +227,7 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
     // busy card at once, whose Try again asks again. Never a sign-in — nothing was learned.
     if (n >= CONFIRM_ATTEMPTS || report?.timedOut !== undefined) { setView({ kind: "busy" }); return; }
     timer.current = setTimeout(() => void attempt(n + 1), nextConfirmDelay(n, report?.retryAfterMs ?? null));
-  }, [initialOwner, leave, staleJar, stillMine]);
+  }, [initialOwner, leave, staleJar, stillMine, tellOtherTabs]);
 
   useEffect(() => {
     if (started.current) return;

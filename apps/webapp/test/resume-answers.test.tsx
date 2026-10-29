@@ -141,6 +141,18 @@ async function mountResume(owner = "acct_A"): Promise<HTMLElement> {
   return host;
 }
 
+async function mountLogin(): Promise<HTMLElement> {
+  const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(LoginScreen) }));
+  });
+  await flush();
+  return host;
+}
+
 const text = (el: HTMLElement): string => el.textContent ?? "";
 const buttons = (el: HTMLElement, label: string): number =>
   [...el.querySelectorAll("a, button")].filter((b) => (b.textContent ?? "").trim() === label).length;
@@ -335,6 +347,123 @@ describe("(e) another tab heard the door while this one waited", () => {
   });
 });
 
+/**
+ * TWO SPLASHES ON ONE ENDED SIGN-IN, each a page of its own (fresh modules) over one jar, one storage
+ * and one lock. The browser may grant the next tab before the holder hears its own release (another
+ * process): a reason the holder writes after letting go reaches the next tab too late.
+ */
+describe("(f) every tab on an ended sign-in says the same reason", () => {
+  /** The server's half of the jar: a refresh token until the door refuses it and clears the jar. */
+  let jarHoldsToken = true;
+  const door = (): Response => {
+    if (!jarHoldsToken) return refused("refresh_missing")();
+    jarHoldsToken = false;
+    return refusedClearing("refresh_revoked")();
+  };
+  /** The note each tab carried to /login, in the order the tabs left. */
+  let told: Array<string | null> = [];
+  const tabs: Root[] = [];
+
+  beforeEach(() => {
+    jarHoldsToken = true;
+    script = [door];
+    told = [];
+    // A tab that leaves takes its note with it: session storage is the tab's own in a browser.
+    (window.location as unknown as { replace: (u: string) => void }).replace = (u) => {
+      replaced.push(u);
+      told.push(sessionStorage.getItem(NOTE_KEY));
+      sessionStorage.removeItem(NOTE_KEY);
+    };
+    let busy = false;
+    const waiting: Array<() => void> = [];
+    /** Hands the lock on; answers whether a tab was waiting for it. */
+    const grantNext = (): boolean => { const run = waiting.shift(); busy = run !== undefined; run?.(); return busy; };
+    // A holder that handed the lock on hears its release after the next tab has run.
+    const settle = (handed: boolean, done: () => void): void => { if (handed) setTimeout(done, 0); else done(); };
+    Object.defineProperty(globalThis.navigator, "locks", {
+      configurable: true,
+      value: {
+        request: (_n: string, _o: unknown, fn: () => Promise<unknown>) => new Promise((resolve, reject) => {
+          const run = (): void => {
+            void Promise.resolve().then(fn).then(
+              (v) => settle(grantNext(), () => resolve(v)),
+              (e) => settle(grantNext(), () => reject(e)),
+            );
+          };
+          if (busy) waiting.push(run);
+          else { busy = true; run(); }
+        }),
+      },
+    });
+  });
+
+  afterEach(async () => {
+    for (const r of tabs.splice(0)) await act(async () => { r.unmount(); });
+  });
+
+  /** Tabs opened at the same moment, `initialOwner` as each one's edge saw it. */
+  async function openTabs(...owners: Array<string | null>): Promise<void> {
+    const screens: Array<typeof import("../app/(product)/resume/ResumeScreen.js").ResumeScreen> = [];
+    for (const _ of owners) {
+      vi.resetModules();
+      screens.push((await import("../app/(product)/resume/ResumeScreen.js")).ResumeScreen);
+    }
+    await act(async () => {
+      owners.forEach((owner, i) => {
+        const el = document.createElement("div");
+        document.body.appendChild(el);
+        const r = createRoot(el);
+        tabs.push(r);
+        r.render(h(NextIntlClientProvider, {
+          locale: "en", messages, timeZone: "UTC", children: h(screens[i]!, { initialOwner: owner }),
+        }));
+      });
+    });
+    await tick(500);
+  }
+
+  it("opened together on a jar that names the account: both say the refusal's reason", async () => {
+    await openTabs("acct_A", "acct_A");
+    expect(refreshes, "the second tab presented the refused jar again").toBe(1);
+    expect(told).toEqual(["revoked", "revoked"]);
+  });
+
+  it("opened together from another site (no marker seen): the empty jar's answer says the first tab's reason", async () => {
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    await openTabs(null, null);
+    expect(refreshes).toBe(2);
+    expect(told).toEqual(["revoked", "revoked"]);
+    expect(JSON.parse(localStorage.getItem("ohmail.signed-out-reason.shared")!).reason, "the reason was overwritten")
+      .toBe("revoked");
+  });
+
+  it("a tab opened 3 s later meets the emptied jar and says the first tab's reason", async () => {
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    await openTabs(null);
+    sessionStorage.clear();
+    await tick(2_500);
+    await openTabs(null);
+    expect(told).toEqual(["revoked", "revoked"]);
+  });
+
+  it("the control: a tab opened past the note's window says the jar is empty", async () => {
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    await openTabs(null);
+    sessionStorage.clear();
+    await tick(16_000);
+    await openTabs(null);
+    expect(told).toEqual(["revoked", "absent"]);
+  });
+
+  it("a tab opened 3 s later on a server that sends it straight to /login says the first tab's reason", async () => {
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    await openTabs(null);
+    sessionStorage.clear();
+    await tick(3_000);
+    expect(text(await mountLogin())).toContain(R.revokedBody);
+  });
+});
+
 describe("the loop guard reads the answer of the previous pass", () => {
   it("back here right after a MINT: no second rotation, a reload after a backoff", async () => {
     stamp("minted");
@@ -407,6 +536,18 @@ describe("/login says why the splash sent this tab there", () => {
     await flush();
     expect(text(host).split(R.reusedBody).length - 1, "the reuse sentence, once").toBe(1);
     expect(sessionStorage.getItem(NOTE_KEY)).toBeNull();
+  });
+
+  it("no note of its own: another tab's young reason is said", async () => {
+    shareSignedOutNote("expired");
+    await tick(3_000);
+    expect(text(await mountLogin())).toContain(R.expiredBody);
+  });
+
+  it("the control: another tab's reason older than 15 s is not said", async () => {
+    shareSignedOutNote("expired");
+    await tick(16_000);
+    expect(text(await mountLogin())).not.toContain(R.expiredBody);
   });
 
   it("THE CONTROL — no note, no sentence", async () => {
