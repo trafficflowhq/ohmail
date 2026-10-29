@@ -128,6 +128,11 @@ describe("the scope: the paths that make a pull request whole", () => {
     }
     // A deleted file that is no module selects its readers by name.
     for (const p of ["docs/organizer-profile.md", "packages/core/test/fixtures/planted.eml"]) expect(whole(p, "D").scope, p).toBe("selected");
+    // A Next route group is a whole segment in parentheses; parentheses in any other shape stay whole.
+    expect(whole("apps/webapp/app/(product)/mailbox/CloudShell.tsx").scope).toBe("selected");
+    for (const p of ["apps/webapp/app/(product$(id))/x.ts", "apps/webapp/app/(a);id/x.ts", "apps/webapp/app/(a b)/x.ts", "apps/webapp/app/((a))/x.ts", "apps/webapp/app/x(1).ts", "apps/webapp/app/(a)`id`/x.ts", "apps/webapp/app/()/x.ts"]) {
+      expect(whole(p), p).toMatchObject({ scope: "whole", why: "a changed path outside [A-Za-z0-9@._/+-] and (group) segments" });
+    }
   });
 
   it("makes only the SQLite run whole for its config, and selects every Dovecot file for test/dovecot", () => {
@@ -480,6 +485,11 @@ describe("the readers of this tree", () => {
       const h = hit(p);
       for (const f of want) expect(h.has(f), `${p} selects ${f}`).toBe(true);
     }
+  });
+
+  it("select the readers that name a file in a route group", () => {
+    expect(hit("apps/mobile/app/(tabs)/screener.tsx").has("apps/mobile/test/screener-row-names-the-claim.test.ts")).toBe(true);
+    expect(hit("apps/webapp/app/(product)/mailbox/CloudShell.tsx").has("apps/webapp/test/ai-off-switch.test.tsx")).toBe(true);
   });
 
   it("select the built worker's loader for package source, and a child's spawner for what the child loads", () => {

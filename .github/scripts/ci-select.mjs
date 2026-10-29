@@ -40,6 +40,9 @@ export const MAX_SQLITE = 4;
 export const COSTS = "test/support/ci-costs.json";
 /** Every path a plan may hand on; all test paths fit it. */
 export const PATH_OK = /^[A-Za-z0-9@._/+-]+$/;
+/** A tree path the selector reads (a changed path, a reader's name): PATH_OK, plus a Next route group as a
+ *  whole segment, `(name)` of the same characters. It never reaches a plan. */
+export const TREE_PATH_OK = /^(?:[A-Za-z0-9@._/+-]|(?<=^|\/)\([A-Za-z0-9@._+-]+\)(?=\/|$))+$/;
 const MAINTAINER = ["OWNER", "MEMBER", "COLLABORATOR"];
 
 const oneLine = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 400);
@@ -231,7 +234,7 @@ export function pathTriggers(root, changes) {
   let dovecotAll = false;
   const closure = new Set(setupClosure(root));
   for (const { s, p } of changes) {
-    if (!PATH_OK.test(p)) { whole.push("a changed path outside [A-Za-z0-9@._/+-]"); continue; }
+    if (!TREE_PATH_OK.test(p)) { whole.push("a changed path outside [A-Za-z0-9@._/+-] and (group) segments"); continue; }
     const st = s.charAt(0);
     if (!["A", "M", "D"].includes(st)) { whole.push(`${p}: change kind ${oneLine(s)}`); continue; }
     // vitest cannot relate a deleted module to what still imports it; a deleted test file has no importer.
@@ -339,7 +342,7 @@ function holdsTreeRoot(src) {
  *  name equal to one, or a directory above one, still counts. */
 export function namedPaths(root, holder, src, tops, deleted = []) {
   const out = new Set();
-  const exists = (p) => !!p && p !== "." && !p.startsWith("..") && PATH_OK.test(p) && (existsSync(join(root, p)) || deleted.some((d) => under(d, p)));
+  const exists = (p) => !!p && p !== "." && !p.startsWith("..") && TREE_PATH_OK.test(p) && (existsSync(join(root, p)) || deleted.some((d) => under(d, p)));
   const isFile = (p) => deleted.includes(p) || (existsSync(join(root, p)) && statSync(join(root, p)).isFile());
   const text = src.replace(SPECIFIER, '$1""');
   for (const m of text.matchAll(LIT)) {

@@ -8,6 +8,7 @@ export const MAX_SHARDS: number;
 export const MAX_SQLITE: number;
 export const COSTS: string;
 export const PATH_OK: RegExp;
+export const TREE_PATH_OK: RegExp;
 
 export interface Ctx { event_name: string; actor: string; triggering_actor: string; repository: string; event: Record<string, any> }
 export interface Change { s: string; p: string }
