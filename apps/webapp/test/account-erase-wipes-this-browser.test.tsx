@@ -241,10 +241,17 @@ describe("Delete your account wipes this browser's copy of that account", () => 
     const others = await seedAnotherAccount();
     expect(await entitiesOf(OTHER), "the control seeded nothing").toBe(1);
     expect(keysNaming(OWNER).length, "the census has nothing to find").toBeGreaterThan(0);
+    // A renewal the server did not answer keeps its name owed, in its own IndexedDB database.
+    const refresh = await import("../app/session-refresh.js");
+    const renewalNames = async (): Promise<string[]> =>
+      (await indexedDB.databases()).map((d) => d.name ?? "").filter((n) => n === refresh.SESSION_ATTEMPT_DB);
+    expect(await refresh.resumeSession()).toBe("unavailable");
+    expect(await renewalNames(), "the control: the renewal's name is in IndexedDB").toHaveLength(1);
 
     const c = await eraseThroughThePane();
     await waitFor(() => receiptShown(c), "the receipt");
 
+    expect(await renewalNames(), "the erased session's renewal name survived").toEqual([]);
     expect(await mirrorsLeft(), "the erase took another account's mirror, or left its own")
       .toEqual([`ohmail-mirror:${OTHER}`]);
     expect(keysNaming(OWNER), "keys naming the erased account survived").toEqual([]);

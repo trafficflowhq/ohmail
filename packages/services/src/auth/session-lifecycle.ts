@@ -1211,7 +1211,8 @@ export class SessionLifecycle {
       // holding a captured wire, and it belongs to the sweep. Read in the lock, against every row
       // consumed at or after the presented one; this arm's own kill-stamps carry `attemptHash`,
       // so repeated retries of one attempt never trip it. `>=` and not-self: two rotations can
-      // land in one millisecond (the recovery path's reading, and for its reason).
+      // land in one millisecond (the recovery path's reading, and for its reason). A real spend
+      // (`expires_at > consumed_at`) under the SAME name moved on too: a jar that reused its name.
       const movedOn = await tx.select({ id: refreshTokens.id }).from(refreshTokens)
         .where(and(
           eq(refreshTokens.familyId, existing.familyId),
@@ -1219,7 +1220,8 @@ export class SessionLifecycle {
           isNotNull(refreshTokens.consumedAt),
           gte(refreshTokens.consumedAt, existing.consumedAt!),
           or(isNull(refreshTokens.consumedByAttempt),
-            ne(refreshTokens.consumedByAttempt, attemptHash)),
+            ne(refreshTokens.consumedByAttempt, attemptHash),
+            gt(refreshTokens.expiresAt, refreshTokens.consumedAt)),
         ))
         .limit(1);
       if (movedOn.length > 0) return null;

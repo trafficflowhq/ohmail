@@ -9,7 +9,9 @@
  * — `next.config.mjs` carries the dedicated rewrite (`REFRESH_PATH`).
  */
 
-import { CREDENTIAL_REFUSED, REFRESH_MISSING, REFRESH_REUSE_CAUSE, isSessionRefusal } from "@ohmail/client-engine";
+import {
+  CREDENTIAL_REFUSED, REFRESH_MISSING, REFRESH_REUSE_CAUSE, durableIdbCommit, isSessionRefusal,
+} from "@ohmail/client-engine";
 import { csrfMark, csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./shell/durable";
@@ -476,9 +478,21 @@ async function presentationLanded(out: PresentationOut): Promise<boolean> {
  * by the attempt that spent it, where the same token under a new name past the grace window is swept.
  * It is resumed only while the jar has not moved on (its `tf_csrf` is the one it went out with, or has
  * merely lapsed) and for one access window: a landed answer's `tf_csrf` outlives that window, and past
- * it the server's own recovery takes a quiet tail.
+ * it the server's own recovery takes a quiet tail. A 204 does not settle it: a browser killed before it
+ * saved the answer's cookies comes back on the old mark, and resumes the name.
  */
 export const SESSION_ATTEMPT_KEY = "ohmail.session.refreshAttempt";
+
+/**
+ * THE NAME'S DURABLE COPY. Chromium writes `localStorage` to disk in batches, so a crash can
+ * lose the newest name; IndexedDB commits it strictly before the request leaves. The same record, never
+ * a token. Each step waits at most {@link ATTEMPT_STORE_BUDGET_MS}: an IndexedDB that is missing, refusing
+ * or hung leaves the `localStorage` copy alone, as before, and never holds a renewal back.
+ */
+export const SESSION_ATTEMPT_DB = "ohmail-session";
+const ATTEMPT_STORE = "attempt";
+const OWED_KEY = "owed";
+export const ATTEMPT_STORE_BUDGET_MS = 1_500;
 
 interface PendingAttempt {
   id: string;
@@ -494,15 +508,93 @@ export function jarMark(): string {
   return csrfMark(csrfToken());
 }
 
-function owedAttempt(): PendingAttempt | null {
+function pendingAttemptOf(v: unknown): PendingAttempt | null {
+  const p = v as Partial<PendingAttempt> | null | undefined;
+  return p && typeof p.id === "string" && typeof p.csrf === "string" && typeof p.at === "number"
+    ? { id: p.id, csrf: p.csrf, at: p.at } : null;
+}
+
+/** The `localStorage` copy; `null` when absent or unreadable. */
+function keptAttempt(): PendingAttempt | null {
   try {
     const raw = window.localStorage.getItem(SESSION_ATTEMPT_KEY);
-    const v = raw === null ? null : (JSON.parse(raw) as Partial<PendingAttempt> | null);
-    if (v && typeof v.id === "string" && typeof v.csrf === "string" && typeof v.at === "number") return v as PendingAttempt;
+    return pendingAttemptOf(raw === null ? null : JSON.parse(raw));
   } catch {
-    /* unreadable: this page's own copy */
+    return null;
   }
-  return attemptHere;
+}
+
+/** One step on the store within the budget; `undefined` when IndexedDB is missing, refuses or does not answer. */
+function attemptStoreStep<T>(step: (db: IDBDatabase) => Promise<T>): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    let over = false;
+    const timer = setTimeout(() => { over = true; resolve(undefined); }, ATTEMPT_STORE_BUDGET_MS);
+    const answer = (value: T | undefined): void => {
+      clearTimeout(timer);
+      resolve(value);
+    };
+    try {
+      const req = globalThis.indexedDB.open(SESSION_ATTEMPT_DB, 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore(ATTEMPT_STORE); };
+      req.onerror = () => answer(undefined);
+      req.onsuccess = () => {
+        const db = req.result;
+        // A sign-out deleting the database is never blocked by this page.
+        db.onversionchange = () => db.close();
+        // Opened past the budget: the renewal went without it, and a late write could only be older.
+        if (over) { db.close(); return; }
+        new Promise<T>((ok) => { ok(step(db)); }).then(answer, () => answer(undefined)).finally(() => db.close());
+      };
+    } catch {
+      answer(undefined);
+    }
+  });
+}
+
+const readOwed = (db: IDBDatabase): Promise<PendingAttempt | null> => new Promise((resolve, reject) => {
+  const get = db.transaction(ATTEMPT_STORE, "readonly").objectStore(ATTEMPT_STORE).get(OWED_KEY);
+  get.onsuccess = () => resolve(pendingAttemptOf(get.result));
+  get.onerror = () => reject(get.error);
+});
+
+const commitOwed = (owed: PendingAttempt) => (db: IDBDatabase): Promise<unknown> => {
+  const tx = db.transaction(ATTEMPT_STORE, "readwrite", { durability: "strict" });
+  tx.objectStore(ATTEMPT_STORE).put(owed, OWED_KEY);
+  return durableIdbCommit(tx, `idb:${SESSION_ATTEMPT_DB}`);
+};
+
+/** The durable copy, deleted with its database; `false` when IndexedDB refused or did not answer. */
+function dropAttemptStore(): Promise<boolean> {
+  let idb: IDBFactory | undefined;
+  try {
+    idb = globalThis.indexedDB ?? undefined;
+  } catch {
+    idb = undefined;
+  }
+  // No IndexedDB here: nothing was ever written to one.
+  if (idb === undefined) return Promise.resolve(true);
+  const factory = idb;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), ATTEMPT_STORE_BUDGET_MS);
+    const answer = (gone: boolean): void => {
+      clearTimeout(timer);
+      resolve(gone);
+    };
+    try {
+      const req = factory.deleteDatabase(SESSION_ATTEMPT_DB);
+      req.onsuccess = () => answer(true);
+      req.onerror = () => answer(false);
+      req.onblocked = () => answer(false);
+    } catch {
+      answer(false);
+    }
+  });
+}
+
+/** Sign-out's and erasure's door for the durable copy. Answers what could not be removed. */
+export async function forgetRenewalName(): Promise<string[]> {
+  attemptHere = null;
+  return (await dropAttemptStore()) ? [] : [SESSION_ATTEMPT_DB];
 }
 
 function mintAttemptId(): string {
@@ -515,23 +607,33 @@ function mintAttemptId(): string {
 }
 
 /** The attempt this renewal goes out as: the one still owed, or a new one, written down BEFORE it goes. */
-function attemptFor(csrf: string | null): string {
-  const owed = owedAttempt();
-  // 0 <= age < window: a stamp in the future is any script's to write, and it is discarded.
-  const age = owed === null ? -1 : Date.now() - owed.at;
-  if (owed !== null && age >= 0 && age < ACCESS_WINDOW_MS && (csrf === null || owed.csrf === csrfMark(csrf))) {
+async function attemptFor(csrf: string | null): Promise<string> {
+  // `undefined`: IndexedDB gave no answer, and is not asked again for this renewal.
+  const stored = await attemptStoreStep(readOwed);
+  const kept = keptAttempt();
+  const now = Date.now();
+  // The newest copy goes: one that missed a write (IndexedDB hung or refusing) still holds an older name.
+  // A stamp in the future is any script's to write, and it is discarded.
+  const owed = [stored ?? null, kept, attemptHere].reduce<PendingAttempt | null>(
+    (newest, p) => (p !== null && p.at <= now && (newest === null || p.at > newest.at) ? p : newest), null);
+  if (owed !== null && now - owed.at < ACCESS_WINDOW_MS && (csrf === null || owed.csrf === csrfMark(csrf))) {
+    // Both copies hold it before it goes again: a crash may keep either.
+    if (kept?.id !== owed.id) durableSet(SESSION_ATTEMPT_KEY, JSON.stringify(owed), "session-attempt");
+    if (stored !== undefined && stored?.id !== owed.id) await attemptStoreStep(commitOwed(owed));
     return owed.id;
   }
   const next: PendingAttempt = { id: mintAttemptId(), csrf: csrfMark(csrf), at: Date.now() };
   attemptHere = next;
   durableSet(SESSION_ATTEMPT_KEY, JSON.stringify(next), "session-attempt");
+  if (stored !== undefined) await attemptStoreStep(commitOwed(next));
   return next.id;
 }
 
-/** A definitive answer settles the attempt; the next renewal is a new one. */
-function settleAttempt(): void {
+/** A definitive answer settles the attempt, both copies; the next renewal is a new one. */
+async function settleAttempt(): Promise<void> {
   attemptHere = null;
   durableRemove(SESSION_ATTEMPT_KEY, "session-attempt");
+  await dropAttemptStore();
 }
 
 /**
@@ -604,11 +706,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
             asked.refused = true;
             return "refused";
           }
-          if (landed) {
-            // That presentation's name is answered.
-            settleAttempt();
-            return takeLandedJar();
-          }
+          if (landed) return takeLandedJar();
         }
         durableSessionSet(SPLASH_PRESENTATION_KEY,
           JSON.stringify({ at: Date.now(), mark: csrfMark(csrfToken()), owner: readOwner() }), "session-splash");
@@ -629,7 +727,13 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       const csrf = csrfToken();
       // Who this refresh leaves under — BEFORE it goes: an erased account's answer clears the jar.
       const erasedBefore = erasedCapture();
-      const attemptId = opts.attemptId ?? attemptFor(csrf);
+      const attemptId = opts.attemptId ?? await attemptFor(csrf);
+      // Asked again past the store's wait, as past the splash's: nothing may have ended the jar meanwhile.
+      if (pendingSignOut()) return "refused";
+      if (opts.mayProceed && !opts.mayProceed()) {
+        asked.refused = true;
+        return "refused";
+      }
       deadline = setTimeout(() => { timedOut = true; request.abort(); }, RENEWAL_DEADLINE_MS);
       const res = await fetch(REFRESH_ENDPOINT, {
         method: "POST",
@@ -664,7 +768,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // latch additionally requires the door's own refusal code: a 401 without one is a platform
       // interposing itself.
       if (res.status === 204) {
-        settleAttempt();
+        // The name stays owed: a browser killed before it saves this answer's cookies presents it again.
         recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null, retryAfterMs: null });
         noteSessionMinted();
         // A repair's own answer arms no watch: one repair per renewal, then the 12-minute belt.
@@ -679,7 +783,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
         // This 410 cleared the jar whatever the erased door makes of it (the splash and /login register none).
         purgeSiteCache();
         const heard = hearAccountErased(erased.named, erasedBefore) === "erased";
-        if (heard) settleAttempt();
+        if (heard) await settleAttempt();
         recordRefresh({
           outcome: heard ? "revoked" : "unavailable", status: 410, code: "account_erased", errorClass: null,
           retryAfterMs: null,
@@ -690,7 +794,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // refresh door's own refusal is a verdict (`isSessionRefusal`, the phone's reading too).
       const { code, cause } = res.status === 401 ? await refusalOf(res) : NO_REFUSAL;
       if (isSessionRefusal(res.status, code)) {
-        settleAttempt();
+        await settleAttempt();
         recordRefresh({
           outcome: "revoked", status: 401, code, errorClass: null, retryAfterMs: null, ...(cause ? { cause } : {}),
         });
@@ -791,8 +895,8 @@ export function forgetSplashPresentation(): string[] {
 }
 
 /** A sign-in minted past this refresh: nothing it learned is about the jar that holds now. */
-function superseded(err: unknown): "refused" {
-  settleAttempt();
+async function superseded(err: unknown): Promise<"refused"> {
+  await settleAttempt();
   recordRefresh({
     outcome: "superseded", status: 0, code: null, errorClass: err === null ? null : classOf(err), retryAfterMs: null,
   });

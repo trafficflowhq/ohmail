@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
+import { selfHostRoutes } from "@trafficflow/api/self-host";
 import { refreshTokens, sessions } from "@trafficflow/db";
 import { authEvents } from "@trafficflow/db/cloud";
 import { generateToken, hashToken, type Db } from "@trafficflow/services";
@@ -130,4 +131,64 @@ describe("POST /auth/refresh, cookie branch: a browser names its rotation", () =
     expect(setCookieMap(res).tf_refresh).toBeUndefined();
     expect((await refresh(deps, j.refresh)).status, "the token was never spent").toBe(204);
   });
+});
+
+const TIERS = [["Cloud", apiRoutes], ["self-host", selfHostRoutes]] as const;
+const doorOf = (table: typeof apiRoutes) => table.find((r) => r.method === "POST" && r.pattern === "/auth/refresh");
+
+async function liveTails(db: Db, familyId: string): Promise<number> {
+  const rows = await db.select().from(refreshTokens).where(eq(refreshTokens.familyId, familyId));
+  return rows.filter((r) => r.consumedAt === null && r.revokedAt === null).length;
+}
+
+/* A BROWSER KILLED BEFORE IT STORED ITS RENEWED COOKIE comes back holding the spent token. The web client
+ * keeps the name it went out under past the 204, so the restart presents it under that name. */
+describe.each(TIERS)("POST /auth/refresh on %s: a browser killed before it stored the renewed cookie", (_tier, table) => {
+  const app = createApp(table);
+  const post = (deps: ApiDeps, token: string, body: string): Promise<Response> =>
+    app.handle(req("POST", "/auth/refresh", { cookie: `tf_refresh=${token}`, body }), { ...deps, session: null, idempotency: null });
+
+  it("the spent token back 76 s later under the name it went out with gets one live successor", async () => {
+    const { db, deps, clock } = await makeDeps(FIXED_NOW);
+    const j = await jarFor(db, clock.now());
+    expect((await post(deps, j.refresh, named("w-before-kill"))).status, "the answer the browser never stored").toBe(204);
+    clock.advance(76_000);
+    const back = await post(deps, j.refresh, named("w-before-kill"));
+    expect(back.status).toBe(204);
+    expect(await revoked(db, j.familyId)).toBe(false);
+    expect(await liveTails(db, j.familyId), "the unused successor is dead, one line lives").toBe(1);
+    expect(await eventsOf(db, j.accountId)).not.toContain("refresh_reuse_revoked");
+    clock.advance(61_000);
+    expect((await post(deps, setCookieMap(back).tf_refresh!, named("w-next"))).status, "it rotates on").toBe(204);
+  });
+
+  it("two restored tabs presenting it back to back under the name: both answered, one live successor", async () => {
+    const { db, deps, clock } = await makeDeps(FIXED_NOW);
+    const j = await jarFor(db, clock.now());
+    expect((await post(deps, j.refresh, named("w-before-kill"))).status).toBe(204);
+    clock.advance(76_000);
+    expect((await post(deps, j.refresh, named("w-before-kill"))).status).toBe(204);
+    expect((await post(deps, j.refresh, named("w-before-kill"))).status, "a kill under the name is not a spend").toBe(204);
+    expect(await revoked(db, j.familyId)).toBe(false);
+    expect(await liveTails(db, j.familyId)).toBe(1);
+  });
+
+  it("a token two rotations back, under a name the jar spent its next token with too, is swept", async () => {
+    const { db, deps, clock } = await makeDeps(FIXED_NOW);
+    const j = await jarFor(db, clock.now());
+    const t1 = setCookieMap(await post(deps, j.refresh, named("w-reused"))).tf_refresh!;
+    clock.advance(30_000);
+    expect((await post(deps, t1, named("w-reused"))).status, "the next token spent under the same name").toBe(204);
+    clock.advance(117_000);
+    const stale = await post(deps, j.refresh, named("w-reused"));
+    expect(stale.status, "the chain moved on: a real spend under the name counts").toBe(401);
+    expect(await codeOf(stale)).toBe("refresh_revoked");
+    expect(await revoked(db, j.familyId)).toBe(true);
+    expect(await eventsOf(db, j.accountId)).toContain("refresh_reuse_revoked");
+  });
+});
+
+it("Cloud and self-host mount the same /auth/refresh route object", () => {
+  expect(doorOf(selfHostRoutes)).toBeDefined();
+  expect(doorOf(selfHostRoutes)).toBe(doorOf(apiRoutes));
 });
