@@ -104,13 +104,17 @@ async function engineWith(
 
 /** Which segment the mounted view shows; `switchTo` moves it as the tabs do. */
 let switchTo: (segment: "waiting" | "screened" | "spam") => void = () => {};
+/** With `as: "warmup"`, the shell's warm-up is mounted instead, and this says the Screener is on screen. */
+let showScreener: (shown: boolean) => void = () => {};
 
-async function mount(engine: OhmailEngine, segment: "waiting" | "screened" | "spam" = "waiting"): Promise<void> {
+async function mount(
+  engine: OhmailEngine, segment: "waiting" | "screened" | "spam" = "waiting", as: "view" | "warmup" = "view",
+): Promise<void> {
   const { EngineProvider, useDerivedVersion } = await import("../app/shell/engine.js");
   const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
   const { useMessageAttachments } = await import("../app/shell/attachments.js");
   const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
+  const { ScreenerView, ScreenerWarmup } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("../app/shell/keymap.js");
   /* `AppShell`'s door, as it resolves a target: the mirror's own row, else a resting snippet. */
   const door = (m: BodyTarget) => bodyOf(engine.read(), engine.read().get<EngineMessage>("message", m.id) ?? m);
@@ -121,6 +125,9 @@ async function mount(engine: OhmailEngine, segment: "waiting" | "screened" | "sp
     switchTo = setSeg;
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
     const [full, setFull] = React.useState(false);
+    const [shown, setShown] = React.useState(false);
+    showScreener = setShown;
+    if (as === "warmup") return h(ScreenerWarmup, { state, shown });
     return h(ScreenerView, {
       owed: false, state, segment: seg, settled: true, selection: sel as never,
       onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
@@ -458,6 +465,93 @@ describe("a sender's held letters open on the newest three", () => {
     await frames(1);
     expect(prime(), "the primed segments outlived their frame").toBeNull();
     expect([wire.batches, wire.lists], "something was asked for a primed letter").toEqual([[], []]);
+  });
+
+  /* THE SHELL'S WARM-UP, for the Screener's first open: the page has a box, frames run when told,
+     and the quiet the warm-up waits for is timed. */
+  const warmWorld = async () => {
+    const spam = bag(FOLDER.spam, 2).map((m, i) => ({ ...m, id: `q${i + 1}`, subject: `Spam q${i + 1}`, from: { name: "A Spammer", address: "spam@example.test" } }));
+    return engineWith([held("w1", 6), ...bag(FOLDER.screened, 3), ...spam], async (id) => answer(id), { batch: true });
+  };
+  const warmPage = () => {
+    vi.spyOn(Element.prototype, "getClientRects").mockImplementation(function boxes(this: Element) {
+      return (this === document.body ? [{ top: 0, bottom: 900, height: 900 }] : []) as unknown as DOMRectList;
+    });
+    queued = new Map();
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { queued.set(++frameId, cb); return frameId; });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => { queued.delete(id); });
+  };
+  /** Mounted on a page with a box; the queue settles on real timers, then the quiet is timed. */
+  const mountWarm = async (engine: OhmailEngine) => {
+    warmPage();
+    await mount(engine, "waiting", "warmup");
+    await settle();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  };
+  const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  const paint = async () => {
+    const due = [...queued.values()];
+    queued = new Map();
+    await act(async () => {
+      for (const cb of due) cb(performance.now());
+      await vi.advanceTimersByTimeAsync(0);
+    });
+  };
+  const primed = () => host!.querySelector<HTMLElement>(".scn-prime");
+  /** What the primer on screen draws: its segment, and which half (the list's row or the letters' heads). */
+  const piece = () => {
+    const p = primed();
+    if (!p) return null;
+    const row = p.querySelector(".list-col .rows .row")?.getAttribute("data-id") ?? null;
+    const heads = [...p.querySelectorAll(".scn-read .hmail h2")].map((x) => x.textContent);
+    return { row, heads };
+  };
+
+  it("before the Screener is first shown, the shell draws each segment's halves hidden, a frame each, once the page is quiet", async () => {
+    const { SCREENER_WARMUP_QUIET_MS: quiet } = await import("../app/views/ScreenerView.js");
+    const { engine, wire, asked } = await warmWorld();
+    await mountWarm(engine);
+    await paint();
+    await tick(quiet - 1);
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "j" })); });
+    await tick(quiet - 1);
+    expect(primed(), "primed while the page was in use").toBeNull();
+    const drawn: Array<ReturnType<typeof piece>> = [];
+    for (let i = 0; i < 6; i++) {
+      await tick(quiet);
+      drawn.push(piece());
+      const p = primed();
+      expect(p, `piece ${i + 1} was never drawn`).not.toBeNull();
+      expect([p!.hasAttribute("inert"), p!.getAttribute("aria-hidden"), p!.hasAttribute("data-pile")]).toEqual([true, "true", true]);
+      expect(p!.querySelector(".hm-body")?.childElementCount ?? 0, "a primed letter drew its body").toBe(0);
+      await paint();
+      expect(primed(), `piece ${i + 1} outlived its frame`).toBeNull();
+      await paint();
+    }
+    expect(drawn.map((d) => [d!.row !== null, d!.heads.length > 0]), "each segment's list, then its letters").toEqual([
+      [true, false], [false, true], [true, false], [false, true], [true, false], [false, true],
+    ]);
+    expect(drawn[3]!.heads).toEqual(["Subject m01", "Subject m02", "Subject m03"]);
+    expect(drawn[5]!.heads).toEqual(["Spam q1", "Spam q2"]);
+    for (let i = 0; i < 3; i++) { await tick(quiet); await paint(); }
+    expect(primed(), "the warm-up ran twice").toBeNull();
+    expect([asked, wire.batches, wire.lists], "something was asked for a primed letter").toEqual([[], [], []]);
+  });
+
+  it("a Screener already on screen is never primed by the shell", async () => {
+    const { SCREENER_WARMUP_QUIET_MS: quiet } = await import("../app/views/ScreenerView.js");
+    const { engine } = await warmWorld();
+    await mountWarm(engine);
+    let drawn = 0;
+    const watch = new MutationObserver((ms) => {
+      for (const m of ms) for (const n of m.addedNodes) if (n instanceof Element && n.matches(".scn-prime")) drawn += 1;
+    });
+    watch.observe(host!, { childList: true, subtree: true });
+    await act(async () => { showScreener(true); });
+    await act(async () => { showScreener(false); });
+    for (let i = 0; i < 8; i++) { await paint(); await tick(quiet); }
+    watch.disconnect();
+    expect(drawn, "a primer was drawn after the Screener had been on screen").toBe(0);
   });
 
   it("the letters drawn without their bodies mount no older ones", async () => {

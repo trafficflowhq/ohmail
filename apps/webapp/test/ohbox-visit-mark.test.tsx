@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useOhboxVisitMark } from "../app/shell/ohbox-visit";
@@ -42,6 +42,8 @@ async function draw(open: boolean, eng: typeof engine | null = engine): Promise<
 
 beforeEach(() => { marks = 0; visibility = "visible"; });
 afterEach(async () => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   if (root) await act(async () => { root!.unmount(); });
   root = null;
   document.body.innerHTML = "";
@@ -54,6 +56,24 @@ describe("a visit ends, and writes once", () => {
     await draw(false);
     expect(marks).toBe(1);
     await draw(false);
+    expect(marks).toBe(1);
+  });
+
+  it("on a switch, once the switch's frame has painted and not inside it", async () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let id = 0;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { frames.set(++id, cb); return id; });
+    vi.stubGlobal("cancelAnimationFrame", (n: number) => { frames.delete(n); });
+    vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{ top: 0, height: 900 }] as unknown as DOMRectList);
+    await draw(true);
+    await draw(false);
+    expect(marks, "the mark was written in the switch's own frame").toBe(0);
+    await act(async () => {
+      const due = [...frames.values()];
+      frames.clear();
+      for (const f of due) f(0);
+      await new Promise((r) => setTimeout(r, 0));
+    });
     expect(marks).toBe(1);
   });
 

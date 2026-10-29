@@ -360,8 +360,9 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .view-screener .scn-read {
   overflow-anchor: none;
 }
-/* The segment primer (`ScreenerView`): laid out for one frame so its styles resolve, never seen. */
-.view-screener .scn-prime {
+/* The Screener's primer (`ScreenerPrimer`, in the view and in the stage): laid out for one frame
+   so its styles resolve, never seen. */
+.scn-prime {
   position: absolute;
   top: 0;
   left: 0;

@@ -17,7 +17,7 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { modalIsOpen, pageModal } from "./modal-gate";
@@ -201,7 +201,19 @@ interface Registry {
   claimCursorPlacer: (place: CursorPlacer, scope?: PlacerScope) => () => void;
 }
 
-const KeymapContext = createContext<Registry | null>(null);
+/**
+ * What the context carries: everything but `bindings`, which is a store read by the hooks that
+ * need it. The value is stable across shape changes, so a view that only declares keys is not
+ * re-rendered when another layer reshapes (a focus move between zones reshapes the zone layer).
+ */
+interface Store extends Omit<Registry, "bindings"> {
+  subscribe: (notify: () => void) => () => void;
+  snapshot: () => BoundKey[];
+  /** A layer's shape changed without re-registering (its `get` reads live state). */
+  reshaped: () => void;
+}
+
+const KeymapContext = createContext<Store | null>(null);
 
 /* ── chord matching ─────────────────────────────────────────────────────────────────── */
 
@@ -365,15 +377,28 @@ export function ariaShortcut(chord: string, mod: string): string | undefined {
 export function KeymapProvider({ children }: { children: ReactNode }) {
   const layers = useRef<Layer[]>([]);
   const nextId = useRef(1);
-  const [version, bump] = useState(0);
+  const version = useRef(0);
+  const notifiers = useRef(new Set<() => void>());
+
+  const reshaped = useCallback(() => {
+    version.current += 1;
+    for (const notify of notifiers.current) notify();
+  }, []);
 
   const register = useCallback((layer: Omit<Layer, "id">) => {
     const entry: Layer = { ...layer, id: nextId.current++ };
     layers.current = [...layers.current, entry];
-    bump((v) => v + 1);
+    reshaped();
     return () => {
       layers.current = layers.current.filter((l) => l.id !== entry.id);
-      bump((v) => v + 1);
+      reshaped();
+    };
+  }, [reshaped]);
+
+  const subscribe = useCallback((notify: () => void) => {
+    notifiers.current.add(notify);
+    return () => {
+      notifiers.current.delete(notify);
     };
   }, []);
 
@@ -599,23 +624,61 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
     return false;
   }, [ordered]);
 
+  /* The published list, rebuilt once per shape version. An unchanged binding keeps its object, so a
+     hook selecting one chord re-renders only when that chord's shape moves. `press` is NOT subject
+     to it — it resolves its handler when it is called. */
+  const snap = useRef<{ v: number; list: BoundKey[]; byShape: Map<string, BoundKey> }>({
+    v: -1, list: [], byShape: new Map(),
+  });
+  const snapshot = useCallback((): BoundKey[] => {
+    const prev = snap.current;
+    if (prev.v === version.current) return prev.list;
+    const byShape = new Map<string, BoundKey>();
+    const list = ordered().map((b) => {
+      const shape = published(b);
+      const k = JSON.stringify(shape);
+      const kept = byShape.get(k) ?? prev.byShape.get(k) ?? shape;
+      byShape.set(k, kept);
+      return kept;
+    });
+    const same = list.length === prev.list.length && list.every((b, i) => b === prev.list[i]);
+    snap.current = { v: version.current, list: same ? prev.list : list, byShape };
+    return snap.current.list;
+  }, [ordered]);
+
   const mod = useModGlyph();
-  const value = useMemo<Registry>(
-    // `version` is the dependency that matters: it changes when a layer is added, removed
-    // or reshaped, which is exactly when the overlay's content changes. `press` is NOT
-    // subject to it — it resolves its handler when it is called.
-    () => ({ register, bindings: ordered().map(published), press, mod, claimWriting, claimCursorPlacer }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [register, ordered, press, mod, claimWriting, claimCursorPlacer, version],
+  const value = useMemo<Store>(
+    () => ({ register, press, mod, claimWriting, claimCursorPlacer, subscribe, snapshot, reshaped }),
+    [register, press, mod, claimWriting, claimCursorPlacer, subscribe, snapshot, reshaped],
   );
 
   return <KeymapContext.Provider value={value}>{children}</KeymapContext.Provider>;
 }
 
-export function useKeymap(): Registry {
+function useStore(): Store {
   const ctx = useContext(KeymapContext);
   if (!ctx) throw new Error("useKeyBindings/useKeymap outside a <KeymapProvider>");
   return ctx;
+}
+
+const NO_SUBSCRIBE = (): (() => void) => () => {};
+
+/** The registry with its published list; re-renders the caller whenever any layer reshapes. */
+export function useKeymap(): Registry {
+  const ctx = useStore();
+  const bindings = useSyncExternalStore(ctx.subscribe, ctx.snapshot, ctx.snapshot);
+  const { register, mod, press, claimWriting, claimCursorPlacer } = ctx;
+  return useMemo(
+    () => ({ register, bindings, mod, press, claimWriting, claimCursorPlacer }),
+    [register, bindings, mod, press, claimWriting, claimCursorPlacer],
+  );
+}
+
+/** One chord's published binding, re-rendering the caller only when that answer changes. */
+function useSelectedBinding(pick: (b: BoundKey) => boolean): BoundKey | null {
+  const ctx = useContext(KeymapContext);
+  const read = (): BoundKey | null => (ctx ? (ctx.snapshot().find(pick) ?? null) : null);
+  return useSyncExternalStore(ctx ? ctx.subscribe : NO_SUBSCRIBE, read, read);
 }
 
 /**
@@ -627,7 +690,7 @@ export function useKeymap(): Registry {
  * makes.
  */
 export function useWritingSurface(): void {
-  const { claimWriting } = useKeymap();
+  const { claimWriting } = useStore();
   useEffect(() => claimWriting(), [claimWriting]);
 }
 
@@ -642,7 +705,7 @@ export function useWritingSurface(): void {
  * cursor from a list the user has since left.
  */
 export function useCursorPlacer(place: CursorPlacer, scope: PlacerScope = "global"): void {
-  const { claimCursorPlacer } = useKeymap();
+  const { claimCursorPlacer } = useStore();
   const latest = useRef(place);
   latest.current = place;
   useEffect(
@@ -660,7 +723,7 @@ export function useCursorPlacer(place: CursorPlacer, scope: PlacerScope = "globa
  * every render would churn the layer order for nothing.
  */
 export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "view"): void {
-  const { register } = useKeymap();
+  const { register } = useStore();
   const latest = useRef(bindings);
   latest.current = bindings;
   /* `JSON.stringify` rather than a separator character, and that is not a style choice.
@@ -696,21 +759,40 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
  * absent (`useBinding`'s argument: no provider means NO keys, never guessed
  * ones). Registration is otherwise identical to `useKeyBindings`.
  */
-export function useOptionalKeyBindings(bindings: KeyBinding[], scope: BindingScope = "view"): void {
+export function useOptionalKeyBindings(
+  bindings: KeyBinding[] | (() => KeyBinding[]),
+  scope: BindingScope = "view",
+  /**
+   * With a getter: the outside state it reads. Each change republishes the layer's shape with no
+   * render of the caller (the zone model: a focus move must not re-render the mounted view).
+   */
+  watch?: (onChange: () => void) => () => void,
+): void {
   const ctx = useContext(KeymapContext);
   const latest = useRef(bindings);
   latest.current = bindings;
+  const now = typeof bindings === "function" ? bindings() : bindings;
   // The same JSON shape key as `useKeyBindings`, `disabledReason` included, for the same
   // collision argument and the same staleness one.
   const shape = JSON.stringify(
-    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? ""]),
+    now.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? ""]),
   );
   const register = ctx ? ctx.register : null;
-  useEffect(
-    () => (register ? register({ scope, get: () => latest.current }) : undefined),
+  const reshaped = ctx ? ctx.reshaped : null;
+  useEffect(() => {
+    if (!register) return undefined;
+    const get = (): KeyBinding[] => {
+      const b = latest.current;
+      return typeof b === "function" ? b() : b;
+    };
+    const off = register({ scope, get });
+    const unwatch = watch && reshaped ? watch(reshaped) : undefined;
+    return () => {
+      unwatch?.();
+      off();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [register, scope, shape],
-  );
+  }, [register, reshaped, scope, shape, watch]);
 }
 
 /**
@@ -724,8 +806,7 @@ export function useOptionalKeyBindings(bindings: KeyBinding[], scope: BindingSco
  * message must stay readable. No provider means no hint, never a guessed one.
  */
 export function useBinding(chord: string): BoundKey | null {
-  const ctx = useContext(KeymapContext);
-  return ctx ? (ctx.bindings.find((b) => b.chord === chord) ?? null) : null;
+  return useSelectedBinding((b) => b.chord === chord);
 }
 
 /**
@@ -739,8 +820,7 @@ export function useBinding(chord: string): BoundKey | null {
  * and `groupedBindings` dedups. Null-safe for `useBinding`'s reason.
  */
 export function useEnabledBinding(chord: string): BoundKey | null {
-  const ctx = useContext(KeymapContext);
-  return ctx ? (ctx.bindings.find((b) => b.chord === chord && !b.disabled) ?? null) : null;
+  return useSelectedBinding((b) => b.chord === chord && !b.disabled);
 }
 
 /**

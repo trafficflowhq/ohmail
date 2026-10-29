@@ -37,6 +37,31 @@ export function useCursorFollowsTop(cur: string | null, jumpTo: string | null, t
   }, []);
 }
 
+/** The input that counts as somebody using the page, for {@link whenQuiet}. */
+const BUSY_EVENTS = ["pointerdown", "keydown", "wheel"] as const;
+
+/**
+ * RUN `cb` ONCE THE PAGE HAS GONE `ms` WITHOUT A PRESS, A KEY OR A WHEEL, for work nobody waits on
+ * that would cost a frame somebody could feel. Answers the cancel.
+ */
+export function whenQuiet(ms: number, cb: () => void): () => void {
+  let timer = setTimeout(fire, ms);
+  function poke(): void {
+    clearTimeout(timer);
+    timer = setTimeout(fire, ms);
+  }
+  function stop(): void {
+    clearTimeout(timer);
+    for (const e of BUSY_EVENTS) removeEventListener(e, poke, true);
+  }
+  function fire(): void {
+    stop();
+    cb();
+  }
+  for (const e of BUSY_EVENTS) addEventListener(e, poke, { capture: true, passive: true });
+  return stop;
+}
+
 /**
  * RUN `cb` ONCE THE NEXT FRAME HAS BEEN PAINTED — a timer queued from that frame's own callback,
  * so it runs after the paint. Answers the cancel. Where nothing lays out (no animation frames, or
