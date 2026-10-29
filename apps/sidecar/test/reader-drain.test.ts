@@ -90,6 +90,7 @@ class ForeignLease implements LeaseIo {
     return this.claims.map((c) => ({ ...c }));
   }
   async appendClaim(raw: string): Promise<void> {
+    reads.appendClaim += 1;
     this.claims.push({ ref: this.nextUid++, raw });
   }
   async removeClaims(refs: readonly unknown[]): Promise<void> {
@@ -112,6 +113,9 @@ class ForeignLease implements LeaseIo {
 
 /** Run once, INSIDE the lease read — see {@link ForeignLease.listClaims}. */
 let onLeaseRead: (() => Promise<void>) | null = null;
+
+/** The calls that would mean a drain or a lease gate ran. */
+const reads = { changesSince: 0, appendClaim: 0 };
 
 const EMPTY_CURSOR = { folders: {} };
 
@@ -156,6 +160,7 @@ function recordingMailbox(
     },
     async ensureFolders(): Promise<void> { wire.push({ verb: "ensureFolders", detail: "" }); },
     async changesSince(): Promise<ChangeBatch> {
+      reads.changesSince += 1;
       if (handed) {
         if (later.length === 0 || laterHanded) {
           return { creates: [], moves: [], flagChanges: [], deletes: [], newCursor: EMPTY_CURSOR };
@@ -363,6 +368,26 @@ describe("a stood-down install keeps reading its mailbox", () => {
       wire.filter((w) => w.verb === "setFlags"),
       "the read never reached the mailbox — this is the reported symptom, on a reader",
     ).toEqual([{ verb: "setFlags", detail: "1:41 seen=true" }]);
+  });
+
+  it("…and the read goes out within a second of the press, with no drain and nothing else on the wire", async () => {
+    const sidecar = await boot([41]);
+    await sidecar.syncUntilQuiet();
+    const [row] = await sidecar.db.select().from(messages)
+      .where(eq(messages.mailboxId, sidecar.world.mailboxId));
+    wire.length = 0;
+    Object.assign(reads, { changesSince: 0, appendClaim: 0 });
+
+    const marked = await sidecar.handle(new Request("http://sidecar/messages", {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ ids: [row!.id], unread: false }),
+    }));
+    expect(marked.status).toBe(200);
+
+    await vi.waitFor(() => expect(wire).toEqual([{ verb: "setFlags", detail: "1:41 seen=true" }]),
+      { timeout: 1_000, interval: 10 });
+    expect(reads, "a drain or a lease gate carried the reader's read").toEqual({ changesSince: 0, appendClaim: 0 });
   });
 
   it("PRESS WHILE RUNNING: the next poll spends the stamp and promotes — no relaunch", async () => {

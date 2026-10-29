@@ -128,13 +128,17 @@ describe("the standalone door: an open read takes the top of Earlier", () => {
 
     // 1. Open F, read it, move on: the top of Earlier.
     expect(engine.holdOpenRow(ids.f!)).toBe(true);
+    const pressedAt = performance.now();
     expect((await engine.mutate({ kind: "mark_seen", messageIds: [ids.f!], unread: false, via: "glance" })).status).toBe("confirmed");
+    // The read reaches the mailbox on its own, with no drain asked for, within a second.
+    await vi.waitFor(async () => expect(await seenOnServer(w, "f", tag)).toBe(true), { timeout: 1_000, interval: 20 });
+    expect(performance.now() - pressedAt, "\\Seen took over a second to reach the server").toBeLessThan(1_000);
     engine.releaseOpenRow(ids.f!);
     await engine.syncOnce();
     expect(label(box().previouslySeen)).toEqual(["f", "r1", "r2", "r3"]);
     // 2. The local door stamped its own column.
     expect(await openReadAtOf(w, ids.f!), "the open read was not stamped locally").toBeInstanceOf(Date);
-    // The read reached the mailbox: the reconciler put \Seen on the server, read back from it.
+    // …and a drain after it leaves it there.
     await w.sidecar.syncUntilQuiet();
     expect(await seenOnServer(w, "f", tag), "\\Seen did not reach the server").toBe(true);
 

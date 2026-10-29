@@ -181,6 +181,8 @@ const CYCLE_CALLS: Readonly<Record<string, "supplies_permit" | "forwards_deps">>
   "apps/worker/src/reconcile-cron.ts:runReconcileCron": "supplies_permit",
   // The desktop and phone engine's drain.
   "apps/sidecar/src/engine.ts:drain": "supplies_permit",
+  // A read press's `\Seen`-only cycle, on the reader's entitlement.
+  "apps/sidecar/src/engine.ts:pushSeen": "supplies_permit",
   // `reconcileOnRestart(deps)` — see `sync-role-census.test.ts` for the same classification.
   "apps/worker/src/restart.ts:reconcileOnRestart": "forwards_deps",
 };
@@ -275,8 +277,8 @@ describe("every destructive IMAP write asks one function", () => {
     expect({
       withoutPermit: composing.filter((c) => !c.namesWriteAuthority).map((c) => `${c.key}:${c.line}`),
     }).toEqual({ withoutPermit: [] });
-    // A census over nothing passes for the wrong reason — three composing roots, four calls.
-    expect(composing.length).toBe(4);
+    // A census over nothing passes for the wrong reason — three composing roots, five calls.
+    expect(composing.length).toBe(5);
     // A forwarding call hands on a whole `SyncDeps` and cannot name anything: it must not be an
     // object literal, or it is composing and is on the wrong list.
     const forwarding = calls.filter((c) => CYCLE_CALLS[c.key] === "forwards_deps");
