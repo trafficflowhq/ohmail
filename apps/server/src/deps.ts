@@ -30,6 +30,7 @@ import {
   FolderOpsService, scheduleService,
   workflowsService, proposalsService, redeemInviteGrant,
   makeAttachmentStagingPort, MailService, SmtpMailer, mailAlertSink, dbFreeMailAlertSink, dbRecipientLimiter,
+  OWED_COPY_SELF_HOST,
 } from "@trafficflow/services";
 // The policy TYPE lives on the mail entry (the sidecar imports it there too); the full barrel
 // above is still loaded by this app — which is exactly why the explicit allowance below exists.
@@ -269,6 +270,8 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     sendSurfaceMaxTotalBytes: SELF_HOST_SEND_MAX_TOTAL_BYTES,
     // A long-lived process: a send's Sent copy is retried in memory after the answer.
     sendCopyOutlivesAnswer: true,
+    // And kept in the store until filed, letters with files too: a restart cannot lose it.
+    sendKeepOwedCopy: OWED_COPY_SELF_HOST,
     // UNMETERED STORAGE, on SELF_HOST_MAILBOX_ALLOWANCE's exact argument above: the operator
     // pays for their own disk, and a value somebody WROTE is the only admissible spelling of
     // that — a bag that declared nothing gets the send route's refusing resolver, never a

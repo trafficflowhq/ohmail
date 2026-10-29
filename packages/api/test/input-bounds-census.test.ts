@@ -228,6 +228,8 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // `SEND_RECONCILE_BATCH`, the staleness cutoff and the give-up are constants in the pass, and
   // the route reads no query and no body at all — the secret is the entire request.
   "GET /internal/sends/reconcile/run",
+  // The late Sent-copy pass: the reconciler's bucket — no query, no body, the secret is the request.
+  "GET /internal/sends/sent-copies/run",
   // mail 0087 — the away responder's clock. Its sibling's bucket exactly: a scheduler pokes it
   // with a shared secret and NO body, no query and no path parameter, so there is no channel for a
   // caller-chosen count or size. What one call may cause is bounded inside the pass by constants

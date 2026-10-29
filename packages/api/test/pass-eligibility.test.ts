@@ -4,10 +4,11 @@ import { eq } from "drizzle-orm";
 import {
   createApp, apiRoutes, SCHEDULED_SEND_CRON_PATH, SEND_RECONCILE_CRON_PATH, type ApiDeps,
 } from "@trafficflow/api";
-import { AWAY_RESPONDER_CRON_PATH } from "../src/routes/internal.js";
-import { drafts, mailboxes, awayResponders, outboundSends } from "@trafficflow/db";
+import { AWAY_RESPONDER_CRON_PATH, SENT_COPIES_CRON_PATH } from "../src/routes/internal.js";
+import { drafts, mailboxes, awayResponders, outboundSends, outboundSentCopies } from "@trafficflow/db";
 import type { AccessVerdict, EntitlementsPort } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core/mail";
+import { OWED_COPY_CLOUD } from "@trafficflow/services";
 import { makeDeps, req } from "./helpers.js";
 
 /**
@@ -143,6 +144,64 @@ describe("the reconciler skips a parked account's stranded reservations", () => 
     await H(req("GET", SEND_RECONCILE_CRON_PATH, { bearer: SECRET }), open.deps);
     const [resolved] = await open.db.select().from(outboundSends).where(eq(outboundSends.id, s2.sendId));
     expect(resolved!.status).not.toBe("pending");
+  });
+});
+
+describe("the late Sent-copy pass does not dial a parked account's mailbox", () => {
+  async function owed(db: Awaited<ReturnType<typeof makeDeps>>["db"], accountId: string, now: Date) {
+    const [mb] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `c-${randomUUID().slice(0, 8)}@wall.test`, status: "connected",
+    }).returning();
+    const minted = `<${randomUUID()}@wall.test>`;
+    const [s] = await db.insert(outboundSends).values({
+      accountId, idempotencyKey: randomUUID(), mintedMessageId: minted, providerMessageId: minted, status: "sent",
+    }).returning();
+    await db.insert(outboundSentCopies).values({ sendId: s!.id, accountId, mailboxId: mb!.id, rawB64: "cmF3", nextAttemptAt: now });
+    return { sendId: s!.id };
+  }
+  const dialling = (dials: string[]): OpenSendAdapter => async (mailboxId: string) => {
+    dials.push(mailboxId);
+    return {
+      async send() { throw new Error("never"); },
+      async messageInSent() { return false; },
+      async fileSentCopy() { return null; },
+      async close() { /* nothing held */ },
+    };
+  };
+
+  it("the scheduled sender keeps a copy that cannot land under the door's own policy", async () => {
+    const { db, deps } = await armed(new Set());
+    deps.services!.sendKeepOwedCopy = OWED_COPY_CLOUD;
+    deps.services!.sendAdapter = async () => ({
+      async send(msg: OutboundMessage, o?: { copy?: string; beforeRelease?: () => Promise<void> }) {
+        await o?.beforeRelease?.();
+        return { providerMessageId: msg.messageId!, ...(o?.copy === "caller" ? { unfiledCopy: Buffer.from("raw") } : {}) };
+      },
+      async fileSentCopy() { throw new Error("NO [OVERQUOTA] mailbox full"); },
+      async messageInSent() { return false; },
+      async close() { /* nothing held */ },
+    });
+    await dueDraft(db, randomUUID(), deps.now());
+    expect((await (await H(req("GET", SCHEDULED_SEND_CRON_PATH, { bearer: SECRET }), deps)).json()).sent).toBe(1);
+    expect(await db.select({ id: outboundSentCopies.sendId }).from(outboundSentCopies)).toHaveLength(1);
+  });
+
+  it("parked ⇒ the copy waits, no socket opened; open ⇒ it is filed", async () => {
+    const parkedAccount = randomUUID();
+    const { db, deps } = await armed(new Set([parkedAccount]));
+    const dials: string[] = [];
+    deps.services!.sendAdapter = dialling(dials);
+    const { sendId } = await owed(db, parkedAccount, deps.now());
+    const body = await (await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: SECRET }), deps)).json();
+    expect({ deferred: body.deferred, dials }).toEqual({ deferred: 1, dials: [] });
+    expect(await db.select({ id: outboundSentCopies.sendId }).from(outboundSentCopies)).toEqual([{ id: sendId }]);
+
+    const open = await armed(new Set());
+    const openDials: string[] = [];
+    open.deps.services!.sendAdapter = dialling(openDials);
+    await owed(open.db, randomUUID(), open.deps.now());
+    const body2 = await (await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: SECRET }), open.deps)).json();
+    expect({ filed: body2.filed, dials: openDials.length }).toEqual({ filed: 1, dials: 1 });
   });
 });
 

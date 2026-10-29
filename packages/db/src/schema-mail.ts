@@ -2306,15 +2306,18 @@ export const outboundSendFingerprints = pgTable("outbound_send_fingerprints", {
   ),
 }));
 
-// Mail 0170 — A DELIVERED SEND'S SENT COPY, OWED: the exact delivered bytes (base64), kept by the
-// local engine from the server's accept until the copy is in Sent, so a quit, a crash or a long IMAP
-// outage cannot lose it (`SendService.fileOwedCopies`). One row per piece of a send's bytes (`seq`
+// Mail 0170 — A DELIVERED SEND'S SENT COPY, OWED: the exact delivered bytes (base64), kept from the
+// server's accept until the copy is in Sent, so a quit, a crash, a restart or a long IMAP outage
+// cannot lose it (`SendService.fileOwedCopies` on the local engine). One row per piece of a send's bytes (`seq`
 // from 0; each piece is written once, never appended to), deleted once filed or given up; `attempts`
-// and `next_attempt_at` are read off piece 0. Its own table: a column would load the bytes on every
+// and `next_attempt_at` are read off piece 0, `attempts` the copy's own refusals plus, in hundreds,
+// its mailbox's run of refusals on the server pass's ladder, and in ten-thousands its turn (when it was
+// last tried, as its mailbox counts). Its own table: a column would load the bytes on every
 // `select()` of a send, and `draft_id` goes NULL when a sent draft is deleted while the copy still
 // needs its mailbox. The composite key `(send_id, account_id)` is created by the migration; no key on
-// `mailbox_id`, for the fingerprints' reason (a KEY SHARE lock on the mailbox row per insert). Cloud
-// and self-host write none.
+// `mailbox_id`, for the fingerprints' reason (a KEY SHARE lock on the mailbox row per insert). The
+// server doors write rows too (`OwedCopyPolicy`: self-host every letter, Cloud only letters without
+// files), filed by `runOwedSentCopyPass`.
 export const outboundSentCopies = pgTable("outbound_sent_copies", {
   sendId: uuid("send_id").notNull().references(() => outboundSends.id, { onDelete: "cascade" }),
   seq: integer("seq").notNull().default(0),

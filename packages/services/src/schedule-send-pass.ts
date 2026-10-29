@@ -5,7 +5,7 @@ import { createLogger, type Logger, type OpenSendAdapter, type StorageCap } from
 import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import {
-  sendService, SEND_ATTEMPT_CEILING_MS, SEND_COPY_DEADLINE_MS, SEND_STALE_AFTER_MS, type SendService,
+  sendService, SEND_ATTEMPT_CEILING_MS, SEND_COPY_DEADLINE_MS, SEND_STALE_AFTER_MS, type SendDeps, type SendService,
 } from "./send-service.js";
 
 /**
@@ -89,8 +89,8 @@ export interface ScheduledSendPassDeps {
    * filterless desktop behaves like the hosted clock.
    */
   mailboxIds?: readonly string[];
-  /** The local engine: a delivered appointment's owed Sent copy is kept on disk (`SendDeps.keepOwedCopy`). */
-  keepOwedCopy?: boolean;
+  /** A delivered appointment's owed Sent copy is kept in the store (`SendDeps.keepOwedCopy`): the host's own value. */
+  keepOwedCopy?: SendDeps["keepOwedCopy"];
   log?: Logger;
   now?: () => Date;
   /** Test seams. */
@@ -174,7 +174,7 @@ export async function runScheduledSendPass(
         // No request pipeline carries bytes at send time — the draft row stores none and the
         // adapter dials from this process — so the truthful surface is the local engine's.
         surfaceMaxTotalBytes: null,
-        ...(deps.keepOwedCopy === true ? { keepOwedCopy: true } : {}),
+        ...(deps.keepOwedCopy !== undefined && deps.keepOwedCopy !== false ? { keepOwedCopy: deps.keepOwedCopy } : {}),
         log,
       });
       if (res.status === "sent") {

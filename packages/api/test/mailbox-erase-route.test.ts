@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { eraseOwedMailbox, mailboxes, messages, threads } from "@trafficflow/db";
+import { createApp, apiRoutes, SENT_COPIES_CRON_PATH, type ApiDeps } from "@trafficflow/api";
+import { eraseOwedMailbox, mailboxes, messages, outboundSends, outboundSentCopies, threads } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { makeDeps, seedSession, seedMailbox, req, FIXED_NOW } from "./helpers.js";
@@ -62,6 +62,26 @@ describe("DELETE /mailboxes/:id?erase=1 — the second confirmation, at the door
     const flat = JSON.stringify(dto);
     expect(flat).not.toContain("giulia@example.test");
     expect(flat).not.toContain("Glaze order");
+  });
+
+  it("a server door's owed Sent copy is never dialled once the mailbox is stamped, and the sweep removes it", async () => {
+    const { db, deps, s, mailboxId } = await world();
+    const minted = "<owed@lichtgrat.example>";
+    const [send] = await db.insert(outboundSends).values({
+      accountId: s.accountId, idempotencyKey: "owed-erase", mintedMessageId: minted, providerMessageId: minted, status: "sent",
+    }).returning();
+    await db.insert(outboundSentCopies).values({
+      sendId: send!.id, accountId: s.accountId, mailboxId, rawB64: "cmF3", nextAttemptAt: FIXED_NOW,
+    });
+    expect((await H(req("DELETE", `/mailboxes/${mailboxId}?erase=1&confirm=mila%40lichtgrat.example`, { bearer: s.token }), deps)).status)
+      .toBe(202);
+    const dials: string[] = [];
+    deps.alerts = { secret: "mailbox-erase-route-test-secret-abcdefghij-fixture" };
+    deps.services = { ...deps.services!, sendAdapter: async (id: string) => { dials.push(id); throw new Error("never dialled"); } };
+    const pass = await (await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: "mailbox-erase-route-test-secret-abcdefghij-fixture" }), deps)).json();
+    expect({ claimed: pass.claimed, dials }).toEqual({ claimed: 0, dials: [] });
+    await eraseOwedMailbox(db as never, dialect(db as never), { accountId: s.accountId, mailboxId, now: () => FIXED_NOW, maxSteps: 10 });
+    expect(await db.select().from(outboundSentCopies).where(eq(outboundSentCopies.mailboxId, mailboxId))).toEqual([]);
   });
 
   it("takes the typed address from the BODY, so the URL carries no address", async () => {
