@@ -262,6 +262,7 @@ function SettingsBody() {
             setPin={setFacePin}
             choose={w.face.choose}
             applyAll={w.face.applyAll}
+            standalone={w.standalone}
           />
         </Panel>
 
@@ -479,7 +480,7 @@ function DiagnosticPanel() {
  * desktop (`face-scope.ts`'s `choose`); on the standalone door or with nothing
  * connected it is the device pin. The quiet line, "apply on all devices",
  * PATCHes the account (`{themeFace}` alone), adopts the echo and clears the pin. Apply-all is withheld, not disabled, when
- * nothing is connected or the face is not yet read ({@link World.face.known}):
+ * nothing is connected, on the standalone door, or the face is not yet read ({@link World.face.known}):
  * pressing while unknown would PATCH paper over a real ohmarchy (the webapp
  * gates on `themeFaceKnown` too). A refused write leaves the real face shown.
  */
@@ -1078,6 +1079,7 @@ function FacePanel({
   setPin,
   choose,
   applyAll,
+  standalone,
 }: {
   pin: FaceName | null;
   account: FaceName | null;
@@ -1086,13 +1088,15 @@ function FacePanel({
   setPin: (face: FaceName | null) => void;
   choose: ((face: FaceName) => Promise<boolean>) | null;
   applyAll: (face: FaceName) => Promise<boolean>;
+  /** A phone on its own keeps its look to itself (#421): nothing leaves it, so no "all devices". */
+  standalone: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   /* The face on screen — the provider resolves the same way; this recomputes it rather than
      reading the theme, because the CONTROL must show the choice, and reading `useTheme().face`
      would draw the same value through a longer path. `accountGovernsFace` is the pure rule. */
   const face: FaceName = pin ?? account ?? "paper";
-  const governed = accountGovernsFace(face, pin, account);
+  const governed = !standalone && accountGovernsFace(face, pin, account);
   return (
     <>
       <Section style={{ paddingTop: 18 }}>{Copy.face}</Section>
@@ -1116,7 +1120,7 @@ function FacePanel({
         <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
           {governed ? Copy.faceScopeAll : Copy.faceScopeDevice}
         </Txt>
-        {accountWideOffered(accountKnown, face, pin, account) ? (
+        {!standalone && accountWideOffered(accountKnown, face, pin, account) ? (
           <Button
             label={Copy.faceApplyAll}
             variant="quiet"
