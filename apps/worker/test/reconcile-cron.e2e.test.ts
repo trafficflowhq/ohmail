@@ -11,6 +11,7 @@ import { runReconcileCron } from "../src/reconcile-cron.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "../src/leader-lock.js";
 import { cloudInstallId } from "../src/lease.js";
 import { byMessageId, makeHarness, rawClient, emlOf, dbUrlFor } from "./_workerenv.js";
+import { rigAppendDate } from "../../../test/support/rig-append-date.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 
@@ -65,8 +66,9 @@ type HarnessCfg = Awaited<ReturnType<typeof makeHarness>>["cfg"];
  */
 async function appendClaim(
   cfg: HarnessCfg,
-  claim: { kind: string; installId: string; displayName: string; heartbeat: Date },
+  claim: { kind: string; installId: string; displayName: string; heartbeat?: Date },
 ): Promise<void> {
+  const heartbeat = claim.heartbeat ?? new Date();
   const c = await rawClient(cfg);
   try {
     const list = await c.list();
@@ -76,8 +78,8 @@ async function appendClaim(
       `X-Ohmail-Organizer-Kind: ${claim.kind}`,
       `X-Ohmail-Install-Id: ${claim.installId}`,
       "X-Ohmail-Protocol: 1",
-      `X-Ohmail-Heartbeat: ${claim.heartbeat.toISOString()}`,
-      `X-Ohmail-Claimed-At: ${new Date(claim.heartbeat.getTime() - 3_600_000).toISOString()}`,
+      `X-Ohmail-Heartbeat: ${heartbeat.toISOString()}`,
+      `X-Ohmail-Claimed-At: ${new Date(heartbeat.getTime() - 3_600_000).toISOString()}`,
       `X-Ohmail-Display-Name: ${claim.displayName}`,
       `X-Ohmail-Nonce: n-${Math.random().toString(36).slice(2, 8)}`,
       "",
@@ -87,7 +89,8 @@ async function appendClaim(
        hours ago had its INTERNALDATE stamped two hours ago too. Appending a back-dated heartbeat
        and letting the server stamp NOW forges the one record an honest writer cannot produce — a
        clock two hours behind the server — and the gate reads exactly that pair to refuse such an
-       install. Third argument is imapflow's flags, fourth its internal date. */
+       install. Third argument is imapflow's flags, fourth its internal date; a renewal right now
+       is stamped by the server itself (a back-dated one comes from rigAppendDate). */
     await c.append(META_PATH, raw, ["\\Seen"], claim.heartbeat);
   } finally {
     await c.logout();
@@ -235,7 +238,6 @@ describe("cron reconciler backstop", () => {
     // the decision table — "we lost, and the folder is still being renewed" — and not arm 5.
     await appendClaim(h.cfg, {
       kind: "local", installId: "the-owners-mac", displayName: "ohmail on Mila's Mac",
-      heartbeat: new Date(),
     });
 
     const res = await runReconcileCron(cfgFrom(h));
@@ -298,7 +300,7 @@ describe("cron reconciler backstop", () => {
     // the ONLY claim in the folder, so it is also the newest, and arm 3 answers `organize`.
     await appendClaim(h.cfg, {
       kind: "cloud", installId: cloudInstallId("production"), displayName: "ohmail Cloud",
-      heartbeat: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      heartbeat: rigAppendDate(2 * 60 * 60 * 1000),
     });
 
     // First sweep: ingest and file, so there is a real message with a real locator to owe a move.

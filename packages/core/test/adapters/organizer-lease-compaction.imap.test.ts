@@ -9,6 +9,7 @@ import {
   parseClaim,
 } from "../../src/adapters/organizer-lease.js";
 import { greenmailConfig } from "./_imapenv.js";
+import { rigAppendDate } from "../../../../test/support/rig-append-date.js";
 
 /**
  * The library types both of these as optional and `internalDate` as `Date | string`: a server may
@@ -183,14 +184,9 @@ describe("ohmail/_meta copied into itself, on GreenMail", () => {
       const metaPath = (await raw.list())
         .map((m) => m.path)
         .find((p) => p.toLowerCase().endsWith("_meta")) as string;
-      /* A record filed two days ago, at a FIXED 04:00 UTC rather than at whatever hour this run
-         happens to start. GreenMail parses an APPEND date-time with a twelve-hour pattern and an
-         AM default, so a date whose hour is 12 is filed at 00 — twelve hours out — while 13, 15,
-         23 and every morning file exactly (measured over an eight-hour sweep). The wall clock also
-         carries MILLISECONDS, which an IMAP date-time has no field for. Both are removed here. */
-      const old = new Date(Date.UTC(
-        NOW.getUTCFullYear(), NOW.getUTCMonth(), NOW.getUTCDate() - 2, 4, 0, 0, 0,
-      ));
+      /* A record filed two days ago, off GreenMail's 12:xx hour and without the wall clock's
+         milliseconds, which an IMAP date-time has no field for (the FIXTURE case below). */
+      const old = rigAppendDate(2 * 24 * 3_600_000, NOW.getTime());
       await raw.append(metaPath, ourClaim(), ["\\Seen"], old);
 
       const lock = await raw.getMailboxLock(metaPath);
@@ -224,11 +220,11 @@ describe("ohmail/_meta copied into itself, on GreenMail", () => {
    * THE FIXTURE BEHAVIOUR THE CASE ABOVE STEPS AROUND, documented rather than hidden.
    *
    * ImapFlow sends a correct 24-hour date-time; GreenMail's own APPEND parse reads it with a
-   * twelve-hour pattern and an AM default, so noon files at midnight. The case above pins 04:00
-   * for that reason, and this asserts the reason is real — if GreenMail ever fixes it this goes
-   * red and the comment above stops being true.
+   * twelve-hour pattern and an AM default, so noon files at midnight. Every wall-clock APPEND date
+   * comes from test/support/rig-append-date.ts for that reason, and this asserts the reason is
+   * real — if GreenMail ever fixes it this goes red and that helper stops being needed.
    */
-  it("FIXTURE: GreenMail files a 12:xx UTC append at 00:xx — the reason the case above pins 04:00", async () => {
+  it("FIXTURE: GreenMail files a 12:xx UTC append at 00:xx — the reason APPEND dates skip that hour", async () => {
     const cfg = greenmailConfig();
     const raw = new ImapFlow({
       host: cfg.host, port: cfg.port, secure: cfg.secure, auth: cfg.auth, logger: false,
@@ -237,9 +233,7 @@ describe("ohmail/_meta copied into itself, on GreenMail", () => {
     try {
       const box = "ohmail/_meta_noonprobe";
       await raw.mailboxCreate(box).catch(() => { /* already there */ });
-      const noon = new Date(Date.UTC(
-        NOW.getUTCFullYear(), NOW.getUTCMonth(), NOW.getUTCDate() - 2, 12, 34, 56, 0,
-      ));
+      const noon = new Date(Date.UTC(2026, 9, 27, 12, 34, 56, 0));
       await raw.append(box, ourClaim(), ["\\Seen"], noon);
       const lock = await raw.getMailboxLock(box);
       try {

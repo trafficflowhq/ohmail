@@ -9,6 +9,7 @@ import { resetMetaMemos } from "../../src/adapters/meta-memo.js";
 import { CONDSTORE_HOST, CONDSTORE_PORT, greenmailConfig, probeCondstore } from "./_imapenv.js";
 import { metaRelay, type MetaRelay } from "./_meta-relay.js";
 import { INCUMBENT, INCUMBENT_NONCE, foreign600, gateOutcome } from "./_lease-fixtures.js";
+import { rigAppendDates } from "../../../../test/support/rig-append-date.js";
 
 /**
  * L17: THE LEASE PAST THE WINDOW ON REAL SERVERS (ARCH-LEASE-BLIND-SEARCH §5). GreenMail and
@@ -79,9 +80,11 @@ async function claimsOf(cfg: ImapConfig, path: string, installId: string): Promi
 /** The ruling's fixture plus its strays: A's live claim first, the stale acks backdated. */
 async function seed650(witness: ImapFlow, path: string, now: Date): Promise<void> {
   const records = foreign600(now);
+  const backdated = records.filter((r) => r.kind === "ack" && r.internalDate.getTime() < now.getTime() - 24 * 3_600_000);
+  const dates = rigAppendDates(backdated.map((r) => now.getTime() - r.internalDate.getTime()), now.getTime());
   for (const r of records) {
-    const backdated = r.kind === "ack" && r.internalDate.getTime() < now.getTime() - 24 * 3_600_000;
-    await witness.append(path, r.raw, ["\\Seen"], backdated ? r.internalDate : undefined);
+    const i = backdated.indexOf(r);
+    await witness.append(path, r.raw, ["\\Seen"], i >= 0 ? dates[i] : undefined);
   }
   for (let i = 0; i < 49; i++) await witness.append(path, `Subject: stray ${i}\r\n\r\n.\r\n`, ["\\Seen"]);
 }
