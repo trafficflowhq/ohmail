@@ -1,0 +1,442 @@
+Upstream: https://gitlab.gnome.org/GNOME/at-spi2-core/-/commit/750687342c903880c410fc0634dba6fa6d792450 (backported)
+From: Azamat Almazbek uulu
+Date: Thu, 3 Sep 2026 14:38:38 +0200
+Subject: [PATCH 4/5] atk-bridge: Release disconnected direct connections
+
+Direct peer connections are retained until bridge shutdown. Release each connection when libdbus emits its local Disconnected signal so its routing state and credentials do not accumulate.
+
+Add a regression test that checks pidfds are released after repeated direct connections.
+
+[ohmail: upstream commit https://gitlab.gnome.org/GNOME/at-spi2-core/-/commit/750687342c903880c410fc0634dba6fa6d792450,
+first in at-spi2-core 2.62.0; backported to 2.52.0, context only. 2.52 tears the bus down
+inline in atk_bridge_adaptor_cleanup instead of calling deactivate_bus, and that
+cleanup is not guarded by DISABLE_P2P, so the two new helpers sit ahead of the
+#ifndef DISABLE_P2P block instead of inside it. The added and removed lines are
+upstream's, +43/-9 in bridge.c as upstream.]
+
+Signed-off-by: Azamat Almazbek uulu (address in the upstream commit)
+---
+ atk-adaptor/bridge.c                       |  52 +++-
+ tests/at-spi2-atk/meson.build              |  12 +
+ tests/at-spi2-atk/test-direct-connection.c | 296 +++++++++++++++++++++
+ 3 files changed, 351 insertions(+), 9 deletions(-)
+ create mode 100644 tests/at-spi2-atk/test-direct-connection.c
+
+diff --git a/atk-adaptor/bridge.c b/atk-adaptor/bridge.c
+index 899cf32..02a9f36 100644
+--- a/atk-adaptor/bridge.c
++++ b/atk-adaptor/bridge.c
+@@ -630,6 +630,38 @@ install_plug_hooks ()
+   socket_class->embed = socket_embed_hook;
+ }
+ 
++static void
++remove_direct_connection (DBusConnection *connection)
++{
++  GList *link;
++
++  link = g_list_find (spi_global_app_data->direct_connections, connection);
++  if (!link)
++    return;
++
++  droute_context_unregister (spi_global_app_data->droute, connection);
++  droute_unintercept_dbus (connection);
++  spi_global_app_data->direct_connections =
++      g_list_delete_link (spi_global_app_data->direct_connections, link);
++  dbus_connection_unref (connection);
++}
++
++static DBusHandlerResult
++direct_connection_filter (DBusConnection *connection,
++                          DBusMessage *message,
++                          void *user_data)
++{
++  if (dbus_message_is_signal (message, DBUS_INTERFACE_LOCAL, "Disconnected"))
++    {
++      dbus_connection_remove_filter (connection,
++                                     direct_connection_filter,
++                                     NULL);
++      remove_direct_connection (connection);
++    }
++
++  return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
++}
++
+ #ifndef DISABLE_P2P
+ static guint
+ get_ancestral_uid (guint pid)
+@@ -680,12 +712,16 @@ static void
+ new_connection_cb (DBusServer *server, DBusConnection *con, void *data)
+ {
+   dbus_connection_set_unix_user_function (con, user_check, NULL, NULL);
++  if (!dbus_connection_add_filter (con, direct_connection_filter, NULL, NULL))
++    return;
++
+   dbus_connection_ref (con);
+   atspi_dbus_connection_setup_with_g_main (con, spi_context);
+   droute_intercept_dbus (con);
+   droute_context_register (spi_global_app_data->droute, con);
+ 
+-  spi_global_app_data->direct_connections = g_list_append (spi_global_app_data->direct_connections, con);
++  spi_global_app_data->direct_connections =
++      g_list_append (spi_global_app_data->direct_connections, con);
+ }
+ #endif
+ 
+@@ -1207,7 +1243,6 @@ atk_bridge_adaptor_init (gint *argc, gchar **argv[])
+ void
+ atk_bridge_adaptor_cleanup (void)
+ {
+-  GList *l;
+   GSList *ls;
+ 
+   if (!inited)
+@@ -1250,19 +1285,18 @@ atk_bridge_adaptor_cleanup (void)
+       spi_global_app_data->bus = NULL;
+     }
+ 
+-  for (l = spi_global_app_data->direct_connections; l; l = l->next)
++  while (spi_global_app_data->direct_connections)
+     {
+       DBusConnection *connection;
+ 
+-      connection = l->data;
++      connection = spi_global_app_data->direct_connections->data;
+ 
+-      droute_context_unregister (spi_global_app_data->droute, connection);
+-      droute_unintercept_dbus (connection);
++      dbus_connection_remove_filter (connection,
++                                     direct_connection_filter,
++                                     NULL);
+       dbus_connection_close (connection);
+-      dbus_connection_unref (connection);
++      remove_direct_connection (connection);
+     }
+-  g_list_free (spi_global_app_data->direct_connections);
+-  spi_global_app_data->direct_connections = NULL;
+ 
+   for (ls = clients; ls; ls = ls->next)
+     g_free (ls->data);
+diff --git a/tests/at-spi2-atk/meson.build b/tests/at-spi2-atk/meson.build
+index 4caf5d9..0c748a4 100644
+--- a/tests/at-spi2-atk/meson.build
++++ b/tests/at-spi2-atk/meson.build
+@@ -79,4 +79,16 @@ foreach t: tests
+   endif
+ endforeach
+ 
++direct_connection_test_bin = executable(
++  'direct-connection-test',
++  'test-direct-connection.c',
++  dependencies: gio_dep,
++  c_args: [
++    '-DTESTS_BUILD_DIR="@0@"'.format(meson.current_build_dir()),
++    '-DTESTS_DATA_DIR="@0@"'.format(join_paths(meson.current_source_dir(), 'data')),
++  ],
++)
++
++test('direct-connection', direct_connection_test_bin, timeout: 30)
++
+ test('atk-test', atk_test_bin, timeout: 300)
+diff --git a/tests/at-spi2-atk/test-direct-connection.c b/tests/at-spi2-atk/test-direct-connection.c
+new file mode 100644
+index 0000000..1fad3a7
+--- /dev/null
++++ b/tests/at-spi2-atk/test-direct-connection.c
+@@ -0,0 +1,296 @@
++/*
++ * AT-SPI - Assistive Technology Service Provider Interface
++ *
++ * Copyright 2026 Azamat Almazbek uulu
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ */
++
++#include <gio/gio.h>
++#include <glib.h>
++#include <signal.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
++#define TEST_APP_NAME "org.a11y.atspi.test.DirectConnection"
++#define ATSPI_ROOT_PATH "/org/a11y/atspi/accessible/root"
++#define ATSPI_APPLICATION_INTERFACE "org.a11y.atspi.Application"
++
++static guint
++count_pidfds (GPid pid)
++{
++  g_autofree gchar *directory_path = NULL;
++  g_autoptr (GDir) directory = NULL;
++  const gchar *entry;
++  guint count = 0;
++
++  directory_path = g_strdup_printf ("/proc/%d/fd", pid);
++  directory = g_dir_open (directory_path, 0, NULL);
++  if (!directory)
++    return 0;
++
++  while ((entry = g_dir_read_name (directory)))
++    {
++      g_autofree gchar *fd_path = g_build_filename (directory_path, entry, NULL);
++      g_autofree gchar *target = g_file_read_link (fd_path, NULL);
++
++      if (g_strcmp0 (target, "anon_inode:[pidfd]") == 0)
++        count++;
++    }
++
++  return count;
++}
++
++static gboolean
++wait_for_pidfd_count (GPid pid, guint expected)
++{
++  gint64 deadline = g_get_monotonic_time () + (2 * G_TIME_SPAN_SECOND);
++
++  do
++    {
++      if (count_pidfds (pid) == expected)
++        return TRUE;
++      g_usleep (10 * 1000);
++    }
++  while (g_get_monotonic_time () < deadline);
++
++  return FALSE;
++}
++
++static gboolean
++wait_for_pidfd_increase (GPid pid, guint baseline)
++{
++  gint64 deadline = g_get_monotonic_time () + (2 * G_TIME_SPAN_SECOND);
++
++  do
++    {
++      if (count_pidfds (pid) > baseline)
++        return TRUE;
++      g_usleep (10 * 1000);
++    }
++  while (g_get_monotonic_time () < deadline);
++
++  return FALSE;
++}
++
++static gchar *
++get_accessibility_bus_address (void)
++{
++  g_autoptr (GDBusConnection) session_bus = NULL;
++  g_autoptr (GVariant) reply = NULL;
++  g_autoptr (GError) error = NULL;
++  const gchar *address;
++
++  session_bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, &error);
++  if (!session_bus)
++    g_error ("Failed to connect to session bus: %s", error->message);
++
++  reply = g_dbus_connection_call_sync (session_bus,
++                                       "org.a11y.Bus",
++                                       "/org/a11y/bus",
++                                       "org.a11y.Bus",
++                                       "GetAddress",
++                                       NULL,
++                                       G_VARIANT_TYPE ("(s)"),
++                                       G_DBUS_CALL_FLAGS_NONE,
++                                       -1,
++                                       NULL,
++                                       &error);
++  if (!reply)
++    g_error ("Failed to get accessibility bus address: %s", error->message);
++
++  g_variant_get (reply, "(&s)", &address);
++  return g_strdup (address);
++}
++
++static gchar *
++wait_for_application_address (GDBusConnection *accessibility_bus)
++{
++  guint attempt;
++
++  for (attempt = 0; attempt < 100; attempt++)
++    {
++      g_autoptr (GVariant) reply = NULL;
++      g_autoptr (GError) error = NULL;
++      const gchar *address;
++
++      reply = g_dbus_connection_call_sync (accessibility_bus,
++                                           TEST_APP_NAME,
++                                           ATSPI_ROOT_PATH,
++                                           ATSPI_APPLICATION_INTERFACE,
++                                           "GetApplicationBusAddress",
++                                           NULL,
++                                           G_VARIANT_TYPE ("(s)"),
++                                           G_DBUS_CALL_FLAGS_NONE,
++                                           100,
++                                           NULL,
++                                           &error);
++      if (reply)
++        {
++          g_variant_get (reply, "(&s)", &address);
++          return g_strdup (address);
++        }
++
++      g_usleep (10 * 1000);
++    }
++
++  return NULL;
++}
++
++static GDBusConnection *
++open_direct_connection (const gchar *address, GError **error)
++{
++  return g_dbus_connection_new_for_address_sync (
++      address,
++      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT,
++      NULL,
++      NULL,
++      error);
++}
++
++static gboolean
++query_direct_connection (GDBusConnection *connection, GError **error)
++{
++  g_autoptr (GVariant) reply = NULL;
++
++  reply = g_dbus_connection_call_sync (connection,
++                                       NULL,
++                                       ATSPI_ROOT_PATH,
++                                       ATSPI_APPLICATION_INTERFACE,
++                                       "GetApplicationBusAddress",
++                                       NULL,
++                                       G_VARIANT_TYPE ("(s)"),
++                                       G_DBUS_CALL_FLAGS_NONE,
++                                       -1,
++                                       NULL,
++                                       error);
++  return reply != NULL;
++}
++
++static void
++test_direct_connection_is_released (void)
++{
++  g_autofree gchar *accessibility_bus_address = NULL;
++  g_autofree gchar *application_address = NULL;
++  g_autoptr (GDBusConnection) accessibility_bus = NULL;
++  g_autoptr (GDBusConnection) direct_connection = NULL;
++  g_autoptr (GError) error = NULL;
++  gchar *app_argv[] = {
++    TESTS_BUILD_DIR "/app-test",
++    "--test-data-file",
++    TESTS_DATA_DIR "/test.xml",
++    "--atspi-dbus-name",
++    TEST_APP_NAME,
++    NULL,
++  };
++  GPid app_pid = 0;
++  guint baseline;
++  guint iteration;
++
++  accessibility_bus_address = get_accessibility_bus_address ();
++  accessibility_bus = g_dbus_connection_new_for_address_sync (
++      accessibility_bus_address,
++      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
++          G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
++      NULL,
++      NULL,
++      &error);
++  if (!accessibility_bus)
++    g_error ("Failed to connect to accessibility bus: %s", error->message);
++
++  if (!g_spawn_async (NULL,
++                      app_argv,
++                      NULL,
++                      G_SPAWN_DO_NOT_REAP_CHILD,
++                      NULL,
++                      NULL,
++                      &app_pid,
++                      &error))
++    g_error ("Failed to start test application: %s", error->message);
++
++  application_address = wait_for_application_address (accessibility_bus);
++  if (!application_address)
++    {
++      g_test_fail_printf ("Test application did not publish its direct bus address");
++      goto out;
++    }
++
++  baseline = count_pidfds (app_pid);
++  direct_connection = open_direct_connection (application_address, &error);
++  if (!direct_connection)
++    {
++      g_test_fail_printf ("Failed to open direct connection: %s", error->message);
++      goto out;
++    }
++
++  if (!query_direct_connection (direct_connection, &error))
++    {
++      g_test_fail_printf ("Failed to query direct connection: %s", error->message);
++      goto out;
++    }
++
++  if (!wait_for_pidfd_increase (app_pid, baseline))
++    {
++      g_test_skip ("libdbus does not retain peer credentials in a pidfd");
++      goto out;
++    }
++
++  if (!g_dbus_connection_close_sync (direct_connection, NULL, &error))
++    {
++      g_test_fail_printf ("Failed to close direct connection: %s", error->message);
++      goto out;
++    }
++  g_clear_object (&direct_connection);
++
++  if (!wait_for_pidfd_count (app_pid, baseline))
++    {
++      g_test_fail_printf ("Direct connection pidfd was not released");
++      goto out;
++    }
++
++  for (iteration = 0; iteration < 10; iteration++)
++    {
++      direct_connection = open_direct_connection (application_address, &error);
++      if (!direct_connection)
++        {
++          g_test_fail_printf ("Failed to open direct connection: %s", error->message);
++          goto out;
++        }
++
++      if (!query_direct_connection (direct_connection, &error))
++        {
++          g_test_fail_printf ("Failed to query direct connection: %s",
++                              error->message);
++          goto out;
++        }
++
++      if (!g_dbus_connection_close_sync (direct_connection, NULL, &error))
++        {
++          g_test_fail_printf ("Failed to close direct connection: %s", error->message);
++          goto out;
++        }
++      g_clear_object (&direct_connection);
++    }
++
++  if (!wait_for_pidfd_count (app_pid, baseline))
++    g_test_fail_printf ("Direct connection pidfds accumulated after reconnecting");
++
++out:
++  if (direct_connection)
++    g_dbus_connection_close_sync (direct_connection, NULL, NULL);
++  kill (app_pid, SIGTERM);
++  waitpid (app_pid, NULL, 0);
++  g_spawn_close_pid (app_pid);
++}
++
++int
++main (int argc, char **argv)
++{
++  g_test_init (&argc, &argv, NULL);
++  g_test_add_func ("/atk-bridge/direct-connection-is-released",
++                   test_direct_connection_is_released);
++  return g_test_run ();
++}

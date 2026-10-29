@@ -15,8 +15,8 @@ import { publicPath, ROOT } from "./support/public-root.mjs";
  *
  *   · every npm install line in ci, build and android goes through the npm-network class;
  *   · each wrapper call names a known class and wraps only that class's command: npm ci / npm install,
- *     `cargo test --locked … --no-run` (a compile, never a run), `hdiutil detach`, and in
- *     build-engine-app.mjs the tauri build alone, verbose, on macOS when a dmg is built;
+ *     `cargo test --locked … --no-run` (a compile, never a run), `hdiutil detach`, a `curl -fsSL -o`
+ *     download, and in build-engine-app.mjs the tauri build alone, verbose, on macOS when a dmg is built;
  *   · the inline retry is one function in macos-sign and nowhere else: `hdiutil detach`, again once
  *     after the exit status 16 alone, announced as the wrapper announces one; every detach in that job
  *     goes through it;
@@ -56,6 +56,7 @@ export function wrapperProblems(text: string): string[] {
       cls === "npm-network" ? /^npm (ci|install) /.test(cmd)
       : cls === "cargo-exec-126" ? /^cargo test --locked\b.*\s--no-run\s*$/.test(cmd)
       : cls === "hdiutil-busy" ? /^hdiutil detach /.test(cmd)
+      : cls === "download-network" ? /^curl -fsSL -o \S+ https:\/\/\S+$/.test(cmd)
       : false;
     if (!ok) out.push(`${cls} may not wrap: ${cmd}`);
     if (TEST_WORDS.test(cmd) || (/\bcargo test\b/.test(cmd) && !/--no-run/.test(cmd))) out.push(`a test is wrapped: ${cmd}`);
@@ -202,6 +203,8 @@ describe("a retry wraps a named infrastructure class of a non-test step", () => 
     expect(wrapperProblems(`          ${WRAP} npm-network -- npm run test\n`)).not.toEqual([]);
     expect(wrapperProblems(`          ${WRAP} cargo-exec-126 -- cargo test --locked --features local-engine --no-run\n`)).toEqual([]);
     expect(wrapperProblems(`          ${WRAP} hdiutil-busy -- hdiutil detach "$MNT"\n`)).toEqual([]);
+    expect(wrapperProblems(`          ${WRAP} download-network -- curl -fsSL -o "$W/x.tar.xz" https://example.com/x.tar.xz\n`)).toEqual([]);
+    expect(wrapperProblems(`          ${WRAP} download-network -- curl -fsSL https://example.com/x.sh | bash\n`)).toHaveLength(1);
 
     const swapped = TEXT.build.replace(
       /( {6}- name: Compile the Rust tests \(default configuration\)\n(?: {8}.*\n| {10}.*\n)*)\n( {6}- name: cargo test \(both configurations\)\n(?: {8}.*\n| {10}.*\n)*)/,

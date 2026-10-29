@@ -1,0 +1,27 @@
+Upstream: https://gitlab.gnome.org/GNOME/at-spi2-core/-/commit/c4ddb104fb25ba9b1f839cea28f280bb3a4146ba
+From: Mike Gorse <mgorse@suse.com>
+Date: Tue, 11 Nov 2025 14:59:01 -0600
+Subject: [PATCH] atk-adaptor: Fix cleaning up the cache object's weak refs
+
+We were looping through the hash and calling g_object_weak_unref on the values,
+rather than the keys, meaning that we would pass NULL, resulting in a
+warning being generated and the weak ref not being removed.
+
+Closes #213
+---
+ atk-adaptor/accessible-cache.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/atk-adaptor/accessible-cache.c b/atk-adaptor/accessible-cache.c
+index 26d9f75e..25b4394d 100644
+--- a/atk-adaptor/accessible-cache.c
++++ b/atk-adaptor/accessible-cache.c
+@@ -144,7 +144,7 @@ cache_weak_ref (gpointer data, GObject *gobj)
+ static void
+ spi_cache_remove_weak_ref (gpointer key, gpointer val, gpointer cache)
+ {
+-  g_object_weak_unref (val, cache_weak_ref, cache);
++  g_object_weak_unref (key, cache_weak_ref, cache);
+ }
+ 
+ static void

@@ -1,0 +1,28 @@
+Upstream: https://gitlab.gnome.org/GNOME/at-spi2-core/-/commit/8db3f580bd024095ddd86981b07f975575992c5d
+From: Tatiana Elfimova <tatiana.elfimova@jetbrains.com>
+Date: Tue, 9 Jun 2026 09:51:09 +0200
+Subject: [PATCH] Avoid duplicate weak refs for cached objects
+
+Prevent registering multiple weak references for the same object in `add_object`. This keeps weak ref registration and unregistration balanced and avoids stale weak ref callbacks accessing cache state after the object has been removed from the cache.
+
+Closes #231
+---
+ atk-adaptor/accessible-cache.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/atk-adaptor/accessible-cache.c b/atk-adaptor/accessible-cache.c
+index 25b4394d..47e15b5e 100644
+--- a/atk-adaptor/accessible-cache.c
++++ b/atk-adaptor/accessible-cache.c
+@@ -198,6 +198,11 @@ add_object (SpiCache *cache, GObject *gobj)
+ {
+   g_return_if_fail (G_IS_OBJECT (gobj));
+ 
++  if (spi_cache_in (cache, gobj))
++    {
++      return;
++    }
++
+   g_hash_table_insert (cache->objects, gobj, NULL);
+   g_object_weak_ref (G_OBJECT (gobj), cache_weak_ref, cache);
+ 

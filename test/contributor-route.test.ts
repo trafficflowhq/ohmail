@@ -16,7 +16,8 @@ import { ROOT, publicPath } from "./support/public-root.mjs";
  * directory) and a step named `<doc> · <id>` whose run is that block. The commands live in the workflow, where
  * the workflow tests read them (pins, --ignore-scripts, the Rust pin, downloads); this file holds the two
  * equal, so a pull request that edits a block is red until the workflow follows, and the job holds no
- * credential, no secret and no trigger but the schedule and a dispatch.
+ * credential, no secret and no trigger but the schedule and a dispatch. build.yml's two Linux jobs run on the
+ * same pinned Ubuntu: the AppImage's bundled AT-SPI bridge is built for that release's at-spi2-core.
  */
 const yaml = createRequire(__filename)("js-yaml") as { load(text: string): unknown; dump(v: unknown): string };
 
@@ -164,6 +165,14 @@ export function routeFindings(inputs: Inputs): string[] {
   // Per job; one finding per departure, naming every job it holds in.
   const where = new Map<string, string[]>();
   const note = (what: string, job: string) => where.set(what, [...(where.get(what) ?? []), job]);
+  /** A Linux job on the Ubuntu docs/install.md names, by its pinned label: a floating one moves when GitHub re-points it. */
+  const onUbuntu = (label: unknown, suffix: string, job: string) => {
+    const got = new RegExp(`^ubuntu-(\\d+\\.\\d+)${suffix}$`).exec(String(label))?.[1];
+    if (got !== ubuntu) note(`runs on ${got ? `Ubuntu ${got}` : String(label)}, not the Ubuntu ${ubuntu} docs/install.md names`, job);
+  };
+  // The release's Linux artifacts are built on that Ubuntu too, both architectures in step.
+  onUbuntu(build.jobs?.linux?.["runs-on"], "", "build.yml linux");
+  onUbuntu(build.jobs?.["linux-arm64"]?.["runs-on"], "-arm", "build.yml linux-arm64");
   const jobs = wf.jobs ?? {};
   if (!same(Object.keys(jobs).sort(), Object.keys(ROUTE).sort())) out.push(`the jobs are ${Object.keys(jobs).sort().join(", ")}, not ${Object.keys(ROUTE).sort().join(", ")}`);
   for (const [id, want] of Object.entries(ROUTE)) {
@@ -173,8 +182,8 @@ export function routeFindings(inputs: Inputs): string[] {
     if (extra.length) note(`a job carries ${extra.sort().join(", ")}`, id);
     const os = id.split("-")[0]!;
     const part = /-suite-(\d+)$/.exec(id)?.[1];
-    const label = os === "linux" ? `ubuntu-${ubuntu}` : RUNNERS[os];
-    if (job["runs-on"] !== label) note(`runs-on is ${String(job["runs-on"])}, not ${label}`, id);
+    if (os === "linux") onUbuntu(job["runs-on"], "", id);
+    else if (job["runs-on"] !== RUNNERS[os]) note(`runs-on is ${String(job["runs-on"])}, not ${RUNNERS[os]}`, id);
     if (job["timeout-minutes"] !== 345) note("timeout-minutes is not 345", id);
     if (!same(job.defaults, { run: { shell: "bash" } })) note("defaults.run is not shell: bash alone", id);
     const steps = (job.steps ?? []) as Step[];
@@ -271,6 +280,11 @@ describe("contributor.yml runs the documents' marked blocks, and nothing else", 
     const steps = (w: Workflow, job: string) => w.jobs![job]!.steps as Step[];
     const step = (w: Workflow, job: string, label: string) => steps(w, job).find((s) => labelOf(s) === label)!;
     const withWf = (w: Workflow): Inputs => ({ ...base, contributor: yaml.dump(w) });
+    const withBuild = (edit: (b: Workflow) => void): Inputs => {
+      const b = yaml.load(base.build) as Workflow;
+      edit(b);
+      return { ...base, build: yaml.dump(b) };
+    };
     const withDoc = (doc: string, from: string, to: string): Inputs => {
       expect(base.docs[doc], `${doc} carries the text the plant replaces`).toContain(from);
       return { ...base, docs: { ...base.docs, [doc]: base.docs[doc]!.replace(from, to) } };
@@ -354,7 +368,9 @@ describe("contributor.yml runs the documents' marked blocks, and nothing else", 
         (w.on as Record<string, unknown>).pull_request = null;
         return withWf(w);
       }, /^the triggers are pull_request, schedule, workflow_dispatch/],
-      ["the Linux label differing from docs/install.md's Ubuntu", () => withDoc("docs/install.md", "on Ubuntu\n24.04:", "on Ubuntu\n26.04:"), /^runs-on is ubuntu-24\.04, not ubuntu-26\.04 \(linux-build, linux-suite-1, linux-suite-2\)$/],
+      ["the Linux label differing from docs/install.md's Ubuntu", () => withDoc("docs/install.md", "on Ubuntu\n24.04:", "on Ubuntu\n26.04:"), /^runs on Ubuntu 24\.04, not the Ubuntu 26\.04 docs\/install\.md names \(build\.yml linux, build\.yml linux-arm64, linux-build, linux-suite-1, linux-suite-2\)$/],
+      ["build.yml's x86_64 Linux job on the floating ubuntu-latest", () => withBuild((b) => { b.jobs!.linux!["runs-on"] = "ubuntu-latest"; }), /^runs on ubuntu-latest, not the Ubuntu 24\.04 docs\/install\.md names \(build\.yml linux\)$/],
+      ["build.yml's arm64 Linux job a release ahead", () => withBuild((b) => { b.jobs!["linux-arm64"]!["runs-on"] = "ubuntu-26.04-arm"; }), /^runs on Ubuntu 26\.04, not the Ubuntu 24\.04 docs\/install\.md names \(build\.yml linux-arm64\)$/],
       ["shards to 14, in the block and the steps alike", () => {
         const w = wf();
         const to = (t: string) => t.replace('"$PARTS" 15', '"$PARTS" 14');

@@ -1656,7 +1656,9 @@ jobs:
     name: Linux · smoke · engine · appimage + deb + rpm
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'pull_request' && needs.changes.result != 'skipped' && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true')) }}
-    runs-on: ubuntu-latest
+    # Pinned, as linux-arm64 is: ubuntu-latest moves to 26.04, whose at-spi2-core build-bridge.sh
+    # refuses, and whose glibc and GTK would move the AppImage with it. Both jobs change release together.
+    runs-on: ubuntu-24.04
     # Seventy-five and not sixty since the perf smoke joined this job: importing five thousand
     # messages and letting the process group settle is minutes on top of three packaged artifacts.
     timeout-minutes: 75
@@ -1693,6 +1695,9 @@ jobs:
       # `rpm` and `rpm2cpio` are both present and `cpio` is absent. Naming both
       # here means a runner image that drops either is an apt failure rather than
       # a silently skipped set of assertions.
+      #
+      # `meson`, `ninja-build`, `libxml2-dev` and `at-spi2-core` build and test the AT-SPI
+      # bridge the AppImage carries (see "Build the AT-SPI bridge the AppImage carries").
       - name: Install the Tauri prerequisites
         run: |
           sudo apt-get update
@@ -1706,7 +1711,8 @@ jobs:
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
             xdg-utils rpm cpio fuse3 \
-            xvfb x11-utils x11-apps
+            xvfb x11-utils x11-apps \
+            meson ninja-build libxml2-dev at-spi2-core
 
       - name: Toolchain
         run: |
@@ -1798,6 +1804,25 @@ jobs:
           install -m 0755 apps/desktop/src-tauri/linux/linuxdeploy-plugin-gtk.sh \
             "$TOOLS/linuxdeploy-plugin-gtk.sh"
           ls -la "$TOOLS/linuxdeploy-plugin-gtk.sh"
+
+      # ── THE APPIMAGE'S AT-SPI BRIDGE ──────────────────────────────────────
+      #
+      # at-spi2-core 2.52.0's bridge (this runner's) caches a defunct object
+      # again with nothing watching it; once the object is finalized, every
+      # accessibility client that discovers the app makes the bridge ref freed
+      # memory and the app dies on SIGSEGV. The same version is built here with
+      # the upstream fixes and its regression tests, from a source pinned by
+      # digest, and the GTK plugin swaps it into the AppDir (change 5 there).
+      # The .deb and the .rpm keep the distribution's bridge.
+      - name: Build the AT-SPI bridge the AppImage carries
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/at-spi2-core"
+          mkdir -p "$W"
+          bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" download-network -- curl -fsSL -o "$W/at-spi2-core-2.52.0.tar.xz" https://download.gnome.org/sources/at-spi2-core/2.52/at-spi2-core-2.52.0.tar.xz
+          bash apps/desktop/src-tauri/linux/at-spi2-core/build-bridge.sh "$W/out" --tarball "$W/at-spi2-core-2.52.0.tar.xz" | tee "$W/build.log"
+          grep -E '^OHMAIL_ATK_BRIDGE(_BUILD_ID)?=' "$W/build.log" >> "$GITHUB_ENV"
+          test "$(grep -cE '^OHMAIL_ATK_BRIDGE(_BUILD_ID)?=' "$W/build.log")" = 2
 
       # THE RUNNER'S SPEED, beside the engine's: the build step's own seconds are
       # the reading every engine-ready ceiling's distribution was taken beside
@@ -2213,6 +2238,33 @@ jobs:
           FIRST_EXPORT="$(grep -an '^export GTK_DATA_PREFIX=' "$HOOK" | cut -d: -f1)"
           if [ -z "$FIRST_EXPORT" ] || [ "$ESCAPE_LINE" -ge "$FIRST_EXPORT" ]; then
             echo "the escape branch is not ahead of the AppDir exports (escape $ESCAPE_LINE, exports $FIRST_EXPORT)" >&2
+            exit 1
+          fi
+
+          # 5. The AT-SPI bridge is the one built above, not the runner's: one
+          #    copy, the build-id the build printed, and the RUNPATH that loads
+          #    the bundled libatk and libatspi beside it.
+          BRIDGES="$(find squashfs-root -name 'libatk-bridge*.so*' -print)"
+          echo "AT-SPI bridges in the AppImage: ${BRIDGES:-<none>}"
+          if [ "$(printf '%s\n' "$BRIDGES" | grep -c . || true)" != 1 ]; then
+            echo "the AppImage does not carry exactly one AT-SPI bridge" >&2
+            exit 1
+          fi
+          BRIDGE_ID="$(readelf -n "$BRIDGES" | sed -n 's/^ *Build ID: *//p')"
+          RUNNER_BRIDGE_ID="$(readelf -n "/usr/lib/$TRIPLE/libatk-bridge-2.0.so.0" | sed -n 's/^ *Build ID: *//p')"
+          echo "bridge build-id $BRIDGE_ID; built ${OHMAIL_ATK_BRIDGE_BUILD_ID:-<unset>}; the runner's $RUNNER_BRIDGE_ID"
+          if [ -z "${OHMAIL_ATK_BRIDGE_BUILD_ID:-}" ] || [ "$BRIDGE_ID" != "$OHMAIL_ATK_BRIDGE_BUILD_ID" ]; then
+            echo "the AppImage's AT-SPI bridge is not the one built for it" >&2
+            exit 1
+          fi
+          if [ -z "$RUNNER_BRIDGE_ID" ] || [ "$BRIDGE_ID" = "$RUNNER_BRIDGE_ID" ]; then
+            echo "the AppImage's AT-SPI bridge is the runner's unpatched one, or the runner's could not be read" >&2
+            exit 1
+          fi
+          BRIDGE_RUNPATH="$(patchelf --print-rpath "$BRIDGES")"
+          echo "bridge RUNPATH: $BRIDGE_RUNPATH"
+          if [ "$BRIDGE_RUNPATH" != '$ORIGIN' ]; then
+            echo "the AppImage's AT-SPI bridge has RUNPATH '$BRIDGE_RUNPATH', not \$ORIGIN" >&2
             exit 1
           fi
 
@@ -2882,7 +2934,8 @@ jobs:
             libssl-dev \
             build-essential curl wget file patchelf desktop-file-utils \
             xdg-utils rpm cpio fuse3 \
-            xvfb x11-utils x11-apps
+            xvfb x11-utils x11-apps \
+            meson ninja-build libxml2-dev at-spi2-core
 
       - name: Toolchain
         run: |
@@ -2983,6 +3036,17 @@ jobs:
           install -m 0755 apps/desktop/src-tauri/linux/linuxdeploy-plugin-gtk.sh \
             "$TOOLS/linuxdeploy-plugin-gtk.sh"
           ls -la "$TOOLS/linuxdeploy-plugin-gtk.sh"
+
+      # The same AT-SPI bridge as the x86_64 job's, built natively here.
+      - name: Build the AT-SPI bridge the AppImage carries
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/at-spi2-core"
+          mkdir -p "$W"
+          bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" download-network -- curl -fsSL -o "$W/at-spi2-core-2.52.0.tar.xz" https://download.gnome.org/sources/at-spi2-core/2.52/at-spi2-core-2.52.0.tar.xz
+          bash apps/desktop/src-tauri/linux/at-spi2-core/build-bridge.sh "$W/out" --tarball "$W/at-spi2-core-2.52.0.tar.xz" | tee "$W/build.log"
+          grep -E '^OHMAIL_ATK_BRIDGE(_BUILD_ID)?=' "$W/build.log" >> "$GITHUB_ENV"
+          test "$(grep -cE '^OHMAIL_ATK_BRIDGE(_BUILD_ID)?=' "$W/build.log")" = 2
 
       # The bundle is smoked inside this script, on this platform, before the app
       # is packaged — see the header.
@@ -3326,6 +3390,33 @@ jobs:
           FIRST_EXPORT="$(grep -an '^export GTK_DATA_PREFIX=' "$HOOK" | cut -d: -f1)"
           if [ -z "$FIRST_EXPORT" ] || [ "$ESCAPE_LINE" -ge "$FIRST_EXPORT" ]; then
             echo "the escape branch is not ahead of the AppDir exports (escape $ESCAPE_LINE, exports $FIRST_EXPORT)" >&2
+            exit 1
+          fi
+
+          # 5. The AT-SPI bridge is the one built above, not the runner's: one
+          #    copy, the build-id the build printed, and the RUNPATH that loads
+          #    the bundled libatk and libatspi beside it.
+          BRIDGES="$(find squashfs-root -name 'libatk-bridge*.so*' -print)"
+          echo "AT-SPI bridges in the AppImage: ${BRIDGES:-<none>}"
+          if [ "$(printf '%s\n' "$BRIDGES" | grep -c . || true)" != 1 ]; then
+            echo "the AppImage does not carry exactly one AT-SPI bridge" >&2
+            exit 1
+          fi
+          BRIDGE_ID="$(readelf -n "$BRIDGES" | sed -n 's/^ *Build ID: *//p')"
+          RUNNER_BRIDGE_ID="$(readelf -n "/usr/lib/$TRIPLE/libatk-bridge-2.0.so.0" | sed -n 's/^ *Build ID: *//p')"
+          echo "bridge build-id $BRIDGE_ID; built ${OHMAIL_ATK_BRIDGE_BUILD_ID:-<unset>}; the runner's $RUNNER_BRIDGE_ID"
+          if [ -z "${OHMAIL_ATK_BRIDGE_BUILD_ID:-}" ] || [ "$BRIDGE_ID" != "$OHMAIL_ATK_BRIDGE_BUILD_ID" ]; then
+            echo "the AppImage's AT-SPI bridge is not the one built for it" >&2
+            exit 1
+          fi
+          if [ -z "$RUNNER_BRIDGE_ID" ] || [ "$BRIDGE_ID" = "$RUNNER_BRIDGE_ID" ]; then
+            echo "the AppImage's AT-SPI bridge is the runner's unpatched one, or the runner's could not be read" >&2
+            exit 1
+          fi
+          BRIDGE_RUNPATH="$(patchelf --print-rpath "$BRIDGES")"
+          echo "bridge RUNPATH: $BRIDGE_RUNPATH"
+          if [ "$BRIDGE_RUNPATH" != '$ORIGIN' ]; then
+            echo "the AppImage's AT-SPI bridge has RUNPATH '$BRIDGE_RUNPATH', not \$ORIGIN" >&2
             exit 1
           fi
 

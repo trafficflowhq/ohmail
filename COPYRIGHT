@@ -84,7 +84,19 @@ licence:
                   and the linuxdeploy contributors, MIT, with the notice
                   below.
 
-The MIT notice both of those carry, after their copyright lines:
+  AT-SPI bridge   apps/desktop/src-tauri/linux/at-spi2-core/0001-0004 are
+  patches         upstream at-spi2-core commits, each patch's first line
+                  linking its commit and the last one backported to
+                  2.52.0, by their authors as each patch names them, and
+                  0005 adds regression tests; all are LGPL-2.1-or-later, as
+                  at-spi2-core is. The Linux AppImage carries
+                  libatk-bridge-2.0.so.0 built by build-bridge.sh in the same
+                  directory from the public at-spi2-core 2.52.0 tarball with
+                  these patches applied; the .deb and the .rpm use the
+                  distribution's own.
+
+The MIT notice the Omarchy themes and the GTK plugin carry, after their
+copyright lines:
 
   Permission is hereby granted, free of charge, to any person obtaining a
   copy of this software and associated documentation files (the
