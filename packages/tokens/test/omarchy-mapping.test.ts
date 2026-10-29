@@ -20,7 +20,13 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { clearsFloors, mapOmarchyTheme, omarchyMap } from "../omarchy/map.js";
+import {
+  clearsFloors,
+  mapOmarchyTheme,
+  mapOmarchyThemePair,
+  omarchyMap,
+  omarchyRefusal,
+} from "../omarchy/map.js";
 import { parseColorsToml } from "../omarchy/colors-toml.js";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -48,6 +54,29 @@ function chipGround(wash: string, ground: string): string {
 }
 
 const rawOf = (slug: string) => readFileSync(join(rawDir, `${slug}.colors.toml`), "utf8");
+
+/** What Omarchy stages for a legacy theme with no colors.toml of its own (mars, #436): the
+ *  poles, accent, selection and the sixteen ANSI slots, no named roles and no mode. */
+const MARS = [
+  'accent = "#c4632f"', 'selection = "#3b2420"', 'background = "#1d1310"', 'foreground = "#e8d5c4"',
+  'color0 = "#1d1310"', 'color1 = "#d2553f"', 'color2 = "#8fa05a"', 'color3 = "#e0a24a"',
+  'color4 = "#6f8fb0"', 'color5 = "#b06f95"', 'color6 = "#6fa8a0"', 'color7 = "#e8d5c4"',
+  'color8 = "#5a463e"', 'color9 = "#e8705a"', 'color10 = "#a8b870"', 'color11 = "#f0bc60"',
+  'color12 = "#88a8c8"', 'color13 = "#c888ac"', 'color14 = "#88c0b8"', 'color15 = "#f5e6d8"',
+].join("\n");
+
+/** netrunner's shape (#436): a crimson foreground on near-black, under the 4.5:1 floor. */
+const NETRUNNER = [
+  'mode = "dark"', 'accent = "#00d9ff"', 'background = "#0f0508"', 'foreground = "#c5003c"',
+  'red = "#ff1744"', 'yellow = "#f2e900"', 'green = "#00ff9f"', 'cyan = "#00d9ff"',
+  'blue = "#3d5afe"', 'magenta = "#d500f9"',
+].join("\n");
+
+/** A grey foreground ~1.4:1 on its panel: walked to the pole, it reads. */
+const DIM_GREY = [
+  'mode = "dark"', 'background = "#202020"', 'foreground = "#303030"',
+  'dark_foreground = "#282828"', 'accent = "#2a2a2a"', 'red = "#252525"',
+].join("\n");
 const fixtureOf = (slug: string): Fixture =>
   JSON.parse(readFileSync(join(omarchyDir, "fixtures", `${slug}.json`), "utf8")) as Fixture;
 
@@ -152,20 +181,75 @@ describe("the ohmarchy mapping, production path", () => {
   });
 
   it("a palette the walks cannot save is refused, not shipped under the floor", () => {
-    // `ensure` mixes toward the palette's own foreground; when the foreground itself sits
-    // near the background, every walk runs to its end and still lands under the floor —
-    // ~1.4:1 here against promised 4.5:1. The production path must answer null (keep the
-    // last good theme), never a "success" whose floors are fiction. Deleting the output
-    // floor check in map.ts turns this red.
+    // A mid-grey panel: even white, the dark scheme's pole, reads 3.9:1 on it against the
+    // promised 4.5:1. The production path must answer null (keep the last good theme), never
+    // a "success" whose floors are fiction. Deleting the output floor check in map.ts turns
+    // this red.
     const unreadable = [
       'mode = "dark"',
-      'background = "#202020"',
-      'foreground = "#303030"',
-      'dark_foreground = "#282828"',
-      'accent = "#2a2a2a"',
-      'red = "#252525"',
+      'background = "#808080"',
+      'foreground = "#909090"',
+      'dark_foreground = "#888888"',
+      'accent = "#8a8a8a"',
+      'red = "#858585"',
     ].join("\n");
     expect(mapOmarchyTheme({ colorsToml: unreadable })).toBeNull();
+    expect(omarchyRefusal({ colorsToml: unreadable })).toBe("floor-ink");
+  });
+
+  it("a foreground under the floor is walked toward the pole, and the theme maps (#436)", () => {
+    // netrunner's shape: crimson ink on near-black, 3.29:1. Every walk used to aim at that
+    // foreground, so none could clear 4.5:1 and the whole theme was refused.
+    const MAP = omarchyMap();
+    expect(MAP.contrast("#c5003c", "#0f0508")).toBeLessThan(4.5);
+    for (const colorsToml of [NETRUNNER, DIM_GREY]) {
+      const mapped = mapOmarchyTheme({ colorsToml });
+      expect(mapped, colorsToml).not.toBeNull();
+      expect(clearsFloors(MAP, mapped!.tokens)).toBe(true);
+      expect(mapped!.notes.some((n) => n.slot === "--ink")).toBe(true);
+      expect(omarchyRefusal({ colorsToml })).toBeNull();
+    }
+    expect(mapOmarchyTheme({ colorsToml: NETRUNNER })!.tokens["--panel"]).toBe("#0f0508");
+  });
+
+  it("a legacy colorN-only palette maps, the ANSI slots standing in for the named roles (#436)", () => {
+    const mapped = mapOmarchyTheme({ colorsToml: MARS });
+    expect(mapped).not.toBeNull();
+    // Exactly what the same palette maps to with the named roles written out from colorN.
+    const named = [
+      MARS,
+      'red = "#d2553f"', 'green = "#8fa05a"', 'yellow = "#e0a24a"',
+      'blue = "#6f8fb0"', 'magenta = "#b06f95"', 'cyan = "#6fa8a0"',
+      'bright_red = "#e8705a"', 'bright_green = "#a8b870"', 'bright_yellow = "#f0bc60"',
+      'bright_blue = "#88a8c8"', 'bright_magenta = "#c888ac"', 'bright_cyan = "#88c0b8"',
+    ].join("\n");
+    expect(mapped!.tokens).toEqual(mapOmarchyTheme({ colorsToml: named })!.tokens);
+    // A named role the theme does write wins over its ANSI slot.
+    const own = mapOmarchyTheme({ colorsToml: `${MARS}\nred = "#ff5555"` })!.tokens;
+    expect(own["--danger"]).not.toBe(mapped!.tokens["--danger"]);
+    expect(mapOmarchyThemePair({ colorsToml: MARS })).not.toBeNull();
+  });
+
+  it("names why a theme is refused, and nothing for one that maps", () => {
+    const base = ['mode = "dark"', 'background = "#1d1310"', 'foreground = "#e8d5c4"'];
+    expect(omarchyRefusal({ colorsToml: "not a theme" })).toBe("no-palette");
+    expect(omarchyRefusal({ colorsToml: [...base, 'red = "#d2553f"'].join("\n") })).toBe("missing-accent");
+    expect(omarchyRefusal({ colorsToml: [...base, 'accent = "#c4632f"'].join("\n") })).toBe("missing-red");
+    expect(
+      omarchyRefusal({ colorsToml: [...base, 'accent = "#c4632f"', 'red = "crimson"'].join("\n") }),
+    ).toBe("not-a-color");
+    expect(omarchyRefusal({ colorsToml: rawOf("tokyo-night") })).toBeNull();
+  });
+
+  it("the stock themes map exactly as before, both schemes", () => {
+    const lines = slugs.flatMap((slug) => {
+      const pair = mapOmarchyThemePair({ colorsToml: rawOf(slug) })!;
+      return [
+        `${slug} native ${JSON.stringify(pair.native.tokens)}`,
+        `${slug} counterpart ${JSON.stringify(pair.counterpart?.tokens ?? null)}`,
+      ];
+    });
+    expect(lines.join("\n")).toMatchSnapshot();
   });
 
   it("unreadable material answers null — the caller keeps the last good theme", () => {

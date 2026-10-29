@@ -107,6 +107,9 @@ const WINDOW_COMMANDS: &[&str] = &[
     // window may name; the push half is the `omarchy:theme` event over the listen grant the
     // menu already uses.
     "omarchy_theme",
+    // …and the word back when the window could not map that theme: a reason CODE from a closed
+    // list; the shell adds the theme's name itself and writes one log line.
+    "omarchy_theme_refused",
     // THE UPDATER, from the settings pane (`src/updater.rs`). Two commands that name nothing:
     // a read of the flow's own state — installed version, what the last check found and when —
     // and a press that does exactly what picking the menu item does. They exist because the

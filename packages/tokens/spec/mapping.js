@@ -92,12 +92,23 @@
     ["mulberry", 320], ["heather", 352],
   ];
 
+  /* A legacy theme Omarchy stages with only color0..color15 (mars): the ANSI
+     slots stand in for the named roles it does not write. */
+  const ANSI_ROLES = [["red", 1], ["green", 2], ["yellow", 3], ["blue", 4], ["magenta", 5], ["cyan", 6],
+    ["bright_red", 9], ["bright_green", 10], ["bright_yellow", 11], ["bright_blue", 12],
+    ["bright_magenta", 13], ["bright_cyan", 14]];
+  function withAnsiRoles(colors) {
+    const c = { ...colors };
+    for (const [role, n] of ANSI_ROLES) if (!c[role] && c["color" + n]) c[role] = c["color" + n];
+    return c;
+  }
+
   /* ── the mapping ─────────────────────────────────────────────────────── */
   /* fixture: a parsed omarchy-fixtures/<slug>.json (or any object with
      { mode, colors }). Returns { tokens, notes } — tokens keyed by ohmail
      custom-property name, notes listing every fallback that fired. */
   function mapTheme(fixture) {
-    const c = fixture.colors;
+    const c = withAnsiRoles(fixture.colors);
     const mode = fixture.mode === "light" ? "light" : "dark";
     const notes = [];
     const note = (slot, msg) => notes.push({ slot, msg });
@@ -106,9 +117,13 @@
     const canvas = c.dark_background || bg;
     const dfg = c.dark_foreground || fg;
     const bfg = c.bright_foreground || fg;
+    /* Where every walk below aims: the foreground, or the mode's pole when the foreground
+       itself misses 4.5:1 on the panel (netrunner) — a walk toward it could never clear. */
+    const pole = mode === "dark" ? "#ffffff" : "#000000";
+    const lead = contrast(fg, bg) >= 4.5 ? fg : pole;
 
     /* Structural accent: focus borders, active bars, the lift-3 ring.
-       Floor 3:1 against the tile (WCAG non-text), walking toward fg.
+       Floor 3:1 against the tile (WCAG non-text), walking toward the lead.
        A theme's border override may use Hyprland syntax — `rgba(RRGGBBAA)`,
        possibly two stops + an angle (a gradient). Tokens need one color:
        take the FIRST stop and drop its alpha (measured on the four themes
@@ -118,7 +133,7 @@
       return m ? "#" + m[1] : v;
     };
     const accSrc = hyprColor(c.hyprland_active_border || c.active_border_color || c.accent);
-    const accStruct = ensure(accSrc, bg, 3, fg);
+    const accStruct = ensure(accSrc, bg, 3, lead);
     if (accStruct.walked) note("--accent", `structural accent walked ${accStruct.walked}% toward foreground (was ${contrast(accSrc, bg).toFixed(2)}:1 vs panel)`);
 
     /* An unread message's panel. Light: the panel taken toward its own ink by Omarchy's hover
@@ -127,17 +142,17 @@
     const text = mode === "light" ? [bg, wash] : bg;
 
     /* Text accent: links, active labels. Floor 4.5:1, same walk. */
-    const accText = ensure(accSrc, text, 4.5, fg);
+    const accText = ensure(accSrc, text, 4.5, lead);
     if (accText.walked) note("--accent-ink", `text accent walked ${accText.walked}% toward foreground`);
 
     /* Ink ramp: fg is the theme's designed body text (floor 4.5 anyway);
        ink2/ink3 are mechanical mixes toward dark_foreground, floored so
        meta text never sinks below 4.5:1 on weak ramps. */
-    const ink = ensure(fg, text, 4.5, mode === "dark" ? "#ffffff" : "#000000");
+    const ink = ensure(fg, text, 4.5, pole);
     if (ink.walked) note("--ink", `foreground walked ${ink.walked}% toward ${mode === "dark" ? "white" : "black"}`);
-    const ink2 = ensure(mix(fg, dfg, 1 / 3), text, 4.5, fg);
+    const ink2 = ensure(mix(fg, dfg, 1 / 3), text, 4.5, lead);
     if (ink2.walked) note("--ink2", `walked ${ink2.walked}% back toward foreground`);
-    const ink3 = ensure(mix(fg, dfg, 2 / 3), text, 4.5, fg);
+    const ink3 = ensure(mix(fg, dfg, 2 / 3), text, 4.5, lead);
     if (ink3.walked) note("--ink3", `walked ${ink3.walked}% back toward foreground`);
 
     /* On-accent: whichever of the theme's own poles reads better on the
@@ -151,7 +166,7 @@
     /* Danger: the theme's red as TEXT (4.5:1). Achromatic themes (White)
        collapse it to gray on purpose — their own terminals do the same;
        weight and wording carry the meaning there. */
-    const danger = ensure(c.red, bg, 4.5, fg);
+    const danger = ensure(c.red, bg, 4.5, lead);
     if (danger.walked) note("--danger", `red walked ${danger.walked}% toward foreground`);
 
     /* Tag ramp: nearest hue per slot from the chromatic set; bg at alpha
@@ -175,7 +190,7 @@
       } else {
         pick = mix(fg, dfg, 0.33); // achromatic theme: tags are quiet ink
       }
-      const tink = ensure(pick, [mix(bg, pick, 0.14), mix(canvas, pick, 0.14)], 4.5, fg);
+      const tink = ensure(pick, [mix(bg, pick, 0.14), mix(canvas, pick, 0.14)], 4.5, lead);
       tags[`--tg-${name}-ink`] = tink.value;
       tags[`--tg-${name}-bg`] = alpha(pick, 0.14);
       if (tink.walked) note(`--tg-${name}-ink`, `walked ${tink.walked}% toward foreground`);
@@ -240,5 +255,5 @@
     return { tokens, notes, mode };
   }
 
-  return { mapTheme, contrast, mix, alpha, hue, ensure, TAG_HUES };
+  return { mapTheme, withAnsiRoles, contrast, mix, alpha, hue, ensure, TAG_HUES };
 });

@@ -163,3 +163,24 @@ fn detection_is_the_staged_theme_directory_itself() {
     clean(&dir);
     clean(&bare);
 }
+
+#[test]
+fn a_refused_theme_is_one_line_naming_it_and_why() {
+    // #436: a refusal and "not following" looked the same. The shell reads the name itself.
+    let dir = staged("refused");
+    write(&dir, "theme.name", "netrunner\n");
+    let name = theme_name(&dir);
+    assert_eq!(
+        refusal_line(name.as_deref(), "floor-ink").as_deref(),
+        Some("omarchy theme \"netrunner\" refused: its text misses the 4.5:1 contrast floor; the window keeps its last theme"),
+    );
+    assert!(refusal_line(Some("mars"), "missing-red").expect("a known code").contains("missing red"));
+    // Only the closed vocabulary is written, and a name that is not a slug is left out.
+    assert_eq!(refusal_line(Some("mars"), "anything the page says"), None);
+    assert_eq!(
+        refusal_line(Some("a\"b c"), "no-palette").as_deref(),
+        Some("omarchy theme refused: its colors.toml has no readable background and foreground; the window keeps its last theme"),
+    );
+    assert!(REFUSALS.iter().all(|entry| refusal_line(None, entry.0).is_some()));
+    clean(&dir);
+}
