@@ -287,6 +287,41 @@ describe("the gate over each session state", () => {
   });
 });
 
+/* A door to the person's own server signs in to that server: the address it proved stays, and
+   neither ohmail Cloud nor a copy of mail a fresh install does not have is named. */
+describe("the sign-in over a door to the person's own server", () => {
+  const SELF_HOSTED: EngineStatus = {
+    ...CLOUD_SERVING, address: "someone@mail.example.org", cloudUrl: "https://mail.example.org",
+  };
+  const reached = () => DOOR_COPY.serverReached("https://mail.example.org", "someone@mail.example.org");
+
+  it("after the address step: the server's own sign-in, its address kept, no Cloud and no copy", async () => {
+    fakeShell({ signedIn: false, sessionExpired: false }, { status: SELF_HOSTED });
+    const el = await render();
+    expect(text(el)).toContain(DOOR_COPY.doorServerName);
+    expect(text(el)).toContain(reached());
+    expect(dialog(el), "a self-hoster was asked to sign in to ohmail Cloud").toBe(false);
+    expect(text(el)).not.toContain("The copy of your mail");
+    expect(el.querySelector("#server-password"), "no password field for the server").toBeTruthy();
+  });
+
+  it("a refused session there says why, over the mail, on the server's own card", async () => {
+    fakeShell({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_revoked") }, { status: SELF_HOSTED });
+    const el = await render();
+    expect(dialog(el)).toBe(false);
+    expect(text(el)).toContain(DOOR_COPY.cloudLeadRevoked(machineWord()));
+    expect(text(el)).toContain(reached());
+    expect(mounted(el), "the mail stays behind the card").toBe(true);
+  });
+
+  it("control: the managed door keeps the Cloud sign-in", async () => {
+    fakeShell({ signedIn: false, sessionExpired: false });
+    const el = await render();
+    expect(dialog(el)).toBe(true);
+    expect(el.querySelector("#server-password")).toBeNull();
+  });
+});
+
 /**
  * THE REFUSAL UNDER A WINDOW ALREADY SHOWING MAIL, as the packaged app met it: the engine knew
  * in three seconds, the window said "Retrying" and then emptied to the engine-down notice, and

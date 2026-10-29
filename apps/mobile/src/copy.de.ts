@@ -263,6 +263,16 @@ export const DE: Deck = {
     "Dein Ausgangsserver (SMTP) bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 465 oder 587.",
   standaloneSmtpUnreachable:
     "ohmail hat deinen Ausgangsserver (SMTP) unter dieser Adresse und diesem Port nicht erreicht. Prüf beides und versuch es erneut. Es wurde nichts gespeichert.",
+  standaloneSmtpCertificateRefused:
+    "Das Zertifikat deines Ausgangsservers (SMTP) wurde abgelehnt, wir haben also abgebrochen, bevor das Passwort rausging. Prüf den SMTP-Server und ob dieser Port TLS erwartet.",
+  standaloneSmtpCertificateName:
+    "Das Zertifikat deines Ausgangsservers (SMTP) passt nicht zum eingegebenen Server, wir haben also abgebrochen, bevor das Passwort rausging. Frag deinen Anbieter nach dem richtigen SMTP-Server.",
+  standaloneStarttlsInjected:
+    "Dein Mailserver hat beim Wechsel auf eine verschlüsselte Verbindung unerwartete Daten geschickt, wir haben also abgebrochen, bevor das Passwort rausging. Etwas in diesem Netz könnte stören: Versuch es in einem anderen Netz oder mit Port 993.",
+  standaloneStarttlsTimeout:
+    "Der Wechsel auf eine verschlüsselte Verbindung zu deinem Mailserver wurde nicht rechtzeitig fertig, wir haben also abgebrochen, bevor das Passwort rausging. Versuch es erneut oder nimm Port 993.",
+  standaloneOffline:
+    "Dieses Handy hat kein Netz, deshalb hat ohmail deinen Mailserver nicht erreicht. Versuch es erneut, sobald es wieder da ist. Es wurde nichts gespeichert.",
   standaloneRefused: (detail: string) =>
     `Das Öffnen des Postfachs wurde abgebrochen: ${detail}`,
   /* Die drei des Neustarts. Jede benennt ein anderes Fehlen. */
@@ -429,8 +439,7 @@ export const DE: Deck = {
   connectSyncing: "Wird synchronisiert…",
   connectSyncNow: "Jetzt synchronisieren",
   connectDisconnect: "Trennen",
-  connectMirrored: (n: number, cursor: string) =>
-    `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} auf diesem Gerät · Cursor ${cursor}`,
+  connectMirrored: (n: number) => `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} auf diesem Gerät`,
   pinChanged: PIN_CHANGED,
   /* Die andere Hälfte eines fehlgeschlagenen Handshakes — siehe `copy.en.ts`. */
   pairKeyMismatch:
@@ -593,8 +602,8 @@ export const DE: Deck = {
   metaItems: (n: number) => `${n} ${n === 1 ? "Eintrag" : "Einträge"}`,
   mailRowAria: (from: string, subject: string, time: string, unread: boolean) =>
     `${from}. ${subject.trim() === "" ? "" : `${subject}. `}${time}.${unread ? " Ungelesen." : ""}`,
-  senderRowAria: (name: string, address: string, held: number, claim: string) =>
-    `${name}, ${address}, ${held} zurückgehalten${claim ? `, ${claim}` : ""}`,
+  senderRowAria: (name: string, address: string, count: number, claim: string) =>
+    `${name}, ${address}, ${count === 1 ? "1 Nachricht" : `${count} Nachrichten`}${claim ? `, ${claim}` : ""}`,
   deliveredTo: (label: string) => `Zugestellt an ${label}`,
   readsCollapse: "Zuklappen",
   readsReadInFull: "Ganz lesen",
@@ -637,7 +646,7 @@ export const DE: Deck = {
     (shown === 1
       ? "Die eine Ausgabe wird gezeigt."
       : `Alle ${shown} Ausgaben werden gezeigt.`)
-    + " Vorbeiscrollen markiert einen Beitrag als gesehen.",
+    + " Ein Beitrag gilt als gelesen, sobald er im Strom auf dem Bildschirm stehen bleibt. Schnelles Vorbeiscrollen lässt ihn ungelesen.",
   receiptsTail: (shown: number) =>
     shown === 1 ? "Der eine Beleg wird gezeigt." : `Alle ${shown} Belege werden gezeigt.`,
   readsEmptyTitle: "Noch keine Ausgaben.",
@@ -645,7 +654,7 @@ export const DE: Deck = {
   receiptsEmptyTitle: "Noch keine Belege.",
   receiptsEmptyHint: "Bestellungen, Rechnungen und Tickets, die du hier ablegst, kommen an, sobald sie synchronisiert werden.",
   today: "heute",
-  streamSeenHint: "Vorbeiscrollen markiert als gesehen",
+  streamSeenHint: "ein Beitrag gilt als gelesen, sobald er auf dem Bildschirm stehen bleibt; schnelles Vorbeiscrollen lässt ihn ungelesen",
 
   /* ------------------------------------------------------------- protected */
 
@@ -679,11 +688,11 @@ export const DE: Deck = {
   decideReadOff: "Wird ungelesen einsortiert — sie meldet sich.",
   heldCaption: (n: number, firstContact?: string) => {
     /* "alle" cannot govern one thing — `vollständig` says the same and takes no number. */
-    const head = `${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} — vollständig gezeigt`;
+    const head = `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} — vollständig gezeigt`;
     return firstContact ? `${head} · erster Kontakt ${firstContact}` : head;
   },
   screenedNote: (date: string, held: number) =>
-    `Aussortiert ${date} · ${held} zurückgehalten, vollständig gezeigt. Zulassen gibt jede einzelne davon in die gewählte Ansicht frei.`,
+    `Neueste Mail ${date} · ${held} zurückgehalten, vollständig gezeigt. Zulassen gibt jede einzelne davon in die gewählte Ansicht frei.`,
   /* No trailing preposition: the destination is chosen in the control beside this label, and
      "freigeben nach Belege" is not German. The label states the act; the picker states the place. */
   allowLabel: "Zulassen: zurückgehaltene Mails freigeben",
@@ -698,6 +707,7 @@ export const DE: Deck = {
   waitingNotYetPress: "Einstellungen öffnen",
   cutlinePending:
     "Deine Screening-Einstellungen werden gelesen — bis sie da sind, steht diese Liste nicht fest.",
+  waitingFirstPass: "Dein Postfach wird noch gelesen — wer hier wartet, steht fest, sobald der erste Durchgang fertig ist.",
   screenedEmptyTitle: "Niemand aussortiert.",
   screenedEmptyHint: "Absender, zu denen du Nein sagst, warten hier — zurückgehalten, nie gelöscht.",
   spamEmptyTitle: "Kein Spam zurückgehalten.",
@@ -870,7 +880,7 @@ export const DE: Deck = {
 
   search: "Suche",
   /* SUCHE — der `search`-Namespace des Web-Katalogs, wo die Fläche dieselbe ist. */
-  searchPlaceholder: "Alles durchsuchen — Tippfehler sind erlaubt",
+  searchPlaceholder: "Alles durchsuchen",
   searchResultsHead: (n: number) => (n === 1 ? "Ein Treffer" : `${n} Treffer`),
   searchSimilarHead: "Ähnlich",
   searchSimilarHint: "Nichts stimmte genau überein — das sind die nächstliegenden Wörter.",
@@ -1412,10 +1422,10 @@ export const DE: Deck = {
   deleteReplayGone: (n: number) =>
     `${n === 1 ? "1 Nachricht wurde" : `${n} Nachrichten wurden`} nicht in den Papierkorb verschoben — dieses Handy hat sie beim nächsten Start nicht gefunden. Lösche sie noch einmal, wenn du das weiterhin willst.`,
   /* Das Angebot der Ohbox — die `screener.unscreened*`-Sätze des Web-Katalogs, Wort für Wort. */
-  unscreenedLead: (n: number) =>
-    n === 1
+  unscreenedLead: (n: number, atLeast?: boolean) =>
+    `${atLeast ? "Mindestens " : ""}${n === 1
       ? "1 Nachricht von einem Absender, über den du nie entschieden hast, liegt noch in der Inbox auf deinem Mailserver."
-      : `${n} Nachrichten von Absendern, über die du nie entschieden hast, liegen noch in der Inbox auf deinem Mailserver.`,
+      : `${n} Nachrichten von Absendern, über die du nie entschieden hast, liegen noch in der Inbox auf deinem Mailserver.`}`,
   unscreenedAll: (n: number) => `${n} in den Screener`,
   unscreenedMoved: (n: number) => `${n} in den Screener gelegt. Dein Organizer verschiebt sie beim nächsten Durchlauf.`,
   unscreenedMovedNone: "Nichts mehr zu screenen.",
@@ -1451,6 +1461,7 @@ export const DE: Deck = {
   trashRestore: "Wiederherstellen",
   trashRestoring: "Wird wiederhergestellt…",
   trashToastRestoring: (place: string) => `Wird in ${place} wiederhergestellt…`,
+  trashToastRestored: (place: string) => `In ${place} wiederhergestellt.`,
   trashToastRestoreFailed: "Konnte nicht wiederhergestellt werden — sie ist noch im Papierkorb.",
   trashNoErase: "ohmail löscht nie unwiderruflich — zum endgültigen Entfernen nutze deinen eigenen Mail-Client.",
   trashListFailed: "Der Papierkorb ließ sich gerade nicht lesen.",
@@ -1703,6 +1714,7 @@ export const DE: Deck = {
   },
   draftsEmptyTitle: "Nichts Halbfertiges",
   draftsEmptyHint: "Sie liegen in deinem Account und sind deshalb auf jedem Gerät da, auf dem du deine Mails liest.",
+  draftsEmptyHintHere: "Sie bleiben auf diesem Handy.",
   draftsIsReply: "Antwort",
   draftsHeldChecking: "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. Wir schauen in deinem Gesendet-Ordner nach.",
   draftsHeldNotInSent: "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. In deinem Gesendet-Ordner ist sie nicht.",
@@ -1739,6 +1751,8 @@ export const DE: Deck = {
   draftsOpenConversation: "Unterhaltung öffnen",
   draftsEditNote:
     "Dieser Entwurf lässt sich hier nicht bearbeiten. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
+  draftsEditNoteHeldHere: "Diese Nachricht lässt sich nicht bearbeiten. Sende sie unverändert erneut oder verwirf sie.",
+  draftsEditNoteHere: "Dieser Entwurf lässt sich auf diesem Handy nicht bearbeiten. Verwerfen kannst du ihn hier.",
   draftsForwardOriginalAbsent:
     "Die Nachricht, die dieser Entwurf weiterleitet, ist nicht auf diesem Handy. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
   draftsEdit: "Bearbeiten",

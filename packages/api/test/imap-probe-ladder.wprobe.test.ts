@@ -146,6 +146,16 @@ describe("smtpTlsDetailOf — nodemailer re-stamps codes, so this classifier rea
     const err = Object.assign(new Error("Error upgrading connection with STARTTLS"), { code: "ETLS" });
     expect(smtpTlsDetailOf(err, "h")).toEqual({ kind: "tls_unavailable" });
   });
+  it("the phone's TLS shim names the refusal itself: its kind, or a certificate it could not name", () => {
+    // Android's words reach nodemailer as an ESOCKET over the shim's own stamps.
+    const shim = (kind?: string) => Object.assign(new Error("Trust anchor for certification path not found."), {
+      code: "ESOCKET", tlsFailed: true, certificateRefused: true, ...(kind ? { certificateKind: kind } : {}),
+    });
+    expect(smtpTlsDetailOf(shim("expired"), "h")).toEqual({ kind: "expired" });
+    expect(smtpTlsDetailOf(shim("untrusted"), "h")).toEqual({ kind: "untrusted" });
+    expect(smtpTlsDetailOf(shim(), "h")).toEqual({ kind: "generic" });
+    expect(smtpTlsDetailOf(shim("a kind nobody wrote"), "h")).toEqual({ kind: "generic" });
+  });
   it("a non-TLS failure is not claimed by this classifier", () => {
     expect(smtpTlsDetailOf(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }), "h")).toBeNull();
     expect(smtpVerdictFor(Object.assign(new Error("Invalid login"), { code: "EAUTH", responseCode: 535 }))).toEqual({ verdict: "refuse", code: "auth" });

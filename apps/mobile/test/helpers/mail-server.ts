@@ -69,6 +69,7 @@ export function ruleDto(id: string, kind: "sender" | "domain", match: string, de
  */
 export function mailServer() {
   const log: SyncChange[] = [];
+  let unscreenedBound: number | null = null;
   const messages = new Map<string, Dto>();
   /**
    * WHAT THE SERVER'S TRASH HOLDS — every DELETEd message, with when and where it came from.
@@ -608,16 +609,18 @@ export function mailServer() {
           && !r.subjectContains && !r.bodyContains
           && (r.kind === "sender" ? r.match.toLowerCase() === address : r.kind === "domain" && r.match.toLowerCase() === address.split("@")[1]));
         const bySender = new Map<string, Dto[]>();
-        for (const m of messages.values()) {
+        const undecided = [...messages.values()].filter((m) => m.folder === "INBOX" && !decided(m.from.address.toLowerCase()));
+        // The service's walk stops at its bound and says so (`complete: false`).
+        const walked = unscreenedBound === null ? undecided : undecided.slice(0, unscreenedBound);
+        for (const m of walked) {
           const key = m.from.address.toLowerCase();
-          if (m.folder !== "INBOX" || decided(key)) continue;
           bySender.set(key, [...(bySender.get(key) ?? []), m]);
         }
         const groups = [...bySender.entries()]
           .map(([address, list]) => ({ address, count: list.length, newestAt: list.map((m) => String(m.date ?? "")).sort().at(-1) ?? "" }))
           .sort((a, b) => b.count - a.count || a.address.localeCompare(b.address));
         if (method === "GET") {
-          json(200, { groups, total: groups.reduce((n, g) => n + g.count, 0), max: 200 }, seq);
+          json(200, { groups, total: groups.reduce((n, g) => n + g.count, 0), complete: walked.length === undecided.length, max: 200 }, seq);
           return;
         }
         const named = (JSON.parse(body || "{}") as { addresses?: string[] }).addresses;
@@ -1036,6 +1039,8 @@ export function mailServer() {
       push("folder", "update", id, next);
     },
     failNext: (method: string, prefix: string) => failures.push({ method, prefix }),
+    /** Stops `GET /screener/unscreened`'s walk after `n` letters, as the service's bound does. */
+    boundUnscreened: (n: number | null) => { unscreenedBound = n; },
     /**
      * The next matching request answers 202 with the organizer's request record — the reader
      * mailbox's door. `holder` is the install's name, or `null` for a real holder without one.

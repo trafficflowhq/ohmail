@@ -86,14 +86,15 @@ export function UnsavedChanges() {
   return (
     <View style={{ paddingHorizontal: 16, paddingBottom: 6, gap: 6 }}>
       {listed === 0 && said !== null ? (
-        <Tap onPress={() => setSaid(null)} accessibilityRole="button">
+        <Tap under onPress={() => setSaid(null)} accessibilityRole="button">
           <Txt variant="meta" tone="ink3">
             {said.message || Copy.unsavedNoReason} · {Copy.unsavedDismiss}
           </Txt>
         </Tap>
       ) : null}
       {listed === 0 ? null : (
-        <Tap onPress={() => setOpen((v) => !v)} accessibilityRole="button">
+        /* Under the top bar: a target grown upward took the Sidebar button's presses. */
+        <Tap under onPress={() => setOpen((v) => !v)} accessibilityRole="button">
           <Txt variant="meta" tone="ink3">
             {[
               rows.length > 0 ? Copy.unsavedCount(rows.length) : null,

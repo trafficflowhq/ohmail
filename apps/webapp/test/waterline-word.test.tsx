@@ -406,3 +406,29 @@ describe("the two numbers on one screen never share a word", () => {
     });
   }
 });
+
+/* The list's foot states the read rule: an item turns read once it rests in the stream, and a
+   list scroll reads nothing (#415). It used to say scrolling past marked it seen. */
+describe("the News list's foot names the read rule the stream runs", () => {
+  beforeAll(() => {
+    (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver = MockIO;
+  });
+
+  const RULE: Record<Locale, { says: readonly string[]; never: RegExp }> = {
+    en: { says: ["rests on screen", "quick scroll past leaves it unread"], never: /scrolling past[^.]*marks/i },
+    de: { says: ["auf dem Bildschirm stehen bleibt", "Vorbeiscrollen lässt ihn ungelesen"], never: /Vorbeiscrollen markiert/ },
+  };
+
+  for (const locale of ["en", "de"] as const) {
+    it(`${locale}: the foot says what rests turns read and a quick scroll reads nothing`, async () => {
+      await mountReads(locale, await pile());
+      const foot = host!.querySelector(".tail-row")?.textContent ?? "";
+      for (const s of RULE[locale].says) expect(foot).toContain(s);
+      expect(foot).not.toMatch(RULE[locale].never);
+      /* The demo's About text tells the same rule. */
+      const about = at(CATALOGUE[locale], "about.p2") as string;
+      expect(about).toContain(RULE[locale].says[0]);
+      expect(about).not.toMatch(RULE[locale].never);
+    });
+  }
+});

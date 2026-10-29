@@ -34,6 +34,13 @@ describe("the phone's reach sentence for a part inside a word", () => {
     expect(partReachSaid(q, s)).toBe(false);
   });
 
+  it("the box promises no typo tolerance the phone's store does not have, as the browser's", () => {
+    expect(EN.searchPlaceholder).toBe("Search everything");
+    expect(DE.searchPlaceholder).toBe("Alles durchsuchen");
+    const box = (l: "en" | "de") => (JSON.parse(read(`../../webapp/messages/${l}.json`)) as { search: { placeholder: string } }).search.placeholder;
+    expect([box("en"), box("de")]).toEqual([EN.searchPlaceholder, DE.searchPlaceholder]);
+  });
+
   it("the sentence is the browser's, word for word, in both languages", () => {
     expect(EN.searchPartReach).toBe(webOf("en"));
     expect(DE.searchPartReach).toBe(webOf("de"));

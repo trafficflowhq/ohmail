@@ -24,6 +24,7 @@ import {
   paneSplit,
   railHome,
   scaffoldPlan,
+  sheetOwnsTheWayOut,
 } from "../src/ui/scaffold/plan";
 
 const at = (name: string) => {
@@ -126,7 +127,15 @@ describe("a pushed route's rail leads with Back (the prototype's pushed rail)", 
   it("everything else is", () => {
     for (const p of ["/settings", "/message/abc", "/sender/waiting/x", "/servers", "/triage", "/history"]) {
       expect(isTabRoute(p)).toBe(false);
+      expect(sheetOwnsTheWayOut(p, true), p).toBe(false);
     }
+  });
+  /* New mail is a sheet with its own Cancel: a rail Back beside it was a lone chevron saying it twice. */
+  it("New mail's sheet carries the way out while it is up; its pages without one keep the rail's Back", () => {
+    expect(sheetOwnsTheWayOut("/compose", true)).toBe(true);
+    expect(sheetOwnsTheWayOut("/compose/", true)).toBe(true);
+    expect(sheetOwnsTheWayOut("/compose", false), "no mailbox to send from: a page, Back stays").toBe(false);
+    expect(isTabRoute("/compose"), "CONTROL: nor is it a tab root").toBe(false);
   });
 });
 

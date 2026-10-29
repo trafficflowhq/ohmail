@@ -22,6 +22,7 @@ import {
 } from "../src/mobile.js";
 import { DEFAULT_POLL_INTERVAL_MS } from "../src/engine.js";
 import { serviceUp } from "@trafficflow/db/testing";
+import { rigAppendDates } from "../../../test/support/rig-append-date.js";
 
 type Row = Record<string, unknown>;
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
@@ -170,8 +171,9 @@ async function deliver(user: string, n: number, tag: string): Promise<void> {
   const client = new ImapFlow({ host: HOST, port: PORT, secure: false, auth: { user, pass: "test" }, logger: false });
   await client.connect();
   try {
+    const dates = rigAppendDates(Array.from({ length: n }, (_, i) => (100 + (i % 20)) * 86_400_000));
     for (let i = 0; i < n; i++) {
-      const when = new Date(Date.now() - (100 + (i % 20)) * 86_400_000);
+      const when = dates[i]!;
       const raw = [
         "From: Pal <pal@example.test>", `To: <${user}>`, `Subject: ${tag} ${i}`,
         `Message-ID: <${tag}-${i}-${randomUUID()}@example.test>`, `Date: ${when.toUTCString()}`,

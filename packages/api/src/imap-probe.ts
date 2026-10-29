@@ -915,6 +915,13 @@ export function smtpTlsDetailOf(err: unknown, expectedHost: string): ProbeTlsDet
   // requireTLS sent STARTTLS even unadvertised and the server answered non-2xx: no upgrade to
   // be had. The one SMTP shape that maps to "this server offers no encryption".
   if (/upgrading connection with STARTTLS/i.test(message)) return { kind: "tls_unavailable" };
+  // The phone's TLS shim says it in the platform's words, so it stamps the refusal itself.
+  const shim = err as { certificateRefused?: unknown; certificateKind?: unknown } | null;
+  if (shim?.certificateRefused === true) {
+    const kind = shim.certificateKind;
+    return kind === "untrusted" || kind === "expired" || kind === "not_yet_valid" || kind === "hostname_mismatch"
+      ? { kind } : { kind: "generic" };
+  }
   if (/does not match certificate'?s altnames/i.test(message)) {
     const { certHost } = smtpCertNamesOf(err);
     return { kind: "hostname_mismatch", expectedHost, ...(certHost ? { certHost } : {}) };

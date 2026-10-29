@@ -1,7 +1,7 @@
 /**
  * WHERE THE OHBOX'S MAIL WENT — the line under the Ohbox's meta (row OHBOX-QUIET-READS-AS-STALLED):
  * when the mailboxes were last checked and how many letters went to which pile since the person was
- * here, each count a link to its pile; while the top line has a sentence, that sentence instead
+ * here, each count a link to its pile; nothing while the top line has a sentence
  * (`live.ts#ohboxWhereSaid`). The web's `OhboxWhereLine`, in this app's own primitives.
  */
 import { useEffect, useState } from "react";
@@ -51,9 +51,6 @@ export function OhboxWhere({ filed }: { filed: FiledSince | null }) {
     filed,
   });
   if (said === null) return null;
-  if (said.kind === "said") {
-    return <Txt variant="meta" tone="ink3" style={{ marginTop: 4 }}>{said.text}</Txt>;
-  }
   if (said.checked === null && said.piles.length === 0) return null;
   const checked = said.checked === null ? null : Copy.whereChecked(checkedAgoSaid(said.checked, nowMs));
   return (

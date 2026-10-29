@@ -7,7 +7,7 @@
  * unsaved changes — which are state, not brand.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AccessibilityInfo, Animated, Easing, Platform, View, type LayoutChangeEvent } from "react-native";
+import { AccessibilityInfo, Animated, Easing, Platform, View, useWindowDimensions, type LayoutChangeEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
@@ -18,6 +18,7 @@ import { useWorld, useWorldToast } from "../state/world";
 import { AT_REST, riseForAction, riseForNotice, riseForPress, type Rise, type ToastEntry } from "../state/toast-one";
 import { firstSyncContinuesSaid, topLineSaid } from "../state/live";
 import { useNetworkNow } from "../net/network-door";
+import { FadeOut } from "./FadeOut";
 import { Icon } from "./Icon";
 import { usePaneChrome } from "./pane-chrome";
 import { useAppWindow, usePosture } from "./posture";
@@ -112,11 +113,20 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
 /**
  * THE TOP A BAR-LESS PANE OWES: the status bar's inset and nothing drawn. A reader or a sender
  * page in the pair's pane yields its `DetailBar` to the list beside it, and with the bar went
- * the inset — its title started inside the transparent status bar, under the clock.
+ * the inset — its title started inside the transparent status bar, under the clock. Its edge is
+ * the clamp fade the reader draws under a bar, so a scrolled line ends in canvas, not a bare cut.
  */
 export function PaneTop() {
+  const t = useTheme();
   const top = useTopPad(0);
-  return <View style={{ paddingTop: top }} />;
+  return (
+    <>
+      <View style={{ paddingTop: top }} />
+      <View pointerEvents="none" style={{ height: 0, zIndex: 1 }}>
+        <FadeOut color={t.c.canvas} height={10} edge="top" />
+      </View>
+    </>
+  );
 }
 
 /**
@@ -189,10 +199,11 @@ export function Doorbell(
 ) {
   const t = useTheme();
   const [width, setWidth] = useState(0);
+  const { fontScale } = useWindowDimensions();
   if (count === 0) return null;
   // FACES AND A COUNT, the web's rule (`doorbell-stack.ts` holds it and the suite drives it), the
   // number of faces read off the capsule's own width so the sentence and "Screener" always fit.
-  const cap = max ?? doorbellMax(width);
+  const cap = max ?? doorbellMax(width, fontScale);
   const { shown, overflow } = doorbellFaces(initials, cap);
   return (
     <Tap
@@ -265,7 +276,8 @@ export function Doorbell(
           </View>
         ) : null}
       </View> : null}
-      <Txt variant="meta" tone="ink2" numberOfLines={2} style={{ flex: 1, minWidth: 0 }}>
+      {/* Never cut: the only place the count is said in words; it wraps at large text. */}
+      <Txt variant="meta" tone="ink2" style={{ flex: 1, minWidth: 0 }}>
         <Txt variant="settingsLabel" tone="ink">
           {Copy.doorbell(count)}
         </Txt>{" "}

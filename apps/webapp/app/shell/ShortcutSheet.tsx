@@ -94,6 +94,7 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
     no_cursor: t("needsCursor"),
     no_erase: tRoot("trash.noErase"),
     trash_unavailable: tRoot("trash.unavailable"),
+    layout_same: t("layoutSame"),
   };
   const rows = (items: BoundKey[]): Row[] => {
     const out: Row[] = [];

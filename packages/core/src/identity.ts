@@ -130,7 +130,7 @@ function field(out: Buffer[], label: string, value: string | null): void {
 /** Everything the fingerprint reads. A subset of {@link NormalizedMessage}, named so it is auditable. */
 export type FingerprintInput = Pick<
   NormalizedMessage,
-  "canonical" | "subject" | "from" | "to" | "cc" | "date" | "textBody" | "htmlBody" | "attachments"
+  "canonical" | "subject" | "from" | "to" | "cc" | "date" | "textBody" | "ownText" | "htmlBody" | "attachments"
 >;
 
 /**
@@ -155,7 +155,7 @@ export function messageFingerprint(m: FingerprintInput): string {
   for (const a of m.cc) field(parts, LABEL.cc, a.address);
   field(parts, LABEL.subject, m.subject);
   field(parts, LABEL.date, m.date === null ? null : String(m.date.getTime()));
-  field(parts, LABEL.textHash, bodyHash(m.textBody));
+  field(parts, LABEL.textHash, bodyHash(m.ownText ?? m.textBody));
   field(parts, LABEL.htmlHash, m.htmlBody === null ? null : bodyHash(m.htmlBody));
   for (const a of m.attachments) {
     field(parts, LABEL.attachmentName, a.filename);

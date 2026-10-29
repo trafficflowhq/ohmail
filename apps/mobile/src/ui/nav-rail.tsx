@@ -20,9 +20,10 @@ import { railDestinationFixed } from "./glass/fold";
 import type { IconName } from "./Icon";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { publishFolded } from "./nav-fold";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useReaderRail } from "./reader-rail";
-import { isTabRoute, railHome, scaffoldPlan } from "./scaffold/plan";
+import { isTabRoute, railHome, scaffoldPlan, sheetOwnsTheWayOut } from "./scaffold/plan";
+import { readerHeldNow, subscribeReaderHeld } from "./reader-held";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 /** The rail's fold, published for the More screen; stable, so the rail's effect runs on a change only. */
@@ -49,6 +50,8 @@ export function NavRail() {
   const win = useAppWindow();
   const cluster = useStatusCluster();
   const drawn = useNavDrawn();
+  /* A composer holds the reader while it is up (`reader-held.ts`): on New mail, that is its sheet. */
+  const sheetUp = useSyncExternalStore(subscribeReaderHeld, readerHeldNow);
   const railShown = plan.nav === "rail" && drawn
     && !(plan.railCarriesReaderVerbs && readerRail !== null);
   /* The rail's folded set is More's to list, and nobody's once the rail is gone. */
@@ -71,7 +74,7 @@ export function NavRail() {
   const active = DESTINATIONS.find((d) => d.path === here)?.id ?? null;
 
   const groups: RailAction[][] = [];
-  if (!isTabRoute(here) && router.canGoBack()) {
+  if (!isTabRoute(here) && !sheetOwnsTheWayOut(here, sheetUp) && router.canGoBack()) {
     groups.push([{ id: "__back", icon: "back", label: Copy.back, fixed: true, onPress: () => router.back() }]);
   }
   groups.push(

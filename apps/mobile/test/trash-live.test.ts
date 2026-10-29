@@ -12,6 +12,7 @@ import type { EngineMessage } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, type LiveWorldActions } from "../src/state/live";
 import { Copy } from "../src/copy";
+import { setActiveLocale } from "../src/i18n/locale";
 import { dto, listen, mailServer } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 
@@ -104,6 +105,20 @@ describe("restore moves it back", () => {
     await live.engine.syncOnce();
     const back = live.engine.read().get<EngineMessage>("message", "m1");
     expect(back?.subject).toBe("Back soon");
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("a restore the server already finished says it is done, in both languages", async () => {
+    const live = await scene((f) => f.addMessage(dto("m1")));
+    await live.actions.deleteMessage("m1");
+    live.fake.answerNext("POST", "/messages/m1/restore", 200, { restoreTo: "INBOX", pending: false });
+    expect(await live.actions.trashRestore("m1")).toBe(true);
+    expect(live.toasts.at(-1)).toBe(Copy.trashToastRestored(Copy.placeOhbox));
+    expect(Copy.trashToastRestored("Q1")).toBe("Restored to Q1.");
+    setActiveLocale("de");
+    expect(Copy.trashToastRestored("Q1")).toBe("In Q1 wiederhergestellt.");
+    setActiveLocale("en");
     live.store.close();
     live.fake.server.close();
   });

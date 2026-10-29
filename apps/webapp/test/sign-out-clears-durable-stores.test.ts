@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { dropLocalStorageKeys } from "../app/shell/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../app/shell/compose";
@@ -393,6 +394,31 @@ describe("sign-out clears the durable decision stores", () => {
    * Mutation: drop `forgetComposeRows()` from the sweep. Real failure text:
    *   AssertionError: the row remembered for a jar-less browser survived the sign-out …
    */
+  it("the renewal name's own IndexedDB database goes with the browser's copy", async () => {
+    const engine = existsSync(resolve("packages/client-engine/package.json"))
+      ? resolve("packages/client-engine/package.json") : resolve("../../packages/client-engine/package.json");
+    const { IDBFactory } = createRequire(engine)("fake-indexeddb") as { IDBFactory: new () => IDBFactory };
+    (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
+    const answered = globalThis.fetch;
+    globalThis.fetch = (async () => { throw new TypeError("Failed to fetch"); }) as typeof fetch;
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const refresh = await import(`${APP}/session-refresh.ts`);
+      const held = async (): Promise<string[]> =>
+        (await indexedDB.databases()).map((d) => d.name ?? "").filter((n) => n === refresh.SESSION_ATTEMPT_DB);
+      expect(await refresh.resumeSession(), "a renewal nobody answered keeps its name").toBe("unavailable");
+      expect(await held(), "the control: the name is in IndexedDB").toHaveLength(1);
+      const { forgetThisBrowser } = await import(`${APP}/sign-out.ts`);
+      const out = await forgetThisBrowser();
+      expect(await held(), "a renewal name survived the sign-out").toEqual([]);
+      expect(out.remaining).not.toContain(refresh.SESSION_ATTEMPT_DB);
+    } finally {
+      warned.mockRestore();
+      globalThis.fetch = answered;
+      Reflect.deleteProperty(globalThis, "indexedDB");
+    }
+  });
+
   it("signOut forgets the row a jar-less browser was remembering", async () => {
     const { writeComposeRow, readComposeRow, forgetComposeRows } =
       await import(`${APP}/shell/compose.ts`);

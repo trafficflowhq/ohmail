@@ -12,11 +12,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
-import { derivePosture, type FoldFeature } from "../src/ui/posture/derive";
+import { creaseAcross, derivePosture, type FoldFeature } from "../src/ui/posture/derive";
 import {
   detailPaneRect, pairPadding, paneSplit, RAIL_W, scaffoldPlan, screenFillsWindow, screenRailClearance, screenSideInsets,
 } from "../src/ui/scaffold/plan";
-import { SHEET_TOP_ROOM, sheetPanelBounds } from "../src/ui/sheet-bounds";
+import { SHEET_TOP_ROOM, sheetPanelBounds, sheetRoom } from "../src/ui/sheet-bounds";
 
 const src = (rel: string) => withoutComments(readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8"));
 
@@ -111,6 +111,23 @@ describe("one pane and tabletop keep their sheets", () => {
     const b = sheetPanelBounds(905, 821, TOP, { x: 400, w: 505 }, p.hinge);
     expect(b.alignSelf).toBe("center");
     expect(b.maxHeight).toBe(Math.min(821 - TOP, Math.max(280, 821 - (p.hinge!.y + p.hinge!.h))));
+  });
+  /* Typing a reply in tabletop: the keyboard took the lower half and Cancel, Send + Done and Send
+     stood on the crease, the keyboard's top a little below it. */
+  it("tabletop with the keyboard up: the sheet ends above the crease", () => {
+    const crease = { x: 0, y: 336, w: 841, h: 0 };
+    const p = derivePosture({ platform: "android", width: 841, height: 673, hasFold: true,
+      folds: [{ bounds: crease, state: "half", orientation: "horizontal", occlusion: "none" }] });
+    const across = creaseAcross(p.fold, p.hinge);
+    const room = sheetRoom(TOP, 302, across, 673);
+    expect(673 - (room.paddingBottom as number), "the sheet's foot").toBeLessThanOrEqual(crease.y);
+    expect(sheetRoom(TOP, 0, across, 673).paddingBottom, "keyboard down: the lower segment, as before").toBe(0);
+    expect(sheetRoom(TOP, 400, across, 673).paddingBottom, "a keyboard above the crease lifts it itself").toBe(400);
+    expect(sheetRoom(TOP, 302, null, 673).paddingBottom, "CONTROL: no crease, the keyboard's own lift").toBe(302);
+    const flat = derivePosture({ platform: "android", width: 841, height: 673, hasFold: true,
+      folds: [{ bounds: crease, state: "flat", orientation: "horizontal", occlusion: "none" }] });
+    expect(creaseAcross(flat.fold, flat.hinge), "a flat fold is no crease").toBeNull();
+    expect(creaseAcross(p.fold, { x: 420, y: 0, w: 0, h: 673 }), "a book fold is not across").toBeNull();
   });
 });
 

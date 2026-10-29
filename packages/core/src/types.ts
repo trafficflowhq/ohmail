@@ -371,6 +371,8 @@ export interface NormalizedMessage {
   runtimeDate?: Date;
   headers: Record<string, string[]>;   // lowercased header name -> raw values
   textBody: string;
+  /** The parse's own text, present only when `textBody` holds the html's words. In memory only. */
+  ownText?: string;
   htmlBody: string | null;
   hasAttachments: boolean;
   attachments: AttachmentMeta[];        // metadata only — bytes are fetched on-demand from IMAP (§13.2/§14)

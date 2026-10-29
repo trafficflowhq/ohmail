@@ -205,7 +205,7 @@ function UnscreenedOffer({ offer, screen }: { offer: WorldUnscreened | null; scr
   };
   return (
     <Panel style={{ paddingVertical: 14, paddingHorizontal: 18, marginBottom: 12 }}>
-      <Txt variant="note" tone="ink2" accessibilityRole="text">{Copy.unscreenedLead(offer.total)}</Txt>
+      <Txt variant="note" tone="ink2" accessibilityRole="text">{Copy.unscreenedLead(offer.total, offer.atLeast === true)}</Txt>
       <Button
         label={Copy.unscreenedAll(offer.total)}
         variant="solid"

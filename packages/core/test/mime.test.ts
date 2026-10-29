@@ -622,6 +622,67 @@ describe("normalizeMime", () => {
 
   // ── FINDING bounding the parse ─────────────────────────────────────────────────────
 
+  /**
+   * A letter with no text part keeps its html's words as `textBody`, and its identity reads the
+   * parse's own text (`ownText`, empty here): the fingerprint corpus pins the digests from before.
+   */
+  describe("a letter with html and no text part", () => {
+    const PNG = ["Content-Type: image/png", "Content-ID: <pic@x>", "Content-Transfer-Encoding: base64", "", "iVBORw0KGgo="];
+    const PDF = ['Content-Type: application/pdf; name="a.pdf"', 'Content-Disposition: attachment; filename="a.pdf"',
+      "Content-Transfer-Encoding: base64", "", "JVBERi0xLjQK"];
+    const LETTER = '<head><style>.brand{color:red}</style></head><table><tr><td>Hello</td><td>World</td></tr></table>'
+      + '<div>Line one</div><div>Line two</div><img src="cid:pic@x" alt="Logo">';
+    const WORDS = "Hello World\n\nLine one\nLine two";
+    const head = (type: string) => ["Message-ID: <html-only@example.test>", "From: a@example.test", "To: b@example.test",
+      "Subject: pictures", "MIME-Version: 1.0", `Content-Type: ${type}`, ""];
+    const related = (html: string) => [...head('multipart/related; boundary="R"'), "--R", "Content-Type: text/html; charset=utf-8", "",
+      html, "--R", ...PNG, "--R--", ""].join("\r\n");
+    const SHAPES: Record<string, string> = {
+      related: related(LETTER),
+      htmlWithPdf: [...head('multipart/mixed; boundary="B"'), "--B", "Content-Type: text/html; charset=utf-8", "", LETTER,
+        "--B", ...PDF, "--B--", ""].join("\r\n"),
+      emptyTextAlternative: [...head('multipart/alternative; boundary="A"'), "--A", "Content-Type: text/plain", "", "",
+        "--A", "Content-Type: text/html; charset=utf-8", "", LETTER, "--A--", ""].join("\r\n"),
+      relatedInMixed: [...head('multipart/mixed; boundary="B"'), "--B", 'Content-Type: multipart/related; boundary="R"', "",
+        "--R", "Content-Type: text/html; charset=utf-8", "", LETTER, "--R", ...PNG, "--R--", "", "--B", ...PDF, "--B--", ""].join("\r\n"),
+    };
+
+    it.each(Object.keys(SHAPES))("%s: textBody is the words, the identity reads the empty text", async (name) => {
+      const m = await normalizeMime(SHAPES[name]!);
+      expect(m.textBody).toBe(WORDS);
+      expect(m.ownText?.trim()).toBe("");
+      expect(m.canonical.bodyHash).toBe(bodyHash(""));
+      expect(messageFingerprint(m)).toBe(messageFingerprint({ ...m, textBody: m.ownText!, ownText: undefined }));
+    });
+
+    it("a root html over the html-to-text bound gives its early words, and keeps hashing the html", async () => {
+      const html = "<p>Early words</p>" + "<div>x</div>".repeat(90_000);
+      expect(html.length).toBeGreaterThan(MAX_HTML_TO_TEXT_CHARS);
+      const m = await normalizeMime([...head("text/html; charset=utf-8"), html, ""].join("\r\n"));
+      expect(m.textBody.startsWith("Early words\n\nx\nx")).toBe(true);
+      expect(m.textBody.length).toBeLessThanOrEqual(65_536);
+      expect(m.ownText).toBe("");
+      expect(m.canonical.bodyHash).toBe(bodyHash(m.htmlBody!));
+    });
+
+    it.each([
+      ["a picture only", '<img src="cid:pic@x" alt="Logo">'],
+      ["hidden text only", '<div style="display: none !important">Preheader</div><style>p{}</style>'],
+      ["preheader filler only", "<p>\u034f\u200c \u034f\u200c&zwnj; \u00ad\u200b</p>"],
+    ])("%s stays empty, with no ownText", async (_n, html) => {
+      const m = await normalizeMime(related(html));
+      expect(m.textBody.trim()).toBe("");
+      expect(m.ownText).toBeUndefined();
+    });
+
+    it("a letter with a real text part is unchanged", async () => {
+      const m = await normalizeMime([...head('multipart/alternative; boundary="A"'), "--A", "Content-Type: text/plain", "", "Own words",
+        "--A", "Content-Type: text/html; charset=utf-8", "", LETTER, "--A--", ""].join("\r\n"));
+      expect(m.textBody.trim()).toBe("Own words");
+      expect(m.ownText).toBeUndefined();
+    });
+  });
+
   describe("the parse is bounded", () => {
     /** An html-only message: mailparser only converts html→text when there is no text/plain. */
     const htmlOnly = (html: string) =>
@@ -707,7 +768,8 @@ describe("normalizeMime", () => {
       const b = await normalizeMime(over("second"));
       expect(a.canonical.messageIdHeader).toBeNull();
       expect(b.canonical.messageIdHeader).toBeNull();
-      expect(a.textBody).toBe("");
+      // The identity's text; `textBody` may now hold the words of the stored head.
+      expect(a.ownText ?? a.textBody).toBe("");
       expect(legacyDedupKey(a.canonical)).not.toBe(legacyDedupKey(b.canonical));
       expect(a.canonical.bodyHash).not.toBe(bodyHash(""));
       // …and the same holds for the key ingest actually writes. The fingerprint hashes the text and

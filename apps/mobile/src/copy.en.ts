@@ -403,6 +403,18 @@ const TABLE = {
     "Your outgoing server (SMTP) offers no encrypted connection on that port, and ohmail will not send your password in the clear. Try port 465 or 587.",
   standaloneSmtpUnreachable:
     "ohmail could not reach your outgoing server (SMTP) at that address and port. Check both and try again — nothing has been saved.",
+  /* The outgoing server's certificate; untrusted, expired and not yet valid share the incoming server's sentences. */
+  standaloneSmtpCertificateRefused:
+    "The certificate of your outgoing server (SMTP) was refused, so we stopped before sending the password. Check the SMTP host, and whether the port expects TLS.",
+  standaloneSmtpCertificateName:
+    "The certificate of your outgoing server (SMTP) does not match the host you entered, so we stopped before sending the password. Check the SMTP host with your provider.",
+  /* A STARTTLS upgrade the server offered and that went wrong: not a server without encryption. */
+  standaloneStarttlsInjected:
+    "Your mail server sent unexpected data while the connection was switching to encryption, so we stopped before sending the password. Something on this network may be interfering: try another network, or port 993.",
+  standaloneStarttlsTimeout:
+    "Switching the connection to your mail server to encryption did not finish in time, so we stopped before sending the password. Try again, or use port 993.",
+  standaloneOffline:
+    "This phone has no network, so ohmail could not reach your mail server. Try again once it is back — nothing has been saved.",
   standaloneRefused: (detail: string) =>
     `Opening the mailbox stopped: ${detail}`,
   /* The relaunch's own three, and each one names a different absence: nothing sealed, a mailbox
@@ -680,8 +692,7 @@ const TABLE = {
   connectSyncing: "Syncing…",
   connectSyncNow: "Sync now",
   connectDisconnect: "Disconnect",
-  connectMirrored: (n: number, cursor: string) =>
-    `${n} message${n === 1 ? "" : "s"} on this device · cursor ${cursor}`,
+  connectMirrored: (n: number) => `${n} message${n === 1 ? "" : "s"} on this device`,
   /**
    * A failed handshake is not a failed network. A raw SSLHandshakeException dump is unreadable
    * and indistinguishable from bad wifi; a person whose desktop key genuinely changed must be
@@ -923,9 +934,9 @@ const TABLE = {
   /** A mail row, spoken. The trailing state is a clause rather than a word glued to a stop. */
   mailRowAria: (from: string, subject: string, time: string, unread: boolean) =>
     `${from}. ${subject.trim() === "" ? "" : `${subject}. `}${time}.${unread ? " Unread." : ""}`,
-  /** A Screener row, spoken — the only word in it is the one describing what is held; a company claim last. */
-  senderRowAria: (name: string, address: string, held: number, claim: string) =>
-    `${name}, ${address}, ${held} held${claim ? `, ${claim}` : ""}`,
+  /** A Screener row, spoken — name, address, how many messages its card lists; a company claim last. */
+  senderRowAria: (name: string, address: string, count: number, claim: string) =>
+    `${name}, ${address}, ${count} message${count === 1 ? "" : "s"}${claim ? `, ${claim}` : ""}`,
   /** Which of the account's addresses a message arrived at — drawn only above one mailbox. */
   deliveredTo: (label: string) => `Delivered to ${label}`,
   /** The News card's expand affordance, as a badge and as a spoken label. */
@@ -973,7 +984,7 @@ const TABLE = {
   receipts: "Receipts",
   waterline: "Seen up to here",
   readsTail: (shown: number) =>
-    `All ${shown} issue${shown === 1 ? "" : "s"} shown. Scrolling past an item marks it seen.`,
+    `All ${shown} issue${shown === 1 ? "" : "s"} shown. An item turns read once it rests on screen in the stream. A quick scroll past leaves it unread.`,
   receiptsTail: (shown: number) => `All ${shown} receipt${shown === 1 ? "" : "s"} shown.`,
   readsEmptyTitle: "No issues yet.",
   readsEmptyHint: "Newsletters and long reads you file here arrive as they sync.",
@@ -981,7 +992,7 @@ const TABLE = {
   receiptsEmptyHint: "Orders, invoices and tickets you file here arrive as they sync.",
   /** The Receipts day heading for the current day (the shared selector capitalises it). */
   today: "today",
-  streamSeenHint: "scrolling past marks seen",
+  streamSeenHint: "an item turns read once it rests on screen; a quick scroll past leaves it unread",
 
   /* ------------------------------------------------------------- protected */
 
@@ -1024,11 +1035,11 @@ const TABLE = {
   decideReadOn: "Filing as read — the count will not move.",
   decideReadOff: "Filing unread — it will announce itself.",
   heldCaption: (n: number, firstContact?: string) => {
-    const head = `${n} held message${n === 1 ? "" : "s"} — all shown`;
+    const head = `${n} message${n === 1 ? "" : "s"} — all shown`;
     return firstContact ? `${head} · first contact ${firstContact}` : head;
   },
   screenedNote: (date: string, held: number) =>
-    `Screened ${date} · ${held} held, all shown. Allowing releases every one of them to the chosen view.`,
+    `Newest letter ${date} · ${held} held, all shown. Allowing releases every one of them to the chosen view.`,
   allowLabel: "Allow — release held mail to",
   notSpamLabel: "Not spam — move all held mail to",
   spamNote:
@@ -1048,6 +1059,8 @@ const TABLE = {
    * sentence over the silhouette, so an empty list cannot read as "no mail".
    */
   cutlinePending: "Reading your screening settings — until they land, this list is not settled.",
+  /** The waiting shelf while an organized mailbox's first import runs: the gate has judged nobody yet. */
+  waitingFirstPass: "Still reading your mailbox — the senders waiting here are known once the first pass is done.",
   screenedEmptyTitle: "Nobody is screened out.",
   screenedEmptyHint: "Senders you say No to wait here — held, never deleted.",
   spamEmptyTitle: "No spam held.",
@@ -1300,7 +1313,7 @@ const TABLE = {
   /* SEARCH — the webapp's `search` namespace, sentence for sentence where the surface is
      the same: the box, the two tiers, the honest coverage sentence, and the address door the
      empty state offers (the web's own empty-state fix, mirrored). */
-  searchPlaceholder: "Search everything — typos welcome",
+  searchPlaceholder: "Search everything",
   searchResultsHead: (n: number) => (n === 1 ? "1 result" : `${n} results`),
   searchSimilarHead: "Similar",
   searchSimilarHint: "Nothing matched exactly, so these are the closest words.",
@@ -2013,10 +2026,10 @@ const TABLE = {
   deleteReplayGone: (n: number) =>
     `${n === 1 ? "1 message was" : `${n} messages were`} not moved to Trash — this phone could not find ${n === 1 ? "it" : "them"} when the app started again. Delete ${n === 1 ? "it" : "them"} again if you still want ${n === 1 ? "it" : "them"} there.`,
   /** THE OHBOX'S UNDECIDED-SENDER OFFER — the web's `screener.unscreened*` sentences, word for word. */
-  unscreenedLead: (n: number) =>
-    n === 1
+  unscreenedLead: (n: number, atLeast?: boolean) =>
+    `${atLeast ? "At least " : ""}${n === 1
       ? "1 message from a sender you have not decided about is still in the Inbox on your mail server."
-      : `${n} messages from senders you have not decided about are still in the Inbox on your mail server.`,
+      : `${n} messages from senders you have not decided about are still in the Inbox on your mail server.`}`,
   unscreenedAll: (n: number) => `Screen ${n}`,
   unscreenedMoved: (n: number) => `Screened ${n}. Your organizer moves them on the next pass.`,
   unscreenedMovedNone: "Nothing left to screen.",
@@ -2053,6 +2066,8 @@ const TABLE = {
   trashRestore: "Restore",
   trashRestoring: "Restoring…",
   trashToastRestoring: (place: string) => `Restoring to ${place}…`,
+  /** The server answered `pending: false`: the move is already done. */
+  trashToastRestored: (place: string) => `Restored to ${place}.`,
   trashToastRestoreFailed: "Couldn't restore — it's still in Trash.",
   trashNoErase: "ohmail never erases mail — to remove it for good, use your own mail client.",
   trashListFailed: "Trash couldn't be read just now.",
@@ -2492,6 +2507,8 @@ const TABLE = {
   },
   draftsEmptyTitle: "Nothing half-written",
   draftsEmptyHint: "They're saved to your account, so they're here on every device you read your mail on.",
+  /** A standalone phone: drafts live in this phone's own store, not in the mailbox. */
+  draftsEmptyHintHere: "They're kept on this phone.",
   draftsIsReply: "Reply",
   draftsHeldChecking: "We're not sure this was sent. We're checking your Sent folder.",
   draftsHeldNotInSent: "We're not sure this was sent. It isn't in your Sent folder.",
@@ -2544,6 +2561,9 @@ const TABLE = {
    */
   draftsEditNote:
     "This draft can't be edited here. Edit and send it from ohmail on the web or the desktop.",
+  /** A standalone phone has no web or desktop app beside it: what this card itself offers. */
+  draftsEditNoteHeldHere: "This message can't be edited. Send it again as it is, or discard it.",
+  draftsEditNoteHere: "This draft can't be edited on this phone. You can discard it here.",
   /**
    * PHONE-ONLY (6/6): a forward draft whose original this phone does not hold. The forward is sent
    * from the original, so it is opened where the original is.

@@ -541,10 +541,13 @@ export function MessageReader({
         />
       )}
       {/* The reader's top edge: text scrolled under the bar ends in canvas, not in sliced glyphs.
-          A zero-height row drawn above the scroller, so it takes no room and no touch. */}
-      <View pointerEvents="none" style={{ height: 0, zIndex: 1 }}>
-        <FadeOut color={t.c.canvas} height={10} edge="top" />
-      </View>
+          A zero-height row drawn above the scroller, so it takes no room and no touch. A pane's
+          `PaneTop` draws its own. */}
+      {bare ? null : (
+        <View pointerEvents="none" style={{ height: 0, zIndex: 1 }}>
+          <FadeOut color={t.c.canvas} height={10} edge="top" />
+        </View>
+      )}
       {/* `.msg{padding:20px 20px 40px}` in the ≤900px block — the message needs
           air above the from-line, or the back bar reads as part of the mail. */}
       <View style={{ flex: 1, flexDirection: "row" }}>

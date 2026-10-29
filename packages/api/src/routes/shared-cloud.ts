@@ -6,7 +6,7 @@ import type {
 import { serviceContext } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import type {} from "../deps-cloud.js";
-import { enrollmentCookies, jarCookie, sessionCookies } from "../cookies.js";
+import { enrollmentCookies, jarCookie, presentedResumeMarker, sessionCookies } from "../cookies.js";
 import { csrfTokenFor } from "../csrf.js";
 import { cookieSurface, json, parseCookies } from "./shared.js";
 
@@ -65,17 +65,20 @@ export function waitlistSvc(deps: ApiDeps): WaitlistService {
 /**
  * Web session response: run the ceremony's MINT, move the established tokens into the cookies and
  * STRIP `tokens` from the JSON body (contract §1.3); extra fields such as `remainingCodes` stay.
- * On a cookie surface the mint is handed the jar's current `tf_session`, and revokes that session
- * inside its own transaction (`SessionLifecycle.establish`). On a BEARER-ONLY host no cookie is
- * read, nothing is revoked, and the tokens stay in the body for the native client there.
+ * On a cookie surface the mint is handed the jar's current `tf_session` and its resume marker, and
+ * retires what they name inside its own transaction (`SessionLifecycle.establish`). On a
+ * BEARER-ONLY host no cookie is read, nothing is revoked, and the tokens stay in the body for the
+ * native client there.
  */
 export async function webSession<T extends SessionEstablished>(
   deps: ApiDeps, req: Request, mint: (ctx: ServiceContext) => Promise<T>,
 ): Promise<Response> {
   const ctx = serviceContext(deps, req);
   if (!cookieSurface(deps)) return json(await mint(ctx), 200);
-  const previous = jarCookie(parseCookies(req.headers.get("cookie")), "tf_session");
-  const est = await mint(previous ? { ...ctx, supersedes: previous } : ctx);
+  const jar = parseCookies(req.headers.get("cookie"));
+  const previous = jarCookie(jar, "tf_session") || null;
+  const marker = presentedResumeMarker(jarCookie(jar, "tf_resume"));
+  const est = await mint(previous || marker ? { ...ctx, supersedes: previous, supersedesMarker: marker } : ctx);
   // DERIVED from the access token, never random — see `csrfTokenFor`. A value unrelated to the
   // session let a cookie-tossed pair satisfy the double-submit check.
   // The account id rides with them, in a cookie that carries no authority — see `OWNER_COOKIE`

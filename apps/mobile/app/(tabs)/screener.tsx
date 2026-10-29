@@ -28,6 +28,7 @@ import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 import { noneOrganizedWhy, notOrganizingSay } from "../../src/ui/not-organizing";
+import { firstPassWithholds } from "../../src/state/seed-offer";
 
 /**
  * The three empty states, READ WHEN THE SCREEN RENDERS rather than when this module is imported.
@@ -87,6 +88,8 @@ function ScreenerBody() {
   const { waiting, screened, spam, meta, waitingPending } = w.screener;
   // Unknown ≠ empty, per SEGMENT: the active shelf's own count against the one settled fact.
   const shelves: Record<ScreenerSeg, ScreenerRow[]> = { waiting, screened, spam };
+  // "Nobody is waiting" over a first import the gate has not judged yet is a claim nobody made.
+  const firstPass = firstPassWithholds(waiting.length, w.mailboxes, Date.now());
   const rows = shelves[seg];
   /* …and the WAITING shelf has a second way of being unknown over a settled mirror: this phone
      derived it, and the account's cutline answer has not landed, so it was withheld rather than
@@ -95,14 +98,14 @@ function ScreenerBody() {
   const surface = listSurface({
     settled: w.boot.settled,
     count: rows.length,
-    pending: seg === "waiting" && waitingPending,
+    pending: seg === "waiting" && (waitingPending || firstPass),
   });
   const shelfEmpty = surface === "empty" ? (
     <Empty {...empty} />
   ) : (
     <SkeletonList
       kind="screener"
-      {...(surface === "pending" ? { note: Copy.cutlinePending } : { stalled: w.boot.syncFailure })}
+      {...(surface === "pending" ? { note: firstPass ? Copy.waitingFirstPass : Copy.cutlinePending } : { stalled: w.boot.syncFailure })}
     />
   );
 
@@ -173,7 +176,7 @@ function ScreenerBody() {
               segments={[
                 // Counts speak only over a settled mirror — a "0" badge beside a shelf that is
                 // still rendering its skeleton would be an invented count (`state/surface.ts`).
-                { value: "waiting", label: Copy.segWaiting, ...(w.boot.settled ? { count: waiting.length } : {}) },
+                { value: "waiting", label: Copy.segWaiting, ...(w.boot.settled && !firstPass ? { count: waiting.length } : {}) },
                 { value: "screened", label: Copy.segScreened, ...(w.boot.settled ? { count: screened.length } : {}) },
                 { value: "spam", label: Copy.segSpam, ...(w.boot.settled ? { count: spam.length } : {}) },
               ]}

@@ -141,6 +141,7 @@ import {
   ruleMatchKey,
   unscreenedGroups,
   unscreenedTotalOf,
+  unscreenedTotalIsFloor,
   zonedDayNumber,
   NOT_DERIVED_FROM,
   beginDerive,
@@ -1535,6 +1536,8 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
 export interface WorldUnscreened {
   /** Messages across every shown group — the server's own count. */
   total: number;
+  /** Present when `total` is a floor: the server's walk stopped at its bound. */
+  atLeast?: true;
   /** Who wrote them, largest group first: what the press screens. */
   senders: readonly string[];
 }
@@ -1547,7 +1550,8 @@ export interface WorldUnscreened {
 export function liveUnscreened(reader: EntityReader): WorldUnscreened | null {
   const groups = unscreenedGroups(reader);
   const total = unscreenedTotalOf(reader);
-  return total > 0 && groups.length > 0 ? { total, senders: groups.map((g) => g.id) } : null;
+  if (total <= 0 || groups.length === 0) return null;
+  return { total, ...(unscreenedTotalIsFloor(reader) ? { atLeast: true as const } : {}), senders: groups.map((g) => g.id) };
 }
 
 export interface WorldReads {
@@ -3891,36 +3895,44 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const quiet = (): void => undefined;
 
   /**
-   * Enqueue on one message's chain. `run` may NOT enqueue again for the same id — it would
-   * await its own tail — so the verbs that write twice for one message dispatch inside their
-   * single slot rather than through {@link dispatch}.
+   * Enqueue on the chain of every message named: `run` waits for all of them and holds each
+   * slot until it settles. `run` may NOT enqueue again for one of its ids — it would await its
+   * own tail — so a press that writes several times dispatches inside its single slot rather
+   * than through {@link dispatch}.
    */
-  const inOrder = <T>(messageId: string, run: () => Promise<T>): Promise<T> => {
-    const prior = chains.get(messageId);
-    /* NOTHING IN THE AIR FOR THIS MESSAGE ⇒ RUN IN THE PRESS'S OWN TURN. `mutate` applies
+  const inOrder = <T>(messageIds: readonly string[], run: () => Promise<T>): Promise<T> => {
+    const keys = [...new Set(messageIds)];
+    const prior = keys.flatMap((id) => { const p = chains.get(id); return p === undefined ? [] : [p]; });
+    /* NOTHING IN THE AIR FOR THESE MESSAGES ⇒ RUN IN THE PRESS'S OWN TURN. `mutate` applies
        optimistically before its first await and the screens read the mirror straight after a
        press, so a microtask's delay here would move the mirror out of the turn it happened in. */
-    const mine = prior === undefined ? run() : prior.then(run, run);
+    const mine = prior.length === 0 ? run() : Promise.all(prior).then(run, run);
     const tail: Promise<void> = mine.then(quiet, quiet).then(() => {
-      if (chains.get(messageId) === tail) chains.delete(messageId);
+      for (const id of keys) if (chains.get(id) === tail) chains.delete(id);
     });
-    chains.set(messageId, tail);
+    for (const id of keys) chains.set(id, tail);
     return mine;
   };
 
-  /** The one message a mutation names, or `null` where it names none or many — the chain's key. */
-  const chainKeyOf = (m: EngineMutation): string | null => {
+  /**
+   * Every message a mutation names — its chains' keys; none for a verb that names no message. Nor
+   * for the reader's glance, the app's own read: it reaches the engine at once and no press waits
+   * for its answer. The engine sends a later press after the glance's request, and when the glance
+   * must be sent again, a read or unread pressed since on one of its letters has taken that letter
+   * out of it (`engine.ts#readsTaken`): only its other letters go again.
+   */
+  const chainKeysOf = (m: EngineMutation): readonly string[] => {
     switch (m.kind) {
-      case "move": case "message_delete": case "triage_set": case "tag_assign": return m.messageId;
-      case "mark_seen": return m.messageIds.length === 1 ? (m.messageIds[0] ?? null) : null;
-      default: return null;
+      case "move": case "message_delete": case "triage_set": case "tag_assign": return [m.messageId];
+      case "mark_seen": return m.via === "glance" && !m.unread ? [] : m.messageIds;
+      default: return [];
     }
   };
 
-  /** A dispatch in its message's order; a mutation naming no one message passes straight through. */
+  /** A dispatch in its messages' order; a mutation naming no message passes straight through. */
   const inMessageOrder = <T>(m: EngineMutation, run: () => Promise<T>): Promise<T> => {
-    const key = chainKeyOf(m);
-    return key === null ? run() : inOrder(key, run);
+    const keys = chainKeysOf(m);
+    return keys.length === 0 ? run() : inOrder(keys, run);
   };
 
   /** `watched(engine.mutate(m))`, in its message's order — the ordinary door for one write. */
@@ -3928,16 +3940,23 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     inMessageOrder(m, () => watched(engine.mutate(m)));
 
   /**
-   * THE LATCH A VERB AND ITS UNDO RACE FOR. An optimistic verb holds its chain slot from the
-   * press, through the pill's paint gate, to the instant it dispatches; whoever claims the latch
-   * first decides whether anything leaves the device. The verb claims it and sends; an Undo
-   * claims it and the verb is CANCELLED — `mutate` was never called, so the mirror never moved
-   * and there is nothing to roll back and nothing for the server to take back.
+   * THE LATCH A VERB AND ITS UNDO RACE FOR. An optimistic verb holds its chain slots from the
+   * press, through the pill's paint gate, to its last write; the latch is read before EACH write.
+   * An Undo claims it and every write not yet handed is CANCELLED — `mutate` was never called for
+   * it, so there is nothing to roll back and nothing for the server to take back; only the writes
+   * already handed are reversed, each behind its own answer.
    */
-  const oneShot = (): (() => boolean) => {
-    let open = true;
-    return () => { const mine = open; open = false; return mine; };
+  const pressLatch = () => {
+    let handed = 0;
+    let undone = false;
+    return {
+      /** The press, before EACH write: false once an Undo claimed it. */
+      write: (): boolean => { if (!undone) handed += 1; return !undone; },
+      /** The Undo: stops the press before its next write; answers how many writes it had handed. */
+      undo: (): number => { undone = true; return handed; },
+    };
   };
+  type PressLatch = ReturnType<typeof pressLatch>;
 
   /**
    * THE ONE DOOR EVERY OPTIMISTIC VERB DISPATCHES THROUGH — the sentence is already spoken, so
@@ -3947,17 +3966,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * run may not re-enter its own chain.
    */
   const gatedWrite = (
-    messageId: string,
     ms: readonly EngineMutation[],
     onScreen: Promise<void>,
-    leaving: () => boolean,
+    latch: PressLatch | null,
   ): Promise<PressVerdict[] | null> =>
-    inOrder(messageId, async (): Promise<PressVerdict[] | null> => {
+    inOrder(ms.flatMap(chainKeysOf), async (): Promise<PressVerdict[] | null> => {
       await onScreen;
-      if (!leaving()) return null;
       const out: PressVerdict[] = [];
-      for (const m of ms) out.push(await watched(engine.mutate(m)));
-      return out;
+      for (const m of ms) {
+        if (latch !== null && !latch.write()) break;
+        out.push(await watched(engine.mutate(m)));
+      }
+      return out.length === 0 && ms.length > 0 ? null : out;
     });
 
   /**
@@ -3995,9 +4015,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     messageId: string,
     ms: readonly EngineMutation[],
     onScreen: Promise<void>,
-    leaving: () => boolean,
+    latch: PressLatch,
   ): Promise<boolean> => {
-    const vs = await gatedWrite(messageId, ms, onScreen, leaving);
+    const vs = await gatedWrite(ms, onScreen, latch);
     return vs === null ? true : saidAll(vs, null, pileFailed(vs, messageId));
   };
 
@@ -4008,11 +4028,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * sent first and its sentence follows the server's answer; everywhere else nothing changes.
    */
   const pilePress = (
-    messageId: string, say: RefusalArg, inv: readonly EngineMutation[], ms: readonly EngineMutation[],
+    messageId: string, say: RefusalArg, ms: readonly EngineMutation[],
   ): Promise<boolean> => {
+    // Each write's way back, off the pre-press mirror, in write order.
+    const pre = engine.verbRead();
+    const back = ms.map((m) => inverseMutations(pre, m));
+    const inv = back.flat();
     const mailboxId = messageOf(messageId)?.mailboxId;
     if (mailboxId !== undefined && (deps.readsOnly?.(mailboxId) ?? null) !== null) {
-      return gatedWrite(messageId, ms, Promise.resolve(), () => true).then((answered) => {
+      return gatedWrite(ms, Promise.resolve(), null).then((answered) => {
         const vs = answered ?? [];
         const t = tallyVerdicts(vs);
         /* A WAIT IS NOT AN ACCEPT HERE: a timed-out or held-back press replays into the same 409,
@@ -4023,9 +4047,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         return saidAll(vs, say, pileFailed(vs, messageId), undoable(inv));
       });
     }
-    const leaving = oneShot();
-    toast(say, undoable(inv, leaving));
-    return gatedSaid(messageId, ms, painted(), leaving);
+    const latch = pressLatch();
+    // The Undo stops the press before its next write and takes back only what it had handed, last first.
+    toast(say, undoable(inv, () => undoInOrder(back.slice(0, latch.undo()).reverse().flat())));
+    return gatedSaid(messageId, ms, painted(), latch);
   };
 
   /**
@@ -4688,7 +4713,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * consumed at most once: a late press takes nothing back and claims nothing (the Screener's
    * own rule). `[]` — no wire inverse, or a press that changes nothing — offers no verb.
    */
-  const undoable = (inv: readonly EngineMutation[], leaving?: () => boolean): ToastOpts | undefined => {
+  const undoable = (inv: readonly EngineMutation[], stop?: () => readonly EngineMutation[]): ToastOpts | undefined => {
     if (inv.length === 0) return undefined;
     const at = now().getTime();
     let fired = false;
@@ -4697,14 +4722,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       undo: () => {
         if (fired || now().getTime() - at > UNDO_MS) return;
         fired = true;
-        /* The cheapest and truest undo: the verb has not left the device, so claiming its latch
-           cancels it and NOTHING is sent — see {@link oneShot}. Past that, the inverse rides the
-           same chain and can no longer pass the verb it undoes. */
-        if (leaving?.() === true) { toast(refuse("toastUndone")); return; }
-        /* SAID AT THE PRESS, as the verbs say theirs: the overlay has already put the row back,
-           and a refused or organizer-queued inverse overrides the sentence when it answers. */
+        /* A gated press stops before its next write: what it never handed is cancelled, not reversed. */
+        const back = stop?.() ?? inv;
         toast(refuse("toastUndone"));
-        void Promise.all(inv.map((mu) => dispatch(mu))).then((vs) => {
+        if (back.length === 0) return;
+        void Promise.all(back.map((mu) => dispatch(mu))).then((vs) => {
           saidAll(vs, null, refuse("liveSaveFailed"));
         });
       },
@@ -4771,18 +4793,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        (FIX-022, 2026-09-21): a Park in the reader showed its pill 3–5 s after the tap, the same
        moment the triage POST left the device, over a 2 157-row list. One turn lets React commit
        the pill alone first; the act is read off the pre-press mirror above and lands unchanged.
-       The wait now happens INSIDE the message's chain slot, taken at the press: that is the
-       window an Undo cancels, and the window nothing else for this message may overtake. */
-    const pre = engine.verbRead();
-    const inv = ms.flatMap((m) => inverseMutations(pre, m));
-    return pilePress(messageId, say, inv, ms);
+       The wait now happens INSIDE every member's chain slot, taken at the press: that is the
+       window an Undo cancels, and the window nothing else for these messages may overtake. */
+    return pilePress(messageId, say, ms);
   };
 
   /**
    * THE TOGGLE IS READ OFF THE MEMBERS IT WRITES (PHONE-OWN-FACED-ROW-TOGGLE-READS-THE-OWN-REPLY):
    * it switches off only where every one already holds the state, else on for those that do not,
    * so the sentence names the change made. A row faced by the person's own reply never reads it,
-   * and the press holds the slot of the first letter it writes, never the reply's.
+   * and the press is answered for a letter it writes, never the reply; it holds every member's slot.
    */
   const pileToggle = async (
     messageId: string, kind: "replyLater" | "setAside", members?: readonly string[],
@@ -4798,7 +4818,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const off = targets.every(holds);
     const changed = off ? targets : targets.filter((id) => !holds(id));
     const say = refuse(kind === "replyLater" ? (off ? "toastUnqueued" : "toastQueued") : (off ? "toastUnparked" : "toastAside"));
-    // The press holds the slot of the first letter it writes, never my reply's.
+    // The press is answered for a letter it writes, never my reply.
     const lead = changed.find((id) => !isOwn(id)) ?? changed[0]!;
     return triage(lead, off ? "none" : state, say, undefined, changed, own);
   };
@@ -4808,7 +4828,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const row = pileSubjectIds(presentedReader(), messageId, engine.openRowHeld());
     return row.length > 1 ? row : undefined;
   };
-  /** The press holds the slot of a letter it writes, never my reply's (`pileToggle`'s lead). */
+  /** The letter a press is answered for, never my reply (`pileToggle`'s lead). */
   const leadOf = (messageId: string, row: readonly string[] | undefined): string =>
     [messageId, ...(row ?? [])].find((id) => !isOwn(id)) ?? messageId;
 
@@ -4926,16 +4946,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        at its own date). A row is pinned OR booked, never both, so the reads cannot overlap. */
     const pre = engine.verbRead();
     const bookedIds = ids.filter((id) => { const x = messageOf(id); return x !== undefined && triageStateOf(pre, x) === "bubbled_up"; });
-    const inv = [
-      ...inverseMutations(pre, { kind: "mark_seen", messageIds: ids, unread: false }),
-      ...bookedIds.flatMap((id) => inverseMutations(pre, { kind: "triage_set", messageId: id, state: "none" })),
-    ];
-    // Spoken FIRST and mounted alone (`paintFirst`), like every optimistic verb; the inverses
-    // above were read off the pre-press mirror, so the order of the two changes nothing they say.
     // Both halves in the ONE slot and in order: the booking clears before the read lands.
     const read: EngineMutation = { kind: "mark_seen", messageIds: ids, unread: false };
     const clears: EngineMutation[] = bookedIds.map((id) => ({ kind: "triage_set", messageId: id, state: "none" }));
-    return pilePress(messageId, refuse("toastResurfaceDone"), inv, [...clears, read]);
+    return pilePress(messageId, refuse("toastResurfaceDone"), [...clears, read]);
   };
 
   /** The reader the Ohbox is drawn from — see {@link LiveDeps.presented}. */
@@ -5286,8 +5300,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
-   * The restore stays PENDING on the mail server (the engine's own contract), so the sentence
-   * is "Restoring to …" — the webapp's exact toast — never "restored". The intent id makes a
+   * A restore the mail server still owes (`pending`) says "Restoring to …", the webapp's toast; one
+   * the server answered as done says "Restored to …". The intent id makes a
    * double press one request end to end (the engine builds `restore:<intent>:<id>` as the
    * Idempotency-Key); without a uuid source the request simply carries no key, as the engine
    * documents.
@@ -5296,7 +5310,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const intent = deps.uuid?.();
     const res = await engine.restoreFromTrash(messageId, intent ? { intentId: intent } : {});
     if (res.state === "restored") {
-      toast(refuse("trashToastRestoring", trashRestoreLabel(res.restoreTo)));
+      toast(refuse(res.pending ? "trashToastRestoring" : "trashToastRestored", trashRestoreLabel(res.restoreTo)));
       return true;
     }
     toast(refuse(res.state === "rolled_back" ? "trashToastRestoreFailed" : "trashUnavailable"));
@@ -5976,8 +5990,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const tagToggle = async (messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean> => {
     const m: EngineMutation = { kind: "tag_assign", messageId, tagId: tag.id, assigned };
-    const inv = inverseMutations(engine.verbRead(), m);
-    return pilePress(messageId, assigned ? refuse("tagTagged", tag.name) : refuse("tagUntagged", tag.name), inv, [m]);
+    return pilePress(messageId, assigned ? refuse("tagTagged", tag.name) : refuse("tagUntagged", tag.name), [m]);
   };
 
   const tagCreate = async (messageId: string, name: string): Promise<boolean> => {
@@ -5990,8 +6003,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // The undo UNASSIGNS; the minted tag row stands — deleting it is a different act with its
     // own verb and its own confirm (`inverseMutations`' tag arm states the same boundary).
     const m: EngineMutation = { kind: "tag_assign", messageId, tagId: deps.uuid(), assigned: true, createName: typed };
-    const inv = inverseMutations(engine.verbRead(), m);
-    return pilePress(messageId, refuse("tagTagged", typed), inv, [m]);
+    return pilePress(messageId, refuse("tagTagged", typed), [m]);
   };
 
   /**
@@ -7056,13 +7068,11 @@ export function topLineSaid(o: {
 
 /**
  * WHAT THE LINE UNDER THE OHBOX TITLE SAYS (row OHBOX-QUIET-READS-AS-STALLED): nothing before the
- * mirror has settled; the top line's own sentence while it has one (the same ranking, without the
- * first-sync clause); otherwise when the mailboxes were last checked and where mail went since the
- * person was here. Pure; the screen renders it.
+ * mirror has settled, and nothing while the top line has a sentence (the TopBar above the title
+ * says it; said here too, an offline Ohbox showed it twice); otherwise when the mailboxes were last
+ * checked and where mail went since the person was here. Pure; the screen renders it.
  */
-export type OhboxWhere =
-  | { kind: "said"; text: string }
-  | { kind: "where"; checked: string | null; piles: ReadonlyArray<{ pile: FiledPile; count: number }> };
+export type OhboxWhere = { kind: "where"; checked: string | null; piles: ReadonlyArray<{ pile: FiledPile; count: number }> };
 
 export function ohboxWhereSaid(o: {
   settled: boolean;
@@ -7077,7 +7087,7 @@ export function ohboxWhereSaid(o: {
 }): OhboxWhere | null {
   if (!o.settled) return null;
   const top = topLineSaid({ network: o.network, connection: o.connection, stale: o.stale, draining: o.draining, continuing: null });
-  if (top !== null) return { kind: "said", text: top.text };
+  if (top !== null) return null;
   return {
     kind: "where",
     checked: lastCheckedAt(o.mailboxes, o.mailboxesReadAt, o.nowMs),

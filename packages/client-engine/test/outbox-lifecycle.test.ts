@@ -3609,6 +3609,53 @@ describe("round nine: a mark is confirmed by its replacement's write", () => {
 });
 
 /**
+ * A READ ON THE WIRE IS MARKED BY A NEWER READ ON ITS IDS (`readsTaken`), and the mark is the read
+ * verbs' round eight: a Mark unread whose write is refused never happened, so it reaches no wire
+ * and takes nothing from the glance, which goes again whole, under its key. Mutations: the mark not
+ * put back → the glance is dropped; the refused write still sent → the unread reaches the wire.
+ */
+describe("a read on the wire and a newer read whose write is refused", () => {
+  const tick = (): Promise<void> => new Promise<void>((r) => { setTimeout(r, 5); });
+
+  it("the refused Mark unread reaches no wire, and the glance goes again whole, same key", async () => {
+    const faulty = faultyFactory(new IDBFactory());
+    const store = new IndexedDbMirrorStore({ owner: "acct-read-refused", factory: faulty.factory });
+    const wire: Array<{ said: string; key: string }> = [];
+    let failGlance!: (e: unknown) => void;
+    const inner = new FixturesAdapter();
+    const engine = new OhmailEngine({
+      adapter: {
+        fetchBody: (...a: Parameters<FixturesAdapter["fetchBody"]>) => inner.fetchBody(...a),
+        sync: (...a: Parameters<FixturesAdapter["sync"]>) => inner.sync(...a),
+        mutate: async (m: EngineMutation, opts: { idempotencyKey: string }) => {
+          const r = m as { messageIds?: string[]; unread?: boolean };
+          wire.push({ said: `${(r.messageIds ?? []).join(",")} ${r.unread ? "unread" : "read"}`, key: opts.idempotencyKey });
+          if (wire.length === 1) await new Promise((_r, rej) => { failGlance = rej as never; });
+          return { changes: [], seq: 1 };
+        },
+      } as never,
+      store, now: () => new Date(Date.parse("2026-10-29T09:00:00.000Z")),
+    } as never);
+    await engine.start();
+
+    const glance = engine.mutate({ kind: "mark_seen", messageIds: ["giulia"], unread: false, via: "glance" } as EngineMutation);
+    for (let i = 0; i < 30 && wire.length === 0; i++) await tick();
+    faulty.arm({ mode: "none", onWrite: (_op, key) => (key.startsWith(`${OUTBOX_TYPE}:`) ? "quota" : "pass") });
+    const unread = engine.mutate({ kind: "mark_seen", messageIds: ["giulia"], unread: true } as EngineMutation);
+    for (let i = 0; i < 10; i++) await tick();
+    faulty.heal();
+    failGlance(new MutationRejectedError("net", { code: "network", retryable: true }));
+    const [, refused] = await Promise.all([glance, unread]);
+    expect(refused.error?.code, "the unrecordable Mark unread went out anyway").toBe("storage_refused");
+    await engine.flushPending();
+
+    expect(wire.map((w) => w.said), "the glance lost its letter to a Mark unread that never happened").toEqual(["giulia read", "giulia read"]);
+    expect(new Set(wire.map((w) => w.key)).size, "the glance went again under a second key").toBe(1);
+    store.close();
+  });
+});
+
+/**
  * ROUND SIX'S RESIDUE.
  *
  * two fixes were in the code with controls that stayed green when they were reverted.:

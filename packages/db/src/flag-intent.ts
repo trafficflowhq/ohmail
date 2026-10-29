@@ -11,7 +11,9 @@ import type { Tx } from "./change-log.js";
  * `DrizzleRepo.upsertFlagState` writes desired AND observed with a backoff reset; the census test
  * pins every other `insert(flagState)` out of the tree. `observedSeen` is only supplied for the
  * INSERT; on conflict the column is omitted — the worker owns it. `reconcileStatus` is recomputed
- * IN SQL against the STORED `observed_seen`, so a no-op click never queues an IMAP round trip.
+ * IN SQL against the STORED `observed_seen`, so a no-op click never queues an IMAP round trip,
+ * except on a row whose `conflict` says that observation is in doubt: that one stays pending, and a
+ * press never clears the doubt.
  */
 export async function upsertDesiredSeen(
   tx: Tx, id: string, observedSeen: boolean, desiredSeen: boolean, now: Date,
@@ -38,9 +40,9 @@ export async function upsertDesiredSeenMany(
   }))).onConflictDoUpdate({
     target: flagState.messageId,
     set: {
-      desiredSeen, lastSetBy: "us", conflict: false, updatedAt: now, decidedAt,
+      desiredSeen, lastSetBy: "us", updatedAt: now, decidedAt,
       // A literal, not a bound boolean: the device store's test driver refuses one by position.
-      reconcileStatus: sql`case when ${flagState.observedSeen} = ${boolLiteral(desiredSeen)} then 'reconciled' else 'pending' end`,
+      reconcileStatus: sql`case when ${flagState.conflict} = TRUE then 'pending' when ${flagState.observedSeen} = ${boolLiteral(desiredSeen)} then 'reconciled' else 'pending' end`,
     },
   });
 }

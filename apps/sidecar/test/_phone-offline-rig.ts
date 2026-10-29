@@ -249,8 +249,9 @@ export async function post(p: Phone, path: string): Promise<number> {
 }
 
 /** A client this engine knows nothing about, straight to the server. */
-export async function withServer<T>(user: string, fn: (c: ImapFlow) => Promise<T>): Promise<T> {
-  const c = new ImapFlow({ host: HOST, port: PORT, secure: false, auth: { user, pass: PASS }, logger: false });
+export async function withServer<T>(user: string, fn: (c: ImapFlow) => Promise<T>, at = { host: HOST, port: PORT }): Promise<T> {
+  const c = new ImapFlow({ host: at.host, port: at.port, secure: false, auth: { user, pass: PASS }, logger: false });
+  c.on("error", () => undefined); // a reset socket's error event, else uncaught; the pending op rejects anyway
   await c.connect();
   try { return await fn(c); } finally { await c.logout().catch(() => undefined); }
 }
@@ -266,18 +267,25 @@ export async function deliver(user: string, from: string, subject: string): Prom
 }
 
 /** Which server folder holds the letter with this subject, or `null` when none does. */
-export async function folderOnServer(user: string, subject: string): Promise<string | null> {
-  return withServer(user, async (c) => {
-    for (const box of await c.list()) {
-      if (box.flags.has("\\Noselect")) continue;
-      const lock = await c.getMailboxLock(box.path);
-      try {
-        const hits = await c.search({ header: { subject } }, { uid: true });
-        if (Array.isArray(hits) && hits.length > 0) return box.path.replace(/\./g, "/");
-      } finally { lock.release(); }
+export async function folderOnServer(user: string, subject: string, at = { host: HOST, port: PORT }): Promise<string | null> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await withServer(user, async (c) => {
+        for (const box of await c.list()) {
+          if (box.flags.has("\\Noselect")) continue;
+          const lock = await c.getMailboxLock(box.path);
+          try {
+            const hits = await c.search({ header: { subject } }, { uid: true });
+            if (Array.isArray(hits) && hits.length > 0) return box.path.replace(/\./g, "/");
+          } finally { lock.release(); }
+        }
+        return null;
+      }, at);
+    } catch (err) {
+      // GreenMail 2.1.3 drops a connection whose SELECT races a write to that folder; read again on a fresh one.
+      if ((err as { code?: unknown }).code !== "NoConnection" || attempt === 3) throw err;
     }
-    return null;
-  });
+  }
 }
 
 /** Wait until the letter sits in `ohmail/Screener` on the server, or answer where it is. */

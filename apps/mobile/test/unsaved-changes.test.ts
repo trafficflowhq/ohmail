@@ -156,6 +156,18 @@ describe("the notice, mounted", () => {
     expect(screen.getByText(`${Copy.unsavedCount(2)} · ${Copy.unsavedShow}`)).toBeTruthy();
   });
 
+  /* The strip stands under the top bar; its press target grown upward took the Sidebar button's
+     presses, so in two panes the Sidebar only toggled "Show them". */
+  it("the strip's toggle reaches down and sideways, never up over the bar above it", () => {
+    mount([row("move")]);
+    const slopOf = (label: string) =>
+      (above(screen.getByText(label)).find((n) => (n.props as { hitSlop?: unknown }).hitSlop !== undefined)?.props as { hitSlop?: unknown })?.hitSlop;
+    const slop = slopOf(`${Copy.unsavedCount(1)} · ${Copy.unsavedShow}`) as { top: number; bottom: number; left: number };
+    expect(slop.top, "a press above the strip belongs to the bar").toBe(0);
+    expect(slop.bottom, "CONTROL: the target still grows below").toBeGreaterThan(0);
+    expect(slop.left).toBeGreaterThan(0);
+  });
+
   it("Try again and Discard sit inside the bounded scroller, and stack below 380 dp", () => {
     device.width = 360;
     const narrow = mount([row("move")]);

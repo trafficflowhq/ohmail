@@ -20,6 +20,7 @@ import {
   standaloneLaunchGeneration, takeStandaloneLaunch,
 } from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, openStandaloneMailbox } from "../src/engine/standalone-door";
+import { networkNow } from "../src/net/network-door";
 import { useConnection } from "../src/net/connection";
 import { useTheme } from "../src/theme";
 import { Button, Panel, Rule, Screen, Scroller, Tap, Txt } from "../src/ui/base";
@@ -169,6 +170,7 @@ function Credentials() {
           return native.nativeEnginePlatform();
         },
         machineName: () => PHONE_CLAIM_NAME,
+        network: networkNow,
         buildCommit: buildCommit(process.env.EXPO_PUBLIC_COMMIT),
         /* THE SAME ID THE GATE STAMPED, never a fresh one: a claim written against a second id is
            how an install reads its own claim as somebody else's. `null` — the marker has not been

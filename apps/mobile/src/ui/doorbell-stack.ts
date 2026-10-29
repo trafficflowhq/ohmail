@@ -26,10 +26,13 @@ export function doorbellFaces(initials: readonly string[], max: number = DOORBEL
 
 /**
  * How many faces fit the capsule's own measured width: four from 360, three from 300, none below —
- * there the sentence carries the count alone. An unmeasured capsule (0) draws the full four, which
- * the first layout then corrects.
+ * there the sentence carries the count alone. The width is counted at the system text size
+ * (`fontScale`), since the sentence grows with it and the faces do not. An unmeasured capsule (0)
+ * draws the full four, which the first layout then corrects.
  */
-export function doorbellMax(width: number): number {
-  if (width <= 0 || width >= 360) return DOORBELL_MAX;
-  return width >= 300 ? 3 : 0;
+export function doorbellMax(width: number, fontScale = 1): number {
+  if (width <= 0) return DOORBELL_MAX;
+  const room = width / Math.max(1, fontScale);
+  if (room >= 360) return DOORBELL_MAX;
+  return room >= 300 ? 3 : 0;
 }

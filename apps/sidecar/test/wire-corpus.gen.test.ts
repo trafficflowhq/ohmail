@@ -12,6 +12,7 @@ import { connectOverStdio, type StdioClient } from "../src/client.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
+import { rigAppendDates } from "../../../test/support/rig-append-date.js";
 import { serveOverStdio, type StdioHost } from "../src/host.js";
 import { canonical, settleBookkeeping, substitute, substitutionsFor, type Substitutions } from "./_wire-substitutions.js";
 
@@ -282,31 +283,24 @@ describe("the wire corpus the desktop app decodes", () => {
         followUp: `follow-up-${randomUUID()}@stranger.test`,
         otherSender: `kiln-${randomUUID()}@pottery.test`,
       };
-      // Each append names its INTERNALDATE, a minute apart in the Date headers' order, from one
-      // clock read floored to the second (the server's precision): arrival order is not timing.
-      // GreenMail stores an APPEND date in the 12:xx UTC hour as 00:xx (a 12-hour clock with no
-      // AM/PM), so arrivals that would fall in that hour move to 11:47-11:49 UTC the same day.
-      const now = Math.floor(Date.now() / 1000) * 1000;
-      const inNoonHour = (t: number): boolean => new Date(t).getUTCHours() === 12;
-      const base = inNoonHour(now) || inNoonHour(now - 3 * 60_000)
-        ? new Date(now).setUTCHours(11, 50, 0, 0)
-        : now;
-      const arrival = (minutesAgo: number): Date => new Date(base - minutesAgo * 60_000);
+      // Each append names its INTERNALDATE, a minute apart in the Date headers' order: arrival
+      // order is not timing.
+      const [threeAgo, twoAgo, oneAgo] = rigAppendDates([3 * 60_000, 2 * 60_000, 60_000]);
       await w.raw.append("INBOX", eml({
         from: "stranger@nowhere.test", to: w.cfg.auth.user, subject: "Can we talk?",
         messageId: ids.firstContact, date: "Mon, 03 Aug 2026 08:14:00 +0000",
         body: "Hello — we have not met before. I am writing about the pottery studio.",
-      }), [], arrival(3));
+      }), [], threeAgo);
       await w.raw.append("INBOX", eml({
         from: "stranger@nowhere.test", to: w.cfg.auth.user, subject: "Following up",
         messageId: ids.followUp, date: "Mon, 03 Aug 2026 09:41:00 +0000",
         body: "Following up on the studio question — no rush.",
-      }), [], arrival(2));
+      }), [], twoAgo);
       await w.raw.append("INBOX", eml({
         from: "studio@pottery.test", to: w.cfg.auth.user, subject: "Kiln schedule for August",
         messageId: ids.otherSender, date: "Mon, 03 Aug 2026 10:02:00 +0000",
         body: "The kiln is booked Tuesdays and Thursdays through the end of the month.",
-      }), [], arrival(1));
+      }), [], oneAgo);
 
       // ── 2. The engine starts: connect, ensure the ohmail/* tree, drain the mailbox.
       await w.sidecar.start();
@@ -325,7 +319,7 @@ describe("the wire corpus the desktop app decodes", () => {
         .where(eq(messages.messageIdHeader, ids.firstContact));
       expect(row, "first contact was never ingested").toBeDefined();
       expect(row!.arrivedAt?.getTime(), "arrival is not the INTERNALDATE the append named")
-        .toBe(arrival(3).getTime());
+        .toBe(threeAgo.getTime());
 
       // ── 4. The routes the app speaks, in the order it speaks them.
       //

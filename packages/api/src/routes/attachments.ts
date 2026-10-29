@@ -142,6 +142,8 @@ export const attachmentRoutes: Route[] = [
             // `nosniff` is the belt to that braces.
             "X-Content-Type-Options": "nosniff",
             "Cache-Control": "private, max-age=3600",
+            // Keyed on the session as /img is: the next account on this browser never gets these bytes.
+            "Vary": "Cookie",
           },
         });
       } catch (err) {

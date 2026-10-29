@@ -1475,11 +1475,12 @@ export function useShellVerbs({
               inverseMutations(pre, { kind: "triage_set", messageId, state: "none" })),
           ];
           if (booked.length > 0) {
-            const applied = await mutateSetAndReport(
+            // A clear queued to be sent again stands, as the single arm's does: the read follows it.
+            const stood = await mutateSetAndReport(
               booked.map((messageId) => ({ kind: "triage_set" as const, messageId, state: "none" as const })),
               () => null,
             );
-            if (applied === 0) return;
+            if (stood === 0) return;
           }
           if (await markSeen(ids, false)) {
             // The conversation's newest member names the slot — the date its row wears.

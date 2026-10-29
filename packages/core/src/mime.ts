@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { AddressObject, Attachment, ParsedMail } from "mailparser";
 import { canonicalId } from "./identity.js";
+import { htmlWords } from "./html-text.js";
+import { prepareHtmlForStorage } from "./html-storage.js";
 import { mailDate } from "./mail-date.js";
 import { ParseDeadlineExceeded, parseBounded, startParseBudget } from "./mime-parse.js";
 import type { NormalizedMessage, EmailAddress, AttachmentMeta } from "./types.js";
@@ -332,11 +334,19 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
     (headers[name] ??= []).push(value);
   }
 
-  // `text` is scrubbed HERE, on the way in, and nowhere later — see {@link scrubNul}. Every
-  // derivation below reads this binding: the canonical body hash, the stored body, and (through
-  // `pipeline.ts`) the snippet and the search vector. One representation, so they cannot disagree.
+  // The parse's own text, scrubbed once here ({@link scrubNul}); the identity reads it, never the words.
   const text = scrubNul(parsed.text ?? "");
   const html = typeof parsed.html === "string" ? scrubNul(parsed.html) : null;
+  // No text part: the stored html's words, so a later backfill from that html gets the same text.
+  let words = "";
+  if (text.trim() === "" && html !== null) {
+    try {
+      words = scrubNul(htmlWords(prepareHtmlForStorage(html) ?? ""));
+    } catch {
+      // Derived text only: a letter whose html cannot be rendered keeps the parse's own (empty) text.
+      words = "";
+    }
+  }
   const fromObj = parsed.from?.value?.[0];
   const attachments = (parsed.attachments ?? []).map(toAttachmentMeta);
 
@@ -353,15 +363,7 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
     if (!a.inline && referencesCid(html, a.contentId)) a.inline = true;
   }
 
-  // What the fallback parse hashes, and why it is not `text`: `skipHtmlToText` leaves
-  // `parsed.text` empty, so on that path `canonicalId` would hash "" for EVERY such message — and
-  // `dedupKey` falls back to `body:<hash>` when a message carries no Message-ID, so a shared hash
-  // means the second such message is filed as a duplicate of the first: real mail silently
-  // dropped, worse than the CPU burn the limit stops. So this path hashes the html, which is real
-  // content and stable — the same raw bytes always take the same branch, so a message dedups
-  // against itself on every later sync. `textBody` stays honestly empty rather than being filled
-  // with an invented rendition: a second text extraction would show up in the snippet and the
-  // search vector, and belongs in a change that can measure it.
+  // The refused parse has no text, so it hashes the html: "" for all of them would dedup them together.
   const bodyForCanonical = htmlToTextRefused ? (html ?? text) : text;
   // The header read by hand first: the phone's Date refuses common forms, and mailparser then says
   // "now". The last Date line, the one mailparser reads; its own reading is kept when it differs.
@@ -382,7 +384,7 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
     date: sent ?? parsed.date ?? null,
     ...(runtimeDate ? { runtimeDate } : {}),
     headers,
-    textBody: text,
+    ...(words !== "" ? { textBody: words, ownText: text } : { textBody: text }),
     htmlBody: html,
     // NOT `attachments.length > 0` — see {@link isRealFile} for what that over-reports.
     hasAttachments: attachments.some(isRealFile),

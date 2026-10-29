@@ -64,6 +64,10 @@ describe("the attachment routes refuse a part that is not the row's file", () =>
     const res = await H(req("GET", `/attachments/${w.attId}`, { bearer: w.s.token }), w.deps);
     expect(res.status).toBe(200);
     expect(Buffer.from(await res.arrayBuffer()).equals(RIGHT)).toBe(true);
+    // Kept privately for an hour, keyed on the session as /img is: the next account signed in on
+    // the same browser never takes the first one's file from the cache.
+    expect(res.headers.get("cache-control")).toBe("private, max-age=3600");
+    expect(res.headers.get("vary")).toBe("Cookie");
   });
 });
 

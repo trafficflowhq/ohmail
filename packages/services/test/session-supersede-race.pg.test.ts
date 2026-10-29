@@ -18,7 +18,8 @@ import { resolveSession } from "@trafficflow/services/auth";
  * Whichever order the two commit in, no token of A's session authenticates after the mint and A's
  * family keeps no spendable refresh token. Each case builds its own accounts and reads only them.
  * The one order the server cannot see (the rotation fully committed while the jar still presents
- * the pre-rotation cookie) is pinned apart, as the open residual it is.
+ * the pre-rotation cookie) is pinned apart, as the open residual it is; for the same person the
+ * jar's resume marker closes it.
  */
 const URL = pgTestUrl(import.meta.url);
 const PG_UP = await realPgAvailable(URL);
@@ -37,7 +38,8 @@ const COOKIE = { concurrentGrace: true, surface: "cookie" } as const;
 
 /** Register and enrol TOTP; the answer signs in a fresh browser session on demand. */
 async function person(svc: AuthService, label: string): Promise<{
-  userId: string; signIn: (over?: Partial<ServiceContext>) => Promise<{ access: string; refresh: string }>;
+  userId: string; first: { access: string; refresh: string };
+  signIn: (over?: Partial<ServiceContext>) => Promise<{ access: string; refresh: string }>;
 }> {
   const email = `${label}-${randomUUID()}@lichtgrat.example`;
   const reg = await svc.register(ctx(), { email, password: PW, displayName: "S", inviteCode: "INVITE-OK" });
@@ -46,9 +48,11 @@ async function person(svc: AuthService, label: string): Promise<{
     .where(eq(sessions.userId, reg.user.userId)).orderBy(desc(sessions.createdAt)).limit(1);
   const enrolCtx = ctx({ userId: reg.user.userId, accountId: reg.user.accountId, sessionId: enrol!.id });
   const { secret } = await svc.totpEnroll(enrolCtx);
-  await svc.totpActivate(enrolCtx, { code: totp(secret) });
+  const { session } = await svc.totpActivate(enrolCtx, { code: totp(secret) });
   return {
     userId: reg.user.userId,
+    // The full session activation exchanged the enrolment for: this browser's first family.
+    first: { access: session!.tokens!.accessToken, refresh: session!.tokens!.refreshToken },
     // ONE sign-in per person: activation spent this step, and the window admits the next one at
     // the real clock, so nothing is stamped ahead of it.
     signIn: async (over = {}) => {
@@ -300,5 +304,49 @@ describe.skipIf(!PG_UP)("a sign-in supersedes the jar's previous session, on rea
     const rotated = (await svc.refresh(ctx(), { refreshToken: jar.refresh }, COOKIE)).tokens!;
     await b.signIn({ supersedes: jar.access });
     expect(await authenticates(rotated.accessToken)).toBe(false);
+  });
+
+  // ITS SAME-PERSON SIBLING, closed: the jar's resume marker is the digest of the pre-rotation
+  // refresh token, which still names the family the rotation moved on.
+  it("the same person signs in again after a whole rotation, carrying the pre-rotation marker: the family is revoked", async () => {
+    const svc = new AuthService(makeTestAuthDeps());
+    const a = await person(svc, "sup-own-a");
+    const rotated = (await svc.refresh(ctx(), { refreshToken: a.first.refresh }, COOKIE)).tokens!;
+    await a.signIn({ supersedesMarker: hashToken(a.first.refresh) });
+    expect(await authenticates(rotated.accessToken)).toBe(false);
+    expect(await refused(svc.refresh(ctx(), { refreshToken: rotated.refreshToken }, COOKIE))).toBe("refresh_revoked");
+    expect(await spendableRefresh(a.first.refresh)).toBe(0);
+  });
+
+  it("a sign-in carrying only the marker, in the MIDDLE of a rotation, waits for it: the successor is dead on arrival", async () => {
+    const svc = new AuthService(makeTestAuthDeps());
+    const a = await person(svc, "sup-mark-mid");
+    let release!: () => void;
+    let arrived!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const atSessionWrite = new Promise<void>((r) => { arrived = r; });
+    const rotation = svc.refresh(
+      ctx({ db: pausingUpdatesOf(db, sessions, gate, arrived) as never }), { refreshToken: a.first.refresh }, COOKIE,
+    );
+    await atSessionWrite;
+    const minter = `sup-mark-${randomUUID().slice(0, 8)}`;
+    const mint = a.signIn({ supersedesMarker: hashToken(a.first.refresh), db: named(minter) });
+    const blocked = await blockedOnALock(minter);
+    release();
+    expect(blocked, "the supersede waits for the rotation that holds the session row").toBe(true);
+    const late = (await rotation).tokens!;
+    await mint;
+    expect(await authenticates(late.accessToken), "the late rotation's access token authenticates").toBe(false);
+    expect(await refused(svc.refresh(ctx(), { refreshToken: late.refreshToken }, COOKIE))).toBe("refresh_revoked");
+    expect(await spendableRefresh(a.first.refresh)).toBe(0);
+  });
+
+  it("control: a marker naming the person's paired device revokes nothing", async () => {
+    const svc = new AuthService(makeTestAuthDeps());
+    const a = await person(svc, "sup-mark-pair");
+    const phone = (await svc.establishPairedDevice(ctx(), { userId: a.userId, label: "Phone", kind: "mobile-android" })).tokens;
+    await a.signIn({ supersedesMarker: hashToken(phone.refreshToken) });
+    expect(await authenticates(phone.accessToken), "a browser's marker revoked a paired device").toBe(true);
+    expect(await refused(svc.refresh(ctx(), { refreshToken: phone.refreshToken }, { surface: "native" }))).toBe("rotated");
   });
 });

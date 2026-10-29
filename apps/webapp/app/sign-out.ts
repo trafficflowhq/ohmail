@@ -18,8 +18,8 @@ import { READING_ALONG_PREFIX } from "./shell/reading-along";
 import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "./shell/wall-lift";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 import {
-  SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch, forgetSplashPresentation,
-  purgeSiteCache,
+  SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch, forgetRenewalName,
+  forgetSplashPresentation, purgeSiteCache,
 } from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
 import { SHARED_NOTE_KEY } from "./(product)/resume/signed-out-note";
@@ -265,6 +265,8 @@ export async function forgetThisBrowser(
     deviceCeremonySwept = false;
     survivors.push(...watchLeft);
   }
+  // The renewal name's durable copy, its own IndexedDB database (`session-refresh.ts`): it goes whole.
+  survivors.push(...await forgetRenewalName());
   const wipe = only ? await clearAllMirrors(owner, undefined, { only: true }) : await clearAllMirrors(owner);
   return {
     remaining: [...survivors, ...wipe.remaining].sort(),

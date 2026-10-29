@@ -30,8 +30,10 @@ describe("a sheet rises above the keyboard", () => {
   it("the composer and the keyboard sheets both pad their foot by it", () => {
     for (const [name, src] of [["MessageActions", ACTIONS], ["Sheet", SHEET]] as const) {
       expect(src, `${name} reads no lift`).toContain("const keyboardLift = useKeyboardLift();");
-      expect(src, `${name} does not pad by it`).toContain("style={sheetRoom(insets.top, keyboardLift)}");
+      expect(src, `${name} does not pad by it`).toContain("const room = useSheetRoom(keyboardLift);");
+      expect(src, `${name} does not lay its sheet in the room`).toContain("style={room}");
     }
+    expect(SHEET, "the shared room drops the lift").toContain("return sheetRoom(insets.top, keyboardLift, ");
   });
 });
 

@@ -829,6 +829,31 @@ export class MoveRefusedError extends Error {
 }
 
 /**
+ * A `\Seen` STORE left and its answer was lost: imapflow resolved `false` on a connection that is no
+ * longer usable. The STORE may have landed, so what we last observed of the flag is in doubt.
+ */
+export class StoreUnansweredError extends Error {
+  readonly code = "ESTOREUNANSWERED";
+  constructor(public locator: NativeLocator) {
+    super(`the flag STORE on ${locator.folder}#${locator.ref} got no answer; it may have landed`);
+    this.name = "StoreUnansweredError";
+  }
+}
+
+/**
+ * The server answered a `\Seen` STORE and did not apply it: imapflow resolved `false` on a
+ * connection that is still usable (a tagged NO or BAD).
+ */
+export class StoreRefusedError extends Error {
+  readonly code = "ESTOREREFUSED";
+  readonly responseStatus = "NO" as const;
+  constructor(public locator: NativeLocator) {
+    super(`the server refused the flag STORE on ${locator.folder}#${locator.ref}`);
+    this.name = "StoreRefusedError";
+  }
+}
+
+/**
  * The destination folder of a MOVE or COPY is not on the server, and nothing was written. imapflow
  * swallows a `NO [TRYCREATE]` and its lock reads `mailboxMissing`, so the adapter names it here.
  * A `responseStatus` NO, so a caller asking {@link isRefusedCommand} still reads a refusal.
@@ -5374,8 +5399,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * nothing — measured, and RFC 3501 permits it. `!ok` alone would report success for a message
    * never touched, the reconciler would flip `observed_seen` to a value no server confirmed, and
    * the row would read converged for ever. `fetchOne` costs one round trip under a held lock and
-   * raises the {@link MessageGoneError} the reconciler's skip-and-retry branch is written for;
-   * `!ok` stays as a second signal.
+   * raises the {@link MessageGoneError} the reconciler's skip-and-retry branch is written for.
+   * imapflow resolves `!ok` both for a refusal and for an answer a closed socket lost, so `usable`
+   * tells {@link StoreRefusedError} from {@link StoreUnansweredError}.
    */
   async setFlags(locator: NativeLocator, flags: { seen: boolean }, door: WriteDoor): Promise<void> {
     const { uid } = parseRef(locator.ref);
@@ -5393,7 +5419,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const ok = await (flags.seen
         ? this.client.messageFlagsAdd([uid], ["\\Seen"], { uid: true })
         : this.client.messageFlagsRemove([uid], ["\\Seen"], { uid: true }));
-      if (!ok) throw new MessageGoneError(locator);
+      if (!ok) {
+        if ((this.client as unknown as { usable?: unknown }).usable === true) throw new StoreRefusedError(locator);
+        throw new StoreUnansweredError(locator);
+      }
     } finally {
       lock.release();
     }

@@ -92,7 +92,7 @@ const post = (path: string, body: unknown, jar?: Jar, extra: Record<string, stri
 let firstVerifySetCookies: string[] = [];
 
 /** register (invite) → TOTP enroll+activate → login → totp verify ⇒ a FULL cookie session. */
-async function signUpAndIn(email: string, inviteCode: string): Promise<{ full: Jar; verifyRes: Response }> {
+async function signUpAndIn(email: string, inviteCode: string): Promise<{ full: Jar; verifyRes: Response; secret: string }> {
   const reg = await post("/auth/register", { email, password: PW, displayName: "Fam", inviteCode });
   expect(reg.status).toBe(201);
   const enrollment = jarOf(reg);
@@ -100,20 +100,23 @@ async function signUpAndIn(email: string, inviteCode: string): Promise<{ full: J
   const enroll = await post("/auth/2fa/totp/enroll", {}, enrollment);
   expect(enroll.status).toBe(200);
   const { secret } = await enroll.json() as { secret: string };
-  const activate = await post("/auth/2fa/totp/activate", { code: totpNow(secret, new Date()) }, enrollment);
+  // The PREVIOUS time-step's code activates and the current one signs in: single-use per
+  // timestep is the replay guard, and the ±1-step skew window admits both now, which leaves the
+  // authenticator's NEXT code for a later sign-in. Clear of a step's end, so the previous step
+  // is still inside the window when the server reads it.
+  const intoStep = Date.now() % 30_000;
+  if (intoStep > 25_000) await new Promise((r) => setTimeout(r, 30_100 - intoStep));
+  const activate = await post("/auth/2fa/totp/activate", { code: totpNow(secret, new Date(Date.now() - 30_000)) }, enrollment);
   expect(activate.status).toBe(200);
 
   const login = await post("/auth/login", { email, password: PW });
   expect(login.status).toBe(200);
   const l = await login.json() as { status: string; loginToken: string };
   expect(l.status).toBe("twofa_required");
-  // The NEXT time-step's code, deliberately: activate CONSUMED the current step (single-use
-  // per timestep is the replay guard), and the ±1-step skew window makes step+1 verifiable
-  // now — the same ceremony a human performs by waiting for the authenticator to tick.
-  const verifyRes = await post("/auth/2fa/totp/verify", { loginToken: l.loginToken, code: totpNow(secret, new Date(Date.now() + 30_000)) });
+  const verifyRes = await post("/auth/2fa/totp/verify", { loginToken: l.loginToken, code: totpNow(secret, new Date()) });
   expect(verifyRes.status).toBe(200);
   if (firstVerifySetCookies.length === 0) firstVerifySetCookies = verifyRes.headers.getSetCookie();
-  return { full: jarOf(verifyRes), verifyRes };
+  return { full: jarOf(verifyRes), verifyRes, secret };
 }
 
 const mailboxBody = (address: string): unknown => ({
@@ -195,6 +198,7 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
   afterEach(async () => { if (roleAdmin) await guard.check(roleAdmin); });
 
   let firstJar: Jar;
+  let ownerSecret = "";
   let secondInviteToken = "";
 
   it("GET /hello answers the fresh-box truth: selfhost, needsSetup:true, pairing:true, no open signup", async () => {
@@ -221,8 +225,9 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
     const replay = await post("/pair/redeem", { grant: "invite", token: setupToken, email: "thief@family.example" });
     expect(replay.status).toBe(400);
 
-    const { full } = await signUpAndIn("owner@family.example", invite.code);
+    const { full, secret } = await signUpAndIn("owner@family.example", invite.code);
     firstJar = full;
+    ownerSecret = secret;
 
     // THE OWNERLESS PATH CONFERS: whoever read the boot log controls the box, so the first
     // account's address starts proven — measured in the database, not inferred from a flag.
@@ -341,6 +346,22 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
     const hello = await fetch(at("/hello"));
     expect(hello.status).toBe(200);
     expect(midlifeMints).toEqual([]);
+  });
+
+  it("signed in again on the first browser after its access cookie lapsed: its marker retires that family", async () => {
+    // Before the sign-out below. The browser sends its resume marker alone, with the
+    // authenticator's next code; the first jar's family then answers as revoked.
+    const marker = /(?:^|; )tf_resume=([^;]+)/.exec(firstJar.cookie)![1]!;
+    const login = await post("/auth/login", { email: "owner@family.example", password: PW });
+    const { loginToken } = await login.json() as { loginToken: string };
+    const again = await post("/auth/2fa/totp/verify", { loginToken, code: totpNow(ownerSecret, new Date(Date.now() + 30_000)) },
+      undefined, { cookie: `tf_resume=${marker}` });
+    expect(again.status).toBe(200);
+    const late = await post("/auth/refresh", {}, firstJar);
+    expect(late.status, "the first browser's earlier family still renews").toBe(401);
+    expect(((await late.json()) as { error: { code: string } }).error.code).toBe("refresh_revoked");
+    firstJar = jarOf(again);
+    expect((await fetch(at("/auth/session"), { headers: { cookie: firstJar.cookie } })).status).toBe(200);
   });
 
   it("signed out: the door's 204 and the refused refresh clear the jar with no cache clear; the purge answers alone", async () => {

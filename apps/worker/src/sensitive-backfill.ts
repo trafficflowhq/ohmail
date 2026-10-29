@@ -5,7 +5,7 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import {
   classifySensitivity, fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime, runtimeDedupKey,
-  prepareHtmlForStorage, reindexMessageSearch, silentLogger,
+  htmlWords, prepareHtmlForStorage, reindexMessageSearch, silentLogger,
   type Logger, type NativeLocator, type NormalizedMessage, type SensitivityResult,
 } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -232,7 +232,7 @@ const EMPTY: SensitiveBackfillResult = {
 };
 
 /** One candidate, as it sits on disk — every field the pre-filter and the identity check read. */
-interface CandidateRow {
+export interface CandidateRow {
   messageId: string;
   dedupKey: string;
   messageIdHeader: string | null;
@@ -726,6 +726,8 @@ function fromStoredRow(row: CandidateRow): NormalizedMessage {
     date: null,
     headers: {},
     textBody: row.storedText,
+    // Text ingest derived from this html is counted once, from the html, as ingest counted it.
+    ...(row.storedHtml !== null && row.storedText !== "" && row.storedText === htmlWords(row.storedHtml) ? { ownText: "" } : {}),
     htmlBody: row.storedHtml,
     hasAttachments: false,
     attachments: [],
@@ -744,3 +746,5 @@ function snippetOf(normalized: NormalizedMessage): string {
 
 /** Exported for the guard that pins the mirror above. Not part of the pass's surface. */
 export const __snippetOf = snippetOf;
+/** Exported for the guard that holds the stored row's verdict to ingest's. Not part of the pass's surface. */
+export const __fromStoredRow = fromStoredRow;

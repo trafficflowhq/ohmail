@@ -16,7 +16,7 @@ import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useKeyboardLift } from "./keyboard-lift";
 import { useReaderCover } from "./reader-cover";
-import { separatingVerticalHinge, usePosture } from "./posture";
+import { creaseAcross, separatingVerticalHinge, usePosture } from "./posture";
 import { detailPaneRect, scaffoldPlan } from "./scaffold/plan";
 import { sheetPanelBounds, sheetRoom } from "./sheet-bounds";
 import { Tap, Txt } from "./base";
@@ -37,6 +37,14 @@ export function useSheetPanelBounds(): ViewStyle {
   /* One pane hands no hinge (a flat fold has no width), except a book fold, which a sheet keeps off. */
   const hinge = posture.panes === 2 || separatingVerticalHinge(posture.fold, posture.hinge) !== null ? posture.hinge : null;
   return sheetPanelBounds(w, h, insets.top, pane, hinge);
+}
+
+/** The room a sheet rises in, above the keyboard and, over a crease, above the crease (`sheetRoom`). */
+export function useSheetRoom(keyboardLift: number): ViewStyle {
+  const { height: h } = useWindowDimensions();
+  const posture = usePosture();
+  const insets = useSafeAreaInsets();
+  return sheetRoom(insets.top, keyboardLift, creaseAcross(posture.fold, posture.hinge), h);
 }
 
 /**
@@ -78,6 +86,7 @@ export function Sheet({
   const keyboardLift = useKeyboardLift();
   const insets = useSafeAreaInsets();
   const bounds = useSheetPanelBounds();
+  const room = useSheetRoom(keyboardLift);
   const modalKey = useModalKey();
   /* A shown sheet stands over the reader: nothing under it is read (`reader-cover.ts`). */
   useReaderCover(open);
@@ -95,6 +104,7 @@ export function Sheet({
             borderTopRightRadius: t.radius.panel,
             paddingTop: 12,
             paddingBottom: 8 + insets.bottom,
+            flexShrink: 1,
           },
           bounds,
           t.liftUp("l3"),
@@ -117,7 +127,7 @@ export function Sheet({
       {avoidKeyboard ? (
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={sheetRoom(insets.top, keyboardLift)}
+          style={room}
         >
           {body}
         </KeyboardAvoidingView>
@@ -145,7 +155,11 @@ export function SheetBackdrop({ label, onPress }: { label: string; onPress: () =
   );
 }
 
-/** One verb, one row. `on` draws the check — the tag sheet's assigned mark. */
+/**
+ * One verb, one row. A row given `on` is a checkbox whose state is read out. On a row with no icon
+ * (the Tag sheet's) the check stands in the icon's place, before the name: at the far end it went
+ * unseen, and a tap removed the tag a person meant to add.
+ */
 export function SheetRow({
   label,
   detail,
@@ -166,20 +180,40 @@ export function SheetRow({
   onPress: () => void;
 }) {
   const t = useTheme();
+  const row = {
+    onPress,
+    accessibilityLabel: detail === undefined ? label : Copy.ariaLabelDetail(label, detail),
+    style: ({ pressed }: { pressed: boolean }) => ({
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
+      gap: 10,
+      paddingHorizontal: 16,
+      paddingVertical: 13,
+      backgroundColor: pressed ? t.c.tint : "transparent",
+    }),
+  };
+  // A checkbox row hands native its state with the key; a plain row hands none. Keyed apart, so a
+  // row that changes kind is a new view and never keeps the other kind's flag.
+  return on === undefined ? (
+    <Tap key="button" {...row} accessibilityRole="button">
+      {rowContent(t, label, detail, icon, on)}
+    </Tap>
+  ) : (
+    <Tap key="checkbox" {...row} accessibilityRole="checkbox" accessibilityState={{ checked: on }}>
+      {rowContent(t, label, detail, icon, on)}
+    </Tap>
+  );
+}
+
+function rowContent(
+  t: ReturnType<typeof useTheme>, label: string, detail: string | undefined, icon: IconName | undefined,
+  on: boolean | undefined,
+) {
   return (
-    <Tap
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={detail === undefined ? label : Copy.ariaLabelDetail(label, detail)}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 10,
-        paddingHorizontal: 16,
-        paddingVertical: 13,
-        backgroundColor: pressed ? t.c.tint : "transparent",
-      })}
-    >
+    <>
+      {on !== undefined && !icon ? (
+        <View style={{ width: 14 }}>{on ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}</View>
+      ) : null}
       {icon ? <Icon name={icon} size={14} color={t.c.ink2} /> : null}
       <Txt variant="button" style={{ flexShrink: 1 }}>
         {label}
@@ -190,8 +224,8 @@ export function SheetRow({
           {detail}
         </Txt>
       )}
-      {on ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}
-    </Tap>
+      {on && icon ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}
+    </>
   );
 }
 

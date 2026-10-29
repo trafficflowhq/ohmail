@@ -190,6 +190,15 @@ describe("readMailboxes — the wire, and what it refuses to guess", () => {
     expect(out?.map((b) => b.smtpMaxSizeBytes)).toEqual([50 * 1024 * 1024, null, null, null, null]);
   });
 
+  it("reads when the mailbox was connected, the first-import floor's clock, only as a non-empty string", async () => {
+    const out = await readMailboxes(session(ok([
+      { id: "m1", address: "a@b.test", createdAt: "2026-09-22T08:00:00.000Z" },
+      { id: "m2", address: "b@b.test", createdAt: "" },
+      { id: "m3", address: "c@b.test" },
+    ])));
+    expect(out?.map((b) => b.createdAt)).toEqual(["2026-09-22T08:00:00.000Z", undefined, undefined]);
+  });
+
   it("reads the error code and the sign-in kind the support mail's block classes, only as the wire sent them", async () => {
     const out = await readMailboxes(session(ok([
       { id: "m1", address: "a@b.test", errorCode: "auth", authKind: "oauth" },

@@ -676,8 +676,9 @@ describe("the marker is a marker, not a credential", () => {
 
   it("it is Lax — which is the entire point — while the real cookies stay Strict", () => {
     // Lax is what makes a cross-site link work. Safe only because the marker authorises
-    // nothing: forging it buys an attacker a refresh attempt that fails.
-    expect(cookies).toMatch(/\$\{RESUME_COOKIE\}=1; HttpOnly; SameSite=Lax; Secure; Path=\/; Max-Age=\$\{refreshMax\}/);
+    // nothing: forging it buys an attacker a refresh attempt that fails, and at most the end of
+    // one of the signer's own browser sessions at their next sign-in.
+    expect(cookies).toMatch(/\$\{RESUME_COOKIE\}=\$\{resumeMarkerFor\(tokens\.refreshToken\)\}; HttpOnly; SameSite=Lax; Secure; Path=\/; Max-Age=\$\{refreshMax\}/);
     for (const name of ["tf_session", "tf_refresh", "tf_csrf"]) {
       const line = cookies.split("\n").find((l) => l.includes(`${name}=$`) || l.includes(`${name}=\${`));
       expect(line, name).toMatch(/SameSite=Strict/);
@@ -686,7 +687,7 @@ describe("the marker is a marker, not a credential", () => {
 
   it("it lives as long as the REFRESH token, not the access token", () => {
     // Present for exactly as long as a resume could succeed.
-    expect(cookies).toMatch(/RESUME_COOKIE\}=1;[^`]*Max-Age=\$\{refreshMax\}/);
+    expect(cookies).toMatch(/RESUME_COOKIE\}=\$\{resumeMarkerFor\(tokens\.refreshToken\)\};[^`]*Max-Age=\$\{refreshMax\}/);
   });
 
   it("logout and erasure clear it — otherwise the next visit loops through the splash", () => {

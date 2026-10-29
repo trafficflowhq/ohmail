@@ -73,6 +73,9 @@ function messageIdsOf(m: EngineMutation): string[] {
   return Array.isArray(r.messageIds) ? r.messageIds.filter((x): x is string => typeof x === "string") : [];
 }
 
+/** A press that stands: applied, or on this client's retry queue to land on the next drive. */
+const stands = (v: PressVerdict): boolean => v.kind === "applied" || (v.kind === "queued" && v.wait === "retry");
+
 /** What the shell composes with: the two windows, the four report doors and the armed Undo. */
 export interface ShellDispatch {
   fileAndRefresh: <T>(dispatch: Promise<T>) => Promise<T>;
@@ -97,9 +100,10 @@ export interface ShellDispatch {
     held?: { cancel: () => boolean; undone: string },
   ) => void;
   mutateAndReport: (mutation: EngineMutation, okSentence: string | null) => Promise<boolean>;
+  /** Answers how many of the presses stand: applied, or queued to be sent again. */
   mutateSetAndReport: (
     mutations: readonly EngineMutation[],
-    say: (applied: number) => string | null,
+    say: (stood: number) => string | null,
   ) => Promise<number>;
   /** Where the Ohbox registers its answer to an Undo — see {@link UndoLink}. */
   undoLink: MutableRefObject<UndoLink | null>;
@@ -165,6 +169,7 @@ export function useShellDispatch({
       undo: t("screener.toastUndo"),
       undone: t("ohbox.deleteUndone"),
       failed: t("ohbox.deleteFailed"),
+      noTrash: t("ohbox.deleteNoTrash"),
       /* THE ONE SENTENCE THIS ROW WAS WAITING FOR — the key has been in both catalogues since the
          202 work and nothing read it, so a reader install's delete kept saying "Deleted". */
       queued: t("screening.deleteQueuedForOrganizer"),
@@ -418,8 +423,7 @@ export function useShellDispatch({
       void Promise.all(inverses.map((mu) => dispatchPress(mu))).then((outs) => {
         const tally = tallyVerdicts(outs);
         if (mine !== null) {
-          const took = (v: PressVerdict): boolean => v.kind === "applied" || (v.kind === "queued" && v.wait === "retry");
-          undoLink.current?.settle(mine, inverses.some((mu, i) => messageIdsOf(mu).includes(mine) && took(outs[i]!)));
+          undoLink.current?.settle(mine, inverses.some((mu, i) => messageIdsOf(mu).includes(mine) && stands(outs[i]!)));
         }
         /* THE MAIL CAME BACK. Only a cancel that TOOK may add "and no rule was made" — past the
            window the rule is on its way and the honest sentence is the plain one. */
@@ -463,38 +467,40 @@ export function useShellDispatch({
    * organizer is counted separately again, because nothing has happened to it.
    */
   const mutateSetAndReport = useStableCallback(
-    (mutations: readonly EngineMutation[], say: (applied: number) => string | null): Promise<number> => {
-      /* One pre-press read for the whole set; the undo covers exactly the mutations that APPLIED
-         — an inverse of a refused press would change state the press never touched. */
+    (mutations: readonly EngineMutation[], say: (stood: number) => string | null): Promise<number> => {
+      /* One pre-press read for the whole set; the sentence, the count and the undo cover exactly the
+         presses that STAND (`stands`), as `mutateAndReport` does for one: a retry-queued press lands
+         on the next drive, and an inverse of a refused press would change state it never touched. */
       const preRead = engine.verbRead();
       const inversesOf = mutations.map((mu) => inverseMutations(preRead, mu));
       const claim = inversesOf.some((i) => i.length > 0) ? door.expect() : undefined;
       return Promise.all(mutations.map((mu) => dispatchPress(mu))).then((outs) => {
         const tally = tallyVerdicts(outs);
         const waiting = organizerWaits(outs);
+        const stood = outs.filter(stands).length;
         const whole = tally.refused === 0 && waiting === 0;
-        const sentence = tally.applied === 0 && outs.length > 0 ? null : say(tally.applied);
+        const sentence = stood === 0 && outs.length > 0 ? null : say(stood);
         if (claim && (sentence === null || !whole)) door.drop(claim);
-        if (tally.applied === 0 && outs.length > 0) {
+        if (stood === 0 && outs.length > 0) {
           // Every press replaced by a newer one for the same thing: that press says the sentence.
           if (tally.silent === outs.length) return 0;
           if (tally.refused === 0 && waiting > 0) { toast(queuedSentence(tally.holder)); return 0; }
           toast(refusalSentence(tally.firstRefusal));
           return 0;
         }
-        /* Undo only when the WHOLE set applied: on a partial press the extra sentence below is
+        /* Undo only when the WHOLE set stands: on a partial press the extra sentence below is
            the one left standing (the host renders one toast), and it must not wipe a live offer. */
         if (sentence !== null && whole) {
-          toastWithUndo(sentence, outs.flatMap((o, i) => (o.kind === "applied" ? inversesOf[i]! : [])), undefined, claim);
+          toastWithUndo(sentence, outs.flatMap((o, i) => (stands(o) ? inversesOf[i]! : [])), undefined, claim);
         } else if (sentence !== null) {
           toast(sentence);
         }
         /* THE PART THAT DID NOT HAPPEN, SAID BESIDE IT. One extra sentence at most, and only
-           when the press was partial: a count of what applied is a true number under which four
+           when the press was partial: a count of what stands is a true number under which four
            refused messages are invisible. */
         if (tally.refused > 0) toast(t("ohbox.pressPartlyRefused", { count: tally.refused }));
         else if (waiting > 0) toast(t("ohbox.pressPartlyQueued", { count: waiting }));
-        return tally.applied;
+        return stood;
       });
     },
   );

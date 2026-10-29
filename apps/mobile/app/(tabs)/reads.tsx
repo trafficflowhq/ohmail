@@ -1,11 +1,12 @@
 /**
  * Reads — the skim stream. Issues are cards carrying their own text, clamped
  * to about a screenful, and tapping opens the rest in place.
- * Scrolling past marks seen. The waterline is a marker, not a sort key: when
- * a card passes the read line its dot fades in place, the "new" count ticks
- * down, and nothing moves. On a live account the sweep rides the engine's
+ * A card turns read once its first lines rest on screen (the web's rule); a
+ * fling past reads nothing. The waterline is a marker, not a sort key: when
+ * a card turns read its dot fades in place, the "new" count ticks down, and
+ * nothing moves. On a live account the sweep rides the engine's
  * `feed_mark_seen` (this stream's folder only), and leaving the screen commits
- * the waterline above the newest issue the reader passed — it moves exactly
+ * the waterline above the newest issue the reader read — it moves exactly
  * once per visit. Every issue the world answers renders; no "and 9 more".
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -18,7 +19,7 @@ import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useTheme } from "../../src/theme";
 import { useFilesStamp, useMessageBody, useWorld, type WorldMail } from "../../src/state/world";
-import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, Waterline } from "../../src/ui/base";
+import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, Waterline, useListInsets } from "../../src/ui/base";
 import { BodyPages } from "../../src/ui/BodyPages";
 import { mailboxStatusOf, withheldNote } from "../../src/ui/body-note";
 import { TopBar } from "../../src/ui/chrome";
@@ -31,9 +32,6 @@ import { MarkAllRead, VIEW_HEAD_ROW } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
-
-/** The read line: a card counts as skimmed once its foot clears this fraction. */
-const READ_LINE = 0.62;
 
 export default function ReadsScreen() {
   return (
@@ -65,11 +63,13 @@ function ReadsBody() {
   const onRowGone = useCallback((m: WorldMail) => {
     bounds.current.delete(m.id);
   }, []);
-  // Only a look the person drives marks: the list holding its place or gliding marks nothing.
+  // A card turns read once it rests on screen in a visit the person drove; the dock's strip is not on screen.
+  const foot = useListInsets().paddingBottom;
   const { run, gestures } = useSeenRun(
-    READ_LINE,
     () => bounds.current.values(),
     (ids) => actions.markSeenThrough("reads", ids),
+    () => foot,
+    items,
   );
 
   // Leaving the stream (tab switch, back) is the waterline commit — and so is the APP going
@@ -85,11 +85,15 @@ function ReadsBody() {
       run.restart();
       place.current?.back();
       const sub = AppState.addEventListener("change", (s) => {
-        if (s === "background") void actions.leaveFeed("reads");
+        if (s === "background") {
+          run.restart();
+          void actions.leaveFeed("reads");
+        }
         if (s === "active") run.restart();
       });
       return () => {
         sub.remove();
+        run.restart();
         place.current?.leave();
         void actions.leaveFeed("reads");
       };

@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider, useTranslations } from "next-intl";
 import {
-  consentPartition, presentAt, presentationReader, type EngineMessage, type OhmailEngine,
+  consentPartition, presentAt, presentationReader, winningStates, type EngineMessage, type OhmailEngine,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
@@ -57,12 +57,21 @@ let ruleBodies: Array<Record<string, unknown>> = [];
 let moveBodies: Array<{ url: string; body: Record<string, unknown> }> = [];
 const toasts: Array<{ message: string; onAction?: () => void }> = [];
 const originalFetch = globalThis.fetch;
+/** A three-letter conversation in the Ohbox, served when a case asks for it. */
+const CONVO = ["c1", "c2", "c3"];
+let convo = false;
+/** The letters whose next triage write the server answers with a retryable 503 (a deploy). */
+let retrying = new Set<string>();
+let triagePosts: Array<{ id: string; state: string; status: number }> = [];
 
 beforeEach(() => {
   calls = [];
   ruleBodies = [];
   moveBodies = [];
   toasts.length = 0;
+  convo = false;
+  retrying = new Set<string>();
+  triagePosts = [];
   localStorage.clear();
   globalThis.fetch = ((url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
@@ -78,8 +87,20 @@ beforeEach(() => {
           { type: "rule", op: "create", id: "r2", seq: 1, updatedAt: AT, entity: rule("r2", "spam@two.test", "ohmail/Quarantine") },
           { type: "message", op: "create", id: "m3", seq: 1, updatedAt: AT, entity: message("m3", "d@three.test", "ohmail/Screened") },
           { type: "rule", op: "create", id: "r3", seq: 1, updatedAt: AT, entity: rule("r3", "three.test", "ohmail/Screened", "domain") },
+          ...(convo ? CONVO.map((id) => ({
+            type: "message", op: "create", id, seq: 1, updatedAt: AT, entity: { ...message(id, "pal@four.test", "INBOX"), threadId: "t1" },
+          })) : []),
         ],
       }));
+    }
+    const triage = /^\/api\/messages\/([^/]+)\/triage$/.exec(url);
+    if (method === "POST" && triage) {
+      const state = (JSON.parse(body) as { state: string }).state;
+      const status = retrying.delete(triage[1]!) ? 503 : 200;
+      triagePosts.push({ id: triage[1]!, state, status });
+      return Promise.resolve(status === 503
+        ? json(503, { error: { code: "unavailable", message: "deploying" } })
+        : json(200, { messageId: triage[1], state, bubbleUpAt: null, updatedAt: AT }));
     }
     if (url.startsWith("/api/sync?")) {
       return Promise.resolve(json(200, {
@@ -103,6 +124,7 @@ beforeEach(() => {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 const state: { current: import("../app/shell/screener-state.js").ScreenerState | null } = { current: null };
+const dispatch: { current: ReturnType<typeof import("../app/shell/shell-dispatch.js").useShellDispatch> | null } = { current: null };
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
@@ -127,6 +149,7 @@ async function mount(engine: OhmailEngine): Promise<void> {
       engine, reader, t, demo: false, refreshFacts: () => {},
       toast: (message: string, opts?: { onAction?: () => void }) => { toasts.push({ message, onAction: opts?.onAction }); },
     });
+    dispatch.current = d;
     const presented = React.useMemo(
       () => presentAt(presentationReader(reader, consentPartition(reader, { now: NOW })), d.routing.places),
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -238,4 +261,45 @@ describe("Not spam, back to Waiting", () => {
     await windowCloses();
     expect(ruleWrites()).toEqual(["DELETE /api/rules/r2"]);
   });
+});
+
+/**
+ * A CONVERSATION'S PARK TAKES BACK EVERY LETTER WHOSE PRESS STANDS. A letter whose write met a
+ * retryable answer waits on this client's retry queue and lands on the next drive: it is parked,
+ * so the press names it and its Undo is owed too. Without that the letter stayed parked while the
+ * rest came back, and a press whose every letter met the 503 said nothing had changed, with no Undo.
+ */
+describe("a conversation's Park with letters on the retry queue", () => {
+  for (const queued of [["c2"], CONVO]) {
+    it(`names all three, offers Undo, and Undo takes every letter back when ${queued.length} of 3 wait to be sent again`, async () => {
+      convo = true;
+      retrying = new Set(queued);
+      const engine = createEngine(false, ARMED);
+      await engine.start();
+      await mount(engine);
+      let stood = -1;
+      await act(async () => {
+        void dispatch.current!.mutateSetAndReport(
+          CONVO.map((messageId) => ({ kind: "triage_set" as const, messageId, state: "set_aside" as const })),
+          (n) => `Parked ${n}`,
+        ).then((n) => { stood = n; });
+      });
+      await flush();
+      expect(triagePosts.filter((p) => p.status === 503).map((p) => p.id), "control: these writes met the 503").toEqual(queued);
+      expect(toasts.map((x) => x.message), "the press said nothing changed").not.toContain(messages.ohbox.refusedPress);
+      const offer = toasts.find((x) => x.onAction !== undefined);
+      expect(offer?.message, "the press did not name every parked letter with its Undo").toBe("Parked 3");
+      expect(stood, "the press counted only the letters that applied").toBe(3);
+      await act(async () => { offer!.onAction!(); });
+      await flush();
+      await act(async () => { await engine.flushPending(); });
+      await flush();
+
+      const last = (id: string) => triagePosts.filter((p) => p.id === id && p.status === 200).at(-1)?.state ?? "none";
+      expect(CONVO.filter((id) => !triagePosts.some((p) => p.id === id && p.state === "none")), "Undo left these letters out").toEqual([]);
+      expect(CONVO.map(last), "a letter is still parked on the server").toEqual(["none", "none", "none"]);
+      expect(CONVO.map((id) => winningStates(engine.read()).get(id)?.state ?? "none")).toEqual(["none", "none", "none"]);
+      expect(toasts.at(-1)?.message).toBe(messages.ohbox.toastUndone);
+    });
+  }
 });

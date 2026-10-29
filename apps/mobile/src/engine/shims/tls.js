@@ -175,7 +175,8 @@ function superviseUpgrade(native, bridge, deadlineMs = UPGRADE_DEADLINE_MS) {
   };
   timer = setTimeout(() => {
     if (settled) return;
-    bridge.emit("error", new Error(`the TLS upgrade did not finish within ${deadlineMs} ms`));
+    // imapflow's own code for the same bound, so Connect words both alike.
+    bridge.emit("error", Object.assign(new Error(`the TLS upgrade did not finish within ${deadlineMs} ms`), { code: "UPGRADE_TIMEOUT" }));
     bridge.destroy();
   }, deadlineMs);
   confirmUpgrade(native, bridge);

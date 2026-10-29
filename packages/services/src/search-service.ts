@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { exactAsked, showSimilar, substringOpen, type SearchTier } from "@trafficflow/core/search-rank";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
-import { accountSettings, messages } from "@trafficflow/db";
+import { accountSettings, messageSearch, messages } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
 import { boolLiteral, dialect, pgOnly, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
@@ -355,10 +355,11 @@ function storeIndexes(db: Db): Promise<{ readonly trigram: boolean; readonly wor
 const filteredWheres = new WeakSet<SQL>();
 
 /**
- * What the store says before a search composes its arms: the backfill marker, pg_trgm, and the
- * account-keyed word index (`message_search_words_idx`).
+ * What the store says before a search composes its arms: the backfill marker, pg_trgm, the
+ * account-keyed word index (`message_search_words_idx`), and whether the account has any search
+ * document yet (`docs`, read while the marker is unwritten).
  */
-interface StoreFacts { readonly built: boolean; readonly trigram: boolean; readonly words: boolean }
+interface StoreFacts { readonly built: boolean; readonly trigram: boolean; readonly words: boolean; readonly docs: boolean }
 
 /** One branch of an arm: an index-served predicate and the rank the arm orders by. */
 interface Branch {
@@ -377,6 +378,8 @@ interface Branch {
   readonly pos?: SQL;
   /** The branch's matches as terms, each one read of the word index under the arm's key ({@link SearchService.boundedRead}). */
   readonly set?: readonly SQL[];
+  /** Over the account's documents: left out while it has none ({@link SearchService.arms}). */
+  readonly doc?: true;
 }
 /**
  * An arm: its branches (one per index), cut at its top-K after they are merged. `ranked`: ordered
@@ -499,17 +502,25 @@ export class SearchService {
    * The arms of one tier. `exact`: head, text and (when open) substring; `similar`: the typo
    * arm. While the account's backfill is unfinished each arm also reads the rows without a
    * document through the pre-0125 columns, ANDed with "no document" so no row is read twice.
+   * Before the account has any document, only those columns are read, and no row is asked.
    */
   private arms(ctx: ServiceContext, d: Dialect, q: string, tier: SearchTier, store: StoreFacts): Arm[] {
     const { built, trigram } = store;
     const legacy = built ? null : d.search.unindexed(q, { trigram, threshold: FUZZY_THRESHOLD });
-    const bare = (b: SearchArm): Branch => ({ pred: sql`(${b.pred} and s.message_id is null)`, rank: b.rank });
+    const docless = legacy !== null && !store.docs;
+    const bare = (b: SearchArm): Branch => (docless ? { pred: b.pred, rank: b.rank } : { pred: sql`(${b.pred} and s.message_id is null)`, rank: b.rank });
+    // A document branch is planned though it reads nothing (the trigram estimate alone reads
+    // message_search's statistics): an arm keeps one only while it has no other branch.
+    const read = (arms: Arm[]): Arm[] => (docless ? arms.map((a) => {
+      const older = a.branches.filter((b) => b.doc !== true);
+      return older.length > 0 ? { ...a, branches: older } : a;
+    }) : arms);
     // Where the arms read the document (a store with vectors), a branch names the document's own
     // account too, so an index that leads with the account reads one account's candidates. A
     // store whose word index is over the rows keeps every row, document or not.
     const documents = d.search.document({ subject: "", people: "", attachments: "", body: "" }) !== null;
     const own = (b: SearchArm): Branch =>
-      documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank, raw: b.pred } : b;
+      documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank, raw: b.pred, doc: true } : b;
     if (tier === "similar") {
       // A guess never holds a word the reader excluded, anywhere in the letter.
       const held = (b: SearchArm, none: SQL | undefined): SearchArm => (none ? { pred: sql`(${b.pred} and ${none})`, rank: b.rank } : b);
@@ -520,7 +531,7 @@ export class SearchService {
       // The server's documents only: the desktop's store keeps its scans inside six cuts.
       const pre = trigram && documents && legacy === null && this.opts.localStore !== true
         ? d.search.typoPrefilter(q, { threshold: FUZZY_THRESHOLD, terms: sql`s.terms`, lowered: sql`s.t` }) : null;
-      if (pre === null) return [arm];
+      if (pre === null) return read([arm]);
       const walkPred = sql`(s.account_id = ${ctx.accountId} and (case when ${pre} then ${fuzz.pred} else false end))`;
       return [{ ...arm, typo: { walkPred, vectors: excluded !== undefined } }];
     }
@@ -584,7 +595,7 @@ export class SearchService {
       });
     }
     // Every branch is then the document's own (`own`), so the bounded read can ask it by itself.
-    return local ? out.map((a) => ({ ...a, local: { account: ctx.accountId }, bounded: false })) : out;
+    return local ? out.map((a) => ({ ...a, local: { account: ctx.accountId }, bounded: false })) : read(out);
   }
 
   /**
@@ -1373,7 +1384,7 @@ export class SearchService {
     if (setup === null) {
       if (gate) await gate();
       const [built, open] = await Promise.all([searchIndexBuilt(ctx.db as never, ctx.accountId), storeStillImporting(ctx)]);
-      return covered(await fn(ctx.db, { built, trigram, words }), open);
+      return covered(await fn(ctx.db, { built, trigram, words, docs: true }), open);
     }
     const handle = ctx.db as unknown as object;
     const known = markerWritten.get(handle) ?? new Set<string>();
@@ -1384,22 +1395,23 @@ export class SearchService {
       const warm = sql`select ${importOpen(d, ctx.accountId, ctx.now(), { inline: true })} as importing, s.* from (${setup}) s`;
       return tx.transaction(async (t) => {
         if (gate) await gate();
-        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram, words }));
+        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram, words, docs: true }));
         return covered(out, truthy(settings[0]?.[0]));
       });
     }
     // Scoped by the caller's account like every read below: a marker is one account's fact.
     const marker = sql`exists (select 1 from ${accountSettings}
       where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchIndexBuiltAt} is not null)`;
+    const docs = sql`exists (select 1 from ${messageSearch} where ${messageSearch.accountId} = ${ctx.accountId})`;
     return tx.transaction(async (t) => {
       if (gate) await gate();
-      const [row] = await d.exec(t, sql`select ${marker} as built, ${importOpen(d, ctx.accountId, ctx.now())} as importing, s.* from (${setup}) s`);
+      const [row] = await d.exec(t, sql`select ${marker} as built, ${importOpen(d, ctx.accountId, ctx.now())} as importing, ${docs} as docs, s.* from (${setup}) s`);
       const built = truthy(row?.[0]);
       if (built) {
         if (known.size >= MARKER_MEMO_MAX) known.clear();
         known.add(ctx.accountId);
       }
-      return covered(await fn(t, { built, trigram, words }), truthy(row?.[1]));
+      return covered(await fn(t, { built, trigram, words, docs: truthy(row?.[2]) }), truthy(row?.[1]));
     });
   }
 

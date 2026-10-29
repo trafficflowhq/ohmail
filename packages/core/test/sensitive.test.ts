@@ -58,6 +58,24 @@ describe("classifySensitivity", () => {
   });
 });
 
+describe("a letter of pictures with no text part is screened on its parse, its words counted once", () => {
+  it("a sign-in link judged by the 40-word prose bound keeps the verdict it had before the words", async () => {
+    const html = "<table><tr><td><p>Hello Mila,</p><p>We noticed you asked to sign in to your workspace from a new browser "
+      + "this morning. Use the button below to continue where you left off today.</p>"
+      + '<p><a href="https://app.example/login?t=Xk29fLq83PzR7mWqZ">Sign in</a></p></td></tr></table><img src="cid:logo@x">';
+    const m = await normalizeMime(["Message-ID: <link@example.test>", "From: App <no-reply@app.example>", "To: mila@example.test",
+      "Subject: Your workspace", "MIME-Version: 1.0", 'Content-Type: multipart/related; boundary="R"', "",
+      "--R", "Content-Type: text/html; charset=utf-8", "", html,
+      "--R", "Content-Type: image/png", "Content-ID: <logo@x>", "Content-Transfer-Encoding: base64", "", "iVBORw0KGgo=", "--R--", ""].join("\r\n"));
+    expect(m.textBody).toContain("asked to sign in");
+    const r = classifySensitivity(m);
+    expect(r).toEqual(classifySensitivity({ ...m, textBody: "" }));
+    expect([r.verdict, r.reasons, r.flags.no_ai, r.flags.no_kb]).toEqual(["indeterminate", ["auth_url_token"], true, true]);
+    // Read twice, the words pass the bound and the letter would go to a model as ordinary.
+    expect(classifySensitivity({ ...m, ownText: undefined }).verdict).toBe("ordinary");
+  });
+});
+
 /**
  * THE ADVERSARIAL CORPUS — the upstream half of the the "Sensitive mail" invariant.
  *

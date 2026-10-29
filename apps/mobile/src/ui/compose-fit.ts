@@ -27,3 +27,13 @@ export function pinnedNotesMax(windowHeight: number): number {
 export function notesPinned(measured: number | null, max: number): boolean {
   return measured === null || measured <= max;
 }
+
+/** The height kept for the sentences: none once every one cleared, so the next is unmeasured again. */
+export function notesMeasured(measured: number | null, count: number): number | null {
+  return count === 0 ? null : measured;
+}
+
+/** Whether the letter goes on below the scroller's edge: more content past the view than a rounding step. */
+export function letterRunsOn(content: number, view: number, y: number): boolean {
+  return view > 0 && content - view - y > 1;
+}

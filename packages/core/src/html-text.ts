@@ -1,10 +1,9 @@
 import { Parser } from "htmlparser2";
 
 /**
- * HTML AS PLAIN TEXT — the text/plain alternative of a composed message, and the words of an
- * inbound HTML-only message for its search document (mail 0125). Tags come from `htmlparser2`,
- * the parser `sanitize-html` uses. Moved here from `packages/services/src/outbound-html.ts`
- * (which re-exports it) so the ingest pipeline and the search backfill can import it.
+ * HTML AS PLAIN TEXT — {@link htmlToPlainText}, the text/plain alternative of a composed message,
+ * and {@link htmlWords}, the words of an inbound letter that has no text part. Tags come from
+ * `htmlparser2`, the parser `sanitize-html` uses.
  */
 
 /** Elements whose content is never text a reader sees. */
@@ -339,4 +338,139 @@ export function htmlToPlainText(html: string): string {
   }
   result += collapse(out.slice(cursor));
   return result.replace(/\n+$/, "");
+}
+
+/** Elements whose content the reader never draws: the sanitizer's drop set, and the stylesheet. */
+const UNDRAWN = new Set([
+  "annotation-xml", "audio", "desc", "foreignobject", "head", "iframe", "math", "mi", "mn", "mo", "ms", "mtext",
+  "noembed", "noframes", "noscript", "optgroup", "option", "plaintext", "script", "style", "svg", "template",
+  "title", "video", "xmp",
+]);
+/** Blocks that leave a blank line before and after them. */
+const PARAGRAPH = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "dl", "table", "pre", "hr", "blockquote"]);
+/** Blocks that start a new line. */
+const LINE = new Set([
+  "div", "li", "tr", "dt", "dd", "address", "article", "aside", "center", "caption", "figure", "figcaption",
+  "footer", "form", "header", "main", "nav", "section", "tbody", "thead", "tfoot",
+]);
+/** Elements with no close tag of their own; the parser closes them at once. */
+const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+/** The html {@link htmlWords} reads, in characters: the stored html's own cap. */
+export const HTML_WORDS_READ_MAX = 262_144;
+/** The words {@link htmlWords} returns, in characters. */
+export const HTML_WORDS_MAX = 65_536;
+const HIDDEN_STYLE = /(?:^|;)\s*display\s*:\s*none\s*(?:!important\s*)?(?:;|$)/i;
+/** A token of preheader filler: only U+034F and format characters (ZWNJ, ZWSP, soft hyphen…). */
+const FILLER = /^[\u034f\p{Cf}]+$/u;
+const BLANK = /^>*$/;
+/** The deepest quote a line's `> ` prefix shows, so a line costs a bounded prefix. */
+const QUOTE_MAX = 32;
+
+/** Cut to at most `max` UTF-16 units without leaving half a surrogate pair. */
+function cutAt(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const last = s.charCodeAt(max - 1);
+  return s.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
+}
+
+/** Without its trailing spaces and tabs, in one pass: `/[ \t]+$/` backtracks quadratically on a long inner run. */
+function trimSpacesEnd(s: string): string {
+  let end = s.length;
+  while (end > 0 && (s.charCodeAt(end - 1) === 32 || s.charCodeAt(end - 1) === 9)) end -= 1;
+  return end === s.length ? s : s.slice(0, end);
+}
+
+/**
+ * The words of an inbound html part, as the reader draws them: blocks break lines (paragraphs
+ * leave a blank one), cells are spaced, `pre` is verbatim, a quote keeps `> `. A link gives its
+ * text and never its href, an image nothing. Skips what the reader never draws, `display:none`
+ * included (the `hidden` attribute is stripped by the render rules, so its text is drawn), and
+ * preheader filler. `""` when nothing visible is left. Bounded on both ends; never throws on input.
+ */
+export function htmlWords(html: string): string {
+  const lines: string[] = [];
+  let line = "";
+  let lineQuote = 0;
+  let quote = 0;
+  let pre = 0;
+  /** What the next words wait for: 1 a new line, 2 a blank line before it. */
+  let gap = 0;
+  let skip = 0;
+  let size = 0;
+  /** Whether `line` ends in a space, kept apart: `line.endsWith` would flatten the whole line per text event. */
+  let spaced = false;
+  // Past the output bound nothing more is built, and a line keeps only what is left of it: the work stays O(bound).
+  const push = (l: string): void => {
+    if (size > HTML_WORDS_MAX) return;
+    const kept = cutAt(l, HTML_WORDS_MAX - size);
+    lines.push(kept);
+    size += kept.length + 1;
+  };
+  const end = (): void => {
+    push(`${"> ".repeat(Math.min(lineQuote, QUOTE_MAX))}${line}`);
+    line = "";
+    spaced = false;
+  };
+  const open = (): void => {
+    if (gap > 0 && (line !== "" || lines.length > 0)) {
+      if (line !== "") end();
+      if (gap === 2) push(">".repeat(Math.min(quote, lineQuote, QUOTE_MAX)));
+    }
+    gap = 0;
+    if (line === "") lineQuote = quote;
+  };
+  const write = (t: string): void => {
+    if (size > HTML_WORDS_MAX) return;
+    if (pre > 0) {
+      const parts = t.replace(/\r\n?/g, "\n").split("\n");
+      for (let i = 0; i < parts.length && size <= HTML_WORDS_MAX; i++) {
+        if (i > 0) { open(); end(); }
+        if (parts[i] !== "") { open(); line += parts[i]; spaced = parts[i].endsWith(" "); }
+      }
+      return;
+    }
+    let s = t.replace(/\s+/g, " ");
+    if (line === "" || gap > 0 || spaced) s = s.trimStart();
+    if (s === "") return;
+    open();
+    line += s;
+    spaced = s.endsWith(" ");
+  };
+  const parser = new Parser({
+    onopentag(name, attribs) {
+      if (skip > 0) { if (!VOID.has(name)) skip += 1; return; }
+      if (UNDRAWN.has(name) || HIDDEN_STYLE.test(attribs.style ?? "")) { if (!VOID.has(name)) skip = 1; return; }
+      if (name === "br") {
+        if (size > HTML_WORDS_MAX) return;
+        if (line === "" && gap === 0) push(">".repeat(Math.min(quote, QUOTE_MAX)));
+        else { open(); end(); }
+        return;
+      }
+      gap = Math.max(gap, PARAGRAPH.has(name) ? 2 : LINE.has(name) ? 1 : 0);
+      if (name === "blockquote") quote += 1;
+      if (name === "pre") pre += 1;
+    },
+    ontext(t) {
+      if (skip === 0) write(t);
+    },
+    onclosetag(name) {
+      if (skip > 0) { if (!VOID.has(name)) skip -= 1; return; }
+      if (name === "blockquote") quote = Math.max(0, quote - 1);
+      if (name === "pre") pre = Math.max(0, pre - 1);
+      if (name === "td" || name === "th") write(" ");
+      gap = Math.max(gap, PARAGRAPH.has(name) ? 2 : LINE.has(name) ? 1 : 0);
+    },
+  }, { decodeEntities: true });
+  parser.write(cutAt(html, HTML_WORDS_READ_MAX));
+  parser.end();
+  if (line !== "") end();
+  const out: string[] = [];
+  for (const raw of lines) {
+    const l = trimSpacesEnd(raw.split(" ").filter((tok) => !FILLER.test(tok)).join(" "));
+    if (BLANK.test(l) && (out.length === 0 || BLANK.test(out[out.length - 1]!))) continue;
+    out.push(l);
+  }
+  while (out.length > 0 && BLANK.test(out[out.length - 1]!)) out.pop();
+  const text = cutAt(out.join("\n"), HTML_WORDS_MAX).trimEnd();
+  return text.replace(/[\s\u034f\p{Cf}]/gu, "") === "" ? "" : text;
 }

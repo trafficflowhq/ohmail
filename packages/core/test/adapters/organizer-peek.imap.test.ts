@@ -13,6 +13,7 @@ import {
   type LeaseSelf,
 } from "../../src/adapters/organizer-lease.js";
 import { CONDSTORE_HOST, CONDSTORE_PORT, greenmailConfig, probeCondstore } from "./_imapenv.js";
+import { rigAppendDate } from "../../../../test/support/rig-append-date.js";
 
 /** The io seams refuse a memory they cannot attribute, so every fixture states one. */
 const TEST_META_ID = { installId: "test-install", mailboxId: "test-mailbox" };
@@ -201,7 +202,7 @@ for (const server of SERVERS) {
     it("a claim nobody renewed reads as `stopped`, and is NOT expunged by the read", async () => {
       const cfg = server.config();
       const owner = await adapterFor(cfg);
-      const stale = new Date(NOW.getTime() - DEFAULT_STALE_AFTER_MS - 60_000);
+      const stale = rigAppendDate(DEFAULT_STALE_AFTER_MS + 60_000, NOW.getTime());
       const io = owner.leaseIo(TEST_META_ID);
       await io.ensureMetaFolder();
 

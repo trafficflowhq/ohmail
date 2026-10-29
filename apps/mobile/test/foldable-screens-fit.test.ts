@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { installEngineLogWriter, logPostureDerived, type EngineLogLevel } from "../src/engine/engine-log";
 import { derivePosture, type FoldFeature } from "../src/ui/posture/derive";
-import { composeBodyMin, notesPinned, pinnedNotesMax } from "../src/ui/compose-fit";
+import { composeBodyMin, letterRunsOn, notesMeasured, notesPinned, pinnedNotesMax } from "../src/ui/compose-fit";
 import { RAIL_W, scaffoldPlan, screenFillsWindow, screenRailClearance } from "../src/ui/scaffold/plan";
 
 const src = (rel: string) => withoutComments(readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8"));
@@ -94,6 +94,22 @@ describe("the composer's heights on a short window", () => {
     expect(notesPinned(null, 81), "a first sentence lands by the buttons").toBe(true);
     expect(notesPinned(81, 81)).toBe(true);
     expect(notesPinned(82, 81)).toBe(false);
+  });
+  /* A tall block measured, every sentence cleared, then one short sentence: it drew at the letter's
+     end for a frame on the old height before it measured and moved back over the buttons. */
+  it("once every sentence clears, the next one is unmeasured and lands by the buttons", () => {
+    const max = pinnedNotesMax(403);
+    expect(notesPinned(notesMeasured(200, 0), max)).toBe(true);
+    expect(notesPinned(notesMeasured(200, 2), max), "CONTROL: a block still standing keeps its height").toBe(false);
+  });
+  /* On the cover held sideways the why-no-Send-later sentence sat below the hair line with no cue. */
+  it("a letter that runs on below the scroller's edge says so; at its end it does not", () => {
+    expect(letterRunsOn(400, 160, 0)).toBe(true);
+    expect(letterRunsOn(400, 160, 238)).toBe(true);
+    expect(letterRunsOn(400, 160, 239), "a rounding step from the end is the end").toBe(false);
+    expect(letterRunsOn(400, 160, 240), "scrolled to the end").toBe(false);
+    expect(letterRunsOn(150, 160, 0), "it all fits").toBe(false);
+    expect(letterRunsOn(0, 0, 0), "unmeasured").toBe(false);
   });
   it("on the cover held sideways under a 200 dp keyboard, the pinned part fits what is left", () => {
     // ASSUMED: a keyboard that does not go full screen and stands 200 dp tall, half the 403 dp cover.

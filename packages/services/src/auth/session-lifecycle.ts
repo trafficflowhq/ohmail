@@ -666,32 +666,67 @@ export class SessionLifecycle {
     // rather than at seven call sites, one of which would eventually be added without it.
     // `revokeEnrollmentSessions` below is a write, so the check precedes it.
     refuseCrossAccountCredential(ctx, user.accountId);
-    const previous = ctx.supersedes;
-    if (!previous) return this.mintEstablished(ctx, user, o);
+    const jar = { accessToken: ctx.supersedes || null, marker: ctx.supersedesMarker || null };
+    if (!jar.accessToken && !jar.marker) return this.mintEstablished(ctx, user, o);
     // THE SUPERSEDE AND THE MINT COMMIT TOGETHER, never as two calls: a new session beside a
-    // previous one that still renews is the state this exists to remove. Cleared on the inner
-    // context so a nested mint cannot run it twice.
-    return this.inTransaction({ ...ctx, supersedes: null }, async (txCtx) => {
-      await this.supersede(asTx(txCtx), previous, txCtx.now());
+    // previous one that still renews is the state this exists to remove. Both carriers are cleared
+    // on the inner context so a nested mint cannot run it twice.
+    return this.inTransaction({ ...ctx, supersedes: null, supersedesMarker: null }, async (txCtx) => {
+      await this.supersede(asTx(txCtx), txCtx, user, jar, txCtx.now());
       return this.mintEstablished(txCtx, user, o);
     }, { fence: { accountId: user.accountId } });
   }
 
   /**
-   * A SIGN-IN SUPERSEDES THE JAR'S PREVIOUS SESSION — `logout`'s revocation, keyed on the access
-   * token the browser presented beside the ceremony. An expired access token still names its
-   * session; an enrollment token or an unknown hash revokes nothing. The FAMILY goes, not only the
-   * row the hash found, so a rotation that lands after this read leaves no live successor.
+   * A SIGN-IN SUPERSEDES WHAT ITS JAR NAMES — `logout`'s revocation, keyed on the two carriers the
+   * browser presented beside the ceremony. The access token: an expired one still names its
+   * session; an enrollment token or an unknown hash revokes nothing. The resume marker, which
+   * outlives the access cookie: the family whose refresh token it digests, only when that is the
+   * signer's own plain browser session. The FAMILY goes, not only the row a hash found, so a
+   * rotation that lands after this read leaves no live successor; each once, and each of the
+   * signer's own written down as a `logout`.
    */
-  protected async supersede(db: Tx, previousAccessToken: string, now: Date): Promise<void> {
-    const [prev] = await db.select({ familyId: sessions.familyId }).from(sessions)
-      .where(and(
-        eq(sessions.accessTokenHash, hashToken(previousAccessToken)),
-        eq(sessions.scope, "full"),
-        isNull(sessions.revokedAt),
-      ))
-      .limit(1);
-    if (prev) await this.revokeFamily(db, prev.familyId, now);
+  protected async supersede(
+    db: Tx, ctx: ServiceContext, user: typeof users.$inferSelect,
+    jar: { accessToken: string | null; marker: string | null }, now: Date,
+  ): Promise<void> {
+    const named = new Map<string, { familyId: string; userId: string; sessionId: string }>();
+    const found = { familyId: sessions.familyId, userId: sessions.userId, sessionId: sessions.id };
+    if (jar.accessToken) {
+      const [prev] = await db.select(found).from(sessions)
+        .where(and(
+          eq(sessions.accessTokenHash, hashToken(jar.accessToken)),
+          eq(sessions.scope, "full"),
+          isNull(sessions.revokedAt),
+        ))
+        .limit(1);
+      if (prev) named.set(prev.familyId, prev);
+    }
+    if (jar.marker) {
+      // The signer's own sessions only: the marker is a digest the database holds, and reaching
+      // another person's family with it would make read access to that database a sign-out lever.
+      const [own] = await db.select(found).from(refreshTokens)
+        .innerJoin(sessions, eq(sessions.id, refreshTokens.sessionId))
+        .where(and(
+          eq(refreshTokens.tokenHash, jar.marker),
+          eq(sessions.userId, user.id),
+          isNull(sessions.deviceId),
+          eq(sessions.scope, "full"),
+          isNull(sessions.revokedAt),
+        ))
+        .limit(1);
+      if (own) named.set(own.familyId, own);
+    }
+    // In session id order, the order every claim of several sessions takes.
+    const byId = (a: { sessionId: string }, b: { sessionId: string }): number =>
+      (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0);
+    for (const f of [...named.values()].sort(byId)) {
+      const { sessions: revoked } = await this.revokeFamily(db, f.familyId, now);
+      if (revoked > 0 && f.userId === user.id) {
+        await this.audit(db, user, "logout", undefined, ctx,
+          `family=${f.familyId} session=${f.sessionId} by=supersede`);
+      }
+    }
   }
 
   /** `establish`'s writes, after its refusal and inside its supersede when there is one. */
@@ -1211,7 +1246,8 @@ export class SessionLifecycle {
       // holding a captured wire, and it belongs to the sweep. Read in the lock, against every row
       // consumed at or after the presented one; this arm's own kill-stamps carry `attemptHash`,
       // so repeated retries of one attempt never trip it. `>=` and not-self: two rotations can
-      // land in one millisecond (the recovery path's reading, and for its reason).
+      // land in one millisecond (the recovery path's reading, and for its reason). A real spend
+      // (`expires_at > consumed_at`) under the SAME name moved on too: a jar that reused its name.
       const movedOn = await tx.select({ id: refreshTokens.id }).from(refreshTokens)
         .where(and(
           eq(refreshTokens.familyId, existing.familyId),
@@ -1219,7 +1255,8 @@ export class SessionLifecycle {
           isNotNull(refreshTokens.consumedAt),
           gte(refreshTokens.consumedAt, existing.consumedAt!),
           or(isNull(refreshTokens.consumedByAttempt),
-            ne(refreshTokens.consumedByAttempt, attemptHash)),
+            ne(refreshTokens.consumedByAttempt, attemptHash),
+            gt(refreshTokens.expiresAt, refreshTokens.consumedAt)),
         ))
         .limit(1);
       if (movedOn.length > 0) return null;
