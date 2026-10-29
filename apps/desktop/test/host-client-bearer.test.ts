@@ -1,7 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  BearerManager, REFRESH_ATTEMPT_STORAGE_KEY, REFRESH_STORAGE_KEY, type BearerTokens,
+  ATTEMPT_STORE_BUDGET_MS, BearerManager, OWED_ATTEMPT_STORAGE_KEY, PAIR_SCOPE_STORAGE_KEY, REFRESH_ATTEMPT_DB,
+  REFRESH_ATTEMPT_STORAGE_KEY, REFRESH_STORAGE_KEY, type BearerTokens,
 } from "../src/host-client/bearer.js";
+
+/* The engine's own devDependency, reached through its package: the desktop does not carry one. */
+const { IDBFactory: FakeIDBFactory, IDBDatabase: FakeIDBDatabase } = createRequire(
+  new URL("../../../packages/client-engine/package.json", import.meta.url),
+)("fake-indexeddb") as { IDBFactory: new () => IDBFactory; IDBDatabase: { prototype: IDBDatabase } };
 
 /**
  * ═══ THE BEARER MANAGER — the served client's whole credential, held to its contract ══════════
@@ -652,11 +659,149 @@ describe("the pairing scope", () => {
  * A rotation is two halves plus a response: the server consumes and mints, then the answer has to
  * land. When it does not, this client still holds the old token, and its retry used to be
  * byte-identical to a replay — so the server revoked the family. Every attempt now carries a
- * name, written to the JAR before it submits and repeated until an answer lands. This is the
- * CLIENT half; the server half — N presentations under ONE name leave one live tail and no
- * revocation — is measured in the services rotation-retry pg twin.
+ * name, committed to IndexedDB and written to the JAR before it submits, and owed for the token it
+ * went out with. This is the CLIENT half; the server half — N presentations under ONE name leave
+ * one live tail and no revocation — is measured in the services rotation-retry pg twin.
  */
 describe("a lost rotation answer", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The host door's native refresh arm (`surface: "native"`: no grace, a name honoured for its token's
+   * whole life). A live token rotates; a spent one presented under the name that spent it is answered
+   * again while the chain has not moved on under another name; anything else sweeps the family.
+   * `drop` loses the next answer, `"before"` the door reads it or `"after"` it rotated.
+   */
+  function nativeDoor() {
+    const chain: Array<{ token: string; by: string | null }> = [{ token: "refresh-1", by: null }];
+    const drops: Array<"before" | "after"> = [];
+    const names: string[] = [];
+    const presented: string[] = [];
+    let swept = false;
+    let lapsed = false;
+    const mint = (): Response => {
+      chain.push({ token: `refresh-${chain.length + 1}`, by: null });
+      lapsed = false;
+      return json(200, { tokens: { accessToken: `access-${chain.length}`, refreshToken: `refresh-${chain.length}` } });
+    };
+    const answer = (token: string, name: string): Response => {
+      const at = chain.findIndex((row) => row.token === token);
+      const row = chain[at];
+      if (swept || row === undefined) return refusal("refresh_revoked");
+      if (row.by === null) {
+        row.by = name;
+        return mint();
+      }
+      if (row.by === name && chain.slice(at + 1).every((later) => later.by === null || later.by === name)) {
+        chain.at(-1)!.by = name;
+        return mint();
+      }
+      swept = true;
+      return refusal("refresh_revoked");
+    };
+    const fetch = async (url: string, init?: unknown): Promise<Response> => {
+      const i = (init ?? {}) as { body?: string; headers?: Record<string, string> };
+      if (url === "/auth/refresh") {
+        const sent = JSON.parse(i.body!) as { refreshToken: string; attemptId: string };
+        names.push(sent.attemptId);
+        presented.push(sent.refreshToken);
+        const drop = drops.shift();
+        if (drop === "before") throw new TypeError("network error");
+        const out = answer(sent.refreshToken, sent.attemptId);
+        if (drop === "after") throw new TypeError("network error");
+        return out;
+      }
+      const auth = Object.entries(i.headers ?? {}).find(([k]) => k.toLowerCase() === "authorization")?.[1];
+      return !lapsed && auth === `Bearer access-${chain.length}` ? json(200, { ok: true }) : json(401, {});
+    };
+    return {
+      fetch, names, presented,
+      swept: () => swept,
+      /** The access window ends: the next request is refused until a rotation lands. */
+      lapse: () => { lapsed = true; },
+      drop: (when: "before" | "after") => { drops.push(when); },
+    };
+  }
+
+  /** localStorage as a browser keeps it: reads see every write; `commit` lands the batch on `disk`, `kill` drops it. */
+  function batchedJar(disk: Map<string, string>): { storage: Storage; commit: () => void; kill: () => void } {
+    const pending = new Map<string, string | null>();
+    const view = (): Map<string, string> => {
+      const now = new Map(disk);
+      for (const [k, v] of pending) {
+        if (v === null) now.delete(k);
+        else now.set(k, v);
+      }
+      return now;
+    };
+    const storage = {
+      get length() { return view().size; },
+      clear: () => { for (const k of view().keys()) pending.set(k, null); },
+      getItem: (k: string) => view().get(k) ?? null,
+      key: (i: number) => [...view().keys()][i] ?? null,
+      removeItem: (k: string) => void pending.set(k, null),
+      setItem: (k: string, v: string) => void pending.set(k, String(v)),
+    } as Storage;
+    const commit = (): void => {
+      for (const [k, v] of pending) {
+        if (v === null) disk.delete(k);
+        else disk.set(k, v);
+      }
+      pending.clear();
+    };
+    return { storage, commit, kill: () => pending.clear() };
+  }
+
+  /** IndexedDB's copy, read as a restarted page reads it; `null` for none. */
+  async function storedRecord(idb: IDBFactory): Promise<unknown> {
+    const db = await new Promise<IDBDatabase>((ok, no) => {
+      const req = idb.open(REFRESH_ATTEMPT_DB, 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore("attempt"); };
+      req.onsuccess = () => ok(req.result);
+      req.onerror = () => no(req.error);
+    });
+    try {
+      return await new Promise((ok, no) => {
+        const get = db.transaction("attempt", "readonly").objectStore("attempt").get("owed");
+        get.onsuccess = () => ok(get.result ?? null);
+        get.onerror = () => no(get.error);
+      });
+    } finally {
+      db.close();
+    }
+  }
+  const idOf = (record: unknown): unknown => (record as { id?: unknown } | null)?.id ?? null;
+  const jarId = (raw: string | null | undefined): unknown => idOf(raw == null ? null : JSON.parse(raw));
+  /** The jar's two copies of the name: the bare one every build reads, and the record. */
+  const jarNames = (jar: Storage): unknown[] => [jar.getItem(REFRESH_ATTEMPT_STORAGE_KEY), jar.getItem(OWED_ATTEMPT_STORAGE_KEY)];
+  const databases = async (idb: IDBFactory): Promise<string[]> => (await idb.databases()).map((d) => d.name ?? "");
+
+  /** IndexedDB refusing, failing every open a task later, or never answering one — a wedged profile. */
+  const refusingIdb = { open: () => { throw new DOMException("refused", "SecurityError"); } } as unknown as IDBFactory;
+  const failingIdb = {
+    open: () => {
+      const req = {} as IDBOpenDBRequest;
+      setTimeout(() => req.onerror?.(new Event("error")));
+      return req;
+    },
+  } as unknown as IDBFactory;
+  const hungIdb = { open: () => ({}) } as unknown as IDBFactory;
+
+  /** One real store whose opens can be made to hang or fail for a while. */
+  function wedgeable(): { idb: IDBFactory; mode: "answers" | "hung" | "failing" } {
+    const real = new FakeIDBFactory();
+    const store = { mode: "answers" as "answers" | "hung" | "failing", idb: real };
+    store.idb = {
+      open: (name: string, version?: number) =>
+        (store.mode === "answers" ? real : store.mode === "hung" ? hungIdb : failingIdb).open(name, version),
+      deleteDatabase: (name: string) => real.deleteDatabase(name),
+    } as unknown as IDBFactory;
+    return store;
+  }
+
   /** A door whose refresh answer is dropped until `answer` is flipped; every name is recorded. */
   function lossyDoor(names: string[], state: { answer: "lost" | "ok" }): (url: string, init?: unknown) => Promise<Response> {
     return async (url, init) => {
@@ -673,7 +818,7 @@ describe("a lost rotation answer", () => {
     };
   }
 
-  it("is retried under the SAME name until one lands, and adopting clears it", async () => {
+  it("is retried under the SAME name until one lands, and stays owed for the token it went out with", async () => {
     const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
     const names: string[] = [];
     const state = { answer: "lost" as "lost" | "ok" };
@@ -684,8 +829,10 @@ describe("a lost rotation answer", () => {
     }
     expect(names).toHaveLength(5);
     expect(new Set(names).size, "five retries of one lost answer, ONE name").toBe(1);
-    // On disk, not only in this object — which is what makes the name survive a reload.
+    // On disk, not only in this object — which is what makes the name survive a reload. The bare
+    // copy is what a tab of an older build sends as ITS name: a name, and nothing else.
     expect(storage.getItem(REFRESH_ATTEMPT_STORAGE_KEY)).toBe(names[0]);
+    expect(jarId(storage.getItem(OWED_ATTEMPT_STORAGE_KEY))).toBe(names[0]);
     // A dropped answer clears nothing: the pairing and its token are exactly as they were.
     expect(storage.getItem(REFRESH_STORAGE_KEY)).toBe("refresh-1");
     expect(bearer.paired()).toBe(true);
@@ -693,8 +840,10 @@ describe("a lost rotation answer", () => {
     state.answer = "ok";
     expect((await bearer.fetch("/sync")).status).toBe(200);
     expect(names[5], "the answered attempt is still the same one").toBe(names[0]);
-    // ADOPTING IS CLEARING: a name only ever stands where an answer never arrived.
+    // ANSWERED for every build, as before: the bare copy goes with the adoption.
     expect(storage.getItem(REFRESH_ATTEMPT_STORAGE_KEY)).toBeNull();
+    // STILL OWED for refresh-1: a crash before the jar keeps refresh-2 comes back holding refresh-1.
+    expect(jarId(storage.getItem(OWED_ATTEMPT_STORAGE_KEY))).toBe(names[0]);
     expect(storage.getItem(REFRESH_STORAGE_KEY)).toBe("refresh-2");
   });
 
@@ -713,18 +862,305 @@ describe("a lost rotation answer", () => {
     expect(names[1], "the reloaded page retries as itself, not as a stranger").toBe(names[0]);
   });
 
-  it("a fresh rotation after an adoption names a NEW attempt", async () => {
-    // The other half of clearing: a name that outlived its answer would make every later rotation
-    // claim to be a retry of one long-finished attempt.
-    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
-    const names: string[] = [];
-    const state = { answer: "ok" as "lost" | "ok" };
-    const bearer = new BearerManager({ storage, fetchImpl: lossyDoor(names, state) });
+  it("CONTROL: no crash, so the next rotation presents the token the answer brought, under a NEW name", async () => {
+    // A name owed for a token the jar has moved past is never claimed again, on this page or a reload.
+    const idb = new FakeIDBFactory();
+    const door = nativeDoor();
+    const jar = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const bearer = new BearerManager({ storage: jar, fetchImpl: door.fetch, idb });
     expect((await bearer.fetch("/sync")).status).toBe(200);
-    bearer.adopt(PAIR);                       // back to the first pair, so /sync 401s again
+    door.lapse();
     expect((await bearer.fetch("/sync")).status).toBe(200);
+    door.lapse();
+    expect((await new BearerManager({ storage: jar, fetchImpl: door.fetch, idb }).fetch("/sync")).status).toBe(200);
 
+    expect(door.presented).toEqual(["refresh-1", "refresh-2", "refresh-3"]);
+    expect(new Set(door.names).size, "a finished attempt is never claimed twice").toBe(3);
+    expect(door.swept()).toBe(false);
+  });
+
+  /* KILLED BEFORE THE JAR'S BATCH LANDED. A rotation from refresh-1 to refresh-2 lands, then the browser
+     dies before localStorage writes its batch, which held the name and refresh-2 both. The restart holds
+     refresh-1, and only the name that spent it brings it back: this door honours the name for the
+     token's whole life and sweeps the family under any other. */
+  it.each([["at once", 0], ["a day later", 24 * 60 * 60 * 1000]])(
+    "killed before the jar's batch landed, restarted %s: refresh-1 goes under the SAME name and stays paired",
+    async (_when, later) => {
+      const disk = new Map([[REFRESH_STORAGE_KEY, "refresh-1"], [PAIR_SCOPE_STORAGE_KEY, "scope-1"]]);
+      const idb = new FakeIDBFactory();
+      const door = nativeDoor();
+      const before = batchedJar(disk);
+      const first = new BearerManager({ storage: before.storage, fetchImpl: door.fetch, idb });
+      expect((await first.fetch("/sync")).status).toBe(200);
+      before.kill();
+      expect(disk.get(REFRESH_STORAGE_KEY)).toBe("refresh-1");
+      expect([REFRESH_ATTEMPT_STORAGE_KEY, OWED_ATTEMPT_STORAGE_KEY].filter((k) => disk.has(k)), "the lost batch held the name too")
+        .toEqual([]);
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + later);
+      const after = batchedJar(disk);
+      const restarted = new BearerManager({ storage: after.storage, fetchImpl: door.fetch, idb });
+      let died = 0;
+      restarted.onSessionDead(() => died++);
+      expect((await restarted.fetch("/sync")).status).toBe(200);
+      expect(door.presented).toEqual(["refresh-1", "refresh-1"]);
+      expect(door.names[1], "the name the spent token went out under").toBe(door.names[0]);
+      expect(door.swept()).toBe(false);
+      expect(died).toBe(0);
+      // Both records hold it again: the jar's, once its batch lands, beside IndexedDB's.
+      after.commit();
+      expect(jarId(disk.get(OWED_ATTEMPT_STORAGE_KEY))).toBe(door.names[0]);
+      expect(idOf(await storedRecord(idb))).toBe(door.names[0]);
+    },
+  );
+
+  it("the name's IndexedDB write has FINISHED when the request leaves", async () => {
+    // Each open answers a task later, as a browser's does; the count is read at the send, never by a
+    // second read that IndexedDB would queue behind a write still in flight.
+    const real = new FakeIDBFactory();
+    let finished = 0;
+    const transaction = FakeIDBDatabase.prototype.transaction;
+    vi.spyOn(FakeIDBDatabase.prototype, "transaction").mockImplementation(function (this: IDBDatabase, ...args) {
+      const tx = transaction.apply(this, args);
+      if (args[1] === "readwrite") tx.addEventListener("complete", () => { finished += 1; });
+      return tx;
+    });
+    const idb = {
+      open: (name: string, version?: number) => {
+        const later: { result?: IDBDatabase; error?: unknown; onupgradeneeded?: (e: Event) => void;
+          onsuccess?: (e: Event) => void; onerror?: (e: Event) => void } = {};
+        setTimeout(() => {
+          const req = real.open(name, version);
+          req.onupgradeneeded = (e) => { later.result = req.result; later.onupgradeneeded?.(e); };
+          req.onsuccess = (e) => { later.result = req.result; later.onsuccess?.(e); };
+          req.onerror = (e) => { later.error = req.error; later.onerror?.(e); };
+        });
+        return later;
+      },
+    } as unknown as IDBFactory;
+    const door = nativeDoor();
+    let atSend = -1;
+    const wire = (url: string, init?: unknown): Promise<Response> => {
+      if (url === "/auth/refresh") atSend = finished;
+      return door.fetch(url, init);
+    };
+    const bearer = new BearerManager({ storage: memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" }), fetchImpl: wire, idb });
+    expect((await bearer.fetch("/sync")).status).toBe(200);
+    expect(atSend, "the request left before the name was on disk").toBe(1);
+  });
+
+  it.each<[string, IDBFactory | null]>([
+    ["missing", null], ["refusing", refusingIdb], ["failing", failingIdb], ["hung", hungIdb],
+  ])("an IndexedDB that is %s: the rotation still goes out, once, within the budget, saying nothing", async (_how, idb) => {
+    vi.useFakeTimers();
+    const said = (["log", "info", "warn", "error", "debug"] as const).map((level) => vi.spyOn(console, level));
+    const door = nativeDoor();
+    const bearer = new BearerManager({ storage: memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" }), fetchImpl: door.fetch, idb });
+    const answer = bearer.fetch("/sync");
+    await vi.advanceTimersByTimeAsync(ATTEMPT_STORE_BUDGET_MS);
+    expect((await answer).status).toBe(200);
+    expect(door.presented).toEqual(["refresh-1"]);
+    for (const level of said) expect(level).not.toHaveBeenCalled();
+  });
+
+  it("an IndexedDB that opens past the budget is closed unwritten: the rotation went without it", async () => {
+    vi.useFakeTimers();
+    const late = { close: vi.fn(), transaction: vi.fn() };
+    const idb = {
+      open: () => {
+        const req: { result?: unknown; onsuccess?: () => void } = {};
+        setTimeout(() => { req.result = late; req.onsuccess?.(); }, 2 * ATTEMPT_STORE_BUDGET_MS);
+        return req;
+      },
+    } as unknown as IDBFactory;
+    const door = nativeDoor();
+    const bearer = new BearerManager({ storage: memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" }), fetchImpl: door.fetch, idb });
+    const answer = bearer.fetch("/sync");
+    await vi.advanceTimersByTimeAsync(ATTEMPT_STORE_BUDGET_MS);
+    expect((await answer).status).toBe(200);
+    await vi.advanceTimersByTimeAsync(ATTEMPT_STORE_BUDGET_MS);
+    expect(late.close).toHaveBeenCalled();
+    expect(late.transaction, "a late write could only be older").not.toHaveBeenCalled();
+    expect(door.presented).toEqual(["refresh-1"]);
+  });
+
+  /* A COPY THAT MISSED A WRITE HOLDS AN OLDER NAME: an IndexedDB that hung or failed on the rotation
+     whose answer died must not shadow the name that rotation went out under, which the other copies hold. */
+  it.each([
+    ["hung", "this page"], ["hung", "a reload"], ["failing", "this page"], ["failing", "a reload"],
+  ] as const)("IndexedDB %s on the rotation whose answer died: the retry from %s keeps that rotation's name", async (how, where) => {
+    const store = wedgeable();
+    const door = nativeDoor();
+    const jar = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const bearer = new BearerManager({ storage: jar, fetchImpl: door.fetch, idb: store.idb });
+    expect((await bearer.fetch("/sync")).status).toBe(200);
+    // refresh-2's window ends; the store misses its rotation's name, and the answer dies after the door rotated.
+    door.lapse();
+    door.drop("after");
+    store.mode = how;
+    if (how === "hung") vi.useFakeTimers();
+    const lost = bearer.fetch("/sync");
+    if (how === "hung") await vi.advanceTimersByTimeAsync(ATTEMPT_STORE_BUDGET_MS);
+    expect((await lost).status).toBe(401);
+    vi.useRealTimers();
+    store.mode = "answers";
+    const retry = where === "this page" ? bearer : new BearerManager({ storage: jar, fetchImpl: door.fetch, idb: store.idb });
+    expect((await retry.fetch("/sync")).status).toBe(200);
+    expect(door.presented).toEqual(["refresh-1", "refresh-2", "refresh-2"]);
+    expect(door.names[1], "refresh-2 went out under a name of its own").not.toBe(door.names[0]);
+    expect(door.names[2], "the name refresh-2 went out under").toBe(door.names[1]);
+    expect(door.swept()).toBe(false);
+  });
+
+  it("two names for one token: the newer one goes", async () => {
+    // The first was lost before the door read it. A restart whose jar had lost it named the token
+    // again while IndexedDB failed, and the door rotated under that newer name; its answer died too.
+    const store = wedgeable();
+    const door = nativeDoor();
+    door.drop("before");
+    await new BearerManager({ storage: memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" }), fetchImpl: door.fetch, idb: store.idb }).fetch("/sync");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 60_000);
+    store.mode = "failing";
+    door.drop("after");
+    const jar = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    await new BearerManager({ storage: jar, fetchImpl: door.fetch, idb: store.idb }).fetch("/sync");
+    store.mode = "answers";
+    expect((await new BearerManager({ storage: jar, fetchImpl: door.fetch, idb: store.idb }).fetch("/sync")).status).toBe(200);
+    expect(door.presented).toEqual(["refresh-1", "refresh-1", "refresh-1"]);
+    expect(door.names[1]).not.toBe(door.names[0]);
+    expect(door.names[2], "the newer of the two").toBe(door.names[1]);
+    expect(door.swept()).toBe(false);
+  });
+
+  it("a newer name for a token the jar never kept does not hide the name owed for the token it holds", async () => {
+    // refresh-1's name reached disk while its request was in flight and refresh-2 never did; refresh-2's
+    // rotation named it in IndexedDB, then the browser died before the door read it.
+    const disk = new Map([[REFRESH_STORAGE_KEY, "refresh-1"], [PAIR_SCOPE_STORAGE_KEY, "scope-1"]]);
+    const idb = new FakeIDBFactory();
+    const door = nativeDoor();
+    const before = batchedJar(disk);
+    const wire = (url: string, init?: unknown): Promise<Response> => {
+      if (url === "/auth/refresh" && door.presented.length === 0) before.commit();
+      return door.fetch(url, init);
+    };
+    const tab = new BearerManager({ storage: before.storage, fetchImpl: wire, idb });
+    expect((await tab.fetch("/sync")).status).toBe(200);
+    door.lapse();
+    door.drop("before");
+    expect((await tab.fetch("/sync")).status).toBe(401);
+    before.kill();
+    expect(door.presented).toEqual(["refresh-1", "refresh-2"]);
+    expect(door.names[1], "refresh-2 went out under a name of its own").not.toBe(door.names[0]);
+
+    const restarted = new BearerManager({ storage: batchedJar(disk).storage, fetchImpl: door.fetch, idb });
+    expect((await restarted.fetch("/sync")).status).toBe(200);
+    expect(door.presented[2]).toBe("refresh-1");
+    expect(door.names[2], "the name refresh-1 went out under").toBe(door.names[0]);
+    expect(door.swept()).toBe(false);
+  });
+
+  it.each(["a named refusal", "a sign-out"] as const)("%s settles every copy of the name, the database included", async (end) => {
+    const idb = new FakeIDBFactory();
+    const jar = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const wire = scripted([
+      () => json(401, {}), () => new TypeError("network error"),
+      ...(end === "a named refusal" ? [() => json(401, {}), () => refusal("refresh_revoked")] : [() => new Response(null, { status: 204 })]),
+    ]);
+    const bearer = new BearerManager({ storage: jar, fetchImpl: wire.fetch, idb });
+    await bearer.fetch("/sync");
+    expect(await databases(idb), "the control: the name was written").toContain(REFRESH_ATTEMPT_DB);
+    if (end === "a named refusal") await bearer.fetch("/sync");
+    else await bearer.logout();
+    expect(bearer.paired()).toBe(false);
+    expect(jarNames(jar)).toEqual([null, null]);
+    await vi.waitFor(async () => expect(await databases(idb)).not.toContain(REFRESH_ATTEMPT_DB));
+  });
+
+  it("a fresh pairing leaves no name behind, even for the same token string", async () => {
+    const idb = new FakeIDBFactory();
+    const names: string[] = [];
+    const jar = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const bearer = new BearerManager({ storage: jar, fetchImpl: lossyDoor(names, { answer: "lost" }), idb });
+    await bearer.fetch("/sync");
+    bearer.adopt({ accessToken: "access-0", refreshToken: "refresh-1" }, { fresh: true });
+    expect(jarNames(jar)).toEqual([null, null]);
+    await bearer.fetch("/sync");
     expect(names).toHaveLength(2);
-    expect(names[1], "a finished attempt is never claimed twice").not.toBe(names[0]);
+    expect(names[1], "a new pairing never presents the previous one's name").not.toBe(names[0]);
+  });
+
+  it("re-paired in another tab while IndexedDB hung: nothing is presented, this tab stands down, the new pairing is untouched", async () => {
+    vi.useFakeTimers();
+    const door = nativeDoor();
+    const jar = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const tab = new BearerManager({ storage: jar, fetchImpl: door.fetch, idb: hungIdb });
+    let died = 0;
+    tab.onSessionDead(() => died++);
+    const answer = tab.fetch("/sync");
+    await vi.advanceTimersByTimeAsync(10);
+    const other = new BearerManager({ storage: jar, fetchImpl: door.fetch, idb: null });
+    other.adopt({ accessToken: "b-1", refreshToken: "r-b" }, { fresh: true });
+    await vi.advanceTimersByTimeAsync(ATTEMPT_STORE_BUDGET_MS);
+    expect((await answer).status).toBe(401);
+    expect(door.presented).toEqual([]);
+    expect(died).toBe(1);
+    expect(tab.paired()).toBe(false);
+    expect(jar.getItem(REFRESH_STORAGE_KEY), "the successor's token").toBe("r-b");
+    expect(jar.getItem(PAIR_SCOPE_STORAGE_KEY)).toBe(other.pairScope());
+    expect(jarNames(jar), "the stale tab wrote the new pairing's jar").toEqual([null, null]);
+  });
+
+  it("re-paired in another tab while the name's write was in flight: nothing is presented or written over", async () => {
+    const real = new FakeIDBFactory();
+    const door = nativeDoor();
+    const jar = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    let opens = 0;
+    const idb = {
+      open: (name: string, version?: number) => {
+        // The second open is the write's: another tab redeems a new pairing just then.
+        opens += 1;
+        if (opens === 2) {
+          new BearerManager({ storage: jar, fetchImpl: door.fetch, idb: real })
+            .adopt({ accessToken: "b-1", refreshToken: "r-b" }, { fresh: true });
+        }
+        return real.open(name, version);
+      },
+      deleteDatabase: (name: string) => real.deleteDatabase(name),
+    } as unknown as IDBFactory;
+    const tab = new BearerManager({ storage: jar, fetchImpl: door.fetch, idb });
+    let died = 0;
+    tab.onSessionDead(() => died++);
+    expect((await tab.fetch("/sync")).status).toBe(401);
+    expect(opens, "the control: the write was under way").toBe(2);
+    expect(door.presented).toEqual([]);
+    expect(died).toBe(1);
+    expect(jar.getItem(REFRESH_STORAGE_KEY), "the successor's token").toBe("r-b");
+    expect(await storedRecord(real), "the old pairing's name in the new pairing's store").toBeNull();
+  });
+
+  it("a bare name an older build left is resumed for the token the jar holds, and only for it", async () => {
+    const idb = new FakeIDBFactory();
+    const door = nativeDoor();
+    const jar = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1", [REFRESH_ATTEMPT_STORAGE_KEY]: "rlegacy-1" });
+    expect((await new BearerManager({ storage: jar, fetchImpl: door.fetch, idb }).fetch("/sync")).status).toBe(200);
+    door.lapse();
+    expect((await new BearerManager({ storage: jar, fetchImpl: door.fetch, idb }).fetch("/sync")).status).toBe(200);
+    expect(door.names[0]).toBe("rlegacy-1");
+    expect(door.names[1], "refresh-2 is a new attempt").not.toBe("rlegacy-1");
+  });
+
+  it("no copy holds a token: the record is a name, a mark and a time", async () => {
+    const idb = new FakeIDBFactory();
+    const jar = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-never-stored" });
+    const wire = scripted([() => json(401, {}), () => new TypeError("network error")]);
+    await new BearerManager({ storage: jar, fetchImpl: wire.fetch, idb }).fetch("/sync");
+    const [bare, kept] = jarNames(jar) as [string, string];
+    const stored = JSON.stringify(await storedRecord(idb));
+    expect(Object.keys(JSON.parse(kept) as object).sort()).toEqual(["at", "id", "mark"]);
+    expect(JSON.parse(stored)).toEqual(JSON.parse(kept));
+    expect(bare).toBe(jarId(kept));
+    for (const copy of [bare, kept, stored]) expect(copy).not.toContain("refresh-never-stored");
   });
 });

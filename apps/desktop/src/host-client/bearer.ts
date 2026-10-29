@@ -27,14 +27,17 @@
 /*
  * A rotation whose RESPONSE is lost used to end the pairing: strict reuse read the retry of the
  * retained token as theft, the browser landed on `/pair`, and one fresh QR scan re-paired it.
- * Every attempt now carries a name, written to the jar BEFORE it submits and repeated until an
- * answer lands, so the server can tell a retry from a replay. What remains is the phone's own
- * bounded residual, stated there: an attacker holding a whole captured request can replay it
- * inside the presented token's window, and the legitimate retry rotates straight past it.
+ * Every attempt now carries a name, committed to IndexedDB and written to the jar BEFORE it
+ * submits, and owed for the token it went out with until the pairing ends. A retry, a reload, or a
+ * restart whose jar lost its last batch (localStorage reaches disk in batches, so a crash can drop
+ * the name and the answer's token together) presents that token under the same name, so the
+ * server can tell a retry from a replay. What remains is the phone's own bounded residual, stated
+ * there: an attacker holding a whole captured request can replay it inside the presented token's
+ * window, and the legitimate retry rotates straight past it.
  */
 
 import { isCredentialRefusal, readRefreshAnswer } from "@ohmail/client-engine";
-import { storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
+import { durableIdbCommit, storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
 
 /** The wire pair the redeem and the refresh both answer. */
 export interface BearerTokens {
@@ -66,12 +69,71 @@ export const PAIR_SCOPE_STORAGE_KEY = "ohmail.host.pairScope";
 
 /**
  * THE NAME OF A ROTATION THIS ORIGIN SUBMITTED AND NEVER ADOPTED — the phone's field
- * (`apps/mobile/src/net/bearer.ts`), the phone's semantics, three clients and one contract. It
- * lives in the JAR rather than in memory for the same reason the token does: the answer can be
- * lost to a reload or a crash, and whichever tab rotates next has to retry as the same attempt
- * instead of presenting a spent token as a stranger and earning the reuse sweep.
+ * (`apps/mobile/src/net/bearer.ts`), the phone's semantics, three clients and one contract. A bare
+ * id, written before the request goes and removed by the adoption that answers it, as every shipped
+ * build writes it: a tab still running one sends whatever this key holds as its name.
  */
 export const REFRESH_ATTEMPT_STORAGE_KEY = "ohmail.host.refreshAttempt";
+
+/**
+ * THE NAME, OWED FOR THE TOKEN IT WENT OUT WITH: `{ id, mark, at }`, never with a token, kept past
+ * the adoption. A crash can leave the jar on a token a rotation already spent, and only the name
+ * that spent it brings it back: this door honours that name for the token's whole life and sweeps
+ * the family under any other. Older builds never read this key.
+ */
+export const OWED_ATTEMPT_STORAGE_KEY = "ohmail.host.refreshAttemptOwed";
+
+/**
+ * THE RECORD'S DURABLE COPY: IndexedDB commits it strictly before the request leaves. Each step
+ * waits at most {@link ATTEMPT_STORE_BUDGET_MS}; an IndexedDB that is missing, refusing or hung
+ * leaves the jar's copies alone, as before, and never holds a rotation back.
+ */
+export const REFRESH_ATTEMPT_DB = "ohmail-host-session";
+const ATTEMPT_STORE = "attempt";
+const OWED_KEY = "owed";
+export const ATTEMPT_STORE_BUDGET_MS = 1_500;
+
+/** A rotation's name, the mark of the token it went out with, and when it was named. */
+interface OwedAttempt {
+  id: string;
+  mark: string;
+  at: number;
+}
+
+/** Enough of a refresh token to tell which one a name is owed for, never the token: FNV-1a, 32 bits. */
+function refreshMark(token: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < token.length; i += 1) h = Math.imul(h ^ token.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+function owedAttemptOf(v: unknown): OwedAttempt | null {
+  const p = v as Partial<OwedAttempt> | null | undefined;
+  return p && typeof p.id === "string" && typeof p.mark === "string" && typeof p.at === "number"
+    ? { id: p.id, mark: p.mark, at: p.at } : null;
+}
+
+/** The jar's record; `null` where there is none or it does not parse. */
+function keptAttempt(raw: string | null): OwedAttempt | null {
+  if (raw === null) return null;
+  try {
+    return owedAttemptOf(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+const readOwed = (db: IDBDatabase): Promise<OwedAttempt | null> => new Promise((resolve, reject) => {
+  const get = db.transaction(ATTEMPT_STORE, "readonly").objectStore(ATTEMPT_STORE).get(OWED_KEY);
+  get.onsuccess = () => resolve(owedAttemptOf(get.result));
+  get.onerror = () => reject(get.error);
+});
+
+const commitOwed = (db: IDBDatabase, owed: OwedAttempt): Promise<unknown> => {
+  const tx = db.transaction(ATTEMPT_STORE, "readwrite", { durability: "strict" });
+  tx.objectStore(ATTEMPT_STORE).put(owed, OWED_KEY);
+  return durableIdbCommit(tx, `idb:${REFRESH_ATTEMPT_DB}`);
+};
 
 /** An id-shaped random scope. `randomUUID` where the platform has it, 128 bits of hex otherwise. */
 function mintPairScope(): string {
@@ -166,14 +228,15 @@ export class BearerManager {
    */
   private generation = 0;
   /**
-   * The attempt in flight, or the one a previous rotation left UNANSWERED — loaded from the jar
-   * at construction, which is what makes a retry survive a reload between submit and adopt.
-   * Cleared by every adoption and every death.
+   * The name this page last sent, beside the jar's and IndexedDB's copies: what is left when
+   * storage refuses. A rotation leaves it owed for its token; a death and a new pairing clear it.
    */
-  private attempt: string | null = null;
+  private attempt: OwedAttempt | null = null;
+  /** The name's IndexedDB: `undefined` reads the browser's own on each call, `null` is none. */
+  private readonly idb: IDBFactory | null | undefined;
   private readonly deadListeners = new Set<() => void>();
 
-  constructor(opts: { storage?: Storage | null; fetchImpl?: FetchLike } = {}) {
+  constructor(opts: { storage?: Storage | null; fetchImpl?: FetchLike; idb?: IDBFactory | null } = {}) {
     this.door = storageDoor(
       opts.storage !== undefined ? opts.storage : defaultStorage(),
       "host-pair",
@@ -181,8 +244,8 @@ export class BearerManager {
     // BIND THE GLOBAL — the same illegal-invocation trap http-adapter.ts documents: a browser's
     // native fetch refuses any receiver that is not its own global.
     this.fetchImpl = opts.fetchImpl ?? (globalThis.fetch.bind(globalThis) as FetchLike);
+    this.idb = opts.idb;
     this.refresh = this.door.get(REFRESH_STORAGE_KEY);
-    this.attempt = this.door.get(REFRESH_ATTEMPT_STORAGE_KEY);
     /**
      * A PAIRING THAT EXISTS MUST HAVE A SCOPE BEFORE THE FIRST RENDER, NOT AT ITS FIRST
      * ADOPT. The upgrade arm lived in {@link adopt}, which runs on a redeem or a rotation —
@@ -245,16 +308,17 @@ export class BearerManager {
     // Storage refused answers "lost" from the door and raises the notice; the session then lives
     // for this page load and the next one re-pairs, which is what the door exists to say out loud.
     this.door.set(REFRESH_STORAGE_KEY, tokens.refreshToken);
-    // THE ATTEMPT IS ANSWERED. Cleared AFTER the token is written, never before: a crash between
-    // the two leaves a name standing beside a token that has already rotated, which the server
-    // reads as an ordinary fresh attempt — while the other order would retry a spent token with
-    // no name at all, which is the sweep.
-    this.attempt = null;
+    // THE ATTEMPT IS ANSWERED, for every build: the bare name goes AFTER the token is written, as
+    // it always has. The record stays owed for the token it went out with: a crash before the jar
+    // keeps this token comes back holding that one. The next rotation presents this token, whose
+    // mark differs, under a new name.
     this.door.remove(REFRESH_ATTEMPT_STORAGE_KEY);
     // A REDEEM re-mints; a rotation does not. The upgrade case is NOT handled here — it is
     // handled in the constructor, because by the time `adopt` runs the shell has already
     // mounted and read a partition. See `ensureScope`.
     if (opts.fresh === true) {
+      // A new pairing owes no name.
+      this.forgetAttempt();
       this.door.set(PAIR_SCOPE_STORAGE_KEY, mintPairScope());
     } else {
       this.ensureScope();
@@ -288,9 +352,8 @@ export class BearerManager {
     this.access = null;
     this.accessExpiresAt = null;
     this.refresh = null;
-    this.attempt = null;
     this.door.remove(REFRESH_STORAGE_KEY);
-    this.door.remove(REFRESH_ATTEMPT_STORAGE_KEY);
+    this.forgetAttempt();
     // The scratch space this pairing owned goes with it. The next pairing on this origin mints
     // a new scope and therefore cannot read what this one left — which is the whole point of
     // the key. The VALUES under the old scope are unreachable rather than deleted; the shared
@@ -381,10 +444,12 @@ export class BearerManager {
       // THE NAME GOES DOWN BEFORE THE REQUEST GOES OUT, and a retry of an attempt whose answer
       // never arrived carries the SAME one. The jar is the shared head for the name exactly as it
       // is for the token — a tab that submitted and never adopted leaves the name behind, and
-      // whichever tab rotates next resumes it. A fresh name only where none is owed.
-      const attemptId = this.door.get(REFRESH_ATTEMPT_STORAGE_KEY) ?? this.attempt ?? mintAttemptId();
-      this.attempt = attemptId;
-      this.door.set(REFRESH_ATTEMPT_STORAGE_KEY, attemptId);
+      // whichever tab rotates next, or a restart, resumes it. A fresh name only where none is
+      // owed for this token.
+      const attemptId = await this.attemptFor(presented, scopeAtSend);
+      // Asked again past the store's wait: a death or a re-pair may have come in between.
+      if (this.refresh === null) return false;
+      if (this.standDownIfRepaired(scopeAtSend)) return false;
       let res: Response;
       try {
         res = await this.fetchImpl("/auth/refresh", {
@@ -419,6 +484,88 @@ export class BearerManager {
     }).finally(() => {
       this.rotating = null;
     }));
+  }
+
+  /**
+   * The name a rotation of `presented` goes out under, in every copy before it goes: of the records
+   * owed for this token (by mark) the newest, since one that missed a write holds an older name;
+   * none, the bare name, which carries no mark but went out with the token the jar holds (every
+   * build removes it on adoption); neither, a new one. A pairing that ended meanwhile gets nothing
+   * written.
+   */
+  private async attemptFor(presented: string, scope: string | null): Promise<string> {
+    const mark = refreshMark(presented);
+    const live = (): boolean => this.refresh !== null && this.readScope() === scope;
+    // `undefined`: IndexedDB gave no answer, and is not asked again for this rotation.
+    const stored = await this.attemptStoreStep(readOwed);
+    const kept = this.door.get(OWED_ATTEMPT_STORAGE_KEY);
+    const bare = this.door.get(REFRESH_ATTEMPT_STORAGE_KEY);
+    const owed = [stored ?? null, keptAttempt(kept), this.attempt].reduce<OwedAttempt | null>(
+      (newest, p) => (p !== null && p.mark === mark && (newest === null || p.at > newest.at) ? p : newest),
+      null,
+    ) ?? (bare?.startsWith("r") ? { id: bare, mark, at: 0 } : null)
+      ?? { id: mintAttemptId(), mark, at: Date.now() };
+    if (!live()) return owed.id;
+    this.attempt = owed;
+    // Every copy holds it before it goes: a crash may keep any of them, and an older tab reads the bare one.
+    const record = JSON.stringify(owed);
+    if (kept !== record) this.door.set(OWED_ATTEMPT_STORAGE_KEY, record);
+    if (bare !== owed.id) this.door.set(REFRESH_ATTEMPT_STORAGE_KEY, owed.id);
+    if (stored !== undefined && stored?.id !== owed.id) {
+      await this.attemptStoreStep((db) => (live() ? commitOwed(db, owed) : Promise.resolve(undefined)));
+    }
+    return owed.id;
+  }
+
+  /** The name's IndexedDB, or `null` where the browser has none or refuses the lookup. */
+  private attemptStore(): IDBFactory | null {
+    if (this.idb !== undefined) return this.idb;
+    try {
+      return globalThis.indexedDB ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** One step on the name's store within the budget; `undefined` when it is missing, refuses or does not answer. */
+  private attemptStoreStep<T>(step: (db: IDBDatabase) => Promise<T>): Promise<T | undefined> {
+    const factory = this.attemptStore();
+    if (factory === null) return Promise.resolve(undefined);
+    return new Promise((resolve) => {
+      let over = false;
+      const timer = setTimeout(() => { over = true; resolve(undefined); }, ATTEMPT_STORE_BUDGET_MS);
+      const answer = (value: T | undefined): void => {
+        clearTimeout(timer);
+        resolve(value);
+      };
+      try {
+        const req = factory.open(REFRESH_ATTEMPT_DB, 1);
+        req.onupgradeneeded = () => { req.result.createObjectStore(ATTEMPT_STORE); };
+        req.onerror = () => answer(undefined);
+        req.onsuccess = () => {
+          const db = req.result;
+          // A death or a new pairing deleting the database is never blocked by this page.
+          db.onversionchange = () => db.close();
+          // Opened past the budget: the rotation went without it, and a late write could only be older.
+          if (over) { db.close(); return; }
+          new Promise<T>((ok) => { ok(step(db)); }).then(answer, () => answer(undefined)).finally(() => db.close());
+        };
+      } catch {
+        answer(undefined);
+      }
+    });
+  }
+
+  /** The name goes with the pairing: this page's copy, the jar's two, and IndexedDB's, deleted unawaited. */
+  private forgetAttempt(): void {
+    this.attempt = null;
+    this.door.remove(REFRESH_ATTEMPT_STORAGE_KEY);
+    this.door.remove(OWED_ATTEMPT_STORAGE_KEY);
+    try {
+      this.attemptStore()?.deleteDatabase(REFRESH_ATTEMPT_DB);
+    } catch {
+      /* refused: a later pairing's tokens never bear its mark */
+    }
   }
 
   /**
