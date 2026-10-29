@@ -710,7 +710,7 @@
     "title": "News",
     "waterline": "Bis hierher gesehen",
     "waterlineMeta": "letzter Besuch · {stamp}",
-    "tail": "Vorbeiscrollen markiert einen Beitrag als gesehen.",
+    "tail": "Ein Beitrag gilt als gelesen, sobald er im Strom auf dem Bildschirm stehen bleibt. Schnelles Vorbeiscrollen lässt ihn ungelesen.",
     "streamTail": "Keine älteren ungelesenen Beiträge.",
     "aiApprove": "Passt",
     "aiCorrect": "Korrigieren",
@@ -1898,7 +1898,7 @@
   },
   "about": {
     "p1": "Ein Demo-Postfach, dafür erfunden — niemand echt, nichts echt. Jede Taste und jeder Klick funktioniert, und nichts davon verlässt diesen Tab: hier gibt es überhaupt kein Netzwerk.",
-    "p2": "Der Screener hält neue Absender zurück, bis du entscheidest. Ein Klick legt einen Absender in die Ohbox, nach News oder in die Belege (die ✓-Hälfte markiert die zurückgehaltenen Mails gleich als gelesen), und die Entscheidung wird zur Regel für künftige Mails. News und Belege teilen sich einen Lesestrom, in dem Vorbeiscrollen einen Eintrag an der Wasserlinie als gesehen markiert. Tags gruppieren Nachrichten über Ansichten hinweg, ohne sie zu verschieben.",
+    "p2": "Der Screener hält neue Absender zurück, bis du entscheidest. Ein Klick legt einen Absender in die Ohbox, nach News oder in die Belege (die ✓-Hälfte markiert die zurückgehaltenen Mails gleich als gelesen), und die Entscheidung wird zur Regel für künftige Mails. News und Belege teilen sich einen Lesestrom, in dem ein Eintrag als gelesen gilt, sobald er auf dem Bildschirm stehen bleibt; schnelles Vorbeiscrollen lässt ihn ungelesen. Tags gruppieren Nachrichten über Ansichten hinweg, ohne sie zu verschieben.",
     "keys": "Drücke ? für die Tastaturübersicht.",
     "loading": "Deine Postfächer werden gelesen …",
     "noMailbox": "Kein Postfach verbunden. Einstellungen → Postfächer.",
