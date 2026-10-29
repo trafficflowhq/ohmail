@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { fullDateTime } from "./format";
 import type { ReuseSweepLine } from "./reuse-sweeps";
@@ -22,7 +22,8 @@ const CLIENT_KEY = new Map<string, ClientKey>([
 
 /**
  * THE SIGN-INS OHMAIL ENDED BECAUSE AN OLDER COPY USED THEM AGAIN (`GET /auth/session`'s
- * `reuseSweeps`), in the shell's account slot until OK. The press hides it at once; the host's
+ * `reuseSweeps`), in the shell's account slot until OK: one quiet line, the list and the advice
+ * under Details. OK acknowledges every listed sweep and hides it at once; the host's
  * `onAcknowledge` (the API, or the desktop's bridge) rejecting puts it back.
  */
 export function ReuseSweepNotice({ sweeps, onAcknowledge }: {
@@ -31,6 +32,8 @@ export function ReuseSweepNotice({ sweeps, onAcknowledge }: {
 }) {
   const t = useTranslations("settings");
   const [pressed, setPressed] = useState<ReadonlySet<string>>(() => new Set());
+  const [open, setOpen] = useState(false);
+  const panel = useId();
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -49,20 +52,35 @@ export function ReuseSweepNotice({ sweeps, onAcknowledge }: {
   };
 
   return (
-    <div className="acct-note" role="status">
-      <p className="acct-note-line"><strong>{t("reuseSweepsTitle", { count: shown.length })}</strong></p>
-      <ul className="acct-note-list">
-        {shown.map((s) => (
-          <li key={s.id}>
-            {t("reuseSweepsLine", {
-              client: t(CLIENT_KEY.get(s.client ?? "") ?? "reuseClientUnknown"),
-              when: fullDateTime({ date: s.at }),
-            })}
-          </li>
-        ))}
-      </ul>
-      <p className="acct-note-line">{t("reuseSweepsBody", { count: shown.length })}</p>
-      <button type="button" className="acct-later" onClick={acknowledge}>{t("reuseSweepsOk")}</button>
+    <div className="acct-note acct-note-one" role="status">
+      <div className={open ? "acct-note-row acct-note-row-open" : "acct-note-row"}>
+        <span className="acct-note-said">{t("reuseSweepsTitle", { count: shown.length })}</span>
+        <button
+          type="button"
+          className="acct-later"
+          aria-expanded={open}
+          aria-controls={open ? panel : undefined}
+          onClick={() => setOpen((was) => !was)}
+        >
+          {t("reuseSweepsDetails")}
+        </button>
+        <button type="button" className="acct-later" onClick={acknowledge}>{t("reuseSweepsOk")}</button>
+      </div>
+      {open ? (
+        <div id={panel} className="acct-note-more">
+          <ul className="acct-note-list">
+            {shown.map((s) => (
+              <li key={s.id}>
+                {t("reuseSweepsLine", {
+                  client: t(CLIENT_KEY.get(s.client ?? "") ?? "reuseClientUnknown"),
+                  when: fullDateTime({ date: s.at }),
+                })}
+              </li>
+            ))}
+          </ul>
+          <p className="acct-note-line">{t("reuseSweepsBody")}</p>
+        </div>
+      ) : null}
     </div>
   );
 }

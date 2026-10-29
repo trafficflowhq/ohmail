@@ -1111,6 +1111,35 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
+/* A notice that is one quiet row; what it explains opens under it on Details. */
+.acct-note-one {
+  padding: 5px 14px;
+}
+.acct-note-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  line-height: 1.55;
+}
+/* One line at every width: a narrow window cuts the sentence, never moves the buttons under it. */
+.acct-note-said {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-note-row button {
+  flex: none;
+}
+.acct-note-row-open {
+  align-items: flex-start;
+}
+.acct-note-row-open .acct-note-said {
+  white-space: normal;
+}
+.acct-note-more {
+  padding: 6px 0 2px;
+}
 
 /* ================= the same sentence, in the rail =================
    The rail's own copy of the sync line — `SyncBar variant="rail"`, rendered into the slot
