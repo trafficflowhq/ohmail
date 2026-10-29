@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { connect, createServer, type AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { startPhoneEngine } from "../src/mobile.js";
 import {
@@ -118,6 +119,34 @@ const addresses = (body: Record<string, unknown>, key: string): string[] =>
   ((body[key] ?? []) as Array<{ address: string }>).map((g) => g.address).sort();
 const events = (p: Phone): string => [...new Set(p.lines.map((l) => l.event))].join(", ");
 
+/** A door to the server that ends its first connection at that connection's first SELECT, with a
+ *  FIN or a reset, as GreenMail does when a SELECT races a write; later connections pass through. */
+async function endsFirstSelect(how: "fin" | "rst", target = { host: HOST, port: PORT }): Promise<{ port: number; connections: () => number; close: () => Promise<void> }> {
+  let connections = 0;
+  const server = createServer((inbound) => {
+    const nth = ++connections;
+    const outbound = connect(target);
+    const end = (): void => { inbound.destroy(); outbound.destroy(); };
+    inbound.on("error", end).on("close", end);
+    outbound.on("error", end).on("close", end);
+    outbound.on("data", (b: Buffer) => { if (!inbound.destroyed) inbound.write(b); });
+    inbound.on("data", (b: Buffer) => {
+      if (nth === 1 && / SELECT /i.test(b.toString("latin1"))) {
+        outbound.destroy();
+        if (how === "fin") inbound.end(); else inbound.resetAndDestroy();
+        return;
+      }
+      if (!outbound.destroyed) outbound.write(b);
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  return {
+    port: (server.address() as AddressInfo).port,
+    connections: () => connections,
+    close: () => new Promise<void>((r) => server.close(() => r())),
+  };
+}
+
 describe.skipIf(ON_DEVICE_STORE)("the default project does not substitute the device schema", () => {
   it("states the premise, so this file cannot pass here by contributing nothing", () => {
     expect(EXPECTED_DIALECT).toBe("pg");
@@ -131,6 +160,17 @@ describe.runIf(ON_DEVICE_STORE && !SERVER_UP)("the mail server this file measure
 });
 
 describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone connected to a mailbox with mail already in its Inbox", () => {
+  it.each(["fin", "rst"] as const)("the server check reads again when the server ends its connection at SELECT (%s)", async (how) => {
+    const user = `pre-connect-check-${randomUUID()}@trafficflow.test`;
+    const subject = `Checked ${randomUUID().slice(0, 8)}`;
+    await deliver(user, "Nobody Known <nobody@stranger.invalid>", subject);
+    const door = await endsFirstSelect(how);
+    try {
+      expect(await folderOnServer(user, subject, { host: "127.0.0.1", port: door.port })).toBe("INBOX");
+      expect(door.connections(), "the check did not read again on a fresh connection").toBe(2);
+    } finally { await door.close(); }
+  }, 60_000);
+
   it("keeps that mail where it is, offers both senders, and the offer's press holds them", async () => {
     const user = `pre-connect-${randomUUID()}@trafficflow.test`;
     const n = randomUUID().slice(0, 8);
