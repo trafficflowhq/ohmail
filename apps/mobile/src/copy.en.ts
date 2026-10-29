@@ -973,7 +973,7 @@ const TABLE = {
   receipts: "Receipts",
   waterline: "Seen up to here",
   readsTail: (shown: number) =>
-    `All ${shown} issue${shown === 1 ? "" : "s"} shown. Scrolling past an item marks it seen.`,
+    `All ${shown} issue${shown === 1 ? "" : "s"} shown. An item turns read once it rests on screen in the stream. A quick scroll past leaves it unread.`,
   receiptsTail: (shown: number) => `All ${shown} receipt${shown === 1 ? "" : "s"} shown.`,
   readsEmptyTitle: "No issues yet.",
   readsEmptyHint: "Newsletters and long reads you file here arrive as they sync.",
@@ -981,7 +981,7 @@ const TABLE = {
   receiptsEmptyHint: "Orders, invoices and tickets you file here arrive as they sync.",
   /** The Receipts day heading for the current day (the shared selector capitalises it). */
   today: "today",
-  streamSeenHint: "scrolling past marks seen",
+  streamSeenHint: "an item turns read once it rests on screen; a quick scroll past leaves it unread",
 
   /* ------------------------------------------------------------- protected */
 
