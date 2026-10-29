@@ -135,6 +135,31 @@ describe("the desktop window's Ohbox", () => {
     expect(rowOf(passed).dataset.unseen).toBe("1");
   });
 
+  it("a row marked unread stays unread after j away, k back and a long rest; ↵ then reads it (found on 0.30.12)", async () => {
+    await mountWindow(new LaterTaskDisk());
+    const id = host!.querySelector<HTMLElement>('.row[data-unseen="1"][data-id]')!.dataset.id!;
+    const key = (k: string) => act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
+    const wait = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    const marks = () => wire.filter((w) => w.kind === "mark_seen" && w.ids.includes(id)).map((w) => w.unread);
+    await act(async () => { rowOf(id).click(); });
+    await wait(50);
+    await layout.passDwell();
+    expect(marks(), "the open reads it").toEqual([false]);
+    await key("u");
+    await wait(50);
+    expect(marks()).toEqual([false, true]);
+    await key("j");
+    await wait(300);
+    await key("k");
+    expect(host!.querySelector(".view .row.sel")?.getAttribute("data-id"), "k came back").toBe(id);
+    await wait(6000);
+    expect(marks(), "the landing's rest read it back").toEqual([false, true]);
+    await key("Enter");
+    await wait(50);
+    await layout.passDwell();
+    expect(marks()).toEqual([false, true, false]);
+  });
+
   /**
    * A conversation opens on its newest, also when opened again (the c3 design): the
    * fixture's three unread letters threaded into one row. The first open reads the newest; after

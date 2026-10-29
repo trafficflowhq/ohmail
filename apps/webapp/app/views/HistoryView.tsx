@@ -159,8 +159,8 @@ export function HistoryView({
     first: first !== null && first !== "gone" ? first : null,
   });
   const shown = list.shown;
-  /* The column's visit: entered by an open, → or the person's own press or scroll in it; ↓/↑ and
-     the first-row fallback stay previews. */
+  /* The column's visit: entered by an open, → or the person's own press or scroll in it, or once a
+     step (j/k, ↓/↑) is rested on; the first-row fallback, the placer and the rail stay previews. */
   const visit = useReaderVisit({ shown, markSeen: onMarkSeen });
   const readColRef = useRef<HTMLDivElement>(null);
   const shownAt = picked && shown?.id === picked.row.id ? picked.at : shown ? 0 : -1;
@@ -239,8 +239,14 @@ export function HistoryView({
     },
   });
 
-  const stepUp = { disabled: shownAt <= 0, run: () => selectAt(shownAt - 1), label: to("keyPrev") };
-  const stepDown = { disabled: shownAt < 0 || shownAt >= tl.length - 1, run: () => selectAt(shownAt + 1), label: to("keyNext") };
+  /** A step key's move: the row it lands on is entered once rested on (`useReaderVisit`'s `land`). */
+  const stepTo = (i: number): void => {
+    selectAt(i);
+    const r = tl.rowAt(i);
+    if (r !== null && r !== "gone") visit.land(r.id);
+  };
+  const stepUp = { disabled: shownAt <= 0, run: () => stepTo(shownAt - 1), label: to("keyPrev") };
+  const stepDown = { disabled: shownAt < 0 || shownAt >= tl.length - 1, run: () => stepTo(shownAt + 1), label: to("keyNext") };
   // j/k walk History as ↓/↑ do, as they do every other list.
   useKeyBindings([
     { chord: "j", group: "navigate", ...stepDown },
@@ -252,6 +258,7 @@ export function HistoryView({
       selector: ".view-history .read-col",
       disabled: shown == null,
       onEnter: () => { if (shown) visit.enter(shown.id); },
+      onScrollKey: () => { if (shown) visit.keyScroll(shown.id, readColRef.current); },
       onHiddenEnter: () => {
         if (shown) onOpen(shown);
       },
@@ -444,7 +451,11 @@ export function HistoryView({
             message={m}
             tags={tags}
             now={now}
-            onAction={(a) => onAction(a, m)}
+            onAction={(a) => {
+              // The bar's Mark unread (the read switch on a read letter): held for the visit.
+              if (a === "unread" && !m.unread) visit.holdUnread(m.id);
+              onAction(a, m);
+            }}
             onAddTag={onAddTag}
             scroller={readColRef}
             threadRead={visit.wiring ?? undefined}

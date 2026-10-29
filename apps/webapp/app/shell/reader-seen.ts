@@ -40,9 +40,10 @@ import type { ThreadWalkChannel } from "./thread-walk-channel";
 export { EVIDENCE_WINDOW_MS };
 
 /**
- * A LANDING THE PERSON RESTS ON IS ENTERED: the Ohbox's j/k, a verb's advance or an Undo put the
- * cursor here, and it stayed this long with the window in front, no page modal over it and no command
- * since. With the 0.7 s dwell, a message on screen reads 2 s after the cursor stopped.
+ * A LANDING THE PERSON RESTS ON IS ENTERED: the Ohbox's j/k, a verb's advance or an Undo, or ↓/↑
+ * (j/k in History) in a reader off the Ohbox, put the cursor here, and it stayed this long with the
+ * window in front, no page modal over it and no command since. With the 0.7 s dwell, a message on
+ * screen reads 2 s after the cursor stopped.
  */
 export const LANDING_REST_MS = 1300;
 
@@ -82,6 +83,8 @@ export interface ThreadReadDomOptions {
   onRest?: () => void;
   /** The cursor stayed `restMs` on this landing, whatever came in between (its pictures may load). */
   onStay?: () => void;
+  /** Does the landing show a message held unread for the visit ({@link UnreadHold})? Its rest never enters it. */
+  held?: () => boolean;
 }
 
 export interface ThreadReadDom {
@@ -191,6 +194,46 @@ export function viewOf(scroller: HTMLElement): ThreadView {
 const unreadIn = (scroller: HTMLElement): Set<string> =>
   new Set([...scroller.querySelectorAll<HTMLElement>("[data-conv-id][data-unseen]")].map((el) => el.dataset.convId!));
 
+/**
+ * A MARK UNREAD HOLDS FOR THE VIEW'S VISIT, as News holds it (`StreamShell`'s kept set): a message is not
+ * entered again by a landing's rest or an arrow scroll of the column while the view stays open. An open,
+ * ↵, →, a press or a hand scroll in it still enters it, and the rule reads it. One per view visit, handed
+ * to the reader in the wiring. Fed by message id only: the view's own Mark unread doors (`u`, a panel's
+ * ⋯, a pick's Mark unread, the bar's), and the shown message's own flag turning unread while it stays
+ * shown (another device's, {@link useUnreadTurn}). Never by the reader's DOM: its one article is reused
+ * across letters, and a switch of letter looked like the new one turning unread.
+ */
+export interface UnreadHold {
+  /** These were marked unread: held for the rest of the visit. */
+  add: (ids: Iterable<string>) => void;
+  /** Does `scroller` show a held message that is still unread? */
+  shows: (scroller: HTMLElement | null | undefined) => boolean;
+}
+
+export function createUnreadHold(): UnreadHold {
+  const held = new Set<string>();
+  return {
+    add: (ids) => { for (const id of ids) held.add(id); },
+    shows: (scroller) => !!scroller && held.size > 0 && [...unreadIn(scroller)].some((id) => held.has(id)),
+  };
+}
+
+/**
+ * THE SHOWN MESSAGE'S OWN TURN TO UNREAD — another device's Mark unread reaching the mirror while the
+ * reader shows it (or an Undo of its read): the same id, read at the last commit, unread now. Another
+ * message shown is no turn, whatever it is.
+ */
+export function useUnreadTurn(hold: UnreadHold, shown: Pick<EngineMessage, "id" | "unread"> | null | undefined): void {
+  const last = useRef<{ id: string; unread: boolean } | null>(null);
+  const id = shown?.id ?? null;
+  const unread = shown?.unread === true;
+  useEffect(() => {
+    const was = last.current;
+    if (id !== null && was?.id === id && !was.unread && unread) hold.add([id]);
+    last.current = id === null ? null : { id, unread };
+  }, [hold, id, unread]);
+}
+
 const editable = (t: EventTarget | null): boolean =>
   t instanceof HTMLElement && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
 
@@ -276,11 +319,12 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
 
   /* THE REST (`restMs`): a landing looked at and not acted on is entered. A command — a key the app
      took, a press on a control — ends it for this landing; the window going away starts it over; a
-     page modal standing over it (the palette, a dialog) keeps it from entering. */
+     page modal standing over it (the palette, a dialog), or a message on it held unread for the visit
+     (`held`), keeps it from entering. */
   let resting = o.restMs !== undefined;
   let rest: (() => void) | null = null;
   const restable = (): boolean =>
-    resting && live && !record.entered && visible() && documentFocused() && pageModal(doc) === null;
+    resting && live && !record.entered && visible() && documentFocused() && pageModal(doc) === null && !(o.held?.() ?? false);
   /* The rest's and the stay's own timer, the wall clock's: never the dwell's (`after`), which a test passes by hand. */
   const wait = (ms: number, run: () => void): (() => void) => {
     const t = setTimeout(run, ms);
@@ -457,6 +501,8 @@ export interface ThreadReadWiring {
   previewing?: boolean;
   /** The cursor stayed the rest's length on this landing, entered or not. */
   onStay?: () => void;
+  /** The view's Mark-unread hold: the rest never enters a landing showing a held message. */
+  hold?: UnreadHold;
 }
 
 /** The shell's `markSeen`, as a reader visit writes through it. */
@@ -465,14 +511,28 @@ export type ReaderMarkSeen = (ids: string[], unread: boolean, via?: "glance", re
 /**
  * THE VISIT OF A READER OFF THE OHBOX — Folder, History, a tag, the triage piles and the sheet over
  * them. One record per shown message, unentered until `enter` (an open, ↵, → into the column) or the
- * adapter's own press, wheel or hand scroll. Any change of the shown id ends the visit and coming back
- * starts over; an `enter` for an id the next commit does not show is dropped. Reads go out as glances
- * naming the shown message as the row read (`readRow`), so an Ohbox letter read here is an open read.
+ * adapter's own press, wheel or hand scroll. `land` marks a visit a step key made (↓/↑, j/k): it is
+ * entered once the cursor rests on it ({@link LANDING_REST_MS}). Any change of the shown id ends the
+ * visit, its landing with it, and coming back starts over; an `enter` or a `land` for an id the next
+ * commit does not show is dropped. Reads go out as glances naming the shown message as the row read
+ * (`readRow`), so an Ohbox letter read here is an open read. A letter marked unread (a panel's ⋯, the
+ * bar's `holdUnread`, or its own flag turning while shown) is held for the view's visit
+ * ({@link UnreadHold}): neither a rest nor an arrow scroll (`keyScroll`) enters it again.
  */
 export function useReaderVisit({ shown, markSeen }: {
   shown: EngineMessage | null;
   markSeen: ReaderMarkSeen;
-}): { wiring: ThreadReadWiring | null; enter: (id: string) => void } {
+}): {
+  wiring: ThreadReadWiring | null;
+  enter: (id: string) => void;
+  land: (id: string) => void;
+  keyScroll: (id: string, scroller: HTMLElement | null) => void;
+  holdUnread: (id: string) => void;
+} {
+  const [hold] = useState(createUnreadHold);
+  useUnreadTurn(hold, shown);
+  /** The view's own Mark unread of `id` (the bar's switch): held for the visit. */
+  const holdUnread = useCallback((id: string) => hold.add([id]), [hold]);
   const records = useRef(new Map<string, ThreadRead>());
   const [, bump] = useState(0);
   const write = useRef(markSeen);
@@ -493,18 +553,37 @@ export function useReaderVisit({ shown, markSeen }: {
     r.enter(threadReadTime.now());
     bump((n) => n + 1);
   }, []);
+  const landings = useRef(new WeakSet<ThreadRead>());
+  const land = useCallback((id: string) => {
+    const r = records.current.get(id) ?? createThreadRead();
+    records.current.set(id, r);
+    if (landings.current.has(r)) return;
+    landings.current.add(r);
+    bump((n) => n + 1);
+  }, []);
+  /** ↑/↓ scrolled the column (`zone-nav`'s `onScrollKey`): entered, as a rested landing is, unless it shows a held letter. */
+  const keyScroll = useCallback((id: string, scroller: HTMLElement | null) => {
+    if (!hold.shows(scroller)) enter(id);
+  }, [hold, enter]);
+  /** The landing the cursor stayed the rest's length on: its pictures load. */
+  const [stayed, setStayed] = useState<ThreadRead | null>(null);
   const record = shownId === null ? null : recordFor(shownId);
+  const landed = record !== null && landings.current.has(record);
+  const entered = record?.entered ?? false;
   const wiring = useMemo<ThreadReadWiring | null>(() => (record === null || shownId === null ? null : {
     look: "dot",
     record,
+    hold,
     onEnter: () => enter(shownId),
     onRead: (ids) => { void write.current(ids, false, "glance", shownId); },
     onMarkUnread: (id) => {
       record.keepUnread(id);
+      hold.add([id]);
       void write.current([id], true);
     },
-  }), [record, shownId, enter]);
-  return { wiring, enter };
+    ...(landed ? { restMs: LANDING_REST_MS, previewing: !entered && stayed !== record, onStay: () => setStayed(record) } : {}),
+  }), [record, hold, shownId, enter, landed, entered, stayed]);
+  return { wiring, enter, land, keyScroll, holdUnread };
 }
 
 /**
@@ -536,6 +615,7 @@ export function useThreadRead({
       onRead: (ids) => latest.current?.onRead(ids),
       onEnter: () => latest.current?.onEnter(),
       onHumanScroll: () => human.current?.(),
+      held: () => latest.current?.hold?.shows(el) ?? false,
       restMs,
       onRest: () => { if (latest.current?.record === record) latest.current.onEnter(); },
       onStay: () => { if (latest.current?.record === record) latest.current.onStay?.(); },

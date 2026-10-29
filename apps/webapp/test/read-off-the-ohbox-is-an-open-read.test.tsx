@@ -1,8 +1,10 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { OhmailEngine } from "@ohmail/client-engine";
 import { ISO, act, answerConsentWith, goTo, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
-import { LENA, click, key, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
+import { LENA, arriveLater, click, key, keyAsBrowser, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
+import { LANDING_REST_MS } from "../app/shell/reader-seen";
 
 /**
  * AN OHBOX MESSAGE READ IN THE READER OVER ANOTHER VIEW IS A READ IN OHMAIL (owner 2026-10-21:
@@ -100,8 +102,9 @@ describe("CONTROLS off the Ohbox", () => {
  * THE READ RULE IN EVERY READER (0.30.7's note said every message; it ran in the Ohbox only). In
  * History, a folder, a tag, the triage piles and the sheet over them, a letter opened, pressed in or
  * scrolled by hand turns read once its first lines have held on screen for the dwell and its sender
- * line or the end of its text was on screen, as a glance naming it as the row read. Stepping with the
- * keys, the first-row fallback and a link read nothing; Trash reads nothing. The reader is laid out
+ * line or the end of its text was on screen, as a glance naming it as the row read. A step with ↓/↑
+ * (j/k in History) is entered once the cursor rests on it (`LANDING_REST_MS`); one passed sooner, the
+ * first-row fallback and a link read nothing; Trash reads nothing. The reader is laid out
  * (`thread-layout.ts`) and the dwell is passed by hand.
  */
 describe("the read rule in the readers off the Ohbox", () => {
@@ -131,6 +134,8 @@ describe("the read rule in the readers off the Ohbox", () => {
   const folder = { type: "folder", op: "create", id: "fd1", seq: 901, updatedAt: ISO, entity: { id: "fd1", name: "Projects", mailboxId: "mb_1", mailbox: "walker@example.invalid", updatedAt: ISO } };
   const filed = () => [msg("f1", 20, { threadId: "t-f1", folder: "Projects" }), msg("f2", 10, { threadId: "t-f2", folder: "Projects" }), folder];
   const later = (id: string, n: number) => msg(id, n, { threadId: `t-${id}`, triage: { id: `ms_${id}`, messageId: id, state: "reply_later", bubbleUpAt: null, setAt: ISO, updatedAt: ISO } });
+  const order = (view: string): string[] =>
+    [...document.querySelectorAll<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id]`)].map((e) => e.dataset.id!);
 
   it("History: a click reads after the dwell, as a glance and an open read; the row and the panel turn read", async () => {
     window.location.hash = "#/history";
@@ -177,18 +182,19 @@ describe("the read rule in the readers off the Ohbox", () => {
     expect(glances()).toEqual([["p3"]]);
   }, 30_000);
 
-  it("a folder: a click reads; ↑ to another row reads nothing; a press in the reader then reads", async () => {
+  it("a folder: a click reads and the row keeps its place; ↓ passing reads nothing; a press in the reader then reads", async () => {
     answerConsentWith({ foldersEnabledAt: ISO });
     window.location.hash = "#/folder/fd1";
     await mountThread(filed());
     await click(rowIn("folder", "f1"), "f1's row");
     await dwell();
     expect(patches).toEqual([{ ids: ["f1"], unread: false, via: "glance" }]);
-    // Read, f1 files under Earlier, below f2.
-    await key("ArrowUp");
-    expect(panel("f2"), "↑ shows f2").not.toBeNull();
-    await dwell();
-    expect(glances(), "a step is a preview").toEqual([["f1"]]);
+    expect(order("folder"), "read, f1 keeps its place while shown").toEqual(["f1", "f2"]);
+    await keyAsBrowser("ArrowDown");
+    expect(panel("f2"), "↓ shows f2").not.toBeNull();
+    expect(order("folder"), "left, f1 files under Earlier").toEqual(["f2", "f1"]);
+    await tick(LANDING_REST_MS / 2);
+    expect(glances(), "a step passed is a preview").toEqual([["f1"]]);
     await press(panel("f2")?.querySelector(".msg-body, .pm-body"));
     await dwell();
     expect(glances()).toEqual([["f1"], ["f2"]]);
@@ -292,6 +298,318 @@ describe("the read rule in the readers off the Ohbox", () => {
       expect(toastText()).toBe("");
     }, 30_000);
   }
+});
+
+/**
+ * A STEP RESTED ON READS OFF THE OHBOX (owner 2026-10-26: "it does not mark itself as read"). ↓/↑,
+ * and j/k in History, land the cursor on a letter; resting there for `LANDING_REST_MS` with the window
+ * in front enters it, as in the Ohbox, and the dwell then reads what is on screen. Passing reads nothing.
+ */
+describe("a step key's landing rested on reads, off the Ohbox", () => {
+  let layout: ThreadLayout;
+  beforeEach(() => { layout = stubThreadLayout(); });
+  afterEach(() => { layout.restore(); });
+  const glances = () => patches.filter((p) => p.via === "glance").map((p) => p.ids);
+  const dwell = async (): Promise<void> => { await layout.passDwell(); await settle(); };
+  /** Past the rest, then the dwell. */
+  const rest = async (): Promise<void> => { await tick(LANDING_REST_MS + 100); await dwell(); };
+  const brief = (): Promise<void> => tick(LANDING_REST_MS / 2);
+  const panel = (id: string): HTMLElement | null =>
+    layout.scroller()?.querySelector<HTMLElement>(`[data-conv-id="${id}"]`) ?? null;
+  const order = (view: string): string[] =>
+    [...document.querySelectorAll<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id]`)].map((e) => e.dataset.id!);
+  const own = (id: string, n: number, over: Record<string, unknown> = {}) => msg(id, n, { threadId: `t-${id}`, ...over });
+  const folder = { type: "folder", op: "create", id: "fd1", seq: 901, updatedAt: ISO, entity: { id: "fd1", name: "Projects", mailboxId: "mb_1", mailbox: "walker@example.invalid", updatedAt: ISO } };
+  const tagged = () => [own("g1", 30, { labels: ["tg1"] }), own("g2", 20, { labels: ["tg1"] }), own("g3", 10, { labels: ["tg1"] }), tag];
+  const later = (id: string, n: number) => own(id, n, { triage: { id: `ms_${id}`, messageId: id, state: "reply_later", bubbleUpAt: null, setAt: ISO, updatedAt: ISO } });
+
+  it("History: j j k pressed fast, then a rest: only the letter rested on reads, as a glance and an open read", async () => {
+    window.location.hash = "#/history";
+    await mountThread([own("h1", 30), own("h2", 20), own("h3", 10)]);
+    await rest();
+    expect(patches, "the first row the list shows rests and reads nothing").toEqual([]);
+    await keyAsBrowser("j");
+    await keyAsBrowser("j");
+    await keyAsBrowser("k");
+    expect(panel("h2"), "k came back to h2").not.toBeNull();
+    await rest();
+    expect(patches).toEqual([{ ids: ["h2"], unread: false, via: "glance", openRead: true }]);
+  }, 30_000);
+
+  it("History, focus in the column: → then j, and ↓ scrolling the column inside the rest reads the letter", async () => {
+    layout.restore();
+    layout = stubThreadLayout({ heights: { h2: 2000 } });
+    window.location.hash = "#/history";
+    await mountThread([own("h1", 30), own("h2", 20), own("h3", 10)]);
+    await keyAsBrowser("ArrowRight");
+    await keyAsBrowser("j");
+    expect(panel("h2"), "j shows h2").not.toBeNull();
+    const before = layout.scroller().scrollTop;
+    await keyAsBrowser("ArrowDown");
+    expect(layout.scroller().scrollTop, "↓ scrolled the column").toBeGreaterThan(before);
+    await rest();
+    await tick(5000);
+    await dwell();
+    expect(patches).toEqual([{ ids: ["h2"], unread: false, via: "glance", openRead: true }]);
+  }, 30_000);
+
+  it("a tag: ↓ to a letter, focus into the column, ↓ scrolling it reads the letter", async () => {
+    layout.restore();
+    layout = stubThreadLayout({ heights: { g2: 2000 } });
+    window.location.hash = "#/tag/tg1";
+    await mountThread(tagged());
+    await keyAsBrowser("ArrowDown");
+    await act(async () => { document.querySelector<HTMLElement>(".view-tag .read-col")!.focus(); });
+    await keyAsBrowser("ArrowDown");
+    expect(layout.scroller().scrollTop, "↓ scrolled the column").toBeGreaterThan(0);
+    await rest();
+    expect(glances()).toEqual([["g2"]]);
+  }, 30_000);
+
+  it("a tag: ↓ passed inside the rest reads nothing; ↓ rested on reads", async () => {
+    window.location.hash = "#/tag/tg1";
+    await mountThread(tagged());
+    expect(order("tag")).toEqual(["g1", "g2", "g3"]);
+    await keyAsBrowser("ArrowDown");
+    expect(panel("g2")).not.toBeNull();
+    await brief();
+    await keyAsBrowser("ArrowDown");
+    expect(panel("g3")).not.toBeNull();
+    await rest();
+    expect(glances()).toEqual([["g3"]]);
+  }, 30_000);
+
+  it("Answer Later: ↓ rested on reads as a glance, writes no triage and the letter stays in its pile", async () => {
+    window.location.hash = "#/triage";
+    await mountThread([later("a1", 20), later("a2", 10)]);
+    const [, second] = order("triage");
+    await keyAsBrowser("ArrowDown");
+    expect(panel(second!), "↓ shows the second letter").not.toBeNull();
+    await rest();
+    expect(patches).toEqual([{ ids: [second], unread: false, via: "glance" }]);
+    const sent = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map(([, init]) => String((init as RequestInit | undefined)?.body ?? ""));
+    expect(sent.some((b) => b.includes("triage")), "no triage write").toBe(false);
+    expect(order("triage"), "still in Answer Later").toContain(second);
+  }, 30_000);
+
+  it("a folder holds the row the cursor is on in its group: ↓ walks New though each rested row reads", async () => {
+    answerConsentWith({ foldersEnabledAt: ISO });
+    window.location.hash = "#/folder/fd1";
+    const inFolder = { folder: "Projects" };
+    await mountThread([own("u1", 30, inFolder), own("u2", 20, inFolder), own("u3", 10, inFolder), own("r1", 0, { ...inFolder, unread: false }), folder]);
+    expect(order("folder")).toEqual(["u1", "u2", "u3", "r1"]);
+    await keyAsBrowser("ArrowDown");
+    await rest();
+    expect(glances()).toEqual([["u2"]]);
+    expect(order("folder"), "read, u2 keeps its place under New").toEqual(["u1", "u2", "u3", "r1"]);
+    await keyAsBrowser("ArrowDown");
+    expect(panel("u3"), "↓ goes on to u3").not.toBeNull();
+    expect(order("folder"), "left, u2 files under Earlier").toEqual(["u1", "u3", "u2", "r1"]);
+  }, 30_000);
+
+  /** Mark unread on the bar, then a step away and back, then a long rest (found on 0.30.12): no landing reads it back. */
+  const rowOf = (view: string, id: string): HTMLElement | null =>
+    document.querySelector<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id="${id}"]`);
+  const markUnread = async (id: string): Promise<void> => {
+    const slot = layout.scroller().querySelector<HTMLElement>(".abar .abar-read");
+    expect(slot?.getAttribute("aria-label")).toBe("Mark unread");
+    await click(slot, "Mark unread");
+    expect(patches.at(-1)).toEqual({ ids: [id], unread: true });
+  };
+
+  it("History: marked unread, j away, k back, a long rest and ↓ scrolling the column: it stays unread; ↵ on its row (the row's click) reads it", async () => {
+    layout.restore();
+    layout = stubThreadLayout({ heights: { h2: 2000 } });
+    window.location.hash = "#/history";
+    await mountThread([own("h1", 30), own("h2", 20), own("h3", 10)]);
+    await click(rowOf("history", "h2"), "h2's row");
+    await dwell();
+    expect(glances()).toEqual([["h2"]]);
+    await markUnread("h2");
+    await keyAsBrowser("j");
+    expect(panel("h3"), "j shows h3").not.toBeNull();
+    await keyAsBrowser("k");
+    expect(panel("h2"), "k came back to h2").not.toBeNull();
+    await rest();
+    await tick(5000);
+    await dwell();
+    expect(glances(), "the landing's rest read it back").toEqual([["h2"]]);
+    await act(async () => { document.querySelector<HTMLElement>(".view-history .read-col")!.focus(); });
+    await keyAsBrowser("ArrowDown");
+    expect(layout.scroller().scrollTop, "↓ scrolled the column").toBeGreaterThan(0);
+    await dwell();
+    expect(glances(), "the arrow scroll read it back").toEqual([["h2"]]);
+    await click(rowOf("history", "h2"), "↵ on h2's row");
+    await dwell();
+    expect(glances()).toEqual([["h2"], ["h2"]]);
+  }, 30_000);
+
+  it("History: Mark unread on the bar and j in one breath (never shown unread), k back, a long rest: it stays unread", async () => {
+    window.location.hash = "#/history";
+    await mountThread([own("h1", 30), own("h2", 20), own("h3", 10)]);
+    await click(rowOf("history", "h2"), "h2's row");
+    await dwell();
+    expect(glances()).toEqual([["h2"]]);
+    const slot = layout.scroller().querySelector<HTMLElement>(".abar .abar-read");
+    expect(slot?.getAttribute("aria-label")).toBe("Mark unread");
+    await act(async () => {
+      slot!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
+    });
+    await settle();
+    expect(patches.at(-1)).toEqual({ ids: ["h2"], unread: true });
+    expect(panel("h3"), "j shows h3").not.toBeNull();
+    await keyAsBrowser("k");
+    expect(panel("h2"), "k came back to h2").not.toBeNull();
+    await rest();
+    await tick(5000);
+    await dwell();
+    expect(glances(), "the landing's rest read it back").toEqual([["h2"]]);
+  }, 30_000);
+
+  it("a folder: marked unread, ↓ away, ↑ back, a long rest: it stays unread; a press in the letter reads it", async () => {
+    answerConsentWith({ foldersEnabledAt: ISO });
+    window.location.hash = "#/folder/fd1";
+    await mountThread([own("f1", 20, { folder: "Projects" }), own("f2", 10, { folder: "Projects" }), folder]);
+    await click(rowOf("folder", "f1"), "f1's row");
+    await dwell();
+    expect(glances()).toEqual([["f1"]]);
+    await markUnread("f1");
+    await keyAsBrowser("ArrowDown");
+    expect(panel("f2"), "↓ shows f2").not.toBeNull();
+    await keyAsBrowser("ArrowUp");
+    expect(panel("f1"), "↑ came back to f1").not.toBeNull();
+    await rest();
+    await tick(5000);
+    await dwell();
+    expect(glances(), "the landing's rest read it back").toEqual([["f1"]]);
+    await act(async () => { panel("f1")!.querySelector(".msg-body, .pm-body")!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+    await settle();
+    await dwell();
+    expect(glances()).toEqual([["f1"], ["f1"]]);
+  }, 30_000);
+
+  it("a folder: marked unread on another device while shown, ↓ away, ↑ back, a long rest: it stays unread; a press in it reads it", async () => {
+    answerConsentWith({ foldersEnabledAt: ISO });
+    window.location.hash = "#/folder/fd1";
+    await mountThread([own("f1", 20, { folder: "Projects" }), own("f2", 10, { folder: "Projects", unread: false }), folder]);
+    await click(rowOf("folder", "f1"), "f1's row");
+    await dwell();
+    expect(glances(), "a read on the wire: the drains now serve what arrives").toEqual([["f1"]]);
+    await click(rowOf("folder", "f2"), "f2's row, read from the start");
+    // Above every seq a mount serves: an update the mirror must not take for a stale one.
+    arriveLater([{ ...own("f2", 10, { folder: "Projects", unread: true }), seq: 100_000 }], ["f2"], "t-f2");
+    await tick(20_000);
+    await settle();
+    expect(panel("f2")?.hasAttribute("data-unseen"), "the other device's unread, shown").toBe(true);
+    await keyAsBrowser("ArrowDown");
+    expect(panel("f2"), "↓ shows another letter").toBeNull();
+    await keyAsBrowser("ArrowUp");
+    expect(panel("f2"), "↑ came back to f2").not.toBeNull();
+    await rest();
+    await tick(5000);
+    await dwell();
+    expect(glances(), "the landing's rest read it back").toEqual([["f1"]]);
+    await act(async () => { panel("f2")!.querySelector(".msg-body, .pm-body")!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+    await settle();
+    await dwell();
+    expect(glances()).toEqual([["f1"], ["f2"]]);
+  }, 30_000);
+
+  describe("embedded pictures: asked for once the cursor stays, never for a landing passed", () => {
+    const HTML = '<table width="600"><tr><td><p>hello</p><img src="cid:logo@x" width="40" height="40" alt="logo"></td></tr></table>';
+    let asks: string[] = [];
+    beforeEach(() => {
+      asks = [];
+      vi.spyOn(OhmailEngine.prototype, "loadInlineImages").mockImplementation(async (id: string) => { asks.push(id); });
+    });
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    it("History: j passed asks for nothing, j rested on asks after the rest", async () => {
+      window.location.hash = "#/history";
+      await mountThread([own("h1", 30), own("h2", 20), own("h3", 10)], { bodies: { h2: { text: "hello", html: HTML }, h3: { text: "hello", html: HTML } } });
+      await keyAsBrowser("j");
+      expect(panel("h2")).not.toBeNull();
+      expect(asks, "not while landing").toEqual([]);
+      await brief();
+      await keyAsBrowser("j");
+      expect(asks, "not before the rest").toEqual([]);
+      await tick(5000);
+      expect(asks).toContain("h3");
+      expect(asks, "the landing passed").not.toContain("h2");
+    }, 30_000);
+  });
+
+  describe("CONTROLS: what reads nothing", () => {
+    it("a tag: m after a landing (a command) ends the rest", async () => {
+      window.location.hash = "#/tag/tg1";
+      await mountThread(tagged());
+      await keyAsBrowser("ArrowDown");
+      await keyAsBrowser("m");
+      await rest();
+      await tick(5000);
+      expect(patches).toEqual([]);
+    }, 30_000);
+
+    it("a tag: a press on the list ends the rest", async () => {
+      window.location.hash = "#/tag/tg1";
+      await mountThread(tagged());
+      await keyAsBrowser("ArrowDown");
+      await act(async () => { document.querySelector('.view-tag [role="listbox"]')!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+      await rest();
+      await tick(5000);
+      expect(patches).toEqual([]);
+    }, 30_000);
+
+    it("a tag: the cursor a verb key places after the column's ✕ rests and reads nothing", async () => {
+      window.location.hash = "#/tag/tg1";
+      await mountThread(tagged());
+      await keyAsBrowser("ArrowDown");
+      await click(document.querySelector(".view-tag .read-col-close"), "the column's ✕");
+      expect(panel("g2"), "closed").toBeNull();
+      await keyAsBrowser("e");
+      expect(panel("g1"), "the placer put the cursor on the first row").not.toBeNull();
+      await rest();
+      await tick(5000);
+      expect(patches).toEqual([]);
+    }, 30_000);
+
+    it("a tag at phone width (the column hidden): ↓ rested on reads nothing", async () => {
+      layout.restore();
+      layout = stubThreadLayout({ columnHidden: () => true });
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true, writable: true,
+        value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
+      });
+      window.location.hash = "#/tag/tg1";
+      await mountThread(tagged());
+      await keyAsBrowser("ArrowDown");
+      await rest();
+      await tick(5000);
+      expect(patches).toEqual([]);
+    }, 30_000);
+
+    it("Trash: ↓ rested on reads nothing", async () => {
+      const trashed = (id: string, n: number) => ({
+        id, accountId: "acct_live_1", mailboxId: "mb_1", threadId: `t-${id}`, folder: "Trash", subject: "Deleted",
+        from: LENA, to: [], labels: [], unread: true, date: new Date(Date.UTC(2026, 7, 3, 8, n)).toISOString(), updatedAt: ISO, trashedAt: ISO, restoreTo: "INBOX",
+      });
+      await mountThread([own("h1", 0), own("x1", 20, { folder: "Trash" }), own("x2", 10, { folder: "Trash" })]);
+      const inner = globalThis.fetch;
+      globalThis.fetch = (async (input: unknown, init?: RequestInit) => String(input).includes("view=trash")
+        ? new Response(JSON.stringify({ items: [trashed("x1", 20), trashed("x2", 10)], nextCursor: null }), { status: 200, headers: { "content-type": "application/json" } })
+        : (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init)) as typeof globalThis.fetch;
+      await goTo("trash");
+      await settle();
+      await click(document.querySelector('.view-trash [role="listbox"] .row[data-id="x1"]'), "x1's row");
+      await keyAsBrowser("ArrowDown");
+      expect(panel("x2"), "↓ shows x2").not.toBeNull();
+      await rest();
+      await tick(5000);
+      expect(patches).toEqual([]);
+    }, 30_000);
+  });
 });
 
 describe("a hit opened from Search reads in a folder's column and in the sheet", () => {

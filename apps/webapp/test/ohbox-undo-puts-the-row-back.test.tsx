@@ -9,6 +9,7 @@ import {
   MemoryMirrorStore,
   MutationRejectedError,
   OhmailEngine,
+  THREAD_READ_HOLD_MS,
   mutationEffects,
   type EngineMessage,
   type EngineMutation,
@@ -18,6 +19,7 @@ import {
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "../app/shell/mail-state";
 import { UNDO_MS } from "../app/shell/delete-undo";
+import { LANDING_REST_MS } from "../app/shell/reader-seen";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
@@ -150,6 +152,7 @@ function engineOver(store: MirrorStore): OhmailEngine {
         cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
       }),
       mutate: async (m: EngineMutation) => {
+        if (gate) await gate(m);
         if (refuseWhen?.(m)) throw new MutationRejectedError("refused", { status: 409, code: "conflict", retryable: false });
         sent.push(m);
         const changes = mutationEffects(store, m, { now: () => NOW, uuid: () => `id-${++seq}` })
@@ -333,8 +336,10 @@ const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_d
 
 /** A wire that refuses the mutations this names — the refused-Undo cases. */
 let refuseWhen: ((m: EngineMutation) => boolean) | null = null;
+/** A wire that answers only when the test lets it go — an answer arriving outside act, as a server's does. */
+let gate: ((m: EngineMutation) => Promise<void>) | null = null;
 let lastEngine: OhmailEngine | null = null;
-beforeEach(() => { refuseWhen = null; lastEngine = null; });
+beforeEach(() => { refuseWhen = null; gate = null; lastEngine = null; });
 
 const IDS = ["w8", "n1", "n2", "n3", "e1", "e2"];
 const UNREAD = new Set(["w8", "n1", "n2", "n3"]);
@@ -635,5 +640,79 @@ describe("Undo restores the cursor only for a row its verb took and whose revers
     expect(selectedRow(c)).toBe("w8");
     expect(deletes()).toEqual([]);
   }, 30000);
+});
+
+/**
+ * A LETTER NOBODY MARKED UNREAD IS NOT HELD (#448's review). The reader's one article is reused across
+ * letters, and an Undo's answer or a link renders the switch from a read letter to an unread one on
+ * React's own scheduler, as a browser does: the Mark-unread hold once took that for the new letter
+ * turning unread, and its landing's rest never read it, for the rest of the visit.
+ */
+describe("an unread letter shown by an Undo's answer or a link is not held: its landing's rest reads it", () => {
+  const readsOf = (id: string): number =>
+    sent.filter((m) => m.kind === "mark_seen" && !m.unread && m.messageIds.includes(id)).length;
+  const rawSleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** The landing's rest and the dwell, and a margin. */
+  const REST_AND_DWELL = LANDING_REST_MS + THREAD_READ_HOLD_MS + 1500;
+  /** n3, the last of New, passed by j (nothing read), then Parked: the advance lands on e1, read. */
+  async function parkN3(): Promise<HTMLElement> {
+    const c = await shell(ORGANIZER_ROSTER);
+    for (let i = 0; i < 4; i++) { await key("j"); await sleep(120); }
+    expect(selectedRow(c), "j walked to n3").toBe("n3");
+    await key("e");
+    await waitFor(() => !rowIds(c).includes("n3"), "n3 to leave");
+    await sleep(200);
+    expect(selectedRow(c), "the advance").toBe("e1");
+    expect(readsOf("n3"), "n3 was passed").toBe(0);
+    return c;
+  }
+
+  for (const outside of [true, false]) {
+    it(`Park n3, the advance onto e1, Undo ${outside ? "answered outside act" : "answered inside act (CONTROL)"}: the rest on n3 reads it once`, async () => {
+      const c = await parkN3();
+      const answer: { release?: () => void } = {};
+      if (outside) gate = () => new Promise<void>((r) => { answer.release = r; });
+      await clickUndo();
+      if (outside) {
+        expect(answer.release, "the Undo's reversal is on the wire, held").toBeDefined();
+        gate = null;
+        answer.release!();
+        await rawSleep(300);
+      }
+      await waitFor(() => rowIds(c).includes("n3"), "n3 to come back");
+      expect(selectedRow(c), "Undo put the cursor back on n3").toBe("n3");
+      await sleep(REST_AND_DWELL);
+      expect(readsOf("n3"), "the Undo's landing, rested on, reads n3").toBe(1);
+      if (!outside) return;
+      await key("j"); await sleep(150); await key("k");
+      expect(selectedRow(c), "k came back to n3").toBe("n3");
+      await sleep(2 * REST_AND_DWELL);
+      await key("Enter");
+      await sleep(1500);
+      expect(readsOf("n3"), "read once: nothing held it, nothing read it again").toBe(1);
+    }, 40000);
+  }
+
+  for (const outside of [true, false]) {
+    it(`a link from e1 (read) to n3 ${outside ? "delivered outside act" : "inside act (CONTROL)"}: k's landing back on n3, rested on, reads it`, async () => {
+      const c = await shell(ORGANIZER_ROSTER);
+      await goHash("#/ohbox/m/e1");
+      expect(selectedRow(c), "the link put the cursor on e1").toBe("e1");
+      if (outside) {
+        window.location.hash = "#/ohbox/m/n3";
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+        await rawSleep(300);
+      } else {
+        await goHash("#/ohbox/m/n3");
+      }
+      expect(selectedRow(c), "the link put the cursor on n3").toBe("n3");
+      await sleep(REST_AND_DWELL);
+      expect(readsOf("n3"), "a link's landing is a preview").toBe(0);
+      await key("j"); await sleep(150); await key("k");
+      expect(selectedRow(c), "k came back to n3").toBe("n3");
+      await sleep(REST_AND_DWELL);
+      expect(readsOf("n3"), "k's landing on n3, rested on, reads it").toBe(1);
+    }, 40000);
+  }
 });
 
