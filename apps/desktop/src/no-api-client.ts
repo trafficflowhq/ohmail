@@ -307,7 +307,9 @@ export const auth: {
     session: () => Promise<{
         user: SessionUser;
         scope: "full" | "enrollment";
+        reuseSweeps?: ReuseSweep[];
     }>;
+    acknowledgeReuseSweeps: (ids: readonly string[]) => Promise<void>;
     logout: (opts?: {
         mayProceed?: () => boolean;
     }) => Promise<void>;
@@ -1175,6 +1177,24 @@ export function onAccessFeed(_listener: () => void): () => void {
 }
 
 export function putAwayCatchUp(_owner: string | null): void {}
+
+/**
+ * THE REUSE FEED, answered on the access feed's rule: no hosted account here, so no sweep to tell.
+ * The desktop window reads its account's sweeps over the bridge instead (`DesktopSubscription.tsx`).
+ */
+export interface ReuseSweep {
+    id: string;
+    at: string;
+    client: string | null;
+}
+
+export function reuseFeedFor(_owner: string | null): readonly ReuseSweep[] | null {
+    return null;
+}
+
+export function onReuseFeed(_listener: () => void): () => void {
+    return () => {};
+}
 
 export const messageOf: (err: unknown) => string = absent;
 

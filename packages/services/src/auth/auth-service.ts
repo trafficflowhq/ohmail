@@ -46,9 +46,10 @@ import { throttleKeysFor, THROTTLE_PREFIX, type ThrottleKeys } from "./throttle-
 import type { AuthDeps, AuthConfig } from "./types.js";
 import type {
   SessionUser, TwofaEnrolled, LoginResult, SessionEstablished, OAuthTokens,
-  RecoveryCodesResp, AuthAuditEvent, DeviceKind,
+  RecoveryCodesResp, AuthAuditEvent, DeviceKind, ReuseSweep,
   EnrollmentSessionEstablished, RegistrationResult, VerifyEmailResult,
 } from "./types.js";
+import { isUuid } from "../ids.js";
 import type { SessionScope } from "./resolve-session.js";
 import {
   buildRegistrationOptions, verifyRegistration,
@@ -59,10 +60,23 @@ import {
   allowedOrigins, assertOriginConfig, resolveCeremonyOrigin, tryNormalizeOrigin,
 } from "./origins.js";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp.js";
-import { SessionLifecycle, holdLiveSession, lockUserRow, refuseCrossAccountCredential } from "./session-lifecycle.js";
+import {
+  PAIRED_DEVICE_KINDS, SessionLifecycle, holdLiveSession, lockUserRow, refuseCrossAccountCredential,
+} from "./session-lifecycle.js";
 
 /** Where a swallowed auth fault is named: `err` is class and code, never its message. */
 const authLog = createLogger({ service: "auth" });
+
+/** How far back a full session is told of the account's reuse sweeps, in days. */
+const REUSE_SWEEP_WINDOW_DAYS = 14;
+/** The most sweeps one session read lists, and one acknowledgement names. */
+export const REUSE_SWEEPS_MAX = 20;
+/** Sweep rows read per listing, acknowledged ones included, before the newest open ones are kept. */
+const REUSE_SWEEPS_SCAN = 100;
+/** An acknowledgement row's `device`: this prefix and the sweep row's id. */
+const REUSE_ACK_PREFIX = "ack=";
+/** The swept session's id in the sweep row's `device` (`family=… session=… depth=…`). */
+const SWEPT_SESSION = /(?:^| )session=([0-9a-f-]{36})(?= |$)/;
 
 type Method = "webauthn" | "totp" | "recovery_code";
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
@@ -1141,11 +1155,120 @@ export class AuthService extends SessionLifecycle {
    * whether it holds a full session or is still mid-enrollment, so it can route
    * itself back into the 2FA step without guessing from `twofaEnrolled`. It is
    * INFORMATIONAL: the privilege gate itself lives in `withSession`.
+   *
+   * `reuseSweeps`, only when there is something to tell ({@link openReuseSweeps}): how the copy a
+   * sweep signed out hears why, once it signs in again. Best effort, never a 5xx.
    */
-  async getSession(ctx: ServiceContext): Promise<{ user: SessionUser; scope: SessionScope }> {
+  async getSession(ctx: ServiceContext): Promise<{ user: SessionUser; scope: SessionScope; reuseSweeps?: ReuseSweep[] }> {
     if (!ctx.userId) throw new ServiceError("unauthorized", 401, "no active session");
     const db = asTx(ctx);
-    return { user: await this.sessionUser(db, ctx.userId), scope: await this.sessionScope(db, ctx.sessionId) };
+    const user = await this.sessionUser(db, ctx.userId);
+    const minted = await this.sessionMinted(db, ctx);
+    const scope = minted?.scope ?? "full";
+    if (minted === null || scope !== "full" || !minted.recent) return { user, scope };
+    try {
+      const open = await this.openReuseSweeps(db, ctx, minted.createdAt);
+      if (open.length === 0) return { user, scope };
+      const clients = await this.sweptClients(db, ctx, open.map((s) => SWEPT_SESSION.exec(s.device ?? "")?.[1] ?? null));
+      return {
+        user, scope,
+        reuseSweeps: open.map((s, i) => ({ id: s.id, at: s.at.toISOString(), client: clients[i] ?? null })),
+      };
+    } catch (err) {
+      authLog.error("auth_reuse_sweeps_unread", {
+        requestId: ctx.requestId, err, reason: "the session read answered without the sweeps it would have listed",
+      });
+      return { user, scope };
+    }
+  }
+
+  /**
+   * `POST /auth/reuse-sweeps/ack`: OK on what this session was told. Only a sweep THIS session's
+   * listing holds gets its one `refresh_reuse_acknowledged` row; the answer is the same either way.
+   */
+  async acknowledgeReuseSweeps(ctx: ServiceContext, body: { ids?: unknown }): Promise<void> {
+    const raw = body?.ids;
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > REUSE_SWEEPS_MAX || !raw.every(isUuid)) {
+      throw new ServiceError("validation_failed", 400, `ids must be 1 to ${REUSE_SWEEPS_MAX} sweep ids`);
+    }
+    const ids = new Set(raw.map((id) => id.toLowerCase()));
+    const userId = this.requireUser(ctx);
+    await this.inTransaction(ctx, async (txCtx) => {
+      const tx = asTx(txCtx);
+      const minted = await this.sessionMinted(tx, ctx);
+      if (minted === null || minted.scope !== "full" || !minted.recent) return;
+      const told = (await this.openReuseSweeps(tx, ctx, minted.createdAt)).filter((s) => ids.has(s.id));
+      if (told.length === 0) return;
+      const [user] = await tx.select().from(users).where(eq(users.id, userId)).limit(1);
+      if (!user) return;
+      for (const s of told) {
+        await this.audit(tx, user, "refresh_reuse_acknowledged", undefined, txCtx, `${REUSE_ACK_PREFIX}${s.id}`);
+      }
+    }, { fence: { accountId: ctx.accountId } });
+  }
+
+  /**
+   * This session's scope and when it was minted, from its own row; `recent` is the database's
+   * answer to "inside the sweep window", on the clock `created_at` was stamped with.
+   */
+  private async sessionMinted(
+    db: Tx, ctx: ServiceContext,
+  ): Promise<{ scope: SessionScope; createdAt: Date; recent: boolean } | null> {
+    if (!ctx.sessionId || !ctx.userId) return null;
+    const [row] = await db.select({
+      scope: sessions.scope, createdAt: sessions.createdAt,
+      recent: sql<boolean>`${sessions.createdAt} > now() - make_interval(days => ${REUSE_SWEEP_WINDOW_DAYS})`,
+    }).from(sessions).where(and(eq(sessions.id, ctx.sessionId), eq(sessions.userId, ctx.userId))).limit(1);
+    if (!row) return null;
+    return { scope: row.scope === "enrollment" ? "enrollment" : "full", createdAt: row.createdAt, recent: row.recent === true };
+  }
+
+  /**
+   * THE SWEEPS A FULL SESSION IS TOLD OF: this user's own sweeps of the window, stamped BEFORE the
+   * session was minted (a session that already existed, a stolen one included, is never told), less
+   * the acknowledged ones, newest first. All on the database's clock, as `auditOnce` measures.
+   */
+  private async openReuseSweeps(
+    db: Tx, ctx: ServiceContext, mintedAt: Date,
+  ): Promise<Array<{ id: string; at: Date; device: string | null }>> {
+    const userId = this.requireUser(ctx);
+    const swept = await db.select({ id: authEvents.id, at: authEvents.at, device: authEvents.device })
+      .from(authEvents)
+      .where(and(
+        eq(authEvents.accountId, ctx.accountId), eq(authEvents.userId, userId),
+        eq(authEvents.event, "refresh_reuse_revoked"),
+        gt(authEvents.at, sql`now() - make_interval(days => ${REUSE_SWEEP_WINDOW_DAYS})`),
+        lessThan(authEvents.at, mintedAt),
+      ))
+      .orderBy(desc(authEvents.at)).limit(REUSE_SWEEPS_SCAN);
+    if (swept.length === 0) return [];
+    const ackDevices = swept.map((s) => `${REUSE_ACK_PREFIX}${s.id}`);
+    const acks = await db.select({ device: authEvents.device, at: authEvents.at }).from(authEvents)
+      .where(and(
+        eq(authEvents.accountId, ctx.accountId), eq(authEvents.userId, userId),
+        eq(authEvents.event, "refresh_reuse_acknowledged"),
+        inArray(authEvents.device, ackDevices),
+      ));
+    const acked = (s: { id: string; at: Date }): boolean =>
+      acks.some((a) => a.device === `${REUSE_ACK_PREFIX}${s.id}` && a.at.getTime() >= s.at.getTime());
+    return swept.filter((s) => !acked(s)).slice(0, REUSE_SWEEPS_MAX);
+  }
+
+  /**
+   * What kind of client each swept session was, in order: its device's kind, `web` for a session no
+   * device backs (a browser sign-in), `null` when the id did not read or the row is gone.
+   */
+  private async sweptClients(db: Tx, ctx: ServiceContext, ids: ReadonlyArray<string | null>): Promise<Array<DeviceKind | null>> {
+    const sweptSessions = [...new Set(ids.filter((id): id is string => id !== null))];
+    if (sweptSessions.length === 0) return ids.map(() => null);
+    const rows = await db.select({ id: sessions.id, deviceId: sessions.deviceId, kind: devices.kind })
+      .from(sessions)
+      .leftJoin(devices, and(eq(devices.id, sessions.deviceId), eq(devices.accountId, ctx.accountId)))
+      .where(and(eq(sessions.accountId, ctx.accountId), inArray(sessions.id, sweptSessions)));
+    const kindOf = new Map(rows.map((r): [string, DeviceKind | null] => [
+      r.id, r.deviceId === null ? "web" : r.kind !== null && PAIRED_DEVICE_KINDS.has(r.kind) ? r.kind as DeviceKind : null,
+    ]));
+    return ids.map((id) => (id === null ? null : kindOf.get(id) ?? null));
   }
 
   // ── Handing a session to the desktop app ────────────────────────────────────

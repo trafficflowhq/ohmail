@@ -138,8 +138,9 @@ describe("the auth family's transactions open on the erasure fence", () => {
     // 25 -> 27 with `approveAuthorize` and `mintPairingToken`: each mint's writes and its session hold.
     // 27 -> 31 with `claimDesktopLink`, `token`, `totpVerify` and `webauthnAssertVerify`: each redeem's
     // burn and the session it writes.
+    // 31 -> 32 with `acknowledgeReuseSweeps`: the acknowledgement's audit rows, fenced.
     expect({ fenced, byCreation, named: Object.keys(UNFENCED).length, raw: tree.raw.length })
-      .toEqual({ fenced: 31, byCreation: 1, named: 3, raw: 1 });
+      .toEqual({ fenced: 32, byCreation: 1, named: 3, raw: 1 });
   });
 
   it("RED: a planted unfenced opener is named", () => {

@@ -4,7 +4,7 @@ import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { refreshTokens, sessions } from "@trafficflow/db";
 import { authEvents } from "@trafficflow/db/cloud";
 import { generateToken, hashToken, type Db } from "@trafficflow/services";
-import { makeDeps, seedSession, req, setCookieMap, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, req, setCookieMap, cookieMaxAge, FIXED_NOW } from "./helpers.js";
 
 /**
  * A CAPTURED RENEWAL REQUEST DOES NOT TAKE OVER THE SESSION. A browser's renewal carries its attempt
@@ -38,6 +38,10 @@ async function codeOf(res: Response): Promise<string> {
   try { return ((await res.clone().json()) as { error?: { code?: string } }).error?.code ?? "-"; } catch { return "-"; }
 }
 const answer = async (res: Response | null): Promise<string> => (res ? `${res.status}/${await codeOf(res)}` : "none");
+/** The answer's whole envelope: `details` is the field that says why, and only a sweep's own 401 has one. */
+const envelope = async (res: Response): Promise<unknown> => ((await res.clone().json()) as { error?: unknown }).error;
+const REUSE = { code: "refresh_revoked", message: "refresh token reuse detected", details: { cause: "reuse" } };
+const PLAIN = { code: "refresh_revoked", message: "invalid refresh token" };
 async function familyRevoked(db: Db, sessionId: string): Promise<boolean> {
   const [s] = await db.select({ r: sessions.revokedAt }).from(sessions).where(eq(sessions.id, sessionId));
   return s?.r != null;
@@ -200,6 +204,8 @@ describe("which kills carry a name", () => {
     clock.advance(70_000);
     const named = await refresh(deps, lateNamed, "w-next");
     expect(await answer(named)).toBe("401/refresh_revoked");
+    // Its usual cause is a late answer inside one client: no "used again from a copy" for it.
+    expect(await envelope(named)).toEqual({ code: "refresh_revoked", message: "refresh token reuse detected" });
     expect(await trail(db, n.accountId)).toContain("refresh_attempt_revoked(attempt_mismatch)x1");
     // The same race with no names: the second converges, the late answer expires.
     const u = await jarFor(db, clock.now());
@@ -211,5 +217,40 @@ describe("which kills carry a name", () => {
     expect(await answer(plain)).toBe("401/refresh_expired");
     expect(await trail(db, u.accountId)).toContain("refresh_expired(superseded)x1");
     expect(await familyRevoked(db, u.sessionId)).toBe(false);
+  });
+});
+
+/**
+ * THE SWEEP SAYS WHY, AND ONLY THE SWEEP. Its own 401 carries `details.cause` on both branches, the
+ * cookie one still clearing the jar without Clear-Site-Data; the swept family's tail and an unknown
+ * token answer as they always did, so the door tells nobody whether a token was ever minted.
+ */
+describe("the sweep's own refusal names its cause", () => {
+  it("cookie branch: the cause, the jar cleared, no Clear-Site-Data; the tail and an unknown token carry none", async () => {
+    const { db, deps, clock } = await makeDeps(FIXED_NOW);
+    const j = await jarFor(db, clock.now());
+    const tail = setCookieMap(await refresh(deps, j.refresh, "w-legit-1")).tf_refresh!;
+    clock.advance(5 * MIN);
+    const swept = await refresh(deps, j.refresh, "w-other");
+    expect(swept.status).toBe(401);
+    expect(await envelope(swept)).toEqual(REUSE);
+    expect(cookieMaxAge(swept, "tf_refresh"), "the jar keeps a swept token").toBe(0);
+    expect(swept.headers.get("clear-site-data")).toBeNull();
+    for (const later of [tail, generateToken()]) {
+      const res = await refresh(deps, later, "w-later");
+      expect(res.status).toBe(401);
+      expect(await envelope(res)).toEqual(PLAIN);
+    }
+  });
+
+  it("native branch: the sweep's 401 carries the same cause", async () => {
+    const { db, deps, clock } = await makeDeps(FIXED_NOW);
+    const j = await jarFor(db, clock.now());
+    const native = (name: string): Promise<Response> =>
+      H(req("POST", "/auth/refresh", { body: JSON.stringify({ refreshToken: j.refresh, attemptId: name }) }), deps);
+    expect((await native("n-1")).status).toBe(200);
+    const swept = await native("n-2");
+    expect(swept.status).toBe(401);
+    expect(await envelope(swept)).toEqual(REUSE);
   });
 });

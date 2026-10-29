@@ -1,3 +1,4 @@
+import { REFRESH_REUSE_CAUSE } from "@ohmail/client-engine";
 import type { HostConnection } from "../../webapp/app/shell/host-connection";
 import { bridgeFetch } from "./bridge-fetch.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
@@ -15,6 +16,8 @@ export interface CloudSessionWire {
   state: "live" | "renewing" | "unreachable" | "refused" | "seal_failed" | "refused_before";
   code: string | null;
   since: string;
+  /** A reuse sweep's own refusal: this install presented a sign-in already renewed elsewhere. */
+  cause?: typeof REFRESH_REUSE_CAUSE;
 }
 
 const STATES = new Set(["live", "renewing", "unreachable", "refused", "seal_failed", "refused_before"]);
@@ -22,16 +25,20 @@ const STATES = new Set(["live", "renewing", "unreachable", "refused", "seal_fail
 /** The reading off a `/health` body, or null — an older engine sends none, and none is not a fault. */
 export function sessionOf(value: unknown): CloudSessionWire | null {
   if (typeof value !== "object" || value === null) return null;
-  const v = value as { state?: unknown; code?: unknown; since?: unknown };
+  const v = value as { state?: unknown; code?: unknown; since?: unknown; cause?: unknown };
   if (typeof v.state !== "string" || !STATES.has(v.state) || typeof v.since !== "string") return null;
-  return { state: v.state as CloudSessionWire["state"], code: typeof v.code === "string" ? v.code : null, since: v.since };
+  return {
+    state: v.state as CloudSessionWire["state"], code: typeof v.code === "string" ? v.code : null, since: v.since,
+    ...(v.cause === REFRESH_REUSE_CAUSE ? { cause: REFRESH_REUSE_CAUSE } : {}),
+  };
 }
 
 /** Why the dialog is open, when the engine knows — or null, and the ordinary lead is said. */
-export type SignInCause = "revoked" | "expired" | "seal" | null;
+export type SignInCause = "revoked" | "reused" | "expired" | "seal" | null;
 
 export function signInCauseOf(session: CloudSessionWire | null): SignInCause {
   const refused = session?.state === "refused" || session?.state === "refused_before";
+  if (refused && session.code === "refresh_revoked" && session.cause === REFRESH_REUSE_CAUSE) return "reused";
   if (refused && session.code === "refresh_revoked") return "revoked";
   if (refused && session.code === "refresh_expired") return "expired";
   if (session?.state === "seal_failed" && session.code === "seal_unreadable") return "seal";
@@ -41,6 +48,7 @@ export function signInCauseOf(session: CloudSessionWire | null): SignInCause {
 /** The dialog's first sentence for a cause. */
 export function signInLead(cause: SignInCause): string {
   const machine = machineWord();
+  if (cause === "reused") return DOOR_COPY.cloudLeadReused(machine);
   if (cause === "revoked") return DOOR_COPY.cloudLeadRevoked(machine);
   if (cause === "expired") return DOOR_COPY.cloudLeadExpired(machine);
   if (cause === "seal") return DOOR_COPY.cloudLeadSealFailed(machine);

@@ -23,6 +23,7 @@ import { RETURN_DEBOUNCE_MS, readStoredVerdict, storeVerdict } from "./shell/wal
 import { durableSessionRemove, durableSessionSet } from "./shell/durable";
 import { planHintOf, type PlanHint } from "./plan-hint";
 import { storageFactsOf, type StorageFacts } from "./shell/storage-state";
+import { reuseSweepLinesOf } from "./shell/reuse-sweeps";
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/access-window";
 import {
   ACCOUNT_ERASED, ERASED_DECLARATION, accountErasedOwner, clearAccountErased, erasedCapture, hearAccountErased,
@@ -1580,8 +1581,19 @@ export const auth = {
    * ordinary shell read of the signed-in person's email, account id and enrolled factors, and is
    * owner-bound like the rest of the account surface. See {@link RequestOptions.ceremony}.
    */
-  session: (opts: { signal?: AbortSignal; ceremony?: boolean } = {}) =>
-    api<{ user: SessionUser; scope: "full" | "enrollment" }>("/auth/session", opts),
+  session: async (opts: { signal?: AbortSignal; ceremony?: boolean } = {}) => {
+    const answer = await api<{ user: SessionUser; scope: "full" | "enrollment"; reuseSweeps?: ReuseSweep[] }>(
+      "/auth/session", opts,
+    );
+    publishReuseSweeps(answer);
+    return answer;
+  },
+
+  /** OK on the reuse sweeps the session read listed; the feed drops them on the 204, a refusal rejects. */
+  acknowledgeReuseSweeps: async (ids: readonly string[]): Promise<void> => {
+    await api<void>(REUSE_SWEEPS_ACK_PATH, { method: "POST", body: { ids } });
+    dropReuseSweeps(ids);
+  },
 
   /**
    * The sign-out door: it revokes the family this jar's refresh cookie names, which survives a
@@ -3160,6 +3172,53 @@ export function putAwayCatchUp(owner: string | null): void {
     feed = { ...feed, caughtUp: null };
     for (const listener of [...feedListeners]) listener();
   }
+}
+
+/**
+ * A REUSE SWEEP OF THE ACCOUNT, as `GET /auth/session` lists it to a full session minted after it:
+ * the sweep's id, when, and the swept session's device kind (`null` when unknown).
+ */
+export interface ReuseSweep {
+  id: string;
+  at: string;
+  client: string | null;
+}
+
+const REUSE_SWEEPS_ACK_PATH = "/auth/reuse-sweeps/ack";
+
+/**
+ * THE REUSE FEED — the last session read's sweeps, PER OWNER (the access feed's shape). A sweep this
+ * page acknowledged stays out of every later read: an answer already on its way cannot bring it back.
+ */
+let reuseFeed: { owner: string; sweeps: readonly ReuseSweep[] } | null = null;
+const reuseAcknowledged = new Set<string>();
+const reuseListeners = new Set<() => void>();
+
+function tellReuseFeed(next: { owner: string; sweeps: readonly ReuseSweep[] } | null): void {
+  reuseFeed = next;
+  for (const listener of [...reuseListeners]) listener();
+}
+
+/** A full answer's sweeps, published for its own account; an answer without the field lists none. */
+function publishReuseSweeps(answer: { user?: { accountId?: unknown }; scope?: unknown; reuseSweeps?: unknown } | null): void {
+  const owner = answer?.user?.accountId;
+  if (answer?.scope !== "full" || typeof owner !== "string" || owner === "") return;
+  tellReuseFeed({ owner, sweeps: reuseSweepLinesOf(answer.reuseSweeps).filter((s) => !reuseAcknowledged.has(s.id)) });
+}
+
+function dropReuseSweeps(ids: readonly string[]): void {
+  for (const id of ids) reuseAcknowledged.add(id);
+  if (reuseFeed !== null) tellReuseFeed({ owner: reuseFeed.owner, sweeps: reuseFeed.sweeps.filter((s) => !ids.includes(s.id)) });
+}
+
+/** This owner's sweeps, or `null` — the stored array, so a snapshot is stable. */
+export function reuseFeedFor(owner: string | null): readonly ReuseSweep[] | null {
+  return reuseFeed !== null && reuseFeed.owner === owner ? reuseFeed.sweeps : null;
+}
+
+export function onReuseFeed(listener: () => void): () => void {
+  reuseListeners.add(listener);
+  return () => { reuseListeners.delete(listener); };
 }
 
 /** Forget the held verdict and the feed — for a test, and for any act that changes what the account may do. */

@@ -117,7 +117,7 @@ describe("the two writers of a sign-in verdict, and only those", () => {
     ]);
     // …and `code` is the refusal's code read only off a 401.
     const src = readFileSync(resolve("apps/webapp/app/session-refresh.ts"), "utf8");
-    expect(scan.withoutComments(src)).toMatch(/const code = res\.status === 401 \? await refusalCode\(res\) : null;/);
+    expect(scan.withoutComments(src)).toMatch(/const \{ code, cause \} = res\.status === 401 \? await refusalOf\(res\) : NO_REFUSAL;/);
   });
 
   it("the splash sends a browser to /login only from its refusal arm; sign-out is the other door", () => {

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { REFRESH_REUSE_CAUSE } from "@ohmail/client-engine";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { DataDirLockedError, LOCK_FILE } from "../src/db.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
@@ -103,7 +104,7 @@ function boot(dataDir: string, h: Host, over: {
 
 type Health = {
   signedIn: boolean; sessionExpired: boolean;
-  session: { state: string; code: string | null; since: string } | null;
+  session: { state: string; code: string | null; since: string; cause?: string } | null;
 };
 const health = async (s: CloudSidecar): Promise<Health> =>
   (await s.handle(new Request("http://sidecar/health"))).json() as never;
@@ -121,6 +122,10 @@ async function until(s: CloudSidecar, want: (h: Health) => boolean, what: string
 const html403 = (): Response =>
   new Response("<html>Access denied</html>", { status: 403, headers: { "content-type": "text/html" } });
 const revoked401 = (): Response => new Response(JSON.stringify({ error: { code: "refresh_revoked" } }), { status: 401 });
+/** A reuse sweep's own refusal, its cause spelled by the client engine's constant the sidecar twins. */
+const reuse401 = (): Response => new Response(JSON.stringify({
+  error: { code: "refresh_revoked", message: "refresh token reuse detected", details: { cause: REFRESH_REUSE_CAUSE } },
+}), { status: 401 });
 
 const call = (s: CloudSidecar, method: string, path: string, body?: unknown): Promise<Response> =>
   s.handle(new Request(`http://sidecar${path}`, {
@@ -130,8 +135,8 @@ const call = (s: CloudSidecar, method: string, path: string, body?: unknown): Pr
   }));
 
 /** A run whose session the server refuses, kept until the refusal's teardown removed the seal, then stopped. */
-async function refusedRun(dataDir: string, keks: Record<number, Buffer>): Promise<void> {
-  const h = host(revoked401);
+async function refusedRun(dataDir: string, keks: Record<number, Buffer>, refusal = revoked401): Promise<void> {
+  const h = host(refusal);
   const s = await boot(dataDir, h, { keks });
   h.expired = true;
   await until(s, (x) => x.sessionExpired, "the engine never took the refusal");
@@ -178,11 +183,22 @@ describe("the cloud engine's session through /health", () => {
     h.expired = true;
     const got = await until(sidecar, (x) => x.sessionExpired, "the engine never took the refusal");
     expect(got).toMatchObject({ signedIn: false, session: { state: "refused", code: "refresh_revoked" } });
+    expect(got.session, "a plain refusal names no cause").not.toHaveProperty("cause");
     const deadline = Date.now() + 10_000;
     while (existsSync(join(dataDir, "cloud-tokens.seal"))) {
       if (Date.now() > deadline) throw new Error("the refused seal was never removed");
       await new Promise((r) => setTimeout(r, 25));
     }
+  });
+
+  it("a reuse sweep's refusal: the same refusal, and why", { timeout: 40_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-reused-");
+    dirs.push(dataDir);
+    const h = host(reuse401);
+    const sidecar = await boot(dataDir, h);
+    h.expired = true;
+    const got = await until(sidecar, (x) => x.sessionExpired, "the engine never took the refusal");
+    expect(got.session).toMatchObject({ state: "refused", code: "refresh_revoked", cause: "reuse" });
   });
 });
 
@@ -202,6 +218,7 @@ describe("a refusal heard by an earlier run", () => {
     expect(await health(again)).toMatchObject({
       signedIn: false, sessionExpired: false, session: { state: "refused_before", code: "refresh_revoked" },
     });
+    expect((await health(again)).session).not.toHaveProperty("cause");
     const signIn = await call(again, "POST", "/cloud/signin", { email: "me@ohmail.test", password: "pw", totp: "123456" });
     expect(signIn.status, await signIn.clone().text()).toBe(200);
     expect((await health(again)).session).toMatchObject({ state: "live" });
@@ -226,6 +243,15 @@ describe("a refusal heard by an earlier run", () => {
     await again.stop();
     sidecars.splice(0);
     expect((await health(await relaunch(dataDir, keks))).session, "a sign-out left the refusal to be said again").toBeNull();
+  });
+
+  it("a reuse sweep's cause is said at the next launch too", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-reused-before-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await refusedRun(dataDir, keks, reuse401);
+    expect((await health(await relaunch(dataDir, keks))).session)
+      .toMatchObject({ state: "refused_before", code: "refresh_revoked", cause: "reuse" });
   });
 
   it("is not carried to another account", { timeout: 60_000 }, async () => {

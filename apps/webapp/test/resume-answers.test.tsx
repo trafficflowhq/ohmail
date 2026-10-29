@@ -38,6 +38,11 @@ const refusedClearing = (code: string) => (): Response => {
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
   return refused(code)();
 };
+/** A reuse sweep's own refusal: the code every client ends on, and `details.cause` saying why. */
+const reuseSwept = (cause: string, clearing: boolean) => (): Response => {
+  if (clearing) document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  return json({ error: { code: "refresh_revoked", message: "refresh token reuse detected", details: { cause } } }, 401);
+};
 const platform401 = (): Response => new Response("<html>401</html>", { status: 401, headers: { "content-type": "text/html" } });
 const minted = (): Response => new Response(null, { status: 204 });
 
@@ -227,6 +232,21 @@ describe("(d) the door's refusals go to /login on the FIRST attempt, with the se
     expect(sessionStorage.getItem(NOTE_KEY)).toBe(note);
   });
 
+  it.each([false, true])("a reuse sweep's refusal (the server clears the jar: %s) — /login at once, note reused", async (clearing) => {
+    script = [reuseSwept("reuse", clearing)];
+    await mountResume();
+    expect(refreshes, "the refused token was presented again").toBe(1);
+    expect(replaced).toEqual(["/login"]);
+    expect(sessionStorage.getItem(NOTE_KEY)).toBe("reused");
+  });
+
+  it("the control: a cause this build does not know is the plain revoked note", async () => {
+    script = [reuseSwept("replayed", true)];
+    await mountResume();
+    expect(replaced).toEqual(["/login"]);
+    expect(sessionStorage.getItem(NOTE_KEY)).toBe("revoked");
+  });
+
   it("the control: a refusal that lands under another account's jar reloads, with no sentence", async () => {
     script = [() => { document.cookie = "tf_owner=acct_B; Path=/"; return refused("refresh_revoked")(); }];
     await mountResume();
@@ -343,6 +363,14 @@ describe("the loop guard reads the answer of the previous pass", () => {
     expect(buttons(el, R.signIn)).toBe(1);
   });
 
+  it("back here after a REUSE SWEEP: the card says what happened and what to do", async () => {
+    stamp("reused");
+    const el = await mountResume();
+    expect(refreshes).toBe(0);
+    expect(text(el)).toContain(R.reusedBody);
+    expect(buttons(el, R.signIn)).toBe(1);
+  });
+
   it("a stamp from the previous build — a bare timestamp — resumes; it shows no card", async () => {
     sessionStorage.setItem(ONCE_KEY, String(Date.now()));
     const el = await mountResume();
@@ -365,6 +393,20 @@ describe("/login says why the splash sent this tab there", () => {
     await flush();
     expect(text(host)).toContain(R.expiredBody);
     expect(sessionStorage.getItem(NOTE_KEY), "the note outlived its one reading").toBeNull();
+  });
+
+  it("the reuse note renders its sentence once and is removed", async () => {
+    sessionStorage.setItem(NOTE_KEY, "reused");
+    const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(LoginScreen) }));
+    });
+    await flush();
+    expect(text(host).split(R.reusedBody).length - 1, "the reuse sentence, once").toBe(1);
+    expect(sessionStorage.getItem(NOTE_KEY)).toBeNull();
   });
 
   it("THE CONTROL — no note, no sentence", async () => {
