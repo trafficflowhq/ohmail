@@ -190,7 +190,8 @@ describe("every door that ends a session ends its open stream within two polls",
     const { db, deps } = await makeDeps();
     const armed = { ...deps, alerts: { secret: SECRET, sinks: [] } } as ApiDeps;
     const me = await seedSession(db, { now: FIXED_NOW });
-    await db.update(sessions).set({ lastSeenAt: new Date(FIXED_NOW.getTime() - 61 * DAY) }).where(eq(sessions.id, me.sessionId));
+    await db.update(sessions).set({ lastSeenAt: new Date(FIXED_NOW.getTime() - 91 * DAY), refreshExpiresAt: new Date(FIXED_NOW.getTime() - DAY) })
+      .where(eq(sessions.id, me.sessionId));
     const dev = await seedDevice(db, { accountId: me.accountId, userId: me.userId, kind: "web" });
     const paired = await seedSessionFor(db, { accountId: me.accountId, userId: me.userId, now: FIXED_NOW, deviceId: dev });
     await db.update(sessions).set({ lastSeenAt: new Date(FIXED_NOW.getTime() - 400 * DAY) }).where(eq(sessions.id, paired.sessionId));

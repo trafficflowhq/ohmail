@@ -74,7 +74,8 @@ export type RefreshFailure = "session_refused" | "request_refused" | "fault";
 
 /*
  * THE REFRESH DOOR NAMES ITS REFUSAL IN THREE CODES, all 401: `refresh_missing` (no token was
- * presented), `refresh_expired` (the idle window closed, or a recovery killed the row), and
+ * presented), `refresh_expired` (the idle window closed, or a recovery killed the row; also a
+ * session revoked only after its window closed), and
  * `refresh_revoked` for everything else — unknown, revoked, reused, a dead session, a capped
  * one. Unknown and revoked share a code on purpose: a probe must not learn whether a token was
  * ever minted. The messages stay as they were; the phone keys on the reuse sentence.
@@ -921,7 +922,15 @@ export class SessionLifecycle {
     // We did not get the row. Why not — and the answer decides whether a family dies.
     const [existing] = await db.select().from(refreshTokens)
       .where(eq(refreshTokens.tokenHash, tokenHash)).limit(1);
-    if (!existing || existing.revokedAt) {
+    if (!existing) throw new ServiceError("refresh_revoked", 401, "invalid refresh token");
+    if (existing.revokedAt) {
+      // A session revoked only after its own window closed (the reaper's) ended by expiry. The two
+      // stored stamps decide, never `now`: a sign-out stays revoked however long ago it was.
+      const [s] = await db.select({ refreshExpiresAt: sessions.refreshExpiresAt, revokedAt: sessions.revokedAt })
+        .from(sessions).where(eq(sessions.id, existing.sessionId)).limit(1);
+      if (s?.revokedAt && s.refreshExpiresAt.getTime() <= s.revokedAt.getTime()) {
+        throw await this.expiredRefusal(ctx, existing, "lapsed");
+      }
       throw new ServiceError("refresh_revoked", 401, "invalid refresh token");
     }
     // Reuse detection: a consumed token presented again means it leaked — revoke the WHOLE

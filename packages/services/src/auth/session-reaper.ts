@@ -5,10 +5,11 @@ import { authEvents } from "@trafficflow/db/cloud";
 import type { AuthAuditEvent } from "./types.js";
 
 /**
- * The web-session reaper — maintenance revocation of long-idle plain browser sessions, which
- * otherwise sit live-but-idle for ever. It revokes plain web sessions UNSEEN for over sixty days:
- * an active browser re-stamps `last_seen_at` on every rotation, so only a browser silent for two
- * months meets a sign-in prompt on return. Structural scope: `device_id IS NULL` (a paired device
+ * The web-session reaper — maintenance revocation of plain browser sessions whose idle window has
+ * closed, which otherwise stay unrevoked for ever. It revokes only past `refresh_expires_at`, which
+ * every rotation rolls forward with the token, so a browser keeps the ninety days its cookies
+ * promise, and the door tells a family reaped this way that it expired (`rotateRefresh`).
+ * Structural scope: `device_id IS NULL` (a paired device
  * is NEVER auto-reaped — re-pairing has a ceremony cost re-login does not), `scope = 'full'`, the
  * cookie window (`refresh_expires_at - last_seen_at` under 100 days, migration 0061's
  * discriminator: a rotation writes the two in lockstep, 90 days apart on the browser and 400 on
@@ -30,16 +31,14 @@ export interface ReapResult {
 export async function reapStaleWebSessions(
   db: Tx,
   now: Date,
-  opts: { olderThanMs?: number; limit?: number } = {},
+  opts: { limit?: number } = {},
 ): Promise<ReapResult> {
-  const olderThanMs = opts.olderThanMs ?? 60 * DAY_MS;
   const budget = Math.min(Math.max(1, opts.limit ?? 5_000), 20_000);
-  const cutoff = new Date(now.getTime() - olderThanMs);
   const reapable = and(
     isNull(sessions.deviceId),
     eq(sessions.scope, "full"),
     isNull(sessions.revokedAt),
-    lt(sessions.lastSeenAt, cutoff),
+    lt(sessions.refreshExpiresAt, now),
     sql`${sessions.refreshExpiresAt} - ${sessions.lastSeenAt} < ${dialect(db).interval(COOKIE_WINDOW_UNDER_MS)}`,
   );
 
@@ -50,11 +49,11 @@ export async function reapStaleWebSessions(
   let reaped = 0;
   for (let i = 0; i < candidates.length; i += CHUNK) {
     const ids = candidates.slice(i, i + CHUNK).map((r) => r.id);
-    // The claim re-states the WHOLE predicate, the cutoff included, not just the id list: a
+    // The claim re-states the WHOLE predicate, the window included, not just the id list: a
     // session revoked (or paired — impossible today, but the predicate should not depend on
     // that) between the read and this write is skipped, and — the arm the review caught
-    // missing — a session that ROTATED in that window (`mintRotation` stamps `last_seen_at`
-    // current) is a browser that just came back to life, which a maintenance pass must not
+    // missing — a session that ROTATED in that window (`mintRotation` rolls `refresh_expires_at`
+    // forward) is a browser that just came back to life, which a maintenance pass must not
     // sign out. Only rows THIS statement flipped count.
     const stale = and(inArray(sessions.id, ids), reapable);
     // One transaction per chunk, its sessions locked in id order first, erasure's step-7 order: the

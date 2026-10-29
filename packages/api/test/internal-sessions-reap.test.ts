@@ -44,19 +44,19 @@ describe("GET /internal/sessions/reap — the surface", () => {
     expect((await H(get(CRON), armed)).status).toBe(200);
   });
 
-  it("reaps a >60d-idle plain web session, counts it, and leaves a paired device alone", async () => {
+  it("reaps a plain web session past its window, counts it, and leaves a paired device alone", async () => {
     const { db, deps, clock } = await makeDeps();
     const now = clock.now();
     const me = await seedSession(db, { now });
-    // Stale: device-less, unseen 61 days. `seedSessionFor` stamps lastSeenAt from the column
-    // default (now), so age it explicitly.
+    // Stale: device-less, unseen 91 days, its 90-day window closed a day ago. `seedSessionFor`
+    // stamps lastSeenAt from the column default (now), so age it explicitly.
     const stale = await seedSessionFor(db, { accountId: me.accountId, userId: me.userId, now });
-    await db.update(sessions).set({ lastSeenAt: new Date(now.getTime() - 61 * DAY) })
+    await db.update(sessions).set({ lastSeenAt: new Date(now.getTime() - 91 * DAY), refreshExpiresAt: new Date(now.getTime() - DAY) })
       .where(eq(sessions.id, stale.sessionId));
-    // Ancient but PAIRED: never auto-reaped.
+    // Ancient, its window long closed, but PAIRED: never auto-reaped.
     const dev = await seedDevice(db, { accountId: me.accountId, userId: me.userId, kind: "web", label: "Mila's phone" });
     const paired = await seedSessionFor(db, { accountId: me.accountId, userId: me.userId, now, deviceId: dev });
-    await db.update(sessions).set({ lastSeenAt: new Date(now.getTime() - 400 * DAY) })
+    await db.update(sessions).set({ lastSeenAt: new Date(now.getTime() - 400 * DAY), refreshExpiresAt: new Date(now.getTime() - 310 * DAY) })
       .where(eq(sessions.id, paired.sessionId));
 
     const armed = { ...deps, alerts: { secret: SECRET, sinks: [] } };

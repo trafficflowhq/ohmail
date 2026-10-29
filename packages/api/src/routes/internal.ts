@@ -732,7 +732,7 @@ export const internalRoutes: Route[] = [
   {
     /**
      * `GET /internal/sessions/reap` — the web-session reaper's clock: revokes plain browser
-     * sessions (`device_id IS NULL`, scope `full`) unseen for over sixty days, families included;
+     * sessions (`device_id IS NULL`, scope `full`) past their own idle window, families included;
      * paired devices are structurally out of reach (`reapStaleWebSessions`). The alert cron's
      * shape verbatim: GET (a crawler cannot present a bearer token), either secret, 404 unarmed —
      * where the hygiene then does not run; the live acceptance curls the armed route. On
