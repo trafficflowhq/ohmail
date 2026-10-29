@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { REFRESH_REUSE_CAUSE } from "@ohmail/client-engine";
+import { StaticKeyProvider } from "@trafficflow/core";
+import { loadSealedTokens } from "../src/cloud-auth.js";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { DataDirLockedError, LOCK_FILE } from "../src/db.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
@@ -80,7 +82,7 @@ function host(refresh: () => Response): Host {
 }
 
 function boot(dataDir: string, h: Host, over: {
-  keks?: Record<number, Buffer>; address?: string; tokens?: boolean;
+  keks?: Record<number, Buffer>; address?: string; tokens?: boolean; machine?: string | null;
 } = {}): Promise<CloudSidecar> {
   if (closing) return Promise.reject(new Error("boot after teardown began"));
   const run = (async () => {
@@ -90,6 +92,7 @@ function boot(dataDir: string, h: Host, over: {
       address: over.address ?? "me@ohmail.test",
       ...(over.tokens === false ? {} : { tokens: { accessToken: "access-1", refreshToken: "refresh-1" } }),
       keks: over.keks ?? ring(),
+      ...(over.machine !== undefined ? { machineBinding: over.machine } : {}),
       fetchImpl: h.fetchImpl,
       log: (event) => { h.logged.push(event); },
       pollIntervalMs: 40,
@@ -307,6 +310,103 @@ describe("a seal on disk this key cannot open", () => {
     // The positive control: the key that wrote it opens it, and the launch is signed in.
     const same = await boot(dataDir, host(html403), { keks, tokens: false });
     expect(await health(same)).toMatchObject({ signedIn: true, session: { state: "live" } });
+  });
+});
+
+/**
+ * A SEAL BELONGS TO THE COMPUTER THAT WROTE IT. Carried to another by a copied or synced home, it
+ * reads unreadable there and presents nothing, so the server's reuse rule never meets it; the
+ * computer that owns the sign-in keeps it.
+ */
+describe("a seal belongs to the computer that wrote it", () => {
+  const SEAL_UNREADABLE = { signedIn: false, sessionExpired: false, session: { state: "seal_failed", code: "seal_unreadable" } };
+
+  it("carried to another computer: unreadable there, nothing presented, the file kept; its own computer stays signed in", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-elsewhere-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await (await boot(dataDir, host(html403), { keks, machine: "machine-a" })).stop();
+    sidecars.splice(0);
+
+    const h = host(html403);
+    const other = await boot(dataDir, h, { keks, tokens: false, machine: "machine-b" });
+    expect(await health(other)).toMatchObject(SEAL_UNREADABLE);
+    expect(h.seen, "the other computer presented nothing").toEqual([]);
+    expect(h.logged).toContain("cloud_seal_elsewhere");
+    await other.stop();
+    sidecars.splice(0);
+
+    const same = await boot(dataDir, host(html403), { keks, tokens: false, machine: "machine-a" });
+    expect(await health(same)).toMatchObject({ signedIn: true, session: { state: "live" } });
+  });
+
+  it("an unbound seal (an older install's) stays signed in on upgrade and is bound at that launch", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-unbound-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await (await boot(dataDir, host(html403), { keks, machine: null })).stop();
+    sidecars.splice(0);
+
+    const upgraded = await boot(dataDir, host(html403), { keks, tokens: false, machine: "machine-a" });
+    expect(await health(upgraded), "no sign-out on upgrade").toMatchObject({ signedIn: true, session: { state: "live" } });
+    await upgraded.stop();
+    sidecars.splice(0);
+
+    const h = host(html403);
+    expect(await health(await boot(dataDir, h, { keks, tokens: false, machine: "machine-b" }))).toMatchObject(SEAL_UNREADABLE);
+    expect(h.seen).toEqual([]);
+  });
+
+  it("a bind that will not write keeps the launch signed in and says so", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-bind-refused-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await (await boot(dataDir, host(html403), { keks, machine: null })).stop();
+    sidecars.splice(0);
+    // A real refusal: a directory where the atomic write stages the seal.
+    mkdirSync(join(dataDir, `cloud-tokens.seal.${process.pid}.tmp`));
+
+    const h = host(html403);
+    expect(await health(await boot(dataDir, h, { keks, tokens: false, machine: "machine-a" }))).toMatchObject({
+      signedIn: true, session: { state: "live" },
+    });
+    expect(h.logged).toContain("cloud_seal_bind_failed");
+  });
+
+  it("a renewal seals for the computer it ran on", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-renewal-bound-");
+    dirs.push(dataDir);
+    const keks = ring();
+    const a = host(() => new Response(JSON.stringify({ tokens: { accessToken: "access-2", refreshToken: "refresh-2" } })));
+    const first = await boot(dataDir, a, { keks, machine: "machine-a" });
+    a.expired = true;
+    const sealPath = join(dataDir, "cloud-tokens.seal");
+    const deadline = Date.now() + 20_000;
+    while ((await loadSealedTokens(sealPath, new StaticKeyProvider(keks)))?.refreshToken !== "refresh-2") {
+      if (Date.now() > deadline) throw new Error("the renewal was never sealed");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    await first.stop();
+    sidecars.splice(0);
+
+    const h = host(html403);
+    expect(await health(await boot(dataDir, h, { keks, tokens: false, machine: "machine-b" }))).toMatchObject(SEAL_UNREADABLE);
+    expect(h.seen).toEqual([]);
+  });
+
+  it("a sign-in seals for the computer it was made on", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-signin-bound-");
+    dirs.push(dataDir);
+    const keks = ring();
+    const first = await boot(dataDir, host(html403), { keks, tokens: false, machine: "machine-a" });
+    const signIn = await call(first, "POST", "/cloud/signin", { email: "me@ohmail.test", password: "pw", totp: "123456" });
+    expect(signIn.status, await signIn.clone().text()).toBe(200);
+    await first.stop();
+    sidecars.splice(0);
+
+    const h = host(html403);
+    expect(await health(await boot(dataDir, h, { keks, tokens: false, machine: "machine-b" }))).toMatchObject(SEAL_UNREADABLE);
+    expect(h.seen).toEqual([]);
   });
 });
 
