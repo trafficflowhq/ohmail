@@ -9,7 +9,7 @@
  * was — continuity as data, not as tree position.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useIsFocused } from "expo-router";
+import { router, useIsFocused } from "expo-router";
 import { JUNK_REFILL_BOUND_MS, type WorldAttachment, type WorldEarlier } from "../state/live";
 import { invitationNote, junkLeaving, mailboxStatusOf, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
@@ -21,7 +21,7 @@ import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useBodyStamp, useFilesStamp, useWorld, useWorldToast } from "../state/world";
 import { openConfirmedLink } from "../mail/frame-nav";
-import { endMark } from "../engine/ui-marks";
+import { beginMark, endMark } from "../engine/ui-marks";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt, useListInsets } from "./base";
 import { DetailBar, PaneTop } from "./chrome";
@@ -48,7 +48,7 @@ import {
   MARK_HOLD_MS, RAIL_HIT_SLOP, RAIL_MORE, RAIL_PITCH, RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railItemsMemo, readerChromeOverlap, slotOf,
   readerGroups, type RailItem,
 } from "./reader-marks";
-import { hideVisit, showVisit, visitKnew, visitRecordFor } from "./visit-records";
+import { endIdleVisit, hideVisit, showVisit, visitKnew, visitRecordFor } from "./visit-records";
 import { threadHeading } from "./thread-heading";
 import { MARK_RING, MarkRing, MarkSheet, MarkSquare, ringRest, useMarkHold, useSquaresWindow, type MarkHold } from "./MarkSquare";
 import {
@@ -187,6 +187,18 @@ export function MessageReader({
     if (fresh.length > 0) hydrateHeld(fresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberIds, hydrateHeld]);
+  /* A MEMBER WHOSE HTML HOLDS NO WORDS draws its files alone, its embedded pictures among them: its
+     list is asked whatever its flag says (a picture the html names by `cid:` clears the flag). */
+  const filesDoor = useRef(w.actions);
+  filesDoor.current = w.actions;
+  const wordless = m ? m.earlier.filter((h) => h.wordless === true).map((h) => h.id).join(" ") : "";
+  useEffect(() => {
+    if (wordless === "") return;
+    const door = filesDoor.current;
+    const ids = wordless.split(" ");
+    for (const mid of ids) door.holdFiles([mid]);
+    return () => { for (const mid of ids) door.releaseFiles([mid]); };
+  }, [wordless, worldKey]);
   /** The message whose frame has its document's height (`MailBodyFrame`'s `onFinal`). */
   const [frameFinalFor, setFrameFinalFor] = useState<string | null>(null);
   /** The opened html message's quoted history: where its frame found one, and whether it is open. */
@@ -404,6 +416,17 @@ export function MessageReader({
   };
   const jumpRef = useRef(jump);
   jumpRef.current = jump;
+  /* A MEMBER THE PHONE CANNOT DRAW AS WORDS opens alone, its html in the opened message's frame: a
+     fresh open (the list row's press), read by that open's own rule, never by its card being on screen. */
+  const openMember = (mid: string): void => {
+    beginMark("open", mid);
+    endIdleVisit(mid);
+    router.push(`/message/${mid}`);
+  };
+  const pressSquare = (mid: string): void => {
+    if (m?.earlier.some((h) => h.id === mid && h.wordless === true)) openMember(mid);
+    else jump(mid);
+  };
   /* WHERE THE PERSON STOPPED, for the list row's strip: this conversation's squares and the ring, kept
      after the reader goes. Another open replaces them; one without squares leaves no row ringed. While
      this reader shows squares, a strip press jumps it. */
@@ -456,10 +479,12 @@ export function MessageReader({
   const historyRow = (
     <HistoryRow open={historyFor === m.id} onToggle={() => setHistoryFor(historyFor === m.id ? null : m.id)} />
   );
+  const memberEnd = (h: WorldEarlier) => <View style={{ height: 0 }} onLayout={(e) => seen.panelEnd(h.id, e.nativeEvent.layout.y)} />;
   /** A member's panel, above or below the opened message: its header, its body, its own files. */
   const memberPanel = (h: WorldEarlier, group: "above" | "below") => (
     <Panel key={h.id} radius={t.radius.card} style={{ padding: 18 }}
-      onLayout={(e) => { seen.panel(h.id, group, e.nativeEvent.layout.y, e.nativeEvent.layout.height); anchor.layout(); }}>
+      onLayout={(e) => { seen.panel(h.id, group, e.nativeEvent.layout.y, e.nativeEvent.layout.height); anchor.layout(); }}
+      {...(h.wordless ? { onPress: () => openMember(h.id) } : {})}>
       {inOhbox ? (
         <ReadTint unread={!h.seen} style={{ top: 0, left: 0, right: 0, bottom: 0, borderRadius: t.radius.card }} />
       ) : null}
@@ -485,11 +510,17 @@ export function MessageReader({
       {/* Where its body starts and ends: its first lines, with the header, are the read rule's top. */}
       <View style={{ height: 0, marginTop: 10 }} onLayout={(e) => seen.panelBody(h.id, e.nativeEvent.layout.y)} />
       {/* Its quoted history folds; its end is where its own words end, above the row. */}
-      <HistoryFold foldKey={h.id} html={h.html} subject={h.subject} end={<View style={{ height: 0 }} onLayout={(e) => seen.panelEnd(h.id, e.nativeEvent.layout.y)} />}>
-        <BodyPages variant="streamBody" tone="ink2" text={h.body} />
+      <HistoryFold foldKey={h.id} html={h.html} subject={h.subject} end={h.wordless ? null : memberEnd(h)}>
+        {h.wordless ? (
+          <Tap accessibilityRole="button" onPress={() => openMember(h.id)} style={{ minHeight: 44, justifyContent: "center" }}>
+            <Txt variant="streamBody" tone="accent">{Copy.readerMemberAsPage}</Txt>
+          </Tap>
+        ) : <BodyPages variant="streamBody" tone="ink2" text={h.body} />}
       </HistoryFold>
       {/* Each member's own files: the reader's open asked for its list. */}
       <AttachmentTiles m={h} />
+      {/* No words: its files are its body, so its end is below them. */}
+      {h.wordless ? memberEnd(h) : null}
     </Panel>
   );
 
@@ -520,7 +551,7 @@ export function MessageReader({
       {/* THE RAIL OF SQUARES, in time order — the order the reader draws the conversation in here,
           and the list row's. Only in the Ohbox, and only for a conversation. */}
       {railItems.length > 0 ? (
-        <ReaderRail items={railItems} here={here} over={chromeOver} onJump={jump} marks={markHold} />
+        <ReaderRail items={railItems} here={here} over={chromeOver} onJump={pressSquare} marks={markHold} />
       ) : null}
       <Scroller
         key={scrollKey}

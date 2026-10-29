@@ -22,6 +22,8 @@ import { standsInOhboxMail } from "../src/ui/pane-routes";
 import { threadBadgeOf } from "../src/ui/row-spoken";
 import { dto, listen, mailServer, ruleDto } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
+import { normalizeMime } from "../../../packages/core/src/mime.js";
+import { htmlWords } from "../src/mail/html-words";
 
 const view: WorldView = { now: new Date("2026-08-19T12:00:00Z"), zone: "UTC" };
 const world = sqlWorld();
@@ -64,14 +66,14 @@ const settleWire = async (engine: { syncOnce(): Promise<unknown> }): Promise<voi
 };
 
 /** A reader over the adapter with its frames and its clock run by hand. */
-function readerOf(opts: { opened: string | null; unread: Set<string>; onRead: (ids: string[]) => void; record?: ReturnType<typeof createThreadRead> }) {
+function readerOf(opts: { opened: string | null; unread: Set<string>; onRead: (ids: string[]) => void; record?: ReturnType<typeof createThreadRead>; ready?: (id: string) => boolean }) {
   const record = opts.record ?? createThreadRead();
   let clock = 1000;
   record.enter(clock);
   let frames: (() => void)[] = [];
   let timers: { at: number; run: () => void }[] = [];
   const core = createPhoneThreadRead({
-    record, openedId: () => opts.opened, unread: (id) => opts.unread.has(id), ready: () => true,
+    record, openedId: () => opts.opened, unread: (id) => opts.unread.has(id), ready: opts.ready ?? (() => true),
     onRead: (ids) => { for (const id of ids) opts.unread.delete(id); opts.onRead(ids); },
     now: () => clock,
     frame: (run) => { frames.push(run); return () => undefined; },
@@ -236,6 +238,129 @@ describe("the reported case: an unread conversation opened from the Ohbox", () =
       s.close();
     }
   }, 30_000);
+});
+
+/** An html-only letter with embedded pictures: multipart/related, its html the root, no text part. */
+const relatedLetter = (n: number, html: string): Buffer => Buffer.from([
+  `Message-ID: <rel-${n}@fake.test>`, "From: Sender <sender@fake.test>", "To: Me <me@fake.test>", "Subject: picture rota",
+  "Date: Wed, 19 Aug 2026 08:00:00 +0000", "MIME-Version: 1.0", 'Content-Type: multipart/related; boundary="REL"', "",
+  "--REL", 'Content-Type: text/html; charset="us-ascii"', "", html, "",
+  "--REL", "Content-Type: image/png", `Content-ID: <p${n}@fake.test>`, 'Content-Disposition: inline; filename="p.png"',
+  "Content-Transfer-Encoding: base64", "", "iVBORw0KGgo=", "--REL--", "",
+].join("\r\n"));
+
+describe("an older member whose body is html inside multipart/related, with no text part", () => {
+  it("draws the html's words and reads it on the rest; one whose html holds no words draws its files and a line, and is read only by its own open", async () => {
+    const worded = await normalizeMime(relatedLetter(1,
+      `<html><head><style>p{color:red}</style></head><body><p>Top of member 1.</p><img src="cid:p1@fake.test" alt="picture 1"><p>End of member 1.</p></body></html>`));
+    const bare = await normalizeMime(relatedLetter(2, `<html><body><img src="cid:p2@fake.test"></body></html>`));
+    // A single-part html letter of pictures alone: the parse stores a placeholder as its text.
+    const single = await normalizeMime(Buffer.from(["Message-ID: <s6@fake.test>", "From: sender@fake.test", "To: me@fake.test", "Subject: s",
+      "MIME-Version: 1.0", 'Content-Type: text/html; charset="us-ascii"', "", `<html><body><img src="https://pictures.fake.test/b.png"></body></html>`, ""].join("\r\n")));
+    expect(single.textBody.trim(), "the premise: a text that is no words of its own").not.toBe("");
+    expect([worded.textBody, bare.textBody], "the premise: the parse stores no text for this shape").toEqual(["", ""]);
+    const s = await session();
+    try {
+      s.fake.setBody("p1", worded.textBody); s.fake.setHtml("p1", worded.htmlBody!);
+      s.fake.setBody("p2", bare.textBody); s.fake.setHtml("p2", bare.htmlBody!);
+      s.fake.setFiles("p2", [{ id: "a-p2", filename: "p.png", contentType: "image/png", sizeBytes: 8, inline: true }]);
+      s.fake.setBody("p3", ""); s.fake.setHtml("p3", `<html><body><img src="https://pictures.fake.test/a.png"></body></html>`);
+      // Words past the html bound the phone does not read, and an embedded picture.
+      s.fake.addMessage({ ...dto("p5", { subject: "Q3 plan", date: "2026-08-19T00:30:00Z" }), threadId: "T" });
+      s.fake.setBody("p5", ""); s.fake.setHtml("p5", `<html><body><img src="cid:p5@fake.test"><p>${"many words ".repeat(60_000)}</p></body></html>`);
+      s.fake.setFiles("p5", [{ id: "a-p5", filename: "q.png", contentType: "image/png", sizeBytes: 8, inline: true }]);
+      s.fake.addMessage({ ...dto("p6", { subject: "Q3 plan", date: "2026-08-19T00:20:00Z" }), threadId: "T" });
+      s.fake.setBody("p6", single.textBody); s.fake.setHtml("p6", single.htmlBody!);
+      // Pictures from the web and a file: its file pill is not its body.
+      s.fake.addMessage({ ...dto("p7", { subject: "Q3 plan", date: "2026-08-19T00:10:00Z" }), threadId: "T" });
+      s.fake.setBody("p7", ""); s.fake.setHtml("p7", `<html><body><img src="https://pictures.fake.test/c.png"></body></html>`);
+      s.fake.setFiles("p7", [{ id: "a-p7", filename: "flyer.pdf", contentType: "application/pdf", sizeBytes: 800, inline: false }]);
+      await settleWire(s.boot.engine);
+      await s.actions.openMessage("p4");
+      await settleWire(s.boot.engine);
+      let m = liveMessage(s.boot.engine, "p4", view)!;
+      const at = (id: string) => m.earlier.find((h) => h.id === id)!;
+      expect(at("p1").body, "the member draws its words").toBe("Top of member 1.\n\nEnd of member 1.");
+      expect([at("p1").ready, at("p1").wordless], "drawn: the rule may read it").toEqual([true, undefined]);
+      expect([at("p2").body, at("p2").wordless, at("p2").attachments], "no words, and its flag asked no list").toEqual(["", true, undefined]);
+      expect(at("p2").ready, "nothing drawn yet").not.toBe(true);
+      expect(liveMessage(s.boot.engine, "p1", view)!.body, "opened, its text says the same").toBe(at("p1").body);
+
+      // The reader asks a word-less member's list, as it asks the opened message's.
+      for (const id of ["p2", "p3", "p5", "p6", "p7"]) s.actions.holdFiles([id]);
+      await settleWire(s.boot.engine);
+      m = liveMessage(s.boot.engine, "p4", view)!;
+      expect(at("p2").attachments?.map((a) => [a.filename, a.inline]), "its pictures, as files").toEqual([["p.png", true]]);
+      expect(at("p2").ready, "its tiles are not its body: only its open reads it").toBe(undefined);
+      expect([at("p6").body, at("p6").wordless, at("p6").ready], "a placeholder text is not its words").toEqual(["", true, undefined]);
+      expect([at("p7").wordless, at("p7").attachments?.map((a) => a.filename), at("p7").ready], "a file pill is not its body").toEqual([true, ["flyer.pdf"], undefined]);
+      expect([at("p3").wordless, at("p3").attachments, at("p3").ready], "nothing to draw: not ready").toEqual([true, undefined, undefined]);
+      expect([at("p5").wordless, at("p5").attachments?.length, at("p5").ready], "words past the bound: its tiles alone are not its body").toEqual([true, 1, undefined]);
+      expect(at("o1").ready, "CONTROL: a text member").toBe(true);
+      expect(s.fake.message("p2")?.unread, "the open read nothing").toBe(true);
+
+      // p2 as the reader lays it out, its end below its files; p3 under it, its line alone; p5 its tiles.
+      const reads: string[][] = [];
+      const r = readerOf({ opened: null, unread: new Set(["p2", "p3", "p5", "p6", "p7"]), onRead: (ids) => reads.push(ids), ready: (id) => at(id).ready === true });
+      r.core.viewport(800); r.core.offset("padded", 0); r.core.offset("above", 0);
+      r.core.panel("p2", "above", 0, 140); r.core.panelHeader("p2", 18, 30); r.core.panelBody("p2", 58); r.core.panelEnd("p2", 122);
+      r.core.panel("p3", "above", 152, 100); r.core.panelHeader("p3", 18, 30); r.core.panelBody("p3", 58); r.core.panelEnd("p3", 88);
+      r.core.panel("p5", "above", 264, 140); r.core.panelHeader("p5", 18, 30); r.core.panelBody("p5", 58); r.core.panelEnd("p5", 122);
+      r.core.panel("p6", "above", 416, 100); r.core.panelHeader("p6", 18, 30); r.core.panelBody("p6", 58); r.core.panelEnd("p6", 88);
+      r.core.panel("p7", "above", 528, 140); r.core.panelHeader("p7", 18, 30); r.core.panelBody("p7", 58); r.core.panelEnd("p7", 122);
+      r.flush();
+      expect(reads, "the write waits for the dwell").toEqual([]);
+      r.pass(dwell);
+      r.pass(5 * dwell);
+      expect(reads, "on screen as cards, none of them read").toEqual([]);
+      await settleWire(s.boot.engine);
+      expect(["p2", "p3", "p5", "p6", "p7"].map((id) => s.fake.message(id)?.unread)).toEqual([true, true, true, true, true]);
+
+      // A press on p3's card opens it alone: its html is the opened message's, read by the open's own rule.
+      expect(await s.actions.openMessage("p3")).toBe(true);
+      await settleWire(s.boot.engine);
+      const p3 = liveMessage(s.boot.engine, "p3", view)!;
+      expect([p3.html, p3.unread], "opened: its html to frame, unread until seen").toEqual([`<html><body><img src="https://pictures.fake.test/a.png"></body></html>`, true]);
+      const opened: string[][] = [];
+      const o = readerOf({ opened: "p3", unread: new Set(["p3"]), onRead: (ids) => { opened.push(ids); s.actions.markGlanced(ids); }, ready: (id) => id === "p3" });
+      o.core.viewport(800); o.core.chrome(0); o.core.offset("padded", 0); o.core.offset("above", 0);
+      o.core.offset("opened", 34); o.core.openedFrom(0, 40); o.core.openedBody(100); o.core.openedEnd(300);
+      o.core.onScroll(0);
+      o.pass(dwell);
+      expect(opened, "its own open read it").toEqual([["p3"]]);
+      await settleWire(s.boot.engine);
+      expect(s.fake.message("p3")?.unread).toBe(false);
+      for (const id of ["p2", "p6", "p7"]) {
+        expect(await s.actions.openMessage(id)).toBe(true);
+        await settleWire(s.boot.engine);
+        const got: string[][] = [];
+        const x = readerOf({ opened: id, unread: new Set([id]), onRead: (ids) => { got.push(ids); s.actions.markGlanced(ids); }, ready: (y) => y === id });
+        x.core.viewport(800); x.core.chrome(0); x.core.offset("padded", 0); x.core.offset("above", 0);
+        x.core.offset("opened", 34); x.core.openedFrom(0, 40); x.core.openedBody(100); x.core.openedEnd(300);
+        x.core.onScroll(0);
+        x.pass(dwell);
+        expect(got, `${id}: its own open read it`).toEqual([[id]]);
+        await settleWire(s.boot.engine);
+        expect(s.fake.message(id)?.unread).toBe(false);
+      }
+    } finally {
+      s.close();
+    }
+  }, 30_000);
+});
+
+describe("an html part's words, as a member draws them", () => {
+  it("blocks start lines, paragraphs and lists leave a blank line, a quote keeps its marks", () => {
+    expect(htmlWords("<div>Hi&nbsp;Ben,</div><div>the   plan<br>is in</div><p>Two</p><p>Three</p>")).toBe("Hi Ben,\nthe plan\nis in\n\nTwo\n\nThree");
+    expect(htmlWords("<p>Mine</p><blockquote><p>Yours</p><p>more</p></blockquote>")).toBe("Mine\n\n> Yours\n>\n> more");
+    expect(htmlWords("<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>")).toBe("a b\nc");
+    expect(htmlWords("<pre>x = 1\n  y = 2</pre>")).toBe("x = 1\n  y = 2");
+  });
+  it("draws nothing a reader never sees, and nothing from markup alone", () => {
+    expect(htmlWords("<head><title>T</title><style>p{}</style></head><body><script>x()</script><p>words</p></body>")).toBe("words");
+    expect(htmlWords("<img src=\"cid:a\" alt=\"a picture\">")).toBe("");
+    expect(htmlWords("")).toBe("");
+  });
 });
 
 describe("CONTROL: outside the Ohbox the open is still the read", () => {

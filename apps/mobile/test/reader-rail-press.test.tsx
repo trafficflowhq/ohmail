@@ -17,8 +17,8 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const nav = vi.hoisted(() => ({ focused: true }));
-vi.mock("expo-router", () => ({ useIsFocused: () => nav.focused }));
+const nav = vi.hoisted(() => ({ focused: true, pushed: [] as string[] }));
+vi.mock("expo-router", () => ({ useIsFocused: () => nav.focused, router: { push: (to: string) => { nav.pushed.push(to); } } }));
 
 const native = vi.hoisted(() => ({
   offset: 0,
@@ -108,7 +108,7 @@ vi.mock("../src/theme", () => ({
   }),
 }));
 
-const world = vi.hoisted(() => ({ mail: null as any, glanced: [] as string[][] }));
+const world = vi.hoisted(() => ({ mail: null as any, glanced: [] as string[][], files: [] as string[] }));
 vi.mock("../src/state/world", () => ({
   useBodyStamp: () => 0,
   useFilesStamp: () => 0,
@@ -124,6 +124,8 @@ vi.mock("../src/state/world", () => ({
       hydrateHeld: () => undefined,
       markSeen: () => undefined,
       markGlanced: (ids: string[]) => { world.glanced.push([...ids]); },
+      holdFiles: (ids: string[]) => { world.files.push(`hold ${ids}`); },
+      releaseFiles: (ids: string[]) => { world.files.push(`release ${ids}`); },
     },
   }),
 }));
@@ -131,7 +133,7 @@ vi.mock("../src/state/live", () => ({ JUNK_REFILL_BOUND_MS: 10_000, readerZone: 
 vi.mock("../src/ui/body-note", () => ({ invitationNote: () => null, junkLeaving: () => false, withheldNote: () => "" }));
 vi.mock("../src/ui/attachment-fault-note", () => ({ attachmentFaultNote: () => "" }));
 vi.mock("../src/mail/frame-nav", () => ({ openConfirmedLink: () => undefined }));
-vi.mock("../src/engine/ui-marks", () => ({ endMark: () => undefined }));
+vi.mock("../src/engine/ui-marks", () => ({ beginMark: () => undefined, endMark: () => undefined }));
 vi.mock("../src/mail/open-attachment-native", () => ({ shareAttachmentBytes: async () => true }));
 vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null, PaneTop: () => null }));
 vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
@@ -158,6 +160,7 @@ const require_ = createRequire(join(__dirname, "../../webapp/package.json"));
 const client = require_("react-dom/client") as { createRoot(el: Element): { render(n: ReactNode): void; unmount(): void } };
 
 const { MessageReader } = await import("../src/ui/MessageReader");
+const { Copy } = await import("../src/copy");
 const { VISIT_HANDOFF_MS, endIdleVisit, resetVisitsForTests } = await import("../src/ui/visit-records");
 const { hitSlopFor } = await import("../src/theme/tokens");
 const { RAIL_MORE, RAIL_PITCH, RAIL_TOP } = await import("../src/ui/reader-marks");
@@ -218,7 +221,9 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "Date"] });
   native.offset = 0; native.content = 0; native.view = 640; native.events = []; native.asked = []; native.stuck = false;
   world.glanced = [];
+  world.files = [];
   nav.focused = true;
+  nav.pushed = [];
   resetVisitsForTests();
   place.resetThreadPlaceForTests();
 });
@@ -422,6 +427,97 @@ describe("a reader another screen covers reads nothing", () => {
     pass(1000);
     flushNative();
     expect(world.glanced.flat()).toContain("p3");
+  });
+});
+
+describe("a member whose html holds no words draws its files", () => {
+  it("the reader asks its list, its end stands below its files, and its files on screen read nothing", () => {
+    const bare = {
+      ...memberOf("p1", "Ada"), body: "", html: '<img src="cid:p1">', wordless: true as const, ready: undefined,
+      attachments: [{ id: "a1", filename: "p.png", size: "8 B", sizeBytes: 8, inline: true, mime: "image/png", state: "idle" as const }],
+    };
+    world.mail = mailOf("p3", [bare as unknown as ReturnType<typeof memberOf>, memberOf("p2", "Ben")]);
+    const el = mountReader("p3");
+    expect(world.files, "only the word-less member's list is asked").toEqual(["hold p1"]);
+    const panel = all(el).filter((x) => x.getAttribute("data-rn") === "Panel")[0]!;
+    const inner = all(panel);
+    const tile = inner.find((x) => String(x.__props?.accessibilityLabel ?? "").includes("p.png"))!;
+    const end = inner.find((x) => src(x).includes("panelEnd"))!;
+    expect(tile.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING, "its end below its files").toBeTruthy();
+
+    const v = views(el);
+    native.content = 18 + 150 + 34 + 118 + 34 + 180 + 100;
+    lay(v.scroll, { y: 0, height: 640 });
+    lay(v.padded, { y: 0, height: 640 });
+    lay(v.above, { y: 18, height: 270 });
+    lay(panel, { y: 0, height: 150 });
+    lay(inner.find((x) => src(x).includes("panelHeader")), { y: 18, height: 22 });
+    lay(inner.find((x) => src(x).includes("panelBody")), { y: 50, height: 0 });
+    lay(end, { y: 120, height: 0 });
+    const p2 = v.member("p2");
+    lay(p2.panel, { y: 152, height: 118 });
+    lay(p2.header, { y: 18, height: 22 });
+    lay(p2.body, { y: 50, height: 0 });
+    lay(p2.end, { y: 100, height: 0 });
+    lay(v.opened, { y: 18 + 270 + 34, height: 180 });
+    lay(v.from, { y: 0, height: 20 });
+    lay(v.obody, { y: 120, height: 0 });
+    lay(v.oend, { y: 180, height: 0 });
+    act(() => { native.props!.onContentSizeChange?.(360, native.content); });
+    flushNative();
+    expect(world.glanced.flat(), "nothing at the open").toEqual([]);
+    pass(3000);
+    flushNative();
+    expect(world.glanced.flat(), "CONTROL: its neighbour read").toContain("p2");
+    expect(world.glanced.flat(), "its files are not its body: only its open reads it").not.toContain("p1");
+    act(() => root!.unmount());
+    root = null;
+    expect(world.files).toEqual(["hold p1", "release p1"]);
+  });
+});
+
+describe("a member the phone cannot draw as words", () => {
+  it("says so in its card, stays unread on screen, and a press on its card or its square opens it alone", () => {
+    const page = { ...memberOf("p1", "Ada"), body: "", html: '<img src="https://pictures.fake.test/a.png">', wordless: true as const, ready: undefined };
+    world.mail = mailOf("p3", [page as unknown as ReturnType<typeof memberOf>, memberOf("p2", "Ben")]);
+    const el = mountReader("p3");
+    const panel = all(el).filter((x) => x.getAttribute("data-rn") === "Panel")[0]!;
+    expect(panel.textContent, "its card says what to do").toContain(Copy.readerMemberAsPage);
+    const inner = all(panel);
+    const v = views(el);
+    native.content = 18 + 150 + 34 + 118 + 34 + 180 + 100;
+    lay(v.scroll, { y: 0, height: 640 });
+    lay(v.padded, { y: 0, height: 640 });
+    lay(v.above, { y: 18, height: 270 });
+    lay(panel, { y: 0, height: 150 });
+    lay(inner.find((x) => src(x).includes("panelHeader")), { y: 18, height: 22 });
+    lay(inner.find((x) => src(x).includes("panelBody")), { y: 50, height: 0 });
+    lay(inner.find((x) => src(x).includes("panelEnd")), { y: 120, height: 0 });
+    const p2 = v.member("p2");
+    lay(p2.panel, { y: 152, height: 118 });
+    lay(p2.header, { y: 18, height: 22 });
+    lay(p2.body, { y: 50, height: 0 });
+    lay(p2.end, { y: 100, height: 0 });
+    lay(v.opened, { y: 18 + 270 + 34, height: 180 });
+    lay(v.from, { y: 0, height: 20 });
+    lay(v.obody, { y: 120, height: 0 });
+    lay(v.oend, { y: 180, height: 0 });
+    act(() => { native.props!.onContentSizeChange?.(360, native.content); });
+    flushNative();
+    pass(3000);
+    flushNative();
+    expect(world.glanced.flat(), "CONTROL: its neighbour read").toContain("p2");
+    expect(world.glanced.flat(), "on screen as a card, never read").not.toContain("p1");
+    expect(nav.pushed, "nothing opened yet").toEqual([]);
+    act(() => { panel.__props!.onPress(); });
+    expect(nav.pushed, "a press on its card opens it alone").toEqual(["/message/p1"]);
+    const square = el.querySelector<El>('[data-test="rail-p1"]')!;
+    act(() => { square.__props!.onPress(); });
+    expect(nav.pushed, "its square opens it too").toEqual(["/message/p1", "/message/p1"]);
+    act(() => { (el.querySelector<El>('[data-test="rail-p2"]')!).__props!.onPress(); });
+    expect(nav.pushed, "CONTROL: a drawn member's square only jumps").toHaveLength(2);
+    pass(3000);
+    expect(world.glanced.flat(), "the press is no read: the open's own rule reads it").not.toContain("p1");
   });
 });
 

@@ -162,6 +162,7 @@ export function Panel({
   radius,
   style,
   onLayout,
+  onPress,
 }: {
   children: ReactNode;
   level?: PanelLevel;
@@ -169,8 +170,13 @@ export function Panel({
   style?: StyleProp<ViewStyle>;
   /** Where the panel landed — the reader's scroll-to-read reads each member panel's place. */
   onLayout?: (e: LayoutChangeEvent) => void;
+  /** The whole card takes a press; its children stay their own for a screen reader, so one of them names the press. */
+  onPress?: () => void;
 }) {
   const t = useTheme();
+  if (onPress) {
+    return <Pressable accessible={false} style={[panelSurface(t, level, radius), style]} onLayout={onLayout} onPress={onPress}>{children}</Pressable>;
+  }
   return <View style={[panelSurface(t, level, radius), style]} onLayout={onLayout}>{children}</View>;
 }
 

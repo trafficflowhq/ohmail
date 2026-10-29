@@ -155,6 +155,7 @@ import {
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
 import { blobToBase64 } from "../mail/blob-base64";
+import { drawnText, htmlWords } from "../mail/html-words";
 import { logAttachmentRefusal, logLaunchReplay } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import type { LetterDoor } from "../compose/letter-store";
@@ -509,6 +510,8 @@ export type WorldEarlier = Held & {
   later?: true;
   /** Its body is final (full, withheld, protected): the read rule may take its end as its end. */
   ready?: true;
+  /** Its html holds no words it can draw: the card draws its files and a line that opens it, the reader asks their list, and only its own open reads it. */
+  wordless?: true;
   /** The account's own message: a hollow square, and no Mark unread. */
   mine?: true;
   /** Who wrote it, for its square's name in the reader's rail. */
@@ -813,7 +816,7 @@ function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: Mes
     ...(m.invitationWithoutEvent === true ? { invitationWithoutEvent: true as const } : {}),
     subject: m.subject,
     time: messageDisplayTime(m, v.now, v.zone, v.locale ?? "en"),
-    body: body.text,
+    body: drawnText(body.text, body.html),
     bodyState: body.state,
     ...(body.state === "withheld" && body.withheld ? { bodyWithheld: body.withheld } : {}),
     ...(isJunkHuskLeaving(body, physical) ? { bodyJunkLeaving: true as const } : {}),
@@ -2046,21 +2049,27 @@ export function liveMessage(
         ? member.to.map((a) => a.name || a.address).filter((n) => n.length > 0).join(", ")
         : "";
       const b = bodyOf(pres, member);
+      // With an html part, its html alone says whether it draws: a stored text can be a placeholder.
+      const wordless = !!b.html && htmlWords(b.html).trim() === "";
+      const body = wordless ? "" : drawnText(b.text, b.html);
+      const files = filesField(engine, member.id);
       return {
         id: member.id,
         subject: member.subject,
         time: messageDisplayTime(member, v.now, v.zone, v.locale ?? "en"),
-        body: b.text,
+        body,
         ...(b.html ? { html: b.html } : {}),
         seen: !member.unread,
         ...(isResurfaced(member) ? { resurfaced: true as const } : {}),
         ...(later ? { later: true as const } : {}),
-        ...(bodyReady(b.state, member) ? { ready: true as const } : {}),
+        ...(wordless ? { wordless: true as const } : {}),
+        // Word-less, nothing on screen is its body (its files are not): only its own open reads it.
+        ...(bodyReady(b.state, member) && !wordless ? { ready: true as const } : {}),
         ...(isOwnOutbound(member) ? { mine: true as const } : {}),
         sender: member.from.name || member.from.address,
         date: shownDateOf(member),
         ...(forwardedTo ? { face: Copy.forwardedTo(forwardedTo) } : {}),
-        ...filesField(engine, member.id),
+        ...files,
       };
     });
   // The reading view's own facts, attached here and not in `toMail`: a list row never pays
