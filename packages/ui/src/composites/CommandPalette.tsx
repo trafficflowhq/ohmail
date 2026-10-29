@@ -77,8 +77,12 @@ export function CommandPalette({
 
   if (!open) return null;
 
-  const q = query.trim().toLowerCase();
-  const items = commands.filter((c) => c.label.toLowerCase().includes(q));
+  // Word by word, so "go to ohbox" finds "Go to the Ohbox"; one word is the old substring match.
+  const words = query.trim().toLowerCase().split(/\s+/);
+  const items = commands.filter((c) => {
+    const label = c.label.toLowerCase();
+    return words.every((w) => label.includes(w));
+  });
   const selIdx = Math.min(sel, Math.max(0, items.length - 1));
 
   const run = (c: Command) => {

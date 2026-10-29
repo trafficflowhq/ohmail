@@ -141,6 +141,8 @@ export class PlaceKeeper {
   private view: PlaceView | null = null;
   private place: { key: string; rel: number } | null = null;
   private by: "app" | "person" = "app";
+  /** A begin drag with no end drag yet: a finger is on the list. */
+  private touching = false;
   private away = false;
   private holdUntil = 0;
   private tries = PLACE_TRIES;
@@ -183,12 +185,14 @@ export class PlaceKeeper {
 
   drag(): void {
     this.by = "person";
+    this.touching = true;
     this.holdUntil = 0;
   }
 
   /** The finger lifts; a glide may follow, and its landing ends the person's move. */
   lift(v: PlaceView): void {
     this.take(v);
+    this.touching = false;
     this.by = "app";
   }
 
@@ -196,9 +200,10 @@ export class PlaceKeeper {
     this.by = "person";
   }
 
+  /** A glide's end under a finger that caught it leaves the move the person's until the lift. */
   land(v: PlaceView): void {
     this.take(v);
-    this.by = "app";
+    if (!this.touching) this.by = "app";
   }
 
   scroll(v: PlaceView): void {

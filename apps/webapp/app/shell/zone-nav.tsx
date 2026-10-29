@@ -154,6 +154,11 @@ export function useZone(): Zone {
   return useSyncExternalStore(subscribe, currentZone, () => "list");
 }
 
+/** Whether the zone is `z` — re-renders the caller only when that answer flips. */
+export function useZoneIs(z: Zone): boolean {
+  return useSyncExternalStore(subscribe, () => zone === z, () => z === "list");
+}
+
 /**
  * FOCUS-BORDER-AS-CURSOR, THE MECHANISM (ohmarchy Phase 1) — the derived zone, REFLECTED ONTO THE DOCUMENT so CSS can
  * paint which tile the keys land in. The deep prototype does exactly this (`document.documentElement.dataset.tile`),
@@ -340,13 +345,12 @@ export interface ZoneNavConfig {
 }
 
 /**
- * Declare the zone model for the mounted view. Returns the live zone so the view can gate
- * its own bindings (`disabled: … || zone !== "list"`) — the counterpart of this hook gating
- * everything it registers on the same value.
+ * Declare the zone model for the mounted view. The view never re-renders for a zone change: the
+ * bindings are built at dispatch time from the live zone, and the registry republishes their
+ * shape when it moves. A view that gates its own keys on the zone reads {@link useZoneIs}.
  */
-export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
+export function useZoneNav(cfg: ZoneNavConfig = {}): void {
   const t = useTranslations("shortcuts");
-  const z = useZone();
 
   /* The mounted view owns the reader geography for as long as it is mounted. */
   const readerSelector = cfg.reader?.selector ?? null;
@@ -445,137 +449,139 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
     (b: KeyBinding): KeyBinding[] => [b, { ...b, chord: alias, inInput: false }];
   const left = lateralTwins("h");
   const right = lateralTwins("l");
-  const bindings: KeyBinding[] = [
-    ...left({
-      chord: "ArrowLeft",
-      group: "navigate",
-      label: t("zoneMenu"),
-      disabled: z !== "list",
-      run: enterRail,
-    }),
-    ...left({
-      chord: "ArrowLeft",
-      group: "navigate",
-      label: t("zoneList"),
-      disabled: z !== "reader",
-      // Gated: with the SHEET standing the zone is "reader" too, and "back to the list"
-      // would land real focus on a row behind a modal. The sheet's ← is nothing; its exit
-      // is Escape, which the shell's overlay ladder owns.
-      when: noReaderOverlay,
-      run: focusList,
-    }),
-    ...right({
-      chord: "ArrowRight",
-      group: "navigate",
-      label: t("zoneList"),
-      disabled: z !== "rail",
-      run: focusList,
-    }),
-    ...right({
-      chord: "ArrowRight",
-      group: "navigate",
-      label: t("zoneRead"),
-      disabled: z !== "list" || !cfg.reader || cfg.reader.disabled,
-      run: enterReader,
-    }),
-    {
-      chord: "ArrowUp",
-      group: "navigate",
-      label: t("zoneMenuUp"),
-      disabled: z !== "rail",
-      run: () => railStep(-1),
-    },
-    {
-      chord: "ArrowDown",
-      group: "navigate",
-      label: t("zoneMenuDown"),
-      disabled: z !== "rail",
-      run: () => railStep(1),
-    },
-    /* Escape walks back left, one zone per press. It is registered at `global` scope like
-       everything here, so every existing Escape wins first: the shell's overlay ladder
-       (anything open on top), then the view's own (cancel the bulk row, clear the picked
-       set) — this fires only when nothing nearer claimed the key. */
-    {
-      chord: "Escape",
-      group: "navigate",
-      label: t("zoneList"),
-      disabled: z !== "reader",
-      // Gated for ArrowLeft's reason — and the shell's overlay-scope Escape outranks this
-      // binding anyway while anything is open; the gate keeps the fallthrough honest.
-      when: noReaderOverlay,
-      run: focusList,
-    },
-    {
-      chord: "Escape",
-      group: "navigate",
-      label: t("zoneMenu"),
-      disabled: z !== "list",
-      run: enterRail,
-    },
-  ];
-
-  if (cfg.list) {
-    bindings.push(
+  const build = (z: Zone): KeyBinding[] => {
+    const bindings: KeyBinding[] = [
+      ...left({
+        chord: "ArrowLeft",
+        group: "navigate",
+        label: t("zoneMenu"),
+        disabled: z !== "list",
+        run: enterRail,
+      }),
+      ...left({
+        chord: "ArrowLeft",
+        group: "navigate",
+        label: t("zoneList"),
+        disabled: z !== "reader",
+        // Gated: with the SHEET standing the zone is "reader" too, and "back to the list"
+        // would land real focus on a row behind a modal. The sheet's ← is nothing; its exit
+        // is Escape, which the shell's overlay ladder owns.
+        when: noReaderOverlay,
+        run: focusList,
+      }),
+      ...right({
+        chord: "ArrowRight",
+        group: "navigate",
+        label: t("zoneList"),
+        disabled: z !== "rail",
+        run: focusList,
+      }),
+      ...right({
+        chord: "ArrowRight",
+        group: "navigate",
+        label: t("zoneRead"),
+        disabled: z !== "list" || !cfg.reader || cfg.reader.disabled,
+        run: enterReader,
+      }),
       {
         chord: "ArrowUp",
         group: "navigate",
-        label: cfg.list.up.label,
-        disabled: z !== "list" || cfg.list.up.disabled,
-        run: () => latest.current.list?.up.run(),
+        label: t("zoneMenuUp"),
+        disabled: z !== "rail",
+        run: () => railStep(-1),
       },
       {
         chord: "ArrowDown",
         group: "navigate",
-        label: cfg.list.down.label,
-        disabled: z !== "list" || cfg.list.down.disabled,
-        run: () => latest.current.list?.down.run(),
+        label: t("zoneMenuDown"),
+        disabled: z !== "rail",
+        run: () => railStep(1),
+      },
+      /* Escape walks back left, one zone per press. It is registered at `global` scope like
+         everything here, so every existing Escape wins first: the shell's overlay ladder
+         (anything open on top), then the view's own (cancel the bulk row, clear the picked
+         set) — this fires only when nothing nearer claimed the key. */
+      {
+        chord: "Escape",
+        group: "navigate",
+        label: t("zoneList"),
+        disabled: z !== "reader",
+        // Gated for ArrowLeft's reason — and the shell's overlay-scope Escape outranks this
+        // binding anyway while anything is open; the gate keeps the fallthrough honest.
+        when: noReaderOverlay,
+        run: focusList,
+      },
+      {
+        chord: "Escape",
+        group: "navigate",
+        label: t("zoneMenu"),
+        disabled: z !== "list",
+        run: enterRail,
+      },
+    ];
+
+    if (cfg.list) {
+      bindings.push(
+        {
+          chord: "ArrowUp",
+          group: "navigate",
+          label: cfg.list.up.label,
+          disabled: z !== "list" || cfg.list.up.disabled,
+          run: () => latest.current.list?.up.run(),
+        },
+        {
+          chord: "ArrowDown",
+          group: "navigate",
+          label: cfg.list.down.label,
+          disabled: z !== "list" || cfg.list.down.disabled,
+          run: () => latest.current.list?.down.run(),
+        },
+      );
+    }
+
+    /* Unconditional, unlike everything else the reader config guards: the STREAM views have no
+       reading column, but the full-screen sheet can stand over any view, and while it does the
+       zone is "reader" — a pair registered only under `cfg.reader` left the sheet unscrollable
+       exactly there. With no sheet and no geography the zone is never
+       "reader", so the pair stays declared-inert where it has nothing to scroll. */
+    /* `inInput` + the `when` below, together: a keyboard search can open a hit in place while
+       the search box keeps focus, so the typing target is a field BURIED UNDER the sheet — the
+       pair must claim ↑/↓ there or the visible reader cannot scroll at all.
+       A typing target INSIDE the sheet (an editor in the open message) keeps its native caret:
+       the `when` yields for it, and with no sheet standing it yields for every field. */
+    const scrollableTyping = (e: KeyboardEvent): boolean => {
+      /* The conversation's squares are a toolbar of their own: ↑/↓ walk it while focus is in it. */
+      if (e.target instanceof Element && e.target.closest(".thread-marks")) return false;
+      if (!isTypingTarget(e.target)) return true;
+      const el = e.target as HTMLElement;
+      return document.querySelector(READER_OVERLAY) != null && !el.closest(READER_OVERLAY);
+    };
+    bindings.push(
+      {
+        chord: "ArrowUp",
+        group: "navigate",
+        label: t("zoneScroll"),
+        disabled: z !== "reader",
+        inInput: true,
+        when: scrollableTyping,
+        run: () => scrollReader(-1),
+      },
+      {
+        chord: "ArrowDown",
+        group: "navigate",
+        label: t("zoneScroll"),
+        disabled: z !== "reader",
+        inInput: true,
+        when: scrollableTyping,
+        run: () => scrollReader(1),
       },
     );
-  }
-
-  /* Unconditional, unlike everything else the reader config guards: the STREAM views have no
-     reading column, but the full-screen sheet can stand over any view, and while it does the
-     zone is "reader" — a pair registered only under `cfg.reader` left the sheet unscrollable
-     exactly there. With no sheet and no geography the zone is never
-     "reader", so the pair stays declared-inert where it has nothing to scroll. */
-  /* `inInput` + the `when` below, together: a keyboard search can open a hit in place while
-     the search box keeps focus, so the typing target is a field BURIED UNDER the sheet — the
-     pair must claim ↑/↓ there or the visible reader cannot scroll at all.
-     A typing target INSIDE the sheet (an editor in the open message) keeps its native caret:
-     the `when` yields for it, and with no sheet standing it yields for every field. */
-  const scrollableTyping = (e: KeyboardEvent): boolean => {
-    /* The conversation's squares are a toolbar of their own: ↑/↓ walk it while focus is in it. */
-    if (e.target instanceof Element && e.target.closest(".thread-marks")) return false;
-    if (!isTypingTarget(e.target)) return true;
-    const el = e.target as HTMLElement;
-    return document.querySelector(READER_OVERLAY) != null && !el.closest(READER_OVERLAY);
+    return bindings;
   };
-  bindings.push(
-    {
-      chord: "ArrowUp",
-      group: "navigate",
-      label: t("zoneScroll"),
-      disabled: z !== "reader",
-      inInput: true,
-      when: scrollableTyping,
-      run: () => scrollReader(-1),
-    },
-    {
-      chord: "ArrowDown",
-      group: "navigate",
-      label: t("zoneScroll"),
-      disabled: z !== "reader",
-      inInput: true,
-      when: scrollableTyping,
-      run: () => scrollReader(1),
-    },
-  );
 
   /* Optional registration: the split views are also mounted with no keymap at all (bare
      view tests, keyboard-less hosts), where the zone model is simply absent — see the
      variant's own docs in `keymap.tsx`. Under the app's provider it registers exactly as
      `useKeyBindings` would. */
-  useOptionalKeyBindings(bindings, "global");
-  return z;
+  useOptionalKeyBindings(() => build(zone), "global", subscribe);
 }

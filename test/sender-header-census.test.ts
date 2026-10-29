@@ -109,7 +109,7 @@ const CLASSIFIED: Record<string, Row> = {
   },
   "packages/core/src/pipeline.ts": {
     terms: ["messageIdHeader"], classes: ["dedup-content", "thread-key-at-ingest"],
-    why: "the dual-key lookup verifies stored CONTENT before collapsing; the own-authored twin arm is gated on `Change.ownAuthored` and adopts only a row with a Sent instance; the same value goes to `resolveThread`; a delivery report is lifted only by `citesOwnWriting`",
+    why: "the dual-key lookup verifies stored CONTENT before collapsing; the own-authored twin arm is gated on `Change.ownAuthored` and adopts only a row with a Sent instance; a copy dated apart joins only when every other fingerprinted field agrees and the arrival or the row is from Sent; the same value goes to `resolveThread`; a delivery report is lifted only by `citesOwnWriting`",
   },
   "packages/core/src/message-search.ts": {
     terms: ["ccAddresses", "toAddresses"], classes: ["display"],
@@ -117,7 +117,7 @@ const CLASSIFIED: Record<string, Row> = {
   },
   "packages/core/src/ports.ts": {
     terms: ["messageIdHeader", "references"], classes: ["display", "dedup-content", "threading-corroborated"],
-    why: "`StoredMessage`'s field, the `findByMessageIdHeader` port the own-authored arm calls (a row with a Sent instance only), and `isCorrespondent`'s references — answered only against a copy in our own Sent folder, `named` when its To/Cc names that sender",
+    why: "`StoredMessage`'s field, the `findByMessageIdHeader` port step 3 calls (candidates only: a row with a Sent instance, or one whose content agrees but for the Date), and `isCorrespondent`'s references — answered only against a copy in our own Sent folder, `named` when its To/Cc names that sender",
   },
   "packages/core/src/types.ts": {
     terms: ["messageIdHeader"], classes: ["display"],
@@ -151,7 +151,7 @@ const CLASSIFIED: Record<string, Row> = {
   "packages/core/src/adapters/drizzle-repo.ts": {
     terms: ["ccAddresses", "messageIdHeader", "references", "toAddresses"],
     classes: ["display", "dedup-content", "threading-corroborated"],
-    why: "the store: writes the columns, serves `findByMessageIdHeader` account- and mailbox-scoped to a row with a Sent instance, and hands `isCorrespondent`'s and `citesOwnWriting`'s ids to the one predicate",
+    why: "the store: writes the columns, serves `findByMessageIdHeader` account- and mailbox-scoped with each row's Date and Sent instance, and hands `isCorrespondent`'s and `citesOwnWriting`'s ids to the one predicate",
   },
   "packages/core/src/adapters/blank-rows.ts": {
     terms: ["messageIdHeader", "toAddresses"], classes: ["dedup-content"],
@@ -343,7 +343,7 @@ const RULE_NAMES = [
  * WHO MAY ASK WHICH LOOKUP, by CALL — `file#function` and how often, parsed, never by mention. Each
  * turns an id or a reference a stranger writes into an answer about the account, and each is safe
  * only where it is bounded: `findThreadParent` (any row of the account) groups a thread and decides
- * no consent; `findByMessageIdHeader` adopts only for an own-authored create; `citesOwnWriting` is
+ * no consent; `findByMessageIdHeader` adopts only a copy the Sent folder vouches for; `citesOwnWriting` is
  * the bounce arm's own question; `messagesCitingOwnWriting` is the retro's, message by message, and
  * `sendersAnsweringOwnWriting` asks every held message for the act and the retro; the correspondent
  * predicate answers the gate, the retro, the act, the suggestions and the press's signal. A new

@@ -1,5 +1,8 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
@@ -188,6 +191,22 @@ async function render(): Promise<HTMLElement> {
 const text = (el: HTMLElement): string => el.textContent ?? "";
 const mounted = (el: HTMLElement): boolean => text(el).includes("Ohbox");
 const dialog = (el: HTMLElement): boolean => text(el).includes(DOOR_COPY.cloudTitle);
+/**
+ * THE CARD HOLDS THE KEYBOARD: focus stands inside `card` (the in-session dialog, or the whole
+ * page at launch), and no Tab stop outside it is reachable (outside an `[inert]` subtree). The
+ * in-session dialog also claims the page and is described by `cause`, so a reader says why.
+ */
+function holdsFocus(card: Element | null, cause: string, where: string): void {
+  expect(card, `${where}: no card`).not.toBeNull();
+  expect(card!.contains(document.activeElement), `${where}: focus is on ${document.activeElement?.tagName}`).toBe(true);
+  const outside = [...document.body.querySelectorAll<HTMLElement>("*")].filter((n) =>
+    n.tabIndex >= 0 && !(n as HTMLButtonElement).disabled && !card!.contains(n) && n.closest("[inert]") === null);
+  expect(outside.map((n) => n.outerHTML.slice(0, 60)), `${where}: Tab reaches the mail behind the card`).toEqual([]);
+  if (!card!.matches(".session-end")) return;
+  expect(card!.getAttribute("aria-modal")).toBe("true");
+  const said = (card!.getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+  expect(said, `${where}: the dialog's description`).toContain(cause);
+}
 /** The engine-down notice — never the answer to a refused Cloud session. */
 const engineDown = (el: HTMLElement): boolean => text(el).includes(DOOR_COPY.gateCannotOpen);
 const RETRYING = (messages as { sync: { failing: string } }).sync.failing;
@@ -284,6 +303,7 @@ describe("the gate over each session state", () => {
     expect(dialog(el)).toBe(true);
     expect(text(el)).toContain(DOOR_COPY.cloudLeadRevoked(machineWord()));
     expect(text(el)).not.toContain(DOOR_COPY.cloudLeadSignIn(machineWord()));
+    holdsFocus(el, DOOR_COPY.cloudLeadRevoked(machineWord()), "relaunch");
   });
 });
 
@@ -342,6 +362,21 @@ describe("a session refused while the mail is on screen", () => {
     expect(mounted(el), "the mail on screen was taken away").toBe(true);
     expect(engineDown(el)).toBe(false);
     expect(text(el)).not.toContain(RETRYING);
+    holdsFocus(el.querySelector(".session-end"), DOOR_COPY.cloudLeadRevoked(machineWord()), "in-session");
+  });
+
+  it("gives focus back to where it stood once the session is live again and the card closes", async () => {
+    const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true });
+    const el = await render();
+    const stood = el.querySelector<HTMLElement>(".shell button")!;
+    stood.focus();
+    shell.move({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_revoked", 0) });
+    expect(await within(2_000, () => dialog(el))).not.toBeNull();
+    expect(el.querySelector(".session-end")!.contains(document.activeElement)).toBe(true);
+    shell.move({ signedIn: true, sessionExpired: false, session: reading("live", null) });
+    expect(await within(2_000, () => el.querySelector(".session-end") === null)).not.toBeNull();
+    expect([...el.querySelectorAll(".app-root, .app-root ~ *")].filter((n) => n.hasAttribute("inert")), "the mail stayed inert").toEqual([]);
+    expect(document.activeElement).toBe(stood);
   });
 
   it("the positive control: with the session still live nothing opens, however long it is held", async () => {
@@ -376,6 +411,7 @@ describe("a paired install removed on the other computer", () => {
     expect(dialog(el), "the hosted password form is not this door's way back").toBe(false);
     expect(buttons(el, DOOR_COPY.gatePairAgain)).toHaveLength(1);
     expect(buttons(el, DOOR_COPY.gateOwn)).toHaveLength(1);
+    holdsFocus(el.querySelector(".session-end"), unpaired(), "paired, in-session");
   });
 
   it("Pair again opens the pairing door over the kept mail, and the card steps aside", async () => {
@@ -489,10 +525,112 @@ describe("the reuse sweeps a new sign-in is told of", () => {
     expect(mounted(el)).toBe(true);
   });
 
+  it("OK in a browser takes it away in this window at its next return: the session read lists none", async () => {
+    const answer = hosted([SWEEP]);
+    const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { hosted: answer });
+    const el = await render();
+    expect(await within(2_000, () => okButton(el) !== undefined), "the strip never came").not.toBeNull();
+    delete answer.reuseSweeps;
+    // Past the return debounce, then back to the window.
+    await act(async () => { await new Promise((r) => setTimeout(r, 1_600)); });
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(await within(2_000, () => okButton(el) === undefined), "the notice outlived the read").not.toBeNull();
+    expect(shell.acks(), "this window acknowledged nothing").toEqual([]);
+    expect(mounted(el)).toBe(true);
+  });
+
   it("the control: nothing listed, nothing drawn", async () => {
     fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { hosted: hosted() });
     const el = await render();
     expect(mounted(el)).toBe(true);
     expect(okButton(el)).toBeUndefined();
+  });
+});
+
+/**
+ * THE CARD FITS THE WINDOW, IN-SESSION AS AFTER A RELAUNCH. The in-session card was drawn ~75px
+ * wide (`.join-card` is an inline-size container and its `.gate` shrank to fit it), the buttons a
+ * thousand pixels below a 900px window; and over a window that had read no mail it stood over an
+ * empty list while saying the copy is where you left it. The gate's markup, laid out in Chromium
+ * under the window's stylesheets: the same card both ways, whole, and over mail only when there is mail.
+ */
+describe("the refused card in the window", () => {
+  const SHEETS = [
+    "packages/tokens/src/tokens.css", "packages/tokens/src/faces.css", "packages/tokens/src/ohmarchy.css",
+    "packages/ui/src/base.css", "packages/ui/src/primitives/button.css", "packages/ui/src/primitives/text-field.css",
+    "packages/ui/src/primitives/toast.css", "packages/ui/src/primitives/spinner.css",
+    "apps/webapp/app/app.css", "apps/webapp/app/zero-layout.css",
+  ].map((p) => readFileSync(resolve(process.cwd(), p), "utf8")).join("\n");
+  const WINDOWS = [[1440, 900], [1024, 768]] as const;
+  type Reading = { card: { x: number; y: number; width: number; height: number }; button: { y: number; height: number }; alpha: number };
+  let browser: Awaited<ReturnType<typeof import("@playwright/test")["chromium"]["launch"]>> | null = null;
+
+  beforeAll(async () => {
+    const { chromium } = createRequire(resolve(process.cwd(), "package.json"))("@playwright/test") as typeof import("@playwright/test");
+    browser = await chromium.launch();
+  }, 120_000);
+  afterAll(async () => { await browser?.close(); });
+
+  /** The window's markup at `width`×`height`: the card's box, its Sign in button, the layer's opacity. */
+  async function measure(html: string, width: number, height: number): Promise<Reading> {
+    const page = await browser!.newPage({ viewport: { width, height } });
+    try {
+      await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${SHEETS}</style>
+        <style>*{animation:none!important}</style></head><body class="mo-canvas app-body"><div id="root">${html}</div></body></html>`);
+      const card = page.locator(".gate-card").last();
+      const layer = await page.evaluate(() => {
+        const at = document.querySelector(".session-end");
+        return at ? getComputedStyle(at).backgroundColor : "none";
+      });
+      const alpha = /\/\s*([\d.]+)\)$/.exec(layer)?.[1] ?? /rgba\([^)]*,\s*([\d.]+)\)$/.exec(layer)?.[1];
+      return {
+        card: (await card.boundingBox())!,
+        button: (await card.getByRole("button", { name: "Sign in", exact: true }).boundingBox())!,
+        alpha: alpha === undefined ? 1 : Number(alpha),
+      };
+    } finally {
+      await page.close();
+    }
+  }
+  const reused = () => ({ ...reading("refused", "refresh_revoked", 0), cause: "reuse" });
+  function fits(r: Reading, width: number, height: number, where: string): void {
+    expect(r.card.width, `${where}: the card is ${r.card.width}px wide`).toBeGreaterThanOrEqual(400);
+    expect(r.card.x, where).toBeGreaterThanOrEqual(0);
+    expect(r.card.x + r.card.width, where).toBeLessThanOrEqual(width);
+    expect(Math.abs(r.card.x + r.card.width / 2 - width / 2), `${where}: off centre`).toBeLessThanOrEqual(8);
+    expect(r.button.y + r.button.height, `${where}: Sign in below the window`).toBeLessThanOrEqual(height);
+  }
+
+  it("after a relaunch, the card the in-session one is held to", { timeout: 60_000 }, async () => {
+    fakeShell({ signedIn: false, sessionExpired: false, session: { ...reused(), state: "refused_before" } });
+    const el = await render();
+    expect(text(el)).toContain(DOOR_COPY.cloudLeadReused(machineWord()));
+    for (const [w, hgt] of WINDOWS) fits(await measure(el.innerHTML, w, hgt), w, hgt, `relaunch ${w}x${hgt}`);
+  });
+
+  it("refused before the window read any mail: the same card, whole, on the window's own page", { timeout: 60_000 }, async () => {
+    fakeShell({ signedIn: false, sessionExpired: true, session: reused() }, { reads: 409 });
+    const el = await render();
+    expect(dialog(el)).toBe(true);
+    expect(text(el)).toContain(DOOR_COPY.cloudLeadReused(machineWord()));
+    for (const [w, hgt] of WINDOWS) {
+      const r = await measure(el.innerHTML, w, hgt);
+      fits(r, w, hgt, `in-session ${w}x${hgt}`);
+      expect(r.alpha, "an empty list showed through behind 'the copy of your mail here is where you left it'").toBe(1);
+    }
+  });
+
+  it("refused over mail this launch read: the same card, whole, the mail kept in view", { timeout: 60_000 }, async () => {
+    const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true });
+    const el = await render();
+    await within(500, () => false);
+    shell.move({ signedIn: false, sessionExpired: true, session: reused() });
+    expect(await within(2_000, () => dialog(el))).not.toBeNull();
+    expect(mounted(el)).toBe(true);
+    for (const [w, hgt] of WINDOWS) {
+      const r = await measure(el.innerHTML, w, hgt);
+      fits(r, w, hgt, `over mail ${w}x${hgt}`);
+      expect(r.alpha, "the scrim hid the mail it is there to keep").toBeLessThan(1);
+    }
   });
 });

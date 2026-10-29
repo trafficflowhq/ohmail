@@ -146,30 +146,33 @@ const NO_HOSTED_SESSION: HostedSessionRead = { accountId: null, reuseSweeps: [] 
 
 /**
  * The hosted account's id, for Help & contact's diagnostics, and the reuse sweeps this sign-in is
- * told of: one `GET /auth/session`, forwarded on the account door. Nothing on any other door and
- * until the account answers; never an address.
+ * told of: one `GET /auth/session`, forwarded on the account door, and again on `recheck` (the
+ * notice asks while shown). Nothing on any other door and until the account answers; never an address.
  */
-export function useHostedSession(accountDoor: boolean): HostedSessionRead {
+export function useHostedSession(accountDoor: boolean): HostedSessionRead & { recheck: () => Promise<void> } {
   const [read, setRead] = useState<HostedSessionRead>(NO_HOSTED_SESSION);
+  const door = useRef(0);
+  const ask = useCallback(async (): Promise<void> => {
+    const mine = door.current;
+    try {
+      const res = await bridgeFetch("/auth/session");
+      const body = res.ok
+        ? ((await res.json()) as { user?: { accountId?: unknown }; reuseSweeps?: unknown } | null)
+        : null;
+      const named = body?.user?.accountId;
+      if (door.current === mine && typeof named === "string" && named !== "") {
+        setRead({ accountId: named, reuseSweeps: reuseSweepLinesOf(body?.reuseSweeps) });
+      }
+    } catch { /* no answer: the block keeps what it said */ }
+  }, []);
   useEffect(() => {
+    door.current += 1;
     setRead(NO_HOSTED_SESSION);
     if (!accountDoor) return undefined;
-    let live = true;
-    void (async () => {
-      try {
-        const res = await bridgeFetch("/auth/session");
-        const body = res.ok
-          ? ((await res.json()) as { user?: { accountId?: unknown }; reuseSweeps?: unknown } | null)
-          : null;
-        const named = body?.user?.accountId;
-        if (live && typeof named === "string" && named !== "") {
-          setRead({ accountId: named, reuseSweeps: reuseSweepLinesOf(body?.reuseSweeps) });
-        }
-      } catch { /* no answer: the block says none */ }
-    })();
-    return () => { live = false; };
-  }, [accountDoor]);
-  return read;
+    void ask();
+    return () => { door.current += 1; };
+  }, [accountDoor, ask]);
+  return { ...read, recheck: ask };
 }
 
 /** Nothing drawn yet. */

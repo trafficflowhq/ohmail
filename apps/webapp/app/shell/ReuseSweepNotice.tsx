@@ -4,6 +4,10 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { fullDateTime } from "./format";
 import type { ReuseSweepLine } from "./reuse-sweeps";
+import { RETURN_DEBOUNCE_MS } from "./wall-lift";
+
+/** How often a shown notice asks the session again: OK on another device ends it here too. */
+export const REUSE_RECHECK_MS = 5 * 60_000;
 
 type ClientKey =
   | "reuseClientWeb" | "reuseClientLinux" | "reuseClientMac" | "reuseClientWindows" | "reuseClientPhone"
@@ -24,11 +28,14 @@ const CLIENT_KEY = new Map<string, ClientKey>([
  * THE SIGN-INS OHMAIL ENDED BECAUSE AN OLDER COPY USED THEM AGAIN (`GET /auth/session`'s
  * `reuseSweeps`), in the shell's account slot until OK: one quiet line, the list and the advice
  * under Details. OK acknowledges every listed sweep and hides it at once; the host's
- * `onAcknowledge` (the API, or the desktop's bridge) rejecting puts it back.
+ * `onAcknowledge` (the API, or the desktop's bridge) rejecting puts it back. While shown, the host's
+ * `onRecheck` reads the session again on a return to the window and on {@link REUSE_RECHECK_MS}; an
+ * answer listing none takes the notice away.
  */
-export function ReuseSweepNotice({ sweeps, onAcknowledge }: {
+export function ReuseSweepNotice({ sweeps, onAcknowledge, onRecheck }: {
   sweeps: readonly ReuseSweepLine[];
   onAcknowledge: (ids: string[]) => Promise<unknown>;
+  onRecheck?: () => Promise<unknown>;
 }) {
   const t = useTranslations("settings");
   const [pressed, setPressed] = useState<ReadonlySet<string>>(() => new Set());
@@ -38,6 +45,24 @@ export function ReuseSweepNotice({ sweeps, onAcknowledge }: {
   useEffect(() => {
     alive.current = true;
     return () => { alive.current = false; };
+  }, []);
+  const recheck = useRef(onRecheck);
+  useEffect(() => { recheck.current = onRecheck; });
+  useEffect(() => {
+    let last = Date.now();
+    const ask = (): void => {
+      if (document.visibilityState !== "visible" || Date.now() - last < RETURN_DEBOUNCE_MS) return;
+      last = Date.now();
+      void recheck.current?.()?.catch(() => undefined);
+    };
+    const clock = setInterval(ask, REUSE_RECHECK_MS);
+    window.addEventListener("focus", ask);
+    document.addEventListener("visibilitychange", ask);
+    return () => {
+      clearInterval(clock);
+      window.removeEventListener("focus", ask);
+      document.removeEventListener("visibilitychange", ask);
+    };
   }, []);
 
   const shown = sweeps.filter((s) => !pressed.has(s.id));

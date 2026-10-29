@@ -559,6 +559,34 @@ describe("a forward whose original cannot be loaded is refused; an html-only one
     expect(msg.html).toBeUndefined();
     expect(msg.text).toContain("Join the meeting (https://meet.example/j/9876543210)");
   });
+
+  it("an html-only original with a long newline run in a <pre> forwards in linear time", async () => {
+    const w = await world({ origHtml: `<pre>a${"\n".repeat(100_000)}b</pre>` });
+    await w.db.update(messageBodies).set({ text: "" }).where(eq(messageBodies.messageId, w.originalId));
+    const send = sendSpy();
+    const fetch = fetchSpy({});
+    const started = performance.now();
+    const res = await sendService.send(w.ctx, w.draftId, "fwd-key-newlines", { openSendAdapter: send.openSendAdapter, openFetchAdapter: fetch.openFetchAdapter },
+      { forwardOf: w.originalId });
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(res.status).toBe("sent");
+    expect(send.delivered[0]!.text).toContain(`a${"\n".repeat(100_000)}b`);
+  });
+
+  it("an html-only original nesting thousands of quotes forwards a text part linear in its size", async () => {
+    const origHtml = `${"<blockquote>".repeat(3_000)}<pre>${"x\n".repeat(100_000)}</pre>`;
+    const w = await world({ origHtml });
+    await w.db.update(messageBodies).set({ text: "" }).where(eq(messageBodies.messageId, w.originalId));
+    const send = sendSpy();
+    const fetch = fetchSpy({});
+    const started = performance.now();
+    const res = await sendService.send(w.ctx, w.draftId, "fwd-key-deep-quotes", { openSendAdapter: send.openSendAdapter, openFetchAdapter: fetch.openFetchAdapter },
+      { forwardOf: w.originalId });
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(res.status).toBe("sent");
+    expect(send.delivered[0]!.text.length).toBeLessThan(40 * origHtml.length);
+    expect(send.delivered[0]!.text).toContain(`${"> ".repeat(32)}x\n`);
+  });
 });
 
 /**

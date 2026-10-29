@@ -9,7 +9,7 @@
  * setting on this door; `503` = out of reach — a pane vanishing for both loses filled words.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsNote, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
 
@@ -31,6 +31,7 @@ import {
   type ScreeningPreference,
   type ScreeningRead,
 } from "./local-screening.js";
+import { useWindowReturn } from "./window-return.js";
 
 export function DesktopScreening({
   /** Which door this install came in by. `null` while the shell has not answered yet. */
@@ -81,6 +82,17 @@ export function DesktopScreening({
     return () => { cancelled = true; };
   }, [door, heard]);
 
+  /* A value changed on another device reaches the open pane; never over a save in flight. */
+  const saving = useRef(false);
+  const reread = useCallback(() => {
+    if (door === null || saving.current) return;
+    void readScreening().then(
+      (r) => { if (r.state === "ready" && !saving.current) { setRead(r); setWatched(r.pref); } },
+      () => undefined,
+    );
+  }, [door]);
+  useWindowReturn(reread);
+
   if (read === null || read.state === "not-served") return null;
 
   if (read.state === "offline") {
@@ -106,10 +118,11 @@ export function DesktopScreening({
   const apply = (patch: Partial<ScreeningPreference>): void => {
     if (pending) return;
     setPending(true);
+    saving.current = true;
     setFailed(false);
     void saveScreening(patch).then(
-      (landed) => { setRead({ state: "ready", pref: landed }); heard(landed, true); setPending(false); },
-      () => { change.clear(); setFailed(true); setPending(false); },
+      (landed) => { saving.current = false; setRead({ state: "ready", pref: landed }); heard(landed, true); setPending(false); },
+      () => { saving.current = false; change.clear(); setFailed(true); setPending(false); },
     );
   };
 

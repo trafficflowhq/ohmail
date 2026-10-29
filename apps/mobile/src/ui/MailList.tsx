@@ -160,6 +160,62 @@ function Cell({ children, onLayout, style, item, onFocusCapture }: CellRendererP
   );
 }
 
+/** A glide begun is taken as over once the list has sent no scroll report for this long. */
+export const GLIDE_STILL_MS = 300;
+
+type GlideProps = Pick<ScrollViewProps, "onScroll" | "onScrollBeginDrag" | "onScrollEndDrag" | "onMomentumScrollBegin" | "onMomentumScrollEnd">;
+
+/**
+ * EVERY GLIDE ENDS. Android never ends a glide that its next touch cancels (fast flings toward the top
+ * with the list already there, the touch then taken by the pull to refresh), and React Native's
+ * ScrollView takes every press inside it as stopping a glide that began and has not ended: the rows
+ * stayed dead until the list was scrolled again. A glide with no scroll report for `GLIDE_STILL_MS`
+ * is ended here, through the ScrollView's own end handler, a finger on the list or not: a touch the
+ * pull to refresh takes sends a begin drag and never its end drag. A finger moving the list keeps
+ * the reports coming; one held still meets an end that leaves the move its own until the lift
+ * (`PlaceKeeper.land`).
+ */
+function useGlideEnds(ref: Ref<ScrollView> | undefined, own: GlideProps) {
+  const at = useRef(own);
+  at.current = own;
+  const view = useRef<ScrollView | null>(null);
+  const g = useRef({ open: false, last: null as NativeScrollEvent | null, timer: undefined as ReturnType<typeof setTimeout> | undefined });
+  useEffect(() => () => clearTimeout(g.current.timer), []);
+  return useMemo(() => {
+    const s = g.current;
+    const wait = (e: ScrollEv) => {
+      s.last = e.nativeEvent;
+      clearTimeout(s.timer);
+      s.timer = s.open ? setTimeout(end, GLIDE_STILL_MS) : undefined;
+    };
+    const onMomentumScrollEnd = (e: ScrollEv) => {
+      s.open = false;
+      clearTimeout(s.timer);
+      at.current.onMomentumScrollEnd?.(e);
+    };
+    const end = () => {
+      if (!s.open || s.last === null) return;
+      const e = { nativeEvent: { ...s.last, velocity: { x: 0, y: 0 } } } as ScrollEv;
+      // Not public: the ScrollView's press check reads when its own handler last saw an end.
+      const sv = view.current?.getScrollResponder?.() as { _handleMomentumScrollEnd?: (e: ScrollEv) => void } | undefined;
+      if (typeof sv?._handleMomentumScrollEnd === "function") sv._handleMomentumScrollEnd(e);
+      else onMomentumScrollEnd(e);
+    };
+    return {
+      glideRef: (v: ScrollView | null) => {
+        view.current = v;
+        if (typeof ref === "function") ref(v);
+        else if (ref) (ref as { current: ScrollView | null }).current = v;
+      },
+      onScroll: (e: ScrollEv) => { if (s.open) wait(e); at.current.onScroll?.(e); },
+      onScrollBeginDrag: (e: ScrollEv) => { if (s.open) wait(e); at.current.onScrollBeginDrag?.(e); },
+      onScrollEndDrag: (e: ScrollEv) => { if (s.open) wait(e); at.current.onScrollEndDrag?.(e); },
+      onMomentumScrollBegin: (e: ScrollEv) => { s.open = true; wait(e); at.current.onMomentumScrollBegin?.(e); },
+      onMomentumScrollEnd,
+    };
+  }, [ref]);
+}
+
 /**
  * The scroll view with the panel surface as its content's FIRST child — behind every cell. The
  * native hold starts at the first cell after the head (`anchorFrom` children in), whatever index
@@ -173,10 +229,12 @@ function SurfacedScroll({
   ...rest
 }: ScrollViewProps & { ref?: Ref<ScrollView>; surface: ReactNode }) {
   const anchorFrom = (surface !== null ? 1 : 0) + 1;
+  const { glideRef, ...ends } = useGlideEnds(ref, rest);
   return (
     <ScrollView
-      ref={ref}
+      ref={glideRef}
       {...rest}
+      {...ends}
       maintainVisibleContentPosition={hold ? { ...hold, minIndexForVisible: anchorFrom } : hold}
     >
       {surface}

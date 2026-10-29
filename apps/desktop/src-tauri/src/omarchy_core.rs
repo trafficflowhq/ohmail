@@ -87,6 +87,40 @@ fn read_capped(path: &Path, cap: u64) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+/// What the window may say about a staged theme it could not map, each code with the words the
+/// log line carries: a closed vocabulary, so no text from the page reaches the log.
+pub const REFUSALS: &[(&str, &str)] = &[
+    ("no-palette", "its colors.toml has no readable background and foreground"),
+    ("missing-accent", "missing accent"),
+    ("missing-red", "missing red (and color1)"),
+    ("not-a-color", "a color that is not 6-digit hex"),
+    ("floor-ink", "its text misses the 4.5:1 contrast floor"),
+    ("floor-accent", "its accent misses the contrast floor"),
+    ("floor-on-accent", "text on its accent misses the 4.5:1 contrast floor"),
+    ("floor-danger", "its red misses the 4.5:1 contrast floor"),
+    ("floor-tag", "a tag color misses the 4.5:1 contrast floor"),
+];
+
+/// The staged theme's name, as `theme.name` holds it.
+pub fn theme_name(current: &Path) -> Option<String> {
+    read_capped(&current.join("theme.name"), NAME_MAX)
+}
+
+/// The log line for a refused theme, or `None` for a code outside [`REFUSALS`]. A name that is
+/// not a plain slug is left out rather than written.
+pub fn refusal_line(name: Option<&str>, code: &str) -> Option<String> {
+    let why = REFUSALS.iter().find(|entry| entry.0 == code)?.1;
+    let slug = name.map(str::trim).filter(|n| {
+        !n.is_empty()
+            && n.len() <= 64
+            && n.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    });
+    Some(match slug {
+        Some(slug) => format!("omarchy theme \"{slug}\" refused: {why}; the window keeps its last theme"),
+        None => format!("omarchy theme refused: {why}; the window keeps its last theme"),
+    })
+}
+
 /// Past this many staged Hyprland toggles the directory is not Omarchy's.
 const TOGGLES_MAX: usize = 64;
 

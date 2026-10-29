@@ -64,6 +64,17 @@ describe("useCommandPalette + CommandPalette", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("matches a phrase word by word, so 'go to ohbox' finds 'Go to the Ohbox'", () => {
+    const run = vi.fn();
+    render(<Harness commands={[{ id: "o", label: "Go to the Ohbox", run }, { id: "n", label: "Go to News", run: vi.fn() }]} />);
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    const input = screen.getByPlaceholderText("Type a command…");
+    fireEvent.change(input, { target: { value: "go to ohbox" } });
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Go to the Ohbox"]);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it("lists a disabled command, refuses to run it, and does not close on it", () => {
     // A command whose target is absent stays in the list — a row that vanishes with the
     // cursor is a row nobody learns — and says so, the way the `?` sheet dims a `disabled`

@@ -60,10 +60,10 @@ import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden, watchNarrow } from "../shell/narrow";
-import { afterPaint } from "../shell/visit";
+import { afterPaint, whenQuiet } from "../shell/visit";
 import { useRowMenuFit } from "../shell/row-menu-fit";
 import { useListWindow } from "../shell/list-window";
-import { HELD_ANCHOR_PAD_PX, heldAnchorTop, heldAnchored, useHeldWindow } from "../shell/held-window";
+import { HELD_ANCHOR_PAD_PX, HELD_OPENING, heldAnchorTop, heldAnchored, useHeldWindow } from "../shell/held-window";
 import { linkHref, useRenderedLinks } from "../shell/rendered-links";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
@@ -117,6 +117,37 @@ function reasonValues(ai: NonNullable<ScreenerSenderDTO["ai"]>): Record<string, 
     brand: ai.reasonBrand ?? "",
     count: ai.reasonCount === undefined ? "" : String(ai.reasonCount),
   };
+}
+
+/** A waiting row's AI chip, or nothing: the list's rows and the primer's draw it from here. */
+function aiSuggestionOf(
+  w: ScreenerSenderDTO,
+  t: (k: string, v?: Record<string, string>) => string,
+  piles: Record<DecisionDestination, string>,
+) {
+  if (!w.ai) return undefined;
+  return w.ai.noAnswer
+    ? // THE NON-ANSWER, as a sentence and nothing else. This was
+      // `destLabel: "No answer", confidence: 0` — rendered "→ Keine Antwort 0.00",
+      // a destination chip for a decision nobody made, over a number that measured
+      // nothing. The sentence names the reason and the way out (`aiSkipRow.*`).
+      { note: t(`aiSkipRow.${w.ai.noAnswer}`) }
+    : {
+        // `screener` is in no pile table — the five there are the five a decision can
+        // FILE to, and this is the one that files nothing. The `?? w.ai.dest` fallback
+        // would print the raw view key "screener" in the row.
+        destLabel: w.ai.dest === "screener"
+          ? t("aiHoldChip")
+          : piles[w.ai.dest as DecisionDestination] ?? w.ai.dest,
+        confidence: w.ai.confidence,
+        // WHAT OHMAIL CHECKED, said on the row itself. The chip's own words come from
+        // the catalogue by CODE — the server sends a code and two facts of its own (a
+        // brand out of our dictionary, a count we measured), never a sentence, so this
+        // reads in the reader's language and can never print a stranger's text.
+        ...(w.ai.reasonCode
+          ? { reason: t(`aiReasonChip.${w.ai.reasonCode}`, reasonValues(w.ai)) }
+          : {}),
+      };
 }
 
 function pileList(dests: DecisionDestination[], t: (k: string, v?: Record<string, string>) => string): string {
@@ -1026,6 +1057,18 @@ export function ScreenerView({
     if (bodies) return;
     return afterPaint(readRef.current, () => startTransition(() => setBodiesFor(anchorKey)));
   }, [anchorKey, bodies]);
+  /* THE OTHER SEGMENTS' SHAPES, DRAWN ONCE BEFORE ANYBODY ASKS. A segment's first click paid for
+     WebKit's first style pass over its row and letter shapes, the larger part of that click on the
+     desktop. Once the queue has settled, the first row and the letters' heads of each segment not on
+     screen are drawn hidden for one frame (`ScreenerPrimer`), and nothing is asked for them. */
+  const [prime, setPrime] = useState<"no" | "on" | "done">("no");
+  const primeSegs = (["screened", "spam"] as const).filter((s) => s !== segment
+    && (s === "screened" ? state.screenedOut.length > 0 : junk === undefined && state.spam.length > 0));
+  const primeReady = state.queueSettled && primeSegs.length > 0;
+  useEffect(() => {
+    if (prime === "done" || (prime === "no" && !primeReady)) return;
+    return afterPaint(listScrollerRef.current, () => startTransition(() => setPrime(prime === "no" ? "on" : "done")));
+  }, [prime, primeReady]);
   /**
    * THE MOUNTED LETTERS (`held-window.ts`): the newest few on entry, older ones as the reader
    * scrolls up to them. Counts, captions and decisions read the whole bag; what is drawn, asked
@@ -1498,32 +1541,7 @@ export function ScreenerView({
               ? t("rowNotSaved")
               : notAppliedFor(w) !== undefined ? t("rowNotApplied") : undefined
           }
-          aiSuggestion={
-            w.ai
-              ? w.ai.noAnswer
-                ? // THE NON-ANSWER, as a sentence and nothing else. This was
-                  // `destLabel: "No answer", confidence: 0` — rendered "→ Keine Antwort 0.00",
-                  // a destination chip for a decision nobody made, over a number that measured
-                  // nothing. The sentence names the reason and the way out (`aiSkipRow.*`).
-                  { note: t(`aiSkipRow.${w.ai.noAnswer}`) }
-                : {
-                    // `screener` is in no pile table — the five there are the five a decision can
-                    // FILE to, and this is the one that files nothing. The `?? w.ai.dest` fallback
-                    // would print the raw view key "screener" in the row.
-                    destLabel: w.ai.dest === "screener"
-                      ? t("aiHoldChip")
-                      : piles[w.ai.dest as DecisionDestination] ?? w.ai.dest,
-                    confidence: w.ai.confidence,
-                    // WHAT OHMAIL CHECKED, said on the row itself. The chip's own words come from
-                    // the catalogue by CODE — the server sends a code and two facts of its own (a
-                    // brand out of our dictionary, a count we measured), never a sentence, so this
-                    // reads in the reader's language and can never print a stranger's text.
-                    ...(w.ai.reasonCode
-                      ? { reason: t(`aiReasonChip.${w.ai.reasonCode}`, reasonValues(w.ai)) }
-                      : {}),
-                  }
-              : undefined
-          }
+          aiSuggestion={aiSuggestionOf(w, t, piles)}
           heldCount={w.held.length}
           heldLabel={rowBadge.held(w.held.length)}
           /* UNREAD WHILE ANY HELD MESSAGE IS: without it the row was spoken "Read" (`row-spoken.ts`). */
@@ -2069,8 +2087,161 @@ export function ScreenerView({
           />
         )}
       </div>
+      {prime === "on" ? <ScreenerPrimer state={state} segments={primeSegs} /> : null}
     </section>
   );
+}
+
+const SEGMENTS = ["waiting", "screened", "spam"] as const;
+
+/** A segment's first sender, as its list draws it first; undefined when the segment is empty. */
+function firstOf(state: ScreenerState, seg: ScreenerSegmentId): ScreenerSenderDTO | SpamRow | undefined {
+  return seg === "waiting" ? state.waiting[0] : seg === "screened" ? state.screenedOut[0] : state.spam[0];
+}
+
+/**
+ * THE SCREENER'S SHAPES, DRAWN HIDDEN FOR ONE FRAME BEFORE ANYBODY ASKS. WebKit pays the first time a
+ * page meets a row or letter shape, a font size or weight, or a glyph its font lacks, and a Screener
+ * opened cold met all of its own inside the click. Per segment: its head, its first row and its first
+ * sender's newest letters' heads, from the components the view draws them with. Hidden and inert,
+ * outside every listbox, skipped by every shell query (`visible-dom.ts`), and no body is drawn, so
+ * nothing is hydrated, held or read for it.
+ */
+export function ScreenerPrimer({ state, segments, half }: {
+  state: ScreenerState;
+  segments: readonly ScreenerSegmentId[];
+  /** One half of each segment, the list or the reading column; both when absent. */
+  half?: "list" | "read";
+}) {
+  const t = useTranslations("screener");
+  const piles = usePileNames();
+  const rowBadge = useRowBadgeCopy();
+  const none = () => {};
+  const reader = readerHolder(state.role);
+  return (
+    <div className="scn-prime" data-pile="screener-prime" aria-hidden="true" inert>
+      {segments.map((seg) => {
+        const x = firstOf(state, seg);
+        if (x === undefined) return null;
+        const sender = "pinned" in x ? x.sender : x;
+        const shown = sender.held.slice(-HELD_OPENING);
+        const mounted: HeldShown = { shown, from: sender.held.length - shown.length, busy: false, bodies: false };
+        const newest = newestHeld(sender);
+        const counts = { ohbox: 0, reads: 0, receipts: 0, screened: 0, spam: 0, none: 0 } as Record<ScreenerFilterId, number>;
+        if (seg === "waiting") for (const w of state.waiting) counts[filterGroupOf(w)]++;
+        return (
+          <section key={seg} className="view split view-screener">
+            {/* Both columns stand, so each half lands in its own track at its own width. */}
+            <div className="list-col">{half === "read" ? null : <>
+              {seg === "waiting" ? (
+                <div className="scn-head">
+                  <SegmentedControl<ScreenerSegmentId>
+                    className="scn-seg"
+                    ariaLabel={t("segAria")}
+                    value="waiting"
+                    onChange={none}
+                    options={[
+                      { id: "waiting", label: t("segWaiting"), count: state.waitingCount || "" },
+                      { id: "screened", label: t("segScreened"), count: state.screenedOut.length || "" },
+                      { id: "spam", label: t("segSpam"), count: state.spam.length || "" },
+                    ]}
+                  />
+                  <BulkStrip ariaLabel={t("bulkAria")}>
+                    <Button kbdHint="a" onClick={none}>{t("markAllSpam")}</Button>
+                    <Button variant="ghost" onClick={none}>{t("markAllSpam")}</Button>
+                  </BulkStrip>
+                  <FilterChips counts={counts} value={null} onChange={none} />
+                </div>
+              ) : null}
+              <div className="scroller"><div className="rows">
+                <MessageRow
+                  spoken={rowBadge.spoken}
+                  id={sender.id}
+                  windowIndex={0}
+                  inSet={{ size: 1, position: 1 }}
+                  from={displayAddressee(sender.from.name, sender.from.address)}
+                  address={displayAddressUnder(sender.from.name, sender.from.address)}
+                  addressFirst={seg !== "spam"}
+                  time={seg === "screened" ? screenedDate(sender) : newest?.time ?? sender.time}
+                  subject={newest?.subject ?? ""}
+                  avatarInitial={sender.initial}
+                  avatarHue={avatarHue(sender.from.address)}
+                  dull={seg === "waiting" ? sender.dull : true}
+                  heldCount={sender.held.length}
+                  heldLabel={rowBadge.held(sender.held.length)}
+                  {...(seg === "waiting" ? {
+                    aiSuggestion: aiSuggestionOf(sender, t, piles),
+                    unread: sender.held.some((h) => h.unread === true),
+                    actions: <RowActions exiting={false} accept={acceptDestOf(sender)} open={false} onOpen={none} onFile={none} />,
+                  } : {})}
+                  {...(seg === "spam" ? { detection: (x as SpamRow).pinned ? t("markedByYou") : sender.detection?.label } : {})}
+                  onClick={none}
+                />
+              </div></div>
+            </>}</div>
+            <div className="read-col scn-read">{half === "list" ? null : <>
+              {seg === "waiting" ? (
+                <WaitingPreview sender={sender} mounted={mounted} scope="sender" onScopeChange={none} onDecide={none}
+                  onRetryBody={none} bodyStall={state.bodyStall} onBack={none} role={state.role} mailboxLabel={null}
+                  standing={null} reach={null} inFlight={false} subscriptionPane={false} unsub={null} />
+              ) : seg === "screened" ? (
+                <ScreenedPreview sender={sender} mounted={mounted} choosing={false} onChoose={none} onCancel={none}
+                  onAllow={none} onRetryBody={none} bodyStall={state.bodyStall} onBack={none}
+                  mailboxLabel={null} reader={reader} />
+              ) : (
+                <SpamPreview row={x as SpamRow} mounted={mounted} choosing={false} onChoose={none} onCancel={none}
+                  onToWaiting={none} onToOhbox={none} onDelete={none} onRetryBody={none} bodyStall={state.bodyStall}
+                  onBack={none} reader={reader} />
+              )}
+            </>}</div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The warm-up's pieces, in order: each segment's list, then its reading column. */
+const WARMUP_PIECES = SEGMENTS.flatMap((s) => [[s, "list"], [s, "read"]] as const);
+
+/** How long the page goes without a press, a key or a wheel before the next piece is primed. */
+export const SCREENER_WARMUP_QUIET_MS = 400;
+
+/**
+ * THE SHELL'S PRIMER, for the Screener's first open. Opened cold, the Screener's click resolved every
+ * shape and font of its first frame (about 200 ms of style in WebKit, where the desktop runs). Before
+ * the Screener is first shown, once its queue has settled, its segments are drawn hidden a half at a
+ * time ({@link ScreenerPrimer}), Waiting first, each after a painted frame and a quiet moment
+ * (`whenQuiet`), so the frame it costs is never one somebody is using. Once per mount, never after
+ * the Screener has been on screen, and never where nothing lays out. Its own state, so the shell does
+ * not re-render for it.
+ */
+export function ScreenerWarmup({ state, shown }: { state: ScreenerState; shown: boolean }) {
+  /* Half-steps over the pieces: -1 before any; 2k draws piece k for one frame, 2k + 1 has dropped it. */
+  const [step, setStep] = useState(-1);
+  const [left, setLeft] = useState(false);
+  if (shown && !left) setLeft(true);
+  const drawing = step >= 0 && step % 2 === 0;
+  const ready = state.queueSettled && SEGMENTS.some((s) => firstOf(state, s) !== undefined);
+  const live = !left && step < WARMUP_PIECES.length * 2 - 1 && (step >= 0 || ready);
+  useEffect(() => {
+    if (!live) return;
+    const body = document.body;
+    if (body.getClientRects().length === 0) return;
+    const next = () => startTransition(() => setStep(step + 1));
+    let unquiet = () => {};
+    const unpaint = afterPaint(body, drawing ? next : () => {
+      unquiet = whenQuiet(SCREENER_WARMUP_QUIET_MS, next);
+    });
+    return () => {
+      unpaint();
+      unquiet();
+    };
+  }, [live, step, drawing]);
+  const piece = drawing ? WARMUP_PIECES[step / 2] : undefined;
+  return !left && piece !== undefined && firstOf(state, piece[0]) !== undefined
+    ? <ScreenerPrimer state={state} segments={[piece[0]]} half={piece[1]} />
+    : null;
 }
 
 /**
@@ -2507,7 +2678,7 @@ export function HeldMail({
         className="hm-state"
         offerLink={!dull}
       />
-      {message ? <MessageEvents messageId={message.id} /> : null}
+      {message && drawBody ? <MessageEvents messageId={message.id} /> : null}
       <div className="hm-body">
         {drawBody ? <MessageBody
           {...(message ? { messageId: message.id } : {})}
@@ -2526,7 +2697,7 @@ export function HeldMail({
       </div>
       {/* A held message's files, through the one holder every reader uses. Only a row the mirror
           backs has a list to ask for; a fixture row and the live Junk window's rows have none. */}
-      {message ? <MessageFiles messageId={message.id} /> : null}
+      {message && drawBody ? <MessageFiles messageId={message.id} /> : null}
       {note ? (
         <p className={failed ? "hm-state warn" : "hm-state"} role="status">
           {note}{" "}

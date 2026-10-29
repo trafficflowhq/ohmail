@@ -28,11 +28,11 @@ const MBX = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const DRAFT = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const TO = [{ name: null, address: "ada@fake.test" }];
 
-function cloud(html: string | null) {
+function cloud(html: string | null, extra: Record<string, unknown> = {}) {
   const row = {
     id: DRAFT, mailboxId: MBX, threadId: null, inReplyToMessageId: null, forwardOfMessageId: null,
     subject: "Invoice 12", body: "bold", html, to: TO, cc: [], bcc: [], rationale: null, status: "draft",
-    createdAt: "2026-10-20T09:00:00.000Z", updatedAt: "2026-10-20T09:00:00.000Z",
+    createdAt: "2026-10-20T09:00:00.000Z", updatedAt: "2026-10-20T09:00:00.000Z", ...extra,
   };
   const puts: Array<{ body: Record<string, unknown>; answered: number }> = [];
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -69,9 +69,9 @@ function cloud(html: string | null) {
   return { fetchImpl, puts, row };
 }
 
-async function windowOverCloud(html: string | null) {
+async function windowOverCloud(html: string | null, extra: Record<string, unknown> = {}) {
   const dataDir = await freshDataDir("ohmail-draft-plain-"); dirs.push(dataDir);
-  const c = cloud(html);
+  const c = cloud(html, extra);
   const sidecar = await createCloudSidecar({
     dataDir, cloudUrl: "https://host.test", address: "me@ohmail.test", fetchImpl: c.fetchImpl,
     pollIntervalMs: 3_600_000, keks: { 1: Buffer.alloc(32, 7) }, tokens: { accessToken: "held-access", refreshToken: "held-refresh" },
@@ -119,5 +119,14 @@ describe("the desktop paired to Cloud, a draft whose formatting was removed", ()
     expect((await t.w.mutate(save(null))).status).toBe("confirmed");
     expect(t.puts).toHaveLength(1);
     expect("html" in t.puts[0]!.body).toBe(false);
+  });
+});
+
+describe("the desktop paired to Cloud, a scheduled draft", () => {
+  it("keeps the time it sends at, as the web's row does", { timeout: 60_000 }, async () => {
+    const t = await windowOverCloud(null, { status: "scheduled", sendAt: "2026-10-25T17:00:00.000Z" });
+    const row = t.w.read().get<{ status?: string; sendAt?: string | null }>("draft", DRAFT);
+    expect(row?.status).toBe("scheduled");
+    expect(row?.sendAt).toBe("2026-10-25T17:00:00.000Z");
   });
 });

@@ -449,12 +449,12 @@ export function ComposeView({
         // AND RE-CHECKED THROUGH THE INVERSE, because a wall-clock minute is not an instant:
         // in an autumn DST fold the seeded local time names TWO instants and the inverse
         // conversion picks the earlier one, which sits under the floor again (review
-        // finding, round 2 — measured at real fold minutes). When that happens the seed
-        // moves one hour ahead, past the fold, where the wall clock is unambiguous.
+        // finding, round 2 — measured at real fold minutes). Given the floor, the inverse now
+        // takes the second occurrence; the hour ahead stays as the fallback.
         const seedOf = (ms: number): string =>
           localInputValue(new Date(Math.ceil(ms / 60_000) * 60_000).toISOString());
         let seed = seedOf(now.getTime() + SEND_LATER_MIN_LEAD_MS);
-        const inverse = composedLocalInput(seed);
+        const inverse = composedLocalInput(seed, new Date(now.getTime() + SEND_LATER_MIN_LEAD_MS));
         if (inverse === null || inverse.instant.getTime() - now.getTime() < SEND_LATER_MIN_LEAD_MS) {
           seed = seedOf(now.getTime() + SEND_LATER_MIN_LEAD_MS + 3_600_000);
         }
@@ -479,7 +479,7 @@ export function ComposeView({
   /* THE TYPED CLOCK, COMPOSED — the presets name hours no transition crosses, this field names
      any hour at all, so it is the one appointment on this screen whose wall clock can be missing
      or doubled. It carries the verdict; the sentence below states it before the press. */
-  const custom = composedLocalInput(customAt);
+  const custom = composedLocalInput(customAt, new Date(openedAt.getTime() + SEND_LATER_MIN_LEAD_MS));
   const customIso = custom?.instant.toISOString() ?? null;
   const customUsable = customIso !== null
     && Date.parse(customIso) - openedAt.getTime() >= SEND_LATER_MIN_LEAD_MS;

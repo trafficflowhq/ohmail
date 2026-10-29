@@ -3,7 +3,8 @@ import type { Logger } from "./log.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
 import { searchBodyOf } from "./message-search.js";
 import {
-  fingerprintDedupKey, legacyDedupKey, messageFingerprint, runtimeDedupKey, verifiesLegacyIdentity,
+  fingerprintDedupKey, isStorableMessageId, legacyDedupKey, messageFingerprint, runtimeDedupKey, sameLetterBesideDate,
+  verifiesLegacyIdentity,
 } from "./identity.js";
 import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
@@ -56,7 +57,7 @@ import type { NormalizedMessage } from "./types.js";
 // A VALUE import, and from `types.js` rather than `adapters/imap-types.js` which re-exports it:
 // that module's entry point carries `imapflow`, and this predicate is deliberately kept in a module
 // with no imports at all so every caller can reach it. See {@link isOrganizedFolder}.
-import { canonicalDestination, isOrganizedFolder } from "./types.js";
+import { canonicalDestination, isOrganizedFolder, isSentFolderPath } from "./types.js";
 import { attachmentSections } from "./mime-sections.js";
 
 /** Confidence a graduated pattern must meet before the AI branch auto-applies. */
@@ -845,13 +846,13 @@ async function filedOnArrivalBound(p: NewPlan, deps: CommitDeps): Promise<Date> 
  * missing digests), so a backfilled row's first re-observation would insert a SECOND `messages`
  * row — which no delta removes, and which mints a second `threads` row too. The migration happens
  * at read time: (1) `fp1:` — the same message; (2) the legacy key — a CANDIDATE only, verified
- * against four stored columns, then rewritten; (3) the own-sent twin arm, `ownAuthored` only; (4)
- * new. Any mismatch in step 2 means NEW — the legacy key is forgeable, and the verification tuple
+ * against four stored columns, then rewritten; (3) by Message-ID: the own-sent twin arm, and a copy
+ * of one sent letter dated apart; (4) new. Any mismatch in step 2 means NEW — the legacy key is forgeable, and the verification tuple
  * refuses the forgery. Cost: one indexed SELECT per genuinely-new message.
  */
 async function resolveExisting(
   repo: RepoPort, accountId: string, mailboxId: string, normalized: NormalizedMessage,
-  ownAuthored: boolean,
+  ownAuthored: boolean, ownAddresses: ReadonlySet<string> | undefined,
 ): Promise<{ key: string; existing: StoredMessage | null; upgrade?: DedupKeyUpgrade }> {
   const fpKey = fingerprintDedupKey(messageFingerprint(normalized));
   const onFingerprint = await repo.findByDedupKey(mailboxId, fpKey);
@@ -880,9 +881,21 @@ async function resolveExisting(
   // Sent folder) vouches for THIS copy, and the Sent instance for the row it joins — an inbound row
   // under the same id is a stranger's. The key returned is still `fpKey`, and NO `upgrade` rides
   // along: rewriting the stored key would repoint the row's identity at whichever copy came last.
-  if (ownAuthored && normalized.canonical.messageIdHeader !== null) {
-    const twin = await repo.findByMessageIdHeader(accountId, mailboxId, normalized.canonical.messageIdHeader);
-    if (twin) return { key: fpKey, existing: twin };
+  //
+  // The second arm: ONE SENT LETTER'S TWO COPIES DATED APART. A send that compiled the delivered
+  // copy and the Sent copy in different seconds left two fingerprints that differ only by the Date.
+  // A row joins when every other fingerprinted field agrees and the Sent folder vouches for one
+  // side: this arrival (`ownAuthored`) or the row (`inSent`). Two INBOX copies never join this way.
+  // The Date is the sender's own line, so it admits no copy a forger could not already match.
+  const mid = normalized.canonical.messageIdHeader;
+  const mayBeOwn = ownAddresses === undefined || ownAddresses.has(normalized.from.address.toLowerCase());
+  if (mid !== null && isStorableMessageId(mid) && (ownAuthored || mayBeOwn)) {
+    const rows = await repo.findByMessageIdHeader(accountId, mailboxId, mid);
+    const twin = ownAuthored ? rows.find((c) => c.inSent) : undefined;
+    if (twin) return { key: fpKey, existing: twin.row };
+    const copy = rows.find((c) => (ownAuthored || c.inSent)
+      && sameLetterBesideDate(normalized, { dedupKey: c.row.dedupKey, date: c.date }));
+    if (copy) return { key: fpKey, existing: copy.row };
   }
 
   // Either nothing was stored under the legacy key, or a row was and it is NOT this message. Both
@@ -1100,7 +1113,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
 
   const normalized = await normalizeMime(change.raw, { log: deps.log });
   const { key, existing, upgrade } =
-    await resolveExisting(repo, accountId, mailboxId, normalized, change.ownAuthored === true);
+    await resolveExisting(repo, accountId, mailboxId, normalized, change.ownAuthored === true, deps.ownAddresses);
 
   // Correlate against any outstanding move we issued for this message.
   const pendingMoveFolders = new Set<string>();
@@ -1126,7 +1139,14 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     evidence = { kind: "verified_absence" };
   }
 
-  const outcome = classifyDedup({ change, dedupKey: key, existing, pendingMoveFolders, evidence });
+  // A Sent folder the Sent-shaped names miss is known by the mailbox's record: read only when an
+  // INBOX arrival meets a row stored elsewhere, outside those names.
+  const knownFolder = existing === null ? null : canonicalDestination(existing.nativeLocator.folder);
+  const sentFolder = knownFolder !== null && knownFolder !== "INBOX" && !isSentFolderPath(knownFolder)
+    && change.ownAuthored !== true && canonicalDestination(change.locator.folder) === "INBOX"
+    ? (await repo.getMailboxSpecialFolders?.(mailboxId))?.sentFolder ?? null
+    : null;
+  const outcome = classifyDedup({ change, dedupKey: key, existing, pendingMoveFolders, evidence, sentFolder });
 
   if (outcome.kind === "new") {
     assignServerSections(change, normalized, deps.log);

@@ -83,6 +83,16 @@ describe("the gate and the pending sign-out", () => {
     expect(calls).toBe(1);
   });
 
+  it("a sign-in ended seconds ago (tf_signed_out): an empty jar goes to the sign-in page, a live one to the app", async () => {
+    const live = (async () => json({ user: { userId: "u-1", accountId: "a-1" }, scope: "full" })) as unknown as typeof fetch;
+    const gate = (sessionToken: string | null, apiOrigin: string | null, fetchImpl = noNetwork) =>
+      resolveSurface({ sessionToken, signedOutJustNow: true, search: "", apiOrigin, fetchImpl });
+    await expect(gate(null, API)).resolves.toBe("door");
+    await expect(gate("not a token", API)).resolves.toBe("door");
+    await expect(gate(TOKEN, API, live), "a new sign-in since").resolves.toBe("app");
+    await expect(gate(null, null), "no API armed").resolves.toBe("marketing");
+  });
+
   it("the middleware reads the marker the client writes and hands it to the gate", () => {
     const mw = readFileSync(`${HERE}../middleware.ts`, "utf8");
     expect(mw, "the gate is never told about the pending sign-out")
@@ -92,7 +102,7 @@ describe("the gate and the pending sign-out", () => {
 
   it("…and answers `sign-out` with a 307 to the sign-in page, private and no-store, on both builds", () => {
     const mw = readFileSync(`${HERE}../middleware.ts`, "utf8");
-    const at = mw.indexOf('if (surface === "sign-out") {');
+    const at = mw.indexOf('if (surface === "sign-out" || surface === "door") {');
     expect(at, "no arm answers the pending sign-out").toBeGreaterThan(-1);
     const arm = mw.slice(at, mw.indexOf("\n  }\n", at));
     expect(arm).toMatch(/door\.pathname = DOOR_ROUTE;/);

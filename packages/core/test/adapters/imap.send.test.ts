@@ -3,6 +3,7 @@ import { ImapFlow } from "imapflow";
 import { ImapAdapter, parseRef } from "../../src/adapters/imap.js";
 import { greenmailConfig, waitFor } from "./_imapenv.js";
 import { FIXTURE_DOOR } from "./_door.js";
+import { dedupKeyFor } from "../fakes.js";
 
 describe("ImapAdapter.send (GreenMail SMTP + \\Sent append)", () => {
   let adapter: ImapAdapter | undefined;
@@ -77,5 +78,38 @@ describe("ImapAdapter.send (GreenMail SMTP + \\Sent append)", () => {
     const again = await adapter.fileSentCopy(raw, id, { look: true });
     expect(again?.locator.ref, "the retry found the copy that is there").toBe(first!.locator.ref);
     expect(await copiesInSent(cfg, id, sent), "a retry never adds a second copy").toBe(1);
+  });
+
+  /* A LETTER TO YOURSELF whose submission spans a second: the delivered copy and the Sent copy are
+     compiled apart, and each used to stamp its own Date line, so the two fingerprints differed. */
+  it("a slow submission: the delivered copy and the Sent copy carry one Date line and one fingerprint", async () => {
+    const cfg = greenmailConfig();
+    adapter = new ImapAdapter(cfg);
+    await adapter.connect();
+    await adapter.ensureFolders(FIXTURE_DOOR);
+    const id = `<self-${Date.now()}@trafficflow.test>`;
+    const res = await adapter.send(
+      { from: cfg.auth.user, to: cfg.auth.user, subject: "Re: to myself", text: "one letter", messageId: id },
+      { copy: "caller", beforeRelease: () => new Promise((r) => setTimeout(r, 1100)) },
+    );
+    const sent = (res as { unfiledCopy?: Buffer }).unfiledCopy!;
+    const c = new ImapFlow({ host: cfg.host, port: cfg.port, secure: cfg.secure, auth: cfg.auth, logger: false });
+    await c.connect();
+    let delivered: Buffer | null = null;
+    try {
+      await waitFor(async () => {
+        const l = await c.getMailboxLock("INBOX");
+        try {
+          const hits = await c.search({ header: { "message-id": id.replace(/[<>]/g, "") } }, { uid: true });
+          if (!Array.isArray(hits) || hits.length === 0) return false;
+          const m = await c.fetchOne(String(hits[0]), { source: true }, { uid: true });
+          delivered = m ? (m as { source: Buffer }).source : null;
+          return delivered !== null;
+        } finally { l.release(); }
+      }, 8000);
+    } finally { await c.logout(); }
+    const dateOf = (b: Buffer) => /^Date: (.*)$/m.exec(b.toString())?.[1];
+    expect(dateOf(delivered!), "the two copies were dated apart").toBe(dateOf(sent));
+    expect(await dedupKeyFor(delivered!), "the two copies are two letters to the store").toBe(await dedupKeyFor(sent));
   });
 });

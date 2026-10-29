@@ -16,6 +16,8 @@
  *
  * Common: --q "n=3000&nr=2000&nc=1000&demo=0&heavy=1" (the 3000/2000/1000 heavy fixture, the default)
  * --warm 80 (bodies hydrated per stream before timing) --viewport 1440x900.
+ * --scenario screener times the Screener's tabs instead of 1/2/3 (`runScreener`, its own default
+ * fixture adds 60 screened-out senders and 40 spam senders, 40 letters each); --gap 1000.
  *
  * What a press reports (median and p90 over the presses): `paint` press -> the frame that shows
  * the pile's list rows has painted (rows seen in a frame's callback, then the next frame's);
@@ -36,7 +38,7 @@
  */
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { cpus, loadavg, tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +49,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "../..");
 const ENTRY = join(HERE, "view-switch-entry.tsx");
 const DEFAULT_Q = "n=3000&nr=2000&nc=1000&demo=0&heavy=1";
+/* A full Screener: 2,400 screened-out letters from 60 senders, 1,600 spam from 40. */
+const SCREENER_Q = `${DEFAULT_Q}&ns=60&nsh=40&np=40&nph=40`;
 
 const IS_MAIN = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 const argv = IS_MAIN ? process.argv.slice(2) : [];
@@ -77,6 +81,17 @@ export async function build(out, tree = ROOT, names = false) {
       /* The desktop window's way: no API client, and one copy of React and the catalogue's runtime,
          the tree root's (`vitest.config.ts` holds the suite to the same rule). */
       b.onResolve({ filter: /^(?:.*\/)?api-client$/ }, () => ({ path: join(desk, "src/no-api-client.ts") }));
+      /* A tree on this checkout's install (an archive with its node_modules linked here) would take its
+         workspace packages from THIS checkout, a second copy beside the entry's: point them at the tree's. */
+      const here = realpathSync(ROOT);
+      if (realpathSync(tree) !== here) {
+        b.onResolve({ filter: /^@ohmail\// }, async (a) => {
+          if (a.pluginData === "ws") return undefined;
+          const r = await b.resolve(a.path, { kind: a.kind, resolveDir: a.resolveDir, pluginData: "ws" });
+          if (r.errors.length > 0 || !r.path.startsWith(`${here}/`) || r.path.includes("/node_modules/")) return undefined;
+          return { path: join(tree, r.path.slice(here.length + 1)), sideEffects: r.sideEffects };
+        });
+      }
       b.onResolve({ filter: /^next-intl$/ }, (a) => b.resolve("use-intl", { kind: a.kind, resolveDir: tree }));
       b.onResolve({ filter: /^(react|react-dom|use-intl)(\/.*)?$/ }, (a) =>
         a.pluginData === "root" ? undefined : b.resolve(a.path, { kind: a.kind, resolveDir: tree, pluginData: "root" }));
@@ -135,11 +150,13 @@ function pageProbe() {
   const visible = (root, sel) => {
     if (!root) return 0;
     let n = 0;
-    for (const e of root.querySelectorAll(sel)) if (e.getClientRects().length > 0) n += 1;
+    // An inert subtree (the Screener's hidden primer) is never on screen.
+    for (const e of root.querySelectorAll(sel)) if (e.getClientRects().length > 0 && !e.closest("[inert]")) n += 1;
     return n;
   };
-  /** Resolves with the press's readings; `t0` is the LAST keydown/pointerdown seen after arming. */
-  w.__vsArm = (viewSel, presses) => new Promise((resolve) => {
+  /** Resolves with the press's readings; `t0` is the LAST keydown/pointerdown seen after arming.
+      `rows` names the rows to wait for instead of the pile's own (no stream follows them). */
+  w.__vsArm = (viewSel, presses, rows) => new Promise((resolve) => {
     let t0 = null;
     let seen = 0;
     const onPress = () => { seen += 1; if (seen >= presses) t0 = performance.now(); };
@@ -152,8 +169,8 @@ function pageProbe() {
     const s0 = w.__vsSanitize ?? 0;
     const b0 = (w.__bodyFetches ?? 0) + w.__vsFetches;
     let rowsAt = null; let paintAt = null; let paint2At = null; let streamAt = null; let iframes = 0; let cards = 0;
-    const stream = viewSel !== ".view-ohbox";
-    const rowSel = stream ? ".row" : "[data-index]";
+    const stream = rows === undefined && viewSel !== ".view-ohbox";
+    const rowSel = rows ?? (stream ? ".row" : "[data-index]");
     const check = () => {
       const view = document.querySelector(viewSel);
       if (t0 !== null && rowsAt === null && visible(view, rowSel) > 0) {
@@ -206,7 +223,60 @@ function pageProbe() {
   });
 }
 
-export async function runArm({ dist, engine = "chromium", reps = 10, q = DEFAULT_Q, warm = 80, viewport = "1440x900" }) {
+/* THE SCREENER'S TABS (`--scenario screener`): per rep a cold page, the rail's Screener, then one
+   held segment's tab first (Screened out and Spam take turns), the other one, and warm switches:
+   between the two tabs, and by way of the Ohbox and the Screener again. `--gap` is the wait
+   between opening the Screener and the first tab click. */
+const SCN_TAB = { waiting: 0, screened: 1, spam: 2 };
+const SCN_ROWS = { screened: '[data-id^="screened:"]', spam: '[data-id^="spam:"]' };
+
+async function runScreener(browser, { url, reps, gap, size, errors }) {
+  const presses = [];
+  let bootMs = 0;
+  for (let r = 0; r < reps; r++) {
+    /* A fresh page per rep: a goto that differs only in the hash would keep the document warm. */
+    const page = await browser.newPage({ viewport: size });
+    page.on("pageerror", (e) => errors.push(String(e).slice(0, 300)));
+    page.on("console", (m) => { if (m.type() === "error") errors.push(m.text().slice(0, 300)); });
+    const tabs = page.locator(".view-screener .scn-seg [role=\"tab\"]");
+    const shown = () => page.evaluate(() => {
+      const on = [...document.querySelectorAll(".view-screener .scn-seg [role=\"tab\"]")]
+        .findIndex((b) => b.getAttribute("aria-selected") === "true");
+      return ["waiting", "screened", "spam"][on] ?? null;
+    });
+    const press = async (act, viewSel, rows, view, phase) => {
+      const wait = page.evaluate(([sel, r]) => window.__vsArm(sel, 1, r), [viewSel, rows]);
+      await page.waitForTimeout(30);
+      await act();
+      presses.push({ how: "click", view, phase, ...(await wait) });
+      await page.waitForTimeout(250);
+    };
+    const tab = (seg, phase) => press(() => tabs.nth(SCN_TAB[seg]).click(), ".view-screener", SCN_ROWS[seg], seg, phase);
+    const openScreener = (phase) => press(() => page.click('[data-rail-id="screener"]'), ".view-screener", "[data-index]", "screener", phase);
+    const t0 = Date.now();
+    await page.goto(url);
+    await page.waitForSelector(".view-ohbox [data-index]", { timeout: 120000 });
+    await page.waitForTimeout(1500);
+    bootMs = Math.max(bootMs, Date.now() - t0);
+    await page.evaluate(pageProbe);
+    await openScreener("screener");
+    await page.waitForTimeout(gap);
+    const [first, other] = r % 2 === 0 ? ["screened", "spam"] : ["spam", "screened"];
+    await tab(first, "first");
+    await tab(other, "other");
+    for (let k = 0; k < 4; k++) await tab((await shown()) === "spam" ? "screened" : "spam", "warm");
+    for (let k = 0; k < 2; k++) {
+      await press(() => page.keyboard.press("1"), ".view-ohbox", undefined, "1", "away");
+      await openScreener("screener-warm");
+      await tab((await shown()) === "spam" ? "screened" : "spam", "warm");
+    }
+    await page.close();
+  }
+  return { presses, bootMs };
+}
+
+export async function runArm({ dist, engine = "chromium", reps = 10, q, warm = 80, viewport = "1440x900", scenario = "piles", gap = 1000 }) {
+  q ??= scenario === "screener" ? SCREENER_Q : DEFAULT_Q;
   const { chromium, webkit } = createRequire(join(ROOT, "package.json"))("playwright");
   const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
   const srv = createServer((req, res) => {
@@ -221,8 +291,15 @@ export async function runArm({ dist, engine = "chromium", reps = 10, q = DEFAULT
   await new Promise((r) => srv.listen(0, "127.0.0.1", r));
   const [vw, vh] = viewport.split("x").map(Number);
   const browser = await (engine === "webkit" ? webkit : chromium).launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: vw, height: vh } });
   const errors = [];
+  if (scenario === "screener") {
+    const url = `http://127.0.0.1:${srv.address().port}/?${q}#/ohbox`;
+    const { presses, bootMs } = await runScreener(browser, { url, reps, gap, size: { width: vw, height: vh }, errors });
+    await browser.close();
+    srv.close();
+    return { engine, q, reps, warm: 0, viewport, scenario, gap, bootMs, presses, errors: errors.slice(0, 8), uiVitals: {} };
+  }
+  const page = await browser.newPage({ viewport: { width: vw, height: vh } });
   page.on("pageerror", (e) => errors.push(String(e).slice(0, 300)));
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text().slice(0, 300)); });
   const t0 = Date.now();
@@ -318,6 +395,11 @@ export function summarize(res) {
     ["first", (p) => p.phase === "first"],
     ["rapid", (p) => p.phase === "rapid"],
     ["all-switches", (p) => p.phase !== "rapid"],
+    ["scn-open", (p) => p.phase === "screener"],
+    ["scn-first-screened", (p) => p.phase === "first" && p.view === "screened"],
+    ["scn-first-spam", (p) => p.phase === "first" && p.view === "spam"],
+    ["scn-other", (p) => p.phase === "other"],
+    ["scn-warm", (p) => p.phase === "warm"],
   ]) {
     const rows = pick(f);
     out[name] = {
@@ -340,7 +422,10 @@ function printArm(tag, res) {
   const s = summarize(res);
   console.log(`## ${tag} ${res.engine} load ${res.load.load1}/${res.load.cpus} boot ${res.bootMs} ms` +
     ` uiVitals p50 ${round(res.uiVitals.switchP50)} p95 ${round(res.uiVitals.switchP95)} errors ${res.errors.length}`);
-  for (const k of ["ohbox", "news", "receipts", "revisit", "first", "rapid"]) console.log(line(k, s[k]));
+  const keys = res.scenario === "screener"
+    ? ["scn-open", "scn-first-screened", "scn-first-spam", "scn-other", "scn-warm"]
+    : ["ohbox", "news", "receipts", "revisit", "first", "rapid"];
+  for (const k of keys) console.log(line(k, s[k]));
   return s;
 }
 
@@ -354,7 +439,8 @@ if (cmd === "build") {
 } else if (cmd === "run") {
   const res = await runArm({
     dist: resolve(arg("dist")), engine: arg("engine", "chromium"), reps: Number(arg("reps", "10")),
-    q: arg("q", DEFAULT_Q), warm: Number(arg("warm", "80")), viewport: arg("viewport", "1440x900"),
+    q: arg("q"), warm: Number(arg("warm", "80")), viewport: arg("viewport", "1440x900"),
+    scenario: arg("scenario", "piles"), gap: Number(arg("gap", "1000")),
   });
   res.load = hostLoad();
   res.summary = summarize(res);
@@ -374,8 +460,9 @@ if (cmd === "build") {
       for (const arm of arms) {
         const load = hostLoad();
         const res = await runArm({
-          dist: arm.dist, engine, reps: Number(arg("reps", "10")), q: arg("q", DEFAULT_Q),
+          dist: arm.dist, engine, reps: Number(arg("reps", "10")), q: arg("q"),
           warm: Number(arg("warm", "80")), viewport: arg("viewport", "1440x900"),
+          scenario: arg("scenario", "piles"), gap: Number(arg("gap", "1000")),
         });
         Object.assign(res, { arm: arm.name, round: r, runId, load, build: JSON.parse(readFileSync(join(arm.dist, "build.json"), "utf8")) });
         res.summary = printArm(`${arm.name} r${r}`, res);
@@ -393,7 +480,7 @@ if (cmd === "build") {
   const [a, b] = argv.slice(1, 3).map((p) => JSON.parse(readFileSync(p, "utf8")));
   if (!a.runId || a.runId !== b.runId) throw new Error("REFUSED: the arms come from different runs; run them interleaved with `ab`");
   if (Math.abs(a.round - b.round) > 1) throw new Error("REFUSED: the arms are more than one round apart");
-  if (a.engine !== b.engine || a.q !== b.q) throw new Error("REFUSED: different engines or fixtures");
+  if (a.engine !== b.engine || a.q !== b.q || a.scenario !== b.scenario) throw new Error("REFUSED: different engines or fixtures");
   printArm(`${a.arm} r${a.round}`, a);
   printArm(`${b.arm} r${b.round}`, b);
 } else if (IS_MAIN) {

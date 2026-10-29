@@ -68,9 +68,9 @@ export type DedupEvidenceIsRequired = Expect<
   Equal<Extract<RequiredKeys<DedupInput>, "evidence">, "evidence">
 >;
 
-/** FOUR — and the input's shape is exactly these five fields. A sixth fails here; so does a fifth. */
+/** FOUR — and the input's shape is exactly these six fields. A seventh fails here; so does a missing one. */
 export type DedupInputKeysArePinned = Expect<
-  Equal<keyof DedupInput, "change" | "dedupKey" | "existing" | "pendingMoveFolders" | "evidence">
+  Equal<keyof DedupInput, "change" | "dedupKey" | "existing" | "pendingMoveFolders" | "evidence" | "sentFolder">
 >;
 
 const STATE: FolderStateRow = {
