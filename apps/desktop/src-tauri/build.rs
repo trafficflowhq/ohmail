@@ -163,6 +163,14 @@ fn main() {
     // WHICH COMMIT THIS SHELL WAS BUILT FROM, baked so the engine it spawns can say the same
     // thing. See [`build_commit`].
     println!("cargo:rustc-env=OHMAIL_BUILD_COMMIT={}", build_commit());
+    // THE AT-SPI BRIDGE THE .deb, THE .rpm AND THE FLATPAK CARRY. libgtk-3 loads
+    // libatk-bridge-2.0.so.0 as its own dependency, which only a DT_RPATH on the executable reaches
+    // (a DT_RUNPATH does not): the bundled build in <exe dir>/../lib/ohmail/atk-bridge wins over the
+    // distribution's. A directory that is absent costs one failed lookup; linuxdeploy replaces this
+    // with the AppImage's own RUNPATH.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        println!("cargo:rustc-link-arg-bins=-Wl,--disable-new-dtags,-rpath,$ORIGIN/../lib/ohmail/atk-bridge");
+    }
     tauri_build::try_build(attributes).expect("ohmail: failed to build the Tauri context");
 }
 

@@ -272,6 +272,31 @@ describe("the Flathub submission manifest is derived, never kept by hand", () =>
   it("the pinned manifest keeps the same permissions", () => {
     expect(items(pinned, "finish-args")).toEqual(items(manifest, "finish-args"));
   });
+
+  // The runtime's at-spi2-core lacks two of the cache fixes; the binary's RPATH ($ORIGIN/../lib/
+  // ohmail/atk-bridge, src-tauri/build.rs) loads the bridge the app module builds with the in-tree patches.
+  it("builds the AT-SPI bridge from the pinned source, where the binary looks first", () => {
+    expect(pinned).toContain("url: https://download.gnome.org/sources/at-spi2-core/2.52/at-spi2-core-2.52.0.tar.xz");
+    expect(pinned).toContain("sha256: 0ac3fc8320c8d01fa147c272ba7fa03806389c6b03d3c406d0823e30e35ff5ab");
+    const commands = buildCommands(pinned);
+    expect(commands).toMatch(/apps\/desktop\/src-tauri\/linux\/at-spi2-core\/0\*\.patch; do patch -d at-spi2-core -p1\s+--fuzz=0/);
+    expect(commands).toMatch(/install -Dm644 at-spi2-core\/_dest\/app\/lib\/libatk-bridge-2\.0\.so\.0\s+\/app\/lib\/ohmail\/atk-bridge\/libatk-bridge-2\.0\.so\.0/);
+  });
+
+  // The bridge is the module's one unstripped ELF. Splitting its debuginfo needs the host's eu-strip
+  // (the 0.30.15 vehicle's Flatpak job died without it) and adds a .Debug extension and a [Build]
+  // group to the app's metadata, which the job's permission check refuses.
+  it("splits no debuginfo out of the app module", () => {
+    const lines = pinned.split("\n");
+    const at = lines.findIndex((line) => /^ {4}build-options:$/.test(line));
+    expect(at).toBeGreaterThan(-1);
+    const options: string[] = [];
+    for (const line of lines.slice(at + 1)) {
+      if (!/^ {6}/.test(line)) break;
+      options.push(line);
+    }
+    expect(options).toContain("      no-debuginfo: true");
+  });
 });
 
 describe("the tool the submission is rendered with reads the manifest that is here", () => {

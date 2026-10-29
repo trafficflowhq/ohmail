@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { PACKAGED_BRIDGE, bridgePackaging } from "../scripts/linux-atk-bridge.mjs";
 
 /**
  * THE LINUX PACKAGING RECIPE, asserted where it is written.
@@ -301,5 +304,33 @@ describe("the Linux desktop entry", () => {
       expect(line, "a Linux job packages the AppImage and the .deb but not the .rpm")
         .toMatch(/--bundles appimage,deb,rpm(?: |$)/);
     }
+  });
+});
+
+describe("the AT-SPI bridge the .deb and the .rpm carry", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ohmail-bridge-"));
+  const elf = path.join(dir, "libatk-bridge-2.0.so.0");
+  fs.writeFileSync(elf, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]));
+
+  // The binary's DT_RPATH ($ORIGIN/../lib/ohmail/atk-bridge, src-tauri/build.rs) from /usr/bin.
+  it("installs the built bridge into both packages, where the binary looks first", () => {
+    const config = bridgePackaging({ platform: "linux", bridge: elf });
+    expect(PACKAGED_BRIDGE).toBe("/usr/lib/ohmail/atk-bridge/libatk-bridge-2.0.so.0");
+    expect(config?.bundle.linux.deb.files).toEqual({ [PACKAGED_BRIDGE]: elf });
+    expect(config?.bundle.linux.rpm.files).toEqual({ [PACKAGED_BRIDGE]: elf });
+  });
+
+  it("adds nothing where no bridge was built, or on another platform", () => {
+    expect(bridgePackaging({ platform: "linux", bridge: undefined })).toBeNull();
+    expect(bridgePackaging({ platform: "linux", bridge: "" })).toBeNull();
+    expect(bridgePackaging({ platform: "darwin", bridge: elf })).toBeNull();
+  });
+
+  it("refuses a path that is missing or is not a library", () => {
+    const text = path.join(dir, "build.log");
+    fs.writeFileSync(text, "OHMAIL_ATK_BRIDGE=...\n");
+    expect(() => bridgePackaging({ platform: "linux", bridge: path.join(dir, "absent.so") }))
+      .toThrow(/absent\.so/);
+    expect(() => bridgePackaging({ platform: "linux", bridge: text })).toThrow(/not an ELF/);
   });
 });

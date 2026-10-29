@@ -2,8 +2,9 @@
 #
 # build-bridge.sh <work-dir> [--tarball <at-spi2-core-2.52.0.tar.xz>]
 #
-# Builds the AT-SPI bridge the Linux AppImage carries: libatk-bridge-2.0.so.0 from at-spi2-core
-# 2.52.0, the version the build runner (Ubuntu 24.04) ships, with the patches beside this script.
+# Builds the AT-SPI bridge the Linux AppImage, .deb and .rpm carry: libatk-bridge-2.0.so.0 from
+# at-spi2-core 2.52.0, the version the build runner (Ubuntu 24.04) ships, with the patches beside this
+# script. The Flatpak builds the same source and patches in its manifest.
 #
 #   0001-0003  upstream's cache fixes (2.56.0, 2.60.0, 2.62.0). On 2.52.0 an object that is queued
 #             for the bridge's cache, goes defunct and is cached again from the queue keeps a cache
@@ -15,8 +16,9 @@
 #
 # Only the bridge changes: the AppImage keeps the runner's libatk and libatspi, so the build is
 # refused unless the runner's at-spi2-core is 2.52.0, and unless the built library needs the same
-# libraries and exports the same symbols as the runner's own bridge. The .deb and the .rpm use the
-# distribution's bridge and never see this file.
+# libraries and exports the same symbols as the runner's own bridge. The .deb and the .rpm install it
+# in /usr/lib/ohmail/atk-bridge, which the binary's RPATH names, beside the distribution's libatk and
+# libatspi (2.52.0 or newer wherever the binary's glibc runs). The build tree's RUNPATH is removed.
 #
 # Without --tarball the source is downloaded; either way it is refused unless its digest is the
 # pinned one (GNOME's .sha256sum and Ubuntu's .dsc agree on it). The last two lines printed are
@@ -24,7 +26,7 @@
 #   OHMAIL_ATK_BRIDGE_BUILD_ID=<its GNU build-id>
 # which the AppImage's GTK plugin and the workflow's inspection read.
 #
-# Needs: meson, ninja, pkg-config, dpkg-buildflags, patch, readelf, nm, dbus-run-session, the
+# Needs: meson, ninja, pkg-config, dpkg-buildflags, patch, patchelf, readelf, nm, dbus-run-session, the
 # at-spi2-core bus launcher (the upstream direct-connection test asks the session bus for it), and
 # the -dev packages of glib, dbus, libxml2, libx11, libxtst and libxi.
 set -euo pipefail
@@ -95,6 +97,9 @@ exported() { nm -D --defined-only "$1" | awk '{print $NF}' | sort; }
 
 OUT=$WORK/libatk-bridge-2.0.so.0
 install -m 0644 "$LIB" "$OUT"
+# The build tree's RUNPATH ($ORIGIN/../atspi:$ORIGIN/../atk) means nothing where the library is installed.
+patchelf --remove-rpath "$OUT"
+[ -z "$(patchelf --print-rpath "$OUT")" ] || refuse "the built bridge keeps a RUNPATH"
 BUILD_ID=$(readelf -n "$OUT" | awk '/Build ID/ {print $3}')
 [ -n "$BUILD_ID" ] || refuse "the built bridge carries no GNU build-id"
 echo "OHMAIL_ATK_BRIDGE=$OUT"

@@ -46,7 +46,8 @@
 #     app then refs freed memory: the app dies on SIGSEGV. CI builds the same version with the
 #     upstream fixes (`src-tauri/linux/at-spi2-core/build-bridge.sh`) and names it here; it replaces
 #     the build host's copy at the END of this script, after the libwayland-client removal. Unset,
-#     the host's bridge stays and the script says so.
+#     the host's bridge stays and the script says so. The .deb's copy the AppDir inherits
+#     (usr/lib/ohmail/atk-bridge) is removed, so the AppImage carries one bridge.
 #
 # GTK3 environment variables: https://docs.gtk.org/gtk3/running.html
 # GTK4 environment variables: https://docs.gtk.org/gtk4/running.html
@@ -471,3 +472,5 @@ if [ -n "${OHMAIL_ATK_BRIDGE:-}" ]; then
 else
     echo "ohmail: OHMAIL_ATK_BRIDGE is unset, so the AppImage bundles the build host's AT-SPI bridge"
 fi
+# The AppDir is built from the .deb's tree, whose copy (for the binary's RPATH) the line above replaces.
+rm -rf "$APPDIR/usr/lib/ohmail/atk-bridge"

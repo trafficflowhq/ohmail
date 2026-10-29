@@ -45,6 +45,8 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { bridgePackaging } from "./linux-atk-bridge.mjs";
+
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ROOT = resolve(APP, "..", "..");
 
@@ -95,6 +97,15 @@ if (!existsSync(join(ROOT, "build", "vendor"))) {
       "    node scripts/vendor-node.mjs");
 }
 
+/* The AT-SPI bridge CI builds goes into the .deb and the .rpm (linux-atk-bridge.mjs); refused here, before
+ * the long stages, when OHMAIL_ATK_BRIDGE names no library. */
+let atkBridge = null;
+try {
+  atkBridge = bridgePackaging({ platform: process.platform, bridge: process.env.OHMAIL_ATK_BRIDGE });
+} catch (err) {
+  die(err.message);
+}
+
 say("1/4 · stage the engine and its runtime");
 run(process.execPath, [join(ROOT, "scripts", "stage-desktop-resources.mjs")], ROOT);
 
@@ -136,6 +147,8 @@ if (!existsSync(join(APP, "dist-host", "index.html"))) {
 run(process.execPath, [join(APP, "scripts", "scan-artifact.mjs"), "--expect", "host-client"], APP);
 
 say(`4/4 · build the app (${distribution})`);
+if (atkBridge) process.stdout.write(`  the .deb and the .rpm carry the AT-SPI bridge ${process.env.OHMAIL_ATK_BRIDGE}\n`);
+else if (process.platform === "linux") process.stdout.write("  OHMAIL_ATK_BRIDGE is unset: a .deb or .rpm built here loads the system's AT-SPI bridge\n");
 /* `tauri` from this package's own `node_modules/.bin`, resolved through node rather than named as a
  * shell command: the launcher is `tauri` on Unix and `tauri.cmd` on Windows, and reaching for it
  * through a shell to paper over that is the quoting problem `build-ui.mjs` exists to avoid. */
@@ -146,6 +159,7 @@ const tauriArgs = [
      one appends or replaces is the CLI's business and not something an artifact should depend on. */
   "--features", ["local-engine", ...(distribution === "mas" ? ["mas"] : [])].join(","),
   "--config", join(APP, "src-tauri", "tauri.engine.conf.json"),
+  ...(atkBridge ? ["--config", JSON.stringify(atkBridge)] : []),
   ...(bundles ? ["--bundles", bundles] : []),
   ...passThrough,
 ];
