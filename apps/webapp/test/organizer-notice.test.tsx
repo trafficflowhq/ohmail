@@ -342,11 +342,24 @@ describe("the organizer notice, on screen — one block per kind", () => {
       .toContain("2 mailboxes are no longer being organized.");
   });
 
-  it("the stopped block carries the way to act on it; the settled one only Mark read", async () => {
+  it("the stopped block carries the way to act on it; the settled one only Dismiss", async () => {
     const el = await mountNotice(five(), async () => {});
     const labels = (b: HTMLElement) => [...b.querySelectorAll(".rn-verbs button")].map((x) => x.textContent);
     expect(labels(blocks(el)[0]!)).toEqual([en.mailboxes.noticeOpenMailboxes, en.mailboxes.noticeDismiss]);
     expect(labels(blocks(el)[1]!)).toEqual([en.mailboxes.noticeDismiss]);
+  });
+
+  /* The press stamps the notice seen and moves no mail, so it is not called Mark read. */
+  it("the press is named for what it does, in en and de: it dismisses the notice", async () => {
+    const de = (await import("../messages/de.json")).default as typeof en;
+    for (const [cat, word] of [[en, "Dismiss"], [de, "Ausblenden"]] as const) {
+      expect(cat.mailboxes.noticeDismiss).toBe(word);
+      for (const k of ["noticeDismissOffline", "noticeDismissInactive", "noticeDismissFailed"] as const) {
+        expect(cat.mailboxes[k]).not.toMatch(/read|gelesen/i);
+      }
+    }
+    const el = await mountNotice([fact()], async () => {});
+    expect([...el.querySelectorAll(".rn-verbs button")].map((x) => x.textContent)).toEqual(["Dismiss"]);
   });
 
   it("the shell twin is the same blocks under its own class; no tone class on either", async () => {
@@ -374,23 +387,23 @@ describe("the organizer notice, on screen — one block per kind", () => {
   });
 });
 
-describe("a refused Mark read says why, under the notice that stays (NOTICE-DISMISS-REFUSAL-IS-SILENT)", () => {
+describe("a refused Dismiss says why, under the notice that stays (NOTICE-DISMISS-REFUSAL-IS-SILENT)", () => {
   const refusedWith = (status: number, code?: string) => Object.assign(new Error(`${status}`), { status, code });
   const line = (el: HTMLElement) => el.querySelector<HTMLElement>(".rn-refused");
   const pressDismiss = async (el: HTMLElement) => {
     const b = [...el.querySelectorAll("button")].find((x) => x.textContent === en.mailboxes.noticeDismiss);
-    expect(b, "no Mark read press was drawn").toBeDefined();
+    expect(b, "no Dismiss press was drawn").toBeDefined();
     await act(async () => { b!.click(); });
     await act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
   };
   /* One row per answer the door can give: the sentence it owes, or none. */
   const table: ReadonlyArray<[string, () => Promise<unknown>, string | null]> = [
-    ["503 offline_read_only (the desktop is offline)", async () => { throw refusedWith(503, "offline_read_only"); }, "Couldn't mark it read — you're offline."],
-    ["0 network_unreachable (the browser reached nothing)", async () => { throw refusedWith(0, "network_unreachable"); }, "Couldn't mark it read — you're offline."],
-    ["503 from the server itself", async () => { throw refusedWith(503, "unavailable"); }, "Couldn't mark it read — try again."],
-    ["402 (the account is not active)", async () => { throw refusedWith(402); }, "Couldn't mark it read — this account is not active."],
-    ["a network failure", async () => { throw new TypeError("Failed to fetch"); }, "Couldn't mark it read — you're offline."],
-    ["500 (anything else)", async () => { throw refusedWith(500); }, "Couldn't mark it read — try again."],
+    ["503 offline_read_only (the desktop is offline)", async () => { throw refusedWith(503, "offline_read_only"); }, "Couldn't dismiss it — you're offline."],
+    ["0 network_unreachable (the browser reached nothing)", async () => { throw refusedWith(0, "network_unreachable"); }, "Couldn't dismiss it — you're offline."],
+    ["503 from the server itself", async () => { throw refusedWith(503, "unavailable"); }, "Couldn't dismiss it — try again."],
+    ["402 (the account is not active)", async () => { throw refusedWith(402); }, "Couldn't dismiss it — this account is not active."],
+    ["a network failure", async () => { throw new TypeError("Failed to fetch"); }, "Couldn't dismiss it — you're offline."],
+    ["500 (anything else)", async () => { throw refusedWith(500); }, "Couldn't dismiss it — try again."],
     ["200", async () => ({}), null],
   ];
   for (const [answer, transport, said] of table) {
@@ -423,7 +436,7 @@ describe("a refused Mark read says why, under the notice that stays (NOTICE-DISM
       async () => { if (refuse) throw refusedWith(503, "offline_read_only"); },
     );
     await pressDismiss(el);
-    expect(line(el)?.textContent).toBe("Couldn't mark it read — you're offline.");
+    expect(line(el)?.textContent).toBe("Couldn't dismiss it — you're offline.");
     refuse = false;
     await pressDismiss(el);
     expect(el.textContent, "the second, accepted press left the block").toBe("");
@@ -433,7 +446,7 @@ describe("a refused Mark read says why, under the notice that stays (NOTICE-DISM
     const A = fact({ id: "a", address: "a@example.com" });
     const el = await mountNotice([A], async () => { throw refusedWith(503, "offline_read_only"); });
     await pressDismiss(el);
-    expect(line(el)?.textContent).toBe("Couldn't mark it read — you're offline.");
+    expect(line(el)?.textContent).toBe("Couldn't dismiss it — you're offline.");
     const rerender = async (notices: NoticeFact[]) => {
       await act(async () => {
         root!.render(h(NextIntlClientProvider, {
@@ -456,7 +469,7 @@ describe("a refused Mark read says why, under the notice that stays (NOTICE-DISM
     await pressDismiss(el);
     expect(el.textContent).toContain("b@example.com");
     expect(el.textContent).not.toContain("a@example.com");
-    expect(line(el)?.textContent).toBe("Couldn't mark it read — this account is not active.");
+    expect(line(el)?.textContent).toBe("Couldn't dismiss it — this account is not active.");
   });
 });
 

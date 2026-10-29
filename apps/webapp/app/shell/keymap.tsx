@@ -46,7 +46,7 @@ export const BINDING_GROUPS: BindingGroup[] = ["navigate", "message", "screener"
  * member is a reason the `?` sheet turns into words. Trash's two are keys that cannot work there
  * and must keep falling through.
  */
-export type DisabledReason = "no_cursor" | "no_erase" | "trash_unavailable";
+export type DisabledReason = "no_cursor" | "no_erase" | "trash_unavailable" | "layout_same";
 
 /**
  * Put a cursor on the first row, and say so — the host's half of the rule

@@ -42,7 +42,8 @@ import type { MailboxFacts } from "./mail-state";
 import { isModalOpen } from "./modal-gate";
 import { useFocusFollows } from "./focus-follows";
 import {
-  railLayout, readColumnHidden, readColumnHiddenFor, watchNarrow, watchRailLayout, watchZeroPushTier, zeroPushTier,
+  layoutsDiffer, railLayout, readColumnHidden, readColumnHiddenFor, watchLayoutsDiffer, watchNarrow, watchRailLayout,
+  watchZeroPushTier, zeroPushTier,
   type RailLayout,
 } from "./narrow";
 import type { PullBinding } from "./PullNewMail";
@@ -345,6 +346,12 @@ export function useShellKeys({
   const cycleLayout = useStableCallback(() => {
     theme.setLayout(theme.layout === "zero" ? "classic" : "zero");
   });
+  /* Live only where the layouts differ on screen (392–1023): elsewhere `w` changed nothing. */
+  const [layoutOffered, setLayoutOffered] = useState(false);
+  useEffect(() => {
+    setLayoutOffered(layoutsDiffer());
+    return watchLayoutsDiffer(setLayoutOffered);
+  }, []);
 
   /**
    * The drawer summon (zone-nav's module seam): wherever the rail is a drawer — classic below
@@ -861,6 +868,8 @@ export function useShellKeys({
       chord: "w",
       group: "app",
       label: t("shortcuts.layout"),
+      disabled: !layoutOffered,
+      disabledReason: "layout_same",
       run: cycleLayout,
     },
     /* ONE UNDO KEY FOR EVERY VERB (the 0.20 review): presses the live toast's own offer — the same
@@ -998,7 +1007,7 @@ export function useShellKeys({
     list.push({ id: "theme-auto", label: t("palette.themeAuto"), run: () => theme.setTheme("system") });
     /* The demo's own ruling for layout controls: "palette and hotkeys only" — no rail
        button, no Settings row (named in the 3b close-out). */
-    list.push({ id: "layout", label: t("palette.cycleLayout"), keys: ["w"], run: cycleLayout });
+    if (layoutOffered) list.push({ id: "layout", label: t("palette.cycleLayout"), keys: ["w"], run: cycleLayout });
     /* MOVE IS THE `m` KEY'S ROW: it presses the live `m` binding, so it opens the strip the key
        opens, on the message the key names, and rests exactly where the key rests. */
     list.push({
@@ -1018,7 +1027,7 @@ export function useShellKeys({
       run: () => { pressKey("b"); },
     });
     return list;
-  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, startFR, engine, settingsWired, goSettings, moveKey, resurfaceKey, pressKey]);
+  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, startFR, engine, settingsWired, goSettings, moveKey, resurfaceKey, pressKey, layoutOffered]);
 
   /**
    * THE ONE NUMBER A NATIVE SHELL IS TOLD — see `AppShell`'s `onUnread`.

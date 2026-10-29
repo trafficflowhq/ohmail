@@ -546,6 +546,38 @@ describe("the undo window", () => {
     expect(sent).toHaveLength(1);
     expect(said).toEqual([en.ohbox.toastDeleted, en.ohbox.deleteFailed]);
   });
+
+  it("NO TRASH FOLDER is said as the reason, and the next press on that mailbox is refused at once", async () => {
+    const sent: string[] = [];
+    const said: string[] = [];
+    const queue = createDeleteUndo({
+      mutate: async (messageId) => {
+        sent.push(messageId);
+        return messageId === "m3" ? { status: "confirmed" } : { status: "rolled_back", error: { code: "no_trash_folder" } };
+      },
+      toast: (msg) => { said.push(msg); },
+      copy: {
+        deleted: en.ohbox.toastDeleted, undo: en.screener.toastUndo,
+        undone: en.ohbox.deleteUndone, failed: en.ohbox.deleteFailed,
+        noUndo: en.session.noUndoHere, noTrash: en.ohbox.deleteNoTrash,
+      },
+      onHeld: () => {},
+      refusal: () => null,
+    });
+    const NO_TRASH = "Not deleted — this mailbox has no Trash folder, and ohmail never erases mail.";
+    queue.remove({ id: "m1", mailboxId: "mb1" });
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS); });
+    expect(said).toEqual([en.ohbox.toastDeleted, NO_TRASH]);
+    // Known now: no "Moved to Trash." that is taken back later, and nothing sent.
+    expect(queue.remove({ id: "m2", mailboxId: "mb1" })).toBe(false);
+    expect(said.at(-1)).toBe(NO_TRASH);
+    expect(queue.held().size).toBe(0);
+    // Control: another mailbox still deletes.
+    expect(queue.remove({ id: "m3", mailboxId: "mb2" })).toBe(true);
+    expect(said.at(-1)).toBe(en.ohbox.toastDeleted);
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS); });
+    expect(sent).toEqual(["m1", "m3"]);
+  });
 });
 
 /* ── one press, however many messages ──────────────────────────────────────────────────────── */

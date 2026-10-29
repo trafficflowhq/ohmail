@@ -39,6 +39,7 @@ const PAIRED: EngineStatus = {
   ...MANAGED, flavor: "desktop-host", address: "someone@example.com",
   baseUrl: "http://sidecar", cloudUrl: "https://kestrel.tail1234.ts.net",
 } as EngineStatus;
+const SELF_HOSTED: EngineStatus = { ...MANAGED, address: "someone@mail.example.org", cloudUrl: "https://mail.example.org" } as EngineStatus;
 const SIGNED_OUT = { state: "not_configured", mode: null, missing: ["config.json"] } as unknown as EngineStatus;
 
 function encode(status: number, body: string): Uint8Array {
@@ -235,6 +236,26 @@ describe("where the person reads it", () => {
     await mount("en");
     await until("the sign-in form", () => text().includes(DOOR_COPY.cloudTitle));
     expect(statusLines()).toContain(DOOR_COPY.changesWaiting(1, "someone@ohmail.app", machineWord()));
+  });
+
+  it("(10) a self-hosted install: the refused card and the plain sign-in say it, in English and German", { timeout: 60_000 }, async () => {
+    const who = "someone@mail.example.org";
+    for (const locale of ["en", "de"] as const) {
+      for (const health of [
+        { signedIn: false, sessionExpired: true, session: { state: "refused", code: "refresh_revoked", since: new Date().toISOString() }, queued: { count: 1 } },
+        { signedIn: false, sessionExpired: false, queued: { count: 1 } },
+      ]) {
+        fakeShell(SELF_HOSTED, { health });
+        await mount(locale);
+        await until("the own-server sign-in", () => text().includes(DOOR_COPY.doorServerName));
+        const want = locale === "de" ? germanOne(who) : DOOR_COPY.changesWaiting(1, who, machineWord());
+        expect(statusLines(), `${locale} ${JSON.stringify(health)}`).toContain(want);
+        await act(async () => { root!.unmount(); });
+        el?.remove();
+        root = null;
+        setActiveCatalog("en", null);
+      }
+    }
   });
 
   it("(10) nothing waiting: the card and the form say nothing about changes", { timeout: 30_000 }, async () => {
