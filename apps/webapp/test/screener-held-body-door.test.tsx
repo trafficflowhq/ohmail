@@ -422,6 +422,44 @@ describe("a sender's held letters open on the newest three", () => {
     for (const [i, a] of articles().entries()) expect(bodyText(a)).toContain(`the whole of ${ids(1, 3)[i]}`);
   });
 
+  it.each(["screened", "spam"] as const)("%s: a tab click reads no letter's file list before its body is drawn", async (segment) => {
+    const { engine, wire } = await engineWith(bag(FOLDER[segment], 3), async (id) => answer(id), { batch: true, html: true });
+    await engine.hydrateBodies(ids(1, 3));
+    await mount(engine, "waiting");
+    await settle();
+    boxColumn();
+    await act(async () => { switchTo(segment); });
+    expect(wire.lists, "a file list was read in the click's own commit").toEqual([]);
+    await frames(3);
+    expect([...wire.lists].sort(), "the file lists never followed the bodies").toEqual(ids(1, 3));
+  });
+
+  it("once the queue settles, the segments not on screen are drawn hidden for one frame, and nothing is asked for them", async () => {
+    const spam = bag(FOLDER.spam, 2).map((m, i) => ({ ...m, id: `q${i + 1}`, subject: `Spam q${i + 1}`, from: { name: "A Spammer", address: "spam@example.test" } }));
+    const { engine, wire } = await engineWith([...bag(FOLDER.screened, 3), ...spam], async (id) => answer(id), { batch: true });
+    vi.spyOn(Element.prototype, "getClientRects").mockImplementation(function boxes(this: Element) {
+      return (this.matches(".scroller, .scn-read") ? [{ top: 0, bottom: 800, height: 800 }] : []) as unknown as DOMRectList;
+    });
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { queued.set(++frameId, cb); return frameId; });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => { queued.delete(id); });
+    await mount(engine, "waiting");
+    await settle();
+    const prime = () => host!.querySelector<HTMLElement>(".view-screener .scn-prime");
+    expect(prime(), "primed before the Screener painted").toBeNull();
+    await frames(1);
+    const p = prime();
+    expect(p, "the other segments were never drawn ahead of their click").not.toBeNull();
+    expect([p!.hasAttribute("inert"), p!.getAttribute("aria-hidden")]).toEqual([true, "true"]);
+    expect(p!.querySelectorAll(".rows .row")).toHaveLength(2);
+    expect([...p!.querySelectorAll(".hmail h2")].map((x) => x.textContent)).toEqual(
+      ["Subject m01", "Subject m02", "Subject m03", "Spam q1", "Spam q2"]);
+    expect(p!.querySelector(".hm-body")!.childElementCount, "a primed letter drew its body").toBe(0);
+    expect(host!.querySelectorAll("[role=listbox] [role=option]"), "a primed row joined the list").toHaveLength(0);
+    await frames(1);
+    expect(prime(), "the primed segments outlived their frame").toBeNull();
+    expect([wire.batches, wire.lists], "something was asked for a primed letter").toEqual([[], []]);
+  });
+
   it("the letters drawn without their bodies mount no older ones", async () => {
     const { engine } = await engineWith(bag(FOLDER.screened), async (id) => answer(id), { batch: true, html: true });
     await engine.hydrateBodies(ids(10, 12));

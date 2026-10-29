@@ -63,7 +63,7 @@ import { readColumnHidden, watchNarrow } from "../shell/narrow";
 import { afterPaint } from "../shell/visit";
 import { useRowMenuFit } from "../shell/row-menu-fit";
 import { useListWindow } from "../shell/list-window";
-import { HELD_ANCHOR_PAD_PX, heldAnchorTop, heldAnchored, useHeldWindow } from "../shell/held-window";
+import { HELD_ANCHOR_PAD_PX, HELD_OPENING, heldAnchorTop, heldAnchored, useHeldWindow } from "../shell/held-window";
 import { linkHref, useRenderedLinks } from "../shell/rendered-links";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
@@ -1026,6 +1026,18 @@ export function ScreenerView({
     if (bodies) return;
     return afterPaint(readRef.current, () => startTransition(() => setBodiesFor(anchorKey)));
   }, [anchorKey, bodies]);
+  /* THE OTHER SEGMENTS' SHAPES, DRAWN ONCE BEFORE ANYBODY ASKS. A segment's first click paid for
+     WebKit's first style pass over its row and letter shapes, the larger part of that click on the
+     desktop. Once the queue has settled, the first row and the letters' heads of each segment not on
+     screen are drawn hidden for one frame (`primeSegments` below), and nothing is asked for them. */
+  const [prime, setPrime] = useState<"no" | "on" | "done">("no");
+  const primeSegs = (["screened", "spam"] as const).filter((s) => s !== segment
+    && (s === "screened" ? state.screenedOut.length > 0 : junk === undefined && state.spam.length > 0));
+  const primeReady = state.queueSettled && primeSegs.length > 0;
+  useEffect(() => {
+    if (prime === "done" || (prime === "no" && !primeReady)) return;
+    return afterPaint(listScrollerRef.current, () => startTransition(() => setPrime(prime === "no" ? "on" : "done")));
+  }, [prime, primeReady]);
   /**
    * THE MOUNTED LETTERS (`held-window.ts`): the newest few on entry, older ones as the reader
    * scrolls up to them. Counts, captions and decisions read the whole bag; what is drawn, asked
@@ -1456,7 +1468,12 @@ export function ScreenerView({
       : t("senderCheck.impersonation", { brand: s.checked.brand, domain: s.checked.domain }),
   } : {});
 
-  const row = (x: ScreenerSenderDTO | SpamRow, windowIndex: number, inSet: { size: number; position: number }) => {
+  const onScreen = segment;
+  /* `segment` is the shown one unless the primer asks for another's row. */
+  const row = (
+    x: ScreenerSenderDTO | SpamRow, windowIndex: number, inSet: { size: number; position: number },
+    segment: ScreenerSegmentId = onScreen,
+  ) => {
     if (segment === "waiting") {
       const w = x as ScreenerSenderDTO;
       // Both fields come from the SAME message — the newest one, which is what
@@ -1635,6 +1652,37 @@ export function ScreenerView({
       />
     );
   };
+
+  /** Hidden and inert, outside the listbox, and skipped by every shell query (`visible-dom.ts`). */
+  const primeSegments = () => (
+    <div className="scn-prime" data-pile="screener-prime" aria-hidden="true" inert>
+      {primeSegs.map((seg) => {
+        const x: ScreenerSenderDTO | SpamRow = seg === "screened" ? state.screenedOut[0]! : state.spam[0]!;
+        const sender = "pinned" in x ? x.sender : x;
+        const shown = sender.held.slice(-HELD_OPENING);
+        const mounted: HeldShown = { shown, from: sender.held.length - shown.length, busy: false, bodies: false };
+        const none = () => {};
+        return (
+          <div key={seg} className="scn-prime-seg">
+            <div className="list-col"><div className="scroller"><div className="rows">
+              {row(x, 0, { size: 1, position: 1 }, seg)}
+            </div></div></div>
+            <div className="read-col scn-read">
+              {seg === "screened" ? (
+                <ScreenedPreview sender={sender} mounted={mounted} choosing={false} onChoose={none} onCancel={none}
+                  onAllow={none} onRetryBody={none} bodyStall={state.bodyStall} onBack={none}
+                  mailboxLabel={mailboxLabelFor(sender)} reader={readerHolder(state.role)} />
+              ) : (
+                <SpamPreview row={x as SpamRow} mounted={mounted} choosing={false} onChoose={none} onCancel={none}
+                  onToWaiting={none} onToOhbox={none} onDelete={none} onRetryBody={none} bodyStall={state.bodyStall}
+                  onBack={none} reader={readerHolder(state.role)} />
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <section className={fullShown ? "view split view-screener scn-full" : "view split view-screener"}>
@@ -2068,6 +2116,7 @@ export function ScreenerView({
           />
         )}
       </div>
+      {prime === "on" ? primeSegments() : null}
     </section>
   );
 }
@@ -2506,7 +2555,7 @@ export function HeldMail({
         className="hm-state"
         offerLink={!dull}
       />
-      {message ? <MessageEvents messageId={message.id} /> : null}
+      {message && drawBody ? <MessageEvents messageId={message.id} /> : null}
       <div className="hm-body">
         {drawBody ? <MessageBody
           {...(message ? { messageId: message.id } : {})}
@@ -2525,7 +2574,7 @@ export function HeldMail({
       </div>
       {/* A held message's files, through the one holder every reader uses. Only a row the mirror
           backs has a list to ask for; a fixture row and the live Junk window's rows have none. */}
-      {message ? <MessageFiles messageId={message.id} /> : null}
+      {message && drawBody ? <MessageFiles messageId={message.id} /> : null}
       {note ? (
         <p className={failed ? "hm-state warn" : "hm-state"} role="status">
           {note}{" "}

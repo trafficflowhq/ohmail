@@ -360,6 +360,18 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .view-screener .scn-read {
   overflow-anchor: none;
 }
+/* The segment primer (`ScreenerView`): laid out for one frame so its styles resolve, never seen. */
+.view-screener .scn-prime {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  contain: strict;
+}
 
 /* THE READING STREAMS' MOUNTED CARDS ARE MADE CHEAP OFF-SCREEN.
    Reads and Receipts mount an opening run of cards that grows toward the reader and never
