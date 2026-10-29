@@ -167,19 +167,21 @@ describe("DesktopCta is controlled — dismissal is the parent's fact", () => {
   });
 });
 
-describe("the desktop rail's foot names the version it runs, and the line stands above Command", () => {
-  it("the shell's version is the foot line; a tab with none keeps no box; an offer takes the slot", async () => {
+describe("the desktop rail's foot keeps no version line; the update line names it on demand", () => {
+  it("no foot line for the version, with or without an offer; the line's title names the running one", async () => {
     const props = { composeLabel: "Compose", mailboxesLabel: "Mailboxes", ariaLabel: "Main", groups: [] };
     const c = await mount(h(NextIntlClientProvider, { locale: "en", messages: en as never, children: h(ShellRail, props) }));
     expect(c.querySelector(".rail-mail"), "a tab with no version kept a box").toBeNull();
     expect(c.querySelector(".rail-update")).toBeNull();
 
     await act(async () => announceVersion("0.30.5"));
-    expect(c.querySelector(".rail-mail .rail-version")!.textContent).toBe("ohmail 0.30.5");
+    expect(c.querySelector(".rail-mail"), "the running version took a permanent foot line").toBeNull();
+    expect(c.textContent).not.toContain("0.30.5");
 
     await act(async () => announceUpdate({ kind: "ready", version: "0.30.6", act: () => {}, key: "ready:0.30.6" }));
     expect(c.querySelector(".rail-update .upd-line")!.textContent).toContain("0.30.6 ready");
-    expect(c.querySelector(".rail-mail .rail-version")!.textContent).toBe("ohmail 0.30.5");
+    expect(c.querySelector(".rail-mail")).toBeNull();
+    expect(c.querySelector(".rail-update .ul-text")!.getAttribute("title")).toBe("ohmail 0.30.5");
   });
 });
 

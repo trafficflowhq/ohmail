@@ -1095,7 +1095,7 @@ describe("the cadence, running", () => {
     stop();
   });
 
-  it("the foot names the version the shell runs, from the first report", async () => {
+  it("knows the version the shell runs from the first report", async () => {
     const s = shell(() => report());
     const stop = startUpdateCadence({ ...s.options });
     await Promise.resolve();

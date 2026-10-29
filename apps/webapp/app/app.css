@@ -1028,10 +1028,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   width: 100%;
   margin-top: 4px;
 }
-/* The desktop's foot line: the version this copy runs. */
-.rail-version {
-  font-variant-numeric: tabular-nums;
-}
 /* The ≡ below 1024px carries a dot while the line has something to press and the drawer is shut. */
 .tb-btn:has(.upd-dot),
 .rail-expand:has(.upd-dot) {
