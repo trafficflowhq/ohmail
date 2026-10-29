@@ -78,6 +78,20 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.13" date="2026-10-29">
+      <description>
+        <ul>
+          <li>The sign-in form shows at once when a sign-in has ended</li>
+          <li>Signing out and deleting your account finish at once</li>
+          <li>The Linux AppImage no longer vanishes when an accessibility tool reads its window</li>
+          <li>A device that reconnects is no longer refused live updates by its own earlier connection</li>
+          <li>A letter you read is marked read on the mail server at once</li>
+          <li>The keyboard keeps working after a click into a designed letter</li>
+          <li>The search speed test no longer fails on a busy machine</li>
+          <li>The nightly search speed test judges a slower machine fairly</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.12" date="2026-10-29">
       <description>
         <ul>
@@ -165,37 +179,6 @@
           <li>ohmail Cloud answers "busy, retry shortly" when the database pooler turns a request away</li>
           <li>The 5xx poll keeps working when ohmail Cloud is busy</li>
           <li>The sign-in record says why a session ended</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.8" date="2026-10-27">
-      <description>
-        <ul>
-          <li>A reply in News or Receipts is written where the letter is</li>
-          <li>Screened out and Spam open at once</li>
-          <li>Desktop updates now install on the next restart, and the sidebar says when one is ready</li>
-          <li>In a long conversation the squares follow the message you are reading</li>
-          <li>The focused conversation's border no longer runs through the thread squares</li>
-          <li>A letter opened from Search turns read</li>
-          <li>End and Home in News and Receipts mark only the letters they stop on</li>
-          <li>News and Receipts on the phone mark only what you scrolled through</li>
-          <li>When ohmail Cloud ends your sign-in, the sign-in screen says so</li>
-          <li>Fewer sign-outs after a crash or a forced restart</li>
-          <li>Pictures in mail load a few at a time on the web</li>
-          <li>The desktop log says why its window stopped</li>
-          <li>The desktop log says how the window's process ended</li>
-          <li>Shorter pauses while the desktop app stores a first sync</li>
-          <li>A large letter no longer holds up new mail on a busy computer</li>
-          <li>Letters that reached your mail server just before Stop organizing here are offered after Start</li>
-          <li>A phone that organizes a mailbox shares its rules and screening window again</li>
-          <li>Rules made on the computer that organizes your mail show on your other devices</li>
-          <li>A forward left unfinished is a draft with its recipients, note and files</li>
-          <li>A click anywhere on a Screener row selects that sender, so s opens their menu</li>
-          <li>A sender filed somewhere and back takes every letter along</li>
-          <li>A month chosen on History's rail opens at that month, also on a large mailbox</li>
-          <li>Adding a mailbox another install organizes never takes it over without asking</li>
-          <li>Tests that migrate a database refuse the shared test database</li>
-          <li>A maintainer's dispatched test run uses the maintainers' own runners</li>
         </ul>
       </description>
     </release>

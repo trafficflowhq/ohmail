@@ -21,6 +21,77 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.13] — 2026-10-29
+
+### The sign-in form shows at once when a sign-in has ended
+
+In Chrome, opening ohmail after your sign-in had expired, or had been ended on another device, could sit
+on "Checking your sign-in…" for a minute or more before the sign-in form appeared. The sign-in form now
+shows at once, with the reason, and the browser still clears its cache for this site, in the background.
+A second tab that was checking the same sign-in goes to the sign-in form too, with the same reason. On
+ohmail Cloud and on your own server.
+
+### Signing out and deleting your account finish at once
+
+In Chrome, Sign out could take seconds, on a long-used browser up to its ten-second limit, and then say
+the server had not confirmed it, although it had. Deleting your account could wait just as long on its
+receipt, and other tabs could not sign in meanwhile. Both now finish at once. The browser still clears
+its cache for this site afterwards, in the background. On ohmail Cloud and on your own server.
+
+### The Linux AppImage no longer vanishes when an accessibility tool reads its window
+
+With a screen reader, an automation tool or another accessibility client coming and going, the Linux
+desktop app could close without a word: the accessibility bridge it bundles (at-spi2-core 2.52.0) kept
+entries for parts of the window that were already gone, and the next client that looked at the app made
+it read freed memory. The AppImage now carries that bridge with the upstream fixes, and also lets go of
+clients that have left instead of keeping their connections. This is the AppImage only (x86_64 and
+arm64); the .deb and the .rpm use your distribution's bridge.
+
+### A device that reconnects is no longer refused live updates by its own earlier connection
+
+When a page was reloaded or a tab reopened, the server could still be counting the connection the page
+had just left, and after a few reloads the newest page was refused live updates for up to four and a half
+minutes and fell back to polling. A device's new connection now takes the place of its own earlier one
+when the account's limit is reached, so up to four devices keep live updates however often they
+reconnect; only a fifth device with a connection of its own is refused. Every live connection is also
+ended by the server within its lifetime, even when its first database read was slow. On Cloud and your
+own server.
+
+### A letter you read is marked read on the mail server at once
+
+On the desktop and the phone without ohmail Cloud, a letter you read or mark unread reached your mail server 8
+to 21 seconds later, so your other devices and mail apps kept showing it unread for that long. ohmail now sends
+the change as soon as you make it, within about a second when nothing else is being synced, and right after
+the sync in progress otherwise. A read followed by an unread still reaches the server in that order, and a
+change made offline waits as before and goes out when the connection is back.
+
+### The keyboard keeps working after a click into a designed letter
+
+A click into the text of a designed letter in the Ohbox reader or in News left j, k, Escape and g o dead until
+a click outside the letter. Once the click is over the keys go back to ohmail, also when you selected text in
+the letter: Ctrl+C (Cmd+C on a Mac) still copies that text, and Ctrl+A (Cmd+A) after a click into the letter
+selects the whole letter. A link reached with Tab keeps the focus in the letter. Desktop and web.
+
+### The search speed test no longer fails on a busy machine
+
+The test that holds a search page to 100 ms read the machine's speed only before and after each round of
+measurements, so load that came and went in between could fail it on code that was no slower. It now reads a
+fixed reference beside every measurement and judges a round only when that reference stayed steady
+throughout and the machine's load average stayed under a quarter of its processors. A run with no such round
+says SKIPPED-LOADED in its log instead of passing quietly. Every night the test also runs alone on a machine of
+its own, where a run with no such round fails instead. The 100 ms budget is unchanged, and a search slower than
+it still fails on a quiet machine.
+
+### The nightly search speed test judges a slower machine fairly
+
+The nightly run that always judges the 100 ms search budget runs on a machine about twice as slow as the ones
+the budget was measured on, so it could never find a round it counted as quiet and failed every figure over
+100 ms. On a machine slower than the calibrated one, a round now counts as quiet against that machine's own
+quietest reading, and each figure's computing time is scaled to the calibrated machine before it is held to 100 ms;
+the simulated network round trips in a figure take as long on any machine and are not scaled. A dispatched
+whole run no longer includes this job unless asked for it, so a release does not wait on it. The 100 ms budget
+is unchanged, and the test on every other machine is unchanged.
+
 ## [0.30.12] — 2026-10-29
 
 ### A conversation you stop on with j or k turns read
@@ -15003,7 +15074,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.12...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.13...HEAD
+[0.30.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.13
 [0.30.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.12
 [0.30.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.11
 [0.30.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.10
