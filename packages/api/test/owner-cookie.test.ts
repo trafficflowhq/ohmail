@@ -197,6 +197,8 @@ describe("no Set-Cookie this module mints carries Domain=", () => {
     clearResumeCookie: () => clearResumeCookie(),
     // Reads a jar in either spelling; returns a value, never a Set-Cookie line.
     jarCookie: () => [],
+    // Reads the resume marker a jar presented; returns a value or null, never a Set-Cookie line.
+    presentedResumeMarker: () => [],
   };
 
   it("every exported function is registered — a new mint cannot dodge the sweep", async () => {

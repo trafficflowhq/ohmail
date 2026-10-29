@@ -121,6 +121,12 @@ export interface ServiceContext {
    */
   supersedes?: string | null;
   /**
+   * The resume marker the same jar presented beside that ceremony: the digest of its refresh
+   * token, which still names the browser's family once the access cookie has lapsed. Set only by
+   * `webSession`; the mint retires that family when it is the signer's own plain browser session.
+   */
+  supersedesMarker?: string | null;
+  /**
    * WHICH RUN OF A LOSSY STORE THIS REQUEST IS BEING ANSWERED FROM — the desktop's local PGlite
    * mints one at every launch that could have lost committed rows (`apps/sidecar/src/db.ts`), and
    * `/sync` stamps it into every cursor and checks it on every read.

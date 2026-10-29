@@ -1,4 +1,4 @@
-import type { AuthConfig } from "@trafficflow/services/mail";
+import { hashToken, type AuthConfig } from "@trafficflow/services/mail";
 // TYPE-ONLY, and deliberately from the full barrel: `OAuthTokens` describes the hosted
 // ceremony's response shape. A type import is erased, so this costs the local artifact
 // nothing at runtime — it is not a module-graph edge in the emitted JS.
@@ -44,6 +44,21 @@ export function jarCookie(jar: Readonly<Record<string, string>>, name: Credentia
 export const RESUME_COOKIE = "tf_resume";
 
 /**
+ * The resume marker's value: the digest of the refresh token minted beside it, which is that
+ * token's `refresh_tokens.token_hash`. It names the browser's family and grants nothing: no door
+ * accepts a digest as a credential, and only a completed full sign-in on this jar reads it back
+ * (`webSession`), to retire that family when it is the signer's own.
+ */
+const resumeMarkerFor = hashToken;
+
+const RESUME_MARKER = /^[A-Za-z0-9_-]{43}$/;
+
+/** The marker a jar presented, or `null`: a legacy `1` or anything not a digest names no family. */
+export function presentedResumeMarker(raw: string | null | undefined): string | null {
+  return typeof raw === "string" && RESUME_MARKER.test(raw) ? raw : null;
+}
+
+/**
  * The name of the OWNER MARKER — see {@link sessionCookies}. Exported because
  * `apps/webapp/app/shell/owner-cookie.ts` reads it and the two must not drift.
  */
@@ -68,10 +83,10 @@ export function ownerCookieValue(raw: string | null | undefined): string | null 
  * The web session cookies: `tf_session` (access, HttpOnly), `tf_refresh` (HttpOnly, scoped to
  * `/auth/refresh` and read by that one route alone, a census holds it), `tf_csrf` (readable, the
  * SPA's double-submit header), all `SameSite=Strict; Secure`; `tf_resume`, deliberately `Lax` and
- * not a credential, living as long as the refresh token so the edge can send a lapsed session to
- * the resume splash; and `tf_owner`, the account id (an identifier, never a credential) so the
- * client opens the account-named mirror at once: not HttpOnly, host-only, `Secure`, `Strict`, never
- * set for an enrollment session.
+ * not a credential (the refresh token's digest, {@link resumeMarkerFor}), living as long as the
+ * refresh token so the edge can send a lapsed session to the resume splash; and `tf_owner`, the
+ * account id (an identifier, never a credential) so the client opens the account-named mirror at
+ * once: not HttpOnly, host-only, `Secure`, `Strict`, never set for an enrollment session.
  */
 export function sessionCookies(
   tokens: OAuthTokens,
@@ -85,9 +100,10 @@ export function sessionCookies(
     `tf_session=${tokens.accessToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${accessMax}`,
     `tf_refresh=${tokens.refreshToken}; HttpOnly; SameSite=Strict; Secure; Path=/auth/refresh; Max-Age=${refreshMax}`,
     `tf_csrf=${csrfToken}; SameSite=Strict; Secure; Path=/; Max-Age=${accessMax}`,
-    // Presence-only: the value is a constant and is never read. HttpOnly anyway — nothing in
-    // the client needs to see it, and a marker JS cannot touch is a marker XSS cannot plant.
-    `${RESUME_COOKIE}=1; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=${refreshMax}`,
+    // The edge reads it by presence only; the value names the family ({@link resumeMarkerFor}).
+    // HttpOnly — nothing in the client needs to see it, and a marker JS cannot touch is a marker
+    // XSS cannot plant.
+    `${RESUME_COOKIE}=${resumeMarkerFor(tokens.refreshToken)}; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=${refreshMax}`,
     ...ownerCookie(owner, cfg),
   ];
 }
