@@ -374,6 +374,58 @@ describe("the release rides the send's own row, whichever road confirms it", () 
   });
 });
 
+/** Answer Later holds the answers you owe: a delivered reply pays it on every road, as the web's `settle` does. */
+describe("a delivered reply takes its letter out of Answer Later", () => {
+  type Live = Awaited<ReturnType<typeof scene>>;
+  const owed = (live: { engine: Live["engine"] }): boolean =>
+    live.engine.read().get<EngineMessage>("message", "m-1")?.triage?.state === "reply_later";
+  const cleared = (live: Live): number =>
+    live.fake.seen.filter((r) => r.method === "POST" && r.url === "/messages/m-1/triage" && JSON.parse(r.body).state === "none").length;
+
+  it("a reply confirmed at the press", async () => {
+    const live = await scene(undefined, "reply_later");
+    expect((await live.actions.sendReply("m-1", "Donnerstag passt.", false)).outcome).toBe("sent");
+    expect(owed(live), "the answered letter is still owed").toBe(false);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(cleared(live)).toBe(1);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("CONTROL: a refused send pays nothing", async () => {
+    const live = await scene((fake) => { fake.failNext("POST", "/drafts"); }, "reply_later");
+    expect((await live.actions.sendReply("m-1", "Donnerstag passt.", false)).outcome).toBe("failed");
+    expect(owed(live)).toBe(true);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("a reply the reconnect flush confirms, and one restored after a kill", async () => {
+    const live = await scene(undefined, "reply_later");
+    failSends(live.fake, 2);
+    expect((await live.actions.sendReply("m-1", "Donnerstag passt.", false)).outcome).toBe("queued");
+    expect(owed(live), "a queued reply paid before it went").toBe(true);
+    await flushQueued(live.engine, live.actions.releaseConfirmed);
+    expect(owed(live)).toBe(false);
+    live.store.close();
+
+    const other = await scene(undefined, "reply_later");
+    failSends(other.fake, 2);
+    expect((await other.actions.sendReply("m-1", "Gern.", false)).outcome).toBe("queued");
+    other.store.close();
+    const again = await bootEngine(deps, { origin: other.origin, token: "tok-1", accountId: "acct-1" });
+    if (again.kind !== "ready") throw new Error("boot refused");
+    await again.verifyIdentity();
+    await again.engine.start();
+    const acts = liveActions({ engine: again.engine, toast: () => undefined, uuid, zone: "UTC" });
+    expect([...(await flushQueued(again.engine, acts.releaseConfirmed)).values()].map((o) => o.status)).toEqual(["confirmed"]);
+    expect(owed(again), "the restored reply was confirmed and its letter is still owed").toBe(false);
+    again.store.close();
+    live.fake.server.close();
+    other.fake.server.close();
+  });
+});
+
 describe("one caller releases, and the reconnect flush is handed it", () => {
   it("CONTROL: only a CONFIRMED result releases — a refused one carrying a plan files nothing", async () => {
     const live = await scene();

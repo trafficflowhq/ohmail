@@ -20,7 +20,10 @@ const scene = vi.hoisted(() => ({
 vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
 vi.mock("expo-constants", () => ({ default: { expoConfig: {} } }));
 vi.mock("expo-router", () => ({ router: { push: () => undefined } }));
-vi.mock("../src/theme", () => ({ accountGovernsFace: () => false, accountWideOffered: () => false }));
+vi.mock("../src/theme", async () => {
+  const { accountGovernsFace, accountWideOffered } = await import("../src/theme/face");
+  return { accountGovernsFace, accountWideOffered };
+});
 vi.mock("../src/state/store", () => ({
   usePrefs: () => ({ themePref: "system", setTheme: () => undefined, facePin: null, setFacePin: () => undefined,
     pictureQuality: "medium", setPictureQuality: () => undefined }),
@@ -161,5 +164,34 @@ describe("Settings under a Cloud account while the phone's own engine still runs
     await settle();
     expect(view.el.textContent).toContain("own@phone.test");
     view.unmount();
+  });
+});
+
+/** The Look (#421's rule): a phone on its own keeps its look to itself, so nothing says or offers "all devices". */
+describe("the Look on a standalone phone", () => {
+  const look = async (standalone: boolean, account: "paper" | "ohmarchy" | null) => {
+    holdStandaloneDoor(ownEngine());
+    cloudAccount([]);
+    (scene.session as { standalone: boolean }).standalone = standalone;
+    Object.assign(scene.world as object, {
+      standalone, face: { account, known: true, pending: false, applyAll: async () => true, choose: async () => true },
+    });
+    const view = mount(h(SettingsScreen));
+    await settle();
+    const said = { text: view.el.textContent ?? "", applyAll: view.el.querySelector('[data-button="Apply on all devices"]') !== null };
+    view.unmount();
+    return said;
+  };
+
+  it.each([null, "ohmarchy"] as const)("account look %s: no Apply on all devices, and the line says this device only", async (account) => {
+    const said = await look(true, account);
+    expect(said.applyAll).toBe(false);
+    expect(said.text).toContain("Applies on this device only.");
+    expect(said.text).not.toContain("Applies on all your devices.");
+  });
+
+  it("CONTROL: signed in to an account, the press is offered and a stored look says all devices", async () => {
+    expect((await look(false, null)).applyAll).toBe(true);
+    expect((await look(false, "ohmarchy")).text).toContain("Applies on all your devices.");
   });
 });

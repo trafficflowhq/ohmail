@@ -203,6 +203,28 @@ describe("mark all read drives the wire and carries the one undo", () => {
     live.fake.server.close();
   }, CASE_MS);
 
+  it("the Undo of the streams' press puts the line back: the letters are new again, nothing above them seen", async () => {
+    const live = await scene((f) => {
+      f.addMessage(dto("n1", { folder: "ohmail/News", unread: true, date: "2026-08-19T09:00:00Z" }));
+      f.addMessage(dto("n0", { folder: "ohmail/News", unread: false, date: "2026-08-18T09:00:00Z" }));
+    });
+    const lineAt = () => live.engine.read().get<{ newestSeenId: string }>("view_meta", waterlineIdOf("reads"))?.newestSeenId;
+    await live.engine.mutate({ kind: "feed_mark_seen", view: "reads", messageIds: [], upToId: "n0" });
+    await arrived("the earlier visit's line at n0", () => lineAt() === "n0");
+    const news = () => liveReads(presentedOf(live.engine.read(), view.now), view);
+    expect([news().newCount, news().waterlineAboveId]).toEqual([1, "n0"]);
+
+    await live.actions.markAllSeen(news().unreadIds, { place: "reads", upToId: "n1" });
+    await arrived("n1 read with the line at it", () => readAndLined(live, "n1"));
+    expect(news().newCount).toBe(0);
+    live.toasts.find((t) => t.say === Copy.markAllDone(1))!.undo!();
+    await arrived("n1 unread and the line back at n0", () =>
+      live.engine.read().get<EngineMessage>("message", "n1")?.unread === true && lineAt() === "n0");
+    expect([news().newCount, news().waterlineAboveId]).toEqual([1, "n0"]);
+    live.store.close();
+    live.fake.server.close();
+  }, CASE_MS);
+
   it("the same press on a mailbox the organizer HAS renamed — the canonical spelling", async () => {
     const live = await scene((f) => {
       f.addMessage(dto("n1", { folder: "ohmail/News", unread: true, date: "2026-08-19T09:00:00Z" }));

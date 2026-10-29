@@ -40,3 +40,17 @@ export function dispatchMarkAll(
   }
   return chunks;
 }
+
+/**
+ * The mark-all toast's Undo: the flags back, then, in a stream, its line as it stood before the press
+ * (`feedLineUndo`), so the letters are new again and not only unread.
+ */
+export function dispatchMarkAllUndo(
+  mutate: (m: EngineMutation) => unknown,
+  ids: readonly string[],
+  line: EngineMutation | null,
+): number {
+  const chunks = dispatchMarkAll(mutate, ids, true);
+  if (line !== null) void mutate(line);
+  return chunks;
+}

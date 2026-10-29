@@ -1319,6 +1319,8 @@ export type EngineMutation =
       upToId?: string;
       /** Filled by the engine at mutate() time: the unread ids of the view's folder to flip. */
       messageIds?: string[];
+      /** Undo of a Mark all read only (`feedLineUndo`): the line exactly as it was, `null` for none. */
+      line?: WaterlineMeta | null;
     }
   /**
    * Folder-agnostic read-state — the one thing `feed_mark_seen` is not.

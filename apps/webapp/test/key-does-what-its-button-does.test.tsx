@@ -398,6 +398,24 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
     });
   }
 
+  /* In News the press also moves the line; its Undo puts that back too, or the letters stay unread but not new. */
+  for (const via of ["the button", "z"] as const) {
+    it(`News's mark all read: ${via} gives back the new count`, async () => {
+      await mountShell("#/reads");
+      const fresh = () => (host!.querySelector(".view-reads")?.textContent ?? "").match(/(\d+|Nothing) new since/)?.[1];
+      await tick(500);
+      const before = fresh();
+      expect(Number(before), "News shows nothing new").toBeGreaterThan(0);
+      await click(host!.querySelector(".view-reads .mark-all-read"));
+      await tick(500);
+      expect(fresh()).toBe("Nothing");
+      if (via === "the button") await click(undoCapsule());
+      else await key("z");
+      await tick(500);
+      expect(fresh()).toBe(before);
+    });
+  }
+
   /* THE PLANTED MISS — the same probe over a surface under the real keymap with a held commit of
      its own: its Undo raised through the door is live under z, raised beside it is dead. A probe
      that cannot read the second as a miss would pass every press above for nothing. */

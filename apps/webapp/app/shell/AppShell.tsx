@@ -1720,7 +1720,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   const {
     absoluteTime, barPanel, chipState, closeCard, commitReadsSeen, commitReceiptsSeen, enterReader,
-    focused, fr, frDone, frValues, jump, markAllRead, markSeen, mirrorHolds, verbHolds, ohboxGone, openMessage,
+    focused, fr, frDone, frValues, jump, markAllRead, markAllReadsRead, markAllReceiptsRead, markSeen,
+    mirrorHolds, verbHolds, ohboxGone, openMessage,
     picker, pickerIds, previewFor, railOpen, readerCrossed, readerFor, readerGone, readerMessage, readSetFor, readsCur,
     readsMarkSeen, reportPick, receiptsCur, receiptsMarkSeen, ribbonGone, scnSel, screenerFull, searchFrom,
     searchQuery, selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setChipState, setCloseCard,
@@ -2715,7 +2716,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 closeTo={closeCard?.view === "reads" ? closeCard.id : null}
                 onClosed={() => setCloseCard(null)}
                 onAction={onMessageAction}
-                onMarkAllRead={markAllRead}
+                onMarkAllRead={markAllReadsRead}
                 onPick={reportPick}
               />
                   ),
@@ -2763,7 +2764,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 closeTo={closeCard?.view === "receipts" ? closeCard.id : null}
                 onClosed={() => setCloseCard(null)}
                 onAction={onMessageAction}
-                onMarkAllRead={markAllRead}
+                onMarkAllRead={markAllReceiptsRead}
                 onPick={reportPick}
               />
                   ),

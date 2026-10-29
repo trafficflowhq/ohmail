@@ -751,6 +751,11 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         id: msg.id,
         entity: { ...msg, unread: false, lastReadAt: iso, updatedAt: iso },
       }));
+      // An Undo's line is put back as it was, the one write that may move it back.
+      if (m.line !== undefined) {
+        effects.push({ type: "view_meta", id: waterlineIdOf(view), entity: m.line });
+        return effects;
+      }
       // THE LINE MOVES ONLY ON AN EXPLICIT ANCHOR. `upToId` is the leave commit — the newest
       // message that was on screen, above which the line renders (`WaterlineMeta`). A sweep
       // that passes ids alone leaves the line where the last visit put it: "new since last
