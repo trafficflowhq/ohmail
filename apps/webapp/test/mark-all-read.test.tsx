@@ -2,9 +2,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { createTranslator, NextIntlClientProvider } from "next-intl";
 import type { EngineMutation } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
+import de from "../messages/de.json";
 import { dispatchMarkAllRead, MARK_SEEN_CHUNK } from "../app/shell/read-all";
 import { MarkAllRead } from "../app/components/MarkAllRead";
 
@@ -114,5 +115,38 @@ describe("MarkAllRead — absent exactly when there is nothing to clear", () => 
     const host = mount(3, () => {}, 5);
     const btn = host.querySelector("button.mark-all-read");
     expect(btn!.getAttribute("aria-label")).toBe("Mark all 3 unread messages read");
+  });
+
+  it("one unread or one new message is named in the singular, in English and German", () => {
+    expect(mount(1, () => {}).querySelector("button")!.getAttribute("aria-label"))
+      .toBe("Mark the 1 unread message read");
+    expect(mount(0, () => {}, 1).querySelector("button")!.getAttribute("aria-label"))
+      .toBe("Mark the 1 message new since you were here as read");
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.push(root);
+    act(() => {
+      root.render(React.createElement(NextIntlClientProvider, {
+        locale: "de", messages: de, timeZone: "UTC",
+        children: React.createElement(MarkAllRead, { unreadCount: 1, onMarkAllRead: () => {} }),
+      }));
+    });
+    expect(host.querySelector("button")!.getAttribute("aria-label"))
+      .toBe("Die 1 ungelesene Nachricht als gelesen markieren");
+  });
+});
+
+describe("a count of one is said in the singular", () => {
+  it("the first run's History row and a Screener card's caption, in English and German", () => {
+    const enT = createTranslator({ locale: "en", messages });
+    const deT = createTranslator({ locale: "de", messages: de });
+    expect(enT("onboarding.doneHistory", { count: 1 })).toBe("1 message listed under History");
+    expect(enT("onboarding.doneHistory", { count: 12 })).toBe("12 messages listed under History");
+    expect(deT("onboarding.doneHistory", { count: 1 })).toBe("1 Nachricht unter Historie gelistet");
+    expect(enT("screener.heldCaption", { count: 1, time: "9:00" })).toBe("1 held message — shown · first contact 9:00");
+    expect(deT("screener.heldCaption", { count: 1, time: "9:00" }))
+      .toBe("1 zurückgehaltene Nachricht — gezeigt · erster Kontakt 9:00");
+    expect(enT("screener.heldCaption", { count: 12, time: "9:00" })).toBe("12 held messages — all shown · first contact 9:00");
   });
 });

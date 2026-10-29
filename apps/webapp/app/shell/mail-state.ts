@@ -29,7 +29,9 @@
    why a reader's press has nowhere to go, shared with the server's refusal. Each import is the
    alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
 import { addressKey } from "./address-key";
-import { FILING_REFUSAL_REASONS, filingRefusalReason, type FilingRefusalReason } from "@ohmail/client-engine";
+import {
+  FILING_REFUSAL_REASONS, IMPORT_FLOOR_MAX_MS, filingRefusalReason, importFloorInWindow, type FilingRefusalReason,
+} from "@ohmail/client-engine";
 import { liftedAt, refusalIsStale } from "./access-window";
 import {
   holderIsLive, holderStopped, nothingOrganizesWhy, notOrganizingYet, organizerSituation, rosterRefusalReason,
@@ -1370,9 +1372,9 @@ export function wantsImportCounts(
  * second mailbox waits with nothing stamped. A day is an order of
  * magnitude past all of it, which is what makes the window safe to treat
  * as absolute: inside it the floor is obeyed exactly as before the bound
- * existed. Exported so a test can drive either side.
+ * existed. Defined in client-engine, which the phone reads too; re-exported so a test can drive either side.
  */
-export const IMPORT_FLOOR_MAX_MS = 86_400_000;
+export { IMPORT_FLOOR_MAX_MS };
 
 /**
  * Does the server's unwritten stamp still entitle the strip to say "importing" about THIS mailbox? The stamp is written only
@@ -1403,8 +1405,7 @@ export function importFloorSpeaks(
   // banner, which is the defect this function exists to remove, and the corroboration is what
   // makes skipping the window safe. Pinned by a test so it stays a decision rather than an
   // accident of `now - NaN < bound` evaluating false.
-  const connectedAt = new Date(mailbox.createdAt).getTime();
-  if (Number.isFinite(connectedAt) && now - connectedAt < IMPORT_FLOOR_MAX_MS) return true;
+  if (importFloorInWindow(mailbox, now)) return true;
 
   // Past the window the client must have something of its own to say. It has not drained, or its
   // last drain failed: it has observed nothing it can rely on, so the server's claim stands.

@@ -142,6 +142,27 @@ describe("the piles among the piles", () => {
     expect(document.activeElement, "→ from the rail did not land on Receipts' selected row").toBe(sel);
   });
 
+  it("every count on the rail and on the Screener's tabs says what it counts", async () => {
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter({ fixtures: getFixtures() }) });
+    await mountShell(engine);
+    const counted = [...host!.querySelectorAll<HTMLElement>(".rail .ritem")]
+      .map((el) => ({ el, n: (el.querySelector(".cnt")?.textContent ?? "").trim() }))
+      .filter(({ n }) => /^\d+$/.test(n));
+    const ids = counted.map(({ el }) => el.dataset.railId ?? `tag:${el.dataset.railTagId}`);
+    expect(ids, "control: the fixture's rail counts a pile and a tag").toEqual(
+      expect.arrayContaining(["triage-aside", expect.stringMatching(/^tag:/)]),
+    );
+    for (const { el, n } of counted) {
+      expect(el.title, `the ${el.textContent} count is a bare number`).toMatch(new RegExp(`\\b${n} [a-z]`));
+    }
+    expect(host!.querySelector<HTMLElement>('[data-rail-id="triage-aside"]')!.title).toBe("1 item");
+    await go("#/screener");
+    const waiting = host!.querySelector<HTMLElement>(".scn-seg button");
+    const n = (waiting?.querySelector(".scnt")?.textContent ?? "").trim();
+    expect(n, "control: the fixture has senders waiting").toMatch(/^\d+$/);
+    expect(waiting!.title).toBe(`${n} first-time senders waiting`);
+  });
+
   it("after a switch the pane says the rail's number, a change made while it was hidden included", async () => {
     const engine = new OhmailEngine({ adapter: new FixturesAdapter({ fixtures: getFixtures() }) });
     await mountShell(engine);

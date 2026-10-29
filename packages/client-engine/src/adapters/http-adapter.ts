@@ -1324,7 +1324,7 @@ export class HttpAdapter implements EngineAdapter {
   async unscreened(): Promise<UnscreenedWire> {
     const res = await this.request("GET", "/screener/unscreened");
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { groups?: unknown; total?: unknown; max?: unknown };
+    const wire = (await res.json()) as { groups?: unknown; total?: unknown; complete?: unknown; max?: unknown };
     const groups = Array.isArray(wire.groups)
       ? wire.groups.map((g) => HttpAdapter.unscreenedGroupOf(g)).filter((g): g is UnscreenedGroupWire => g !== null)
       : [];
@@ -1333,6 +1333,7 @@ export class HttpAdapter implements EngineAdapter {
     return {
       groups,
       total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
+      complete: wire.complete !== false,
       max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
     };
   }

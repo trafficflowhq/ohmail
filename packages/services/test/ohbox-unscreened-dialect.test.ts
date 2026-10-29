@@ -8,6 +8,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   screenUnscreened, unscreenedSummary, type ServiceContext,
 } from "../src/mail.js";
+import { OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_MESSAGES_MAX } from "../src/ohbox-unscreened-service.js";
 
 /**
  * THE UNDECIDED-SENDER WALK, ON BOTH STORES.
@@ -103,7 +104,40 @@ describe("the undecided-sender walk speaks both dialects", () => {
       { address: "stranger@x.test", count: 2, newestAt: ARRIVED.toISOString() },
     ]);
     expect(summary.total).toBe(2);
+    expect(summary.complete, "a walk that read every candidate is the whole count").toBe(true);
   });
+
+  async function seedMany(w: Awaited<ReturnType<typeof world>>, count: number, senders: number) {
+    const rows = Array.from({ length: count }, (_, i) => ({
+      accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `cap${i}`, dedupKey: `cap:${randomUUID()}`,
+      subject: `Cap ${i}`, fromAddress: `s${i % senders}@x.test`, date: ARRIVED, createdAt: ARRIVED, arrivedAt: ARRIVED,
+      unread: false, nativeLocator: { folder: OHBOX, ref: `9:${i}` },
+    }));
+    const ids = (await w.db.insert(messages).values(rows).returning({ id: messages.id })).map((r) => r.id);
+    await w.db.insert(messageBodies).values(ids.map((messageId) => ({ messageId, text: "", html: null, headers: {} })));
+    await w.db.insert(folderState).values(ids.map((messageId) => ({
+      messageId, desiredFolder: OHBOX, observedFolder: OHBOX, lastSetBy: "external" as const,
+      reconcileStatus: "reconciled" as const, conflict: false,
+    })));
+  }
+
+  it("a walk stopped at the bound says its total is a floor", async () => {
+    const w = await world();
+    await seedMany(w, OHBOX_UNSCREENED_MESSAGES_MAX + 5, 7);
+    const summary = await unscreenedSummary(w.db as never, w.accountId, NOW);
+    expect(summary.total).toBe(OHBOX_UNSCREENED_MESSAGES_MAX);
+    expect(summary.complete).toBe(false);
+  }, 120_000);
+
+  it("a list cut at the sender bound says its total is a floor", async () => {
+    const w = await world();
+    const senders = OHBOX_UNSCREENED_GROUPS_MAX + 50;
+    await seedMany(w, senders * 2, senders);
+    const summary = await unscreenedSummary(w.db as never, w.accountId, NOW);
+    expect(summary.groups).toHaveLength(OHBOX_UNSCREENED_GROUPS_MAX);
+    expect(summary.total).toBe(OHBOX_UNSCREENED_GROUPS_MAX * 2);
+    expect(summary.complete, "the shown groups leave senders out").toBe(false);
+  }, 120_000);
 
   it("the press writes the intent, on either store, and a second press finds nothing", async () => {
     const w = await world();
@@ -217,6 +251,6 @@ describe("the undecided-sender walk speaks both dialects", () => {
     await w.db.update(mailboxes).set({ organizerRole: "reader" })
       .where(eq(mailboxes.id, w.mailboxId));
     await seed(w, "stranger@x.test");
-    expect(await unscreenedSummary(w.db as never, w.accountId, NOW)).toEqual({ groups: [], total: 0 });
+    expect(await unscreenedSummary(w.db as never, w.accountId, NOW)).toEqual({ groups: [], total: 0, complete: true });
   });
 });

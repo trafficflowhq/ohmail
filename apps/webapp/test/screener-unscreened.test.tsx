@@ -69,6 +69,8 @@ function waiting(id: string, from: string, folder: Folder = "ohmail/Screener"): 
 interface Door {
   groups: Array<{ address: string; count: number; newestAt: string }>;
   total: number;
+  /** False: the server's walk stopped at its bound, so `total` is a floor. */
+  complete?: boolean;
 }
 
 let presses: Array<readonly string[] | undefined> = [];
@@ -92,7 +94,7 @@ async function engineWith(door: Door | null): Promise<OhmailEngine> {
       // A door with nothing to say implements NEITHER call — an older server, exactly.
       ...(door
         ? {
-          unscreened: async () => ({ groups: door.groups, total: door.total, max: 200 }),
+          unscreened: async () => ({ groups: door.groups, total: door.total, complete: door.complete, max: 200 }),
           screenUnscreened: async (addresses?: readonly string[]) => {
             presses.push(addresses);
             return { screened: door.groups, total: door.total };
@@ -177,6 +179,7 @@ const DOOR: Door = {
 describe("the row renders through the engine the product actually builds", () => {
   const ARMED = { NEXT_PUBLIC_API_BASE: "/api" } as const;
   let calls: string[] = [];
+  let wireFloor = false;
   const originalFetch = globalThis.fetch;
 
   const json = (status: number, body: unknown): Response =>
@@ -184,6 +187,7 @@ describe("the row renders through the engine the product actually builds", () =>
 
   beforeEach(() => {
     calls = [];
+    wireFloor = false;
     // Stubbed BEFORE `createEngine`: `HttpAdapter` binds the global at construction.
     globalThis.fetch = ((url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
@@ -191,7 +195,7 @@ describe("the row renders through the engine the product actually builds", () =>
       if (url.endsWith("/api/screener/unscreened")) {
         return Promise.resolve(method === "POST"
           ? json(200, { screened: DOOR.groups, total: DOOR.total })
-          : json(200, { groups: DOOR.groups, total: DOOR.total, max: 200 }));
+          : json(200, { groups: DOOR.groups, total: DOOR.total, max: 200, ...(wireFloor ? { complete: false } : {}) }));
       }
       return Promise.resolve(json(404, { error: { code: "not_found", message: "no stub for this route" } }));
     }) as unknown as typeof fetch;
@@ -215,6 +219,14 @@ describe("the row renders through the engine the product actually builds", () =>
     await act(async () => { pressButton().dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await flush();
     expect(calls, "the press never reached the door").toContain("POST /api/screener/unscreened");
+  });
+
+  it("a total the server's walk stopped at is said as a floor, off the wire", async () => {
+    wireFloor = true;
+    await mount(null, createEngine(false, ARMED));
+    expect(row()?.querySelector(".scn-held-lead")?.textContent).toBe(
+      "At least 12 messages from senders you have not decided about are still in the Inbox on your mail server.",
+    );
   });
 });
 
@@ -248,6 +260,19 @@ describe("the undecided-sender row in the Screener header", () => {
     await act(async () => { pressButton().dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await flush();
     expect(presses).toEqual([undefined]);
+  });
+
+  it("a floor says 'at least', and the press names what it moves", async () => {
+    await mount({ ...DOOR, total: 40, complete: false });
+    expect(row()?.querySelector(".scn-held-lead")?.textContent).toBe(
+      "At least 40 messages from senders you have not decided about are still in the Inbox on your mail server.",
+    );
+    expect(pressButton().textContent).toContain("Screen 40");
+    await act(async () => { root!.unmount(); });
+    root = null;
+    host?.remove();
+    await mount({ ...DOOR, complete: true });
+    expect(row()?.querySelector(".scn-held-lead")?.textContent).toMatch(/^12 messages/);
   });
 
   /** A door with nothing to offer draws NO ROW — never a row stating zero. */

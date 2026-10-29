@@ -1089,9 +1089,12 @@ export function useShellKeys({
            `viewTitles` below titles the mobile view with it, so the locale files keep their
            shape. */
         items: [
-          { id: "triage", label: t("rail.replyLater"), count: piles.replyLater.length },
-          { id: "triage-aside", label: t("rail.setAside"), count: piles.setAside.length },
-          { id: "triage-resurface", label: t("rail.resurface"), count: piles.resurface.length },
+          { id: "triage", label: t("rail.replyLater"), count: piles.replyLater.length,
+            title: t("rail.pileTitle", { count: piles.replyLater.length }) },
+          { id: "triage-aside", label: t("rail.setAside"), count: piles.setAside.length,
+            title: t("rail.pileTitle", { count: piles.setAside.length }) },
+          { id: "triage-resurface", label: t("rail.resurface"), count: piles.resurface.length,
+            title: t("rail.pileTitle", { count: piles.resurface.length }) },
         ],
       },
       // TAGS ARE THEIR OWN GROUP, not a sub-item of Triage. They were nested under it, which
@@ -1119,6 +1122,7 @@ export function useShellKeys({
             label: g.tag.name,
             hue: hueOf(g.tag),
             count: g.messages.length,
+            title: t("rail.tagTitle", { count: g.messages.length }),
           })),
           /* "New tag" is a first-class inline affordance now, not a data row and not a dialog:
              `RailNav` owns a `+ New tag` trigger that swaps for an input IN PLACE, plus an
@@ -1248,7 +1252,7 @@ export function useShellKeys({
              count is exactly a call to act, and zero of them is a row worth having anyway: it is
              how somebody learns their half-written mail is on the account rather than in one
              browser. `count` is therefore present even at zero, unlike History's absent key. */
-          { id: "drafts", label: t("rail.drafts"), count: drafts.length },
+          { id: "drafts", label: t("rail.drafts"), count: drafts.length, title: t("rail.draftsTitle", { count: drafts.length }) },
           { id: "settings", label: t("rail.settings") },
         ],
       },

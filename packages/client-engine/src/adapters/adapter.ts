@@ -245,6 +245,8 @@ export interface UnscreenedWire {
   groups: UnscreenedGroupWire[];
   /** Messages the SHOWN groups hold. Every message has one sender, so these do add up. */
   total: number;
+  /** False when the server's walk stopped at its bound: `total` is then a floor. Absent: an older server, read as whole. */
+  complete?: boolean;
   /** How many groups one press may name. Read rather than hardcoded, so the client cannot drift. */
   max: number;
 }

@@ -141,6 +141,7 @@ import {
   ruleMatchKey,
   unscreenedGroups,
   unscreenedTotalOf,
+  unscreenedTotalIsFloor,
   zonedDayNumber,
   NOT_DERIVED_FROM,
   beginDerive,
@@ -1535,6 +1536,8 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
 export interface WorldUnscreened {
   /** Messages across every shown group — the server's own count. */
   total: number;
+  /** Present when `total` is a floor: the server's walk stopped at its bound. */
+  atLeast?: true;
   /** Who wrote them, largest group first: what the press screens. */
   senders: readonly string[];
 }
@@ -1547,7 +1550,8 @@ export interface WorldUnscreened {
 export function liveUnscreened(reader: EntityReader): WorldUnscreened | null {
   const groups = unscreenedGroups(reader);
   const total = unscreenedTotalOf(reader);
-  return total > 0 && groups.length > 0 ? { total, senders: groups.map((g) => g.id) } : null;
+  if (total <= 0 || groups.length === 0) return null;
+  return { total, ...(unscreenedTotalIsFloor(reader) ? { atLeast: true as const } : {}), senders: groups.map((g) => g.id) };
 }
 
 export interface WorldReads {

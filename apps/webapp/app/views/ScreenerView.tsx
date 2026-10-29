@@ -1675,6 +1675,7 @@ export function ScreenerView({
                   id: "waiting",
                   label: t("segWaiting"),
                   count: state.waitingCount > 0 ? state.waitingCount : "",
+                  ...(state.waitingCount > 0 ? { title: t("metaWaiting", { count: state.waitingCount }) } : {}),
                 },
                 {
                   id: "screened",
@@ -1770,7 +1771,7 @@ export function ScreenerView({
             {segment === "waiting" && state.unscreened ? (
               <div className="scn-held scn-unscreened" role="note">
                 <p className="scn-held-lead">
-                  {t("unscreenedLead", { count: state.unscreened.total })}
+                  {t(state.unscreened.atLeast ? "unscreenedLeadAtLeast" : "unscreenedLead", { count: state.unscreened.total })}
                 </p>
                 <Button
                   disabled={state.unscreened.screening}

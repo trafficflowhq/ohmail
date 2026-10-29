@@ -20,6 +20,8 @@ export type { UnscreenedSenderGroup };
 export interface UnscreenedSummary {
   groups: UnscreenedSenderGroup[];
   total: number;
+  /** False when the walk or the group list stopped at its bound: `total` is then a floor. */
+  complete: boolean;
 }
 
 /** What a press did. A second press over the same set is empty — the moved rows leave the set. */
@@ -45,7 +47,9 @@ export async function unscreenedSummary(
     lock: false, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope: { kind: "offer", cutoff },
   });
   const groups = unscreenedGroups(walk.rows);
-  return { groups, total: groups.reduce((n, g) => n + g.count, 0) };
+  // Either bound makes `total` a floor: the walk's message bound or the shown groups' sender bound.
+  const complete = walk.complete && walk.senders <= OHBOX_UNSCREENED_GROUPS_MAX;
+  return { groups, total: groups.reduce((n, g) => n + g.count, 0), complete };
 }
 
 /**

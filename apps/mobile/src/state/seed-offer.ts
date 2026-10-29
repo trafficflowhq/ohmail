@@ -10,6 +10,7 @@
  */
 import type { SeedReview } from "../net/consent";
 import type { SecureKV } from "./servers";
+import { importFloorInWindow } from "./surface";
 
 /** What the account's consent answer said about the seed. */
 export type WorldSeed =
@@ -28,6 +29,8 @@ export interface SeedMailbox {
   status: string | null;
   organizerRole: "organizer" | "reader" | null;
   initialImportCompletedAt?: string | null;
+  /** When the mailbox was connected: the first-import floor's clock. */
+  createdAt?: string;
 }
 
 export interface SeedFacts {
@@ -40,6 +43,17 @@ export interface SeedFacts {
 /** The mailboxes this door organizes — `organizerRole`, never `organizedByThisInstall`. */
 export function organizedHere<R extends SeedMailbox>(rows: readonly R[]): R[] {
   return rows.filter((r) => r.status !== "disabled" && r.organizerRole === "organizer");
+}
+
+/**
+ * An EMPTY waiting shelf while an organized mailbox's first import runs, by the web's bounded floor
+ * (`importFloorInWindow`): the gate has judged nobody yet. A shelf with rows counts them, as the
+ * badges do; an unwritten stamp a day old withholds nothing.
+ */
+export function firstPassWithholds(
+  waiting: number, mailboxes: { known: boolean; rows: readonly SeedMailbox[] }, now: number,
+): boolean {
+  return waiting === 0 && mailboxes.known && organizedHere(mailboxes.rows).some((r) => importFloorInWindow(r, now));
 }
 
 /** Whether Settings offers the review again: the door carries the seed and organizes a mailbox. */

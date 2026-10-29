@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OhmailEngine, UNSCREENED_REASK_MS } from "../src/engine.js";
-import { unscreenedGroups, unscreenedTotalOf } from "../src/selectors.js";
+import { unscreenedGroups, unscreenedTotalIsFloor, unscreenedTotalOf } from "../src/selectors.js";
 import type { EngineAdapter, UnscreenedGroupWire, UnscreenedWire } from "../src/adapters/adapter.js";
 import type { EngineMessage, Folder, SyncChange } from "../src/types.js";
 
@@ -61,7 +61,21 @@ describe("the undecided-sender offer, client side", () => {
     const rows = unscreenedGroups(engine.read());
     expect(rows.map((r) => [r.id, r.count])).toEqual([["big@x.test", 9], ["small@x.test", 2]]);
     expect(unscreenedTotalOf(engine.read())).toBe(11);
+    expect(unscreenedTotalIsFloor(engine.read()), "a door that says nothing is read as whole").toBe(false);
     expect(rows[0]!.newestAt).toBe(ARRIVED);
+  });
+
+  it("a total the server's walk stopped at is held as a floor, and a whole answer replaces it", async () => {
+    const { adapter } = doorWith([
+      { groups: [group({ address: "a@x.test", count: 1000 })], total: 1000, complete: false, max: 200 },
+      { groups: [group({ address: "a@x.test", count: 400 })], total: 400, complete: true, max: 200 },
+    ]);
+    const engine = await engineOn(adapter);
+    await engine.refreshUnscreened();
+    expect(unscreenedTotalIsFloor(engine.read())).toBe(true);
+    await engine.refreshUnscreened();
+    expect(unscreenedTotalIsFloor(engine.read())).toBe(false);
+    expect(unscreenedTotalOf(engine.read())).toBe(400);
   });
 
   it("a refresh REPLACES the set — a group the door no longer names is gone", async () => {

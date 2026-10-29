@@ -1059,6 +1059,8 @@ const TABLE = {
    * sentence over the silhouette, so an empty list cannot read as "no mail".
    */
   cutlinePending: "Reading your screening settings — until they land, this list is not settled.",
+  /** The waiting shelf while an organized mailbox's first import runs: the gate has judged nobody yet. */
+  waitingFirstPass: "Still reading your mailbox — the senders waiting here are known once the first pass is done.",
   screenedEmptyTitle: "Nobody is screened out.",
   screenedEmptyHint: "Senders you say No to wait here — held, never deleted.",
   spamEmptyTitle: "No spam held.",
@@ -2024,10 +2026,10 @@ const TABLE = {
   deleteReplayGone: (n: number) =>
     `${n === 1 ? "1 message was" : `${n} messages were`} not moved to Trash — this phone could not find ${n === 1 ? "it" : "them"} when the app started again. Delete ${n === 1 ? "it" : "them"} again if you still want ${n === 1 ? "it" : "them"} there.`,
   /** THE OHBOX'S UNDECIDED-SENDER OFFER — the web's `screener.unscreened*` sentences, word for word. */
-  unscreenedLead: (n: number) =>
-    n === 1
+  unscreenedLead: (n: number, atLeast?: boolean) =>
+    `${atLeast ? "At least " : ""}${n === 1
       ? "1 message from a sender you have not decided about is still in the Inbox on your mail server."
-      : `${n} messages from senders you have not decided about are still in the Inbox on your mail server.`,
+      : `${n} messages from senders you have not decided about are still in the Inbox on your mail server.`}`,
   unscreenedAll: (n: number) => `Screen ${n}`,
   unscreenedMoved: (n: number) => `Screened ${n}. Your organizer moves them on the next pass.`,
   unscreenedMovedNone: "Nothing left to screen.",
