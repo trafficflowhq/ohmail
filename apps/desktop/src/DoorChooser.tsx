@@ -71,6 +71,12 @@ import { offLinkCode, onLinkCode, openApprovalPage, openWeb } from "./native.js"
  */
 type Step = "doors" | "takeover" | "local" | "host" | "server" | "cloud";
 
+/** Focus the first field in `root`, else its first button: a card that stands for the window takes the keyboard. */
+export function focusFirstControl(root: HTMLElement | null): void {
+  const field = root?.querySelector<HTMLElement>("input:not([type=hidden]):not([disabled]), select, textarea");
+  (field ?? root?.querySelector<HTMLElement>("button:not([disabled]), a[href]"))?.focus();
+}
+
 export function DoorChooser({
   onEntered,
   /** Where the chooser opens. The Settings pane sends somebody straight to one door. */
@@ -100,6 +106,8 @@ export function DoorChooser({
   cloudAction = "configure",
   /** Why the sign-in is asked for, when the engine knows — the dialog's first sentence says it. */
   signInCause = null,
+  /** The id the sign-in's first sentence carries, for the dialog that is described by it. */
+  causeId,
   /** Offered only when there is already a door to go back to. */
   onCancel,
   /**
@@ -134,6 +142,7 @@ export function DoorChooser({
   start?: Step;
   cloudAction?: "configure" | "signIn";
   signInCause?: SignInCause;
+  causeId?: string;
   roster?: { address: string; id: string }[] | null | undefined;
   host?: string | null;
   onCancel?: () => void;
@@ -681,6 +690,7 @@ export function DoorChooser({
             onCancel={onCancel ? () => { stopApproval(); onCancel(); } : undefined}
             signInOnly={cloudAction === "signIn"}
             signInCause={signInCause}
+            causeId={causeId}
             needsAddress={!(cloudAction === "signIn" && !mustSwitch)}
             addressless={noAddress}
             adopting={adopting}
@@ -1467,6 +1477,7 @@ function CloudDoor({
   notice = null,
   signInOnly,
   signInCause = null,
+  causeId,
   needsAddress = true,
   addressless = false,
   adopting = false,
@@ -1487,6 +1498,7 @@ function CloudDoor({
   /** The door is already chosen; this is only the session coming back. */
   signInOnly?: boolean;
   signInCause?: SignInCause;
+  causeId?: string;
   /** False when the engine is already configured: the browser approval reads no address. */
   needsAddress?: boolean;
   /**
@@ -1536,6 +1548,12 @@ function CloudDoor({
    */
   const live = useRef({ address, viaBrowser, onSubmitCode });
   live.current = { address, viaBrowser, onSubmitCode };
+  const form = useRef<HTMLFormElement | null>(null);
+  /* A sign-in asked for again stands where the window was: the keyboard starts in it. */
+  useEffect(() => {
+    if (signInOnly) focusFirstControl(form.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on arrival only
+  }, []);
 
   /**
    * ANSWER THE SCHEME while this screen is the one on show. Registered once and cleared on
@@ -1563,6 +1581,7 @@ function CloudDoor({
 
   return (
     <form
+      ref={form}
       onSubmit={(e) => {
         e.preventDefault();
         if (byApproval) onApprove?.(address);
@@ -1571,7 +1590,7 @@ function CloudDoor({
       }}
     >
       <h1>{DOOR_COPY.cloudTitle}</h1>
-      <p>{signInOnly ? signInLead(signInCause) : DOOR_COPY.cloudLead}</p>
+      <p id={causeId}>{signInOnly ? signInLead(signInCause) : DOOR_COPY.cloudLead}</p>
       {notice ? <div className="join-note" role="status">{notice}</div> : null}
 
       {problem ? <p className="join-error">{problem}</p> : null}

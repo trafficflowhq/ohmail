@@ -20,7 +20,7 @@
  * drives `go()`, the same function the rail, palette and number keys call.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { Button, Spinner, useOptionalToast } from "@ohmail/ui";
 
@@ -48,7 +48,7 @@ import {
 import {
   cloudNoticeDue, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
 } from "./cloud-session.js";
-import { DoorChooser } from "./DoorChooser.js";
+import { DoorChooser, focusFirstControl } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
@@ -1159,18 +1159,23 @@ export function DesktopGate() {
      real and stays. The doors differ only in the way back in: Cloud signs in inside the card; a
      paired install was removed on the other computer, so it pairs again or sets up on its own
      (opposite remedies, both offered) through a door opened over the card, which yields while
-     that door is open and returns if it is cancelled. */
+     that door is open and returns if it is cancelled. With no pull of this launch finished the
+     window holds no mail (a signed-out engine refuses reads), so the card stands on the window's
+     own page, as at launch, rather than over an empty list. */
+  const overMail = mount.kind === "engine" && live?.key === mount.key && live.engine.drainsCompleted() > 0;
+  const layer = overMail ? "session-end" : "session-end session-whole";
   const refusedCard = readers === null || readers.card === "closed" || overlay !== null ? null : paired ? (
-    <div className="session-end" role="dialog" aria-label={DOOR_COPY.credHostOutValue}>
-      <UnpairedCard host={hostLabel} notice={waitingNotice} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} />
-    </div>
+    <RefusedLayer className={layer} label={DOOR_COPY.credHostOutValue}>
+      <UnpairedCard host={hostLabel} notice={waitingNotice} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} causeId={REFUSED_CAUSE} />
+    </RefusedLayer>
   ) : (
-    <div className="session-end session-signin" role="dialog" aria-label={ownServer ? DOOR_COPY.doorServerName : DOOR_COPY.cloudTitle}>
+    <RefusedLayer className={`${layer} session-signin`} label={ownServer ? DOOR_COPY.doorServerName : DOOR_COPY.cloudTitle}>
       <DoorChooser
         start={ownServer ? "server" : "cloud"}
         server={ownServer}
         cloudAction="signIn"
         signInCause={readers.card}
+        causeId={REFUSED_CAUSE}
         notice={waitingNotice}
         onEntered={(r) => {
           /* Back to PENDING: only the fresh probe against the engine the sign-in touched says
@@ -1180,7 +1185,7 @@ export function DesktopGate() {
           else void refresh();
         }}
       />
-    </div>
+    </RefusedLayer>
   );
 
   const suggestDoor = suggestDoorFor(status, hostedSession);
@@ -1624,15 +1629,50 @@ export function DesktopGate() {
   );
 }
 
-/** "Not paired", the other computer named, and the two remedies: pair again, or stand alone. */
-function UnpairedCard({ host, notice = null, onPairAgain, onOwn }: {
-  host: string | null; notice?: string | null; onPairAgain: () => void; onOwn: () => void;
-}) {
+/** The id of the refused card's first sentence, which describes its dialog. One card is up at a time. */
+const REFUSED_CAUSE = "session-end-cause";
+
+/**
+ * THE REFUSED CARD CLAIMS THE WINDOW while it is up: everything beside it, up to the body, is
+ * inert (no Tab, press or reader reaches the mail behind the scrim), and focus goes back where it
+ * stood when the card closes. The card itself takes focus on arrival. A layout effect, so it reads
+ * the focus before the card's own effect moves it.
+ */
+function RefusedLayer({ className, label, children }: { className: string; label: string; children: ReactNode }) {
+  const layer = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const stood = document.activeElement;
+    const held: Array<[Element, boolean]> = [];
+    for (let at: HTMLElement | null = layer.current; at && at !== document.body; at = at.parentElement) {
+      for (const sib of Array.from(at.parentElement?.children ?? [])) {
+        if (sib === at) continue;
+        held.push([sib, sib.hasAttribute("inert")]);
+        sib.setAttribute("inert", "");
+      }
+    }
+    return () => {
+      for (const [el, was] of held) if (!was) el.removeAttribute("inert");
+      if (stood instanceof HTMLElement && stood !== document.body && stood.isConnected) stood.focus();
+    };
+  }, []);
   return (
-    <div className="gate-card">
+    <div ref={layer} className={className} role="dialog" aria-modal="true" aria-label={label} aria-describedby={REFUSED_CAUSE}>
+      {children}
+    </div>
+  );
+}
+
+/** "Not paired", the other computer named, and the two remedies: pair again, or stand alone. */
+function UnpairedCard({ host, notice = null, causeId, onPairAgain, onOwn }: {
+  host: string | null; notice?: string | null; causeId?: string; onPairAgain: () => void; onOwn: () => void;
+}) {
+  const card = useRef<HTMLDivElement | null>(null);
+  useEffect(() => focusFirstControl(card.current), []);
+  return (
+    <div className="gate-card" ref={card}>
       <span className="wordmark"><b>ohmail</b><em>.</em></span>
       <h1>{DOOR_COPY.credHostOutValue}</h1>
-      <p>{DOOR_COPY.gateUnpaired(machineWord(), host ?? DOOR_COPY.doorHostName)}</p>
+      <p id={causeId}>{DOOR_COPY.gateUnpaired(machineWord(), host ?? DOOR_COPY.doorHostName)}</p>
       {notice ? <div className="join-note" role="status">{notice}</div> : null}
       <div className="gate-actions">
         <Button onClick={onPairAgain}>{DOOR_COPY.gatePairAgain}</Button>
