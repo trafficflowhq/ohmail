@@ -190,6 +190,16 @@ export function runtimeDedupKey(m: FingerprintInput & Pick<NormalizedMessage, "r
   return m.runtimeDate === undefined ? null : fingerprintDedupKey(messageFingerprint({ ...m, date: m.runtimeDate }));
 }
 
+/**
+ * True when a stored row is this message in every fingerprinted field but the Date: its key,
+ * recomputed from this message's bytes with the row's own stored date. Two copies of one sent
+ * letter compiled seconds apart differ only there. Never evidence on its own: the caller decides
+ * which rows may be asked.
+ */
+export function sameLetterBesideDate(m: FingerprintInput, stored: { dedupKey: string; date: Date | null }): boolean {
+  return fingerprintDedupKey(messageFingerprint({ ...m, date: stored.date })) === stored.dedupKey;
+}
+
 /** True for a key in the new format. `dedup_key NOT LIKE 'fp1:%'` is the same question in SQL. */
 export function isFingerprintDedupKey(key: string): boolean {
   return key.startsWith(`${FINGERPRINT_VERSION}:`);

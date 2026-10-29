@@ -38,7 +38,7 @@ import type { OutboundMessage } from "../src/adapters/imap-types.js";
 const HEADER_END = /\r\n\r\n/;
 
 function compiled(msg: OutboundMessage) {
-  return new MailComposer(outboundToMail(msg, "<mid-1@trafficflow.test>")).compile();
+  return new MailComposer(outboundToMail(msg, "<mid-1@trafficflow.test>", new Date())).compile();
 }
 
 function rawOf(msg: OutboundMessage): Promise<string> {

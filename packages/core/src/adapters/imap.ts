@@ -5527,7 +5527,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // envelope nodemailer computes for `sendMail` and the raw bytes `buildRaw` appends to Sent are
     // built from the same `bcc`, so a bcc recipient is on the RCPT list AND absent from the Sent
     // copy's headers — there is no way for the two to disagree about who was blind-copied.
-    const mail = outboundToMail(msg, messageId);
+    // One Date for every compile: each stamped its own, and a slow submission dated the copies apart.
+    const mail = outboundToMail(msg, messageId, new Date(this.now()));
     // Read by `releaseGatePlugin`; `armed` stays false on a transporter built without it.
     const gate: ReleaseGate = { armed: false, released: false, settled: false, beforeRelease: opts.beforeRelease };
     (mail as Record<symbol, unknown>)[RELEASE_GATE] = gate;
@@ -5945,8 +5946,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
  */
 type MailWithOAuth = Mail.Options & { auth?: { type: "OAuth2"; user: string; accessToken: string } };
 
-export function outboundToMail(msg: OutboundMessage, messageId: string): Mail.Options {
+export function outboundToMail(msg: OutboundMessage, messageId: string, date: Date): Mail.Options {
   return {
+    date,
     from: msg.from,
     to: msg.to,
     ...(msg.cc !== undefined ? { cc: msg.cc } : {}),

@@ -1,5 +1,5 @@
 import type {
-  AdapterPort, RepoPort, RoutingPort, StoredMessage, InsertedMessage, InsertMessageInput,
+  AdapterPort, RepoPort, RoutingPort, StoredMessage, MessageIdCandidate, InsertedMessage, InsertMessageInput,
   FolderStateRow, NativeLocator, MessageBodyInput, BodyStorageContext, BodyStorageOutcome, RepoChangeInput,
   RoutingDecisionInput, ApprovalInput, AttachmentMeta,
   ThreadParent, ThreadUpsertInput, ThreadUpsertResult, ThreadMergeInput,
@@ -108,17 +108,18 @@ export class FakeRepo implements RepoPort {
   }
 
   /**
-   * The own-sent twin lookup — `RepoPort.findByMessageIdHeader`: only a row that already has an
-   * instance in the mailbox's Sent set, the same test {@link sentCopiesByHeader} applies. Insertion
-   * order stands in for `created_at, id` ("oldest row wins"): `insertMessage` only ever appends.
+   * `RepoPort.findByMessageIdHeader`: the rows under one id, those with an instance in the
+   * mailbox's Sent set first (the test {@link sentCopiesByHeader} applies). Insertion order stands
+   * in for `created_at, id` ("oldest row wins"): `insertMessage` only ever appends, and the sort is stable.
    */
-  async findByMessageIdHeader(accountId: string, mailboxId: string, messageIdHeader: string): Promise<StoredMessage | null> {
+  async findByMessageIdHeader(accountId: string, mailboxId: string, messageIdHeader: string): Promise<MessageIdCandidate[]> {
+    const out: MessageIdCandidate[] = [];
     for (const { stored, input } of this.rows.values()) {
       if (input.accountId !== accountId || input.mailboxId !== mailboxId) continue;
       if (stored.messageIdHeader === null || stored.messageIdHeader !== messageIdHeader) continue;
-      if (this.hasSentInstance(stored.id)) return { ...stored };
+      out.push({ row: { ...stored }, date: input.date, inSent: this.hasSentInstance(stored.id) });
     }
-    return null;
+    return out.sort((a, b) => Number(b.inSent) - Number(a.inSent)).slice(0, 8);
   }
 
   /**

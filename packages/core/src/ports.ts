@@ -367,18 +367,28 @@ export interface ThreadMergeInput {
  */
 export type InsertedMessage = StoredMessage & { created: boolean };
 
+/** A row under one Message-ID: its stored Date and whether it has an instance in the mailbox's Sent set. */
+export interface MessageIdCandidate { row: StoredMessage; date: Date | null; inSent: boolean }
+
 export interface RepoPort {
   findByDedupKey(mailboxId: string, dedupKey: string): Promise<StoredMessage | null>;
   /**
-   * A row of THIS mailbox carrying this Message-ID (bracket-stripped, case preserved) that already
-   * has an instance in the mailbox's Sent set — the user's own copy; an inbound row carrying the
-   * same id is a stranger's and is never adopted. Oldest row wins, so observations converge. One
-   * caller: the own-sent twin lookup for a `Change.ownAuthored` create. It exists because Exchange
-   * Online re-renders the copy it files beside the byte-exact one the send path APPENDs, defeating
-   * both fingerprint lookups. For INBOUND mail the Message-ID is a string a stranger types; never
-   * call this outside that gate — the forgery pin goes red when it widens.
+   * The rows of THIS mailbox carrying this Message-ID (bracket-stripped, case preserved), those
+   * with an instance in the mailbox's Sent set first, then oldest first (`created_at, id`), at most
+   * a handful. A candidate list, never an answer: the Message-ID is a string a stranger types. One
+   * caller, `resolveExisting`'s step 3, which adopts only (a) for a `Change.ownAuthored` create, a
+   * row with a Sent instance (Exchange Online re-renders the copy it files beside the one the send
+   * path APPENDs), or (b) a copy whose fingerprint agrees but for the Date, where the arrival or
+   * the row is from the Sent folder. Widen either gate and the forgery pin goes red.
    */
-  findByMessageIdHeader(accountId: string, mailboxId: string, messageIdHeader: string): Promise<StoredMessage | null>;
+  findByMessageIdHeader(accountId: string, mailboxId: string, messageIdHeader: string): Promise<MessageIdCandidate[]>;
+  /**
+   * The mailbox's recorded special folders (mail 0065/0132). OPTIONAL: a repo that cannot say reads
+   * as nothing recorded, and the ingest then knows Sent by its name alone.
+   */
+  getMailboxSpecialFolders?(mailboxId: string): Promise<{
+    junkFolder: string | null; trashFolder: string | null; sentFolder?: string | null;
+  }>;
   /**
    * Insert a message, or return the row a concurrent/earlier ingest already wrote.
    *

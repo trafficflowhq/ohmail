@@ -27,7 +27,7 @@ const forward: OutboundMessage = {
 };
 
 function sentCopy(msg: OutboundMessage): Promise<Buffer> {
-  const mail = outboundToMail(msg, "<fwd-1@trafficflow.test>");
+  const mail = outboundToMail(msg, "<fwd-1@trafficflow.test>", new Date());
   return new Promise((resolve, reject) => {
     new MailComposer({ ...mail, disableFileAccess: true, disableUrlAccess: true }).compile()
       .build((err: Error | null, raw: Buffer) => (err ? reject(err) : resolve(raw)));
@@ -73,7 +73,7 @@ describe("a forwarded message/rfc822 part", () => {
 
   it("is asked of every message/* type in any case, and of no other type", () => {
     const types = ["message/rfc822", "Message/RFC822", "message/global", "message/delivery-status", "text/plain", "application/octet-stream", "image/png"];
-    const mail = outboundToMail({ ...forward, attachments: types.map((contentType, i) => ({ filename: `p${i}`, contentType, content: new Uint8Array([0x41]) })) }, "<fwd-2@trafficflow.test>");
+    const mail = outboundToMail({ ...forward, attachments: types.map((contentType, i) => ({ filename: `p${i}`, contentType, content: new Uint8Array([0x41]) })) }, "<fwd-2@trafficflow.test>", new Date());
     const asked = (mail.attachments ?? []).map((a) => [a.contentType, a.contentTransferEncoding ?? "nodemailer's own"]);
     expect(asked).toEqual([
       ["message/rfc822", "base64"], ["Message/RFC822", "base64"], ["message/global", "base64"], ["message/delivery-status", "base64"],

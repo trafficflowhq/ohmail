@@ -27,7 +27,7 @@ const OWNER = "mila@lichtgrat.example";
 
 function eml(o: {
   from?: string; to?: string; subject?: string; body?: string;
-  messageId: string; inReplyTo?: string; references?: string[];
+  messageId: string; inReplyTo?: string; references?: string[]; date?: string;
 }): Buffer {
   return Buffer.from([
     `Message-ID: <${o.messageId}>`,
@@ -36,6 +36,7 @@ function eml(o: {
     `Subject: ${o.subject ?? "the north elevation"}`,
     ...(o.inReplyTo ? [`In-Reply-To: <${o.inReplyTo}>`] : []),
     ...(o.references ? [`References: ${o.references.map((r) => `<${r}>`).join(" ")}`] : []),
+    ...(o.date ? [`Date: ${o.date}`] : []),
     "Content-Type: text/plain; charset=utf-8",
     "",
     o.body ?? "Sounds good — Thursday works.",
@@ -356,9 +357,9 @@ describe("own-authored mail", () => {
     // The self-CC's inbound copy — already re-rendered by the provider's inbound transport…
     const first = await ingest(inboxChange(rewrittenBy("exchange", { messageId: "cc-rw@t.example" })), repo);
     const before = await repo.getFolderState(first.messageId);
-    // …and the byte-exact copy ohmail APPENDed to Sent, observed later. Only a row that already
-    // has a Sent instance is the account's own copy; an INBOX row under the same id may be a
-    // stranger's, so the two copies stay two rows — as every other client shows them.
+    // …and the byte-exact copy ohmail APPENDed to Sent, observed later. An INBOX row under the same
+    // id joins only when its content agrees but for the Date; the re-rendered text does not, so the
+    // two copies stay two rows — as every other client shows them.
     const twin = await ingest(sentChange(eml({ messageId: "cc-rw@t.example" }), "1:60"), repo);
 
     expect(twin.outcome).toBe("new");
@@ -400,6 +401,51 @@ describe("own-authored mail", () => {
     );
     expect(forged.outcome).toBe("new");
     expect(forged.messageId).not.toBe(held.messageId);
+    expect(repo.rows.size).toBe(2);
+  });
+
+  /* ONE LETTER TO YOURSELF, ITS TWO COPIES DATED APART: a send that compiled the delivered copy and
+     the Sent copy seconds apart left only the Date line different, and the fingerprint with it. */
+  const DELIVERED_AT = "Thu, 29 Oct 2026 18:54:31 +0000";
+  const FILED_AT = "Thu, 29 Oct 2026 18:54:38 +0000";
+  const toMyself = (date: string, o: { body?: string; to?: string } = {}) =>
+    eml({ messageId: "self-reply@lichtgrat.example", to: o.to ?? OWNER, date, ...(o.body ? { body: o.body } : {}) });
+  const own = { ownAddresses: new Set([OWNER]) };
+
+  for (const sentFirst of [true, false]) {
+    const order = sentFirst ? "Sent copy first" : "INBOX copy first";
+    it(`a letter to yourself whose copies are dated apart is ONE row — ${order}`, async () => {
+      const repo = new FakeRepo();
+      const sent = sentChange(toMyself(FILED_AT), "1:80");
+      const inbox = inboxChange(toMyself(DELIVERED_AT), "1:81");
+      expect(await dedupKeyFor(sent.raw!), "the premise: two fingerprints").not.toBe(await dedupKeyFor(inbox.raw!));
+      const first = await ingest(sentFirst ? sent : inbox, repo, own);
+      const second = await ingest(sentFirst ? inbox : sent, repo, own);
+      expect(second.outcome).toBe(sentFirst ? "received_copy" : "own_copy");
+      expect(second.messageId).toBe(first.messageId);
+      expect(repo.rows.size).toBe(1);
+    });
+
+    it(`the same Message-ID dated apart with another text or another To stays two rows — ${order}`, async () => {
+      for (const other of [{ body: "a different letter" }, { to: "anna@example.com" }]) {
+        const repo = new FakeRepo();
+        const sent = sentChange(toMyself(FILED_AT), "1:82");
+        const inbox = inboxChange(toMyself(DELIVERED_AT, other), "1:83");
+        const first = await ingest(sentFirst ? sent : inbox, repo, own);
+        const second = await ingest(sentFirst ? inbox : sent, repo, own);
+        expect(second.outcome, JSON.stringify(other)).toBe("new");
+        expect(second.messageId).not.toBe(first.messageId);
+        expect(repo.rows.size).toBe(2);
+      }
+    });
+  }
+
+  it("two INBOX copies of one letter dated apart stay two rows: no Sent copy vouches for either", async () => {
+    const repo = new FakeRepo();
+    const first = await ingest(inboxChange(toMyself(DELIVERED_AT), "1:84"), repo, own);
+    const second = await ingest(inboxChange(toMyself(FILED_AT), "1:85"), repo, own);
+    expect(second.outcome).toBe("new");
+    expect(second.messageId).not.toBe(first.messageId);
     expect(repo.rows.size).toBe(2);
   });
 });

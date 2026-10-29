@@ -3,7 +3,7 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, listBrandsOf, readListAddresses } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
-  StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
+  StoredMessage, MessageIdCandidate, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   FolderAttribution,
   Rule, NativeLocator, EmailAddress,
   MessageBodyInput, BodyStorageContext, BodyStorageOutcome, RepoChangeInput, RoutingDecisionInput, ApprovalInput, AttachmentMeta,
@@ -940,15 +940,24 @@ export const KNOWN_LOCATOR_PAGE_ROWS = 5_000;
  * wrote for a letter to yourself before `dedup.ts`'s `received_copy`. Kept out of the known-set,
  * so the next pass fetches that copy with its flags and the arm gives it the row. A row whose
  * desire has left Sent (our move in flight) keeps it known. `coalesce` so a row with no locator
- * reads as not-Sent rather than NULL, which `not` would turn into an exclusion.
+ * reads as not-Sent rather than NULL, which `not` would turn into an exclusion. Sent is the
+ * Sent-shaped names or the mailbox's recorded `sent_folder`, a bound value so the page keeps one
+ * statement text and its plan; `coalesce` again, for an unrecorded one.
  */
-function inboxCopyOfSentRow(): SQL {
+function inboxCopyOfSentRow(recordedSent: string | null): SQL {
   const sent = [...SENT_SHAPED_PATHS];
+  const recorded = (folder: SQL) => sql`coalesce(${folder} = ${recordedSent}, false)`;
   return and(
     eq(messageInstances.folder, "INBOX"),
     eq(messageInstances.isPrimary, false),
-    inArray(sql`coalesce(lower(${messages.nativeLocator}->>'folder'), '')`, sent),
-    or(isNull(folderState.desiredFolder), inArray(sql`lower(${folderState.desiredFolder})`, sent)),
+    or(
+      inArray(sql`coalesce(lower(${messages.nativeLocator}->>'folder'), '')`, sent),
+      recorded(sql`${messages.nativeLocator}->>'folder'`),
+    ),
+    or(
+      isNull(folderState.desiredFolder), inArray(sql`lower(${folderState.desiredFolder})`, sent),
+      recorded(sql`${folderState.desiredFolder}`),
+    ),
   )!;
 }
 
@@ -1072,30 +1081,33 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * The own-sent twin lookup — see `RepoPort.findByMessageIdHeader` for the contract, including
-   * why only the `ownAuthored` gate in `resolveExisting` may call it. `accountId` is in the
-   * predicate so the `(account_id, message_id_header)` index serves the read; the row must already
-   * have an instance in this mailbox's Sent set (`inSentFolderSql`, the own-writing scope's own
-   * spelling), so an inbound row under the same id is never the twin. `created_at, id` makes
-   * "oldest row wins" deterministic when a mailbox already holds several rows under one id.
+   * The rows under one Message-ID — see `RepoPort.findByMessageIdHeader` for the contract, including
+   * why only `resolveExisting`'s step 3 may call it. `accountId` is in the predicate so the
+   * `(account_id, message_id_header)` index serves the read. `inSent` is an instance in this
+   * mailbox's Sent set (`inSentFolderSql`, the own-writing scope's own spelling); those rows come
+   * first, then `created_at, id`, so "oldest row wins" stays deterministic.
    */
-  async findByMessageIdHeader(accountId: string, mailboxId: string, messageIdHeader: string): Promise<StoredMessage | null> {
-    const rows = await this.db.select().from(messages)
+  async findByMessageIdHeader(accountId: string, mailboxId: string, messageIdHeader: string): Promise<MessageIdCandidate[]> {
+    // Spelled out: drizzle renders a column bare inside a single-table selection, and a bare `id`
+    // in this subquery is ambiguous.
+    const outerId = sql`${sql.identifier("messages")}.${sql.identifier("id")}`;
+    const inSent = sql<unknown>`exists (
+          select 1 from message_instances mi
+            join mailboxes mb on mb.id = mi.mailbox_id
+           where mi.message_id = ${outerId}
+             and mi.mailbox_id = ${mailboxId}
+             and ${inSentFolderSql(sql`mi.folder`, sql`mb.sent_folder`)}
+        )`;
+    const rows = await this.db.select({ m: messages, inSent }).from(messages)
       .where(and(
         eq(messages.accountId, accountId),
         eq(messages.mailboxId, mailboxId),
         eq(messages.messageIdHeader, messageIdHeader),
-        sql`exists (
-          select 1 from message_instances mi
-            join mailboxes mb on mb.id = mi.mailbox_id
-           where mi.message_id = ${messages.id}
-             and mi.mailbox_id = ${mailboxId}
-             and ${inSentFolderSql(sql`mi.folder`, sql`mb.sent_folder`)}
-        )`,
       ))
-      .orderBy(asc(messages.createdAt), asc(messages.id))
-      .limit(1);
-    return rows[0] ? rowToStored(rows[0]) : null;
+      .orderBy(desc(inSent), asc(messages.createdAt), asc(messages.id))
+      .limit(8);
+    // The device store answers a SQL boolean as 1 or 0.
+    return rows.map((r) => ({ row: rowToStored(r.m), date: r.m.date ?? null, inSent: Number(r.inSent) === 1 }));
   }
 
   async insertMessage(input: InsertMessageInput): Promise<InsertedMessage> {
@@ -3681,6 +3693,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    */
   async listKnownLocators(mailboxId: string): Promise<KnownLocator[]> {
     const out: KnownLocator[] = [];
+    const [box] = await this.db.select({ sentFolder: mailboxes.sentFolder }).from(mailboxes)
+      .where(eq(mailboxes.id, mailboxId)).limit(1);
+    const recordedSent = box?.sentFolder ?? null;
     // Below every stored key, so every page is one statement text (`pglite-plans.ts` pins it).
     let after: { folder: string; uidvalidity: bigint; uid: number } = { folder: "", uidvalidity: -1n, uid: -1 };
     for (;;) {
@@ -3701,7 +3716,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         .leftJoin(flagState, eq(flagState.messageId, messageInstances.messageId))
         .leftJoin(folderState, eq(folderState.messageId, messageInstances.messageId))
         .where(and(
-          eq(messageInstances.mailboxId, mailboxId), sql`not (${inboxCopyOfSentRow()})`,
+          eq(messageInstances.mailboxId, mailboxId), sql`not (${inboxCopyOfSentRow(recordedSent)})`,
           // The locator's unique key, so a page edge can neither skip nor repeat a row. Each value
           // is bound through its column: the device's SQLite binding refuses a raw bigint.
           sql`(${messageInstances.folder}, ${messageInstances.uidvalidity}, ${messageInstances.uid}) > (${
