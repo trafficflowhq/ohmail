@@ -356,6 +356,8 @@ interface SupersedeEffect {
    * loses the only expressed intent, so the mark is part of the rollback.
    */
   markedInFlight: PendingMutation[];
+  /** The app's reads on their way to the wire or on it whose ids this call took — {@link PendingMutation.readsTaken}. */
+  takenOnWire: Array<{ entry: PendingMutation; by: string }>;
 }
 
 interface PendingMutation {
@@ -397,6 +399,14 @@ interface PendingMutation {
    * the decision ({@link replacementDecided}), and a refused write takes the mark back.
    */
   supersededBy?: string;
+  /**
+   * A PERSON'S READS AND UNREADS, by entry id, that named this involuntary read's ids while it was on
+   * its way to the wire or on it — {@link supersededBy} for the read verbs, which carry no key. The
+   * request cannot be narrowed in the air, so each is kept and applied by the queue's own rule
+   * ({@link readLeftBy}) before this read is sent or sent again: only the ids none of them names go.
+   * Tentative, like the mark, until that verb's write has decided.
+   */
+  readsTaken?: Map<string, EngineMutation>;
   /**
    * TRUE once a non-idempotent CREATE went out under this key and its answer could not be read.
    *
@@ -849,6 +859,50 @@ function supersedeKey(m: EngineMutation): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * A PERSON'S READ OR UNREAD: a `mark_seen` with no glance label — the read pill, ⇧I, bulk; `via` is
+ * the verb's own involuntary marker, so a dwell commit's `mark_seen` counts as a glance. A glance
+ * can only ever READ: `unread: true` is a deliberate act whatever label a caller stuck on it, so the
+ * value takes part in the classification, not the label alone.
+ */
+const explicitRead = (m: EngineMutation): boolean =>
+  m.kind === "mark_seen" && (m.via !== "glance" || m.unread === true);
+/** THE APP'S OWN READ: a stream's sweep, or a glance-labelled read (the dwell, the open's read). */
+const involuntaryRead = (m: EngineMutation): boolean =>
+  m.kind === "feed_mark_seen" || (m.kind === "mark_seen" && m.via === "glance" && m.unread === false);
+
+/**
+ * WHAT A NEWER READ VERB LEAVES OF AN OLDER ONE — the read-flag half of
+ * {@link OhmailEngine.supersedeQueued}, one rule for a queued read and for one on its way to the
+ * wire or on it ({@link PendingMutation.readsTaken}). `undefined`: the older stands whole;
+ * `null`: nothing of it is left.
+ */
+function readLeftBy(newer: EngineMutation, older: EngineMutation): EngineMutation | null | undefined {
+  if ((newer.kind !== "mark_seen" && newer.kind !== "feed_mark_seen")
+    || (older.kind !== "mark_seen" && older.kind !== "feed_mark_seen")) return undefined;
+  const readIds = new Set(newer.messageIds ?? []);
+  // The allowed pairs, and only these: a person's read or unread outranks BOTH older read verbs; a
+  // glance of either kind outranks only the app's own older reads — it must never cancel a
+  // deliberate unread. Asked whenever the newer verb is a read verb at all, id overlap or not,
+  // because a newer same-view leave-commit with an EMPTY id list (the ordinary waterline commit)
+  // still supersedes the older line.
+  const newerExplicit = explicitRead(newer);
+  const olderInvoluntary = involuntaryRead(older);
+  const qids = older.messageIds ?? [];
+  // A newer same-view glance also replaces the older glance's waterline: the newer departure IS
+  // the later line.
+  const lineSuperseded = newer.kind === "feed_mark_seen" && older.kind === "feed_mark_seen"
+    && (newer.view ?? "reads") === (older.view ?? "reads") && newer.upToId !== undefined;
+  const overlaps = qids.some((mid) => readIds.has(mid));
+  if (!(newerExplicit || olderInvoluntary) || (!overlaps && !lineSuperseded)) return undefined;
+  const remaining = qids.filter((mid) => !readIds.has(mid));
+  const keepsLine = older.kind === "feed_mark_seen" && older.upToId !== undefined && !lineSuperseded;
+  if (remaining.length === 0 && !keepsLine) return null;
+  const narrowed = { ...older, messageIds: remaining } as EngineMutation;
+  if (lineSuperseded && narrowed.kind === "feed_mark_seen") delete narrowed.upToId;
+  return narrowed;
 }
 
 /**
@@ -2841,6 +2895,12 @@ export class OhmailEngine {
    * close, arriving through the one door supersession could not look through.
    */
   private readonly inFlight = new Map<string, PendingMutation>();
+  /**
+   * THE APP'S OWN READS FROM THEIR PRESS TO THEIR DISPATCH: waiting for their write or their turn at
+   * the gate, they are in no queue and not on the wire, and a person's read or unread must still
+   * reach them ({@link PendingMutation.readsTaken}).
+   */
+  private readonly freshReads = new Set<PendingMutation>();
 
   /**
    * The abandoned record for an id, from disk OR from the session-local fallback.
@@ -7443,10 +7503,13 @@ export class OhmailEngine {
     };
     // A create waits its turn painted and in no collection: a take-back reaches it here.
     if (awaitsHold) this.awaitingTurn.set(key, pending);
+    // So does the app's own read: a person's read or unread on its letters reaches it here (`readsTaken`).
+    if (involuntaryRead(enriched)) this.freshReads.add(pending);
     try {
       return await this.dispatchFresh(pending, superseded, settleMarks, opts, awaitsHold);
     } finally {
       if (this.awaitingTurn.get(key) === pending) this.awaitingTurn.delete(key);
+      this.freshReads.delete(pending);
     }
   }
 
@@ -7482,7 +7545,9 @@ export class OhmailEngine {
     if (!persisted
       && (superseded.retired.length > 0 || superseded.narrowed.length > 0 || commit.marks > 0
         // A send on the wire this verb only MARKED: unmarked, or its retryable answer drops it.
-        || superseded.markedInFlight.length > 0)) {
+        || superseded.markedInFlight.length > 0
+        // A read on its way or on the wire this verb took ids from: the same, for those ids.
+        || superseded.takenOnWire.length > 0)) {
       /**
        * NO WRITE, NO WIRE — the supersession half of the rule stated in this module's header. This verb replaces
        * queued verbs. Its durable write was refused, so the store still holds the ones it would have retired, and
@@ -7683,6 +7748,8 @@ export class OhmailEngine {
   }> {
     if (this.outboxHold) return { result: null, timedOut: false, held: true, owed: null };
     if (this.awaitingTurn.get(p.key) === p) this.awaitingTurn.delete(p.key);
+    // From here a fresh read is on the wire, where `inFlight` holds it.
+    this.freshReads.delete(p);
     let owed: "await" | "background" | null = null;
     const { result, timedOut } = await this.dispatchWithDeadline(p, {
       deferReconcile: true,
@@ -8542,9 +8609,7 @@ export class OhmailEngine {
      * record from the same stale read.
      */
     const key = supersedeKey(m);
-    const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
-      ? new Set(m.messageIds ?? [])
-      : null;
+    const reads = m.kind === "mark_seen" || m.kind === "feed_mark_seen";
     /**
      * A verb on the wire is MARKED, not removed — there is nothing to remove it from: its request is running, and the
      * newer verb cannot un-send it. What the mark does is keep the older verb from rejoining the queue when its
@@ -8575,11 +8640,22 @@ export class OhmailEngine {
         if (sameSend && q.createdRow !== undefined) createdRow = q.createdRow;
       }
     }
+    /* THE APP'S OWN READ ON ITS WAY TO THE WIRE OR ON IT carries no key, so the scan above misses it:
+       a person's read or unread on its letters is recorded on it (`readsTaken`), and only what that
+       leaves of it is sent, or sent again. */
+    const takenOnWire: Array<{ entry: PendingMutation; by: string }> = [];
+    if (explicitRead(m)) {
+      for (const q of new Set([...this.inFlight.values(), ...this.freshReads])) {
+        if (!involuntaryRead(q.mutation) || readLeftBy(m, q.mutation) === undefined) continue;
+        (q.readsTaken ??= new Map()).set(by, m);
+        takenOnWire.push({ entry: q, by });
+      }
+    }
     const carried = {
       ...(createAttempted ? { createAttempted: true as const } : {}),
       ...(createdRow !== undefined ? { createdRow } : {}),
     };
-    if (this.queue.length === 0) return { retired, narrowed, undo, markedInFlight, ...carried };
+    if (this.queue.length === 0) return { retired, narrowed, undo, markedInFlight, takenOnWire, ...carried };
     let changed = false;
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const q = this.queue[i]!;
@@ -8607,40 +8683,18 @@ export class OhmailEngine {
         changed = true;
         continue;
       }
-      // Read-flag subtraction. The allowed pairs, and only these: an EXPLICIT `mark_seen`
-      // (no glance label — the read pill, ⇧I, bulk; `via` is the verb's own involuntary
-      // marker, so a dwell commit's `mark_seen` counts as a glance here too) outranks BOTH
-      // queued read verbs; a glance of either kind outranks only queued involuntary reads —
-      // it must never cancel a queued deliberate unread. Entered whenever the newer verb is a
-      // read verb at all, id overlap or not, because a newer same-view leave-commit with an
-      // EMPTY id list (the ordinary waterline commit) still supersedes the older line.
-      if (readIds && (qm.kind === "mark_seen" || qm.kind === "feed_mark_seen")) {
-        // A glance can only ever READ — `unread: true` is a deliberate act whatever label a
-        // caller stuck on it, so the value participates in the classification, not the label
-        // alone: a mislabelled mark-unread must still outrank a queued stale read.
-        const newerExplicit = m.kind === "mark_seen" && (m.via !== "glance" || m.unread === true);
-        const olderInvoluntary = qm.kind === "feed_mark_seen"
-          || (qm.kind === "mark_seen" && qm.via === "glance" && qm.unread === false);
-        const pairAllowed = newerExplicit || olderInvoluntary;
-        const qids = qm.messageIds ?? [];
-        // A newer same-view glance also replaces the older glance's waterline: the newer
-        // departure IS the later line.
-        const lineSuperseded = m.kind === "feed_mark_seen" && qm.kind === "feed_mark_seen"
-          && (m.view ?? "reads") === (qm.view ?? "reads") && m.upToId !== undefined;
-        const overlaps = qids.some((mid) => readIds.has(mid));
-        if (!pairAllowed || (!overlaps && !lineSuperseded)) continue;
-        const remaining = qids.filter((mid) => !readIds.has(mid));
-        const keepsLine = qm.kind === "feed_mark_seen" && qm.upToId !== undefined && !lineSuperseded;
-        if (remaining.length === 0 && !keepsLine) {
+      // Read-flag subtraction, by the rule a queued read shares with one on the wire (`readLeftBy`).
+      if (reads && (qm.kind === "mark_seen" || qm.kind === "feed_mark_seen")) {
+        const left = readLeftBy(m, qm);
+        if (left === undefined) continue;
+        if (left === null) {
           undo.push({ entry: q, index: i, mutation: qm });
           this.queue.splice(i, 1);
           this.overlays.delete(q.id);
           retired.push(q.id);
         } else {
           undo.push({ entry: q, index: i, mutation: qm });
-          const narrowedMutation = { ...qm, messageIds: remaining } as EngineMutation;
-          if (lineSuperseded && narrowedMutation.kind === "feed_mark_seen") delete narrowedMutation.upToId;
-          q.mutation = narrowedMutation;
+          q.mutation = left;
           try {
             const effects = this.paintOf(q.mutation, q.key, () => new Date(q.at));
             if (effects.length > 0) this.overlays.set(q.id, effects);
@@ -8658,7 +8712,7 @@ export class OhmailEngine {
       this.notify();
     }
     return {
-      retired, narrowed, undo, markedInFlight,
+      retired, narrowed, undo, markedInFlight, takenOnWire,
       ...(createAttempted ? { createAttempted: true as const } : {}),
       ...(createdRow !== undefined ? { createdRow } : {}),
     };
@@ -8683,6 +8737,7 @@ export class OhmailEngine {
      * wire" in `outbox-lifecycle.test.ts`, red with this line removed.
      */
     for (const q of effect.markedInFlight) delete q.supersededBy;
+    for (const { entry, by } of effect.takenOnWire) entry.readsTaken?.delete(by);
     if (effect.undo.length === 0) return;
     for (const { entry, mutation } of effect.undo) {
       entry.mutation = mutation;
@@ -8820,10 +8875,54 @@ export class OhmailEngine {
     return { ...waiting.result, ...(differs ? { earlierWordsKept: true as const } : {}) };
   }
 
+  /**
+   * THE APP'S READ WHOSE IDS A PERSON'S READ OR UNREAD TOOK ({@link PendingMutation.readsTaken}),
+   * before it is sent or sent again: each mark waits for its verb's write, as a wire mark does
+   * ({@link replacementDecided}), and the queue's rule then leaves only the ids none of them names.
+   * `false`: nothing is left, and the read's row and paint are gone.
+   */
+  private async narrowTaken(p: PendingMutation): Promise<boolean> {
+    for (;;) {
+      const open = [...(p.readsTaken?.keys() ?? [])].filter((by) => this.replacementWrites.has(by));
+      if (open.length === 0) break;
+      await Promise.all(open.map((by) => this.replacementDecided(by)));
+    }
+    const taken = p.readsTaken;
+    delete p.readsTaken;
+    let left: EngineMutation | null = p.mutation;
+    for (const newer of taken?.values() ?? []) {
+      if (left === null) break;
+      const next = readLeftBy(newer, left);
+      if (next !== undefined) left = next;
+    }
+    if (left === p.mutation) return true;
+    if (left === null) {
+      await this.dropOutbox(p.id);
+      this.overlays.delete(p.id);
+      this.overlayRev++;
+      this.notify();
+      return false;
+    }
+    p.mutation = left;
+    try {
+      const effects = this.paintOf(left, p.key, () => new Date(p.at));
+      if (effects.length > 0) this.overlays.set(p.id, effects);
+      else this.overlays.delete(p.id);
+    } catch { this.overlays.delete(p.id); }
+    this.overlayRev++;
+    this.notify();
+    return true;
+  }
+
   private async dispatchOnce(
     p: PendingMutation,
     opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
   ): Promise<MutationResult> {
+    /* THE APP'S READ A PERSON'S PRESS TOOK LETTERS FROM while it waited, read here for the
+       withdrawal's reason below: only the rest goes, and nothing when none is left. */
+    if (p.readsTaken !== undefined && !(await this.narrowTaken(p))) {
+      return { id: p.id, key: p.key, status: "superseded", seq: null };
+    }
     /**
      * THE WITHDRAWAL IS READ HERE, the line before the wire, because this is the only place every
      * road passes and the only moment at which "is this still wanted?" is a true question. A
@@ -9095,6 +9194,12 @@ export class OhmailEngine {
         : new MutationRejectedError(String(err), { retryable: false });
       // THE BELT: a hand-built rejection carrying an unjudged code is still kept, never dropped.
       if (rejection.retryable || UNJUDGED_WRITE_CODES.has((rejection.code ?? "") as UnjudgedWriteCode)) {
+        /* THE APP'S READ A PERSON'S PRESS TOOK LETTERS FROM while it was on the wire goes again without
+           them: a glance answered 500, or dropped after the server took it, must not land over a later
+           Mark unread. */
+        if (p.readsTaken !== undefined && !(await this.narrowTaken(p))) {
+          return { id: p.id, key: p.key, status: "superseded", seq: null };
+        }
         /**
          * ── COUNT IT, DELAY IT, OR GIVE UP ON IT ────────────────────────────────────────────
          *

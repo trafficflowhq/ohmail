@@ -8,6 +8,7 @@
  * (FIX-022): the second half drives the window the phone measured — Undo pressed while the
  * verb is still behind its paint gate, and Undo pressed while it is on the wire unanswered.
  */
+import type { IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 import { winningStates } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
@@ -86,6 +87,17 @@ const settle = () => new Promise((r) => setTimeout(r, 25));
 /** `id`'s `n`th triage POST reached the server; a red names the ones that did. */
 const postsArrive = (fake: ReturnType<typeof mailServer>, n: number, what: string, id = "m1") =>
   arrived(what, () => triageFor(fake, id).length >= n, () => `[${triageFor(fake, id).join(", ")}]`);
+/** Each mark-read PATCH naming `id`, as "read" or "unread", in the order the server received them. */
+const readsFor = (fake: ReturnType<typeof mailServer>, id: string) =>
+  fake.seen
+    .filter((r) => r.method === "PATCH" && r.url === "/messages")
+    .flatMap((r) => { const b = JSON.parse(r.body) as { ids: string[]; unread: boolean };
+      return b.ids.includes(id) ? [b.unread ? "unread" : "read"] : []; });
+
+/** One conversation, oldest m1 to newest m4; the reader opens it on m4. */
+const ROW = ["m1", "m2", "m3", "m4"];
+const convo = (fake: ReturnType<typeof mailServer>, triage?: { state: string }) => ROW.forEach((id, i) =>
+  fake.addMessage({ ...dto(id, { date: new Date(Date.UTC(2026, 7, 19, 8, i)).toISOString(), ...(triage ? { triage } : {}) }), threadId: "t1" }));
 const undoneSaid = (toasts: SaidToast[]) =>
   arrived("the Undone sentence", () => toasts.some((t) => t.say === Copy.toastUndone), () => `[${toasts.map((t) => t.say).join(" | ")}]`);
 
@@ -297,4 +309,164 @@ describe("a verb and its Undo, in the order the person pressed them", () => {
     live.store.close();
     live.fake.server.close();
   });
+
+  /**
+   * A CONVERSATION'S PRESS WRITES EVERY LETTER. Tester C, android 0.30.13: Park on an open
+   * conversation, Undo at +1–3 s, and the letters the press had not written yet stayed parked —
+   * their Undo reached the server before their Park.
+   */
+  it("Undo while a letter's write is on the wire: sent letters go back behind their answers, the rest never leave", async () => {
+    const live = await scene((f) => convo(f));
+    const answer = live.fake.holdNext("POST", "/messages/m3/triage");
+    const press = live.actions.pileToggle("m4", "setAside");
+    await postsArrive(live.fake, 1, "m3's write on the wire", "m3");
+    live.toasts.find((t) => t.undo)!.undo!();
+    await settle();
+    expect(triageFor(live.fake, "m3"), "m3's inverse passed its own write").toEqual(["set_aside"]);
+    answer();
+    expect(await press).toBe(true);
+    await postsArrive(live.fake, 2, "m3's inverse", "m3");
+    await postsArrive(live.fake, 2, "m4's inverse", "m4");
+    await settle();
+    expect(ROW.map((id) => triageFor(live.fake, id))).toEqual([[], [], ["set_aside", "none"], ["set_aside", "none"]]);
+    expect(ROW.map((id) => winningStates(live.engine.read()).get(id)?.state ?? "none")).toEqual(["none", "none", "none", "none"]);
+    expect(live.toasts.map((t) => t.say)).toContain(Copy.toastUndone);
+    live.store.close();
+    live.fake.server.close();
+  }, CASE_MS);
+
+  it("a letter's own press made while its conversation's press waits lands after it", async () => {
+    const live = await scene((f) => convo(f));
+    live.paint.hold();
+    const park = live.actions.pileToggle("m4", "setAside");
+    const later = live.actions.setPile("m2", "replyLater");
+    await settle();
+    live.paint.release();
+    await Promise.all([park, later]);
+    await settle();
+    expect(triageFor(live.fake, "m2")).toEqual(["set_aside", "reply_later"]);
+    live.store.close();
+    live.fake.server.close();
+  }, CASE_MS);
+
+  it("Mark unread pressed while the conversation's Done waits lands after Done's read", async () => {
+    const live = await scene((f) => convo(f, { state: "resurfaced" }));
+    live.paint.hold();
+    const done = live.actions.resurfaceDone("m4");
+    const unread = live.actions.markSeen("m4", true, ROW);
+    await settle();
+    live.paint.release();
+    await Promise.all([done, unread]);
+    await settle();
+    expect(readsFor(live.fake, "m2").at(-1)).toBe("unread");
+    live.store.close();
+    live.fake.server.close();
+  }, CASE_MS);
+});
+
+/**
+ * THE READER'S GLANCE NEVER HOLDS A PRESS. The read it saves over the open conversation's unread
+ * letters is the app's own act: a press made while it is unanswered paints at once and lands after it.
+ */
+describe("a press made while the reader's glance is on the wire", () => {
+  /** The glance's PATCH held unanswered; `failed`: its answer, when released, is a 500 and the server took nothing. */
+  const glanceHeld = async (ids: string[], failed = false) => {
+    const live = await scene((f) => convo(f));
+    if (failed) live.fake.failNextStatus("PATCH", "/messages", 500);
+    const sockets: Array<{ destroy: () => void }> = [];
+    live.fake.server.prependListener("request", (req: IncomingMessage) => { if (req.method === "PATCH") sockets.push(req.socket); });
+    const answer = live.fake.holdNext("PATCH", "/messages");
+    const glance = live.actions.markGlanced(ids);
+    await arrived("the glance's PATCH", () => readsFor(live.fake, ids[0]!).length > 0);
+    /** The connection drops after the server took the glance: its answer never arrives. */
+    const drop = () => sockets[0]!.destroy();
+    return { live, answer, glance, drop };
+  };
+  const stateOf = (live: Awaited<ReturnType<typeof scene>>, id: string) => winningStates(live.engine.read()).get(id)?.state;
+  const unreadOf = (live: Awaited<ReturnType<typeof scene>>, id: string) => live.engine.read().get<{ unread: boolean }>("message", id)?.unread;
+  /** A press that waits for the glance's answer never paints here: the answer is held. */
+  const paintsWithin50 = async (what: string, holds: () => boolean) => {
+    const deadline = Date.now() + 50;
+    while (!holds()) {
+      if (Date.now() >= deadline) throw new Error(`${what} did not paint within 50 ms of the press`);
+      await new Promise((r) => setTimeout(r, 1));
+    }
+  };
+
+  for (const ids of [["m4", "m3", "m2"], ["m4"]]) {
+    it(`Park paints at the press during a glance over ${ids.length} letter(s), and every letter is parked`, async () => {
+      const { live, answer, glance } = await glanceHeld(ids);
+      const park = live.actions.pileToggle("m4", "setAside");
+      await paintsWithin50("Park", () => stateOf(live, "m4") === "set_aside");
+      answer();
+      expect(await Promise.all([glance, park])).toEqual([true, true]);
+      expect(ROW.map((id) => triageFor(live.fake, id))).toEqual(ROW.map(() => ["set_aside"]));
+      expect(ids.map((id) => live.fake.message(id)?.unread)).toEqual(ids.map(() => false));
+      live.store.close();
+      live.fake.server.close();
+    }, CASE_MS);
+  }
+
+  it("Later and Mark unread paint at the press, and the glance never overwrites the Mark unread", async () => {
+    const { live, answer, glance } = await glanceHeld(["m4", "m3", "m2"]);
+    const later = live.actions.setPile("m2", "replyLater");
+    await paintsWithin50("Later", () => stateOf(live, "m2") === "reply_later");
+    const unread = live.actions.markSeen("m4", true);
+    await paintsWithin50("Mark unread", () => unreadOf(live, "m4") === true);
+    answer();
+    expect(await Promise.all([glance, later, unread])).toEqual([true, true, true]);
+    expect(triageFor(live.fake, "m2")).toEqual(["reply_later"]);
+    expect(readsFor(live.fake, "m4")).toEqual(["read", "unread"]);
+    expect(live.fake.message("m4")?.unread, "the glance's read stands over the later Mark unread").toBe(true);
+    live.store.close();
+    live.fake.server.close();
+  }, CASE_MS);
+
+  /** After the Mark unread pressed meanwhile: the screen stays unread, and once the glance has gone
+   *  again the wire, the server and the mirror end unread, the glance's other letters read. */
+  const unreadWins = async (live: Awaited<ReturnType<typeof scene>>, others: readonly string[]) => {
+    expect(unreadOf(live, "m4"), "the glance waiting to go again paints the letter read over the Mark unread").toBe(true);
+    await live.engine.flushPending();
+    await settle();
+    expect(readsFor(live.fake, "m4").at(-1), "the glance's read went again after the Mark unread").toBe("unread");
+    expect(live.fake.message("m4")?.unread, "the glance's read stands on the server over the Mark unread").toBe(true);
+    expect(unreadOf(live, "m4"), "the glance's read stands in the mirror over the Mark unread").toBe(true);
+    expect(others.map((id) => live.fake.message(id)?.unread), "a letter only the glance named was left unread").toEqual(others.map(() => false));
+    live.store.close();
+    live.fake.server.close();
+  };
+
+  /**
+   * THE GLANCE THAT HAS TO GO AGAIN — answered 500, or its connection dropped after the server took
+   * it. It is sent again after the Mark unread made meanwhile, without the letter marked unread.
+   */
+  for (const ids of [["m4"], ["m4", "m3", "m2"]]) {
+    for (const how of ["answered 500", "dropped"] as const) {
+      it(`a glance over ${ids.length} letter(s) ${how} never overwrites a Mark unread made meanwhile`, async () => {
+        const { live, answer, glance, drop } = await glanceHeld(ids, how === "answered 500");
+        const unread = live.actions.markSeen("m4", true);
+        await paintsWithin50("Mark unread", () => unreadOf(live, "m4") === true);
+        if (how === "dropped") drop(); else answer();
+        expect(await Promise.all([glance, unread])).toEqual([true, true]);
+        await unreadWins(live, ids.slice(1));
+      }, CASE_MS);
+    }
+  }
+
+  it("a glance still waiting behind another write and answered 500 never overwrites a Mark unread made meanwhile", async () => {
+    const live = await scene((f) => { convo(f); f.addMessage(dto("x1")); });
+    const answerPark = live.fake.holdNext("POST", "/messages/x1/triage");
+    const park = live.actions.pileToggle("x1", "setAside");
+    await postsArrive(live.fake, 1, "x1's Park on the wire", "x1");
+    live.fake.failNextStatus("PATCH", "/messages", 500);
+    const glance = live.actions.markGlanced(["m4", "m3", "m2"]);
+    await settle();
+    expect(readsFor(live.fake, "m4"), "control: the glance waits behind the Park").toEqual([]);
+    const unread = live.actions.markSeen("m4", true);
+    await paintsWithin50("Mark unread", () => unreadOf(live, "m4") === true);
+    answerPark();
+    expect(await Promise.all([park, glance, unread])).toEqual([true, true, true]);
+    await unreadWins(live, ["m3", "m2"]);
+    expect(readsFor(live.fake, "m4"), "the waiting glance still sent the letter marked unread").toEqual(["unread"]);
+  }, CASE_MS);
 });
