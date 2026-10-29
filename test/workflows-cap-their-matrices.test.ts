@@ -135,6 +135,7 @@ describe("the hosted jobs each event starts", () => {
       "github.event.pull_request.head.repo.full_name": pr ? "trafficflowhq/ohmail" : null,
       "github.event.pull_request.user.type": pr ? "User" : null, "github.event.pull_request.author_association": pr ? "OWNER" : null,
       "github.event.pull_request.draft": null, "github.event.action": null, "github.event.release.tag_name": null, "inputs.verify_only": null,
+      "github.event.inputs.judge_search_budget": event === "workflow_dispatch" ? "false" : null,
       "needs.changes.outputs.desktop": "true", "needs.changes.outputs.android": "true", "needs.changes.outputs.selfhost": "true",
       "needs.version.outputs.promote_public": "yes", ...PLAN, ...extra,
     };
@@ -216,6 +217,13 @@ describe("the hosted jobs each event starts", () => {
     expect(nightly()).toEqual([APK, ...DESKTOP, BUDGET, SMOKE]);
   });
 
+  it("a dispatch on main runs the judged search budget only when asked: a release's whole run never waits on it", () => {
+    const ci = (judge?: string) => hosted("workflow_dispatch", "refs/heads/main", {}, judge ? { "github.event.inputs.judge_search_budget": judge } : {})
+      .filter((j) => j.startsWith("ci.yml"));
+    expect(ci()).toEqual([]);
+    expect(ci("true")).toEqual([BUDGET]);
+  });
+
   it("the weekly fresh-clone run: 11", () => {
     expect(hosted("schedule", "refs/heads/main", { cron: "weekly" })).toEqual([
       "linux-build @ubuntu-24.04", "linux-suite-1 @ubuntu-24.04", "linux-suite-2 @ubuntu-24.04", "macos-build @macos-latest",
@@ -237,8 +245,10 @@ describe("the hosted jobs each event starts", () => {
     expect(push(BATCH, planted(" && !startsWith(github.head_ref, 'pr/batch-')", "")), "the batch clause dropped").toEqual(QUICK);
     expect(push({}, planted("needs.changes.result != 'skipped' && ", "")), "a skipped `changes` read as unread").toEqual([APK, ...DESKTOP, SMOKE, ...QUICK]);
     expect(nightly(planted('  schedule:\n    - cron: "41 0 * * *"\n', "", "build.yml")), "build.yml's schedule dropped").toEqual([APK, BUDGET, SMOKE]);
-    expect(push({}, planted("    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'\n", "", "ci.yml")),
+    expect(push({}, planted("    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && github.event.inputs.judge_search_budget == 'true'\n", "", "ci.yml")),
       "the search budget's nightly clause dropped").toEqual([BUDGET, ...QUICK]);
+    expect(hosted("workflow_dispatch", "refs/heads/main", {}, {}, planted(" && github.event.inputs.judge_search_budget == 'true'\n", "\n", "ci.yml"))
+      .filter((j) => j.startsWith("ci.yml")), "the dispatch input dropped").toEqual([BUDGET]);
     expect(matricesOf(text("ghcr-images.yml").replace("      max-parallel: 3\n", ""))[0]).toEqual({ job: "build-push", bound: undefined });
   });
 });

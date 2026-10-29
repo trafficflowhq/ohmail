@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clockOf, mustJudge, outcomeOf, verdicts, windowOf, type Round } from "./_budget-clock.js";
+import { clockOf, judgedClockOf, judgedVerdicts, mustJudge, outcomeOf, verdicts, windowOf, type Round } from "./_budget-clock.js";
 
 /** A round whose reference read `before`/`after` at its ends and `during` (median, p95) inside it, on a host at `load`. */
 const round = (before: number, after: number, ms: number, during = { median: Math.min(before, after), p95: Math.max(before, after) }, load = 1.5): Round =>
@@ -80,6 +80,40 @@ describe("the search budget's clock", () => {
     const over = verdicts([round(11, 12, 104, { median: 11.5, p95: 13 })], 100, quiet).page!;
     expect(outcomeOf(over, false)).toBe("fail");
     expect(outcomeOf(over, true)).toBe("fail");
+  });
+
+  it("where it must judge, a slower runner's figures are scaled to the calibrated reference and its rounds are quiet against its own quietest", () => {
+    // The hosted runner: the reference at 24 ms at its quietest, load 1.1 on 4 CPUs; over the absolute cap on every round.
+    const hosted = (ms: number) => [round(25, 26, ms, { median: 25, p95: 30 }, 1.1), round(24, 25, ms + 3, { median: 24.5, p95: 29 }, 1.2)];
+    expect(outcomeOf(verdicts(hosted(102), 100, clockOf(24, 4)).page!, true)).toBe("fail");
+    expect(judgedVerdicts(hosted(102), 100, 24, 4).page).toEqual({ kind: "within", ms: 57.4 });
+    // A regression planted on the same runner: 90 ms more reads 108 ms on the calibrated machine.
+    const slow = judgedVerdicts(hosted(192), 100, 24, 4).page!;
+    expect(slow).toMatchObject({ kind: "over", ms: 108 });
+    expect(outcomeOf(slow, true)).toBe("fail");
+    // Load on the slow runner still leaves it unjudged, a failure where it must judge.
+    expect(outcomeOf(judgedVerdicts([round(25, 26, 192, { median: 25, p95: 30 }, 3)], 100, 24, 4).page!, true)).toBe("fail");
+    expect(judgedVerdicts([round(25, 26, 192, { median: 25, p95: 30 }, 3)], 100, 24, 4).page!.kind).toBe("unjudged");
+  });
+
+  it("where it must judge, a figure's round-trip wait is not scaled: only its CPU share is", () => {
+    // Four statements at 8 ms: 32 ms of each figure is a timer, as long on any machine.
+    const hosted = (ms: number) => [round(25, 26, ms, { median: 24.4, p95: 29 }, 1.1)];
+    const at170 = judgedVerdicts(hosted(170), 100, 24.4, 4, { page: 32 }).page!;
+    expect(at170).toMatchObject({ kind: "over", ms: 108.4 });
+    expect(outcomeOf(at170, true)).toBe("fail");
+    expect(judgedVerdicts(hosted(102), 100, 24.4, 4, { page: 32 }).page).toEqual({ kind: "within", ms: 70.7 });
+    // A figure with no round trip (a local socket) is scaled whole.
+    expect(judgedVerdicts(hosted(170), 100, 24.4, 4).page).toEqual({ kind: "within", ms: 94.1 });
+    // On a runner at the calibrated reference nothing moves.
+    expect(judgedVerdicts([round(11, 12, 104, { median: 11.5, p95: 13 })], 100, 12, 32, { page: 32 }).page).toMatchObject({ kind: "over", ms: 104 });
+  });
+
+  it("where it must judge, a runner at or under the calibrated reference is judged as everywhere else", () => {
+    for (const rs of [[round(11, 12, 104, { median: 11.5, p95: 13 })], [round(11, 12, 95)], [round(14, 14, 104, { median: 14, p95: 15 })], [round(20, 21, 130)]])
+      expect(judgedVerdicts(rs, 100, 12, 32)).toEqual(verdicts(rs, 100, clockOf(12, 32)));
+    expect(judgedClockOf(12, 32)).toEqual(clockOf(12, 32));
+    expect(judgedClockOf(24, 4)).toMatchObject({ limit: 30, load: 2 });
   });
 
   it("a window of reference readings gives its median and p95", () => {

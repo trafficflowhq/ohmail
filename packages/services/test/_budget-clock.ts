@@ -50,6 +50,28 @@ export const isQuiet = (r: Round, c: Clock): boolean =>
  * OHMAIL_BUDGET_MUST_JUDGE=1 marks a host where the budget is always judged: ci.yml's nightly job "suite · search
  * budget · judged" on a hosted runner of its own. There a figure over the budget with no quiet round fails, never skips.
  */
+/**
+ * Where the budget must be judged, the runner may be slower than the machines the clock is calibrated on (a hosted
+ * runner read the reference at 24.4 ms at its quietest, on no load). There a round is quiet against the run's own
+ * quietest reference, and each figure is judged as the calibrated machine would read it: scaled by
+ * CALIBRATED_REF_MS over the quietest, never up. A runner at or under CALIBRATED_REF_MS is judged as everywhere else.
+ * `fixedMs` names each figure's round-trip wait (statements x a timer's ms): it is as long on any machine, so only the
+ * rest of the figure is scaled.
+ */
+export const CALIBRATED_REF_MS = QUIET_REF_MS;
+export const judgedClockOf = (quietest: number, cpus: number): Clock =>
+  quietest > CALIBRATED_REF_MS ? { ...clockOf(quietest, cpus), limit: QUIET_RATIO * quietest } : clockOf(quietest, cpus);
+export const scaleOf = (quietest: number): number => Math.min(1, CALIBRATED_REF_MS / quietest);
+export function judgedVerdicts(rounds: Round[], budgetMs: number, quietest: number, cpus: number, fixedMs: Record<string, number> = {}): Record<string, Verdict> {
+  const s = scaleOf(quietest);
+  const judged = (k: string, v: number): number => {
+    const f = Math.min(v, fixedMs[k] ?? 0);
+    return Math.round((f + (v - f) * s) * 10) / 10;
+  };
+  const scaled = rounds.map((r) => ({ ...r, figures: Object.fromEntries(Object.entries(r.figures).map(([k, v]) => [k, judged(k, v)])) }));
+  return verdicts(scaled, budgetMs, judgedClockOf(quietest, cpus));
+}
+
 export const mustJudge = (env: Record<string, string | undefined> = process.env): boolean => env.OHMAIL_BUDGET_MUST_JUDGE === "1";
 export type Outcome = "pass" | "skipped-loaded" | "fail";
 /** A verdict's outcome: unjudged is a SKIPPED-LOADED warning, or a failure on a host that must judge. */

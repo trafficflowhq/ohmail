@@ -12,7 +12,7 @@ import { pgTestUrl } from "@trafficflow/db/testing";
 import { searchIndexProgress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
-import { LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, mustJudge, outcomeOf, verdicts, windowOf, type Round, type Verdict, type Window } from "./_budget-clock.js";
+import { CALIBRATED_REF_MS, LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, judgedClockOf, judgedVerdicts, mustJudge, outcomeOf, scaleOf, verdicts, windowOf, type Round, type Verdict, type Window } from "./_budget-clock.js";
 
 /**
  * SEARCH IS MILLISECONDS: the first page of a search answers inside 100 ms of server time at p95
@@ -287,6 +287,8 @@ async function vocabWord(k: number): Promise<string> {
   return row!.w;
 }
 
+/** The round trip `latent` waits before each statement in production's shape. */
+const RTT_MS = 8;
 const p95Of = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b); return s[Math.ceil(s.length * 0.95) - 1]!; };
 
 /**
@@ -299,8 +301,8 @@ const p95Of = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b
  * quarter of its CPUs) reads it over, and is unjudged,
  * a SKIPPED-LOADED warning and never red, when no round was quiet, unless it reads past LOADED_CEILING
  * times the budget, which load alone has never reached; under OHMAIL_BUDGET_MUST_JUDGE=1 (ci.yml's nightly job
- * "suite · search budget · judged", on a hosted runner of its own) it fails instead, and the wait before a round is for the
- * host's load average too. Every round prints its figures, the reference
+ * "suite · search budget · judged", on a hosted runner of its own) it fails instead, the wait before a round is for the
+ * host's load average too, and a runner slower than the calibrated one is judged scaled to it (`judgedVerdicts`). Every round prints its figures, the reference
  * at both ends and inside, quiet or loaded, the limits, the wait and the load. The budget never moves.
  */
 const ROUNDS = 3;
@@ -339,7 +341,12 @@ async function quietClock(): Promise<{ ref: number; waited: number }> {
 const fixed = (n: number): string => n.toFixed(1);
 const CPUS = availableParallelism();
 const MUST_JUDGE = mustJudge();
-async function bestOfRounds(label: string, round: (tick: () => Promise<void>) => Promise<Record<string, number>>): Promise<Record<string, Verdict>> {
+const clockNow = () => (MUST_JUDGE ? judgedClockOf : clockOf)(quietest, CPUS);
+/** `fixedOf` names a figure's round-trip wait in ms (`latent`'s timers), left unscaled where it must judge. */
+async function bestOfRounds(label: string, round: (tick: () => Promise<void>) => Promise<Record<string, number>>, fixedOf: (figure: string) => number = () => 0): Promise<Record<string, Verdict>> {
+  const verdictsOf = (rounds: Round[]) => (MUST_JUDGE
+    ? judgedVerdicts(rounds, BUDGET_MS, quietest, CPUS, Object.fromEntries(Object.keys(rounds[0]!.figures).map((k) => [k, fixedOf(k)])))
+    : verdicts(rounds, BUDGET_MS, clockOf(quietest, CPUS)));
   const rounds: Round[] = [];
   for (let i = 1; i <= ROUNDS; i++) {
     const before = await quietClock();
@@ -349,19 +356,20 @@ async function bestOfRounds(label: string, round: (tick: () => Promise<void>) =>
     const after = await referenceMs();
     const r: Round = { before: before.ref, after, during: noted(inside), load: Math.max(loadBefore, loadavg()[0]!), figures };
     rounds.push(r);
-    const clock = clockOf(quietest, CPUS);
+    const clock = clockNow();
     console.log(`search-budget ${label} round ${i}/${ROUNDS} ${isQuiet(r, clock) ? "quiet" : "loaded"} ref ${fixed(before.ref)}/${fixed(after)} ms, `
       + `inside median ${fixed(r.during.median)} p95 ${fixed(r.during.p95)} of ${inside.length} (limit ${fixed(clock.limit)}, spike ${fixed(clock.spike)}, `
       + `quietest ${fixed(quietest)}, waited ${before.waited} ms) `
       + `load ${r.load.toFixed(2)} (limit ${clock.load} on ${CPUS} CPUs): ${Object.entries(figures).map(([k, v]) => `${k} ${v} ms`).join(", ")}`);
-    if (Object.keys(figures).every((k) => Math.min(...rounds.map((x) => x.figures[k]!)) <= BUDGET_MS)) break;
+    if (Object.values(verdictsOf(rounds)).every((v) => v.kind === "within")) break;
   }
-  return verdicts(rounds, BUDGET_MS, clockOf(quietest, CPUS));
+  return verdictsOf(rounds);
 }
 /** A figure inside the budget, or over it on a quiet round (red); over on no quiet round warns, or fails where it must be judged. */
 function judge(v: Verdict, what: string): void {
-  const clock = clockOf(quietest, CPUS);
-  const limits = `limit ${fixed(clock.limit)} ms, spike ${fixed(clock.spike)} ms, load limit ${clock.load} on ${CPUS} CPUs, the run's quietest reference ${fixed(quietest)} ms`;
+  const clock = clockNow();
+  const limits = `limit ${fixed(clock.limit)} ms, spike ${fixed(clock.spike)} ms, load limit ${clock.load} on ${CPUS} CPUs, the run's quietest reference ${fixed(quietest)} ms`
+    + (MUST_JUDGE ? `, figures less their round trip scaled by ${scaleOf(quietest).toFixed(3)} to the calibrated ${CALIBRATED_REF_MS} ms reference` : "");
   if (outcomeOf(v, MUST_JUDGE) === "skipped-loaded") {
     console.log(`::warning title=search budget SKIPPED-LOADED::${what} p95 ${v.ms} ms over ${BUDGET_MS} ms with no quiet round (${limits}): not judged on this host`);
     return;
@@ -371,7 +379,7 @@ function judge(v: Verdict, what: string): void {
     : v.round ? `on a quiet round (reference ${fixed(v.round.before)}/${fixed(v.round.after)} ms, inside ${fixed(v.round.during.median)}/${fixed(v.round.during.p95)} ms, `
       + `limit ${fixed(clock.limit)}/${fixed(clock.spike)} ms, load ${v.round.load.toFixed(2)} of ${clock.load}): search over budget`
     : `past ${LOADED_CEILING * BUDGET_MS} ms with no quiet round, slower than load alone has ever read: search over budget`;
-  expect(v.ms, `${what} p95 ${how}`).toBeLessThanOrEqual(BUDGET_MS);
+  expect(v.ms, `${what} p95 ${how}${MUST_JUDGE ? ` (${limits})` : ""}`).toBeLessThanOrEqual(BUDGET_MS);
 }
 
 describe("the first page of a search is milliseconds (real Postgres, a large mailbox)", () => {
@@ -492,10 +500,12 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const count = { n: 0 };
     // Production's client over the same database: the pooler's `prepare: false`, four connections.
     const pooled = postgres(PG_URL, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
-    const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, 8, count);
+    const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, RTT_MS, count);
     const at = { ...ctx(), db: far as never };
     const QS = ["w1", "w40", "w3000", "axa", "w100", "myax"];
     for (const q of QS) await svc.search(at, { q, parts: "page" });
+    // The fewest statements any read of a query paid: the round trip every one of them waited.
+    const fewest: Record<string, number> = {};
     const best = await bestOfRounds("far", async (tick) => {
       const p95: Record<string, number> = {};
       for (const q of QS) {
@@ -503,12 +513,13 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
         for (let i = 0; i < 20; i++) {
           count.n = 0;
           ms.push((await svc.search(at, { q, parts: "page" })).ms);
+          fewest[q] = Math.min(fewest[q] ?? Infinity, count.n);
           await tick();
         }
         p95[q] = p95Of(ms);
       }
       return p95;
-    });
+    }, (q) => RTT_MS * fewest[q]!);
     console.log(`search-budget far: ${count.n} statements a page`);
     await pooled.end({ timeout: 5 });
     for (const q of QS) judge(best[q]!, `far ${q}`);
@@ -522,7 +533,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const svc = new SearchService();
     const count = { n: 0 };
     const pooled = postgres(PG_URL, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
-    const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, 8, count);
+    const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, RTT_MS, count);
     const at = { ...ctx(D), db: far as never };
     for (const h of HARNESS) await svc.search(at, { q: h.q!, parts: "page" });
     // The same pages with no round trip: the database's and the service's own share of the budget.
@@ -531,7 +542,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const CLASSES = ["common", "mid", "rare", "none", "typo"] as const;
     const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
     // Every round's answers and statement counts, for the class's shape: a round is judged whole.
-    const seenOf = HARNESS.map(() => ({ statements: [] as number[], items: [] as number[] }));
+    const seenOf = HARNESS.map(() => ({ statements: [] as number[], counts: [] as number[], items: [] as number[] }));
     const best = await bestOfRounds("harness", async (tick) => {
       const reads = HARNESS.map(() => ({ page: [] as number[], count: [] as number[] }));
       for (let pass = 0; pass < 5; pass++) {
@@ -541,7 +552,9 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
           seenOf[i]!.statements.push(count.n);
           reads[i]!.page.push(page.ms);
           seenOf[i]!.items.push(page.tier === "exact" ? page.items.length : -page.items.length);
+          count.n = 0;
           reads[i]!.count.push((await svc.search(at, { q: h.q!, parts: "estimate" })).ms);
+          seenOf[i]!.counts.push(count.n);
           await tick();
         }
       }
@@ -554,6 +567,9 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
         figures[`${cls} count`] = p95Of(of.map((r) => median(r.count)));
       }
       return figures;
+    }, (figure) => {
+      const [cls, part] = figure.split(" ");
+      return RTT_MS * Math.min(...seenOf.filter((_, i) => HARNESS[i]!.cls === cls).flatMap((r) => (part === "page" ? r.statements : r.counts)));
     });
     await pooled.end({ timeout: 5 });
     for (const cls of CLASSES) {

@@ -37,6 +37,11 @@ on:
     # ready_for_review too: a lane PR opens as a draft, and marking it ready (land-pr.sh) starts its run.
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      judge_search_budget:
+        description: "Also run the search budget, judged (the nightly's job)"
+        type: boolean
+        default: false
   schedule:
     - cron: "23 2 * * *"
 
@@ -366,11 +371,11 @@ jobs:
 
   # Where the 100 ms search budget is always judged. On a loaded runner the alone job above reports a figure over the
   # budget with no quiet round as a SKIPPED-LOADED warning; here, alone on a hosted runner with its own Postgres,
-  # OHMAIL_BUDGET_MUST_JUDGE=1 makes that a failure (packages/services/test/_budget-clock.ts). The nightly and a
-  # dispatch only: no pull request starts it. The release reads this job by its name.
+  # OHMAIL_BUDGET_MUST_JUDGE=1 makes that a failure (packages/services/test/_budget-clock.ts). The nightly, and a
+  # dispatch only when its judge_search_budget input asks: a release's whole run does not wait on it.
   search-budget:
     name: suite · search budget · judged
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && github.event.inputs.judge_search_budget == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     services:
