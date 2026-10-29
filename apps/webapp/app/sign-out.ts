@@ -19,6 +19,7 @@ import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "./shell/wall-lift";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 import {
   SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch, forgetSplashPresentation,
+  purgeSiteCache,
 } from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
 import { SHARED_NOTE_KEY } from "./(product)/resume/signed-out-note";
@@ -347,6 +348,9 @@ export async function signOut(
     if (!alreadyGone && opts.mayProceed !== undefined && !opts.mayProceed()) return null;
     serverRefused = alreadyGone ? null : err instanceof Error ? err.message : String(err);
   }
+  // The door's answer cleared the jar and no longer carries the cache clear (a shared machine keeps a
+  // day of pictures there). Never after a refusal: the jar may be live, and an older API renews it.
+  if (serverRefused === null) purgeSiteCache();
   {
     // `revokeWake: false` — already done above, with the session that authorized it.
     // `serverHeld` carries the one fact the marker has to reflect: whether a session may still

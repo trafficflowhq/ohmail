@@ -84,6 +84,8 @@ beforeEach(() => {
         else signal?.addEventListener("abort", stop);
       });
     }
+    // The cache purge after a confirmed sign-out presents nothing: answered apart, never a renewal.
+    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") { wire.push("purge"); return new Response(null, { status: 202 }); }
     if (url.endsWith("/auth/refresh")) {
       wire.push("refresh");
       if (!refreshable) return json({ error: { code: "refresh_missing", message: "no refresh token" } }, 401);

@@ -738,14 +738,17 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
 const CACHE_PURGE_HEADER = "x-ohmail-clear";
 
 /**
- * THE CACHE CLEAR A REFUSAL NO LONGER CARRIES. The door's refusal used to say `Clear-Site-Data`, and
- * Chrome held that answer, cookie clears included, until it had walked its whole disk cache: on a
- * long-used profile the splash said "Checking your sign-in…" for a minute. Asked for on its own,
- * once the refusal is in hand: never awaited, outside `api()`, the lane and the single flight, and
- * `keepalive` so it outlives the navigation to the sign-in form. The door answers it before reading
- * the jar and sets no cookie. A lost one costs the clear, never the sign-in.
+ * THE CACHE CLEAR NO SESSION ANSWER CARRIES ANY MORE. The refresh door's refusal, the sign-out door's
+ * answer and the erase's receipt used to say `Clear-Site-Data`, and Chrome held each, cookie clears
+ * included, until it had walked its whole disk cache: on a long-used profile the splash said
+ * "Checking your sign-in…" for a minute, and a confirmed sign-out ran out its deadline and was named
+ * unconfirmed. Asked for on its own, once a confirmed answer is in hand (`sign-out.ts`, the erase in
+ * `AccountSection.tsx`, the refusals here), never for an unconfirmed one: an older API reads it as a
+ * renewal. Never awaited, outside `api()`, the lane and the single flight, and `keepalive` so it
+ * outlives the navigation away. The door answers it before reading the jar and sets no cookie. A lost
+ * one costs the clear, never the sign-in.
  */
-function purgeSiteCache(): void {
+export function purgeSiteCache(): void {
   try {
     void fetch(REFRESH_ENDPOINT, {
       method: "POST",

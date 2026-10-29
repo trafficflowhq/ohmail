@@ -343,15 +343,19 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
     expect(midlifeMints).toEqual([]);
   });
 
-  it("signed out elsewhere: the refused refresh clears the jar with no cache clear; the purge answers alone", async () => {
+  it("signed out: the door's 204 and the refused refresh clear the jar with no cache clear; the purge answers alone", async () => {
     // Last, because it ends the first account's session. Chrome holds an answer carrying
     // Clear-Site-Data, cookie clears included, for a walk of its whole disk cache.
-    expect((await post("/auth/refresh/logout", {}, firstJar)).status).toBe(204);
+    const cleared = (res: Response): string[] =>
+      res.headers.getSetCookie().filter((c) => /Max-Age=0/.test(c)).map((c) => c.split("=")[0]!).sort();
+    const signedOut = await post("/auth/refresh/logout", {}, firstJar);
+    expect(signedOut.status).toBe(204);
+    expect(cleared(signedOut)).toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+    expect(signedOut.headers.get("clear-site-data"), "the sign-out is held for a cache walk").toBeNull();
     const refused = await post("/auth/refresh", {}, firstJar);
     expect(refused.status).toBe(401);
     expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("refresh_revoked");
-    expect(refused.headers.getSetCookie().filter((c) => /Max-Age=0/.test(c)).map((c) => c.split("=")[0]).sort())
-      .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+    expect(cleared(refused)).toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
     expect(refused.headers.get("clear-site-data"), "the refusal is held for a cache walk").toBeNull();
 
     const purge = await fetch(at("/auth/refresh"), { method: "POST", headers: { "x-ohmail-clear": "cache" } });

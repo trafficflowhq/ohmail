@@ -64,7 +64,9 @@ function expectCleared(res: Response, what: string): void {
   }
   expect(lines.find((l) => l.startsWith("tf_refresh=")), `${what}: the refresh clear keeps its path`)
     .toMatch(/Path=\/auth\/refresh(;|$)/);
-  expect(res.headers.get("clear-site-data"), `${what}: the cache goes with the jar`).toBe('"cache"');
+  // Chrome holds an answer carrying the cache clear, its cookie clears too, for a walk of its whole
+  // disk cache: the press gave up at its deadline and named a confirmed sign-out unconfirmed.
+  expect(res.headers.get("clear-site-data"), `${what}: held for a cache walk`).toBeNull();
 }
 
 async function reuseRows(db: Db, accountId: string): Promise<number> {

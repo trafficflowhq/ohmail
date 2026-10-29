@@ -68,12 +68,14 @@ beforeEach(() => {
   mirrorOnDisk();
   document.cookie = `tf_owner=${PENDING}; Path=/`;
   originalFetch = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown) => {
+  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/auth/refresh/logout")) {
       wire.push("door");
       return doorScript[Math.min(count("door"), doorScript.length) - 1]!();
     }
+    // The cache purge after a confirmed sign-out presents nothing: answered apart, never a renewal.
+    if (new Headers(init?.headers).get("x-ohmail-clear") === "cache") { wire.push("purge"); return new Response(null, { status: 202 }); }
     if (url.endsWith("/auth/refresh")) { wire.push("refresh"); return json({ error: { code: "refresh_revoked" } }, 401); }
     if (url.includes("/auth/session")) { wire.push("session"); return json({}, 401); }
     if (url.includes("/auth/login")) {
