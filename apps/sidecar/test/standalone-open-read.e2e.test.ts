@@ -11,6 +11,7 @@ import { createSidecar, type Sidecar } from "../src/engine.js";
 import { serveOverStdio, type StdioHost } from "../src/host.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
+import { rigAppendDates } from "../../../test/support/rig-append-date.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 
 vi.setConfig({ testTimeout: 4 * PGLITE_STANDUP_BUDGET_MS });
@@ -83,8 +84,9 @@ const LETTERS = [
 const midOf = (k: string, tag: string) => `${tag}-${k}@rig.test`;
 
 async function plant(w: World, tag: string): Promise<void> {
-  for (const x of LETTERS) {
-    const when = new Date(Date.now() - x.ago);
+  const dates = rigAppendDates(LETTERS.map((x) => x.ago));
+  for (const [i, x] of LETTERS.entries()) {
+    const when = dates[i]!;
     const eml = [`Message-ID: <${midOf(x.k, tag)}>`, `From: Mara <${SENDER}>`, "To: me@trafficflow.test",
       `Subject: Letter ${x.k}`, `Date: ${when.toUTCString()}`, "Content-Type: text/plain; charset=utf-8", "", `Letter ${x.k}.`].join("\r\n");
     await w.raw.append("INBOX", eml, x.seen ? ["\\Seen"] : [], when);

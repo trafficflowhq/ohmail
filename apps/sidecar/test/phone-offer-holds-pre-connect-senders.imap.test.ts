@@ -16,6 +16,7 @@ import {
   deliver, dialectSeam, dirs, folderOnServer, nodeExecutor, open, post, rowOf, seedMailboxId, withServer, type Line, type Phone,
 } from "./_phone-offline-rig.js";
 import { serviceUp } from "@trafficflow/db/testing";
+import { rigAppendDates } from "../../../test/support/rig-append-date.js";
 import { createRequire } from "node:module";
 import type { SqlExecutor, SqlRow, SqlValue } from "@ohmail/client-engine";
 import { bootEngine, LOCAL_ENGINE_ORIGIN, localEngineTransport, type MobileEngineDeps } from "../../mobile/src/engine/boot.js";
@@ -133,14 +134,14 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone connected to a mailbox wit
   it("keeps that mail where it is, offers both senders, and the offer's press holds them", async () => {
     const user = `pre-connect-${randomUUID()}@trafficflow.test`;
     const n = randomUUID().slice(0, 8);
-    const base = Date.now();
+    const [sentAt, plainAt, firstAt] = rigAppendDates([60 * MIN, 50 * MIN, 45 * MIN]);
     const mara = `mara.${n}@rig-corpus.invalid`;
     const stranger = `nobody.${n}@stranger.invalid`;
-    await put(user, "Sent", { from: `<${user}>`, to: `Mara Lindqvist <${mara}>`, subject: `Keys ${n}`, at: new Date(base - 60 * MIN) });
+    await put(user, "Sent", { from: `<${user}>`, to: `Mara Lindqvist <${mara}>`, subject: `Keys ${n}`, at: sentAt });
     const plain = `Plain note ${n}`;
     const first = `First contact ${n}`;
-    await put(user, "INBOX", { from: `Mara Lindqvist <${mara}>`, to: `<${user}>`, subject: plain, at: new Date(base - 50 * MIN) });
-    await put(user, "INBOX", { from: `Nobody Known <${stranger}>`, to: `<${user}>`, subject: first, at: new Date(base - 45 * MIN) });
+    await put(user, "INBOX", { from: `Mara Lindqvist <${mara}>`, to: `<${user}>`, subject: plain, at: plainAt });
+    await put(user, "INBOX", { from: `Nobody Known <${stranger}>`, to: `<${user}>`, subject: first, at: firstAt });
 
     const phone = await bootPhone(user);
     expect(await post(phone, `/local/mailboxes/${seedMailboxId(phone)}/organize`)).toBe(200);
@@ -171,14 +172,14 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone connected to a mailbox wit
   it("asks the sent-mail seed, and a yes lets the person written to through", async () => {
     const user = `pre-connect-seed-${randomUUID()}@trafficflow.test`;
     const n = randomUUID().slice(0, 8);
-    const base = Date.now();
+    const [sentAt, plainAt, firstAt] = rigAppendDates([60 * MIN, 50 * MIN, 45 * MIN]);
     const mara = `mara.${n}@rig-corpus.invalid`;
     const stranger = `nobody.${n}@stranger.invalid`;
-    await put(user, "Sent", { from: `<${user}>`, to: `Mara Lindqvist <${mara}>`, subject: `Keys ${n}`, at: new Date(base - 60 * MIN) });
+    await put(user, "Sent", { from: `<${user}>`, to: `Mara Lindqvist <${mara}>`, subject: `Keys ${n}`, at: sentAt });
     const plain = `Plain note ${n}`;
     const first = `First contact ${n}`;
-    await put(user, "INBOX", { from: `Mara Lindqvist <${mara}>`, to: `<${user}>`, subject: plain, at: new Date(base - 50 * MIN) });
-    await put(user, "INBOX", { from: `Nobody Known <${stranger}>`, to: `<${user}>`, subject: first, at: new Date(base - 45 * MIN) });
+    await put(user, "INBOX", { from: `Mara Lindqvist <${mara}>`, to: `<${user}>`, subject: plain, at: plainAt });
+    await put(user, "INBOX", { from: `Nobody Known <${stranger}>`, to: `<${user}>`, subject: first, at: firstAt });
 
     const phone = await bootPhone(user);
     expect(await post(phone, `/local/mailboxes/${seedMailboxId(phone)}/organize`)).toBe(200);
