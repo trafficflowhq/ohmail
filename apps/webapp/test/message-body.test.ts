@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
@@ -899,5 +899,59 @@ describe("what the reader is told, and what they are offered", () => {
     expect(f.className).toBe("mb-frame");
     expect(f.getAttribute("title")).toBe("Message content");
     expect(f.getAttribute("referrerpolicy")).toBe("no-referrer");
+  });
+});
+
+describe("a press in the letter leaves the app its keys", () => {
+  // Tester round 34: after a click into a framed letter, j, k, Escape and g o did nothing until a
+  // click outside it. The focus sat in the letter's document, where WebKit runs no listener.
+  const letter = '<table width="600"><tr><td><p>Thanks, see you Friday.</p><a href="https://example.com/">link</a></td></tr></table>';
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  async function pressInto(): Promise<HTMLIFrameElement> {
+    const el = await render({ text: "x", html: letter });
+    const f = el.querySelector<HTMLIFrameElement>("iframe.mb-frame")!;
+    f.focus();
+    expect(document.activeElement).toBe(f);
+    window.dispatchEvent(new Event("blur"));
+    return f;
+  }
+
+  it("a plain press gives the focus back to the app", async () => {
+    // Mutation: drop the watch from MessageBody; the focus stays in the letter.
+    await pressInto();
+    await wait(250);
+    expect(document.activeElement?.tagName).not.toBe("IFRAME");
+  });
+
+  it("a selection in the letter hands the keys back too, and stays; select-all then selects the letter", async () => {
+    // Copy itself is read in real engines: letter-focus-browser.test.ts.
+    const f = await pressInto();
+    const inner = f.contentDocument!;
+    inner.body.innerHTML = "<p>some words to copy</p><p>and more</p>";
+    const range = inner.createRange();
+    range.selectNodeContents(inner.body.firstChild!);
+    inner.getSelection()!.addRange(range);
+    await wait(250);
+    expect(document.activeElement?.tagName).not.toBe("IFRAME");
+    expect(inner.getSelection()!.toString()).toBe("some words to copy");
+    const all = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(all);
+    expect(all.defaultPrevented).toBe(true);
+    expect(inner.getSelection()!.toString()).toBe("some words to copyand more");
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    const own = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(own);
+    expect(own.defaultPrevented, "a press in the app gives select-all back to it").toBe(false);
+  });
+
+  it("no focus is taken while the window is behind another", async () => {
+    const away = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    try {
+      const f = await pressInto();
+      await wait(250);
+      expect(document.activeElement).toBe(f);
+    } finally {
+      away.mockRestore();
+    }
   });
 });

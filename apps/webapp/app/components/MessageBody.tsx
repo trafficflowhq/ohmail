@@ -44,6 +44,7 @@ import { scrollProgrammatically } from "../shell/programmatic-scroll";
 import { useEngineOrNull } from "../shell/engine";
 import { mailDocCacheFor, type MailDocCache, type MailDocInputs } from "./mail-doc-cache";
 import { foldSanitized, type SanitizedFold } from "./quoted-fold";
+import { holdLetterFocusWatch } from "./letter-focus";
 
 /**
  * The English sentences — the FALLBACK, not the source: every string comes
@@ -4072,6 +4073,9 @@ export function MessageBody({
    * anchors through `BodyText`, which reports those, so a message is one surface either way.
    */
   useRenderedLinks(shown !== null && !framelessView ? shown.links : NO_LINKS);
+
+  /** A press in the frame hands the app's keys back once it is over (`letter-focus.ts`). */
+  useEffect(() => holdLetterFocusWatch(window), []);
 
   /**
    * ── ASK FOR THE EMBEDDED IMAGES THIS RENDERING IS SHOWING BLANKED — see {@link MessageBodyProps.onCidImages}
