@@ -789,21 +789,19 @@ export const StreamShell = forwardRef<
           ? null
           : el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(jump.id)}"]`);
         if (card) {
-          const atLine = cssRect(card).top - cssRect(el).top <= 90;
-          const atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
-          if (!atLine && !atEnd) return; // still travelling — emit nothing
+          // At the landing's own aim (clamped as `scrollTo` clamps it), not merely above the 90px line.
+          const raw = cssRect(card).top - cssRect(el).top + el.scrollTop - LANDING_LEAD_PX;
+          const aim = Math.min(Math.max(raw, 0), Math.max(0, el.scrollHeight - el.clientHeight));
+          if (Math.abs(aim - el.scrollTop) > ANCHOR_TOLERANCE_PX) return; // still travelling — emit nothing
           jumpRef.current = null;
-          if (!atLine) {
-            // Bottomed out with the target short of the line: the target IS the cursor.
-            // Falling through would pin the pile's LAST card instead — the wrong-message
-            // landing this ref exists to prevent.
-            if (curRef.current !== jump.id) {
-              curRef.current = jump.id;
-              onCurrentRef.current(jump.id);
-            }
-            return;
+          // Landed, or bottomed out short of the line: the target IS the cursor. Falling
+          // through would pin the pile's last card, or a short card below the target that
+          // also starts above the 90px line.
+          if (curRef.current !== jump.id) {
+            curRef.current = jump.id;
+            onCurrentRef.current(jump.id);
           }
-          // Arrived at the line — the ordinary computation below now lands on the target.
+          return;
         } else {
           jumpRef.current = null; // expired, or the card left the stream mid-flight
         }

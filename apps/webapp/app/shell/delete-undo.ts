@@ -23,7 +23,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { EntityReader, EngineMessage } from "@ohmail/client-engine";
+import { pressVerdict, type EntityReader, type EngineMessage, type PressAnswer } from "@ohmail/client-engine";
 import type { UndoToastFn } from "./undo-door";
 import type { DisabledReason, KeyBinding } from "./keymap";
 import { isModalOpen } from "./modal-gate";
@@ -662,8 +662,11 @@ export function deleteKeyBindings(input: {
 export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   held: ReadonlySet<string>;
   remove: (target: DeleteTarget | readonly DeleteTarget[], undone?: () => void) => boolean;
+  /** How many dispatches the server confirmed — what an open Trash reads in. */
+  landed: number;
 } {
   const [held, setHeld] = useState<ReadonlySet<string>>(EMPTY);
+  const [landed, setLanded] = useState(0);
   /* THE DEPS ARE READ THROUGH A REF, never closed over: `refusal`, `toast` and `copy` change
      identity on most renders, and rebuilding the queue would drop every armed timer — a press
      silently un-deleted by an unrelated re-render. */
@@ -671,7 +674,10 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   latest.current = deps;
   const queue = useMemo(
     () => createDeleteUndo({
-      mutate: (id, pressId) => latest.current.mutate(id, pressId),
+      mutate: (id, pressId) => latest.current.mutate(id, pressId).then((res) => {
+        if (pressVerdict(res as PressAnswer).kind === "applied") setLanded((n) => n + 1);
+        return res;
+      }),
       ...(latest.current.verb ? { verb: latest.current.verb } : {}),
       toast: (msg, opts) => latest.current.toast(msg, opts),
       get copy() { return latest.current.copy; },
@@ -703,6 +709,7 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   return {
     held,
     remove: useCallback((t: DeleteTarget | readonly DeleteTarget[], undone?: () => void) => queue.remove(t, undone), [queue]),
+    landed,
   };
 }
 

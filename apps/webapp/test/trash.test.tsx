@@ -520,3 +520,29 @@ describe("the Trash view", () => {
     expect(el.querySelector(".lp-head")?.textContent ?? el.textContent).toContain(en.rail.trash);
   });
 });
+
+describe("useTrashPage — a delete that lands while Trash is open", () => {
+  it("is read in at the top without leaving the view; nothing is read while away", async () => {
+    const { useTrashPage } = await import("../app/shell/trash-page");
+    const listTrash = vi.fn()
+      .mockResolvedValueOnce({ state: "ready", items: [row("m1")], nextCursor: null })
+      .mockResolvedValue({ state: "ready", items: [row("m2"), row("m1")], nextCursor: null });
+    const engine = { trashAvailable: () => true, listTrash } as never;
+    let shown: string[] = [];
+    function Probe({ active, landed }: { active: boolean; landed: number }): null {
+      shown = useTrashPage(engine, active, new Set(), landed).items.map((r) => r.id);
+      return null;
+    }
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(h(Probe, { active: true, landed: 0 })); });
+    expect(shown).toEqual(["m1"]);
+    await act(async () => { root!.render(h(Probe, { active: true, landed: 1 })); });
+    expect(listTrash).toHaveBeenCalledTimes(2);
+    expect(shown).toEqual(["m2", "m1"]);
+    await act(async () => { root!.render(h(Probe, { active: false, landed: 1 })); });
+    await act(async () => { root!.render(h(Probe, { active: false, landed: 2 })); });
+    expect(listTrash, "a delete away from Trash is read by the next visit").toHaveBeenCalledTimes(2);
+  });
+});

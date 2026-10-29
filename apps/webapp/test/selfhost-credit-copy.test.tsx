@@ -82,6 +82,15 @@ describe("the draft offer", () => {
       .toContain(`Das kostet ${DRAFT_REPLY_COST_CREDITS} Punkte deines KI-Budgets.`);
   });
 
+  it.each(["en", "de"] as const)("%s: an account the Screener already knows has no credits is told so, not offered a price", (locale) => {
+    const text = render(
+      <DraftReplyCard chrome={{ control: offered(), pending: null, resolve: noop, noCredits: true } as never} messageId="m1" />,
+      { locale, managed: true },
+    );
+    expect(text).toContain((locale === "en" ? en : de).aiRefusal.insufficientCredits);
+    expect(text).not.toContain(String(DRAFT_REPLY_COST_CREDITS));
+  });
+
   it.each(["en", "de"] as const)("%s: an unmetered host says what happens and states no price", (locale) => {
     const text = render(draftCard(), { locale, managed: false });
     expect(text).toContain(locale === "en" ? en.draftReply.offerBodyUnmetered : de.draftReply.offerBodyUnmetered);

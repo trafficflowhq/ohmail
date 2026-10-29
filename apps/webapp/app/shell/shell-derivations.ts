@@ -141,7 +141,7 @@ export interface ShellDerivationsInput {
   /** The host's own Trash transport, `undefined` where there is none. */
   trashWire: TrashWire | undefined;
   /** The delete window's held ids — what the projection subtracts. */
-  deleting: { held: ReadonlySet<string> };
+  deleting: { held: ReadonlySet<string>; landed?: number };
   /** The restore window's held ids — what the Trash page subtracts. */
   restoring: { held: ReadonlySet<string> };
   /** Where a held routing press is showing its mail. Read, never written. */
@@ -336,7 +336,7 @@ export function useShellDerivations({
    * ids are subtracted here rather than in the view — one place, so the
    * list and the rail count cannot disagree.
    */
-  const trashPage = useTrashPage(engine, route.view === "trash", restoring.held);
+  const trashPage = useTrashPage(engine, route.view === "trash", restoring.held, deleting.landed);
   /**
    * THE LIVE TRASH WINDOW — the mail server's own \Trash, read beside the mirrored deletes and
    * never written anywhere. Gated exactly as the Junk window is: the hook is called

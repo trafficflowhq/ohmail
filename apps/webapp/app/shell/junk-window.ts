@@ -242,6 +242,11 @@ export const JUNK_FIRST_PAGE_FRESH_MS = 30_000;
  * organizer files on its next cycle, so a read at the press would find Junk as it was.
  */
 export const JUNK_MOVE_SETTLE_MS = 5_000;
+/**
+ * How many settle beats re-read the preview while the Junk segment is on screen: the organizer
+ * files a verdict on its own cycle, and the open shelf shows it once the preview has it.
+ */
+export const JUNK_MOVE_SETTLE_BEATS = 12;
 
 /**
  * THE KEPT PAGE. `on`: the shell is up with the window readable (folders on, no demo); its rise
@@ -606,6 +611,8 @@ export function useJunkWindow(
   const [sweepPreview, setSweepPreview] = useState<JunkSweepWire | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [held, setHeld] = useState<JunkHeldControl | null>(null);
+  /** The held ids as last answered, joined; `null` before an answer or from a server without them. */
+  const heldKey = useRef<string | null>(null);
   const previewAskedAt = useRef<number | null>(null);
   const previewInFlight = useRef(false);
   /** Set once the human pressed THIS session — what turns an emptied pile into "done". */
@@ -616,6 +623,7 @@ export function useJunkWindow(
   const absorbPreview = useCallback((pv: JunkSweepWire) => {
     setSweepPreview(pv);
     setHeld(pv.held ? { ids: new Set(pv.held.ids), truncated: pv.held.truncated } : null);
+    heldKey.current = pv.held ? pv.held.ids.join(",") : null;
     if (rereadAfterSweep.current && !pv.pending) {
       rereadAfterSweep.current = false;
       fetchFirst();
@@ -672,13 +680,22 @@ export function useJunkWindow(
   const readAfterMove = useCallback(() => {
     moved.current = true;
     if (settleTimer.current !== null) clearTimeout(settleTimer.current);
-    settleTimer.current = setTimeout(() => {
-      settleTimer.current = null;
-      if (!onSegment.current) fetchFirst(true);
-      if (supported) readPreview();
-      // The organizer may file it after this read: the entry still reads.
-      moved.current = true;
-    }, JUNK_MOVE_SETTLE_MS);
+    const from = heldKey.current;
+    let beats = 0;
+    const beat = (): void => {
+      settleTimer.current = setTimeout(() => {
+        settleTimer.current = null;
+        beats += 1;
+        if (beats === 1 && !onSegment.current) fetchFirst(true);
+        // Later beats only while the segment is on screen and the shelf has not moved yet.
+        if (beats > 1 && (!onSegment.current || from === null || heldKey.current !== from)) return;
+        if (supported) readPreview();
+        // The organizer may file it after this read: the entry still reads.
+        moved.current = true;
+        if (beats < JUNK_MOVE_SETTLE_BEATS) beat();
+      }, JUNK_MOVE_SETTLE_MS);
+    };
+    beat();
   }, [fetchFirst, readPreview, supported]);
   useEffect(() => { rereadAfterMove.current = readAfterMove; }, [readAfterMove]);
   const pile = keep?.moved ?? 0;

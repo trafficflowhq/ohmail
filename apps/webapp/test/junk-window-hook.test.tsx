@@ -998,6 +998,25 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
     expect(control!.visible.map((i) => i.uid)).toEqual([3, 2, 1]);
   });
 
+  it("on the segment, a verdict the organizer files after the settle read reaches the shelf without leaving", async () => {
+    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    junkList.mockResolvedValue(pageWire(two, null));
+    const without = { ...NO_SWEEP, held: { ids: ["q1"], truncated: false } };
+    junkSweepPreview.mockResolvedValueOnce(without).mockResolvedValueOnce(without)
+      .mockResolvedValue({ ...NO_SWEEP, held: { ids: ["q2", "q1"], truncated: false } });
+    await mountHook(true, undefined, true, { on: true, moved: 1 });
+    await act(async () => { setKeep!({ on: true, moved: 2 }); });
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    expect([...control!.held!.ids], "not filed yet at the settle").toEqual(["q1"]);
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    expect([...control!.held!.ids]).toEqual(["q2", "q1"]);
+    const asked = junkSweepPreview.mock.calls.length;
+    await settleTimers(JUNK_MOVE_SETTLE_MS * 20);
+    expect(junkSweepPreview, "it stops once the letter is there").toHaveBeenCalledTimes(asked);
+    expect(junkList, "the list under the reader is not replaced").toHaveBeenCalledTimes(1);
+  });
+
   it("on the segment the settle keeps the older rows the reader loaded; the next entry reads", async () => {
     const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
