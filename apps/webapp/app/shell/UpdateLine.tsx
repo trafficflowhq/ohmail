@@ -53,6 +53,7 @@ export function UpdateLine() {
   const t = useTranslations("update");
   const offer = useUpdateOffer();
   const hold = useRestartHold();
+  const running = useRunningVersion();
   const tipId = useId();
   const pressing = useRef(false);
   if (offer === null) return null;
@@ -92,7 +93,7 @@ export function UpdateLine() {
 
   return (
     <div className="upd-line" role="status" data-s={held ? "waiting" : offer.kind}>
-      <span className="ul-text">
+      <span className="ul-text" title={running !== null ? t("lineVersion", { version: running }) : undefined}>
         <span className={mark} aria-hidden="true" />
         {text}
       </span>
@@ -127,12 +128,6 @@ export function UpdateLine() {
       {held ? <span className="upd-sub">{why}</span> : null}
     </div>
   );
-}
-
-/** The rail's foot on the desktop: the version this copy runs. */
-export function RailVersion({ version }: { version: string }) {
-  const t = useTranslations("update");
-  return <span className="rail-version">{t("lineVersion", { version })}</span>;
 }
 
 /** The ≡'s dot below 1024px: something on the line to press while the drawer is closed. */
