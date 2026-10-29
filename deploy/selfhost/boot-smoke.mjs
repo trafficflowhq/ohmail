@@ -659,6 +659,8 @@ async function main() {
     "the refresh cookie's clear must name its own path, or a browser keeps the cookie");
   const renewAfter = await post("/auth/refresh", {}, jar);
   assert(renewAfter.status === 401, `the signed-out jar must not renew (got ${renewAfter.status})`);
+  assert(renewAfter.headers.get("clear-site-data") === null,
+    "the refused refresh must not carry Clear-Site-Data: Chrome holds such an answer for a walk of its whole cache");
   ok("signed out through the proxy: 204, five cookies expired, and the session no longer renews");
 
   process.stdout.write("\n✓ BOOT SMOKE GREEN — compose boots, migrates, signs in, syncs seeded mail, stages bytes, signs out.\n");

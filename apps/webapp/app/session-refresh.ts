@@ -9,7 +9,7 @@
  * — `next.config.mjs` carries the dedicated rewrite (`REFRESH_PATH`).
  */
 
-import { CREDENTIAL_REFUSED, isSessionRefusal } from "@ohmail/client-engine";
+import { CREDENTIAL_REFUSED, REFRESH_MISSING, isSessionRefusal } from "@ohmail/client-engine";
 import { csrfMark, csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./shell/durable";
@@ -674,6 +674,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // can mint a session for an account that is gone (`shell/account-erased.ts`).
       const erased = await erasedAnswerOf(res);
       if (erased !== null) {
+        // This 410 cleared the jar whatever the erased door makes of it (the splash and /login register none).
+        purgeSiteCache();
         const heard = hearAccountErased(erased.named, erasedBefore) === "erased";
         if (heard) settleAttempt();
         recordRefresh({
@@ -688,6 +690,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       if (isSessionRefusal(res.status, code)) {
         settleAttempt();
         recordRefresh({ outcome: "revoked", status: 401, code, errorClass: null, retryAfterMs: null });
+        // No token presented is every signed-out visit's answer (`/login` asks too): no cache walk for it.
+        if (code !== REFRESH_MISSING) purgeSiteCache();
         markSessionDead();
         return "refused";
       }
@@ -728,6 +732,31 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
   if (opts.attemptId !== undefined) inFlightRepair = { answer: started, asked };
   void started.finally(() => { inFlight = null; inFlightRepair = null; });
   return started;
+}
+
+/** The request header that asks the refresh door for the cache clear alone (`withCachePurge` there). */
+const CACHE_PURGE_HEADER = "x-ohmail-clear";
+
+/**
+ * THE CACHE CLEAR A REFUSAL NO LONGER CARRIES. The door's refusal used to say `Clear-Site-Data`, and
+ * Chrome held that answer, cookie clears included, until it had walked its whole disk cache: on a
+ * long-used profile the splash said "Checking your sign-in…" for a minute. Asked for on its own,
+ * once the refusal is in hand: never awaited, outside `api()`, the lane and the single flight, and
+ * `keepalive` so it outlives the navigation to the sign-in form. The door answers it before reading
+ * the jar and sets no cookie. A lost one costs the clear, never the sign-in.
+ */
+function purgeSiteCache(): void {
+  try {
+    void fetch(REFRESH_ENDPOINT, {
+      method: "POST",
+      headers: { [CACHE_PURGE_HEADER]: "cache" },
+      credentials: "same-origin",
+      cache: "no-store",
+      keepalive: true,
+    }).catch(() => undefined);
+  } catch {
+    /* no fetch here: nothing to clear */
+  }
 }
 
 /**

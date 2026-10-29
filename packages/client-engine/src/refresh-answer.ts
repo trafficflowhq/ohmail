@@ -8,9 +8,12 @@
  * held equal by `test/refresh-answer-one-classifier.test.ts`.
  */
 
+/** The door's refusal when the jar presented no token at all: every signed-out visit hears it. */
+export const REFRESH_MISSING = "refresh_missing";
+
 /** The door's codes (`packages/services/src/auth/session-lifecycle.ts`), plus the legacy one. */
 export const SESSION_REFUSAL_CODES: ReadonlySet<string> = new Set([
-  "refresh_missing", "refresh_expired", "refresh_revoked", "unauthorized",
+  REFRESH_MISSING, "refresh_expired", "refresh_revoked", "unauthorized",
 ]);
 
 /**

@@ -134,6 +134,9 @@ describe("the two writers of a sign-in verdict, and only those", () => {
       // A jar holding this browser's own unfinished sign-out, met by the splash: no door asked, the
       // sign-in page finishes it (`resume-never-loops`, `login-finishes-sign-out`). Not a verdict.
       "apps/webapp/app/(product)/resume/ResumeScreen.tsx [signOutPending()]",
+      // The jar lost the account the edge saw while the splash waited: another tab heard the door's
+      // refusal (or signed out), and only a server answer or a sign-out takes `tf_owner`. Not a fault.
+      "apps/webapp/app/(product)/resume/ResumeScreen.tsx [initialOwner !== null && readOwnerCookie() === null]",
       'apps/webapp/app/(product)/resume/ResumeScreen.tsx [answer !== "unavailable"]',
     ]);
     for (const file of ["apps/webapp/app/(product)/error.tsx", "apps/webapp/app/(product)/mailbox/AccessLock.tsx"]) {
@@ -142,8 +145,10 @@ describe("the two writers of a sign-in verdict, and only those", () => {
     }
   });
 
-  it("the sign-out note is left only beside that navigation", () => {
+  it("the sign-out note is left only beside those navigations", () => {
     expect(sites((src) => callSites(src, "leaveSignedOutNote")).map((s) => `${s.file} [${s.guard}]`)).toEqual([
+      // The sentence the other tab heard, copied for this tab's `/login`.
+      "apps/webapp/app/(product)/resume/ResumeScreen.tsx [initialOwner !== null && readOwnerCookie() === null]",
       'apps/webapp/app/(product)/resume/ResumeScreen.tsx [answer !== "unavailable"]',
     ]);
   });
@@ -156,10 +161,15 @@ describe("the two writers of a sign-in verdict, and only those", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("there is one refresh request in the app — resumeSession's", () => {
-    const fetches = FILES.flatMap(({ rel, src }) =>
-      [...scan.withoutComments(src).matchAll(/\bfetch\s*\(\s*(?:REFRESH_ENDPOINT|["'`][^"'`]*\/auth\/refresh)/g)].map(() => rel));
-    expect(fetches).toEqual(["apps/webapp/app/session-refresh.ts"]);
+  it("there is one refresh request in the app — resumeSession's — beside the cache purge, which presents nothing", () => {
+    const fetches = FILES.flatMap(({ rel, src }) => {
+      const code = scan.withoutComments(src);
+      return [...code.matchAll(/\bfetch\s*\(\s*(?:REFRESH_ENDPOINT|["'`][^"'`]*\/auth\/refresh)/g)].map((m) => {
+        const call = scan.bracketSpan(scan.withoutCommentsAndLiterals(src), m.index! + m[0].indexOf("("));
+        return /\bCACHE_PURGE_HEADER\b/.test(code.slice(call.start, call.end)) ? `${rel} (purge)` : rel;
+      });
+    });
+    expect(fetches).toEqual(["apps/webapp/app/session-refresh.ts", "apps/webapp/app/session-refresh.ts (purge)"]);
   });
 });
 

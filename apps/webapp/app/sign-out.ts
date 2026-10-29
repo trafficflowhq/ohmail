@@ -21,6 +21,7 @@ import {
   SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch, forgetSplashPresentation,
 } from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
+import { SHARED_NOTE_KEY } from "./(product)/resume/signed-out-note";
 import { postSignedOut } from "./signed-out-signal";
 import { forgetMailDocs } from "./components/mail-doc-cache";
 
@@ -214,6 +215,8 @@ export async function forgetThisBrowser(
     // `ohmail.access.<owner>` — where the service last found this account. Left behind it would
     // decide the next account's first paint on this browser from somebody else's standing.
     ACCESS_VERDICT_PREFIX,
+    // Why the splash sent a tab to the sign-in form, left for the other tabs: it goes with the session.
+    SHARED_NOTE_KEY,
     // The erased-account word, which names an erased account's id (`shell/account-erased.ts`).
     // The erased door writes it after this sweep, so its own sweep never removes it.
     ERASED_KEY,

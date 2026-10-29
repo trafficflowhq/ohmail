@@ -7,9 +7,17 @@
  * in its address. A note that cannot be stored costs the sentence, never the navigation.
  */
 
-import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
+import { durableSessionRemove, durableSessionSet, durableSet } from "../../shell/durable";
 
 const NOTE_KEY = "ohmail.signed-out-reason";
+
+/**
+ * THE SAME REASON FOR THE OTHER TABS: a splash waiting on the cross-tab lock while another tab heard
+ * the door finds its jar emptied and nothing told. A reason and a time, never an account; read while
+ * younger than {@link SHARED_NOTE_MS} and left for every tab that needs it.
+ */
+export const SHARED_NOTE_KEY = "ohmail.signed-out-reason.shared";
+export const SHARED_NOTE_MS = 15_000;
 
 /**
  * The three refusals the refresh door names (`refresh_revoked` / `_expired` / `_missing`), and
@@ -45,4 +53,21 @@ export function takeSignedOutNote(): SignedOutReason | null {
   if (raw === null) return null;
   durableSessionRemove(NOTE_KEY, "resume.note");
   return isSignedOutReason(raw) ? raw : null;
+}
+
+export function shareSignedOutNote(reason: SignedOutReason): void {
+  durableSet(SHARED_NOTE_KEY, JSON.stringify({ reason, at: Date.now() }), "resume.note");
+}
+
+/** Another tab's reason while it is young, else `null`; unreadable storage costs only the sentence. */
+export function takeSharedSignedOutNote(): SignedOutReason | null {
+  let note: { reason?: unknown; at?: unknown } | null = null;
+  try {
+    const raw = localStorage.getItem(SHARED_NOTE_KEY);
+    note = raw === null ? null : (JSON.parse(raw) as { reason?: unknown; at?: unknown } | null);
+  } catch {
+    return null;
+  }
+  const age = typeof note?.at === "number" ? Date.now() - note.at : -1;
+  return age >= 0 && age < SHARED_NOTE_MS && isSignedOutReason(note?.reason) ? note.reason : null;
 }
