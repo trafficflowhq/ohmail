@@ -435,3 +435,11 @@ export function railHome(
 /** The tab roots — a rail over any other path leads with Back (the prototype's pushed rail). */
 const TAB_ROUTES = new Set(["/", "/index", "/screener", "/reads", "/receipts", "/more"]);
 export const isTabRoute = (pathname: string): boolean => TAB_ROUTES.has(pathname.replace(/\/+$/, "") || "/");
+
+/**
+ * A route drawn as a sheet over the screen, whose sheet carries its own Cancel while it is up: the rail
+ * adds no Back over it then. Its pages without the sheet (no mailbox to send from) keep the rail's Back.
+ */
+const SHEET_ROUTES = new Set(["/compose"]);
+export const sheetOwnsTheWayOut = (pathname: string, sheetUp: boolean): boolean =>
+  sheetUp && SHEET_ROUTES.has(pathname.replace(/\/+$/, ""));

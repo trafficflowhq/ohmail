@@ -12,8 +12,9 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { ThreadRead } from "./reader-seen";
 import {
   AppState, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, useWindowDimensions, View,
-  type LayoutChangeEvent,
+  type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent,
 } from "react-native";
+import { FadeOut } from "./FadeOut";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
@@ -109,11 +110,10 @@ import { ComposeCopies } from "./ComposeCopies";
 import type { MailtoPrefill } from "./mailto";
 import { diagStrip } from "./help-contact";
 import { Segmented } from "./Segmented";
-import { Sheet, SheetBackdrop, SheetRow, useModalKey, useSheetPanelBounds } from "./Sheet";
+import { Sheet, SheetBackdrop, SheetRow, useModalKey, useSheetPanelBounds, useSheetRoom } from "./Sheet";
 import { useFocusKeeper } from "./keep-focus";
 import { showKeyboardWhenFocused } from "./keyboard-native";
-import { sheetRoom } from "./sheet-bounds";
-import { composeBodyMin, notesPinned, pinnedNotesMax } from "./compose-fit";
+import { composeBodyMin, letterRunsOn, notesMeasured, notesPinned, pinnedNotesMax } from "./compose-fit";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { heldSheetFooter, sendPressAct } from "./send-press";
 import { sendAgainSentence, type DraftSendAgainRefusal } from "./draft-card";
@@ -1182,6 +1182,17 @@ export function ComposeSheet({
   useEffect(() => {
     if (!pinNotes) letterScroll.current?.scrollToEnd({ animated: false });
   }, [pinNotes, notesHeight]);
+  /* Whether the letter goes on below its scroller's edge: a fade over the edge says so. */
+  const letterBox = useRef({ content: 0, view: 0, y: 0 });
+  const [runsOn, setRunsOn] = useState(false);
+  const measureLetter = (k: "content" | "view" | "y", v: number) => {
+    letterBox.current[k] = v;
+    const next = letterRunsOn(letterBox.current.content, letterBox.current.view, letterBox.current.y);
+    setRunsOn((was) => (was === next ? was : next));
+  };
+  const letterContent = (_w: number, h: number) => measureLetter("content", h);
+  const letterView = (e: LayoutChangeEvent) => measureLetter("view", e.nativeEvent.layout.height);
+  const letterMoved = (e: NativeSyntheticEvent<NativeScrollEvent>) => measureLetter("y", e.nativeEvent.contentOffset.y);
   const w = useWorld();
   const toast = useWorldToast();
   /* THE COMPOSER HOLDS THE READER'S MOVE, whatever opened it (the reader's sheet, the rail's pen, a
@@ -1200,6 +1211,7 @@ export function ComposeSheet({
   useEffect(() => () => { if (!closed.current) atUnmount.current(); }, []);
   /** The composer never straddles a hinge and stays bounded on wide windows (`Sheet.tsx`). */
   const panelBounds = useSheetPanelBounds();
+  const room = useSheetRoom(keyboardLift);
   /** The send-later day rows, named by `Intl` in the app's language. */
   const locale = useLocale();
   const [body, setBody] = useState(draft?.body ?? prefill?.body ?? "");
@@ -1914,12 +1926,14 @@ export function ComposeSheet({
       {noteItems}
     </View>
   );
+  /* Every sentence cleared: forget their height, or the next one draws a frame at the letter's end. */
+  if (notesMeasured(notesHeight, noteItems.length) !== notesHeight) setNotesHeight(null);
 
   return (
     <Modal key={modalKey} transparent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={closeComposer} onShow={focusKeeper.onShow}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={sheetRoom(insets.top, keyboardLift)}
+        style={room}
       >
         <SheetBackdrop label={Copy.replyCancel} onPress={closeComposer} />
         <View
@@ -1949,6 +1963,10 @@ export function ComposeSheet({
             bounces={false}
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled
+            onContentSizeChange={letterContent}
+            onLayout={letterView}
+            onScroll={letterMoved}
+            scrollEventThrottle={32}
           >
           {/* The head states the audience — the same statement the webapp editor opens with,
               and for reply-all the same envelope the send will carry, every name on it. */}
@@ -2408,7 +2426,14 @@ export function ComposeSheet({
           {pinNotes ? null : notesBlock}
           </ScrollView>
           {/* The scroller's bottom edge, drawn: a cut letter reads as an edge, not a sliced field. */}
-          <View style={{ height: StyleSheet.hairlineWidth * 2, marginTop: -10, backgroundColor: t.c.hairSoft }} />
+          <View style={{ height: StyleSheet.hairlineWidth * 2, marginTop: -10, backgroundColor: t.c.hairSoft }}>
+            {/* More letter below the edge: the clamp fade over it, so the line under it reads as cut. */}
+            {runsOn ? (
+              <View pointerEvents="none" style={{ position: "absolute", left: 0, right: 0, bottom: StyleSheet.hairlineWidth * 2, height: 0 }}>
+                <FadeOut color={t.c.float} height={18} />
+              </View>
+            ) : null}
+          </View>
           {pinNotes ? notesBlock : null}
           {/* The footer WRAPS on a narrow sheet: Cancel keeps the left edge on its own line and the
               send verbs stay right-aligned under it — nothing starts off-screen (the attach row's grammar). */}

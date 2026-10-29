@@ -146,6 +146,12 @@ export function separatingVerticalHinge(fold: FoldState, hinge: HingeRect | null
   return hinge.h >= hinge.w ? hinge : null;
 }
 
+/** The fold when it crosses the window side to side as a crease (tabletop, a hardware hinge held so). */
+export function creaseAcross(fold: FoldState, hinge: HingeRect | null): HingeRect | null {
+  if (hinge === null || (fold !== "half" && fold !== "hard")) return null;
+  return hinge.w > hinge.h ? hinge : null;
+}
+
 export function derivePosture(input: PostureInput): Posture {
   const { width: w, height: h, platform } = input;
   const orientation: Orientation = w >= h ? "landscape" : "portrait";

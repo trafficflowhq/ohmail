@@ -18,6 +18,7 @@ import { useWorld, useWorldToast } from "../state/world";
 import { AT_REST, riseForAction, riseForNotice, riseForPress, type Rise, type ToastEntry } from "../state/toast-one";
 import { firstSyncContinuesSaid, topLineSaid } from "../state/live";
 import { useNetworkNow } from "../net/network-door";
+import { FadeOut } from "./FadeOut";
 import { Icon } from "./Icon";
 import { usePaneChrome } from "./pane-chrome";
 import { useAppWindow, usePosture } from "./posture";
@@ -112,11 +113,20 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
 /**
  * THE TOP A BAR-LESS PANE OWES: the status bar's inset and nothing drawn. A reader or a sender
  * page in the pair's pane yields its `DetailBar` to the list beside it, and with the bar went
- * the inset — its title started inside the transparent status bar, under the clock.
+ * the inset — its title started inside the transparent status bar, under the clock. Its edge is
+ * the clamp fade the reader draws under a bar, so a scrolled line ends in canvas, not a bare cut.
  */
 export function PaneTop() {
+  const t = useTheme();
   const top = useTopPad(0);
-  return <View style={{ paddingTop: top }} />;
+  return (
+    <>
+      <View style={{ paddingTop: top }} />
+      <View pointerEvents="none" style={{ height: 0, zIndex: 1 }}>
+        <FadeOut color={t.c.canvas} height={10} edge="top" />
+      </View>
+    </>
+  );
 }
 
 /**

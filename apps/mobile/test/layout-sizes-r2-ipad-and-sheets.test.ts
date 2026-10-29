@@ -53,8 +53,10 @@ describe("a sheet's room starts under the status bar (R4-08)", () => {
     expect(sheetRoom(24, 336)).toMatchObject({ paddingTop: 24, paddingBottom: 336 });
   });
   it("both keyboard-carrying sheets are laid in it — the reply composer and the Sheet that avoids the keyboard", () => {
+    expect(src("../src/ui/Sheet.tsx")).toContain("return sheetRoom(insets.top, keyboardLift, ");
     for (const f of ["../src/ui/MessageActions.tsx", "../src/ui/Sheet.tsx"]) {
-      expect(src(f).match(/style=\{sheetRoom\(insets\.top, keyboardLift\)\}/g), f).toHaveLength(1);
+      expect(src(f).match(/const room = useSheetRoom\(keyboardLift\);/g), f).toHaveLength(1);
+      expect(src(f).match(/style=\{room\}/g), f).toHaveLength(1);
       expect(src(f), `${f} still lays a room with no top inset`).not.toMatch(/flex: 1, justifyContent: "flex-end", paddingBottom: keyboardLift/);
     }
   });

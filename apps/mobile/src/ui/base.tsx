@@ -496,6 +496,10 @@ export function Button({
  */
 export const DISABLED_FACE = { opacity: 0.45 } as const;
 
+/* Under another control the slop it would grow upward goes below instead: the same 48 dp, none of it above. */
+const slopOf = (s: number, under: boolean): PressableProps["hitSlop"] =>
+  under ? { top: 0, bottom: 2 * s, left: s, right: s } : s;
+
 function isDisabled(p: PressableProps): boolean {
   return p.disabled === true || p.accessibilityState?.disabled === true;
 }
@@ -504,7 +508,10 @@ function dimmed(style: PressableProps["style"]): PressableProps["style"] {
   return typeof style === "function" ? (state) => [style(state), DISABLED_FACE] : [style, DISABLED_FACE];
 }
 
-export function Tap({ style, children, hitSlop, onLayout, ...rest }: PressableProps) {
+export function Tap({ style, children, hitSlop, onLayout, under, ...rest }: PressableProps & {
+  /** Drawn under another control (a strip below a bar): the target grows down and sideways, never up over it. */
+  under?: boolean;
+}) {
   const [height, setHeight] = useState(0);
   const measure = useCallback(
     (e: LayoutChangeEvent) => {
@@ -516,7 +523,7 @@ export function Tap({ style, children, hitSlop, onLayout, ...rest }: PressablePr
   );
   return (
     <Pressable
-      hitSlop={hitSlop ?? (height > 0 ? hitSlopFor(height) : MIN_SLOP)}
+      hitSlop={hitSlop ?? slopOf(height > 0 ? hitSlopFor(height) : MIN_SLOP, under === true)}
       onLayout={measure}
       {...rest}
       style={isDisabled(rest) ? dimmed(style) : style}
