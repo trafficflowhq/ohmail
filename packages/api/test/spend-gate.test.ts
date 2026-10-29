@@ -227,7 +227,7 @@ const UNAUTHENTICATED = [
   // exact class and exact reasoning: the caller is a scheduler holding a shared secret, not an
   // account — ANONYMOUS_PIPELINE resolves no session, so no other class is representable — and
   // an unauthenticated GET is a 401 that reaps nothing. What it revokes is bounded structurally
-  // inside `reapStaleWebSessions` (device-less, full-scope, >60d idle), never by anything on
+  // inside `reapStaleWebSessions` (device-less, full-scope, past its window), never by anything on
   // the wire. Sorted after `alerts/run` (`alerts` < `sessions`).
   "GET /internal/sessions/reap",
   // The screened-out unsubscribe DRAIN, on the away clock's and the send reconciler's exact

@@ -11,18 +11,19 @@ import {
 /**
  * ═══ THE WEB-SESSION REAPER — what it may touch, proven by what survives ═══
  *
- * The predicate is structural (`device_id IS NULL AND scope = 'full' AND last_seen_at <
- * now - 60d`, on the cookie window: `refresh_expires_at - last_seen_at < 100d`), and every
+ * The predicate is structural (`device_id IS NULL AND scope = 'full' AND refresh_expires_at <
+ * now`, on the cookie window: `refresh_expires_at - last_seen_at < 100d`), and every
  * arm of it is pinned by a row that DIFFERS in exactly that arm:
  *
- *  · a plain web session idle 61 days      → REAPED, refresh family included
- *  · the same, idle 59 days                → kept (the cutoff is the cutoff)
+ *  · a plain web session idle 91 days      → REAPED, its 90-day window closed, family included
+ *  · the same, idle 89 days                → kept (a day of its window is left)
  *  · a PAIRED device idle 400 days         → kept — paired devices are NEVER auto-reaped;
  *    an idle phone in a drawer keeps its pairing, because re-pairing has a ceremony cost
  *    that a web re-login does not
  *  · an enrollment session, however old    → kept (its own five-minute death owns it)
  *  · an already-revoked session            → not counted twice (the claim is guarded)
- *  · a device-less session on the native window, idle 61 days → kept, and it renews
+ *  · a device-less session on the native window, idle 91 days → kept, and it renews
+ *  · a browser used 61 days ago, 29 days left → kept, and it renews
  */
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -57,12 +58,12 @@ describe("reapStaleWebSessions", () => {
     const db = (await makeTestDb()) as unknown as Tx;
     const me = await seedUser(db);
 
-    const stale = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 61 * DAY) });
+    const stale = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 91 * DAY) });
     await db.insert(refreshTokens).values({
       accountId: me.accountId, userId: me.userId, sessionId: stale.id, familyId: stale.familyId,
       tokenHash: "fixture-stale", expiresAt: new Date(NOW.getTime() + 60_000),
     });
-    const fresh = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 59 * DAY) });
+    const fresh = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 89 * DAY) });
 
     const [dev] = await db.insert(devices).values({
       accountId: me.accountId, userId: me.userId, kind: "web", label: "Mila's phone",
@@ -94,46 +95,58 @@ describe("reapStaleWebSessions", () => {
     expect(fam.revokedAt?.toISOString()).toBe(NOW.toISOString());
   });
 
-  it("reaps a browser but keeps a device-less desktop session, which renews on the native window", async () => {
+  it("reaps only a browser past its window; one with 29 days left and a device-less desktop renew; the reaped one hears expired", async () => {
     // Desktop password sign-ins of v0.11.0–v0.11.1 declared no device kind, so they have no
     // device row; the desktop's rotations write the native window (400 days), a browser's 90.
     const db = (await makeTestDb()) as unknown as Tx;
     const me = await seedUser(db);
     const lifecycle = makeSessionLifecycle({ config: makeTestAuthDeps().config });
-    const lastUse = new Date(NOW.getTime() - 61 * DAY);
-    const renew = async (at: Date, token: string, surface: "cookie" | "native") => (await lifecycle.refresh(
-      { db: db as unknown as ServiceContext["db"], accountId: "", userId: null, now: () => at, requestId: "reap" },
-      { refreshToken: token }, { surface })).tokens!.refreshToken;
-    const usedOn = async (surface: "cookie" | "native") => {
-      const s = await seedSession(db, { ...me, lastSeenAt: lastUse });
+    const daysAgo = (d: number) => new Date(NOW.getTime() - d * DAY);
+    const ctx = (at: Date): ServiceContext =>
+      ({ db: db as unknown as ServiceContext["db"], accountId: "", userId: null, now: () => at, requestId: "reap" });
+    const renew = async (at: Date, token: string, surface: "cookie" | "native") =>
+      (await lifecycle.refresh(ctx(at), { refreshToken: token }, { surface })).tokens!.refreshToken;
+    const answerAtNow = (token: string) => renew(NOW, token, "cookie").then(() => "renewed", (e: { code?: string }) => e.code);
+    // Signed in `signedIn` days ago, last rotated on `surface` `used` days ago.
+    const usedOn = async (surface: "cookie" | "native", used: number, signedIn = used) => {
+      const s = await seedSession(db, { ...me, lastSeenAt: daysAgo(signedIn) });
       const token = generateToken();
       await db.insert(refreshTokens).values({
         ...me, sessionId: s.id, familyId: s.familyId, tokenHash: hashToken(token),
-        expiresAt: new Date(lastUse.getTime() + 90 * DAY),
+        expiresAt: new Date(daysAgo(signedIn).getTime() + 90 * DAY),
       });
-      return { id: s.id, token: await renew(lastUse, token, surface) };
+      return { id: s.id, token: await renew(daysAgo(used), token, surface) };
     };
-    const browser = await usedOn("cookie");
-    const desktop = await usedOn("native");
+    const browser = await usedOn("cookie", 91);
+    const desktop = await usedOn("native", 91);
+    // Its sign-in's window closed 30 days ago: only the rotation's rolled window keeps it.
+    const recent = await usedOn("cookie", 61, 120);
+    const signedOut = await usedOn("cookie", 91);
+    await lifecycle.logout(ctx(daysAgo(89)), { refreshToken: signedOut.token });
 
     expect((await reapStaleWebSessions(db, NOW)).reaped).toBe(1);
     const revokedAt = async (id: string) => (await db.select().from(sessions).where(eq(sessions.id, id)))[0]!.revokedAt;
     expect(await revokedAt(browser.id)).not.toBeNull();
     expect(await revokedAt(desktop.id)).toBeNull();
+    expect(await revokedAt(recent.id)).toBeNull();
     expect(await renew(NOW, desktop.token, "native")).toBeTruthy();
+    expect(await renew(NOW, recent.token, "cookie")).toBeTruthy();
+    // Revoked after its window closed: expired. Signed out while it was open: revoked, for ever.
+    expect(await answerAtNow(browser.token)).toBe("refresh_expired");
+    expect(await answerAtNow(signedOut.token)).toBe("refresh_revoked");
   });
 
   it("a session that ROTATES between the candidate read and the claim survives the claim", async () => {
     // The gate finding this pins: the claim UPDATE re-stated the structural predicate but not
     // the CUTOFF, so a browser that came back to life in the window between the candidate
-    // SELECT and the claim — `mintRotation` stamps `last_seen_at` current on every rotation —
-    // was revoked anyway: a just-active session signed out by maintenance. The race is made
-    // deterministic by interposing on the reaper's own claim, a transaction per chunk (its lock
-    // and its update): the rotation's `last_seen_at` write lands after the candidates are read
+    // SELECT and the claim — `mintRotation` rolls `refresh_expires_at` and `last_seen_at` on
+    // every rotation — was revoked anyway: a just-active session signed out by maintenance. The
+    // race is made deterministic by interposing on the reaper's own claim, a transaction per
+    // chunk (its lock and its update): the rotation's write lands after the candidates are read
     // and before the claim begins.
     const db = (await makeTestDb()) as unknown as Tx;
     const me = await seedUser(db);
-    const victim = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 61 * DAY) });
+    const victim = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 91 * DAY) });
 
     let raced = false;
     const racing = new Proxy(db as object, {
@@ -143,8 +156,9 @@ describe("reapStaleWebSessions", () => {
           return async (...a: unknown[]) => {
             if (!raced) {
               raced = true;
-              // The rotation, landing in the window: the victim is seen NOW.
-              await (db as Tx).update(sessions).set({ lastSeenAt: NOW }).where(eq(sessions.id, victim.id));
+              // The rotation, landing in the window: the victim is seen NOW, its window rolled.
+              await (db as Tx).update(sessions).set({ lastSeenAt: NOW, refreshExpiresAt: new Date(NOW.getTime() + 90 * DAY) })
+                .where(eq(sessions.id, victim.id));
             }
             return (v as (...b: unknown[]) => unknown).apply(t, a);
           };
@@ -164,7 +178,7 @@ describe("reapStaleWebSessions", () => {
     const db = (await makeTestDb()) as unknown as Tx;
     const me = await seedUser(db);
     for (let i = 0; i < 5; i++) {
-      await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - (61 + i) * DAY) });
+      await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - (91 + i) * DAY) });
     }
     const first = await reapStaleWebSessions(db, NOW, { limit: 2 });
     expect(first.reaped).toBe(2);
@@ -179,15 +193,15 @@ describe("reapStaleWebSessions", () => {
   it("leaves one session_reaped row per reaped session, and the erasure takes it with the account", async () => {
     const db = (await makeTestDb()) as unknown as Tx;
     const me = await seedUser(db);
-    const stale = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 61 * DAY) });
-    await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 59 * DAY) });
+    const stale = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 91 * DAY) });
+    await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 89 * DAY) });
     await reapStaleWebSessions(db, NOW);
     // The second pass reaps nothing, so it records nothing.
     await reapStaleWebSessions(db, NOW);
     const trail = async () => db.select().from(authEvents).where(eq(authEvents.accountId, me.accountId));
     expect((await trail()).map((r) => ({ event: r.event, userId: r.userId, method: r.method, ip: r.ip, device: r.device, at: r.at.toISOString() })))
       .toEqual([{ event: "session_reaped", userId: me.userId, method: null, ip: null,
-        device: `family=${stale.familyId} session=${stale.id} idle_d=61`, at: NOW.toISOString() }]);
+        device: `family=${stale.familyId} session=${stale.id} idle_d=91`, at: NOW.toISOString() }]);
     await deleteAccount({ db: db as never, accountId: me.accountId, userId: me.userId, now: () => NOW, requestId: "reap-erase" });
     expect(await trail()).toEqual([]);
   });
