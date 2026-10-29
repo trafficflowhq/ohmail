@@ -345,7 +345,7 @@ describe("a sender's held letters open on the newest three", () => {
     expect(subjects()).toEqual(ids(10, 12).map((id) => `Subject ${id}`));
     expect(wire.batches.flat().sort(), "bodies asked for letters nobody can see").toEqual(ids(10, 12));
     expect([...wire.lists].sort(), "attachment lists read for letters nobody can see").toEqual(ids(10, 12));
-    expect(host!.querySelector(".scn-mails")!.textContent, "the caption stopped counting the whole bag").toMatch(/12 held messages/);
+    expect(host!.querySelector(".scn-mails")!.textContent, "the caption stopped counting the whole bag").toMatch(/12 messages/);
   });
 
   it("reaching the top of the column mounts three older letters and asks for their bodies, until all twelve are on screen", async () => {

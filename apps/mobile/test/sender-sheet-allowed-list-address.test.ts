@@ -12,6 +12,7 @@ import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { liveScreener, presentedOf, type WorldView } from "../src/state/live";
 import { Copy } from "../src/copy";
+import { DE } from "../src/copy.de";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const sheet = withoutComments(fs.readFileSync(path.join(HERE, "..", "src/ui/SenderDetail.tsx"), "utf8"));
@@ -59,19 +60,27 @@ describe("the sheet for a list address the person allowed, over a claim it holds
 
   it("R32-03: the caption names no first contact, as the web's names none", async () => {
     expect(sheet).toMatch(/\{Copy\.heldCaption\(row\.held\.length, row\.firstContact\)\}/);
-    expect(caption(await rowOf({ inOhbox: 4, held: 1, rule: true }))).toBe("1 held message — all shown");
-    expect(caption(await rowOf({ inOhbox: 4, held: 2, rule: true }))).toBe("2 held messages — all shown");
+    expect(caption(await rowOf({ inOhbox: 4, held: 1, rule: true }))).toBe("1 message — all shown");
+    expect(caption(await rowOf({ inOhbox: 4, held: 2, rule: true }))).toBe("2 messages — all shown");
   });
 
   it("CONTROL: two letters waiting and nothing past the gate is a first contact, and the caption says when", async () => {
     const row = await rowOf({ inOhbox: 0, held: 2, rule: false });
     expect(row.reached).toBe(0);
-    expect(caption(row)).toBe("2 held messages — all shown · first contact 01:40");
+    expect(caption(row)).toBe("2 messages — all shown · first contact 01:40");
   });
 
   it("one letter waiting names no first contact apart from its own time, as the web's caption", async () => {
     const row = await rowOf({ inOhbox: 0, held: 1, rule: false });
     expect(row.reached).toBe(0);
-    expect(caption(row)).toBe("1 held message — all shown");
+    expect(caption(row)).toBe("1 message — all shown");
+  });
+
+  it("a letter of an undecided sender still in the Inbox is listed, and counted as a message, not as held", async () => {
+    const row = await rowOf({ inOhbox: 1, held: 1, rule: false });
+    expect(row.held).toHaveLength(2);
+    expect(caption(row)).toMatch(/^2 messages — all shown/);
+    expect(DE.heldCaption(row.held.length)).toBe("2 Nachrichten — vollständig gezeigt");
+    expect(DE.heldCaption(1)).toBe("1 Nachricht — vollständig gezeigt");
   });
 });

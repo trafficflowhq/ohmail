@@ -5,7 +5,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  OhmailEngine, MemoryMirrorStore, senderKey,
+  OhmailEngine, MemoryMirrorStore, senderKey, consentPartition, presentationReader,
   type EngineMessage, type Folder, type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
@@ -100,6 +100,7 @@ async function mount(
   mail: EngineMessage[] = [held("m0", FORGED, 9), held("m1", CLEAN, 10)],
   extra: SyncChange[] = [],
   advised = true,
+  presented = false,
 ): Promise<void> {
   const { useScreenerState } = await import("../app/shell/screener-state.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
@@ -120,7 +121,9 @@ async function mount(
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions as never);
+    const raw = engine.read();
+    const state = useScreenerState(engine, v, (() => {}) as never, suggestions as never,
+      presented ? presentationReader(raw, consentPartition(raw, { now: NOW })) : undefined);
     const [sel, setSel] = React.useState<Record<string, string | null>>({
       waiting: null, screened: null, spam: null,
     });
@@ -345,19 +348,36 @@ describe("the held caption names a first contact only when it is one", () => {
     },
   } as unknown as SyncChange;
   const captionText = () => [...host!.querySelectorAll(".scn-caption")].map((e) => e.textContent ?? "")
-    .find((s) => s.includes("held message"));
+    .find((s) => /messages? —/.test(s));
 
   it("R32-03: claims held under an address whose letters the person's rule filed in the Ohbox", async () => {
     await mount("en", [held("in0", LISTED, 6, "INBOX"), held("in1", LISTED, 7, "INBOX"), claim("c0", 9), claim("c1", 10)], [allowed], false);
     await open(LISTED);
-    expect(captionText()).toBe("2 held messages — all shown");
+    expect(captionText()).toBe("2 messages — all shown");
   });
 
   it("CONTROL: two letters held and nothing past the gate is a first contact, at the oldest", async () => {
     await mount("en", [claim("c2", 9), claim("c3", 10)], [], false);
     await open(LISTED);
     const oldest = host!.querySelector(".hmail .t")?.textContent ?? "NO HELD LETTER";
-    expect(captionText()).toBe(`2 held messages — all shown · first contact ${oldest}`);
+    expect(captionText()).toBe(`2 messages — all shown · first contact ${oldest}`);
+  });
+
+  /* An undecided sender's letter still in the server's Inbox is listed on the card and moved by the
+     decision, but it is not held: the count says what the card lists, not "held". */
+  it.each([
+    ["en", "2 messages — all shown · first contact", "2 messages"],
+    ["de", "2 Nachrichten — alle gezeigt · erster Kontakt", "2 Nachrichten"],
+  ] as const)("%s: a letter still in the Inbox is counted as a message, never as held", async (locale, caption, chip) => {
+    const STRANGER = "new@stranger.example";
+    await mount(locale, [held("s0", STRANGER, 9), held("i0", STRANGER, 10, "INBOX")], [], false, true);
+    await open(STRANGER);
+    expect(host!.querySelectorAll(".hmail")).toHaveLength(2);
+    const oldest = host!.querySelector(".hmail .t")?.textContent ?? "NO LETTER";
+    expect([...host!.querySelectorAll(".scn-caption")].map((e) => e.textContent)).toContain(`${caption} ${oldest}`);
+    const row = [...host!.querySelectorAll<HTMLElement>(".rows .row")].find((r) => r.textContent!.includes(STRANGER))!;
+    expect([...row.querySelectorAll(".badge")].map((b) => b.textContent)).toContain(chip);
+    expect(row.getAttribute("aria-description")).toMatch(new RegExp(`· ${chip}$`));
   });
 });
 
