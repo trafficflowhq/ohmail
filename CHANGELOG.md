@@ -21,6 +21,85 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.14] — 2026-10-29
+
+### The sidebar no longer spends a line on the version number
+
+The desktop sidebar showed "ohmail" and the running version under Command at all times. That line is gone.
+The version stays in Settings, in the Updates section, and while an update is downloading or ready, pointing
+at the update line at the foot of the sidebar names the version you run.
+
+### A letter you stop on with the arrow keys turns read in History, folders, tags and the piles
+
+In History, a folder, a tag, Answer Later, Parked and Resurface, a letter reached with ↓ or ↑ (or j and k in History) stayed unread however long you read it; only a click, → or a scroll in it read it. Now a letter the cursor stays on for 1.3 seconds with the window in front counts as opened, and it turns read once its first lines have stayed on screen for 0.7 seconds, as in the Ohbox. Scrolling the open letter with ↓ or ↑ in the reading column counts as opening it too, and in the Ohbox the same now goes for a conversation shown with j or k. Moving on sooner reads nothing, so passing rows still marks nothing. In a folder, a letter read this way keeps its place under New while the cursor is on it and moves under Earlier once you move on, so ↓ carries on through New. Its embedded pictures load once you stop on it or open it, not while you pass. This replaces the 0.30.9 rule that stepping through these lists with the arrow keys reads nothing. Trash and the Screener still leave a letter as it was. Desktop and web.
+
+### A conversation you mark unread stays unread when j or k comes back to it
+
+In the Ohbox on the desktop and the web, a conversation you marked unread with u or Mark unread turned read again about two seconds after j, k or the arrow keys brought the cursor back to it, because since 0.30.12 a conversation the cursor rests on counts as opened. It now stays unread while you stay in the Ohbox, however long the cursor rests on it, and scrolling it with ↓ or ↑ in the reading column does not read it either. A click, ↵, a press in the message or a scroll with the mouse or trackpad opens it and reads it as before. The same holds for a letter you mark unread in History, a folder, a tag, Answer Later, Parked and Resurface, and for one marked unread on another device while it is open here. News already kept a letter you marked unread.
+
+### ohmail says why a sign-in was ended everywhere
+
+When a browser or a computer presents a sign-in that was already renewed, which is what a restored
+backup, a copied browser profile or home folder, or a stolen sign-in looks like, ohmail ends that sign-in
+everywhere. Until now the sign-in form and the desktop app only said you were signed out. They now say
+what happened and what to do: sign in again, and change your password if you did not restore or copy
+anything. After you sign in again, on the web or in the desktop app, ohmail also lists the sign-ins it
+ended this way in the last 14 days, with the kind of app and the time, until you press OK. On ohmail
+Cloud and on your own server.
+
+### A browser stays signed in for the full ninety days without use
+
+A browser signed in to ohmail Cloud stays signed in until it goes ninety days without being used, but the
+clean-up that ends old sign-ins ended it after sixty: opened again after two or three months, the browser
+asked you to sign in with "You were signed out on this browser." The clean-up now ends a browser's sign-in
+only once its ninety days have run out, and a browser that comes back after that reads "Your sign-in on this
+browser has expired." A server of your own does the same when it runs that clean-up. A browser the old rule
+already signed out asks you to sign in once more.
+
+### The desktop app's ohmail Cloud sign-in stays on the computer that saved it
+
+A copy of the desktop app's data opened on another computer (a copied, synced or restored home folder)
+used to present a sign-in the first computer had since renewed. ohmail Cloud treats that as a stolen
+sign-in and ends it on both computers. The saved sign-in now belongs to the computer that saved it:
+another computer asks you to sign in, and the first one stays signed in. Updating keeps you signed in.
+This covers sign-ins saved by this version and later; going back to an older copy on the same computer
+is not covered.
+
+### A letter delivered just before a restart or an IMAP outage reaches Sent once it can
+
+When your mail server had accepted a letter but its copy could not be put in your Sent folder yet, Cloud
+and your own server kept retrying only in memory, so a restart or a deploy at that moment lost the copy:
+the letter went out but never appeared in Sent or its conversation. Now the copy is kept and filed once
+your Sent folder takes it: on your own server for every letter, on Cloud for letters without attachments,
+because Cloud never stores attachment bytes. While your mail server refuses every copy, for example a full
+mailbox, the waiting copies are tried together after a minute, ten minutes, an hour, six hours and then
+once a day, and a copy it refuses does not hold the others back. A refusal counts against a copy only when
+the server says it is about that letter, for example that it is too large, or when your mailbox took
+another waiting copy at the same time; after eight refusals that count, the copy is given up. Every copy is
+kept for at most seven days: one that is still not in Sent by then is deleted. Each copy is filed once,
+after a look in Sent.
+
+### A letter with embedded pictures and no plain text reads whole in a phone conversation
+
+On the phone, an older letter in a conversation whose body is HTML with embedded pictures and no plain-text
+part showed only its subject and time, and turned read at the open although none of it had been on screen.
+It now shows its text like any other letter, its pictures stay in its files, and it turns read only once you
+have read it. A letter whose HTML holds no words the phone can show (only pictures, or HTML too large to
+read) shows its files and says so in its card; a press on the card or its square opens it on its own, and it
+turns read only once you have read it there, never because its card or its files were on screen.
+
+### Undo after Mark all read in News keeps the new letters new, and two phone fixes
+
+Undo after Mark all read in News or Receipts now puts back the "seen up to here" line where it was.
+Before, the letters became unread again, but the header said "Nothing new", the tab lost its count
+and the line sat above letters you had not seen. This was the same on the web, the desktop and the
+phone.
+
+On the phone, a reply to a letter in Answer Later now takes the letter out of Answer Later once the
+reply is delivered, as on the web and the desktop. A phone that runs on its own, without an account,
+no longer offers "Apply on all devices" for the Look, and no longer says the look applies on all your
+devices: the look stays on that phone.
+
 ## [0.30.13] — 2026-10-29
 
 ### The sign-in form shows at once when a sign-in has ended
@@ -15074,7 +15153,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.13...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.14...HEAD
+[0.30.14]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.14
 [0.30.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.13
 [0.30.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.12
 [0.30.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.11
