@@ -78,6 +78,32 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.15" date="2026-10-30">
+      <description>
+        <ul>
+          <li>The notice about signed-out older copies is one line</li>
+          <li>A browser that crashes right after renewing your sign-in stays signed in</li>
+          <li>Signing in again on a browser ends that browser's earlier sign-in</li>
+          <li>Every tab on an ended sign-in says the same reason</li>
+          <li>A signed-out browser tab stops asking the server to renew its sign-in</li>
+          <li>A browser paired with your computer stays paired after a crash right after it renews</li>
+          <li>News and Receipts on the phone read only what rests on screen</li>
+          <li>A letter marked unread right after a dropped connection stays unread</li>
+          <li>Undo takes back every letter of a conversation</li>
+          <li>A reply typed in tabletop keeps its buttons off the crease</li>
+          <li>The phone's sentences say what is true</li>
+          <li>Letters made only of html and pictures show their words in the list</li>
+          <li>Search answers faster on mail its index has not reached yet</li>
+          <li>Counts say what they count</li>
+          <li>The Screener counts the messages it shows, not "held" ones</li>
+          <li>Five controls now say what they do, or do what they say</li>
+          <li>The News list's last line states the read rule it follows</li>
+          <li>A downloaded attachment is no longer served from the browser cache to the next account</li>
+          <li>The .deb, .rpm and Flatpak builds no longer vanish when an accessibility tool reads their window</li>
+          <li>A pull request under a Next route group runs only the tests it reaches</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.14" date="2026-10-29">
       <description>
         <ul>
@@ -147,24 +173,6 @@
           <li>A lower storage limit on Cloud waits 14 days before old letters are emptied</li>
           <li>Search answers faster for words in a few percent of your mail</li>
           <li>A closed tab no longer holds a live-update stream on ohmail Cloud</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.10" date="2026-10-28">
-      <description>
-        <ul>
-          <li>A reply to a large group folds its earlier messages</li>
-          <li>ohmail on Linux keeps running when an accessibility tool stops while you type</li>
-          <li>A message sent just before ohmail closed gets its copy in Sent when ohmail starts again</li>
-          <li>Pictures from a sender you have not let in wait for Show images</li>
-          <li>Screening a sender out or marking them as spam leaves their letters unread</li>
-          <li>On a device that only reads your mail, every rule can be changed, and a takeover drops removed rules</li>
-          <li>Closing a reply or forward under a letter saves it to Drafts at once</li>
-          <li>A letter the phone restores after a stop no longer overwrites a draft changed on another device</li>
-          <li>The reading column stays inside its frame in the Ohmarchy look</li>
-          <li>Live mail with a browser tab and the desktop app open together</li>
-          <li>The first sync after launch no longer holds the desktop app for most of a second</li>
-          <li>Cloud can record how connecting a mailbox ended</li>
         </ul>
       </description>
     </release>
