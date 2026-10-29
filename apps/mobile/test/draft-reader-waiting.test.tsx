@@ -16,7 +16,8 @@ vi.mock("react-native", async () => ({
 vi.mock("../src/ui/base", () => {
   const box = (p: { children?: ReactNode }) => createElement("div", null, p.children);
   return {
-    Screen: box, Scroller: box, Panel: box, Rule: () => null,
+    Screen: box, Scroller: box, Panel: box, Rule: () => null, TapRow: box, Tail: box,
+    Empty: (p: { title: string; hint: string }) => createElement("span", { "data-txt": "" }, p.hint),
     Txt: (p: { children?: ReactNode }) => createElement("span", { "data-txt": "" }, p.children),
     Button: (p: { label: string; disabled?: boolean; onPress: () => void }) =>
       createElement("div", { "data-button": p.label, onClick: p.disabled ? undefined : p.onPress }),
@@ -27,11 +28,22 @@ vi.mock("../src/ui/BodyPages", () => ({ BodyPages: (p: { text: string }) => crea
 const nav = vi.hoisted(() => ({ focused: true, pushed: [] as unknown[] }));
 vi.mock("expo-router", () => ({ router: { push: (p: unknown) => nav.pushed.push(p) }, useIsFocused: () => nav.focused }));
 vi.mock("../src/net/network-door", () => ({ useNetworkNow: () => "offline" }));
+/* The Drafts list's own frame, stood in: the screen under test is the list's sentence. */
+vi.mock("../src/state/pull", () => ({ usePullToSync: () => undefined }));
+vi.mock("../src/ui/Gated", () => ({ Gated: (p: { children?: ReactNode }) => p.children }));
+vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: (p: { children?: ReactNode }) => p.children }));
+vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
+vi.mock("../src/ui/Skeleton", () => ({ SkeletonList: () => null }));
+vi.mock("../src/ui/list-detail", () => ({
+  useListDetail: () => ({ open: null, openRow: () => undefined, close: () => undefined }),
+  ListDetail: (p: { list: ReactNode }) => p.list,
+}));
 
 const said: string[] = [];
 const world = {
   drafts: [] as WorldDraft[],
   standalone: true,
+  boot: { settled: true, syncFailure: null },
   sendSettlement: () => ({ accepted: false, rearmed: false, draftId: null, failure: null }),
   sendOutcome: () => "pending",
   actions: {
@@ -47,6 +59,7 @@ vi.mock("../src/state/world", () => ({
 const { mount } = await import("./_rendered-dom");
 const { DraftReader } = await import("../src/ui/DraftReader");
 const { Copy } = await import("../src/copy");
+const { default: DraftsScreen } = await import("../app/drafts/index");
 
 const waitingRow = (rowless = false): WorldDraft => ({
   id: rowless ? "q-1" : "d-1", subject: "Offline", to: "Bo", preview: "Written on a train.", when: "09:00",
@@ -63,7 +76,7 @@ const press = async (el: HTMLElement, label: string) => {
   await settle();
 };
 
-afterEach(() => { said.length = 0; nav.focused = true; nav.pushed.length = 0; vi.clearAllMocks(); });
+afterEach(() => { said.length = 0; nav.focused = true; nav.pushed.length = 0; world.standalone = true; vi.clearAllMocks(); });
 
 describe("DraftReader over a waiting send", () => {
   it("says it waits for the network, offers Cancel send, and no Edit", () => {
@@ -179,5 +192,47 @@ describe("DraftReader after its Edit sent the draft", () => {
     expect(texts(m.el)).toEqual([Copy.draftsRowGone]);
     expect(onClose).not.toHaveBeenCalled();
     m.unmount();
+  });
+});
+
+describe("Drafts on a phone that is its own mailbox's only app", () => {
+  const held = (): WorldDraft => ({
+    ...waitingRow(), state: "held", heldSays: "notInSent", waiting: null, edit: null,
+  });
+
+  it("a send nobody confirmed points to what this card can do, not to a web or desktop app", () => {
+    world.drafts = [held()];
+    const { el, unmount } = mount(createElement(DraftReader, { id: "d-1" }));
+    expect(texts(el)).toContain(Copy.draftsEditNoteHeldHere);
+    expect(texts(el), "pointed to an app this phone does not have").not.toContain(Copy.draftsEditNote);
+    expect(el.querySelector(`[data-button="${Copy.draftsSendAgain}"]`), "the act the note names").not.toBeNull();
+    unmount();
+  });
+
+  it("a draft this phone cannot take whole says it can be discarded here", () => {
+    world.drafts = [{ ...held(), state: "open", heldSays: null }];
+    const { el, unmount } = mount(createElement(DraftReader, { id: "d-1" }));
+    expect(texts(el)).toContain(Copy.draftsEditNoteHere);
+    unmount();
+  });
+
+  it("CONTROL: a paired phone still names the web and the desktop", () => {
+    world.standalone = false;
+    world.drafts = [held()];
+    const { el, unmount } = mount(createElement(DraftReader, { id: "d-1" }));
+    expect(texts(el)).toContain(Copy.draftsEditNote);
+    unmount();
+  });
+
+  it("an empty Drafts says where a standalone phone keeps them, and the account sentence only where there is one", () => {
+    world.drafts = [];
+    const here = mount(createElement(DraftsScreen));
+    expect(texts(here.el)).toContain(Copy.draftsEmptyHintHere);
+    expect(texts(here.el), "a standalone phone was told about an account and other devices").not.toContain(Copy.draftsEmptyHint);
+    here.unmount();
+    world.standalone = false;
+    const paired = mount(createElement(DraftsScreen));
+    expect(texts(paired.el)).toContain(Copy.draftsEmptyHint);
+    paired.unmount();
   });
 });

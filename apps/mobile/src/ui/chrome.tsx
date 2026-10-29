@@ -7,7 +7,7 @@
  * unsaved changes — which are state, not brand.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AccessibilityInfo, Animated, Easing, Platform, View, type LayoutChangeEvent } from "react-native";
+import { AccessibilityInfo, Animated, Easing, Platform, View, useWindowDimensions, type LayoutChangeEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Copy } from "../copy";
@@ -199,10 +199,11 @@ export function Doorbell(
 ) {
   const t = useTheme();
   const [width, setWidth] = useState(0);
+  const { fontScale } = useWindowDimensions();
   if (count === 0) return null;
   // FACES AND A COUNT, the web's rule (`doorbell-stack.ts` holds it and the suite drives it), the
   // number of faces read off the capsule's own width so the sentence and "Screener" always fit.
-  const cap = max ?? doorbellMax(width);
+  const cap = max ?? doorbellMax(width, fontScale);
   const { shown, overflow } = doorbellFaces(initials, cap);
   return (
     <Tap
@@ -275,7 +276,8 @@ export function Doorbell(
           </View>
         ) : null}
       </View> : null}
-      <Txt variant="meta" tone="ink2" numberOfLines={2} style={{ flex: 1, minWidth: 0 }}>
+      {/* Never cut: the only place the count is said in words; it wraps at large text. */}
+      <Txt variant="meta" tone="ink2" style={{ flex: 1, minWidth: 0 }}>
         <Txt variant="settingsLabel" tone="ink">
           {Copy.doorbell(count)}
         </Txt>{" "}

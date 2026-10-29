@@ -61,12 +61,10 @@ describe("ohboxWhereSaid", () => {
     expect(ohboxWhereSaid({ ...base, settled: false })).toBeNull();
   });
 
-  it("the top line's own sentence while it has one", () => {
-    const off = ohboxWhereSaid({ ...base, network: "offline" });
-    expect(off?.kind).toBe("said");
-    const stale = ohboxWhereSaid({ ...base, stale: "Fri 09:00" });
-    expect(stale).toMatchObject({ kind: "said" });
-    expect((stale as { text: string }).text).toContain("Fri 09:00");
+  it("nothing while the top line has a sentence: the top bar above the title says it once", () => {
+    expect(ohboxWhereSaid({ ...base, network: "offline" })).toBeNull();
+    expect(ohboxWhereSaid({ ...base, connection: { kind: "lost" } })).toBeNull();
+    expect(ohboxWhereSaid({ ...base, stale: "Fri 09:00" })).toBeNull();
   });
 
   it("otherwise the check and the piles", () => {

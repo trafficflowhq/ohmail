@@ -88,6 +88,13 @@ describe("the doorbell draws the faces its capsule has room for", () => {
     expect(doorbellMax(0)).toBe(DOORBELL_MAX);
   });
 
+  it("at large text the sentence takes the room: the width counts in text sizes, not points", () => {
+    // Android at font 2.0 on a 360 dp phone: the capsule is about 340 wide, and four faces cut the sentence.
+    expect([doorbellMax(340, 2), doorbellMax(384, 1.3), doorbellMax(384, 1.1)]).toEqual([0, 0, 3]);
+    expect([doorbellMax(340, 1), doorbellMax(340)]).toEqual([3, 3]);
+    expect(doorbellMax(0, 2)).toBe(DOORBELL_MAX);
+  });
+
   it("with no faces the count is the sentence's alone — no stack and no chip is asked for", () => {
     const stack = doorbellFaces(["A", "B", "C"], doorbellMax(283));
     expect(stack.shown).toEqual([]);

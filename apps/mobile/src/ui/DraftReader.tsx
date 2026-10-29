@@ -398,11 +398,11 @@ export function DraftReader({
           </View>
         </Panel>
 
-        {/* Where a draft this phone cannot take whole goes to be finished. */}
+        {/* Where a draft this phone cannot take whole goes to be finished; standalone, there is no elsewhere. */}
         {row.edit === null ? (
           waiting === null ? (
             <Txt variant="hint" tone="ink3" style={{ paddingHorizontal: 18, paddingBottom: 8 }}>
-              {Copy.draftsEditNote}
+              {!w.standalone ? Copy.draftsEditNote : plan.held !== null ? Copy.draftsEditNoteHeldHere : Copy.draftsEditNoteHere}
             </Txt>
           ) : null
         ) : null}

@@ -71,7 +71,7 @@ function DraftsBody() {
               <SkeletonList rows={2} stalled={w.boot.syncFailure} />
             </View>
           ) : surface === "empty" ? (
-            <Empty title={Copy.draftsEmptyTitle} hint={Copy.draftsEmptyHint} />
+            <Empty title={Copy.draftsEmptyTitle} hint={w.standalone ? Copy.draftsEmptyHintHere : Copy.draftsEmptyHint} />
           ) : (
             rows.map((row, i) => (
               <View key={row.id}>
