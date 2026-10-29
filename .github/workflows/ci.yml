@@ -364,6 +364,59 @@ jobs:
           npx vitest run --reporter=default --reporter=json --outputFile=build/ci-alone.json "$FILE"
           node -e 'const n=require("./build/ci-alone.json").testResults.length;if(n!==1){console.error("expected the one file, the report holds "+n);process.exit(1)}'
 
+  # Where the 100 ms search budget is always judged. On a loaded runner the alone job above reports a figure over the
+  # budget with no quiet round as a SKIPPED-LOADED warning; here, alone on a hosted runner with its own Postgres,
+  # OHMAIL_BUDGET_MUST_JUDGE=1 makes that a failure (packages/services/test/_budget-clock.ts). The nightly and a
+  # dispatch only: no pull request starts it. The release reads this job by its name.
+  search-budget:
+    name: suite · search budget · judged
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+        env:
+          POSTGRES_USER: tf
+          POSTGRES_PASSWORD: tf
+          POSTGRES_DB: trafficflow_test
+        ports: ["5433:5432"]
+        options: >-
+          --shm-size=1g
+          --health-cmd "pg_isready -U tf -d trafficflow_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL_PG_TEST: postgres://tf:tf@localhost:5433/trafficflow_test
+      TF_REQUIRE_PG: "1"
+      OHMAIL_BUDGET_MUST_JUDGE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.4
+
+      - name: Install the locked dependency tree
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
+
+      - name: The project build
+        run: npm run build
+
+      - name: This checkout's own database, from empty
+        run: bash scripts/lane-db.sh "$GITHUB_WORKSPACE"
+
+      - name: The search budget, judged
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          npx vitest run --reporter=default --reporter=json --outputFile=build/ci-search-budget.json packages/services/test/search-budget.pg.test.ts
+          node -e 'const n=require("./build/ci-search-budget.json").testResults.length;if(n!==1){console.error("expected the one file, the report holds "+n);process.exit(1)}'
+
   # The second store's run, in measured shards of its own (test/support/ci-shards-sqlite.json): as one
   # job it was 2811 s of serial file time and outran this bound; five shards of about 560 s each.
   sqlite:
