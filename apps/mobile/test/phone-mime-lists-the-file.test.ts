@@ -37,7 +37,7 @@ type Row = {
   filename: string | null; contentType: string; sizeBytes: number; partId: string | null;
   contentId: string | null; inline: boolean; contentSha256: string | null;
 };
-type Parsed = { hasAttachments: boolean; attachments: readonly Row[] };
+type Parsed = { hasAttachments: boolean; attachments: readonly Row[]; textBody: string; ownText?: string };
 /** Every field the store writes for a part, and the paperclip. */
 const rowsOf = (m: Parsed) => ({
   hasAttachments: m.hasAttachments,
@@ -85,4 +85,20 @@ describe("the phone's own parser lists a plain-text message's PDF", () => {
       expect(onPhone, "the phone's parser and the server's disagree").toEqual(rowsOf(await normalizeMime(shape.raw)));
     });
   }
+});
+
+describe("the phone's own parser gives a letter of pictures its words", () => {
+  it("multipart/related, html root, no text part: the words and the identity's text are the server's", async () => {
+    const related = Buffer.from([
+      "Message-ID: <bilder@example.test>", "From: Shop <shop@example.test>", "To: kunde@example.test", "Subject: Herbst",
+      "MIME-Version: 1.0", 'Content-Type: multipart/related; boundary="R"', "",
+      "--R", "Content-Type: text/html; charset=utf-8", "",
+      '<style>.a{color:red}</style><table><tr><td>Herbst</td><td>Angebot</td></tr></table><div>Die ganze Woche</div><img src="cid:p@x">',
+      "--R", "Content-Type: image/png", "Content-ID: <p@x>", "Content-Transfer-Encoding: base64", "", "iVBORw0KGgo=", "--R--", "",
+    ].join("\r\n"));
+    const onPhone = await phone.parse(related.toString("base64"));
+    const server = await normalizeMime(related);
+    expect({ textBody: onPhone.textBody, ownText: onPhone.ownText }).toEqual({ textBody: "Herbst Angebot\n\nDie ganze Woche", ownText: "" });
+    expect({ textBody: onPhone.textBody, ownText: onPhone.ownText }).toEqual({ textBody: server.textBody, ownText: server.ownText });
+  });
 });

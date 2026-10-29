@@ -16,6 +16,12 @@ const head = (extra: string[]): string[] => [
   "Subject: corpus", "Date: Mon, 14 Sep 2026 10:00:00 +0000", "MIME-Version: 1.0", ...extra,
 ];
 
+const PNG = ["Content-Type: image/png", "Content-ID: <pic@x>", "Content-Transfer-Encoding: base64", "", "iVBORw0KGgo="];
+const PDF = ['Content-Type: application/pdf; name="a.pdf"', 'Content-Disposition: attachment; filename="a.pdf"',
+  "Content-Transfer-Encoding: base64", "", "JVBERi0xLjQK"];
+const LETTER = '<style>.x{color:red}</style><table><tr><td>Hello</td><td>World</td></tr></table>'
+  + '<div>Line one</div><div>Line two</div><img src="cid:pic@x">';
+
 const CORPUS: Record<string, string> = {
   plain: CRLF([...head(["Content-Type: text/plain; charset=utf-8"]), "", "hello", ""]),
   html: CRLF([...head(['Content-Type: text/html; charset="utf-8"']), "", "<p>hello</p>", ""]),
@@ -37,6 +43,17 @@ const CORPUS: Record<string, string> = {
   applicationIcs: CRLF([...head(['Content-Type: multipart/mixed; boundary="B"']), "", "--B", "Content-Type: text/plain", "", "x",
     "--B", "Content-Type: application/ics; method=CANCEL", 'Content-Disposition: attachment; filename="c.ics"', "",
     "BEGIN:VCALENDAR", "END:VCALENDAR", "--B--", ""]),
+  // Letters with no text part: `textBody` now carries the html's words, and these digests were
+  // computed before it did, so the words must not reach the fingerprint.
+  relatedHtmlRoot: CRLF([...head(['Content-Type: multipart/related; boundary="R"']), "", "--R", "Content-Type: text/html; charset=utf-8", "",
+    LETTER, "--R", ...PNG, "--R--", ""]),
+  htmlWithPdf: CRLF([...head(['Content-Type: multipart/mixed; boundary="B"']), "", "--B", "Content-Type: text/html; charset=utf-8", "",
+    "<p>See the invoice</p>", "--B", ...PDF, "--B--", ""]),
+  emptyTextAlternative: CRLF([...head(['Content-Type: multipart/alternative; boundary="A"']), "", "--A", "Content-Type: text/plain", "", "",
+    "--A", "Content-Type: text/html; charset=utf-8", "", "<p>Only the html has words</p>", "--A--", ""]),
+  relatedInMixed: CRLF([...head(['Content-Type: multipart/mixed; boundary="B"']), "", "--B", 'Content-Type: multipart/related; boundary="R"', "",
+    "--R", "Content-Type: text/html; charset=utf-8", "", LETTER, "--R", ...PNG, "--R--", "", "--B", ...PDF, "--B--", ""]),
+  oversizeHtmlRoot: CRLF([...head(["Content-Type: text/html; charset=utf-8"]), "", "<p>Early words</p>" + "<div>x</div>".repeat(90_000), ""]),
 };
 
 const GOLDEN: Record<string, string> = {
@@ -48,6 +65,11 @@ const GOLDEN: Record<string, string> = {
   calendarRequest: "16088aaec66b2d62c840d231c4e0f60013f1b92607f9f179bbc3630f6f57a594",
   calendarReply: "0f419646c493f3fcedbed887edb11a7a11e38a72c46507ea482340685091fcbc",
   applicationIcs: "f409b6a99b587afb560320bf254cbf7dae1bf77d95ea314f8622dbfe82419d62",
+  relatedHtmlRoot: "3eda3285dbdeb0b56e4151b794481dd1e14038e46a777267d9f448f1ae3ce6da",
+  htmlWithPdf: "d03c0e189676114db0ac950fe4a80b510037e3b9c42fcca3792b5a774c3ee47c",
+  emptyTextAlternative: "5748f4ac6208e9a35918ce5da8b9171e6bcc813de24fb04c98dc036c9a89ffb5",
+  relatedInMixed: "631e99c8ed7b0ae15bef78cc630379bdaca5ff4c8c9735bcd0c39fbbfbec2660",
+  oversizeHtmlRoot: "8295671195c502faca99bf9a769e28545ff768013f4091e0bafb1c4b294a4553",
 };
 
 describe("fp1 digests over the corpus are the ones the base code computed", () => {

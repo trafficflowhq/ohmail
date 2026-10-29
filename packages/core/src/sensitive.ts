@@ -1435,7 +1435,9 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
   };
 
   const subject = cap(msg.subject ?? "", "subject");
-  const text = cap(msg.textBody ?? "", "text");
+  // The parse's own text: the html's words are read from the html below, and counted once.
+  const own = msg.ownText ?? msg.textBody ?? "";
+  const text = cap(own, "text");
   const htmlRaw = msg.htmlBody ?? "";
   const markup = htmlRaw ? cap(htmlRaw, "html") : "";
   const htmlText = markup ? cap(visibleTextFromHtml(markup), "html-text") : "";
@@ -1512,7 +1514,7 @@ export function classifySensitivity(msg: NormalizedMessage): SensitivityResult {
     // Nothing scannable, although the message has a surface that should have produced
     // something. We are not judging a message we could not read.
     const anyScannable = reps.some((r) => r.raw.trim().length > 0);
-    if (!anyScannable && (htmlRaw.length > 0 || (msg.attachments ?? []).length > 0 || (msg.textBody ?? "").length > 0)) {
+    if (!anyScannable && (htmlRaw.length > 0 || (msg.attachments ?? []).length > 0 || own.length > 0)) {
       reasons.add("no_visible_text");
     }
     if (!anyScannable && !subject) reasons.add("no_visible_text");

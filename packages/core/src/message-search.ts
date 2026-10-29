@@ -3,7 +3,7 @@ import {
   accounts, accountSettings, attachments, messageBodies, messages, messageSearch, type Tx,
 } from "@trafficflow/db";
 import { dialect, type SearchDocumentParts } from "@trafficflow/db/dialect";
-import { htmlToPlainText } from "./html-text.js";
+import { htmlWords } from "./html-text.js";
 import type { EmailAddress } from "./types.js";
 
 /**
@@ -55,9 +55,8 @@ export interface MessageSearchInput {
 }
 
 /**
- * The body words for a document: the stored text when it has any, else the text rendering of the
- * stored html (HTML-only mail, which stores no text part), else none. A rendering that
- * throws is `headers_only`, never a failed ingest.
+ * The body words for a document: the stored text when it has any, else the stored html's words
+ * (a row stored before ingest kept them), else none. A rendering that throws is `headers_only`.
  */
 export function searchBodyOf(
   text: string | null | undefined, html: string | null | undefined,
@@ -65,7 +64,7 @@ export function searchBodyOf(
   if (typeof text === "string" && text.trim() !== "") return { bodyText: text, source: "text" };
   if (typeof html === "string" && html.trim() !== "") {
     try {
-      const derived = htmlToPlainText(html);
+      const derived = htmlWords(html);
       if (derived.trim() !== "") return { bodyText: derived, source: "html" };
     } catch {
       // A body nobody can render still has a subject and senders to be found by.

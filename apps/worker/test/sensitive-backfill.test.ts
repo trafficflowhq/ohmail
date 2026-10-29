@@ -7,13 +7,13 @@ import {
   routingDecisions, type Tx,
 } from "@trafficflow/db";
 import {
-  classifySensitivity, fingerprintDedupKey, messageFingerprint, normalizeMime,
+  classifySensitivity, fingerprintDedupKey, messageFingerprint, normalizeMime, prepareHtmlForStorage,
 } from "@trafficflow/core";
 import {
   MessageGoneError, RawMessageTooLargeError, type MailboxAdapter,
 } from "@trafficflow/core/adapters/imap";
 import {
-  resetSensitiveBackfillProgress, sensitiveBackfillPass, __snippetOf,
+  resetSensitiveBackfillProgress, sensitiveBackfillPass, __fromStoredRow, __snippetOf,
 } from "../src/sensitive-backfill.js";
 
 /**
@@ -159,6 +159,17 @@ const MAGIC_LINK_RAW = [
   "",
   `<html><body><p>${DIGEST_PROSE}</p><a href="${MAGIC_LINK}">Read</a></body></html>`,
   "",
+].join("\r\n");
+
+/** A sign-in letter of pictures with no text part; its verdict hangs on the 40-word prose bound. */
+const SIGN_IN_RELATED_RAW = [
+  "From: App <no-reply@app.example>", "To: someone@ohmail.test", "Subject: Your workspace",
+  "Message-ID: <sign-in-1@app.example>", "Date: Tue, 21 Jul 2026 08:00:00 +0000", "MIME-Version: 1.0",
+  'Content-Type: multipart/related; boundary="R"', "", "--R", "Content-Type: text/html; charset=utf-8", "",
+  "<table><tr><td><p>Hello Mila,</p><p>We noticed you asked to sign in to your workspace from a new browser this morning. "
+    + "Use the button below to continue where you left off today.</p>"
+    + '<p><a href="https://app.example/login?t=Xk29fLq83PzR7mWqZ">Sign in</a></p></td></tr></table><img src="cid:logo@x">',
+  "--R", "Content-Type: image/png", "Content-ID: <logo@x>", "Content-Transfer-Encoding: base64", "", "iVBORw0KGgo=", "--R--", "",
 ].join("\r\n");
 
 /** Ordinary marketing mail — no token anywhere. Its original is `ordinary`. */
@@ -795,6 +806,27 @@ describe("the repair", () => {
     const [m] = await w.db.select().from(messages).where(eq(messages.id, id));
     expect(m!.sensitivityCategory).toBe("otp");
     expect(m!.noAi).toBe(true);
+  });
+});
+
+describe("an html-only letter, whose stored text is its html's words", () => {
+  it("is judged on the stored row as ingest judged it, so an oversized original keeps its flags", async () => {
+    const w = await newWorld();
+    const norm = await normalizeMime(Buffer.from(SIGN_IN_RELATED_RAW, "utf8"));
+    const storedText = norm.textBody;
+    const storedHtml = prepareHtmlForStorage(norm.htmlBody);
+    expect(storedText).toContain("asked to sign in");
+    const stored = __fromStoredRow({
+      messageId: "m", dedupKey: "k", messageIdHeader: null, subject: norm.subject, storedText, storedHtml, locator: null,
+    });
+    expect(classifySensitivity(stored)).toEqual(classifySensitivity(norm));
+    expect(classifySensitivity(norm).flags).toMatchObject({ no_ai: true, no_kb: true });
+
+    const id = await seedWithheld(w, { raw: SIGN_IN_RELATED_RAW, storedText, storedHtml });
+    const r = await run(w, undefined, { maxBytes: 8 });
+    expect(r).toMatchObject({ examined: 1, candidates: 0, fetched: 0, clearedFromStored: 0 });
+    const [m] = await w.db.select().from(messages).where(eq(messages.id, id));
+    expect([m!.noAi, m!.noKb]).toEqual([true, true]);
   });
 });
 

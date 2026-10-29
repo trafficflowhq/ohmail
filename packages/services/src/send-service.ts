@@ -6,7 +6,7 @@ import {
   threads, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import {
-  createLogger, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime, prepareHtmlForStorage, recordSentMessage,
+  createLogger, htmlWords, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime, prepareHtmlForStorage, recordSentMessage,
   SendNotSubmitted, SentCopyAppendFailed,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
@@ -88,10 +88,11 @@ function forwardedQuote(
     ...(dateStr ? [`Date: ${dateStr}`] : []),
     `Subject: ${orig.subject}`,
   ];
-  // An HTML-only original has an EMPTY stored text; the plain alternative derives it from the
-  // sanitized html, or a text-first reader gets the banner and headers over nothing (measured).
+  // An html-only original stores no text or its html's words (no link targets); the plain
+  // alternative then derives from the sanitized html, or a text-first reader loses the links.
   const safeHtml = originalHtml ? sanitizeOutboundHtml(originalHtml) : null;
-  const plain = originalText.trim() !== "" ? originalText : safeHtml ? htmlToPlainText(safeHtml) : "";
+  const derived = originalHtml !== null && originalText !== "" && originalText === htmlWords(originalHtml);
+  const plain = originalText.trim() !== "" && !derived ? originalText : safeHtml ? htmlToPlainText(safeHtml) : "";
   const text = `${headerLines.join("\n")}\n\n${plain}`;
   const bodyHtml = safeHtml ?? escapeHtml(plain).replace(/\n/g, "<br>");
   const html =
