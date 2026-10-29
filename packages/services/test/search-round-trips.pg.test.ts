@@ -21,10 +21,12 @@ import type { ServiceContext } from "@trafficflow/services";
  * holds only the caller's rows.
  */
 let statements: string[] = [];
+/** Every statement as sent, with its parameters, so a read can be planned again. */
+let sent: Array<{ q: string; params: unknown[] }> = [];
 const PG_URL = pgTestUrl(import.meta.url);
 const client = postgres(PG_URL, {
   max: 1, onnotice: () => {},
-  debug: (_c: number, q: string) => { statements.push(q.replace(/\s+/g, " ").trim()); },
+  debug: (_c: number, q: string, params: unknown[]) => { statements.push(q.replace(/\s+/g, " ").trim()); sent.push({ q, params }); },
 });
 const db = brandDialect(drizzle(client, { schema }), "pg");
 const svc = new SearchService();
@@ -33,7 +35,9 @@ const A = randomUUID();
 const B = randomUUID();
 /** Mail and no search document or marker yet: an account the backfill is still building. */
 const C = randomUUID();
-const own: Record<string, Set<string>> = { [A]: new Set(), [B]: new Set(), [C]: new Set() };
+/** The same: the backfill reaches it inside one test. */
+const D = randomUUID();
+const own: Record<string, Set<string>> = { [A]: new Set(), [B]: new Set(), [C]: new Set(), [D]: new Set() };
 const PAGE = 4;
 
 function ctx(accountId: string): ServiceContext {
@@ -75,16 +79,16 @@ describe("a search answer is a bounded number of statements (real Postgres)", ()
   beforeAll(async () => {
     await runMigrations(PG_URL);
     await ensureSearchExtensions(db, { concurrently: false });
-    for (const acct of [A, B, C]) {
+    for (const acct of [A, B, C, D]) {
       const [t] = await db.insert(tags).values({ accountId: acct, name: "birds", hue: "moss" }).returning();
-      await seed(acct, acct === B ? 6 : 9, t!.id, acct !== C);
+      await seed(acct, acct === B ? 6 : 9, t!.id, acct !== C && acct !== D);
     }
     // Warm the per-handle extension probe, which is once per handle and not per answer.
     await svc.search(ctx(A), { q: "heron", parts: "page", limit: PAGE });
   }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => {
-    for (const a of [A, B, C]) {
+    for (const a of [A, B, C, D]) {
       await db.execute(sql`delete from message_search where account_id = ${a}`);
       await db.execute(sql`delete from message_tags where account_id = ${a}`);
       await db.execute(sql`delete from tags where account_id = ${a}`);
@@ -144,6 +148,28 @@ describe("a search answer is a bounded number of statements (real Postgres)", ()
     const later = new Date(NOW.getTime() + 31_000);
     const after = await svc.search({ ...ctx(C), now: () => later }, { q: "heron", parts: "estimate", limit: PAGE });
     expect(after.indexed).toEqual({ done: 2, total: 9 });
+  });
+
+  // Before the backfill reaches an account it has no search document: its page reads none, and
+  // asks no match whether it has one. Its answers are the same before, during and after the backfill.
+  it("before the backfill, a page reads no search document; the same page during and after it", async () => {
+    const page = async () => (await svc.search(ctx(D), { q: "heron", parts: "page", limit: 50 })).items.map((m) => m.id);
+    sent = [];
+    const before = await page();
+    const read = sent.find((s) => /\bfused\b/.test(s.q))!;
+    const [plan] = (await client.unsafe(`explain (format json) ${read.q}`, read.params as never[])) as unknown as Array<{ "QUERY PLAN": unknown }>;
+    const relations = (n: Record<string, unknown>): string[] => [String(n["Relation Name"] ?? ""),
+      ...((n["Plans"] as Array<Record<string, unknown>> | undefined) ?? []).flatMap(relations)];
+    const top = (plan!["QUERY PLAN"] as Array<{ Plan: Record<string, unknown> }>)[0]!.Plan;
+    expect(relations(top)).not.toContain("message_search");
+    expect(new Set(before)).toEqual(own[D]);
+    const summary = async () => (await svc.search(ctx(D), { q: "heron", parts: "summary" })).total;
+    expect(await summary()).toBe(9);
+    await searchIndexBackfillPass({ db: db as never, accountId: D, batch: 2, rounds: 1, now: () => NOW });
+    expect(await page()).toEqual(before);
+    expect(await summary()).toBe(9);
+    await searchIndexBackfillPass({ db: db as never, accountId: D, now: () => NOW });
+    expect(await page()).toEqual(before);
   });
 
   it("an empty exact tier asks the typo tier in the SAME transaction", async () => {
