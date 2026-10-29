@@ -2068,6 +2068,7 @@ export const DE: Deck = {
   readerMarkYou: "du",
   readerMarkYesterday: "gestern",
   readerMessageActions: "Nachrichtenaktionen",
+  readerMemberAsPage: "Diese Nachricht wird als Seite gezeigt — öffne sie",
   readerUnread: "Ungelesen",
 
   /* Der Wall des verwalteten Accounts und seine Streifen — dieselben Sätze wie im Browser. */

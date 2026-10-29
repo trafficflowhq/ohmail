@@ -79,6 +79,8 @@ export function mailServer() {
   const trash = new Map<string, { dto: Dto; trashedAt: string; restoreTo: string }>();
   /** The stored body per message id — what the two body routes below serve. */
   const bodies = new Map<string, string>();
+  /** The stored html part per message id, where it has one. */
+  const htmls = new Map<string, string>();
   /** The one-click posture each body's headers carry, as the server derives it; absent ⇒ `no_header`. */
   const postures = new Map<string, "one_click" | "no_header" | "mailto_only" | "not_one_click">();
   /** A body the server holds only as a husk, and why — the single route answers `withheld`. */
@@ -385,7 +387,7 @@ export function mailServer() {
         if (text === undefined) { json(404, { error: { code: "not_found", message: "no body" } }); return; }
         const marker = withheld.get(id);
         json(200, {
-          messageId: id, text, html: null, ...(marker ? { withheld: marker } : {}),
+          messageId: id, text, html: htmls.get(id) ?? null, ...(marker ? { withheld: marker } : {}),
           headers: { subject: [messages.get(id)?.subject ?? ""] },
           loadedRemoteContent: false, unsubscribe: postures.get(id) ?? "no_header", unsubscribeUrl: null,
         });
@@ -395,7 +397,7 @@ export function mailServer() {
         const ids = (url.searchParams.get("ids") ?? "").split(",").map((s) => decodeURIComponent(s)).filter(Boolean);
         json(200, {
           items: ids.filter((id) => bodies.has(id)).map((id) => ({
-            messageId: id, text: bodies.get(id), html: null,
+            messageId: id, text: bodies.get(id), html: htmls.get(id) ?? null,
             loadedRemoteContent: false, unsubscribe: postures.get(id) ?? "no_header", unsubscribeUrl: null,
           })),
           nextCursor: null,
@@ -985,6 +987,8 @@ export function mailServer() {
       bodies.set(id, text);
       if (posture) postures.set(id, posture);
     },
+    /** Give this message a stored html part beside its text. */
+    setHtml: (id: string, html: string) => { htmls.set(id, html); },
     /** Hold this message's body as a husk under `marker` — the single route answers it empty. */
     setWithheld: (id: string, marker: "storage_cap" | "junk_filed" | "expunged") => {
       bodies.set(id, ""); withheld.set(id, marker);

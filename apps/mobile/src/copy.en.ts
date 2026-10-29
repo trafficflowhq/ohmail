@@ -2987,6 +2987,8 @@ const TABLE = {
   readerMarkYou: "you",
   readerMarkYesterday: "yesterday",
   readerMessageActions: "Message actions",
+  /** A conversation member the phone cannot draw as words (pictures only, or past the html bound): its card opens it. */
+  readerMemberAsPage: "This letter is shown as a page — open it",
   readerUnread: "Unread",
 
   /* ───────────────────────────────────────────────── the managed account's wall and its strips
