@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StaticKeyProvider } from "@trafficflow/core";
 import {
-  createCloudAuth, loadSealedTokens, sealTokens,
+  createCloudAuth, loadSealedTokens, openSealedTokens, sealTokens,
   RETRY_CAP_MS, type CloudAuth, type CloudAuthConfig, type CloudSessionReading,
 } from "../src/cloud-auth.js";
+import { readMachineBinding } from "../src/machine-binding.js";
 
 /**
  * A DESKTOP SESSION ENDS ONLY WHEN THE REFRESH DOOR SAYS SO, WITH A CODE.
@@ -381,5 +382,123 @@ describe("a launch renews from the window the seal carries, never from a 401", (
     expect(renewed, "the belt's renewal is logged as the request's").toEqual(["request"]);
     expect((await loadSealedTokens(sealPath, keyProvider))?.expiresAt, "the renewal wrote the window")
       .toBe(new Date(renewedAt + 900_000).toISOString());
+  });
+});
+
+/**
+ * A SEAL STAYS ON THE COMPUTER THAT WROTE IT. A copied or synced home carried the seal to another
+ * computer, which presented a token the first one had renewed past, and the server's reuse rule
+ * signed every device out. Another computer opens nothing; one that cannot name itself is no mismatch.
+ */
+describe("a seal stays on the computer that wrote it", () => {
+  const pair = { accessToken: "a", refreshToken: "r1", refreshAttempt: "rX", expiresAt: "2026-09-24T12:15:00.000Z" };
+
+  it("sealed under one computer and opened under another: nothing to present; its own computer opens it", async () => {
+    const keyProvider = new StaticKeyProvider({ 1: aKek() });
+    const sealPath = join(tmp(), "cloud-tokens.seal");
+    await sealTokens(sealPath, keyProvider, pair, new Date(), () => true, "machine-a");
+    expect(await loadSealedTokens(sealPath, keyProvider, "machine-b"), "another computer presents nothing").toBeNull();
+    expect(await openSealedTokens(sealPath, keyProvider, "machine-b")).toEqual({ kind: "elsewhere" });
+    expect(await loadSealedTokens(sealPath, keyProvider, "machine-a")).toEqual(pair);
+    expect(await loadSealedTokens(sealPath, keyProvider, null), "a computer that cannot name itself").toEqual(pair);
+  });
+
+  it("a renewal's attempt name and its new pair are both sealed for the computer it runs on", async () => {
+    const keyProvider = new StaticKeyProvider({ 1: aKek() });
+    const sealPath = join(tmp(), "cloud-tokens.seal");
+    await sealTokens(sealPath, keyProvider, { accessToken: "stale", refreshToken: "r1" });
+    const atRequest: unknown[] = [];
+    const d = door([async () => {
+      atRequest.push(await loadSealedTokens(sealPath, keyProvider, "machine-b"));
+      return minted("fresh", "r2", 900)();
+    }]);
+    const a = auth(d, { keyProvider, sealPath, machine: "machine-a" });
+    expect((await a.renewNow()).state).toBe("live");
+    expect(atRequest, "the attempt's name went down bound").toEqual([null]);
+    expect(await loadSealedTokens(sealPath, keyProvider, "machine-b")).toBeNull();
+    expect(await loadSealedTokens(sealPath, keyProvider, "machine-a")).toMatchObject({ accessToken: "fresh", refreshToken: "r2" });
+  });
+
+  it("an unbound seal (an older install's) opens on any computer, said as unbound", async () => {
+    const keyProvider = new StaticKeyProvider({ 1: aKek() });
+    const sealPath = join(tmp(), "cloud-tokens.seal");
+    await sealTokens(sealPath, keyProvider, pair);
+    expect(await openSealedTokens(sealPath, keyProvider, "machine-b")).toEqual({ kind: "opened", tokens: pair, bound: false });
+  });
+
+  it("what a launch reads: none, unreadable, or opened and bound", async () => {
+    const keyProvider = new StaticKeyProvider({ 1: aKek() });
+    const sealPath = join(tmp(), "cloud-tokens.seal");
+    expect(await openSealedTokens(sealPath, keyProvider, "machine-a")).toEqual({ kind: "none" });
+    mkdirSync(sealPath);
+    expect(await openSealedTokens(sealPath, keyProvider, "machine-a"), "a read that fails is not an absence").toEqual({ kind: "unreadable" });
+    rmSync(sealPath, { recursive: true });
+    const unnamed = await keyProvider.encrypt(JSON.stringify({ accessToken: "a", refreshToken: "r1" }));
+    writeFileSync(sealPath, JSON.stringify({ v: 2, sealed: unnamed.ciphertext, keyVersion: unnamed.keyVersion }));
+    expect(await openSealedTokens(sealPath, keyProvider, "machine-a"), "a bound file naming no computer").toEqual({ kind: "unreadable" });
+    await sealTokens(sealPath, keyProvider, pair, new Date(), () => true, "machine-a");
+    const bound = JSON.parse(readFileSync(sealPath, "utf8")) as { sealed: string; keyVersion: number };
+    expect(await openSealedTokens(sealPath, new StaticKeyProvider({ 1: aKek() }), "machine-a"), "another key").toEqual({ kind: "unreadable" });
+    expect(await openSealedTokens(sealPath, keyProvider, "machine-a")).toEqual({ kind: "opened", tokens: pair, bound: true });
+    writeFileSync(sealPath, JSON.stringify({ ciphertext: bound.sealed, keyVersion: bound.keyVersion }));
+    expect(await openSealedTokens(sealPath, keyProvider, "machine-b"), "rewrapped in the older shape, still not unbound").toEqual({ kind: "unreadable" });
+  });
+
+  it("a reader that predates the binding (0.30.12's) opens nothing in a bound seal, and still opens an unbound one", async () => {
+    const keyProvider = new StaticKeyProvider({ 1: aKek() });
+    const sealPath = join(tmp(), "cloud-tokens.seal");
+    const older = async (): Promise<unknown> => {
+      try {
+        const file = JSON.parse(readFileSync(sealPath, "utf8")) as { ciphertext: string; keyVersion: number };
+        const t = JSON.parse(await keyProvider.decrypt(file.ciphertext, file.keyVersion)) as Record<string, unknown>;
+        return typeof t.accessToken === "string" && typeof t.refreshToken === "string" ? t : null;
+      } catch {
+        return null;
+      }
+    };
+    await sealTokens(sealPath, keyProvider, { accessToken: "a", refreshToken: "r1" }, new Date(), () => true, "machine-a");
+    expect(await older()).toBeNull();
+    await sealTokens(sealPath, keyProvider, { accessToken: "a", refreshToken: "r1" });
+    expect(await older()).toEqual({ accessToken: "a", refreshToken: "r1" });
+  });
+});
+
+describe("the computer a seal is bound to", () => {
+  const ID = "0123456789abcdef0123456789abcdef";
+  const UUID = "0A1B2C3D-4E5F-6071-8293-A4B5C6D7E8F9";
+  const files = (map: Record<string, string>) => async (p: string): Promise<string> => {
+    if (p in map) return map[p]!;
+    throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+  };
+  const linux = (map: Record<string, string>): Promise<string | null> => readMachineBinding({ platform: "linux", readText: files(map) });
+
+  it("Linux: /etc/machine-id, else D-Bus's copy; a digest, never the id", async () => {
+    const a = await linux({ "/etc/machine-id": `${ID}\n` });
+    expect(a).toMatch(/^[\w-]{43}$/);
+    expect(a).not.toContain(ID);
+    expect(await linux({ "/var/lib/dbus/machine-id": ID })).toBe(a);
+    expect(await linux({ "/etc/machine-id": "uninitialized\n", "/var/lib/dbus/machine-id": ID })).toBe(a);
+    expect(await linux({ "/etc/machine-id": `1${ID.slice(1)}` })).not.toBe(a);
+    expect(await linux({ "/etc/machine-id": "uninitialized\n" }), "no machine named").toBeNull();
+    expect(await linux({})).toBeNull();
+  });
+
+  it("macOS: IOPlatformUUID from ioreg; Windows: MachineGuid from the registry; a tool that fails names nothing", async () => {
+    const asked: string[][] = [];
+    const answer = (out: string) => async (file: string, args: readonly string[]): Promise<string> => {
+      asked.push([file, ...args]);
+      return out;
+    };
+    const mac = await readMachineBinding({ platform: "darwin", run: answer(`  |   "IOPlatformUUID" = "${UUID}"\n`) });
+    const win = await readMachineBinding({
+      platform: "win32", run: answer(`\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography\r\n    MachineGuid    REG_SZ    ${UUID.toLowerCase()}\r\n`),
+    });
+    expect(mac).toMatch(/^[\w-]{43}$/);
+    expect(win, "one id, one digest, whichever tool printed it").toBe(mac);
+    expect(asked[0]).toEqual(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]);
+    expect(asked[1]![0]).toMatch(/^[A-Za-z]:\\.*\\System32\\reg\.exe$/i);
+    expect(asked[1]!.slice(1)).toEqual(["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid", "/reg:64"]);
+    expect(await readMachineBinding({ platform: "darwin", run: async () => { throw new Error("spawn ETIMEDOUT"); } })).toBeNull();
+    expect(await readMachineBinding({ platform: "win32", run: answer("ERROR: The system was unable to find the specified registry key or value.") })).toBeNull();
   });
 });
