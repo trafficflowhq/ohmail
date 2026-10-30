@@ -118,6 +118,8 @@ const EN = {
     `${n} remote stylesheets were blocked, so this message may look plain.`,
   /** The size fallback. It states the reason, because a bare plain-text render reads as a bug. */
   oversize: "This message's HTML part is too large to render safely. Showing the plain-text version.",
+  /** What a screen reader calls a picture the sender gave no alt text. */
+  picture: "Picture",
 };
 
 /**
@@ -2499,6 +2501,10 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
 
     if (tag === "img") {
       const src = node.getAttribute("src") ?? "";
+      // An unnamed picture is otherwise read out by its src (a blob: or data: URL): a beacon is hidden, the rest named.
+      const named = ["alt", "aria-hidden", "role"].some((n) => node.hasAttribute(n)) ||
+        ["title", "aria-label"].some((n) => (node.getAttribute(n) ?? "").trim() !== "");
+      if (!named) node.setAttribute("alt", pixel ? "" : COPY.picture);
       // `srcset` is a second, independent way to name a remote image and a blocker that
       // only reads `src` leaves it fetchable. It is dropped whole rather than parsed:
       // there is no consent story for a candidate set.

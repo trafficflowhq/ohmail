@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * ═══ THE PHONE READER'S MAIL DOCUMENT SAYS NOTHING THE RULES DO NOT ADMIT ════════════════════
  *
@@ -16,6 +17,8 @@ import { buildPhoneMailDocument } from "../src/mail/mail-document";
 import { shareFilename } from "../src/mail/open-attachment";
 import { blockedNotice } from "../src/mail/notice";
 import { DECKS } from "../src/copy";
+import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
+import { within } from "@testing-library/react";
 
 const PNG = "data:image/png;base64,iVBORw0KGgo=";
 const THEME = { bg: "#fbfaf9", ink: "#251f1b", ink2: "#625952", accent: "#a3461c", fontScale: 1 };
@@ -75,6 +78,36 @@ describe("cid images: this message's own parts, exactly", () => {
     });
     expect(out.html).toContain("url(cid:bg@x)");
     expect(out.html).not.toContain(PNG);
+  });
+});
+
+describe("a picture the sender left unnamed is read as a picture, never as its data", () => {
+  /** The pictures a screen reader meets in the document the WebView is handed, by name. */
+  const spoken = (html: string, opts: Parameters<typeof sanitizeMailHtmlPhone>[1] = {}): string[] => {
+    document.documentElement.innerHTML = buildPhoneMailDocument(sanitizeMailHtmlPhone(html, opts).html, THEME);
+    const names: string[] = [];
+    within(document.body).queryAllByRole("img", { name: (name) => names.push(name) > 0 });
+    return names;
+  };
+  const map = new Map([["a@x", PNG], ["b@x", PNG]]);
+
+  it("an embedded picture with no alt is named 'Picture' (Bild in German), and a named one keeps its name", () => {
+    const html = '<img src="cid:a@x"><img src="cid:b@x" alt="Logo"><img src="cid:a@x" title="Plan">';
+    expect(spoken(html, { inlineImages: map })).toEqual([DECKS.en.mailPicture, "Logo", "Plan"]);
+    expect(spoken(html)).toEqual([DECKS.en.mailPicture, "Logo", "Plan"]); // unresolved, blank
+    expect(DECKS.en.mailPicture).toBe("Picture");
+    setActiveLocale("de");
+    try {
+      expect(spoken('<img src="cid:a@x">', { inlineImages: map })).toEqual(["Bild"]);
+    } finally {
+      resetLocaleRegisterForTests();
+    }
+  });
+
+  it("a tracking pixel or a 1×1 spacer is hidden from the reader; alt='' stays decorative", () => {
+    const html =
+      '<img src="cid:a@x" width="1" height="1"><img src="https://t.example/wf/open?u=1"><img src="cid:b@x" alt="">';
+    expect(spoken(html, { inlineImages: map })).toEqual([]);
   });
 });
 

@@ -4058,6 +4058,7 @@
     "sheetOne": "A remote stylesheet was blocked, so this message may look plain.",
     "sheetMany": "{n} remote stylesheets were blocked, so this message may look plain.",
     "oversize": "This message's HTML part is too large to render safely. Showing the plain-text version.",
+    "picture": "Picture",
     "darkOriginal": "Original",
     "darkAdapt": "Adapt to dark",
     "darkOriginalTitle": "Show this message in its original colours",

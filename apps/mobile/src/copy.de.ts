@@ -1278,6 +1278,7 @@ export const DE: Deck = {
   bodyHistoryHide: "Verlauf ausblenden",
   mailOversize:
     "Der HTML-Teil dieser Nachricht ist zu groß, um ihn sicher darzustellen. Die Textfassung wird gezeigt.",
+  mailPicture: "Bild",
   mailOpenLinkTitle: "Diesen Link öffnen?",
   mailOpenLinkOpen: "Öffnen",
   mailOpenLinkCancel: "Abbrechen",
