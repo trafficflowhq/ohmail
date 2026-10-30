@@ -347,4 +347,40 @@ describe.skipIf(!PG_UP)("a retry of an unanswered refresh, on real Postgres", ()
     const next = await svc.refresh(at(31_000), { refreshToken: repaired.tokens!.refreshToken }, cookie);
     expect(next.tokens?.refreshToken, "what the repair handed back is the live line").toBeTruthy();
   });
+
+  /* A BROWSER KILLED BEFORE IT STORED ITS RENEWED COOKIE: its restored tabs present the spent token under
+   * the name it went out with, at once. The replay serializes on the session lock and converges. */
+  it("on the COOKIE surface two presentations of the spent token AT ONCE under its name: both answered, one live line", async () => {
+    const svc = new AuthService(makeTestAuthDeps());
+    const { userId, r1 } = await establish(svc, `cookie-killed-${randomUUID()}@lichtgrat.example`);
+    const attemptId = `w-${randomUUID()}`;
+    await svc.refresh(ctx(), { refreshToken: r1, attemptId }, cookie);
+    const familyId = await familyOf(userId);
+
+    const restart = at(76_000);
+    const [a, b] = await Promise.all([
+      svc.refresh(restart, { refreshToken: r1, attemptId }, cookie),
+      svc.refresh(restart, { refreshToken: r1, attemptId }, cookie),
+    ]);
+    expect(a.tokens?.refreshToken && b.tokens?.refreshToken, "both tabs are answered").toBeTruthy();
+    const fam = await db.select().from(refreshTokens).where(eq(refreshTokens.familyId, familyId));
+    expect(fam.some((r) => r.revokedAt !== null), "nothing in the family was revoked").toBe(false);
+    expect(await liveTails(familyId), "one attempt, one live line").toBe(1);
+    expect(await eventsOf(userId)).not.toContain("refresh_reuse_revoked");
+  });
+
+  it("on the COOKIE surface a token two rotations back, under a name the jar spent its next token with, is swept", async () => {
+    const svc = new AuthService(makeTestAuthDeps());
+    const { userId, r1 } = await establish(svc, `cookie-reused-${randomUUID()}@lichtgrat.example`);
+    const attemptId = `w-${randomUUID()}`;
+    const first = await svc.refresh(ctx(), { refreshToken: r1, attemptId }, cookie);
+    const familyId = await familyOf(userId);
+    await svc.refresh(at(30_000), { refreshToken: first.tokens!.refreshToken, attemptId }, cookie);
+
+    await expect(svc.refresh(at(147_000), { refreshToken: r1, attemptId }, cookie))
+      .rejects.toMatchObject({ code: "refresh_revoked" });
+    const fam = await db.select().from(refreshTokens).where(eq(refreshTokens.familyId, familyId));
+    expect(fam.every((r) => r.revokedAt !== null), "a real spend under the name moved the chain on").toBe(true);
+    expect(await eventsOf(userId)).toContain("refresh_reuse_revoked");
+  });
 });
