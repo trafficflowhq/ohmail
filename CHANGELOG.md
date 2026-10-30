@@ -21,6 +21,91 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.17] — 2026-10-30
+
+### Older letters made only of html and pictures get their words too
+
+Letters stored before the previous change, with html and no plain-text part, now get the words the
+reader draws as their text, once, in the background: the list shows their preview and search finds
+them by their words. They stay where they were filed; nothing is sorted again. The desktop and the
+phone do it from the mail they already hold, only while nobody is using the app and, on a laptop,
+only on power. ohmail Cloud and your own server do it in the worker.
+
+### The Screener's open Junk lists a letter you just marked spam
+
+The 0.30.16 note said the Screener's Junk, open while a sender is marked spam, lists the letter once ohmail
+has filed it. It did so only for letters held in ohmail/Quarantine: a letter filed into your mail server's
+own Junk folder appeared only after leaving the segment and coming back, up to a minute and a half later.
+While the segment is open, ohmail now reads the Junk list again every five seconds for up to a minute
+after a sender is marked spam, puts the letter on top of the list once it is there, and then stops. The
+rows you already have, older pages included, stay where they are. Web and desktop.
+
+### The phone suggests recipients as you type them
+
+On the phone, typing in To, Cc or Bcc now lists up to six people you correspond with who match what you
+typed, as the web composer does, from the mail the phone already holds, whether it is paired or runs on
+its own. A tap puts the person in the field and keeps the addresses already there.
+Back closes the list before the composer, and at large text the names and addresses wrap in full.
+
+### News and Receipts on the phone match the web
+
+On the phone, an open letter in News now has Reply and Forward. They open the same composer as the reader, and a letter flagged not to be forwarded still asks first. Receipts now has Mark all read, like News, with an Undo. The count over both streams now uses the web's wording ("3 new since you were here", or "Nothing new since you were here"), so it no longer reads as an unread count that disagrees with the unread rows below it.
+
+### The phone's Screener says a mailbox is still being read on its own first pass
+
+On a phone that connects to the mail server itself and organizes the mailbox, the Screener's Waiting
+shelf showed "0 first-time senders waiting" while that phone was still reading the mailbox for the first
+time, then jumped to the real count minutes later. It now says the mailbox is still being read until the
+first pass is done, as it already did on a paired phone. A relaunch over a mailbox whose first pass
+finished long ago is not taken for one. Its count line also no longer blames "the
+organizing device's" unread settings on the phone that is the organizing device.
+
+### A picture-only letter with invisible preheader filler no longer reads as words on the phone
+
+On the phone, an older letter in a conversation whose html holds only pictures, a hidden preheader
+(`display:none`) and zero-width filler characters was drawn as a blank card and turned read after the
+pause, although nothing of it had been on screen. It now counts as a letter without words, like one of
+pictures alone: its card shows its files and the line that opens it, and it turns read only by that open.
+
+### A letter with deeply nested html no longer stalls mail sync
+
+The html parser ohmail reads letters with (htmlparser2) kept the elements a letter had opened in a way
+that slowed down with every level of nesting. A letter built to nest tens of thousands of elements, or to
+close many that were never opened, could hold the mail sync for 2 to 21 seconds while its text was
+read, and on Cloud that delay held up other mailboxes on the same worker too. The phone's message view
+spent up to 4.6 seconds cleaning such a letter, and search indexing up to 0.75 seconds. ohmail now carries a
+fix to the parser that makes this cost grow in step with the letter's size, so the same letters take
+milliseconds. Ordinary mail reads exactly as before. On every app: desktop, web, phone, Cloud and your own
+server.
+
+### Your own letters count as yours when your Sent folder has another name
+
+On a mailbox whose Sent folder has a localized or custom name, such as 'Envoyés' or 'INBOX.Verzonden', the
+apps now recognise that folder by the name the server reported when the mailbox was connected, as the server
+already did for correspondents. Your own letters show under Earlier and in their conversations, rows read
+"Me → name", your reply no longer brings a set-aside conversation back as if someone else wrote, and a
+screening press no longer calls the Sent folder a folder you made. This applies on desktop, web, phone, Cloud
+and your own server.
+
+### A screen reader calls an unnamed picture in a letter a picture
+
+A picture in a letter that its sender gave no alt text was read out by its data on the phone, often a
+long run of letters and digits. It is now called "Picture" ("Bild" in German) on the phone, the web and the
+desktop app, and a tracking pixel or a 1×1 spacer is skipped. A picture with alt text keeps it.
+
+### An Undo that waits to be sent says Undone, and the command palette reaches every place
+
+On web and desktop, an Undo whose writes could not reach the server yet (a server that is down or
+restarting) said "Nothing changed — that did not go through. Try it again." a few seconds later,
+although the Undo stood and was sent once the server answered again. It now says "Undone.", as an
+Undo the server took at once does.
+
+The command palette (Ctrl+K, ⌘K on a Mac) now has a Go to row for Answer Later, Parked, Resurface,
+Drafts and History, as it had for the Ohbox, News, Receipts and Trash, and Settings shows its `g ,`
+key there too. Every word you type is matched on its own, so "go to ohbox" finds "Go to the Ohbox"
+and "zu historie" finds "Zur Historie". The Screener's row reads "Go to the Screener" and the
+Settings row "Go to Settings", as in the shortcut list.
+
 ## [0.30.16] — 2026-10-30
 
 ### Sign-in notes reach every open window
@@ -15463,7 +15548,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.16...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.17...HEAD
+[0.30.17]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.17
 [0.30.16]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.16
 [0.30.15]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.15
 [0.30.14]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.14

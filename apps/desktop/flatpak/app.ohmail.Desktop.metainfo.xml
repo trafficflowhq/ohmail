@@ -78,6 +78,22 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.17" date="2026-10-30">
+      <description>
+        <ul>
+          <li>Older letters made only of html and pictures get their words too</li>
+          <li>The Screener's open Junk lists a letter you just marked spam</li>
+          <li>The phone suggests recipients as you type them</li>
+          <li>News and Receipts on the phone match the web</li>
+          <li>The phone's Screener says a mailbox is still being read on its own first pass</li>
+          <li>A picture-only letter with invisible preheader filler no longer reads as words on the phone</li>
+          <li>A letter with deeply nested html no longer stalls mail sync</li>
+          <li>Your own letters count as yours when your Sent folder has another name</li>
+          <li>A screen reader calls an unnamed picture in a letter a picture</li>
+          <li>An Undo that waits to be sent says Undone, and the command palette reaches every place</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.16" date="2026-10-30">
       <description>
         <ul>
@@ -147,27 +163,6 @@
           <li>The keyboard keeps working after a click into a designed letter</li>
           <li>The search speed test no longer fails on a busy machine</li>
           <li>The nightly search speed test judges a slower machine fairly</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.12" date="2026-10-29">
-      <description>
-        <ul>
-          <li>A conversation you stop on with j or k turns read</li>
-          <li>Embedded pictures wait for a free connection instead of failing</li>
-          <li>Resurface takes the whole conversation out of the Ohbox</li>
-          <li>The Linux desktop window no longer freezes when an accessibility client is slow to answer keys</li>
-          <li>j after coming back to News starts from the letter on screen</li>
-          <li>Spam shows your Junk folder at once, without waiting for the mail server</li>
-          <li>The web app's "Get ohmail for desktop" link opens the download page</li>
-          <li>On a device that only reads your mail, the Screener and Move change the organizer's rule</li>
-          <li>A reply cancelled from another window keeps one draft</li>
-          <li>The desktop drops "Images blocked" once a letter's pictures are shown</li>
-          <li>The ✓ beside Screen out and Spam on the phone marks the mail read again</li>
-          <li>The phone says a draft changed elsewhere was kept, not that saving failed</li>
-          <li>A reply arriving into an open conversation on the phone no longer moves the reader or turns read</li>
-          <li>A letter dated after it arrived, or with no date, is listed by its arrival</li>
-          <li>The SQLite test run splits into five measured shards</li>
         </ul>
       </description>
     </release>
