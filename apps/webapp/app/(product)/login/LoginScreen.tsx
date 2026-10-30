@@ -26,7 +26,9 @@ import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule
 import { readOwnerMarker } from "../../shell/owner-cookie";
 import { refreshSettled } from "../../session-refresh";
 import { resolveOwnerOutcome } from "../session-outcome";
-import { REASON_BODY, takeSignedOutNote, type SignedOutReason } from "../resume/signed-out-note";
+import {
+  REASON_BODY, takeSharedSignedOutNote, takeSignedOutNote, type SignedOutReason,
+} from "../resume/signed-out-note";
 import { PendingSignOutSaid, usePendingSignOut } from "./pending-sign-out";
 // The approval page's way back after an ordinary sign-in: a request id, never a URL.
 import { approvalReturnKept, takeApprovalReturn } from "../approve/approval-return";
@@ -90,11 +92,12 @@ export function LoginScreen(
   const [error, setError] = useState<string | null>(null);
   /**
    * Why this tab is here, read once after mount (never during render): a sign-out this browser asked
-   * for that the server never confirmed (`tf_owner`), else the resume splash's note.
+   * for that the server never confirmed (`tf_owner`), else the resume splash's note, else another tab's
+   * young reason: a tab opened after the refusal emptied the jar is sent here without the splash.
    */
   const [signedOut, setSignedOut] = useState<SignedOutReason | null>(null);
   useEffect(() => {
-    const note = takeSignedOutNote();
+    const note = takeSignedOutNote() ?? takeSharedSignedOutNote();
     if (readOwnerMarker().kind === "signed-out") setSignedOut("pending");
     else if (note !== null) setSignedOut(note);
   }, []);
