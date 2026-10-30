@@ -194,8 +194,9 @@ export const MAX_RAW_MESSAGE_BYTES = 64 * 1024 * 1024;
  * milliseconds. mailparser EMITS an error at the limit and drops the html, so the option alone
  * turns a slow message into a lost one — {@link normalizeMime} treats the rejection as a retry
  * signal and re-parses once with `skipHtmlToText: true`, keeping the html and giving up only the
- * derived text. 1 MiB sits above every html this system has measured. Residual: maximally-nested
- * html just under the limit still costs ~5.5 s. Owed.
+ * derived text. 1 MiB sits above every html this system has measured. Deep nesting just under the
+ * limit cost 2 to 21 s in html-to-text's parser stack; `patches/htmlparser2@10.1.0.patch` makes it
+ * 0.07 to 0.2 s.
  */
 export const MAX_HTML_TO_TEXT_CHARS = 1024 * 1024;
 

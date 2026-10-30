@@ -778,6 +778,20 @@ describe("normalizeMime", () => {
       expect(messageFingerprint(a)).not.toBe(messageFingerprint(b));
     });
 
+    /**
+     * Under the html-to-text cap, nesting cost the parser's own stack: html-to-text's htmlparser2 kept it with
+     * unshift, so a crafted letter at the cap held the shared worker 9 s (`patches/htmlparser2@10.1.0.patch`).
+     */
+    it("parses a deep nest just under the html-to-text cap in under 2 s, keeping the html", async () => {
+      const html = "<p>" + "x<b>".repeat(Math.floor((MAX_HTML_TO_TEXT_CHARS - 3) / 4));
+      expect(html.length).toBeGreaterThan(MAX_HTML_TO_TEXT_CHARS - 4);
+      const t0 = performance.now();
+      const m = await normalizeMime(htmlOnly(html));
+      const ms = performance.now() - t0;
+      expect(m.htmlBody?.trimEnd()).toBe(html);
+      expect(ms).toBeLessThan(2_000);
+    }, 60_000);
+
     /** An ordinary html-only message is untouched by any of this — text still comes back. */
     it("leaves an ordinary html-only message converting to text as before", async () => {
       const m = await normalizeMime(htmlOnly("<p>hello</p><p>world</p>"));

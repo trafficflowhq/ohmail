@@ -10,6 +10,7 @@ import { defaultTreeAdapter, parse } from "parse5";
 import { sanitizeMailHtmlPhone, type PhoneSanitizeOptions } from "../src/mail/sanitize";
 import { buildPhoneMailDocument } from "../src/mail/mail-document";
 import { treeStepper, treeWithin } from "@ohmail/client-engine/html-tree-budget";
+import { MAIL_MAX_HTML_CHARS } from "@ohmail/client-engine";
 import { FRAME_BUDGET, FRAME_STEP_CHARS, FRAME_STEP_WORK, PHONE_FRAME_MAX_CHARS } from "../src/mail/frame-budget";
 import {
   FRAME_CACHE_MAX_CHARS,
@@ -177,6 +178,21 @@ describe("the count is over the document the frame mounts, the shell included", 
     const amp = `<p>${bs(400)}</p>${"<p>t</p>".repeat(1600)}`;
     expect(treeWithin(`<noscript>${amp}</noscript>`, FRAME_BUDGET)).toEqual({ fits: false, past: "elements" });
   });
+
+  // The sanitizer's htmlparser2 kept its open-element stack with unshift and indexOf (`patches/htmlparser2@12.0.0.patch`).
+  it("sanitizes closes that match nothing and a deep math nest at the html cap in under a second", () => {
+    const fill = (head: string, unit: string, tail = "") => {
+      const n = Math.floor((MAIL_MAX_HTML_CHARS - head.length) / (unit.length + tail.length));
+      return head + unit.repeat(n) + tail.repeat(n);
+    };
+    for (const html of [fill("", "<b>", "</i>"), fill("<math>", "<mi>")]) {
+      expect(html.length).toBeLessThanOrEqual(MAIL_MAX_HTML_CHARS);
+      const t0 = performance.now();
+      const out = sanitizeMailHtmlPhone(html);
+      expect(out.oversize ?? false, html.slice(0, 12)).toBe(false);
+      expect(performance.now() - t0, html.slice(0, 12)).toBeLessThan(1_000);
+    }
+  }, 60_000);
 
   it("past the html cap the plan refuses without a step", () => {
     expect(frameFor(`<p>${"a".repeat(513 * 1024)}</p>`).plan.known).toEqual({ fits: false, past: "oversize" });
