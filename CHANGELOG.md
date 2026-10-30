@@ -21,6 +21,208 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.15] — 2026-10-30
+
+### The notice about signed-out older copies is one line
+
+When ohmail signs out an older copy of your sign-in (a browser or the app restored from a backup, copied
+to another computer, or closed at the wrong moment), the window says so in one quiet line above the mail,
+at any window width, instead of a block that took the whole top of the window. Details shows the whole
+sentence, each signed-out copy with its date and what to do; OK puts the notice away. On the desktop app
+and the web.
+
+### A browser that crashes right after renewing your sign-in stays signed in
+
+The web app renews your sign-in in the background while you use it. If the browser crashed, was
+force-quit or lost power shortly after a renewal, before it had saved the renewed sign-in to disk, it came
+back with the one it had already used, and the server ended the session in that browser as if its sign-in
+had been copied. The browser now writes down which renewal it sent before the request leaves, and keeps
+that note until the next renewal, so after a restart the server sees the same browser finishing its own
+renewal and the sign-in continues. An older copy of a sign-in is still refused, as before. On ohmail Cloud
+and on your own server.
+
+### Signing in again on a browser ends that browser's earlier sign-in
+
+Signing in again on a browser whose sign-in had lapsed left the earlier one live on the server for up to
+ninety days, where an old copy of that browser's profile could still use it. A completed sign-in now ends
+the earlier sign-in of the same person on the same browser; one made before this release takes part once
+it has renewed. Your other browsers, the desktop app and paired phones stay signed in. A browser profile
+that was reset or reinstalled keeps no trace of its earlier sign-in, so that one still lasts until ninety
+days without use, or until you press "Sign out all" beside your other web sessions in Devices. On ohmail
+Cloud and on your own server.
+
+### Every tab on an ended sign-in says the same reason
+
+Web, on ohmail Cloud and on your own server: when two tabs open on a sign-in that has ended, both now say
+why at the sign-in form, for example "You were signed out on this browser." Until now only the tab that
+asked the server said so; the other said "This browser holds no sign-in." or gave no reason. A tab opened
+within 15 seconds of the first gives the same reason. The form still shows at once.
+
+### A signed-out browser tab stops asking the server to renew its sign-in
+
+A browser tab left open after its sign-in had ended, for example after a sign-out on another device, sent
+the server a renewal request every five minutes for as long as it stayed open, and each one was refused. It
+now asks nothing more until somebody signs in again in that browser; the tab then picks the new sign-in up
+within five minutes, as before. A renewal that failed because the server was busy or out of reach is still
+retried. On ohmail Cloud and on your own server.
+
+### A browser paired with your computer stays paired after a crash right after it renews
+
+A browser paired with the desktop app renews its access in the background. If the browser crashed, was
+force-quit or lost power shortly after a renewal, before it had saved the renewed pairing to disk, it came
+back with the one it had already used, and your computer ended the pairing as if it had been copied, so
+the browser had to be paired again. The browser now writes down which renewal it sent before the request
+leaves, and keeps that note until the next renewal, so after a restart your computer sees the same browser
+finishing its own renewal and the pairing continues, however long the restart took. An older copy of a
+pairing is still refused, as before. Desktop app only.
+
+### News and Receipts on the phone read only what rests on screen
+
+On the phone, a letter in News or Receipts turned read when a scroll you drove carried it past the read line,
+so a few fast flings marked letters you never looked at. The phone now follows the rule the web and desktop
+apps follow: an item turns read once its first lines have rested on screen for 0.7 s, and a fling's glide
+counts nothing. A fling or a quick scroll past leaves it unread, so does leaving with only its sender line
+showing at the foot, and a scroll the app makes reads nothing; the list holding its place while mail arrives
+does not stop the rest. An item you mark unread stays unread until you leave the stream. The line under the
+News title and the one at the end of the stream say so. Android and iOS.
+
+### A letter marked unread right after a dropped connection stays unread
+
+When you opened a letter and the connection to your mail server dropped while ohmail was telling the
+server it was read, pressing Mark unread before ohmail reconnected could be lost: the server kept the
+letter read, and after the reconnect ohmail showed it read again. The unread is now sent, and the letter
+stays unread in ohmail and on the server. On the desktop, the phone, ohmail Cloud and your own server.
+
+### Undo takes back every letter of a conversation
+
+On Android and iOS, Undo now takes back every letter of a conversation after Later, Park, Resurface or Done.
+An Undo pressed while the conversation's letters were still being sent could leave some of them filed, so the
+conversation showed up in Parked again and stayed there after the app was restarted. A press on one of its
+letters made in that moment now also lands after the conversation's own, and a press on an open message no
+longer waits while the phone saves that you have read it.
+
+On every app, Mark unread on a message you had just opened, while the app was still saving that you read it,
+now stays: when that save failed and was sent again, after a server error or a dropped connection, it marked
+the message read again.
+
+On the web and desktop apps, Undo after a press on a whole conversation or a selection now also takes back a
+letter whose save was still being retried after a failed attempt; that letter used to stay where the press put it.
+When every save of such a press failed for a moment, it said nothing had changed and offered no Undo, while the
+letters stayed where it put them; it now says what it did, counts the letters still being saved and offers Undo.
+
+### A reply typed in tabletop keeps its buttons off the crease
+
+On an Android foldable half open like a laptop, a reply or a sheet that takes text now ends above the
+crease while the keyboard is up, so Cancel, Send + Done and Send are no longer drawn across the fold.
+Also on the phone app: in two panes the Sidebar button works while the "could not be saved" line stands
+under it; a message or sender page in a pane ends a scrolled line in a fade under the status bar instead
+of a bare cut; New mail shows no extra Back on the rail beside its own Cancel; a letter that goes on below
+the composer's edge fades into it; and a sentence that appears after the earlier ones cleared lands over
+the buttons at once.
+
+### The phone's sentences say what is true
+
+On the phone, several screens said something that was not so. The Tag sheet now marks the tags a message
+already has, before each name, and a screen reader hears each as a checked or unchecked box, so a tap no
+longer removes a tag you meant to add. A phone that is its own mailbox's only app no longer says drafts are
+in your account on every device, or sends you to ohmail on the web or the desktop to finish one: it says
+they are kept on this phone, and what the card itself can do. With no network the Ohbox says so once, at
+the top, instead of again under the title, and "Connection lost. Reconnecting…" is no longer said twice.
+The Servers page counts the messages on the device without an internal sync marker beside them, a restore
+the server has already finished says "Restored to …", and a Screened out card calls its time the newest
+letter's, which it is. The Screener's knock wraps its sentence at large text instead of cutting the count.
+Connect names a refused certificate on the outgoing server as it does on the incoming one, says when a
+switch to encryption was interfered with or did not finish rather than that the server offers none, and
+tells a phone with no network that it is offline rather than to check the address. In English and German.
+
+### Letters made only of html and pictures show their words in the list
+
+A letter that has no plain-text part, such as a newsletter of pictures with its html beside them, now
+keeps the words the reader draws as its text. The message list shows them as its preview, search finds
+them, and body rules and screening read them, on the desktop, the web, the phone, ohmail Cloud and your
+own server. Hidden preview filler, stylesheets and link targets are left out. Letters you already have
+keep an empty preview for now; a later release fills them in.
+
+### Search answers faster on mail its index has not reached yet
+
+A search on an account whose mail the search index has not started on yet reads only the older
+columns that hold that mail's words, and no longer plans or checks the index's documents it does not
+have. The first page answers in about half the database time, with the same results in the same order.
+
+### Counts say what they count
+
+Several numbers said something other than what was on screen. On the web and the desktop app:
+
+- Selecting a conversation in the Ohbox counts one row, not every message in it.
+- The Answer Later, Parked, Resurface, tag and Drafts counts on the rail, and the Screener's Waiting tab,
+  now say what they count to a screen reader and in their tooltip, as the Ohbox and Screener counts did.
+- With one unread message, Mark all read is read out in the singular. "1 held message" and "1 message listed
+  under History" are singular too, in English and German.
+- The first-run summary no longer counts your own sent mail as screened.
+
+On every app, the offer to screen mail from senders you never decided about says "at least" when there is
+more such mail than one press takes, instead of giving the press's limit as the total. On the phone, the
+Screener no longer says nobody is waiting while a mailbox's first import is still running. It says the
+mailbox is still being read.
+
+### The Screener counts the messages it shows, not "held" ones
+
+A waiting sender's card and row in the Screener said "12 held messages — all shown" while some of those
+letters were not held at all: mail from a sender you have not decided about that is still in the Inbox on
+your mail server is listed on the card, and your decision moves it too, but it was counted as held. The card,
+the row and the first decision in setup now say "12 messages — all shown" ("12 Nachrichten" in German),
+which is what they list, on the desktop app, the web and the phone. Which letters stay out of the Ohbox is
+unchanged.
+
+### Five controls now say what they do, or do what they say
+
+On the desktop and the web:
+
+- Deleting a message in a mailbox that has no Trash folder said "Moved to Trash." and, seconds later, took it
+  back with no reason. The refusal now names it: the mailbox has no Trash folder, and ohmail never erases
+  mail. A second delete in that mailbox is refused at once, with the same sentence.
+- The notice about who organizes a mailbox had a button named "Mark read" that marked no mail read. It is
+  named "Dismiss" now (German "Ausblenden").
+- On the desktop, a door to your own server asked you to "Sign in to ohmail Cloud" after its address step,
+  forgot the address you had typed and spoke of a copy of your mail that a fresh install does not have. It
+  now opens your server's own sign-in with the address kept, and that sign-in says which changes still wait
+  on this computer, as the Cloud one does.
+- `w` and the palette's "Switch layout" did nothing you could see in a window wider than 1023 or narrower
+  than 392 pixels, where the two layouts look the same. There the palette leaves it out, and the shortcut
+  sheet greys `w` and says why.
+
+On the desktop, the web and the phone, the search box says "Search everything". It said "typos welcome",
+but on the desktop and the phone a one-letter typo of a word in your mail finds nothing.
+
+### The News list's last line states the read rule it follows
+
+The line under the News list said scrolling past an item marks it seen, which stopped being true when
+News began reading only what rests on screen in the stream. It now says so: an item turns read once it
+rests on screen, and a quick scroll past leaves it unread. The demo's About text says the same. Desktop
+and web, English and German.
+
+### A downloaded attachment is no longer served from the browser cache to the next account
+
+On the web app (ohmail Cloud and your own server), an attachment's bytes were kept in the browser's cache for an
+hour without being tied to the session, so after a sign-out and a different account's sign-in on the same browser
+the same attachment link could in a narrow case still be answered from that cache. Attachments are now keyed on the
+session, as remote images already were.
+
+### The .deb, .rpm and Flatpak builds no longer vanish when an accessibility tool reads their window
+
+The Linux AppImage already carried an accessibility bridge with the upstream fixes for a crash: with a
+screen reader, an automation tool or another accessibility client coming and going, the app could close
+without a word. The .deb, the .rpm and the Flatpak now carry the same bridge too, and load it ahead of
+your distribution's or the runtime's. Nothing else about how they use your system's libraries changes.
+
+### A pull request under a Next route group runs only the tests it reaches
+
+For contributors: a maintainer's pull request that changed a file under `apps/webapp/app/(product)/` or
+`apps/mobile/app/(tabs)/` ran the whole test suite, because the per-PR test selector refused every path with
+parentheses. It now reads a route group, a whole path segment `(name)`, as part of a path, and selects the
+tests that file reaches, including the tests that read it by name. Parentheses in any other shape still run
+the whole suite.
+
 ## [0.30.14] — 2026-10-29
 
 ### The sidebar no longer spends a line on the version number
@@ -15153,7 +15355,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.14...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.15...HEAD
+[0.30.15]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.15
 [0.30.14]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.14
 [0.30.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.13
 [0.30.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.12
