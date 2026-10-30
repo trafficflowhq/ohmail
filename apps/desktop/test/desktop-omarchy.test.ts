@@ -76,6 +76,10 @@ const NORD_MINIMAL = [
   'red = "#bf616a"',
 ].join("\n");
 
+/* A mid-grey panel no walk can read on (refused), and a legacy theme with only colorN (#436). */
+const MID_GREY = ['mode = "dark"', 'background = "#808080"', 'foreground = "#909090"', 'accent = "#8a8a8a"', 'red = "#858585"'].join("\n");
+const LEGACY = ['accent = "#c4632f"', 'background = "#1d1310"', 'foreground = "#e8d5c4"', 'color1 = "#d2553f"', 'color4 = "#6f8fb0"'].join("\n");
+
 interface Asked {
   command: string;
   payload?: Record<string, unknown>;
@@ -103,6 +107,7 @@ function installShell(themeAnswer: unknown): { asked: Asked[]; pushes: Map<strin
         return null;
       }
       if (command === "omarchy_theme") return themeAnswer;
+      if (command === "omarchy_theme_refused") return null;
       throw new Error(`unexpected command ${command}`);
     },
   };
@@ -282,6 +287,24 @@ describe("the push — omarchy theme set, heard live", () => {
     push({ payload: { slug: "broken" } });
     push("garbage");
     expect(styleText()).toBe(afterNord);
+  });
+
+  it("a refused theme says why in the shell's log, once per theme change; a legacy one maps (#436)", async () => {
+    const { asked, pushes } = installShell({ slug: "tokyo-night", colorsToml: TOKYO_NIGHT });
+    await startOmarchyFeed();
+    const push = pushes.get(OMARCHY_THEME_EVENT)!;
+    const refusals = () => asked.filter((a) => a.command === "omarchy_theme_refused").map((a) => a.payload);
+    const afterTokyo = styleText();
+
+    push({ payload: { slug: "grey", colorsToml: MID_GREY } });
+    push({ payload: { slug: "grey", colorsToml: MID_GREY } });
+    expect(styleText()).toBe(afterTokyo);
+    expect(refusals()).toEqual([{ reason: "floor-ink" }]);
+
+    push({ payload: { slug: "mars", colorsToml: LEGACY } });
+    expect(styleText()).toContain("--panel: #1d1310 !important;");
+    push({ payload: { slug: "grey", colorsToml: MID_GREY } });
+    expect(refusals()).toEqual([{ reason: "floor-ink" }, { reason: "floor-ink" }]);
   });
 
   it("the system's own settings ride the same payload into their slots", async () => {

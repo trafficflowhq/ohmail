@@ -38,6 +38,19 @@ pub fn omarchy_theme() -> Option<serde_json::Value> {
     omarchy_core::state_dir().and_then(|current| omarchy_core::gather(&current))
 }
 
+/// The window could not map the staged theme and keeps its last one: say why in the log. The
+/// argument is a code from `omarchy_core::REFUSALS`; the shell reads the theme's name itself.
+#[tauri::command(async)]
+pub fn omarchy_theme_refused(reason: String) {
+    let Some(current) = omarchy_core::state_dir() else {
+        return;
+    };
+    let name = omarchy_core::theme_name(&current);
+    if let Some(line) = omarchy_core::refusal_line(name.as_deref(), &reason) {
+        crate::engine::log_line(format_args!("{line}"));
+    }
+}
+
 /// Start following the desktop theme, if there is one to follow. Called once from `main.rs`
 /// after the app is built; detection failing is the normal case on two of the three
 /// platforms and most of the third, and costs exactly the stat it took to find out.

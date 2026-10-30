@@ -36,13 +36,18 @@ export interface OmarchyThemeRaw extends OmarchySystemRaw {
 }
 
 /** The floors the law promises, verified on the OUTPUT rather than trusted to the walk:
- *  `ensure`'s walk mixes toward the palette's own foreground, so a palette whose foreground
- *  sits near its background can run the walk to the end and still land under the floor —
- *  every step "helped" and none sufficed. All 22 stock themes clear these; the palette that
- *  fails them is user-authored and unreadable-by-contrast, and the honest answer for it is
- *  the same as for one that does not parse: keep the last good theme.
+ *  `ensure`'s walk mixes toward the palette's foreground (toward the mode's pole when that
+ *  foreground itself misses the floor), and on a mid-grey panel even the pole can land under
+ *  it — every step "helped" and none sufficed. All 22 stock themes clear these; a palette
+ *  that fails them is unreadable-by-contrast, and the honest answer for it is the same as for
+ *  one that does not parse: keep the last good theme.
  *  A tag's ink is asked on the chip's own ground — its wash over the tile and over the canvas. */
 export function clearsFloors(map: OhmarchyMap, t: Record<string, string>): boolean {
+  return floorMissed(map, t) === null;
+}
+
+/** The first slot under its floor, `"?"` for a slot the contrast math cannot read, or null. */
+function floorMissed(map: OhmarchyMap, t: Record<string, string>): string | null {
   const panel = t["--panel"];
   try {
     const floors: [string, string, number][] = [
@@ -56,9 +61,9 @@ export function clearsFloors(map: OhmarchyMap, t: Record<string, string>): boole
       ...map.TAG_HUES.flatMap(([name]): [string, string, number][] =>
         [panel, t["--canvas"]].map((g) => [`--tg-${name}-ink`, washOver(map, t[`--tg-${name}-bg`], g), 4.5])),
     ];
-    return floors.every(([slot, against, floor]) => map.contrast(t[slot], against) >= floor);
+    return floors.find(([slot, against, floor]) => !(map.contrast(t[slot], against) >= floor))?.[0] ?? null;
   } catch {
-    return false; // a slot the contrast math cannot read is a floor not cleared
+    return "?"; // a slot the contrast math cannot read is a floor not cleared
   }
 }
 
@@ -80,19 +85,57 @@ function washOver(map: OhmarchyMap, wash: string, ground: string): string {
  * so does a palette the walks could not save, because a floor is a promise about the OUTPUT.
  */
 export function mapOmarchyTheme(raw: OmarchyThemeRaw): OhmarchyMapResult | null {
+  const out = mapNative(raw);
+  return "refused" in out ? null : out.mapped;
+}
+
+/**
+ * Why `mapOmarchyTheme` answers null for this material, or null when it maps. A closed
+ * vocabulary: the desktop shell logs it under the theme's name (`omarchy.rs`).
+ */
+export type OmarchyRefusal =
+  | "no-palette"
+  | "missing-accent"
+  | "missing-red"
+  | "not-a-color"
+  | "floor-ink"
+  | "floor-accent"
+  | "floor-on-accent"
+  | "floor-danger"
+  | "floor-tag";
+
+export function omarchyRefusal(raw: OmarchyThemeRaw): OmarchyRefusal | null {
+  const out = mapNative(raw);
+  return "refused" in out ? out.refused : null;
+}
+
+function mapNative(raw: OmarchyThemeRaw): { mapped: OhmarchyMapResult } | { refused: OmarchyRefusal } {
   const palette = parseColorsToml(raw.colorsToml);
-  if (palette === null) return null;
+  if (palette === null) return { refused: "no-palette" };
   const map = omarchyMap();
+  const c = map.withAnsiRoles(palette.colors);
+  if (!(c.hyprland_active_border || c.active_border_color || c.accent)) return { refused: "missing-accent" };
+  if (!c.red) return { refused: "missing-red" };
   let mapped: OhmarchyMapResult;
   try {
     mapped = map.mapTheme(palette);
   } catch {
     /* A palette the law itself refuses (e.g. a required color that is not hex). The last
        good theme is the honest render; broken chrome is not. */
-    return null;
+    return { refused: "not-a-color" };
   }
-  if (!clearsFloors(map, mapped.tokens)) return null;
-  return { ...mapped, tokens: applySettings(mapped.tokens, parseSystem(raw)) };
+  const missed = floorMissed(map, mapped.tokens);
+  if (missed !== null) return { refused: floorRefusal(missed) };
+  return { mapped: { ...mapped, tokens: applySettings(mapped.tokens, parseSystem(raw)) } };
+}
+
+function floorRefusal(slot: string): OmarchyRefusal {
+  if (slot.startsWith("--tg-")) return "floor-tag";
+  if (slot === "--on-accent") return "floor-on-accent";
+  if (slot.startsWith("--accent")) return "floor-accent";
+  if (slot === "--danger") return "floor-danger";
+  if (slot.startsWith("--ink")) return "floor-ink";
+  return "not-a-color";
 }
 
 /**

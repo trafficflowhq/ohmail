@@ -1179,6 +1179,9 @@ describe("the Rust side", () => {
       // else `None`. The push half is the `omarchy:theme` event over the one listen grant the
       // window already holds; `omarchy.rs` carries the reasoning.
       "omarchy_theme",
+      // …and why the window kept its look when that theme did not map: a reason CODE the shell
+      // checks against its own closed list (`omarchy_core.rs`), adding the theme's name itself.
+      "omarchy_theme_refused",
       // THE APP'S OWN UPDATE, from Settings. Two commands that name nothing: a read of the
       // update flow's state (installed version, stage, what the last check found and when), and
       // a press that does exactly what picking the menu item does — `updater.rs` routes both

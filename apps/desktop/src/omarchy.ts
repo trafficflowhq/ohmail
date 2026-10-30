@@ -17,7 +17,11 @@
  * failing pair is dropped. The fence and the cascade argument live with the rule builder.
  */
 
-import { mapOmarchyThemePair, type OmarchyThemeRaw } from "../../../packages/tokens/omarchy/map.js";
+import {
+  mapOmarchyThemePair,
+  omarchyRefusal,
+  type OmarchyThemeRaw,
+} from "../../../packages/tokens/omarchy/map.js";
 import {
   applyOmarchyTokens,
   cacheOmarchyPalette,
@@ -42,6 +46,9 @@ export const OMARCHY_THEME_EVENT = "omarchy:theme";
 
 /** The command that answers the active theme's raw material, or null off-Omarchy. */
 const OMARCHY_THEME_COMMAND = "omarchy_theme";
+
+/** The command that logs why the staged theme was refused; it takes a reason code only. */
+const OMARCHY_REFUSED_COMMAND = "omarchy_theme_refused";
 
 interface TauriInternals {
   invoke(command: string, payload?: Record<string, unknown>, options?: unknown): Promise<unknown>;
@@ -91,6 +98,9 @@ export function themeRawOfPayload(payload: unknown): OmarchyThemeRaw | null {
    simply does not touch. */
 let feedStarted = false;
 
+/* The colors.toml last reported as refused, so one theme change logs one line. */
+let lastRefused: string | null = null;
+
 /**
  * WHAT "THE SYSTEM" IS ON THIS DESKTOP — the last mapped theme's own mode, or null before the
  * first payload and on every system that is not an Omarchy one, where `prefers-color-scheme`
@@ -115,7 +125,11 @@ function handlePayload(payload: unknown): void {
   const raw = themeRawOfPayload(payload);
   if (raw === null) return;
   const mapped = mapOmarchyThemePair(raw);
-  if (mapped === null) return;
+  if (mapped === null) {
+    reportRefusal(raw);
+    return;
+  }
+  lastRefused = null;
   applyOmarchyTokens(mapped.native.tokens, mapped.mode, mapped.counterpart?.tokens ?? null);
   cacheOmarchyPalette({
     v: OMARCHY_PALETTE_VERSION,
@@ -125,6 +139,19 @@ function handlePayload(payload: unknown): void {
   });
   liveMode = mapped.mode;
   for (const watcher of modeWatchers) watcher();
+}
+
+/** Tell the shell's log why the window kept its look: the theme's name is the shell's to add. */
+function reportRefusal(raw: OmarchyThemeRaw): void {
+  const reason = omarchyRefusal(raw);
+  const shell = internals();
+  if (reason === null || shell === null || raw.colorsToml === lastRefused) return;
+  lastRefused = raw.colorsToml;
+  try {
+    void shell.invoke(OMARCHY_REFUSED_COMMAND, { reason }).catch(() => {});
+  } catch {
+    /* a lost log line never stops the feed */
+  }
 }
 
 /**
@@ -156,6 +183,7 @@ export async function startOmarchyFeed(): Promise<void> {
 /** Tests only: forget the started flag so each test drives a fresh feed. */
 export function resetOmarchyFeedForTests(): void {
   feedStarted = false;
+  lastRefused = null;
   liveMode = null;
   modeWatchers.clear();
   resetOmarchyPaintForTests();

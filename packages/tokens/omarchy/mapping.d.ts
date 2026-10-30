@@ -24,6 +24,8 @@ export interface OhmarchyMapResult {
 
 export interface OhmarchyMap {
   mapTheme(fixture: { mode: string; colors: Record<string, string> }): OhmarchyMapResult;
+  /** The palette with absent named roles filled from their ANSI `colorN` slots. */
+  withAnsiRoles(colors: Record<string, string>): Record<string, string>;
   contrast(a: string, b: string): number;
   mix(a: string, b: string, t: number): string;
   alpha(c: string, a: number): string;
