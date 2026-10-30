@@ -515,7 +515,7 @@ export function DesktopGate() {
    * gates the ask as well as the mount: a door with no hosted account has nothing to ask.
    */
   const { manageOffered, withdrawManage, storage, lifecycleState } = useDesktopManageOffer(accountDoor);
-  const { accountId: hostedAccountId, reuseSweeps } = useHostedSession(accountDoor);
+  const { accountId: hostedAccountId, reuseSweeps, recheck: recheckHostedSession } = useHostedSession(accountDoor);
   /** The Subscription pane is offered AND this build may point at a purchase (not the Mac App Store). */
   const billingLinksOut = accountDoor && manageOffered && linksOutToBilling();
 
@@ -1339,7 +1339,7 @@ export function DesktopGate() {
                     />
                   ) : null}
                   {reuseSweeps.length > 0
-                    ? <ReuseSweepNotice sweeps={reuseSweeps} onAcknowledge={reuseSweepsOverBridge} />
+                    ? <ReuseSweepNotice sweeps={reuseSweeps} onAcknowledge={reuseSweepsOverBridge} onRecheck={recheckHostedSession} />
                     : null}
                 </>
               ),

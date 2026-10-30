@@ -56,6 +56,13 @@ export const DOOR_ROUTE = "/login";
 /** The resume marker's cookie name. Must equal `RESUME_COOKIE` in `packages/api/src/cookies.ts`. */
 export const RESUME_COOKIE = "tf_resume";
 
+/**
+ * A SIGN-IN ENDED ON THIS BROWSER SECONDS AGO: the client writes it beside the shared signed-out note
+ * (`signed-out-note.ts`), host-only, for the note's 15 s, holding only the reason's word. The refusal
+ * emptied the jar, so without it a tab opened next met the landing instead of the sign-in form.
+ */
+export const SIGNED_OUT_COOKIE = "tf_signed_out";
+
 /** The API path that answers "is this token a live full session?" (`core.ts`). */
 export const SESSION_ENDPOINT = "/auth/session";
 
@@ -88,9 +95,10 @@ export function looksLikeSessionToken(token: string): boolean {
 
 /**
  * What `/` should render for this request. `sign-out` is not rendered here: `middleware.ts` answers it
- * with a redirect to the sign-in page, which finishes the sign-out behind its form.
+ * with a redirect to the sign-in page, which finishes the sign-out behind its form; `door` with the
+ * same redirect, where the page says why the sign-in ended.
  */
-export type Surface = "marketing" | "app" | "demo" | "resume" | "sign-out";
+export type Surface = "marketing" | "app" | "demo" | "resume" | "sign-out" | "door";
 
 export interface GateInput {
   /** The raw `tf_session` cookie value, or null when the browser sent none. */
@@ -128,6 +136,8 @@ export interface GateInput {
    * resumed (the person said no).
    */
   signOutPending?: boolean;
+  /** {@link SIGNED_OUT_COOKIE} is in the jar: a jar with no session is sent to the sign-in page (`door`). */
+  signedOutJustNow?: boolean;
   /** Injectable so the tests can assert the ZERO-fetch branches by counting calls. */
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -168,19 +178,21 @@ export async function resolveSurface(input: GateInput): Promise<Surface> {
   //    `Lax`, so it arrives, and such a visitor resumes instead of being shown marketing.
   const token = input.sessionToken?.trim();
   const resumable = input.resumeMarker === true && input.apiOrigin !== null;
+  const noSession = (): Surface =>
+    resumable ? "resume" : input.signedOutJustNow === true && input.apiOrigin !== null ? "door" : "marketing";
 
   // 2a. A SIGN-OUT THIS BROWSER ASKED FOR AND THE SERVER NEVER CONFIRMED: the sign-in page finishes
   //     it. Before the probe and the throttle, because the answer does not depend on the session.
   if (input.signOutPending === true && input.apiOrigin !== null && (token || input.resumeMarker === true)) {
     return "sign-out";
   }
-  if (!token) return resumable ? "resume" : "marketing";
+  if (!token) return noSession();
 
   // 2b. A value no `generateToken()` could ever have produced is not worth a network
   //     round trip — see TOKEN_SHAPE. Free, and it runs before the API is consulted.
   //     A garbage token with a valid marker still gets to try: the token is what is
   //     malformed, and the refresh path does not use it.
-  if (!looksLikeSessionToken(token)) return resumable ? "resume" : "marketing";
+  if (!looksLikeSessionToken(token)) return noSession();
 
   // 3. A cookie on a deployment with no API behind it proves nothing. Answering "app"
   //    on presence alone is the one shortcut this file refuses to take.

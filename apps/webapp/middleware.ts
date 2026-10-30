@@ -7,7 +7,7 @@ import { newNonce, nonceCsp } from "./app/security-headers";
 import { cookieFromStore } from "./app/shell/cookie-jar";
 import { OWNER_COOKIE, OWNER_SIGNED_OUT } from "./app/shell/owner-cookie";
 import {
-  APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, resolveSurface,
+  APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, SIGNED_OUT_COOKIE, resolveSurface,
 } from "./app/session-gate";
 
 /**
@@ -307,12 +307,14 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const marker = cookieFromStore(request.cookies, RESUME_COOKIE) !== null;
   // The client's own word for a sign-out the server never confirmed (`owner-cookie.ts`).
   const signOutPending = cookieFromStore(request.cookies, OWNER_COOKIE) === OWNER_SIGNED_OUT;
+  const signedOutJustNow = /^[a-z]{1,16}$/.test(cookieFromStore(request.cookies, SIGNED_OUT_COOKIE) ?? "");
 
   const surface = await resolveSurface({
     sessionToken: token,
     throttled,
     resumeMarker: marker,
     signOutPending,
+    signedOutJustNow,
     search: request.nextUrl.searchParams,
     apiOrigin: API_ORIGIN,
     env: { NEXT_PUBLIC_DEMO: process.env.NEXT_PUBLIC_DEMO },
@@ -320,8 +322,9 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 
   // A SIGN-OUT THE SERVER NEVER CONFIRMED goes to the sign-in page, on both builds: it paints at once
   // and finishes the sign-out behind its form (the splash did it behind a blank page). Nothing is
-  // fetched here. A 307 for `DOOR_ROUTE`'s reason, the query dropped.
-  if (surface === "sign-out") {
+  // fetched here. A 307 for `DOOR_ROUTE`'s reason, the query dropped. A sign-in that ended seconds ago
+  // (`door`) goes the same way, so a tab opened after it says why at the form.
+  if (surface === "sign-out" || surface === "door") {
     const door = request.nextUrl.clone();
     door.pathname = DOOR_ROUTE;
     door.search = "";
