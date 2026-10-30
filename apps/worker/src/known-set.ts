@@ -286,6 +286,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // `folder_state.desired_folder` + `change_log` for own mail at the gate — neither is projected.
   "releaseOwnMailAtGate",
   "deferFlagReconcile", "recordAudit", "recordAuditMany", "recordChange",
+  // `flag_state.conflict` and `reconcile_status` only, never `observed_seen`.
+  "markFlagUnanswered",
   /* `recordChanges` is `recordChange` for a list — the same two tables (`change_log` and the
      account's seq counter), neither of them in the projection. Named separately because the list
      is what the ingest now calls; the singular stays for every caller that knows one delta. */

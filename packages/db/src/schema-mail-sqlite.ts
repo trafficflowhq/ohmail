@@ -869,6 +869,7 @@ export const flagState = sqliteTable("flag_state", {
   observedSeen: integer("observed_seen", { mode: "boolean" }).notNull(),
   lastSetBy: text("last_set_by").notNull(),   // 'us' | 'external'
   reconcileStatus: text("reconcile_status").notNull().default("pending"),
+  /** A STORE of ours left and its answer was lost; `observed_seen` is in doubt. */
   conflict: integer("conflict", { mode: "boolean" }).notNull().default(false),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   /** Refusals recorded for this `\Seen` write — `folder_state`'s pair, same rules. */

@@ -6,7 +6,8 @@ import * as imapModule from "@trafficflow/core/adapters/imap";
 import {
   AttachmentTooLargeError, DestinationMissingError, EpochUnknownError, ImapAdapter, ImapBoundConfigError, ImapBoundExceeded,
   ImapConnectionClosedError, MessageGoneError, MoveIncompleteError, MoveRefusedError, MoveVerifyError,
-  RawMessageTooLargeError, SameFolderMoveError, UnsupportedAuthTypeError, WriteDeclinedError,
+  RawMessageTooLargeError, SameFolderMoveError, StoreRefusedError, StoreUnansweredError, UnsupportedAuthTypeError,
+  WriteDeclinedError,
 } from "@trafficflow/core/adapters/imap";
 import type { MimeStructure, NativeLocator, OutboundMessage, SendAdapter } from "@trafficflow/core/mail";
 import { sendService, type AttachmentAdapter, type ServiceContext } from "@trafficflow/services/mail";
@@ -119,6 +120,8 @@ const MODULE_CLASSES: Record<string, { verdict: Verdict; make: () => unknown }> 
   DestinationMissingError: { verdict: "latch", make: () => new DestinationMissingError("Archive") },
   SameFolderMoveError: { verdict: "latch", make: () => new SameFolderMoveError(STALE, "INBOX") },
   WriteDeclinedError: { verdict: "latch", make: () => new WriteDeclinedError("move", "claim_stale") },
+  StoreRefusedError: { verdict: "latch", make: () => new StoreRefusedError(STALE) },
+  StoreUnansweredError: { verdict: "latch", make: () => new StoreUnansweredError(STALE) },
   UnsupportedAuthTypeError: { verdict: "latch", make: () => new UnsupportedAuthTypeError("kerberos") },
 };
 /** The throws that are no class of the module: the door's own clock, the driver's, a bug. */

@@ -1,4 +1,4 @@
-import { MessageGoneError, ImapConnectionClosedError } from "@trafficflow/core/adapters/imap";
+import { MessageGoneError, ImapConnectionClosedError, StoreRefusedError, StoreUnansweredError } from "@trafficflow/core/adapters/imap";
 import type {
   MailboxAdapter, ImapConfig, ImapCursor, ChangeBatch, ImapCapabilities,
   OutboundMessage, SendResult, FetchedPart, FetchByUidOptions, TargetedFetch,
@@ -547,6 +547,12 @@ export class FakeAdapterFleet {
   /** Locator refs whose `setFlags` throws `MessageGoneError` — it left the locator mid-cycle. */
   readonly goneFlagRefs = new Set<string>();
   /**
+   * Locator ref → what its next `setFlags` calls meet, one entry each: `unanswered` lands the STORE
+   * and loses the answer, `refused` is answered and not applied, `unsent` never leaves. `during`
+   * runs while the STORE is on the wire. Every STORE that left is in {@link flagWrites}.
+   */
+  readonly flagStoreFaults = new Map<string, Array<{ answer: "unanswered" | "refused" | "unsent"; during?: () => Promise<unknown> }>>();
+  /**
    * mailboxId → the worker's `onConnectionError` callback for that adapter.
    *
    * A real `ImapFlow` reports a dead socket by EMITTING `error`, not by rejecting anything a
@@ -787,7 +793,12 @@ export class FakeAdapterFleet {
       },
       async setFlags(locator: NativeLocator, flags: { seen: boolean }): Promise<void> {
         if (fleet.goneFlagRefs.has(locator.ref)) throw new MessageGoneError(locator);
+        const fault = fleet.flagStoreFaults.get(locator.ref)?.shift();
+        if (fault?.answer === "unsent") throw new ImapConnectionClosedError();
         fleet.flagWrites.push({ mailboxId: id, locator, seen: flags.seen });
+        await fault?.during?.();
+        if (fault?.answer === "unanswered") throw new StoreUnansweredError(locator);
+        if (fault?.answer === "refused") throw new StoreRefusedError(locator);
       },
       /* ── THE TARGETED RE-READ, present only when the fleet opts in — see `targetedRetry` ────
        *
