@@ -131,9 +131,10 @@ interface Phone { engine: PhoneEngine; lines: Line[]; exec: PhoneSqlExecutor; in
 const open: PhoneEngine[] = [];
 const dirs: string[] = [];
 
-async function bootPhone(o: { user: string; file: string; flushMs: number }): Promise<Phone> {
+/** `installId`: the install generation a phone keeps across Stop and remove (a fresh one by default). */
+async function bootPhone(o: { user: string; file: string; flushMs: number; installId?: string }): Promise<Phone> {
   const lines: Line[] = [];
-  const installId = `install-${randomUUID()}`;
+  const installId = o.installId ?? `install-${randomUUID()}`;
   const exec = dialectSeam(nodeExecutor(o.file));
   const engine = await startPhoneEngine({
     exec,
@@ -534,5 +535,59 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone organizing a mailbox with 
     const reach = await call(phone, "GET", "/local/mailboxes/connections");
     const row = (reach.json?.items ?? []).find((i: { mailboxId?: string }) => i.mailboxId === mailboxId);
     expect(row?.settingsLeft).toBeUndefined();
+  }, 600_000);
+
+  /* STOP AND REMOVE, THEN CONNECT AGAIN: the store goes and the install generation stays, so the
+     mailbox's settings carry this phone's own install id and predate its new store. A decision made
+     before the card is answered stays on the phone, so a third connect still finds the first settings. */
+  it("removed and connected again on a fresh store, twice, the phone keeps the first store's settings and asks", async () => {
+    const user = `settings-doc-${randomUUID()}@trafficflow.test`;
+    await withServer(user, async () => undefined);
+    const installId = `install-${randomUUID()}`;
+    const first = await bootPhone({ user, file: join(storeDir(), "engine.db"), flushMs: 0, installId });
+    const firstId = seedMailboxId(first);
+    expect((await call(first, "POST", `/local/mailboxes/${firstId}/organize`, { consent: "person" })).status).toBe(200);
+    expect(await untilLine(first, "organizer_row_promoted", () => true, 120_000), `events ${events(first)}`).not.toBeNull();
+    await decide(first, "anna@elsewhere.test", "INBOX");
+    await decide(first, "news@elsewhere.test", "ohmail/Screened");
+    await twoPasses(first);
+    expect(await first.engine.stopOrganizing()).toBe("released");
+    const left = ["anna@elsewhere.test>INBOX", "news@elsewhere.test>ohmail/Screened"];
+    expect((await documentsOnServer(user)).map((d) => d.rules.sort()), "premise: the first store's settings are in the mailbox")
+      .toEqual([left]);
+    await first.engine.stop();
+    open.splice(open.indexOf(first.engine), 1);
+
+    const phone = await bootPhone({ user, file: join(storeDir(), "engine.db"), flushMs: 0, installId });
+    const mailboxId = seedMailboxId(phone);
+    expect((await call(phone, "POST", `/local/mailboxes/${mailboxId}/organize`, { consent: "person" })).status).toBe(200);
+    await untilLine(phone, "organizer_profile_detected", () => true, 120_000);
+    for (let i = 0; i < 3; i++) await twoPasses(phone);
+    expect((await documentsOnServer(user)).map((d) => d.rules.sort()), `events ${events(phone)}`).toEqual([left]);
+    expect((await readProfileImport(phoneSession(phone), mailboxId))?.state).toBe("found");
+    // A sender the first store let in keeps the folder the mailbox has it in while the question is open.
+    const named = `named ${randomUUID()}`;
+    await deliver(user, "anna@elsewhere.test", named);
+    expect(await untilIngested(phone, named), `never ingested — events ${events(phone)}`).not.toBeNull();
+    expect(await afterOnePass(phone, user, named)).toBe("INBOX");
+
+    await decide(phone, "carol@elsewhere.test", "INBOX");
+    await twoPasses(phone);
+    await phone.engine.stopOrganizing();
+    const second = { docs: (await documentsOnServer(user)).map((d) => d.rules.sort()), left: phone.engine.runtimes().organizer[mailboxId]?.settingsLeft };
+    await phone.engine.stop();
+    open.splice(open.indexOf(phone.engine), 1);
+    const third = await bootPhone({ user, file: join(storeDir(), "engine.db"), flushMs: 0, installId });
+    const thirdId = seedMailboxId(third);
+    expect((await call(third, "POST", `/local/mailboxes/${thirdId}/organize`, { consent: "person" })).status).toBe(200);
+    await untilLine(third, "organizer_profile_detected", () => true, 120_000);
+    for (let i = 0; i < 3; i++) await twoPasses(third);
+    const again = `named again ${randomUUID()}`;
+    await deliver(user, "anna@elsewhere.test", again);
+    expect(await untilIngested(third, again), `never ingested — events ${events(third)}`).not.toBeNull();
+    const asked = await readProfileImport(phoneSession(third), thirdId);
+    expect({
+      second, asked: asked?.state === "found" ? asked.counts.rules : asked?.state, anna: await afterOnePass(third, user, again),
+    }, `events ${events(third)}`).toEqual({ second: { docs: [left], left: "not_saved" }, asked: 2, anna: "INBOX" });
   }, 600_000);
 });
