@@ -39,7 +39,7 @@ import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
 import { DEFERRED_SHEET_ATTR, DEFERRED_SRC_ATTR, DEFERRED_STYLE_ATTR, DEFERRED_URLS_ATTR, PARK_FLAT_ATTR, proxiedImages } from "./proxied-images";
-import { QUOTED_HISTORY_LIMITS, isForwardSubject, quotedDomTree, quotedHistoryVerdictOfHtml, type QuotedDomNode, type QuotedVerdict } from "@ohmail/client-engine";
+import { QUOTED_HISTORY_LIMITS, drawsNoWords, hiddenByOwnStyle, isForwardSubject, quotedDomTree, quotedHistoryVerdictOfHtml, type QuotedDomNode, type QuotedVerdict } from "@ohmail/client-engine";
 import { scrollProgrammatically } from "../shell/programmatic-scroll";
 import { useEngineOrNull } from "../shell/engine";
 import { mailDocCacheFor, type MailDocCache, type MailDocInputs } from "./mail-doc-cache";
@@ -1793,6 +1793,14 @@ const MAX_WALK_DEPTH = 256;
 const RICH_SKIP = new Set(["style"]);
 
 /**
+ * An element the prose never draws: {@link RICH_SKIP}, or one the letter hides with its own
+ * `display:none` (a preheader). The style is read for this test only, never emitted.
+ */
+function unseen(el: Element): boolean {
+  return RICH_SKIP.has(el.tagName.toLowerCase()) || hiddenByOwnStyle(el.getAttribute("style"));
+}
+
+/**
  * The ceiling on the TEXT the walk emits: one body page, the most the plain path draws in a pass.
  * The node cap bounds elements, not characters — a 511 KiB letter of 2,000 paragraphs drew an
  * 11,631-node accessibility tree, and one of a single paragraph a 523,163-character name. Past it
@@ -1851,7 +1859,7 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
   if (node.nodeType !== 1 /* ELEMENT_NODE */) return;
   const el = node as Element;
   const tag = el.tagName.toLowerCase();
-  if (RICH_SKIP.has(tag)) return;
+  if (unseen(el)) return;
   if (tag === "img") {
     // AN EMBEDDED PICTURE, ALREADY RESOLVED — the walk runs on the post-passed document, so a
     // `cid:` image the resolve step could serve carries its gated URL here and every
@@ -1905,7 +1913,8 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
         kind: "link",
         href: gate.href,
         host,
-        elsewhere: textDisagreesWithHref(el.textContent ?? "", host),
+        // The label as drawn: hidden words must not stand in for the host.
+        elsewhere: textDisagreesWithHref(textOfInline(children), host),
         children,
       });
     }
@@ -1930,7 +1939,7 @@ function preTextOf(node: ChildNode, b: RichBudget, nest: number): string {
   if (node.nodeType !== 1 /* ELEMENT_NODE */) return "";
   const el = node as Element;
   const tag = el.tagName.toLowerCase();
-  if (RICH_SKIP.has(tag)) return "";
+  if (unseen(el)) return "";
   if (tag === "br") return "\n";
   let s = "";
   for (const child of el.childNodes) s += preTextOf(child, b, nest + 1);
@@ -1979,8 +1988,9 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
     if (run.length === 0) return;
     const children = run;
     run = [];
-    const words = textOfInline(children).trim();
-    if (words.length === 0) {
+    const drawn = textOfInline(children);
+    const words = drawn.trim();
+    if (drawsNoWords(drawn)) {
       // A wordless run survives only when a person put something in it: a `br` is an empty line
       // the sender wrote (never the whitespace between two of a builder's divs), and an `image`
       // is a picture standing on its own line — the signature logo's usual shape. Spent from the
@@ -2006,7 +2016,7 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
     if (node.nodeType !== 1 /* ELEMENT_NODE */) { appendInline(node, run, b, nest + 1); continue; }
     const el = node as Element;
     const tag = el.tagName.toLowerCase();
-    if (RICH_SKIP.has(tag)) continue;
+    if (unseen(el)) continue;
     if (RICH_INLINE.has(tag)) { appendInline(node, run, b, nest + 1); continue; }
 
     flush();
@@ -2023,7 +2033,7 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
       const items: BodyNode[][] = [];
       for (const child of el.children) {
         if (b.left < 0) break;
-        if (RICH_SKIP.has(child.tagName.toLowerCase())) continue;
+        if (unseen(child)) continue;
         const item = blocksOf(child, depth, b, nest + 1);
         if (item.length > 0) items.push(item);
       }
@@ -2036,14 +2046,14 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
       // same non-content a blank paragraph is, and is dropped for the same reason.
       let text = "";
       for (const child of el.childNodes) text += preTextOf(child, b, nest + 1);
-      if (text.trim().length > 0 && spendText(b, text.length)) out.push({ kind: "pre", text });
+      if (!drawsNoWords(text) && spendText(b, text.length)) out.push({ kind: "pre", text });
     } else if (tag === "table") {
       tableOf(el, depth, b, out, nest + 1);
     } else if (tag === "hr") {
       if (spend(b)) out.push({ kind: "rule" });
     } else if (/^h[1-6]$/.test(tag)) {
       const children = inlineOf(el, b, nest);
-      if (textOfInline(children).trim().length > 0 && spend(b)) {
+      if (!drawsNoWords(textOfInline(children)) && spend(b)) {
         out.push({
           kind: "heading",
           level: Number(tag[1]) as 1 | 2 | 3 | 4 | 5 | 6,
@@ -2075,7 +2085,7 @@ function tableOf(el: Element, depth: number, b: RichBudget, out: BodyNode[], nes
     for (const c of tr.children) {
       if (b.left < 0) break;
       const tag = c.tagName.toLowerCase();
-      if (tag !== "td" && tag !== "th") continue;
+      if ((tag !== "td" && tag !== "th") || unseen(c)) continue;
       if (!spend(b)) break;
       cells.push({
         header: tag === "th",
@@ -2088,11 +2098,12 @@ function tableOf(el: Element, depth: number, b: RichBudget, out: BodyNode[], nes
   };
   for (const child of el.children) {
     if (b.left < 0) break;
+    if (unseen(child)) continue;
     const tag = child.tagName.toLowerCase();
     if (tag === "tr") addRow(child);
     else if (tag === "thead" || tag === "tbody" || tag === "tfoot") {
       for (const tr of child.children) {
-        if (tr.tagName.toLowerCase() === "tr") addRow(tr);
+        if (tr.tagName.toLowerCase() === "tr" && !unseen(tr)) addRow(tr);
       }
     } else if (tag === "caption") {
       out.push(...blocksOf(child, depth, b, nest + 1));

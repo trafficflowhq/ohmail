@@ -324,6 +324,21 @@ describe("remote content is blocked, and blocked means not named", () => {
     expect(logo!.pixel).toBe(false);
   });
 
+  it("a hidden preheader stays in the frame document, and a beacon hidden in it is still refused", async () => {
+    // The frame keeps what the letter hides (a "mobile-show" @media rule can re-show it); only
+    // the prose walk skips it. Guard: the sanitizer's output is not where the fix lives.
+    const out = await clean(
+      `<div style="display:none;font-size:1px;max-height:0;overflow:hidden;mso-hide:all">` +
+        `Your weekly picks&#847;&zwnj;&nbsp;&shy;</div><p>Hello Ben,</p><p>The plan is in.</p>` +
+        `<div style="display:none"><img src="https://t.example/o.gif?uid=1" width="1" height="1"></div>`,
+    );
+    const doc = new DOMParser().parseFromString(out.html, "text/html");
+    const hidden = doc.querySelector("div[style]");
+    expect(hidden?.getAttribute("style")).toMatch(/display:\s*none/);
+    expect(hidden?.textContent).toContain("Your weekly picks");
+    expect(out.blocked.map((b) => [b.url, b.pixel])).toEqual([["https://t.example/o.gif?uid=1", true]]);
+  });
+
   it("1×1 dimensions alone are enough to call it a beacon", async () => {
     // THE GUARD for the dimension signal, on a url with NO beacon shape at all. Mutation:
     // `return false` in `declaresPixel`. Real failure text:

@@ -588,6 +588,85 @@ describe("native links — one gate, the sender's label, the honest host", () =>
     expect(el.querySelector("a"), "a mailto: href became a live anchor natively").toBeNull();
     expect(el.textContent).toContain("write us");
   });
+
+  /**
+   * The disagreement check reads the label AS DRAWN: hidden words the walk skips must not
+   * stand in for the host. Mutation: `textDisagreesWithHref(el.textContent …)` — no disclosure.
+   */
+  it("a hidden host in the label neither draws nor hides the real one", async () => {
+    const el = await render({
+      text: "fallback",
+      html: `<p><a href="https://evil.example/login"><span style="display:none">evil.example </span>bank.example</a></p>`,
+    });
+    const a = el.querySelector<HTMLAnchorElement>("a.msg-link")!;
+    expect(a.firstChild!.textContent, "the hidden half of the label was drawn").toBe("bank.example");
+    expect(a.querySelector(".msg-link-host")?.textContent ?? "", "a decoy label hid the real host")
+      .toContain("evil.example");
+  });
+});
+
+/**
+ * WHAT THE LETTER HIDES STAYS HIDDEN. A newsletter's preheader is `display:none` text plus
+ * zero-width filler; the frame never draws it, so the prose walk must not either. Only the
+ * element's own `display:none` hides it: `mso-hide:all` and `font-size:0` wrap content other
+ * clients draw.
+ */
+describe("hidden preheaders and filler", () => {
+  const lines = (el: HTMLElement): string[] =>
+    [...el.querySelectorAll(".msg-p, .msg-line")].map((p) => p.textContent ?? "");
+
+  it("a hidden preheader with filler draws nothing above the letter", async () => {
+    const el = await render({
+      text: "Hello Ben,\n\nThe plan is in.",
+      html: `<div style="display:none;font-size:1px;max-height:0;overflow:hidden;mso-hide:all">` +
+        `Your weekly picks&#847;&zwnj;&nbsp;&shy;</div><p>Hello Ben,</p><p>The plan is in.</p>`,
+    });
+    expect(el.querySelector("iframe"), "the preheader letter must render as prose").toBeNull();
+    expect(lines(el), "the hidden preheader drew a line").toEqual(["Hello Ben,", "The plan is in."]);
+    expect(el.textContent).not.toContain("weekly picks");
+    expect(el.textContent).not.toMatch(/[͏‌­]/);
+  });
+
+  it("a hidden span, list item, cell, row, picture and pre piece draw nothing", async () => {
+    const gif = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
+    const el = await render({
+      text: "fallback",
+      cidImages: new Map([["seen@x", gif], ["hid@x", gif]]),
+      html: `<p>Hello <span style="DISPLAY: none !important">secret </span>Ben</p>` +
+        `<ul><li>One</li><li style="display:none">hidden item</li></ul>` +
+        `<table width="100%"><tr><td>Cell</td><td style="display:none">hidden cell</td></tr>` +
+        `<tr style="display:none"><td>hidden row</td></tr></table>` +
+        `<p><img src="cid:seen@x" alt="seen"><img src="cid:hid@x" alt="hid" style="display:none"></p>` +
+        `<pre>line one<span style="display:none"> hidden pre</span></pre>`,
+    });
+    expect(el.querySelector("iframe")).toBeNull();
+    expect(el.textContent).not.toMatch(/secret|hidden/);
+    expect(el.querySelector("p.msg-p")!.textContent).toBe("Hello Ben");
+    expect([...el.querySelectorAll(".msg-list li")].map((li) => li.textContent)).toEqual(["One"]);
+    expect([...el.querySelectorAll(".msg-table td")].map((td) => td.textContent)).toEqual(["Cell"]);
+    expect([...el.querySelectorAll("img.msg-img")].map((i) => i.getAttribute("alt"))).toEqual(["seen"]);
+    expect(el.querySelector("pre.msg-pre")!.textContent).toBe("line one");
+  });
+
+  it("a visible run of filler alone draws no line", async () => {
+    const el = await render({
+      text: "fallback",
+      html: `<p>Before.</p><div>&#847;&zwnj;&#847;&zwnj;&nbsp;&shy;</div><p>After.</p>`,
+    });
+    expect(lines(el), "a filler-only run drew an empty line").toEqual(["Before.", "After."]);
+  });
+
+  it("font-size:0 columns and mso-hide:all alone stay drawn", async () => {
+    const el = await render({
+      text: "fallback",
+      html: `<div style="font-size:0"><div style="display:inline-block;font-size:14px">Left column</div>` +
+        `<div style="display:inline-block;font-size:14px">Right column</div></div>` +
+        `<div style="mso-hide:all">Not for Outlook</div>`,
+    });
+    expect(el.textContent).toContain("Left column");
+    expect(el.textContent).toContain("Right column");
+    expect(el.textContent).toContain("Not for Outlook");
+  });
 });
 
 describe("the caps — breadth, and the fall back to the text part", () => {
