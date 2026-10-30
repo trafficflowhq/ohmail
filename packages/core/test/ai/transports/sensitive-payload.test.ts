@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SensitivePayloadRefusal, type ClassifierInput, type DraftInput } from "../../../src/mail.js";
 import {
-  anthropicTransport, ollamaTransport, openaiTransport, opencodeGoTransport, type AiTransport,
+  anthropicTransport, customLocalTransport, ollamaTransport, openaiTransport, opencodeGoTransport, type AiTransport,
 } from "../../../src/ai/transports/index.js";
 import { portsOf } from "../../../src/ai/transports/host.js";
 import { anthropicKey, openAiKey } from "../../../../../test/support/fixture-credentials.js";
@@ -9,7 +9,7 @@ import { anthropicKey, openAiKey } from "../../../../../test/support/fixture-cre
 /**
  * INVARIANT #1 AT EVERY TRANSPORT. Each provider builds its request through the shared sink
  * (`classifyUserPayload`), which throws on credential material before a payload exists. Asked of
- * all four, both questions, directly and through `portsOf` (what the server and the worker hold):
+ * every transport, both questions, directly and through `portsOf` (what the server and the worker hold):
  * the refusal is `SensitivePayloadRefusal` and the injected fetch is never called. The control
  * shows the same transports DO call it for ordinary mail, so the empty count is earned. A draft
  * goes through its own sink, `draftUserPayload`'s redaction allow-list, asked the same way.
@@ -35,6 +35,9 @@ const TRANSPORTS: Array<[string, Make]> = [
   })],
   ["ollama", (f) => ollamaTransport({
     baseUrl: "http://ollama:11434", classifyModel: "llama3.2", draftModel: "llama3.2", fetchImpl: f, timeoutMs: 2000,
+  })],
+  ["custom-local", (f) => customLocalTransport({
+    baseUrl: "http://127.0.0.1:1234/v1", classifyModel: "local-model", draftModel: "local-model", fetchImpl: f, timeoutMs: 2000,
   })],
   ["opencode-go", (f) => opencodeGoTransport({
     apiKey: "sensitive-transports-fixture-token", classifyModel: "glm-5.3-flash", draftModel: "kimi-k3",
