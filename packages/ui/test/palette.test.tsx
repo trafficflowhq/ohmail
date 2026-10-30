@@ -75,6 +75,16 @@ describe("useCommandPalette + CommandPalette", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it("matches every typed word, in any order, and nothing when one word is missing", () => {
+    render(<Harness commands={commands()} />);
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    const input = screen.getByPlaceholderText("Type a command…");
+    fireEvent.change(input, { target: { value: "  go  ohbox " } });
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([expect.stringContaining("Go to Ohbox")]);
+    fireEvent.change(input, { target: { value: "go screener" } });
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+  });
+
   it("lists a disabled command, refuses to run it, and does not close on it", () => {
     // A command whose target is absent stays in the list — a row that vanishes with the
     // cursor is a row nobody learns — and says so, the way the `?` sheet dims a `disabled`

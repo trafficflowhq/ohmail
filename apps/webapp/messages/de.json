@@ -1848,13 +1848,11 @@
   "palette": {
     "placeholder": "Befehl eingeben …",
     "empty": "Kein Befehl — probier „screener“, „tag“, „erscheinungsbild“ …",
-    "openScreener": "Screener öffnen",
     "screenerScreened": "Screener: Aussortiert",
     "screenerSpam": "Screener: Spam",
     "startFR": "Antwortrunde starten",
     "search": "Alles durchsuchen",
     "newMessage": "Neue Nachricht",
-    "openSettings": "Einstellungen öffnen",
     "settingsPane": "Einstellungen: {name}",
     "tagToggle": "Tag: {name} …",
     "goTag": "Zum Tag: {name}",
