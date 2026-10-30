@@ -1017,6 +1017,71 @@ describe("useJunkWindow — the kept page: no dial on the Spam entry's path", ()
     expect(junkList, "the list under the reader is not replaced").toHaveBeenCalledTimes(1);
   });
 
+  it("on the segment, a verdict filed into Junk after the entry read is listed on top without leaving", async () => {
+    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const filed = item(3, "7", "2026-10-28T10:00:00.000Z");
+    junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValueOnce(pageWire(two, null))
+      .mockResolvedValueOnce(pageWire(two, null)).mockResolvedValue(pageWire([...two, filed], null));
+    junkSweepPreview.mockResolvedValue({ ...NO_SWEEP, held: { ids: ["q1"], truncated: false } });
+    const pile = (n: number) => n * 0x1_0000_0000 + n;
+    await mountHook(false, undefined, true, { on: true, moved: pile(2) });
+    await act(async () => { setKeep!({ on: true, moved: pile(3) }); });
+    await act(async () => { setActive!(true); });
+    await settle();
+    expect(junkList, "the entry read, before the filing").toHaveBeenCalledTimes(2);
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    expect(control!.visible.map((i) => i.uid), "not filed yet at the first beat").toEqual([2, 1]);
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    expect(control!.visible.map((i) => i.uid)).toEqual([3, 2, 1]);
+    const [lists, previews] = [junkList.mock.calls.length, junkSweepPreview.mock.calls.length];
+    await settleTimers(JUNK_MOVE_SETTLE_MS * JUNK_MOVE_SETTLE_BEATS);
+    expect(junkList, "it stops once the letter is listed").toHaveBeenCalledTimes(lists);
+    expect(junkSweepPreview).toHaveBeenCalledTimes(previews);
+  });
+
+  it("on the segment, an entry read landing after the first beat does not wipe the filed letter", async () => {
+    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let land: (p: ReturnType<typeof pageWire>) => void = () => {};
+    junkList.mockResolvedValueOnce(pageWire(two, null))
+      .mockImplementationOnce(() => new Promise((r) => { land = r; }))
+      .mockResolvedValue(pageWire([item(3, "7", "2026-10-28T10:00:00.000Z"), ...two], null));
+    const pile = (n: number) => n * 0x1_0000_0000 + n;
+    await mountHook(false, undefined, true, { on: true, moved: pile(2) });
+    await act(async () => { setKeep!({ on: true, moved: pile(3) }); });
+    await act(async () => { setActive!(true); });
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    await act(async () => { land(pageWire(two, null)); });
+    await settleTimers(JUNK_MOVE_SETTLE_MS * JUNK_MOVE_SETTLE_BEATS);
+    expect(control!.visible.map((i) => i.uid)).toEqual([3, 2, 1]);
+  });
+
+  it("on the segment, a Not junk press during the arrival settle keeps topping up", async () => {
+    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    junkList.mockResolvedValueOnce(pageWire(two, null)).mockResolvedValueOnce(pageWire(two, null))
+      .mockResolvedValue(pageWire([item(3, "7", "2026-10-28T10:00:00.000Z"), ...two], null));
+    const pile = (n: number) => n * 0x1_0000_0000 + n;
+    await mountHook(true, undefined, true, { on: true, moved: pile(2) });
+    await act(async () => { setKeep!({ on: true, moved: pile(3) }); });
+    await settleTimers(JUNK_MOVE_SETTLE_MS);
+    await act(async () => { control!.rescue(control!.visible[1]!); });
+    await settle();
+    await settleTimers(JUNK_MOVE_SETTLE_MS * JUNK_MOVE_SETTLE_BEATS);
+    expect(control!.visible.map((i) => i.uid)).toEqual([3, 2, 1]);
+  });
+
+  it("on the segment, a letter leaving the pile reads no list on the settle", async () => {
+    const { JUNK_MOVE_SETTLE_MS, JUNK_MOVE_SETTLE_BEATS } = await import("../app/shell/junk-window");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    junkList.mockResolvedValue(pageWire(two, null));
+    await mountHook(true, undefined, true, { on: true, moved: 3 * 0x1_0000_0000 });
+    await act(async () => { setKeep!({ on: true, moved: 2 * 0x1_0000_0000 }); });
+    await settleTimers(JUNK_MOVE_SETTLE_MS * JUNK_MOVE_SETTLE_BEATS);
+    expect(junkList).toHaveBeenCalledTimes(1);
+  });
+
   it("on the segment the settle keeps the older rows the reader loaded; the next entry reads", async () => {
     const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
