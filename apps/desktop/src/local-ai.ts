@@ -15,7 +15,7 @@ import { bridgeFetch } from "./bridge-fetch.js";
 /** Where the engine serves this install's own AI settings. Root-relative, like every path here. */
 const AI_PATH = "/local/ai";
 
-export type AiProviderKind = "anthropic" | "openai" | "ollama" | "opencode-go";
+export type AiProviderKind = "anthropic" | "openai" | "ollama" | "opencode-go" | "custom-local";
 
 /** Why the chosen provider cannot answer right now. The engine's word; the pane renders it. */
 export type AiUnavailableReason =
@@ -54,6 +54,13 @@ export interface HostedAiSettings {
   hasKey: boolean;
 }
 
+export interface CustomLocalAiSettings {
+  baseUrl: string;
+  classifyModel: string;
+  draftModel: string;
+  hasKey: boolean;
+}
+
 export interface LocalAiSettings {
   provider: AiProviderKind | null;
   anthropic: HostedAiSettings;
@@ -61,6 +68,7 @@ export interface LocalAiSettings {
   /** Optional, as the engine declares it: an engine without the Go block omits it. */
   opencodeGo?: HostedAiSettings;
   ollama: { baseUrl: string; classifyModel: string; draftModel: string };
+  customLocal?: CustomLocalAiSettings;
 }
 
 export interface LocalAiStatus {
@@ -94,6 +102,13 @@ export interface LocalAiWrite {
   openai?: { classifyModel?: string; draftModel?: string; apiKey?: string };
   opencodeGo?: { classifyModel?: string; draftModel?: string; apiKey?: string };
   ollama?: { baseUrl?: string; classifyModel?: string; draftModel?: string };
+  customLocal?: {
+    baseUrl?: string;
+    model?: string;
+    classifyModel?: string;
+    draftModel?: string;
+    apiKey?: string;
+  };
 }
 
 /** The engine's error envelope. */
@@ -184,6 +199,7 @@ function vendorName(provider: AiProviderKind | null): string {
     case "anthropic": return "Anthropic";
     case "openai": return "OpenAI";
     case "opencode-go": return "OpenCode Go";
+    case "custom-local": return "Custom Local Endpoint";
     default: return "The chosen provider";
   }
 }
