@@ -302,4 +302,34 @@ describe("a conversation's Park with letters on the retry queue", () => {
       expect(toasts.at(-1)?.message).toBe(messages.ohbox.toastUndone);
     });
   }
+
+  /* The Undo stands by the press's own rule: its writes queued for retry land on the next drive. */
+  it("an Undo whose every write is answered retryable says Undone, never that nothing changed", async () => {
+    convo = true;
+    const engine = createEngine(false, ARMED);
+    await engine.start();
+    await mount(engine);
+    await act(async () => {
+      void dispatch.current!.mutateSetAndReport(
+        CONVO.map((messageId) => ({ kind: "triage_set" as const, messageId, state: "set_aside" as const })),
+        (n) => `Parked ${n}`,
+      );
+    });
+    await flush();
+    const offer = toasts.find((x) => x.onAction !== undefined)!;
+    expect(offer.message).toBe("Parked 3");
+    retrying = new Set(CONVO);
+    const before = toasts.length;
+    await act(async () => { offer.onAction!(); });
+    await flush();
+    expect(triagePosts.filter((p) => p.status === 503 && p.state === "none").map((p) => p.id),
+      "control: the Undo's writes met the 503").toEqual(CONVO);
+    const said = toasts.slice(before).map((x) => x.message);
+    expect(said, "a queued Undo said nothing changed").not.toContain(messages.ohbox.refusedPress);
+    expect(said).toEqual([messages.ohbox.toastUndone]);
+    await act(async () => { await engine.flushPending(); });
+    await flush();
+    const last = (id: string) => triagePosts.filter((p) => p.id === id && p.status === 200).at(-1)?.state ?? "none";
+    expect(CONVO.map(last), "the queued Undo did not land").toEqual(["none", "none", "none"]);
+  });
 });

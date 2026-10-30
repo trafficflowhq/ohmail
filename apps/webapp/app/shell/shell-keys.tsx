@@ -933,7 +933,12 @@ export function useShellKeys({
       { id: "go-ohbox", label: t("shortcuts.goOhbox"), keys: ["g", "o"], run: () => go("ohbox") },
       { id: "go-reads", label: t("shortcuts.goReads"), keys: ["g", "r"], run: () => go("reads") },
       { id: "go-receipts", label: t("shortcuts.goReceipts"), keys: ["g", "e"], run: () => go("receipts") },
-      { id: "go-screener", label: t("palette.openScreener"), keys: ["g", "s"], run: () => go("screener") },
+      { id: "go-screener", label: t("shortcuts.goScreener"), keys: ["g", "s"], run: () => go("screener") },
+      { id: "go-later", label: t("shortcuts.goLater"), keys: ["g", "l"], run: () => goTriage("reply") },
+      { id: "go-parked", label: t("shortcuts.goParked"), keys: ["g", "p"], run: () => goTriage("aside") },
+      { id: "go-resurface", label: t("shortcuts.goResurface"), keys: ["g", "b"], run: () => goTriage("resurface") },
+      { id: "go-drafts", label: t("shortcuts.goDrafts"), keys: ["g", "d"], run: () => go("drafts") },
+      { id: "go-history", label: t("shortcuts.goHistory"), keys: ["g", "h"], run: () => go("history") },
       { id: "scn-screened", label: t("palette.screenerScreened"), run: () => goScreener("screened") },
       { id: "scn-spam", label: t("palette.screenerSpam"), run: () => goScreener("spam") },
       {
@@ -959,7 +964,7 @@ export function useShellKeys({
         disabled: !engine.trashAvailable(),
         run: () => go("trash"),
       },
-      { id: "settings", label: t("palette.openSettings"), run: () => go("settings") },
+      { id: "settings", label: t("shortcuts.goSettings"), keys: ["g", ","], run: () => go("settings") },
       /* EVERY SETTINGS TAB, from the settings' own list — a new pane added to `settingsPanes`
          reaches the palette by construction (see `settingsWired` above). The fastest path to
          any setting becomes typed, and only panes this surface offers are named: a row onto a

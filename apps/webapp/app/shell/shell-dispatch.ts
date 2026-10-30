@@ -427,7 +427,8 @@ export function useShellDispatch({
         }
         /* THE MAIL CAME BACK. Only a cancel that TOOK may add "and no rule was made" — past the
            window the rule is on its way and the honest sentence is the plain one. */
-        if (tally.applied > 0) { toast(cancelled && held ? held.undone : t("ohbox.toastUndone")); return; }
+        // An Undo stands as a press does: applied, or queued for retry and landing on the next drive.
+        if (outs.some(stands)) { toast(cancelled && held ? held.undone : t("ohbox.toastUndone")); return; }
         // Every inverse replaced by a newer press for the same thing: that press says the sentence.
         if (outs.length > 0 && tally.silent === outs.length) return;
         if (tally.refused === 0 && organizerWaits(outs) > 0) { toast(queuedSentence(tally.holder)); return; }
