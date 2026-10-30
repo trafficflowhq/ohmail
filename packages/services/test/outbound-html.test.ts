@@ -416,4 +416,30 @@ describe("a code block survives, and its whitespace is meaning rather than layou
     expect(html).toContain("<pre>");
     expect(text).toBe("see:\ndef f():\n    return 1");
   });
+
+  it("a long newline run inside a block costs linear time, not the run squared", () => {
+    const n = 100_000;
+    const started = performance.now();
+    const { text } = prepareOutboundBody(`<pre>${"\n".repeat(n)}a${"\n".repeat(n)}b${"\n".repeat(n)}</pre><p>after</p>`);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(text).toBe(`${"\n".repeat(n - 1)}a${"\n".repeat(n)}b\nafter`);
+  });
+
+  it("a quote or list nested past 32 levels renders 32, so a line's prefix stays bounded", () => {
+    expect(htmlToPlainText(`${"<blockquote>".repeat(40)}<p>deep</p>`)).toBe(`${"> ".repeat(32)}deep`);
+    expect(htmlToPlainText(`${"<ul><li>".repeat(40)}x`)).toBe(`${"  ".repeat(32)}- x`);
+    expect(htmlToPlainText(`${"<ol><li>".repeat(40)}x`)).toBe(`${"  ".repeat(32)}1. x`);
+  });
+
+  it("thousands of nested quotes or lists give a text part linear in the letter's size", () => {
+    for (const html of [
+      `${"<blockquote>".repeat(3_000)}<pre>${"x\n".repeat(100_000)}</pre>`,
+      `${"<ul>".repeat(2_000)}${"<li>x</li>".repeat(20_000)}`,
+    ]) {
+      const started = performance.now();
+      const { text } = prepareOutboundBody(html);
+      expect(performance.now() - started).toBeLessThan(1_000);
+      expect(text.length).toBeLessThan(40 * html.length);
+    }
+  });
 });

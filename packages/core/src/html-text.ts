@@ -19,6 +19,9 @@ const NON_TEXT = new Set(["style", "script", "head", "title", "noscript", "templ
  */
 const BLOCKS = new Set(["p", "ul", "ol", "li", "blockquote"]);
 
+/** The deepest quote or list a line's prefix shows, so a line costs a bounded prefix. */
+const QUOTE_MAX = 32;
+
 /**
  * Render sanitized html as the text/plain alternative. Runs on the OUTPUT of
  * `sanitizeOutboundHtml`, over exactly the tags `ALLOWED_TAGS` names — not a general converter,
@@ -84,7 +87,7 @@ export function htmlToPlainText(html: string): string {
    */
   const codeSpans: Array<[number, number]> = [];
 
-  const prefix = (): string => "> ".repeat(quoteDepth);
+  const prefix = (): string => "> ".repeat(Math.min(quoteDepth, QUOTE_MAX));
 
   /**
    * End the current line.
@@ -166,7 +169,7 @@ export function htmlToPlainText(html: string): string {
    * Interior whitespace — indentation, alignment, blank lines between blocks — is untouched.
    */
   const flushPre = (raw: string): void => {
-    const body = raw.replace(/\r\n?/g, "\n").replace(/^\n/, "").replace(/\n+$/, "");
+    const body = trimNewlinesEnd(raw.replace(/\r\n?/g, "\n").replace(/^\n/, ""));
     if (body === "") return;
     const start = out.length;
     for (const l of body.split("\n")) out += `${prefix()}${l}\n`;
@@ -221,7 +224,7 @@ export function htmlToPlainText(html: string): string {
           // A stray `<li>` with no list around it still needs a marker; treat it as a bullet
           // rather than dropping it, because the sanitizer permits the tag and the reader will
           // otherwise see two items run together as one sentence.
-          const depth = Math.max(0, lists.length - 1);
+          const depth = Math.min(Math.max(0, lists.length - 1), QUOTE_MAX);
           if (ctx?.ordered) {
             ctx.n += 1;
             lead = `${"  ".repeat(depth)}${ctx.n}. `;
@@ -337,7 +340,7 @@ export function htmlToPlainText(html: string): string {
     cursor = end;
   }
   result += collapse(out.slice(cursor));
-  return result.replace(/\n+$/, "");
+  return trimNewlinesEnd(result);
 }
 
 /** Elements whose content the reader never draws: the sanitizer's drop set, and the stylesheet. */
@@ -363,8 +366,6 @@ const HIDDEN_STYLE = /(?:^|;)\s*display\s*:\s*none\s*(?:!important\s*)?(?:;|$)/i
 /** A token of preheader filler: only U+034F and format characters (ZWNJ, ZWSP, soft hyphen…). */
 const FILLER = /^[\u034f\p{Cf}]+$/u;
 const BLANK = /^>*$/;
-/** The deepest quote a line's `> ` prefix shows, so a line costs a bounded prefix. */
-const QUOTE_MAX = 32;
 
 /** Cut to at most `max` UTF-16 units without leaving half a surrogate pair. */
 function cutAt(s: string, max: number): string {
@@ -377,6 +378,13 @@ function cutAt(s: string, max: number): string {
 function trimSpacesEnd(s: string): string {
   let end = s.length;
   while (end > 0 && (s.charCodeAt(end - 1) === 32 || s.charCodeAt(end - 1) === 9)) end -= 1;
+  return end === s.length ? s : s.slice(0, end);
+}
+
+/** Without its trailing newlines, in one pass: `/\n+$/` rescans every inner run to its end. */
+function trimNewlinesEnd(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 10) end -= 1;
   return end === s.length ? s : s.slice(0, end);
 }
 
