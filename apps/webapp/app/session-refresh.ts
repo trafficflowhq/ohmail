@@ -15,7 +15,7 @@ import {
 import { csrfMark, csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./shell/durable";
-import { readOwner, readOwnerMarker } from "./shell/owner-cookie";
+import { readOwner, readOwnerCookie, readOwnerMarker } from "./shell/owner-cookie";
 import { webLane } from "./shell/resume-lane";
 import { isDemoOwned, storageOwner } from "./shell/storage-owner";
 import {
@@ -503,6 +503,14 @@ interface PendingAttempt {
 /** This page's copy, for a jar that refuses storage. */
 let attemptHere: PendingAttempt | null = null;
 
+/** The session marks when the refresh door last refused this jar by code; `null` before any refusal. */
+let refusedJar: string | null = null;
+
+/** `tf_csrf` lapses with the access window; `tf_owner` lives as long as the session, so a later sign-in shows. */
+function sessionMarks(): string {
+  return JSON.stringify([jarMark(), readOwnerCookie()]);
+}
+
 /** The jar's mark as it stands, `""` when it holds no `tf_csrf`. Never the value. */
 export function jarMark(): string {
   return csrfMark(csrfToken());
@@ -800,6 +808,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
         });
         // No token presented is every signed-out visit's answer (`/login` asks too): no cache walk for it.
         if (code !== REFRESH_MISSING) purgeSiteCache();
+        refusedJar = sessionMarks();
         markSessionDead();
         return "refused";
       }
@@ -956,6 +965,9 @@ export function retryAfterMsOf(res: Response): number | undefined {
  * mount is a wiring bug waiting to be reported.
  */
 registerSessionProbe(() => {
+  // THE HEAL ASKS ONLY A JAR THE REFUSAL DID NOT JUDGE. A signed-out tab presented the same refused jar
+  // every five minutes for as long as it stayed open; a sign-in in another tab moves these marks.
+  if (sessionIsDead() && refusedJar !== null && sessionMarks() === refusedJar) return;
   void resumeSession();
 });
 

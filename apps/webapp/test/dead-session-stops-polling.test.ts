@@ -31,6 +31,8 @@ let originalFetch: typeof globalThis.fetch;
  * including the refresh, which is what confirms the death. `true` is the world after a sign-in.
  */
 let served = false;
+/** The refresh door answers 503 — a fault, never a verdict on the session. */
+let refreshFault = false;
 
 /** Every stubbed answer is the API's own coded 401 — a live server with a dead session. */
 const coded401 = (): Response =>
@@ -42,10 +44,18 @@ const coded401 = (): Response =>
 beforeEach(() => {
   seen = { paths: [] };
   served = false;
+  refreshFault = false;
   originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: unknown) => {
-    const url = String(input);
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const purge = new Headers(init?.headers).has("x-ohmail-clear");
+    const url = String(input) + (purge ? "#purge" : "");
     seen.paths.push(url);
+    if (refreshFault && url.includes("/auth/refresh")) return new Response("busy", { status: 503 });
+    // The refresh door's refusal clears the jar, as the server's clearSessionCookies() does.
+    if (!served && url.endsWith("/auth/refresh")) {
+      document.cookie = "tf_csrf=; max-age=0; path=/";
+      document.cookie = "tf_owner=; max-age=0; path=/";
+    }
     if (!served) return coded401();
     if (url.includes("/auth/refresh")) return new Response(null, { status: 204 });
     return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
@@ -54,6 +64,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   globalThis.fetch = originalFetch;
+  document.cookie = "tf_csrf=; max-age=0; path=/";
+  document.cookie = "tf_owner=; max-age=0; path=/";
   const truth = await import("../app/shell/session-truth.js");
   truth.resetSessionTruthForTests();
   vi.useRealTimers();
@@ -69,6 +81,8 @@ async function pollOnce(api: (p: string) => Promise<unknown>): Promise<void> {
 
 /** Only the three polled routes — the refresh is counted by its own assertions. */
 const polledReads = (): string[] => seen.paths.filter((p) => POLLED.some((r) => p.endsWith(r)));
+/** Refreshes that present the jar; a refusal's cache clear (`x-ohmail-clear`) is counted apart. */
+const refreshes = (): string[] => seen.paths.filter((p) => p.endsWith("/auth/refresh"));
 
 describe("a browser whose session is confirmed dead stops asking", () => {
   it("THE PRODUCTION SEQUENCE: one tick confirms the death, and no tick after it asks", async () => {
@@ -188,5 +202,67 @@ describe("a browser whose session is confirmed dead stops asking", () => {
     expect(truth.sessionHealAttempts()).toBe(0);
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(truth.sessionHealAttempts(), "the heal kept asking for a session this tab already holds").toBe(0);
+  });
+
+  it("A CODED REFUSAL ENDS THE KNOCKING until a sign-in moves the jar (one refresh every 5 min, measured)", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const { api } = await import("../app/api-client.js");
+    const truth = await import("../app/shell/session-truth.js");
+    await pollOnce(api);
+    expect(truth.sessionIsDead()).toBe(true);
+
+    seen.paths = [];
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(refreshes(), "a signed-out tab kept knocking on the refresh door").toEqual([]);
+
+    // A sign-in in another tab of this browser mints a fresh jar: the next step asks, and heals.
+    document.cookie = "tf_csrf=fresh-session; path=/";
+    served = true;
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(refreshes().length).toBe(1);
+    expect(truth.sessionIsDead()).toBe(false);
+  });
+
+  it("a sign-in elsewhere revives the tab even after its tf_csrf lapsed (tf_owner outlives it)", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const { api } = await import("../app/api-client.js");
+    const truth = await import("../app/shell/session-truth.js");
+    document.cookie = "tf_csrf=old-session; path=/";
+    document.cookie = "tf_owner=acct-1; path=/";
+    await pollOnce(api);
+    expect(truth.sessionIsDead()).toBe(true);
+
+    // Signed in in another tab; this tab's heal sleeps past the 15-minute tf_csrf.
+    document.cookie = "tf_csrf=fresh-session; path=/";
+    document.cookie = "tf_owner=acct-1; path=/";
+    document.cookie = "tf_csrf=; max-age=0; path=/";
+    served = true;
+    seen.paths = [];
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(refreshes().length, "the live sign-in's jar was read as the refused one").toBe(1);
+    expect(truth.sessionIsDead()).toBe(false);
+  });
+
+  it("a fault after the jar moved keeps retrying; a second refusal stops it again", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const { api } = await import("../app/api-client.js");
+    const truth = await import("../app/shell/session-truth.js");
+    await pollOnce(api);
+    document.cookie = "tf_csrf=fresh-session; path=/";
+    refreshFault = true;
+    seen.paths = [];
+    await vi.advanceTimersByTimeAsync(5_000 + 30_000 + 120_000);
+    expect(refreshes().length, "a busy door is not a verdict: every step asks").toBe(3);
+
+    // The door answers again, and refuses this jar too: nothing more leaves.
+    refreshFault = false;
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(refreshes().length).toBe(4);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(refreshes().length).toBe(4);
+    expect(truth.sessionIsDead()).toBe(true);
   });
 });
