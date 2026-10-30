@@ -19,6 +19,11 @@ const LINE = new Set([
   "footer", "form", "header", "main", "nav", "section", "tbody", "thead", "tfoot",
 ]);
 
+/** Hidden by its own style, as core's htmlWords reads it: a preheader is not drawn. */
+const HIDDEN_STYLE = /(?:^|;)\s*display\s*:\s*none\s*(?:!important\s*)?(?:;|$)/i;
+/** A token of preheader filler: only U+034F and format characters (ZWNJ, ZWSP, soft hyphen…). */
+const FILLER = /^[\u034f\p{Cf}]+$/u;
+
 const known = new Map<string, string>();
 
 /** Its words as drawn; past the bound the phone reads no html at all, so none. */
@@ -85,7 +90,7 @@ function wordsOf(top: readonly AnyNode[]): string {
     }
     if (n instanceof Text) { write(n.data); continue; }
     const tag = n.tagName;
-    if (UNREAD.has(tag)) continue;
+    if (UNREAD.has(tag) || HIDDEN_STYLE.test(n.attribs.style ?? "")) continue;
     if (tag === "br") {
       if (line === "" && gap === 0) lines.push(">".repeat(quote));
       else { open(); end(); }
@@ -99,11 +104,12 @@ function wordsOf(top: readonly AnyNode[]): string {
   }
   if (line !== "") end();
   const out: string[] = [];
-  for (const l of lines.map((x) => x.replace(/[ \t]+$/, ""))) {
+  for (const l of lines.map((x) => x.split(" ").filter((tok) => !FILLER.test(tok)).join(" ").replace(/[ \t]+$/, ""))) {
     const blank = /^>*$/.test(l);
     if (blank && (out.length === 0 || /^>*$/.test(out[out.length - 1]!))) continue;
     out.push(l);
   }
   while (out.length > 0 && /^>*$/.test(out[out.length - 1]!)) out.pop();
-  return out.join("\n");
+  const text = out.join("\n");
+  return text.replace(/[\s\u034f\p{Cf}]/gu, "") === "" ? "" : text;
 }

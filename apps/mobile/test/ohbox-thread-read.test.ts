@@ -258,6 +258,9 @@ describe("an older member whose body is html inside multipart/related, with no t
     const single = await normalizeMime(Buffer.from(["Message-ID: <s6@fake.test>", "From: sender@fake.test", "To: me@fake.test", "Subject: s",
       "MIME-Version: 1.0", 'Content-Type: text/html; charset="us-ascii"', "", `<html><body><img src="https://pictures.fake.test/b.png"></body></html>`, ""].join("\r\n")));
     expect(single.textBody.trim(), "the premise: a text that is no words of its own").not.toBe("");
+    // Pictures behind a preheader: hidden text, then zero-width filler that draws as nothing.
+    const filler = await normalizeMime(relatedLetter(8, `<html><body><div style="display:none;max-height:0">Your weekly picks</div><div>&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&shy;&#8203;</div><img src="cid:p8@fake.test"></body></html>`));
+    expect(filler.textBody, "the premise: the parse finds no words in it").toBe("");
     expect([worded.textBody, bare.textBody], "the premise: the parse stores the html's words, and none for an html without")
       .toEqual(["Top of member 1.\n\nEnd of member 1.", ""]);
     const s = await session();
@@ -277,6 +280,8 @@ describe("an older member whose body is html inside multipart/related, with no t
       s.fake.addMessage({ ...dto("p7", { subject: "Q3 plan", date: "2026-08-19T00:10:00Z" }), threadId: "T" });
       s.fake.setBody("p7", ""); s.fake.setHtml("p7", `<html><body><img src="https://pictures.fake.test/c.png"></body></html>`);
       s.fake.setFiles("p7", [{ id: "a-p7", filename: "flyer.pdf", contentType: "application/pdf", sizeBytes: 800, inline: false }]);
+      s.fake.addMessage({ ...dto("p8", { subject: "Q3 plan", date: "2026-08-19T00:05:00Z" }), threadId: "T" });
+      s.fake.setBody("p8", filler.textBody); s.fake.setHtml("p8", filler.htmlBody!);
       await settleWire(s.boot.engine);
       await s.actions.openMessage("p4");
       await settleWire(s.boot.engine);
@@ -289,7 +294,7 @@ describe("an older member whose body is html inside multipart/related, with no t
       expect(liveMessage(s.boot.engine, "p1", view)!.body, "opened, its text says the same").toBe(at("p1").body);
 
       // The reader asks a word-less member's list, as it asks the opened message's.
-      for (const id of ["p2", "p3", "p5", "p6", "p7"]) s.actions.holdFiles([id]);
+      for (const id of ["p2", "p3", "p5", "p6", "p7", "p8"]) s.actions.holdFiles([id]);
       await settleWire(s.boot.engine);
       m = liveMessage(s.boot.engine, "p4", view)!;
       expect(at("p2").attachments?.map((a) => [a.filename, a.inline]), "its pictures, as files").toEqual([["p.png", true]]);
@@ -297,26 +302,28 @@ describe("an older member whose body is html inside multipart/related, with no t
       expect([at("p6").body, at("p6").wordless, at("p6").ready], "a placeholder text is not its words").toEqual(["", true, undefined]);
       expect([at("p7").wordless, at("p7").attachments?.map((a) => a.filename), at("p7").ready], "a file pill is not its body").toEqual([true, ["flyer.pdf"], undefined]);
       expect([at("p3").wordless, at("p3").attachments, at("p3").ready], "nothing to draw: not ready").toEqual([true, undefined, undefined]);
+      expect([at("p8").body, at("p8").wordless, at("p8").ready], "hidden text and filler are no words").toEqual(["", true, undefined]);
       expect([at("p5").wordless, at("p5").attachments?.length, at("p5").ready], "words past the bound: its tiles alone are not its body").toEqual([true, 1, undefined]);
       expect(at("o1").ready, "CONTROL: a text member").toBe(true);
       expect(s.fake.message("p2")?.unread, "the open read nothing").toBe(true);
 
       // p2 as the reader lays it out, its end below its files; p3 under it, its line alone; p5 its tiles.
       const reads: string[][] = [];
-      const r = readerOf({ opened: null, unread: new Set(["p2", "p3", "p5", "p6", "p7"]), onRead: (ids) => reads.push(ids), ready: (id) => at(id).ready === true });
+      const r = readerOf({ opened: null, unread: new Set(["p2", "p3", "p5", "p6", "p7", "p8"]), onRead: (ids) => reads.push(ids), ready: (id) => at(id).ready === true });
       r.core.viewport(800); r.core.offset("padded", 0); r.core.offset("above", 0);
       r.core.panel("p2", "above", 0, 140); r.core.panelHeader("p2", 18, 30); r.core.panelBody("p2", 58); r.core.panelEnd("p2", 122);
       r.core.panel("p3", "above", 152, 100); r.core.panelHeader("p3", 18, 30); r.core.panelBody("p3", 58); r.core.panelEnd("p3", 88);
       r.core.panel("p5", "above", 264, 140); r.core.panelHeader("p5", 18, 30); r.core.panelBody("p5", 58); r.core.panelEnd("p5", 122);
       r.core.panel("p6", "above", 416, 100); r.core.panelHeader("p6", 18, 30); r.core.panelBody("p6", 58); r.core.panelEnd("p6", 88);
       r.core.panel("p7", "above", 528, 140); r.core.panelHeader("p7", 18, 30); r.core.panelBody("p7", 58); r.core.panelEnd("p7", 122);
+      r.core.panel("p8", "above", 680, 100); r.core.panelHeader("p8", 18, 30); r.core.panelBody("p8", 58); r.core.panelEnd("p8", 88);
       r.flush();
       expect(reads, "the write waits for the dwell").toEqual([]);
       r.pass(dwell);
       r.pass(5 * dwell);
       expect(reads, "on screen as cards, none of them read").toEqual([]);
       await settleWire(s.boot.engine);
-      expect(["p2", "p3", "p5", "p6", "p7"].map((id) => s.fake.message(id)?.unread)).toEqual([true, true, true, true, true]);
+      expect(["p2", "p3", "p5", "p6", "p7", "p8"].map((id) => s.fake.message(id)?.unread)).toEqual([true, true, true, true, true, true]);
 
       // A press on p3's card opens it alone: its html is the opened message's, read by the open's own rule.
       expect(await s.actions.openMessage("p3")).toBe(true);
@@ -332,7 +339,7 @@ describe("an older member whose body is html inside multipart/related, with no t
       expect(opened, "its own open read it").toEqual([["p3"]]);
       await settleWire(s.boot.engine);
       expect(s.fake.message("p3")?.unread).toBe(false);
-      for (const id of ["p2", "p6", "p7"]) {
+      for (const id of ["p2", "p6", "p7", "p8"]) {
         expect(await s.actions.openMessage(id)).toBe(true);
         await settleWire(s.boot.engine);
         const got: string[][] = [];
@@ -361,6 +368,8 @@ describe("an html part's words, as a member draws them", () => {
   it("draws nothing a reader never sees, and nothing from markup alone", () => {
     expect(htmlWords("<head><title>T</title><style>p{}</style></head><body><script>x()</script><p>words</p></body>")).toBe("words");
     expect(htmlWords("<img src=\"cid:a\" alt=\"a picture\">")).toBe("");
+    expect(htmlWords("<div style=\"color:red; display: none !important\">preheader</div><p>&#847;&zwnj;&nbsp;&shy;&#8203;&#65279;</p>")).toBe("");
+    expect(htmlWords("<p>&zwnj;&nbsp;Hi&nbsp;&#847;&nbsp;Ben &#x1F468;&zwj;&#x1F469;</p>"), "a joiner inside a word stays").toBe("Hi Ben \u{1F468}\u200d\u{1F469}");
     expect(htmlWords("")).toBe("");
   });
 });
