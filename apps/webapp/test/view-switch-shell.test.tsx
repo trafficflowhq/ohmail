@@ -186,3 +186,35 @@ describe("the piles among the piles", () => {
     expect(before, "control: the change moved the count").not.toBe(pane());
   });
 });
+
+describe("the Screener's first open", () => {
+  it("the stage draws the Screener's shapes hidden before it is first opened, and none once it has been", async () => {
+    // The page lays out (the warm-up primes only where it does); frames run as jsdom's timers do.
+    const rects = Element.prototype.getClientRects;
+    vi.spyOn(Element.prototype, "getClientRects").mockImplementation(function boxes(this: Element) {
+      return this === document.body ? [{ top: 0, bottom: 900, height: 900 }] as unknown as DOMRectList : rects.call(this);
+    });
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(performance.now()), 16));
+    vi.stubGlobal("cancelAnimationFrame", (id: ReturnType<typeof setTimeout>) => clearTimeout(id));
+    const drawn: Array<string | null> = [];
+    const watch = new MutationObserver((ms) => {
+      for (const m of ms) for (const n of m.addedNodes) {
+        if (!(n instanceof Element) || !n.matches(".stage > .scn-prime")) continue;
+        drawn.push(n.querySelector(".rows .row")?.getAttribute("data-id") ?? null);
+      }
+    });
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter({ fixtures: getFixtures() }) });
+    await mountShell(engine);
+    watch.observe(host!, { childList: true, subtree: true });
+    for (let i = 0; i < 60 && drawn.length === 0; i += 1) await settle(2);
+    expect(drawn.length, "the stage never drew the Screener's shapes").toBeGreaterThan(0);
+    expect(drawn[0], "the first piece is not the Waiting list's first row").toMatch(/\S/);
+    expect(host!.querySelector(".view-ohbox"), "control: the Ohbox stayed on screen").not.toBeNull();
+    await go("#/screener");
+    expect(host!.querySelector(".view-screener"), "control: the Screener opened").not.toBeNull();
+    const before = drawn.length;
+    await settle(60);
+    watch.disconnect();
+    expect(drawn.length - before, "the stage primed a Screener already on screen").toBe(0);
+  });
+});

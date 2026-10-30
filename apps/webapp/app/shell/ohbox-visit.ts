@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef } from "react";
 import { documentHidden } from "./document-hidden";
+import { afterPaint } from "./visit";
 
 export interface VisitMarker {
   markOhboxVisit(): Promise<boolean>;
@@ -27,25 +28,34 @@ export function useOhboxVisitMark(engine: VisitMarker | null | undefined, open: 
   }, [engine, open]);
 
   useEffect(() => {
-    const leave = (): void => {
+    const leave = (switched = false): void => {
       if (!seen.current) return;
       seen.current = false;
-      void engineRef.current?.markOhboxVisit().catch(() => { /* the next leave tries again */ });
+      const marker = engineRef.current;
+      const write = (): void => {
+        void marker?.markOhboxVisit().catch(() => { /* the next leave tries again */ });
+      };
+      /* A switch writes once its frame has painted: the write moves the mirror's version, and
+         every pile re-derived before the next pile could paint. An unload or a hidden tab has no
+         frame to wait for. */
+      if (switched) afterPaint(document.body, write);
+      else write();
     };
     // A switch away from the Ohbox. Not on unmount: a sign-out takes the mirror with it.
-    if (wasOpen.current && !open) leave();
+    if (wasOpen.current && !open) leave(true);
     wasOpen.current = open;
     if (!open) return;
     if (!documentHidden()) seen.current = true;
+    const onPageHide = (): void => leave();
     const onVisibility = (): void => {
       if (documentHidden()) leave();
       else seen.current = true;
     };
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("pagehide", leave);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pagehide", leave);
+      window.removeEventListener("pagehide", onPageHide);
     };
   }, [open]);
 }

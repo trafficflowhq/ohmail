@@ -190,7 +190,7 @@ const UNCOUNTED: Record<string, { rows: number; why: string }> = {
   "ReceiptsView.tsx id=m.id": { rows: 1, why: "a receipt stands for itself; this stream has never drawn the capsule" },
   "ScreenerView.tsx id=w.id": { rows: 2, why: "the Screener's rows are waiting SENDERS, not conversations" },
   "ScreenerView.tsx id=r.sender.id": { rows: 1, why: "a decided sender's card, one row per sender" },
-  "ScreenerView.tsx id=sender.id": { rows: 1, why: "a decided sender's card, one row per sender" },
+  "ScreenerView.tsx id=sender.id": { rows: 2, why: "a decided sender's card, one row per sender; and the hidden primer's first sender of a segment, a sender too" },
   "ScreenerView.tsx id=junkKeyOf(i)": { rows: 1, why: "the junk window's rows are the server's own and carry no thread id" },
   "TrashView.tsx id=trashLiveKeyOf(i)": { rows: 1, why: "the server's own trash listing, whose rows carry no thread id" },
 };

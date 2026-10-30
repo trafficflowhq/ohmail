@@ -56,6 +56,8 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let rail: HTMLElement | null = null;
 let markSeen: Array<[string[], boolean, string | undefined]> = [];
+let viewRenders = 0;
+let shellKey: string | null = null;
 
 /** The rail, in the `.rail` vocabulary and nothing else — see the header. */
 function mountRail(): void {
@@ -70,11 +72,19 @@ function mountRail(): void {
 
 async function render(newForYou: Row[]): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider, useEnabledBinding } = await import("../app/shell/keymap.js");
   markSeen = [];
+  viewRenders = 0;
+  // Called as a function, so the view's own hooks live here and its every render is counted.
+  const Counted = (p: unknown): React.ReactElement => {
+    viewRenders++;
+    return (OhboxView as unknown as (q: unknown) => React.ReactElement)(p);
+  };
   function Wrapper(): React.ReactElement {
     const [sel, setSel] = React.useState<string | null>(null);
-    return h(OhboxView as never, {
+    // The shell reads the registry like this (`useShellKeys`), and it renders the view.
+    shellKey = useEnabledBinding("j")?.label ?? null;
+    return h(Counted as never, {
     owed: false,
       demo: false, settled: true,
       older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
@@ -572,6 +582,30 @@ describe("the zone walk: rail ← list → open message", () => {
     await key("ArrowLeft");
     expect((focused() as HTMLElement | null)?.closest?.(".rail"),
       "← refused an OPEN drawer").toBeTruthy();
+  });
+
+  it("focus crossing rail, list and reader re-renders neither the view nor a shell reading the registry", async () => {
+    setViewport();
+    await render(FIVE);
+    await key("ArrowDown");
+    expect(shellKey, "fixture: the shell reads a live view key").not.toBeNull();
+    const row = host!.querySelector<HTMLElement>(".row.sel")!;
+    const col = host!.querySelector<HTMLElement>(".read-col")!;
+    const items = [...rail!.querySelectorAll<HTMLElement>("button")];
+    const { READER_SCROLL_STEP } = await import("../app/shell/zone-nav.js");
+    viewRenders = 0;
+
+    await act(async () => { items[0]!.focus(); });
+    await key("ArrowDown");
+    expect(focused(), "the rail keys did not follow a focus the view never rendered for").toBe(items[1]);
+    await act(async () => { row.focus(); });
+    await act(async () => { col.focus(); });
+    await act(async () => { row.focus(); });
+    await act(async () => { col.focus(); });
+    expect(viewRenders, "a focus move re-rendered the whole view").toBe(0);
+    await key("ArrowDown");
+    expect(col.scrollTop, "the reader keys did not follow").toBe(READER_SCROLL_STEP);
+    expect(cursor()).toBe("m1");
   });
 
   it("every zone key is inert while a text field owns focus", async () => {

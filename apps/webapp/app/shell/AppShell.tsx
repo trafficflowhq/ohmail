@@ -276,7 +276,7 @@ import { SeedReviewView } from "../views/SeedReviewView";
 import { OhboxView, type OhboxReplyDone } from "../views/OhboxView";
 import { ReadsView } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
-import { ScreenerView } from "../views/ScreenerView";
+import { ScreenerView, ScreenerWarmup } from "../views/ScreenerView";
 import { SearchView } from "../views/SearchView";
 import { AddressView } from "../views/AddressView";
 import { TagView } from "../views/TagView";
@@ -3549,6 +3549,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
               </Suspense>
             ) : null}
             </ViewBoundary>
+            {/* The Screener's first open meets shapes this page has already drawn (`ScreenerWarmup`). */}
+            <ScreenerWarmup state={screener} shown={effectiveView === "screener"} />
           </main>
         </div>
       </div>
