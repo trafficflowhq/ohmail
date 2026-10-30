@@ -710,7 +710,7 @@
     "title": "News",
     "waterline": "Seen up to here",
     "waterlineMeta": "last visit · {stamp}",
-    "tail": "Scrolling past an item marks it seen.",
+    "tail": "An item turns read once it rests on screen in the stream. A quick scroll past leaves it unread.",
     "streamTail": "No older unread items.",
     "aiApprove": "Approve",
     "aiCorrect": "Correct",
@@ -1898,7 +1898,7 @@
   },
   "about": {
     "p1": "A demo mailbox, invented for it — nobody real, nothing real. Every key and every click works, and none of it leaves this tab: there is no network here at all.",
-    "p2": "The Screener holds first-time senders until you decide. One click files a sender to Ohbox, News or Receipts — the ✓ half also marks the held mail read — and the decision becomes a rule for future mail. News and Receipts share a skim stream where scrolling past an item marks it seen at the waterline. Tags group messages across views without moving them.",
+    "p2": "The Screener holds first-time senders until you decide. One click files a sender to Ohbox, News or Receipts — the ✓ half also marks the held mail read — and the decision becomes a rule for future mail. News and Receipts share a reading stream where an item turns read once it rests on screen; a quick scroll past leaves it unread. Tags group messages across views without moving them.",
     "keys": "Press ? for the keyboard map.",
     "loading": "Reading your mailboxes…",
     "noMailbox": "No mailbox connected. Settings → Mailboxes.",
