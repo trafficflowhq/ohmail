@@ -4058,6 +4058,7 @@
     "sheetOne": "Ein externes Stylesheet wurde blockiert, diese Nachricht kann also schlicht aussehen.",
     "sheetMany": "{n} externe Stylesheets wurden blockiert, diese Nachricht kann also schlicht aussehen.",
     "oversize": "Der HTML-Teil dieser Nachricht ist zu groß, um ihn sicher darzustellen. Hier steht die Nur-Text-Fassung.",
+    "picture": "Bild",
     "darkOriginal": "Original",
     "darkAdapt": "An Dunkel anpassen",
     "darkOriginalTitle": "Diese Nachricht in ihren Originalfarben anzeigen",

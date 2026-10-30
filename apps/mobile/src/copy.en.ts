@@ -1911,6 +1911,8 @@ const TABLE = {
   mailOversize:
     "This message's HTML part is too large to render safely. Showing the plain-text version.",
   /** The link confirm — the destination said out loud before anything leaves the app. */
+  /** What a screen reader calls a picture in a letter that the sender gave no alt text. */
+  mailPicture: "Picture",
   mailOpenLinkTitle: "Open this link?",
   mailOpenLinkOpen: "Open",
   mailOpenLinkCancel: "Cancel",
