@@ -1,4 +1,5 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +7,13 @@ import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { BearerManager, PAIR_SCOPE_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../desktop/src/host-client/bearer.js";
+import { BearerManager as ShippedBearerManager } from "../../desktop/test/fixtures/host-bearer-0.30.13.js";
+
+/* The engine's own devDependency, reached through its package: neither app carries one. */
+const { IDBFactory: FakeIDBFactory } = createRequire(
+  new URL("../../../packages/client-engine/package.json", import.meta.url),
+)("fake-indexeddb") as { IDBFactory: new () => IDBFactory };
 
 // Every test here stands up the real sidecar (createSidecar boots the engine's PGlite and
 // runs its migrations) in the test body — see pglite-budget.ts for the measured cost.
@@ -61,6 +69,19 @@ function req(method: string, path: string, init: { bearer?: string; body?: strin
   if (init.bearer) headers.set("authorization", `Bearer ${init.bearer}`);
   if (init.cookie) headers.set("cookie", init.cookie);
   return new Request(`http://sidecar${path}`, { method, headers, body: init.body });
+}
+
+/** One browser's localStorage, over a Map. */
+function memoryStorage(seed: Record<string, string> = {}): Storage {
+  const map = new Map(Object.entries(seed));
+  return {
+    get length() { return map.size; },
+    clear: () => map.clear(),
+    getItem: (k: string) => map.get(k) ?? null,
+    key: (i: number) => [...map.keys()][i] ?? null,
+    removeItem: (k: string) => void map.delete(k),
+    setItem: (k: string, v: string) => void map.set(k, String(v)),
+  } as Storage;
 }
 
 describe("DISARMED — the default composition is byte-identical to the pre-host build", () => {
@@ -337,5 +358,83 @@ describe("ARMED — the desktop-host door, stdio→host end to end", () => {
       json({ grant: "invite", token: "t".repeat(43), email: "kid@example.com" })));
     expect(invite.status).toBe(400);
     expect((await invite.json()).error.code).toBe("validation_failed");
+  });
+});
+
+/**
+ * ═══ A PAIRED BROWSER ACROSS AN UPDATE — two builds in two tabs, one jar ═══════════════════
+ *
+ * Nothing reloads an open tab of the served client, so after the desktop app updates, one browser
+ * can run the shipped build in one tab and this one in another, over one localStorage. Both renew
+ * on this door's native arm: no grace, a spent token answered again only under the name that spent
+ * it, the family swept under any other. So each build must read the other's name for a renewal
+ * whose answer never came, and leave the other nothing it would send that is not a name. Each pair
+ * is one browser with its own pairing; every step starts past the access window, so every step
+ * renews, and a lost answer is dropped after the door rotated.
+ */
+describe("a paired browser across an update: the shipped build and this one in two tabs", () => {
+  type Build = "this build" | "the shipped build";
+  const PAIRS: Array<[Build, Build]> = [
+    ["this build", "the shipped build"], ["the shipped build", "this build"],
+    ["this build", "this build"], ["the shipped build", "the shipped build"],
+  ];
+  const PAST_THE_ACCESS_WINDOW_MS = 16 * 60 * 1000;
+
+  /** One browser paired to the door, two tabs on its jar, each step a tab reading mail: what they saw. */
+  async function browse(
+    door: Awaited<ReturnType<typeof standUp>>, builds: [Build, Build], steps: Array<[0 | 1, "kept" | "lost"]>,
+  ): Promise<string> {
+    const { sidecar, clock } = door;
+    const minted = await (await sidecar.handle(req("POST", "/pair", {
+      bearer: sidecar.sessionToken, ...json({ grant: "device-pair", label: "a browser" }),
+    }))).json();
+    const { tokens } = await (await sidecar.handleHost!(req("POST", "/pair/redeem",
+      json({ grant: "device-pair", token: minted.token })))).json();
+    const jar = memoryStorage({ [REFRESH_STORAGE_KEY]: tokens.refreshToken, [PAIR_SCOPE_STORAGE_KEY]: "scope-1" });
+    const idb = new FakeIDBFactory();
+    let renewals = 0;
+    let lose = false;
+    const wire = async (url: string, init?: unknown): Promise<Response> => {
+      const i = (init ?? {}) as { method?: string; headers?: Record<string, string>; body?: string };
+      const res = await sidecar.handleHost!(new Request(`http://sidecar${url}`, {
+        method: i.method ?? "GET", headers: i.headers, body: i.body,
+      }));
+      if (url !== "/auth/refresh") return res;
+      renewals += 1;
+      if (!lose) return res;
+      lose = false;
+      throw new TypeError("network error");
+    };
+    const tabs = builds.map((build) => (build === "this build"
+      ? new BearerManager({ storage: jar, fetchImpl: wire, idb })
+      : new ShippedBearerManager({ storage: jar, fetchImpl: wire })));
+    let ended = 0;
+    for (const tab of tabs) tab.onSessionDead(() => { ended += 1; });
+    const seen: number[] = [];
+    for (const [tab, answer] of steps) {
+      clock.advance(PAST_THE_ACCESS_WINDOW_MS);
+      lose = answer === "lost";
+      seen.push((await tabs[tab]!.fetch("/sync")).status);
+    }
+    return `${seen.join(" ")}, ${renewals} renewals, ${ended} ended`;
+  }
+
+  async function everyPair(steps: Array<[0 | 1, "kept" | "lost"]>): Promise<Record<string, string>> {
+    const door = await standUp({ hostMode: true });
+    const seen: Record<string, string> = {};
+    for (const pair of PAIRS) seen[pair.join(", then ")] = await browse(door, pair, steps);
+    return seen;
+  }
+  const forEveryPair = (outcome: string): Record<string, string> =>
+    Object.fromEntries(PAIRS.map((pair) => [pair.join(", then "), outcome]));
+
+  it("one tab's renewal loses its answer: the other tab's finishes it, whichever build each runs", async () => {
+    expect(await everyPair([[0, "lost"], [1, "kept"], [0, "kept"]]))
+      .toEqual(forEveryPair("401 200 200, 3 renewals, 0 ended"));
+  });
+
+  it("after one tab's renewal lands, the other's loses its answer: the first finishes it, whichever build each runs", async () => {
+    expect(await everyPair([[0, "kept"], [1, "lost"], [0, "kept"], [1, "kept"]]))
+      .toEqual(forEveryPair("200 401 200 200, 4 renewals, 0 ended"));
   });
 });
