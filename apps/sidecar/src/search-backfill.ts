@@ -1,10 +1,11 @@
 /**
- * THE SEARCH INDEX FILLS ITSELF IN WHILE NOBODY IS USING THE APP — the desktop's schedule for the
- * store-only `search_index_backfill` pass. One round per tick, and a tick runs a round only when no
- * person has asked for anything for {@link PERSON_QUIET_MS}, no drain is taking mail in, and the host
- * is on power. The account's marker ends the rounds; `maintain` (the planner statistics) runs after
- * each round and, once the marker is written, at most every {@link SEARCH_MAINTAIN_EVERY_MS} on an
- * idle tick. A failed round is logged and tried again; rows without a document are read the older way.
+ * THE STORE-ONLY PASSES RUN WHILE NOBODY IS USING THE APP — the desktop's and the phone's schedule
+ * for the store-only `search_index_backfill` and `html_words_backfill` passes. One round per tick,
+ * and a tick runs a round only when no person has asked for anything for {@link PERSON_QUIET_MS},
+ * no drain is taking mail in, and the host is on power. The account's marker ends the rounds;
+ * `maintain` (the planner statistics) runs after each round and, once the marker is written, at
+ * most every {@link SEARCH_MAINTAIN_EVERY_MS} on an idle tick. A failed round is logged and tried
+ * again; rows without a document are read the older way.
  */
 import { PERSON_QUIET_MS } from "./attention.js";
 import { cadenceDue, stampNow, type CadenceClocks, type CadenceStamp } from "./pass-cadence.js";
@@ -54,6 +55,12 @@ interface SearchBackfillDeps {
  */
 const NO_POWER_READING: PowerVerdict = { onPower: true, state: "unknown" };
 
+/** The pass's own two lines, written at each caller so every event name stays a literal. */
+interface IdleStorePassLines {
+  finished: (totals: { written: number; rounds: number; totalMs: number }) => void;
+  failed: (err: unknown) => void;
+}
+
 export interface SearchBackfill {
   /** Look once and run a round if the gate admits one. The timer calls this; so may a test. */
   tick(): Promise<TickOutcome>;
@@ -63,6 +70,33 @@ export interface SearchBackfill {
 }
 
 export function startSearchIndexBackfill(deps: SearchBackfillDeps): SearchBackfill {
+  return startIdleStorePass(deps, {
+    finished: (t) => deps.log("search_index_backfill_finished", {
+      written: t.written, rounds: t.rounds, totalMs: t.totalMs,
+      reason: "every message on this install now has its search document; search reads the index alone",
+    }),
+    failed: (err) => deps.log("search_index_backfill_failed", {
+      err,
+      reason: "one round of the search index backfill failed and wrote nothing; a later idle tick tries again",
+    }),
+  });
+}
+
+/** Older html-only letters get their words (`html_words_backfill`), on the same idle gate. */
+export function startHtmlWordsBackfill(deps: SearchBackfillDeps): SearchBackfill {
+  return startIdleStorePass(deps, {
+    finished: (t) => deps.log("html_words_backfill_finished", {
+      written: t.written, rounds: t.rounds, totalMs: t.totalMs,
+      reason: "every stored html-only letter on this install now has its words as its text",
+    }),
+    failed: (err) => deps.log("html_words_backfill_failed", {
+      err,
+      reason: "one round of the html-words backfill failed; its cursor holds, and a later idle tick resumes there",
+    }),
+  });
+}
+
+function startIdleStorePass(deps: SearchBackfillDeps, lines: IdleStorePassLines): SearchBackfill {
   // Monotonic: every reading below is a "how long since", which a wall clock stepped back stretches.
   const now = deps.now ?? ((): number => performance.now());
   const clocks: CadenceClocks = { wall: deps.wall ?? ((): number => Date.now()), mono: now };
@@ -106,17 +140,11 @@ export function startSearchIndexBackfill(deps: SearchBackfillDeps): SearchBackfi
       written += r.written;
       if (r.marked) {
         finished = true;
-        deps.log("search_index_backfill_finished", {
-          written, rounds, totalMs: Math.round(now() - startedAt),
-          reason: "every message on this install now has its search document; search reads the index alone",
-        });
+        lines.finished({ written, rounds, totalMs: Math.round(now() - startedAt) });
       }
       return "ran";
     } catch (err) {
-      deps.log("search_index_backfill_failed", {
-        err,
-        reason: "one round of the search index backfill failed and wrote nothing; a later idle tick tries again",
-      });
+      lines.failed(err);
       return "failed";
     } finally {
       inFlight = null;

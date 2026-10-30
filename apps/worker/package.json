@@ -58,6 +58,12 @@
       "node": "./dist/sender-name-backfill.js",
       "default": "./src/sender-name-backfill.ts"
     },
+    "./html-words-backfill": {
+      "types": "./src/html-words-backfill.ts",
+      "ohmail-source": "./src/html-words-backfill.ts",
+      "node": "./dist/html-words-backfill.js",
+      "default": "./src/html-words-backfill.ts"
+    },
     "./thread-join-heal": {
       "types": "./src/thread-join-heal.ts",
       "ohmail-source": "./src/thread-join-heal.ts",

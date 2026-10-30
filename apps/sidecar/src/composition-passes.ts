@@ -79,15 +79,17 @@ export class AppointmentsRefused extends ScheduleService {
  * `search_index_backfill` pass (`@trafficflow/core/mail`), gated on idle and power here
  * (`search-backfill.ts`). The hosted deployment runs it in the worker's cycle tail, never in
  * this composition; the phone does not schedule it (search there reads rows without a document the
- * older way, which stays complete).
+ * older way, which stays complete). `html-words-backfill` (`@trafficflow/worker/html-words-backfill`)
+ * gives older html-only letters their words, on the same gate, on the phone too: its index and its
+ * previews read the stored text alone. A Cloud mirror follows the hosted store's deltas instead.
  */
-type StorePass = "search-index-backfill";
+type StorePass = "search-index-backfill" | "html-words-backfill";
 
 export const COMPOSITION_STORE_PASSES:
   Readonly<Record<OrganizerKind, readonly StorePass[]>> = {
-  local: ["search-index-backfill"],
+  local: ["search-index-backfill", "html-words-backfill"],
   cloud: [],
-  mobile: [],
+  mobile: ["html-words-backfill"],
 };
 
 export function runsStorePass(kind: OrganizerKind, pass: StorePass): boolean {

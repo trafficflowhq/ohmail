@@ -123,6 +123,7 @@ import { mailboxErasurePass } from "./mailbox-erasure-pass.js";
 import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
 import { SEARCH_INDEX_ACCOUNTS_PER_TAIL, searchIndexBackfillPass, searchIndexOwedAccounts } from "@trafficflow/core/mail";
+import { HTML_WORDS_ACCOUNTS_PER_TAIL, htmlWordsBackfillPass, htmlWordsOwedAccounts } from "./html-words-backfill.js";
 import { storageEvictPass } from "./storage-evict.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
 import {
@@ -5645,6 +5646,42 @@ export async function startWorkerWithLock(
               reason: "no sender was filed past the failure and nothing is marked — a filed sender " +
                 "leaves the Screener and stops being a candidate, so the next cycle resumes at the " +
                 "next waiting sender and every one of them still carries its own Apply",
+            });
+          });
+        },
+      },
+      html_words_backfill: {
+        // ── OLDER HTML-ONLY LETTERS' WORDS (mail 0172) ─────────────────────────────────────
+        // Store-only: a letter stored before ingest kept its html's words gets them as its text, with
+        // its preview, search document and one delta; nothing is re-filed. One page per account under
+        // the slice, a turn of the event loop between rows; the cursor is the resume point.
+        enter: async () => {
+          let owed: string[] = [];
+          await runTailStage("cycle.htmlWordsOwedAccounts", "database", async () => {
+            owed = await htmlWordsOwedAccounts(db as unknown as Tx, {
+              limit: HTML_WORDS_ACCOUNTS_PER_TAIL, shard: accountShardFilter(selection, accounts.id),
+            });
+          }, (err) => {
+            log.warn("html_words_owed_read_failed", {
+              err, reason: "the accounts owed the html-words backfill could not be read; the next tail reads them again",
+            });
+          });
+          return owed;
+        },
+        run: async (accountId) => {
+          await runTailStage("cycle.htmlWordsBackfillPass", "database", async () => {
+            const r = await htmlWordsBackfillPass(db as unknown as Tx, {
+              accountId, until: sliceUntil(), turn: () => new Promise<void>((resolve) => setImmediate(resolve)),
+            });
+            if (r.ran && (r.filled > 0 || r.marked)) {
+              log.info("html_words_backfill_pass", {
+                accountId, scanned: r.scanned, written: r.filled, skipped: r.wordless, marked: r.marked,
+              });
+            }
+          }, (err) => {
+            log.error("html_words_backfill_failed", {
+              accountId, err,
+              reason: "the page's writes rolled back with its cursor, so the next tail reads the same rows again",
             });
           });
         },

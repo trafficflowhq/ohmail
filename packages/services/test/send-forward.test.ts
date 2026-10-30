@@ -3,7 +3,7 @@ import { accountStorage, attachments, drafts, messages, messageBodies, outboundS
 import { eq } from "drizzle-orm";
 import { FORWARD_MAX_RAW_BYTES, forwardedDate, sendService } from "@trafficflow/services/mail";
 import type { ServiceContext, AttachmentAdapter, OpenAdapter } from "@trafficflow/services/mail";
-import { normalizeMime, prepareHtmlForStorage, STORED_HTML_CAP_BYTES } from "@trafficflow/core/mail";
+import { normalizeMime, prepareHtmlForStorage, STORED_HTML_CAP_BYTES, textFromHtml } from "@trafficflow/core/mail";
 import type { SendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core/mail";
 import { MessageGoneError, RawMessageTooLargeError } from "@trafficflow/core/adapters/imap";
 import { FIXED_NOW, makeDeps, seedMailbox, seedMessage, seedSession, seedBody } from "../../api/test/helpers.js";
@@ -542,14 +542,18 @@ describe("a forward whose original cannot be loaded is refused; an html-only one
     expect(msg.html).toContain("Quarterly <b>numbers</b> attached.");
   });
 
-  it("a plain forward of a letter whose stored text is its html's words keeps the link targets", async () => {
+  // Stored by ingest, or stored blank before the words and filled later from the stored html.
+  it.each(["ingest", "backfill"] as const)("a plain forward of a letter whose stored text is its html's words keeps the link targets (%s)", async (by) => {
     const parsed = await normalizeMime(["Message-ID: <invite@meet.example>", "From: Meet <no-reply@meet.example>", "Subject: Invite",
       "MIME-Version: 1.0", 'Content-Type: multipart/related; boundary="R"', "", "--R", "Content-Type: text/html; charset=utf-8", "",
       '<p>You are invited.</p><p><a href="https://meet.example/j/9876543210">Join the meeting</a></p><img src="cid:logo@x">',
       "--R", "Content-Type: image/png", "Content-ID: <logo@x>", "Content-Transfer-Encoding: base64", "", "iVBORw0KGgo=", "--R--", ""].join("\r\n"));
     expect(parsed.textBody).toBe("You are invited.\n\nJoin the meeting");
+    const storedHtml = prepareHtmlForStorage(parsed.htmlBody);
+    const text = by === "ingest" ? parsed.textBody : textFromHtml("", storedHtml);
+    expect(text).toBe(parsed.textBody);
     const w = await world({ note: "See below." });
-    await w.db.update(messageBodies).set({ text: parsed.textBody, html: prepareHtmlForStorage(parsed.htmlBody) })
+    await w.db.update(messageBodies).set({ text, html: storedHtml })
       .where(eq(messageBodies.messageId, w.originalId));
     const send = sendSpy();
     const fetch = fetchSpy({});

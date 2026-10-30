@@ -37,6 +37,20 @@ function scrubNul(s: string): string {
   return s.includes(NUL) ? s.replace(NUL_GLOBAL, NUL_REPLACEMENT) : s;
 }
 
+/**
+ * The text ingest stores for a letter whose own text is blank: the words of its STORED html (what
+ * {@link prepareHtmlForStorage} kept), else "". The one spelling ingest and the stored-row backfill
+ * share; "" for a letter with text of its own, no html, or html that cannot be rendered.
+ */
+export function textFromHtml(ownText: string, storedHtml: string | null): string {
+  if (ownText.trim() !== "" || storedHtml === null) return "";
+  try {
+    return scrubNul(htmlWords(storedHtml));
+  } catch {
+    return "";
+  }
+}
+
 function toAddr(a: { name?: string; address?: string }): EmailAddress {
   return {
     name: scrubNul(a.name?.trim() ?? "") || null,
@@ -342,7 +356,7 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
   let words = "";
   if (text.trim() === "" && html !== null) {
     try {
-      words = scrubNul(htmlWords(prepareHtmlForStorage(html) ?? ""));
+      words = textFromHtml(text, prepareHtmlForStorage(html) ?? "");
     } catch {
       // Derived text only: a letter whose html cannot be rendered keeps the parse's own (empty) text.
       words = "";
