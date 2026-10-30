@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, isNull, lt, or, sql, type SQL, type SQLWrapper 
 import {
   accounts, accountSettings, attachments, messageBodies, messages, messageSearch, type Tx,
 } from "@trafficflow/db";
-import { dialect, type SearchDocumentParts } from "@trafficflow/db/dialect";
+import { dialect, SEARCH_NAMES_MARK, type SearchDocumentParts } from "@trafficflow/db/dialect";
 import { htmlWords } from "./html-text.js";
 import type { EmailAddress } from "./types.js";
 
@@ -38,6 +38,14 @@ const INSERT_CHUNK = 100;
 export const SEARCH_HTML_READ_MAX_CHARS = 262_144;
 /** Accounts one cycle tail's backfill section visits, at most. */
 export const SEARCH_INDEX_ACCOUNTS_PER_TAIL = 16;
+/**
+ * The present document shape's stamp (each file name, whole and in parts, a word of the text vector
+ * and of no head, and the substring corpus's names behind its mark): a version instant no clock
+ * reaches, written as `built_at` on every document and marker this writer writes. One dated earlier
+ * was written by an older writer, whenever it ran, and the backfill owes a letter with a file name
+ * its document in this shape. A later shape takes a later instant.
+ */
+export const SEARCH_DOCUMENT_SHAPE_AT = new Date("3000-01-02T00:00:00Z");
 
 /** Where a document's body words came from. `headers_only`: the stored body had no words. */
 export type { SearchSource } from "@trafficflow/db";
@@ -80,28 +88,81 @@ function personWords(a: EmailAddress | null): string {
   return [a.name ?? "", address, address.replace(/[@.+_-]+/g, " ")].join(" ").trim();
 }
 
-/** The document's parts and substring corpus, each bounded. Pure; the writer's only input. */
+/**
+ * The parts of the file names as words: Postgres reads `harbour-ledger-7731.pdf` as one token. Each
+ * name's runs between marks that are not letters or digits, and inside a run its camel humps and its
+ * letter or digit runs of two characters or more (`harbour ledger 7731 pdf`). Only the names inside
+ * the head part's `max` characters are split, and the words written stop there too: the work is
+ * bounded however many names a letter carries, even the same name over and over.
+ */
+function fileNameWords(names: readonly string[], max: number): string[] {
+  // Keyed lower-cased: `pdf` and `PDF` are one word to the index, written once.
+  const words = new Map<string, string>();
+  let size = 0;
+  let at = 0;
+  for (const name of names) {
+    if (at >= max) break;
+    const inside = name.slice(0, max - at);
+    at += name.length + 1;
+    for (const run of inside.split(/[^\p{L}\p{M}\p{N}]+/u)) {
+      if (run === "") continue;
+      const pieces = run.replace(/(\p{Ll}\p{M}*)(?=\p{Lu})/gu, "$1 ").replace(/(\p{Lu}\p{M}*)(?=\p{Lu}\p{M}*\p{Ll})/gu, "$1 ")
+        .replace(/([\p{L}\p{M}])(?=\p{N})|(\p{N})(?=\p{L})/gu, "$1$2 ").split(" ");
+      for (const w of [run, ...(pieces.length > 1 ? pieces.filter((p) => [...p].length > 1) : [])]) {
+        const key = w.toLowerCase();
+        if (words.has(key)) continue;
+        if (size + w.length + 1 > max) return [...words.values()];
+        words.set(key, w);
+        size += w.length + 1;
+      }
+    }
+  }
+  return [...words.values()];
+}
+
+/**
+ * The document's parts and substring corpus, each bounded. Pure; the writer's only input, on every
+ * store. The head is the subject and the people. The text is the body, then each file name whole,
+ * then the names' parts ({@link fileNameWords}): a word a file name holds is a word of the text alone,
+ * found by the arms that find a body word and ranked by recency as one. The corpus is the header text,
+ * then {@link SEARCH_NAMES_MARK} and the names whole; a letter with no file name writes no mark.
+ */
 export function searchDocumentOf(input: MessageSearchInput): { parts: SearchDocumentParts; terms: string } {
   const people = [input.from, ...input.to, ...input.cc].map(personWords).filter((w) => w !== "").join(" ");
-  const attachmentsText = input.attachmentNames.filter((n) => n.trim() !== "").join(" ");
+  const names = input.attachmentNames.filter((n) => n.trim() !== "");
+  const whole = names.join(" ").slice(0, SEARCH_HEAD_PART_MAX_CHARS);
+  const files = fileNameWords(names, SEARCH_HEAD_PART_MAX_CHARS).join(" ");
+  const body = input.bodyText.slice(0, SEARCH_BODY_MAX_CHARS);
   const parts: SearchDocumentParts = {
     subject: input.subject.slice(0, SEARCH_HEAD_PART_MAX_CHARS),
     people: people.slice(0, SEARCH_HEAD_PART_MAX_CHARS),
-    attachments: attachmentsText.slice(0, SEARCH_HEAD_PART_MAX_CHARS),
-    body: input.bodyText.slice(0, SEARCH_BODY_MAX_CHARS),
+    body: whole === "" ? body : `${body}\n${whole}\n${files}`,
   };
   const addresses = [input.from, ...input.to, ...input.cc]
     .map((a) => (a === null ? "" : `${a.name ?? ""} ${a.address ?? ""}`.trim()));
-  const terms = [input.subject, ...addresses, attachmentsText]
+  // The mark out of every part first: it says where the names begin.
+  const unmarked = (t: string): string => t.split(SEARCH_NAMES_MARK).join(" ");
+  const head = [input.subject, ...addresses].map(unmarked)
     .filter((t) => t.trim() !== "")
     .join(" ")
     .replace(/\s+/g, " ")
-    .toLowerCase()
-    .slice(0, SEARCH_TERMS_MAX_CHARS);
+    .toLowerCase();
+  const named = names.map(unmarked).join(" ").replace(/\s+/g, " ").trim().toLowerCase();
+  const terms = (named === "" ? head : `${head}${SEARCH_NAMES_MARK}${named}`).slice(0, SEARCH_TERMS_MAX_CHARS);
   return { parts, terms };
 }
 
-const NO_PARTS: SearchDocumentParts = { subject: "", people: "", attachments: "", body: "" };
+const NO_PARTS: SearchDocumentParts = { subject: "", people: "", body: "" };
+
+/** An instant no earlier than {@link SEARCH_DOCUMENT_SHAPE_AT}: what this writer dates its documents and markers with. */
+function shapeFloor(at: Date): Date {
+  return at < SEARCH_DOCUMENT_SHAPE_AT ? SEARCH_DOCUMENT_SHAPE_AT : at;
+}
+
+/** Does this store's document have a shape to be current in? A store without vectors keeps the substring corpus alone. */
+function shaped(db: unknown): boolean {
+  return dialect(db).search.document(NO_PARTS) !== null;
+}
 
 /** One document's row values on the store the handle belongs to. */
 function rowOf(db: unknown, messageId: string, input: MessageSearchInput, builtAt: Date): Record<string, unknown> {
@@ -121,7 +182,7 @@ export function messageSearchUpsert(
   const vectors = dialect(db).search.document(NO_PARTS) === null ? {} : {
     headTsv: sql`excluded.head_tsv`, textTsv: sql`excluded.text_tsv`,
   };
-  const values = rows.map((r) => rowOf(db, r.messageId, r.input, now));
+  const values = rows.map((r) => rowOf(db, r.messageId, r.input, shapeFloor(now)));
   return db.insert(messageSearch).values(values as never).onConflictDoUpdate({
     target: messageSearch.messageId,
     set: { terms: sql`excluded.terms`, source: sql`excluded.source`, builtAt: sql`excluded.built_at`, ...vectors } as never,
@@ -157,13 +218,41 @@ export async function searchInputsFromStore(
   if (messageIds.length === 0) return [];
   const ids = [...messageIds];
   const rows = await db.select({
-    id: messages.id, subject: messages.subject, fromAddress: messages.fromAddress,
-    fromName: messages.fromName, to: messages.toAddresses, cc: messages.ccAddresses,
+    ...HEADER,
     text: sql<string | null>`substr(${messageBodies.text}, 1, ${SEARCH_BODY_MAX_CHARS})`,
     html: sql<string | null>`substr(${messageBodies.html}, 1, ${SEARCH_HTML_READ_MAX_CHARS})`,
   }).from(messages)
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
     .where(and(eq(messages.accountId, accountId), inArray(messages.id, ids)));
+  const namesOf = await fileNamesOf(db, accountId, ids);
+  return rows.map((r) => ({ messageId: r.id, input: inputOf(accountId, r, namesOf.get(r.id) ?? [], searchBodyOf(r.text, r.html)) }));
+}
+
+/** What a document is built from in the store besides the body: a letter's headers. */
+const HEADER = {
+  id: messages.id, subject: messages.subject, fromAddress: messages.fromAddress,
+  fromName: messages.fromName, to: messages.toAddresses, cc: messages.ccAddresses,
+};
+
+/** A stored letter's document input: its headers, its file names and its body words. */
+function inputOf(
+  accountId: string, r: { subject: string | null; fromAddress: string | null; fromName: string | null; to: unknown; cc: unknown },
+  attachmentNames: readonly string[], body: { bodyText: string; source: SearchSource },
+): MessageSearchInput {
+  return {
+    accountId,
+    subject: r.subject ?? "",
+    from: r.fromAddress ? { name: r.fromName ?? null, address: r.fromAddress } : null,
+    to: addressList(r.to),
+    cc: addressList(r.cc),
+    attachmentNames,
+    bodyText: body.bodyText,
+    source: body.source,
+  };
+}
+
+/** The stored file names of these messages, by message. */
+async function fileNamesOf(db: Tx, accountId: string, ids: string[]): Promise<Map<string, string[]>> {
   const files = await db.select({ messageId: attachments.messageId, filename: attachments.filename })
     .from(attachments)
     .where(and(eq(attachments.accountId, accountId), inArray(attachments.messageId, ids)));
@@ -174,22 +263,41 @@ export async function searchInputsFromStore(
     list.push(f.filename);
     namesOf.set(f.messageId, list);
   }
-  return rows.map((r) => {
-    const body = searchBodyOf(r.text, r.html);
-    return {
-      messageId: r.id,
-      input: {
-        accountId,
-        subject: r.subject ?? "",
-        from: r.fromAddress ? { name: r.fromName ?? null, address: r.fromAddress } : null,
-        to: addressList(r.to),
-        cc: addressList(r.cc),
-        attachmentNames: namesOf.get(r.id) ?? [],
-        bodyText: body.bodyText,
-        source: body.source,
-      },
-    };
-  });
+  return namesOf;
+}
+
+/**
+ * THE REFILL: an older writer's documents in the present shape, from the letter's stored headers and
+ * file names alone: the head built again (the subject and the people, no name), the names whole and
+ * their parts appended to the text vector, the substring corpus the writer writes now, and the present
+ * shape's stamp. No body is read, so a withheld body's document keeps the words it was built with. One
+ * statement per {@link INSERT_CHUNK}.
+ */
+async function refillFileNames(db: Tx, accountId: string, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const d = dialect(db);
+  const namesOf = await fileNamesOf(db, accountId, ids);
+  const heads = await db.select(HEADER).from(messages).where(and(eq(messages.accountId, accountId), inArray(messages.id, ids)));
+  const shape = d.ts(SEARCH_DOCUMENT_SHAPE_AT);
+  for (let i = 0; i < heads.length; i += INSERT_CHUNK) {
+    const chunk = heads.slice(i, i + INSERT_CHUNK);
+    const head: SQL[] = [];
+    const text: SQL[] = [];
+    const terms: SQL[] = [];
+    for (const h of chunk) {
+      // The writer's own document with no body: its text is the names, whole and in parts.
+      const doc = searchDocumentOf(inputOf(accountId, h, namesOf.get(h.id) ?? [], { bodyText: "", source: "headers_only" }));
+      const vectors = d.search.document(doc.parts)!;
+      head.push(sql`when ${h.id} then ${vectors.head}`);
+      text.push(sql`when ${h.id} then ${vectors.text}`);
+      terms.push(sql`when ${h.id} then ${doc.terms}`);
+    }
+    await d.exec(db, sql`update message_search set built_at = ${shape},
+      head_tsv = case message_id ${sql.join(head, sql` `)} end,
+      text_tsv = text_tsv || case message_id ${sql.join(text, sql` `)} end,
+      terms = case message_id ${sql.join(terms, sql` `)} end
+      where account_id = ${accountId} and built_at < ${shape} and message_id in (${sql.join(chunk.map((h) => sql`${h.id}`), sql`, `)})`);
+  }
 }
 
 /** A stored recipient list, read defensively: jsonb written by older code may hold anything. */
@@ -216,10 +324,18 @@ export async function searchIndexProgress(db: Tx, accountId: string): Promise<{ 
   return { total: Number(rows[0]?.[0] ?? 0), done: Number(rows[0]?.[1] ?? 0) };
 }
 
+/** The marker is absent, or older than the document's shape: documents are owed or owed again. */
+function markerOwed(db: unknown): SQL {
+  return shaped(db)
+    ? or(isNull(accountSettings.searchIndexBuiltAt), lt(accountSettings.searchIndexBuiltAt, SEARCH_DOCUMENT_SHAPE_AT))!
+    : isNull(accountSettings.searchIndexBuiltAt);
+}
+
 /**
- * The accounts the backfill still owes: living mail and no marker. The tail walks this list, not
- * its snapshot of enabled mailboxes, so an account whose only mailbox is disabled, or whose account
- * is parked, is still indexed from the store. `shard` is the caller's predicate over `accounts.id`.
+ * The accounts the backfill still owes: living mail and no marker, or a marker older than the
+ * document's shape. The tail walks this list, not its snapshot of enabled mailboxes, so an account
+ * whose only mailbox is disabled, or whose account is parked, is still indexed from the store.
+ * `shard` is the caller's predicate over `accounts.id`.
  */
 export async function searchIndexOwedAccounts(
   db: Tx, opts: { limit: number; shard?: SQL },
@@ -227,7 +343,7 @@ export async function searchIndexOwedAccounts(
   const rows = await db.select({ id: accounts.id }).from(accounts)
     .leftJoin(accountSettings, eq(accountSettings.accountId, accounts.id))
     .where(and(
-      isNull(accountSettings.searchIndexBuiltAt),
+      markerOwed(db),
       sql`exists (select 1 from ${messages} where ${messages.accountId} = ${accounts.id} and ${messages.deletedAt} is null)`,
       opts.shard,
     ))
@@ -247,8 +363,20 @@ export async function searchIndexBuilt(db: Tx, accountId: string): Promise<boole
   }
 }
 
+/** Are this account's documents all built, in the present shape? `false` for no settings row or a failed read. */
+async function searchIndexCurrent(db: Tx, accountId: string): Promise<boolean> {
+  try {
+    const [row] = await db.select({ at: accountSettings.searchIndexBuiltAt }).from(accountSettings)
+      .where(eq(accountSettings.accountId, accountId)).limit(1);
+    const at = row?.at;
+    return at != null && (!shaped(db) || new Date(at).getTime() >= SEARCH_DOCUMENT_SHAPE_AT.getTime());
+  } catch {
+    return false;
+  }
+}
+
 export interface SearchIndexBackfillResult {
-  /** False when the marker was already written — nothing was read. */
+  /** False when the marker was already written in the present shape — nothing was read. */
   readonly ran: boolean;
   readonly written: number;
   readonly rounds: number;
@@ -258,9 +386,11 @@ export interface SearchIndexBackfillResult {
 
 /**
  * THE STORE-ONLY BACKFILL — `search_index_backfill` in the worker's pass registry. Newest first,
- * the absence of a document is the resume point, one transaction per round. No mailbox, no
- * adapter: every word it writes is already in the store. Writes the completion marker once the
- * account's living messages all have a document.
+ * one transaction per round, the same bound per round whatever it writes: a letter with no document
+ * is built from the store; one with a file name and a document older than the present shape is
+ * brought to it from its headers and file names ({@link refillFileNames}). What is left owed is the resume
+ * point. No mailbox, no adapter: every word it writes is already in the store. Writes the completion
+ * marker once the account's living messages all have a document in the present shape.
  */
 export async function searchIndexBackfillPass(args: {
   db: Tx; accountId: string; now?: () => Date;
@@ -270,7 +400,10 @@ export async function searchIndexBackfillPass(args: {
   const batch = args.batch ?? SEARCH_INDEX_BATCH;
   const maxRounds = args.rounds ?? SEARCH_INDEX_ROUNDS_PER_CYCLE;
   const now = args.now ?? (() => new Date());
-  if (await searchIndexBuilt(db, accountId)) return { ran: false, written: 0, rounds: 0, marked: false };
+  if (await searchIndexCurrent(db, accountId)) return { ran: false, written: 0, rounds: 0, marked: false };
+  // A document older than the shape is owed again only where the shape changed it: a file name.
+  const older = shaped(db) ? and(lt(messageSearch.builtAt, SEARCH_DOCUMENT_SHAPE_AT), sql`exists (select 1 from ${attachments}
+    where ${attachments.accountId} = ${accountId} and ${attachments.messageId} = ${messages.id} and ${attachments.filename} is not null)`) : undefined;
   let written = 0;
   let rounds = 0;
   let after: { date: Date | null; id: string } | null = null;
@@ -278,16 +411,19 @@ export async function searchIndexBackfillPass(args: {
   while (rounds < maxRounds) {
     rounds += 1;
     const page = await db.transaction(async (tx) => {
-      const ids = await tx.select({ id: messages.id, date: messages.date }).from(messages)
+      const ids = await tx.select({ id: messages.id, date: messages.date, doc: messageSearch.messageId }).from(messages)
         .leftJoin(messageSearch, eq(messageSearch.messageId, messages.id))
         .where(and(
-          eq(messages.accountId, accountId), isNull(messages.deletedAt), isNull(messageSearch.messageId),
+          eq(messages.accountId, accountId), isNull(messages.deletedAt),
+          older === undefined ? isNull(messageSearch.messageId) : or(isNull(messageSearch.messageId), older),
           ...(after === null ? [] : [olderThan(after)]),
         ))
         .orderBy(sql`${messages.date} desc nulls last`, desc(messages.id))
         .limit(batch);
-      const inputs = await searchInputsFromStore(tx as unknown as Tx, accountId, ids.map((r) => r.id));
-      await upsertMessageSearchRows(tx as unknown as Tx, inputs, now());
+      const t = tx as unknown as Tx;
+      const inputs = await searchInputsFromStore(t, accountId, ids.filter((r) => r.doc === null).map((r) => r.id));
+      await upsertMessageSearchRows(t, inputs, now());
+      await refillFileNames(t, accountId, ids.filter((r) => r.doc !== null).map((r) => r.id));
       return ids;
     });
     written += page.length;
@@ -311,16 +447,18 @@ function olderThan(pos: { date: Date | null; id: string }): SQL {
 }
 
 /**
- * Write the completion marker once. An account with no settings row gains one, but only while it
- * still has living mail — an erased account's empty store must not grow a settings row back.
+ * Write the completion marker once, and again over one older than the document's shape. An account
+ * with no settings row gains one, but only while it still has living mail — an erased account's
+ * empty store must not grow a settings row back.
  */
 async function stampSearchIndexBuilt(db: Tx, accountId: string, at: Date): Promise<boolean> {
   const d = dialect(db);
   await d.exec(db, sql`
     insert into account_settings (account_id, search_index_built_at)
-    select ${accountId}, ${d.ts(at)}
+    select ${accountId}, ${d.ts(shapeFloor(at))}
     where exists (select 1 from messages where account_id = ${accountId} and deleted_at is null)
     on conflict (account_id) do update
-      set search_index_built_at = coalesce(account_settings.search_index_built_at, excluded.search_index_built_at)`);
-  return searchIndexBuilt(db, accountId);
+      set search_index_built_at = case when account_settings.search_index_built_at < ${d.ts(SEARCH_DOCUMENT_SHAPE_AT)}
+        then excluded.search_index_built_at else coalesce(account_settings.search_index_built_at, excluded.search_index_built_at) end`);
+  return searchIndexCurrent(db, accountId);
 }

@@ -12,7 +12,7 @@ import { qhFixtures, qhNorm } from "../../../packages/client-engine/test/quoted-
  * toggle, so its top is its header and its own first lines; a folded member reads after the dwell,
  * and pressing a toggle reads or unreads nothing by itself.
  */
-const FX = Object.fromEntries(qhFixtures().filter((f) => ["01", "11", "13", "37"].includes(f.id)).map((f) => [f.id, f]));
+const FX = Object.fromEntries(qhFixtures().filter((f) => ["01", "11", "13", "37", "132"].includes(f.id)).map((f) => [f.id, f]));
 const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
 const panel = (id: string): HTMLElement => col().querySelector<HTMLElement>(`[data-conv-id="${id}"]`)!;
 const glances = () => patches.filter((p) => p.via === "glance").map((p) => p.ids);
@@ -25,7 +25,7 @@ beforeAll(async () => {
 }, 120_000);
 beforeEach(() => {
   installShellEnv();
-  layout = stubThreadLayout({ heights: { p1: 160, p2: 160, p3: 160 } });
+  layout = stubThreadLayout({ heights: { p1: 160, p2: 160, p3: 160, p4: 160 } });
   window.location.hash = "#/ohbox";
 });
 afterEach(async () => {
@@ -34,11 +34,13 @@ afterEach(async () => {
 });
 
 async function openThread(): Promise<void> {
-  const host = await mountThread([msg("p1", 0), msg("p2", 10), msg("p3", 20)], {
+  const host = await mountThread([msg("p1", 0), msg("p2", 10), msg("p3", 20), msg("p4", 30)], {
     bodies: {
       p1: { text: FX["01"]!.text, html: FX["01"]!.html },
       p2: { text: FX["13"]!.text, html: FX["13"]!.html },
       p3: FX["37"]!.text,
+      // A new-Mac history holding its own quote and answer.
+      p4: { text: FX["132"]!.text, html: FX["132"]!.html },
     },
   });
   await openTheRow(host);
@@ -48,7 +50,7 @@ async function openThread(): Promise<void> {
 describe("a conversation of replies, each carrying its history", () => {
   it("every panel folds its history; its end marker stands above its toggle", async () => {
     await openThread();
-    for (const [id, fx] of [["p1", FX["01"]!], ["p2", FX["13"]!], ["p3", FX["37"]!]] as const) {
+    for (const [id, fx] of [["p1", FX["01"]!], ["p2", FX["13"]!], ["p3", FX["37"]!], ["p4", FX["132"]!]] as const) {
       const p = panel(id);
       const toggle = p.querySelector<HTMLButtonElement>("button.msg-history-toggle");
       expect(toggle, `${id}: no toggle`).not.toBeNull();

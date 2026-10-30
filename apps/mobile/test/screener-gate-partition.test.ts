@@ -324,6 +324,6 @@ describe("the read itself", () => {
     // The meta the Screener renders, and the projection hands it the shelf's own source.
     expect(screenerMetaOf("device", 2, SCREENING_UNSUPPLIED)).toBe("2 first-time senders waiting, counted on this phone");
     expect(screenerMetaOf("server", 2, SCREENING_UNSUPPLIED)).toBe("2 first-time senders waiting");
-    expect(src("src/state/world-projection.ts")).toContain("meta: screenerMetaOf(s.source, s.waiting.length, posture, organizingHere),");
+    expect(src("src/state/world-projection.ts")).toContain("meta: screenerMetaOf(s.source, s.waiting.length, posture, holder),");
   });
 });

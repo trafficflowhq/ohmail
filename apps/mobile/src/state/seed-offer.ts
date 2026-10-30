@@ -31,6 +31,8 @@ export interface SeedMailbox {
   initialImportCompletedAt?: string | null;
   /** When the mailbox was connected: the first-import floor's clock. */
   createdAt?: string;
+  /** `null`: nobody agreed to organize it; absent where the read carried no answer. */
+  organizeConsentedAt?: string | null;
 }
 
 export interface SeedFacts {
@@ -49,15 +51,26 @@ export function organizedHere<R extends SeedMailbox>(rows: readonly R[]): R[] {
  * An EMPTY waiting shelf while an organized mailbox's first import runs, by the web's bounded floor
  * (`importFloorInWindow`): the gate has judged nobody yet. A shelf with rows counts them, as the
  * badges do; an unwritten stamp a day old withholds nothing. On the standalone door the engine's
- * own word (`standaloneHere`) says it too: the mailbox read may predate this phone's start.
+ * own word (`standaloneHere`) says it too: the mailbox read may predate this phone's start, and its
+ * claim comes after the first pass. A mailbox nobody agreed to organize keeps its own empty state.
  */
 export function firstPassWithholds(
   waiting: number, mailboxes: { known: boolean; rows: readonly SeedMailbox[] }, now: number,
   door: { organizing: boolean | null; firstSync: string | null } | null = null,
 ): boolean {
   if (waiting !== 0) return false;
-  if (door !== null && door.organizing === true && door.firstSync === "pending") return true;
+  if (door !== null && door.firstSync === "pending") {
+    // A fresh mailbox's claim is written after its first pass: not organizing yet is no reason to say nobody waits.
+    if (door.organizing === true) return true;
+    if (door.organizing === false && !neverAgreed(mailboxes)) return true;
+  }
   return mailboxes.known && organizedHere(mailboxes.rows).some((r) => importFloorInWindow(r, now));
+}
+
+/** Every live mailbox read says nobody agreed to organize it. */
+function neverAgreed(mailboxes: { known: boolean; rows: readonly SeedMailbox[] }): boolean {
+  const live = mailboxes.rows.filter((r) => r.status !== "disabled");
+  return mailboxes.known && live.length > 0 && live.every((r) => r.organizeConsentedAt === null);
 }
 
 /** Whether Settings offers the review again: the door carries the seed and organizes a mailbox. */

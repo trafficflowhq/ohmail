@@ -591,3 +591,27 @@ export function neutraliseCss(
   }
   return copied === 0 ? css : out + css.slice(copied);
 }
+
+const HIDDEN_STYLE = /(?:^|;)\s*display\s*:\s*none\s*(?:!important\s*)?(?:;|$)/i;
+
+/**
+ * Whether an element's OWN style attribute hides it (`display:none`, any case, `!important` or
+ * not): no descendant can draw again, and every preheader convention carries it. Core's
+ * `htmlWords` skips the same elements; the parity suite holds the two equal.
+ */
+export function hiddenByOwnStyle(style: string | null | undefined): boolean {
+  return style != null && HIDDEN_STYLE.test(style);
+}
+
+/** A token of preheader filler: only U+034F and format characters (ZWNJ, ZWSP, soft hyphen…). */
+export const FILLER_TOKEN = /^[͏\p{Cf}]+$/u;
+
+/** Whether a run draws no words: whitespace and preheader filler only. */
+export function drawsNoWords(text: string): boolean {
+  return text.replace(/[\s͏\p{Cf}]/gu, "") === "";
+}
+
+/** The text with its preheader filler (U+034F and format characters) taken out, whitespace kept. */
+export function withoutFiller(text: string): string {
+  return text.replace(/[\u034f\p{Cf}]/gu, "");
+}

@@ -70,7 +70,9 @@ describe("the search document's header parts are bounded", () => {
       accountId: "a", subject: big, from: { name: big, address: "a@example.com" }, to: [], cc: [],
       attachmentNames: [big], bodyText: "b", source: "text",
     });
-    expect([parts.subject.length, parts.people.length, parts.attachments.length])
-      .toEqual([SEARCH_HEAD_PART_MAX_CHARS, SEARCH_HEAD_PART_MAX_CHARS, SEARCH_HEAD_PART_MAX_CHARS]);
+    // The file names are words of the text, after the body: whole, then their parts.
+    const [body, names] = parts.body.split("\n");
+    expect([parts.subject.length, parts.people.length, names!.length, body])
+      .toEqual([SEARCH_HEAD_PART_MAX_CHARS, SEARCH_HEAD_PART_MAX_CHARS, SEARCH_HEAD_PART_MAX_CHARS, "b"]);
   });
 });

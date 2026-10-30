@@ -955,6 +955,9 @@ export {
   CID_URL,
   cidOfSrc,
   declaresPixelAttrs,
+  drawsNoWords,
+  FILLER_TOKEN,
+  hiddenByOwnStyle,
   INERT_CSS_URL,
   INLINE_IMAGE_SRC,
   MAIL_ALLOWED_ATTR,
@@ -967,6 +970,7 @@ export {
   REMOTE_URL,
   SAFE_HREF,
   tinyDimension,
+  withoutFiller,
 } from "./mail-render-rules.js";
 // Where a body's quoted history starts and ends — one reading for every reader. See `quoted-history.ts`.
 export {

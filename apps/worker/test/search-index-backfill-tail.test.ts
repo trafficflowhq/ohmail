@@ -4,7 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { inArray, sql } from "drizzle-orm";
 import { accounts, accountSettings, mailboxes, mailboxCredentials, messageBodies, messages } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
-import { StaticKeyProvider, createLogger } from "@trafficflow/core";
+import { SEARCH_DOCUMENT_SHAPE_AT, StaticKeyProvider, createLogger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
@@ -120,7 +120,7 @@ describe("the search backfill reaches every account that owes it", () => {
     const parked = await seedAccount(db, "active");
     plane.parked.add(parked.accountId);
     const built = await seedAccount(db, "disabled");
-    await db.insert(accountSettings).values({ accountId: built.accountId, searchIndexBuiltAt: new Date() });
+    await db.insert(accountSettings).values({ accountId: built.accountId, searchIndexBuiltAt: SEARCH_DOCUMENT_SHAPE_AT });
 
     const fleet = new FakeAdapterFleet();
     const cfg: WorkerConfig = {

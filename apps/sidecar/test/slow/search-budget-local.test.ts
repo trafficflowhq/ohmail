@@ -27,7 +27,11 @@ const COLD_PAGE_BUDGET_MS = 150;
 /** A walk of the newest six cuts of a 50-row page: what a bounded arm may read. */
 const ROWS_PER_SCAN = 6 * 4 * 50;
 const MID = "kestrelmid";
-const QUERIES = ["w1", "w40", "w3000", MID, "axa", "portl", '"myaxa portal"'] as const;
+/**
+ * `pdf` a part of the file names on about one letter in seven, beside the common word too; a fragment of
+ * every invoice's name and of one scan's, typed with their marks, which only the names' own index reads.
+ */
+const QUERIES = ["w1", "w40", "w3000", MID, "axa", "portl", '"myaxa portal"', "pdf", "w1 pdf", "ice_2025-02", "can0102"] as const;
 /** The recipients (mail 0154): the own address in To of every message, a rare contact, a mid one in Cc. */
 const OWN = "Budget@mail.example";
 const RARE = "rare@contact.example";
@@ -180,6 +184,22 @@ describe(`the desktop store's search is milliseconds (PGlite, ${N} messages)`, (
       from messages m where m.account_id = ${accountId}::uuid`);
     await o.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
       select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
+    // The server twin's file names, on about two letters in five.
+    await o.db.execute(sql`
+      insert into attachments (account_id, message_id, filename, content_type)
+      select m.account_id, m.id, f.name, 'application/octet-stream'
+      from messages m cross join lateral (select substring(m.dedup_key from 8)::int as g) x
+      cross join lateral (values
+        (case when x.g % 5 = 0 then 'image001.png' end),
+        (case when x.g % 10 = 0 then 'image002.jpg' end),
+        (case when x.g % 12 = 1 then 'Invoice_' || (2024 + x.g % 3) || '-' || lpad(((x.g % 12) + 1)::text, 2, '0') || '-' || lpad(((x.g % 28) + 1)::text, 2, '0') || '.pdf' end),
+        (case when x.g % 25 = 2 then 'scan' || lpad((x.g % 10000)::text, 4, '0') || '.PDF' end),
+        (case when x.g % 33 = 3 then 'IMG_' || (20240101 + x.g % 1000) || '_' || lpad((x.g % 2400)::text, 4, '0') || '.jpg' end),
+        (case when x.g % 50 = 4 then 'w' || (x.g * 7 % 5000) || '-w' || ((x.g * 13 + 1) % 5000) || '-' || (x.g % 10000) || '.pdf' end),
+        (case when x.g % 100 = 5 then 'Report Q' || (1 + x.g % 4) || ' ' || (2024 + x.g % 3) || '.docx' end),
+        (case when x.g % 100 = 6 then 'W' || (x.g * 7 % 5000) || 'W' || ((x.g * 13 + 1) % 5000) || (x.g % 100) || '.xlsx' end)
+      ) f(name)
+      where f.name is not null and m.account_id = ${accountId}::uuid`);
     // The production writer, then the store's own statistics rule — nothing hand-analyzed.
     const built = await searchIndexBackfillPass({ db: o.db as unknown as Tx, accountId, rounds: 1_000, batch: 2_000 });
     expect(built.marked).toBe(true);

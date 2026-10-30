@@ -270,9 +270,10 @@
 .msg-history-toggle:last-child,.msg-page-more:last-child{margin-bottom:0}
 /* A link in mail is the accent, quietly: coloured ink and a hairline underline rather than the
    browser's blue. `overflow-wrap` is inherited from `.msg-p`, so a 300-character tracking URL
-   breaks inside the anchor instead of pushing the panel. */
+   breaks inside the anchor instead of pushing the panel. Isolated, so a bidi control the text
+   before it leaves open cannot draw its label in another order. */
 .msg-link{color:var(--accent-ink);text-decoration:underline;text-decoration-color:var(--accent-hair);
-  text-underline-offset:2px}
+  text-underline-offset:2px;unicode-bidi:isolate}
 .msg-link:hover{text-decoration-color:var(--accent)}
 /* The product speaking about the body, never part of it. Deliberately quieter
    than `.msg-body` and set apart from it, so it cannot be read as the sender's words. */

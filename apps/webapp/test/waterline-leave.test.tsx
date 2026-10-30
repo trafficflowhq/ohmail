@@ -1259,12 +1259,24 @@ describe("the read rule over every card on screen, after the reader's own scroll
     expect(marked).toEqual(["r1", "r3"]);
   });
 
-  it("after a far open, an upward wheel that leaves the card above 95px of its foot: its dwell reads nothing", async () => {
+  it("after a far open, an upward wheel that leaves the opened card's head on screen: the cursor stays on it", async () => {
     const el = await laidOut();
     await act(async () => { host!.querySelector<HTMLElement>('.view-reads .row[data-id="r30"]')!.click(); });
     for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
     const landed = scrollTops.get(el)!;
     expect(landed, "control: r30 at the reading line").toBe(30 * CARD_H - 14);
+    await rest(3000);
+    await wheelStream(landed - 81);
+    await rest(2500);
+    expect(curs.at(-1)).toBe("r30");
+    expect(marked.includes("r29")).toBe(false);
+  });
+
+  it("after a far leap, an upward wheel that leaves the card above 95px of its foot: its dwell reads nothing", async () => {
+    const el = await laidOut();
+    const landed = 30 * CARD_H - 14;
+    await leapStream(landed);
+    expect(scrollTops.get(el), "control: r30 at the reading line").toBe(landed);
     await rest(3000);
     // r29 shows its bottom 95px and r30's top stands at 95, past the scroll-spy's 90px line.
     await wheelStream(landed - 81);

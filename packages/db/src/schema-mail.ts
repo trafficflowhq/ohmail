@@ -2528,9 +2528,10 @@ export const unsubscribeDrainState = pgTable("unsubscribe_drain_state", {
 /**
  * THE SEARCH DOCUMENT (mail 0125) — one row per message, written at ingest in the commit
  * transaction and by the store-only `search_index_backfill` pass for older rows. Both vectors are
- * built by the INSERT itself (`dialect.search.document`): `headTsv` = subject (A) + senders,
- * recipients, attachment names (B), small enough to rank; `textTsv` = the body text, walked newest
- * first. `terms` is the header corpus lower-cased, the substring arm's column. NOT metered (the
+ * built by the INSERT itself (`dialect.search.document`): `headTsv` = subject (A) + senders and
+ * recipients (B), small enough to rank; `textTsv` = the body text, then each file name whole and in
+ * parts, walked newest first. `terms` is the substring corpus lower-cased: the header text, then, for
+ * a letter with a file name, U+001F and the names whole, each side read apart. NOT metered (the
  * storage cap governs stored bodies, never findability) and never read by a model or the
  * knowledge base (the core's message-search census holds both).
  */

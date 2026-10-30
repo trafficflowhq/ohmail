@@ -199,13 +199,55 @@ function operandMatch(text: string, fold: boolean): string {
 }
 
 /**
- * `match` in the subject and sender (`m`) or in the body (`b`): one operand anywhere in the letter.
- * A letter with no body row has a null `b.rowid`, whose `IN` is null, never false: coalesced, so
- * `NOT` of it keeps that letter, as the server's `not coalesce(b.body_tsv @@ t, false)` does.
+ * `match` in the subject and sender (`m`), the people's or the file names' words (mail 0173) or the
+ * body (`b`): one operand anywhere in the letter. A letter with no body row has a null `b.rowid`,
+ * whose `IN` is null, never false: coalesced, so `NOT` of it keeps that letter, as the server's
+ * `not coalesce(b.body_tsv @@ t, false)` does.
  */
 function inLetter(match: string): SQL {
   return sql`(m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${match})
+    OR ${wordRows("message_people_fts", match)} OR ${wordRows("message_files_fts", match)}
     OR coalesce(b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${match}), 0))`;
+}
+
+/**
+ * The letters whose people's or file names' words (mail 0173) match `match`: tables keyed by the
+ * letter's own rowid, read as one set on `m` (no lookup of the document, per match or per letter), never null.
+ */
+function wordRows(table: "message_people_fts" | "message_files_fts", match: string): SQL {
+  const t = sql.raw(table);
+  return sql`m.rowid IN (SELECT rowid FROM ${t} WHERE ${t} MATCH ${match})`;
+}
+
+/**
+ * One word arm's rows: `own` (the subject and sender, or the body) or `table`'s words, either
+ * matching; for a query of exclusions only, neither holding them.
+ */
+function armRows(own: SQL, table: "message_people_fts" | "message_files_fts", q: string, mode: "words" | "parts"): SQL {
+  const f = ftsFoldedQueryOf(q, mode);
+  if (f.match !== null) return sql`(${own} OR ${wordRows(table, f.match)})`;
+  if (f.exclude !== null) return sql`(${own} AND NOT ${wordRows(table, f.exclude)})`;
+  return own;
+}
+
+/** The header arm's rows: the subject and sender, or the people's names and addresses. */
+function headRows(q: string, mode: "words" | "parts" = "words"): SQL {
+  return armRows(ftsRows(sql`m.rowid`, "messages_fts", q, mode), "message_people_fts", q, mode);
+}
+
+/**
+ * The header arm's rank: the subject's and sender's bm25 where they hold the query, else 0 with no
+ * read of `messages_fts`: a name in every letter's recipients would cost one read a letter.
+ */
+function headRank(q: string): SQL {
+  const f = ftsFoldedQueryOf(q);
+  return f.match === null ? sql`0` : sql`(CASE WHEN m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${f.match})
+    THEN ${ftsRank(sql`m.rowid`, "messages_fts", q)} ELSE 0 END)`;
+}
+
+/** The text arm's rows: the body, or the file names' words, which rank as a body word does. */
+function textRows(q: string, mode: "words" | "parts" = "words"): SQL {
+  return armRows(ftsRows(sql`b.rowid`, "message_bodies_fts", q, mode), "message_files_fts", q, mode);
 }
 
 /**
@@ -245,6 +287,33 @@ function headLike(q: string): SQL {
                   or lower(coalesce(s.terms, '')) like lower(${like})`;
   };
   return sql`(${sql.join(eszettForms(q).map(one), sql` or `)})`;
+}
+
+/**
+ * The query inside the letter's subject or people, as `terms` holds them beside the file names: the
+ * sender's and each recipient's name and address, never a recipient list's keys. Every ß/ss form.
+ * A list is parsed only when its text holds the query at all.
+ */
+function peopleLike(q: string): SQL {
+  const one = (f: string): SQL => {
+    const like = `%${f}%`;
+    const listed = (col: SQL): SQL => sql`(lower(coalesce(${col}, '')) like lower(${like})
+      and exists (select 1 from json_each(case when json_valid(${col}) then ${col} else '[]' end) e
+        where e.type = 'object' and (lower(coalesce(json_extract(e.value, '$.name'), '')) like lower(${like})
+          or lower(coalesce(json_extract(e.value, '$.address'), '')) like lower(${like}))))`;
+    return sql`lower(coalesce(m.subject, '')) like lower(${like}) or lower(coalesce(m.from_name, '')) like lower(${like})
+      or lower(coalesce(m.from_address, '')) like lower(${like}) or ${listed(sql`m.to_addresses`)} or ${listed(sql`m.cc_addresses`)}`;
+  };
+  return sql`(${sql.join(eszettForms(q).map(one), sql` or `)})`;
+}
+
+/**
+ * The letters whose file names' words (mail 0173) hold the query as a word or as the start of one:
+ * the text arms find them so, by the same reads. One read of the table, a list of letters.
+ */
+function filesHold(q: string): SQL {
+  const reads = [ftsFoldedQueryOf(q).match, ftsFoldedQueryOf(q, "parts").match].filter((m): m is string => m !== null);
+  return reads.length === 0 ? sql`0` : wordRows("message_files_fts", reads.length === 1 ? reads[0]! : reads.map((m) => `(${m})`).join(" OR "));
 }
 
 /** `col` among the rows `table` holds for this query — never a syntax error, whatever was typed. */
@@ -491,12 +560,13 @@ export function sqliteDialect(): Dialect {
           rank: sql`coalesce(m.date, 0)`,
         };
       },
-      // The two FTS5 tables as the two word arms: subject/sender ranked by bm25, the body by
-      // recency, as the server's arms rank. FTS5 reads a quoted span as a phrase.
+      // The FTS5 tables as the two word arms: the header (subject/sender, ranked by their bm25, or the
+      // people's words) and the text (the body or the file names' words) by recency, as the server's
+      // arms rank. FTS5 reads a quoted span as a phrase.
       words: (q: string): MailWordArms => {
-        const head = { pred: ftsRows(sql`m.rowid`, "messages_fts", q), rank: ftsRank(sql`m.rowid`, "messages_fts", q) };
+        const head = { pred: headRows(q), rank: headRank(q) };
         const recency = sql`coalesce(m.date, 0)`;
-        return acrossOf(q, head, recency) ?? { head, text: { pred: ftsRows(sql`b.rowid`, "message_bodies_fts", q), rank: recency } };
+        return acrossOf(q, head, recency) ?? { head, text: { pred: textRows(q), rank: recency } };
       },
       // The same two FTS5 tables as `words`, each word as itself and, from four letters, as the
       // start of a longer one or as itself plus a tail (`ftsQueryOf`): the tables stem (porter,
@@ -513,18 +583,22 @@ export function sqliteDialect(): Dialect {
           return { head: { pred: letter, rank: recency }, text: { pred: letter, rank: recency }, across: true };
         }
         return {
-          head: { pred: ftsRows(sql`m.rowid`, "messages_fts", q, "parts"), rank: recency },
-          text: { pred: ftsRows(sql`b.rowid`, "message_bodies_fts", q, "parts"), rank: recency },
+          head: { pred: headRows(q, "parts"), rank: recency },
+          text: { pred: textRows(q, "parts"), rank: recency },
         };
       },
       substring: (q: string): SearchArm => {
         // Every row, whether or not it has a search document yet: this store has no index for a
-        // substring either way, so the header columns and the recipients' `terms` are one scan.
+        // substring either way, so the header columns and the recipients' `terms` are one scan. A
+        // letter its file names' words find is the text arms', as a body word's is: not read here
+        // again, unless its subject or people hold the query too.
         return {
-          pred: headLike(q),
+          pred: sql`(${headLike(q)} and not (${filesHold(q)} and not ${peopleLike(q)}))`,
           rank: sql`coalesce(m.date, 0)`,
         };
       },
+      // The substring arm reads the file names here, leaving out what the text arms find.
+      names: (): null => null,
       // The typo arm here is a LIKE already (`fuzzy`): there is no costlier operator to spare.
       typoPrefilter: (): null => null,
       // The side table mail 0154's triggers keep, read by its (account, address) index.

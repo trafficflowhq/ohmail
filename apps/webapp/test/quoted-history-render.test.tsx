@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { qhFixtures, qhFolds, qhNorm, type QhFixture } from "../../../packages/client-engine/test/quoted-history-fixtures.js";
+import { qhFixtures, qhFolds, qhNorm, qhTypedAnswers, type QhFixture } from "../../../packages/client-engine/test/quoted-history-fixtures.js";
 
 /**
  * EVERY THREAD MEMBER AND EVERY OPENED MESSAGE FOLDS ITS HISTORY (owner, 2026-10-23: "most of the
@@ -214,6 +214,20 @@ describe("the text part rendered instead of the html follows the html's own read
       shows(el, "From: Support Desk");
       shows(el, "A reply card like this one is what our template builder draws for you.");
     });
+  }
+});
+
+describe("answers typed into the history keep it open", () => {
+  for (const cls of ["pm-body", "msg-body"]) {
+    for (const t of qhTypedAnswers()) {
+      it(`.${cls}: ${t.name}, with its text part and framed`, async () => {
+        for (const props of [{ text: t.text, html: t.html }, { text: "", html: t.html }]) {
+          const el = await renderBody(cls, props);
+          expect(toggleIn(el)).toBeNull();
+          expect(textOf(el) + srcdocText(el)).toContain(qhNorm(t.answer));
+        }
+      });
+    }
   }
 });
 

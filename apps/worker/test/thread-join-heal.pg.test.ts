@@ -9,7 +9,8 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, changeLog, drafts, mailboxes, messages, threadNotes, threads, type Tx } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { MAX_THREAD_PARTICIPANTS } from "@trafficflow/core/mail";
-import { threadJoinHealPass } from "../src/thread-join-heal.js";
+import { threadJoinHealPass, type ThreadJoinHealResult } from "../src/thread-join-heal.js";
+import { makeThreadJoinHealWalk } from "../src/thread-join-heal-walk.js";
 
 /**
  * THE THREAD-JOIN HEAL, AGAINST REAL POSTGRES.
@@ -583,5 +584,165 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
     const [surv] = await db.select({ participants: threads.participants }).from(threads).where(eq(threads.id, a));
     expect((surv!.participants as Array<{ address: string }>).map((x) => x.address))
       .toEqual([...people(60, "a"), ...people(MAX_THREAD_PARTICIPANTS - 60, "b")].map((p) => p.address));
+  });
+
+  /** Alpha and Charlie are splits that join, Bravo two unrelated senders that never do. */
+  async function seedThreeGroups(s: Seeded): Promise<void> {
+    for (const subject of ["Alpha", "Charlie"]) {
+      const x = await seedThread(s, subject, new Date(t0));
+      await seedMessage(s, x, { subject, date: new Date(t0), from: OWNER, to: [COUNTERPART] });
+      const y = await seedThread(s, subject, new Date(t0 + DAY));
+      await seedMessage(s, y, { subject: `AW: ${subject}`, date: new Date(t0 + DAY), from: COUNTERPART, to: [OWNER] });
+    }
+    const b1 = await seedThread(s, "Bravo", new Date(t0));
+    await seedMessage(s, b1, { subject: "Re: Bravo", date: new Date(t0), from: "billing@acme.example", to: [OWNER] });
+    const b2 = await seedThread(s, "Bravo", new Date(t0 + DAY));
+    await seedMessage(s, b2, { subject: "Re: Bravo", date: new Date(t0 + DAY), from: "accounts@other.example", to: [OWNER] });
+  }
+
+  /** What an account ends as: each message's thread (by its subject and its oldest message), and the change-log op counts. */
+  async function endState(s: Seeded): Promise<{ placement: string[]; ops: Record<string, number> }> {
+    const rows = await db.select({ subject: messages.subject, threadId: messages.threadId }).from(messages)
+      .where(eq(messages.accountId, s.accountId));
+    const firstOf = new Map<string, string>();
+    for (const t of await db.select({ id: threads.id }).from(threads).where(eq(threads.accountId, s.accountId))) {
+      const [m] = await db.select({ subject: messages.subject }).from(messages)
+        .where(eq(messages.threadId, t.id)).orderBy(asc(messages.date)).limit(1);
+      firstOf.set(t.id, m!.subject);
+    }
+    const ops: Record<string, number> = {};
+    for (const c of await db.select({ entityType: changeLog.entityType, op: changeLog.op }).from(changeLog)
+      .where(eq(changeLog.accountId, s.accountId))) {
+      const k = `${c.entityType}:${c.op}`;
+      ops[k] = (ops[k] ?? 0) + 1;
+    }
+    return { placement: rows.map((r) => `${r.subject} -> ${firstOf.get(r.threadId!)}`).sort(), ops };
+  }
+
+  it("a clock that is out stops the walk after each group, and the walk finishes over later calls as one call would", async () => {
+    const s = await seedAccount();
+    await seedThreeGroups(s);
+    const until = () => true;
+    const one = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId, until });
+    expect(one).toMatchObject({ groupsScanned: 1, merged: 1, cut: true, capped: false, cursor: { accountId: s.accountId, subject: "Alpha" } });
+    const two = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId, until, cursor: one.cursor! });
+    expect(two).toMatchObject({ groupsScanned: 1, merged: 0, cut: true, cursor: { accountId: s.accountId, subject: "Bravo" } });
+    const three = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId, until, cursor: two.cursor! });
+    expect(three).toMatchObject({ groupsScanned: 1, merged: 1, cut: false, capped: false });
+
+    const twin = await seedAccount();
+    await seedThreeGroups(twin);
+    const whole = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: twin.accountId });
+    expect(whole).toMatchObject({ groupsScanned: 3, merged: 2, cut: false });
+    expect(await endState(s)).toEqual(await endState(twin));
+  });
+
+  it("a spent group budget is capped, not cut, even with the clock out", async () => {
+    const s = await seedAccount();
+    await seedThreeGroups(s);
+    const r = await threadJoinHealPass({
+      db: db as unknown as Tx, apply: true, accountId: s.accountId, maxGroups: 1, until: () => true,
+    });
+    expect(r).toMatchObject({ groupsScanned: 1, capped: true, cut: false });
+  });
+
+  it("a subject on more threads than the bound is skipped untouched, and a later split still joins", async () => {
+    const s = await seedAccount();
+    for (let i = 0; i < 13; i++) {
+      const x = await seedThread(s, "Many", new Date(t0 + i * DAY));
+      await seedMessage(s, x, { subject: i === 0 ? "Many" : "AW: Many", date: new Date(t0 + i * DAY), from: OWNER, to: [COUNTERPART] });
+    }
+    const a = await seedThread(s, "Zulu split", new Date(t0));
+    await seedMessage(s, a, { subject: "Zulu split", date: new Date(t0), from: OWNER, to: [COUNTERPART] });
+    const b = await seedThread(s, "Zulu split", new Date(t0 + DAY));
+    await seedMessage(s, b, { subject: "AW: Zulu split", date: new Date(t0 + DAY), from: COUNTERPART, to: [OWNER] });
+
+    const r = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId });
+    expect(r).toMatchObject({ groupsScanned: 2, skipped: 1, merged: 1 });
+    const left = await db.select({ subject: threads.subject }).from(threads).where(eq(threads.accountId, s.accountId));
+    expect(left.filter((t) => t.subject === "Many")).toHaveLength(13);
+    expect(left.filter((t) => t.subject === "Zulu split")).toHaveLength(1);
+  });
+});
+
+describe("the thread-join heal walk", () => {
+  const EVERY = 1_000;
+  const result = (over: Partial<ThreadJoinHealResult>): ThreadJoinHealResult => ({
+    groupsScanned: 0, merged: 0, messagesMoved: 0, skipped: 0, failed: 0, refusedUncorroborated: 0,
+    capped: false, cut: false, cursor: null, ...over,
+  });
+  const at = (subject: string) => ({ accountId: "a", subject });
+
+  it("starts due, and a finished walk keeps the gate shut until the period passes", () => {
+    const w = makeThreadJoinHealWalk(EVERY);
+    expect(w.due(0)).toBe(true);
+    expect(w.slice("a", ["a"])).toEqual({ maxGroups: 200 });
+    w.settle("a", result({ groupsScanned: 3 }));
+    expect(w.slice("a", ["a"])).toBeNull();
+    expect(w.due(EVERY - 1)).toBe(false);
+    expect(w.due(EVERY)).toBe(true);
+    expect(w.slice("a", ["a"])).toEqual({ maxGroups: 200 });
+  });
+
+  it("a cut keeps the account owed with what is left of its group budget", () => {
+    const w = makeThreadJoinHealWalk(EVERY);
+    w.due(0);
+    w.slice("a", ["a", "b"]);
+    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }));
+    w.slice("b", ["a", "b"]);
+    w.settle("b", result({}));
+    expect(w.due(10)).toBe(true);
+    expect(w.slice("a", ["a", "b"])).toEqual({ cursor: at("Alpha"), maxGroups: 199 });
+    expect(w.slice("b", ["a", "b"])).toBeNull();
+    w.settle("a", result({ groupsScanned: 2 }));
+    expect(w.due(20)).toBe(false);
+  });
+
+  it("a capped account resumes at its cursor in the next walk; an exhausted one starts over", () => {
+    const w = makeThreadJoinHealWalk(EVERY);
+    w.due(0);
+    w.slice("a", ["a", "b"]);
+    w.settle("a", result({ groupsScanned: 200, capped: true, cursor: at("Mike") }));
+    w.slice("b", ["a", "b"]);
+    w.settle("b", result({ groupsScanned: 4, cursor: { accountId: "b", subject: "Zulu" } }));
+    expect(w.due(EVERY)).toBe(true);
+    expect(w.slice("a", ["a", "b"])).toEqual({ cursor: at("Mike"), maxGroups: 200 });
+    expect(w.slice("b", ["a", "b"])).toEqual({ maxGroups: 200 });
+  });
+
+  it("an abandoned slice closes the account and keeps its last settled cursor", () => {
+    const w = makeThreadJoinHealWalk(EVERY);
+    w.due(0);
+    w.slice("a", ["a"]);
+    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }));
+    expect(w.due(10)).toBe(true);
+    w.slice("a", ["a"]);
+    w.abandon("a");
+    expect(w.due(20)).toBe(false);
+    expect(w.due(EVERY)).toBe(true);
+    expect(w.slice("a", ["a"])).toEqual({ cursor: at("Alpha"), maxGroups: 200 });
+  });
+
+  it("an owed account that left the shard releases the gate", () => {
+    const w = makeThreadJoinHealWalk(EVERY);
+    w.due(0);
+    w.slice("a", ["a", "b"]);
+    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }));
+    w.slice("b", ["a", "b"]);
+    w.settle("b", result({}));
+    expect(w.due(10)).toBe(true);
+    expect(w.slice("b", ["b"])).toBeNull();
+    expect(w.due(20)).toBe(false);
+    expect(w.due(EVERY)).toBe(true);
+    expect(w.slice("a", ["a"])).toEqual({ cursor: at("Alpha"), maxGroups: 200 });
+  });
+
+  it("a walk never outlives its period", () => {
+    const w = makeThreadJoinHealWalk(EVERY);
+    w.due(0);
+    w.slice("a", ["a"]);
+    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }));
+    expect(w.due(EVERY)).toBe(true);
+    expect(w.slice("a", ["a"])).toEqual({ cursor: at("Alpha"), maxGroups: 200 });
   });
 });

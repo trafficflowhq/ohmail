@@ -48,6 +48,8 @@ export const TRIGRAM_INDEXES = [
   "messages_subject_trgm_idx",
   "messages_from_address_trgm_idx",
   "message_search_terms_trgm_idx",
+  "message_search_head_terms_trgm_idx",
+  "message_search_names_trgm_idx",
 ] as const;
 
 /**

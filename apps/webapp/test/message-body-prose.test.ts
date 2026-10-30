@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -587,6 +589,181 @@ describe("native links — one gate, the sender's label, the honest host", () =>
     });
     expect(el.querySelector("a"), "a mailto: href became a live anchor natively").toBeNull();
     expect(el.textContent).toContain("write us");
+  });
+
+  /**
+   * The disagreement check reads the label AS DRAWN: hidden words the walk skips must not
+   * stand in for the host. The whole label names bank.example too, so reading `el.textContent`
+   * no longer turns this red; the glue case below is what bites.
+   */
+  it("a hidden host in the label neither draws nor hides the real one", async () => {
+    const el = await render({
+      text: "fallback",
+      html: `<p><a href="https://evil.example/login"><span style="display:none">evil.example </span>bank.example</a></p>`,
+    });
+    const a = el.querySelector<HTMLAnchorElement>("a.msg-link")!;
+    expect(a.firstChild!.textContent, "the hidden half of the label was drawn").toBe("bank.example");
+    expect(a.querySelector(".msg-link-host")?.textContent ?? "", "a decoy label hid the real host")
+      .toContain("evil.example");
+  });
+
+  /** Hidden glue joins the decoy to the drawn host. Mutation: `textDisagreesWithHref(el.textContent …)`. */
+  it("hidden glue in the label cannot make the decoy agree with the host", async () => {
+    const el = await render({
+      text: "fallback",
+      html: `<p><a href="https://evil.example/login"><span style="display:none">evil.example/</span>bank.example</a></p>`,
+    });
+    expect(el.querySelector(".msg-link .msg-link-host")?.textContent ?? "", "hidden glue hid the real host")
+      .toContain("evil.example");
+  });
+
+  /**
+   * After "Show original" the frame says it too. Mutation: the frame's note reads only the whole
+   * label's first host (the rule before this test) → red.
+   */
+  it("after Show original, the frame names the real host beside the decoy", async () => {
+    const el = await render({
+      text: "fallback",
+      html: `<p><a href="https://evil.example/login"><span style="display:none">evil.example </span>bank.example</a></p>`,
+    });
+    const flip = [...el.querySelectorAll<HTMLButtonElement>(".mb-flip")].find((b) => b.textContent === COPY.design);
+    await act(async () => { flip!.click(); });
+    const doc = new DOMParser().parseFromString(el.querySelector("iframe")?.getAttribute("srcdoc") ?? "", "text/html");
+    expect(doc.querySelector("a")?.hasAttribute("data-ohmail-elsewhere"), "the frame hid the real host").toBe(true);
+  });
+
+  /**
+   * An override draws "bank.example" from "bankelpmaxe." and a variation selector splits a host
+   * without a gap. The note is drawn isolated, left to right, so the override the first label
+   * leaves open cannot reorder it. Mutations: no bidi rule → the first note; no strip of what
+   * draws nothing → the second; the note a plain span → the isolation.
+   */
+  it("a reordered or invisibly split host gets the real one beside it, drawn isolated", async () => {
+    const el = await render({
+      text: "fallback",
+      html: `<p>Sign in at <a href="https://evil.example/a">bank&#x202E;elpmaxe.</a> today.</p>` +
+        `<p>Or at <a href="https://evil.example/b">bank&#xFE00;.example</a>.</p>`,
+    });
+    const notes = [...el.querySelectorAll(".msg-link .msg-link-host")];
+    expect(notes.map((n) => n.textContent), "a disguised host hid the real one").toEqual([" (evil.example)", " (evil.example)"]);
+    expect(notes.map((n) => `${n.localName} ${n.getAttribute("dir")}`)).toEqual(["bdi ltr", "bdi ltr"]);
+  });
+
+  /**
+   * An override before the link draws its label backwards ("elpmaxe.knab-ym" as "my-bank.example")
+   * and the label's own reading never sees it, so the link is drawn isolated from the text around
+   * it, as the real sheet says. Mutation: the isolation dropped from `.msg-link` → red.
+   */
+  it("an override around a link cannot turn its label around", async () => {
+    const sheet = document.createElement("style");
+    sheet.textContent = readFileSync(resolve(process.cwd(), "packages/ui/src/composites/message.css"), "utf8");
+    document.head.appendChild(sheet);
+    try {
+      const el = await render({
+        text: "fallback",
+        html: `<p>Sign in at &#x202E;<a href="https://evil.example/">elpmaxe.knab-ym</a>&#x202C; today.</p>`,
+      });
+      const a = el.querySelector(".msg-link");
+      expect(a?.textContent).toBe("elpmaxe.knab-ym");
+      expect(getComputedStyle(a!).unicodeBidi, "an override outside the label reaches into it").toBe("isolate");
+    } finally {
+      sheet.remove();
+    }
+  });
+
+  /**
+   * Links nest in prose too, where a removed element leaves one inside another. A link that holds
+   * one is named outright and no label is read past a link inside it, so the links cost about
+   * what the same letter nested through <b> costs. Mutation: read each link's whole label again
+   * (the walk's `textOfInline`) → over the bound.
+   */
+  it("a link that holds another link names its host, and each label is read once", async () => {
+    const { sanitizeMailHtml } = await mod();
+    const nested = (open: string, close: string, levels = 250, words = 12_000): string =>
+      `<p>${`${open}<object>`.repeat(levels)}${"e.ee ".repeat(words)}${`</object>${close}`.repeat(levels)}</p>`;
+    sanitizeMailHtml(nested(`<a href="https://e.ee/x">`, "</a>", 2, 10));
+    const timed = (html: string): [number, ReturnType<typeof sanitizeMailHtml>] => {
+      const started = performance.now();
+      const out = sanitizeMailHtml(html);
+      return [performance.now() - started, out];
+    };
+    const [plain] = timed(nested("<b>", "</b>"));
+    const [linked, { rich }] = timed(nested(`<a href="https://e.ee/x">`, "</a>"));
+    const [again] = timed(nested(`<a href="https://e.ee/x">`, "</a>"));
+    const marked: boolean[] = [];
+    const visit = (nodes: readonly { kind: string; elsewhere?: boolean; children?: unknown }[]): void => {
+      for (const n of nodes) {
+        if (n.kind === "link") marked.push(n.elsewhere === true);
+        if (Array.isArray(n.children)) visit(n.children);
+      }
+    };
+    visit(rich ?? []);
+    expect(marked).toEqual([...Array(249).fill(true), false]);
+    expect(Math.min(linked, again)).toBeLessThan(1.75 * plain);
+  });
+});
+
+/**
+ * WHAT THE LETTER HIDES STAYS HIDDEN. A newsletter's preheader is `display:none` text plus
+ * zero-width filler; the frame never draws it, so the prose walk must not either. Only the
+ * element's own `display:none` hides it: `mso-hide:all` and `font-size:0` wrap content other
+ * clients draw.
+ */
+describe("hidden preheaders and filler", () => {
+  const lines = (el: HTMLElement): string[] =>
+    [...el.querySelectorAll(".msg-p, .msg-line")].map((p) => p.textContent ?? "");
+
+  it("a hidden preheader with filler draws nothing above the letter", async () => {
+    const el = await render({
+      text: "Hello Ben,\n\nThe plan is in.",
+      html: `<div style="display:none;font-size:1px;max-height:0;overflow:hidden;mso-hide:all">` +
+        `Your weekly picks&#847;&zwnj;&nbsp;&shy;</div><p>Hello Ben,</p><p>The plan is in.</p>`,
+    });
+    expect(el.querySelector("iframe"), "the preheader letter must render as prose").toBeNull();
+    expect(lines(el), "the hidden preheader drew a line").toEqual(["Hello Ben,", "The plan is in."]);
+    expect(el.textContent).not.toContain("weekly picks");
+    expect(el.textContent).not.toMatch(/[͏‌­]/);
+  });
+
+  it("a hidden span, list item, cell, row, picture and pre piece draw nothing", async () => {
+    const gif = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
+    const el = await render({
+      text: "fallback",
+      cidImages: new Map([["seen@x", gif], ["hid@x", gif]]),
+      html: `<p>Hello <span style="DISPLAY: none !important">secret </span>Ben</p>` +
+        `<ul><li>One</li><li style="display:none">hidden item</li></ul>` +
+        `<table width="100%"><tr><td>Cell</td><td style="display:none">hidden cell</td></tr>` +
+        `<tr style="display:none"><td>hidden row</td></tr></table>` +
+        `<p><img src="cid:seen@x" alt="seen"><img src="cid:hid@x" alt="hid" style="display:none"></p>` +
+        `<pre>line one<span style="display:none"> hidden pre</span></pre>`,
+    });
+    expect(el.querySelector("iframe")).toBeNull();
+    expect(el.textContent).not.toMatch(/secret|hidden/);
+    expect(el.querySelector("p.msg-p")!.textContent).toBe("Hello Ben");
+    expect([...el.querySelectorAll(".msg-list li")].map((li) => li.textContent)).toEqual(["One"]);
+    expect([...el.querySelectorAll(".msg-table td")].map((td) => td.textContent)).toEqual(["Cell"]);
+    expect([...el.querySelectorAll("img.msg-img")].map((i) => i.getAttribute("alt"))).toEqual(["seen"]);
+    expect(el.querySelector("pre.msg-pre")!.textContent).toBe("line one");
+  });
+
+  it("a visible run of filler alone draws no line", async () => {
+    const el = await render({
+      text: "fallback",
+      html: `<p>Before.</p><div>&#847;&zwnj;&#847;&zwnj;&nbsp;&shy;</div><p>After.</p>`,
+    });
+    expect(lines(el), "a filler-only run drew an empty line").toEqual(["Before.", "After."]);
+  });
+
+  it("font-size:0 columns and mso-hide:all alone stay drawn", async () => {
+    const el = await render({
+      text: "fallback",
+      html: `<div style="font-size:0"><div style="display:inline-block;font-size:14px">Left column</div>` +
+        `<div style="display:inline-block;font-size:14px">Right column</div></div>` +
+        `<div style="mso-hide:all">Not for Outlook</div>`,
+    });
+    expect(el.textContent).toContain("Left column");
+    expect(el.textContent).toContain("Right column");
+    expect(el.textContent).toContain("Not for Outlook");
   });
 });
 

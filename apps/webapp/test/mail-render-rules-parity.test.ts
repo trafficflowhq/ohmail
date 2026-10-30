@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { fileURLToPath, URL as NodeURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-/* @reads: apps/webapp/app/components/MessageBody.tsx apps/webapp/app/shell/BodyText.tsx packages/core/src/privacy/tracker-blocker.ts packages/client-engine/src/mail-render-rules.ts
+/* @reads: apps/webapp/app/components/MessageBody.tsx apps/webapp/app/shell/BodyText.tsx packages/core/src/privacy/tracker-blocker.ts packages/client-engine/src/mail-render-rules.ts packages/core/src/html-text.ts
    Read by a path built at runtime or reached through a package barrel, so no landing pass
    selects this file when one of them moves — the shape `reads-list.mjs` exists for. */
 
@@ -25,6 +25,9 @@ import {
   BLANK_GIF,
   CID_URL,
   declaresPixelAttrs,
+  drawsNoWords,
+  FILLER_TOKEN,
+  hiddenByOwnStyle,
   INERT_CSS_URL,
   INLINE_IMAGE_SRC,
   MAIL_ALLOWED_TAGS,
@@ -34,6 +37,7 @@ import {
   neutraliseCss as leafNeutraliseCss,
   REMOTE_URL,
   SAFE_HREF,
+  withoutFiller,
 } from "@ohmail/client-engine";
 import {
   MAX_HTML_CHARS,
@@ -43,6 +47,7 @@ import {
 import {
   BEACON_PATH as SERVER_BEACON_PATH,
   detectTrackers,
+  htmlWords,
   isBeaconUrl,
 } from "@trafficflow/core/mail";
 
@@ -229,6 +234,29 @@ describe("the pixel rule: the readers and the server's twin give one answer", ()
         detectTrackers(tag)[0]?.isPixel ?? false,
       ];
       expect(new Set(v).size, `${tag}: ${JSON.stringify(v)}`).toBe(1);
+    }
+  });
+});
+
+describe("what a letter hides: the reader and the stored words agree", () => {
+  it("hiddenByOwnStyle hides exactly what core's htmlWords skips", () => {
+    const STYLES = [
+      "display:none", "DISPLAY : NONE !important", "color:red; display:none;", "display:block",
+      "display:none-x", "x-display:none", "mso-hide:all", "font-size:0", "visibility:hidden",
+      "max-height:0;overflow:hidden", "",
+    ];
+    for (const s of STYLES) {
+      expect(hiddenByOwnStyle(s), s).toBe(htmlWords(`<div style="${s}">gone</div><p>kept</p>`) === "kept");
+    }
+    expect(hiddenByOwnStyle(null)).toBe(false);
+  });
+
+  it("drawsNoWords and FILLER_TOKEN read filler as core does; an emoji sequence stays", () => {
+    const RUNS = ["\u034f\u200c\u00a0\u00ad", "\u200b \u2060", " \n\t", "\u{1F469}\u200d\u{1F4BB}", "a\u200c", ""];
+    for (const r of RUNS) expect(drawsNoWords(r), JSON.stringify(r)).toBe(htmlWords(`<p>${r}</p>`) === "");
+    for (const r of RUNS) expect(drawsNoWords(r), JSON.stringify(r)).toBe(withoutFiller(r).trim() === "");
+    for (const t of ["\u034f\u200c", "\u00ad", "\u200d", "\u{1F469}\u200d\u{1F4BB}", "a"]) {
+      expect(FILLER_TOKEN.test(t), JSON.stringify(t)).toBe(htmlWords(`<p>${t} x</p>`) === "x");
     }
   });
 });

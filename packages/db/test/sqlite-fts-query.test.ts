@@ -1,8 +1,12 @@
 import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
+import { sql, type SQL } from "drizzle-orm";
+import { SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
 import { describe, expect, it } from "vitest";
+import { SQLITE_JOURNAL } from "@ohmail/db-mail/sqlite-journal";
 import { ENGLISH_STOPWORDS, ftsQueryOf } from "../src/dialect/sqlite.js";
-import { partOperandsOf, partWordTails, queryOperandsOf, straddlesParts } from "../src/dialect/index.js";
+import { partOperandsOf, partWordTails, queryOperandsOf, sqliteDialect, straddlesParts } from "../src/dialect/index.js";
+import { migrateSqlite } from "../src/sqlite-migrate.js";
 
 type Sqlite = { exec(sql: string): void; prepare(sql: string): { all(...p: unknown[]): unknown[] } };
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as { DatabaseSync: new (path: string) => Sqlite };
@@ -91,6 +95,47 @@ describe("the device store's full-text query builder", () => {
     expect(rows(ftsQueryOf("elevat repo", "parts").match!)).toEqual([1]);
     const bare = [group("elevat"), group("repo")].map((g) => g.slice(1, -1)).join(" AND ");
     expect(rows(bare), "the control: without the parentheses the lone word matches").toEqual([1, 2]);
+  });
+});
+
+describe("the device store's people and file names' words (mail 0173)", () => {
+  /** The plan of one arm's read, joined as the search service joins it. */
+  async function planOf(pred: SQL): Promise<Array<{ id: number; parent: number; detail: string }>> {
+    const db = new DatabaseSync(":memory:");
+    await migrateSqlite({ run: async (s: string) => { db.exec(s); }, all: async <T,>(s: string) => db.prepare(s).all() as T[] }, SQLITE_JOURNAL);
+    const q = new SQLiteSyncDialect().sqlToQuery(sql`select m.id from messages m
+      left join message_search s on s.message_id = m.id left join message_bodies b on b.message_id = m.id
+      where m.account_id = ${"a"} and ${pred} order by m.date desc limit 40`);
+    return db.prepare(`EXPLAIN QUERY PLAN ${q.sql}`).all(...q.params) as Array<{ id: number; parent: number; detail: string }>;
+  }
+
+  it("are each read once as a list of letters, people with the head and file names with the text, never the document", async () => {
+    const d = sqliteDialect();
+    const across = d.search.words("ines ledger");
+    const ARMS: ReadonlyArray<readonly [arm: string, pred: SQL, tables: readonly string[]]> = [
+      ["head", d.search.words("ledger").head.pred, ["message_people_fts", "messages_fts"]],
+      ["text", d.search.words("ledger").text.pred, ["message_bodies_fts", "message_files_fts"]],
+      ["part head", d.search.partWords("ledg")!.head.pred, ["message_people_fts", "messages_fts"]],
+      ["part text", d.search.partWords("ledg")!.text.pred, ["message_bodies_fts", "message_files_fts"]],
+      ["exclusions only", d.search.words("-pdf").head.pred, ["message_people_fts", "messages_fts"]],
+      ["across head", across.head.pred, ["message_bodies_fts", "message_files_fts", "message_people_fts", "messages_fts"]],
+      ["across text", across.text.pred, ["message_bodies_fts", "message_files_fts", "message_people_fts", "messages_fts"]],
+      ["across parts", d.search.partWords("ines ledg")!.text.pred, ["message_bodies_fts", "message_files_fts", "message_people_fts", "messages_fts"]],
+    ];
+    const got: Array<{ arm: string; tables: string[]; perLetter: string[]; others: string[] }> = [];
+    for (const [arm, pred] of ARMS) {
+      const plan = await planOf(pred);
+      const parent = new Map(plan.map((r) => [r.id, r.detail]));
+      const reads = plan.filter((r) => /^SCAN \w+_fts VIRTUAL TABLE/.test(r.detail));
+      got.push({
+        arm, tables: [...new Set(reads.map((r) => r.detail.split(" ")[1]!))].sort(),
+        // A words table asked per letter (`rowid = ?`) or under a correlated subquery costs a read a letter.
+        perLetter: reads.filter((r) => /:=/.test(r.detail) || !/^LIST SUBQUERY/.test(parent.get(r.parent) ?? "")).map((r) => r.detail),
+        // Nothing read beside the letter, its body and the word lists: the document is never looked up.
+        others: plan.filter((r) => /^(SEARCH|SCAN) /.test(r.detail) && !/^(SEARCH|SCAN) (m|b|\w+_fts)\b/.test(r.detail)).map((r) => r.detail),
+      });
+    }
+    expect(got).toEqual(ARMS.map(([arm, , tables]) => ({ arm, tables: [...tables], perLetter: [], others: [] })));
   });
 });
 

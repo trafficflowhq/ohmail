@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { StreamShell, type StreamHandle } from "../app/shell/StreamShell";
+import { StreamCardToggled, StreamShell, type StreamHandle } from "../app/shell/StreamShell";
 
 /**
  * TRI-F2 (stream half) — A PROGRAMMATIC JUMP OWNS THE CURSOR WHILE IT LANDS.
@@ -175,5 +175,113 @@ describe("the scroll-spy during a programmatic jump", () => {
     const announced = onCurrentChange.mock.calls.map((c) => c[0]);
     expect(announced, `the spy announced: ${announced.join(", ") || "(nothing)"}`).not.toContain("c3");
     expect(announced).not.toContain("c4");
+  });
+});
+
+/* Five short cards sharing one Date bottom out the port; the landing opens its card, which raises the end. */
+const PILE = ["RC2", "RC1", "RC4", "RC0", "RC3"];
+const Activity = Reflect.get(React, "Activity") as React.ComponentType<{ mode: string; children: React.ReactNode }>;
+let pill: (sid: string) => void = () => {};
+function Card({ sid }: { sid: string }) {
+  const toggled = React.useContext(StreamCardToggled);
+  pill = (id) => toggled(id, true);
+  return h("div", { className: "scast", "data-sid": sid });
+}
+
+async function mountPile(cursor: string | null = null) {
+  const onCurrentChange = vi.fn();
+  const ref = React.createRef<StreamHandle>();
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  roots.push(root);
+  const render = (cur: string | null, visible = true) => act(async () => {
+    root.render(h(Activity, { mode: visible ? "visible" : "hidden", children: h(StreamShell, {
+      ref, ariaLabel: "stream", onCurrentChange, onSeen: () => {}, contentKey: 1, cursor: cur,
+      children: PILE.map((sid) => h(Card, { sid, key: sid })),
+    } as never) }));
+  });
+  await render(cursor);
+  const el = container.querySelector<HTMLElement>(".stream")!;
+  const open = new Set<string>();
+  const height = (sid: string) => (open.has(sid) ? 400 : 180);
+  const topOf = (sid: string) => {
+    let t = 100;
+    for (const s of PILE) { if (s === sid) return t; t += height(s) + 20; }
+    return t;
+  };
+  const max = () => Math.max(0, topOf("") + 48 - 860);
+  let scrollTop = 0;
+  Object.defineProperty(el, "clientHeight", { configurable: true, value: 860 });
+  Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => max() + 860 });
+  Object.defineProperty(el, "scrollTop", {
+    configurable: true, get: () => scrollTop, set: (v: number) => { scrollTop = Math.min(max(), Math.max(0, v)); },
+  });
+  el.getBoundingClientRect = () => rect(0, 860);
+  container.querySelectorAll<HTMLElement>(".scast").forEach((c) => {
+    c.getBoundingClientRect = () => rect(topOf(c.dataset.sid!) - scrollTop, height(c.dataset.sid!));
+  });
+  el.scrollTo = ((opts: ScrollToOptions) => {
+    el.scrollTop = opts.top ?? 0;
+    el.dispatchEvent(new Event("scroll"));
+  }) as typeof el.scrollTo;
+  /** One scroll frame nobody's hand made: a clamp, a correction, a smooth scroll's tail. */
+  const frame = async (to?: number | "end") => {
+    await act(async () => {
+      if (to != null) el.scrollTop = to === "end" ? max() : to;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await flush();
+  };
+  return { el, onCurrentChange, ref, open, frame, render, announced: () => onCurrentChange.mock.calls.map((c) => c[0]) };
+}
+
+describe("a later scroll frame after a landing that opened its card", () => {
+  for (const toEnd of [false, true]) {
+    it(`keeps the pressed card current — frame ${toEnd ? "at the end" : "where the landing stopped"}`, async () => {
+      const p = await mountPile();
+      await act(async () => { p.ref.current!.scrollTo("RC0", () => { p.open.add("RC0"); }); });
+      await flush();
+      vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2000); // past the jump's deadline
+      await p.frame(toEnd ? "end" : undefined);
+      expect(p.announced().filter((id) => id !== "RC0")).toEqual([]);
+    });
+  }
+
+  it("a cursor the view set is held through a frame; null releases it to the reading line", async () => {
+    const p = await mountPile();
+    await p.frame();
+    await p.render("RC4");
+    p.onCurrentChange.mockClear();
+    await p.frame(230); // RC1 crosses the reading line; RC4's first lines are on screen
+    expect(p.announced()).toEqual([]);
+    await p.render(null);
+    await p.frame();
+    expect(p.announced()).toEqual(["RC1"]);
+  });
+
+  it("back in a kept pile, the first frame that takes the top card off the line moves the cursor", async () => {
+    const p = await mountPile();
+    await p.frame("end");
+    await p.render("RC3", false);
+    // A browser announces the visit's reset scroll a frame later, never inside the call.
+    p.el.scrollTo = ((o: ScrollToOptions) => {
+      p.el.scrollTop = o.top ?? 0;
+      setTimeout(() => p.el.dispatchEvent(new Event("scroll")), 0);
+    }) as typeof p.el.scrollTo;
+    await p.render("RC3");
+    await p.render("RC2"); // the view's cursor follows the top
+    await flush();
+    p.onCurrentChange.mockClear();
+    await p.frame(230); // RC2's foot passes the line; RC1 is on it
+    expect(p.announced()).toEqual(["RC1"]);
+  });
+
+  it("after Back cleared the cursor, the pill that reopens the last current card selects it", async () => {
+    const p = await mountPile("RC1");
+    await p.render(null);
+    p.onCurrentChange.mockClear();
+    await act(async () => { pill("RC1"); });
+    expect(p.announced()).toEqual(["RC1"]);
   });
 });

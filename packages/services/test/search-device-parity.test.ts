@@ -1,10 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { messageBodies } from "@trafficflow/db";
+import { eq, sql } from "drizzle-orm";
+import { attachments, eraseOwedMailbox, mailboxes, messageBodies, messages, stampMailboxErasure } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
-import { searchIndexBackfillPass } from "@trafficflow/core/mail";
+import { reindexMessageSearch, searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { SearchIndex, type EngineMessage } from "@ohmail/client-engine";
 import { SearchService, type SearchSort } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
+import { FRAGMENT_FILES, FRAGMENTS } from "./helpers/file-name-fragments.js";
 
 /**
  * THE DEVICE FINDS WHAT THE SERVER FINDS. This file runs in the default project (Postgres, as
@@ -406,6 +408,243 @@ describe("the subject's last word beside a body word", () => {
   it("the mirror never runs the two together either, and answers a subset", () => {
     expect(JOINED.filter((q) => !q.startsWith('"')).map((q) => ({ q, keys: mirror(q) })).filter((r) => r.keys.length > 0)).toEqual([]);
     expect(FOUND.filter(([q, keys]) => !mirror(q).every((k) => keys.includes(k))).map(([q]) => ({ q, mirror: mirror(q) }))).toEqual([]);
+  });
+});
+
+/**
+ * A file name's later parts beside another word: `ledger` alone found the letter, `ines ledger` did not.
+ * The server's and the desktop's document hold each name whole and its parts as words of its text; the
+ * device holds the file names beside the body and the people beside the subject (mail 0173), split at
+ * `- _ . @`.
+ */
+describe("each part of a file name beside another word", () => {
+  const FILES: ReadonlyArray<readonly [key: string, name: string, from: string, subject: string, body: string, file: string]> = [
+    ["sr2", "Ines Varga", "iv@post.example", "Papers for SR2", "SR2: the scan is attached.", "harbour-ledger-7731.pdf"],
+    ["d2", "Port Office", "office@port.example", "Ledger copy", "The harbour scan.", "notes.txt"],
+  ];
+  const FOUND: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
+    ["ledger", ["d2", "sr2"]], ["ines harbour", ["sr2"]], ["ines ledger", ["sr2"]], ["ines pdf", ["sr2"]], ["ines 7731", ["sr2"]],
+    ["ines harbour-ledger-7731.pdf", ["sr2"]], ["scan pdf", ["sr2"]], ["scan 7731", ["sr2"]], ["papers ledger", ["sr2"]],
+    ["harbour ledger", ["d2", "sr2"]], ["ledger 7731 scan", ["sr2"]], ["ines harbour 7731", ["sr2"]],
+    ["Ines LEDGER", ["sr2"]], ["SCAN Pdf 7731", ["sr2"]], ["scan -pdf", ["d2"]],
+    // Inside a word of a file name, and across its marks: no word of the letter, found as before.
+    ["arbou", ["sr2"]], ["led", ["d2", "sr2"]], ["ger-77", ["sr2"]], ["31.pd", ["sr2"]],
+  ];
+  /** A phrase reads whole words, and the start of a part is no word of the letter. */
+  const NOT_EXACT = ['"ines ledger"', "ines 77"];
+  type Row = readonly [key: string, name: string, from: string, subject: string, body: string, file: string, daysAgo: number];
+  const SERVICES = [["store", new SearchService()], ["phone", new SearchService({ indexFills: false })], ["desktop", new SearchService({ indexFills: true, localStore: true })]] as const;
+  /** A store of its own holding these letters, each with its file and the mailbox's owner in To, its documents built. */
+  const seedRows = async (rows: readonly Row[]) => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    const keyOf = new Map<string, string>();
+    for (const [key, name, from, subject, body, file, days] of rows) {
+      const date = new Date(Date.parse("2026-07-20T09:00:00Z") - days * 86_400_000);
+      const id = await seedMessage(db, accountId, mailboxId, { subject, from, fromName: name, snippet: body, folder: "INBOX", date });
+      await db.update(messages).set({ toAddresses: [{ name: "Mila Hartmann", address: "mila@lichtgrat.example" }] }).where(eq(messages.id, id));
+      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(attachments).values({ accountId, messageId: id, filename: file, contentType: "application/pdf" });
+      keyOf.set(id, key);
+    }
+    expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
+    return { db, ctx, keyOf };
+  };
+  /** Where the letter keyed `key` stands in the relevance answer to `q`, 1 first; -1 past eight pages of 50. */
+  const placeOf = async (s: SearchService, ctx: Awaited<ReturnType<typeof makeCtx>>["ctx"], q: string, keyOf: Map<string, string>, key: string): Promise<number> => {
+    let seen = 0;
+    let cursor: string | undefined;
+    for (let page = 0; page < 8; page++) {
+      const r = await s.search(ctx, { q, limit: 50, parts: "page", ...(cursor ? { cursor } : {}) });
+      const at = r.items.findIndex((m) => keyOf.get(m.id) === key);
+      if (at >= 0) return seen + at + 1;
+      seen += r.items.length;
+      if (!r.nextCursor) return -1;
+      cursor = r.nextCursor;
+    }
+    return -1;
+  };
+  let read: (svc: SearchService, q: string) => Promise<{ tier: string; keys: string[] }>;
+  let device = false;
+  beforeAll(async () => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    device = dialect(db).name === "sqlite";
+    const keyOf = new Map<string, string>();
+    for (const [i, [key, name, from, subject, body, file]] of FILES.entries()) {
+      const date = new Date(Date.parse("2026-07-20T09:00:00Z") - i * 86_400_000);
+      const id = await seedMessage(db, accountId, mailboxId, { subject, from, fromName: name, snippet: body, folder: "INBOX", date });
+      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(attachments).values({ accountId, messageId: id, filename: file, contentType: "application/pdf" });
+      keyOf.set(id, key);
+    }
+    expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
+    read = async (svc, q) => {
+      const r = await svc.search(ctx, { q, limit: 50 });
+      return { tier: r.tier, keys: r.items.map((m) => keyOf.get(m.id)!).sort() };
+    };
+  }, 60_000);
+
+  for (const [label, svc] of [["the store", new SearchService()], ["the desktop's own store", new SearchService({ indexFills: true, localStore: true })]] as const) {
+    it(`${label} finds the letter by any part of its file name beside another word, in the exact tier`, async () => {
+      const { got, want } = await answers((q) => read(svc, q), FOUND);
+      expect(got).toEqual(want);
+      const exact: Array<{ q: string; keys: string[] }> = [];
+      for (const q of NOT_EXACT) {
+        const r = await read(svc, q);
+        if (r.tier === "exact" && r.keys.length > 0) exact.push({ q, keys: r.keys });
+      }
+      expect(exact).toEqual([]);
+    });
+  }
+
+  // A whole name whose runs are all under four letters, beside a subject word: no part-word arm opens, and
+  // the name itself is a word of the letter's text.
+  it("a whole file name of short runs beside a subject word, in the exact tier", async () => {
+    const { ctx, keyOf } = await seedRows([
+      ["q3", "Desk", "po@desk.example", "Q3 papers", "See attached.", "INV-123.pdf", 1],
+      ["sr2", "Ines Varga", "iv@post.example", "Papers for SR2", "SR2: the scan is attached.", "harbour-ledger-7731.pdf", 2],
+    ]);
+    const got: Array<{ svc: string; tier: string; keys: string[] }> = [];
+    for (const [svc, s] of SERVICES) {
+      const r = await s.search(ctx, { q: "q3 inv-123.pdf", limit: 50 });
+      got.push({ svc, tier: r.tier, keys: r.items.map((m) => keyOf.get(m.id)!) });
+    }
+    expect(got).toEqual(SERVICES.map(([svc]) => ({ svc, tier: "exact", keys: ["q3"] })));
+  });
+
+  it("a file name's part ranks like a body word, by recency, never above a subject or sender hit", async () => {
+    const filed = (key: string, file: string, days: number): Row => [key, `Clerk ${key}`, `${key}@desk.example`, `Papers ${key}`, "See attached.", file, days];
+    const ORDERS: ReadonlyArray<readonly [q: string, rows: readonly Row[], first: readonly string[]]> = [
+      ["ledger", [["subj", "Port Office", "office@port.example", "Ledger copy", "The harbour scan.", "notes.txt", 10],
+        filed("f1", "harbour-ledger-7731.pdf", 1), filed("f2", "harbour-ledger-7732.pdf", 2), filed("f3", "harbour-ledger-7733.pdf", 3)],
+      ["subj", "f1", "f2", "f3"]],
+      ["varga", [["sender", "Ines Varga", "iv@post.example", "Hello", "Short note.", "notes.txt", 10],
+        filed("g1", "varga-contract-1.pdf", 1), filed("g2", "varga-contract-2.pdf", 2), filed("g3", "varga-contract-3.pdf", 3)],
+      ["sender", "g1", "g2", "g3"]],
+      ["ledger", [["body", "Port Office", "office@port.example", "Weekly note", "The ledger is closed for the month.", "notes.txt", 1],
+        filed("file", "harbour-ledger-7731.pdf", 3)], ["body", "file"]],
+      ["contract", [["subj", "Port Office", "office@port.example", "Contract renewal", "See you Monday.", "notes.txt", 40],
+        ...Array.from({ length: 80 }, (_, i) => filed(`c${i}`, `Contract_v${i}.docx`, i / 4))], ["subj"]],
+    ];
+    const got: Array<{ q: string; svc: string; first: string[] }> = [];
+    const want: typeof got = [];
+    for (const [q, rows, first] of ORDERS) {
+      const { ctx, keyOf } = await seedRows(rows);
+      for (const [svc, s] of SERVICES) {
+        const r = await s.search(ctx, { q, limit: 50 });
+        got.push({ q, svc, first: r.items.map((m) => keyOf.get(m.id)!).slice(0, first.length) });
+        want.push({ q, svc, first: [...first] });
+      }
+    }
+    expect(got).toEqual(want);
+  }, 120_000);
+
+  /**
+   * PAST THE ARMS' CUT (four pages of 50): 250 newer letters a file name finds, beside an older subject
+   * or sender hit, against 250 newer letters whose text holds the word. A file name's word is a word of
+   * the letter's text alone, and the substring arm reads the names apart from the subject and people
+   * (the server's corpus) or leaves out what the text arms find (the device's), so a letter its file name
+   * finds is a row of the arms a body word's letter is a row of, and of no other: the older hit stands
+   * where it stands beside the body hits. Second on the server's and the desktop's document, where the
+   * newest of them ties it (a word and the start of one); first there for `pdf`, under four letters, which
+   * no part-word arm reads; first on the device, whose part-word arm reads the subject and the people
+   * apart from the text. Names with marks and with spaces, a word's start and a short word; `address`
+   * also names the recipient lists' keys.
+   */
+  const OLDER = {
+    ledger: ["T", "Port Office", "office@port.example", "Ledger copy", "The harbour scan.", "notes.txt", 100],
+    varga: ["T", "Ines Varga", "iv@post.example", "Hello", "Short note.", "notes.txt", 100],
+    address: ["T", "Port Office", "office@port.example", "Address change", "From Monday.", "notes.txt", 100],
+    pdf: ["T", "Port Office", "office@port.example", "PDF guide", "From Monday.", "notes.txt", 100],
+  } as const satisfies Record<string, Row>;
+  const newer = (i: number, body: string, file: string): Row => [`n${i}`, `Clerk ${i}`, `c${i}@desk.example`, `Papers ${i}`, body, file, i / 8];
+  const LEDGER_BODY = (i: number) => newer(i, "The ledger is closed.", "notes.txt");
+  const VARGA_BODY = (i: number) => newer(i, "Varga sent the papers.", "notes.txt");
+  const ADDRESS_BODY = (i: number) => newer(i, "The address list is attached.", "notes.txt");
+  const DEEP: ReadonlyArray<readonly [label: string, q: string, older: Row, file: (i: number) => Row, body: (i: number) => Row]> = [
+    ["ledger, a name with marks", "ledger", OLDER.ledger, (i) => newer(i, "See attached.", `harbour-ledger-${i}.pdf`), LEDGER_BODY],
+    ["ledger, a name with spaces", "ledger", OLDER.ledger, (i) => newer(i, "See attached.", `Annual Ledger ${i}.pdf`), LEDGER_BODY],
+    ["ledg, a word's start", "ledg", OLDER.ledger, (i) => newer(i, "See attached.", `harbour-ledger-${i}.pdf`), LEDGER_BODY],
+    ["varga, a name with marks", "varga", OLDER.varga, (i) => newer(i, "See attached.", `offer-varga-${i}.pdf`), VARGA_BODY],
+    ["varga, a name with spaces", "varga", OLDER.varga, (i) => newer(i, "See attached.", `Offer Varga ${i}.pdf`), VARGA_BODY],
+    ["varg, a word's start", "varg", OLDER.varga, (i) => newer(i, "See attached.", `offer-varga-${i}.pdf`), VARGA_BODY],
+    ["address, beside the recipient lists' keys", "address", OLDER.address, (i) => newer(i, "See attached.", `address-list-${i}.pdf`), ADDRESS_BODY],
+    ["addre, a word's start", "addre", OLDER.address, (i) => newer(i, "See attached.", `address-list-${i}.pdf`), ADDRESS_BODY],
+    ["pdf, under four letters", "pdf", OLDER.pdf, (i) => newer(i, "See attached.", `report-${i}.pdf`), (i) => newer(i, "The pdf is attached.", "notes.txt")],
+  ];
+  for (const [label, q, older, file, body] of DEEP) {
+    it(`past the arms' cut (${label}): an older subject or sender hit stands where it stands beside as many newer body hits`, async () => {
+      const at = new Map<string, { file: number; body: number }>();
+      let sqlite = false;
+      for (const [kind, row] of [["file", file], ["body", body]] as const) {
+        const { db, ctx, keyOf } = await seedRows([older, ...Array.from({ length: 250 }, (_, i) => row(i))]);
+        sqlite = dialect(db).name === "sqlite";
+        for (const [svc, s] of SERVICES) at.set(svc, { ...(at.get(svc) ?? { file: 0, body: 0 }), [kind]: await placeOf(s, ctx, q, keyOf, "T") });
+      }
+      const place = sqlite || q === "pdf" ? 1 : 2;
+      expect(SERVICES.map(([svc]) => ({ svc, ...at.get(svc)! }))).toEqual(SERVICES.map(([svc]) => ({ svc, file: place, body: place })));
+    }, 120_000);
+  }
+
+  /**
+   * A FILE NAME'S FRAGMENT TYPED WITH ITS MARKS: runs under four letters joined by a dash, a part that
+   * starts inside a word, a name's tail across its dot, a whole name. Beside 61 invoices whose names
+   * share the pattern, each is answered in the exact tier with the wanted letter first and as many
+   * letters as 0.30.16 answered: the server reads the names apart, the device reads them whole.
+   */
+  it("a file name's fragment typed with its marks: the exact tier, the letter first, as many letters as before", async () => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    const keyOf = new Map<string, string>();
+    const add = async (key: string, file: string, days: number, subject: string, from: string, name: string) => {
+      const date = new Date(Date.parse("2026-07-20T09:00:00Z") - days * 86_400_000);
+      const id = await seedMessage(db, accountId, mailboxId, { subject, from, fromName: name, snippet: "See attached.", folder: "INBOX", date });
+      await db.update(messages).set({ toAddresses: [{ name: "Mila Hartmann", address: "mila@lichtgrat.example" }] }).where(eq(messages.id, id));
+      await db.insert(messageBodies).values({ messageId: id, text: "See attached." });
+      await db.insert(attachments).values({ accountId, messageId: id, filename: file, contentType: "application/pdf" });
+      keyOf.set(id, key);
+    };
+    for (const [i, [key, file]] of FRAGMENT_FILES.entries()) {
+      if (key === "hl") await add(key, file, 1 + i, "Papers for SR2", "iv@post.example", "Ines Varga");
+      else await add(key, file, 1 + i, `Papers ${key}`, `${key}@desk.example`, `Clerk ${key}`);
+    }
+    for (let n = 100; n <= 160; n++) await add(`n${n}`, `INV-${n}.pdf`, 20 + n / 10, `Papers n${n}`, `n${n}@desk.example`, `Clerk n${n}`);
+    expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
+    const got: Array<{ q: string; svc: string; tier: string; first: string | null; letters: number }> = [];
+    for (const [q] of FRAGMENTS) {
+      for (const [svc, s] of SERVICES) {
+        const r = await s.search(ctx, { q, limit: 50, parts: "page" });
+        got.push({ q, svc, tier: r.tier, first: r.items[0] ? keyOf.get(r.items[0].id)! : null, letters: r.items.length });
+      }
+    }
+    expect(got).toEqual(FRAGMENTS.flatMap(([q, first, letters]) => SERVICES.map(([svc]) => ({ q, svc, tier: "exact", first, letters }))));
+  }, 60_000);
+
+  it("an erased mailbox's file names find nothing, not even a letter stored after it", async () => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    const NOW = new Date("2026-07-28T12:00:00Z");
+    const [gone] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "gone@tf.example" }).returning();
+    const id = await seedMessage(db, accountId, gone!.id, { subject: "Papers", from: "iv@post.example", fromName: "Ines Varga", snippet: "See attached.", folder: "INBOX" });
+    await db.insert(messageBodies).values({ messageId: id, text: "See attached." });
+    await db.insert(attachments).values({ accountId, messageId: id, filename: "harbour-ledger-7731.pdf", contentType: "application/pdf" });
+    expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
+    const found = async (q: string) => (await new SearchService().search(ctx, { q, limit: 50 })).items.map((m) => m.id);
+    expect(await found("ines ledger")).toEqual([id]);
+    await db.transaction((tx) => stampMailboxErasure(tx as never, { accountId, mailboxId: gone!.id, now: NOW }));
+    expect((await eraseOwedMailbox(db as never, dialect(db), { accountId, mailboxId: gone!.id, now: () => NOW, maxSteps: 20 })).done).toBe(true);
+    if (dialect(db).name === "sqlite") {
+      // The device's word tables keep nothing of the erased letter, though no letter shows it now.
+      const left = await dialect(db).exec(db, sql`select (select count(*) from message_people_fts where message_people_fts match 'varga')
+        + (select count(*) from message_files_fts where message_files_fts match 'ledger')`);
+      expect(Number(left[0]?.[0])).toBe(0);
+    }
+    const later = await seedMessage(db, accountId, mailboxId, { subject: "Lunch", from: "kai@site.example", snippet: "Noon?", folder: "INBOX" });
+    await db.insert(messageBodies).values({ messageId: later, text: "Noon?" });
+    await reindexMessageSearch(db as never, accountId, later);
+    expect(await found("lunch")).toEqual([later]);
+    expect(await found("ines ledger")).toEqual([]);
+    expect(await found("harbour")).toEqual([]);
+    if (dialect(db).name === "sqlite") {
+      for (const t of ["message_people_fts", "message_files_fts"]) await dialect(db).exec(db, sql`insert into ${sql.raw(t)}(${sql.raw(t)}) values ('integrity-check')`);
+    }
   });
 });
 

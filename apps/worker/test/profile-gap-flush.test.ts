@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { tags, type Tx } from "@trafficflow/db";
+import { accounts, mailboxes, tags, type Tx } from "@trafficflow/db";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
   PROFILE_VERSION, formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage,
@@ -58,8 +58,11 @@ async function rig(o: { planted?: { gap?: ProfileGap; installId: string; newer?:
     if (o.planted.newer) raw = raw.replace(`"v": ${PROFILE_VERSION}`, `"v": ${PROFILE_VERSION + 1}`);
     folder.messages.push({ ref: 1, raw, generation: 1 });
   }
+  await db.insert(accounts).values({ id: accountId, name: "gap", createdAt: new Date("2026-01-01T00:00:00Z") });
+  const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${randomUUID()}@x.test`, createdAt: new Date("2026-01-01T00:00:00Z") })
+    .returning({ id: mailboxes.id });
   const sync = new OrganizerProfileSync({
-    db, accountId, mailboxId: randomUUID(),
+    db, accountId, mailboxId: mb!.id,
     adapter: { profileIo: () => folder } as unknown as MailboxAdapter,
     self: { installId: SELF, kind: "mobile" },
     producerVersion: "test",
