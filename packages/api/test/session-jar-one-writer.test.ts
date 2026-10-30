@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { and, eq } from "drizzle-orm";
 import { createApp, apiRoutes, csrfTokenFor, dbBusyResponse, type AdminConfig, type ApiDeps } from "@trafficflow/api";
-import { DbAcquireTimeoutError } from "@trafficflow/db/cloud";
+import { DbAcquireTimeoutError, authEvents } from "@trafficflow/db/cloud";
 import { refreshTokens } from "@trafficflow/db";
 import { generateToken, hashToken, totpNow, type Db } from "@trafficflow/services";
 import * as scan from "../../../scripts/lib/source-scan.mjs";
@@ -51,13 +52,15 @@ async function person(deps: ApiDeps, db: Db, clock: TestClock, email: string): P
 }
 
 /** Password then TOTP, the browser's two presses; `cookie` is whatever the jar sends with them. */
-async function signIn(deps: ApiDeps, clock: TestClock, email: string, secret: string, cookie?: string): Promise<Response> {
+async function signIn(
+  deps: ApiDeps, clock: TestClock, email: string, secret: string, cookie?: string, kind?: string,
+): Promise<Response> {
   clock.advance(30_000);   // one TOTP step per verify: the step before this one is spent
   const login = await H(req("POST", "/auth/login", { cookie, body: JSON.stringify({ email, password: PW }) }), deps);
   expect(login.status, await login.clone().text()).toBe(200);
   const { loginToken } = await login.json() as { loginToken: string };
   return H(req("POST", "/auth/2fa/totp/verify", {
-    cookie, body: JSON.stringify({ loginToken, code: totpNow(secret, clock.now()) }),
+    cookie, body: JSON.stringify({ loginToken, code: totpNow(secret, clock.now()), ...(kind ? { kind } : {}) }),
   }), deps);
 }
 
@@ -102,8 +105,147 @@ describe("a sign-in supersedes the session its jar held", () => {
     const b = await signIn(deps, clock, "jar3-b@x.example", bSecret, `tf_session=${aTokens.accessToken}`);
     expect(b.status).toBe(200);
     expect(b.headers.getSetCookie(), "a bearer-only host set a cookie").toEqual([]);
+    // …nor a resume marker naming A's family, beside A's own sign-in there.
+    expect((await signIn(deps, clock, "jar3-a@x.example", aSecret, `tf_resume=${hashToken(aTokens.refreshToken)}`)).status).toBe(200);
     const renew = await H(req("POST", "/auth/refresh", { body: JSON.stringify({ refreshToken: aTokens.refreshToken }) }), deps);
     expect(renew.status, "a cookie on a bearer-only host revoked a session").toBe(200);
+  });
+});
+
+/**
+ * THE RESUME MARKER NAMES ITS FAMILY. `tf_session` lapses after fifteen minutes; `tf_resume` lives
+ * as long as the refresh token and carries its digest, so a sign-in on that browser after the
+ * access cookie lapsed still retires the family the browser held. The signer's own plain browser
+ * session only: another browser, a device, a desktop and another person keep theirs.
+ */
+describe("a sign-in retires the family its jar's resume marker names", () => {
+  const renew = (deps: ApiDeps, refresh: string): Promise<Response> =>
+    H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${refresh}`, body: "{}" }), deps);
+  const cleared = (res: Response): string[] =>
+    res.headers.getSetCookie().filter((c) => /Max-Age=0/.test(c)).map((c) => c.split("=")[0]!).sort();
+  const userOf = async (res: Response): Promise<string> =>
+    ((await res.clone().json()) as { user: { userId: string } }).user.userId;
+  const trail = async (db: Db, userId: string, event: string): Promise<Array<string | null>> =>
+    (await db.select({ device: authEvents.device }).from(authEvents)
+      .where(and(eq(authEvents.userId, userId), eq(authEvents.event, event)))).map((r) => r.device);
+
+  it.each(["signed in", "renewed once", "whose renewal answer was lost"])(
+    "a jar %s: a sign-in carrying only its marker retires the family, which then answers refresh_revoked",
+    async (shape) => {
+      const { db, deps, clock } = await makeDeps();
+      const secret = await person(deps, db, clock, "mark@x.example");
+      const first = await signIn(deps, clock, "mark@x.example", secret);
+      let jar = setCookieMap(first);
+      const family = [jar.tf_refresh!];
+      if (shape !== "signed in") {
+        const renewed = setCookieMap(await renew(deps, jar.tf_refresh!));
+        family.push(renewed.tf_refresh!);
+        if (shape === "renewed once") jar = renewed;
+      }
+      clock.advance(ACCESS_LAPSED_MS);
+      const again = await signIn(deps, clock, "mark@x.example", secret, `tf_resume=${jar.tf_resume}`);
+      expect(again.status, await again.clone().text()).toBe(200);
+      for (const refresh of family) {
+        const late = await renew(deps, refresh);
+        expect(`${late.status} ${await codeOf(late)}`, "the browser's earlier family still renews").toBe("401 refresh_revoked");
+        expect(((await late.json()) as { error: { details?: unknown } }).error.details).toBeUndefined();
+        expect(cleared(late)).toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+      }
+      expect(await trail(db, await userOf(first), "refresh_reuse_revoked"), "a retired family was swept").toEqual([]);
+      expect((await renew(deps, setCookieMap(again).tf_refresh!)).status, "the new sign-in does not renew").toBe(204);
+    },
+  );
+
+  it("a retirement is written once, on the signer's own trail and nobody else's", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const aSecret = await person(deps, db, clock, "row-a@x.example");
+    const bSecret = await person(deps, db, clock, "row-b@x.example");
+    const first = await signIn(deps, clock, "row-a@x.example", aSecret);
+    const jar = setCookieMap(first);
+    const [named] = await db.select({ familyId: refreshTokens.familyId, sessionId: refreshTokens.sessionId })
+      .from(refreshTokens).where(eq(refreshTokens.tokenHash, hashToken(jar.tf_refresh!)));
+    clock.advance(ACCESS_LAPSED_MS);
+    // Both carriers name the one family: retired once, written once.
+    const again = setCookieMap(await signIn(deps, clock, "row-a@x.example", aSecret, `tf_session=${jar.tf_session}; tf_resume=${jar.tf_resume}`));
+    expect(await trail(db, await userOf(first), "logout"))
+      .toEqual([`family=${named!.familyId} session=${named!.sessionId} by=supersede`]);
+    // B over A's lapsed access cookie ends A's family and writes on neither trail.
+    clock.advance(ACCESS_LAPSED_MS);
+    const b = await signIn(deps, clock, "row-b@x.example", bSecret, `tf_session=${again.tf_session}`);
+    expect((await renew(deps, again.tf_refresh!)).status, "positive control: B's sign-in ended A's family").toBe(401);
+    expect(await trail(db, await userOf(first), "logout")).toHaveLength(1);
+    expect(await trail(db, await userOf(b), "logout")).toEqual([]);
+  });
+
+  it("the marker is its refresh token's digest: one per family, new on every renewal, attributes as before", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const secret = await person(deps, db, clock, "value@x.example");
+    const one = await signIn(deps, clock, "value@x.example", secret);
+    const two = setCookieMap(await signIn(deps, clock, "value@x.example", secret));
+    const renewed = await renew(deps, setCookieMap(one).tf_refresh!);
+    const jars = [setCookieMap(one), two, setCookieMap(renewed)];
+    for (const j of jars) expect(j.tf_resume, "the marker names no family").toBe(hashToken(j.tf_refresh!));
+    expect(new Set(jars.map((j) => j.tf_resume)).size).toBe(3);
+    expect(two.tf_resume).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    for (const res of [one, renewed]) {
+      const line = res.headers.getSetCookie().find((c) => c.startsWith("tf_resume="))!;
+      expect(line.replace(/^tf_resume=[^;]*/, "tf_resume=")).toBe(
+        `tf_resume=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=${Math.floor(deps.authConfig.refreshTtlMs / 1000)}`);
+    }
+  });
+
+  it("control: the same person's other browser keeps renewing", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const secret = await person(deps, db, clock, "two@x.example");
+    const here = setCookieMap(await signIn(deps, clock, "two@x.example", secret));
+    const there = setCookieMap(await signIn(deps, clock, "two@x.example", secret));
+    clock.advance(ACCESS_LAPSED_MS);
+    expect((await signIn(deps, clock, "two@x.example", secret, `tf_resume=${here.tf_resume}`)).status).toBe(200);
+    expect((await renew(deps, there.tf_refresh!)).status, "a family this jar never held was retired").toBe(204);
+  });
+
+  it("control: a marker naming another person's family retires nothing of theirs", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const aSecret = await person(deps, db, clock, "other-a@x.example");
+    const bSecret = await person(deps, db, clock, "other-b@x.example");
+    const a = setCookieMap(await signIn(deps, clock, "other-a@x.example", aSecret));
+    clock.advance(ACCESS_LAPSED_MS);
+    expect((await signIn(deps, clock, "other-b@x.example", bSecret, `tf_resume=${a.tf_resume}`)).status).toBe(200);
+    expect((await renew(deps, a.tf_refresh!)).status, "a marker retired another person's family").toBe(204);
+  });
+
+  it("control: a marker forged from a paired device's or a desktop's token retires neither", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const bearer = { ...deps, allowCookieAuth: false };
+    type Pair = { tokens: { accessToken: string; refreshToken: string } };
+    const secret = await person(deps, db, clock, "dev@x.example");
+    const desktop = (await (await signIn(bearer, clock, "dev@x.example", secret, undefined, "desktop-linux")).json() as Pair).tokens;
+    const web = (await (await signIn(bearer, clock, "dev@x.example", secret)).json() as Pair).tokens;
+    const minted = await H(req("POST", "/pair", {
+      bearer: web.accessToken, body: JSON.stringify({ grant: "device-pair", label: "Phone" }),
+    }), deps);
+    expect(minted.status, await minted.clone().text()).toBe(200);
+    const redeemed = await H(req("POST", "/pair/redeem", {
+      body: JSON.stringify({ grant: "device-pair", token: ((await minted.json()) as { token: string }).token, kind: "mobile-android" }),
+    }), deps);
+    const phone = ((await redeemed.json()) as Pair).tokens;
+    clock.advance(ACCESS_LAPSED_MS);
+    for (const named of [desktop, phone]) {
+      expect((await signIn(deps, clock, "dev@x.example", secret, `tf_resume=${hashToken(named.refreshToken)}`)).status).toBe(200);
+    }
+    for (const named of [desktop, phone]) {
+      const renewed = await H(req("POST", "/auth/refresh", { body: JSON.stringify({ refreshToken: named.refreshToken }) }), deps);
+      expect(renewed.status, "a browser's marker retired a device's family").toBe(200);
+    }
+  });
+
+  it.each(["1", "not-a-digest", "A".repeat(43)])("control: a marker naming no family (%s) retires nothing", async (marker) => {
+    const { db, deps, clock } = await makeDeps();
+    const secret = await person(deps, db, clock, "legacy@x.example");
+    const jar = setCookieMap(await signIn(deps, clock, "legacy@x.example", secret));
+    clock.advance(ACCESS_LAPSED_MS);
+    expect((await signIn(deps, clock, "legacy@x.example", secret, `tf_resume=${marker}`)).status).toBe(200);
+    expect((await renew(deps, jar.tf_refresh!)).status).toBe(204);
   });
 });
 
