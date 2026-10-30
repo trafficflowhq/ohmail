@@ -8,7 +8,9 @@ import messages from "../messages/en.json";
 import { openTargetFor, readerMessageFor } from "../app/shell/AppShell";
 import { StreamShell, type StreamHandle, type StreamLeaveState } from "../app/shell/StreamShell";
 import { ReadsView } from "../app/views/ReadsView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { ReceiptsView } from "../app/views/ReceiptsView";
+import { KeymapProvider, useKeyBindings } from "../app/shell/keymap";
+import { deleteKeyBindings } from "../app/shell/delete-undo";
 
 /**
  * ═══ CLICKING A SEARCH RESULT OPENS THAT MESSAGE ════════════════════════════════════════════
@@ -57,6 +59,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ISO = "2026-08-04T09:00:00.000Z";
+const Activity = Reflect.get(React, "Activity") as React.ComponentType<{ mode: string; children?: React.ReactNode }>;
 
 const msg = (over: Partial<EngineMessage> = {}): EngineMessage =>
   ({
@@ -671,5 +674,155 @@ describe("a jump from outside the pile leaves the message OPEN, not merely selec
       window.requestAnimationFrame = realRaf;
       window.cancelAnimationFrame = realCancel;
     }
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   5. THE OPENED LETTER IS THE CURSOR: five letters sharing one Date, Delete after a later frame
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+
+describe("a search arrival among letters sharing one Date: Delete files the letter the reader shows", () => {
+  beforeEach(() => {
+    (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
+    (globalThis as Record<string, unknown>).IntersectionObserver = class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+      takeRecords(): [] { return []; }
+    };
+    (Element.prototype as unknown as Record<string, () => void>).scrollIntoView = () => {};
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(async () => {
+    for (const r of roots) await act(() => r.unmount());
+    roots = [];
+    document.body.innerHTML = "";
+    delete (globalThis as Record<string, unknown>).IntersectionObserver;
+    delete (globalThis as Record<string, unknown>).CSS;
+    vi.restoreAllMocks();
+  });
+
+  const letter = (i: number, folder: "ohmail/News" | "ohmail/Receipts"): EngineMessage =>
+    msg({ id: `RC${i}`, folder, subject: `Your receipt RC${i}`, unread: true,
+      from: { name: "Copper Store", address: "orders@shop.example.invalid" } });
+  const full = (): MessageBody =>
+    ({ text: "Thank you.\nTotal: CHF 10.00", state: "full", html: null, loadedRemoteContent: false,
+       unsubscribe: "no_header", unsubscribeUrl: null }) as unknown as MessageBody;
+
+  async function arrive(view: "receipts" | "reads", start: string | null) {
+    const pile = [0, 1, 2, 3, 4].map((i) => letter(i, view === "reads" ? "ohmail/News" : "ohmail/Receipts"));
+    const filed: string[] = [];
+    let land: (id: string) => void = () => {};
+    let show: (v: boolean) => void = () => {};
+    function Harness() {
+      const [cur, setCur] = React.useState<string | null>(start);
+      const [visible, setVisible] = React.useState(true);
+      show = setVisible;
+      const [jumpTo, setJump] = React.useState<string | null>(null);
+      land = (id) => { setCur(id); setJump(id); }; // the shell's open: cursor + jump + enters, one batch
+      useKeyBindings(deleteKeyBindings({
+        focused: pile.find((m) => m.id === cur) ?? null, label: "Delete", canDelete: true, run: (m) => filed.push(m.id),
+      }), "global");
+      const common = { settled: true, owed: false, tags, now: new Date(ISO), cur, onCur: setCur, markSeen: () => {},
+        bodyOf: full, hydrateBody: () => {}, jumpTo, onJumped: () => setJump(null), jumpEnters: true };
+      return h(Activity, { mode: visible ? "visible" : "hidden" }, view === "reads"
+        ? h(ReadsView, { ...common, partition: { waterline: null, fresh: [], seen: pile, newCount: 0 },
+            aiChip: null, chipState: null, onChipState: () => {}, closeTo: null, onClosed: () => {} } as never)
+        : h(ReceiptsView, { ...common, messages: pile, unreadCount: 5, isUnread: (m: EngineMessage) => m.unread,
+            onAction: () => {} } as never));
+    }
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    await act(() => {
+      root.render(h(NextIntlClientProvider, { locale: "en", messages, now: new Date(ISO), timeZone: "UTC",
+        children: h(KeymapProvider, { children: h(Harness) }) }));
+    });
+    await settle(100);
+    // Short cards that bottom out one port; an open card is taller, so opening raises the end.
+    const el = host.querySelector<HTMLElement>(".stream")!;
+    const order = () => [...el.querySelectorAll<HTMLElement>(".scast[data-sid]")].map((c) => c.dataset.sid!);
+    const height = (sid: string) => (el.querySelector(`.scast.open[data-sid="${sid}"]`) ? 400 : 180);
+    const topOf = (sid: string) => {
+      let t = 100;
+      for (const s of order()) { if (s === sid) return t; t += height(s) + 20; }
+      return t;
+    };
+    const max = () => Math.max(0, topOf("") + 48 - 860);
+    let scrollTop = 0;
+    Object.defineProperty(el, "clientHeight", { configurable: true, get: () => 860 });
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => max() + 860 });
+    Object.defineProperty(el, "scrollTop", {
+      configurable: true, get: () => scrollTop, set: (v: number) => { scrollTop = Math.min(max(), Math.max(0, v)); },
+    });
+    el.scrollTo = ((o: ScrollToOptions) => { el.scrollTop = o.top ?? 0; el.dispatchEvent(new Event("scroll")); }) as typeof el.scrollTo;
+    const real = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === el) return rect(0, 860);
+      if (this.classList.contains("scast") && el.contains(this)) return rect(topOf(this.dataset.sid!) - scrollTop, height(this.dataset.sid!));
+      return real.call(this);
+    });
+    const press = order()[3]!; // a neighbour above it, and the pile's last below it
+    const state = () => ({
+      open: [...host.querySelectorAll<HTMLElement>(".scast.open")].map((c) => c.dataset.sid),
+      card: host.querySelector<HTMLElement>(".scast.cur")?.dataset.sid ?? null,
+      row: host.querySelector<HTMLElement>(".row.sel")?.dataset.id ?? null,
+      filed,
+    });
+    const del = () => act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
+    });
+    return { el, order, press, land: () => act(async () => { land(press); }), state, del,
+      show: (v: boolean) => act(async () => { show(v); }) };
+  }
+
+  for (const view of ["receipts", "reads"] as const) {
+    it(`${view}: the opened card, the card cursor, the selected row and Delete stay on the pressed letter`, async () => {
+      const a = await arrive(view, null);
+      await a.land();
+      await settle(200);
+      vi.spyOn(Date, "now").mockReturnValue(Date.now() + 2000); // the jump's deadline has passed
+      await act(async () => { a.el.dispatchEvent(new Event("scroll")); });
+      await settle(100);
+      await a.del();
+      expect(a.state()).toEqual({ open: [a.press], card: a.press, row: a.press, filed: [a.press] });
+    });
+  }
+
+  for (const view of ["receipts", "reads"] as const) {
+    it(`${view}: back in a kept pile, Delete after the first scroll files the letter on the reading line`, async () => {
+      const a = await arrive(view, null);
+      a.el.scrollTop = 288;
+      await act(async () => { a.el.dispatchEvent(new Event("scroll")); });
+      await settle(60);
+      await a.show(false);
+      // A browser announces the visit's reset scroll a frame later, never inside the call.
+      a.el.scrollTo = ((o: ScrollToOptions) => {
+        a.el.scrollTop = o.top ?? 0;
+        setTimeout(() => a.el.dispatchEvent(new Event("scroll")), 0);
+      }) as typeof a.el.scrollTo;
+      await a.show(true);
+      await settle(120);
+      expect(a.state().card, "the revisit's cursor follows the top").toBe(a.order()[0]);
+      a.el.scrollTop = 230; // the top letter's foot passes the line; the second is on it
+      await act(async () => { a.el.dispatchEvent(new Event("scroll")); });
+      await settle(60);
+      const line = a.order()[1]!;
+      await act(async () => { a.el.querySelector<HTMLElement>(`.scast[data-sid="${line}"] .sc-x`)!.click(); });
+      await settle(50);
+      await a.del();
+      expect(a.state()).toEqual({ open: [line], card: line, row: line, filed: [line] });
+    });
+  }
+
+  it("a press on another card's Expand pill moves the cursor with it, so Delete files the card that shows the bar", async () => {
+    const a = await arrive("receipts", "RC2");
+    const pill = a.el.querySelector<HTMLElement>(`.scast[data-sid="${a.press}"] .sc-x`);
+    expect(pill, "the pressed card's pill").not.toBeNull();
+    await act(async () => { pill!.click(); });
+    await settle(50);
+    await a.del();
+    expect(a.state()).toEqual({ open: [a.press], card: a.press, row: a.press, filed: [a.press] });
   });
 });

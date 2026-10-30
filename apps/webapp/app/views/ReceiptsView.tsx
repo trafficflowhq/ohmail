@@ -632,6 +632,7 @@ export function ReceiptsView({
         ref={streamRef}
         ariaLabel={t("streamAria")}
         onCurrentChange={onCur}
+        cursor={cur}
         onSeen={seenMark}
         onLeave={onStreamLeave}
         pileIndexOf={pileIndexOf}

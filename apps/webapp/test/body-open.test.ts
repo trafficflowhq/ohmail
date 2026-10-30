@@ -181,6 +181,7 @@ async function render(node: React.ReactNode): Promise<void> {
 }
 
 beforeEach(() => {
+  (globalThis as Record<string, unknown>).CSS ??= { escape: (v: string) => v };
   sent = [];
   bodiesFetched = [];
   restoreLayout = layoutStubs();
