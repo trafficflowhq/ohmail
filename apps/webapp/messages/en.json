@@ -3492,6 +3492,7 @@
     "listHandle": "List width"
   },
   "viewError": {
+    "updated": "ohmail was updated. Reload to continue.",
     "loadFailed": "This part of ohmail couldn't load. Check the connection and try again.",
     "tryAgain": "Try again",
     "title": "This view didn't load.",

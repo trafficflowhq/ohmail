@@ -3492,6 +3492,7 @@
     "listHandle": "Breite der Liste"
   },
   "viewError": {
+    "updated": "ohmail wurde aktualisiert. Neu laden, um weiterzumachen.",
     "loadFailed": "Dieser Teil von ohmail konnte nicht geladen werden. Prüfe die Verbindung und versuche es erneut.",
     "tryAgain": "Erneut versuchen",
     "title": "Diese Ansicht wurde nicht geladen.",
