@@ -282,7 +282,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
           const r = liveReceipts(pres, v);
           return {
             groups: r.groups, waterlineAboveId: r.waterlineAboveId, waterLabel: Copy.waterline,
-            total: r.total, newCount: r.newCount, meta: Copy.metaNew(r.newCount),
+            total: r.total, unreadIds: r.unreadIds, newCount: r.newCount, meta: Copy.metaNew(r.newCount),
           };
         });
       },

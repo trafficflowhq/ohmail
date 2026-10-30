@@ -585,7 +585,7 @@ export const DE: Deck = {
   whereMinutesAgo: (n: number) => (n === 1 ? "vor 1 Minute" : `vor ${n} Minuten`),
   whereHoursAgo: (n: number) => (n === 1 ? "vor 1 Stunde" : `vor ${n} Stunden`),
   whereDaysAgo: (n: number) => (n === 1 ? "vor 1 Tag" : `vor ${n} Tagen`),
-  metaNew: (n: number) => `${n} neu`,
+  metaNew: (n: number) => `${n === 0 ? "Nichts Neues" : `${n} neue`} seit deinem letzten Besuch`,
   metaWaiting: (n: number) =>
     `${n} ${n === 1 ? "neuer Absender wartet" : "neue Absender warten"}`,
   metaWaitingOnDevice: (n: number) =>

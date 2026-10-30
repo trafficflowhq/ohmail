@@ -908,7 +908,8 @@ const TABLE = {
   whereMinutesAgo: (n: number) => (n === 1 ? "1 minute ago" : `${n} minutes ago`),
   whereHoursAgo: (n: number) => (n === 1 ? "1 hour ago" : `${n} hours ago`),
   whereDaysAgo: (n: number) => (n === 1 ? "1 day ago" : `${n} days ago`),
-  metaNew: (n: number) => `${n} new`,
+  /** The streams' count, the web's `stream.newSince`: mail above the line, not the unread rows. */
+  metaNew: (n: number) => `${n === 0 ? "Nothing" : n} new since you were here`,
   metaWaiting: (n: number) =>
     `${n} first-time sender${n === 1 ? "" : "s"} waiting`,
   /**

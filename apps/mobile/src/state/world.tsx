@@ -343,6 +343,8 @@ export interface World {
     waterlineAboveId: string | null;
     waterLabel: string;
     total: number;
+    /** What mark-all-read flips — see {@link WorldState.reads.unreadIds}. */
+    unreadIds: string[];
     /** The stream's badge — see {@link WorldState.reads.newCount}. */
     newCount: number;
     meta: string;
@@ -704,7 +706,7 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
     ohbox: { resurfaced: [], fresh: [], seen: [], unreadIds: [], unread: 0, total: 0, meta: "", unscreened: null, filed: null },
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, unreadIds: [], waterLabel: Copy.waterline, newCount: 0, meta: "" },
-    receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
+    receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, unreadIds: [], newCount: 0, meta: "" },
     screener: { waiting: [], screened: [], spam: [], meta: "", source: "device", waitingPending: false, relayed: null },
     history: { items: [], total: 0, meta: "", pending: false },
     piles: [],

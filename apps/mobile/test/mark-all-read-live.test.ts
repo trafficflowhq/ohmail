@@ -18,6 +18,7 @@ import {
   liveActions,
   liveOhbox,
   liveReads,
+  liveReceipts,
   presentedOf,
   UNDO_MS,
   type LiveWorldActions,
@@ -221,6 +222,29 @@ describe("mark all read drives the wire and carries the one undo", () => {
     await arrived("n1 unread and the line back at n0", () =>
       live.engine.read().get<EngineMessage>("message", "n1")?.unread === true && lineAt() === "n0");
     expect([news().newCount, news().waterlineAboveId]).toEqual([1, "n0"]);
+    live.store.close();
+    live.fake.server.close();
+  }, CASE_MS);
+
+  it("Receipts: the press flips the stream's own unread, commits its line, and the Undo puts both back", async () => {
+    const live = await scene((f) => {
+      f.addMessage(dto("c2", { folder: "ohmail/Receipts", unread: true, date: "2026-08-19T10:00:00Z" }));
+      f.addMessage(dto("c1", { folder: "ohmail/Receipts", unread: false, date: "2026-08-19T09:00:00Z" }));
+      f.addMessage(dto("c0", { folder: "ohmail/Receipts", unread: true, date: "2026-08-18T09:00:00Z" }));
+    });
+    const lineAt = () => live.engine.read().get<{ newestSeenId: string }>("view_meta", waterlineIdOf("receipts"))?.newestSeenId;
+    await live.engine.mutate({ kind: "feed_mark_seen", view: "receipts", messageIds: [], upToId: "c1" });
+    await arrived("the earlier visit's line at c1", () => lineAt() === "c1");
+    const receipts = () => liveReceipts(presentedOf(live.engine.read(), view.now), view);
+    // The unread row below the line is in the set though it is not new.
+    expect([[...receipts().unreadIds].sort(), receipts().newCount]).toEqual([["c0", "c2"], 1]);
+
+    await live.actions.markAllSeen(receipts().unreadIds, { place: "receipts", upToId: "c2" });
+    await arrived("both read with the Receipts line at c2", () => receipts().unreadIds.length === 0 && lineAt() === "c2");
+    expect(seenPatches(live.fake)[0]!.ids.sort()).toEqual(["c0", "c2"]);
+    live.toasts.find((t) => t.say === Copy.markAllDone(2))!.undo!();
+    await arrived("c0 and c2 unread and the line back at c1", () => receipts().unreadIds.length === 2 && lineAt() === "c1");
+    expect(receipts().newCount).toBe(1);
     live.store.close();
     live.fake.server.close();
   }, CASE_MS);

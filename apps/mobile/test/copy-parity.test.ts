@@ -945,3 +945,13 @@ describe("the live accessor", () => {
     expect(shape(DE)).toEqual(shape(EN));
   });
 });
+
+describe("the streams' count line", () => {
+  it("says the web's sentence for the count since the last visit, in both languages", async () => {
+    const { IntlMessageFormat } = await import("intl-messageformat");
+    for (const [deck, json, locale] of [[EN, EN_JSON, "en"], [DE, DE_JSON, "de"]] as const) {
+      const web = new IntlMessageFormat(at(json, "stream.newSince"), locale);
+      for (const n of [0, 1, 12]) expect(deck.metaNew(n)).toBe(web.format({ count: n }));
+    }
+  });
+});
