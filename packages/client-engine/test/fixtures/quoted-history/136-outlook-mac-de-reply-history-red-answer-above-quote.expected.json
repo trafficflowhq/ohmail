@@ -1,0 +1,39 @@
+{
+  "id": "136",
+  "file": "136-outlook-mac-de-reply-history-red-answer-above-quote.eml",
+  "shape": "outlook-mac-de-reply-history-red-answer-above-quote",
+  "description": "Outlook for Mac (new), German, html only: 132's reply and header block; in the earlier message the writer's red answer under the earlier writer's question, then his sign-off, an attribution and a ruled quote of an older message",
+  "client": "outlook_mac_new",
+  "ui_language": "de",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Dana Example"
+  ],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Dana"
+    },
+    "inlineAnswers": [
+      "Ja, sie ist Position 3 im Angebot."
+    ],
+    "trailingTail": null
+  },
+  "notes": "Synthetic. New Outlook's history is read to its end, as the Windows header path reads the body: the writer's answer typed into it keeps it open, as under 133's header."
+}
