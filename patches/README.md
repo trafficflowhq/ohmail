@@ -309,3 +309,49 @@ strings.
 
 **What would let us drop this:** an upstream release that refuses a statement on a closed connection,
 clears its write state on close, and handles its own startup queries failing.
+
+## `htmlparser2@12.0.0` and `htmlparser2@10.1.0`
+
+MIT. Upstream: <https://github.com/fb55/htmlparser2>.
+
+Two copies of the html parser are installed, and every html reader here runs on one of them:
+
+- **12.0.0**, the hoisted copy: the search words and plain text of an html part
+  (`packages/core/src/html-text.ts`), the outbound sanitizer through `sanitize-html`
+  (`packages/services/src/outbound-html.ts`), and the phone's reader (`apps/mobile/src/mail/`). The
+  package ships one build, `dist/`, and the patch changes `dist/Parser.js`; `src/` is never loaded.
+- **10.1.0**, nested under `html-to-text`, which mailparser uses to turn an html-only letter into text
+  inside `normalizeMime` (`packages/core/src/mime.ts`). The worker, the server and the desktop engine
+  bundle its CommonJS build, and the phone's engine its ESM build, so the patch changes both
+  `dist/commonjs/Parser.js` and `dist/esm/Parser.js`. The applier also patches the identical copy under
+  `@types/sanitize-html`, which nothing runs.
+
+Upstream keeps the stack of open elements innermost first, adding with `unshift` and removing with
+`shift`, and looks a closing tag up with `indexOf`. Each of those walks the whole stack, so the parse
+is quadratic in nesting depth. Four shapes reach it: a deep nest of opens, closing tags that match
+nothing, a `<form>` opened over a deep stack, and (in 12.0.0) SVG element names inside a
+`<foreignObject>`; the `<svg>`/`<math>` context stack is kept the same way. At each reader's own size
+cap, a crafted letter cost `normalizeMime` 2 to 21 s on the shared worker's main thread, the phone's
+sanitizer 1.5 to 4.6 s, and the search words up to 0.75 s.
+
+The patch keeps both stacks innermost last with `push` and `pop`, and keeps a count of open elements
+per tag name. A closing tag is looked up only when its name is open, with `lastIndexOf`, which stops
+at the element it closes; the `form` and SVG-name checks read the count. Every event, its order, its
+`isImplied` flag and its indices are unchanged (`test/htmlparser2-linear-stack.test.ts` compares each
+copy against upstream's own parser, recovered from this patch, over the depth shapes, the html fixtures
+and random documents). Upstream's 10.1.0 behaviour of a `</svg>` or `</math>` that matches nothing
+popping the foreign context is kept as it is.
+
+It could not be worked around from our side: the stack is the parser's private state, and every
+reader gives the parser the whole html part. A smaller cap would drop real mail, and `sanitize-html`
+and mailparser build their own parsers.
+
+`Parser.stackOrder`, the literal `ohmail-htmlparser2-linear-stack`, is the marker the bundle checks
+read; both patches add the same one, so a bundle that holds only one of the two versions passes.
+`apply` refusing a copy it cannot patch covers a bundle that would hold both, one unpatched. Upstream's
+`.write() after done!` is the control. A bump of the hoisted copy, or of every 10.1.0 copy, is refused
+at install; a bump of `html-to-text`'s copy alone is caught by the test's time guard, which loads each
+copy the way its reader does.
+
+**What would let us drop this:** an upstream release with a linear stack, for 12.x; for 10.1.0, the
+same in a 10.x release or `html-to-text` moving to a release that has it.

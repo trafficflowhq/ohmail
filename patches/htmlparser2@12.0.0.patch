@@ -1,0 +1,154 @@
+diff --git a/dist/Parser.js b/dist/Parser.js
+index c73086d6509f9a75fcbd61fddd87e421117b40e3..f2d1ca90b9d055515a0e3e1a79570c0e8601bb36 100644
+--- a/dist/Parser.js
++++ b/dist/Parser.js
+@@ -154,6 +154,8 @@ const reNameEnd = /\s|\//;
+  * Incremental parser implementation.
+  */
+ export class Parser {
++    /** What a build reads to know this copy keeps a linear open-element stack. */
++    static stackOrder = "ohmail-htmlparser2-linear-stack";
+     options;
+     /** The start index of the last event. */
+     startIndex = 0;
+@@ -168,7 +170,11 @@ export class Parser {
+     attribname = "";
+     attribvalue = "";
+     attribs = null;
++    /** The open elements, innermost last. */
+     stack = [];
++    /** How many open elements carry each name (0 once all closed), so no lookup walks the stack. */
++    openCounts = new Map();
++    /** Innermost last. */
+     foreignContext;
+     cbs;
+     lowerCaseTagNames;
+@@ -220,7 +226,8 @@ export class Parser {
+     }
+     /** @internal */
+     isInForeignContext() {
+-        return this.foreignContext[0] !== ForeignContext.None;
++        return (this.foreignContext[this.foreignContext.length - 1] !==
++            ForeignContext.None);
+     }
+     /**
+      * Checks if the current tag is a void element. Override this if you want
+@@ -246,7 +253,8 @@ export class Parser {
+         if (!(this.lowerCaseTagNames && this.htmlMode)) {
+             return name;
+         }
+-        if (this.foreignContext[0] === ForeignContext.Svg) {
++        if (this.foreignContext[this.foreignContext.length - 1] ===
++            ForeignContext.Svg) {
+             return svgTagNameAdjustments.get(name) ?? name;
+         }
+         /*
+@@ -258,7 +266,7 @@ export class Parser {
+          */
+         if (this.foreignContext.length > 1) {
+             const adjusted = svgTagNameAdjustments.get(name);
+-            if (adjusted !== undefined && this.stack.includes(adjusted)) {
++            if (adjusted !== undefined && this.openCounts.get(adjusted) > 0) {
+                 return adjusted;
+             }
+         }
+@@ -285,27 +293,29 @@ export class Parser {
+          * stays null so endOpenTag is a no-op, and closeCurrentTag can't
+          * match "" on the stack.
+          */
+-        if (this.htmlMode && name === "form" && this.stack.includes("form")) {
++        if (this.htmlMode && name === "form" && this.openCounts.get("form") > 0) {
+             this.tagname = "";
+             return;
+         }
+         const impliesClose = this.htmlMode && openImpliesClose.get(name);
+         if (impliesClose) {
+-            while (this.stack.length > 0 && impliesClose.has(this.stack[0])) {
++            while (this.stack.length > 0 &&
++                impliesClose.has(this.stack[this.stack.length - 1])) {
+                 this.popElement(true);
+             }
+         }
+         if (!this.isVoidElement(name)) {
+-            this.stack.unshift(name);
++            this.stack.push(name);
++            this.openCounts.set(name, (this.openCounts.get(name) ?? 0) + 1);
+             if (this.htmlMode) {
+                 if (name === "svg") {
+-                    this.foreignContext.unshift(ForeignContext.Svg);
++                    this.foreignContext.push(ForeignContext.Svg);
+                 }
+                 else if (name === "math") {
+-                    this.foreignContext.unshift(ForeignContext.MathML);
++                    this.foreignContext.push(ForeignContext.MathML);
+                 }
+                 else if (htmlIntegrationElements.has(name)) {
+-                    this.foreignContext.unshift(ForeignContext.None);
++                    this.foreignContext.push(ForeignContext.None);
+                 }
+             }
+         }
+@@ -343,9 +353,13 @@ export class Parser {
+         this.endIndex = endIndex;
+         const name = this.readTagName(start, endIndex);
+         if (!this.isVoidElement(name)) {
+-            const pos = this.stack.indexOf(name);
++            // Only an open name is looked up: the scan then stops at what it closes.
++            const pos = this.openCounts.get(name) > 0
++                ? this.stack.lastIndexOf(name)
++                : -1;
+             if (pos !== -1) {
+-                for (let index = 0; index < pos; index++) {
++                const above = this.stack.length - 1 - pos;
++                for (let index = 0; index < above; index++) {
+                     this.popElement(true);
+                 }
+                 this.popElement(false);
+@@ -388,11 +402,12 @@ export class Parser {
+      */
+     popElement(implied) {
+         // biome-ignore lint/style/noNonNullAssertion: The element is guaranteed to exist.
+-        const element = this.stack.shift();
++        const element = this.stack.pop();
++        this.openCounts.set(element, this.openCounts.get(element) - 1);
+         if (this.htmlMode &&
+             (foreignContextElements.has(element) ||
+                 htmlIntegrationElements.has(element))) {
+-            this.foreignContext.shift();
++            this.foreignContext.pop();
+         }
+         this.cbs.onclosetag?.(element, implied);
+     }
+@@ -400,7 +415,7 @@ export class Parser {
+         const name = this.tagname;
+         this.endOpenTag(isOpenImplied);
+         // Self-closing tags will be on the top of the stack
+-        if (this.stack[0] === name) {
++        if (this.stack[this.stack.length - 1] === name) {
+             this.popElement(!isOpenImplied);
+         }
+     }
+@@ -538,7 +553,7 @@ export class Parser {
+         if (this.cbs.onclosetag) {
+             // Set the end index for all remaining tags
+             this.endIndex = this.startIndex;
+-            for (let index = 0; index < this.stack.length; index++) {
++            for (let index = this.stack.length - 1; index >= 0; index--) {
+                 this.cbs.onclosetag(this.stack[index], true);
+             }
+         }
+@@ -555,12 +570,13 @@ export class Parser {
+         this.attribvalue = "";
+         this.attribs = null;
+         this.stack.length = 0;
++        this.openCounts.clear();
+         this.startIndex = 0;
+         this.endIndex = 0;
+         this.cbs.onparserinit?.(this);
+         this.buffers.length = 0;
+         this.foreignContext.length = 0;
+-        this.foreignContext.unshift(ForeignContext.None);
++        this.foreignContext.push(ForeignContext.None);
+         this.bufferOffset = 0;
+         this.writeIndex = 0;
+         this.ended = false;

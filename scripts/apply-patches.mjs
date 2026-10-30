@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 /* An upstream literal each package's code keeps whether or not our patch reached it. Absent means the
  * bytes read do not hold the package at all, which is a different answer from "unpatched". */
 const CONTROLS = {
+  htmlparser2: ".write() after done!",
   nodemailer: "Connection closed unexpectedly",
   postgres: "Only use sql.begin, sql.reserved or max: 1",
   "react-native-tcp-socket": "Attempted to write to closed socket",
