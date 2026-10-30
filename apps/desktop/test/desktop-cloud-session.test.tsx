@@ -478,7 +478,9 @@ describe("the reuse sweeps a new sign-in is told of", () => {
   it("is shown once, acknowledged over the bridge with its id, and goes", async () => {
     const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { hosted: hosted([SWEEP]) });
     const el = await render();
-    expect(await within(2_000, () => text(el).includes(S.reuseClientLinux!)), "the strip never came").not.toBeNull();
+    const details = () => [...el.querySelectorAll("button")].find((b) => b.textContent === S.reuseSweepsDetails);
+    expect(await within(2_000, () => details() !== undefined), "the strip never came").not.toBeNull();
+    await act(async () => { details()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(text(el).split(S.reuseClientLinux!).length - 1, "said once").toBe(1);
     await act(async () => { okButton(el)!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(await within(1_000, () => shell.acks().length > 0)).not.toBeNull();
