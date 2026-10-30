@@ -1,6 +1,6 @@
 # Quoted-history corpus
 
-139 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
+140 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
 `<file>.expected.json` sidecar that says where the new message ends and the history begins. Built for the
 0.30.x thread reader, where thread members show their whole quoted history unfolded (report,
 2026-10-23: an Outlook-style `Von:/Datum:/An:/Cc:/Betreff: WG:` block in the body's own colour, never folded).
@@ -53,6 +53,9 @@ Outlook header block reads the same wherever it sits, and both stay open.
 Fixture 139 is 135's Windows reply with that red answer one Outlook hop further down, above an attribution and
 a long older message quoted in one ink: every header block of the history's own level has its message read, and
 it stays open.
+Fixture 140 is 132's new-Outlook reply whose earlier message opens with its quote box: the box is its only one,
+in the message's ink, answered below in a sentence and signed with a closing that only ends a letter ('Viele
+Grüsse') over the name of the sender on the From line, and it folds at the reply header.
 
 ## Sidecar schema (`*.expected.json`)
 
@@ -232,3 +235,4 @@ which belong to the new message and stay visible.
 | 133 | `133-outlook-win-de-reply-history-coloured-quote-answer.eml` | outlook_win | de | reply | 1 | trailing | Outlook for Windows, German: border-top Von block; the earlier message quotes a bullet in #500050 and answers it in a sentence |
 | 134 | `134-outlook-mac-de-two-levels-quote-answer.eml` | outlook_mac_new | de | reply | 2 | trailing | Outlook for Mac (new) over an Outlook for Windows hop, German: each level quotes and answers, the inner quote in #1F497D |
 | 135 | `135-outlook-win-de-reply-history-word-quote-box.eml` | outlook_win | de | reply | 1 | trailing | Outlook for Windows, German: the earlier message's quote is Word's border-left div box in #0070C0, its answer below |
+| 140 | `140-outlook-mac-de-reply-history-opens-with-quote.eml` | outlook_mac_new | de | reply | 1 | trailing | Outlook for Mac (new), German: Von/Datum '... um HH:MM'/An (two)/Cc/Betreff: Re: in #mail-editor-reference-message-container; the earlier message opens with a bullet quoted in a left-ruled blockquote, answers it with a link and signs 'Viele Grüsse / Ben' |

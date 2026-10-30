@@ -126,16 +126,30 @@ export function qhTypedAnswers(): Array<{ name: string; html: string; text: stri
 /**
  * Bodies the html half must read in one linear pass: a long run of date lines above an Outlook header
  * block (a date line starts GMX's header block, so every line of the run starts one), in a pre, between
- * line breaks, under Outlook's border-top marker and in new Outlook's container.
+ * line breaks, under Outlook's border-top marker and in new Outlook's container; and one long word of
+ * punctuation where a sign-off is read, ending an opening quote box or below its answer, under both.
  */
 export function qhHostileBodies(): Array<{ name: string; html: string }> {
   const run = (n: number, sep: string): string => [...Array.from({ length: n }, () => "Date:"),
     "Von: Dana Example", "An: Ben Sample", "Betreff: Termin", "-> eins", "Das ist ein ganzer Satz mit Inhalt."].join(sep);
   const pre = `<pre>${run(43_000, "\n")}</pre>`;
+  // One word of 500,000 marks between two letters where a sign-off is read: an earlier Outlook message opens with a quote box.
+  const word = `<p>x${"!".repeat(500_000)}x</p>`;
+  const header = "<p><b>Von:</b> Ben Sample &lt;ben.sample@example.org&gt;<br><b>Gesendet:</b> Mittwoch, 28. Oktober 2026 14:12<br>"
+    + "<b>An:</b> Clara Muster &lt;clara.muster@example.org&gt;<br><b>Betreff:</b> AW: Begehung</p>";
+  const lead = "<p>Hallo Ben, danke dir.</p><p>Gruss Clara</p>";
+  const win = (h: string): string => `${lead}<div style="border:none;border-top:solid #E1E1E1 1.0pt">${header}</div>${h}`;
+  const mac = (h: string): string => `${lead}<div id="mail-editor-reference-message-container">${header}${h}</div>`;
+  const move = "<p>Können wir die Begehung auf Donnerstag verschieben?</p>";
+  const answer = "<p>Ja, Donnerstag um 10 Uhr passt uns gut.</p>";
   return [
     { name: "43,000 date lines over an Outlook header block in a pre", html: `<div>Hallo Ben</div>${pre}` },
     { name: "8,000 date lines over an Outlook header block between line breaks", html: `<div>Hallo Ben</div><div>${run(8_000, "<br>")}</div>` },
     { name: "the same pre under Outlook's border-top marker", html: `<div>Hallo Ben</div><div style="border:none;border-top:solid #E1E1E1 1.0pt">${pre}</div>` },
     { name: "the same pre in new Outlook's container", html: `<div>Hallo Ben, siehe unten.</div><div>Gruss Clara</div><div id="mail-editor-reference-message-container">${pre}</div>` },
+    { name: "a 500,000-mark word ending an opening quote box under Outlook's header", html: win(`<blockquote>${word}</blockquote><p>ok</p>`) },
+    { name: "the same word ending an opening quote box in new Outlook's container", html: mac(`<blockquote>${word}</blockquote>${answer}`) },
+    { name: "the same word below an opening quote's answer under Outlook's header", html: win(`<blockquote>${move}</blockquote>${answer}${word}`) },
+    { name: "the same word below an opening quote's answer in new Outlook's container", html: mac(`<blockquote>${move}</blockquote>${answer}${word}`) },
   ];
 }

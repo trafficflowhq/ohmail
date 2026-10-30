@@ -749,15 +749,222 @@ function wholeHistory(add: Add): void {
       + gmail(P("Hi Ben,") + P("Can we move the visit of the technical room to Thursday? On Tuesday I am not in the house.") + P("Dana"))) + "</div>");
 }
 
+// ── an earlier message that opens with its quote box: folds when it is the hop's only box, in the
+//    level's ink, answered in a sentence and signed below by the sender on its From line ─────────
+
+/** The tester's letter: a new Outlook for Mac reply whose earlier message opens with its quote. */
+function macReply(tag: string, variant: "quote" | "nolink" | "greeting" | "noquote"): { html: string; text: string } {
+  const link = variant === "nolink" ? "" : ' Der aktuelle Plan liegt hier: <a href="https://example.com/hafenplan-q4">Hafenplan Q4</a>.';
+  const linkT = variant === "nolink" ? "" : " Der aktuelle Plan liegt hier: Hafenplan Q4 <https://example.com/hafenplan-q4>.";
+  const greet = variant === "greeting" ? "<p>Hallo Ada, meine Antworten stehen unten bei deinen Punkten.</p>\n" : "";
+  const quote = variant === "noquote" ? "" : `<blockquote style="margin:0 0 0 0.8ex;border-left:1px solid #cccccc;padding-left:1ex">\n<ul><li>${tag}-q: Bitte die Liegeplatzliste fuer Q4 bis Freitag schicken.</li></ul>\n</blockquote>\n`;
+  const div = '<div style="font-family:Aptos,Calibri,sans-serif;font-size:12pt">';
+  const html = `<html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body>
+${div}${tag}1: Danke Oren, passt so. Ich schicke die Liste morgen.</div>
+${div}<br></div>
+${div}Gruss<br>Ada</div>
+${div}<br></div>
+<div id="mail-editor-reference-message-container">
+<div class="ms-outlook-mac-reference-message">
+<div style="border:none;border-top:solid #B5C4DF 1.0pt;padding:3.0pt 0cm 0cm 0cm">
+<p style="margin:0;font-family:Aptos,Calibri,sans-serif;font-size:12pt"><b>Von: </b>Oren Dale &lt;oren@example.org&gt;<br>
+<b>Datum: </b>Montag, 26. Oktober 2026 um 12:06<br>
+<b>An: </b>Ada Quill &lt;ada@example.com&gt;<br>
+<b>Cc: </b>Mila Stern &lt;mila@example.org&gt;<br>
+<b>Betreff: </b>Re: Hafenplan Q4 ${tag}</p>
+</div>
+<div><br></div>
+${div}
+${greet}${quote}<p>${tag}-h: Mache ich gerne.${link} Sag Bescheid, wenn etwas fehlt.</p>
+<p>Viele Gruesse<br>Oren</p>
+</div>
+</div>
+</div>
+</body></html>`;
+  const text = [`${tag}1: Danke Oren, passt so. Ich schicke die Liste morgen.`, "", "Gruss", "Ada", "", "Von: Oren Dale <oren@example.org>", "Datum: Montag, 26. Oktober 2026 um 12:06",
+    "An: Ada Quill <ada@example.com>", "Cc: Mila Stern <mila@example.org>", `Betreff: Re: Hafenplan Q4 ${tag}`, "",
+    ...(variant === "greeting" ? ["Hallo Ada, meine Antworten stehen unten bei deinen Punkten.", ""] : []),
+    ...(variant === "noquote" ? [] : [`> * ${tag}-q: Bitte die Liegeplatzliste fuer Q4 bis Freitag schicken.`, ""]),
+    `${tag}-h: Mache ich gerne.${linkT} Sag Bescheid, wenn etwas fehlt.`, "", "Viele Gruesse", "Oren", ""].join("\n");
+  return { html, text };
+}
+
+function opensWithItsQuote(add: Add): void {
+  const MOVE = "Können wir die Begehung des Technikraums auf Donnerstag verschieben?";
+  const STMT = "<ul><li>Bitte die Liegeplatzliste für Q4 bis Freitag schicken.</li></ul>";
+  const ANS_LINK = 'Ja, Donnerstag um 10 Uhr passt uns. Den Plan des Technikraums findest du hier: <a href="https://example.com/plan">Plan Technikraum</a>';
+  const ANS = "Ja, Donnerstag um 10 Uhr passt uns gut.";
+  // A sign-off-only closing over the sender's name signs; "Gruss"/"Ben" (the writer may say it to him) does not.
+  const SIGNOFF = P("Viele Grüsse") + P("Ben");
+  const CLARA = "Ja, Donnerstag um 10 Uhr passt mir gut, ich komme.";
+  const testerBq: Wrap = (x) => `<blockquote style="margin:0 0 0 0.8ex;border-left:1px solid #cccccc;padding-left:1ex">${x}</blockquote>`;
+  const boxes: Record<string, Wrap> = { box, testerBq, gmail, cite, plain, wordBq, wordBox, gmxBox, rooster };
+  const head = (date: string, subject: string, from: string): string => `<b>Von: </b>${from}<br><b>${date}<br><b>An: </b>Clara Muster &lt;clara.muster@example.org&gt;, `
+    + `Dana Example &lt;dana@example.net&gt;<br><b>Cc: </b>Finn Beispiel &lt;finn@example.com&gt;<br><b>Betreff: </b>${subject}`;
+  const BEN = "Ben Sample &lt;ben.sample@example.org&gt;";
+  const headers: Record<string, (h: string, from?: string) => string> = {
+    macNew: (h, from = BEN) => '<div id="mail-editor-reference-message-container"><div class="ms-outlook-mobile-reference-message skipProofing"><p class="MsoNormal" style="margin-bottom:12.0pt">'
+      + `${head(DATE_MAC, "Re: Begehung Technikraum", from)}<o:p></o:p></p></div>${h}</div>`,
+    macNewTester: (h, from = BEN) => '<div id="mail-editor-reference-message-container"><div class="ms-outlook-mac-reference-message"><div style="border:none;border-top:solid #B5C4DF 1.0pt;padding:3.0pt 0cm 0cm 0cm">'
+      + `<p style="margin:0">${head(DATE_MAC, "Re: Begehung Technikraum", from)}</p></div><div><br></div><div>${h}</div></div></div>`,
+    macClassic: (h, from = BEN) => '<div style="border:none;border-top:solid #B5C4DF 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p class="MsoNormal" style="margin-bottom:12.0pt">'
+      + `${head(DATE_MAC, "Re: Begehung Technikraum", from)}<o:p></o:p></p></div>${h}`,
+    winDe: (h, from = BEN) => `<div><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p class="MsoNormal">${head(DATE_WIN, "AW: Begehung Technikraum", from)}`
+      + `<o:p></o:p></p></div></div>${BL}${h}`,
+    owa: (h, from = BEN) => '<hr style="display:inline-block;width:98%" tabindex="-1"><div id="divRplyFwdMsg" dir="ltr"><font face="Calibri, sans-serif" style="font-size:11pt" color="#000000">'
+      + `${head(DATE_WIN, "AW: Begehung Technikraum", from)}</font><div>&nbsp;</div></div><div>${h}</div>`,
+  };
+  const text = (mac: boolean, body: string[]): string => [
+    "Hallo Ben,", "", "danke, so machen wir es. Ich reserviere den Raum für Donnerstag.", "", "Gruss", "Clara", "", "Von: Ben Sample <ben.sample@example.org>",
+    mac ? "Datum: Mittwoch, 28. Oktober 2026 um 14:12" : "Gesendet: Mittwoch, 28. Oktober 2026 14:12",
+    "An: Clara Muster <clara.muster@example.org>, Dana Example <dana@example.net>", "Cc: Finn Beispiel <finn@example.com>",
+    mac ? "Betreff: Re: Begehung Technikraum" : "Betreff: AW: Begehung Technikraum", "", ...body,
+  ].join("\n");
+  // The tester's letters: the earlier message opens with its quote (QH, QM, QN), a line above it (QP), no quote (QK).
+  for (const [tag, v] of [["QH", "quote"], ["QM", "quote"], ["QN", "nolink"], ["QP", "greeting"], ["QK", "noquote"]] as const) {
+    const t = macReply(tag, v);
+    add("opens-tester", "owner", `${tag} ${v}`, t.html, { text: t.text });
+  }
+  // Every header, quote box and body: the quote opens the message, the answer and the sign-off follow.
+  const bodies: Record<string, [string, string]> = {
+    link: [BULLET, P(ANS_LINK) + BL + SIGNOFF],
+    sentence: [BULLET, P(ANS) + P("Bitte bringt die Schlüssel mit.") + BL + SIGNOFF],
+    statement: [STMT, P("Mache ich gerne, die Liste kommt bis Donnerstag.") + SIGNOFF],
+    twoBullets: [`<ul><li>${MOVE}</li><li>Bringt ihr die Pläne der Lüftung mit?</li></ul>`, P(ANS) + SIGNOFF],
+    sigBlock: [BULLET, P(ANS) + BL + P("Freundliche Grüsse") + P("Ben Sample") + P("Projektleiter Haustechnik") + P("Beispiel AG, Musterstrasse 1, 8000 Zürich")],
+    gruessOneLine: [BULLET, P(ANS) + P("Viele Grüsse, Ben")],
+    regards: [BULLET, P(ANS) + P("Best regards,") + P("Ben Sample")],
+  };
+  for (const header of Object.keys(headers)) for (const [qk, q] of Object.entries(boxes)) for (const [bk, [inner, rest]] of Object.entries(bodies)) {
+    add("opens", "owner", `${header} ${qk} ${bk}`, word(LEAD + headers[header]!(q(inner) + rest)), bk === "link" ? { text: text(header.startsWith("mac"), [
+      `> • ${MOVE}`, "", "Ja, Donnerstag um 10 Uhr passt uns. Den Plan des Technikraums findest du hier: Plan Technikraum<https://example.com/plan>", "", "Viele Grüsse", "Ben"]) } : {});
+  }
+  // An older Outlook hop below, or a second hop that opens with its own quote.
+  for (const header of ["macNew", "winDe"]) for (const [qk, q] of Object.entries({ box, gmail, testerBq })) {
+    add("opens-older", "owner", `${header} ${qk} older hop`, word(LEAD + headers[header]!(q(BULLET) + P(ANS_LINK) + SIGNOFF + OLDER)));
+    const danaFirst = '<div><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm">'
+      + P("<b>Von:</b> Dana Example &lt;dana@example.net&gt;<br><b>Gesendet:</b> Dienstag, 27. Oktober 2026 09:30<br><b>An:</b> Ben Sample &lt;ben.sample@example.org&gt;<br><b>Betreff:</b> Begehung")
+      + "</div></div>" + q(P("Kommt ihr am Donnerstag mit den Plänen?")) + P("Ja, die Pläne der Lüftung bringe ich selbst mit.") + P("Liebe Grüsse") + P("Dana");
+    add("opens-older", "owner", `${header} ${qk} both hops open with their quote`, word(LEAD + headers[header]!(q(BULLET) + P(ANS_LINK) + SIGNOFF + danaFirst)));
+    add("opens-older", "same", `${header} ${qk} older hop opens with its quote, unsigned`, word(LEAD + headers[header]!(P("Hallo Clara,") + q(BULLET) + P(ANS_LINK) + SIGNOFF
+      + danaFirst.replace(P("Liebe Grüsse") + P("Dana"), ""))));
+    add("opens-older", "same", `${header} ${qk} older hop opens with its quote, 'Gruss'/'Dana'`, word(LEAD + headers[header]!(P("Hallo Clara,") + q(BULLET) + P(ANS_LINK) + SIGNOFF
+      + danaFirst.replace(P("Liebe Grüsse"), P("Gruss")))));
+  }
+  // The writer's answers typed into a history that opens with a box keep 0.30.16's reading.
+  const benBox = box(P("Hallo Clara,") + P(MOVE) + P("Gruss") + P("Ben"));
+  for (const id of IDS) {
+    const ans = { answer: CLARA };
+    const cost = (): QhProbeLabel => (id === "132" ? "cost" : "same");
+    add("H1 whole message boxed, answer below", "same", `${id} black`, earlier(id, benBox + P(CLARA)), ans);
+    add("H1 whole message boxed, answer below", "same", `${id} black + writer's sign-off`, earlier(id, benBox + P(CLARA) + P("Gruss Clara")), ans);
+    add("H1 whole message boxed, answer below", "same", `${id} black + 'Danke dir'`, earlier(id, benBox + P(CLARA) + P("Danke dir")), ans);
+    for (const [k, w] of [["red", red], ["blue", blue], ["hl", hl], ["nm", nm], ["cm", cm]] as const) {
+      add("H1 whole message boxed, answer below", "same", `${id} ${k}`, earlier(id, benBox + P(w(CLARA))), ans);
+    }
+    add("H1 whole message boxed, answer below", "same", `${id} black + 'Danke Ben'`, earlier(id, benBox + P(CLARA) + P("Danke Ben")), ans);
+    // A box with no question: the sign-off rule alone holds these.
+    const ask = P("Hallo Clara,") + P("Bitte schick mir die Liegeplatzliste bis Freitag.");
+    for (const [k, below] of [["'Danke Ben'", P("Danke Ben")], ["'Danke dir, Ben!'", P("Danke dir, Ben!")], ["'Bis Freitag, Ben.'", P("Bis Freitag, Ben.")],
+      ["'Danke Ben' + 'Gruss Clara'", P("Danke Ben") + P("Gruss Clara")], ["the writer is a Ben too", SIGNOFF]] as const) {
+      add("H1 whole message boxed, answer below", "same", `${id} no question, black + ${k}`, earlier(id, box(ask + SIGNOFF) + P(CLARA) + below), ans);
+    }
+    add("H1 whole message boxed, answer below", "same", `${id} unsigned, no question, black + 'Danke Ben'`, earlier(id, box(ask) + P(CLARA) + P("Danke Ben")), ans);
+    add("H1 whole message boxed, answer below", "same", `${id} unsigned question, black + 'Danke Ben'`, earlier(id, box(P("Hallo Clara,") + P(MOVE)) + P(CLARA) + P("Danke Ben")), ans);
+    for (const [k, w] of [["red", red], ["blue", blue], ["hl", hl]] as const) {
+      add("LOW comment above sign-off", "same", `${id} ${k}`, earlier(id, P("Hallo Clara,") + P("Die Begehung ist am Dienstag um 10 Uhr geplant, der Raum ist reserviert.") + P(w(CLARA)) + SIGNOFF), ans);
+    }
+    const at = "Am Dienstag um 10 Uhr, er meldet sich am Empfang.";
+    const parts2 = (w: Wrap): string => box(P("Hallo Clara,") + P(`1. ${Q_WHEN}`)) + P(w(at)) + box(P(`2. ${Q_KEY}`) + P("Gruss Ben")) + P(w("Der Hauswart hat ihn, bitte am Empfang fragen."));
+    for (const [k, w] of [["black", black], ["red", red], ["blue", blue]] as const) add("H2 parts, sign-off boxed", "same", `${id} ${k}`, earlier(id, parts2(w)), { answer: at });
+    add("H2 parts, sign-off boxed", "same", `${id} black, no sign-off at all`, earlier(id, box(P("Hallo Clara,") + P(`1. ${Q_WHEN}`)) + P(at)
+      + box(P(`2. ${Q_KEY}`)) + P("Der Hauswart hat ihn, bitte am Empfang fragen.")), { answer: at });
+    add("H2 parts, sign-off boxed", "same", `${id} red, no sign-off at all`, earlier(id, box(P("Hallo Clara,") + P(`1. ${Q_WHEN}`)) + P(red(at))
+      + box(P(`2. ${Q_KEY}`)) + P(red("Der Hauswart hat ihn, bitte am Empfang fragen."))), { answer: at });
+    add("H3 parts, sign-off at level", "same", `${id} black`, earlier(id, box(P(`1. ${Q_WHEN}`)) + P(at) + box(P(`2. ${Q_KEY}`))
+      + P("Der Hauswart hat ihn, bitte am Empfang fragen.") + SIGNOFF), { answer: at });
+    // The folded shape itself with the writer's same-ink answer: the named cost on new Outlook.
+    add("H4 owner-identical", cost(), `${id} box, black answer, Ben's sign-off`, earlier(id, box(P(MOVE)) + P(CLARA) + SIGNOFF), ans);
+    add("H4 owner-identical", cost(), `${id} box with greeting, black answer, Ben's sign-off`, earlier(id, box(P("Hallo Clara,") + P(MOVE)) + P(CLARA) + SIGNOFF), ans);
+    for (const [k, w] of [["red", red], ["blue", blue], ["hl", hl], ["nm", nm], ["cm", cm], ["arrow", (t: string) => `-&gt; ${t}`]] as const) {
+      add("H5 marked answer, Ben signs", "same", `${id} ${k}`, earlier(id, box(P(MOVE)) + P(w(CLARA)) + SIGNOFF), ans);
+    }
+    const benBelow = P("Die Begehung ist am Dienstag um 10 Uhr geplant, der Raum ist reserviert.") + P(PLAN_T) + SIGNOFF;
+    for (const [k, w] of [["red", red], ["purple", purple], ["blue", blue], ["obl", obl]] as const) {
+      add("H6 writer's box on top", "same", `${id} ${k} question`, earlier(id, box(P(w("Geht auch Mittwoch?"))) + benBelow), { answer: "Geht auch Mittwoch?" });
+      add("H6 writer's box on top", "same", `${id} ${k} comment`, earlier(id, box(P(w("Mittwoch wäre mir lieber."))) + benBelow), { answer: "Mittwoch wäre mir lieber." });
+    }
+    add("H6 writer's box on top", cost(), `${id} black comment`, earlier(id, box(P("Mittwoch wäre mir lieber, geht das auch?")) + benBelow), { answer: "Mittwoch wäre mir lieber, geht das auch?" });
+    for (const a of ["JA", "OK", "Ja, passt.", "14:00"]) add("H7 short below box", "same", `${id} '${a}'`, earlier(id, box(P(QF)) + P(a) + P(PLAN_T) + SIGNOFF), { answer: a });
+    add("H9 name only in the answer", "same", `${id}`, earlier(id, box(P(MOVE)) + P("Ja Ben, passt mir.")), { answer: "Ja Ben, passt mir." });
+    add("H10 unsigned", "same", `${id} answer only`, earlier(id, box(P(MOVE)) + P(ANS_LINK)));
+    add("H10 unsigned", "same", `${id} answer + 'Gruss'`, earlier(id, box(P(MOVE)) + P(ANS) + P("Gruss")));
+    add("H10 unsigned", "same", `${id} answer + other name`, earlier(id, box(P(MOVE)) + P(ANS) + P("Gruss") + P("Clara")));
+    add("H11 coloured sign-off", "same", `${id}`, earlier(id, box(P(MOVE)) + P(ANS) + P(obl("Ben Sample")) + P(obl("Projektleiter Haustechnik"))));
+    add("H12 question + explanation", "same", `${id}`, earlier(id, box(P(MOVE) + P("Am Dienstag bin ich leider nicht im Haus.")) + P(ANS) + SIGNOFF));
+    add("H13 second box after sign-off", "same", `${id}`, earlier(id, box(P(MOVE)) + P(ANS) + SIGNOFF + P("Am 27.10.2026 um 17:40 schrieb Dana Example &lt;dana@example.net&gt;:")
+      + gmail(P("Hallo Ben,") + P(MOVE) + P("Gruss Dana"))));
+    add("H14 two quotes", "same", `${id} black`, earlier(id, box(P(MOVE)) + P(ANS) + box(P("Bringt ihr die Pläne der Lüftung mit?")) + P("Ja, die Pläne bringen wir mit.") + SIGNOFF));
+    for (const [k, w] of [["purple", purple], ["obl", obl]] as const) add("H15 coloured opening quote", "same", `${id} ${k} question`, earlier(id, box(P(w(MOVE))) + P(ANS) + SIGNOFF));
+    add("H16 mixed line", "same", `${id} red word in Ben's answer line`, earlier(id, box(P(MOVE)) + P(`Ja, Donnerstag passt uns. ${red("Mittwoch nicht")}`) + SIGNOFF), { answer: "Mittwoch nicht" });
+    add("H17 name only in a long line", "same", `${id}`, earlier(id, box(P(MOVE)) + P(ANS) + P("Ben ist am Donnerstag selbst vor Ort und bringt die Schlüssel mit.")));
+    // The writer's farewell to the sender under an unsigned box: a closing he can be addressed with signs nothing.
+    for (const bye of ["Ciao Ben", "Cheers Ben!", "À bientôt, Ben", "Saludos, Ben", "Grüessli Ben", "Gruss Ben", "Tschüss Ben", "Bis bald, Ben", "Thanks, Ben",
+      "Merci, Ben", "Liebe Grüsse an Ben"]) {
+      add("H18 the writer's farewell to the sender", "same", `${id} unsigned box, '${bye}'`, earlier(id, box(ask) + P(CLARA) + P(bye)), ans);
+    }
+    // A box ending in the sender's sign-off, or in his signature block or a phone line below it, holds his whole message.
+    const benSig = P("Freundliche Grüsse") + P("Ben Sample") + P("Projektleiter Haustechnik") + P("Beispiel AG, Musterstrasse 1, 8000 Zürich");
+    for (const [bk, end] of [["signature block", benSig], ["phone line", P("Gruss") + P("Ben") + P("Tel. 044 123 45 67")],
+      ["'Danke und Gruss, Ben'", P("Danke und Gruss, Ben")], ["'Cheers Ben!'", P("Cheers Ben!")]] as const) {
+      for (const [wk, below] of [["'Cheers Ben'", P("Cheers Ben")], ["the writer is a Ben too", SIGNOFF], ["the writer is a Ben too, one line", P("Viele Grüsse, Ben")]] as const) {
+        add("H19 the box holds the sender's signed message", "same", `${id} box ends in ${bk}, ${wk}`, earlier(id, box(ask + end) + P(CLARA) + below), ans);
+      }
+    }
+    // Ben's own message signed with a closing the writer could say to him, or with his name alone: open, as on 0.30.18.
+    for (const sign of [["Gruss", "Ben"], ["Gruss Ben"], ["Gruss Ben :-)"], ["Grüsse", "Ben"], ["Ben"], ["Ben Sample"], ["Thanks, Ben"], ["Thanks,", "Ben"],
+      ["Danke und Gruss, Ben"], ["Danke und Gruss", "Ben"], ["Merci, Ben"], ["Bis bald, Ben"], ["Cheers", "Ben"], ["Ciao", "Ben"], ["Grüessli", "Ben"], ["Saludos", "Ben"],
+      ["En Gruess, Ben"], ["Liebe Grüsse aus Zürich", "Ben"], ["Ben Sample, Projektleiter"]]) {
+      add("H20 a closing that can address the sender, or his name alone", "same", `${id} '${sign.join("' / '")}'`, earlier(id, box(P(MOVE)) + P(ANS) + sign.map(P).join("")));
+    }
+    // A sign-off-only closing and the sender's name, on one line or over it, folds (140's and the tester's letters' among them).
+    for (const sign of [["Viele Grüsse", "Ben"], ["Viele Gruesse", "Ben"], ["Liebe Grüße", "Ben"], ["Mit freundlichen Grüssen", "Ben Sample"], ["Freundliche Grüsse, Ben Sample"],
+      ["Herzlichst, Ben"], ["LG Ben"], ["Best regards,", "Ben Sample"], ["Kind regards, Ben"], ["Best,", "Ben"], ["Cordialement,", "Ben Sample"], ["Un saluto, Ben"],
+      ["Met vriendelijke groet,", "Ben Sample"]]) {
+      add("H21 a sign-off-only closing and the sender's name", "owner", `${id} '${sign.join("' / '")}'`, earlier(id, box(P(MOVE)) + P(ANS) + sign.map(P).join("")));
+    }
+    // Another writer's signature block ending the box names someone else: the box stays the sender's quote, and it folds.
+    add("H21 a sign-off-only closing and the sender's name", "owner", `${id} the box ends in Clara's signature block`, earlier(id, box(P("Hallo Ben,")
+      + P("Bitte schick mir die Liegeplatzliste bis Freitag.") + P("Gruss") + P("Clara") + P("Tel. 044 987 65 43")) + P("Mache ich gerne, die Liste kommt bis Donnerstag.") + SIGNOFF));
+  }
+  // The From line's display name: none (as before), "Last, First" and Outlook's mailto form (it folds).
+  for (const header of ["macNew", "winDe"]) {
+    const signed = box(BULLET) + P(ANS_LINK) + SIGNOFF;
+    add("H8 no display name", "same", header, word(LEAD + headers[header]!(signed, "ben.sample@example.org")));
+    add("H8b name as 'Last, First'", "owner", header, word(LEAD + headers[header]!(signed, "Sample, Ben &lt;ben.sample@example.org&gt;")));
+    add("H8c mailto form", "owner", header, word(LEAD + headers[header]!(signed, "Ben Sample [mailto:ben.sample@example.org]")));
+  }
+  // Leads that announce answers, a forward subject, the writer's text after the container: as before.
+  const opened = headers.macNew!(box(BULLET) + P(ANS_LINK) + SIGNOFF);
+  add("opens-lead", "same", "macNew announced", word(LEAD.replace("danke, so machen wir es. Ich reserviere den Raum für Donnerstag.", "meine Antworten findest du unten im Text.") + opened));
+  add("opens-lead", "same", "macNew forward subject", word(LEAD + opened), { subject: "WG: Begehung Technikraum" });
+  add("opens-lead", "same", "macNew the writer's text after the container", word(LEAD + opened).replace("</div></body>", `</div>${P("PS: Ich bringe die Schlüssel mit.")}</body>`),
+    { answer: "PS: Ich bringe die Schlüssel mit." });
+  // GMX's box holds the header and the message (level 1): the message opens with a nested quote.
+  add("opens-gmx", "same", "GMX header box, message opens with its quote", `<div>Hallo Ben, danke dir.</div><div>Gruss Clara</div>${gmxBox('<div style="margin:0 0 10px 0;">'
+    + "<b>Gesendet:</b>&nbsp;Mittwoch, 28. Oktober 2026 um 14:12 Uhr<br><b>Von:</b>&nbsp;\"Ben Sample\" &lt;ben.sample@example.org&gt;<br><b>An:</b>&nbsp;clara.muster@example.org<br>"
+    + `<b>Betreff:</b>&nbsp;Re: Begehung</div><div name="quoted-content">${box(BULLET)}<div>${ANS}</div><div>Gruss</div><div>Ben</div></div>`)}`);
+}
+
 /** Every probe, in a fixed order: the corpus first, then each family. */
 export function qhProbeCases(): QhProbe[] {
   const cases: QhProbe[] = [];
   const add: Add = (family, label, name, html, more = {}) => {
     cases.push({ family, name, label, html, ...more });
   };
-  // The corpus: 132-135 are the class's own fixtures, 136-139 Outlook header blocks read open; every other one reads as 0.30.16 reads it.
+  // The corpus: 132-135 and 140 are the class's own fixtures, 136-139 Outlook header blocks read open; every other one reads as 0.30.16 reads it.
   for (const f of (corpus ??= qhFixtures())) {
-    add("corpus", /^13[2-5]$/.test(f.id) ? "owner" : /^13[6-9]$/.test(f.id) ? "open" : "same", f.name, f.html, { text: f.text, subject: f.subject, answer: f.expect.inlineAnswers[0] });
+    add("corpus", /^(?:13[2-5]|140)$/.test(f.id) ? "owner" : /^13[6-9]$/.test(f.id) ? "open" : "same", f.name, f.html, { text: f.text, subject: f.subject, answer: f.expect.inlineAnswers[0] });
   }
   ownerMatrices(add);
   typedAnswers(add);
@@ -766,5 +973,6 @@ export function qhProbeCases(): QhProbe[] {
   classEdges(add);
   aroundTheContainer(add);
   wholeHistory(add);
+  opensWithItsQuote(add);
   return cases;
 }
