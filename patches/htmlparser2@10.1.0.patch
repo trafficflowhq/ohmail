@@ -1,0 +1,251 @@
+diff --git a/dist/commonjs/Parser.js b/dist/commonjs/Parser.js
+index 0c4a58c8268ba2f94e685c34c45213dcab6b11f2..32ecb98eef442a18dcb71f1b591ad9fc4d39edaa 100644
+--- a/dist/commonjs/Parser.js
++++ b/dist/commonjs/Parser.js
+@@ -149,7 +149,10 @@ class Parser {
+         this.attribname = "";
+         this.attribvalue = "";
+         this.attribs = null;
++        /** The open elements, innermost last. */
+         this.stack = [];
++        /** How many open elements carry each name (0 once all closed), so no lookup walks the stack. */
++        this.openCounts = new Map();
+         this.buffers = [];
+         this.bufferOffset = 0;
+         /** The index of the last written buffer. Used when resuming after a `pause()`. */
+@@ -205,19 +208,21 @@ class Parser {
+         this.tagname = name;
+         const impliesClose = this.htmlMode && openImpliesClose.get(name);
+         if (impliesClose) {
+-            while (this.stack.length > 0 && impliesClose.has(this.stack[0])) {
+-                const element = this.stack.shift();
++            while (this.stack.length > 0 &&
++                impliesClose.has(this.stack[this.stack.length - 1])) {
++                const element = this.popOpen();
+                 (_b = (_a = this.cbs).onclosetag) === null || _b === void 0 ? void 0 : _b.call(_a, element, true);
+             }
+         }
+         if (!this.isVoidElement(name)) {
+-            this.stack.unshift(name);
++            this.stack.push(name);
++            this.openCounts.set(name, (this.openCounts.get(name) || 0) + 1);
+             if (this.htmlMode) {
+                 if (foreignContextElements.has(name)) {
+-                    this.foreignContext.unshift(true);
++                    this.foreignContext.push(true);
+                 }
+                 else if (htmlIntegrationElements.has(name)) {
+-                    this.foreignContext.unshift(false);
++                    this.foreignContext.push(false);
+                 }
+             }
+         }
+@@ -255,13 +260,16 @@ class Parser {
+         if (this.htmlMode &&
+             (foreignContextElements.has(name) ||
+                 htmlIntegrationElements.has(name))) {
+-            this.foreignContext.shift();
++            this.foreignContext.pop();
+         }
+         if (!this.isVoidElement(name)) {
+-            const pos = this.stack.indexOf(name);
++            // Only an open name is looked up: the scan then stops at what it closes.
++            const pos = this.openCounts.get(name) > 0
++                ? this.stack.length - 1 - this.stack.lastIndexOf(name)
++                : -1;
+             if (pos !== -1) {
+                 for (let index = 0; index <= pos; index++) {
+-                    const element = this.stack.shift();
++                    const element = this.popOpen();
+                     // We know the stack has sufficient elements.
+                     (_b = (_a = this.cbs).onclosetag) === null || _b === void 0 ? void 0 : _b.call(_a, element, index !== pos);
+                 }
+@@ -284,7 +292,8 @@ class Parser {
+     /** @internal */
+     onselfclosingtag(endIndex) {
+         this.endIndex = endIndex;
+-        if (this.recognizeSelfClosing || this.foreignContext[0]) {
++        if (this.recognizeSelfClosing ||
++            this.foreignContext[this.foreignContext.length - 1]) {
+             this.closeCurrentTag(false);
+             // Set `startIndex` for next node
+             this.startIndex = endIndex + 1;
+@@ -299,12 +308,18 @@ class Parser {
+         const name = this.tagname;
+         this.endOpenTag(isOpenImplied);
+         // Self-closing tags will be on the top of the stack
+-        if (this.stack[0] === name) {
++        if (this.stack[this.stack.length - 1] === name) {
+             // If the opening tag isn't implied, the closing tag has to be implied.
+             (_b = (_a = this.cbs).onclosetag) === null || _b === void 0 ? void 0 : _b.call(_a, name, !isOpenImplied);
+-            this.stack.shift();
++            this.popOpen();
+         }
+     }
++    /** Pop the innermost open element, keeping the name counts in step. */
++    popOpen() {
++        const element = this.stack.pop();
++        this.openCounts.set(element, this.openCounts.get(element) - 1);
++        return element;
++    }
+     /** @internal */
+     onattribname(start, endIndex) {
+         this.startIndex = start;
+@@ -400,7 +415,7 @@ class Parser {
+         if (this.cbs.onclosetag) {
+             // Set the end index for all remaining tags
+             this.endIndex = this.startIndex;
+-            for (let index = 0; index < this.stack.length; index++) {
++            for (let index = this.stack.length - 1; index >= 0; index--) {
+                 this.cbs.onclosetag(this.stack[index], true);
+             }
+         }
+@@ -417,12 +432,13 @@ class Parser {
+         this.attribname = "";
+         this.attribs = null;
+         this.stack.length = 0;
++        this.openCounts.clear();
+         this.startIndex = 0;
+         this.endIndex = 0;
+         (_d = (_c = this.cbs).onparserinit) === null || _d === void 0 ? void 0 : _d.call(_c, this);
+         this.buffers.length = 0;
+         this.foreignContext.length = 0;
+-        this.foreignContext.unshift(!this.htmlMode);
++        this.foreignContext.push(!this.htmlMode);
+         this.bufferOffset = 0;
+         this.writeIndex = 0;
+         this.ended = false;
+@@ -523,5 +539,7 @@ class Parser {
+         this.end(chunk);
+     }
+ }
++/** What a build reads to know this copy keeps a linear open-element stack. */
++Parser.stackOrder = "ohmail-htmlparser2-linear-stack";
+ exports.Parser = Parser;
+ //# sourceMappingURL=Parser.js.map
+\ No newline at end of file
+diff --git a/dist/esm/Parser.js b/dist/esm/Parser.js
+index a7c02e75c9513d11916df3f5cf98f47a2066ea4a..ef09cf8a0290dce8964110633e6cb12360623fc7 100644
+--- a/dist/esm/Parser.js
++++ b/dist/esm/Parser.js
+@@ -113,7 +113,10 @@ export class Parser {
+         this.attribname = "";
+         this.attribvalue = "";
+         this.attribs = null;
++        /** The open elements, innermost last. */
+         this.stack = [];
++        /** How many open elements carry each name (0 once all closed), so no lookup walks the stack. */
++        this.openCounts = new Map();
+         this.buffers = [];
+         this.bufferOffset = 0;
+         /** The index of the last written buffer. Used when resuming after a `pause()`. */
+@@ -169,19 +172,21 @@ export class Parser {
+         this.tagname = name;
+         const impliesClose = this.htmlMode && openImpliesClose.get(name);
+         if (impliesClose) {
+-            while (this.stack.length > 0 && impliesClose.has(this.stack[0])) {
+-                const element = this.stack.shift();
++            while (this.stack.length > 0 &&
++                impliesClose.has(this.stack[this.stack.length - 1])) {
++                const element = this.popOpen();
+                 (_b = (_a = this.cbs).onclosetag) === null || _b === void 0 ? void 0 : _b.call(_a, element, true);
+             }
+         }
+         if (!this.isVoidElement(name)) {
+-            this.stack.unshift(name);
++            this.stack.push(name);
++            this.openCounts.set(name, (this.openCounts.get(name) || 0) + 1);
+             if (this.htmlMode) {
+                 if (foreignContextElements.has(name)) {
+-                    this.foreignContext.unshift(true);
++                    this.foreignContext.push(true);
+                 }
+                 else if (htmlIntegrationElements.has(name)) {
+-                    this.foreignContext.unshift(false);
++                    this.foreignContext.push(false);
+                 }
+             }
+         }
+@@ -219,13 +224,16 @@ export class Parser {
+         if (this.htmlMode &&
+             (foreignContextElements.has(name) ||
+                 htmlIntegrationElements.has(name))) {
+-            this.foreignContext.shift();
++            this.foreignContext.pop();
+         }
+         if (!this.isVoidElement(name)) {
+-            const pos = this.stack.indexOf(name);
++            // Only an open name is looked up: the scan then stops at what it closes.
++            const pos = this.openCounts.get(name) > 0
++                ? this.stack.length - 1 - this.stack.lastIndexOf(name)
++                : -1;
+             if (pos !== -1) {
+                 for (let index = 0; index <= pos; index++) {
+-                    const element = this.stack.shift();
++                    const element = this.popOpen();
+                     // We know the stack has sufficient elements.
+                     (_b = (_a = this.cbs).onclosetag) === null || _b === void 0 ? void 0 : _b.call(_a, element, index !== pos);
+                 }
+@@ -248,7 +256,8 @@ export class Parser {
+     /** @internal */
+     onselfclosingtag(endIndex) {
+         this.endIndex = endIndex;
+-        if (this.recognizeSelfClosing || this.foreignContext[0]) {
++        if (this.recognizeSelfClosing ||
++            this.foreignContext[this.foreignContext.length - 1]) {
+             this.closeCurrentTag(false);
+             // Set `startIndex` for next node
+             this.startIndex = endIndex + 1;
+@@ -263,12 +272,18 @@ export class Parser {
+         const name = this.tagname;
+         this.endOpenTag(isOpenImplied);
+         // Self-closing tags will be on the top of the stack
+-        if (this.stack[0] === name) {
++        if (this.stack[this.stack.length - 1] === name) {
+             // If the opening tag isn't implied, the closing tag has to be implied.
+             (_b = (_a = this.cbs).onclosetag) === null || _b === void 0 ? void 0 : _b.call(_a, name, !isOpenImplied);
+-            this.stack.shift();
++            this.popOpen();
+         }
+     }
++    /** Pop the innermost open element, keeping the name counts in step. */
++    popOpen() {
++        const element = this.stack.pop();
++        this.openCounts.set(element, this.openCounts.get(element) - 1);
++        return element;
++    }
+     /** @internal */
+     onattribname(start, endIndex) {
+         this.startIndex = start;
+@@ -364,7 +379,7 @@ export class Parser {
+         if (this.cbs.onclosetag) {
+             // Set the end index for all remaining tags
+             this.endIndex = this.startIndex;
+-            for (let index = 0; index < this.stack.length; index++) {
++            for (let index = this.stack.length - 1; index >= 0; index--) {
+                 this.cbs.onclosetag(this.stack[index], true);
+             }
+         }
+@@ -381,12 +396,13 @@ export class Parser {
+         this.attribname = "";
+         this.attribs = null;
+         this.stack.length = 0;
++        this.openCounts.clear();
+         this.startIndex = 0;
+         this.endIndex = 0;
+         (_d = (_c = this.cbs).onparserinit) === null || _d === void 0 ? void 0 : _d.call(_c, this);
+         this.buffers.length = 0;
+         this.foreignContext.length = 0;
+-        this.foreignContext.unshift(!this.htmlMode);
++        this.foreignContext.push(!this.htmlMode);
+         this.bufferOffset = 0;
+         this.writeIndex = 0;
+         this.ended = false;
+@@ -487,4 +503,6 @@ export class Parser {
+         this.end(chunk);
+     }
+ }
++/** What a build reads to know this copy keeps a linear open-element stack. */
++Parser.stackOrder = "ohmail-htmlparser2-linear-stack";
+ //# sourceMappingURL=Parser.js.map
+\ No newline at end of file

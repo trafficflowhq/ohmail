@@ -23,6 +23,8 @@ export const TAIL_SECTION_PLAN = [
   { name: "screener_auto_apply", passes: ["screener_auto_apply"] },
   { name: "screener_auto_suggest", passes: ["screener_auto_suggest"] },
   { name: "screener_auto_act", passes: ["screener_auto_act"] },
+  // Before the search backfill: a letter it fills gets its document in the same transaction.
+  { name: "html_words_backfill", passes: ["html_words_backfill"] },
   { name: "search_index_backfill", passes: ["search_index_backfill"] },
   { name: "mailbox_erasure", passes: ["mailbox_erasure"] },
   { name: "global_maintenance", passes: ["global_maintenance"] },

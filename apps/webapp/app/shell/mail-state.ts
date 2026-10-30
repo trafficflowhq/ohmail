@@ -968,6 +968,13 @@ export interface MailboxFacts {
    */
   junkFolder?: string | null;
   /**
+   * The Sent folder the attach recorded (mail 0132), when its name is not one of the Sent-shaped
+   * ones ('Envoyés'). `deriveMailState` never reads it; the shell states it to the engine
+   * (`setSentFolders`) so the account's own letters there are its own. Optional AND nullable on
+   * {@link MailboxFacts.junkFolder}'s rule.
+   */
+  sentFolder?: string | null;
+  /**
    * Why sending is not set up for this mailbox — the probe's own reason, or
    * `null`/absent when it is. An outgoing server is not a reason to stop
    * receiving: the local door stores the incoming credential when only the

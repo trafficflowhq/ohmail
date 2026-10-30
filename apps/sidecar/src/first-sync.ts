@@ -127,17 +127,18 @@ export interface FirstSyncTracker {
   noteDrainEnded(facts: () => Promise<{ hasMessage: boolean; wroteOff: boolean }>): Promise<void>;
 }
 
-export function createFirstSyncTracker(log: Diagnostic, mailboxId: string): FirstSyncTracker {
-  let importClosed = false;
+export function createFirstSyncTracker(
+  log: Diagnostic, mailboxId: string,
+  /** The row's import stamp as this launch found it: a stamped import is never a first sync again. */
+  opts: { importStamped?: boolean } = {},
+): FirstSyncTracker {
+  let importClosed = opts.importStamped === true;
   let drainEnded = false;
   let hasMessage = false;
   let wroteOff = false;
-  /* Seeded with the state a fresh door is in, so the ordinary launch announces nothing and a MOVE
-     is the only thing that writes a line. */
-  let said: FirstSyncState = "pending";
 
   const state = (): FirstSyncState => {
-    if (!drainEnded) return "pending";
+    if (!drainEnded) return importClosed ? "finished" : "pending";
     /* Mail is landing. The import may still be running — that is a first sync working, not a
        first sync that produced nothing. */
     if (hasMessage) return importClosed ? "finished" : "pending";
@@ -147,6 +148,9 @@ export function createFirstSyncTracker(log: Diagnostic, mailboxId: string): Firs
     if (!importClosed) return "produced_nothing_readable";
     return wroteOff ? "produced_nothing_readable" : "finished";
   };
+  /* Seeded with the state a fresh door is in, so the ordinary launch announces nothing and a MOVE
+     is the only thing that writes a line. */
+  let said: FirstSyncState = state();
 
   /** Say it once per CHANGE. A line per drain would be four a minute on a settled install. */
   const announce = (): void => {

@@ -63,7 +63,7 @@ async function unmount(): Promise<void> {
   host = null;
 }
 
-async function mountShell(): Promise<void> {
+async function mountShell(locale: "en" | "de" = "en"): Promise<void> {
   await unmount();
   const { AppShell } = await import("../app/shell/AppShell.js");
   host = document.createElement("div");
@@ -75,7 +75,7 @@ async function mountShell(): Promise<void> {
   await act(async () => {
     root!.render(
       h(NextIntlClientProvider, {
-        locale: "en", messages: en, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
+        locale, messages: locale === "de" ? de : en, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
           children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
@@ -174,6 +174,54 @@ describe("the palette and the ? sheet name a destination with one sentence", () 
       expect(s!.label).toBe(expected);
     }
   });
+});
+
+/** Types into the open palette's field. */
+async function query(text: string): Promise<void> {
+  const input = host!.querySelector<HTMLInputElement>(".palette input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+/** The rail's places by their shown name. Search is the `/` verb's row, which the palette names as a command. */
+function railPlaces(): Array<{ id: string; name: string }> {
+  return [...host!.querySelectorAll<HTMLElement>("[data-rail-id]")]
+    .filter((b) => b.dataset.railId !== "search")
+    .map((b) => {
+      const clone = b.cloneNode(true) as HTMLElement;
+      clone.querySelector(".cnt")?.remove();
+      return { id: b.dataset.railId!, name: (clone.textContent ?? "").trim() };
+    });
+}
+
+describe("every place the rail and the g-keys reach has a Go to row in the palette", () => {
+  for (const [locale, goTo] of [["en", "go to"], ["de", "zu"]] as const) {
+    it(`${locale}: each g-key of the ? sheet is a palette row, found by its place's name and by "${goTo} <name>"`, async () => {
+      await mountShell(locale);
+      const places = railPlaces();
+      expect(places.length, "the rail drew no places").toBeGreaterThan(8);
+      await key("?");
+      const goRows = sheetRows().filter((r) => /^g./.test(r.caps));
+      expect(goRows.length, "the sheet lists no g-keys").toBeGreaterThan(8);
+      await key("Escape");
+
+      await key("k", { metaKey: true });
+      const all = paletteRows();
+      const missing = goRows.filter((s) => !all.some((p) => p.caps === s.caps && p.label === s.label));
+      expect(missing.map((s) => `${s.caps} ${s.label}`), "g-keys with no palette row").toEqual([]);
+
+      const unfound: string[] = [];
+      for (const { id, name } of places) {
+        for (const q of [name, `${goTo} ${name}`]) {
+          await query(q);
+          if (!paletteRows().some((p) => goRows.some((s) => s.caps === p.caps))) unfound.push(`${id}: "${q}"`);
+        }
+      }
+      expect(unfound, "rail places the palette does not find").toEqual([]);
+    });
+  }
 });
 
 describe("the census — a destination has one message, in one namespace", () => {

@@ -910,7 +910,12 @@ function bodySnippet(normalized: NormalizedMessage): string {
   // removed. It is also the classifier input, but a sensitive/indeterminate message never reaches
   // the classifier (the AI condition below opens with `!no_ai`) and the model boundary re-screens
   // with `redactForModel` regardless, so a full snippet here never carries a code to a model.
-  return normalized.textBody.replace(/\s+/g, " ").trim().slice(0, 200);
+  return snippetOfText(normalized.textBody);
+}
+
+/** The list preview of a stored text: whitespace folded, the first 200 characters. */
+export function snippetOfText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
 /**

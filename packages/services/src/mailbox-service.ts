@@ -3314,6 +3314,8 @@ export class MailboxService {
       // rather than by any error copy. `null` is "no Junk folder, or nothing has attached yet";
       // both mean the client says nothing, so the two are deliberately not separated here.
       junkFolder: m.junkFolder ?? null,
+      // The attach's recorded Sent path (mail 0132), raw on the same rule as the Junk folder.
+      sentFolder: m.sentFolder ?? null,
       /* WHETHER SENDING IS SET UP — read off the incoming credential's own meta, because that is
          where the unsettled marker lives (an unproven submission credential is never stored, so
          there is no `smtp` row to carry it). `null` is "sending is settled", which is what every

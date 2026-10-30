@@ -53,7 +53,7 @@ function reader(counts: Record<string, number>): EntityReader {
 
 const ROWS = [{
   id: "3f1c2b9a-0d4e-4c55-9a7b-1b2c3d4e5f60", address: ADDRESS, displayName: SUBJECT, status: "connected",
-  organizerRole: "organizer", organizerState: "held", junkFolder: FOLDER, organizedBy: { kind: "mobile", name: HOST },
+  organizerRole: "organizer", organizerState: "held", junkFolder: FOLDER, sentFolder: FOLDER, organizedBy: { kind: "mobile", name: HOST },
 }];
 
 afterEach(() => { resetLocaleRegisterForTests(); });

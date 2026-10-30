@@ -112,3 +112,20 @@ describe("every change reaches the rows through one kept projector", () => {
     expect(rows(r.render()).find((m) => m.id === "i2")!.time, "the next day is not shown").not.toBe(today);
   });
 });
+
+describe("the composer's address book is the web's, over this phone's mirror", () => {
+  it("names who wrote, never the account's own address, and an arrival reaches it", async () => {
+    const r = rig([
+      msg("p1", Date.now() - DAY, { from: { name: "Persephone Lind", address: "Persephone@example.test" } }),
+      msg("o1", Date.now() - DAY, { from: { name: "Me", address: "me@example.test" }, to: [{ name: null, address: "k@example.test" }] }),
+    ]);
+    await r.engine.start();
+    const book = r.render().addressBook.map((e) => [e.address, e.name]);
+    expect(book).toContainEqual(["persephone@example.test", "Persephone Lind"]);
+    expect(book.map(([a]) => a), "the account's own address is suggested").not.toContain("me@example.test");
+
+    r.arrive(msg("n1", Date.now(), { from: { name: "Nora Vale", address: "nora@example.test" } }));
+    await r.engine.syncOnce();
+    expect(r.render().addressBook.map((e) => e.address), "an arrival is not in the book").toContain("nora@example.test");
+  });
+});

@@ -875,6 +875,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["mailboxes", "organized_through"],
   // mail 0170_outbound_sent_copies — a delivered send's Sent copy, owed by the local engine until filed.
   ["outbound_sent_copies", "send_id"],
+  // mail 0172_html_words_backfill — the html-words backfill's stamp and cursor, one facet. LOUD: the
+  // settings reads select `account_settings` whole. Deploy order migration → API → worker.
+  ["account_settings", "html_words_backfill_at"],
 ] as const;
 
 /**
@@ -1304,7 +1307,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0171_messages_arrival_key";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0172_html_words_backfill";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

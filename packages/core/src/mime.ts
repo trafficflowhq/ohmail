@@ -37,6 +37,20 @@ function scrubNul(s: string): string {
   return s.includes(NUL) ? s.replace(NUL_GLOBAL, NUL_REPLACEMENT) : s;
 }
 
+/**
+ * The text ingest stores for a letter whose own text is blank: the words of its STORED html (what
+ * {@link prepareHtmlForStorage} kept), else "". The one spelling ingest and the stored-row backfill
+ * share; "" for a letter with text of its own, no html, or html that cannot be rendered.
+ */
+export function textFromHtml(ownText: string, storedHtml: string | null): string {
+  if (ownText.trim() !== "" || storedHtml === null) return "";
+  try {
+    return scrubNul(htmlWords(storedHtml));
+  } catch {
+    return "";
+  }
+}
+
 function toAddr(a: { name?: string; address?: string }): EmailAddress {
   return {
     name: scrubNul(a.name?.trim() ?? "") || null,
@@ -194,8 +208,9 @@ export const MAX_RAW_MESSAGE_BYTES = 64 * 1024 * 1024;
  * milliseconds. mailparser EMITS an error at the limit and drops the html, so the option alone
  * turns a slow message into a lost one — {@link normalizeMime} treats the rejection as a retry
  * signal and re-parses once with `skipHtmlToText: true`, keeping the html and giving up only the
- * derived text. 1 MiB sits above every html this system has measured. Residual: maximally-nested
- * html just under the limit still costs ~5.5 s. Owed.
+ * derived text. 1 MiB sits above every html this system has measured. Deep nesting just under the
+ * limit cost 2 to 21 s in html-to-text's parser stack; `patches/htmlparser2@10.1.0.patch` makes it
+ * 0.07 to 0.2 s.
  */
 export const MAX_HTML_TO_TEXT_CHARS = 1024 * 1024;
 
@@ -341,7 +356,7 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
   let words = "";
   if (text.trim() === "" && html !== null) {
     try {
-      words = scrubNul(htmlWords(prepareHtmlForStorage(html) ?? ""));
+      words = textFromHtml(text, prepareHtmlForStorage(html) ?? "");
     } catch {
       // Derived text only: a letter whose html cannot be rendered keeps the parse's own (empty) text.
       words = "";

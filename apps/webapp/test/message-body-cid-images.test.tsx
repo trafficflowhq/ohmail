@@ -2,6 +2,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { within } from "@testing-library/react";
+import en from "../messages/en.json";
+import de from "../messages/de.json";
+import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";
 
 /**
  * ── EMBEDDED (`cid:`) IMAGES RENDER IN PLACE, FROM THE MESSAGE'S OWN BYTES ──────────────────
@@ -302,5 +306,35 @@ describe("MessageBody — the fetch request and the frame", () => {
     });
     expect(host!.querySelector("iframe")).toBeNull();
     expect(asked, "bytes a rendering cannot show are pure spend").toEqual([]);
+  });
+});
+
+describe("a picture the sender left unnamed is read as a picture, never as its src", () => {
+  /** The pictures a screen reader meets in the sanitized document, by name. */
+  async function spoken(html: string, opts: Parameters<Mod["sanitizeMailHtml"]>[1] = {}): Promise<string[]> {
+    const doc = document.createElement("div");
+    doc.innerHTML = (await clean(html, opts)).html;
+    const names: string[] = [];
+    within(doc).queryAllByRole("img", { name: (name) => names.push(name) > 0 });
+    return names;
+  }
+  const cidImages = new Map([["a@x", PNG_URI], ["b@x", PNG_URI]]);
+
+  it("an embedded picture with no alt is named 'Picture' (Bild in German), and a named one keeps its name", async () => {
+    const html = `<img src="cid:a@x"><img src="cid:b@x" alt="Logo"><img src="cid:a@x" title="Plan">`;
+    expect(await spoken(html, { cidImages })).toEqual(["Picture", "Logo", "Plan"]);
+    expect(await spoken(html)).toEqual(["Picture", "Logo", "Plan"]); // unresolved, blank
+    setActiveCatalog("de", fillFrom(en as never, de as never) as never);
+    try {
+      expect(await spoken(`<img src="cid:a@x">`, { cidImages })).toEqual(["Bild"]);
+    } finally {
+      setActiveCatalog(DEFAULT_LOCALE, null);
+    }
+  });
+
+  it("a tracking pixel or a 1×1 spacer is hidden from the reader; alt='' stays decorative", async () => {
+    const html =
+      `<img src="cid:a@x" width="1" height="1"><img src="https://t.example/wf/open?u=1"><img src="cid:b@x" alt="">`;
+    expect(await spoken(html, { cidImages })).toEqual([]);
   });
 });

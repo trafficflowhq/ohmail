@@ -585,7 +585,7 @@ export const DE: Deck = {
   whereMinutesAgo: (n: number) => (n === 1 ? "vor 1 Minute" : `vor ${n} Minuten`),
   whereHoursAgo: (n: number) => (n === 1 ? "vor 1 Stunde" : `vor ${n} Stunden`),
   whereDaysAgo: (n: number) => (n === 1 ? "vor 1 Tag" : `vor ${n} Tagen`),
-  metaNew: (n: number) => `${n} neu`,
+  metaNew: (n: number) => `${n === 0 ? "Nichts Neues" : `${n} neue`} seit deinem letzten Besuch`,
   metaWaiting: (n: number) =>
     `${n} ${n === 1 ? "neuer Absender wartet" : "neue Absender warten"}`,
   metaWaitingOnDevice: (n: number) =>
@@ -594,6 +594,8 @@ export const DE: Deck = {
     `Alle im Screener-Ordner werden angezeigt – die Screening-Einstellungen von ${holder} wurden noch nicht gelesen.`,
   screeningUnreadNoName:
     "Alle im Screener-Ordner werden angezeigt – die Screening-Einstellungen des organisierenden Geräts wurden noch nicht gelesen.",
+  screeningUnreadHere:
+    "Alle im Screener-Ordner werden angezeigt, bis bei der nächsten Prüfung die eigenen Screening-Einstellungen dieses Handys gelten.",
   screeningUnstated: (holder: string) =>
     `Auf ${holder} läuft eine ältere ohmail-Version, die ihr Screening-Zeitfenster nicht teilt – alle im Screener-Ordner werden angezeigt.`,
   screeningUnstatedNoName:
@@ -1278,6 +1280,7 @@ export const DE: Deck = {
   bodyHistoryHide: "Verlauf ausblenden",
   mailOversize:
     "Der HTML-Teil dieser Nachricht ist zu groß, um ihn sicher darzustellen. Die Textfassung wird gezeigt.",
+  mailPicture: "Bild",
   mailOpenLinkTitle: "Diesen Link öffnen?",
   mailOpenLinkOpen: "Öffnen",
   mailOpenLinkCancel: "Abbrechen",
@@ -1573,6 +1576,7 @@ export const DE: Deck = {
   composeSubjectPlaceholder: "Worum es geht (optional)",
   composeBodyPlaceholder: "Schreib deine Nachricht…",
   composeToPlaceholder: "name@beispiel.de, …",
+  composeSuggestion: (name: string, address: string) => (name === "" ? `${address} hinzufügen` : `${name}, ${address} hinzufügen`),
   composeFrom: (address: string) => `Von ${address}`,
   composeFromSubstituted: (was: string) => `${was} ist getrennt, daher geht diese Nachricht von der Adresse oben raus.`,
   composeFromSubstitutedUnknown: "Die Adresse dieses Entwurfs ist getrennt, daher geht er von der Adresse oben raus.",

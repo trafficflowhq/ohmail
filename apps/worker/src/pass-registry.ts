@@ -189,6 +189,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "store-only — no adapter, no lease; the document's FK refuses a row whose message is gone, and a failure is logged and never fails the tail",
   },
   {
+    name: "html_words_backfill",
+    module: `${W}/html-words-backfill.ts`, entry: "htmlWordsBackfillPass",
+    triggers: ["cycle-tail", "sidecar-drain"],
+    cadence: "every cycle tail, for this shard's accounts with living mail and no account_settings.html_words_backfill_at; on a device, an idle round on power",
+    budget: "HTML_WORDS_ACCOUNTS_PER_TAIL accounts × one page of HTML_WORDS_SCAN_ROWS rows under the tail slice; a device round HTML_WORDS_LOCAL_SCAN_ROWS rows / HTML_WORDS_LOCAL_BUDGET_MS",
+    owns: "a stored html-only letter with a blank text has its html's words as its text, preview and search document, as ingest stores them",
+    fence: "store-only — no adapter, no lease; each page's writes, cursor and stamp in one fencedAccountWrite; every body UPDATE guarded on the blank text it read",
+  },
+  {
     name: "kickstart",
     module: `${W}/kickstart.ts`, entry: "runKickstart",
     triggers: ["attach"],

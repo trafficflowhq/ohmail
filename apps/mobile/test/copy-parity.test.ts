@@ -567,6 +567,8 @@ describe("the phone's two copy decks", () => {
        than guessing — the one arm a generic marker WOULD have reached, which is why listing only
        it would have left the other four in English unnoticed. */
     pairConfirmWhat: ["local", "desktop-host", "selfhost", "managed", "a-later-flavor"],
+    /* a suggested recipient with no name, and one with */
+    composeSuggestion: ["", "Persephone Lind"],
   };
 
   /** Deck functions whose body asks something about one of their own string parameters. */
@@ -941,5 +943,15 @@ describe("the live accessor", () => {
     const shape = (d: Deck) => Object.entries(d).map(([k, v]) => `${k}:${typeof v}`).sort();
     expect(shape(Copy)).toEqual(shape(EN));
     expect(shape(DE)).toEqual(shape(EN));
+  });
+});
+
+describe("the streams' count line", () => {
+  it("says the web's sentence for the count since the last visit, in both languages", async () => {
+    const { IntlMessageFormat } = await import("intl-messageformat");
+    for (const [deck, json, locale] of [[EN, EN_JSON, "en"], [DE, DE_JSON, "de"]] as const) {
+      const web = new IntlMessageFormat(at(json, "stream.newSince"), locale);
+      for (const n of [0, 1, 12]) expect(deck.metaNew(n)).toBe(web.format({ count: n }));
+    }
   });
 });

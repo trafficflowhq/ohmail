@@ -309,6 +309,8 @@ export default defineConfig({
       // through this store's ingest, retro and press; and its one-time backfill on this store.
       "apps/worker/test/list-address-is-not-a-person.test.ts",
       "apps/worker/test/list-address-backfill.test.ts",
+      // Older html-only letters get their words (mail 0172), on this store too: the phone runs the pass.
+      "apps/worker/test/html-words-backfill.test.ts",
       // A crafted sender is read in bounded time at this store's ingest too.
       "apps/worker/test/crafted-identity-inputs.test.ts",
       // The account's own mail claiming a company keeps its place through this store's visit too.

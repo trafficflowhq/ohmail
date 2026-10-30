@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  FixturesAdapter,
   MemoryMirrorStore,
+  OhmailEngine,
   consentPartition,
+  ohboxView,
   presentationReader,
   physicalFolderOf,
   type EngineMessage,
@@ -269,5 +272,78 @@ describe("per-mailbox enablement — the lens is mailbox-scoped (spec §17)", ()
     const part = consentPartition(store, onOpts);
     // Degrades to the pre-§17 lens, never to off: the row keeps its place and joins History.
     expect(part.placeOf.get("m2")).toBe("Projects/Acme");
+  });
+});
+
+/* A localized Sent folder ('Envoyés') is announced as a user folder (the server knows Sent by name
+   only). Once the mailbox read states it as the recorded Sent folder it takes the Sent cutline as
+   'Sent' does: old own letters are History, never the whole backlog poured into Earlier. */
+describe("the mailbox's recorded Sent folder under Use folders", () => {
+  const OLDER = "2022-11-02T09:00:00.000Z";
+  const own = (id: string, mailboxId: string, folderName: string, date: string) => {
+    const m = msg({ id, from: "me@x.example", folder: folderName, date });
+    (m as { mailboxId: string }).mailboxId = mailboxId;
+    return m;
+  };
+  const world = () => [
+    own("en-new", "mb-en", "Sent", RECENT), own("en-old", "mb-en", "Sent", OLD),
+    own("fr-new", "mb-fr", "Envoyés", RECENT), own("fr-old", "mb-fr", "Envoyés", OLD),
+    own("fr-older", "mb-fr", "Envoyés", OLDER),
+  ];
+  const fr = (): FolderEntity => ({ ...folder("Envoyés", "f-fr"), mailboxId: "mb-fr" });
+  async function lists(foldersEnabled: boolean) {
+    const store = await mirrorOf(world(), [fr()]);
+    const part = consentPartition(store, { now: NOW, foldersEnabled, ownAddresses: ["me@x.example"] });
+    const presented = presentationReader(store, part);
+    return {
+      earlier: ohboxView(presented).previouslySeen.map((m) => m.id).sort(),
+      history: part.history.map((m) => m.id).sort(),
+      // The rail folder's own list: the presented mirror on (mailboxId, name), as web and phone filter it.
+      envoyes: presented.list<EngineMessage>("message")
+        .filter((m) => m.mailboxId === "mb-fr" && m.folder === "Envoyés").map((m) => m.id).sort(),
+    };
+  }
+
+  it("stated: folders on files the old letters in History, as 'Sent' and as folders off", async () => {
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter(), now: () => NOW });
+    await engine.start();
+    try {
+      engine.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }]);
+      const want = { earlier: ["en-new", "fr-new"], history: ["en-old", "fr-old", "fr-older"] };
+      const on = await lists(true);
+      expect({ earlier: on.earlier, history: on.history }).toEqual(want);
+      // History never makes the folder look emptier than it is: the 'Envoyés' folder stays whole.
+      expect(on.envoyes).toEqual(["fr-new", "fr-old", "fr-older"]);
+      const off = await lists(false);
+      expect({ earlier: off.earlier, history: off.history }).toEqual(want);
+    } finally {
+      engine.setSentFolders([]);
+    }
+  });
+
+  it("stated: an old own reply on a conversation a consented sender keeps stays with it in Earlier", async () => {
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter(), now: () => NOW });
+    await engine.start();
+    try {
+      engine.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }]);
+      const letter = { ...msg({ id: "in", from: "known@example.com", folder: "INBOX", date: RECENT, threadId: "t" }), mailboxId: "mb-fr" };
+      const reply = {
+        ...msg({ id: "re", from: "me@x.example", folder: "Envoyés", date: OLD, threadId: "t", to: ["known@example.com"] }),
+        mailboxId: "mb-fr",
+      };
+      const store = await mirrorOf([letter, reply], [fr()], [rule({ id: "r1", match: "known@example.com", destination: "INBOX" })]);
+      const part = consentPartition(store, { now: NOW, foldersEnabled: true, ownAddresses: ["me@x.example"] });
+      expect(part.history.map((m) => m.id)).toEqual([]);
+      expect(ohboxView(presentationReader(store, part)).previouslySeen.map((m) => m.id).sort()).toEqual(["in", "re"]);
+    } finally {
+      engine.setSentFolders([]);
+    }
+  });
+
+  it("unstated: 'Envoyés' is somebody's folder, never in Earlier", async () => {
+    const on = await lists(true);
+    expect(on.earlier).toEqual(["en-new"]);
+    expect(on.envoyes).toEqual(["fr-new", "fr-old", "fr-older"]);
+    expect((await lists(false)).earlier).toEqual(["en-new"]);
   });
 });

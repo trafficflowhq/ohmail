@@ -60,7 +60,7 @@ describe("the filings that wait: the strip, the block and the presses", () => {
   const quiet: PhoneFiling = { due: 0, deferred: 0, stuck: 0, stuckSince: null, stuckRefusalClass: null, lastRefusalClass: null, nextAttemptAt: null, asOf: null };
   const box = (id: string, filing: Partial<PhoneFiling>, over: Partial<PhoneMailbox> = {}): PhoneMailbox => ({
     id, address: `${id}@example.test`, organizerRole: "organizer", organizeConsentedAt: null, organizedBy: null,
-    organizedByThisInstall: true, organizerState: null, status: "connected", junkFolder: null, smtpMaxSizeBytes: null,
+    organizedByThisInstall: true, organizerState: null, status: "connected", junkFolder: null, sentFolder: null, smtpMaxSizeBytes: null,
     firstSyncStopFolder: null, filing: { ...quiet, ...filing }, ...over,
   });
   const stuck = { stuck: 2, due: 2, stuckSince: "2026-10-24T04:02:00.000Z", stuckRefusalClass: "no_such_folder" };

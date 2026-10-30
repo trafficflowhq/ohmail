@@ -11,7 +11,7 @@ import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organi
 import { mailboxes, messageBodies, messageInstances, messages } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { createSidecarLogger, diagnosticFor } from "../src/log.js";
-import { createFirstSyncReporter } from "../src/first-sync.js";
+import { createFirstSyncReporter, createFirstSyncTracker } from "../src/first-sync.js";
 import { stampSynced } from "../src/sync-stamp.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
@@ -351,6 +351,38 @@ describe("the first import's start and finish, on the standalone door", () => {
     await again.sidecar.stop();
     rmSync(first.dataDir, { recursive: true, force: true });
   });
+
+  it("a relaunch over a finished import is not a first sync: finished before any drain and after one", async () => {
+    // The phone's Screener reads `pending` as "still reading your mailbox on its first pass".
+    const first = await boot();
+    await seed(first.sidecar, 1);
+    first.state.backlog = false;
+    await first.sidecar.syncUntilQuiet();
+    expect(await importStamp(first.sidecar)).not.toBeNull();
+    await first.sidecar.stop();
+
+    const again = await boot(first.dataDir);
+    const said = (): unknown => again.sidecar.connectionStates()[again.sidecar.world.mailboxId]?.firstSync;
+    expect(said(), "a relaunch read a stamped import as a first sync still working").toBe("finished");
+    await again.sidecar.syncUntilQuiet();
+    expect(again.seen("sync_drain"), "control: the relaunch drained").not.toHaveLength(0);
+    expect(said()).toBe("finished");
+    await again.sidecar.stop();
+    rmSync(first.dataDir, { recursive: true, force: true });
+  });
+
+  it("CONTROL: a relaunch over an import still open says pending", async () => {
+    const first = await boot();
+    await seed(first.sidecar, 1);
+    await first.sidecar.syncUntilQuiet();
+    expect(await importStamp(first.sidecar)).toBeNull();
+    await first.sidecar.stop();
+
+    const again = await boot(first.dataDir);
+    expect(again.sidecar.connectionStates()[again.sidecar.world.mailboxId]?.firstSync).toBe("pending");
+    await again.sidecar.stop();
+    rmSync(first.dataDir, { recursive: true, force: true });
+  });
 });
 
 /**
@@ -452,5 +484,29 @@ describe("createFirstSyncReporter — the state machine", () => {
       .resolves.toBeUndefined();
 
     expect(r.lines.map((l) => l.event)).toEqual(["first_sync_report_failed"]);
+  });
+});
+
+describe("createFirstSyncTracker — a mailbox whose import was stamped before this launch", () => {
+  it("is finished from the start, through a failed drain, and still says a mirror that holds nothing", async () => {
+    const lines: string[] = [];
+    const t = createFirstSyncTracker((event) => { lines.push(event); }, "mb-1", { importStamped: true });
+    expect(t.state()).toBe("finished");
+    await t.noteDrainEnded(async () => ({ hasMessage: true, wroteOff: false }));
+    expect(t.state()).toBe("finished");
+    expect(lines, "a launch over a settled mailbox announced a move").toEqual([]);
+
+    const empty = createFirstSyncTracker(() => {}, "mb-2", { importStamped: true });
+    await empty.noteDrainEnded(async () => ({ hasMessage: false, wroteOff: true }));
+    expect(empty.state()).toBe("produced_nothing_readable");
+  });
+
+  it("CONTROL: an unstamped mailbox stays pending until its import closes", async () => {
+    const t = createFirstSyncTracker(() => {}, "mb-1");
+    expect(t.state()).toBe("pending");
+    await t.noteDrainEnded(async () => ({ hasMessage: true, wroteOff: false }));
+    expect(t.state()).toBe("pending");
+    t.noteStamps({ importWasOpen: true, importStamped: true });
+    expect(t.state()).toBe("finished");
   });
 });

@@ -54,6 +54,8 @@ interface MailboxWire {
   providerConfirms?: boolean;
   /** The provider's own Junk folder, canonical path — absent/null when there is none. See `MailboxFacts`. */
   junkFolder?: string | null;
+  /** The Sent folder the attach recorded (mail 0132) — absent/null when none. See `MailboxFacts`. */
+  sentFolder?: string | null;
   /** Why sending is not set up, or absent/null when it is. See `MailboxFacts`. */
   sendingUnsettledReason?: string | null;
   /**
@@ -234,6 +236,8 @@ export async function readMailboxFactsVia(
     // both surfaces render is silent for either — but the distinction is not this seam's to
     // collapse. Without it the standalone door's rail and search never name the folder at all.
     ...("junkFolder" in m ? { junkFolder: m.junkFolder } : {}),
+    // The recorded Sent folder (mail 0132), spread and untouched: the engine matches it exactly.
+    ...("sentFolder" in m ? { sentFolder: m.sentFolder } : {}),
     /* SPREAD, on the rule this file follows for every optional field: absent means an engine that
        predates the field and has nothing to say, which is a different answer from `null`
        ("sending is settled") even though both render the same. */

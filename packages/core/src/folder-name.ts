@@ -40,4 +40,5 @@ export {
    * `RESERVED_FOLDER_LEAF` is re-exported here rather than copied to avoid.
    */
   isSentFolderPath,
+  isSentFolderOf,
 } from "./types.js";

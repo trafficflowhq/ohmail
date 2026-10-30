@@ -3152,6 +3152,11 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0171_messages_arrival_key": [
     "6e8e0864c211299e",   // create index if not exists messages_account_arrival_key_idx (the hot-path spelling)
   ],
+  // THE HTML-WORDS BACKFILL'S STAMP AND CURSOR — two nullable columns on account_settings. No DML.
+  "0172_html_words_backfill": [
+    "d9d573cdb3a98959",   // ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS html_words_backfill_at timestamptz
+    "741eb2d532e02bb2",   // ALTER TABLE account_settings ADD COLUMN IF NOT EXISTS html_words_backfill_cursor uuid
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4187,6 +4192,8 @@ describe("the two journals are well-formed", () => {
   // 0169_mailboxes_organized_through's.
   // 171 → 172 for `0171_messages_arrival_key` (idx 171): its `when` (1791602600075) is strictly above
   // 0170_outbound_sent_copies's.
+  // 172 → 173 for `0172_html_words_backfill` (idx 172): its `when` (1791602600076) is strictly above
+  // 0171_messages_arrival_key's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
@@ -4196,7 +4203,7 @@ describe("the two journals are well-formed", () => {
   // cloud 38 → 39 for `0053_connect_reminder_notices`: its `when` (1792901976213) is strictly above 0052's.
   // cloud 39 → 40 for `0054_connect_attempts`: its `when` (1793059413550) is strictly above 0053's.
   // cloud 40 → 41 for `0055_account_storage_holds`: its `when` (1793139772651) is strictly above 0054's.
-  it.each([["mail", MAIL_DIR, 172], ["cloud", CLOUD_DIR, 41]] as const)(
+  it.each([["mail", MAIL_DIR, 173], ["cloud", CLOUD_DIR, 41]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

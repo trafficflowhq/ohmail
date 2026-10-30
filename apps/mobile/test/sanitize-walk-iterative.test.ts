@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * THE SANITIZER'S WALK IS A LOOP NOW, AND IT WRITES THE SAME BYTES (`src/mail/sanitize.ts`). The
  * recursive walk it replaces overflowed the reader's stack at thousands of nested `<b>` (a few kilobytes, the whole
@@ -24,6 +25,7 @@ import {
   REMOTE_URL,
   SAFE_HREF,
 } from "@ohmail/client-engine";
+import { Copy } from "../src/copy";
 import type { PhoneBlockedAsset, PhoneSanitizedMail, PhoneSanitizeOptions } from "../src/mail/sanitize";
 import * as XSS from "../../webapp/test/fixtures/mutation-xss-payloads";
 import { HOSTILE_HTML, OWNER_BILLING_HTML } from "../../webapp/test/fixtures/owner-billing-email";
@@ -193,6 +195,11 @@ function recursiveSanitize(html: string, opts: PhoneSanitizeOptions = {}): Phone
         continue;
       }
       kept.push([name, value]);
+    }
+    const named = ([n, v]: [string, string]): boolean =>
+      n === "alt" || n === "aria-hidden" || n === "role" || ((n === "title" || n === "aria-label") && v.trim() !== "");
+    if (tag === "img" && !kept.some(named)) {
+      kept.push(["alt", pixel ? "" : Copy.mailPicture]);
     }
     const attrs = kept.map(([n, v]) => ` ${n}="${escAttr(v)}"`).join("");
     if (VOID_TAGS.has(tag)) {

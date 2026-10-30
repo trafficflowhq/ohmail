@@ -131,6 +131,7 @@ import {
   type WorldEvent,
   type WorldMail,
   type WorldPile,
+  type AddressBookEntry,
   type WorldDraft,
   type WorldScheduled,
   type ScreeningPosture,
@@ -342,6 +343,8 @@ export interface World {
     waterlineAboveId: string | null;
     waterLabel: string;
     total: number;
+    /** What mark-all-read flips — see {@link WorldState.reads.unreadIds}. */
+    unreadIds: string[];
     /** The stream's badge — see {@link WorldState.reads.newCount}. */
     newCount: number;
     meta: string;
@@ -379,6 +382,8 @@ export interface World {
    * PHONE has, for the first time, a surface that says so.
    */
   drafts: WorldDraft[];
+  /** Who the composer's recipient fields suggest — the web's address book over this mirror (`live.ts#liveAddressBook`). */
+  addressBook: readonly AddressBookEntry[];
   /**
    * THE FOLDERS SURFACE (FOLDERS-SPEC.md; stage-1 read-only parity with the webapp's
    * foundation). `enabled` is the SERVER's consent answer (`GET /consent`,
@@ -701,7 +706,7 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
     ohbox: { resurfaced: [], fresh: [], seen: [], unreadIds: [], unread: 0, total: 0, meta: "", unscreened: null, filed: null },
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, unreadIds: [], waterLabel: Copy.waterline, newCount: 0, meta: "" },
-    receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
+    receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, unreadIds: [], newCount: 0, meta: "" },
     screener: { waiting: [], screened: [], spam: [], meta: "", source: "device", waitingPending: false, relayed: null },
     history: { items: [], total: 0, meta: "", pending: false },
     piles: [],
@@ -710,6 +715,7 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
     tagged: { count: () => 0, items: () => ({ rows: [], unread: 0, total: 0 }) },
     scheduled: [],
     drafts: [],
+    addressBook: [],
     folders: {
       enabled: false,
       // Nothing is connected, so no door has said it cannot keep one: today's interface.
@@ -1778,6 +1784,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       ? widestWindowOfAnswer(screening) ?? { dormancyDays: screening.answer.dormancyDays, scope: screening.answer.scope }
       : null);
   }, [engine, screening]);
+
+  // Each mailbox's recorded Sent folder, from the last successful read; the engine ignores a repeat.
+  useEffect(() => {
+    if (engine === null || mailboxes === null) return;
+    engine.setSentFolders(mailboxes);
+  }, [engine, mailboxes]);
 
   /**
    * THE MAILBOX'S OWN PROJECTION — derived from the mirror, never from the connection.

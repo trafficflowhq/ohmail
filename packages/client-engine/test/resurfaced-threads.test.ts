@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  FixturesAdapter,
+  OhmailEngine,
   arrivalMs,
   ohboxView,
   resurfacedThreads,
@@ -291,6 +293,23 @@ describe("new mail pulls a conversation whose time has not come forward", () => 
     expect(resurfacedThreads(reader)).toEqual([]);
     // And with no row, the parked member is parked and its sent sibling files as usual.
     expect(ohboxView(reader).newForYou).toEqual([]);
+  });
+
+  /**
+   * MUTATION WATCHED: drop the recorded folder from `isOwnSent` and the own reply filed in the
+   * mailbox's 'Envoyés' brings the conversation back as if somebody wrote. Its own mailbox id, so
+   * the 'Enviados' cases above keep meaning "a Sent name nobody recorded".
+   */
+  it("the account's own reply in the mailbox's recorded 'Envoyés' does not pull it forward", () => {
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter() });
+    const reply = { folder: "Envoyés" as EngineMessage["folder"], mailboxId: "mb-envoyes" };
+    expect(resurfacedThreads(build(reply).reader)).toHaveLength(1);
+    try {
+      engine.setSentFolders([{ id: "mb-envoyes", sentFolder: "Envoyés" }]);
+      expect(resurfacedThreads(build(reply).reader)).toEqual([]);
+    } finally {
+      engine.setSentFolders([]);
+    }
   });
 
   /**

@@ -80,7 +80,7 @@ function box(id: string, smtpMaxSizeBytes: number | null): PhoneMailbox {
   return {
     id, address: `${id}@fake.test`, organizerRole: null, organizeConsentedAt: null,
     organizedBy: null,
-    organizedByThisInstall: false, organizerState: null, status: null, junkFolder: null,
+    organizedByThisInstall: false, organizerState: null, status: null, junkFolder: null, sentFolder: null,
     smtpMaxSizeBytes, firstSyncStopFolder: null,
   };
 }

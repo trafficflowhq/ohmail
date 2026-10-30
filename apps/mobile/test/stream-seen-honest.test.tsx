@@ -46,7 +46,7 @@ vi.mock("react-native", async () => {
       onScroll: p.onScroll, onScrollBeginDrag: p.onScrollBeginDrag, onScrollEndDrag: p.onScrollEndDrag,
       onMomentumScrollBegin: p.onMomentumScrollBegin, onMomentumScrollEnd: p.onMomentumScrollEnd,
     });
-    return React.cloneElement(scroll, {}, ...rows.map((r: any) =>
+    return React.cloneElement(scroll, {}, p.ListHeaderComponent, ...rows.map((r: any) =>
       React.createElement(Cell, { key: p.keyExtractor(r), item: r, onLayout: () => undefined, style: null },
         React.createElement("i", { "data-row": p.keyExtractor(r) }, p.renderItem({ item: r })))));
   };
@@ -60,8 +60,10 @@ vi.mock("react-native", async () => {
 vi.mock("../src/ui/base", async () => {
   const React = await import("react");
   const box = (p: any) => React.createElement("div", null, p.children);
-  const tap = (p: any) => React.createElement("div", { "data-tap": "", ref: (el: any) => { if (el) el.__props = p; } }, p.children);
-  return { Badge: () => null, Empty: () => null, Tail: () => null, Waterline: () => null, Panel: box, Screen: box, TapRow: tap,
+  // The card's tap and the answer verbs are pressable, so a test can open a card and answer it.
+  const tap = (p: any) => React.createElement("div", { "data-tap": "", onClick: p.onPress, ref: (el: any) => { if (el) el.__props = p; } }, p.children);
+  const button = (p: any) => React.createElement("div", { "data-button": p.label, onClick: p.onPress });
+  return { Badge: () => null, Empty: () => null, Tail: () => null, Waterline: () => null, Panel: box, Screen: box, TapRow: tap, Button: button,
     Txt: () => null, Section: () => null, panelSurface: () => ({}), pullRefreshControl: () => undefined,
     useListInsets: () => ({ paddingLeft: 0, paddingRight: 0, paddingBottom: 0 }) };
 });
@@ -80,18 +82,26 @@ vi.mock("expo-router", async () => {
   };
 });
 const st = vi.hoisted(() => {
-  const s = { items: [] as any[], marked: [] as string[], opened: [] as string[], actions: null as any };
+  const s = {
+    items: [] as any[], marked: [] as string[], opened: [] as string[], actions: null as any,
+    /* The header's Mark all read as drawn, its presses, the composer mounted, and each letter's forward ask. */
+    markAll: null as any, pressed: [] as unknown[][], composer: null as any, asks: {} as Record<string, string>, fetched: [] as string[],
+    reading: null as null | Promise<void>,
+  };
   // One object for the app's life, as the world's actions are: a new one per render re-runs the focus effect.
   s.actions = {
     markSeenThrough: (_p: string, ids: string[]) => { for (const id of ids) if (!s.marked.includes(id)) s.marked.push(id); },
-    leaveFeed: () => undefined, markAllSeen: () => undefined, hydrateMessage: (id: string) => { s.opened.push(id); }, holdFiles: () => undefined, releaseFiles: () => undefined,
+    leaveFeed: () => undefined, markAllSeen: (...a: unknown[]) => { s.pressed.push(a); }, hydrateMessage: (id: string) => { s.opened.push(id); }, holdFiles: () => undefined, releaseFiles: () => undefined,
+    forwardFetch: (id: string) => { s.fetched.push(id); return s.reading; },
   };
   return s;
 });
 vi.mock("../src/state/world", () => ({
   useWorld: () => ({
     reads: { items: st.items, waterlineAboveId: null, waterLabel: "", meta: "", unreadIds: [], newCount: 0 },
-    receipts: { groups: [{ label: "Today", items: st.items }], waterlineAboveId: null, waterLabel: "", total: st.items.length, meta: "" },
+    receipts: { groups: [{ label: "Today", items: st.items }], waterlineAboveId: null, waterLabel: "", total: st.items.length, meta: "",
+      unreadIds: st.items.filter((m) => m.unread).map((m) => m.id), newCount: 0 },
+    message: (id: string) => { const m = st.items.find((x) => x.id === id); return m && { ...m, forwardAsk: st.asks[id] }; },
     boot: { settled: true, syncFailure: false },
     actions: st.actions,
     worldKey: "w", mailboxes: { rows: [] }, eventsOf: () => [], filesOf: () => [],
@@ -111,7 +121,21 @@ vi.mock("../src/ui/MailRow", () => ({ MailRow: () => null }));
 vi.mock("../src/ui/MessageReader", () => ({ MessageReader: () => null, AttachmentTiles: () => null }));
 vi.mock("../src/ui/EventCard", () => ({ EventCards: () => null }));
 vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));
-vi.mock("../src/ui/MarkAllRead", () => ({ MarkAllRead: () => null, VIEW_HEAD_ROW: {} }));
+vi.mock("../src/ui/MarkAllRead", () => ({ MarkAllRead: (p: any) => { st.markAll = p; return null; }, VIEW_HEAD_ROW: {} }));
+vi.mock("../src/ui/Sheet", async () => {
+  const React = await import("react");
+  return {
+    Sheet: (p: any) => (p.open ? React.createElement("div", { "data-sheet": p.label }, p.children) : null),
+    SheetRow: (p: any) => React.createElement("div", { "data-button": p.label, onClick: p.onPress }),
+  };
+});
+vi.mock("../src/ui/MessageActions", async () => {
+  const React = await import("react");
+  return {
+    ComposeSheet: (p: any) => { st.composer = p; return React.createElement("div", { "data-composer": p.mode }); },
+    forwardAskSentence: (a: string) => a,
+  };
+});
 vi.mock("../src/ui/Skeleton", () => ({ SkeletonList: () => null }));
 vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: (p: { children: ReactNode }) => p.children }));
@@ -120,7 +144,7 @@ const { mount } = await import("./_rendered-dom");
 const { act } = await import("react");
 const { default: ReadsScreen } = await import("../app/(tabs)/reads");
 const { default: ReceiptsScreen } = await import("../app/(tabs)/receipts");
-const { DECKS } = await import("../src/copy");
+const { Copy, DECKS } = await import("../src/copy");
 
 const ROW = 300, HEAD = 100, VIEW = 900, REACH = 3 * VIEW;
 const letter = (id: string) => ({ id, from: { name: "L", address: "x@fake.test" }, subject: id, time: "08:00", unread: true, body: "", bodyState: "full" });
@@ -185,6 +209,11 @@ const open = (rows: any[], shown: () => ReturnType<typeof h> = () => h(ReadsScre
   Shown = shown;
   st.items = rows;
   st.marked = [];
+  st.pressed = [];
+  st.composer = null;
+  st.asks = {};
+  st.fetched = [];
+  st.reading = null;
   onScreen.clear();
   win.ids = null;
   win.scrolls = [];
@@ -619,5 +648,53 @@ describe("phone lists: a fling at the top edge leaves every press live", () => {
     expect(st.marked.sort()).toEqual(["NW37", "NW38", "NW39"]);
     press("NW39");
     expect(st.opened).toEqual(["NW39"]);
+  });
+});
+
+describe("phone News and Receipts carry the web stream's verbs", () => {
+  const press = (sel: string) => act(() => { (screen!.el.querySelector(sel) as HTMLElement).click(); });
+  const has = (sel: string) => screen!.el.querySelector(sel) !== null;
+  const reply = `[data-button="${Copy.actionReply}"]`;
+  const forward = `[data-button="${Copy.actionForward}"]`;
+
+  it("an open News card answers with Reply through the reader's composer; a closed one offers no answer", () => {
+    open(letters("NW", 3));
+    expect(has(reply)).toBe(false);
+    press('[data-row="NW2"] [data-tap]');
+    press(reply);
+    expect(st.composer?.mode).toBe("reply");
+    expect(st.composer?.m.id).toBe("NW2");
+    act(() => st.composer.onClose());
+    expect(has("[data-composer]")).toBe(false);
+  });
+
+  it("Forward opens the composer on the letter, read through the reader's door first", async () => {
+    open(letters("NW", 3));
+    press('[data-row="NW1"] [data-tap]');
+    let done!: () => void;
+    st.reading = new Promise<void>((r) => { done = r; });
+    press(forward);
+    expect(st.fetched).toEqual(["NW1"]);
+    expect(has("[data-composer]"), "nothing opens before the letter is read").toBe(false);
+    await act(async () => { done(); await st.reading; });
+    expect([st.composer?.mode, st.composer?.m.id, st.composer?.forwardConfirmed]).toEqual(["forward", "NW1", false]);
+  });
+
+  it("a letter flagged not to forward asks once before the composer", () => {
+    open(letters("NW", 3));
+    st.asks = { NW2: "otp" };
+    press('[data-row="NW2"] [data-tap]');
+    press(forward);
+    expect(has(`[data-sheet="${Copy.forwardAskQuestion}"]`)).toBe(true);
+    expect(has("[data-composer]")).toBe(false);
+    press(`[data-sheet] ${forward}`);
+    expect([st.composer?.mode, st.composer?.forwardConfirmed]).toEqual(["forward", true]);
+  });
+
+  it("Receipts offers Mark all read over its unread rows; the press flips them and commits the line at the newest", () => {
+    open(letters("RW", 3).map((m) => (m.id === "RW1" ? { ...m, unread: false } : m)), () => h(ReceiptsScreen));
+    expect(st.markAll?.unreadCount).toBe(2);
+    act(() => st.markAll.onPress());
+    expect(st.pressed).toEqual([[["RW2", "RW0"], { place: "receipts", upToId: "RW2" }]]);
   });
 });

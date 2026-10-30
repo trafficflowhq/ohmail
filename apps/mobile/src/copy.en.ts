@@ -908,7 +908,8 @@ const TABLE = {
   whereMinutesAgo: (n: number) => (n === 1 ? "1 minute ago" : `${n} minutes ago`),
   whereHoursAgo: (n: number) => (n === 1 ? "1 hour ago" : `${n} hours ago`),
   whereDaysAgo: (n: number) => (n === 1 ? "1 day ago" : `${n} days ago`),
-  metaNew: (n: number) => `${n} new`,
+  /** The streams' count, the web's `stream.newSince`: mail above the line, not the unread rows. */
+  metaNew: (n: number) => `${n === 0 ? "Nothing" : n} new since you were here`,
   metaWaiting: (n: number) =>
     `${n} first-time sender${n === 1 ? "" : "s"} waiting`,
   /**
@@ -923,6 +924,9 @@ const TABLE = {
     `Showing everyone in the Screener folder — ${holder}’s screening settings haven’t been read yet.`,
   screeningUnreadNoName:
     "Showing everyone in the Screener folder — the organizing device’s screening settings haven’t been read yet.",
+  /** …on a standalone phone that organizes the mailbox: the window read predates its start. */
+  screeningUnreadHere:
+    "Showing everyone in the Screener folder until this phone’s own screening settings apply at its next check.",
   /** Beside a folder-whole count: the organizer is an older ohmail that states no window. */
   screeningUnstated: (holder: string) =>
     `${holder} runs an older ohmail that doesn’t share its screening window — showing everyone in the Screener folder.`,
@@ -1908,6 +1912,8 @@ const TABLE = {
   mailOversize:
     "This message's HTML part is too large to render safely. Showing the plain-text version.",
   /** The link confirm — the destination said out loud before anything leaves the app. */
+  /** What a screen reader calls a picture in a letter that the sender gave no alt text. */
+  mailPicture: "Picture",
   mailOpenLinkTitle: "Open this link?",
   mailOpenLinkOpen: "Open",
   mailOpenLinkCancel: "Cancel",
@@ -2272,6 +2278,8 @@ const TABLE = {
   composeSubjectPlaceholder: "What it's about (optional)",
   composeBodyPlaceholder: "Write your message…",
   composeToPlaceholder: "name@example.org, …",
+  /** A suggested recipient, read out: what the press adds. */
+  composeSuggestion: (name: string, address: string) => (name === "" ? `Add ${address}` : `Add ${name}, ${address}`),
   composeFrom: (address: string) => `From ${address}`,
   /** A draft kept from a removed mailbox leaves from another one (`compose-sender.ts`). */
   composeFromSubstituted: (was: string) => `${was} is disconnected, so this message sends from the address above.`,

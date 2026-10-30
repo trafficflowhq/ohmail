@@ -23,6 +23,7 @@ import { Empty, Screen, Tail, Txt, Waterline, useListInsets } from "../../src/ui
 import { TopBar } from "../../src/ui/chrome";
 import { MailList, type ListGroup, type RowFrame } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
+import { MarkAllRead, VIEW_HEAD_ROW } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
@@ -53,7 +54,7 @@ function ReceiptsBody() {
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
      ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
   const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
-  const { groups, waterlineAboveId, waterLabel, total, meta } = w.receipts;
+  const { groups, waterlineAboveId, waterLabel, total, meta, unreadIds, newCount } = w.receipts;
   const actions = w.actions;
   // Unknown ≠ empty — see `state/surface.ts`.
   const surface = listSurface({ settled: w.boot.settled, count: total });
@@ -150,7 +151,17 @@ function ReceiptsBody() {
         refresh={pull}
         head={
           <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}>
-            <Txt variant="h1">{Copy.receipts}</Txt>
+            <View style={VIEW_HEAD_ROW}>
+              <Txt variant="h1">{Copy.receipts}</Txt>
+              {/* Reads' press: flip the stream's unread and commit its line above the newest receipt. */}
+              <MarkAllRead
+                unreadCount={unreadIds.length}
+                freshCount={newCount}
+                onPress={() =>
+                  actions.markAllSeen(unreadIds, rows[0] ? { place: "receipts", upToId: rows[0].id } : undefined)
+                }
+              />
+            </View>
             <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
               {metaWhen(surface, meta) ?? " "}
             </Txt>

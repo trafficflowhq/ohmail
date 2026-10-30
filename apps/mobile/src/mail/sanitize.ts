@@ -30,6 +30,7 @@ import {
   SAFE_HREF,
 } from "@ohmail/client-engine";
 import { DROP_CONTENT, phoneQuotedTree, sheetText } from "./quoted-tree";
+import { Copy } from "../copy";
 
 /** One blocked remote reference — the web's `BlockedAsset` shape, minted by the same rules. */
 export interface PhoneBlockedAsset {
@@ -286,6 +287,13 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
         continue;
       }
       kept.push([name, value]);
+    }
+
+    // An unnamed picture is otherwise read out by its src (a data: URI): a beacon is hidden, the rest named.
+    const named = ([n, v]: [string, string]): boolean =>
+      n === "alt" || n === "aria-hidden" || n === "role" || ((n === "title" || n === "aria-label") && v.trim() !== "");
+    if (tag === "img" && !kept.some(named)) {
+      kept.push(["alt", pixel ? "" : Copy.mailPicture]);
     }
 
     const attrs = kept.map(([n, v]) => ` ${n}="${escAttr(v)}"`).join("");

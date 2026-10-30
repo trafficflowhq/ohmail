@@ -25,11 +25,16 @@ function run(args: string[], env: Record<string, string> = {}): Ran {
 
 /** The copy carrying the CURRENT patch: this checkout's own npm tree, which `node scripts/apply-patches.mjs
  *  apply` patched in place after `npm ci` (the suite applies before it runs). A copy that is not patched
- *  fails the fixture's reverse apply below, by name. */
-function installedPatched(name: string): string {
-  const copy = join(ROOT, "node_modules", name);
-  expect(existsSync(join(copy, "package.json")), `this checkout has no installed copy of ${name}: run npm ci, then apply-patches apply`).toBe(true);
-  return copy;
+ *  fails the fixture's reverse apply below, by name. A versioned patch reads the copy at its version,
+ *  hoisted or nested one package down (htmlparser2 10.1.0 under html-to-text). */
+function installedPatched(name: string, version: string | null = null): string {
+  const nm = join(ROOT, "node_modules");
+  const at = (dir: string) => existsSync(join(dir, "package.json")) && (version === null || JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version === version);
+  const nested = readdirSync(nm).flatMap((e) => (e.startsWith("@") ? readdirSync(join(nm, e)).map((s) => join(nm, e, s)) : [join(nm, e)]))
+    .map((dir) => join(dir, "node_modules", name));
+  const copy = [join(nm, name), ...nested].find(at);
+  expect(copy, `this checkout has no installed copy of ${name}${version ? `@${version}` : ""}: run npm ci, then apply-patches apply`).toBeDefined();
+  return copy!;
 }
 
 function patchPaths(file: string): string[] {
@@ -50,7 +55,7 @@ function tree(patchFiles: string[], opts: { version?: string; nestAt?: string } 
   for (const file of patchFiles) {
     cpSync(join(ROOT, "patches", file), join(root, "patches", file));
     const name = file.replace(/\.patch$/, "").replace(/@\d.*$/, "");
-    const from = installedPatched(name);
+    const from = installedPatched(name, /@(\d[^@]*)\.patch$/.exec(file)?.[1] ?? null);
     const version = opts.version ?? JSON.parse(readFileSync(join(from, "package.json"), "utf8")).version;
     for (const base of [join(root, "node_modules", name), ...(opts.nestAt ? [join(root, opts.nestAt, "node_modules", name)] : [])]) {
       for (const p of patchPaths(file)) cpSync(join(from, p), join(base, p));
@@ -87,6 +92,8 @@ const NODEMAILER = "nodemailer@8.0.11.patch";
 const TCP = "react-native-tcp-socket@6.4.2.patch";
 const WEBVIEW = "react-native-webview@13.16.1.patch";
 const POSTGRES = "postgres@3.4.9.patch";
+const HTMLPARSER2_10 = "htmlparser2@10.1.0.patch";
+const HTMLPARSER2_12 = "htmlparser2@12.0.0.patch";
 const SMTP = "node_modules/nodemailer/lib/smtp-connection/index.js";
 const REFUSAL = "the server sent more data after its STARTTLS response";
 
@@ -475,7 +482,7 @@ describe("assert", () => {
 });
 
 describe("markers", () => {
-  type Table = Record<string, { name: string; paths: string[]; control: string | null; markers: string[]; appleMarkers: string[] }>;
+  type Table = Record<string, { name: string; version: string | null; paths: string[]; control: string | null; markers: string[]; appleMarkers: string[] }>;
   const table = JSON.parse(run(["markers", "--json"]).out) as Table;
 
   it("read Apple sources apart: a dex is never asked for a literal only the iOS half carries", () => {
@@ -488,12 +495,12 @@ describe("markers", () => {
 
   it("are the literals the patch adds, which upstream lacks and our installed copy carries", () => {
     const withMarkers = Object.entries(table).filter(([, t]) => t.markers.length > 0);
-    expect(withMarkers.map(([f]) => f).sort()).toEqual([NODEMAILER, POSTGRES, TCP, WEBVIEW]);
+    expect(withMarkers.map(([f]) => f).sort()).toEqual([HTMLPARSER2_10, HTMLPARSER2_12, NODEMAILER, POSTGRES, TCP, WEBVIEW]);
     const root = tree(withMarkers.map(([f]) => f));
     for (const [file, t] of withMarkers) {
       const read = (base: string) => t.paths.map((p) => readFileSync(join(base, p), "utf8")).join("\n");
       const upstream = read(join(root, "node_modules", t.name));
-      const ours = read(installedPatched(t.name));
+      const ours = read(installedPatched(t.name, t.version));
       for (const m of t.markers) {
         expect(upstream.includes(m), `${file}: upstream already carries ${JSON.stringify(m)}`).toBe(false);
         expect(ours.includes(m), `${file}: our installed copy lacks ${JSON.stringify(m)}`).toBe(true);

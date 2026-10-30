@@ -12,6 +12,7 @@ import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaIn
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
 import { calendarEventsOf, withoutCalendarBodies, type DistinctCalendarEvent } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES, SENT_FORWARD_MAX_PARTS, draftOverCeiling } from "@ohmail/client-engine";
+import { addressBook, formatRecipient, matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
 import {
   FOLDER_OF_VIEW,
   LAST_DRAIN_AT_META,
@@ -777,7 +778,7 @@ function senderCheckOf(m: EngineMessage): { senderCheck?: Mail["senderCheck"]; s
 
 /** The account's own mail, as `isOwn` reads it: the Sent copy, or a sender among its addresses. */
 function ownMailOf(m: EngineMessage, physical: string, own: readonly string[] | undefined): boolean {
-  if (isOwnSent({ folder: physical as Folder })) return true;
+  if (isOwnSent({ folder: physical as Folder, mailboxId: m.mailboxId })) return true;
   const from = m.from.address.trim().toLowerCase();
   return (own ?? []).some((a) => a.trim().toLowerCase() === from);
 }
@@ -1590,13 +1591,16 @@ export interface WorldReceipts {
    * Without this the leave-commit wrote a line nothing ever rendered.
    */
   waterlineAboveId: string | null;
+  /** The stream's own `\Seen` unread, what mark-all-read flips — see {@link WorldReads.unreadIds}. */
+  unreadIds: string[];
   newCount: number;
   total: number;
 }
 
 export function liveReceipts(pres: EntityReader, v: WorldView): WorldReceipts {
   // The phone's own word for today: Hermes has no Intl.RelativeTimeFormat to answer it.
-  const groups = receiptsByDay(pres, v.now, v.locale ?? "en", v.zone, { today: Copy.today }).map((g) => ({
+  const days = receiptsByDay(pres, v.now, v.locale ?? "en", v.zone, { today: Copy.today });
+  const groups = days.map((g) => ({
     label: g.label,
     items: g.items.map((m) => toListRow(pres, m, v)),
   }));
@@ -1608,6 +1612,8 @@ export function liveReceipts(pres: EntityReader, v: WorldView): WorldReceipts {
   return {
     groups,
     waterlineAboveId: part.waterline ? part.seen[0]?.id ?? null : null,
+    // The engine rows' own flag, as in Reads.
+    unreadIds: days.flatMap((g) => g.items.filter((m) => m.unread).map((m) => m.id)),
     newCount: part.newCount,
     total: all.length,
   };
@@ -2765,6 +2771,37 @@ export function parseRecipients(typed: string): { name: string | null; address: 
  */
 export function keptRecipients(typed: string): { name: string | null; address: string }[] {
   return recipientEntries(typed).map(recipientOf).filter((r): r is { name: string | null; address: string } => r !== null);
+}
+
+export type { AddressBookEntry };
+
+/** The web composer's address book over this mirror (`addressBook`), the account's own addresses left out. */
+export function liveAddressBook(reader: EntityReader, ownAddresses: readonly string[]): AddressBookEntry[] {
+  return addressBook(reader, { exclude: ownAddresses });
+}
+
+/** How many suggestions a recipient field offers — the web field's six. */
+export const RECIPIENT_SUGGESTIONS = 6;
+
+/** The entries already settled, and the one still being typed after the last unquoted separator. */
+function typedTail(typed: string): { entries: string[]; tail: string } {
+  let quoted = false;
+  let cut = -1;
+  for (let i = 0; i < typed.length; i++) {
+    if (typed[i] === '"') quoted = !quoted;
+    else if ((typed[i] === "," || typed[i] === ";") && !quoted) cut = i;
+  }
+  return { entries: recipientEntries(typed.slice(0, cut + 1)), tail: typed.slice(cut + 1).trim() };
+}
+
+/** The correspondents the part still being typed matches, the web field's `matchAddresses`. */
+export function recipientSuggestions(book: readonly AddressBookEntry[], typed: string): AddressBookEntry[] {
+  return matchAddresses(book, typedTail(typed).tail, RECIPIENT_SUGGESTIONS);
+}
+
+/** The field with a suggestion in place of the part being typed, closed by a separator as the web's accept is. */
+export function withSuggestion(typed: string, entry: AddressBookEntry): string {
+  return [...typedTail(typed).entries, formatRecipient(entry)].join(", ") + ", ";
 }
 
 /* Quote-aware split: `"Doe, Alice" <alice@x.org>` is ONE entry — a comma inside double quotes is

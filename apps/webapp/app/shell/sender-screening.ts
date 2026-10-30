@@ -353,7 +353,7 @@ function subjectOf(
     const place = placeOf?.has(m.id) ? placeOf.get(m.id)! : m.folder;
     if (place === null) return "history";
     return DEST_OF_FOLDER.get(canonicalDestination(place) as Folder)
-      ?? (isPersonsOwnFolder(place) ? ownFolderPlace(m.mailboxId, place) : undefined);
+      ?? (isPersonsOwnFolder(place, m.mailboxId) ? ownFolderPlace(m.mailboxId, place) : undefined);
   };
   const counts = new Map<ScreeningPlace, number>();
   for (const m of messages) {

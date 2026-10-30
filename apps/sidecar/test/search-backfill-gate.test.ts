@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAttentionClock, isPersonRequest, PERSON_QUIET_MS } from "../src/attention.js";
 import { createHostPower, readPowerSupplies, HOST_POWER_READ_EVERY_MS, type PowerVerdict } from "../src/host-power.js";
-import { startSearchIndexBackfill, type BackfillRound, type SearchBackfill } from "../src/search-backfill.js";
+import {
+  startHtmlWordsBackfill, startSearchIndexBackfill, type BackfillRound, type SearchBackfill,
+} from "../src/search-backfill.js";
 import { COMPOSITION_STORE_PASSES, runsStorePass } from "../src/composition-passes.js";
 import { maskSource } from "./_mask.js";
 
@@ -290,5 +292,53 @@ describe("which composition schedules it", () => {
     expect(runsStorePass("cloud", "search-index-backfill")).toBe(false);
     expect(runsStorePass("mobile", "search-index-backfill")).toBe(false);
     expect(Object.keys(COMPOSITION_STORE_PASSES).sort()).toEqual(["cloud", "local", "mobile"]);
+  });
+
+  it("the html-words backfill: the desktop and the phone, never a Cloud mirror", () => {
+    expect(runsStorePass("local", "html-words-backfill")).toBe(true);
+    expect(runsStorePass("mobile", "html-words-backfill")).toBe(true);
+    expect(runsStorePass("cloud", "html-words-backfill")).toBe(false);
+  });
+});
+
+describe("the html-words backfill's round", () => {
+  it("waits for a person, a drain and the battery like the search backfill, and ends on its marker with its own line", async () => {
+    let quiet = 0; let ingesting = false; let verdict: PowerVerdict = { onPower: true, state: "ac" };
+    const lines: string[] = [];
+    const script: BackfillRound[] = [{ ran: true, written: 3, marked: false }, { ran: true, written: 1, marked: true }];
+    let calls = 0;
+    const bf = startHtmlWordsBackfill({
+      round: async () => { calls += 1; return script.shift() ?? { ran: false, written: 0, marked: false }; },
+      quietForMs: () => quiet, ingesting: () => ingesting, power: () => verdict,
+      log: (event) => { lines.push(event); }, waitMs: 3_600_000,
+    });
+    cleanups.push(() => bf.stop());
+    expect(await bf.tick()).toBe("person");
+    quiet = PERSON_QUIET_MS; ingesting = true;
+    expect(await bf.tick()).toBe("draining");
+    ingesting = false; verdict = { onPower: false, state: "battery" };
+    expect(await bf.tick()).toBe("battery");
+    expect(calls).toBe(0);
+    verdict = { onPower: true, state: "ac" };
+    expect(await bf.tick()).toBe("ran");
+    expect(await bf.tick()).toBe("ran");
+    expect(await bf.tick()).toBe("done");
+    expect(calls).toBe(2);
+    expect(lines).toEqual(["html_words_backfill_finished"]);
+  });
+
+  it("a failed round says so under its own name and is tried again", async () => {
+    let fail = true;
+    const lines: string[] = [];
+    const bf = startHtmlWordsBackfill({
+      round: async () => { if (fail) throw new Error("boom"); return { ran: true, written: 1, marked: true }; },
+      quietForMs: () => Number.POSITIVE_INFINITY, ingesting: () => false,
+      log: (event) => { lines.push(event); }, waitMs: 3_600_000,
+    });
+    cleanups.push(() => bf.stop());
+    expect(await bf.tick()).toBe("failed");
+    fail = false;
+    expect(await bf.tick()).toBe("ran");
+    expect(lines).toEqual(["html_words_backfill_failed", "html_words_backfill_finished"]);
   });
 });

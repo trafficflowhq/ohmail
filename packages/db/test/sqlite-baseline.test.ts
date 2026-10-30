@@ -218,6 +218,8 @@ describe("the SQLite journal, applied", () => {
       "0170_outbound_sent_copies.sql",
       // The arrival index on its new key, replacing 0139's.
       "0171_messages_arrival_key.sql",
+      // The html-words backfill's stamp and cursor, the pg columns' twins.
+      "0172_html_words_backfill.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -364,6 +366,8 @@ describe("the SQLite journal, applied", () => {
       "0170_outbound_sent_copies.sql",
       // The arrival index on its new key, replacing 0139's.
       "0171_messages_arrival_key.sql",
+      // The html-words backfill's stamp and cursor, the pg columns' twins.
+      "0172_html_words_backfill.sql",
     ]);
   });
 

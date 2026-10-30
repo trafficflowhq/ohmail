@@ -92,6 +92,8 @@ describe("the phone's roster read carries the folder name off the wire", () => {
       // Nobody consented on this wire either, and nothing paused it (mail 0135).
       organizeConsentedAt: null, organizerParkedAt: null,
       status: "connected", junkFolder: "INBOX/Junk",
+      // Mail 0132's recorded Sent folder; absent on the wire, so `null` here.
+      sentFolder: null,
       // The composer's cap input rides the same read; absent on the wire, so `null` here.
       smtpMaxSizeBytes: null,
       // Mail 0115's field rides the same read; absent on the wire, so `null` here.

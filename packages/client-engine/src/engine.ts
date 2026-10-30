@@ -32,7 +32,8 @@ import { filedOutOfOhbox, rowPinsBackNow } from "./ohbox-rows.js";
 import { OHBOX_VISIT_ID, ohboxVisitMark, type OhboxVisitMeta } from "./ohbox-where.js";
 import { outrankCoveringDomains } from "./address-rank.js";
 import { heldRuleKey } from "./rule-twins.js";
-import { canonicalDestination } from "@trafficflow/core/folder-name";
+import { canonicalDestination, isSentFolderPath } from "@trafficflow/core/folder-name";
+import { replaceRecordedSentFolders } from "./sent-folders.js";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { consentIndex, decidedDestination, namedByBodyTerm, warmBodyTermNames } from "./consent-cutline.js";
 import { flattenResponse } from "./apply.js";
@@ -3142,6 +3143,8 @@ export class OhmailEngine {
    */
   private cutlineDays: number | null = null;
   private cutlineAllTime = false;
+  /** This engine's last {@link OhmailEngine.setSentFolders} statement, as `[id, path]` pairs sorted by id. */
+  private sentFoldersStated = "[]";
   /**
    * WHAT THE WINDOWED PRUNE LAST RAN OVER — the stamp of everything but bodies, and the cutline
    * generation it ran under. The pass reads the whole mirror and SORTS it; on a settled client
@@ -4780,6 +4783,29 @@ export class OhmailEngine {
     if (resolved !== this.cutlineDays || allTime !== this.cutlineAllTime) this.cutlineGen += 1;
     this.cutlineDays = resolved;
     this.cutlineAllTime = allTime;
+  }
+
+  /**
+   * EACH MAILBOX'S RECORDED SENT FOLDER, from one whole `GET /mailboxes` read (never a failed
+   * one): `isOwnSent` then knows a Sent folder by the server's own name ('Envoyés'). Kept only
+   * when it is a non-empty path that is not INBOX and not already Sent-shaped; a mailbox left out
+   * or stating `null` is cleared. A different statement bumps the overlay and notifies in one
+   * turn, so every derivation re-runs; the same one returns false and changes nothing.
+   */
+  setSentFolders(mailboxes: Iterable<{ id: string; sentFolder?: string | null }>): boolean {
+    const next = new Map<string, string>();
+    for (const m of mailboxes) {
+      const p = m.sentFolder;
+      if (typeof p !== "string" || p === "" || p.toUpperCase() === "INBOX" || isSentFolderPath(p)) continue;
+      next.set(m.id, p);
+    }
+    const stated = JSON.stringify([...next].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    if (stated === this.sentFoldersStated) return false;
+    this.sentFoldersStated = stated;
+    replaceRecordedSentFolders(next);
+    this.overlayRev++;
+    this.notify();
+    return true;
   }
 
   /**

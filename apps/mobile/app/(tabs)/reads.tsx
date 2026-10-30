@@ -30,6 +30,7 @@ import { EventCards } from "../../src/ui/EventCard";
 import { FadeOut } from "../../src/ui/FadeOut";
 import { MarkAllRead, VIEW_HEAD_ROW } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
+import { StreamCardVerbs } from "../../src/ui/StreamCardVerbs";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
@@ -275,6 +276,7 @@ function StreamCard({
       {open ? (
         <View style={{ paddingHorizontal: 18, paddingBottom: 14, marginTop: -14 }}>
           <AttachmentTiles m={{ id: m.id, attachments: w.filesOf(m.id) }} />
+          <StreamCardVerbs id={m.id} />
         </View>
       ) : null}
     </Panel>

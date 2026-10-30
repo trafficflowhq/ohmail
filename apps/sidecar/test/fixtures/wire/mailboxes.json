@@ -82,6 +82,7 @@
       "releaseRequestedAt": null,
       "retryCount": 0,
       "sendingUnsettledReason": null,
+      "sentFolder": null,
       "serverMessageCount": 3,
       "setAside": 0,
       "smtpMaxSizeBytes": null,

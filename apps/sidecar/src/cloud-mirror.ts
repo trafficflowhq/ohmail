@@ -1206,6 +1206,9 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
     // the rail and search would never name the folder junked mail went to. `?? null` on this
     // upsert's rule — a path cleared on Cloud must clear here too.
     junkFolder: m.junkFolder ?? null,
+    // The recorded Sent folder (mail 0132), carried on the same rule: nothing attaches here, and
+    // a path cleared on Cloud clears here too.
+    sentFolder: m.sentFolder ?? null,
     // NOT decoration: `compose-from.ts` orders the From options by `createdAt` ascending and calls
     // the first sendable one the default sender. A mirror that stamped its own clock here would
     // pick a different default from the browser tab looking at the same account.

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screenerMetaOf } from "../src/state/world-projection";
+import { EN } from "../src/copy.en";
+import { DE } from "../src/copy.de";
 import {
   answersPerMailbox, presentedOptions, screeningAnswered, widestWindowOfAnswer, SCREENING_UNANSWERED, SCREENING_UNSUPPLIED,
 } from "../src/state/live";
@@ -24,6 +26,14 @@ describe("the phone's Screener meta", () => {
       .toBe("1 first-time sender waiting. Showing everyone in the Screener folder — Studio Mac’s screening settings haven’t been read yet.");
     expect(screenerMetaOf("server", 1, screeningAnswered({ ...BASE, byMailbox: { mb: W("unread", null) } })))
       .toContain("the organizing device’s screening settings");
+  });
+  it("on a standalone phone that organizes the mailbox, a window read before it started is not another device's", () => {
+    for (const w of [W("unread", null), W("unread"), W("unstated")]) {
+      const said = screenerMetaOf("server", 0, screeningAnswered({ ...BASE, byMailbox: { mb: w } }), true);
+      expect(said).toBe("0 first-time senders waiting. Showing everyone in the Screener folder until this phone’s own screening settings apply at its next check.");
+    }
+    expect(screenerMetaOf("server", 2, screeningAnswered({ ...BASE, byMailbox: { mb: W("own") } }), true)).toBe("2 first-time senders waiting");
+    expect(DE.screeningUnreadHere).not.toBe(EN.screeningUnreadHere);
   });
   it("CONTROL: stated windows, no map, and the two map-less postures say the count alone", () => {
     expect(screenerMetaOf("server", 3, screeningAnswered({ ...BASE, byMailbox: { mb: W("organizer"), mc: W("own") } })))

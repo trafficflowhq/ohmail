@@ -2359,6 +2359,9 @@ export const accountSettings = sqliteTable("account_settings", {
   screenerAutoActAt: integer("screener_auto_act_at", { mode: "timestamp_ms" }),
   /** The list-address backfill's stamp (mail 0150). See the server twin. LAST. */
   listAddressesScannedAt: integer("list_addresses_scanned_at", { mode: "timestamp_ms" }),
+  /** The html-words backfill's stamp and cursor (mail 0172). See the server twin. LAST. */
+  htmlWordsBackfillAt: integer("html_words_backfill_at", { mode: "timestamp_ms" }),
+  htmlWordsBackfillCursor: text("html_words_backfill_cursor"),
 });
 
 /**

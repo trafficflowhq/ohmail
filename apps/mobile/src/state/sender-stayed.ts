@@ -81,7 +81,7 @@ export function stayedAsk(o: {
     const place = o.placeOf.has(m.id) ? o.placeOf.get(m.id)! : m.folder;
     if (place === null) return "history";
     return PLACE_OF_FOLDER.get(canonicalDestination(place) as Folder)
-      ?? (isPersonsOwnFolder(place) ? ownFolderPlace(m.mailboxId, place) : undefined);
+      ?? (isPersonsOwnFolder(place, m.mailboxId) ? ownFolderPlace(m.mailboxId, place) : undefined);
   };
   const counts = new Map<StayedPlace, number>();
   for (const m of o.subject) {

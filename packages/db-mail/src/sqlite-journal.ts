@@ -591,5 +591,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "DROP INDEX IF EXISTS \"messages_account_arrival_order_idx\";",
       "CREATE INDEX IF NOT EXISTS \"messages_account_arrival_key_idx\" ON \"messages\" (\"account_id\", (case when \"arrived_at\" is null then coalesce(\"date\", 0) when \"date\" is null then \"arrived_at\" when \"date\" <= \"arrived_at\" and \"arrived_at\" - \"date\" <= 172800000 then \"date\" else \"arrived_at\" end) DESC, \"id\" DESC) WHERE \"deleted_at\" IS NULL;"
     ]
+  },
+  {
+    "name": "0172_html_words_backfill.sql",
+    "statements": [
+      "ALTER TABLE \"account_settings\" ADD COLUMN \"html_words_backfill_at\" integer;",
+      "ALTER TABLE \"account_settings\" ADD COLUMN \"html_words_backfill_cursor\" text;"
+    ]
   }
 ] as const;
