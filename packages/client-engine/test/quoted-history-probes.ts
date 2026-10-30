@@ -3,12 +3,15 @@
  * phone's parity test. Every case is labelled by what its family builds: `owner`, an earlier message
  * holding its own quotes and nothing else, which folds at its header; `cost`, the writer's same-ink,
  * unmarked words under a quote in a new-Outlook history or under a coloured quote, which fold with it
- * (the class's named cost); `same`, everything else, which reads as 0.30.16 reads it. Synthetic names,
- * example.* addresses only.
+ * (the class's named cost); `open`, a history 0.30.16 folds that an Outlook header block reads open
+ * wherever it sits: new Outlook's read to its end, as its Windows twin is read, the Windows header path's
+ * first message read on its own up to an attribution, an Outlook hop under Yahoo's attribution, and the
+ * header path's comment heading and announcement on new Outlook's container; `same`, everything else,
+ * which reads as 0.30.16 reads it. Synthetic names, example.* addresses only.
  */
 import { qhFixtures, qhTypedAnswers, type QhFixture } from "./quoted-history-fixtures.js";
 
-export type QhProbeLabel = "owner" | "cost" | "same";
+export type QhProbeLabel = "owner" | "cost" | "open" | "same";
 
 export interface QhProbe {
   family: string;
@@ -56,6 +59,8 @@ const rooster: Wrap = (x) => `<blockquote style="border-left: 3px solid rgb(200,
 // ── the words ────────────────────────────────────────────────────────────────────────────
 
 const IDS = ["132", "133", "135"];
+/** New Outlook (132) where its Windows twins read the whole history and keep it open. */
+const opens = (id: string, when = true): QhProbeLabel => (id === "132" && when ? "open" : "same");
 const Q_WHEN = "Wann kommt der Techniker morgen genau?";
 const Q_KEY = "Wer hat den Schlüssel für den Technikraum?";
 const QF = "Ist die Filterreinigung im Angebot enthalten?";
@@ -98,9 +103,15 @@ const earlier = (id: string, body: string): string => {
   if (out === h) throw new Error(`no earlier message in ${id}`);
   return out;
 };
-const winHop = (body: string): string => '<div><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p class="MsoNormal"><b>Von:</b> '
-  + "Dana Example &lt;dana.example@example.net&gt;<br><b>Gesendet:</b> Dienstag, 27. Oktober 2026 17:40<br><b>An:</b> Ben Sample &lt;ben.sample@example.org&gt;<br>"
+const winHop = (body: string, from = "Dana Example &lt;dana.example@example.net&gt;"): string => '<div><div style="border:none;border-top:solid #E1E1E1 1.0pt;'
+  + `padding:3.0pt 0cm 0cm 0cm"><p class="MsoNormal"><b>Von:</b> ${from}<br><b>Gesendet:</b> Dienstag, 27. Oktober 2026 17:40<br><b>An:</b> Ben Sample &lt;ben.sample@example.org&gt;<br>`
   + `<b>Betreff:</b> Begehung Technikraum</p></div></div>${body}`;
+/** A Yahoo reply over Ben's message: Yahoo's container opens with its attribution. */
+const yahoo = (inner: string): string => '<html><head></head><body><div class="ydp1 yahoo-style-wrap" style="font-family:Helvetica Neue, Helvetica, Arial, sans-serif;font-size:13px;">'
+  + '<div dir="ltr" data-setdir="false"><div>Hallo Ben, danke, ich habe Dana direkt geantwortet, siehe unten.</div><div>Gruss Clara</div></div></div>'
+  + '<div id="ydp2yahoo_quoted_1" class="ydp2yahoo_quoted"><div style="font-family:\'Helvetica Neue\', Helvetica, Arial, sans-serif;font-size:13px;color:#26282a;">'
+  + "<div>On Wednesday, 28 October 2026 at 14:12:00 CET, Ben Sample &lt;ben.sample@example.org&gt; wrote:</div><div><br></div><div><div dir=\"ltr\">"
+  + `${inner}</div></div></div></div></body></html>`;
 /** An older message of Dana's under its own Outlook header, below Ben's. */
 const below = (id: string, body: string): string => fixture(id).html!.replace(/(<p class="MsoNormal">Ben<o:p><\/o:p><\/p>)/, `$1${winHop(body)}`);
 /** 134's second hop (Dana's, under its own header), replaced whole. */
@@ -188,16 +199,17 @@ function typedAnswers(add: Add): void {
   for (const id of IDS) for (const [k, q] of QUOTE_BOXES) {
     const a = { answer: LONG[0] };
     add("parts", "same", `${id} ${k} greeting+siehe unten, 3 parts`, earlier(id, P("Hallo Clara,") + P("siehe unten.") + parts(q, 3)), a);
-    add("parts", "same", `${id} ${k} signed, 3 parts`, earlier(id, SIGNED + parts(q, 3)), a);
-    add("parts", "same", `${id} ${k} signed, 2 parts`, earlier(id, SIGNED + parts(q, 2)), a);
-    add("parts-variant", "same", `${id} ${k} signed, 3 parts, quote in #500050`, earlier(id, SIGNED + parts(q, 3, purple)), a);
+    const wb = k === "Word box";
+    add("parts", opens(id, wb), `${id} ${k} signed, 3 parts`, earlier(id, SIGNED + parts(q, 3)), a);
+    add("parts", opens(id, wb), `${id} ${k} signed, 2 parts`, earlier(id, SIGNED + parts(q, 2)), a);
+    add("parts-variant", opens(id, wb), `${id} ${k} signed, 3 parts, quote in #500050`, earlier(id, SIGNED + parts(q, 3, purple)), a);
     add("parts-variant", "same", `${id} ${k} greeting, 3 parts, quote in #500050`, earlier(id, P("Hallo Clara,") + P("siehe unten.") + parts(q, 3, purple)), a);
     const blueBen = P(obl("Hallo Clara,")) + P(obl("Dana hat Fragen, siehe unten.")) + P(obl("Gruss")) + P(obl("Ben")) + BY;
-    add("parts-variant", "same", `${id} ${k} own words in Outlook blue, 3 parts`, earlier(id, blueBen + parts(q, 3)), a);
-    add("parts-variant", "same", `${id} ${k} own words in Outlook blue, 2 parts`, earlier(id, blueBen + parts(q, 2)), a);
+    add("parts-variant", opens(id, wb), `${id} ${k} own words in Outlook blue, 3 parts`, earlier(id, blueBen + parts(q, 3)), a);
+    add("parts-variant", opens(id, wb), `${id} ${k} own words in Outlook blue, 2 parts`, earlier(id, blueBen + parts(q, 2)), a);
     add("parts-variant", "same", `${id} ${k} parts only, no greeting`, earlier(id, parts(q, 3)), a);
-    add("parts-variant", "same", `${id} ${k} blue answers, 3 parts`, earlier(id, SIGNED + parts(q, 3, black, blue)), a);
-    add("parts-variant", "same", `${id} ${k} highlighted answers, 3 parts`, earlier(id, SIGNED + parts(q, 3, black, hl)), a);
+    add("parts-variant", opens(id, wb), `${id} ${k} blue answers, 3 parts`, earlier(id, SIGNED + parts(q, 3, black, blue)), a);
+    add("parts-variant", opens(id, wb), `${id} ${k} highlighted answers, 3 parts`, earlier(id, SIGNED + parts(q, 3, black, hl)), a);
   }
   const qq = P(QF);
   for (const id of IDS) for (const [k, q] of QUOTE_BOXES) for (const [n, a] of [["JA", red("JA")], ["NEIN", red("NEIN")], ["OK", red("OK")], ["14:00", red("14:00")], ["hl JA", hl("JA")]] as const) {
@@ -213,21 +225,21 @@ function typedAnswers(add: Add): void {
   // Ben's reply over an attribution and Dana's quoted message: the plain one is the shape.
   const own = P("Hallo Clara,") + box(P("Können wir die Begehung des Technikraums auf Donnerstag verschieben?")) + P("Ja, Donnerstag um 10 Uhr passt uns.") + P("Gruss");
   for (const id of IDS) for (const [k, q] of [["Gmail", gmail], ["Apple", cite], ["blockquote", box], ["Word box", wordBox]] as const) {
-    add("reply-quote", "same", `${id} ${k} signature`, earlier(id, REPLY + SIG + BY + q(DANA)));
+    add("reply-quote", opens(id), `${id} ${k} signature`, earlier(id, REPLY + SIG + BY + q(DANA)));
     add("reply-quote", "owner", `${id} ${k} plain`, earlier(id, REPLY + BY + q(DANA)));
     add("reply-quote", "same", `${id} ${k} own quote + signature`, earlier(id, own + SIG + BY + q(DANA)));
-    add("reply-quote-signature", "same", `${id} ${k} signature, quote with coloured signature and older quote`, earlier(id, REPLY + SIG + BY
+    add("reply-quote-signature", opens(id), `${id} ${k} signature, quote with coloured signature and older quote`, earlier(id, REPLY + SIG + BY
       + q(DANA + P(obl("Dana Example")) + P(obl("Leiterin Facility Management")) + OLDER_BY + q(BEN_OLD))));
-    add("reply-quote-signature", "same", `${id} ${k} signature in red`, earlier(id, REPLY + P(red("Ben Sample")) + P(red("Projektleiter Haustechnik | Beispiel AG")) + BY + q(DANA)));
-    add("reply-quote-signature", "same", `${id} ${k} signature one line, sentence`, earlier(id, REPLY + P(obl("Beispiel AG, Musterstrasse 1, 8000 Zürich.")) + BY + q(DANA)));
+    add("reply-quote-signature", opens(id), `${id} ${k} signature in red`, earlier(id, REPLY + P(red("Ben Sample")) + P(red("Projektleiter Haustechnik | Beispiel AG")) + BY + q(DANA)));
+    add("reply-quote-signature", opens(id), `${id} ${k} signature one line, sentence`, earlier(id, REPLY + P(obl("Beispiel AG, Musterstrasse 1, 8000 Zürich.")) + BY + q(DANA)));
   }
   const POSITION = "Ja, sie ist Position 3 im Angebot.";
   for (const id of IDS) for (const [k, q] of QUOTE_BOXES) for (const [n, a] of [["red sentence", red(POSITION)], ["red JA", red("JA")], ["blue sentence", blue(POSITION)], ["highlight", hl(POSITION)]] as const) {
     const typed = n === "red JA" ? "JA" : POSITION;
-    add("level-answer", "same", `${id} ${k} ${n}: own question, sign-off, attribution + quote`, earlier(id, P("Hallo Clara,") + qq + P(a) + P("Gruss") + P("Ben") + BY + q(DANA)), { answer: typed });
+    add("level-answer", opens(id), `${id} ${k} ${n}: own question, sign-off, attribution + quote`, earlier(id, P("Hallo Clara,") + qq + P(a) + P("Gruss") + P("Ben") + BY + q(DANA)), { answer: typed });
     add("level-answer", "same", `${id} ${k} ${n}: two own questions, sign-off, attribution + quote`, earlier(id, P("Hallo Clara,") + P(`1. ${QF}`) + P(a)
       + P("2. Brauchen Ihre Techniker einen Schlüssel für den Technikraum?") + P(red("Ja, bitte am Empfang hinterlegen.")) + P("Gruss") + P("Ben") + BY + q(DANA)), { answer: "Ja, bitte am Empfang hinterlegen." });
-    add("level-answer", "same", `${id} ${k} ${n}: own question, attribution + quote, no sign-off`, earlier(id, P("Hallo Clara,") + qq + P(a) + BY + q(DANA)), { answer: typed });
+    add("level-answer", opens(id), `${id} ${k} ${n}: own question, attribution + quote, no sign-off`, earlier(id, P("Hallo Clara,") + qq + P(a) + BY + q(DANA)), { answer: typed });
   }
   for (const id of IDS) for (const [k, q] of QUOTE_BOXES) {
     add("reply-quote-control", "owner", `${id} ${k} reply + attribution + quote`, earlier(id, REPLY + BY + q(DANA)));
@@ -238,17 +250,17 @@ function typedAnswers(add: Add): void {
     const a = { answer: KOMMT };
     add("parts-inked", "same", `${id} ${k} short answers, purple parts`, earlier(id, SIGNED + q(P(purple(`1. ${Q_WHEN}`))) + P(red(KOMMT)) + q(P(purple(`2. ${Q_KEY}`)) + P(purple("Gruss Dana")))
       + P(red(AT_DESK))), a);
-    add("parts-inked", "same", `${id} ${k} short answers, black parts (control)`, earlier(id, SIGNED + q(P(`1. ${Q_WHEN}`)) + P(red(KOMMT)) + q(P(`2. ${Q_KEY}`) + P("Gruss Dana")) + P(red(AT_DESK))), a);
+    add("parts-inked", opens(id, k === "Word box"), `${id} ${k} short answers, black parts (control)`, earlier(id, SIGNED + q(P(`1. ${Q_WHEN}`)) + P(red(KOMMT)) + q(P(`2. ${Q_KEY}`) + P("Gruss Dana")) + P(red(AT_DESK))), a);
     add("parts-inked", "same", `${id} ${k} one answer between two purple parts, message words long`, earlier(id, P("Hallo Clara,")
       + P("Dana hat Fragen zur Begehung, siehe unten. Ich bin bis Montag im Urlaub und kann ihr leider nicht selbst antworten.") + P("Gruss") + P("Ben") + BY
       + q(P(purple(`1. ${Q_WHEN}`))) + P(red(KOMMT)) + q(P(purple(`2. ${Q_KEY}`)) + P(purple("Danke und Gruss")) + P(purple("Dana")))), a);
     add("parts-inked", "same", `${id} ${k} one answer between two blue (#0070C0) parts`, earlier(id, SIGNED + q(P(blue(`1. ${Q_WHEN}`))) + P(red(KOMMT))
       + q(P(blue(`2. ${Q_KEY}`)) + P(blue("Danke und Gruss")) + P(blue("Dana")))), a);
-    add("parts-inked", "same", `${id} ${k} one answer between two black parts (control)`, earlier(id, SIGNED + q(P(`1. ${Q_WHEN}`)) + P(red(KOMMT)) + q(P(`2. ${Q_KEY}`) + P("Danke und Gruss") + P("Dana"))), a);
+    add("parts-inked", opens(id, k === "Word box"), `${id} ${k} one answer between two black parts (control)`, earlier(id, SIGNED + q(P(`1. ${Q_WHEN}`)) + P(red(KOMMT)) + q(P(`2. ${Q_KEY}`) + P("Danke und Gruss") + P("Dana"))), a);
   }
   // Dana's quoted message with her signature and her own older quote: a black signature is the shape.
   for (const id of IDS) for (const [k, q] of [["Gmail", gmail], ["Apple", cite], ["blockquote", box]] as const) {
-    add("quoted-signature", "same", `${id} ${k} plain reply; quoted message has coloured signature + older quote`, earlier(id, REPLY + BY
+    add("quoted-signature", opens(id), `${id} ${k} plain reply; quoted message has coloured signature + older quote`, earlier(id, REPLY + BY
       + q(DANA + P(obl("Dana Example")) + P(obl("Leiterin Facility Management")) + OLDER_BY + q(BEN_OLD))));
     add("quoted-signature", "owner", `${id} ${k} plain reply; quoted message has black signature + older quote (control)`, earlier(id, REPLY + BY
       + q(DANA + P("Dana Example") + P("Leiterin Facility Management") + OLDER_BY + q(BEN_OLD))));
@@ -266,13 +278,13 @@ function typedAnswers(add: Add): void {
   const quoted = (q: Wrap): [string, string] => [q(danaLines.map(P).join("")), danaLines.map((l) => `> ${l}`).join("\n")];
   for (const id of IDS) for (const [qk, q] of [["Apple cite", cite], ["Gmail quote", gmail]] as const) for (const [ak, a, typed] of [["red", red(POSITION), POSITION], ["highlight", hl("JA"), "JA"]] as const) {
     const s1 = shape(id, [p("Hallo Clara,", "kannst du mir bis Freitag sagen, ob die Filterreinigung im Angebot enthalten ist?"), [P(a), typed], p("Gruss", "Ben"), attribution, quoted(q)]);
-    add("both-parts", "same", `${id} ${qk} ${ak}: one own question, answer, sign-off, attribution + quote`, s1.html, { answer: typed, text: s1.text });
+    add("both-parts", opens(id), `${id} ${qk} ${ak}: one own question, answer, sign-off, attribution + quote`, s1.html, { answer: typed, text: s1.text });
     const s2 = shape(id, [p("Hallo Clara,", "Dana fragt, ob die Filterreinigung im Angebot enthalten ist. Weisst du das?"), [P(a), typed], p("Danke dir", "Gruss", "Ben"), attribution, quoted(q)]);
-    add("both-parts", "same", `${id} ${qk} ${ak}: question, answer, 'Danke dir', sign-off, attribution + quote`, s2.html, { answer: typed, text: s2.text });
+    add("both-parts", opens(id), `${id} ${qk} ${ak}: question, answer, 'Danke dir', sign-off, attribution + quote`, s2.html, { answer: typed, text: s2.text });
   }
   for (const id of IDS) for (const [k, q] of QUOTE_BOXES) for (const [cn, ink] of [["#500050", purple], ["#0070C0", blue], ["#1F497D", obl], ["black", black]] as const) {
     for (const n of [2, 3]) {
-      add("parts-long", "same", `${id} ${k} quote ${cn}, signed, ${n} long parts`, earlier(id, SIGNED + parts(q, n, ink)), { answer: LONG[0] });
+      add("parts-long", opens(id, k === "Word box"), `${id} ${k} quote ${cn}, signed, ${n} long parts`, earlier(id, SIGNED + parts(q, n, ink)), { answer: LONG[0] });
       add("parts-long", "same", `${id} ${k} quote ${cn}, greeting, ${n} long parts`, earlier(id, P("Hallo Clara,") + P("siehe unten.") + parts(q, n, ink)), { answer: LONG[0] });
     }
   }
@@ -280,7 +292,7 @@ function typedAnswers(add: Add): void {
     + '<div id="ydp2yahoo_quoted_1" class="ydp2yahoo_quoted"><div><div>On Wednesday, 28 October 2026 at 14:12:00 CET, Ben Sample &lt;ben.sample@example.org&gt; wrote:</div>'
     + `<div><br></div><div dir="ltr">${P("Hallo Clara,") + P("anbei der Stand von Dana, bitte kurz prüfen.") + P("Gruss") + P("Ben") + winHop(inner)}</div></div></div>`;
   const danaPlan = PLAN.replace("Ben", "Dana");
-  add("yahoo-older-hop", "same", "older hop with red inline answers (by Ben, earlier)", yahooQuote(P("Hallo Ben,") + P(`1. ${Q_WHEN}`) + P(red(AT_TEN)) + P(`2. ${Q_KEY}`)
+  add("yahoo-older-hop", "open", "older hop with red inline answers (by Ben, earlier)", yahooQuote(P("Hallo Ben,") + P(`1. ${Q_WHEN}`) + P(red(AT_TEN)) + P(`2. ${Q_KEY}`)
     + P(red("Der Hauswart hat ihn.")) + danaPlan));
   add("yahoo-older-hop", "same", "older hop, no answers (control)", yahooQuote(P("Hallo Ben,") + P(`1. ${Q_WHEN}`) + P(`2. ${Q_KEY}`) + danaPlan));
   for (const id of IDS) for (const [k, q] of [["blockquote", box], ["cite", cite]] as const) {
@@ -314,14 +326,14 @@ function answersEverywhere(add: Add): void {
   const TUESDAY = "Am Dienstag um 10 Uhr.";
   add("older-hop", "same", "132 red answers in the second hop (Mac container)", below("132", DANA_QA), { answer: TUESDAY });
   add("older-hop", "same", "133 red answers in the second hop (Windows control)", below("133", DANA_QA), { answer: TUESDAY });
-  add("older-hop", "same", "132 red in Dana's hop, Ben's hop plain", earlier("132", PLAIN_BEN + winHop(DANA_QA)), { answer: TUESDAY });
+  add("older-hop", "open", "132 red in Dana's hop, Ben's hop plain", earlier("132", PLAIN_BEN + winHop(DANA_QA)), { answer: TUESDAY });
   add("older-hop", "same", "133 red in Dana's hop, Ben's hop plain", earlier("133", PLAIN_BEN + winHop(DANA_QA)), { answer: TUESDAY });
-  add("hop-answer", "same", "132 red below an attribution, no box", earlier("132", PLAIN_BEN + BY + DANA_QA), { answer: TUESDAY });
+  add("hop-answer", "open", "132 red below an attribution, no box", earlier("132", PLAIN_BEN + BY + DANA_QA), { answer: TUESDAY });
   add("hop-answer", "same", "133 red below an attribution, no box", earlier("133", PLAIN_BEN + BY + DANA_QA), { answer: TUESDAY });
   const KOMMT = "Am Dienstag um 10 Uhr kommt er.";
   const between = (q: Wrap): string => PLAIN_BEN + BY + q(P("1. Wann kommt der Techniker genau?")) + P(red(KOMMT)) + q(P(`2. ${Q_KEY}`) + P("Gruss Dana")) + P(red(AT_DESK));
   for (const id of IDS) for (const [k, q] of [["bq", box], ["cite", cite], ["gmail", gmail], ["wbox", wbox]] as const) {
-    add("box-answer", "same", `${id} red between quote parts (${k})`, earlier(id, between(q)), { answer: KOMMT });
+    add("box-answer", opens(id, k === "wbox"), `${id} red between quote parts (${k})`, earlier(id, between(q)), { answer: KOMMT });
   }
   const shortBetween = PLAIN_BEN + BY + box(P(`1. ${QF}`)) + P(red("JA")) + box(P("2. Um wie viel Uhr sollen die Techniker kommen?")) + P(red("14:00"))
     + box(P("Danke für die Rückmeldung, ich plane den Termin danach ein.") + P("Gruss Dana"));
@@ -371,8 +383,8 @@ function answersEverywhere(add: Add): void {
   }
   for (const host of IDS) for (const [k, q] of [["bq", box], ["cite", cite], ["wbox", wbox]] as const) {
     add("long-parts", "same", `${host} ${k} 'siehe unten.' + 3 long red answers between parts`, earlier(host, P("Hallo Clara,") + P("siehe unten.") + parts(q, 3)), { answer: LONG[0] });
-    add("long-parts", "same", `${host} ${k} sign-off + attribution + 3 long red answers between parts`, earlier(host, PLAIN_BEN + BY + parts(q, 3)), { answer: LONG[0] });
-    add("long-parts", "same", `${host} ${k} sign-off + attribution + 2 long red answers between parts`, earlier(host, PLAIN_BEN + BY + parts(q, 2)), { answer: LONG[0] });
+    add("long-parts", opens(host, k === "wbox"), `${host} ${k} sign-off + attribution + 3 long red answers between parts`, earlier(host, PLAIN_BEN + BY + parts(q, 3)), { answer: LONG[0] });
+    add("long-parts", opens(host, k === "wbox"), `${host} ${k} sign-off + attribution + 2 long red answers between parts`, earlier(host, PLAIN_BEN + BY + parts(q, 2)), { answer: LONG[0] });
   }
   for (const host of IDS) {
     const asksDana = P("Hallo Clara,") + P("Dana fragt:");
@@ -389,9 +401,9 @@ function answersEverywhere(add: Add): void {
     + '<span style="color:#1F497D">Projektleiter Haustechnik | Beispiel AG</span></p></div>';
   for (const host of ["132", "133"]) {
     for (const [k, q] of [["gmail", gmail], ["cite", cite]] as const) {
-      add("reply-signature", "same", `${host} ${k} Ben's coloured signature, then attribution + quote of Dana`, earlier(host, benReply + colSig + BY + q(DANA)));
+      add("reply-signature", opens(host), `${host} ${k} Ben's coloured signature, then attribution + quote of Dana`, earlier(host, benReply + colSig + BY + q(DANA)));
       add("reply-signature", "owner", `${host} ${k} Ben's plain signature, then attribution + quote of Dana`, earlier(host, benReply + BY + q(DANA)));
-      add("reply-signature", "same", `${host} ${k} Dana's quoted message: coloured signature then her own older quote`, earlier(host, benReply + BY
+      add("reply-signature", opens(host), `${host} ${k} Dana's quoted message: coloured signature then her own older quote`, earlier(host, benReply + BY
         + q(P("Hallo Ben,") + P("Können wir die Begehung verschieben? Am Dienstag bin ich leider nicht im Haus.") + P("Viele Grüsse")
           + `<p class="MsoNormal">${obl("Dana Example | Example GmbH")}</p>` + P("Am 26.10.2026 um 09:00 schrieb Ben Sample &lt;ben.sample@example.org&gt;:")
           + q(P("Hallo Dana,") + P("passt euch der Dienstag um 10 Uhr für die Begehung des Technikraums?") + P("Gruss Ben")))));
@@ -414,19 +426,22 @@ function answersEverywhere(add: Add): void {
     + box(P("Um wie viel Uhr sollen die Techniker kommen?")) + P(red("14:00")) + PLAN), { answer: "JA" });
   add("short-at-level", "same", "133 lone 'JA' under a boxed question, the line above it ends with '?'", earlier("133", P("Hallo Clara,") + P("Kannst du Dana das beantworten?")
     + box(P(QF)) + P(red("JA")) + PLAN), { answer: "JA" });
-  const yahoo = (inner: string): string => '<html><head></head><body><div class="ydp1 yahoo-style-wrap" style="font-family:Helvetica Neue, Helvetica, Arial, sans-serif;font-size:13px;">'
-    + '<div dir="ltr" data-setdir="false"><div>Hallo Ben, danke, ich habe Dana direkt geantwortet, siehe unten.</div><div>Gruss Clara</div></div></div>'
-    + '<div id="ydp2yahoo_quoted_1" class="ydp2yahoo_quoted"><div style="font-family:\'Helvetica Neue\', Helvetica, Arial, sans-serif;font-size:13px;color:#26282a;">'
-    + "<div>On Wednesday, 28 October 2026 at 14:12:00 CET, Ben Sample &lt;ben.sample@example.org&gt; wrote:</div><div><br></div><div><div dir=\"ltr\">"
-    + `${inner}</div></div></div></div></body></html>`;
   const benOutlook = (danaBody: string): string => P("Hallo Clara,") + P("kannst du Dana bitte direkt antworten? Ich bin bis Montag weg.") + P("Gruss") + P("Ben") + winHop(danaBody);
   const RECEPTION = "Am Dienstag um 10 Uhr, er meldet sich am Empfang.";
   const answered = P(`1. ${Q_WHEN}`) + P(red(RECEPTION)) + P(`2. ${Q_KEY}`) + P(red(AT_DESK)) + P(PLAN_T) + P("Gruss") + P("Dana");
   add("yahoo-outlook", "same", "Yahoo: red answers after Dana's own quote, below an Outlook header", yahoo(benOutlook(P("Hallo Ben,") + box(P(QF))
     + P("Das müssen wir noch klären, ich frage nach.") + answered)), { answer: RECEPTION });
-  add("yahoo-outlook", "same", "Yahoo: red answers below an Outlook header, no quote", yahoo(benOutlook(P("Hallo Ben,") + answered)), { answer: RECEPTION });
+  add("yahoo-outlook", "open", "Yahoo: red answers below an Outlook header, no quote", yahoo(benOutlook(P("Hallo Ben,") + answered)), { answer: RECEPTION });
   add("yahoo-outlook", "same", "Yahoo: Dana's own quote + answer below an Outlook header", yahoo(benOutlook(P("Hallo Ben,") + box(P(QF))
     + P("Ja, sie ist Position 3 im Angebot, siehe Anhang.") + P("Gruss") + P("Dana"))));
+  // An Outlook header block inside Yahoo's container reads as the Windows header path reads it.
+  add("yahoo-outlook", "open", "Yahoo: blue answers below an Outlook header", yahoo(benOutlook(P("Hallo Ben,") + answered.replace(/#C00000/g, "#0070C0"))), { answer: RECEPTION });
+  add("yahoo-outlook", "open", "Yahoo: red answers two Outlook hops down", yahoo(benOutlook(P("Hallo Ben,") + P("siehe Ben unten.") + P("Gruss Dana")
+    + winHop(P("Hallo Dana,") + answered))), { answer: RECEPTION });
+  add("yahoo-outlook", "same", "Yahoo: Dana's purple own quote in a Word box + answer below an Outlook header (the class folds it)", yahoo(benOutlook(P("Hallo Ben,")
+    + wbox(P(purple(QF))) + P("Ja, sie ist Position 3 im Angebot, siehe Anhang.") + P("Gruss") + P("Dana"))));
+  add("yahoo-outlook", "same", "Yahoo: an Outlook hop, no answers, coloured signature last", yahoo(benOutlook(P("Hallo Ben,") + P(`1. ${Q_WHEN}`) + P(PLAN_T) + P("Gruss")
+    + P(obl("Dana Example")) + P(obl("Leiterin Facility Management")))));
 }
 
 // ── adversarial shapes, several quotes in one message, residuals, siblings ────────────────
@@ -623,19 +638,341 @@ function aroundTheContainer(add: Add): void {
   { answer: "Thursday at 10 works for us, see you then." });
 }
 
+// ── new Outlook's history read to its end, as the Windows header path reads the body ──────
+
+function wholeHistory(add: Add): void {
+  const JA = "JA, er kommt um 10 Uhr.";
+  const TUESDAY = "Am Dienstag um 10 Uhr.";
+  const benQa = P("Hallo Clara,") + P("Kommt der Techniker morgen?") + P(red(JA)) + P(PLAN_T) + P("Gruss") + P("Ben");
+  // The writer's reply text holds its own quote, so the container is not the first quote run.
+  const leadQuote = (h: string): string => h.replace('<p class="MsoNormal">danke, so machen wir es.',
+    `${cite(P("Können wir verschieben?"))}<p class="MsoNormal">danke, so machen wir es.`);
+  for (const id of ["132", "133"]) {
+    add("lead-quote", opens(id), `${id} red answer + prose in the earlier message`, leadQuote(earlier(id, benQa)), { answer: JA });
+    add("lead-quote", opens(id), `${id} red answers in an older hop`, leadQuote(earlier(id, PLAIN_BEN + winHop(DANA_QA))), { answer: TUESDAY });
+  }
+  add("lead-quote", "same", "132 no answers (it folds)", leadQuote(earlier("132", PLAIN_BEN + winHop(DANA_QA.replace(/<span style="color:#C00000">([^<]*)<\/span>/g, "$1")))));
+  // A long older quote in one saturated ink past an attribution: the writer's red answer above it stays open.
+  const long = (ink: Wrap): string => P(ink("Hallo Ben,")) + [1, 2, 3].map((k) => P(ink(`Punkt ${k}: Die Begehung des Technikraums muss mit dem Hauswart und der Verwaltung `
+    + "abgestimmt werden, bevor wir den Termin bestätigen."))).join("") + P(ink("Viele Grüsse")) + P(ink("Dana"));
+  // The Windows fixtures' text part beside such an html: Ben's lines, the attribution, the older message.
+  const longT = ["Hallo Ben,", ...[1, 2, 3].map((k) => `Punkt ${k}: Die Begehung des Technikraums muss mit dem Hauswart und der Verwaltung `
+    + "abgestimmt werden, bevor wir den Termin bestätigen."), "Viele Grüsse", "Dana"];
+  const textOf = (id: string, ben: string[], gt: boolean): string => fixture(id).text.replace(/\nHallo Clara,[^]*$/,
+    `\n${[...ben, BY_T.replace(/&lt;/g, "<").replace(/&gt;/g, ">"), ...longT.map((l) => (gt ? `> ${l}` : l))].join("\n")}`);
+  const benQaT = ["Hallo Clara,", "Kommt der Techniker morgen?", JA, PLAN_T, "Gruss", "Ben"];
+  for (const [qk, q] of [["gmail", gmail], ["cite", cite], ["plain lines", black]] as const) for (const [ik, ink] of [["#1F497D", obl], ["#500050", purple]] as const) {
+    add("hop-ink", "same", `132 red answer + prose, attribution, ${qk} quote in ${ik}`, earlier("132", benQa + BY + q(long(ink))), { answer: JA });
+    // The Windows header path reads the earlier message on its own up to the attribution, as new Outlook does.
+    for (const id of ["133", "135"]) {
+      add("hop-ink", "open", `${id} red answer + prose, attribution, ${qk} quote in ${ik}`, earlier(id, benQa + BY + q(long(ink))),
+        { answer: JA, text: textOf(id, benQaT, q !== black) });
+    }
+    add("hop-ink", "open", `132 lead quote: red answer + prose, attribution, ${qk} quote in ${ik}`, leadQuote(earlier("132", benQa + BY + q(long(ink)))), { answer: JA });
+    for (const id of IDS) {
+      add("hop-ink", "same", `${id} no answer: prose, attribution, ${qk} quote in ${ik}`, earlier(id, benQa.replace(red(JA), "Er kommt um 10 Uhr.") + BY + q(long(ink))),
+        id === "132" ? {} : { text: textOf(id, benQaT.map((l) => (l === JA ? "Er kommt um 10 Uhr." : l)), q !== black) });
+    }
+  }
+  // The named cost: the earlier writer's own coloured or highlighted line between his sentences now stays open there too.
+  const NOTE = "Wichtig: Der Technikraum ist erst ab 9 Uhr offen.";
+  for (const id of ["133", "135"]) for (const [ek, e] of [["red", red], ["highlighted", hl]] as const) {
+    add("hop-ink", "open", `${id} Ben's own ${ek} line between his sentences, attribution, gmail quote in #1F497D`, earlier(id, P("Hallo Clara,") + P("anbei Danas Rückmeldung.")
+      + P(e(NOTE)) + P(PLAN_T) + P("Gruss") + P("Ben") + BY + gmail(long(obl))), { text: textOf(id, ["Hallo Clara,", "anbei Danas Rückmeldung.", NOTE, PLAN_T, "Gruss", "Ben"], true) });
+  }
+  // The same in an Outlook hop below Ben's: every header block's own message is read up to its attribution.
+  const FINN = "Am 26.10.2026 um 09:00 schrieb Finn Beispiel &lt;finn@example.com&gt;:";
+  const dana = (lines: string[]): string => lines.map(P).join("");
+  const danaQa = (a: string): string[] => ["Hallo Ben,", "Kommt der Techniker morgen?", a, PLAN_T, "Gruss", "Dana"];
+  const deepT = (id: string, lines: string[], gt: boolean): string => fixture(id).text.replace(/\nHallo Clara,[^]*$/, `\n${["Hallo Clara,", "Dana hat Fragen, siehe unten.",
+    "Gruss", "Ben", "", "Von: Dana Example <dana.example@example.net>", "Gesendet: Dienstag, 27. Oktober 2026 17:40", "An: Ben Sample <ben.sample@example.org>",
+    "Betreff: Begehung Technikraum", "", ...lines, FINN.replace("&lt;", "<").replace("&gt;", ">"), ...longT.map((l) => (gt ? `> ${l}` : l))].join("\n")}`);
+  const deep = (id: string, lines: string[], q: Wrap, ink: Wrap): string => earlier(id, PLAIN_BEN + winHop(dana(lines) + P(FINN) + q(long(ink))));
+  for (const [qk, q] of [["gmail", gmail], ["cite", cite], ["plain lines", black]] as const) for (const [ik, ink] of [["#1F497D", obl], ["#500050", purple]] as const) {
+    for (const id of IDS) {
+      const text = (lines: string[]): { text?: string } => (id === "132" ? {} : { text: deepT(id, lines, q !== black) });
+      add("deep-hop-ink", "open", `${id} Dana's hop: red answer + prose, attribution, ${qk} quote in ${ik}`, deep(id, danaQa(red(JA)), q, ink), { answer: JA, ...text(danaQa(JA)) });
+      add("deep-hop-ink", "same", `${id} Dana's hop, no answer: prose, attribution, ${qk} quote in ${ik}`, deep(id, danaQa(JA), q, ink), text(danaQa(JA)));
+    }
+  }
+  for (const id of ["133", "135"]) {
+    const t = (lines: string[]): { text: string } => ({ text: deepT(id, lines, true) });
+    for (const [ek, e] of [["red", red], ["highlighted", hl]] as const) {
+      const own = ["Hallo Ben,", "anbei meine Rückmeldung.", e(NOTE), PLAN_T, "Gruss", "Dana"];
+      add("deep-hop-ink", "open", `${id} Dana's own ${ek} line between her sentences, attribution, gmail quote in #1F497D`, deep(id, own, gmail, obl), t(own.map((l) => (l === e(NOTE) ? NOTE : l))));
+    }
+    const sigLast = [...danaQa(JA).slice(0, -1), obl("Dana Example"), obl("Leiterin Facility Management")];
+    add("deep-hop-ink", "same", `${id} Dana's hop, no answer, coloured signature last, gmail quote in #1F497D`, deep(id, sigLast, gmail, obl),
+      t([...danaQa(JA).slice(0, -1), "Dana Example", "Leiterin Facility Management"]));
+    add("deep-hop-ink", "same", `${id} Dana's hop, no answer, red heading first, gmail quote in #1F497D`, deep(id, [red("Begehung Technikraum"), ...danaQa(JA)], gmail, obl),
+      t(["Begehung Technikraum", ...danaQa(JA)]));
+  }
+  // Yahoo's container: Dana's hop first, or under a plain Outlook hop.
+  add("deep-hop-ink", "open", "Yahoo: Dana's hop red answer, attribution, gmail quote in #1F497D", yahoo(PLAIN_BEN + winHop(dana(danaQa(red(JA))) + P(FINN) + gmail(long(obl)))), { answer: JA });
+  add("deep-hop-ink", "open", "Yahoo: a plain Outlook hop, then Dana's hop red answer, attribution, gmail quote in #1F497D", yahoo(PLAIN_BEN
+    + winHop(P("Hallo Ben,") + P("siehe Dana unten.") + P("Gruss Finn"), "Finn Beispiel &lt;finn@example.com&gt;") + winHop(dana(danaQa(red(JA))) + P(FINN) + gmail(long(obl)))), { answer: JA });
+  add("deep-hop-ink", "same", "Yahoo: a plain Outlook hop, then Dana's hop, no answer, gmail quote in #1F497D", yahoo(PLAIN_BEN
+    + winHop(P("Hallo Ben,") + P("siehe Dana unten.") + P("Gruss Finn"), "Finn Beispiel &lt;finn@example.com&gt;") + winHop(dana(danaQa(JA)) + P(FINN) + gmail(long(obl)))));
+  // New Outlook's container keeps the header path's lead guards: a comment heading, an announcement however many quote runs come first.
+  const C = "Er kommt um 10 Uhr, ich habe es mit ihm abgesprochen.";
+  const ask = P("Hallo Clara,") + P("Kommt der Techniker morgen um 10 Uhr oder erst am Nachmittag?");
+  const announce = (h: string): string => h.replace("danke, so machen wir es. Ich reserviere den Raum für Donnerstag.", "meine Antworten findest du unten im Text.");
+  const qa = P("Hallo Clara,") + P(`1. ${QF}`) + P("Ja, sie ist Position 3 im Angebot.") + P("2. Brauchen Ihre Techniker einen Schlüssel für den Technikraum?")
+    + P("Ja, bitte am Empfang hinterlegen.") + P("Gruss") + P("Ben");
+  for (const id of IDS) {
+    add("comment-heading", opens(id), `${id} 'Meine Anmerkungen:' and a black comment in the earlier message`, earlier(id, ask + P("Meine Anmerkungen:") + P(C) + P("Gruss") + P("Ben")), { answer: C });
+    add("comment-heading", opens(id), `${id} 'Kommentare:' after the sign-off`, earlier(id, ask + P("Gruss") + P("Ben") + P("Kommentare:") + P(C)), { answer: C });
+    add("comment-heading", opens(id), `${id} 'Comments:' inline`, earlier(id, ask + P("Comments:") + P("He comes at 10, I agreed it with him.") + P("Gruss") + P("Ben")),
+      { answer: "He comes at 10, I agreed it with him." });
+    add("announced", "same", `${id} announced black answers`, announce(earlier(id, qa)), { answer: "Ja, sie ist Position 3 im Angebot." });
+    add("announced", opens(id), `${id} announced black answers, the reply holds a quote`, announce(leadQuote(earlier(id, qa))), { answer: "Ja, sie ist Position 3 im Angebot." });
+  }
+  // A Gmail reply that answers inline and announces it: its trailing container holds no answers and still folds.
+  add("announced", "same", "Gmail inline answers announced, the trailing container folds", '<div dir="ltr"><div>Hi Ben,</div><div>my answers are inline below.</div></div>'
+    + gmail("<div>Can the technician come on Tuesday?</div>") + "<div>Yes, Tuesday at 10 works for us.</div><div>Clara</div><br>"
+    + '<div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Wed, 28 Oct 2026 at 14:12, Ben Sample &lt;ben@example.org&gt; wrote:<br></div>'
+    + gmail("<div>Hi Clara,</div><div>Can the technician come on Tuesday?</div><div>Thanks, Ben</div>") + "</div>");
+  // A Gmail chain holds no header block of its own level: its older hops are read as before.
+  for (const [ek, extra] of [["coloured signature", P(obl("Ben Sample")) + P(obl("Beispiel AG"))], ["red line", P(red("URGENT: the room is locked until 9."))]] as const) {
+    const chain = (inner: string): string => '<div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Wed, 28 Oct 2026 at 14:12, Ben Sample &lt;ben@example.org&gt; wrote:<br></div>'
+      + gmail(inner) + "</div>";
+    add("gmail-chain", "same", `${ek} in the older hop, prose after it`, '<div dir="ltr"><div>Hi all,</div><div>thanks, all set then.</div><div>Finn</div></div><br>'
+      + chain(P("Hi Clara,") + P("Thursday at 10 works for us, see you then.") + P("Ben") + chain(P("Hi Ben,") + extra
+        + P("Can we move the visit of the technical room to Thursday? I am not in the house on Tuesday.") + P("Dana"))));
+  }
+  // A container led by a quoted header block, not its own: read to its first message, as before.
+  const sig = P(obl("Ben Sample")) + P(obl("Projektleiter Haustechnik | Beispiel AG"));
+  add("quoted-header-led", "same", "a Gmail container opening with a quoted Outlook header, a coloured signature above an attribution",
+    '<div dir="ltr">Hi Ben,<div><br></div><div>thanks, that works.</div></div><br><div class="gmail_quote">'
+    + gmail(P("From: Ben Sample &lt;ben.sample@example.org&gt;") + P("Sent: Wednesday, October 28, 2026 2:12 PM") + P("To: Clara Muster &lt;clara.muster@example.org&gt;")
+      + P("Subject: Visit") + P("Hi Clara,") + P("Thursday at 10 works for us, see you then.") + sig + P("On Tue, 27 Oct 2026 at 17:40, Dana Example &lt;dana@example.net&gt; wrote:")
+      + gmail(P("Hi Ben,") + P("Can we move the visit of the technical room to Thursday? On Tuesday I am not in the house.") + P("Dana"))) + "</div>");
+}
+
+// ── an earlier message that opens with its quote box: folds when it is the hop's only box, in the
+//    level's ink, answered in a sentence and signed below by the sender on its From line ─────────
+
+/** The tester's letter: a new Outlook for Mac reply whose earlier message opens with its quote. */
+function macReply(tag: string, variant: "quote" | "nolink" | "greeting" | "noquote"): { html: string; text: string } {
+  const link = variant === "nolink" ? "" : ' Der aktuelle Plan liegt hier: <a href="https://example.com/hafenplan-q4">Hafenplan Q4</a>.';
+  const linkT = variant === "nolink" ? "" : " Der aktuelle Plan liegt hier: Hafenplan Q4 <https://example.com/hafenplan-q4>.";
+  const greet = variant === "greeting" ? "<p>Hallo Ada, meine Antworten stehen unten bei deinen Punkten.</p>\n" : "";
+  const quote = variant === "noquote" ? "" : `<blockquote style="margin:0 0 0 0.8ex;border-left:1px solid #cccccc;padding-left:1ex">\n<ul><li>${tag}-q: Bitte die Liegeplatzliste fuer Q4 bis Freitag schicken.</li></ul>\n</blockquote>\n`;
+  const div = '<div style="font-family:Aptos,Calibri,sans-serif;font-size:12pt">';
+  const html = `<html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body>
+${div}${tag}1: Danke Oren, passt so. Ich schicke die Liste morgen.</div>
+${div}<br></div>
+${div}Gruss<br>Ada</div>
+${div}<br></div>
+<div id="mail-editor-reference-message-container">
+<div class="ms-outlook-mac-reference-message">
+<div style="border:none;border-top:solid #B5C4DF 1.0pt;padding:3.0pt 0cm 0cm 0cm">
+<p style="margin:0;font-family:Aptos,Calibri,sans-serif;font-size:12pt"><b>Von: </b>Oren Dale &lt;oren@example.org&gt;<br>
+<b>Datum: </b>Montag, 26. Oktober 2026 um 12:06<br>
+<b>An: </b>Ada Quill &lt;ada@example.com&gt;<br>
+<b>Cc: </b>Mila Stern &lt;mila@example.org&gt;<br>
+<b>Betreff: </b>Re: Hafenplan Q4 ${tag}</p>
+</div>
+<div><br></div>
+${div}
+${greet}${quote}<p>${tag}-h: Mache ich gerne.${link} Sag Bescheid, wenn etwas fehlt.</p>
+<p>Viele Gruesse<br>Oren</p>
+</div>
+</div>
+</div>
+</body></html>`;
+  const text = [`${tag}1: Danke Oren, passt so. Ich schicke die Liste morgen.`, "", "Gruss", "Ada", "", "Von: Oren Dale <oren@example.org>", "Datum: Montag, 26. Oktober 2026 um 12:06",
+    "An: Ada Quill <ada@example.com>", "Cc: Mila Stern <mila@example.org>", `Betreff: Re: Hafenplan Q4 ${tag}`, "",
+    ...(variant === "greeting" ? ["Hallo Ada, meine Antworten stehen unten bei deinen Punkten.", ""] : []),
+    ...(variant === "noquote" ? [] : [`> * ${tag}-q: Bitte die Liegeplatzliste fuer Q4 bis Freitag schicken.`, ""]),
+    `${tag}-h: Mache ich gerne.${linkT} Sag Bescheid, wenn etwas fehlt.`, "", "Viele Gruesse", "Oren", ""].join("\n");
+  return { html, text };
+}
+
+function opensWithItsQuote(add: Add): void {
+  const MOVE = "Können wir die Begehung des Technikraums auf Donnerstag verschieben?";
+  const STMT = "<ul><li>Bitte die Liegeplatzliste für Q4 bis Freitag schicken.</li></ul>";
+  const ANS_LINK = 'Ja, Donnerstag um 10 Uhr passt uns. Den Plan des Technikraums findest du hier: <a href="https://example.com/plan">Plan Technikraum</a>';
+  const ANS = "Ja, Donnerstag um 10 Uhr passt uns gut.";
+  // A sign-off-only closing over the sender's name signs; "Gruss"/"Ben" (the writer may say it to him) does not.
+  const SIGNOFF = P("Viele Grüsse") + P("Ben");
+  const CLARA = "Ja, Donnerstag um 10 Uhr passt mir gut, ich komme.";
+  const testerBq: Wrap = (x) => `<blockquote style="margin:0 0 0 0.8ex;border-left:1px solid #cccccc;padding-left:1ex">${x}</blockquote>`;
+  const boxes: Record<string, Wrap> = { box, testerBq, gmail, cite, plain, wordBq, wordBox, gmxBox, rooster };
+  const head = (date: string, subject: string, from: string): string => `<b>Von: </b>${from}<br><b>${date}<br><b>An: </b>Clara Muster &lt;clara.muster@example.org&gt;, `
+    + `Dana Example &lt;dana@example.net&gt;<br><b>Cc: </b>Finn Beispiel &lt;finn@example.com&gt;<br><b>Betreff: </b>${subject}`;
+  const BEN = "Ben Sample &lt;ben.sample@example.org&gt;";
+  const headers: Record<string, (h: string, from?: string) => string> = {
+    macNew: (h, from = BEN) => '<div id="mail-editor-reference-message-container"><div class="ms-outlook-mobile-reference-message skipProofing"><p class="MsoNormal" style="margin-bottom:12.0pt">'
+      + `${head(DATE_MAC, "Re: Begehung Technikraum", from)}<o:p></o:p></p></div>${h}</div>`,
+    macNewTester: (h, from = BEN) => '<div id="mail-editor-reference-message-container"><div class="ms-outlook-mac-reference-message"><div style="border:none;border-top:solid #B5C4DF 1.0pt;padding:3.0pt 0cm 0cm 0cm">'
+      + `<p style="margin:0">${head(DATE_MAC, "Re: Begehung Technikraum", from)}</p></div><div><br></div><div>${h}</div></div></div>`,
+    macClassic: (h, from = BEN) => '<div style="border:none;border-top:solid #B5C4DF 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p class="MsoNormal" style="margin-bottom:12.0pt">'
+      + `${head(DATE_MAC, "Re: Begehung Technikraum", from)}<o:p></o:p></p></div>${h}`,
+    winDe: (h, from = BEN) => `<div><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p class="MsoNormal">${head(DATE_WIN, "AW: Begehung Technikraum", from)}`
+      + `<o:p></o:p></p></div></div>${BL}${h}`,
+    owa: (h, from = BEN) => '<hr style="display:inline-block;width:98%" tabindex="-1"><div id="divRplyFwdMsg" dir="ltr"><font face="Calibri, sans-serif" style="font-size:11pt" color="#000000">'
+      + `${head(DATE_WIN, "AW: Begehung Technikraum", from)}</font><div>&nbsp;</div></div><div>${h}</div>`,
+  };
+  const text = (mac: boolean, body: string[]): string => [
+    "Hallo Ben,", "", "danke, so machen wir es. Ich reserviere den Raum für Donnerstag.", "", "Gruss", "Clara", "", "Von: Ben Sample <ben.sample@example.org>",
+    mac ? "Datum: Mittwoch, 28. Oktober 2026 um 14:12" : "Gesendet: Mittwoch, 28. Oktober 2026 14:12",
+    "An: Clara Muster <clara.muster@example.org>, Dana Example <dana@example.net>", "Cc: Finn Beispiel <finn@example.com>",
+    mac ? "Betreff: Re: Begehung Technikraum" : "Betreff: AW: Begehung Technikraum", "", ...body,
+  ].join("\n");
+  // The tester's letters: the earlier message opens with its quote (QH, QM, QN), a line above it (QP), no quote (QK).
+  for (const [tag, v] of [["QH", "quote"], ["QM", "quote"], ["QN", "nolink"], ["QP", "greeting"], ["QK", "noquote"]] as const) {
+    const t = macReply(tag, v);
+    add("opens-tester", "owner", `${tag} ${v}`, t.html, { text: t.text });
+  }
+  // Every header, quote box and body: the quote opens the message, the answer and the sign-off follow.
+  const bodies: Record<string, [string, string]> = {
+    link: [BULLET, P(ANS_LINK) + BL + SIGNOFF],
+    sentence: [BULLET, P(ANS) + P("Bitte bringt die Schlüssel mit.") + BL + SIGNOFF],
+    statement: [STMT, P("Mache ich gerne, die Liste kommt bis Donnerstag.") + SIGNOFF],
+    twoBullets: [`<ul><li>${MOVE}</li><li>Bringt ihr die Pläne der Lüftung mit?</li></ul>`, P(ANS) + SIGNOFF],
+    sigBlock: [BULLET, P(ANS) + BL + P("Freundliche Grüsse") + P("Ben Sample") + P("Projektleiter Haustechnik") + P("Beispiel AG, Musterstrasse 1, 8000 Zürich")],
+    gruessOneLine: [BULLET, P(ANS) + P("Viele Grüsse, Ben")],
+    regards: [BULLET, P(ANS) + P("Best regards,") + P("Ben Sample")],
+  };
+  for (const header of Object.keys(headers)) for (const [qk, q] of Object.entries(boxes)) for (const [bk, [inner, rest]] of Object.entries(bodies)) {
+    add("opens", "owner", `${header} ${qk} ${bk}`, word(LEAD + headers[header]!(q(inner) + rest)), bk === "link" ? { text: text(header.startsWith("mac"), [
+      `> • ${MOVE}`, "", "Ja, Donnerstag um 10 Uhr passt uns. Den Plan des Technikraums findest du hier: Plan Technikraum<https://example.com/plan>", "", "Viele Grüsse", "Ben"]) } : {});
+  }
+  // An older Outlook hop below, or a second hop that opens with its own quote.
+  for (const header of ["macNew", "winDe"]) for (const [qk, q] of Object.entries({ box, gmail, testerBq })) {
+    add("opens-older", "owner", `${header} ${qk} older hop`, word(LEAD + headers[header]!(q(BULLET) + P(ANS_LINK) + SIGNOFF + OLDER)));
+    const danaFirst = '<div><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm">'
+      + P("<b>Von:</b> Dana Example &lt;dana@example.net&gt;<br><b>Gesendet:</b> Dienstag, 27. Oktober 2026 09:30<br><b>An:</b> Ben Sample &lt;ben.sample@example.org&gt;<br><b>Betreff:</b> Begehung")
+      + "</div></div>" + q(P("Kommt ihr am Donnerstag mit den Plänen?")) + P("Ja, die Pläne der Lüftung bringe ich selbst mit.") + P("Liebe Grüsse") + P("Dana");
+    add("opens-older", "owner", `${header} ${qk} both hops open with their quote`, word(LEAD + headers[header]!(q(BULLET) + P(ANS_LINK) + SIGNOFF + danaFirst)));
+    add("opens-older", "same", `${header} ${qk} older hop opens with its quote, unsigned`, word(LEAD + headers[header]!(P("Hallo Clara,") + q(BULLET) + P(ANS_LINK) + SIGNOFF
+      + danaFirst.replace(P("Liebe Grüsse") + P("Dana"), ""))));
+    add("opens-older", "same", `${header} ${qk} older hop opens with its quote, 'Gruss'/'Dana'`, word(LEAD + headers[header]!(P("Hallo Clara,") + q(BULLET) + P(ANS_LINK) + SIGNOFF
+      + danaFirst.replace(P("Liebe Grüsse"), P("Gruss")))));
+  }
+  // The writer's answers typed into a history that opens with a box keep 0.30.16's reading.
+  const benBox = box(P("Hallo Clara,") + P(MOVE) + P("Gruss") + P("Ben"));
+  for (const id of IDS) {
+    const ans = { answer: CLARA };
+    const cost = (): QhProbeLabel => (id === "132" ? "cost" : "same");
+    add("H1 whole message boxed, answer below", "same", `${id} black`, earlier(id, benBox + P(CLARA)), ans);
+    add("H1 whole message boxed, answer below", "same", `${id} black + writer's sign-off`, earlier(id, benBox + P(CLARA) + P("Gruss Clara")), ans);
+    add("H1 whole message boxed, answer below", "same", `${id} black + 'Danke dir'`, earlier(id, benBox + P(CLARA) + P("Danke dir")), ans);
+    for (const [k, w] of [["red", red], ["blue", blue], ["hl", hl], ["nm", nm], ["cm", cm]] as const) {
+      add("H1 whole message boxed, answer below", "same", `${id} ${k}`, earlier(id, benBox + P(w(CLARA))), ans);
+    }
+    add("H1 whole message boxed, answer below", "same", `${id} black + 'Danke Ben'`, earlier(id, benBox + P(CLARA) + P("Danke Ben")), ans);
+    // A box with no question: the sign-off rule alone holds these.
+    const ask = P("Hallo Clara,") + P("Bitte schick mir die Liegeplatzliste bis Freitag.");
+    for (const [k, below] of [["'Danke Ben'", P("Danke Ben")], ["'Danke dir, Ben!'", P("Danke dir, Ben!")], ["'Bis Freitag, Ben.'", P("Bis Freitag, Ben.")],
+      ["'Danke Ben' + 'Gruss Clara'", P("Danke Ben") + P("Gruss Clara")], ["the writer is a Ben too", SIGNOFF]] as const) {
+      add("H1 whole message boxed, answer below", "same", `${id} no question, black + ${k}`, earlier(id, box(ask + SIGNOFF) + P(CLARA) + below), ans);
+    }
+    add("H1 whole message boxed, answer below", "same", `${id} unsigned, no question, black + 'Danke Ben'`, earlier(id, box(ask) + P(CLARA) + P("Danke Ben")), ans);
+    add("H1 whole message boxed, answer below", "same", `${id} unsigned question, black + 'Danke Ben'`, earlier(id, box(P("Hallo Clara,") + P(MOVE)) + P(CLARA) + P("Danke Ben")), ans);
+    for (const [k, w] of [["red", red], ["blue", blue], ["hl", hl]] as const) {
+      add("LOW comment above sign-off", "same", `${id} ${k}`, earlier(id, P("Hallo Clara,") + P("Die Begehung ist am Dienstag um 10 Uhr geplant, der Raum ist reserviert.") + P(w(CLARA)) + SIGNOFF), ans);
+    }
+    const at = "Am Dienstag um 10 Uhr, er meldet sich am Empfang.";
+    const parts2 = (w: Wrap): string => box(P("Hallo Clara,") + P(`1. ${Q_WHEN}`)) + P(w(at)) + box(P(`2. ${Q_KEY}`) + P("Gruss Ben")) + P(w("Der Hauswart hat ihn, bitte am Empfang fragen."));
+    for (const [k, w] of [["black", black], ["red", red], ["blue", blue]] as const) add("H2 parts, sign-off boxed", "same", `${id} ${k}`, earlier(id, parts2(w)), { answer: at });
+    add("H2 parts, sign-off boxed", "same", `${id} black, no sign-off at all`, earlier(id, box(P("Hallo Clara,") + P(`1. ${Q_WHEN}`)) + P(at)
+      + box(P(`2. ${Q_KEY}`)) + P("Der Hauswart hat ihn, bitte am Empfang fragen.")), { answer: at });
+    add("H2 parts, sign-off boxed", "same", `${id} red, no sign-off at all`, earlier(id, box(P("Hallo Clara,") + P(`1. ${Q_WHEN}`)) + P(red(at))
+      + box(P(`2. ${Q_KEY}`)) + P(red("Der Hauswart hat ihn, bitte am Empfang fragen."))), { answer: at });
+    add("H3 parts, sign-off at level", "same", `${id} black`, earlier(id, box(P(`1. ${Q_WHEN}`)) + P(at) + box(P(`2. ${Q_KEY}`))
+      + P("Der Hauswart hat ihn, bitte am Empfang fragen.") + SIGNOFF), { answer: at });
+    // The folded shape itself with the writer's same-ink answer: the named cost on new Outlook.
+    add("H4 owner-identical", cost(), `${id} box, black answer, Ben's sign-off`, earlier(id, box(P(MOVE)) + P(CLARA) + SIGNOFF), ans);
+    add("H4 owner-identical", cost(), `${id} box with greeting, black answer, Ben's sign-off`, earlier(id, box(P("Hallo Clara,") + P(MOVE)) + P(CLARA) + SIGNOFF), ans);
+    for (const [k, w] of [["red", red], ["blue", blue], ["hl", hl], ["nm", nm], ["cm", cm], ["arrow", (t: string) => `-&gt; ${t}`]] as const) {
+      add("H5 marked answer, Ben signs", "same", `${id} ${k}`, earlier(id, box(P(MOVE)) + P(w(CLARA)) + SIGNOFF), ans);
+    }
+    const benBelow = P("Die Begehung ist am Dienstag um 10 Uhr geplant, der Raum ist reserviert.") + P(PLAN_T) + SIGNOFF;
+    for (const [k, w] of [["red", red], ["purple", purple], ["blue", blue], ["obl", obl]] as const) {
+      add("H6 writer's box on top", "same", `${id} ${k} question`, earlier(id, box(P(w("Geht auch Mittwoch?"))) + benBelow), { answer: "Geht auch Mittwoch?" });
+      add("H6 writer's box on top", "same", `${id} ${k} comment`, earlier(id, box(P(w("Mittwoch wäre mir lieber."))) + benBelow), { answer: "Mittwoch wäre mir lieber." });
+    }
+    add("H6 writer's box on top", cost(), `${id} black comment`, earlier(id, box(P("Mittwoch wäre mir lieber, geht das auch?")) + benBelow), { answer: "Mittwoch wäre mir lieber, geht das auch?" });
+    for (const a of ["JA", "OK", "Ja, passt.", "14:00"]) add("H7 short below box", "same", `${id} '${a}'`, earlier(id, box(P(QF)) + P(a) + P(PLAN_T) + SIGNOFF), { answer: a });
+    add("H9 name only in the answer", "same", `${id}`, earlier(id, box(P(MOVE)) + P("Ja Ben, passt mir.")), { answer: "Ja Ben, passt mir." });
+    add("H10 unsigned", "same", `${id} answer only`, earlier(id, box(P(MOVE)) + P(ANS_LINK)));
+    add("H10 unsigned", "same", `${id} answer + 'Gruss'`, earlier(id, box(P(MOVE)) + P(ANS) + P("Gruss")));
+    add("H10 unsigned", "same", `${id} answer + other name`, earlier(id, box(P(MOVE)) + P(ANS) + P("Gruss") + P("Clara")));
+    add("H11 coloured sign-off", "same", `${id}`, earlier(id, box(P(MOVE)) + P(ANS) + P(obl("Ben Sample")) + P(obl("Projektleiter Haustechnik"))));
+    add("H12 question + explanation", "same", `${id}`, earlier(id, box(P(MOVE) + P("Am Dienstag bin ich leider nicht im Haus.")) + P(ANS) + SIGNOFF));
+    add("H13 second box after sign-off", "same", `${id}`, earlier(id, box(P(MOVE)) + P(ANS) + SIGNOFF + P("Am 27.10.2026 um 17:40 schrieb Dana Example &lt;dana@example.net&gt;:")
+      + gmail(P("Hallo Ben,") + P(MOVE) + P("Gruss Dana"))));
+    add("H14 two quotes", "same", `${id} black`, earlier(id, box(P(MOVE)) + P(ANS) + box(P("Bringt ihr die Pläne der Lüftung mit?")) + P("Ja, die Pläne bringen wir mit.") + SIGNOFF));
+    for (const [k, w] of [["purple", purple], ["obl", obl]] as const) add("H15 coloured opening quote", "same", `${id} ${k} question`, earlier(id, box(P(w(MOVE))) + P(ANS) + SIGNOFF));
+    add("H16 mixed line", "same", `${id} red word in Ben's answer line`, earlier(id, box(P(MOVE)) + P(`Ja, Donnerstag passt uns. ${red("Mittwoch nicht")}`) + SIGNOFF), { answer: "Mittwoch nicht" });
+    add("H17 name only in a long line", "same", `${id}`, earlier(id, box(P(MOVE)) + P(ANS) + P("Ben ist am Donnerstag selbst vor Ort und bringt die Schlüssel mit.")));
+    // The writer's farewell to the sender under an unsigned box: a closing he can be addressed with signs nothing.
+    for (const bye of ["Ciao Ben", "Cheers Ben!", "À bientôt, Ben", "Saludos, Ben", "Grüessli Ben", "Gruss Ben", "Tschüss Ben", "Bis bald, Ben", "Thanks, Ben",
+      "Merci, Ben", "Liebe Grüsse an Ben"]) {
+      add("H18 the writer's farewell to the sender", "same", `${id} unsigned box, '${bye}'`, earlier(id, box(ask) + P(CLARA) + P(bye)), ans);
+    }
+    // A box ending in the sender's sign-off, or in his signature block or a phone line below it, holds his whole message.
+    const benSig = P("Freundliche Grüsse") + P("Ben Sample") + P("Projektleiter Haustechnik") + P("Beispiel AG, Musterstrasse 1, 8000 Zürich");
+    for (const [bk, end] of [["signature block", benSig], ["phone line", P("Gruss") + P("Ben") + P("Tel. 044 123 45 67")],
+      ["'Danke und Gruss, Ben'", P("Danke und Gruss, Ben")], ["'Cheers Ben!'", P("Cheers Ben!")]] as const) {
+      for (const [wk, below] of [["'Cheers Ben'", P("Cheers Ben")], ["the writer is a Ben too", SIGNOFF], ["the writer is a Ben too, one line", P("Viele Grüsse, Ben")]] as const) {
+        add("H19 the box holds the sender's signed message", "same", `${id} box ends in ${bk}, ${wk}`, earlier(id, box(ask + end) + P(CLARA) + below), ans);
+      }
+    }
+    // Ben's own message signed with a closing the writer could say to him, or with his name alone: open, as on 0.30.18.
+    for (const sign of [["Gruss", "Ben"], ["Gruss Ben"], ["Gruss Ben :-)"], ["Grüsse", "Ben"], ["Ben"], ["Ben Sample"], ["Thanks, Ben"], ["Thanks,", "Ben"],
+      ["Danke und Gruss, Ben"], ["Danke und Gruss", "Ben"], ["Merci, Ben"], ["Bis bald, Ben"], ["Cheers", "Ben"], ["Ciao", "Ben"], ["Grüessli", "Ben"], ["Saludos", "Ben"],
+      ["En Gruess, Ben"], ["Liebe Grüsse aus Zürich", "Ben"], ["Ben Sample, Projektleiter"]]) {
+      add("H20 a closing that can address the sender, or his name alone", "same", `${id} '${sign.join("' / '")}'`, earlier(id, box(P(MOVE)) + P(ANS) + sign.map(P).join("")));
+    }
+    // A sign-off-only closing and the sender's name, on one line or over it, folds (140's and the tester's letters' among them).
+    for (const sign of [["Viele Grüsse", "Ben"], ["Viele Gruesse", "Ben"], ["Liebe Grüße", "Ben"], ["Mit freundlichen Grüssen", "Ben Sample"], ["Freundliche Grüsse, Ben Sample"],
+      ["Herzlichst, Ben"], ["LG Ben"], ["Best regards,", "Ben Sample"], ["Kind regards, Ben"], ["Best,", "Ben"], ["Cordialement,", "Ben Sample"], ["Un saluto, Ben"],
+      ["Met vriendelijke groet,", "Ben Sample"]]) {
+      add("H21 a sign-off-only closing and the sender's name", "owner", `${id} '${sign.join("' / '")}'`, earlier(id, box(P(MOVE)) + P(ANS) + sign.map(P).join("")));
+    }
+    // Another writer's signature block ending the box names someone else: the box stays the sender's quote, and it folds.
+    add("H21 a sign-off-only closing and the sender's name", "owner", `${id} the box ends in Clara's signature block`, earlier(id, box(P("Hallo Ben,")
+      + P("Bitte schick mir die Liegeplatzliste bis Freitag.") + P("Gruss") + P("Clara") + P("Tel. 044 987 65 43")) + P("Mache ich gerne, die Liste kommt bis Donnerstag.") + SIGNOFF));
+  }
+  // The From line's display name: none (as before), "Last, First" and Outlook's mailto form (it folds).
+  for (const header of ["macNew", "winDe"]) {
+    const signed = box(BULLET) + P(ANS_LINK) + SIGNOFF;
+    add("H8 no display name", "same", header, word(LEAD + headers[header]!(signed, "ben.sample@example.org")));
+    add("H8b name as 'Last, First'", "owner", header, word(LEAD + headers[header]!(signed, "Sample, Ben &lt;ben.sample@example.org&gt;")));
+    add("H8c mailto form", "owner", header, word(LEAD + headers[header]!(signed, "Ben Sample [mailto:ben.sample@example.org]")));
+  }
+  // Leads that announce answers, a forward subject, the writer's text after the container: as before.
+  const opened = headers.macNew!(box(BULLET) + P(ANS_LINK) + SIGNOFF);
+  add("opens-lead", "same", "macNew announced", word(LEAD.replace("danke, so machen wir es. Ich reserviere den Raum für Donnerstag.", "meine Antworten findest du unten im Text.") + opened));
+  add("opens-lead", "same", "macNew forward subject", word(LEAD + opened), { subject: "WG: Begehung Technikraum" });
+  add("opens-lead", "same", "macNew the writer's text after the container", word(LEAD + opened).replace("</div></body>", `</div>${P("PS: Ich bringe die Schlüssel mit.")}</body>`),
+    { answer: "PS: Ich bringe die Schlüssel mit." });
+  // GMX's box holds the header and the message (level 1): the message opens with a nested quote.
+  add("opens-gmx", "same", "GMX header box, message opens with its quote", `<div>Hallo Ben, danke dir.</div><div>Gruss Clara</div>${gmxBox('<div style="margin:0 0 10px 0;">'
+    + "<b>Gesendet:</b>&nbsp;Mittwoch, 28. Oktober 2026 um 14:12 Uhr<br><b>Von:</b>&nbsp;\"Ben Sample\" &lt;ben.sample@example.org&gt;<br><b>An:</b>&nbsp;clara.muster@example.org<br>"
+    + `<b>Betreff:</b>&nbsp;Re: Begehung</div><div name="quoted-content">${box(BULLET)}<div>${ANS}</div><div>Gruss</div><div>Ben</div></div>`)}`);
+}
+
 /** Every probe, in a fixed order: the corpus first, then each family. */
 export function qhProbeCases(): QhProbe[] {
   const cases: QhProbe[] = [];
   const add: Add = (family, label, name, html, more = {}) => {
     cases.push({ family, name, label, html, ...more });
   };
-  // The corpus: 132-135 are the class's own fixtures; every other one reads as 0.30.16 reads it.
-  for (const f of (corpus ??= qhFixtures())) add("corpus", /^13[2-5]$/.test(f.id) ? "owner" : "same", f.name, f.html, { text: f.text, subject: f.subject });
+  // The corpus: 132-135 and 140 are the class's own fixtures, 136-139 Outlook header blocks read open; every other one reads as 0.30.16 reads it.
+  for (const f of (corpus ??= qhFixtures())) {
+    add("corpus", /^(?:13[2-5]|140)$/.test(f.id) ? "owner" : /^13[6-9]$/.test(f.id) ? "open" : "same", f.name, f.html, { text: f.text, subject: f.subject, answer: f.expect.inlineAnswers[0] });
+  }
   ownerMatrices(add);
   typedAnswers(add);
   answersEverywhere(add);
   adversarial(add);
   classEdges(add);
   aroundTheContainer(add);
+  wholeHistory(add);
+  opensWithItsQuote(add);
   return cases;
 }

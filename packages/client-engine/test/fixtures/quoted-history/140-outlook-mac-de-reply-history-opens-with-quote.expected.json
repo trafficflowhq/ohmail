@@ -1,0 +1,43 @@
+{
+  "id": "140",
+  "file": "140-outlook-mac-de-reply-history-opens-with-quote.eml",
+  "shape": "outlook-mac-de-reply-history-opens-with-quote",
+  "description": "Outlook for Mac (new), German: a short reply and sign-off over Von/Datum '... um HH:MM'/An (two)/Cc (one)/Betreff: Re: in #mail-editor-reference-message-container (ms-outlook-mac-reference-message); the earlier message opens with its own quoted bullet in a left-ruled blockquote, its author's answer with a link below it, then 'Viele Grüsse' and the author's name",
+  "client": "outlook_mac_new",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Ben,",
+      "visibleLastLine": "Clara",
+      "historyStartLine": "Von: Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "Von: Ben Sample <ben.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "#mail-editor-reference-message-container",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Clara"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "A reported shape, re-created with invented content: the earlier message has no line above its quote box. The box is its only one, in the message's ink, answered in a sentence and signed by the sender on the From line, so the history folds at the header."
+}

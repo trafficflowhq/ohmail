@@ -117,9 +117,9 @@ describe("a body with an html part folds its text only where that html folds", (
     expect(shown(el)).toContain("Ja, Sie erhalten das Protokoll am selben Tag als PDF.");
   });
 
-  // 132-135: the history holds its own quote and answer.
+  // 132-135 and 140: the history holds its own quote and answer (140's message opens with its quote).
   for (const [id, greeting] of [["01", "Hallo Herr Sample,"], ["104", "Hallo Herr Sample,"], ["132", "Hallo Clara,"], ["133", "Hallo Clara,"],
-    ["134", "Hallo Clara,"], ["135", "Hallo Clara,"]] as const) {
+    ["134", "Hallo Clara,"], ["135", "Hallo Clara,"], ["140", "Sag Bescheid, wenn etwas fehlt."]] as const) {
     it(`control: ${id}, a reply whose html folds, folds its text as a member`, () => {
       const fx = FIXTURES.find((f) => f.id === id)!;
       const el = body(fx.text, "streamBody", [], fx.html);
