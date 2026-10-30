@@ -347,6 +347,9 @@ export function useJunkWindow(
   /** A page is on screen: a read behind it keeps it, and its failure is no new answer. */
   const pageShown = useRef(false);
   const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** A letter entering the pile is not listed yet; a settle restarted by another move keeps topping up. */
+  const arrivalPending = useRef(false);
+  const settleRun = useRef(0);
   const onSegment = useRef(active);
   useEffect(() => { onSegment.current = active; }, [active]);
 
@@ -675,36 +678,69 @@ export function useJunkWindow(
     if (supported && due(previewAskedAt.current, previewInFlight.current)) readPreview();
   }, [active, warm, kept, supported, fetchFirst, readPreview]);
 
+  /* Page one read again under the reader: rows it did not hold go on top, nothing else changes.
+     `onFresh` runs when it added one. */
+  const topUp = useCallback((onFresh: () => void) => {
+    // A page-one read still out would replace what this adds: the next beat tries again.
+    if (!supported || !pageShown.current || listInFlight.current) return;
+    const gen = generation.current;
+    void wire.list().then((page) => {
+      if (generation.current !== gen) return;
+      setItems((cur) => {
+        const have = new Set(cur.map(junkKeyOf));
+        const fresh = page.items.filter((i) => !have.has(junkKeyOf(i)));
+        if (fresh.length === 0) return cur;
+        onFresh();
+        return [...fresh, ...cur];
+      });
+    }, () => { /* the next beat or entry reads again */ });
+  }, [supported, wire]);
+
   /* A MOVE: the next entry reads, whatever the age. After the settle both are read in the background
-     for that entry to paint, the list only off the segment: it would drop the rows a reader loaded. */
-  const readAfterMove = useCallback(() => {
+     for that entry to paint; off the segment the list is replaced, on it a letter entering the pile
+     is topped up each beat until it is listed, also across a later move that restarts the settle. */
+  const readAfterMove = useCallback((rising = false) => {
     moved.current = true;
     if (settleTimer.current !== null) clearTimeout(settleTimer.current);
+    const arriving = rising || arrivalPending.current;
+    arrivalPending.current = arriving;
+    const run = ++settleRun.current;
     const from = heldKey.current;
     let beats = 0;
+    let listed = false;
+    const arrived = (): void => {
+      listed = true;
+      if (settleRun.current === run) arrivalPending.current = false;
+    };
     const beat = (): void => {
       settleTimer.current = setTimeout(() => {
         settleTimer.current = null;
         beats += 1;
         if (beats === 1 && !onSegment.current) fetchFirst(true);
-        // Later beats only while the segment is on screen and the shelf has not moved yet.
-        if (beats > 1 && (!onSegment.current || from === null || heldKey.current !== from)) return;
+        // Later beats only while the segment is on screen and the letter is in neither place yet.
+        if (beats > 1 && (!onSegment.current || listed || (from === null ? !arriving : heldKey.current !== from))) {
+          arrivalPending.current = false;
+          return;
+        }
+        if (arriving && onSegment.current) topUp(arrived);
         if (supported) readPreview();
         // The organizer may file it after this read: the entry still reads.
         moved.current = true;
         if (beats < JUNK_MOVE_SETTLE_BEATS) beat();
+        else arrivalPending.current = false;
       }, JUNK_MOVE_SETTLE_MS);
     };
     beat();
-  }, [fetchFirst, readPreview, supported]);
-  useEffect(() => { rereadAfterMove.current = readAfterMove; }, [readAfterMove]);
+  }, [fetchFirst, readPreview, supported, topUp]);
+  useEffect(() => { rereadAfterMove.current = () => readAfterMove(); }, [readAfterMove]);
   const pile = keep?.moved ?? 0;
   const lastPile = useRef<number | null>(null);
   useEffect(() => {
     // The first key while kept is the baseline the kept read already covers, never a move.
     const before = kept ? lastPile.current : null;
     lastPile.current = kept ? pile : null;
-    if (before !== null && before !== pile) readAfterMove();
+    // The key's high half is the pile's count: a rise is a letter on its way into Junk.
+    if (before !== null && before !== pile) readAfterMove(Math.floor(pile / 0x1_0000_0000) > Math.floor(before / 0x1_0000_0000));
   }, [kept, pile, readAfterMove]);
   useEffect(() => () => { if (settleTimer.current !== null) clearTimeout(settleTimer.current); }, []);
 
