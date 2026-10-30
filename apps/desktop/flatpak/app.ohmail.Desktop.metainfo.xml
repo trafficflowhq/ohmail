@@ -78,6 +78,23 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.16" date="2026-10-30">
+      <description>
+        <ul>
+          <li>Sign-in notes reach every open window</li>
+          <li>The sign-in card after a refused session fits the desktop window</li>
+          <li>The first click on Screened out or Spam does less work on the desktop</li>
+          <li>The Screener opens faster the first time</li>
+          <li>Mark unread stays when an earlier Mark read is sent again</li>
+          <li>The desktop window follows older and low-contrast Omarchy themes, and says when it cannot</li>
+          <li>Letters on the phone open again after a quick flick at the top of the list</li>
+          <li>A letter you send to yourself shows once in its conversation</li>
+          <li>Search opens the letter you pressed, and Trash and Junk show what you just moved there</li>
+          <li>Rule dates, Send later on the night the clocks go back, and scheduled letters on the desktop</li>
+          <li>Forwarding a letter with a long run of blank lines or deeply nested quotes no longer stalls</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.15" date="2026-10-30">
       <description>
         <ul>
@@ -151,28 +168,6 @@
           <li>A reply arriving into an open conversation on the phone no longer moves the reader or turns read</li>
           <li>A letter dated after it arrived, or with no date, is listed by its arrival</li>
           <li>The SQLite test run splits into five measured shards</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.11" date="2026-10-28">
-      <description>
-        <ul>
-          <li>Scrolling the News list no longer marks letters read</li>
-          <li>Screened out and Spam show their list on the first click</li>
-          <li>News and Receipts name their unread letters on your first visit</li>
-          <li>The reply editor in News and Receipts no longer covers the end of the letter</li>
-          <li>A screen reader is told when the desktop window was reloaded</li>
-          <li>The Look follows your account on every signed-in device</li>
-          <li>The phone's Look follows your account too</li>
-          <li>Compose and mail links keep the message you are writing</li>
-          <li>A send you cancel on the phone with no network is in Drafts at once</li>
-          <li>The phone's sidebar opens beside the rail on a foldable</li>
-          <li>The settings document in ohmail/_meta names the app version that wrote it</li>
-          <li>Gmail setup says what to do when an account cannot create an App Password</li>
-          <li>The server no longer ships a command that marks screened-out mail read</li>
-          <li>A lower storage limit on Cloud waits 14 days before old letters are emptied</li>
-          <li>Search answers faster for words in a few percent of your mail</li>
-          <li>A closed tab no longer holds a live-update stream on ohmail Cloud</li>
         </ul>
       </description>
     </release>
