@@ -596,6 +596,7 @@ export const DE: Deck = {
     "Alle im Screener-Ordner werden angezeigt – die Screening-Einstellungen des organisierenden Geräts wurden noch nicht gelesen.",
   screeningUnreadHere:
     "Alle im Screener-Ordner werden angezeigt, bis bei der nächsten Prüfung die eigenen Screening-Einstellungen dieses Handys gelten.",
+  screeningUnreadNobody: "Alle im Screener-Ordner werden angezeigt – dieses Postfach wird von nichts organisiert.",
   screeningUnstated: (holder: string) =>
     `Auf ${holder} läuft eine ältere ohmail-Version, die ihr Screening-Zeitfenster nicht teilt – alle im Screener-Ordner werden angezeigt.`,
   screeningUnstatedNoName:
