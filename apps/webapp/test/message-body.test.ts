@@ -684,6 +684,287 @@ describe("links look like links and say where they go", () => {
     // Ordinary prose naming no host is not a disagreement.
     expect(textDisagreesWithHref("Manage usage credits", "url8792.mail.wolkenmail.example")).toBe(false);
     expect(textDisagreesWithHref("Read more →", "example.com")).toBe(false);
+    // ANY host the label names counts, wherever it stands and whatever wraps or splits it.
+    // Mutations: first host only → the first two; a 2 KiB window → the second; neither strip
+    // below → the zero-width space.
+    for (const label of [
+      "evil.example bank.example",
+      `evil.example ${"x ".repeat(1500)}bank.example`,
+      "Sign in at bank.example.",
+      "(bank.example)",
+      "help@bank.example",
+      "bank\u200b.example",
+    ]) expect(textDisagreesWithHref(label, "evil.example"), JSON.stringify(label).slice(0, 40)).toBe(true);
+    // Drawn as a host the text does not spell: an override or isolate reorders it; a format mark,
+    // a selector, a filler or a control (U+0085) draws nothing; a hair-thin space reads as none; a
+    // strong right-to-left mark draws nothing but carries digits across the dot. Mutations: no bidi
+    // rule → the first two; no strong mark in it → the next two; no filler strip → the annotation
+    // mark (a format character outside Default_Ignorable); no strip of what draws nothing → the next
+    // four; no joined reading → the last two.
+    for (const label of [
+      "bank\u{202e}elpmaxe.\u{202c}",
+      "bank\u{2067}example.\u{2069}",
+      "office\u{200f}.\u{200f}365com",
+      "microsoft\u{061c}.\u{061c}365com",
+      "bank\u{fff9}.example",
+      "bank\u{fe00}.example",
+      "bank\u{e0100}.example",
+      "bank.example\u{3164}",
+      "bank\u0085.example",
+      "bank\u{200a}.example",
+      "bank\u{202f}.example",
+    ]) expect(textDisagreesWithHref(label, "evil.example"), JSON.stringify(label)).toBe(true);
+    // And honest labels stay quiet. Mutations: every run of a word → the path; no IDN guard →
+    // the IDN label (its ASCII tail is not a host the reader sees); any bidi control → the
+    // right-to-left label, which could spell no ASCII host in any order.
+    expect(textDisagreesWithHref("https://bank.example/guide.html", "bank.example")).toBe(false);
+    expect(textDisagreesWithHref("Visit shop.example.", "shop.example")).toBe(false);
+    expect(textDisagreesWithHref("bücher.example", "xn--bcher-kva.example")).toBe(false);
+    expect(textDisagreesWithHref("e.g. U.S. v2.0", "shop.example")).toBe(false);
+    expect(textDisagreesWithHref("a.".repeat(262144) + "b", "evil.example")).toBe(false);
+    expect(textDisagreesWithHref("\u{202b}\u{5e9}\u{5dc}\u{5d5}\u{5dd}.\u{202c}", "shop.example")).toBe(false);
+    expect(textDisagreesWithHref("1\u{2009}000 offers on shop.example\u{202f}!", "shop.example")).toBe(false);
+  });
+
+  it("a designed letter's link names its host when any reading of its label names another", async () => {
+    // The frame keeps what the letter hides, so its note reads the label whole (a sheet can show
+    // again what a style hides) and as drawn (hidden glue joins a decoy to the real host).
+    // Mutations: no drawn reading at all → (b); the drawn readings alone → (c).
+    await render({
+      text: "fallback",
+      html: `<style>.m{display:inline!important}.h{display:none}</style><table width="600"><tr><td>` +
+        `<p><a href="https://evil.example/a"><span style="display:none">evil.example </span>bank.example</a></p>` +
+        `<p><a href="https://evil.example/b"><span style="display:none">evil.example/</span>bank.example</a></p>` +
+        `<p><a href="https://evil.example/c"><span class="m" style="display:none">bank.example</span></a></p>` +
+        `<p><a href="https://evil.example/d"><span class="h">evil.example </span>bank.example</a></p>` +
+        `<p><a href="https://shop.example/e">Visit shop.example.</a></p>` +
+        `<p><a href="https://bank.example/guide.html">https://bank.example/guide.html</a></p></td></tr></table>`,
+    });
+    expect(frame(), "the designed letter did not render in a frame").not.toBeNull();
+    const doc = new DOMParser().parseFromString(srcdoc(), "text/html");
+    expect([...doc.querySelectorAll("a")].map((a) => [a.getAttribute("href"), a.hasAttribute("data-ohmail-elsewhere")]))
+      .toEqual([
+        ["https://evil.example/a", true],
+        ["https://evil.example/b", true],
+        ["https://evil.example/c", true],
+        ["https://evil.example/d", true],
+        ["https://shop.example/e", false],
+        ["https://bank.example/guide.html", false],
+      ]);
+  });
+
+  it("…and as the browser draws it from its defaults and the letter's sheets, in any order", async () => {
+    // A third reading skips what the browser hides by default (rp, a closed details' content) and
+    // what a display:none rule in the letter's sheets matches; a label any part of which is drawn
+    // in another order (bdo, dir, a direction in a sheet, a bidi control) is judged by whether it
+    // could spell a host. Mutations: no third reading → (f)-(h); no shared-rule reading → (i),
+    // whose drawn half a phone-only rule hides from the third; no element bidi → (j), (k).
+    await render({
+      text: "fallback",
+      html: `<style>.g{display:none}@media (max-width:480px){.mo{display:none!important}}` +
+        `.r{unicode-bidi:bidi-override;direction:rtl}</style><table width="600"><tr><td>` +
+        `<div><a href="https://evil.example/f"><rp>evil.example/</rp>bank.example</a></div>` +
+        `<div><a href="https://evil.example/g"><span class="g">evil.example/</span>bank.example</a></div>` +
+        `<div><a href="https://evil.example/h"><details>evil.example/<summary>bank.example</summary></details></a></div>` +
+        `<div><a href="https://evil.example/i"><span style="display:none">evil.example/</span><span class="mo">bank.example</span></a></div>` +
+        `<div><a href="https://evil.example/j">bank<bdo dir="rtl">elpmaxe.</bdo></a></div>` +
+        `<div><a href="https://evil.example/k">bank<span class="r">elpmaxe.</span></a></div>` +
+        `<div><a href="https://evil.example/l">bank&#x202E;elpmaxe.&#x202C;</a></div>` +
+        `<div><a href="https://evil.example/m">bank&#xFE00;.example</a></div>` +
+        `<div><a href="https://shop.example/n"><span dir="rtl">\u{5e9}\u{5dc}\u{5d5}\u{5dd}</span></a></div></td></tr></table>`,
+    });
+    expect(frame(), "the designed letter did not render in a frame").not.toBeNull();
+    const doc = new DOMParser().parseFromString(srcdoc(), "text/html");
+    expect([...doc.querySelectorAll("a")].map((a) => [a.getAttribute("href"), a.hasAttribute("data-ohmail-elsewhere")]))
+      .toEqual([
+        ["https://evil.example/f", true],
+        ["https://evil.example/g", true],
+        ["https://evil.example/h", true],
+        ["https://evil.example/i", true],
+        ["https://evil.example/j", true],
+        ["https://evil.example/k", true],
+        ["https://evil.example/l", true],
+        ["https://evil.example/m", true],
+        ["https://shop.example/n", false],
+      ]);
+  });
+
+  it("…and when what surrounds it may draw it in another order", async () => {
+    // An override before the link, or an ancestor that may draw right to left (a bdo, dir, a bidi
+    // style or sheet rule), draws "elpmaxe.x" as "x.example": such a label is judged by whether it
+    // could spell a host. A control closes only by its own PDF in the same element, never at a
+    // block (a block can be drawn inline). Mutations: no ancestor reading → (p), (q), (s), (v), (w),
+    // (z); no open control → (o), (t), (u); a PDF closing across an element → (u); a block closing
+    // a control → (t); escapes not decoded → (w); no bdo rule and no ancestor reading → (r); a bdi
+    // whose dir is neither ltr nor rtl not read as auto → (z). A pair closed before the link (x)
+    // and a left-to-right ancestor (y) stay quiet. An inline block draws as one neutral: right to
+    // left, (s) and (z) draw "x.example".
+    const { sanitizeMailHtml } = await mod();
+    const blocks = `<span style="display:inline-block">example</span>.<span style="display:inline-block">x</span>`;
+    const { html } = sanitizeMailHtml(
+      `<style>.ov{unicode-bidi:bidi-override;direction:rtl}</style><table width="600"><tr><td>` +
+      `<p>Sign in at &#x202E;<a href="https://evil.example/o">elpmaxe.x</a>&#x202C; today.</p>` +
+      `<p><bdo dir="rtl"><a href="https://evil.example/p">elpmaxe.knab-ym</a></bdo></p>` +
+      `<p><span style="unicode-bidi:bidi-override;direction:rtl"><a href="https://evil.example/q">elpmaxe.x</a></span></p>` +
+      `<div dir="rtl"><a href="https://evil.example/r"><bdo>elpmaxe.x</bdo></a></div>` +
+      `<div dir="auto">&#x200F;<a href="https://evil.example/s">${blocks}</a></div>` +
+      `<div>Sign in at &#x202E;<div style="display:inline;unicode-bidi:normal"><a href="https://evil.example/t">elpmaxe.x</a></div>&#x202C;</div>` +
+      `<p>&#x202E;<span dir="ltr">&#x202C;</span><a href="https://evil.example/u">elpmaxe.x</a>&#x202C;</p>` +
+      `<p><span class="ov"><a href="https://evil.example/v">elpmaxe.x</a></span></p>` +
+      `<p><span style="unicode-bidi:\\62 idi-override;direction:\\72 tl"><a href="https://evil.example/w">elpmaxe.x</a></span></p>` +
+      `<p>&#x202E;abc&#x202C; <a href="https://shop.example/x">shop.example</a></p>` +
+      `<div dir="ltr"><a href="https://shop.example/y">shop.example</a></div>` +
+      `<p><bdi dir="x">&#x200F;<a href="https://evil.example/z">${blocks}</a></bdi></p></td></tr></table>`,
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    expect([...doc.querySelectorAll("a")].map((a) => [a.getAttribute("href")!.slice(-1), a.hasAttribute("data-ohmail-elsewhere")]))
+      .toEqual([["o", true], ["p", true], ["q", true], ["r", true], ["s", true], ["t", true], ["u", true],
+        ["v", true], ["w", true], ["x", false], ["y", false], ["z", true]]);
+    // A dir of auto resolves right to left only on a right-to-left letter, mark or control (as in
+    // (s)); phones write every line that way, so without one it stays quiet. Mutation: auto always.
+    const auto = sanitizeMailHtml(`<div dir="auto">See <a href="https://shop.example/a">shop.example</a>.</div>` +
+      `<div dir="auto"><a href="https://shop.example/b"><bdi>shop.example</bdi></a></div>`).html;
+    expect([...new DOMParser().parseFromString(auto, "text/html").querySelectorAll("a")]
+      .map((a) => a.hasAttribute("data-ohmail-elsewhere"))).toEqual([false, false]);
+  });
+
+  it("…reading the letter's controls in one pass, however many stay open", async () => {
+    // As many controls closed in pairs, so only how many stay open differs. Mutation: a PDI looks
+    // down the open controls for its isolate → quadratic, minutes over the bound.
+    const { sanitizeMailHtml } = await mod();
+    const timed = (controls: string): number => {
+      const started = performance.now();
+      sanitizeMailHtml(`<p>${controls}<a href="https://shop.example/x">shop.example</a></p>`);
+      return performance.now() - started;
+    };
+    const pairs = "\u{202a}\u{202c}".repeat(100_000);
+    const open = "\u{202a}".repeat(100_000) + "\u{2069}".repeat(100_000);
+    timed(pairs);
+    expect(Math.min(timed(open), timed(open))).toBeLessThan(1.75 * Math.min(timed(pairs), timed(pairs)) + 50);
+  });
+
+  it("…and when the letter's sheets may draw any of it in another order", async () => {
+    // A bidi rule the sheet reading cannot match, a control a sheet draws as generated content
+    // (spelled, or read from an attribute) and a rule for the frame's own body or html can each
+    // turn any label around: every link is then judged by whether it could spell a host, and one
+    // that cannot ("Read more") stays quiet. Mutations: no fallback for an unmatched rule → (a);
+    // generated content not read → (b), (c); the frame's body and html not matched → (d), (e); a
+    // control in a style attribute not read (the browser's own q::before draws a q's quotes) →
+    // (f)-(j); escapes not decoded there → (f), (h), (i). A style without one stays quiet (k).
+    const { sanitizeMailHtml } = await mod();
+    const marks = (sheet: string, body: string): boolean[] =>
+      [...new DOMParser().parseFromString(
+        sanitizeMailHtml(`<style>${sheet}</style>${body}<p><a href="https://shop.example/m">Read more</a></p>`).html,
+        "text/html",
+      ).querySelectorAll("a")].map((a) => a.hasAttribute("data-ohmail-elsewhere"));
+    const after = (span: string): string => `<p>${span}<a href="https://evil.example/">elpmaxe.x</a></p>`;
+    expect(marks(".z:not(#q){unicode-bidi:bidi-override;direction:rtl}", `<p><span class="z"><a href="https://evil.example/">elpmaxe.x</a></span></p>`), "(a)")
+      .toEqual([true, false]);
+    expect(marks(`.z::before{content:"\\202E"}`, after(`<span class="z"></span>`)), "(b)").toEqual([true, false]);
+    expect(marks(".z::before{content:attr(title)}", after(`<span class="z" title="&#x202E;"></span>`)), "(c)").toEqual([true, false]);
+    expect(marks("body{unicode-bidi:bidi-override;direction:rtl}", `<a href="https://evil.example/">elpmaxe.x</a>`), "(d)").toEqual([true, false]);
+    expect(marks("[data-ohmail-dark]{unicode-bidi:bidi-override;direction:rtl}", `<a href="https://evil.example/">elpmaxe.x</a>`), "(e)")
+      .toEqual([true, false]);
+    const quotes = `style='quotes:"\\202E" ""'`;
+    expect(marks("", after(`<q ${quotes}></q>`)), "(f)").toEqual([true, false]);
+    expect(marks("", after(`<q style="quotes:'&#x202E;' ''"></q>`)), "(g)").toEqual([true, false]);
+    expect(marks("", `<p><q ${quotes}>Sign in at</q> <a href="https://evil.example/">elpmaxe.x</a></p>`), "(h)").toEqual([true, false]);
+    expect(marks(".z::before{content:open-quote}", after(`<span class="z" ${quotes}></span>`)), "(i)").toEqual([true, false]);
+    expect(marks("", `<ol><li style="list-style:inside '&#x202E;'"><a href="https://evil.example/">elpmaxe.x</a></li></ol>`), "(j)")
+      .toEqual([true, false]);
+    expect(marks("", after(`<q style='quotes:"\\AB" "\\BB"'></q>`)), "(k)").toEqual([false, false]);
+    // A style attribute's attr() reads attributes too, however spelled. Mutation: only a sheet's
+    // attr( reads them → (l)-(n).
+    expect(marks("", after(`<q style="quotes: attr(title) ''" title="&#x202E;"></q>`)), "(l)").toEqual([true, false]);
+    expect(marks("", after(`<q style="quotes: attr(lang) ''" lang="&#x202E;"></q>`)), "(m)").toEqual([true, false]);
+    expect(marks("", after(`<q style="quotes: a\\74 tr(title) ''" title="&#x202E;"></q>`)), "(n)").toEqual([true, false]);
+  });
+
+  it("the sheet reading finds a hiding rule through comments, strings, at-rules, nesting and escapes", async () => {
+    // Mutations: a comment read as CSS → (p); a string's braces read as blocks → (q); at-rules not
+    // read through → (r); a nested rule dropped → (s); an escape's space read as a combinator → (t).
+    // A rule whose subject holds a pseudo-class is left out, as a hover that hides draws nothing (u);
+    // so is one costing more than a few compares per element: a whole-value test (v), more than
+    // four simple selectors (w), more than 64 characters (x). Mutations: each limit lifted → its own.
+    const { sanitizeMailHtml } = await mod();
+    const glue = (id: string, cls: string): string =>
+      `<div><a href="https://evil.example/${id}"><span class="${cls}" title="${"x".repeat(64)}">evil.example/</span>bank.example</a></div>`;
+    const { html } = sanitizeMailHtml(
+      `<style>.p{/* } */display:none} [title="}{"], .q{display:none}` +
+      `@media screen{@supports (display:grid){.r{display:none!important}}} .wrap{color:red; .s{display:none}}` +
+      `.\\74 glue{display:none} .u:hover{display:none} [class~=v]{display:none} .w.w.w.w.w{display:none}` +
+      `span.x[title="${"x".repeat(64)}"]{display:none}</style>` +
+      glue("p", "p") + glue("q", "q") + glue("r", "r") + glue("s", "s") + glue("t", "tglue") + glue("u", "u") +
+      glue("v", "v") + glue("w", "w") + glue("x", "x"),
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    expect([...doc.querySelectorAll("a")].map((a) => [a.getAttribute("href")!.slice(-1), a.hasAttribute("data-ohmail-elsewhere")]))
+      .toEqual([["p", true], ["q", true], ["r", true], ["s", true], ["t", true], ["u", false], ["v", false], ["w", false],
+        ["x", false]]);
+  });
+
+  it("the sheet reading matches a few dozen rules, however many the letter has", async () => {
+    // Mutation: no cap → every one of the rules is matched over the letter, seconds over the bound.
+    const { sanitizeMailHtml } = await mod();
+    const rules = Array.from({ length: 20_000 }, (_, i) => `.c${i}{display:none}`).join("");
+    const body = `<div><a href="https://shop.example/x"><span class="c1">shop.example</span></a></div>`.repeat(1_000);
+    const timed = (sheet: string): number => {
+      const started = performance.now();
+      sanitizeMailHtml(`<style>${sheet}</style>${body}`);
+      return performance.now() - started;
+    };
+    timed("");
+    const plain = timed(`/*${rules}*/`);
+    expect(timed(rules)).toBeLessThan(1.75 * plain + 50);
+  });
+
+  it("…and each in a few compares per element, however long the letter's values", async () => {
+    // A word-list test reads a whole value per element, and a compound of many classes reads a class
+    // list as many times: 32 such rules took the first letter 2.3 s in Chromium. Only a few plain
+    // tests per subject are matched now. Mutations: no limit on a subject's parts → the second
+    // letter; the first goes red only with every limit lifted, each held alone by (v)-(x) above.
+    const { sanitizeMailHtml, MAX_HTML_CHARS } = await mod();
+    const letters = (subject: string, element: string): [string, string] => {
+      const rules = Array.from({ length: 32 }, () => `${subject}{display:none}`).join("");
+      const n = Math.max(1, Math.floor((MAX_HTML_CHARS - 200 - rules.length) / element.length));
+      const body = `<table width="600"><tr><td>${element.repeat(n)}<a href="https://shop.example/x">shop.example</a></td></tr></table>`;
+      return [`<style>${rules}</style>${body}`, `<style>/*${rules}*/</style>${body}`];
+    };
+    const timed = (html: string): number => {
+      const started = performance.now();
+      sanitizeMailHtml(html);
+      return performance.now() - started;
+    };
+    for (const [hostile, plain] of [
+      letters("[dir~=a]".repeat(32), `<span dir="${"b".repeat(4000)} a">x</span>`),
+      letters(".a".repeat(32), `<div class="${"b ".repeat((MAX_HTML_CHARS - 12_000) / 2)}a">x</div>`),
+    ]) {
+      expect(hostile.length).toBeLessThanOrEqual(MAX_HTML_CHARS);
+      timed(plain);
+      expect(Math.min(timed(hostile), timed(hostile))).toBeLessThan(1.5 * Math.min(timed(plain), timed(plain)) + 25);
+    }
+  });
+
+  it("a link that holds another link names its host, and each label is read once", async () => {
+    // Links nest through table markers. A link that holds one is marked outright and no label is
+    // read past a link inside it, so the links cost about what the same letter nested through
+    // <b> costs. Mutation: read each link's whole subtree again → about three times the plain letter.
+    const { sanitizeMailHtml } = await mod();
+    const nested = (open: string, close: string, levels = 40, words = 30_000): string =>
+      `${open}<table><caption>`.repeat(levels) + "e.ee ".repeat(words) + `</caption></table>${close}`.repeat(levels);
+    sanitizeMailHtml(nested(`<a href="https://e.ee/x">`, "</a>", 2, 10));
+    const timed = (html: string): [number, string] => {
+      const started = performance.now();
+      const { html: out } = sanitizeMailHtml(html);
+      return [performance.now() - started, out];
+    };
+    const [plain] = timed(nested("<b>", "</b>"));
+    const [linked, out] = timed(nested(`<a href="https://e.ee/x">`, "</a>"));
+    const [again] = timed(nested(`<a href="https://e.ee/x">`, "</a>"));
+    const marked = [...new DOMParser().parseFromString(out, "text/html").querySelectorAll("a")]
+      .map((a) => a.hasAttribute("data-ohmail-elsewhere"));
+    expect(marked).toEqual([...Array(39).fill(true), false]);
+    expect(Math.min(linked, again)).toBeLessThan(1.75 * plain);
   });
 
   it("`links` is exactly the http(s) anchors the frame keeps, as `URL.href`", async () => {

@@ -37,6 +37,7 @@ import {
   neutraliseCss as leafNeutraliseCss,
   REMOTE_URL,
   SAFE_HREF,
+  withoutFiller,
 } from "@ohmail/client-engine";
 import {
   MAX_HTML_CHARS,
@@ -253,6 +254,7 @@ describe("what a letter hides: the reader and the stored words agree", () => {
   it("drawsNoWords and FILLER_TOKEN read filler as core does; an emoji sequence stays", () => {
     const RUNS = ["\u034f\u200c\u00a0\u00ad", "\u200b \u2060", " \n\t", "\u{1F469}\u200d\u{1F4BB}", "a\u200c", ""];
     for (const r of RUNS) expect(drawsNoWords(r), JSON.stringify(r)).toBe(htmlWords(`<p>${r}</p>`) === "");
+    for (const r of RUNS) expect(drawsNoWords(r), JSON.stringify(r)).toBe(withoutFiller(r).trim() === "");
     for (const t of ["\u034f\u200c", "\u00ad", "\u200d", "\u{1F469}\u200d\u{1F4BB}", "a"]) {
       expect(FILLER_TOKEN.test(t), JSON.stringify(t)).toBe(htmlWords(`<p>${t} x</p>`) === "x");
     }

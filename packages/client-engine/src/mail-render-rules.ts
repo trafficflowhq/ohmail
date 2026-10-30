@@ -610,3 +610,8 @@ export const FILLER_TOKEN = /^[͏\p{Cf}]+$/u;
 export function drawsNoWords(text: string): boolean {
   return text.replace(/[\s͏\p{Cf}]/gu, "") === "";
 }
+
+/** The text with its preheader filler (U+034F and format characters) taken out, whitespace kept. */
+export function withoutFiller(text: string): string {
+  return text.replace(/[\u034f\p{Cf}]/gu, "");
+}
