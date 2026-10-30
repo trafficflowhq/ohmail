@@ -326,6 +326,8 @@ export interface StandaloneDeps {
    * changes. Absent: the engine's own `dev`, the same on every build.
    */
   buildCommit?: string;
+  /** The platform's network reading (`net/network-door.ts#networkNow`): an offline phone is told so. */
+  network?: () => "online" | "offline" | "unknown";
 }
 
 /**
@@ -502,6 +504,34 @@ export function incomingUnreachable(err: unknown): "unreachable" | "timeout" | n
   return null;
 }
 
+/**
+ * THE OUTGOING SERVER'S REFUSED CERTIFICATE — the engine's `submissionCertificate` property (the
+ * probe's certificate kind, or `refused` where it read none), cause walk and hop bound as above.
+ */
+export function submissionCertificateOf(err: unknown): CertificateKind | "refused" | null {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    const kind = (e as Record<string, unknown>).submissionCertificate;
+    if (kind === "refused" || CERTIFICATE_KINDS.has(kind)) return kind as CertificateKind | "refused";
+    e = (e as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+/** An imapflow error code anywhere on the cause chain: `STARTTLS_INJECTION`, `UPGRADE_TIMEOUT`. */
+function codeIn(err: unknown, code: string): boolean {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    if ((e as Record<string, unknown>).code === code) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/** The outgoing server's certificate: a name to fix is the SMTP host's; the server's own faults read as the incoming ones. */
+function smtpCertificateRefusal(kind: CertificateKind | "refused"): Refusal {
+  if (kind === "hostname_mismatch") return refuse("standaloneSmtpCertificateName");
+  return kind === "refused" ? refuse("standaloneSmtpCertificateRefused") : certificateRefusal(kind);
+}
+
 /** A refused certificate's sentence by kind — the desktop's (`mailbox-service.ts`); none read is the generic one. */
 function certificateRefusal(kind: CertificateKind | null): Refusal {
   switch (kind) {
@@ -559,8 +589,13 @@ export async function openStandaloneMailbox(
     /* The outgoing server FIRST: its refusal is its own error, and each answer names that field. */
     const outgoing = submissionRefused(err);
     if (outgoing === "auth") return { ok: false, reason: refuse("standaloneSmtpSignInRefused") };
-    if (outgoing === "tls") return { ok: false, reason: refuse("standaloneSmtpNoEncryption") };
-    if (outgoing === "unreachable") return { ok: false, reason: refuse("standaloneSmtpUnreachable") };
+    if (outgoing === "tls") {
+      const certificate = submissionCertificateOf(err);
+      return { ok: false, reason: certificate !== null ? smtpCertificateRefusal(certificate) : refuse("standaloneSmtpNoEncryption") };
+    }
+    /* Nothing below this line is a server's answer, so an offline phone hears that first. */
+    const offline = deps.network?.() === "offline";
+    if (outgoing === "unreachable") return { ok: false, reason: refuse(offline ? "standaloneOffline" : "standaloneSmtpUnreachable") };
     if (signInRefused(err)) {
       /* The provider said why (`authHint`): its own sentence; else the generic one. */
       const hint = authHintOf(err);
@@ -569,7 +604,11 @@ export async function openStandaloneMailbox(
     /* Before the encryption arm: a refused certificate is encrypted, and "try port 993" is false.
        By kind where the platform said which, as the desktop says it. */
     if (certificateRefused(err)) return { ok: false, reason: certificateRefusal(certificateKindOf(err)) };
+    /* An upgrade the server offered and that went wrong is not a server without encryption. */
+    if (codeIn(err, "STARTTLS_INJECTION")) return { ok: false, reason: refuse("standaloneStarttlsInjected") };
+    if (codeIn(err, "UPGRADE_TIMEOUT")) return { ok: false, reason: refuse("standaloneStarttlsTimeout") };
     if (encryptionRefused(err)) return { ok: false, reason: refuse("standaloneNoEncryption") };
+    if (offline) return { ok: false, reason: refuse("standaloneOffline") };
     /* A server Connect could not sign in to: the address and port, never the password's sentence. */
     if (incomingUnreachable(err) !== null) return { ok: false, reason: refuse("standaloneImapUnreachable") };
     /* `faultDetail`, never `String(err)`: it words a fault THIS APP authored (a store fault

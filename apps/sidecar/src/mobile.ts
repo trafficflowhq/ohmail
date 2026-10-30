@@ -986,12 +986,17 @@ export function loggerOver(log: Diagnostic, bound: LogFields = {}): Logger {
  */
 type SubmissionRefusal = "auth" | "tls" | "unreachable";
 
+/** The outgoing server's certificate, where its `tls` refusal was one: the kind the probe read, or `refused`. */
+type SubmissionCertificate = "untrusted" | "hostname_mismatch" | "expired" | "not_yet_valid" | "refused";
+
 class SubmissionRefusedError extends Error {
   readonly submissionRefused: SubmissionRefusal;
-  constructor(why: SubmissionRefusal) {
+  readonly submissionCertificate?: SubmissionCertificate;
+  constructor(why: SubmissionRefusal, certificate: SubmissionCertificate | null = null) {
     super(`the outgoing server refused this launch (${why})`);
     this.name = "SubmissionRefusedError";
     this.submissionRefused = why;
+    if (certificate !== null) this.submissionCertificate = certificate;
   }
 }
 
@@ -1025,6 +1030,20 @@ export function submissionRefusalOf(
   if (verdict.code === "auth") return "auth";
   if (verdict.code === "tls") return "tls";
   return incomingAnswered ? "unreachable" : null;
+}
+
+/**
+ * WAS THE OUTGOING SERVER'S `tls` REFUSAL ITS CERTIFICATE — read off the probe's TLS detail. A
+ * server with no TLS on the port (`tls_unavailable`), or no detail, showed no certificate.
+ */
+export function submissionCertificateOf(verdict: MailboxProbeVerdict): SubmissionCertificate | null {
+  if (verdict.verdict !== "refuse" || verdict.code !== "tls" || verdict.tls === undefined) return null;
+  switch (verdict.tls.kind) {
+    case "tls_unavailable": return null;
+    case "self_signed": case "untrusted": return "untrusted";
+    case "hostname_mismatch": case "expired": case "not_yet_valid": return verdict.tls.kind;
+    default: return "refused";
+  }
 }
 
 /**
@@ -1403,7 +1422,7 @@ async function composePhoneEngine(
           + "and the next press composes from the form again",
       );
       await sidecar.stop().catch(() => { /* nothing to keep: the launch is being refused */ });
-      throw new SubmissionRefusedError(refused);
+      throw new SubmissionRefusedError(refused, refused === "tls" ? submissionCertificateOf(verdict) : null);
     }
   }
   /* The launch that is still running, or one that failed for a reason a poll may heal. Its own

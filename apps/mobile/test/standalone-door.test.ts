@@ -448,6 +448,54 @@ describe("the fourth door's refusals, worded and ranked", () => {
     expect(await said(new Error("something else entirely"))).toBe("standaloneRefused");
   });
 
+  it("names a STARTTLS upgrade that was tampered with or never finished, never as a server without encryption", async () => {
+    const tls = (code: string) => Object.assign(new Error("upgrade"), { tlsFailed: true, code });
+    expect(await said(tls("STARTTLS_INJECTION"))).toBe("standaloneStarttlsInjected");
+    expect(await said(new Error("wrapped", { cause: tls("STARTTLS_INJECTION") }))).toBe("standaloneStarttlsInjected");
+    expect(await said(tls("UPGRADE_TIMEOUT"))).toBe("standaloneStarttlsTimeout");
+    // CONTROL: a server that offers no STARTTLS is still the no-encryption sentence.
+    expect(await said(Object.assign(new Error("Server does not support STARTTLS"), { tlsFailed: true }))).toBe("standaloneNoEncryption");
+  });
+
+  it("names the outgoing server's refused certificate as the incoming one's, and keeps 'no encryption' for a server without it", async () => {
+    const smtp = (certificate?: string) => Object.assign(new Error("outgoing"), {
+      submissionRefused: "tls", ...(certificate !== undefined ? { submissionCertificate: certificate } : {}),
+    });
+    for (const [kind, key] of [
+      ["untrusted", "standaloneCertificateUntrusted"],
+      ["hostname_mismatch", "standaloneSmtpCertificateName"],
+      ["expired", "standaloneCertificateExpired"],
+      ["not_yet_valid", "standaloneCertificateNotYetValid"],
+      ["refused", "standaloneSmtpCertificateRefused"],
+    ] as const) {
+      expect(await said(smtp(kind)), kind).toBe(key);
+    }
+    expect(await said(smtp())).toBe("standaloneSmtpNoEncryption");
+    expect(refusalField(refuse("standaloneSmtpCertificateName"))).toBe("smtpHost");
+    expect(refusalField(refuse("standaloneSmtpCertificateRefused"))).toBe("smtpHost");
+  });
+
+  it("says a phone with no network is offline, not that the address is wrong", async () => {
+    const offline = (thrown: unknown) => openStandaloneMailbox(form, {
+      startEngine: (async () => { throw thrown; }) as never,
+      platform: async () => ({ kind: "ready" as const, exec: {}, keks: {} }),
+      machineName: () => "ohmail on a phone",
+      installId: async () => "door-arms-case",
+      network: () => "offline",
+    }).then((out) => (out.ok ? null : out.reason.say));
+    expect(await offline(unanswered("unreachable"))).toBe("standaloneOffline");
+    expect(await offline(unanswered("timeout"))).toBe("standaloneOffline");
+    expect(await offline(Object.assign(new Error("outgoing"), { submissionRefused: "unreachable" }))).toBe("standaloneOffline");
+    expect(await offline(new Error("getaddrinfo ENOTFOUND imap.example.test"))).toBe("standaloneOffline");
+    // A server that answered is no network fault, and an online phone keeps the address sentence.
+    expect(await offline(certificate("expired"))).toBe("standaloneCertificateExpired");
+    expect(await said(unanswered("unreachable"))).toBe("standaloneImapUnreachable");
+    for (const lang of ["en", "de"] as const) {
+      setActiveLocale(lang);
+      expect(sayRefusal(refuse("standaloneOffline")), lang).toMatch(lang === "en" ? /no network/ : /kein Netz/);
+    }
+  });
+
   it("reads the kind and the unreachable answer through a wrapping cause, and nothing else as either", () => {
     expect(certificateKindOf(new Error("wrapped", { cause: certificate("expired") }))).toBe("expired");
     expect(incomingUnreachable(new Error("wrapped", { cause: unanswered("timeout") }))).toBe("timeout");

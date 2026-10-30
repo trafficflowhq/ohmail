@@ -403,6 +403,18 @@ const TABLE = {
     "Your outgoing server (SMTP) offers no encrypted connection on that port, and ohmail will not send your password in the clear. Try port 465 or 587.",
   standaloneSmtpUnreachable:
     "ohmail could not reach your outgoing server (SMTP) at that address and port. Check both and try again — nothing has been saved.",
+  /* The outgoing server's certificate; untrusted, expired and not yet valid share the incoming server's sentences. */
+  standaloneSmtpCertificateRefused:
+    "The certificate of your outgoing server (SMTP) was refused, so we stopped before sending the password. Check the SMTP host, and whether the port expects TLS.",
+  standaloneSmtpCertificateName:
+    "The certificate of your outgoing server (SMTP) does not match the host you entered, so we stopped before sending the password. Check the SMTP host with your provider.",
+  /* A STARTTLS upgrade the server offered and that went wrong: not a server without encryption. */
+  standaloneStarttlsInjected:
+    "Your mail server sent unexpected data while the connection was switching to encryption, so we stopped before sending the password. Something on this network may be interfering: try another network, or port 993.",
+  standaloneStarttlsTimeout:
+    "Switching the connection to your mail server to encryption did not finish in time, so we stopped before sending the password. Try again, or use port 993.",
+  standaloneOffline:
+    "This phone has no network, so ohmail could not reach your mail server. Try again once it is back — nothing has been saved.",
   standaloneRefused: (detail: string) =>
     `Opening the mailbox stopped: ${detail}`,
   /* The relaunch's own three, and each one names a different absence: nothing sealed, a mailbox
@@ -680,8 +692,7 @@ const TABLE = {
   connectSyncing: "Syncing…",
   connectSyncNow: "Sync now",
   connectDisconnect: "Disconnect",
-  connectMirrored: (n: number, cursor: string) =>
-    `${n} message${n === 1 ? "" : "s"} on this device · cursor ${cursor}`,
+  connectMirrored: (n: number) => `${n} message${n === 1 ? "" : "s"} on this device`,
   /**
    * A failed handshake is not a failed network. A raw SSLHandshakeException dump is unreadable
    * and indistinguishable from bad wifi; a person whose desktop key genuinely changed must be
@@ -1028,7 +1039,7 @@ const TABLE = {
     return firstContact ? `${head} · first contact ${firstContact}` : head;
   },
   screenedNote: (date: string, held: number) =>
-    `Screened ${date} · ${held} held, all shown. Allowing releases every one of them to the chosen view.`,
+    `Newest letter ${date} · ${held} held, all shown. Allowing releases every one of them to the chosen view.`,
   allowLabel: "Allow — release held mail to",
   notSpamLabel: "Not spam — move all held mail to",
   spamNote:
@@ -2053,6 +2064,8 @@ const TABLE = {
   trashRestore: "Restore",
   trashRestoring: "Restoring…",
   trashToastRestoring: (place: string) => `Restoring to ${place}…`,
+  /** The server answered `pending: false`: the move is already done. */
+  trashToastRestored: (place: string) => `Restored to ${place}.`,
   trashToastRestoreFailed: "Couldn't restore — it's still in Trash.",
   trashNoErase: "ohmail never erases mail — to remove it for good, use your own mail client.",
   trashListFailed: "Trash couldn't be read just now.",
@@ -2492,6 +2505,8 @@ const TABLE = {
   },
   draftsEmptyTitle: "Nothing half-written",
   draftsEmptyHint: "They're saved to your account, so they're here on every device you read your mail on.",
+  /** A standalone phone: drafts live in this phone's own store, not in the mailbox. */
+  draftsEmptyHintHere: "They're kept on this phone.",
   draftsIsReply: "Reply",
   draftsHeldChecking: "We're not sure this was sent. We're checking your Sent folder.",
   draftsHeldNotInSent: "We're not sure this was sent. It isn't in your Sent folder.",
@@ -2544,6 +2559,9 @@ const TABLE = {
    */
   draftsEditNote:
     "This draft can't be edited here. Edit and send it from ohmail on the web or the desktop.",
+  /** A standalone phone has no web or desktop app beside it: what this card itself offers. */
+  draftsEditNoteHeldHere: "This message can't be edited. Send it again as it is, or discard it.",
+  draftsEditNoteHere: "This draft can't be edited on this phone. You can discard it here.",
   /**
    * PHONE-ONLY (6/6): a forward draft whose original this phone does not hold. The forward is sent
    * from the original, so it is opened where the original is.

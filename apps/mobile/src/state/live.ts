@@ -5296,8 +5296,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
-   * The restore stays PENDING on the mail server (the engine's own contract), so the sentence
-   * is "Restoring to …" — the webapp's exact toast — never "restored". The intent id makes a
+   * A restore the mail server still owes (`pending`) says "Restoring to …", the webapp's toast; one
+   * the server answered as done says "Restored to …". The intent id makes a
    * double press one request end to end (the engine builds `restore:<intent>:<id>` as the
    * Idempotency-Key); without a uuid source the request simply carries no key, as the engine
    * documents.
@@ -5306,7 +5306,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const intent = deps.uuid?.();
     const res = await engine.restoreFromTrash(messageId, intent ? { intentId: intent } : {});
     if (res.state === "restored") {
-      toast(refuse("trashToastRestoring", trashRestoreLabel(res.restoreTo)));
+      toast(refuse(res.pending ? "trashToastRestoring" : "trashToastRestored", trashRestoreLabel(res.restoreTo)));
       return true;
     }
     toast(refuse(res.state === "rolled_back" ? "trashToastRestoreFailed" : "trashUnavailable"));
@@ -7064,13 +7064,11 @@ export function topLineSaid(o: {
 
 /**
  * WHAT THE LINE UNDER THE OHBOX TITLE SAYS (row OHBOX-QUIET-READS-AS-STALLED): nothing before the
- * mirror has settled; the top line's own sentence while it has one (the same ranking, without the
- * first-sync clause); otherwise when the mailboxes were last checked and where mail went since the
- * person was here. Pure; the screen renders it.
+ * mirror has settled, and nothing while the top line has a sentence (the TopBar above the title
+ * says it; said here too, an offline Ohbox showed it twice); otherwise when the mailboxes were last
+ * checked and where mail went since the person was here. Pure; the screen renders it.
  */
-export type OhboxWhere =
-  | { kind: "said"; text: string }
-  | { kind: "where"; checked: string | null; piles: ReadonlyArray<{ pile: FiledPile; count: number }> };
+export type OhboxWhere = { kind: "where"; checked: string | null; piles: ReadonlyArray<{ pile: FiledPile; count: number }> };
 
 export function ohboxWhereSaid(o: {
   settled: boolean;
@@ -7085,7 +7083,7 @@ export function ohboxWhereSaid(o: {
 }): OhboxWhere | null {
   if (!o.settled) return null;
   const top = topLineSaid({ network: o.network, connection: o.connection, stale: o.stale, draining: o.draining, continuing: null });
-  if (top !== null) return { kind: "said", text: top.text };
+  if (top !== null) return null;
   return {
     kind: "where",
     checked: lastCheckedAt(o.mailboxes, o.mailboxesReadAt, o.nowMs),

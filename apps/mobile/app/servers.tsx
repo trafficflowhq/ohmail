@@ -211,7 +211,7 @@ function LiveFacts() {
         {organizesHere(s.session.profile) ? Copy.standaloneName : s.session.profile.origin}
       </Txt>
       <Txt variant="caption" tone="ink3" tabular>
-        {conn.syncing ? Copy.connectSyncing : Copy.connectMirrored(total, s.session.store.getCursor())}
+        {conn.syncing ? Copy.connectSyncing : Copy.connectMirrored(total)}
       </Txt>
       {conn.syncError ? (
         <Txt variant="hint" tone="ink2">

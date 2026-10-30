@@ -16,7 +16,7 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import {
-  startPhoneEngine, startPhoneEngineFromSealed, submissionRefusalOf,
+  startPhoneEngine, startPhoneEngineFromSealed, submissionCertificateOf, submissionRefusalOf,
   type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows,
 } from "../src/mobile.js";
 
@@ -189,6 +189,16 @@ describe("which submission answers refuse a Connect", () => {
     expect(submissionRefusalOf({ verdict: "ok" }, true)).toBeNull();
     expect(submissionRefusalOf({ verdict: "store_unverified", code: "connect" }, true)).toBeNull();
   });
+
+  it("a refused certificate is told from a server without encryption, by kind where the probe read one", () => {
+    const tls = (kind?: string) => ({ verdict: "refuse", code: "tls", ...(kind ? { tls: { kind } } : {}) }) as never;
+    expect(["untrusted", "self_signed", "hostname_mismatch", "expired", "not_yet_valid", "generic"].map((k) => submissionCertificateOf(tls(k))))
+      .toEqual(["untrusted", "untrusted", "hostname_mismatch", "expired", "not_yet_valid", "refused"]);
+    // No TLS on the port, or no detail at all: no certificate was shown.
+    expect(submissionCertificateOf(tls("tls_unavailable"))).toBeNull();
+    expect(submissionCertificateOf(tls())).toBeNull();
+    expect(submissionCertificateOf({ verdict: "refuse", code: "auth" })).toBeNull();
+  });
 });
 
 describe.skipIf(ON_DEVICE_STORE)("the default project does not substitute the device schema", () => {
@@ -206,6 +216,15 @@ describe.runIf(ON_DEVICE_STORE)("the phone's Connect dials the outgoing server",
     expect(dialled, "the outgoing server was asked at Connect").toEqual([{ host: "smtp.invalid", port: 587 }]);
     expect((err as { submissionRefused?: unknown } | null)?.submissionRefused).toBe("auth");
     expect(transportsIn(file), "nothing sealed is left to win over the next press").toEqual([]);
+  }, 30_000);
+
+  it("REFUSES an outgoing server whose certificate was refused, and says it was the certificate", async () => {
+    const file = storeFile();
+    const err = await connect(file, { dial: refusing("ETLS", { message: "certificate has expired" }) })
+      .then(() => null, (e: unknown) => e);
+    expect((err as { submissionRefused?: unknown } | null)?.submissionRefused).toBe("tls");
+    expect((err as { submissionCertificate?: unknown } | null)?.submissionCertificate).toBe("expired");
+    expect(transportsIn(file)).toEqual([]);
   }, 30_000);
 
   it("REFUSES an outgoing server nothing answers on while the incoming one did", async () => {

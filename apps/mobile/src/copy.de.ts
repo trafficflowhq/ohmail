@@ -263,6 +263,16 @@ export const DE: Deck = {
     "Dein Ausgangsserver (SMTP) bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 465 oder 587.",
   standaloneSmtpUnreachable:
     "ohmail hat deinen Ausgangsserver (SMTP) unter dieser Adresse und diesem Port nicht erreicht. Prüf beides und versuch es erneut. Es wurde nichts gespeichert.",
+  standaloneSmtpCertificateRefused:
+    "Das Zertifikat deines Ausgangsservers (SMTP) wurde abgelehnt, wir haben also abgebrochen, bevor das Passwort rausging. Prüf den SMTP-Server und ob dieser Port TLS erwartet.",
+  standaloneSmtpCertificateName:
+    "Das Zertifikat deines Ausgangsservers (SMTP) passt nicht zum eingegebenen Server, wir haben also abgebrochen, bevor das Passwort rausging. Frag deinen Anbieter nach dem richtigen SMTP-Server.",
+  standaloneStarttlsInjected:
+    "Dein Mailserver hat beim Wechsel auf eine verschlüsselte Verbindung unerwartete Daten geschickt, wir haben also abgebrochen, bevor das Passwort rausging. Etwas in diesem Netz könnte stören: Versuch es in einem anderen Netz oder mit Port 993.",
+  standaloneStarttlsTimeout:
+    "Der Wechsel auf eine verschlüsselte Verbindung zu deinem Mailserver wurde nicht rechtzeitig fertig, wir haben also abgebrochen, bevor das Passwort rausging. Versuch es erneut oder nimm Port 993.",
+  standaloneOffline:
+    "Dieses Handy hat kein Netz, deshalb hat ohmail deinen Mailserver nicht erreicht. Versuch es erneut, sobald es wieder da ist. Es wurde nichts gespeichert.",
   standaloneRefused: (detail: string) =>
     `Das Öffnen des Postfachs wurde abgebrochen: ${detail}`,
   /* Die drei des Neustarts. Jede benennt ein anderes Fehlen. */
@@ -429,8 +439,7 @@ export const DE: Deck = {
   connectSyncing: "Wird synchronisiert…",
   connectSyncNow: "Jetzt synchronisieren",
   connectDisconnect: "Trennen",
-  connectMirrored: (n: number, cursor: string) =>
-    `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} auf diesem Gerät · Cursor ${cursor}`,
+  connectMirrored: (n: number) => `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} auf diesem Gerät`,
   pinChanged: PIN_CHANGED,
   /* Die andere Hälfte eines fehlgeschlagenen Handshakes — siehe `copy.en.ts`. */
   pairKeyMismatch:
@@ -683,7 +692,7 @@ export const DE: Deck = {
     return firstContact ? `${head} · erster Kontakt ${firstContact}` : head;
   },
   screenedNote: (date: string, held: number) =>
-    `Aussortiert ${date} · ${held} zurückgehalten, vollständig gezeigt. Zulassen gibt jede einzelne davon in die gewählte Ansicht frei.`,
+    `Neueste Mail ${date} · ${held} zurückgehalten, vollständig gezeigt. Zulassen gibt jede einzelne davon in die gewählte Ansicht frei.`,
   /* No trailing preposition: the destination is chosen in the control beside this label, and
      "freigeben nach Belege" is not German. The label states the act; the picker states the place. */
   allowLabel: "Zulassen: zurückgehaltene Mails freigeben",
@@ -1451,6 +1460,7 @@ export const DE: Deck = {
   trashRestore: "Wiederherstellen",
   trashRestoring: "Wird wiederhergestellt…",
   trashToastRestoring: (place: string) => `Wird in ${place} wiederhergestellt…`,
+  trashToastRestored: (place: string) => `In ${place} wiederhergestellt.`,
   trashToastRestoreFailed: "Konnte nicht wiederhergestellt werden — sie ist noch im Papierkorb.",
   trashNoErase: "ohmail löscht nie unwiderruflich — zum endgültigen Entfernen nutze deinen eigenen Mail-Client.",
   trashListFailed: "Der Papierkorb ließ sich gerade nicht lesen.",
@@ -1703,6 +1713,7 @@ export const DE: Deck = {
   },
   draftsEmptyTitle: "Nichts Halbfertiges",
   draftsEmptyHint: "Sie liegen in deinem Account und sind deshalb auf jedem Gerät da, auf dem du deine Mails liest.",
+  draftsEmptyHintHere: "Sie bleiben auf diesem Handy.",
   draftsIsReply: "Antwort",
   draftsHeldChecking: "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. Wir schauen in deinem Gesendet-Ordner nach.",
   draftsHeldNotInSent: "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. In deinem Gesendet-Ordner ist sie nicht.",
@@ -1739,6 +1750,8 @@ export const DE: Deck = {
   draftsOpenConversation: "Unterhaltung öffnen",
   draftsEditNote:
     "Dieser Entwurf lässt sich hier nicht bearbeiten. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
+  draftsEditNoteHeldHere: "Diese Nachricht lässt sich nicht bearbeiten. Sende sie unverändert erneut oder verwirf sie.",
+  draftsEditNoteHere: "Dieser Entwurf lässt sich auf diesem Handy nicht bearbeiten. Verwerfen kannst du ihn hier.",
   draftsForwardOriginalAbsent:
     "Die Nachricht, die dieser Entwurf weiterleitet, ist nicht auf diesem Handy. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
   draftsEdit: "Bearbeiten",

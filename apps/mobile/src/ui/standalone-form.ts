@@ -230,6 +230,8 @@ const FIELD_OF: Readonly<Partial<Record<RefusalKey, ServerField>>> = {
   standaloneSmtpSignInRefused: "smtpHost",
   standaloneSmtpNoEncryption: "smtpHost",
   standaloneSmtpUnreachable: "smtpHost",
+  standaloneSmtpCertificateName: "smtpHost",
+  standaloneSmtpCertificateRefused: "smtpHost",
 };
 
 /** The server field this refusal is about, or `null` for one that belongs beside the verb. */
