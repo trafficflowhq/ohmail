@@ -3905,12 +3905,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * engine the door starts next. One writer, `start()`'s two no-password arms.
        */
       let launchSkipped = false;
+      /* A relaunch over a stamped import is not a first sync; an unreadable row leaves it to the drain. */
+      const importStamped = await db.select({ at: mailboxes.initialImportCompletedAt })
+        .from(mailboxes).where(eq(mailboxes.id, mb.id)).limit(1)
+        .then((r) => r[0]?.at != null, () => false);
       /**
        * WHAT THIS MAILBOX'S FIRST SYNC HAS PRODUCED — the third answer the connection record
        * carries, derived from the drain's own stamps and the mirror's own rows. See
        * {@link createFirstSyncTracker}: nothing here can set it, which is the point.
        */
-      const firstSync = createFirstSyncTracker(log, mb.id);
+      const firstSync = createFirstSyncTracker(log, mb.id, { importStamped });
       /**
        * A CREDENTIAL CHANGED, so the refusal is no longer evidence about anything.
        *

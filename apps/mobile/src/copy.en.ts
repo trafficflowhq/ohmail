@@ -923,6 +923,9 @@ const TABLE = {
     `Showing everyone in the Screener folder — ${holder}’s screening settings haven’t been read yet.`,
   screeningUnreadNoName:
     "Showing everyone in the Screener folder — the organizing device’s screening settings haven’t been read yet.",
+  /** …on a standalone phone that organizes the mailbox: the window read predates its start. */
+  screeningUnreadHere:
+    "Showing everyone in the Screener folder until this phone’s own screening settings apply at its next check.",
   /** Beside a folder-whole count: the organizer is an older ohmail that states no window. */
   screeningUnstated: (holder: string) =>
     `${holder} runs an older ohmail that doesn’t share its screening window — showing everyone in the Screener folder.`,

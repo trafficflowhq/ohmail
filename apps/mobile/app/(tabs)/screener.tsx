@@ -29,6 +29,7 @@ import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 import { noneOrganizedWhy, notOrganizingSay } from "../../src/ui/not-organizing";
 import { firstPassWithholds } from "../../src/state/seed-offer";
+import { standaloneHereFor } from "../../src/engine/organizer-session";
 
 /**
  * The three empty states, READ WHEN THE SCREEN RENDERS rather than when this module is imported.
@@ -89,7 +90,7 @@ function ScreenerBody() {
   // Unknown ≠ empty, per SEGMENT: the active shelf's own count against the one settled fact.
   const shelves: Record<ScreenerSeg, ScreenerRow[]> = { waiting, screened, spam };
   // "Nobody is waiting" over a first import the gate has not judged yet is a claim nobody made.
-  const firstPass = firstPassWithholds(waiting.length, w.mailboxes, Date.now());
+  const firstPass = firstPassWithholds(waiting.length, w.mailboxes, Date.now(), standaloneHereFor(w));
   const rows = shelves[seg];
   /* …and the WAITING shelf has a second way of being unknown over a settled mirror: this phone
      derived it, and the account's cutline answer has not landed, so it was withheld rather than
