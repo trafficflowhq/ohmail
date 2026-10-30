@@ -146,6 +146,8 @@ interface Line {
   canvas: boolean;
   /** Inside a quote container element (gmail_quote, moz-forward-container, …). */
   boxed: boolean;
+  /** Quote boxes around the line: `>` depth, a blockquote, an element drawn with a solid left rule. */
+  nest: number;
   /** Inside a `.moz-cite-prefix` / `#reply-intro` introducer. */
   intro: boolean;
   /** The first line of a `.moz-signature` / `.gmail_signature`. */
@@ -163,7 +165,7 @@ interface Line {
 
 function newLine(text: string, depth: number, raw = ""): Line {
   return {
-    text, depth, blank: text === "", raw, at: -1, hr: false, cell: false, canvas: false, boxed: false, intro: false, sig: false,
+    text, depth, blank: text === "", raw, at: -1, hr: false, cell: false, canvas: false, boxed: false, nest: depth, intro: false, sig: false,
     chars: 0, bold: 0, mark: 0, quiet: 0, ink: "", inkShare: 0, inks: null,
   };
 }
@@ -517,6 +519,63 @@ function answersInside(L: Line[], f: Facts, s: number, html: boolean, end = L.le
   return false;
 }
 
+/** What a writer opens an inline answer with: initials, a name mark, an answer prefix. */
+function opensAnswer(t: string): boolean {
+  return /^\[[A-Z]{1,4}\]/.test(t) || ANSWER_MARK.test(t) || ANSWER_PREFIX.test(t);
+}
+
+/**
+ * THE EARLIER MESSAGES' OWN QUOTES, AND NOTHING ELSE (html): from the header block at `from` to `to`,
+ * each hop opens with its header block and its first body line at the header's level; every body line
+ * is one ink, unhighlighted, with no answer opener; the level's lines share one ink; each run of
+ * deeper lines (a quote box) shares one ink, is not right below the message's own question, holds only
+ * questions below a question and is followed by a sentence of the message, not a word or two. A box in
+ * another ink than the message's ends with the question the message answers; all such boxes of a hop
+ * share one ink, and the first sits below a greeting or a lead-in, not below a sentence.
+ */
+function ownQuotesOnly(L: Line[], f: Facts, from: number, to: number): boolean {
+  for (let a = from; a < to;) {
+    let b = a + 1;
+    while (b < to && !f.hop[b] && !separatorLine(L[b]!.text)) b++;
+    // Every hop opens with its header block (the first at `from`): never a separator or a bare quote.
+    if (!f.hop[a]) return false;
+    const lv = L[a]!.nest;
+    let levelInk: string | null = null;
+    let boxInk: string | null = null;
+    let quoteInk: string | null = null;
+    let above: Line | null = null;
+    for (let i = a; i <= b; i++) {
+      const l = i < b && bodyLine(L, f, i, true) ? L[i]! : null;
+      if (i < b && l === null) continue;
+      if (boxInk !== null && (l === null || l.nest <= lv)) {
+        if (boxInk !== levelInk && !above!.text.endsWith("?")) return false;
+        if (l !== null && l.text.split(" ").length < 4) return false;
+        boxInk = null;
+      }
+      if (l === null) break;
+      if (l.nest < lv || l.mark > 0 || l.inkShare < 1 || opensAnswer(l.text)) return false;
+      if (l.nest === lv) {
+        if (levelInk === null) levelInk = l.ink;
+        else if (l.ink !== levelInk) return false;
+      } else if (boxInk === null) {
+        // A box opens: never right below the message's own question; in another ink, below a
+        // greeting or lead-in the first time, and in that one ink every time.
+        if (above === null || levelInk === null || above.text.endsWith("?")) return false;
+        if (l.ink !== levelInk) {
+          if (quoteInk === null ? SENTENCE_END.test(above.text) : l.ink !== quoteInk) return false;
+          quoteInk = l.ink;
+        }
+        boxInk = l.ink;
+      } else if (l.ink !== boxInk || (above!.text.endsWith("?") && !l.text.endsWith("?"))) {
+        return false;
+      }
+      above = l;
+    }
+    a = b;
+  }
+  return true;
+}
+
 interface Cand { kind: "run" | "header"; line: number; end: number; node: number }
 
 /**
@@ -684,10 +743,22 @@ function decide(
       if (fwd) return belowForward(L, f, s, n, html);
       const bare = c.node < 0 && s === c.line && f.header[c.line] && !separatorLine(L[c.line]!.text);
       if (bare && !vouched && pastedBlock(L, f, s, c.line)) return NO;
-      if (answersInside(L, f, c.line, html)) return NO;
+      if (!(html && ownQuotesOnly(L, f, c.line, n)) && answersInside(L, f, c.line, html)) return NO;
       return { at: "trailing", start: s, end: n, node: s === c.line && c.node >= 0 ? c.node : L[s]!.at };
     }
     const firstRun = runs++ === 0;
+    // A container that opens with a header block (new Outlook's) and holds only the earlier messages'
+    // own quotes: the fold the code below makes when its two answer guards are silent. Else unchanged.
+    if (html && !forward && L[c.line]!.boxed && f.header[c.line]) {
+      const s = introAbove(L, f, c.line, true);
+      const head = L[c.line]!;
+      const introduced = s < c.line || head.intro || strongAttribution(head.text) || weakAttribution(head.text) || separatorLine(head.text);
+      const k = nextFilled(L, c.end);
+      if (f.wordsBefore[s] && !forwardAt(L, s) && (k >= n || signatureAt(L, f, k) || footerAt(L, f, k, html)) && (k >= n || introduced)
+        && !(firstRun && ANNOUNCEMENT.test(leadOf(L, s))) && ownQuotesOnly(L, f, c.line, c.end)) {
+        return { at: "trailing", start: s, end: k, node: L[s]!.at };
+      }
+    }
     // Answers between the quotes of one container: the container is the letter.
     let quote = false;
     for (let i = c.line; i < c.end; i++) {
@@ -810,6 +881,7 @@ interface Frame<N> {
   content: boolean;
   depth: number;
   boxed: boolean;
+  nest: number;
   intro: boolean;
   cell: boolean;
   canvas: boolean;
@@ -841,7 +913,7 @@ function linearize<N>(root: N, tree: QuotedTree<N>, sheets: readonly string[] = 
   let start = -1;
   let fresh = true;
   const stack: Array<Frame<N>> = [{
-    kids: tree.children(root), next: 0, at: -1, block: true, content: false, depth: 0, boxed: false, intro: false,
+    kids: tree.children(root), next: 0, at: -1, block: true, content: false, depth: 0, boxed: false, nest: 0, intro: false,
     cell: false, canvas: false, ink: "", mark: false, quiet: false, bold: false, link: false, pre: false, sig: null,
   }];
 
@@ -874,6 +946,7 @@ function linearize<N>(root: N, tree: QuotedTree<N>, sheets: readonly string[] = 
     if (cur === null) {
       cur = newLine("", fr.depth);
       cur.boxed = fr.boxed;
+      cur.nest = fr.nest;
       cur.intro = fr.intro;
       cur.cell = fr.cell;
       cur.canvas = fr.canvas;
@@ -951,6 +1024,7 @@ function linearize<N>(root: N, tree: QuotedTree<N>, sheets: readonly string[] = 
       l.hr = true;
       l.at = start;
       l.boxed = fr.boxed;
+      l.nest = fr.nest;
       l.canvas = fr.canvas;
       lines.push(l);
       start = -1;
@@ -986,9 +1060,10 @@ function linearize<N>(root: N, tree: QuotedTree<N>, sheets: readonly string[] = 
     const size = SMALL_DECL.exec(style);
     const small = tag === "small" || (tag === "font" && /^\s*[12]\s*$/.test(tree.attr(n, "size") ?? ""))
       || (size !== null && Number(size[1]) <= (size[2]!.toLowerCase() === "pt" ? 9 : 12));
+    const quoteBox = (tag === "blockquote" && !indent) || /border-left\s*:[^;]*\bsolid|border-left-style\s*:\s*solid/i.test(style);
     const child: Frame<N> = {
       kids: tree.children(n), next: 0, at: index, block, content: false, depth,
-      boxed: fr.boxed || container, intro: fr.intro || hasToken(cls, INTRO_CLASS) || hasToken(id, INTRO_ID),
+      boxed: fr.boxed || container, nest: fr.nest + (quoteBox ? 1 : 0), intro: fr.intro || hasToken(cls, INTRO_CLASS) || hasToken(id, INTRO_ID),
       cell: fr.cell || tag === "td" || tag === "th", canvas: fr.canvas || canvas,
       ink: colour != null ? inkOf(colour) : fr.ink,
       mark,

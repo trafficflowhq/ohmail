@@ -1,6 +1,6 @@
 # Quoted-history corpus
 
-131 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
+135 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
 `<file>.expected.json` sidecar that says where the new message ends and the history begins. Built for the
 0.30.x thread reader, where thread members show their whole quoted history unfolded (report,
 2026-10-23: an Outlook-style `Von:/Datum:/An:/Cc:/Betreff: WG:` block in the body's own colour, never folded).
@@ -42,6 +42,9 @@ by the writer's initials ('[AE] '); a mark two lines of one hop repeat ('[Ana Ex
 '[EXTERNAL]' banner does not.
 Fixture 131 is a Thunderbird reply (ISO attribution) quoting an Outlook reply to a group: every quoted `An:`
 line runs past 400 characters, and its Von/Datum/An/Cc/Betreff blocks still count as header blocks.
+Fixtures 132-135 are Outlook replies whose quoted earlier message holds its own quote box (a blockquote, or
+Word's left-ruled div, plain or coloured) and its author's answer below it, one or two levels deep: the quote
+and the answer are the history's, and it folds at the reply header.
 
 ## Sidecar schema (`*.expected.json`)
 
@@ -217,3 +220,7 @@ which belong to the new message and stay visible.
 | 129 | `129-gmail-en-forward-of-forward-thread.eml` | gmail | en | forward | 3 | trailing (from level 3) | Gmail, English: Fwd: Fwd: with a note; two nested 'Forwarded message' blocks, the inner one a reply whose 'On ... wrote:' quote folds |
 | 130 | `130-outlook-win-de-forward-of-forward-chain.eml` | outlook_win | de | forward | 3 | trailing (from level 3) | Outlook for Windows, German: WG: WG: with a note; the middle Von block's Betreff is WG: over 'z.K.', the supplier's AW: with the invoice stays open, the request it answers folds |
 | 131 | `131-thunderbird-en-iso-reply-to-outlook-mac-group.eml` | thunderbird | en | reply | 4 | trailing | Thunderbird, English: 'On 2026-10-20 07:44, ... wrote:' over an Outlook for Mac reply to twelve people; a two-line answer, then Von/Datum/An/Cc/Betreff blocks whose An: line is past 400 characters |
+| 132 | `132-outlook-mac-de-reply-history-quote-answer.eml` | outlook_mac_new | de | reply | 1 | trailing | Outlook for Mac (new), German: Von/Datum '... um HH:MM'/An (two)/Cc/Betreff: Re: in #mail-editor-reference-message-container; the earlier message quotes a bullet in a left-ruled blockquote and answers it with a link |
+| 133 | `133-outlook-win-de-reply-history-coloured-quote-answer.eml` | outlook_win | de | reply | 1 | trailing | Outlook for Windows, German: border-top Von block; the earlier message quotes a bullet in #500050 and answers it in a sentence |
+| 134 | `134-outlook-mac-de-two-levels-quote-answer.eml` | outlook_mac_new | de | reply | 2 | trailing | Outlook for Mac (new) over an Outlook for Windows hop, German: each level quotes and answers, the inner quote in #1F497D |
+| 135 | `135-outlook-win-de-reply-history-word-quote-box.eml` | outlook_win | de | reply | 1 | trailing | Outlook for Windows, German: the earlier message's quote is Word's border-left div box in #0070C0, its answer below |

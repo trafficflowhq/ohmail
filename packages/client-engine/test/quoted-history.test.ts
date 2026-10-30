@@ -9,7 +9,7 @@ import {
   quotedHistoryVerdictOfHtml,
   type QuotedDomNode,
 } from "../src/quoted-history.js";
-import { qhFixtures, qhFolds, qhNorm, type QhFixture } from "./quoted-history-fixtures.js";
+import { qhFixtures, qhFolds, qhNorm, qhTypedAnswers, type QhFixture } from "./quoted-history-fixtures.js";
 
 /**
  * THE CORPUS DECIDES. Every fixture's sidecar says where the new message ends and the history
@@ -282,6 +282,16 @@ describe("bounded", () => {
     const root = domOf(html);
     const t0 = Date.now();
     quotedHistoryOfHtml(root, quotedDomTree);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("2,600 quote boxes and answers under a header block are read in one linear pass", { timeout: 4000 }, () => {
+    const html = '<p>Hi Ben, thanks.</p><div style="border:none;border-top:solid #E1E1E1 1.0pt"><p><b>From:</b> Ben &lt;ben@example.org&gt;<br>'
+      + "<b>Sent:</b> Monday, October 19, 2026 9:00 AM<br><b>To:</b> Ana<br><b>Subject:</b> Visit</p></div><p>Hi Ana,</p>"
+      + '<blockquote><p style="color:#C00000">Is the plan ready?</p></blockquote><p>It is ready and in the folder.</p>'.repeat(2600);
+    const root = domOf(html);
+    const t0 = Date.now();
+    expect(quotedHistoryOfHtml(root, quotedDomTree)).not.toBeNull();
     expect(Date.now() - t0).toBeLessThan(1000);
   });
 });
@@ -664,5 +674,213 @@ describe("a footer or a tracking pixel after the quote ends the history", () => 
   });
   it("control: a reply after the quote is still not a footer", () => {
     expect(htmlCase(appended(fixture("28").html!, "<p>One more thing: the truck comes at 7 on Monday, please have the dock clear.</p>")).r).toBeNull();
+  });
+});
+
+describe("a quote and its answer inside the history are the history's (132-135)", () => {
+  const P = (t: string): string => `<p class="MsoNormal">${t}<o:p></o:p></p>`;
+  const red = (t: string): string => `<span style="color:#C00000">${t}</span>`;
+  const box = (x: string): string => `<blockquote style="margin:0cm 0cm 0cm 4.8pt;border-left:solid #CCCCCC 1.0pt;padding:0cm 0cm 0cm 6.0pt">${x}</blockquote>`;
+  // Ben's message under the header, replaced whole.
+  const earlier = (id: string, body: string): string => fixture(id).html!.replace(/<p class="MsoNormal">Hallo Clara,[^]*Ben<o:p><\/o:p><\/p>/, body);
+  const qa = (a1: string, a2: string): string => P("Hallo Clara,") + P("1. Ist die Filterreinigung im Angebot enthalten?") + P(a1)
+    + P("2. Brauchen Ihre Techniker einen Schlüssel für den Technikraum?") + P(a2) + P("Bitte gebt mir bis Freitag Bescheid, dann plane ich die Begehung fest ein.") + P("Gruss") + P("Ben");
+  const cm = (t: string): string => `<b><i>[CM] </i></b>${t}`;
+
+  it("the text part held by its html folds at the header", () => {
+    for (const id of ["132", "133", "134", "135"]) {
+      const fx = fixture(id);
+      const r = foldText(fx.text, { html: verdictOf(fx.html!, fx.subject), subject: fx.subject });
+      expect(r, id).not.toBeNull();
+      expect(fx.text.split("\n")[r!.start], id).toMatch(/^Von: Ben Sample/);
+    }
+  });
+
+  it("answers in another hand under a new-Mac header stay open, red or marked", () => {
+    for (const [a1, a2] of [[red("Ja, sie ist Position 3 im Angebot."), red("Ja, bitte am Empfang hinterlegen.")],
+      [cm("Ja, sie ist Position 3 im Angebot."), cm("Ja, bitte am Empfang hinterlegen.")]]) {
+      const html = earlier("132", qa(a1!, a2!));
+      expect(html).toContain("mail-editor-reference-message-container");
+      expect(htmlCase(html).r).toBeNull();
+      expect(verdictOf(html)).toBeNull();
+    }
+  });
+
+  it("answers in another hand inside a quote box under a Windows header stay open", () => {
+    const inBox = (a1: string, a2: string): string => P("Hallo Clara,") + P("zu deinen Fragen:") + box(P("1. Wann kommt der Techniker?") + P(a1)
+      + P("2. Wer hat den Schlüssel?") + P(a2)) + P("Bitte gebt mir bis Freitag Bescheid, dann plane ich die Begehung fest ein.") + P("Gruss") + P("Ben");
+    expect(htmlCase(earlier("133", inBox(cm("Am Dienstag um 10 Uhr."), cm("Der Hauswart hat ihn.")))).r, "[CM]").toBeNull();
+    expect(htmlCase(earlier("133", inBox(red("Am Dienstag um 10 Uhr."), red("Der Hauswart hat ihn.")))).r, "red").toBeNull();
+    // An original quoted whole in parts, red answers between them.
+    const parts = box(P("Hallo Clara,") + P("1. Wann kommt der Techniker morgen genau?")) + P(red("Am Dienstag um 10 Uhr."))
+      + box(P("2. Wer hat den Schlüssel für den Technikraum?") + P("Gruss Ben")) + P(red("Der Hauswart hat ihn, bitte am Empfang fragen."));
+    expect(htmlCase(earlier("133", parts)).r, "quote parts").toBeNull();
+  });
+
+  it("control: answers between a Gmail container's quote parts stay open", () => {
+    const q = (t: string): string => `<blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex"><div>${t}</div></blockquote>`;
+    const html = '<div dir="ltr">Hi Ben,<div><br></div><div>thanks, see you then.</div></div><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">'
+      + "On Wed, 28 Oct 2026 at 14:12, Ben Sample &lt;ben@example.org&gt; wrote:<br></div>" + q("Can the technician come Tuesday?")
+      + "<div>Yes, Tuesday at 10 works for us.</div>" + q("Who has the key?") + "<div>The caretaker has it, ask at the desk.</div></div>";
+    expect(htmlCase(html).r).toBeNull();
+  });
+
+  // The current writer's answers typed into the history: they keep it open.
+  const blue = (t: string): string => `<span style="color:#0070C0">${t}</span>`;
+  const hl = (t: string): string => `<span style="background:yellow;mso-highlight:yellow">${t}</span>`;
+  const nm = (t: string): string => `<b><i>[Clara Muster] </i></b>${t}`;
+  const wordBox = (x: string): string => `<div style="border:none;border-left:solid #CCCCCC 1.0pt;padding:0cm 0cm 0cm 6.0pt">${x}</div>`;
+  const cite = (x: string): string => `<blockquote type="cite">${x}</blockquote>`;
+  const Q1 = "Wann kommt der Techniker morgen genau?";
+  const Q2 = "Wer hat den Schlüssel für den Technikraum?";
+  const ANSWER = "Um 10 Uhr, er meldet sich am Empfang.";
+  const ask = P("Dana fragt noch:");
+  const tail = P("Kannst du ihr das bitte direkt beantworten?") + P("Gruss") + P("Ben");
+  const stays = (html: string, why: string): void => {
+    expect(htmlCase(html).r, why).toBeNull();
+    expect(verdictOf(html), why).toBeNull();
+  };
+
+  it("an answer typed as a quote box's last line, the message's text below the box, stays open", () => {
+    const long = "Um 10 Uhr morgen früh, er meldet sich vorher am Empfang bei Frau Muster.";
+    for (const id of ["132", "133", "135"]) {
+      for (const [name, a] of [["red", red(ANSWER)], ["blue", blue(ANSWER)], ["highlight", hl(ANSWER)], ["longer than the question", red(long)], ["comment mark", blue(nm(ANSWER))]]) {
+        for (const [kind, bx] of [["blockquote", box], ["Word box", wordBox]] as const) stays(earlier(id, P("Hallo Clara,") + ask + bx(P(Q1) + P(a!)) + tail), `${id} ${name} ${kind}`);
+      }
+      stays(earlier(id, P("Hallo Clara,") + ask + box(P(`<span style="color:#500050">${Q1}</span>`) + P(red(ANSWER))) + tail), `${id} under a coloured quote`);
+      stays(earlier(id, P("Hallo Clara,") + ask + box(P(Q1) + P(red(ANSWER))) + P("Und ausserdem:") + box(P(Q2) + P(red("Der Hauswart hat ihn."))) + tail), `${id} two boxes`);
+    }
+    // The text part follows its html: it stays open too.
+    for (const t of qhTypedAnswers()) {
+      expect(verdictOf(t.html), t.name).toBeNull();
+      expect(foldText(t.text, { html: verdictOf(t.html) }), t.name).toBeNull();
+    }
+  });
+
+  it("answers at the message's level between the parts of a quote below an attribution stay open", () => {
+    const by = P("Hallo Clara,") + P("Dana hat Fragen, siehe unten.") + P("Gruss") + P("Ben") + P("Am 27.10.2026 um 17:40 schrieb Dana Example &lt;dana.example@example.net&gt;:");
+    for (const id of ["132", "133"]) {
+      for (const [kind, q] of [["blockquote", box], ["cite", cite]] as const) {
+        stays(earlier(id, by + q(P("1. " + Q1)) + P(red("Am Dienstag um 10 Uhr kommt er.")) + q(P("2. " + Q2) + P("Gruss Dana"))
+          + P(red("Der Hauswart hat ihn, bitte am Empfang fragen."))), `${id} ${kind}`);
+      }
+      stays(earlier(id, by + box(P("1. Ist die Filterreinigung im Angebot enthalten?")) + P(red("JA")) + box(P("2. Um wie viel Uhr sollen die Techniker kommen?"))
+        + P(red("14:00")) + box(P("Danke für die Rückmeldung, ich plane den Termin danach ein.") + P("Gruss Dana"))), `${id} short answers`);
+    }
+  });
+
+  it("a name mark repeated across a quote box and the message's text is an answer mark", () => {
+    for (const id of ["132", "133", "135"]) {
+      stays(earlier(id, P("Hallo Clara,") + ask + box(P(Q1) + P(nm(ANSWER))) + P("Kannst du ihr das bitte direkt beantworten?") + P(nm("Ja, ich schreibe ihr gleich selbst."))
+        + P("Gruss") + P("Ben")), `${id} box and text`);
+      stays(earlier(id, P("Hallo Clara,") + ask + box(P(Q1) + P(nm(ANSWER))) + P("Und ausserdem:") + box(P(Q2) + P(nm("Der Hauswart hat ihn."))) + tail), `${id} two boxes`);
+    }
+  });
+
+  // Dana's older message under its own Outlook header.
+  const hop = (body: string): string => '<div><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p class="MsoNormal"><b>Von:</b> '
+    + "Dana Example &lt;dana.example@example.net&gt;<br><b>Gesendet:</b> Dienstag, 27. Oktober 2026 17:40<br><b>An:</b> Ben Sample &lt;ben.sample@example.org&gt;<br>"
+    + `<b>Betreff:</b> Begehung Technikraum</p></div></div>${body}`;
+
+  it("answers in an older hop keep a new-Mac container open: its quote and the words after it are the letter", () => {
+    const below = (id: string, body: string): string => fixture(id).html!.replace(/(<p class="MsoNormal">Ben<o:p><\/o:p><\/p>)/, `$1${hop(body)}`);
+    const sign = P("Viele Grüsse") + P("Dana");
+    stays(below("132", P("Hallo Ben,") + P("1. Wann kommt der Techniker genau?") + P(red("Am Dienstag um 10 Uhr.")) + P("2. " + Q2) + P(red("Der Hauswart hat ihn."))
+      + P("Bitte gebt mir bis Freitag Bescheid, dann plane ich die Begehung fest ein.") + sign), "questions");
+    stays(below("132", P("Hallo Ben,") + box(P(Q1)) + P(red(ANSWER)) + P("Die Pläne der Lüftung bringe ich selbst mit, keine Sorge.") + sign), "after a box");
+    stays(below("132", P("Hallo Ben,") + box(P(Q1)) + P(nm(ANSWER)) + P(Q2) + P(nm("Der Hauswart hat ihn."))), "name marks");
+    // 134's second hop (Dana's, under its own header) with the answer.
+    const h = fixture("134").html!;
+    const i = h.lastIndexOf('<p class="MsoNormal">Hallo Ben,<o:p></o:p></p>');
+    const j = h.indexOf("Dana<o:p></o:p></p>", i) + "Dana<o:p></o:p></p>".length;
+    stays(h.slice(0, i) + P("Hallo Ben,") + box(P(Q1)) + P(red(ANSWER)) + P("Die Pläne der Lüftung bringe ich selbst mit, keine Sorge.") + sign + h.slice(j), "134");
+  });
+
+  // Answers that outweigh the message's own words, or sit under a banner or a coloured signature.
+  const by = P("Am 27.10.2026 um 17:40 schrieb Dana Example &lt;dana.example@example.net&gt;:");
+  const signed = P("Hallo Clara,") + P("Dana hat Fragen, siehe unten.") + P("Gruss") + P("Ben") + by;
+  const plan = P("Bitte gib mir bis Freitag Bescheid, dann plane ich die Begehung fest ein.") + P("Gruss") + P("Ben");
+  const sig = P('<b><span style="color:#1F497D">Ben Sample</span></b>') + P('<span style="color:#1F497D">Projektleiter Haustechnik | Beispiel AG</span>');
+  const LONG = ["Am Dienstag um 10 Uhr, er meldet sich vorher telefonisch bei Frau Muster am Empfang.",
+    "Der Hauswart hat ihn, bitte vorher beim Empfang im Erdgeschoss nachfragen und unterschreiben.",
+    "Ja, die Filterreinigung ist Position 3 im Angebot und wird beim gleichen Termin erledigt."];
+  const ASKED = ["1. Wann kommt der Techniker morgen genau? Wir müssen den Raum vorher aufschliessen und lüften.",
+    "2. Wer hat den Schlüssel für den Technikraum? Letztes Mal hat das eine Stunde gedauert.", "3. Ist die Filterreinigung im Angebot enthalten? Im letzten Jahr wurde sie extra verrechnet."];
+  const parts = (q: (x: string) => string, n: number): string =>
+    ASKED.slice(0, n).map((x, k) => q(P(x)) + P(red(LONG[k]!))).join("") + q(P("Danke und Gruss") + P("Dana"));
+
+  it("answers outweighing the message's own words between a quote's parts stay open", () => {
+    for (const id of ["132", "133", "135"]) {
+      // Not 132's Word box: a new-Mac container is read only to its first message (a fix of its own).
+      const boxes = [["blockquote", box], ["cite", cite], ["Word box", wordBox]] as const;
+      for (const [kind, q] of id === "132" ? boxes.slice(0, 2) : boxes) {
+        stays(earlier(id, P("Hallo Clara,") + P("siehe unten.") + parts(q, 3)), `${id} ${kind} below the greeting`);
+        stays(earlier(id, signed + parts(q, 3)), `${id} ${kind} three`);
+        stays(earlier(id, signed + parts(q, 2)), `${id} ${kind} two`);
+      }
+    }
+    const more = "bitte vorher beim Empfang im Erdgeschoss nachfragen und dort den Ausweis zeigen sowie unterschreiben".split(" ");
+    for (let n = 0; n <= 12; n += 2) {
+      const longer = n === 0 ? "" : `, ${more.slice(0, n).join(" ")}`;
+      stays(earlier("133", signed + box(P(`1. ${Q1}`)) + P(red(`Am Dienstag um 10 Uhr${longer}.`)) + box(P(`2. ${Q2}`) + P("Gruss Dana"))
+        + P(red(`Der Hauswart hat ihn${longer}.`))), `${n} words more`);
+    }
+    stays(earlier("133", P("Hallo Clara,") + P("Dana hat Fragen zur Begehung, siehe unten. Ich bin bis Montag im Urlaub und kann ihr leider nicht selbst antworten.")
+      + P("Gruss") + P("Ben") + by + parts(box, 2)), "the message's words outweigh them");
+  });
+
+  it("a lone short answer under a question quoted in a box stays open", () => {
+    const q = P("Ist die Filterreinigung im Angebot enthalten?");
+    for (const id of ["132", "133", "135"]) {
+      for (const [kind, bx] of [["blockquote", box], ["Word box", wordBox], ["cite", cite]] as const) {
+        for (const [name, a] of [["JA", red("JA")], ["NEIN", red("NEIN")], ["OK", red("OK")], ["14:00", red("14:00")], ["highlight", hl("JA")]]) {
+          stays(earlier(id, P("Hallo Clara,") + ask + bx(q) + P(a!) + plan), `${id} ${kind} ${name}`);
+        }
+      }
+      stays(earlier(id, P("Hallo Clara,") + q + P(red("JA")) + plan), `${id} under the message's own question`);
+      stays(earlier(id, P("Hallo Clara,") + ask + box(q + P(red("JA"))) + plan), `${id} inside the box`);
+    }
+    stays(earlier("133", P("Hallo Clara,") + ask + box(q) + P(red("Ja, Position 3.")) + plan), "a sentence");
+    stays(earlier("133", P("Hallo Clara,") + ask + box(q) + P(red("JA")) + box(P("Um wie viel Uhr sollen die Techniker kommen?")) + P(red("14:00")) + plan), "two");
+    stays(earlier("133", P("Hallo Clara,") + P("Kannst du Dana das beantworten?") + box(q) + P(red("JA")) + plan), "a question above the box");
+  });
+
+  it("an answer ending a quote box stays open when only quoted text follows it", () => {
+    const keyAnswer = red("Der Hauswart hat ihn, bitte am Empfang fragen.");
+    for (const id of ["132", "133", "135"]) {
+      const asks = P("Hallo Clara,") + P("Dana fragt:");
+      stays(earlier(id, asks + box(P(Q1) + P(red(ANSWER))) + P("Und:") + box(P(Q2) + P(keyAnswer)) + P("Gruss") + P("Ben")), `${id} two answered boxes`);
+      stays(earlier(id, asks + box(P(Q1) + P(red(ANSWER))) + P("Und:") + box(P(Q2)) + P("Gruss") + P("Ben")), `${id} a quoted box after it`);
+      stays(earlier(id, asks + box(P(Q1)) + P(red(ANSWER)) + box(P(Q2)) + P("Gruss") + P("Ben")), `${id} between two boxes`);
+    }
+  });
+
+  it("a banner or a coloured signature in the message is not its hand", () => {
+    const banner = P('<span style="color:#9C0006">ACHTUNG: Diese E-Mail stammt von ausserhalb der Organisation. Klicken Sie nicht auf Links.</span>');
+    const table = `<table style="width:100%"><tr><td style="background:#FFEB9C">${P('<b><span style="color:#9C0006">CAUTION: This email originated from outside of the organization. '
+      + "Do not click links unless you recognize the sender.</span></b>")}</td></tr></table>`;
+    for (const id of ["132", "133", "135"]) {
+      for (const [kind, top] of [["banner", banner], ["table banner", table]] as const) {
+        stays(earlier(id, top + P("Hallo Clara,") + P("1. Ist die Filterreinigung im Angebot enthalten?") + P(blue("Ja, sie ist Position 3 im Angebot."))
+          + P("2. Brauchen Ihre Techniker einen Schlüssel für den Technikraum?") + P(blue("Ja, bitte am Empfang hinterlegen.")) + plan), `${id} ${kind}, inline`);
+        stays(earlier(id, top + P("Hallo Clara,") + ask + box(P(Q1)) + P(blue(ANSWER)) + plan), `${id} ${kind}, under a quoted question`);
+      }
+      stays(earlier(id, P("Hallo Clara,") + P("Dana hat Fragen, siehe unten.") + P("Gruss") + sig + by + box(P(`1. ${Q1}`)) + P(red("Am Dienstag um 10 Uhr kommt er."))
+        + box(P(`2. ${Q2}`) + P("Gruss Dana")) + P(red("Der Hauswart hat ihn, bitte am Empfang fragen."))), `${id} signature over answers`);
+      stays(earlier(id, P("Hallo Clara,") + P("siehe unten.") + sig + by + parts(box, 2)), `${id} signature over long answers`);
+    }
+  });
+
+  it("a reply above an attribution and its quote is the history's: it folds", () => {
+    const gmail = (x: string): string => `<blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">${x}</blockquote>`;
+    const dana = P("Hallo Ben,") + P("Können wir die Begehung des Technikraums auf Donnerstag verschieben? Am Dienstag bin ich leider nicht im Haus.") + P("Viele Grüsse") + P("Dana");
+    const reply = P("Hallo Clara,") + P("Ja, Donnerstag um 10 Uhr passt uns.") + P("Gruss") + P("Ben");
+    for (const id of ["132", "133", "135"]) {
+      for (const [kind, q] of [["Gmail", gmail], ["Apple", cite]] as const) {
+        const c = htmlCase(earlier(id, reply + by + q(dana)));
+        expect(c.r, `${id} ${kind}`).not.toBeNull();
+        expect(c.visibleText, `${id} ${kind}`).not.toContain("Ben Sample");
+      }
+    }
   });
 });

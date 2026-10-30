@@ -1,0 +1,37 @@
+Hallo Ben,
+
+danke, so machen wir es. Ich reserviere den Raum für Donnerstag.
+
+Gruss
+Clara
+
+Von: Ben Sample <ben.sample@example.org>
+Datum: Mittwoch, 28. Oktober 2026 um 14:12
+An: Clara Muster <clara.muster@example.org>, Dana Example <dana.example@example.net>
+Cc: Finn Beispiel <finn.beispiel@example.com>
+Betreff: Re: Begehung Technikraum
+
+Hallo Clara,
+
+> • Können wir die Begehung des Technikraums auf Donnerstag verschieben?
+
+Ja, Donnerstag um 10 Uhr passt uns. Den Plan des Technikraums findest du hier: Plan Technikraum<https://example.com/plan-technikraum>
+Bitte bringt die Schlüssel für den Technikraum mit.
+
+Gruss
+Ben
+
+Von: Dana Example <dana.example@example.net>
+Gesendet: Dienstag, 27. Oktober 2026 17:40
+An: Ben Sample <ben.sample@example.org>
+Cc: Clara Muster <clara.muster@example.org>
+Betreff: AW: Begehung Technikraum
+
+Hallo Ben,
+
+> Wer bringt die Pläne der Lüftung zur Begehung mit?
+
+Die bringe ich mit, ich habe sie gestern vom Planungsbüro bekommen.
+
+Viele Grüsse
+Dana

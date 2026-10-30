@@ -10,6 +10,7 @@ import { Element, type AnyNode } from "domhandler";
 import { quotedDomTree, quotedHistoryOfHtml, type QuotedDomNode, type QuotedTree } from "@ohmail/client-engine";
 import { phoneQuotedTree } from "../src/mail/quoted-tree";
 import { qhFixtures } from "../../../packages/client-engine/test/quoted-history-fixtures";
+import { qhProbeCases } from "../../../packages/client-engine/test/quoted-history-probes";
 
 const SKIP = new Set(["style", "script", "head", "title", "template", "noscript", "svg", "math", "xml"]);
 
@@ -43,20 +44,29 @@ function phoneBody(html: string): AnyNode {
   return find(doc.children) ?? doc;
 }
 
+function agree(html: string, subject?: string): void {
+  const web = new DOMParser().parseFromString(html, "text/html").body as unknown as QuotedDomNode;
+  const phone = phoneBody(html);
+  const a = quotedHistoryOfHtml(web, quotedDomTree, { subject });
+  const b = quotedHistoryOfHtml(phone, phoneQuotedTree, { subject });
+  expect(b === null, "both fold, or neither").toBe(a === null);
+  if (a === null || b === null) return;
+  expect(b.at).toBe(a.at);
+  expect(offsetOf(phone, phoneQuotedTree, b.start), "the start").toBe(offsetOf(web, quotedDomTree, a.start));
+  expect(offsetOf(phone, phoneQuotedTree, b.end), "the end").toBe(offsetOf(web, quotedDomTree, a.end));
+}
+
 describe("the phone's tree and the DOM agree on every fixture", () => {
   for (const fx of qhFixtures()) {
     if (fx.html === null) continue;
-    it(fx.name, () => {
-      const web = new DOMParser().parseFromString(fx.html!, "text/html").body as unknown as QuotedDomNode;
-      const phone = phoneBody(fx.html!);
-      const a = quotedHistoryOfHtml(web, quotedDomTree, { subject: fx.subject });
-      const b = quotedHistoryOfHtml(phone, phoneQuotedTree, { subject: fx.subject });
-      expect(b === null, "both fold, or neither").toBe(a === null);
-      if (a === null || b === null) return;
-      expect(b.at).toBe(a.at);
-      expect(offsetOf(phone, phoneQuotedTree, b.start), "the start").toBe(offsetOf(web, quotedDomTree, a.start));
-      expect(offsetOf(phone, phoneQuotedTree, b.end), "the end").toBe(offsetOf(web, quotedDomTree, a.end));
-    });
+    it(fx.name, () => agree(fx.html!, fx.subject));
+  }
+});
+
+describe("the phone's tree and the DOM agree on every generated probe", () => {
+  for (const c of qhProbeCases()) {
+    if (c.html === null) continue;
+    it(`${c.family} ${c.name}`, () => agree(c.html!, c.subject));
   }
 });
 

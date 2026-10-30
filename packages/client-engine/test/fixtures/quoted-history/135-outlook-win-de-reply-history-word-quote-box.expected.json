@@ -1,0 +1,43 @@
+{
+  "id": "135",
+  "file": "135-outlook-win-de-reply-history-word-quote-box.eml",
+  "shape": "outlook-win-de-reply-history-word-quote-box",
+  "description": "Outlook for Windows, German: a short reply over a border-top Von block; the earlier message quotes a bullet in Word's border-left div box in #0070C0 and answers it",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Ben,",
+      "visibleLastLine": "Clara",
+      "historyStartLine": "Von: Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "Von: Ben Sample <ben.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Clara"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Word draws the quote box as a div with a solid left rule, no blockquote."
+}
