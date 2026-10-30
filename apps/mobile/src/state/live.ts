@@ -777,7 +777,7 @@ function senderCheckOf(m: EngineMessage): { senderCheck?: Mail["senderCheck"]; s
 
 /** The account's own mail, as `isOwn` reads it: the Sent copy, or a sender among its addresses. */
 function ownMailOf(m: EngineMessage, physical: string, own: readonly string[] | undefined): boolean {
-  if (isOwnSent({ folder: physical as Folder })) return true;
+  if (isOwnSent({ folder: physical as Folder, mailboxId: m.mailboxId })) return true;
   const from = m.from.address.trim().toLowerCase();
   return (own ?? []).some((a) => a.trim().toLowerCase() === from);
 }

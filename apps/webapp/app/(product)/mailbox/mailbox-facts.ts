@@ -155,6 +155,8 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // the note render nothing today, a `?? null` here would be the seam destroying the
     // distinction rather than a reader choosing not to use it.
     junkFolder: m.junkFolder,
+    // The recorded Sent folder (mail 0132), untouched on the same rule.
+    sentFolder: m.sentFolder,
     // Why sending is not set up, untouched: absent is an older API and `null` is "settled".
     sendingUnsettledReason: m.sendingUnsettledReason,
     // The forwarding-detection pair (mail 0078), untouched: absent is an API older than the columns.

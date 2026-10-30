@@ -13,7 +13,7 @@ import {
   isOwnSent, isResurfaced, messagesByDateDesc, newestHeldBySender, queueCoverage, rulesList, screenerWaitingOf, senderKey,
 } from "./selectors.js";
 import {
-  MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, type EngineMessage,
+  MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, SENT_IN_HISTORY_TYPE, type EngineMessage,
   type Folder, type MailboxProfileEntity, type MessageBodyRecord, type RuleDTO,
 } from "./types.js";
 
@@ -101,6 +101,11 @@ export interface ConsentPartition {
    * cutline. Read by `screenerSegments` through `presentationReader` (`RETIRED_DECIDED_TYPE`).
    */
   readonly retiredDecided: ReadonlySet<string>;
+  /**
+   * Own letters in the recorded Sent folder that History holds while they keep their folder place
+   * (the lens, folders on). Read by `ohboxView` through `presentationReader` (`SENT_IN_HISTORY_TYPE`).
+   */
+  readonly sentInHistory: ReadonlySet<string>;
 }
 
 /**
@@ -742,6 +747,13 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const activeUndecided = new Set<string>();
   const dormantUndecided = new Set<string>();
   const retiredDecided = new Set<string>();
+  const sentKeptInFolder = new Set<string>();
+  /** Outbound mail written before its mailbox's cutline: the backlog the baseline says is finished (see below). */
+  const beforeSentCut = (m: EngineMessage): boolean => {
+    if (rulesOnly || isResurfaced(m)) return false;
+    const ms = messageMs(m);
+    return ms !== null && ms < cutOf(m.mailboxId).cutoff;
+  };
 
   for (const m of messages) {
     /**
@@ -791,6 +803,13 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
        */
       if (inUserFolder(m)) {
         placeOf.set(m.id, m.folder);
+        /* The mailbox's recorded Sent folder, announced as a user folder ('Envoyés'): the Sent cut
+           below, read as the lens. History holds the old letters and the folder keeps them; the
+           Ohbox's own-sent union leaves them out (`sentInHistory`). */
+        if (isOwnSent(m)) {
+          if (beforeSentCut(m)) { historyIds.add(m.id); sentKeptInFolder.add(m.id); }
+          continue;
+        }
         const key = senderKey(m.from.address);
         if (!own.has(key) && !m.unread && !isResurfaced(m)) {
           const decided = decidedDestination(index, m.from.address, m.mailboxId);
@@ -799,8 +818,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
         }
         continue;
       }
-      const sentMs = messageMs(m);
-      if (!rulesOnly && !isResurfaced(m) && sentMs !== null && sentMs < cutOf(m.mailboxId).cutoff) {
+      if (beforeSentCut(m)) {
         placeOf.set(m.id, null);
         historyIds.add(m.id);
       } else {
@@ -977,6 +995,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     history,
     activity,
     retiredDecided,
+    sentInHistory: new Set([...sentKeptInFolder].filter((id) => historyIds.has(id))),
     counts: {
       consentedSenders: consentedSenders.size,
       activeUndecidedSenders: activeUndecided.size,
@@ -1022,6 +1041,7 @@ export function presentationReader(reader: EntityReader, partition: ConsentParti
     list<T = unknown>(type: string): T[] {
       // The partition's own answer, never stored — see `RETIRED_DECIDED_TYPE`.
       if (type === RETIRED_DECIDED_TYPE) return [...partition.retiredDecided].map((key) => ({ key }) as T);
+      if (type === SENT_IN_HISTORY_TYPE) return [...partition.sentInHistory].map((id) => ({ id }) as T);
       if (type !== "message") return reader.list<T>(type);
       /**
        * ITERATE THE BASE READER'S SHARED DATE ORDER, not its raw list. `list()`'s order is

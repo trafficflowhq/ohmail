@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { FixturesAdapter, OhmailEngine } from "@ohmail/client-engine";
 
 /** The fixture's ids, built from their numbers. */
 const tid = (n: number): string => `T${n}`;
@@ -57,12 +58,13 @@ interface Row {
   date?: string;
   /** "Sent" makes the row own-sent (`isOwnSent` recognises the mailbox's Sent folder); default INBOX. */
   folder?: string;
+  mailboxId?: string;
   from?: Addr;
   to?: Addr[];
 }
 function msg(m: Row): Record<string, unknown> {
   return {
-    id: m.id, accountId: "a", mailboxId: "mb", threadId: m.threadId ?? null, messageIdHeader: null,
+    id: m.id, accountId: "a", mailboxId: m.mailboxId ?? "mb", threadId: m.threadId ?? null, messageIdHeader: null,
     subject: `subj-${m.id}`,
     from: m.from ?? { name: `sender-${m.id}`, address: `${m.id}@ex.example` },
     to: m.to ?? [], cc: [],
@@ -130,6 +132,24 @@ describe("own-sent rows name the recipient", () => {
     expect(row.textContent).not.toContain(OWN.address);
     // the circle is the RECIPIENT's, not the writer's own "M".
     expect(row.querySelector(".av")?.textContent).toBe("N");
+  });
+
+  it("a row in the mailbox's recorded Sent folder ('Envoyés') is own-sent: 'Me → <name>'", async () => {
+    setViewport();
+    const row: Row = {
+      id: "fr1", unread: false, folder: "Envoyés", mailboxId: "mb-fr", from: OWN,
+      to: [{ name: "Nora Lindt", address: "nora@example.net" }], date: at(10),
+    };
+    await render({ previouslySeen: [row] });
+    expect(rowEl("fr1").textContent).not.toContain("Me →");
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter() });
+    try {
+      engine.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }]);
+      await render({ previouslySeen: [{ ...row, id: "fr2" }] });
+      expect(rowEl("fr2").textContent).toContain("Me → Nora Lindt");
+    } finally {
+      engine.setSentFolders([]);
+    }
   });
 
   it("a recipient with no display name falls back to their address", async () => {

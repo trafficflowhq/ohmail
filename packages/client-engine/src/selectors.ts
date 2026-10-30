@@ -1,4 +1,5 @@
-import { canonicalDestination, isSentFolderPath } from "@trafficflow/core/folder-name";
+import { canonicalDestination, isSentFolderOf } from "@trafficflow/core/folder-name";
+import { recordedSentFolderOf } from "./sent-folders.js";
 import { opensWithForwardPrefix } from "@trafficflow/core/reply-subject";
 import { isAcknowledgementSubject } from "@trafficflow/core/ics";
 import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
@@ -33,6 +34,7 @@ import {
   type UnscreenedGroupDTO,
   HELD_RELEASE_TYPE,
   RETIRED_DECIDED_TYPE,
+  SENT_IN_HISTORY_TYPE,
   UNSCREENED_TYPE,
   SCREENER_WAITING_TYPE,
   SCREENER_WAITING_PAGE_ID,
@@ -468,20 +470,19 @@ export interface OhboxView {
 
 /**
  * A message the account itself wrote. Sent mail keeps its arrival folder, so the question is which
- * folder is the Sent folder, asked POSITIVELY of the path: {@link isSentFolderPath} recognises
- * every canonical form the worker's Sent resolver produces — one regex, one home
- * (`@trafficflow/core/types`), the same value the folders inventory excludes. Not
- * `!VIEW_OF_FOLDER[m.folder]`: the passive read mirrors the WHOLE folder tree, so the negative
- * test claimed every filed folder as own-sent and lifted blocks of filed mail into "Earlier".
- * Residual: an unrecognised SPECIAL-USE Sent name is absent from "Earlier" until the resolved path
- * is persisted. These rows land `\Seen` — never "New for you".
+ * folder is the Sent folder, asked POSITIVELY of the path: a Sent-shaped name (one regex, one home,
+ * `@trafficflow/core/types`), or exactly the path the mailbox's attach recorded
+ * ({@link recordedSentFolderOf}, stated by `OhmailEngine.setSentFolders`) — the server's own name
+ * for Sent, 'Envoyés'. Not `!VIEW_OF_FOLDER[m.folder]`: the passive read mirrors the WHOLE folder
+ * tree, so the negative test claimed every filed folder as own-sent and lifted blocks of filed
+ * mail into "Earlier". These rows land `\Seen` — never "New for you".
  */
-export function isOwnSent(m: Pick<EngineMessage, "folder">): boolean {
-  return isSentFolderPath(m.folder);
+export function isOwnSent(m: Pick<EngineMessage, "folder" | "mailboxId">): boolean {
+  return isSentFolderOf(m.folder, recordedSentFolderOf(m.mailboxId));
 }
 
 /** A message the account sent: the engine's own send record or the Sent folder's copy. */
-export function isOwnOutbound(m: Pick<EngineMessage, "folder" | "local">): boolean {
+export function isOwnOutbound(m: Pick<EngineMessage, "folder" | "mailboxId" | "local">): boolean {
   return m.local === true || isOwnSent(m);
 }
 
@@ -494,7 +495,7 @@ export function isOwnOutbound(m: Pick<EngineMessage, "folder" | "local">): boole
  * its sender's name; nothing here reaches threading, naming or a merge, and the worst error is an
  * own forward wearing its sender's name.
  */
-export function isForwardedByUs(m: Pick<EngineMessage, "folder" | "subject" | "local">): boolean {
+export function isForwardedByUs(m: Pick<EngineMessage, "folder" | "mailboxId" | "subject" | "local">): boolean {
   return isOwnOutbound(m) && opensWithForwardPrefix(m.subject);
 }
 
@@ -508,7 +509,7 @@ export function isForwardedByUs(m: Pick<EngineMessage, "folder" | "subject" | "l
  * threading, naming or a merge, and the worst error is own mail that genuinely opens "Accepted:"
  * losing its conversation's FACE while staying a member of it.
  */
-export function isItipAcknowledgement(m: Pick<EngineMessage, "folder" | "subject" | "itipReplyHeader">): boolean {
+export function isItipAcknowledgement(m: Pick<EngineMessage, "folder" | "mailboxId" | "subject" | "itipReplyHeader">): boolean {
   if (m.itipReplyHeader === true) return true;
   return isOwnSent(m) && isAcknowledgementSubject(m.subject ?? "");
 }
@@ -727,10 +728,13 @@ export function ohboxView(reader: EntityReader, openHeld: string | null = null):
    * one "Re: …" row per answered message at the top. A calendar acknowledgement
    * ({@link isItipAcknowledgement}) is the same class and is held out for the same reason.
    * `!== true`, never `=== false`: the field is absent on older mirrors/servers and absent must
-   * mean "the person's". Nothing is hidden; both stay in the Sent folder view.
+   * mean "the person's". Nothing is hidden; both stay in the Sent folder view. Nor an own letter
+   * History holds while its folder keeps it (`SENT_IN_HISTORY_TYPE`, the recorded Sent folder under
+   * Use folders): the Sent cutline, as an old letter in 'Sent' is History and not "Earlier".
    */
+  const inHistory = new Set(reader.list<{ id: string }>(SENT_IN_HISTORY_TYPE).map((r) => r.id));
   const sent = all.filter(
-    (m) => isOwnSent(m) && m.autoReplyByUs !== true && !isItipAcknowledgement(m),
+    (m) => isOwnSent(m) && m.autoReplyByUs !== true && !isItipAcknowledgement(m) && !inHistory.has(m.id),
   );
 
   /**

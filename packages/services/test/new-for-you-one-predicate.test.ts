@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
-import { messageStates, messages } from "@trafficflow/db";
+import { mailboxes, messageStates, messages, threads } from "@trafficflow/db";
 import { MessageService, TriageService } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 
@@ -143,6 +143,40 @@ describe("the read half of the Imbox holds out what the unread half does", () =>
     const page = await msgs.list(ctx, { view: "previously_seen", limit: 50 });
     expect(page.items.map((m) => m.id).sort()).toEqual([plain, muted].sort());
     for (const id of held) expect(page.items.map((m) => m.id)).not.toContain(id);
+  });
+});
+
+/**
+ * THE FOLD KNOWS SENT BY THE MAILBOX'S RECORDED NAME. A parked conversation whose only letter after
+ * the pin is the person's own reply, filed in the Sent folder the attach recorded ('Envoyés'), is
+ * not pulled forward, so its other unread member stays in New for you as the client shows it.
+ * MUTATION WATCHED: drop the recorded folder from `foldMemberOf` and the reply reads as somebody's.
+ */
+describe("New for you folds with the mailbox's recorded Sent folder", () => {
+  async function world(sentFolder: string | null) {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    await db.update(mailboxes).set({ sentFolder }).where(eq(mailboxes.id, mailboxId));
+    const [t] = await db.insert(threads).values({ accountId, subject: "plans" }).returning();
+    const seed = (o: Record<string, unknown>) => seedMessage(db, accountId, mailboxId, { folder: "INBOX", ...o });
+    const pin = await seed({ from: "a@example.com", unread: false, date: new Date("2026-07-01T09:00:00Z") });
+    const other = await seed({ from: "b@example.com", unread: true, date: new Date("2026-07-05T09:00:00Z") });
+    const reply = await seed({ folder: "Envoyés", from: "mila@lichtgrat.example", unread: false, date: new Date("2026-07-20T09:00:00Z") });
+    for (const id of [pin, other, reply]) await db.update(messages).set({ threadId: t!.id }).where(eq(messages.id, id));
+    await db.insert(messageStates).values({
+      accountId, messageId: pin, state: "bubbled_up",
+      setAt: new Date("2026-07-10T09:00:00Z"), bubbleUpAt: new Date("2026-12-01T09:00:00Z"),
+    });
+    return { ids: await newForYouIds(ctx), other };
+  }
+
+  it("the own reply in a recorded 'Envoyés' pulls nothing forward: the other unread member stays", async () => {
+    const { ids, other } = await world("Envoyés");
+    expect(ids).toEqual([other]);
+  });
+
+  it("control: with nothing recorded, 'Envoyés' is somebody's folder and the conversation is pulled forward", async () => {
+    const { ids } = await world(null);
+    expect(ids).toEqual([]);
   });
 });
 

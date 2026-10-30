@@ -254,6 +254,15 @@ export function isSentFolderPath(path: string): boolean {
 }
 
 /**
+ * Is `path` this mailbox's Sent folder: Sent-shaped, or exactly the path the attach recorded
+ * (`mailboxes.sent_folder`, as `inSentFolderSql` reads it). A recorded INBOX is never Sent.
+ */
+export function isSentFolderOf(path: string, recorded: string | null | undefined): boolean {
+  return isSentFolderPath(path)
+    || (typeof recorded === "string" && recorded !== "" && recorded.toUpperCase() !== "INBOX" && path === recorded);
+}
+
+/**
  * {@link SENT_SHAPED_CANONICAL}'s whole language, lower-cased — for SQL, where the device store
  * has no regex: a statement asks `lower(folder) in (…)`. Finite by construction, four prefixes by
  * fourteen leaves; a test checks every member against the regex and pins the regex's source, so

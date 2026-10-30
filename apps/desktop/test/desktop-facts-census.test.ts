@@ -110,6 +110,9 @@ describe("the desktop mailbox-facts seam", () => {
          LEAF, so a seam that forwarded a truncated path would still look right in one test and
          wrong on any server that keeps Junk under INBOX. */
       junkFolder: "INBOX/Junk",
+      /* The Sent folder the attach recorded (mail 0132), nested and dotted on purpose: the engine
+         matches it exactly, so a seam that re-spelled it would lose the account's own letters. */
+      sentFolder: "INBOX.Verzonden",
       /* WHERE A BUDGETED FIRST SYNC IS CONTINUING (mail 0115) — the local engine's own column,
          nested for `junkFolder`'s reason: the strip renders the path the server states, and a
          seam that truncated it would look right here and wrong on any server with a tree. */
@@ -189,6 +192,7 @@ describe("the desktop mailbox-facts seam", () => {
     /* Untouched, path and all: the rail and search derive the leaf themselves, and a seam that
        normalised it here would put two spellings of one folder into the product. */
     expect(got!.junkFolder).toBe("INBOX/Junk");
+    expect(got!.sentFolder).toBe("INBOX.Verzonden");
     expect(got!.displayName).toBe("Someone");
     expect(got!.organizeConsentedAt).toBe("2026-09-02T09:00:00.000Z");
     expect(got!.gapLetters).toBe(2);

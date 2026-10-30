@@ -7,7 +7,7 @@
  * the screen printing them named one mailbox. Structurally typed — no DTO import — so the shell's
  * row type can grow without touching this.
  */
-import { isSentFolderPath } from "@trafficflow/core/folder-name";
+import { isOwnSent, type Folder } from "@ohmail/client-engine";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 
 /** The unresolvable arm, named: a run that names a mailbox this install does not hold. */
@@ -88,7 +88,7 @@ export function firstRunCounts(
   if (mailboxId === null) return { screened: 0, history: 0 };
   const mine = (m: HasMailbox) => m.mailboxId === mailboxId;
   // The account's own Sent mail went through no Screener: it is never "screened".
-  const inbound = (m: HasMailbox) => mine(m) && !(m.folder !== undefined && isSentFolderPath(m.folder));
+  const inbound = (m: HasMailbox) => mine(m) && !(m.folder !== undefined && isOwnSent({ folder: m.folder as Folder, mailboxId }));
   const held = mirrored.reduce((n, m) => (inbound(m) ? n + 1 : n), 0);
   const listedInbound = history.reduce((n, m) => (inbound(m) ? n + 1 : n), 0);
   const listed = history.reduce((n, m) => (mine(m) ? n + 1 : n), 0);

@@ -106,7 +106,7 @@ describe("the phone's act on suggestions", () => {
 describe("readsOnly — a reader install, the Screener's own reading", () => {
   const row = (organizerRole: PhoneMailbox["organizerRole"], status: string | null = "connected"): PhoneMailbox => ({
     id: `m-${Math.random()}`, address: "a@x.test", organizerRole, organizeConsentedAt: null, organizedBy: null,
-    organizedByThisInstall: false, organizerState: null, status, junkFolder: null, smtpMaxSizeBytes: null,
+    organizedByThisInstall: false, organizerState: null, status, junkFolder: null, sentFolder: null, smtpMaxSizeBytes: null,
     firstSyncStopFolder: null,
   });
   it("reads only when every live mailbox is read, and never before the roster is known", () => {

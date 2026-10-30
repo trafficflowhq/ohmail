@@ -1902,6 +1902,13 @@ export const HELD_RELEASE_TYPE = "held_release_group";
 export const RETIRED_DECIDED_TYPE = "consent_retired_decided";
 
 /**
+ * OWN LETTERS HISTORY HOLDS IN A FOLDER THAT KEEPS THEM, as the consent partition names them
+ * (`sentInHistory`) — never stored, answered by `presentationReader` alone. `ohboxView` leaves
+ * them out of its own-sent union: History holds them, the folder lists them, "Earlier" does not.
+ */
+export const SENT_IN_HISTORY_TYPE = "consent_sent_in_history";
+
+/**
  * One group on the release screen: the rule, and how much of its mail is stuck at the gate — or,
  * with `sender` set, a CONTACT nobody wrote a rule for (row id `sender:<address>`, `kind`
  * "sender", `match` the address, `destination` the Ohbox), which the press names in `senders`.

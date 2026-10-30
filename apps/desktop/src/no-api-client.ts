@@ -262,6 +262,7 @@ export interface MailboxDTO {
     smtpMaxSizeBytes?: number | null;
     providerConfirms?: boolean;
     junkFolder?: string | null;
+    sentFolder?: string | null;
     sendingUnsettledReason?: string | null;
     messageCount?: number;
     erasure?: {

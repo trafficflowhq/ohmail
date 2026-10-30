@@ -11,7 +11,7 @@ import { diagStrip, phoneSupportMail } from "../src/ui/help-contact";
 
 const DEPS = { platform: { os: "android", osVersion: 35 }, build: { version: "0.30.3", commit: "0123456789abcdef0123456789abcdef01234567" } };
 const ROWS = [
-  { id: "3f1c2b9a-0d4e-4c55-9a7b-1b2c3d4e5f60", address: "juno@fjordpost.example", status: "error", errorCode: "connect", junkFolder: "Rechnungen" },
+  { id: "3f1c2b9a-0d4e-4c55-9a7b-1b2c3d4e5f60", address: "juno@fjordpost.example", status: "error", errorCode: "connect", junkFolder: "Rechnungen", sentFolder: "Rechnungen" },
 ];
 
 afterEach(() => { resetLocaleRegisterForTests(); });

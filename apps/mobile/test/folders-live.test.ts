@@ -16,7 +16,7 @@
  *    alphabetical siblings, the opened-set walk, roll-up counts on a collapsed parent.
  */
 import { describe, expect, it } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
+import { ohboxView, type EngineMessage } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { readFoldersEnabled, writeFoldersEnabled } from "../src/net/consent";
 import type { ConnectedSession } from "../src/net/pairing";
@@ -263,6 +263,30 @@ describe("folder entities and the §16.5 lens, through the real engine", () => {
     expect(view.seen[0]!.folderLeaf).toBe("Acme");
     boot.store.close();
     fake.server.close();
+  });
+
+  it("the mailbox's recorded 'Envoyés' keeps its old letters in the folder and out of Earlier", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    fake.addFolder("fld-fr", "Envoyés");
+    const own = { name: "Owner", address: "owner@fake.test" };
+    fake.addMessage(dto("fr-new", { folder: "Envoyés", unread: false, date: new Date().toISOString(), from: own }));
+    fake.addMessage(dto("fr-old", { folder: "Envoyés", unread: false, date: "2026-01-05T08:00:00Z", from: own }));
+    const boot = await bootOn(origin);
+    try {
+      boot.engine.setSentFolders([{ id: "mb-1", sentFolder: "Envoyés" }]);
+      const now = new Date();
+      const answer = screeningAnswered({ dormancyDays: null, baselineAt: null, scope: "window" });
+      const pres = presentedOf(boot.engine.read(), now, true, answer);
+      const folder = liveFolders(boot.engine.read()).find((f) => f.name === "Envoyés")!;
+      expect(liveFolder(pres, folder, { now, zone: "UTC", foldersEnabled: true }).seen.map((m) => m.id))
+        .toEqual(["fr-new", "fr-old"]);
+      expect(ohboxView(pres).previouslySeen.map((m) => m.id)).toEqual(["fr-new"]);
+    } finally {
+      boot.engine.setSentFolders([]);
+      boot.store.close();
+      fake.server.close();
+    }
   });
 
   it("liveFolderUnread counts per (mailbox, folder) over the projection", async () => {

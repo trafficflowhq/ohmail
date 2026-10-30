@@ -237,6 +237,24 @@ describe("the provider's own Junk folder survives the mirror (JUNK-INVISIBLE)", 
   });
 });
 
+describe("the recorded Sent folder survives the mirror (mail 0132)", () => {
+  // Nothing attaches here on a Cloud account, so without the carry the engine knows Sent by name only.
+  it("a hosted 'Envoyés' lands in the local row and DTO; a hosted null clears it", async () => {
+    const { db, world, cursorPath } = await standUp();
+    let boxes = [hostedMailbox(HOSTED_A, LOGIN, { sentFolder: "Envoyés" })];
+    const mirror = createCloudMirror({
+      db, world, cursorPath, now: () => new Date(), auth: fakeAuth({ boxes: () => boxes }),
+    });
+    await mirror.pullOnce();
+    const [row] = await db.select().from(mailboxes).where(eq(mailboxes.id, HOSTED_A));
+    expect(row!.sentFolder).toBe("Envoyés");
+    expect((await mailboxService.list(ctxFor(db, world)))[0]!.sentFolder).toBe("Envoyés");
+    boxes = [hostedMailbox(HOSTED_A, LOGIN, { sentFolder: null })];
+    await mirror.pullOnce();
+    expect((await mailboxService.list(ctxFor(db, world)))[0]!.sentFolder).toBeNull();
+  });
+});
+
 describe("the wall's pause survives the mirror (mail 0135)", () => {
   // Without it a Cloud desktop reads a paused row as one this account released ("You stopped…").
   const PARKED = "2026-09-23T02:15:07.000Z";

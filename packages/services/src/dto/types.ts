@@ -928,6 +928,13 @@ export interface MailboxDTO {
    */
   junkFolder?: string | null;
   /**
+   * The Sent folder the attach recorded (mail 0132), canonical path, so a client knows Sent by
+   * the server's own name ('Envoyés') beside the Sent-shaped ones. `null`: none recorded or not
+   * attached yet; ABSENT: an older API. The account's own folder name, like {@link junkFolder}:
+   * not on the admin projection.
+   */
+  sentFolder?: string | null;
+  /**
    * Why sending is not set up for this mailbox — a reason code, or `null` when it is. An outgoing
    * server is not a reason to stop receiving: a refused submission dial used to abort the whole
    * connect, so a mailbox whose incoming server worked could not be connected at all. The connect

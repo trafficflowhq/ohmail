@@ -41,7 +41,7 @@ async function scene(m1: { folder: string; from: string }, own: readonly string[
   const row = () => liveMessage(boot.engine, "m1", { now: new Date("2026-08-19T10:00:00Z"), zone: "UTC", ...(own ? { ownAddresses: own } : {}) })!;
   const writes = () => fake.seen.filter((r) => r.method !== "GET" && (r.url.startsWith("/rules") || r.url.startsWith("/screener")));
   const close = () => { boot.store.close(); fake.server.close(); };
-  return { fake, actions, said, row, writes, close };
+  return { fake, actions, said, row, writes, close, engine: boot.engine };
 }
 
 beforeEach(() => { resetLocaleRegisterForTests(); });
@@ -58,6 +58,20 @@ describe("a Screening press on the account's own mail", () => {
       s.close();
     });
   }
+
+  it("a letter in the mailbox's recorded Sent folder ('INBOX/Verzonden') is our own mail", async () => {
+    setActiveLocale("en");
+    // No addresses read, so only the folder can say it is ours.
+    const s = await scene({ folder: "INBOX/Verzonden", from: ME }, []);
+    expect(s.row().ownMail).toBeUndefined();
+    s.engine.setSentFolders([{ id: "mb-1", sentFolder: "INBOX/Verzonden" }]);
+    try {
+      expect(s.row().ownMail).toBe(true);
+    } finally {
+      s.engine.setSentFolders([]);
+      s.close();
+    }
+  });
 
   it("where the phone has not read the account's addresses, the server's own_address refuses the rule", async () => {
     setActiveLocale("en");
