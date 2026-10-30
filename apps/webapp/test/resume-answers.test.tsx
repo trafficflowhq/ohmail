@@ -102,6 +102,7 @@ afterEach(async () => {
   await unmount();
   globalThis.fetch = priorFetch;
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  document.cookie = "tf_signed_out=; Path=/; Max-Age=0";
   sessionStorage.clear();
   localStorage.clear();
   Reflect.deleteProperty(globalThis.navigator as unknown as Record<string, unknown>, "locks");
@@ -461,6 +462,50 @@ describe("(f) every tab on an ended sign-in says the same reason", () => {
     sessionStorage.clear();
     await tick(3_000);
     expect(text(await mountLogin())).toContain(R.revokedBody);
+  });
+
+  /** `/` as the edge answers it for this jar: where it sends the tab, or `null` for the landing. */
+  async function edgeSends(build: "cloud" | "selfhost" = "cloud"): Promise<string | null> {
+    vi.stubEnv("TF_API_ORIGIN", "https://api.ohmail.app");
+    if (build === "selfhost") {
+      vi.stubEnv("NEXT_PUBLIC_OHMAIL_FLAVOR", "selfhost");
+      vi.stubEnv("OHMAIL_INTERNAL_API_ORIGIN", "http://api:8080");
+    }
+    vi.resetModules();
+    const { middleware } = await import("../middleware");
+    const { NextRequest } = await import("next/server");
+    const res = await middleware(new NextRequest("https://ohmail.app/", { headers: { cookie: document.cookie } }));
+    vi.unstubAllEnvs();
+    return res.status === 307 ? new URL(res.headers.get("location")!).pathname : null;
+  }
+
+  /** jsdom's document is plain http, where a `Secure` write is dropped: the page says the same. */
+  const plainHttp = (): void => { (window.location as unknown as { protocol: string }).protocol = "http:"; };
+
+  it("a tab opened 3 s later on ohmail Cloud: the edge sends the emptied jar to /login, which says why", async () => {
+    plainHttp();
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    await openTabs(null);
+    sessionStorage.clear();
+    await tick(3_000);
+    expect(await edgeSends(), "the second tab met the landing").toBe("/login");
+    expect(await edgeSends("selfhost"), "your own server's door").toBe("/login");
+    expect(text(await mountLogin())).toContain(R.revokedBody);
+  });
+
+  it("the control: the edge's copy is host-only and lives the note's 15 s; a jar without it gets the landing", async () => {
+    plainHttp();
+    const writes: string[] = [];
+    const jar = Object.getOwnPropertyDescriptor(Document.prototype, "cookie")!;
+    vi.spyOn(Document.prototype, "cookie", "set").mockImplementation(function (this: Document, v: string) {
+      writes.push(v);
+      jar.set!.call(this, v);
+    });
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    await openTabs(null);
+    expect(writes.filter((w) => w.startsWith("tf_signed_out="))).toEqual(["tf_signed_out=revoked; Path=/; Max-Age=15; SameSite=Lax"]);
+    document.cookie = "tf_signed_out=; Path=/; Max-Age=0";
+    expect(await edgeSends()).toBeNull();
   });
 });
 

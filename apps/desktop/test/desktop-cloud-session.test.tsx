@@ -525,6 +525,20 @@ describe("the reuse sweeps a new sign-in is told of", () => {
     expect(mounted(el)).toBe(true);
   });
 
+  it("OK in a browser takes it away in this window at its next return: the session read lists none", async () => {
+    const answer = hosted([SWEEP]);
+    const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { hosted: answer });
+    const el = await render();
+    expect(await within(2_000, () => okButton(el) !== undefined), "the strip never came").not.toBeNull();
+    delete answer.reuseSweeps;
+    // Past the return debounce, then back to the window.
+    await act(async () => { await new Promise((r) => setTimeout(r, 1_600)); });
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(await within(2_000, () => okButton(el) === undefined), "the notice outlived the read").not.toBeNull();
+    expect(shell.acks(), "this window acknowledged nothing").toEqual([]);
+    expect(mounted(el)).toBe(true);
+  });
+
   it("the control: nothing listed, nothing drawn", async () => {
     fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { hosted: hosted() });
     const el = await render();

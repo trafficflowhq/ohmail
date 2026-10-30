@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -61,6 +61,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   await act(async () => { root.unmount(); });
   host.remove();
   globalThis.fetch = realFetch;
@@ -139,6 +140,32 @@ describe("the reuse sweeps a new sign-in is told of", () => {
     await read();
     expect(told()).toBe(0);
     expect(host.querySelector("button")).toBeNull();
+  });
+
+  it("OK in another window takes it away here at the next session read: a return to the window, or the clock", async () => {
+    const { REUSE_RECHECK_MS } = await import("../app/shell/ReuseSweepNotice");
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    await read();
+    await mount();
+    await pressDetails();
+    expect(told()).toBe(1);
+    // The other window's OK: the server lists the sweep no more. This one has heard nothing yet.
+    listed = undefined;
+    vi.advanceTimersByTime(60_000);
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await settle();
+    expect(details(), "a return to the window kept a notice the server no longer lists").toBeUndefined();
+    expect(acks, "this window acknowledged nothing").toEqual([]);
+
+    // A window left in front: the clock asks.
+    sweep = { ...sweep, id: randomUUID() };
+    listed = [sweep];
+    await read();
+    expect(details()).toBeDefined();
+    listed = undefined;
+    await act(async () => { vi.advanceTimersByTime(REUSE_RECHECK_MS); });
+    await settle();
+    expect(details(), "the notice outlived the clock's read").toBeUndefined();
   });
 
   it("four say one line; Details shows each with its date and the advice, and OK acknowledges all four", async () => {

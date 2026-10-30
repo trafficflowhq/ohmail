@@ -8,6 +8,7 @@
  */
 
 import { durableSessionRemove, durableSessionSet, durableSet } from "../../shell/durable";
+import { SIGNED_OUT_COOKIE } from "../../session-gate";
 
 const NOTE_KEY = "ohmail.signed-out-reason";
 
@@ -60,6 +61,9 @@ export function takeSignedOutNote(): SignedOutReason | null {
 
 export function shareSignedOutNote(reason: SignedOutReason): void {
   durableSet(SHARED_NOTE_KEY, JSON.stringify({ reason, at: Date.now() }), "resume.note");
+  // The edge's copy: a tab opened next is sent to /login, not the landing. Host-only, the reason's word only.
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${SIGNED_OUT_COOKIE}=${reason}; Path=/; Max-Age=${SHARED_NOTE_MS / 1000}; SameSite=Lax${secure}`;
 }
 
 /** Another tab's reason while it is young, else `null`; unreadable storage costs only the sentence. */
