@@ -179,7 +179,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
   it("a reader install offers nothing — it arranges nobody's mailbox", async () => {
     const w = await newWorld("reader");
     await seedOhbox(w, { from: "stranger@x.test" });
-    expect(await unscreenedSummary(db as never, w.accountId, NOW)).toEqual({ groups: [], total: 0 });
+    expect(await unscreenedSummary(db as never, w.accountId, NOW)).toEqual({ groups: [], total: 0, complete: true });
     expect(await screenUnscreened(ctxOf(w))).toEqual({ screened: [], total: 0 });
   });
 
@@ -236,7 +236,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     const claimed = await seedOhbox(w, { from: "mixed@x.test", subject: "your receipt" });
     const other = await seedOhbox(w, { from: "mixed@x.test", subject: "hello there" });
 
-    expect(await unscreenedSummary(db as never, w.accountId, NOW)).toEqual({ groups: [], total: 0 });
+    expect(await unscreenedSummary(db as never, w.accountId, NOW)).toEqual({ groups: [], total: 0, complete: true });
     await screenUnscreened(ctxOf(w));
     for (const id of [claimed, other]) expect((await desiredOf(id)).desired).toBe(OHBOX);
   });

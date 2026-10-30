@@ -6,6 +6,7 @@
  * it holds both senders at the gate. The real engine and wire, the phone's own derivations.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Copy } from "../src/copy";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import {
@@ -108,6 +109,22 @@ describe("the Ohbox offers to screen senders already in the Inbox", () => {
  * The pull that brings the mail re-asks, so the offer appears without leaving the tab. */
 describe("the offer follows the import while the Ohbox is open", () => {
   afterEach(() => { vi.useRealTimers(); });
+
+  it("a total the server's walk stopped at is offered as a floor, and the lead says 'at least'", async () => {
+    const s = await scene();
+    try {
+      s.fake.boundUnscreened(1);
+      await s.cadence();
+      const offer = liveUnscreened(s.engine.read());
+      expect(offer).toEqual({ total: 1, atLeast: true, senders: [expect.any(String)] });
+      expect(Copy.unscreenedLead(offer!.total, offer!.atLeast)).toBe(
+        "At least 1 message from a sender you have not decided about is still in the Inbox on your mail server.",
+      );
+      expect(Copy.unscreenedLead(7, true)).toBe(
+        "At least 7 messages from senders you have not decided about are still in the Inbox on your mail server.",
+      );
+    } finally { s.close(); }
+  });
 
   it("mail arriving after the Ohbox mounted brings 'Screen N' at the next pull", async () => {
     vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });

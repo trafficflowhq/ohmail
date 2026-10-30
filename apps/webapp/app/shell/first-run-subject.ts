@@ -7,6 +7,7 @@
  * the screen printing them named one mailbox. Structurally typed — no DTO import — so the shell's
  * row type can grow without touching this.
  */
+import { isSentFolderPath } from "@trafficflow/core/folder-name";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 
 /** The unresolvable arm, named: a run that names a mailbox this install does not hold. */
@@ -67,7 +68,7 @@ export function firstRunSubject<T extends { id: string }>(
 }
 
 /** What a message has to carry to be counted against a mailbox. Absent ⇒ it is nobody's. */
-interface HasMailbox { mailboxId?: string }
+interface HasMailbox { mailboxId?: string; folder?: string }
 
 /**
  * HOW MUCH OF ONE MAILBOX THIS DEVICE HOLDS — the two numbers the pull screen prints and the summary reports.
@@ -86,12 +87,15 @@ export function firstRunCounts(
 ): { screened: number; history: number } {
   if (mailboxId === null) return { screened: 0, history: 0 };
   const mine = (m: HasMailbox) => m.mailboxId === mailboxId;
-  const held = mirrored.reduce((n, m) => (mine(m) ? n + 1 : n), 0);
+  // The account's own Sent mail went through no Screener: it is never "screened".
+  const inbound = (m: HasMailbox) => mine(m) && !(m.folder !== undefined && isSentFolderPath(m.folder));
+  const held = mirrored.reduce((n, m) => (inbound(m) ? n + 1 : n), 0);
+  const listedInbound = history.reduce((n, m) => (inbound(m) ? n + 1 : n), 0);
   const listed = history.reduce((n, m) => (mine(m) ? n + 1 : n), 0);
   // Two partitions of what this device holds, so they never add to more than it. Not the store's
   // History total: History lists every message, so that figure contains the screened ones.
   // Clamped: both are projections over one reader and a race between the two reads must not print a negative.
-  return { screened: Math.max(0, held - listed), history: listed };
+  return { screened: Math.max(0, held - listedInbound), history: listed };
 }
 
 

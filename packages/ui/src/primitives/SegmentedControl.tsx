@@ -7,6 +7,8 @@ export interface SegmentOption<T extends string = string> {
   label: string;
   /** Optional count rendered after the label (Screener sections). */
   count?: number | string;
+  /** What the count counts ("2 first-time senders waiting"). */
+  title?: string;
 }
 
 export interface SegmentedControlProps<T extends string = string> {
@@ -200,6 +202,7 @@ export function SegmentedControl<T extends string = string>({
             aria-selected={role === "tablist" ? on : undefined}
             aria-pressed={role === "group" ? on : undefined}
             className={on ? "on" : undefined}
+            title={o.title}
             onClick={() => onChange(o.id)}
           >
             {o.label}

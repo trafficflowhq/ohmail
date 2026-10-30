@@ -451,6 +451,7 @@ export {
   heldReleaseTotalOf,
   unscreenedGroups,
   unscreenedTotalOf,
+  unscreenedTotalIsFloor,
   screenerAdviceAi,
   mirrorSuggestionIdOf,
   screenerSegments,
@@ -1061,3 +1062,5 @@ export {
 } from "./diagnostics.js";
 // The filing refusal classes every client words, and their narrowing. See `filing-reasons.ts`.
 export { FILING_REFUSAL_REASONS, filingRefusalReason, type FilingRefusalReason } from "./filing-reasons.js";
+// The first-import floor's bounded window, read by the web strip and the phone Screener alike.
+export { IMPORT_FLOOR_MAX_MS, importFloorInWindow } from "./import-floor.js";

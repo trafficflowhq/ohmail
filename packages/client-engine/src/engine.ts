@@ -6883,6 +6883,7 @@ export class OhmailEngine {
       id: g.address,
       entity: {
         id: g.address, count: g.count, newestAt: g.newestAt, total: wire.total,
+        complete: wire.complete !== false,
       } satisfies UnscreenedGroupDTO,
     }));
     const gone = before.filter((g) => !keep.has(g.id)).map((g) => ({ type: UNSCREENED_TYPE, id: g.id }));

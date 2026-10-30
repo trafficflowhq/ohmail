@@ -707,6 +707,7 @@ export const DE: Deck = {
   waitingNotYetPress: "Einstellungen öffnen",
   cutlinePending:
     "Deine Screening-Einstellungen werden gelesen — bis sie da sind, steht diese Liste nicht fest.",
+  waitingFirstPass: "Dein Postfach wird noch gelesen — wer hier wartet, steht fest, sobald der erste Durchgang fertig ist.",
   screenedEmptyTitle: "Niemand aussortiert.",
   screenedEmptyHint: "Absender, zu denen du Nein sagst, warten hier — zurückgehalten, nie gelöscht.",
   spamEmptyTitle: "Kein Spam zurückgehalten.",
@@ -1421,10 +1422,10 @@ export const DE: Deck = {
   deleteReplayGone: (n: number) =>
     `${n === 1 ? "1 Nachricht wurde" : `${n} Nachrichten wurden`} nicht in den Papierkorb verschoben — dieses Handy hat sie beim nächsten Start nicht gefunden. Lösche sie noch einmal, wenn du das weiterhin willst.`,
   /* Das Angebot der Ohbox — die `screener.unscreened*`-Sätze des Web-Katalogs, Wort für Wort. */
-  unscreenedLead: (n: number) =>
-    n === 1
+  unscreenedLead: (n: number, atLeast?: boolean) =>
+    `${atLeast ? "Mindestens " : ""}${n === 1
       ? "1 Nachricht von einem Absender, über den du nie entschieden hast, liegt noch in der Inbox auf deinem Mailserver."
-      : `${n} Nachrichten von Absendern, über die du nie entschieden hast, liegen noch in der Inbox auf deinem Mailserver.`,
+      : `${n} Nachrichten von Absendern, über die du nie entschieden hast, liegen noch in der Inbox auf deinem Mailserver.`}`,
   unscreenedAll: (n: number) => `${n} in den Screener`,
   unscreenedMoved: (n: number) => `${n} in den Screener gelegt. Dein Organizer verschiebt sie beim nächsten Durchlauf.`,
   unscreenedMovedNone: "Nichts mehr zu screenen.",

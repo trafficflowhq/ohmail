@@ -25,7 +25,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { FOLDER_OF_VIEW, type EngineMessage } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, IMPORT_FLOOR_MAX_MS, type EngineMessage } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import {
   liveHistory,
@@ -37,6 +37,7 @@ import {
   type WorldView,
 } from "../src/state/live";
 import { listSurface, metaWhen } from "../src/state/surface";
+import { firstPassWithholds } from "../src/state/seed-offer";
 import type { ServerWaitingSender } from "../src/net/screener";
 import { DECKS } from "../src/copy";
 import { LOCALES } from "../src/i18n/locale";
@@ -297,6 +298,37 @@ describe("a withheld list is a surface of its own, and it speaks", () => {
     expect(listSurface({ settled: true, count: 2, pending: true })).toBe("content");
   });
 
+  const NOW = Date.parse("2026-09-22T09:00:00.000Z");
+  const FRESH = new Date(NOW - 3_600_000).toISOString();
+  const STALE = new Date(NOW - IMPORT_FLOOR_MAX_MS - 3_600_000).toISOString();
+  const row = (initialImportCompletedAt: string | null, organizerRole: "organizer" | "reader" = "organizer", createdAt = FRESH) =>
+    ({ status: "connected", organizerRole, initialImportCompletedAt, createdAt });
+
+  it("an organized mailbox still on its first pass withholds the waiting shelf: nobody is said to wait yet", () => {
+    expect(firstPassWithholds(0, { known: true, rows: [row(null)] }, NOW)).toBe(true);
+    expect(firstPassWithholds(0, { known: true, rows: [row("2026-09-11T11:00:00.000Z")] }, NOW)).toBe(false);
+    expect(firstPassWithholds(0, { known: true, rows: [row(null, "reader")] }, NOW), "a reader screens nothing").toBe(false);
+    expect(firstPassWithholds(0, { known: false, rows: [] }, NOW)).toBe(false);
+    for (const deck of LOCALES.map((l) => DECKS[l])) expect(deck.waitingFirstPass).toMatch(/\S/);
+    expect(DECKS.en.waitingFirstPass).not.toBe(DECKS.en.waitingEmptyTitle);
+  });
+
+  it("the first pass is bounded: a stamp still unwritten a day after connecting withholds nothing", () => {
+    // The worker stamps only on a no-backlog cycle; an unwritten stamp past the window is no import.
+    const stale = { known: true, rows: [row(null, "organizer", STALE)] };
+    expect(firstPassWithholds(0, stale, NOW)).toBe(false);
+    expect(listSurface({ settled: true, count: 0, pending: firstPassWithholds(0, stale, NOW) }), "Nobody is waiting").toBe("empty");
+    const { createdAt: _clock, ...clockless } = row(null);
+    expect(firstPassWithholds(0, { known: true, rows: [clockless] }, NOW), "no clock, no claim").toBe(false);
+  });
+
+  it("a sibling's first pass withholds only an empty shelf: rows on it are counted, as every badge counts them", () => {
+    const mailboxes = { known: true, rows: [row("2026-09-11T11:00:00.000Z", "organizer", STALE), row(null)] };
+    expect(firstPassWithholds(3, mailboxes, NOW)).toBe(false);
+    expect(listSurface({ settled: true, count: 3, pending: firstPassWithholds(3, mailboxes, NOW) })).toBe("content");
+    expect(firstPassWithholds(0, mailboxes, NOW)).toBe(true);
+  });
+
   it("the count line is silenced while the list is withheld", () => {
     // "0 first-time senders waiting" over a shelf this phone declined to work out is not a small
     // number, it is the wrong one — `metaWhen`'s own rule, one state further on.
@@ -313,8 +345,8 @@ describe("the screens render the marker, and only where the answer decides the l
     const screen = src("app/(tabs)/screener.tsx");
     expect(screen).toContain("const { waiting, screened, spam, meta, waitingPending } = w.screener;");
     // Only the waiting shelf: screened-out and spam are decided by rules, not by the window.
-    expect(screen).toContain('pending: seg === "waiting" && waitingPending,');
-    expect(screen).toContain('surface === "pending" ? { note: Copy.cutlinePending }');
+    expect(screen).toContain('pending: seg === "waiting" && (waitingPending || firstPass),');
+    expect(screen).toContain('surface === "pending" ? { note: firstPass ? Copy.waitingFirstPass : Copy.cutlinePending }');
   });
 
   it("History is the store's timeline, so the cutline answer withholds nothing there (ARCHIVE-024)", () => {

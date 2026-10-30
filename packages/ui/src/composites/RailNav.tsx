@@ -33,6 +33,8 @@ export interface RailTagItem {
   label: string;
   hue: TagHueName;
   count?: number;
+  /** What the count counts ("3 messages"), as on {@link RailItem}. */
+  title?: string;
 }
 
 /**
@@ -453,6 +455,7 @@ function TagsGroup({
             // on without depending on label text. Nothing in this package reads it.
             data-rail-tag-id={t.id}
             className={t.id === activeTagId ? "ritem on" : "ritem"}
+            title={t.title}
             onClick={() => onNavigateTag?.(t.id)}
           >
             <TagDot hue={t.hue} />

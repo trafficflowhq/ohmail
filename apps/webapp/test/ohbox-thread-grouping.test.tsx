@@ -337,6 +337,25 @@ describe("Ohbox conversation grouping", () => {
    * behavioural test above stays green (they all read the LEADING member). The input is spread
    * over all four sections, so the partition is asked across them.
    */
+  it("the selection counts ROWS: x on a two-message conversation says 1 selected, a second row 2", async () => {
+    setViewport();
+    await render({
+      newForYou: [
+        { id: "t2", unread: true, threadId: "T", date: at(12) },
+        { id: "t1", unread: true, threadId: "T", date: at(11) },
+        { id: "solo", unread: true, threadId: null, date: at(10) },
+      ],
+    });
+    const capsule = () => host!.querySelector(".abar-count");
+    await key("j");
+    await key("x");
+    expect(capsule()?.querySelector('[role="status"]')?.textContent).toBe("1");
+    expect(capsule()?.getAttribute("aria-label")).toBe("1 selected — clear the selection");
+    await key("j");
+    await key("x");
+    expect(capsule()?.querySelector('[role="status"]')?.textContent).toBe("2");
+  });
+
   it("the fold is a partition — no member is dropped, duplicated or invented", async () => {
     const { foldOhboxRows } = await import("@ohmail/client-engine");
     const rows: Row[] = [

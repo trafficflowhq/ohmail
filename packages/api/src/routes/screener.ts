@@ -178,11 +178,12 @@ export const screenerRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const { groups, total } = await unscreenedSummary(ctx.db, ctx.accountId, ctx.now());
+      const { groups, total, complete } = await unscreenedSummary(ctx.db, ctx.accountId, ctx.now());
       // `total` is the SHOWN groups' messages: every message has one sender, so a list cut at the
       // bound must not report the mail behind the cut as offered. `max` travels so a client learns
       // the ceiling by READING it rather than carrying a constant of its own that drifts.
-      return jsonResponse({ groups, total, max: OHBOX_UNSCREENED_GROUPS_MAX });
+      // `complete: false` says the walk stopped at its bound, so `total` is a floor.
+      return jsonResponse({ groups, total, complete, max: OHBOX_UNSCREENED_GROUPS_MAX });
     },
   },
   {

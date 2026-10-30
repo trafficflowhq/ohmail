@@ -114,6 +114,8 @@ export interface PhoneMailbox {
    * older than the field answered, which the partition reads as an import finished.
    */
   initialImportCompletedAt?: string | null;
+  /** `MailboxDTO.createdAt`, the first-import floor's clock; absent where the wire named none. */
+  createdAt?: string;
   /**
    * The submission server's RFC 1870 `SIZE` announcement — `MailboxDTO.smtpMaxSizeBytes`, what
    * the composer's attach cap is derived from (`composeAttachCap`, the one shared bound). `null`
@@ -283,6 +285,7 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
           : typeof r.initialImportCompletedAt === "string" && r.initialImportCompletedAt !== ""
             ? { initialImportCompletedAt: r.initialImportCompletedAt }
             : {}),
+        ...(typeof r.createdAt === "string" && r.createdAt !== "" ? { createdAt: r.createdAt } : {}),
         /* A positive finite number or `null` — the cap rule's own admissibility test, applied at
            the wire so no consumer re-derives it. */
         smtpMaxSizeBytes:

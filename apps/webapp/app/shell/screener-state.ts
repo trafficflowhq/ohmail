@@ -26,6 +26,7 @@ import {
   pressGained,
   unscreenedGroups,
   unscreenedTotalOf,
+  unscreenedTotalIsFloor,
   screenerSegments,
   screenerRowsOfStore,
   screenerWaitingNames,
@@ -236,6 +237,8 @@ export interface HeldReleaseOffer {
 export interface UnscreenedOffer {
   /** Messages the shown groups hold — the number the row states. */
   total: number;
+  /** `total` is a floor: the server's walk stopped at its bound. */
+  atLeast: boolean;
   /** One per sender, largest first: who wrote and how much of their mail is sitting there. */
   groups: UnscreenedGroupDTO[];
   /** A press is in flight; a second one is refused rather than queued. */
@@ -2335,6 +2338,7 @@ export function useScreenerState(
 
   const unscreenedRows = useMemo(() => unscreenedGroups(engine.read()), [engine, version]);
   const unscreenedTotal = useMemo(() => unscreenedTotalOf(engine.read()), [engine, version]);
+  const unscreenedAtLeast = useMemo(() => unscreenedTotalIsFloor(engine.read()), [engine, version]);
 
   /* NOT `useCallback`, for the press handler above's measured reason — see it for the render-scope
      census and the idle-hour renderer that made it a rule. */
@@ -2357,7 +2361,7 @@ export function useScreenerState(
      mode that renders an inert press is its own small lie (the bulk strip's argument). */
   const unscreened: UnscreenedOffer | null =
     unscreenedTotal > 0 && unscreenedRows.length > 0 && role.mode !== "blocked"
-      ? { total: unscreenedTotal, groups: unscreenedRows, screening, screen: pressUnscreened }
+      ? { total: unscreenedTotal, atLeast: unscreenedAtLeast, groups: unscreenedRows, screening, screen: pressUnscreened }
       : null;
 
   return {

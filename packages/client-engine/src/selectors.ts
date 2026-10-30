@@ -2294,6 +2294,12 @@ export function unscreenedTotalOf(reader: EntityReader): number {
   return first?.total ?? 0;
 }
 
+/** Whether {@link unscreenedTotalOf} is a floor: the server's walk stopped at its bound. */
+export function unscreenedTotalIsFloor(reader: EntityReader): boolean {
+  const [first] = reader.list<UnscreenedGroupDTO>(UNSCREENED_TYPE);
+  return first?.complete === false;
+}
+
 /**
  * Every rule, newest first, each at the PLACE it files into. A rule stored before the 0.22 rename says
  * `ohmail/Reads` and the organizer files it into the one News folder, so every reader compares the canonical

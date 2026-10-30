@@ -8,3 +8,5 @@
 
 export { countWhen, listSurface, metaWhen, saysEmpty } from "@ohmail/client-engine";
 export type { ListSurface, ListSurfaceInput } from "@ohmail/client-engine";
+// Is a first import still unknown: the web strip's bounded floor, which the Screener's empty shelf reads.
+export { importFloorInWindow } from "@ohmail/client-engine";

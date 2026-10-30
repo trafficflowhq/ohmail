@@ -113,6 +113,14 @@ describe("firstRunCounts — this mailbox's mail, not the install's", () => {
     }
   });
 
+  it("the account's own Sent mail went through no Screener: never counted as screened", () => {
+    const inbound = Array.from({ length: 5 }, () => ({ mailboxId: "mb-1", folder: "INBOX" }));
+    const sent = Array.from({ length: 3 }, () => ({ mailboxId: "mb-1", folder: "Sent" }));
+    // One old Sent letter is listed under History, as the cutline lists pre-line outbound mail.
+    expect(firstRunCounts([...inbound, ...sent], [sent[0]!, inbound[0]!], "mb-1"))
+      .toEqual({ screened: 4, history: 2 });
+  });
+
   it("clamped: History may out-run the mirror between two reads and must not print a negative", () => {
     expect(firstRunCounts([{ mailboxId: "mb-1" }], [
       { mailboxId: "mb-1" }, { mailboxId: "mb-1" }, { mailboxId: "mb-1" },
