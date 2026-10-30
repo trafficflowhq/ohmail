@@ -198,19 +198,19 @@ export interface SearchArm { readonly pred: SQL; readonly rank: SQL }
 
 /**
  * The parts a message's search document is built from (mail 0125), each already bounded by the
- * caller: subject, the people (sender and recipients, names and addresses), the attachment file
- * names, and the body text. Weighted in that order by the store that has weights.
+ * caller: subject and the people (sender and recipients, names and addresses), weighted in that
+ * order by the store that has weights, and the text: the body, then the file names, whole and in
+ * parts, which are words of the text alone.
  */
 export interface SearchDocumentParts {
   readonly subject: string;
   readonly people: string;
-  readonly attachments: string;
   readonly body: string;
 }
 
 /**
- * The mail corpus's two WORD arms, each on its own index: `head` (subject, people, attachment
- * names) ranked by relevance, `text` (the body) ranked by RECENCY — a broad word must not rank
+ * The mail corpus's two WORD arms, each on its own index: `head` (subject, people) ranked by
+ * relevance, `text` (the body, the file names) ranked by RECENCY — a broad word must not rank
  * every body it occurs in, and newest-first is the order a reader scans a body match in.
  */
 export interface MailWordArms {
@@ -346,6 +346,13 @@ export interface UnindexedMailArms {
   /** No excluded operand in the subject or the body: what the typo tier's guesses hold. */
   readonly excluded?: SQL;
 }
+
+/**
+ * The mark between the substring corpus's header text and its file names (`message_search.terms`):
+ * U+001F, which the writer takes out of every part first, and writes only for a letter with a file
+ * name. The server reads each side apart, each through its own trigram index.
+ */
+export const SEARCH_NAMES_MARK = "\u001f";
 
 /** From this many characters a query word is also read as the START of a longer word. */
 export const PART_PREFIX_MIN_CHARS = 4;
@@ -792,10 +799,18 @@ export interface Dialect {
      */
     partWords(q: string): MailWordArms | null;
     /**
-     * The query's characters inside the mail corpus's header text (subject, people, attachment
-     * names) — `axa` inside `myAXA`. Ranked by word similarity where trigrams exist, else recency.
+     * The query's characters inside the mail corpus's header text (subject, people) — `axa` inside
+     * `myAXA`; on the device the file names too. Ranked by word similarity where trigrams exist, else recency.
      */
     substring(q: string, opts: { trigram: boolean }): SearchArm;
+    /**
+     * The query's characters inside the letter's file names, where the store reads them apart from
+     * the header text (the server: `terms` after {@link SEARCH_NAMES_MARK}), by recency: a branch of
+     * the arm that reads a body word's start (the part-word arm when it opens, else the text arm), so
+     * a letter its file names find is one row there. `null` where the substring arm reads the names
+     * itself (the device).
+     */
+    names(q: string): SearchArm | null;
     /** See {@link UnindexedMailArms}. */
     unindexed(q: string, opts: { trigram: boolean; threshold: number }): UnindexedMailArms | null;
     /**
