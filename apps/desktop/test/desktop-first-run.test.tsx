@@ -565,6 +565,53 @@ describe("the shared stage, mounted on the local host", () => {
     // so the rail carries a step the hosted stage does not have.
     expect(text.length).toBeGreaterThan(80);
   });
+
+  /* A connect on an install that has been through setup (Remove, then the same mailbox again) opens
+     `#/first-run` with nothing to draw: the shell behind it is inert while the route stands, so the
+     stage must hand the route back, or the window ignores every click and key. */
+  const stage = (made: FirstRunHost, completed: string | null, onLeave: () => void) =>
+    h(ThemeProvider, null,
+      h(NextIntlClientProvider, { locale: "en", messages: en as never },
+        h(KeymapProvider, null,
+          h(FirstRun, {
+            host: made,
+            facts: {
+              door: "local",
+              mailbox: { organizeConsentedAt: null, initialImportCompletedAt: null },
+              account: { onboardingCompletedAt: completed }, ai: made.ai, queuedSenders: 0,
+            },
+            mailboxId: "11111111-2222-3333-4444-555555555555",
+            pull: { screened: 0, history: 0, pulled: 0 },
+            decide: null,
+            onRefresh: () => {},
+            onLeave,
+          }))));
+
+  it("hands the route back when a reconnect on a finished install has nothing to draw", async () => {
+    const made = (await makeHost())!;
+    const el = document.createElement("div");
+    document.body.append(el);
+    const root = createRoot(el);
+    mounted = root;
+    const onLeave = vi.fn();
+    await act(async () => { root.render(stage(made, "2026-10-30T10:00:00.000Z", onLeave)); });
+    expect(el.textContent).toBe("");
+    expect(onLeave).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves without failing when the flow closes under an open stage", async () => {
+    const made = (await makeHost())!;
+    const el = document.createElement("div");
+    document.body.append(el);
+    const root = createRoot(el);
+    mounted = root;
+    const onLeave = vi.fn();
+    await act(async () => { root.render(stage(made, null, onLeave)); });
+    expect(el.textContent).toContain("What ohmail will do to this mailbox");
+    await act(async () => { root.render(stage(made, "2026-10-30T10:00:00.000Z", onLeave)); });
+    expect(el.textContent).toBe("");
+    expect(onLeave).toHaveBeenCalledTimes(1);
+  });
 });
 
 /**

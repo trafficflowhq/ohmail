@@ -230,7 +230,7 @@ const HOST_FRESHNESS_PROBE_MS = 20_000;
  * password landed in the mail client with nothing having asked them anything (measured on a
  * released build). CONNECTING IS THE ENTRY POINT — it navigates, and only that: WHICH step,
  * and whether the stage opens at all, stay with `deriveOnboardingStep`, so a re-seal on a
- * finished mailbox derives to `null` and `FirstRun` renders nothing — no blank overlay. The
+ * finished mailbox derives to `null` and `FirstRun` hands the route back — no blank overlay. The
  * hosted door is excluded structurally: `firstRunDoorFor` answers `null` there.
  */
 function openSetupOnStandalone(status: EngineStatus | null): void {

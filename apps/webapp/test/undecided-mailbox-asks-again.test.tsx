@@ -40,7 +40,7 @@ const host = (): FirstRunHost => ({
   probeMessage: () => null,
 });
 
-async function launch(roster: MailboxFacts[], hash: string, withStage = true): Promise<HTMLElement> {
+async function launch(roster: MailboxFacts[], hash: string, withStage = true, consent = consentTransport): Promise<HTMLElement> {
   const { AppShell } = await import("../app/shell/AppShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const s = await storeWith([]);
@@ -56,7 +56,7 @@ async function launch(roster: MailboxFacts[], hash: string, withStage = true): P
       locale: "en", messages, timeZone: "UTC", now: NOW,
       children: h(ThemeProvider, { children: h(ToastHost, {
         children: h(AppShell as never, {
-          demo: false, engine, consentTransport, mailboxFacts: async () => roster,
+          demo: false, engine, consentTransport: consent, mailboxFacts: async () => roster,
           ...(withStage ? { firstRun: host() } : {}),
         } as never),
       }) }),
@@ -116,6 +116,17 @@ describe("an undecided mailbox asks the organize decision again", () => {
     resetDecisionAskedForTests();
     await launch([UNDECIDED], "#/screener");
     await waitFor(() => stageHeading() === t.consentTitle, "the stage at the next launch");
+  });
+
+  /* A connect on a finished install (Remove, then the same mailbox again) opens a plain run, which
+     has nothing to draw and hands the route back; the decision must still be asked in this launch. */
+  it("a plain run on a finished install that draws nothing still leads to the decision", async () => {
+    const finished = { ...consentTransport, state: async () => ({
+      ...(await consentTransport.state()), onboardingCompletedAt: "2026-09-02T00:00:00.000Z" }) };
+    await launch([UNDECIDED], "#/first-run?mailbox=mb1", true, finished as typeof consentTransport);
+    await waitFor(() => window.location.hash.startsWith("#/first-run/again"), "the decision as a re-run");
+    await waitFor(() => stageHeading() === t.consentTitle, "the consent statement on the stage");
+    expect(window.location.hash).toContain("mailbox=mb1");
   });
 
   it("CONTROL — a decided mailbox never opens it", async () => {

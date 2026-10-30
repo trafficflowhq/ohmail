@@ -23,6 +23,7 @@ import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { useDecisionBarCopy } from "./decision-copy";
 import { useModalGate } from "./modal-gate";
+import { markDecisionAsked } from "./decision-reopen";
 import { useFocusFollows } from "./focus-follows";
 import { PROVIDERS, authHintPreset, authHintWantsLinks, hostsFor, providerById, providerLabel, type AuthHint, type ProviderPreset } from "./providers";
 import { isLocalServerHost, probeCopyKey, refusalAuthHint, refusalTransport } from "./local-server-host";
@@ -954,6 +955,15 @@ export function FirstRun({
    * field too, since a form you cannot leave is a trap.
    */
   useModalGate(true);
+  /* NOTHING TO DRAW HANDS THE ROUTE BACK. The shell is inert while `#/first-run` stands, so a run the
+     derivation closes (a connect on an install that finished setup) left an invisible modal. Only a drawn
+     step counts as the launch's organize ask, so the reopen still asks after a run that left. */
+  const leaveRef = useRef(onLeave);
+  leaveRef.current = onLeave;
+  useEffect(() => {
+    if (step === null) leaveRef.current();
+    else markDecisionAsked();
+  }, [step]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
@@ -1378,6 +1388,9 @@ export function FirstRun({
    */
   const organizing = facts.mailbox?.organizerRole !== "reader";
 
+  /* THE RAIL THIS RUN WALKS, not every phase the flow has — see {@link railFor}. Above the early return: hooks keep their order. */
+  const rail = useMemo(() => railFor(path), [path]);
+
   if (step === null) return null;
 
   const num = (n: number) => new Intl.NumberFormat(locale).format(n);
@@ -1394,8 +1407,6 @@ export function FirstRun({
     }).format(value);
   };
 
-  /* THE RAIL THIS RUN WALKS, not every phase the flow has — see {@link railFor}. */
-  const rail = useMemo(() => railFor(path), [path]);
   /**
    * Where the run is on its own rail — and never `-1`, which used to be unreachable and is not.
    * Against the full seven-group list every step matched; against the PATH-FILTERED rail it can
