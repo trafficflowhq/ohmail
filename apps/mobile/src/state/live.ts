@@ -12,6 +12,7 @@ import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaIn
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
 import { calendarEventsOf, withoutCalendarBodies, type DistinctCalendarEvent } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES, SENT_FORWARD_MAX_PARTS, draftOverCeiling } from "@ohmail/client-engine";
+import { addressBook, formatRecipient, matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
 import {
   FOLDER_OF_VIEW,
   LAST_DRAIN_AT_META,
@@ -2765,6 +2766,37 @@ export function parseRecipients(typed: string): { name: string | null; address: 
  */
 export function keptRecipients(typed: string): { name: string | null; address: string }[] {
   return recipientEntries(typed).map(recipientOf).filter((r): r is { name: string | null; address: string } => r !== null);
+}
+
+export type { AddressBookEntry };
+
+/** The web composer's address book over this mirror (`addressBook`), the account's own addresses left out. */
+export function liveAddressBook(reader: EntityReader, ownAddresses: readonly string[]): AddressBookEntry[] {
+  return addressBook(reader, { exclude: ownAddresses });
+}
+
+/** How many suggestions a recipient field offers — the web field's six. */
+export const RECIPIENT_SUGGESTIONS = 6;
+
+/** The entries already settled, and the one still being typed after the last unquoted separator. */
+function typedTail(typed: string): { entries: string[]; tail: string } {
+  let quoted = false;
+  let cut = -1;
+  for (let i = 0; i < typed.length; i++) {
+    if (typed[i] === '"') quoted = !quoted;
+    else if ((typed[i] === "," || typed[i] === ";") && !quoted) cut = i;
+  }
+  return { entries: recipientEntries(typed.slice(0, cut + 1)), tail: typed.slice(cut + 1).trim() };
+}
+
+/** The correspondents the part still being typed matches, the web field's `matchAddresses`. */
+export function recipientSuggestions(book: readonly AddressBookEntry[], typed: string): AddressBookEntry[] {
+  return matchAddresses(book, typedTail(typed).tail, RECIPIENT_SUGGESTIONS);
+}
+
+/** The field with a suggestion in place of the part being typed, closed by a separator as the web's accept is. */
+export function withSuggestion(typed: string, entry: AddressBookEntry): string {
+  return [...typedTail(typed).entries, formatRecipient(entry)].join(", ") + ", ";
 }
 
 /* Quote-aware split: `"Doe, Alice" <alice@x.org>` is ONE entry — a comma inside double quotes is

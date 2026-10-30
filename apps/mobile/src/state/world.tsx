@@ -131,6 +131,7 @@ import {
   type WorldEvent,
   type WorldMail,
   type WorldPile,
+  type AddressBookEntry,
   type WorldDraft,
   type WorldScheduled,
   type ScreeningPosture,
@@ -379,6 +380,8 @@ export interface World {
    * PHONE has, for the first time, a surface that says so.
    */
   drafts: WorldDraft[];
+  /** Who the composer's recipient fields suggest — the web's address book over this mirror (`live.ts#liveAddressBook`). */
+  addressBook: readonly AddressBookEntry[];
   /**
    * THE FOLDERS SURFACE (FOLDERS-SPEC.md; stage-1 read-only parity with the webapp's
    * foundation). `enabled` is the SERVER's consent answer (`GET /consent`,
@@ -710,6 +713,7 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
     tagged: { count: () => 0, items: () => ({ rows: [], unread: 0, total: 0 }) },
     scheduled: [],
     drafts: [],
+    addressBook: [],
     folders: {
       enabled: false,
       // Nothing is connected, so no door has said it cannot keep one: today's interface.

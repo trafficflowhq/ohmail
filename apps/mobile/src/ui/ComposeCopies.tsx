@@ -2,45 +2,23 @@
  * The Cc and Bcc fields of a new mail, drawn as To is (`compose-copies.ts` holds the rules). Only
  * mounted where the letter carries copies.
  */
-import { TextInput, View } from "react-native";
 import { Copy } from "../copy";
-import { useTheme } from "../theme";
-import { Txt } from "./base";
+import type { AddressBookEntry } from "../state/live";
+import type { BackStep } from "./RecipientInput";
 import type { TypedCopies } from "./compose-copies";
+import { RecipientInput } from "./RecipientInput";
 
-export function ComposeCopies({ value, editable, onChange }: {
+export function ComposeCopies({ value, editable, onChange, book, back }: {
   value: TypedCopies;
   editable: boolean;
   onChange: (next: TypedCopies) => void;
+  book: () => readonly AddressBookEntry[];
+  back: BackStep;
 }) {
-  const t = useTheme();
-  const field = (label: string, text: string, set: (v: string) => void) => (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-      <Txt variant="caption" tone="ink3">
-        {label}
-      </Txt>
-      <TextInput
-        maxFontSizeMultiplier={t.textCap}
-        value={text}
-        onChangeText={set}
-        editable={editable}
-        placeholder={Copy.composeToPlaceholder}
-        placeholderTextColor={t.c.ink3}
-        accessibilityLabel={label}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="email-address"
-        style={[
-          t.type.body,
-          { flex: 1, color: t.c.ink, backgroundColor: t.c.tint2, borderRadius: t.radius.pill, paddingHorizontal: 14, paddingVertical: 8 },
-        ]}
-      />
-    </View>
-  );
   return (
     <>
-      {field(Copy.composeCc, value.cc, (cc) => onChange({ ...value, cc }))}
-      {field(Copy.composeBcc, value.bcc, (bcc) => onChange({ ...value, bcc }))}
+      <RecipientInput label={Copy.composeCc} value={value.cc} editable={editable} book={book} back={back} onChangeText={(cc) => onChange({ ...value, cc })} />
+      <RecipientInput label={Copy.composeBcc} value={value.bcc} editable={editable} book={book} back={back} onChangeText={(bcc) => onChange({ ...value, bcc })} />
     </>
   );
 }

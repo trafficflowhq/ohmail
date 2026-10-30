@@ -2277,6 +2277,8 @@ const TABLE = {
   composeSubjectPlaceholder: "What it's about (optional)",
   composeBodyPlaceholder: "Write your message…",
   composeToPlaceholder: "name@example.org, …",
+  /** A suggested recipient, read out: what the press adds. */
+  composeSuggestion: (name: string, address: string) => (name === "" ? `Add ${address}` : `Add ${name}, ${address}`),
   composeFrom: (address: string) => `From ${address}`,
   /** A draft kept from a removed mailbox leaves from another one (`compose-sender.ts`). */
   composeFromSubstituted: (was: string) => `${was} is disconnected, so this message sends from the address above.`,

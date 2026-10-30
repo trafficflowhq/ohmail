@@ -1576,6 +1576,7 @@ export const DE: Deck = {
   composeSubjectPlaceholder: "Worum es geht (optional)",
   composeBodyPlaceholder: "Schreib deine Nachricht…",
   composeToPlaceholder: "name@beispiel.de, …",
+  composeSuggestion: (name: string, address: string) => (name === "" ? `${address} hinzufügen` : `${name}, ${address} hinzufügen`),
   composeFrom: (address: string) => `Von ${address}`,
   composeFromSubstituted: (was: string) => `${was} ist getrennt, daher geht diese Nachricht von der Adresse oben raus.`,
   composeFromSubstitutedUnknown: "Die Adresse dieses Entwurfs ist getrennt, daher geht er von der Adresse oben raus.",
