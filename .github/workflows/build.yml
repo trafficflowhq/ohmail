@@ -1697,7 +1697,7 @@ jobs:
       # a silently skipped set of assertions.
       #
       # `meson`, `ninja-build`, `libxml2-dev` and `at-spi2-core` build and test the AT-SPI
-      # bridge the AppImage carries (see "Build the AT-SPI bridge the AppImage carries").
+      # bridge the Linux packages carry (see "Build the AT-SPI bridge the Linux packages carry").
       - name: Install the Tauri prerequisites
         run: |
           sudo apt-get update
@@ -1812,9 +1812,10 @@ jobs:
       # accessibility client that discovers the app makes the bridge ref freed
       # memory and the app dies on SIGSEGV. The same version is built here with
       # the upstream fixes and its regression tests, from a source pinned by
-      # digest, and the GTK plugin swaps it into the AppDir (change 5 there).
-      # The .deb and the .rpm keep the distribution's bridge.
-      - name: Build the AT-SPI bridge the AppImage carries
+      # digest. The GTK plugin swaps it into the AppDir (change 5 there); the
+      # .deb and the .rpm install it in usr/lib/ohmail/atk-bridge, which the
+      # binary's RPATH puts ahead of the distribution's (src-tauri/build.rs).
+      - name: Build the AT-SPI bridge the Linux packages carry
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/at-spi2-core"
@@ -2077,6 +2078,42 @@ jobs:
           printf '%s\n' "$RPM_ENTRY" | grep -qx 'StartupWMClass=ohmail' || {
             echo "the .rpm's desktop entry cannot be matched to the window" >&2; exit 1; }
 
+          # ── THE AT-SPI BRIDGE IN THE .deb AND THE .rpm ────────────────────
+          # libgtk-3 loads libatk-bridge-2.0.so.0 itself; only the binary's DT_RPATH
+          # ($ORIGIN/../lib/ohmail/atk-bridge) puts the packaged copy ahead of the
+          # distribution's. Each package is unpacked and its binary resolved by this
+          # runner's loader, whose own bridge is the unpatched 2.52.0.
+          packaged_bridge() {
+            local label="$1" root="$2"
+            local lib="$root/usr/lib/ohmail/atk-bridge/libatk-bridge-2.0.so.0"
+            [ -f "$lib" ] || { echo "the $label carries no usr/lib/ohmail/atk-bridge/libatk-bridge-2.0.so.0" >&2; return 1; }
+            local id rp dyn resolved
+            id="$(readelf -n "$lib" | sed -n 's/^ *Build ID: *//p')"
+            echo "$label bridge build-id $id; built ${OHMAIL_ATK_BRIDGE_BUILD_ID:-<unset>}"
+            if [ -z "${OHMAIL_ATK_BRIDGE_BUILD_ID:-}" ] || [ "$id" != "$OHMAIL_ATK_BRIDGE_BUILD_ID" ]; then
+              echo "the $label's AT-SPI bridge is not the one built for it" >&2; return 1
+            fi
+            rp="$(patchelf --print-rpath "$lib")"
+            [ -z "$rp" ] || { echo "the $label's AT-SPI bridge has RUNPATH '$rp'" >&2; return 1; }
+            dyn="$(readelf -d "$root/usr/bin/ohmail")"
+            printf '%s\n' "$dyn" | grep -E '\((RPATH|RUNPATH)\)' || true
+            resolved="$( (ldd "$root/usr/bin/ohmail" || true) | awk '$1 == "libatk-bridge-2.0.so.0" {print $3}')"
+            echo "$label: libatk-bridge-2.0.so.0 => ${resolved:-<nothing>}"
+            if [ -z "$resolved" ] || [ "$(readlink -f "$resolved")" != "$(readlink -f "$lib")" ]; then
+              echo "the $label's binary does not load the AT-SPI bridge it carries" >&2; return 1
+            fi
+          }
+          DEB_ROOT="$(mktemp -d)"
+          dpkg-deb -x "$DEB" "$DEB_ROOT"
+          packaged_bridge .deb "$DEB_ROOT"
+          RPM_ROOT="$(mktemp -d)"
+          # rpm2cpio | cpio can exit non-zero with a complete tree (see above): the tree decides.
+          set +e +o pipefail
+          rpm2cpio "$RPM" | (cd "$RPM_ROOT" && cpio -idm --quiet); RPM_X="${PIPESTATUS[*]}"
+          set -e -o pipefail
+          echo "rpm2cpio/cpio exit statuses: $RPM_X"
+          packaged_bridge .rpm "$RPM_ROOT"
+
           # ── The AppImage carries the same tree ────────────────────────────
           # Extracted rather than mounted: this reads the files, and the mounted
           # run is its own step below.
@@ -2265,6 +2302,12 @@ jobs:
           echo "bridge RUNPATH: $BRIDGE_RUNPATH"
           if [ "$BRIDGE_RUNPATH" != '$ORIGIN' ]; then
             echo "the AppImage's AT-SPI bridge has RUNPATH '$BRIDGE_RUNPATH', not \$ORIGIN" >&2
+            exit 1
+          fi
+          # linuxdeploy replaced the binary's RPATH (the .deb's bridge directory) with its RUNPATH.
+          APP_DYN="$(readelf -d squashfs-root/usr/bin/ohmail)"
+          if grep -q '(RPATH)' <<< "$APP_DYN"; then
+            echo "the AppImage's binary keeps the .deb's RPATH" >&2
             exit 1
           fi
 
@@ -3038,7 +3081,7 @@ jobs:
           ls -la "$TOOLS/linuxdeploy-plugin-gtk.sh"
 
       # The same AT-SPI bridge as the x86_64 job's, built natively here.
-      - name: Build the AT-SPI bridge the AppImage carries
+      - name: Build the AT-SPI bridge the Linux packages carry
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/at-spi2-core"
@@ -3248,6 +3291,42 @@ jobs:
           printf '%s\n' "$RPM_ENTRY" | grep -qx 'StartupWMClass=ohmail' || {
             echo "the .rpm's desktop entry cannot be matched to the window" >&2; exit 1; }
 
+          # ── THE AT-SPI BRIDGE IN THE .deb AND THE .rpm ────────────────────
+          # libgtk-3 loads libatk-bridge-2.0.so.0 itself; only the binary's DT_RPATH
+          # ($ORIGIN/../lib/ohmail/atk-bridge) puts the packaged copy ahead of the
+          # distribution's. Each package is unpacked and its binary resolved by this
+          # runner's loader, whose own bridge is the unpatched 2.52.0.
+          packaged_bridge() {
+            local label="$1" root="$2"
+            local lib="$root/usr/lib/ohmail/atk-bridge/libatk-bridge-2.0.so.0"
+            [ -f "$lib" ] || { echo "the $label carries no usr/lib/ohmail/atk-bridge/libatk-bridge-2.0.so.0" >&2; return 1; }
+            local id rp dyn resolved
+            id="$(readelf -n "$lib" | sed -n 's/^ *Build ID: *//p')"
+            echo "$label bridge build-id $id; built ${OHMAIL_ATK_BRIDGE_BUILD_ID:-<unset>}"
+            if [ -z "${OHMAIL_ATK_BRIDGE_BUILD_ID:-}" ] || [ "$id" != "$OHMAIL_ATK_BRIDGE_BUILD_ID" ]; then
+              echo "the $label's AT-SPI bridge is not the one built for it" >&2; return 1
+            fi
+            rp="$(patchelf --print-rpath "$lib")"
+            [ -z "$rp" ] || { echo "the $label's AT-SPI bridge has RUNPATH '$rp'" >&2; return 1; }
+            dyn="$(readelf -d "$root/usr/bin/ohmail")"
+            printf '%s\n' "$dyn" | grep -E '\((RPATH|RUNPATH)\)' || true
+            resolved="$( (ldd "$root/usr/bin/ohmail" || true) | awk '$1 == "libatk-bridge-2.0.so.0" {print $3}')"
+            echo "$label: libatk-bridge-2.0.so.0 => ${resolved:-<nothing>}"
+            if [ -z "$resolved" ] || [ "$(readlink -f "$resolved")" != "$(readlink -f "$lib")" ]; then
+              echo "the $label's binary does not load the AT-SPI bridge it carries" >&2; return 1
+            fi
+          }
+          DEB_ROOT="$(mktemp -d)"
+          dpkg-deb -x "$DEB" "$DEB_ROOT"
+          packaged_bridge .deb "$DEB_ROOT"
+          RPM_ROOT="$(mktemp -d)"
+          # rpm2cpio | cpio can exit non-zero with a complete tree (see above): the tree decides.
+          set +e +o pipefail
+          rpm2cpio "$RPM" | (cd "$RPM_ROOT" && cpio -idm --quiet); RPM_X="${PIPESTATUS[*]}"
+          set -e -o pipefail
+          echo "rpm2cpio/cpio exit statuses: $RPM_X"
+          packaged_bridge .rpm "$RPM_ROOT"
+
           # ── The AppImage carries the same tree ────────────────────────────
           rm -rf squashfs-root
           ./"$APPIMAGE" --appimage-extract > /dev/null
@@ -3417,6 +3496,12 @@ jobs:
           echo "bridge RUNPATH: $BRIDGE_RUNPATH"
           if [ "$BRIDGE_RUNPATH" != '$ORIGIN' ]; then
             echo "the AppImage's AT-SPI bridge has RUNPATH '$BRIDGE_RUNPATH', not \$ORIGIN" >&2
+            exit 1
+          fi
+          # linuxdeploy replaced the binary's RPATH (the .deb's bridge directory) with its RUNPATH.
+          APP_DYN="$(readelf -d squashfs-root/usr/bin/ohmail)"
+          if grep -q '(RPATH)' <<< "$APP_DYN"; then
+            echo "the AppImage's binary keeps the .deb's RPATH" >&2
             exit 1
           fi
 
@@ -3868,6 +3953,19 @@ jobs:
           test -n "$ICONS"
 
           echo
+          echo "=== the binary loads the AT-SPI bridge the package carries ==="
+          # gtk3 (installed with the drill's tools) brings this distribution's at-spi2-core; the
+          # binary's RPATH has to put the packaged bridge ahead of its libatk-bridge-2.0.so.0.
+          test -f /usr/lib/ohmail/atk-bridge/libatk-bridge-2.0.so.0
+          # The webview this container lacks reads "not found"; only the bridge's line is read.
+          BRIDGE_AT="$( (ldd /usr/bin/ohmail || true) | awk '$1 == "libatk-bridge-2.0.so.0" {print $3}')"
+          echo "libatk-bridge-2.0.so.0 => ${BRIDGE_AT:-<nothing>}"
+          if [ -z "$BRIDGE_AT" ] || [ "$(readlink -f "$BRIDGE_AT")" != /usr/lib/ohmail/atk-bridge/libatk-bridge-2.0.so.0 ]; then
+            echo "the installed binary does not load the AT-SPI bridge the package carries" >&2
+            exit 1
+          fi
+
+          echo
           echo "=== the desktop entry, as installed ==="
           cat /usr/share/applications/ohmail.desktop
           # freedesktop's own validator, from desktop-file-utils. It is what a
@@ -3924,6 +4022,7 @@ jobs:
           test ! -e /usr/bin/ohmail
           test ! -e /usr/share/applications/ohmail.desktop
           test ! -e /usr/lib/ohmail/engine/bin/ohmail-engine.mjs
+          test ! -e /usr/lib/ohmail/atk-bridge/libatk-bridge-2.0.so.0
           echo "the install drill passed end to end"
           DRILL
           chmod +x build/rpm-install-drill.sh
@@ -3935,13 +4034,14 @@ jobs:
           # MEASURED against a stock `fedora:42`, not assumed: `rpm`, `rpm2cpio`,
           # `awk`, `find` and `ldd` are in the base image, and
           # `desktop-file-validate` is NOT — it comes from desktop-file-utils,
-          # which is why that package and no other is installed here.
+          # which is why that package is installed here. gtk3 is the library that
+          # loads the AT-SPI bridge, for the drill's bridge check.
           # findutils is named beside it so the drill's `find` does not depend on
           # a base image continuing to carry it.
           docker run --rm \
             -v "$PWD/build:/work:ro" \
             registry.fedoraproject.org/fedora:42@sha256:e78cd1a688cd079c23864f289a89a49a3f4ad66d817864e325e1d058310ee95c \
-            bash -c 'dnf -y install desktop-file-utils findutils file >/dev/null && bash /work/rpm-install-drill.sh'
+            bash -c 'dnf -y install desktop-file-utils findutils file gtk3 >/dev/null && bash /work/rpm-install-drill.sh'
 
       - name: Run summary
         if: always()
@@ -4164,6 +4264,27 @@ jobs:
           flatpak run --command=sh "$R//$V" -c 'command -v xdg-open' || {
             echo "the $R//$V runtime has no xdg-open — every link in the app would do nothing" >&2
             exit 1; }
+
+          # THE AT-SPI BRIDGE STEP 7 BUILT IS THE ONE THE BINARY LOADS: the runtime's own lacks two of
+          # the upstream cache fixes, and only the binary's RPATH puts this one ahead of it.
+          B=lib/ohmail/atk-bridge/libatk-bridge-2.0.so.0
+          [ -f "$F/$B" ] || { echo "the built tree has no $B" >&2; exit 1; }
+          RT_BRIDGE="$(flatpak info --show-location "$R//$V")/files/lib/$(uname -m)-linux-gnu/libatk-bridge-2.0.so.0"
+          OURS_ID="$(readelf -n "$F/$B" | sed -n 's/^ *Build ID: *//p')"
+          RT_ID="$(readelf -n "$RT_BRIDGE" | sed -n 's/^ *Build ID: *//p')"
+          echo "bridge build-id $OURS_ID; the runtime's $RT_ID"
+          if [ -z "$OURS_ID" ] || [ -z "$RT_ID" ] || [ "$OURS_ID" = "$RT_ID" ]; then
+            echo "the Flatpak's AT-SPI bridge is the runtime's, or a build-id could not be read" >&2; exit 1
+          fi
+          OURS_DYN="$(readelf -d "$F/$B")"
+          if grep -qE '\((RPATH|RUNPATH)\)' <<< "$OURS_DYN"; then
+            echo "the Flatpak's AT-SPI bridge keeps a search path of its own" >&2; exit 1
+          fi
+          LOADED="$( (flatpak build flatpak-build ldd /app/bin/ohmail || true) | awk '$1 == "libatk-bridge-2.0.so.0" {print $3}')"
+          echo "libatk-bridge-2.0.so.0 => ${LOADED:-<nothing>}"
+          if [ -z "$LOADED" ] || [ "$(realpath -m "$LOADED")" != "/app/$B" ]; then
+            echo "the Flatpak's binary does not load the AT-SPI bridge it carries" >&2; exit 1
+          fi
 
       # Flathub's own linter, over the manifest and then the built repository.
       # It is the closest thing to the review the submission gets.

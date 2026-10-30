@@ -89,11 +89,11 @@ licence:
                   linking its commit and the last one backported to
                   2.52.0, by their authors as each patch names them, and
                   0005 adds regression tests; all are LGPL-2.1-or-later, as
-                  at-spi2-core is. The Linux AppImage carries
+                  at-spi2-core is. The Linux AppImage, .deb and .rpm carry
                   libatk-bridge-2.0.so.0 built by build-bridge.sh in the same
                   directory from the public at-spi2-core 2.52.0 tarball with
-                  these patches applied; the .deb and the .rpm use the
-                  distribution's own.
+                  these patches applied; the Flatpak builds the same tarball
+                  with the same patches in its manifest.
 
 The MIT notice the Omarchy themes and the GTK plugin carry, after their
 copyright lines:

@@ -52,6 +52,9 @@ modules:
     buildsystem: simple
     build-options:
       append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
+      # Step 7's bridge is the one unstripped ELF here: splitting its debuginfo needs the host's
+      # eu-strip and adds a .Debug extension the app does not ship. It installs as built.
+      no-debuginfo: true
       env:
         CARGO_HOME: /run/build/ohmail/cargo
         # The two caches flatpak-node-generator laid down. npm resolves only what is in them:
@@ -104,6 +107,21 @@ modules:
         /app/share/icons/hicolor/256x256/apps/app.ohmail.Desktop.png
       - install -Dm644 apps/desktop/src-tauri/icons/128x128.png
         /app/share/icons/hicolor/128x128/apps/app.ohmail.Desktop.png
+
+      # 7 · the AT-SPI bridge the binary loads first (its RPATH, src-tauri/build.rs): the runtime's
+      #     at-spi2-core lacks two of the four upstream fixes for the cache use-after-free that
+      #     kills the app under accessibility clients. The same source and patches as the AppImage's
+      #     bridge, tested, then installed alone; the runtime's libatk and libatspi stay.
+      - for p in apps/desktop/src-tauri/linux/at-spi2-core/0*.patch; do patch -d at-spi2-core -p1
+        --fuzz=0 --forward --batch --no-backup-if-mismatch < "$p" || exit 1; done
+      - meson setup at-spi2-core/_build at-spi2-core --prefix=/app --libdir=lib --buildtype=release
+        -Ddocs=false -Dintrospection=disabled -Dgtk2_atk_adaptor=false
+      - ninja -C at-spi2-core/_build
+      - dbus-run-session -- meson test -C at-spi2-core/_build --no-rebuild --print-errorlogs
+        cache-departed direct-connection
+      - DESTDIR="$PWD/at-spi2-core/_dest" meson install -C at-spi2-core/_build --no-rebuild
+      - install -Dm644 at-spi2-core/_dest/app/lib/libatk-bridge-2.0.so.0
+        /app/lib/ohmail/atk-bridge/libatk-bridge-2.0.so.0
     sources:
       - type: dir
         path: ../../..
@@ -115,5 +133,10 @@ modules:
           - apps/desktop/dist-host
           - apps/desktop/src-tauri/target
           - build
+      - type: archive
+        # at-spi2-core 2.52.0 at the digest build-bridge.sh pins, for step 7.
+        url: https://download.gnome.org/sources/at-spi2-core/2.52/at-spi2-core-2.52.0.tar.xz
+        sha256: 0ac3fc8320c8d01fa147c272ba7fa03806389c6b03d3c406d0823e30e35ff5ab
+        dest: at-spi2-core
       - cargo-sources.json
       - node-sources.json
