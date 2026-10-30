@@ -147,7 +147,7 @@ describe("the account's own sent invoice lists its PDF as a file", () => {
     const mail = outboundToMail({
       from: OWN, to: ["kunde@example.test"], subject: "Rechnung September", text: "Anbei die Rechnung.",
       attachments: [{ filename: "Rechnung.pdf", contentType: "application/pdf", content: PDF }],
-    } as unknown as Parameters<typeof outboundToMail>[0], "<rechnung-0901-sent@example.test>");
+    } as unknown as Parameters<typeof outboundToMail>[0], "<rechnung-0901-sent@example.test>", new Date());
     const raw = await new Promise<Buffer>((resolve, reject) => {
       new MailComposer(mail).compile().build((err: Error | null, out: Buffer) => (err ? reject(err) : resolve(out)));
     });

@@ -196,6 +196,18 @@ describe("classifyDedup", () => {
     }
   });
 
+  it("knows a Sent folder by the mailbox's record when its name is not Sent-shaped", () => {
+    const lift = (known: string, sentFolder: string | null, arrival = "INBOX") => classifyDedup({
+      change: change(arrival), dedupKey: KEY, existing: stored(known), pendingMoveFolders: new Set(),
+      evidence: APPEARANCE, sentFolder,
+    }).kind;
+    expect(lift("Envoyés", "Envoyés")).toBe("received_copy");
+    expect(lift("INBOX/Verzonden", "INBOX/Verzonden")).toBe("received_copy");
+    expect(lift("Envoyés", null), "no record: the name alone decides").toBe("external_copy");
+    expect(lift("Archive", "Envoyés"), "another folder is not Sent").toBe("external_copy");
+    expect(lift("Envoyés", "Envoyés", "Work"), "only INBOX takes the row").toBe("external_copy");
+  });
+
   it("lifts nothing else: an INBOX copy of held mail and a label copy of Sent mail stay copies", () => {
     // The Screener's row must not be lifted by a second delivery; a label is a customer folder.
     for (const [arrival, known] of [["INBOX", "ohmail/Screener"], ["INBOX", "Archive"], ["Work", "Sent"]]) {

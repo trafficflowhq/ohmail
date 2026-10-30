@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { accounts, folderState, mailboxes, messageInstances, messages, type Tx } from "@trafficflow/db";
-import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeDrizzleRepo, recordSpecialFolders } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { SyncService, type ServiceContext } from "@trafficflow/services";
 import { MemoryMirrorStore, ohboxView } from "@ohmail/client-engine";
@@ -50,14 +50,27 @@ export const GMAIL: Shape = {
   ],
 };
 
+/** A SPECIAL-USE Sent under a name the Sent-shaped belt does not know: only the mailbox's record says it is Sent. */
+export const LOCALIZED: Shape = {
+  name: "a SPECIAL-USE Sent named Envoyés", delimiter: "/", inbox: "INBOX", sent: "Envoyés",
+  folders: [{ path: "INBOX" }, { path: "Envoyés", specialUse: "\\Sent" }],
+};
+export const LOCALIZED_DOVECOT: Shape = {
+  name: "a SPECIAL-USE Sent named INBOX.Verzonden", delimiter: ".", inbox: "INBOX", sent: "INBOX.Verzonden",
+  folders: [{ path: "INBOX" }, { path: "INBOX.Verzonden", specialUse: "\\Sent" }],
+};
+
 const ARRIVED = new Date("2026-09-25T07:46:00Z");
 
 /** One letter's bytes. `received` adds the headers a delivery writes; identity ignores them. */
-function rawOf(l: { messageId: string; from: string; to: string; subject: string }, received: boolean): Buffer {
+function rawOf(
+  l: { messageId: string; from: string; to: string; subject: string }, received: boolean,
+  date = "Fri, 25 Sep 2026 07:46:00 +0000",
+): Buffer {
   return Buffer.from([
     ...(received ? ["Received: from mx.example.test by imap.example.test", `Delivered-To: ${l.to}`] : []),
     `Message-ID: <${l.messageId}>`, `From: ${l.from}`, `To: ${l.to}`, `Subject: ${l.subject}`,
-    "Date: Fri, 25 Sep 2026 07:46:00 +0000", "Content-Type: text/plain; charset=utf-8", "",
+    `Date: ${date}`, "Content-Type: text/plain; charset=utf-8", "",
     "the whole text of the letter",
   ].join("\r\n"));
 }
@@ -144,6 +157,8 @@ async function world(makeDb: MakeDb, shape: Shape) {
   );
   await adapter.connect();
   const repo = makeDrizzleRepo(db);
+  // The attach's discovery, as both attach paths write it: the Sent folder lands in `mailboxes.sent_folder`.
+  await recordSpecialFolders(adapter, repo, mailboxId);
   // A known correspondent, so the INBOX-only control stays in the Ohbox rather than the Screener.
   await repo.upsertContacts(accountId, ["anna@example.test"], "person");
   const cycle = () => runSyncCycle({
@@ -225,7 +240,7 @@ async function expectInboxInstance(w: World, messageId: string) {
 export function describeSelfSent(store: string, makeDb: MakeDb, order: "forward" | "reverse" = "forward"): void {
   const cases: Array<[string, () => Promise<void>]> = [];
 
-  for (const shape of [PLAIN, DOVECOT]) {
+  for (const shape of [PLAIN, DOVECOT, LOCALIZED, LOCALIZED_DOVECOT]) {
     cases.push([`Sent copy first, then the INBOX copy — ${shape.name}`, async () => {
       const w = await world(makeDb, shape);
       const c = seedControls(w);
@@ -254,26 +269,62 @@ export function describeSelfSent(store: string, makeDb: MakeDb, order: "forward"
     }]);
   }
 
-  /* THE CLOUD'S OWN ORDER for a letter written in ohmail: the send projects the Sent copy at once
-     (`recordSentMessage`, the record-at-send door) and the delivery reaches INBOX a cycle later. */
-  cases.push(["a letter sent from ohmail: the Sent copy is recorded at send, the INBOX copy after", async () => {
-    const w = await world(makeDb, PLAIN);
-    const c = seedControls(w);
-    const l = w.letter("sent-from-ohmail");
-    const raw = rawOf(l, false);
-    const uid = w.imap.put(PLAIN.sent, raw, l.messageId, true);
-    await recordSentMessage({ locator: { folder: PLAIN.sent, ref: `${w.imap.uidValidityOf(PLAIN.sent)}:${uid}` }, raw }, {
+  const recordAtSend = async (w: World, raw: Buffer, uid: number) =>
+    recordSentMessage({ locator: { folder: w.shape.sent, ref: `${w.imap.uidValidityOf(w.shape.sent)}:${uid}` }, raw }, {
       accountId: w.accountId, mailboxId: w.mailboxId, storageCap: UNMETERED_STORAGE_CAP, repo: w.repo,
       withTx: (run) => w.repo.transaction((tx) => run(tx)),
     });
-    await w.cycle();
-    await w.cycle();
-    w.imap.put(PLAIN.inbox, rawOf(l, true), l.messageId, false);
-    await w.cycle();
-    await w.drain();
-    await expectInboxInstance(w, l.messageId);
-    await expectControls(w, c);
-  }]);
+
+  /* THE CLOUD'S OWN ORDER for a letter written in ohmail: the send projects the Sent copy at once
+     (`recordSentMessage`, the record-at-send door) and the delivery reaches INBOX a cycle later. */
+  for (const shape of [PLAIN, LOCALIZED]) {
+    cases.push([`a letter sent from ohmail: the Sent copy is recorded at send, the INBOX copy after — ${shape.name}`, async () => {
+      const w = await world(makeDb, shape);
+      const c = seedControls(w);
+      const l = w.letter("sent-from-ohmail");
+      const raw = rawOf(l, false);
+      const uid = w.imap.put(shape.sent, raw, l.messageId, true);
+      await recordAtSend(w, raw, uid);
+      await w.cycle();
+      await w.cycle();
+      w.imap.put(shape.inbox, rawOf(l, true), l.messageId, false);
+      await w.cycle();
+      await w.drain();
+      await expectInboxInstance(w, l.messageId);
+      await expectControls(w, c);
+    }]);
+  }
+
+  /* A SUBMISSION THAT SPANNED SECONDS: each copy carried its own compile time, the Sent copy
+     dated after the delivered one. Still one letter, in every order the copies can reach the store. */
+  const DELIVERED = "Thu, 29 Oct 2026 18:54:31 +0000";
+  const FILED = "Thu, 29 Oct 2026 18:54:38 +0000";
+  for (const shape of [PLAIN, LOCALIZED]) for (const [name, sentFirst, recorded] of [
+    ["the Sent copy synced, then the INBOX copy", true, false],
+    ["the INBOX copy synced, then the Sent copy", false, false],
+    ["the Sent copy recorded at send, then the INBOX copy", true, true],
+    ["the INBOX copy synced, then the owed Sent copy filed and recorded late", false, true],
+  ] as const) {
+    cases.push([`copies dated seven seconds apart are one letter — ${name} — ${shape.name}`, async () => {
+      const w = await world(makeDb, shape);
+      const c = seedControls(w);
+      const l = w.letter("dated-apart");
+      const putSent = async () => {
+        const raw = rawOf(l, false, FILED);
+        const uid = w.imap.put(shape.sent, raw, l.messageId, true);
+        if (recorded) await recordAtSend(w, raw, uid);
+      };
+      const putInbox = () => w.imap.put(shape.inbox, rawOf(l, true, DELIVERED), l.messageId, false);
+      if (sentFirst) await putSent(); else putInbox();
+      await w.cycle();
+      await w.cycle();
+      if (sentFirst) putInbox(); else await putSent();
+      await w.cycle();
+      await w.drain();
+      await expectInboxInstance(w, l.messageId);
+      await expectControls(w, c);
+    }]);
+  }
 
   cases.push(["both copies in one cycle", async () => {
     const w = await world(makeDb, PLAIN);
@@ -290,22 +341,22 @@ export function describeSelfSent(store: string, makeDb: MakeDb, order: "forward"
   /* THE MIRROR THAT ALREADY COLLAPSED. The state the old ingest wrote for an INBOX copy that met a
      Sent row: the copy recorded as a second, non-primary instance, the conflict flag raised —
      seeded through the repo's own two writes. The next cycle must repair it with no manual step. */
-  cases.push(["a mirror that already collapsed repairs itself at the next cycle", async () => {
-    const w = await world(makeDb, PLAIN);
+  for (const shape of [PLAIN, LOCALIZED, LOCALIZED_DOVECOT]) cases.push([`a mirror that already collapsed repairs itself at the next cycle — ${shape.name}`, async () => {
+    const w = await world(makeDb, shape);
     const c = seedControls(w);
     const l = w.letter("collapsed");
-    w.imap.put(PLAIN.sent, rawOf(l, false), l.messageId, true);
+    w.imap.put(shape.sent, rawOf(l, false), l.messageId, true);
     await w.cycle();
     await w.cycle();
     const [row] = await w.rowsOf(l.messageId);
-    const uid = w.imap.put(PLAIN.inbox, rawOf(l, true), l.messageId, false);
-    await w.repo.recordInstance(row!.id, { folder: "INBOX", ref: `${w.imap.uidValidityOf(PLAIN.inbox)}:${uid}` });
+    const uid = w.imap.put(shape.inbox, rawOf(l, true), l.messageId, false);
+    await w.repo.recordInstance(row!.id, { folder: "INBOX", ref: `${w.imap.uidValidityOf(shape.inbox)}:${uid}` });
     const [fs] = await w.db.select().from(folderState).where(eq(folderState.messageId, row!.id));
     await w.repo.setFolderConflict(row!.id, {
       desiredFolder: fs!.desiredFolder, observedFolder: fs!.observedFolder, lastSetBy: fs!.lastSetBy as "us",
     });
     const [before] = await w.rowsOf(l.messageId);
-    expect(before!.instances, "the premise: the collapsed shape").toEqual(["INBOX", "Sent*"]);
+    expect(before!.instances, "the premise: the collapsed shape").toEqual(["INBOX", `${canonical(shape, shape.sent)}*`].sort());
     await w.cycle();
     await w.drain();
     await expectInboxInstance(w, l.messageId);
@@ -315,18 +366,18 @@ export function describeSelfSent(store: string, makeDb: MakeDb, order: "forward"
   /* THE REPAIR'S EDGE: only a row still desired in Sent re-reads its INBOX copy. A move of ours
      into INBOX in flight (the copy landed, the source not yet expunged) keeps the copy known, or
      every cycle would fetch its body again until the move converged. */
-  cases.push(["the known-set keeps an INBOX copy whose row is moving out of Sent", async () => {
-    const w = await world(makeDb, PLAIN);
+  for (const shape of [PLAIN, LOCALIZED, LOCALIZED_DOVECOT]) cases.push([`the known-set keeps an INBOX copy whose row is moving out of Sent — ${shape.name}`, async () => {
+    const w = await world(makeDb, shape);
     const l = w.letter("moving");
-    w.imap.put(PLAIN.sent, rawOf(l, false), l.messageId, true);
+    w.imap.put(shape.sent, rawOf(l, false), l.messageId, true);
     await w.cycle();
     const [row] = await w.rowsOf(l.messageId);
-    const uid = w.imap.put(PLAIN.inbox, rawOf(l, false), l.messageId, true);
-    await w.repo.recordInstance(row!.id, { folder: "INBOX", ref: `${w.imap.uidValidityOf(PLAIN.inbox)}:${uid}` });
+    const uid = w.imap.put(shape.inbox, rawOf(l, false), l.messageId, true);
+    await w.repo.recordInstance(row!.id, { folder: "INBOX", ref: `${w.imap.uidValidityOf(shape.inbox)}:${uid}` });
     const knowsInbox = async () =>
       (await w.repo.listKnownLocators(w.mailboxId)).some((k) => k.folder === "INBOX" && k.uid === uid);
     expect(await knowsInbox(), "a collapsed row's INBOX copy stayed known — nothing re-reads it").toBe(false);
-    await w.repo.upsertFolderState(row!.id, { desiredFolder: "INBOX", observedFolder: PLAIN.sent, lastSetBy: "us" });
+    await w.repo.upsertFolderState(row!.id, { desiredFolder: "INBOX", observedFolder: canonical(shape, shape.sent), lastSetBy: "us" });
     expect(await knowsInbox(), "a copy our move just made is fetched again every cycle").toBe(true);
   }]);
 

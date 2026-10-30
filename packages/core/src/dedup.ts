@@ -29,6 +29,11 @@ export interface DedupInput {
    * purpose, so leaving it out fails to build rather than silently adopting.
    */
   evidence: MoveEvidence;
+  /**
+   * The mailbox's own Sent folder as the attach recorded it (`mailboxes.sent_folder`), for a Sent
+   * folder whose name the Sent-shaped belt does not know ("Envoyés"). Absent: the belt alone.
+   */
+  sentFolder?: string | null;
 }
 
 /**
@@ -42,7 +47,7 @@ export interface DedupInput {
  * would empty their inbox. It records its instance too, checked AFTER `duplicate`.
  */
 export function classifyDedup(input: DedupInput): DedupOutcome {
-  const { change, existing, pendingMoveFolders, evidence } = input;
+  const { change, existing, pendingMoveFolders, evidence, sentFolder } = input;
   if (existing === null) return { kind: "new" };
 
   // CANONICAL: News and its pre-0.22 spelling (`ohmail/Reads`) are one server folder, so a re-read
@@ -57,8 +62,10 @@ export function classifyDedup(input: DedupInput): DedupOutcome {
   if (permitsAdoption(evidence)) return { kind: "external_move", existing };
   // A letter the account sent itself: its INBOX copy is received mail, so it takes the row from
   // the Sent copy — placement and `\Seen` — whichever copy the sync met first. The one lift an
-  // appearance may make: out of Sent, into INBOX. By fingerprint the content is the account's own
-  // letter, so nothing a stranger wrote passes the gate this way.
-  if (observedFolder === "INBOX" && isSentFolderPath(knownFolder)) return { kind: "received_copy", existing };
+  // appearance may make: out of Sent, into INBOX. The row was found by fingerprint, or by
+  // Message-ID with every fingerprinted field but the Date agreeing with a row in Sent: the content
+  // is the account's own letter, so nothing a stranger wrote passes the gate this way.
+  const knownIsSent = isSentFolderPath(knownFolder) || (sentFolder != null && knownFolder === canonicalDestination(sentFolder));
+  if (observedFolder === "INBOX" && knownIsSent) return { kind: "received_copy", existing };
   return { kind: "external_copy", existing };
 }
