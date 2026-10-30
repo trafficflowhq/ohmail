@@ -783,3 +783,118 @@ describe("HttpAdapter ⇄ real backend (PGlite, in-process)", () => {
     });
   });
 });
+
+/**
+ * A PERSON'S READ OR UNREAD ANSWERED RETRYABLY AFTER A NEWER PRESS ON ITS LETTERS: the newest press
+ * decides each letter's flag. The older verb goes again only with the letters the newer one did not
+ * name, under its own key; with none left it is not sent again. Answered 500 (the server took
+ * nothing) or dropped after the server applied it, the case a cut connection leaves.
+ */
+describe("a person's read answered retryably after a newer press (real wire)", () => {
+  type Step = { hold?: boolean; fault?: "500" | "drop" };
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+
+  async function world(n: number, plan: (batch: number) => Step) {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const plain = bridgeFetch(deps, { bearer: s.token });
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const m = await seedMessage(db, { accountId: s.accountId, folder: "INBOX", subject: `letter ${i}`, unread: true });
+      const r = await plain(`http://localhost/messages/${m.id}`, {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ unread: true }),
+      });
+      expect(r.status).toBe(200);
+      ids.push(m.id);
+    }
+    const wire: Array<{ said: string; key: string }> = [];
+    const releases: Array<() => void> = [];
+    const faulty: FetchLike = async (url, init) => {
+      if (init?.method !== "PATCH" || new URL(String(url)).pathname !== "/messages") return plain(url, init);
+      const body = JSON.parse(String(init.body)) as { ids: string[]; unread: boolean };
+      const key = new Headers(init.headers as HeadersInit | undefined).get("idempotency-key") ?? "";
+      wire.push({ said: `${body.ids.map((id) => ids.indexOf(id)).join(",")} ${body.unread ? "unread" : "read"}`, key });
+      const step = plan(wire.length);
+      if (step.hold) await new Promise<void>((r) => { releases.push(r); });
+      if (step.fault === "500") {
+        return new Response(JSON.stringify({ error: { code: "internal", message: "internal error" } }),
+          { status: 500, headers: { "content-type": "application/json" } });
+      }
+      const res = await plain(url, init);
+      if (step.fault === "drop") throw new TypeError("fetch failed: other side closed");
+      return res;
+    };
+    const engine = new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "http://localhost", fetch: faulty }) });
+    await engine.start();
+    const settle = async () => { for (let i = 0; i < 10; i++) await tick(); };
+    const until = async (count: number) => { for (let i = 0; i < 100 && wire.length < count; i++) await tick(); };
+    const unread = async () => Promise.all(ids.map(async (id) =>
+      ((await (await plain(`http://localhost/messages/${id}`, {})).json()) as { unread: boolean }).unread));
+    const mirror = () => ids.map((id) => engine.read().get<EngineMessage>("message", id)?.unread);
+    return { engine, ids, wire, releases, settle, until, unread, mirror };
+  }
+
+  for (const n of [1, 3]) {
+    for (const fault of ["500", "drop"] as const) {
+      it(`a Mark read over ${n} answered ${fault}, a Mark unread on the first meanwhile: the first ends unread`, async () => {
+        const w = await world(n, (b) => (b === 1 ? { hold: true, fault } : {}));
+        const read = w.engine.mutate({ kind: "mark_seen", messageIds: w.ids, unread: false });
+        await w.until(1);
+        const unread = w.engine.mutate({ kind: "mark_seen", messageIds: [w.ids[0]!], unread: true });
+        await w.settle();
+        w.releases[0]!();
+        const [r, u] = await Promise.all([read, unread]);
+        const flushed = await w.engine.flushPending();
+        await w.settle();
+
+        expect(u.status).toBe("confirmed");
+        const rest = n === 1 ? [] : ["1,2 read"];
+        expect(w.wire.map((x) => x.said), "the older read went again over the newer Mark unread")
+          .toEqual([n === 1 ? "0 read" : "0,1,2 read", "0 unread", ...rest]);
+        expect(w.wire.filter((x) => x.said.endsWith(" read")).every((x) => x.key === r.key), "the read went again under a new key").toBe(true);
+        const settled = [r, ...flushed].filter((x) => x.key === r.key).map((x) => x.status);
+        expect(settled.at(-1)).toBe(n === 1 ? "superseded" : "confirmed");
+        const expected = w.ids.map((_id, i) => i === 0);
+        expect(await w.unread(), "the server ended on the older press").toEqual(expected);
+        expect(w.mirror(), "the mirror disagrees with the server").toEqual(expected);
+        expect(w.engine.pendingMutations()).toEqual([]);
+      }, 30_000);
+    }
+  }
+
+  it("a Mark unread answered 500, a Mark read made meanwhile: the letter ends read", async () => {
+    const w = await world(1, (b) => (b === 1 ? { hold: true, fault: "500" } : {}));
+    const unread = w.engine.mutate({ kind: "mark_seen", messageIds: w.ids, unread: true });
+    await w.until(1);
+    const read = w.engine.mutate({ kind: "mark_seen", messageIds: w.ids, unread: false });
+    await w.settle();
+    w.releases[0]!();
+    await Promise.all([unread, read]);
+    await w.engine.flushPending();
+    await w.settle();
+
+    expect(w.wire.map((x) => x.said), "the older unread went again over the newer read").toEqual(["0 unread", "0 read"]);
+    expect(await w.unread()).toEqual([false]);
+    expect(w.mirror()).toEqual([false]);
+  }, 30_000);
+
+  it("a Mark read waiting its turn loses the letter a Mark unread names, before its first send", async () => {
+    // Letter 2's read holds the wire; the read over 0 and 1 waits behind it and is answered 500.
+    const w = await world(3, (b) => (b === 1 ? { hold: true } : b === 2 ? { fault: "500" } : {}));
+    const other = w.engine.mutate({ kind: "mark_seen", messageIds: [w.ids[2]!], unread: false });
+    await w.until(1);
+    const read = w.engine.mutate({ kind: "mark_seen", messageIds: [w.ids[0]!, w.ids[1]!], unread: false });
+    await w.settle();
+    const unread = w.engine.mutate({ kind: "mark_seen", messageIds: [w.ids[0]!], unread: true });
+    await w.settle();
+    w.releases[0]!();
+    await Promise.all([other, read, unread]);
+    await w.engine.flushPending();
+    await w.settle();
+
+    expect(w.wire.filter((x) => x.said.endsWith(" read") && x.said.split(" ")[0]!.split(",").includes("0")),
+      "the waiting read carried a letter a newer press had marked unread").toEqual([]);
+    expect(await w.unread()).toEqual([true, false, false]);
+    expect(w.mirror()).toEqual([true, false, false]);
+  }, 30_000);
+});
