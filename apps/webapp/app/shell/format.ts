@@ -356,15 +356,23 @@ export function localInputValue(iso: string): string {
  * wall clock freely, so it is the one that reaches the two nights: 02:30 on the autumn night
  * happens twice and `zonedInstant` answers the LAST, an hour after the reader's clock first reads
  * it, and on the spring night it books 03:30 without saying so. A chosen clock takes the first of
- * two and carries the verdict the picker states.
+ * two and carries the verdict the picker states — unless the first is before `notBefore` and the
+ * second is not: typed during the repeated hour, the clock means the one still ahead.
  */
-export function composedLocalInput(value: string): ZonedComposition | null {
+export function composedLocalInput(value: string, notBefore?: Date): ZonedComposition | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
   if (!m) return null;
-  return composeZonedWallClock({
+  const wall = {
     year: Number(m[1]), month: Number(m[2]), day: Number(m[3]),
     hour: Number(m[4]), minute: Number(m[5]),
-  }, activeFormatZone());
+  };
+  const zone = activeFormatZone();
+  const first = composeZonedWallClock(wall, zone);
+  if (notBefore && first.verdict === "first_of_two" && first.instant.getTime() < notBefore.getTime()) {
+    const second = zonedInstant(wall, zone);
+    if (second.getTime() >= notBefore.getTime()) return { ...first, instant: second, verdict: "exact" };
+  }
+  return first;
 }
 
 /**

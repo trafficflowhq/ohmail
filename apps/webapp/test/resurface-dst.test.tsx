@@ -393,6 +393,15 @@ describe("send later composes the wall clock the same way", () => {
     expect(at.verdict).toBe("first_of_two");
   });
 
+  it("once the first of the two has passed, the repeated hour is the second", async () => {
+    const { composedLocalInput } = await import("../app/shell/format.js");
+    // 02:55 CET, the second 02:55 of the night: 02:58 is three minutes ahead, not an hour behind.
+    const at = composedLocalInput("2026-10-25T02:58", new Date("2026-10-25T01:55:00.000Z"))!;
+    expect(at.instant.toISOString()).toBe("2026-10-25T01:58:00.000Z");
+    expect(composedLocalInput("2026-10-25T02:58", new Date("2026-10-24T23:00:00.000Z"))!.instant.toISOString())
+      .toBe("2026-10-25T00:58:00.000Z");
+  });
+
   it("the evening preset is a composition too, verdict and all", async () => {
     const { todayEvening } = await import("../app/shell/format.js");
     const evening = todayEvening(SPRING_EVE);
@@ -497,6 +506,17 @@ describe("the send-later field says which hour it will send at", () => {
     await openSendLater();
     expect(await typeWhen("2027-03-28T02:30"))
       .toContain("That will send at 03:30 — the clocks skip 02:30 that night.");
+  });
+
+  it("at 02:55 in the repeated hour, 02:58 is a time ahead, not one that has passed", async () => {
+    // Only Date is faked: the editor mounts on timers a fake clock would never advance.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-25T01:55:00.000Z") });
+    await openSendLater();
+    expect(host!.querySelector<HTMLInputElement>("#compose-send-at")!.min).toBe("2026-10-25T02:58");
+    expect(await typeWhen("2026-10-25T02:58")).not.toContain("That time has passed");
+    const confirm = [...host!.querySelectorAll<HTMLButtonElement>(".send-later-custom button")]
+      .find((b) => b.textContent?.startsWith(messages.compose.sendLaterConfirm));
+    expect(confirm?.disabled).toBe(false);
   });
 
   it("says nothing on the repeated hour or an ordinary one", async () => {

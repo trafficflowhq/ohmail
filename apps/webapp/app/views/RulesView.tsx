@@ -31,12 +31,13 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, ListGroupLabel, SettingsNote, SettingsSection, Switch, TextField, useToast, type ToastOptions } from "@ohmail/ui";
-import { FOLDER_OF_VIEW, PROFILE_RULES_SENT_MAX, REFILE_UNDO_WINDOW_MS, pressVerdict, tallyVerdicts, walkOwed } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, PROFILE_RULES_SENT_MAX, REFILE_UNDO_WINDOW_MS, pressVerdict, tallyVerdicts, walkOwed, zonedFields } from "@ohmail/client-engine";
 import type { Folder, PressAnswer, QueuedRuleWrite, RuleDTO, WaitingOnOrganizerView } from "@ohmail/client-engine";
 import { browserOffline, queuedSentence } from "../shell/queued-sentence";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { usePileNames } from "../shell/decision-copy";
 import { placeLabel } from "../shell/format";
+import { activeFormatZone } from "../shell/locale";
 import { RETRO_DEFAULT_ON, SCREENING_DESTS } from "../shell/sender-screening";
 import { pileOf } from "../shell/rule-past-mail";
 import { displayRuleMatch } from "../shell/idn";
@@ -109,12 +110,14 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
  * runner's ICU than in the browser, so an assertion about it either passes for the wrong
  * reason or is written loosely enough to assert nothing. The YEAR is always present, unlike
  * the message row's stamp — a rule is a standing decision and "2 Aug" on one made last year
- * is the same ambiguity that stamp already fixed for six-day-old mail.
+ * is the same ambiguity that stamp already fixed for six-day-old mail. The day is the reader's,
+ * as on every other stamp.
  */
 export function ruleDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  const f = zonedFields(d, activeFormatZone());
+  return `${f.day} ${MONTHS[f.month - 1]} ${f.year}`;
 }
 
 /** A destination and the rules that file into it — the buckets the facet chips are built from. */

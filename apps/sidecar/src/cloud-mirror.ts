@@ -1966,6 +1966,9 @@ async function applyUpsert(
         cc: d.cc ?? [],
         rationale: d.rationale ?? null,
         status: d.status,
+        // The appointment the window's Scheduled row names; Cloud sends it, never this mirror.
+        sendAt: asDate(d.sendAt),
+        sendError: d.sendError ?? null,
         updatedAt: asDate(d.updatedAt) ?? now,
       };
       if (bodyCarried) {

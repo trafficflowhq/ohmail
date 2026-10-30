@@ -58,6 +58,9 @@ let actAt: string | null;
 /** False ⇒ an engine from before the act had a switch: `GET /consent` carries no `autoActAt`. */
 let carriesAxis: boolean;
 let asked: Array<{ method: string; url: string; body?: string }>;
+/** The account's auto-apply and AI switches, as another device may have left them. */
+let autoApply: boolean;
+let aiOn: boolean;
 const AT = "2026-09-27T08:00:00.000Z";
 
 function engine(): void {
@@ -100,8 +103,9 @@ function engine(): void {
         }
         return encode(200, "{}");
       }
+      if (url === "/account/ai") return encode(200, JSON.stringify({ aiEnabled: aiOn }));
       return encode(200, JSON.stringify({
-        ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "x", screenerAutoApply: false,
+        ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "x", screenerAutoApply: autoApply,
       }));
     },
   };
@@ -113,15 +117,17 @@ const settle = async (): Promise<void> => {
   await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
 };
 
-async function mountPane(facts: MailboxFacts[]): Promise<void> {
+async function mountPane(facts: MailboxFacts[], door: "local" | "cloud" = "local"): Promise<void> {
   FACTS = facts;
   const { DesktopScreening } = await import("../src/DesktopScreening.js");
+  const { DesktopAiAccount } = await import("../src/DesktopAiAccount.js");
   hostEl = document.createElement("div");
   document.body.append(hostEl);
   root = createRoot(hostEl);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages: en as never, timeZone: "UTC", children: h(DesktopScreening, { door: "local" }),
+      locale: "en", messages: en as never, timeZone: "UTC",
+      children: h("div", null, h(DesktopScreening, { door }), door === "cloud" ? h(DesktopAiAccount) : null),
     }));
   });
   await settle();
@@ -133,7 +139,7 @@ const ACT = en.screener.suggest.actTitle;
 const SUGGEST = en.desktopScreener.autoSuggestLabel;
 
 beforeEach(() => {
-  suggestOn = true; actAt = null; carriesAxis = true; asked = [];
+  suggestOn = true; actAt = null; carriesAxis = true; asked = []; autoApply = false; aiOn = true;
   engine();
 });
 afterEach(async () => {
@@ -241,5 +247,36 @@ describe("the hosted door: the shared shell's row over the bridge", () => {
     await settle();
     expect(switchNamed(ACT)!.getAttribute("aria-checked"), "the shell kept the act on after suggestions went off").toBe("false");
     expect(switchNamed(ACT)!.disabled).toBe(true);
+  });
+});
+
+describe("an open pane follows a change made on another device", () => {
+  const AUTO_APPLY = en.settings.screening.autoApplyTitle;
+  const AI = en.settings.aiLabel;
+  const checked = (label: string): string | null | undefined => switchNamed(label)?.getAttribute("aria-checked");
+
+  it("the Screener and AI switches take the account's new values when the window comes back", async () => {
+    await mountPane([ORGANIZER], "cloud");
+    expect(checked(AUTO_APPLY)).toBe("false");
+    expect(checked(AI)).toBe("true");
+    autoApply = true; aiOn = false;
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await settle();
+    expect(checked(AUTO_APPLY), "the open Screener pane kept the old auto-apply").toBe("true");
+    expect(checked(AI), "the open AI pane kept the old switch").toBe("false");
+  });
+
+  it("…and while the window stays in front, within 30 s", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await mountPane([ORGANIZER], "cloud");
+      autoApply = true; aiOn = false;
+      await act(async () => { vi.advanceTimersByTime(30_000); });
+      await settle();
+      expect(checked(AUTO_APPLY)).toBe("true");
+      expect(checked(AI)).toBe("false");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
