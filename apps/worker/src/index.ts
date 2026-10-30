@@ -98,7 +98,8 @@ import { makeClassifierCircuit, ClassifierFaultError, type ClassifierCircuit } f
 import { attributedIngestClassifier, attributedWorkflowDrafter, makeAiUsageBuffer } from "./ai-usage.js";
 import { workflowDrainPass, workflowTimeScanPass, unconfiguredDrafter } from "./workflow-cron.js";
 import { bubbleUpPass } from "./bubble-up-cron.js";
-import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-heal.js";
+import { threadJoinHealPass } from "./thread-join-heal.js";
+import { makeThreadJoinHealWalk } from "./thread-join-heal-walk.js";
 import { inboundQuietPass } from "./inbound-quiet.js";
 import { makeAwayReplySweep } from "./away-reply-sweep.js";
 import { ruleRetroPass } from "./rule-retro.js";
@@ -889,15 +890,16 @@ export async function startWorkerWithLock(
     /** Each opted-in account's auto-apply mark, shared by the owed serve and the cycle tail. */
     const screenerAutoWalk = newScreenerAutoWalk();
     /**
-     * Time-gate for the thread-join heal. Starts "due" like `lastBubbleUpAt`, and here the
-     * reason is survival rather than latency: a deployment cadence shorter than
+     * The thread-join heal's gate and resume points. Starts "due" like `lastBubbleUpAt`, and here
+     * the reason is survival rather than latency: a deployment cadence shorter than
      * {@link THREAD_JOIN_HEAL_EVERY_MS} would otherwise mean the pass NEVER runs — a
-     * scheduled pass that no schedule ever reaches, which this repo has paid for before.
-     * The first-cycle cost is one small GROUP BY per served account.
+     * scheduled pass that no schedule ever reaches, which this repo has paid for before. Each
+     * slice runs under the tail's slice clock; a cut account stays owed and keeps the gate open
+     * for the next tail walks until it finishes. In memory: a leader handover starts from the top.
      */
-    let lastThreadJoinHealAt = 0;
+    const joinHealWalk = makeThreadJoinHealWalk(THREAD_JOIN_HEAL_EVERY_MS);
     /**
-     * Time-gate for the inbound-quiet pass. Starts "due" like `lastThreadJoinHealAt` and for
+     * Time-gate for the inbound-quiet pass. Starts "due" like the thread-join heal and for
      * its exact reason: a deployment cadence shorter than {@link INBOUND_QUIET_EVERY_MS} would
      * otherwise mean the forwarding-detection heuristic NEVER runs. The first-cycle cost is one
      * bounded grouped aggregate per served account.
@@ -946,15 +948,6 @@ export async function startWorkerWithLock(
         });
       });
     };
-    /**
-     * Where each account's LAST gated heal run stopped, kept only while it stopped on its
-     * BUDGET. An account holding more duplicate-name groups than one run's cap would otherwise
-     * rescan the same leading refusals every six hours for ever — a refused group never leaves
-     * the candidate predicate — and the splits past the cap would never be examined. Cleared on
-     * an uncapped pass so the next run takes a fresh full look. In-memory on purpose: a leader
-     * handover restarts from the top, which costs one rescan and needs no schema.
-     */
-    const threadJoinHealCursors = new Map<string, ThreadJoinHealCursor>();
     /**
      * One-shot: the boot announcement and its heartbeat happen on the FIRST roster pass only.
      * Declared HERE with the rest of the closure state rather than beside `cycleQueued` — a
@@ -5378,38 +5371,32 @@ export async function startWorkerWithLock(
         // the same non-self correspondent on BOTH chains, the later opening with a reply/forward prefix,
         // inside a 14-day window), performing exactly the merge `POST /threads/merge` performs, change
         // rows included. TIME-GATED like `bubbleUpPass` and unlike the retro/tidy passes, because nobody
-        // is waiting on it: it repairs presentation, its own budget bounds a run, and its pre-filter is a
-        // per-account GROUP BY that would buy nothing per-cycle. Its OWN runner call and loop.
-        gate: () => {
-          if (Date.now() - lastThreadJoinHealAt < THREAD_JOIN_HEAL_EVERY_MS) return false;
-          lastThreadJoinHealAt = Date.now();
-          return true;
-        },
-        run: async (accountId) => {
+        // is waiting on it: it repairs presentation and its own budget bounds a walk. Each slice runs
+        // under the slice clock, so a wake never waits behind a whole account's heal; a cut account
+        // is resumed by the next tail walks (`thread-join-heal-walk.ts`). Its OWN runner call and loop.
+        gate: () => joinHealWalk.due(Date.now()),
+        run: async (accountId, walk) => {
+          const slice = joinHealWalk.slice(accountId, walk.accounts);
+          if (slice === null) return;
           await runTailStage("cycle.threadJoinHealPass", "database", async () => {
             const r = await threadJoinHealPass({
-              db: db as unknown as Tx, apply: true, accountId, log,
-              cursor: threadJoinHealCursors.get(accountId),
+              db: db as unknown as Tx, apply: true, accountId, log, ...slice, until: sliceUntil(),
               noteFault: tailFaultNote("cycle.threadJoinHealPass"),
             });
-            // Carry the resume point while the budget (not the candidate set) ended the walk
-            // — UNCONDITIONALLY. Resetting on failure is the tempting wrong move: a group
-            // that fails deterministically would pin every run to its own page and starve the
-            // tail for ever, which is strictly worse than a failed group waiting for the walk
-            // to wrap. Transients are already retried once INSIDE the run (see the pass), so
-            // `failed` here means the persistent case. An uncapped pass has seen everything
-            // and starts the next walk fresh.
-            if (r.capped && r.cursor) threadJoinHealCursors.set(accountId, r.cursor);
-            else threadJoinHealCursors.delete(accountId);
-            if (r.merged > 0 || r.skipped > 0 || r.failed > 0) {
+            // The resume point is carried whatever `failed` says: a group that fails
+            // deterministically must not pin every walk to its own page. Transients are already
+            // retried once inside the pass.
+            joinHealWalk.settle(accountId, r);
+            if (r.merged > 0 || r.skipped > 0 || r.failed > 0 || r.cut) {
               // Named fields, not a spread: `r.cursor` carries a thread SUBJECT (user content
               // the census deny-lists), and the counters must land on registered names.
               log.info("thread_join_heal_pass", {
                 accountId, scanned: r.groupsScanned, merged: r.merged,
-                moved: r.messagesMoved, skipped: r.skipped, failed: r.failed, capped: r.capped,
+                moved: r.messagesMoved, skipped: r.skipped, failed: r.failed, capped: r.capped, more: r.cut,
               });
             }
           }, (err) => {
+            joinHealWalk.abandon(accountId);
             log.error("thread_join_heal_failed", {
               accountId, err,
               reason: "no group of this account committed partially — each is one transaction — " +

@@ -64,11 +64,15 @@ export interface ThreadJoinHealDeps {
   /**
    * Resume AFTER this group. Without it a capped run's successor rescans from the top, and a
    * group whose verdict is "no" never leaves the candidate predicate — so a caller looping on
-   * `capped` alone would walk the same refusals for ever. The one-shot runner threads
-   * `result.cursor` through; the sync-cycle caller deliberately does not (each gated run takes
-   * a fresh look, and its per-account budget makes a full rescan cheap).
+   * `capped` alone would walk the same refusals for ever. Every caller threads `result.cursor`
+   * through: the one-shot runner, the desktop drain and the cycle tail (`thread-join-heal-walk.ts`).
    */
   cursor?: ThreadJoinHealCursor;
+  /**
+   * The caller's clock: true ⇒ stop before the next group (`cut`). Asked only while another group
+   * remains, never before the first; a group, its merge included, is never split.
+   */
+  until?: () => boolean;
 }
 
 export interface ThreadJoinHealResult {
@@ -98,14 +102,18 @@ export interface ThreadJoinHealResult {
   refusedUncorroborated: number;
   /** True ⇒ the group budget ran out before the candidate set did; resume from `cursor`. */
   capped: boolean;
+  /** True ⇒ the caller's clock (`until`) stopped the walk with groups left; resume from `cursor`. */
+  cut: boolean;
   /** The last group examined — the resume point for a follow-on invocation. */
   cursor: ThreadJoinHealCursor | null;
 }
 
 interface ThreadFacts extends ConversationJoinFacts {
   id: string;
-  participants: EmailAddress[];
 }
+
+/** One duplicate-name group of the page: its size, and its thread ids when within the bound. */
+interface Group { account_id: string; subject: string; n: number; ids: string[] }
 
 export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<ThreadJoinHealResult> {
   const { db, apply } = deps;
@@ -113,11 +121,18 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
   const now = deps.now ?? (() => new Date());
   const maxGroups = Math.min(deps.maxGroups ?? THREAD_JOIN_HEAL_MAX_GROUPS, THREAD_JOIN_HEAL_MAX_GROUPS);
 
-  const result: ThreadJoinHealResult = { groupsScanned: 0, merged: 0, messagesMoved: 0, skipped: 0, failed: 0, refusedUncorroborated: 0, capped: false, cursor: null };
+  const result: ThreadJoinHealResult = { groupsScanned: 0, merged: 0, messagesMoved: 0, skipped: 0, failed: 0, refusedUncorroborated: 0, capped: false, cut: false, cursor: null };
   const selfByAccount = new Map<string, Set<string>>();
   let cursor: ThreadJoinHealCursor | null = deps.cursor ?? null;
+  /** The clock, asked only once a group has been examined and another remains. */
+  const outOfTime = (): boolean => {
+    if (result.groupsScanned === 0 || !deps.until?.()) return false;
+    result.cut = true;
+    return true;
+  };
 
-  while (result.groupsScanned < maxGroups) {
+  walk: while (result.groupsScanned < maxGroups) {
+    if (outOfTime()) break;
     // ── The pre-filter: accounts holding two or more threads under one stored name. ─────────
     // Stored names are written through `baseSubject` at create and were normalized fleet-wide
     // by the thread-name heal, so same-conversation splits share their stored name; a thread
@@ -135,46 +150,61 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
        call there is a TypeError naming neither the store nor the statement. This one was proven
        live: the pass died with `db.execute is not a function` on a phone bundle whose dialect
        census was green, because the census counted the construct's TEXT and not the mechanism. */
+    // The page's groups AND, within the bound, their thread ids, in one read: a group over the
+    // bound joins no thread and comes back as one row with a null id.
+    const limit = Math.min(50, maxGroups - result.groupsScanned);
     const executed = await d.exec(db, sql`
-      select account_id, subject
-      from ${threads}
-      where ${deps.accountId ? sql`account_id = ${deps.accountId}` : sql`true`}
-        and ${cursorAccountId !== null
-          ? sql`(account_id, subject) > (${d.castUuid(cursorAccountId)}, ${cursorSubject})`
-          : sql`true`}
-      group by account_id, subject
-      having count(*) > 1
-      order by account_id, subject
-      limit ${Math.min(50, maxGroups - result.groupsScanned)}
+      select g.account_id, g.subject, g.n, t.id
+      from (
+        select account_id, subject, count(*) as n
+        from ${threads}
+        where ${deps.accountId ? sql`account_id = ${deps.accountId}` : sql`true`}
+          and ${cursorAccountId !== null
+            ? sql`(account_id, subject) > (${d.castUuid(cursorAccountId)}, ${cursorSubject})`
+            : sql`true`}
+        group by account_id, subject
+        having count(*) > 1
+        order by account_id, subject
+        limit ${limit}
+      ) g
+      left join ${threads} t on t.account_id = g.account_id and t.subject = g.subject
+        and g.n <= ${THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP}
+        and ${deps.accountId ? sql`t.account_id = ${deps.accountId}` : sql`true`}
+      order by g.account_id, g.subject, t.id
     `);
     // Positional, in the order the statement selected them — the narrower shape both drivers can
     // produce honestly, which is what removes the array-or-`{rows}` split this used to carry.
-    const groups = executed.map((r) => ({ account_id: String(r[0]), subject: String(r[1]) }));
+    const groups: Group[] = [];
+    for (const r of executed) {
+      const accountId = String(r[0]);
+      const subject = String(r[1]);
+      let g = groups[groups.length - 1];
+      if (!g || g.account_id !== accountId || g.subject !== subject) {
+        g = { account_id: accountId, subject, n: Number(r[2]), ids: [] };
+        groups.push(g);
+      }
+      if (r[3] !== null && r[3] !== undefined) g.ids.push(String(r[3]));
+    }
     if (groups.length === 0) break;
-    const last = groups[groups.length - 1]!;
-    cursor = { accountId: last.account_id, subject: last.subject };
-    result.cursor = cursor;
 
     for (const group of groups) {
+      if (outOfTime()) break walk;
+      // Set before the group is examined, so a cut resumes right after it.
+      cursor = { accountId: group.account_id, subject: group.subject };
+      result.cursor = cursor;
       result.groupsScanned += 1;
 
-      const rows = await db.select({
-        id: threads.id, participants: threads.participants,
-      }).from(threads)
-        .where(and(eq(threads.accountId, group.account_id), eq(threads.subject, group.subject)))
-        .orderBy(asc(threads.id))
-        .limit(THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP + 1);
-      if (rows.length > THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP) {
+      if (group.n > THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP) {
         // No subject on any line here: it is user content the log census deny-lists anyway,
         // and the thread ids are enough to find it in the database.
         log.warn("thread_join_heal_group_over_bound", {
-          accountId: group.account_id, considered: rows.length,
+          accountId: group.account_id, considered: group.n,
           reason: "a subject shared this widely is a mailing pattern, not one split conversation",
         });
         result.skipped += 1;
         continue;
       }
-      if (rows.length < 2) continue; // merged or deleted since the pre-filter read
+      if (group.ids.length < 2) continue;
 
       let self = selfByAccount.get(group.account_id);
       if (!self) {
@@ -229,9 +259,9 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
       }
 
       const facts: ThreadFacts[] = [];
-      for (const row of rows) {
-        const f = await threadFactsOf(db, row.id);
-        if (f) facts.push({ ...f, id: row.id, participants: (row.participants as EmailAddress[] | null) ?? [] });
+      for (const id of group.ids) {
+        const f = await threadFactsOf(db, group.account_id, id);
+        if (f) facts.push({ ...f, id });
       }
       if (facts.length < 2) continue;
       facts.sort((a, b) => a.firstMessageAt!.getTime() - b.firstMessageAt!.getTime());
@@ -458,6 +488,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
 
       if (result.groupsScanned >= maxGroups) break;
     }
+    if (groups.length < limit) break; // a short page was the last
   }
 
   // Only meaningful when the budget, not the candidate set, ended the walk.
@@ -480,8 +511,9 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
  * backwards). Only the CORRESPONDENT set is sampled ({@link THREAD_JOIN_HEAL_MAX_MESSAGES_PER_THREAD}
  * oldest living rows): it is evidence, a miss only starves a join, and participants appear long before the cap.
  */
-async function threadFactsOf(db: Tx, threadId: string): Promise<ConversationJoinFacts | null> {
-  const living = and(eq(messages.threadId, threadId), sql`${messages.deletedAt} is null`);
+async function threadFactsOf(db: Tx, accountId: string, threadId: string): Promise<ConversationJoinFacts | null> {
+  // The account first: the only index holding `thread_id` leads with it (no skip scan).
+  const living = and(eq(messages.accountId, accountId), eq(messages.threadId, threadId), sql`${messages.deletedAt} is null`);
 
   const first = await db.select({ subject: messages.subject, date: messages.date })
     .from(messages)
