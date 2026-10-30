@@ -934,9 +934,9 @@ const TABLE = {
   /** A mail row, spoken. The trailing state is a clause rather than a word glued to a stop. */
   mailRowAria: (from: string, subject: string, time: string, unread: boolean) =>
     `${from}. ${subject.trim() === "" ? "" : `${subject}. `}${time}.${unread ? " Unread." : ""}`,
-  /** A Screener row, spoken — the only word in it is the one describing what is held; a company claim last. */
-  senderRowAria: (name: string, address: string, held: number, claim: string) =>
-    `${name}, ${address}, ${held} held${claim ? `, ${claim}` : ""}`,
+  /** A Screener row, spoken — name, address, how many messages its card lists; a company claim last. */
+  senderRowAria: (name: string, address: string, count: number, claim: string) =>
+    `${name}, ${address}, ${count} message${count === 1 ? "" : "s"}${claim ? `, ${claim}` : ""}`,
   /** Which of the account's addresses a message arrived at — drawn only above one mailbox. */
   deliveredTo: (label: string) => `Delivered to ${label}`,
   /** The News card's expand affordance, as a badge and as a spoken label. */
@@ -1035,7 +1035,7 @@ const TABLE = {
   decideReadOn: "Filing as read — the count will not move.",
   decideReadOff: "Filing unread — it will announce itself.",
   heldCaption: (n: number, firstContact?: string) => {
-    const head = `${n} held message${n === 1 ? "" : "s"} — all shown`;
+    const head = `${n} message${n === 1 ? "" : "s"} — all shown`;
     return firstContact ? `${head} · first contact ${firstContact}` : head;
   },
   screenedNote: (date: string, held: number) =>

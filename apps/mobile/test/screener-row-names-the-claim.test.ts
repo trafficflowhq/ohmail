@@ -26,8 +26,9 @@ describe("the phone's waiting row names the claim", () => {
   it("speaks it in the row's label, in the deck's own sentence", () => {
     expect(waitingRow).toMatch(/const aria = Copy\.senderRowAria\(row\.name, row\.address, row\.held\.length, claim \?\? ""\);/);
     expect(waitingRow).toMatch(/accessibilityLabel=\{mark \? `\$\{aria\} \$\{mark\.text\}` : aria\}/);
-    expect(Copy.senderRowAria("Pay", "service@stranger-fixture.example", 1, "Not PayPal")).toBe("Pay, service@stranger-fixture.example, 1 held, Not PayPal");
-    expect(Copy.senderRowAria("Pay", "service@stranger-fixture.example", 1, "")).toBe("Pay, service@stranger-fixture.example, 1 held");
+    expect(Copy.senderRowAria("Pay", "service@stranger-fixture.example", 1, "Not PayPal")).toBe("Pay, service@stranger-fixture.example, 1 message, Not PayPal");
+    expect(Copy.senderRowAria("Pay", "service@stranger-fixture.example", 1, "")).toBe("Pay, service@stranger-fixture.example, 1 message");
+    expect(Copy.senderRowAria("Pay", "service@stranger-fixture.example", 2, "")).toBe("Pay, service@stranger-fixture.example, 2 messages");
   });
 
   it("the chip's words are the sheet's", () => {

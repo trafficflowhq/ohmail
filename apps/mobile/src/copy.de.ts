@@ -602,8 +602,8 @@ export const DE: Deck = {
   metaItems: (n: number) => `${n} ${n === 1 ? "Eintrag" : "Einträge"}`,
   mailRowAria: (from: string, subject: string, time: string, unread: boolean) =>
     `${from}. ${subject.trim() === "" ? "" : `${subject}. `}${time}.${unread ? " Ungelesen." : ""}`,
-  senderRowAria: (name: string, address: string, held: number, claim: string) =>
-    `${name}, ${address}, ${held} zurückgehalten${claim ? `, ${claim}` : ""}`,
+  senderRowAria: (name: string, address: string, count: number, claim: string) =>
+    `${name}, ${address}, ${count === 1 ? "1 Nachricht" : `${count} Nachrichten`}${claim ? `, ${claim}` : ""}`,
   deliveredTo: (label: string) => `Zugestellt an ${label}`,
   readsCollapse: "Zuklappen",
   readsReadInFull: "Ganz lesen",
@@ -688,7 +688,7 @@ export const DE: Deck = {
   decideReadOff: "Wird ungelesen einsortiert — sie meldet sich.",
   heldCaption: (n: number, firstContact?: string) => {
     /* "alle" cannot govern one thing — `vollständig` says the same and takes no number. */
-    const head = `${n === 1 ? "1 zurückgehaltene Nachricht" : `${n} zurückgehaltene Nachrichten`} — vollständig gezeigt`;
+    const head = `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} — vollständig gezeigt`;
     return firstContact ? `${head} · erster Kontakt ${firstContact}` : head;
   },
   screenedNote: (date: string, held: number) =>
