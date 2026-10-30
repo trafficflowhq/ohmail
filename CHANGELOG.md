@@ -21,6 +21,114 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.16] — 2026-10-30
+
+### Sign-in notes reach every open window
+
+Web and desktop, on ohmail Cloud and on your own server: the note that ohmail signed out an older copy of
+your sign-in now leaves a window that is already open once you press OK on another device. The window asks
+again when you come back to it, and every five minutes while the note shows; until now it kept the note
+until it was reloaded.
+
+Web, on ohmail Cloud: a tab opened within 15 seconds of a sign-in ending on this browser now shows the
+sign-in form and the reason, for example "You were signed out on this browser.", instead of the start
+page. The browser keeps a short-lived cookie that holds only the reason for those 15 seconds.
+
+### The sign-in card after a refused session fits the desktop window
+
+On the desktop, when ohmail Cloud or your own server ended the sign-in while the app was open, the
+"Sign in" card was drawn a few words wide, one word per line, with its buttons below the window. It
+now takes the same width and place it has after a relaunch. When the window had not shown any mail
+yet, the card now stands on the window's own page instead of over an empty Ohbox. The keyboard and
+screen readers now start in the card and cannot reach the mail behind it, and focus goes back where it
+was once the card closes.
+
+### The first click on Screened out or Spam does less work on the desktop
+
+The first click on Screened out or Spam after opening the Screener spent most of its time on the desktop
+working out the look of rows and letters it had not drawn before. The Screener now does that once, unseen,
+right after it opens, so less of it is left for the first click. A letter's attachments and invitation now
+show with its text, a moment after the list, instead of in the click's own frame. Desktop and web.
+
+### The Screener opens faster the first time
+
+The first time you opened the Screener after starting ohmail, most of the wait went on working out the
+look and the type of rows and letters the window had not drawn yet. ohmail now draws them unseen while
+you read the Ohbox, a piece at a time and only when you are not typing, clicking or scrolling, so the
+Screener's first open no longer waits for that work. Leaving the Ohbox also no longer recounts every
+pile before the next one appears, and moving between the menu, the list and the open message, by
+key or by click, no longer redraws the whole view. Desktop and web.
+
+### Mark unread stays when an earlier Mark read is sent again
+
+On the web and desktop apps, Mark unread on a message you had just marked read now stays. When saving the
+read failed for a moment, after a server error or a dropped connection, the app sent it again after your
+Mark unread, so the message turned read again on the server while the list still showed it unread. The same
+holds the other way round, for Mark read after a Mark unread. Your newest press now decides each message,
+and only the messages it did not name are sent again.
+
+### The desktop window follows older and low-contrast Omarchy themes, and says when it cannot
+
+On Omarchy, switching to an older theme that only ships the sixteen terminal colors (mars), or to a theme
+whose text color is dim on its background (netrunner), left ohmail in the previous look with no word why.
+The terminal colors now stand in for the named ones, a dim text color is lightened (or darkened) until it
+reads, and a theme that still cannot be made readable leaves one line in `engine.log` naming the theme and
+the reason. Desktop app on Linux.
+
+### Letters on the phone open again after a quick flick at the top of the list
+
+On Android, two or three quick flicks toward the top of a list that was already at its top left every
+letter in it unpressable, the Screener knock too, until the list was scrolled a little. A press on a
+letter now opens it straight after such a flick, and News and Receipts read the letters resting at the
+top by the usual rule.
+
+### A letter you send to yourself shows once in its conversation
+
+A reply or letter sent to your own address could show twice in its conversation, once as the Sent
+copy and once as the delivered copy, with its text repeated in the reader and two rows in search.
+It happened whenever the send took more than a moment: ohmail dated the delivered copy and the Sent
+copy separately, a second or more apart, and then treated them as two letters. Both copies now carry
+the same date, and two copies of one sent letter that differ only by their date are kept as one,
+whichever reaches ohmail first. The kept letter is the one in your Inbox, unread until you read it,
+also when your Sent folder has a name in another language, such as "Envoyés". This holds on the desktop, web and phone apps, on ohmail Cloud and
+on your own server. Letters that differ in anything else stay separate. Letters already shown twice
+stay as they are.
+
+### Search opens the letter you pressed, and Trash and Junk show what you just moved there
+
+On the web and the desktop:
+
+- A Search result that opens in Receipts or News lands on the letter you pressed. Among short cards
+  sharing one time, the cursor could settle on a card below it, so a Delete pressed next would have
+  hit that other letter.
+- Trash, open while a delete is still held for its Undo, lists the letter once the server has taken the
+  delete, without leaving the view or reloading.
+- The Screener's Junk, open while a sender is marked spam, lists the letter once ohmail has filed it,
+  without leaving the segment.
+- The command palette matches a phrase word by word: "go to ohbox" finds "Go to the Ohbox".
+- Draft reply no longer quotes a price on an account the Screener already knows has no AI credits left;
+  it says so instead.
+
+### Rule dates, Send later on the night the clocks go back, and scheduled letters on the desktop
+
+- Settings > Rules dated a rule (and a Screener decision) by the UTC day, so a rule made after midnight read
+  yesterday's date. It now reads your own day, like every other date (web and desktop).
+- On the night the clocks go back, Send later refused a time in the repeated hour ("That time has passed")
+  although it was minutes ahead. During that hour a typed time now means the one still to come (web and desktop).
+- On the desktop signed in to ohmail Cloud, Drafts > Scheduled now says when each letter sends, and keeps it
+  after a sync.
+- On the desktop, an open Settings > Screener or AI pane now follows a switch changed on the web or the phone:
+  it reads the account again when the window comes back to the front, and every 30 seconds while it is open.
+
+### Forwarding a letter with a long run of blank lines or deeply nested quotes no longer stalls
+
+Turning a letter's html into its plain-text half took seconds when a code block held a long run of blank
+lines: 100,000 of them cost about six seconds before the forward or send went out. It now takes a few
+milliseconds and gives the same text. A letter nesting thousands of quotes or lists no longer turns into a
+text part hundreds of megabytes long, or fails to forward: the text shows at most 32 levels of `> ` and
+of list indent, as the reader already does. This applies on the desktop, the web, the phone, ohmail Cloud and
+your own server.
+
 ## [0.30.15] — 2026-10-30
 
 ### The notice about signed-out older copies is one line
@@ -15355,7 +15463,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.15...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.16...HEAD
+[0.30.16]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.16
 [0.30.15]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.15
 [0.30.14]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.14
 [0.30.13]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.13
