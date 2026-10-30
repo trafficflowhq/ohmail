@@ -9,7 +9,7 @@ import {
   quotedHistoryVerdictOfHtml,
   type QuotedDomNode,
 } from "../src/quoted-history.js";
-import { qhFixtures, qhFolds, qhNorm, qhTypedAnswers, type QhFixture } from "./quoted-history-fixtures.js";
+import { qhFixtures, qhFolds, qhHostileBodies, qhNorm, qhTypedAnswers, type QhFixture } from "./quoted-history-fixtures.js";
 
 /**
  * THE CORPUS DECIDES. Every fixture's sidecar says where the new message ends and the history
@@ -294,6 +294,16 @@ describe("bounded", () => {
     expect(quotedHistoryOfHtml(root, quotedDomTree)).not.toBeNull();
     expect(Date.now() - t0).toBeLessThan(1000);
   });
+
+  for (const b of qhHostileBodies()) {
+    it(`${b.name}: one linear pass`, { timeout: 4000 }, () => {
+      const root = domOf(b.html);
+      const t0 = Date.now();
+      const v = quotedHistoryVerdictOfHtml(root, quotedDomTree);
+      expect(Date.now() - t0).toBeLessThan(1000);
+      expect(v, "read to a verdict, within the budget").not.toBe("unread");
+    });
+  }
 });
 
 const domOf = (html: string): QuotedDomNode => new DOMParser().parseFromString(html, "text/html").body as unknown as QuotedDomNode;

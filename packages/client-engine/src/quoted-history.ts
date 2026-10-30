@@ -576,6 +576,25 @@ function ownQuotesOnly(L: Line[], f: Facts, from: number, to: number): boolean {
   return true;
 }
 
+/**
+ * The header path's answer read from the header block at `h` to `end`: 0.30.16's read, and the message
+ * under each header block of this level read on its own up to an attribution (a long older quote in
+ * another ink then sets no hop ink), unless the earlier messages hold only their own quotes.
+ */
+function answersBelowHeader(L: Line[], f: Facts, h: number, end: number, html: boolean): boolean {
+  if (html && ownQuotesOnly(L, f, h, end)) return false;
+  if (answersInside(L, f, h, html, end)) return true;
+  if (!html) return false;
+  for (let i = h; i < end; i++) {
+    if (!f.header[i]) continue;
+    const e = firstHopEnd(L, f, i, end);
+    if (answersInside(L, f, i, html, e)) return true;
+    // Header lines before e come before this message's first line: their reads end at e, over hops read here.
+    i = Math.max(i, e - 1);
+  }
+  return false;
+}
+
 interface Cand { kind: "run" | "header"; line: number; end: number; node: number }
 
 /**
@@ -743,7 +762,7 @@ function decide(
       if (fwd) return belowForward(L, f, s, n, html);
       const bare = c.node < 0 && s === c.line && f.header[c.line] && !separatorLine(L[c.line]!.text);
       if (bare && !vouched && pastedBlock(L, f, s, c.line)) return NO;
-      if (!(html && ownQuotesOnly(L, f, c.line, n)) && answersInside(L, f, c.line, html)) return NO;
+      if (answersBelowHeader(L, f, c.line, n, html)) return NO;
       return { at: "trailing", start: s, end: n, node: s === c.line && c.node >= 0 ? c.node : L[s]!.at };
     }
     const firstRun = runs++ === 0;
@@ -755,7 +774,7 @@ function decide(
       const introduced = s < c.line || head.intro || strongAttribution(head.text) || weakAttribution(head.text) || separatorLine(head.text);
       const k = nextFilled(L, c.end);
       if (f.wordsBefore[s] && !forwardAt(L, s) && (k >= n || signatureAt(L, f, k) || footerAt(L, f, k, html)) && (k >= n || introduced)
-        && !(firstRun && ANNOUNCEMENT.test(leadOf(L, s))) && ownQuotesOnly(L, f, c.line, c.end)) {
+        && !ANNOUNCEMENT.test(leadOf(L, s)) && !f.commentFrom[c.line] && ownQuotesOnly(L, f, c.line, c.end)) {
         return { at: "trailing", start: s, end: k, node: L[s]!.at };
       }
     }
@@ -777,11 +796,15 @@ function decide(
       // Above the new message's signature or footer, an unintroduced quote is the writer's own passage.
       if (k < n && !introduced) continue;
       // Answers typed inside the first quote: the lead says so, or they are in another hand.
-      if (firstRun && ANNOUNCEMENT.test(leadOf(L, s))) return NO;
+      if ((firstRun || f.header[c.line]) && ANNOUNCEMENT.test(leadOf(L, s))) return NO;
+      if (f.header[c.line] && f.commentFrom[c.line]) return NO;
       if (fwd) return belowForward(L, f, s, k, html);
-      // A container led by its own header block (new Outlook's) is read to its end, as the header path reads the body.
+      // From the container's first header block of its own level (new Outlook's, or an Outlook hop under
+      // Yahoo's attribution) to its end, as the header path reads the body.
+      let h = c.line;
+      while (h < c.end && !f.header[h]) h++;
       if ((firstRun && answersInside(L, f, c.line, html, firstHopEnd(L, f, c.line, c.end)))
-        || (f.header[c.line] && answersInside(L, f, c.line, html, c.end))) return NO;
+        || (h < c.end && answersBelowHeader(L, f, h, c.end, html))) return NO;
       return { at: "trailing", start: s, end: k, node: L[s]!.at };
     }
     // Bottom-posted: an introducer and its quote come first, the reply below, nothing quoted after.
