@@ -122,6 +122,23 @@ export function watchNarrow(onChange: (narrow: boolean) => void): () => void {
   };
 }
 
+/** The ribbon tiers (`zero-layout.css`): the only widths where Zero and classic draw differently. */
+const LAYOUTS_DIFFER = "(min-width: 392px) and (max-width: 1023.98px)";
+
+/** Would `w` change anything on screen at this width? Above and below the band Zero is classic's arrangement. */
+export function layoutsDiffer(): boolean {
+  return typeof window !== "undefined" && window.matchMedia?.(LAYOUTS_DIFFER).matches === true;
+}
+
+/** {@link layoutsDiffer}, subscribed. */
+export function watchLayoutsDiffer(onChange: (differ: boolean) => void): () => void {
+  if (typeof window === "undefined" || !window.matchMedia) return () => {};
+  const mq = window.matchMedia(LAYOUTS_DIFFER);
+  const emit = (): void => onChange(mq.matches);
+  mq.addEventListener?.("change", emit);
+  return () => mq.removeEventListener?.("change", emit);
+}
+
 /**
  * WHERE THE RAIL IS A DRAWER. Under classic's 1024px the rail is a drawer that stands over the page
  * when open (`app.css`); the Zero ladder docks it as a ribbon from 392px, so only under that is a

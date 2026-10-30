@@ -168,6 +168,7 @@ const tick = async (): Promise<void> => {
 
 describe("`w` — the layout cycle through the one provider", () => {
   it("stamps zero, persists the device choice, and cycles back", async () => {
+    setup(800);
     await shell();
     expect(document.documentElement.dataset.layout).toBeUndefined();
 
@@ -183,6 +184,7 @@ describe("`w` — the layout cycle through the one provider", () => {
   });
 
   it("the ? sheet documents it — on the paper face, because the offer is face-independent", async () => {
+    setup(800);
     const container = await shell();
     await key("?");
     const sheet = container.querySelector(".ks");
@@ -191,6 +193,47 @@ describe("`w` — the layout cycle through the one provider", () => {
     // `w` carries no modifier, but `chordKeys` requires the glyph from every caller now —
     // a default would be the shipped Mac-cap-on-Linux bug waiting in the signature.
     expect(caps).toContain(chordKeys("w", modGlyph()).join(""));
+  });
+});
+
+/* Zero draws classic's arrangement from 1024 and under 392, so there `w` would change nothing. */
+describe("`w` is live only where the two layouts look different", () => {
+  /** The sheet's `w` row: whether it rests, and the reason it gives. */
+  const sheetRow = async (container: HTMLElement): Promise<{ off: boolean; why: string | null } | null> => {
+    await key("?");
+    const row = [...container.querySelectorAll<HTMLElement>(".ks li")]
+      .find((li) => li.querySelector(".ks-lab")?.textContent === messages.shortcuts.layout);
+    const out = row ? { off: row.classList.contains("off"), why: row.getAttribute("title") } : null;
+    await key("Escape");
+    return out;
+  };
+  const paletteLabels = async (): Promise<string[]> => {
+    await key("k", { ctrlKey: true });
+    const labels = [...document.querySelectorAll(".palette li[role=option]")].map((el) => el.textContent ?? "");
+    await key("Escape");
+    return labels;
+  };
+  for (const px of [1280, 390]) {
+    it(`at ${px}px the key rests, the sheet says why, and the palette leaves it out`, async () => {
+      setup(px);
+      const container = await shell();
+      await key("w");
+      await tick();
+      expect(document.documentElement.dataset.layout, "w changed the layout where nothing shows it").toBeUndefined();
+      expect(await sheetRow(container)).toEqual({ off: true, why: messages.shortcuts.layoutSame });
+      expect((await paletteLabels()).join("|")).not.toContain(messages.palette.cycleLayout);
+    });
+  }
+
+  it("a window narrowed into the band offers it, and the palette names it there", async () => {
+    setup(1280);
+    const container = await shell();
+    await resize(800);
+    expect(await sheetRow(container)).toEqual({ off: false, why: null });
+    expect((await paletteLabels()).join("|")).toContain(messages.palette.cycleLayout);
+    await key("w");
+    await tick();
+    expect(document.documentElement.dataset.layout).toBe("zero");
   });
 });
 
@@ -502,8 +545,9 @@ describe("the fix round, round 3 — the reconcile asks at the current width", (
 
     // the visitor narrows the window into zero's push tier; no layout cycle happened, so
     // nothing refreshes a cached answer (`readColumnHidden` is asked live at event time,
-    // which is why the sheet below is correct while a remembered boolean is not)
-    setup(710);
+    // which is why the sheet below is correct while a remembered boolean is not). A real
+    // resize, so the `w` offer hears the window enter its band.
+    await resize(710);
     await openSheet(container);
 
     await key("w");

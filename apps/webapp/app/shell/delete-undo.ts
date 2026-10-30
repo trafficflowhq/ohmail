@@ -87,6 +87,8 @@ export interface DeleteUndoCopy {
   undone: string;
   /** The window closed and the server refused (no Trash folder, a lost row). */
   failed: string;
+  /** The server refused because the mailbox has no Trash folder; later presses there are refused with it. */
+  noTrash?: string;
   /**
    * THE JAR REFUSED THE RECORD, so the delete went at once and no undo was offered.
    *
@@ -223,6 +225,9 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
   const open = new Map<string, Press>();
   /** Which press holds a message — the reverse index idempotence and Undo both need. */
   const heldBy = new Map<string, string>();
+  /** Each pressed message's mailbox, until it settles; and the mailboxes known to have no Trash. */
+  const mailboxOf = new Map<string, string>();
+  const noTrash = new Set<string>();
 
   const publish = () => deps.onHeld(new Set(heldBy.keys()));
 
@@ -255,6 +260,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
        leave a press that is half on the wire and no longer written down anywhere. */
     let outstanding = ids.length;
     let refused = 0;
+    let trashless = 0;
     /* WAITING ON THE ORGANIZER — counted apart from the refusals, because it is a different
        thing to be told. The press-time sentence says "Deleted" the moment the row is hidden;
        where the server only RECORDED the request, nothing is in the bin and the window owes the
@@ -264,17 +270,24 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
       outstanding -= 1;
       if (outstanding > 0) return;
       disarmDeleteIntent(pressId);
+      if (refused > 0 && trashless === refused && deps.copy.noTrash) { deps.toast(deps.copy.noTrash); return; }
       if (refused > 0) { deps.toast(say(deps.copy.failed, deps.copy.failedMany, refused)); return; }
       if (waiting > 0 && deps.copy.queued) deps.toast(say(deps.copy.queued, deps.copy.queuedMany, waiting));
     };
     for (const messageId of ids) {
       void deps.mutate(messageId, pressId).then(
         (res) => {
+          const mailbox = mailboxOf.get(messageId);
+          mailboxOf.delete(messageId);
+          if (res.status === "rolled_back" && res.error?.code === NO_TRASH) {
+            trashless += 1;
+            if (mailbox) noTrash.add(mailbox);
+          }
           if (res.status === "rolled_back") refused += 1;
           else if (res.status === "awaiting_organizer") waiting += 1;
           settled();
         },
-        () => { refused += 1; settled(); },
+        () => { mailboxOf.delete(messageId); refused += 1; settled(); },
       );
     }
   };
@@ -294,6 +307,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
     if (!press) return false;
     const count = press.ids.length;
     const ids = forget(pressId);
+    for (const id of ids) mailboxOf.delete(id);
     press.undone?.();
     disarmDeleteIntent(pressId);
     const left = deps.onUndone?.(ids) === true;
@@ -319,6 +333,10 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
         deps.toast(refused);
         return false;
       }
+      if (deps.copy.noTrash && targets.some((t) => t.mailboxId != null && noTrash.has(t.mailboxId))) {
+        deps.toast(deps.copy.noTrash);
+        return false;
+      }
       /* IDEMPOTENCE OVER THE SET. A message already inside an open window is dropped from this
          press rather than re-armed: re-arming would silently extend a window the person is
          watching count down, and would put one message in two presses, where a replay after a
@@ -329,6 +347,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
         if (!t.id || seen.has(t.id) || heldBy.has(t.id)) continue;
         seen.add(t.id);
         ids.push(t.id);
+        if (t.mailboxId) mailboxOf.set(t.id, t.mailboxId);
       }
       if (ids.length === 0) return false;
 
@@ -407,6 +426,9 @@ export interface ReplayEnv {
 /** Three tries, two seconds apart — enough for a blip, short enough to still be this launch. */
 export const REPLAY_ATTEMPTS = 3;
 export const REPLAY_RETRY_MS = 2_000;
+
+/** The server's refusal for a mailbox with no Trash folder (422). */
+const NO_TRASH = "no_trash_folder";
 
 /** The code the engine and the server both use for a row that is not there. */
 const ROW_ABSENT = "not_found";

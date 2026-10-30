@@ -1313,7 +1313,7 @@ const TABLE = {
   /* SEARCH — the webapp's `search` namespace, sentence for sentence where the surface is
      the same: the box, the two tiers, the honest coverage sentence, and the address door the
      empty state offers (the web's own empty-state fix, mirrored). */
-  searchPlaceholder: "Search everything — typos welcome",
+  searchPlaceholder: "Search everything",
   searchResultsHead: (n: number) => (n === 1 ? "1 result" : `${n} results`),
   searchSimilarHead: "Similar",
   searchSimilarHint: "Nothing matched exactly, so these are the closest words.",

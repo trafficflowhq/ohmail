@@ -880,7 +880,7 @@ export const DE: Deck = {
 
   search: "Suche",
   /* SUCHE — der `search`-Namespace des Web-Katalogs, wo die Fläche dieselbe ist. */
-  searchPlaceholder: "Alles durchsuchen — Tippfehler sind erlaubt",
+  searchPlaceholder: "Alles durchsuchen",
   searchResultsHead: (n: number) => (n === 1 ? "Ein Treffer" : `${n} Treffer`),
   searchSimilarHead: "Ähnlich",
   searchSimilarHint: "Nichts stimmte genau überein — das sind die nächstliegenden Wörter.",

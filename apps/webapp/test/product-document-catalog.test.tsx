@@ -88,8 +88,10 @@ type Tree = { type?: unknown; props?: { children?: unknown; [k: string]: unknown
  *  Raised 2026-10-29 (both): the splash's and the sign-in's sentence for a sign-in a reuse sweep
  *  ended (resume, carried whole); the account strip's sentences for it stay out of the cut (settings).
  *  Raised 2026-10-29 (both): the rail's pile, tag and Drafts counts say what they count as a title
- *  (rail, carried whole). */
-const INLINE_CEILING_BYTES = { en: 40_160, de: 45_890 } as const;
+ *  (rail, carried whole).
+ *  Raised 2026-10-29 (both): the key sheet says when both layouts look the same at this window width
+ *  (shortcuts, carried whole). */
+const INLINE_CEILING_BYTES = { en: 40_230, de: 45_960 } as const;
 
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const leafCount = (m: Messages): number =>

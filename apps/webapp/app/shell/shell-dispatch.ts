@@ -169,6 +169,7 @@ export function useShellDispatch({
       undo: t("screener.toastUndo"),
       undone: t("ohbox.deleteUndone"),
       failed: t("ohbox.deleteFailed"),
+      noTrash: t("ohbox.deleteNoTrash"),
       /* THE ONE SENTENCE THIS ROW WAS WAITING FOR — the key has been in both catalogues since the
          202 work and nothing read it, so a reader install's delete kept saying "Deleted". */
       queued: t("screening.deleteQueuedForOrganizer"),

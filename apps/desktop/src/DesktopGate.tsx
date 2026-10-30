@@ -906,6 +906,10 @@ export function DesktopGate() {
   }
 
   const status = shell.kind === "status" ? shell.status : null;
+  /* A door to the person's own server signs in there, never to ohmail Cloud. */
+  const ownServer = flavorOf(status) === "selfhost" && status?.cloudUrl && status.address
+    ? { base: status.cloudUrl, address: status.address }
+    : null;
   /* THE CHANGES THIS ACCOUNT LEFT WAITING HERE, for the two sign-in surfaces below: the engine's
      count of its own owner's kept writes, read in the same `/health` answer that opens the card. */
   const waitingWho = status === null ? null : waitingFor(status);
@@ -1079,7 +1083,8 @@ export function DesktopGate() {
   if (hostedPreAuth && !hostedSessionGone) {
     return (
       <DoorChooser
-        start="cloud"
+        start={ownServer ? "server" : "cloud"}
+        server={ownServer}
         cloudAction="signIn"
         signInCause={signInCauseOf(hostedAuth?.session ?? null)}
         notice={waitingNotice}
@@ -1160,9 +1165,10 @@ export function DesktopGate() {
       <UnpairedCard host={hostLabel} notice={waitingNotice} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} />
     </div>
   ) : (
-    <div className="session-end session-signin" role="dialog" aria-label={DOOR_COPY.cloudTitle}>
+    <div className="session-end session-signin" role="dialog" aria-label={ownServer ? DOOR_COPY.doorServerName : DOOR_COPY.cloudTitle}>
       <DoorChooser
-        start="cloud"
+        start={ownServer ? "server" : "cloud"}
+        server={ownServer}
         cloudAction="signIn"
         signInCause={readers.card}
         notice={waitingNotice}

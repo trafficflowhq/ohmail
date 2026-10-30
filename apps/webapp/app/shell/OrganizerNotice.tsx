@@ -5,7 +5,7 @@
  * install took a mailbox, or its holder stopped and nothing files it. ONE BLOCK PER KIND, `stopped` first; a block
  * about several mailboxes is one sentence with the count, and the count opens the list. Rendered in the rail under the
  * piles (`variant="rail"`) and, under 1024px where the rail is a drawer, as the topbar's twin (`variant="shell"`) — one
- * query in `app.css` shows exactly one. "Mark read" acknowledges every row its block lists, on the row itself, so the
+ * query in `app.css` shows exactly one. "Dismiss" acknowledges every row its block lists, on the row itself, so the
  * press holds on every device and across a relaunch (DESIGN-026 §1.2-1.4).
  */
 
@@ -16,7 +16,7 @@ import type { OrganizerNotice as OrganizerNoticeFact, OrganizerNoticeKind } from
 import { goSettings } from "./routing";
 
 /**
- * How "Mark read" reaches the row. Injected rather than imported, on the seam rule the away
+ * How "Dismiss" reaches the row. Injected rather than imported, on the seam rule the away
  * responder and the profile card follow: the browser reaches a hosted API, the desktop window
  * reaches an engine on the same machine over a pipe, and the sentence, the gate and the
  * once-per-change rule have exactly one implementation between them. MUST REJECT on failure: a
@@ -31,7 +31,7 @@ type RefusalKey = "noticeDismissOffline" | "noticeDismissInactive" | "noticeDism
 const OFFLINE_CODES: ReadonlySet<unknown> = new Set(["offline_read_only", "network_unreachable"]);
 
 /**
- * Why a Mark read did not land, read off the rejection's `status` and `code` (the web client's
+ * Why a Dismiss did not land, read off the rejection's `status` and `code` (the web client's
  * `ApiError`, the desktop bridge's refusal) or a fetch that reached nothing (`TypeError`). Offline
  * only by its code — a server's own 503 is not the install being offline; 402 is the account's
  * access refusal; anything else is said plainly.
@@ -55,7 +55,7 @@ export function OrganizerNotice({
 }) {
   const t = useTranslations("mailboxes");
   /**
-   * Changes whose Mark read was ANSWERED in this session, so the block leaves on the write's answer
+   * Changes whose Dismiss was ANSWERED in this session, so the block leaves on the write's answer
    * rather than on the poll. Keyed by `${id}@${at}` — the CHANGE, not the mailbox: a later real
    * change on a mailbox dismissed earlier carries a new instant and shows. Not authoritative: the
    * row decides. A refused row never enters, so the notice stays and {@link refused} says why.
@@ -150,7 +150,7 @@ export function OrganizerNotice({
           </ul>
         ) : null}
         <div className="rn-verbs">
-          {/* The way to act, on the one kind that names something to act on; "Mark read" last. */}
+          {/* The way to act, on the one kind that names something to act on; "Dismiss" last. */}
           {kind === "stopped" ? (
             <button type="button" onClick={() => goSettings("mailboxes")}>
               {t("noticeOpenMailboxes")}

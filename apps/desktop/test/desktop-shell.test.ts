@@ -3091,8 +3091,9 @@ describe("the UI bundle's build config", () => {
     expect(door.gateUnpaired).toMatch(/no longer paired/);
     expect(door.gatePairAgain).toBe("Pair again");
     // The way back is the IN-PLACE cloud sign-in, not a door re-pick that reconfigures the
-    // engine over the mirror it already has.
-    expect(gate).toMatch(/start="cloud"\s+cloudAction="signIn"/);
+    // engine over the mirror it already has. A door to the person's own server opens that
+    // server's sign-in, its address step already done (also in place).
+    expect(gate).toMatch(/start=\{ownServer \? "server" : "cloud"\}\s+server=\{ownServer\}\s+cloudAction="signIn"/);
 
     const bridge = read("src/bridge-fetch.ts");
     expect(bridge).toMatch(/const REQUEST_COMMAND = "engine_request"/);

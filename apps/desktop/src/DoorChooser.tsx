@@ -127,6 +127,8 @@ export function DoorChooser({
   operatorCaFile = null,
   /** One line from the gate, on the doors and the Cloud sign-in: what a sign-out left behind, or nothing. */
   notice = null,
+  /** The own-server door this install is already configured for: its sign-in opens with the address step done. */
+  server = null,
 }: {
   onEntered: (result: DoorResult) => void;
   start?: Step;
@@ -140,6 +142,7 @@ export function DoorChooser({
   onPairing?: () => void;
   operatorCaFile?: string | null;
   notice?: string | null;
+  server?: { base: string; address: string } | null;
 }) {
   const [step, setStep] = useState<Step>(start);
   const [busy, setBusy] = useState(false);
@@ -177,7 +180,7 @@ export function DoorChooser({
    * and a boolean would let a later edit change which server the sentence describes. The
    * field is read-only from the moment this is set, so the two can never disagree.
    */
-  const [reachedServer, setReachedServer] = useState<string | null>(null);
+  const [reachedServer, setReachedServer] = useState<string | null>(server?.base ?? null);
 
   /**
    * THE PAIRING LINK THIS INSTALL HAS PROVED, or null while the card is still asking for one.
@@ -461,6 +464,9 @@ export function DoorChooser({
             problem={problem}
             suggestion={suggestion}
             reached={reachedServer}
+            notice={notice}
+            initialAddress={server?.address ?? ""}
+            signInCause={signInCause}
             caFile={operatorCaFile}
             onBack={() => {
               setProblem(null);
@@ -1073,6 +1079,9 @@ function ServerDoor({
   problem,
   suggestion,
   reached,
+  notice = null,
+  initialAddress,
+  signInCause,
   caFile,
   onBack,
   onCancel,
@@ -1093,6 +1102,11 @@ function ServerDoor({
   suggestion: HostSuggestion | null;
   /** The server the address step proved, or null while it has not been proved yet. */
   reached: string | null;
+  /** The gate's line about what a sign-out left behind (`DoorChooser`'s `notice`), or nothing. */
+  notice?: string | null;
+  initialAddress: string;
+  /** Why the sign-in is asked again, when the engine knows; the lead then says it. */
+  signInCause: SignInCause;
   /** Where the shell reads the operator's certificate authority, or null when it named none. */
   caFile: string | null;
   onBack: () => void;
@@ -1100,8 +1114,8 @@ function ServerDoor({
   onProve: (origin: string, address: string) => void;
   onSubmit: (address: string, password: string, totp: string) => void;
 }) {
-  const [origin, setOrigin] = useState("");
-  const [address, setAddress] = useState("");
+  const [origin, setOrigin] = useState(reached ?? "");
+  const [address, setAddress] = useState(initialAddress);
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
 
@@ -1117,8 +1131,9 @@ function ServerDoor({
       <p>
         {reached === null
           ? DOOR_COPY.serverAskLead
-          : DOOR_COPY.serverSignInLead(machineWord())}
+          : signInCause !== null ? signInLead(signInCause) : DOOR_COPY.serverSignInLead(machineWord())}
       </p>
+      {notice ? <div className="join-note" role="status">{notice}</div> : null}
 
       <DoorProblem problem={problem} suggestion={suggestion} />
 

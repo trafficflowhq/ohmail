@@ -126,6 +126,18 @@ const CORPUS = [
   msg("studio", "Notes from the studio", "ben@lichtgrat.example"),
 ];
 
+/* The device stores (desktop, phone) have no typo arm: a one-letter typo of a word in the mailbox
+   finds nothing there, so the box does not promise typos. */
+describe("the search box promises only what every store does", () => {
+  it("says Search everything, and no typo tolerance, in en and de", async () => {
+    const de = (await import("../messages/de.json")).default as typeof messages;
+    await render(await engineWith(CORPUS), "");
+    const box = host.querySelector<HTMLInputElement>("input[aria-label='Search']");
+    expect(box?.placeholder).toBe("Search everything");
+    expect(de.search.placeholder).toBe("Alles durchsuchen");
+  });
+});
+
 describe("the Similar section", () => {
   /* The store answers as a real one does: the rows it matched, in the tier it matched them in —
      under ARCHIVE-024 its page REPLACES the device's first paint, so an empty fake would be a
