@@ -427,6 +427,8 @@ describe("each part of a file name beside another word", () => {
     ["ines harbour-ledger-7731.pdf", ["sr2"]], ["scan pdf", ["sr2"]], ["scan 7731", ["sr2"]], ["papers ledger", ["sr2"]],
     ["harbour ledger", ["d2", "sr2"]], ["ledger 7731 scan", ["sr2"]], ["ines harbour 7731", ["sr2"]],
     ["Ines LEDGER", ["sr2"]], ["SCAN Pdf 7731", ["sr2"]], ["scan -pdf", ["d2"]],
+    // A first name the english stemmer cuts (ines -> ine) beside an exclusion or in a phrase, and excluded.
+    ["ines -zzzqx", ["sr2"]], ["ines ledger -docx", ["sr2"]], ['"ines varga"', ["sr2"]], ["ledger -ines", ["d2"]],
     // Inside a word of a file name, and across its marks: no word of the letter, found as before.
     ["arbou", ["sr2"]], ["led", ["d2", "sr2"]], ["ger-77", ["sr2"]], ["31.pd", ["sr2"]],
   ];
@@ -509,6 +511,26 @@ describe("each part of a file name beside another word", () => {
       got.push({ svc, tier: r.tier, keys: r.items.map((m) => keyOf.get(m.id)!) });
     }
     expect(got).toEqual(SERVICES.map(([svc]) => ({ svc, tier: "exact", keys: ["q3"] })));
+  });
+
+  // Past eight operands the query is read per part: an excluded word the stemmer cuts (invoices -> invoic)
+  // still leaves out the letter whose subject holds it.
+  it("an excluded word in a query of more than eight words leaves out a letter whose subject has it", async () => {
+    const words = "Alpha bravo delta golf hotel ledger harbour kilo";
+    const { ctx, keyOf } = await seedRows([
+      ["l1", "Port Office", "office@port.example", `${words} invoices`, "See attached.", "notes.txt", 1],
+      ["l2", "Port Office", "office@port.example", words, "See attached.", "notes.txt", 2],
+    ]);
+    const got: Array<{ q: string; svc: string; tier: string; keys: string[] }> = [];
+    const want: typeof got = [];
+    for (const q of [`${words} -invoices`, `${words.replace(" kilo", "")} -invoices`]) {
+      for (const [svc, s] of SERVICES) {
+        const r = await s.search(ctx, { q, limit: 50 });
+        got.push({ q, svc, tier: r.tier, keys: r.items.map((m) => keyOf.get(m.id)!) });
+        want.push({ q, svc, tier: "exact", keys: ["l2"] });
+      }
+    }
+    expect(got).toEqual(want);
   });
 
   it("a file name's part ranks like a body word, by recency, never above a subject or sender hit", async () => {

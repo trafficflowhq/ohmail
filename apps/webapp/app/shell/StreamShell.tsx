@@ -721,8 +721,9 @@ export const StreamShell = forwardRef<
        * exactly the part that arrived a third of a pixel at a time. The accumulator keeps it and
        * spends it when it is worth a pixel.
        */
-      holdAccRef.current += drift;
-      if (Math.abs(holdAccRef.current) > 0.5 && !jumpRef.current) {
+      // A landing in flight re-measures its own card: drift it saw is not spent after it.
+      holdAccRef.current = jumpRef.current ? 0 : holdAccRef.current + drift;
+      if (Math.abs(holdAccRef.current) > 0.5) {
         const by = holdAccRef.current;
         // Taken in before the scroll, so anything read while it runs has nothing left to put back.
         holdRef.current = { ...held, offset: held.offset + drift };
@@ -1028,19 +1029,24 @@ export const StreamShell = forwardRef<
       }
       // `behavior` is always explicit: `stream.css` sets `scroll-behavior: smooth` on `.stream`,
       // so an omitted behavior is a smooth scroll — which is exactly what a correction must not be.
-      if (near) el.scrollTo({ top: aimTop(card), behavior: "smooth" });
-      else observerRef.current.own(() => el.scrollTo({ top: aimTop(card), behavior: "instant" }));
-      if (near) {
-        // Reported immediately, and that is sound rather than a shortcut: this branch's premise is
-        // that the card is already laid out, so a caller that acts on the landing sees real
-        // geometry now — and opening the landed card cannot spoil the flight, because a card's own
-        // height does not move its own top.
-        onLanded?.();
-        return;
-      }
+      let flying = aimTop(card);
+      if (near) el.scrollTo({ top: flying, behavior: "smooth" });
+      else observerRef.current.own(() => el.scrollTo({ top: flying, behavior: "instant" }));
+      // Reported immediately on a near landing, and that is sound rather than a shortcut: this
+      // branch's premise is that the card is already laid out, so a caller that acts on the landing
+      // sees real geometry now — and opening the landed card cannot spoil the flight, because a
+      // card's own height does not move its own top.
+      if (near) onLanded?.();
 
       let frames = 0;
       let held = 0;
+      /* A near flight is followed too: cards above the target that measure in while it flies (a viewer
+         mounting, a frame sizing itself) move the target off the offset the flight was aimed at. It
+         ends when the person takes the pane or the cursor, or the card leaves. */
+      const hands = observerRef.current.hands();
+      let last = el.scrollTop;
+      let gap = Math.abs(flying - last);
+      let still = 0;
       /**
        * One frame of the landing. Two ways to be there — the second is why this is a loop rather
        * than a second scroll: `atLine` — the card sits where a landed card sits, the ordinary
@@ -1055,9 +1061,19 @@ export const StreamShell = forwardRef<
         observerRef.current.restart();
         measureRef.current();
       };
+      /** The landing is over: the spy and the hold loop take the card from here. */
+      const flown = () => {
+        if (jumpRef.current?.id !== id) return;
+        jumpRef.current = null;
+        spyRef.current();
+      };
       const settle = () => {
         anchorRef.current = 0;
         const c = find();
+        if (near && (!c || observerRef.current.hands() !== hands || heldRef.current !== id)) {
+          flown();
+          return;
+        }
         if (!c) { rest(); return; } // left the stream mid-flight — nothing landed
         const aim = aimTop(c);
         const line = lineOf(c);
@@ -1066,17 +1082,41 @@ export const StreamShell = forwardRef<
         const parked = Math.abs(aim - el.scrollTop) <= ANCHOR_TOLERANCE_PX && onScreen;
         if (atLine || parked) {
           if (++held >= ANCHOR_STABLE_FRAMES) {
-            rest();
-            onLanded?.();
+            if (!near) {
+              rest();
+              onLanded?.();
+            }
+            flown();
             return;
+          }
+        } else if (near) {
+          held = 0;
+          // Moved away from the flight's end: somebody else scrolled (a scrollbar), and it is theirs.
+          if (Math.abs(flying - el.scrollTop) > gap + ANCHOR_TOLERANCE_PX) {
+            flown();
+            return;
+          }
+          still = el.scrollTop === last ? still + 1 : 0;
+          // The card moved under the flight: fly on to where it is now; at rest, put it there.
+          if (Math.abs(aim - flying) > ANCHOR_TOLERANCE_PX) {
+            flying = aim;
+            still = 0;
+            el.scrollTo({ top: aim, behavior: "smooth" });
+          } else if (still >= 2) {
+            observerRef.current.own(() => el.scrollTo({ top: aim, behavior: "instant" }));
           }
         } else {
           held = 0;
           observerRef.current.own(() => el.scrollTo({ top: aim, behavior: "instant" }));
         }
+        last = el.scrollTop;
+        gap = Math.abs(flying - last);
         if (++frames > ANCHOR_FRAMES) {
-          rest();
-          onLanded?.();
+          if (!near) {
+            rest();
+            onLanded?.();
+          }
+          flown();
           return;
         }
         protect();

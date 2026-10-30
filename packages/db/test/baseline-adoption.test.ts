@@ -35,6 +35,16 @@ const CLOUD: JournalSpec = {
   migrationsSchema: "drizzle_cloud",
 };
 
+/** The shipped entries above the cutoff, in order, then whatever the journal adds after them. */
+const expectAboveTheCutoff = (spec: JournalSpec, shipped: readonly string[]): void => {
+  const entries = readJournalOf(spec);
+  const above = entries.filter((e) => e.when > LEGACY_CUTOFF_WHEN).map((e) => e.tag);
+  expect(above.slice(0, shipped.length)).toEqual(shipped);
+  const newer = entries.slice(entries.findIndex((e) => e.tag === shipped.at(-1)) + 1);
+  expect(newer.filter((e) => e.when <= LEGACY_CUTOFF_WHEN).map((e) => e.tag), `a new ${spec.name} entry is adoptable`)
+    .toEqual([]);
+};
+
 describe("the baseline cutoff is frozen", () => {
   it("is the pre-split journal's last entry, as a literal", () => {
     expect(LEGACY_CUTOFF_WHEN).toBe(1786006486206);
@@ -286,13 +296,14 @@ describe("the baseline cutoff is frozen", () => {
     // and a role-guarded grant on it, adopting nothing.
     // `- 34` → `- 35`: cloud 0055_account_storage_holds — ONE entry above the cutoff, a NEW table, empty,
     // adopting nothing.
-    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 35);
+    // The set below the cutoff is fixed, so it is pinned alone: a new entry lands above and moves nothing here.
+    expect(baselineEntries(CLOUD).length).toBe(6);
 
     // And the entries above the cutoff are REAL migrations that must run, not an empty set.
-    // Listed by TAG rather than counted, so a new one has to be named here on purpose — this
-    // is the exact set an adopting production database still applies.
-    const above = readJournalOf(MAIL).filter((e) => e.when > LEGACY_CUTOFF_WHEN);
-    expect(above.map((e) => e.tag)).toEqual([
+    // The shipped ones are listed by TAG, frozen; a newer one follows them unnamed, and every entry
+    // past the baseline must sit above the cutoff, since an adopting database would mark one below it
+    // applied without running it. This is the set an adopting production database still applies.
+    expectAboveTheCutoff(MAIL, [
       "0021_mailbox_address_unique",
       "0022_message_body_html_cap",
       "0023_mailbox_failure_reason",
@@ -911,10 +922,8 @@ describe("the baseline cutoff is frozen", () => {
       "0172_html_words_backfill",
     ]);
 
-    // The cloud half of the same set. Listed by TAG for the same reason — an adopting
-    // production database still applies these, so a new one must be named here on purpose.
-    const aboveCloud = readJournalOf(CLOUD).filter((e) => e.when > LEGACY_CUTOFF_WHEN);
-    expect(aboveCloud.map((e) => e.tag)).toEqual([
+    // The cloud half of the same set, read the same way.
+    expectAboveTheCutoff(CLOUD, [
       "0007_staff_users",
       "0009_mailbox_oauth",
       "0010_desktop_link_pkce",

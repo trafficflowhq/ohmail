@@ -41,6 +41,8 @@ export interface MailDocInputs {
   darkWanted: boolean;
   /** The subject is a forward's: the history fold differs. */
   forward: boolean;
+  /** A marked link asks in a tab of its own, so it carries no `href` (`link-ask.ts`). */
+  askInPage: boolean;
 }
 
 /** A frame's fitted height, remembered for the next element that shows the same document. */
@@ -89,6 +91,7 @@ function keyOf(i: MailDocInputs): string {
     i.hasText ? "t" : "-",
     i.darkWanted ? "d" : "-",
     i.forward ? "f" : "-",
+    i.askInPage ? "a" : "-",
   ].join("\u0000");
 }
 

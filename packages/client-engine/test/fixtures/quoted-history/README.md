@@ -1,6 +1,6 @@
 # Quoted-history corpus
 
-135 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
+139 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
 `<file>.expected.json` sidecar that says where the new message ends and the history begins. Built for the
 0.30.x thread reader, where thread members show their whole quoted history unfolded (report,
 2026-10-23: an Outlook-style `Von:/Datum:/An:/Cc:/Betreff: WG:` block in the body's own colour, never folded).
@@ -45,6 +45,14 @@ line runs past 400 characters, and its Von/Datum/An/Cc/Betreff blocks still coun
 Fixtures 132-135 are Outlook replies whose quoted earlier message holds its own quote box (a blockquote, or
 Word's left-ruled div, plain or coloured) and its author's answer below it, one or two levels deep: the quote
 and the answer are the history's, and it folds at the reply header.
+Fixture 136 is 132's new-Outlook reply with the writer's red answer typed under the earlier writer's question,
+above an attribution and a quote: new Outlook's history is read to its end, as under 133's header, and stays open.
+Fixture 137 is 133's Windows reply with the writer's red answer above an attribution and a long older message
+quoted in one ink, and fixture 138 a Yahoo reply over an Outlook hop whose older message holds red answers: an
+Outlook header block reads the same wherever it sits, and both stay open.
+Fixture 139 is 135's Windows reply with that red answer one Outlook hop further down, above an attribution and
+a long older message quoted in one ink: every header block of the history's own level has its message read, and
+it stays open.
 
 ## Sidecar schema (`*.expected.json`)
 

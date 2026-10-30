@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Component, Suspense, lazy,
+  Component, Suspense, createContext, lazy, useContext,
   type ComponentProps, type ComponentType, type LazyExoticComponent, type ReactElement, type ReactNode,
 } from "react";
 import { useTranslations } from "next-intl";
@@ -13,7 +13,8 @@ import { Button } from "@ohmail/ui";
  * until a reload. Here the failure renders a sentence with a Try again press rather than the
  * view's crash card, and the door is replaced once that sentence is on screen, so Try again and
  * the next open both ask again. Not sooner: a render landing between the rejection and the
- * catch would read the new door and fetch again before anyone saw the failure.
+ * catch would read the new door and fetch again before anyone saw the failure. A chunk the server
+ * no longer has (the tab outlived an update) says so and offers Reload instead.
  * Every `lazy()` in the app goes through this (`test/lazy-view-retries.test.tsx` holds the census).
  */
 // Typed over the component, as `React.lazy` is: inferring props through `ComponentType`'s union fails.
@@ -27,12 +28,13 @@ export function lazyView<T extends ComponentType<any>>(
 ): ComponentType<ComponentProps<T>> {
   const failed = frame.failed ?? ((retry: () => void) => <LoadFailedPane onRetry={retry} />);
   const open = (): Door<T> => {
-    const door: Door<T> = { failed: false, View: lazy(() => load().catch((cause: unknown) => {
+    const door: Door<T> = { failed: false, View: lazy(() => load().catch(async (cause: unknown) => {
+      const updated = await buildReplaced(cause);
       door.failed = true;
       // Nobody is waiting on this door (the view closed first), so no render will surface the
       // failure: the next open asks again. A waiting boundary is mounted — the Suspense is inside it.
       if (mounted === 0 && current === door) current = open();
-      throw new ViewLoadFailed(cause);
+      throw new ViewLoadFailed(cause, updated);
     })) };
     return door;
   };
@@ -62,7 +64,8 @@ type Door<T extends ComponentType<any>> = { failed: boolean; View: LazyExoticCom
 
 /** A failed import, told apart from a render throw: only this one is the boundary's to answer. */
 export class ViewLoadFailed extends Error {
-  constructor(readonly reason: unknown) {
+  /** `updated`: the server no longer has this tab's build, so only a reload helps. */
+  constructor(readonly reason: unknown, readonly updated = false) {
     super("the view's code did not load");
     this.name = "ViewLoadFailed";
   }
@@ -98,13 +101,68 @@ class LoadBoundary extends Component<BoundaryProps, { caught: { error: unknown }
     const { caught } = this.state;
     if (caught == null) return this.props.render();
     if (!(caught.error instanceof ViewLoadFailed)) throw caught.error;
-    return this.props.failed(() => this.setState({ caught: null }));
+    return (
+      <BuildReplaced.Provider value={caught.error.updated}>
+        {this.props.failed(() => this.setState({ caught: null }))}
+      </BuildReplaced.Provider>
+    );
   }
 }
+
+/**
+ * AFTER A SERVER UPGRADE an open tab asks for its own build's chunks, and the new server answers 404:
+ * the network is fine and Try again fetches the same missing file. A chunk is judged gone only when
+ * the server says so (404/410 to a fresh HEAD); a probe that cannot reach it is the connection.
+ */
+async function buildReplaced(cause: unknown): Promise<boolean> {
+  const url = chunkUrl(cause);
+  if (url == null) return false;
+  try {
+    const res = await fetch(url, { method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(5_000) });
+    return res.status === 404 || res.status === 410;
+  } catch {
+    return false;
+  }
+}
+
+/** The chunk a failed import names: webpack's `request`, or the URL in a browser's import error (or its cause's). */
+function chunkUrl(cause: unknown, depth = 0): string | null {
+  const c = cause as { request?: unknown; message?: unknown; cause?: unknown } | null | undefined;
+  const raw = typeof c?.request === "string" ? c.request
+    : typeof c?.message === "string" ? /(?:https?:\/\/|\/_next\/)[^\s)]+/.exec(c.message)?.[0] : undefined;
+  return (raw ? ownOrigin(raw) : null) ?? (c?.cause != null && depth < 3 ? chunkUrl(c.cause, depth + 1) : null);
+}
+
+/** Where Next serves the build's chunks; next.config sets no basePath or assetPrefix. */
+const CHUNK_PREFIX = "/_next/static/";
+
+/** Only this app's own build chunks are asked about: never an /api path or any other URL an error names. */
+function ownOrigin(raw: string): string | null {
+  if (typeof location === "undefined") return null;
+  try {
+    const url = new URL(raw, location.href);
+    return url.origin === location.origin && url.pathname.startsWith(CHUNK_PREFIX) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+const BuildReplaced = createContext(false);
+
+/** The reload, behind a seam a test can stub (jsdom cannot navigate). */
+export const page = { reload: (): void => { window.location.reload(); } };
 
 /** The sentence and the press, for any frame a caller puts them in. */
 export function LoadFailed({ onRetry }: { onRetry: () => void }): ReactElement {
   const t = useTranslations("viewError");
+  if (useContext(BuildReplaced)) {
+    return (
+      <div className="view-fail-card" role="alert">
+        <p>{t("updated")}</p>
+        <Button onClick={() => page.reload()}>{t("action")}</Button>
+      </div>
+    );
+  }
   return (
     <div className="view-fail-card" role="alert">
       <p>{t("loadFailed")}</p>

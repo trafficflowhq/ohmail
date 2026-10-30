@@ -106,13 +106,24 @@ processes around it:**
   by the render check's offline audit); and its whole reach is a small named
   list of shell commands (`WINDOW_COMMANDS` in
   `apps/desktop/src-tauri/build.rs`). None of those commands takes a filesystem
-  path, one takes URLs, and none opens an address. `rendered_links_batch` lets the
-  window's renderers report the http(s) links they draw (a message's links, a
-  draft's or a signature's, the Screener's unsubscribe link, the account page
-  the service named); the shell keeps them in a bounded list and opens nothing
-  for them. A link reaches your browser only as the webview's own new-window
-  request, and only when the webview itself marked that request as your click
-  or key press (`apps/desktop/src-tauri/src/link_gate.rs`): WebKitGTK's
+  path, one takes URLs, and none opens an address the window names.
+  `rendered_links_batch` lets the window's renderers report the http(s) links they
+  draw (a message's links, a draft's or a signature's, the Screener's unsubscribe
+  link, the account page the service named) and which of a message's links have
+  text naming a different site; the shell keeps the links in a bounded list and
+  opens nothing for them. An address the window reports as marked asks before it
+  opens, wherever you press it and whether or not the list kept its link, until
+  the app quits; the shell keeps up to 1 MiB of such addresses. Past that, a
+  message whose marked address found no room makes every link ask until the
+  window reports that message again or takes it away, and more than 1,024 such
+  messages at once make every link ask until the app quits.
+  When you press a link that asks, the shell holds the
+  press and the window asks you first; `link_ask_open` takes only the random token
+  the shell handed out with that question, and the shell then opens the one link
+  it holds, once, within two minutes of your press. A link reaches your browser
+  only as the webview's own new-window request, and only when the webview
+  itself marked that request as your click or key press
+  (`apps/desktop/src-tauri/src/link_gate.rs`): WebKitGTK's
   `is_user_gesture` on Linux, WebView2's `IsUserInitiated` on Windows, and on
   macOS WKWebView's new-window question, which it asks only during a gesture
   because the window is built with `javaScriptCanOpenWindowsAutomatically` off.

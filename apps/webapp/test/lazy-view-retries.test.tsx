@@ -24,7 +24,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
-const chunks = vi.hoisted(() => ({ settingsFails: 0, settingsLoads: 0, settingsThrows: false, editorFails: 0, editorLoads: 0 }));
+const chunks = vi.hoisted(() => ({ settingsFails: 0, settingsLoads: 0, settingsThrows: false, editorFails: 0, editorLoads: 0, editorGone: "" }));
 
 const settingsChunk = vi.hoisted(() => async () => {
   chunks.settingsLoads += 1;
@@ -42,6 +42,7 @@ const settingsChunk = vi.hoisted(() => async () => {
 });
 const editorChunk = vi.hoisted(() => async (importOriginal: () => Promise<unknown>) => {
   chunks.editorLoads += 1;
+  if (chunks.editorGone) throw Object.assign(new Error("Loading chunk rich-editor failed"), { name: "ChunkLoadError", request: chunks.editorGone });
   if (chunks.editorFails > 0) {
     chunks.editorFails -= 1;
     throw new Error("Loading chunk rich-editor failed");
@@ -87,7 +88,7 @@ beforeEach(() => {
     takeRecords(): [] { return []; }
   };
   vi.spyOn(console, "error").mockImplementation(() => {});
-  Object.assign(chunks, { settingsFails: 0, settingsLoads: 0, settingsThrows: false, editorFails: 0, editorLoads: 0 });
+  Object.assign(chunks, { settingsFails: 0, settingsLoads: 0, settingsThrows: false, editorFails: 0, editorLoads: 0, editorGone: "" });
 });
 
 afterEach(async () => {
@@ -242,6 +243,15 @@ describe("the editor's door, whose chunk failed once", () => {
     await waitFor(() => host.querySelector(".rte-surface") != null, "Try again did not load the editor");
     expect(chunks.editorLoads).toBe(2);
   });
+
+  it("a chunk gone after an update says so inside the editor's frame, with Reload", async () => {
+    chunks.editorGone = `${location.origin}/_next/static/chunks/rich-editor.js`;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(null, { status: 404 }));
+    const host = await mountEditor();
+    await waitFor(() => host.querySelector("[role=alert]") != null, "the failed editor painted nothing");
+    expect(host.querySelector(".compose-editor [role=alert]")?.textContent).toContain((messages.viewError as Record<string, string>).updated);
+    expect(host.querySelector("[role=alert] button")?.textContent).toBe(messages.viewError.action);
+  });
 });
 
 describe("the helper, when a render lands as the import fails", () => {
@@ -294,6 +304,100 @@ describe("the helper, when a render lands as the import fails", () => {
     await waitFor(() => host.querySelector("#loaded") != null || (host.textContent ?? "").includes(LOAD_FAILED), "the reopened view painted nothing");
     expect(loads, "the next open did not ask again").toBe(2);
     expect(host.querySelector("#loaded"), "the next open showed a failure nobody had seen").not.toBeNull();
+  });
+});
+
+/*
+ * AFTER A SERVER UPGRADE an open tab asks for its own build's chunks, which the new server no longer
+ * has (404). Retrying fetches the same missing file; only a reload helps, and the network is fine.
+ */
+describe("a chunk the server no longer has, after an update", () => {
+  const UPDATED = (messages.viewError as Record<string, string>).updated;
+  const RELOAD = messages.viewError.action;
+  const CHUNK = "/_next/static/chunks/9592.js";
+  /** webpack's own shape for a script that did not load. */
+  const chunkLoadError = (src: string): Error => Object.assign(
+    new Error(`Loading chunk 9592 failed.\n(error: ${src})`), { name: "ChunkLoadError", type: "error", request: src });
+
+  function server(answer: (url: string, init?: RequestInit) => Promise<Response>) {
+    return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => answer(String(input), init));
+  }
+
+  async function mountFailing(cause: unknown): Promise<{ host: HTMLElement; loads: () => number }> {
+    const { lazyView } = await import("../app/shell/lazy-view");
+    let loads = 0;
+    const View = lazyView((): Promise<{ default: React.ComponentType<object> }> => { loads += 1; return Promise.reject(cause); });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.push(root);
+    await act(async () => { root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(View) })); });
+    await waitFor(() => host.querySelector("[role=alert]") != null, "the failed view painted nothing");
+    return { host, loads: () => loads };
+  }
+
+  const buttons = (host: HTMLElement): string[] => Array.from(host.querySelectorAll("[role=alert] button")).map((b) => b.textContent ?? "");
+
+  it("says ohmail was updated with a Reload press, never blames the connection", async () => {
+    const asked = server(async (url) => new Response(null, { status: url.endsWith(CHUNK) ? 404 : 200 }));
+    const { page } = await import("../app/shell/lazy-view");
+    const reload = vi.spyOn(page, "reload").mockImplementation(() => {});
+    const { host, loads } = await mountFailing(chunkLoadError(`${location.origin}${CHUNK}`));
+    const text = host.querySelector("[role=alert]")?.textContent ?? "";
+    expect(text).toContain(UPDATED);
+    expect(text, "a build change blamed the connection").not.toContain(LOAD_FAILED);
+    expect(buttons(host), "Try again would fetch the same missing chunk").toEqual([RELOAD]);
+    expect(asked).toHaveBeenCalledWith(`${location.origin}${CHUNK}`, expect.objectContaining({ method: "HEAD", cache: "no-store" }));
+    expect(reload, "the page reloaded on its own").not.toHaveBeenCalled();
+    await act(async () => { host.querySelector<HTMLButtonElement>("[role=alert] button")!.click(); });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(loads(), "the gone chunk was fetched again").toBe(1);
+  });
+
+  it("reads the chunk from a browser's module import error too", async () => {
+    server(async () => new Response(null, { status: 404 }));
+    const { host } = await mountFailing(new TypeError(`Failed to fetch dynamically imported module: ${location.origin}/_next/static/chunks/app/compose.js`));
+    expect(host.querySelector("[role=alert]")?.textContent).toContain(UPDATED);
+  });
+
+  it("CONTROL: the server still has the chunk: the connection sentence and Try again stay", async () => {
+    server(async () => new Response(null, { status: 200 }));
+    const { host } = await mountFailing(chunkLoadError(`${location.origin}${CHUNK}`));
+    expect(host.querySelector("[role=alert]")?.textContent).toContain(LOAD_FAILED);
+    expect(buttons(host)).toEqual([messages.viewError.tryAgain]);
+  });
+
+  it("CONTROL: the network is down: it still says to check the connection", async () => {
+    server(async () => { throw new TypeError("Failed to fetch"); });
+    const { host } = await mountFailing(chunkLoadError(`${location.origin}${CHUNK}`));
+    expect(host.querySelector("[role=alert]")?.textContent).toContain(LOAD_FAILED);
+    expect(buttons(host)).toEqual([messages.viewError.tryAgain]);
+  });
+
+  it("a chunk named on another origin is never asked about", async () => {
+    const asked = server(async () => new Response(null, { status: 404 }));
+    const { host } = await mountFailing(chunkLoadError(`https://elsewhere.example${CHUNK}`));
+    expect(asked).not.toHaveBeenCalled();
+    expect(host.querySelector("[role=alert]")?.textContent).toContain(LOAD_FAILED);
+  });
+
+  it.each([
+    ["an /api URL", `${location.origin}/api/messages/m1/body`],
+    ["a page path", `${location.origin}/settings`],
+    ["a non-static /_next path", `${location.origin}/_next/data/build/x.json`],
+  ])("only a build chunk is asked about: %s named on this origin probes nothing", async (_what, url) => {
+    const asked = server(async () => new Response(null, { status: 404 }));
+    const { host } = await mountFailing(new TypeError(`Failed to fetch dynamically imported module: ${url}`));
+    expect(asked, "a probe left for a URL that is not a build chunk").not.toHaveBeenCalled();
+    expect(host.querySelector("[role=alert]")?.textContent).toContain(LOAD_FAILED);
+    expect(buttons(host)).toEqual([messages.viewError.tryAgain]);
+  });
+
+  it.each([404, 410])("a /_next/static/ chunk that answers %i shows Reload", async (status) => {
+    server(async () => new Response(null, { status }));
+    const { host } = await mountFailing(chunkLoadError(`${location.origin}${CHUNK}`));
+    expect(host.querySelector("[role=alert]")?.textContent).toContain(UPDATED);
+    expect(buttons(host)).toEqual([RELOAD]);
   });
 });
 

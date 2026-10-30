@@ -132,8 +132,9 @@ fn is_text(mime: &str) -> bool {
     mime.split(';').next().unwrap_or("").trim().to_ascii_lowercase().starts_with("text/")
 }
 
-/// A fresh token: 32 lowercase hex characters from the system's random source.
-fn token() -> Result<String, String> {
+/// A fresh token: 32 lowercase hex characters from the system's random source. Also the held link
+/// press's (`engine::LinkAskHeld`).
+pub(crate) fn token() -> Result<String, String> {
     let mut raw = [0u8; 16];
     getrandom::fill(&mut raw).map_err(|err| format!("ohmail: this computer would not supply random bytes ({err})"))?;
     Ok(raw.iter().map(|b| format!("{b:02x}")).collect())

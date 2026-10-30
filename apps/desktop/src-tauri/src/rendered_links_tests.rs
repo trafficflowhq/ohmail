@@ -228,7 +228,7 @@ fn a_batch_applies_its_reports_in_order_under_the_same_caps() {
         owned(&["https://c.test/"]),
         Vec::new(),
     ];
-    let trim = set.report_batch(&surfaces, &urls).expect("the batch was refused");
+    let trim = set.report_batch(&surfaces, &urls, &no_asks(surfaces.len())).expect("the batch was refused");
     assert_eq!(trim, Trimmed { dropped: 1, evicted: 0 });
     assert!(admitted("https://a.test/", Some(&set)).is_err(), "a surface's earlier report outlived its later one");
     assert!(admitted("https://b.test/", Some(&set)).is_ok());
@@ -238,7 +238,7 @@ fn a_batch_applies_its_reports_in_order_under_the_same_caps() {
 
     let many: Vec<String> = (0..=PER_SURFACE_MAX).map(|i| format!("https://example.test/{i}")).collect();
     let mut set = Rendered::default();
-    let trim = set.report_batch(&["s1".to_string()], &[many.clone()]).expect("report");
+    let trim = set.report_batch(&["s1".to_string()], &[many.clone()], &no_asks(1)).expect("report");
     assert_eq!(trim.dropped, 1, "the per-surface cap did not hold inside a batch");
     assert!(admitted(&many[PER_SURFACE_MAX], Some(&set)).is_err());
 }
@@ -252,13 +252,233 @@ fn a_batch_with_a_malformed_surface_changes_nothing() {
     for bad in ["s".repeat(SURFACE_ID_MAX + 1), String::new(), "«r1»".to_string(), "a b".to_string()] {
         let surfaces = vec!["s1".to_string(), bad.clone()];
         let urls = vec![owned(&["https://first.test/"]), owned(&["https://second.test/"])];
-        assert!(set.report_batch(&surfaces, &urls).is_err(), "surface id {bad:?} was taken");
+        assert!(set.report_batch(&surfaces, &urls, &no_asks(2)).is_err(), "surface id {bad:?} was taken");
         assert!(admitted("https://first.test/", Some(&set)).is_err(), "a refused batch applied its first report");
         assert!(admitted("https://kept.test/", Some(&set)).is_ok(), "a refused batch touched what was kept");
     }
-    let unpaired = set.report_batch(&["s1".to_string(), "s2".to_string()], &[owned(&["https://first.test/"])]);
+    let unpaired = set.report_batch(&["s1".to_string(), "s2".to_string()], &[owned(&["https://first.test/"])], &no_asks(2));
     assert!(unpaired.is_err(), "a batch with more surfaces than lists was taken");
     assert!(admitted("https://first.test/", Some(&set)).is_err());
     assert_eq!(set.surface_ids(), ["kept"]);
-    assert_eq!(set.report_batch(&[], &[]), Ok(Trimmed::default()));
+    assert_eq!(set.report_batch(&[], &[], &[]), Ok(Trimmed::default()));
+}
+
+/// A surface's marked links, none of them.
+fn no_asks(surfaces: usize) -> Vec<Vec<String>> {
+    vec![Vec::new(); surfaces]
+}
+
+/// THE MARKED LINKS (`asks`): every mark a report carries is kept for the session, compared in the
+/// parser's own form, whether or not the report keeps its link and at no byte of the links' own;
+/// a replaced or evicted surface's marks keep asking; a batch whose ask lists do not pair with its
+/// surfaces changes nothing. Mutations: keep a mark only beside a kept link → the unkept row; count
+/// a mark's bytes with the links' → the byte row; let marks go with their surface's next report →
+/// the replaced row, or with its eviction → the evicted row; drop the ask lists' length check →
+/// the unpaired row.
+#[test]
+fn every_reported_mark_asks_for_the_session() {
+    let mut set = Rendered::default();
+    let trim = set
+        .report_asking(
+            "s1",
+            &owned(&["https://a.test/", "https://b.test/"]),
+            &owned(&["HTTPS://A.TEST", "https://a.test/", "https://unkept.test/", "javascript:alert(1)"]),
+        )
+        .expect("the report was refused");
+    assert_eq!(trim, Trimmed { dropped: 1, evicted: 0 });
+    assert!(set.asks("https://a.test/"), "a marked link was not kept");
+    assert!(asked("https://A.test", Some(&set)), "the mark is not compared in the parser's own form");
+    assert!(!set.asks("https://b.test/") && !asked("https://b.test/", Some(&set)));
+    assert!(set.asks("https://unkept.test/"), "a mark whose link the report did not keep was dropped");
+    assert_eq!(set.bytes(), "https://a.test/".len() + "https://b.test/".len());
+
+    set.report_asking("s1", &owned(&["https://a.test/"]), &[]).expect("replace");
+    assert!(set.asks("https://a.test/"), "a replaced report's mark stopped asking");
+    assert!(admitted("https://a.test/", Some(&set)).is_ok());
+
+    let mut set = Rendered::default();
+    set.report_asking("old", &owned(&["https://a.test/"]), &owned(&["https://a.test/"])).expect("report");
+    for i in 0..SURFACES_MAX {
+        set.report(&format!("s{i}"), &[format!("https://s{i}.test/")]).expect("report");
+    }
+    assert!(admitted("https://a.test/", Some(&set)).is_err(), "an evicted surface's link outlived it");
+    assert!(set.asks("https://a.test/"), "an evicted surface's mark went with it");
+    assert!(!asked("https://a.test/", None), "no set asked about a link");
+
+    let mut set = reported("kept", &["https://kept.test/"]);
+    let unpaired = set.report_batch(&["s1".to_string()], &[owned(&["https://first.test/"])], &[]);
+    assert!(unpaired.is_err(), "a batch with no ask list for its surface was taken");
+    assert!(admitted("https://first.test/", Some(&set)).is_err());
+}
+
+/// A link of exactly `len` bytes in its comparison form.
+fn link_of_len(tag: usize, len: usize) -> String {
+    let head = format!("https://e.ee/{tag}/");
+    format!("{head}{}", "a".repeat(len - head.len()))
+}
+
+/// `first`, then links of their own that bring one report to exactly `total` bytes.
+fn filled_to(total: usize, first: &[&str]) -> Vec<String> {
+    let mut urls = owned(first);
+    let mut left = total - first.iter().map(|u| u.len()).sum::<usize>();
+    while left > 0 {
+        let len = if left > 4096 { (left - 64).min(4000) } else { left };
+        let head = format!("https://pad.ee/{}/", urls.len());
+        urls.push(format!("{head}{}", "a".repeat(len - head.len())));
+        left -= len;
+    }
+    urls
+}
+
+/// A MARK WHOSE LINK A BOUND DROPPED STILL ASKS: a letter's marked link past PER_SURFACE_MAX links,
+/// or past BYTES_MAX, is not kept, and another surface holding the same address unmarked (the
+/// Screener's unsubscribe page, a second letter, a plain-text one) does not open it on a press, in
+/// separate reports or one batch. Marked first in a report that fills the byte bound, it asks too.
+/// Mutation: keep a mark only beside a kept link → each press past a bound opens.
+#[test]
+fn a_mark_whose_link_a_bound_dropped_still_asks() {
+    let marked = "https://evil.example/login";
+    let route = |set: &Rendered| popup_route(marked, Some(set), Activation::Person);
+    let mut past_the_count: Vec<String> = (0..PER_SURFACE_MAX).map(|i| format!("https://pad.example/{i}")).collect();
+    past_the_count.push(marked.to_string());
+    let mut past_the_bytes = filled_to(BYTES_MAX, &[]);
+    past_the_bytes.push(marked.to_string());
+    for urls in [past_the_count, past_the_bytes] {
+        let mut set = Rendered::default();
+        let trim = set.report_asking("letter", &urls, &owned(&[marked])).expect("report");
+        assert!(admitted(marked, Some(&set)).is_err(), "the link past the bound was kept");
+        set.report("screener", &owned(&[marked])).expect("report");
+        assert_eq!(route(&set), PopupRoute::Ask(marked.to_string()), "a mark went with its dropped link");
+        assert_eq!(trim.dropped, 1, "only the link past the bound is dropped");
+
+        let mut set = Rendered::default();
+        let surfaces = ["letter".to_string(), "screener".to_string()];
+        set.report_batch(&surfaces, &[urls, owned(&[marked])], &[owned(&[marked]), Vec::new()]).expect("batch");
+        assert_eq!(route(&set), PopupRoute::Ask(marked.to_string()), "inside one batch");
+    }
+
+    let mut set = Rendered::default();
+    let trim = set.report_asking("s1", &filled_to(BYTES_MAX, &[marked]), &owned(&[marked])).expect("report");
+    assert_eq!(trim, Trimmed::default());
+    assert_eq!(set.bytes(), BYTES_MAX);
+    assert_eq!(route(&set), PopupRoute::Ask(marked.to_string()));
+}
+
+/// AN EVICTED SURFACE MAY STILL BE ON SCREEN: its marked addresses keep asking, so a newer surface
+/// that evicted it and holds the same address unmarked does not open it on a press. Mutation: let
+/// the marks go with the surface → the press opens.
+#[test]
+fn an_evicted_surfaces_marked_links_keep_asking() {
+    let marked = "https://evil.example/login";
+    let mut set = Rendered::default();
+    set.report_asking("old", &owned(&[marked]), &owned(&[marked])).expect("report");
+    let trim = set.report("new", &filled_to(BYTES_MAX, &[marked])).expect("report");
+    assert_eq!(trim, Trimmed { dropped: 0, evicted: 1 });
+    assert_eq!(set.surface_ids(), ["new"]);
+    assert_eq!(popup_route(marked, Some(&set), Activation::Person), PopupRoute::Ask(marked.to_string()));
+}
+
+/// AN EVICTED SURFACE'S MARKS ALL KEEP ASKING, 256 KiB of them and one more, and still ask once a
+/// later surface reports the address again unmarked, in separate reports and in one batch.
+/// Mutations: carry an eviction's marks under a 256 KiB bound of their own, the rest refused → the
+/// first press is refused and the press after "later" opens.
+#[test]
+fn an_evicted_surfaces_marks_ask_when_the_address_is_reported_again() {
+    let full: Vec<String> = (0..64).map(|i| link_of_len(i, 4096)).collect();
+    assert_eq!(full.iter().map(String::len).sum::<usize>(), 256 * 1024);
+    let marked = "https://evil.example/login";
+    let route = |set: &Rendered, url: &str| popup_route(url, Some(set), Activation::Person);
+    let ask = |url: &str| PopupRoute::Ask(url.to_string());
+    let mut set = Rendered::default();
+    set.report_asking("full", &full, &full).expect("report");
+    set.report_asking("old", &owned(&[marked]), &owned(&[marked])).expect("report");
+    let trim = set.report("new", &filled_to(BYTES_MAX, &[marked, &full[0]])).expect("report");
+    assert_eq!(trim.evicted, 2);
+    assert_eq!(route(&set, &full[0]), ask(&full[0]), "an evicted surface's mark was lost");
+    assert_eq!(route(&set, marked), ask(marked), "an evicted surface's last mark did not ask");
+    set.report("later", &owned(&[marked])).expect("report");
+    assert_eq!(set.surface_ids(), ["later"]);
+    assert_eq!(route(&set, marked), ask(marked), "a later report of the address let the press open");
+
+    // "old" is the larger, so "new" evicts it and "later" still fits beside "new".
+    let mut set = Rendered::default();
+    set.report_asking("full", &full, &full).expect("report");
+    set.report_asking("old", &owned(&[marked, link_of_len(99, 1000).as_str()]), &owned(&[marked])).expect("report");
+    let surfaces: Vec<String> = ["new", "later"].iter().map(|s| s.to_string()).collect();
+    let urls = [filled_to(BYTES_MAX - marked.len(), &[&full[0]]), owned(&[marked])];
+    set.report_batch(&surfaces, &urls, &no_asks(2)).expect("batch");
+    assert_eq!(set.surface_ids(), ["new", "later"]);
+    assert_eq!(route(&set, marked), ask(marked));
+}
+
+/// 256 links of 4096 bytes: MARKS_BYTES_MAX of them, to mark.
+fn a_mebibyte_of_marks() -> Vec<String> {
+    (0..256).map(|i| link_of_len(i, 4096)).collect()
+}
+
+/// PAST THE MARKS' BOUND, EVERY PRESS ASKS while a surface whose mark found no room may be on
+/// screen — evicted, and with the address reported again unmarked, too — and presses open as before
+/// once that surface reports again; a mark that was kept still asks. Mutations: no fallback → the
+/// presses after "old" open; let eviction end it → the press after "new" opens; keep it past the
+/// surface's own next report → the press after it asks; let marks go with eviction → the kept
+/// mark's press opens.
+#[test]
+fn past_the_marks_bound_every_press_asks_until_that_surface_reports_again() {
+    let full = a_mebibyte_of_marks();
+    assert_eq!(full.iter().map(String::len).sum::<usize>(), MARKS_BYTES_MAX);
+    let (marked, honest) = ("https://evil.example/login", "https://shop.example/");
+    let route = |set: &Rendered, url: &str| popup_route(url, Some(set), Activation::Person);
+    let ask = |url: &str| PopupRoute::Ask(url.to_string());
+    let mut set = Rendered::default();
+    set.report_asking("full", &full, &full).expect("report");
+    set.report("shop", &owned(&[honest])).expect("report");
+    assert_eq!(route(&set, honest), PopupRoute::Browser(honest.to_string()));
+    let trim = set.report_asking("old", &owned(&[marked]), &owned(&[marked])).expect("report");
+    assert_eq!(route(&set, marked), ask(marked));
+    assert_eq!(route(&set, honest), ask(honest), "a mark with no room let another press open");
+    assert_eq!(trim.dropped, 1, "a mark past the bound was kept");
+
+    set.report("new", &filled_to(BYTES_MAX, &[marked, honest])).expect("report");
+    assert_eq!(set.surface_ids(), ["new"]);
+    assert_eq!(route(&set, marked), ask(marked), "an evicted surface's lost mark let the press open");
+    set.report("later", &owned(&[marked, honest, &full[0]])).expect("report");
+    assert_eq!(route(&set, marked), ask(marked), "a later report of the address let the press open");
+
+    set.report("old", &[]).expect("the surface goes");
+    assert_eq!(route(&set, marked), PopupRoute::Browser(marked.to_string()), "the fallback outlived its surface");
+    assert_eq!(route(&set, honest), PopupRoute::Browser(honest.to_string()));
+    assert_eq!(route(&set, &full[0]), ask(&full[0]), "a kept mark stopped asking");
+}
+
+/// ONE SURFACE TOO MANY TO FOLLOW: past SURFACES_MAX surfaces whose marks found no room, every
+/// press asks for the rest of the session, even once they have all reported again; at
+/// SURFACES_MAX, presses open once they have. Mutations: follow no more than fit, and nothing past
+/// them → the last press opens; give up one surface early → the first set's press asks.
+#[test]
+fn past_as_many_short_surfaces_as_surfaces_every_press_asks_for_good() {
+    let honest = "https://shop.example/";
+    for (short, asks) in [(SURFACES_MAX, false), (SURFACES_MAX + 1, true)] {
+        let mut set = Rendered::default();
+        set.report_asking("full", &a_mebibyte_of_marks(), &a_mebibyte_of_marks()).expect("report");
+        for i in 0..short {
+            let mark = format!("https://evil-{i}.example/");
+            set.report_asking(&format!("s{i}"), &[mark.clone()], &[mark]).expect("report");
+        }
+        for i in 0..short {
+            set.report(&format!("s{i}"), &[]).expect("the surface goes");
+        }
+        set.report("shop", &owned(&[honest])).expect("report");
+        let route = popup_route(honest, Some(&set), Activation::Person);
+        assert_eq!(route == PopupRoute::Ask(honest.to_string()), asks, "{short} short surfaces: {route:?}");
+    }
+}
+
+/// THE ASK'S LINE CARRIES NO PART OF THE ADDRESS. Mutation: put the host in the line → red.
+#[test]
+fn an_ask_line_names_no_part_of_the_address() {
+    let line = ask_line("https://evil.example/reset/TOKEN?d=secret#f");
+    for part in ["TOKEN", "secret", "reset", "evil.example", "#f"] {
+        assert!(!line.contains(part), "{line} carries {part}");
+    }
+    assert_eq!(line, r#"{"service":"shell","event":"link_ask","hostClass":"public"}"#);
 }

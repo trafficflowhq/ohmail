@@ -74,6 +74,7 @@ const UI_VITALS_COMMAND = "ui_vitals";
 const WINDOW_READY_COMMAND = "window_ready";
 const TEXT_SIZE_COMMAND = "set_text_size";
 const RENDERED_LINKS_COMMAND = "rendered_links_batch";
+const LINK_ASK_OPEN_COMMAND = "link_ask_open";
 
 /**
  * The places on the web this app can open, named as PLACES and never as addresses. A hosted
@@ -311,6 +312,64 @@ export function offLinkRefused(run: (url: string) => void): void {
   if (linkRefusedHandler === run) linkRefusedHandler = null;
 }
 
+/**
+ * The event the shell emits when it holds the press of a link whose label names another site
+ * (`data-ohmail-ask`): the token it holds the press under and the address, which this window names
+ * to the person. Only the token goes back ({@link linkAskOpen}). One listener for the life of the
+ * window and the latest handler wins, {@link onLinkRefused}'s shape.
+ */
+export const LINK_ASK_EVENT = "link:ask";
+
+/** A held press: the shell's token and the address it opens on Open. */
+export interface LinkAsk {
+  token: string;
+  url: string;
+}
+
+let linkAskHandler: ((ask: LinkAsk) => void) | null = null;
+let linkAskListening = false;
+
+/** The held press a `link:ask` payload carried, or null for anything that is not one. */
+export function askOfPayload(payload: unknown): LinkAsk | null {
+  const raw = typeof (payload as { token?: unknown } | null)?.token === "string"
+    ? payload
+    : (payload as { payload?: unknown } | null)?.payload;
+  const token = (raw as { token?: unknown } | null)?.token;
+  const url = (raw as { url?: unknown } | null)?.url;
+  if (typeof token !== "string" || !/^[0-9a-f]{32}$/.test(token)) return null;
+  if (typeof url !== "string" || url.length > REFUSED_URL_MAX) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  } catch {
+    return null;
+  }
+  return { token, url };
+}
+
+/** Run `run` when the shell holds a press to ask about. */
+export async function onLinkAsk(run: (ask: LinkAsk) => void): Promise<void> {
+  linkAskHandler = run;
+  if (linkAskListening) return;
+  linkAskListening = true;
+  await listen(LINK_ASK_EVENT, askOfPayload, (ask) => linkAskHandler?.(ask));
+}
+
+/** Stop answering asks — the registering mount is going away and none replaced it. */
+export function offLinkAsk(run: (ask: LinkAsk) => void): void {
+  if (linkAskHandler === run) linkAskHandler = null;
+}
+
+/**
+ * Open the press the shell holds under `token`, once. No address crosses: the shell opens what it
+ * holds. Rejects with the shell's sentence when it holds nothing under that token any more.
+ */
+export async function linkAskOpen(token: string): Promise<void> {
+  const shell = internals();
+  if (!shell) throw new Error("There is no app shell to ask.");
+  await shell.invoke(LINK_ASK_OPEN_COMMAND, { token });
+}
+
 /** One `plugin:event|listen`, shared by the two menu channels. */
 async function listen<T>(
   event: string,
@@ -530,15 +589,18 @@ export function reportWindowReady(canvas: string | null = frameCanvas()): void {
  * renderers' batched sink (`rendered-links.ts`): one call carries every surface's latest report, in
  * order, and an empty list takes a surface away. Not awaited — the shell applies a batch in order,
  * before a later open — and a refused one is said in the log, because it shows up later as a link
- * that will not open.
+ * that will not open. `asks[i]` are the marked links among `urls[i]`, which the shell asks about.
  */
-export function reportRenderedLinksToShell(reports: readonly { surface: string; hrefs: readonly string[] }[]): void {
+export function reportRenderedLinksToShell(
+  reports: readonly { surface: string; hrefs: readonly string[]; asks?: readonly string[] }[],
+): void {
   const shell = internals();
   if (!shell || reports.length === 0) return;
   const surfaces = reports.map((r) => r.surface);
   const urls = reports.map((r) => [...r.hrefs]);
+  const asks = reports.map((r) => [...(r.asks ?? [])]);
   try {
-    void shell.invoke(RENDERED_LINKS_COMMAND, { surfaces, urls }).catch((err: unknown) => {
+    void shell.invoke(RENDERED_LINKS_COMMAND, { surfaces, urls, asks }).catch((err: unknown) => {
       console.error("ohmail: the shell did not take the links on screen", err);
     });
   } catch (err) {

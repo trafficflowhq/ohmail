@@ -8093,6 +8093,19 @@ body.dnd-active * { cursor: grabbing !important; }
 .session-end.session-signin > .gate { min-height: 0; padding: 0; margin: auto; width: 100%; }
 /* Before the window has read any mail there is nothing to keep in view: the launch's own page. */
 .session-end.session-whole { background: var(--canvas); }
+/* The desktop's ask before a marked link opens (`apps/desktop/src/LinkAsk.tsx`), on the same layer
+   and card: the address in full, however long, under the sentence that names its host. */
+.gate-card .link-ask-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: calc(12px + var(--type-up));
+  color: var(--ink);
+  background: var(--tint2);
+  border-radius: var(--r-ctl);
+  padding: 8px 10px;
+  max-height: 8.5em;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
 
 /* ── the signature block — every compose surface ──────────────────────────────────────────
    The removable tail of the outgoing message (`SignatureBlock.tsx`; `signature.ts` owns the

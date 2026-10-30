@@ -9,9 +9,10 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { DesktopGate } from "../src/DesktopGate.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
-import { LINK_REFUSED_EVENT } from "../src/native.js";
+import { LINK_ASK_EVENT, LINK_REFUSED_EVENT } from "../src/native.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
+import { COPY } from "../../webapp/app/components/MessageBody";
 import messages from "../../webapp/messages/en.json";
 
 /**
@@ -39,6 +40,9 @@ const host = globalThis as unknown as Host;
 const callbacks = new Map<number, (payload: unknown) => void>();
 const listeners = new Map<string, number>();
 let next = 1;
+/* The tokens the window sent back to open a held press, and whether the shell still holds one. */
+const answered: string[] = [];
+let held = true;
 host.__TAURI_INTERNALS__ = {
   transformCallback: (cb) => {
     const id = next++;
@@ -48,6 +52,10 @@ host.__TAURI_INTERNALS__ = {
   invoke: async (command, payload) => {
     if (command === "engine_status") return { state: "no_key", mode: null, reason: "x" } as unknown as EngineStatus;
     if (command === "plugin:event|listen") listeners.set(String(payload?.event), Number(payload?.handler));
+    if (command === "link_ask_open") {
+      answered.push(String(payload?.token));
+      if (!held) throw "ohmail: that link is no longer waiting";
+    }
     return null;
   },
 };
@@ -159,5 +167,89 @@ describe("a refused link says one sentence, wherever it was drawn", () => {
     });
     await turns(5);
     expect(said()).toBe(before);
+  });
+});
+
+/**
+ * A MARKED LINK'S PRESS IS ASKED ABOUT IN THE WINDOW. The shell holds the press of a link whose
+ * label names another site and hands the window a token and the address (`link:ask`); the window
+ * names where it goes and sends back only the token, on Open. Mutations watched red: the gate's
+ * `onLinkAsk` removed (nothing asks); Open sending the address or nothing (the token rows); Cancel
+ * or Escape answering the shell (the empty rows); the focus on Open (the focus row); the payload
+ * taken unchecked (the malformed rows); a stale answer swallowed (the toast).
+ */
+describe("a marked link the shell holds is asked about in the window", () => {
+  const TOKEN = "0123abcd".repeat(4);
+  const ASK = { token: TOKEN, url: "https://evil.example/login?x=1" };
+  const dialog = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="alertdialog"]');
+  const button = (label: string): HTMLButtonElement =>
+    [...dialog()!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === label)!;
+  const ask = async (payload: unknown): Promise<void> => {
+    await act(async () => { emit(LINK_ASK_EVENT, payload); });
+    await turns(5);
+  };
+
+  afterEach(() => {
+    answered.length = 0;
+    held = true;
+  });
+
+  it("names where the link goes, starts on Cancel, and opens only by sending the token back", async () => {
+    await render();
+    expect(listeners.has(LINK_ASK_EVENT), "the gate never listened for the shell's ask").toBe(true);
+    await ask(ASK);
+    expect(dialog(), "a held press asked nothing").not.toBeNull();
+    expect(dialog()!.getAttribute("aria-modal")).toBe("true");
+    expect(dialog()!.textContent).toContain(COPY.linkAskTitle);
+    expect(dialog()!.textContent).toContain(COPY.linkAskGoes("evil.example"));
+    expect(document.activeElement, "the ask did not start on Cancel").toBe(button(COPY.linkAskCancel));
+    await act(async () => { button(COPY.linkAskOpen("evil.example")).click(); });
+    await turns(5);
+    expect(answered).toEqual([TOKEN]);
+    expect(dialog()).toBeNull();
+  });
+
+  it("Cancel and Escape close it and answer the shell nothing", async () => {
+    await render();
+    await ask(ASK);
+    await act(async () => { button(COPY.linkAskCancel).click(); });
+    await turns(2);
+    expect(dialog()).toBeNull();
+    await ask(ASK);
+    let reached = 0;
+    const behind = (e: KeyboardEvent): void => { if (e.key === "Escape") reached += 1; };
+    document.addEventListener("keydown", behind);
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    await act(async () => { document.activeElement!.dispatchEvent(escape); });
+    await turns(2);
+    document.removeEventListener("keydown", behind);
+    expect(dialog()).toBeNull();
+    expect([escape.defaultPrevented, reached], "Escape went on past the ask").toEqual([true, 0]);
+    expect(answered).toEqual([]);
+  });
+
+  it("a press the shell no longer holds says so", async () => {
+    await render();
+    held = false;
+    await ask(ASK);
+    await act(async () => { button(COPY.linkAskOpen("evil.example")).click(); });
+    await turns(5);
+    expect(answered).toEqual([TOKEN]);
+    expect(said()).toContain(COPY.linkAskGone);
+  });
+
+  it("a payload that is not an ask shows nothing", async () => {
+    await render();
+    for (const bad of [
+      { token: "0123", url: ASK.url },
+      { token: TOKEN.toUpperCase(), url: ASK.url },
+      { token: TOKEN, url: "javascript:alert(1)" },
+      { token: TOKEN, url: `https://example.test/${"x".repeat(4096)}` },
+      { token: TOKEN },
+      ASK.url,
+      7,
+    ]) await ask(bad);
+    expect(dialog()).toBeNull();
+    expect(answered).toEqual([]);
   });
 });

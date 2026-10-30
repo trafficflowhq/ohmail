@@ -80,6 +80,9 @@ afterAll(() => {
 interface Arm { carrier: "blob" | "data"; sandbox?: string; policyWithoutBlob?: boolean }
 type Rig = {
   mount: (png: number[], arm: Arm) => Promise<{ written: boolean; policy: string | null; sandbox: string; naturalWidth: number | null }>;
+  mountAsk: (arm: boolean) => Promise<{
+    asks: string[]; href: string | null; marked: boolean; at: Record<"ask" | "honest", { x: number; y: number }>;
+  }>;
   redPixels: (b64: string) => Promise<number>;
   FRAME_SANDBOX: string;
 };
@@ -141,5 +144,62 @@ for (const [name, engine] of ENGINES) {
         await page.context().close();
       }, 60_000);
     }
+
+    /* THE WEB ASKS OUTSIDE THE LETTER (`link-ask.ts`). A marked link reaches the frame with no
+       address; once armed, its press opens ohmail's own page in a new tab under the frame's sandbox,
+       naming the real host and holding the one link there. Mutations: the arming removed → no tab
+       opens; the address left on the link → the press opens the destination itself. */
+    it("the web app's policy: an armed marked link opens ohmail's page naming the real host; an honest one opens; unarmed, nothing", async () => {
+      const page = await open(browser!, POLICIES["the web app's"]!);
+      const context = page.context();
+      await context.route("https://elsewhere.ohmail.test/**", (route) =>
+        route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Elsewhere</title><p>The page.</p>" }));
+      const errors: string[] = [];
+      const watch = (p: Page): void => {
+        p.on("console", (m) => { if (m.type() === "error") errors.push(`${p.url()}: ${m.text()}`); });
+        p.on("pageerror", (e) => errors.push(`${p.url()}: ${e.message}`));
+      };
+      watch(page);
+      context.on("page", watch);
+      const asked: string[] = [];
+      context.on("request", (r) => asked.push(r.url()));
+      const rig = (arm: boolean) => page.evaluate((a) => (window as unknown as { rig: Rig }).rig.mountAsk(a), arm);
+      // A real press, where the link stands: nothing is run inside the frame, which has no scripts.
+      const press = async (at: { x: number; y: number }): Promise<Page | null> => {
+        const opened = context.waitForEvent("page", { timeout: 3000 }).catch(() => null);
+        await page.mouse.click(at.x, at.y);
+        const tab = await opened;
+        await tab?.waitForLoadState("domcontentloaded");
+        return tab;
+      };
+
+      const unarmed = await rig(false);
+      expect({ ...unarmed, at: undefined }).toEqual({ asks: ["https://evil.ohmail.test/x?n=1"], href: null, marked: true, at: undefined });
+      expect(await press(unarmed.at.ask), "a marked link opened something before it was armed").toBeNull();
+
+      const armed = await rig(true);
+      expect(armed.href).toMatch(/^blob:/);
+      const ask = await press(armed.at.ask);
+      expect(ask, "the armed link opened no tab").not.toBeNull();
+      const askedAt = ask!.url();
+      expect(askedAt).toMatch(/^blob:/);
+      const said = await ask!.locator("body").innerText();
+      expect(said).toContain("It goes to evil.ohmail.test.");
+      expect(said).toContain("https://evil.ohmail.test/x?n=1");
+      expect(said, "the ask page named the decoy").not.toContain("bank.ohmail.test");
+      expect(await ask!.locator("a").evaluateAll((as) => as.map((a) => a.getAttribute("href"))))
+        .toEqual(["https://evil.ohmail.test/x?n=1"]);
+      await ask!.close();
+
+      const honest = await press(armed.at.honest);
+      expect(honest?.url()).toBe("https://elsewhere.ohmail.test/page");
+      await honest?.close();
+
+      expect(errors).toEqual([]);
+      const fetched = asked.filter((u) => !/^(?:blob|data):/.test(u) && !u.startsWith(ORIGIN) && !u.startsWith("https://elsewhere.ohmail.test/"));
+      expect(fetched, "the ask fetched something").toEqual([]);
+      process.stderr.write(`[inline-frame] ${name}: the armed marked link opened ${askedAt.slice(0, 5)}… and the honest one its page\n`);
+      await context.close();
+    }, 60_000);
   });
 }

@@ -1,0 +1,39 @@
+{
+  "id": "138",
+  "file": "138-yahoo-de-reply-over-outlook-hop-red-answers.eml",
+  "shape": "yahoo-de-reply-over-outlook-hop-red-answers",
+  "description": "Yahoo Mail, html only: an English attribution in div.yahoo_quoted over an Outlook for Windows reply; below its border-top Von block the older message holds the writer's red answers under the earlier writer's questions",
+  "client": "yahoo",
+  "ui_language": "de",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Dana Example"
+  ],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Dana"
+    },
+    "inlineAnswers": [
+      "Am Dienstag um 10 Uhr, er meldet sich am Empfang."
+    ],
+    "trailingTail": null
+  },
+  "notes": "Synthetic. An Outlook header block inside Yahoo's container is read from there to the container's end, as the Windows header path reads the body: the red answers keep the history open."
+}
