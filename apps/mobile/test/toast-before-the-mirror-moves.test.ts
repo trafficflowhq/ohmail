@@ -252,7 +252,7 @@ describe("no door in live.ts speaks and dispatches in one task", () => {
     // The pre-fix shape of `tagCreate` — the door this lane took the race out of — planted where
     // `tagCreate` now hands its sentence to `pilePress`.
     const withoutYield = source.replace(
-      '    return pilePress(messageId, refuse("tagTagged", typed), inv, [m]);',
+      '    return pilePress(messageId, refuse("tagTagged", typed), [m]);',
       '    toast(refuse("tagTagged", typed), undoable(inv));\n'
       + '    return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));',
     );
