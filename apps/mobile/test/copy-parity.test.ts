@@ -567,6 +567,8 @@ describe("the phone's two copy decks", () => {
        than guessing — the one arm a generic marker WOULD have reached, which is why listing only
        it would have left the other four in English unnoticed. */
     pairConfirmWhat: ["local", "desktop-host", "selfhost", "managed", "a-later-flavor"],
+    /* a suggested recipient with no name, and one with */
+    composeSuggestion: ["", "Persephone Lind"],
   };
 
   /** Deck functions whose body asks something about one of their own string parameters. */

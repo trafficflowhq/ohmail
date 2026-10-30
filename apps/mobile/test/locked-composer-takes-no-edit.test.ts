@@ -30,7 +30,7 @@ describe("the locked composer takes no edit", () => {
   });
 
   it("all four of the sheet's text fields take their change through it", () => {
-    const inputs = SHEET.split("<TextInput").slice(1).map((chunk) => chunk.slice(0, chunk.indexOf("/>")));
+    const inputs = SHEET.split(/<(?:TextInput|RecipientInput)\b/).slice(1).map((chunk) => chunk.slice(0, chunk.indexOf("/>")));
     const fields = inputs.filter((i) => /value=\{(to|subject|body|sigText)\}/.test(i));
     expect(fields.map((f) => /value=\{(\w+)\}/.exec(f)![1]).sort(), "a composer field moved out of reach").toEqual(["body", "sigText", "subject", "to"]);
     for (const f of fields) expect(f, "a composer field takes a change outside idle").toContain("onChangeText={editWhileIdle(phase, ");

@@ -26,6 +26,7 @@ import {
   liveFolder,
   liveFolderUnread,
   liveFolders,
+  liveAddressBook,
   liveMessage,
   liveOhbox,
   livePiles,
@@ -311,6 +312,9 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
            for the day, and a send left `sending` turns interrupted ten minutes later. */
         const waiting = inp.waitingSends ?? NO_WAITING;
         return kept("drafts", [engine, stamp, v, now.getTime(), waiting], () => liveDrafts(raw, { ...v, now }, waiting));
+      },
+      get addressBook() {
+        return kept("addressBook", [engine, stamp, inp.ownAddresses], () => liveAddressBook(raw, inp.ownAddresses));
       },
       folders: {
         enabled: foldersOn,

@@ -107,6 +107,7 @@ import { composeSenderOf } from "./compose-sender";
 import { editWhileIdle } from "./compose-edit";
 import { copiesShown, copiesToKeep, copiesToSend, type TypedCopies } from "./compose-copies";
 import { ComposeCopies } from "./ComposeCopies";
+import { RecipientInput, stepBack, type BackStep } from "./RecipientInput";
 import type { MailtoPrefill } from "./mailto";
 import { diagStrip } from "./help-contact";
 import { Segmented } from "./Segmented";
@@ -1194,6 +1195,9 @@ export function ComposeSheet({
   const letterView = (e: LayoutChangeEvent) => measureLetter("view", e.nativeEvent.layout.height);
   const letterMoved = (e: NativeSyntheticEvent<NativeScrollEvent>) => measureLetter("y", e.nativeEvent.contentOffset.y);
   const w = useWorld();
+  /* Read when a recipient field is typed in, not on every render of the sheet. */
+  const addressBook = () => w.addressBook;
+  const suggestionsBack = useRef<BackStep["current"]>(null);
   const toast = useWorldToast();
   /* THE COMPOSER HOLDS THE READER'S MOVE, whatever opened it (the reader's sheet, the rail's pen, a
      mailto in a body): a fold or unfold while it is open replaced or covered the New mail route and
@@ -1666,6 +1670,8 @@ export function ComposeSheet({
    * the sheet's caption is said as it goes. Only {@link cancelSend} withdraws.
    */
   const closeComposer = () => {
+    // An open suggestion list is the inner state Back steps out of first.
+    if (stepBack(suggestionsBack)) return;
     const way = cancelAct({ road: "close", phase, key: queuedKey, alreadySent, cancelOwed: cancelUnreachable });
     if (way === "keepSend") {
       w.actions.leaveSend(queuedKey!);
@@ -1998,41 +2004,22 @@ export function ComposeSheet({
             </Txt>
           ) : null}
           {addressed ? (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Txt variant="caption" tone="ink3">
-                {Copy.forwardTo}
-              </Txt>
-              <TextInput
-                ref={toField}
-                {...focusKeeper.bind(toField)}
-                maxFontSizeMultiplier={t.textCap}
-                value={to}
-                onChangeText={editWhileIdle(phase, setTo)}
-                editable={phase === "idle"}
-                /* THE FIELD A NEW MAIL OPENS ON — a composer whose first keystroke lands in
-                   the body is a composer that asks for the message before the audience. */
-                autoFocus={fresh}
-                placeholder={fresh ? Copy.composeToPlaceholder : Copy.forwardToPlaceholder}
-                placeholderTextColor={t.c.ink3}
-                accessibilityLabel={Copy.forwardTo}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-                style={[
-                  t.type.body,
-                  {
-                    flex: 1,
-                    color: t.c.ink,
-                    backgroundColor: t.c.tint2,
-                    borderRadius: t.radius.pill,
-                    paddingHorizontal: 14,
-                    paddingVertical: 8,
-                  },
-                ]}
-              />
-            </View>
+            <RecipientInput
+              label={Copy.forwardTo}
+              ref={toField}
+              {...focusKeeper.bind(toField)}
+              value={to}
+              onChangeText={editWhileIdle(phase, setTo)}
+              editable={phase === "idle"}
+              book={addressBook}
+              back={suggestionsBack}
+              /* THE FIELD A NEW MAIL OPENS ON — a composer whose first keystroke lands in
+                 the body is a composer that asks for the message before the audience. */
+              autoFocus={fresh}
+              placeholder={fresh ? Copy.composeToPlaceholder : Copy.forwardToPlaceholder}
+            />
           ) : null}
-          {copiesOn ? <ComposeCopies value={copies} editable={phase === "idle"} onChange={editWhileIdle(phase, setCopies)} /> : null}
+          {copiesOn ? <ComposeCopies value={copies} editable={phase === "idle"} onChange={editWhileIdle(phase, setCopies)} book={addressBook} back={suggestionsBack} /> : null}
           {fresh ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               <Txt variant="caption" tone="ink3">
