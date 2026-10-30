@@ -276,6 +276,11 @@ export function useShellDerivations({
     engine.setCutline(widestWindowOf(consent.screeningByMailbox)
       ?? { dormancyDays: consent.dormancyDays, scope: consent.screeningScope });
   }, [engine, demo, consent.known, consent.standalone, consent.dormancyDays, consent.screeningScope, screeningByMailboxKey]);
+  // Each mailbox's recorded Sent folder, from the last answered read; the engine ignores a repeat.
+  useEffect(() => {
+    if (demo || facts === null) return;
+    engine.setSentFolders(facts);
+  }, [engine, demo, facts]);
   const consentView: ConsentPartition | null = useMemo(
     // The demo is not partitioned — consent derives from rules and the fixture world has none, so
     // the partition would empty the curated world into History. RULES NEVER WAIT FOR THE READ: until

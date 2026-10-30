@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  FixturesAdapter,
   MemoryMirrorStore,
+  OhmailEngine,
   consentPartition,
   isPersonsOwnFolder,
   presentationReader,
@@ -53,8 +55,8 @@ const five = Array.from({ length: 5 }, (_, i) => message(`in-${i}`, "INBOX"));
 
 describe("a folder the person made is where a press leaves mail", () => {
   it("names the classes: a folder of theirs, never an organized, Sent, Trash or Junk folder", () => {
-    expect(["Fixture", "Archive/2026", "INBOX/Projects"].map(isPersonsOwnFolder)).toEqual([true, true, true]);
-    expect(["INBOX", "ohmail/News", "Sent", "Trash", "INBOX/Junk", "Spam", "Drafts", null].map(isPersonsOwnFolder))
+    expect(["Fixture", "Archive/2026", "INBOX/Projects"].map((f) => isPersonsOwnFolder(f, "mb"))).toEqual([true, true, true]);
+    expect(["INBOX", "ohmail/News", "Sent", "Trash", "INBOX/Junk", "Spam", "Drafts", null].map((f) => isPersonsOwnFolder(f, "mb")))
       .toEqual([false, false, false, false, false, false, false, false]);
   });
 
@@ -75,5 +77,18 @@ describe("a folder the person made is where a press leaves mail", () => {
 
   it("positive control: a sender ohmail filed all of reads none, as before", async () => {
     expect(await verdictOf(five, true)).toEqual({ key: "none" });
+  });
+
+  it("the mailbox's recorded Sent folder is Sent, not a folder of theirs: none; unstated it still is", async () => {
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter(), now: () => NOW });
+    expect(await verdictOf([...five, message("nl-1", "INBOX/Verzonden")], false)).toMatchObject({ key: "still", still: 1 });
+    try {
+      engine.setSentFolders([{ id: "mb", sentFolder: "INBOX/Verzonden" }]);
+      expect(isPersonsOwnFolder("INBOX/Verzonden", "mb")).toBe(false);
+      expect(isPersonsOwnFolder("INBOX/Verzonden", "mb-other")).toBe(true);
+      expect(await verdictOf([...five, message("nl-1", "INBOX/Verzonden")], false)).toEqual({ key: "none" });
+    } finally {
+      engine.setSentFolders([]);
+    }
   });
 });

@@ -465,7 +465,7 @@ describe("a stopped mailbox, and one nobody ever agreed to", () => {
   const box = (over: Partial<PhoneMailbox>): PhoneMailbox => ({
     id: "m1", address: "one@fake.test", organizerRole: null, organizeConsentedAt: null,
     organizedBy: null, organizedByThisInstall: false, organizerState: null, status: null,
-    junkFolder: null, smtpMaxSizeBytes: null, firstSyncStopFolder: null, ...over,
+    junkFolder: null, sentFolder: null, smtpMaxSizeBytes: null, firstSyncStopFolder: null, ...over,
   });
 
   it("a consented reader was stopped; a reader who never consented was not", () => {

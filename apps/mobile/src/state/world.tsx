@@ -1779,6 +1779,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       : null);
   }, [engine, screening]);
 
+  // Each mailbox's recorded Sent folder, from the last successful read; the engine ignores a repeat.
+  useEffect(() => {
+    if (engine === null || mailboxes === null) return;
+    engine.setSentFolders(mailboxes);
+  }, [engine, mailboxes]);
+
   /**
    * THE MAILBOX'S OWN PROJECTION — derived from the mirror, never from the connection.
    *

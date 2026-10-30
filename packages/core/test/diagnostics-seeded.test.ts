@@ -44,7 +44,7 @@ const MAILBOX_ROWS = [
   {
     id: MAILBOX_ID, address: ADDRESS, displayName: SUBJECT, status: "connected",
     errorCode: HOST, disabledReason: SENTENCE, syncBlockedReason: FOLDER, organizerRole: "organizer",
-    organizerState: "held", junkFolder: FOLDER, firstSyncStopFolder: FOLDER_WORD,
+    organizerState: "held", junkFolder: FOLDER, sentFolder: FOLDER, firstSyncStopFolder: FOLDER_WORD,
     organizedBy: { kind: "local", name: HOST }, lastSyncAt: TS, releaseRefusal: SENTENCE,
   },
   { id: SPLIT_ADDRESS, status: SENTENCE, organizerRole: FOLDER_WORD, organizerState: HOST },

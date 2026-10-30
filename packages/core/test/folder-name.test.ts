@@ -92,3 +92,28 @@ describe("pileFolder and the News spellings", () => {
     expect(leaf.LEGACY_NEWS_FOLDER).toBe(types.LEGACY_NEWS_FOLDER);
   });
 });
+
+/** The Sent folder a mailbox recorded at attach (`mailboxes.sent_folder`) counts beside the Sent-shaped names. */
+describe("isSentFolderOf", () => {
+  it("the recorded path is Sent, exactly and only when recorded; INBOX never is", async () => {
+    const { isSentFolderOf } = await import("../src/types.js");
+    for (const p of ["Envoyés", "INBOX.Verzonden", "INBOX/Verzonden"]) {
+      expect(isSentFolderOf(p, p), p).toBe(true);
+      expect(isSentFolderOf(p, null), p).toBe(false);
+      expect(isSentFolderOf(p, ""), p).toBe(false);
+      expect(isSentFolderOf(p, undefined), p).toBe(false);
+    }
+    expect(isSentFolderOf("envoyés", "Envoyés")).toBe(false);
+    expect(isSentFolderOf("INBOX.Verzonden", "INBOX/Verzonden")).toBe(false);
+    expect(isSentFolderOf("INBOX", "INBOX")).toBe(false);
+    expect(isSentFolderOf("inbox", "inbox")).toBe(false);
+    expect(isSentFolderOf("Sent", null)).toBe(true);
+    expect(isSentFolderOf("Sent", "Envoyés")).toBe(true);
+  });
+
+  it("the browser-safe leaf hands out the same function", async () => {
+    const types = await import("../src/types.js");
+    const leaf = await import("../src/folder-name.js");
+    expect(leaf.isSentFolderOf).toBe(types.isSentFolderOf);
+  });
+});

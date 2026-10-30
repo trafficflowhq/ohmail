@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FixturesAdapter, OhmailEngine } from "@ohmail/client-engine";
 import {
   accountOrganizer, firstRunCounts, firstRunSubject,
 } from "../app/shell/first-run-subject";
@@ -119,6 +120,19 @@ describe("firstRunCounts — this mailbox's mail, not the install's", () => {
     // One old Sent letter is listed under History, as the cutline lists pre-line outbound mail.
     expect(firstRunCounts([...inbound, ...sent], [sent[0]!, inbound[0]!], "mb-1"))
       .toEqual({ screened: 4, history: 2 });
+  });
+
+  it("own letters in the mailbox's recorded Sent folder ('Envoyés') are never screened either", () => {
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter() });
+    const inbound = Array.from({ length: 5 }, () => ({ mailboxId: "mb-fr", folder: "INBOX" }));
+    const sent = Array.from({ length: 3 }, () => ({ mailboxId: "mb-fr", folder: "Envoyés" }));
+    expect(firstRunCounts([...inbound, ...sent], [inbound[0]!], "mb-fr")).toEqual({ screened: 7, history: 1 });
+    try {
+      engine.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }]);
+      expect(firstRunCounts([...inbound, ...sent], [inbound[0]!], "mb-fr")).toEqual({ screened: 4, history: 1 });
+    } finally {
+      engine.setSentFolders([]);
+    }
   });
 
   it("clamped: History may out-run the mirror between two reads and must not print a negative", () => {

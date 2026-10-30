@@ -1,20 +1,21 @@
 import {
   LEGACY_NEWS_FOLDER, canonicalDestination, isOrganizedFolder, retroWalkWouldMove,
 } from "@trafficflow/core/destinations";
-import { RESERVED_FOLDER_LEAF, isSentFolderPath } from "@trafficflow/core/folder-name";
+import { RESERVED_FOLDER_LEAF, isSentFolderOf } from "@trafficflow/core/folder-name";
+import { recordedSentFolderOf } from "./sent-folders.js";
 import { authScreens } from "@trafficflow/core/sender-headers";
 import { consentIndex, messagePlacement, ruleTerms } from "./consent-cutline.js";
 import type { EntityReader } from "./store.js";
 import { folderLeaf, type EngineMessage, type Folder, type MailboxProfileEntity, type RuleDTO } from "./types.js";
 
 /**
- * A FOLDER THE PERSON MADE: outside the folders ohmail organizes, not Sent, and not a server
+ * A FOLDER THE PERSON MADE: outside the folders ohmail organizes, not this mailbox's Sent, and not a server
  * folder by its name (Trash, Junk, Drafts, All Mail — the leaf belt the folder scan uses). Mail
  * another app filed there is a place the screening sheet and the press sentence count, because
  * the rule's pass leaves it there; Trash and Junk are where the person put mail away, never counted.
  */
-export function isPersonsOwnFolder(folder: string | null | undefined): boolean {
-  if (!folder || isOrganizedFolder(folder) || isSentFolderPath(folder)) return false;
+export function isPersonsOwnFolder(folder: string | null | undefined, mailboxId: string): boolean {
+  if (!folder || isOrganizedFolder(folder) || isSentFolderOf(folder, recordedSentFolderOf(mailboxId))) return false;
   return !RESERVED_FOLDER_LEAF.test(folderLeaf(folder));
 }
 
@@ -86,7 +87,7 @@ export function pressOutcome(input: {
   };
   for (const m of input.subject) {
     const filed = m.physicalFolder ?? m.folder;
-    const own = isPersonsOwnFolder(filed);
+    const own = isPersonsOwnFolder(filed, m.mailboxId);
     if (!own && !isOrganizedFolder(filed)) continue;
     const shown = input.presented.get<EngineMessage>("message", m.id);
     const where = shown === undefined ? null : canonicalDestination(shown.folder) as Folder;

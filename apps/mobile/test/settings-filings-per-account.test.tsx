@@ -87,7 +87,7 @@ function ownEngine(): StandaloneEngine {
 
 const cloudBox: PhoneMailbox = {
   id: "m-cloud", address: "cloud@example.test", organizerRole: "organizer", organizeConsentedAt: null, organizedBy: null,
-  organizedByThisInstall: true, organizerState: null, status: "connected", junkFolder: null, smtpMaxSizeBytes: null,
+  organizedByThisInstall: true, organizerState: null, status: "connected", junkFolder: null, sentFolder: null, smtpMaxSizeBytes: null,
   firstSyncStopFolder: null,
   filing: { due: 6, deferred: 6, stuck: 6, stuckSince: "2026-10-24T09:00:00.000Z", stuckRefusalClass: "no_such_folder",
     lastRefusalClass: "no_such_folder", nextAttemptAt: "2026-10-24T15:00:00.000Z", asOf: null },

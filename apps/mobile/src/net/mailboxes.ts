@@ -109,6 +109,12 @@ export interface PhoneMailbox {
    */
   junkFolder: string | null;
   /**
+   * The Sent folder the attach recorded — `MailboxDTO.sentFolder` (mail 0132), the canonical path
+   * as the server wrote it. The engine takes it (`setSentFolders`) so the account's own letters in
+   * a Sent folder by another name ('Envoyés') are its own. `null`: none recorded, or not said.
+   */
+  sentFolder: string | null;
+  /**
    * WHEN THIS MAILBOX'S FIRST IMPORT FINISHED — `MailboxDTO.initialImportCompletedAt`, `null` while
    * it runs. The held-claim term reads it (`ConsentOptions.firstImportDoneAt`). ABSENT where a server
    * older than the field answered, which the partition reads as an import finished.
@@ -280,6 +286,8 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         /* An empty string is not a folder name. A server that predates the field sends nothing
            here, which lands as `null` — the same instruction as "no Junk folder": say nothing. */
         junkFolder: typeof r.junkFolder === "string" && r.junkFolder !== "" ? r.junkFolder : null,
+        // Untouched: the engine matches it exactly.
+        sentFolder: typeof r.sentFolder === "string" && r.sentFolder !== "" ? r.sentFolder : null,
         ...(r.initialImportCompletedAt === null
           ? { initialImportCompletedAt: null }
           : typeof r.initialImportCompletedAt === "string" && r.initialImportCompletedAt !== ""

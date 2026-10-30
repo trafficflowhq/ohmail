@@ -120,7 +120,7 @@ describe("no move past a message that failed its checks", () => {
 describe("localized Sent and Trash names are no folder of the person's own", () => {
   const LOCALIZED = ["Gesendet", "Gesendete Elemente", "INBOX/Sent Items", "Papierkorb", "Gelöschte Elemente", "Junk-E-Mail", "Spam", "Deleted Messages"];
   it("each reads as not theirs", () => {
-    expect(LOCALIZED.map(isPersonsOwnFolder)).toEqual(LOCALIZED.map(() => false));
+    expect(LOCALIZED.map((f) => isPersonsOwnFolder(f, "mb"))).toEqual(LOCALIZED.map(() => false));
   });
   it("five at the place and one in each: none, all five", async () => {
     const { v } = await verdictOf([...five, ...LOCALIZED.map((f, i) => message(`x-${i}`, f))]);

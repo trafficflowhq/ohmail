@@ -107,7 +107,7 @@ const sentBody = (fake: ReturnType<typeof mailServer>) =>
   JSON.parse(fake.seen.find((r) => r.method === "POST" && r.url === SEND)!.body) as { forwardParts?: string[]; attachments?: unknown[] };
 const box = (smtpMaxSizeBytes: number | null): PhoneMailbox => ({
   id: "mb-1", address: "me@fake.test", organizerRole: null, organizeConsentedAt: null, organizedBy: null,
-  organizedByThisInstall: false, organizerState: null, status: null, junkFolder: null, smtpMaxSizeBytes, firstSyncStopFolder: null,
+  organizedByThisInstall: false, organizerState: null, status: null, junkFolder: null, sentFolder: null, smtpMaxSizeBytes, firstSyncStopFolder: null,
 });
 /** The optimistic Sent copy's files, by name. */
 const sentCopyFiles = (live: Awaited<ReturnType<typeof scene>>) => {

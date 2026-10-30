@@ -131,7 +131,7 @@ describe("readMailboxes — the wire, and what it refuses to guess", () => {
         // Nobody consented on this wire, and nothing paused it (mail 0135).
         organizeConsentedAt: null, organizerParkedAt: null,
         organizedBy: { kind: "local", name: "laptop" }, organizedByThisInstall: false,
-        organizerState: "held", status: null, junkFolder: null,
+        organizerState: "held", status: null, junkFolder: null, sentFolder: null,
         smtpMaxSizeBytes: null, firstSyncStopFolder: null,
       },
     ]);
@@ -159,10 +159,21 @@ describe("readMailboxes — the wire, and what it refuses to guess", () => {
         // Nobody consented on this wire, and nothing paused it (mail 0135).
         organizeConsentedAt: null, organizerParkedAt: null,
         organizedBy: { kind: "local", name: "laptop" }, organizedByThisInstall: false,
-        organizerState: "held", status: null, junkFolder: null,
+        organizerState: "held", status: null, junkFolder: null, sentFolder: null,
         smtpMaxSizeBytes: null, firstSyncStopFolder: null,
       },
     ]);
+  });
+
+  it("reads the recorded Sent folder as the path, untouched, or `null` (mail 0132)", async () => {
+    const out = await readMailboxes(session(ok([
+      { id: "m1", address: "a@b.test", sentFolder: "INBOX.Verzonden" },
+      { id: "m2", address: "c@d.test", sentFolder: "" },
+      { id: "m3", address: "e@f.test", sentFolder: null },
+      { id: "m4", address: "g@h.test", sentFolder: 7 },
+      { id: "m5", address: "i@j.test" },
+    ])));
+    expect(out!.map((m) => m.sentFolder)).toEqual(["INBOX.Verzonden", null, null, null, null]);
   });
 
   it("reads the closed account's pause, a non-empty instant or `null` (mail 0135)", async () => {

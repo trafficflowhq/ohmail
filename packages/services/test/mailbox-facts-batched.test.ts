@@ -170,6 +170,18 @@ describe("GET /mailboxes reads every mailbox's facts in a fixed number of statem
     expect((await svc.list(ctxFor(db, acct)))[0]!.pendingMoves).toBe(4);
   });
 
+  it("projects the Sent folder the attach recorded: the column's value, null when NULL", async () => {
+    const db = await makeTestDb();
+    const acct = id("c0");
+    await db.insert(accounts).values({ id: acct, name: "mfb-sent" });
+    await db.insert(mailboxes).values([
+      { id: id("c1"), accountId: acct, provider: "imap", address: "c1@example.test", sentFolder: "Envoyés" },
+      { id: id("c2"), accountId: acct, provider: "imap", address: "c2@example.test" },
+    ]);
+    const rows = await svc.list(ctxFor(db, acct));
+    expect(rows.map((r) => [r.id, r.sentFolder])).toEqual([[id("c1"), "Envoyés"], [id("c2"), null]]);
+  });
+
   it("takes the counts and `asOf` at one reading of the clock", async () => {
     const db = await makeTestDb();
     const acct = id("d0");

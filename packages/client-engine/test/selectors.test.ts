@@ -5,6 +5,7 @@ import {
   FOLDER_OF_VIEW,
   FixturesAdapter,
   OhmailEngine,
+  isFromSomeone,
   isOwnSent,
   messagesIn,
   ohboxView,
@@ -282,6 +283,86 @@ describe("ohboxView — own-sent in Earlier", () => {
     expect(view.previouslySeen.map((m) => m.id)).toEqual(["recent"]);
     // The symptom itself: the top of the Ohbox is not a message from May.
     expect(view.previouslySeen[0]?.date).toBe("2026-08-30T12:10:06.000Z");
+  });
+});
+
+/* A Sent folder by another name ('Envoyés', 'INBOX.Verzonden'): the mailbox read states the
+   recorded path (`setSentFolders`), and the predicate takes it beside the Sent-shaped names. */
+describe("ohboxView — the mailbox's recorded Sent folder", () => {
+  const own = (id: string, mailboxId: string, folder: string) =>
+    mkMsg({ id, mailboxId, folder, unread: true, date: "2026-08-03T10:00:00.000Z" });
+
+  it("own letters in a stated 'Envoyés' or 'INBOX.Verzonden' are own-sent and in Earlier", async () => {
+    const engine = await demoEngine();
+    try {
+      expect(engine.setSentFolders([
+        { id: "mb-own-fr", sentFolder: "Envoyés" }, { id: "mb-own-nl", sentFolder: "INBOX.Verzonden" },
+        { id: "mb-own-nl2", sentFolder: "INBOX/Verzonden" },
+      ])).toBe(true);
+      const fr = own("fr", "mb-own-fr", "Envoyés");
+      const nl = own("nl", "mb-own-nl", "INBOX.Verzonden");
+      const nl2 = own("nl2", "mb-own-nl2", "INBOX/Verzonden");
+      // The same path in a mailbox that stated none is somebody's folder, not Sent.
+      const elsewhere = own("elsewhere", "mb-own-none", "Envoyés");
+      const view = ohboxView(readerOf({ message: [fr, nl, nl2, elsewhere] }));
+      for (const m of [fr, nl, nl2]) {
+        expect(isOwnSent(m), m.folder).toBe(true);
+        expect(isFromSomeone(m), m.folder).toBe(false);
+      }
+      expect(view.previouslySeen.map((m) => m.id).sort()).toEqual(["fr", "nl", "nl2"]);
+      expect(view.newForYou).toEqual([]);
+      expect(isOwnSent(elsewhere)).toBe(false);
+    } finally {
+      engine.setSentFolders([]);
+    }
+  });
+
+  it("a stated INBOX is never Sent: an unread INBOX letter stays in New for you", async () => {
+    const engine = await demoEngine();
+    try {
+      engine.setSentFolders([{ id: "mb-own-inbox", sentFolder: "INBOX" }]);
+      const letter = mkMsg({ id: "in", mailboxId: "mb-own-inbox", folder: "INBOX", unread: true });
+      expect(isOwnSent(letter)).toBe(false);
+      expect(ohboxView(readerOf({ message: [letter] })).newForYou.map((m) => m.id)).toEqual(["in"]);
+    } finally {
+      engine.setSentFolders([]);
+    }
+  });
+
+  it("restating null, or leaving the mailbox out, clears it", async () => {
+    const engine = await demoEngine();
+    try {
+      const fr = own("fr", "mb-own-fr", "Envoyés");
+      const nl = own("nl", "mb-own-nl", "INBOX.Verzonden");
+      engine.setSentFolders([{ id: "mb-own-fr", sentFolder: "Envoyés" }, { id: "mb-own-nl", sentFolder: "INBOX.Verzonden" }]);
+      expect(engine.setSentFolders([{ id: "mb-own-fr", sentFolder: null }, { id: "mb-own-nl", sentFolder: "INBOX.Verzonden" }])).toBe(true);
+      expect(isOwnSent(fr)).toBe(false);
+      expect(isOwnSent(nl)).toBe(true);
+      expect(engine.setSentFolders([{ id: "mb-own-fr" }])).toBe(true);
+      expect(isOwnSent(nl)).toBe(false);
+    } finally {
+      engine.setSentFolders([]);
+    }
+  });
+
+  it("a statement re-derives the views; an identical one changes nothing", async () => {
+    const engine = await demoEngine();
+    try {
+      const before = ohboxView(engine.read());
+      const v0 = engine.read().version();
+      expect(engine.setSentFolders([{ id: "mb-own-fr", sentFolder: "Envoyés" }])).toBe(true);
+      // MUTATION WATCHED: without the overlay bump the memoized view of the old answer comes back.
+      expect(ohboxView(engine.read())).not.toBe(before);
+      const v1 = engine.read().version();
+      expect(v1).not.toBe(v0);
+      // MUTATION WATCHED: without the equality gate every poll re-derives the whole mirror.
+      expect(engine.setSentFolders([{ id: "mb-own-fr", sentFolder: "Envoyés" }])).toBe(false);
+      expect(engine.read().version()).toBe(v1);
+      // A Sent-shaped name is no statement: names already decide it.
+      expect(engine.setSentFolders([{ id: "mb-own-fr", sentFolder: "Envoyés" }, { id: "mb-own-en", sentFolder: "Sent" }])).toBe(false);
+    } finally {
+      engine.setSentFolders([]);
+    }
   });
 });
 

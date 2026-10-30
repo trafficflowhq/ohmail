@@ -1473,6 +1473,8 @@ export interface MailboxDTO {
    * every absence is the same instruction to the renderer: say nothing.
    */
   junkFolder?: string | null;
+  /** The Sent folder the attach recorded (mail 0132), or `null`; absent on an older API — see `MailboxFacts`. */
+  sentFolder?: string | null;
   /** Why sending is not set up for this mailbox, or `null` when it is — see `MailboxFacts`. */
   sendingUnsettledReason?: string | null;
   /**
