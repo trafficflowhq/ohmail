@@ -1591,13 +1591,16 @@ export interface WorldReceipts {
    * Without this the leave-commit wrote a line nothing ever rendered.
    */
   waterlineAboveId: string | null;
+  /** The stream's own `\Seen` unread, what mark-all-read flips — see {@link WorldReads.unreadIds}. */
+  unreadIds: string[];
   newCount: number;
   total: number;
 }
 
 export function liveReceipts(pres: EntityReader, v: WorldView): WorldReceipts {
   // The phone's own word for today: Hermes has no Intl.RelativeTimeFormat to answer it.
-  const groups = receiptsByDay(pres, v.now, v.locale ?? "en", v.zone, { today: Copy.today }).map((g) => ({
+  const days = receiptsByDay(pres, v.now, v.locale ?? "en", v.zone, { today: Copy.today });
+  const groups = days.map((g) => ({
     label: g.label,
     items: g.items.map((m) => toListRow(pres, m, v)),
   }));
@@ -1609,6 +1612,8 @@ export function liveReceipts(pres: EntityReader, v: WorldView): WorldReceipts {
   return {
     groups,
     waterlineAboveId: part.waterline ? part.seen[0]?.id ?? null : null,
+    // The engine rows' own flag, as in Reads.
+    unreadIds: days.flatMap((g) => g.items.filter((m) => m.unread).map((m) => m.id)),
     newCount: part.newCount,
     total: all.length,
   };
