@@ -1502,6 +1502,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   search_setup_failed: "error",
   search_index_backfill_finished: "info",
   search_index_backfill_failed: "error",
+  // search-backfill.ts — the html-words backfill (mail 0172) on the same gate: one `info` line with
+  // counts when its marker is written; a failed round is `error`, and its cursor holds.
+  html_words_backfill_finished: "info",
+  html_words_backfill_failed: "error",
   // search-warmup.ts — the launch's one warm-up search: `info` with its ms when it ran or when a
   // person came first and it was skipped, `error` by the suffix rule when it failed (not retried).
   search_warmed: "info",

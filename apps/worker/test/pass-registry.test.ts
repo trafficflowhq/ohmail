@@ -90,6 +90,7 @@ const IN_WORKER_PASSES: readonly string[] = [
   "gate-release.ts::gateReleasePass",
   "sender-check-backfill.ts::senderCheckBackfillPass",
   "list-address-backfill.ts::listAddressBackfillPass",
+  "html-words-backfill.ts::htmlWordsBackfillPass",
   "inbound-quiet.ts::inboundQuietPass",
   "junk-rescue.ts::junkRescuePass",
   "junk-restore.ts::junkRestorePass",

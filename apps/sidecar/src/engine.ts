@@ -195,6 +195,10 @@ import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
    store is the authority and no worker will walk the backlog, so without it a Screener decision
    re-presented the old mail while the mailbox kept it where it was. */
 import { ruleRetroPass } from "@trafficflow/worker/rule-retro";
+/* OLDER HTML-ONLY LETTERS' WORDS, the worker's store-only pass: here the store is the authority. */
+import {
+  HTML_WORDS_LOCAL_BUDGET_MS, HTML_WORDS_LOCAL_SCAN_ROWS, htmlWordsBackfillPass,
+} from "@trafficflow/worker/html-words-backfill";
 import { arrivalBackfill, type ArrivalBackfill, type ArrivalReader } from "./arrival-backfill.js";
 /* MAIL FROM A GAP, the worker's pass for the same reason: on this door no worker rules the mail
    that arrived while nothing organized the mailbox. */
@@ -273,7 +277,7 @@ import {
 import { WINDOW_OUTBOX_ROUTE, adoptLegacyWindowOutbox, createWindowOutbox, windowOutboxOwnerKey } from "./window-outbox.js";
 import { createAttentionClock, isPersonRequest } from "./attention.js";
 import type { PowerVerdict } from "./host-power.js";
-import { startSearchIndexBackfill } from "./search-backfill.js";
+import { startHtmlWordsBackfill, startSearchIndexBackfill } from "./search-backfill.js";
 import { SEARCH_WARMUP_WORD, createSearchWarmup, type SearchWarmup } from "./search-warmup.js";
 import { createStatisticsUpkeep } from "./store-statistics.js";
 import { localRetentionDue, runLocalRetention } from "./local-retention.js";
@@ -9436,6 +9440,25 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           ...(config.searchBackfillTiming ?? {}),
         })
       : null;
+    /* OLDER HTML-ONLY LETTERS GET THEIR WORDS — the same gate, the phone included; one bounded page
+       per round, a turn of the event loop between rows (`html-words-backfill.ts`). */
+    const htmlWordsBackfill = runsStorePass(organizerKind, "html-words-backfill")
+      ? startHtmlWordsBackfill({
+          round: async () => {
+            const began = performance.now();
+            const r = await htmlWordsBackfillPass(db as unknown as Tx, {
+              accountId: world.accountId, scanRows: HTML_WORDS_LOCAL_SCAN_ROWS, turn: loopTurn,
+              until: () => performance.now() - began >= HTML_WORDS_LOCAL_BUDGET_MS,
+            });
+            return { ran: r.ran, written: r.filled, marked: r.marked };
+          },
+          quietForMs: () => attention.quietForMs(),
+          ingesting: ingestIsRunning,
+          ...(config.hostPower ? { power: config.hostPower } : {}),
+          log,
+          ...(config.searchBackfillTiming ?? {}),
+        })
+      : null;
     /* THE FIRST SEARCH'S COLD START, PAID AT LAUNCH IDLE — the same composition as the backfill
        (the desktop's own store); see `search-warmup.ts`. The answer is dropped. */
     searchWarmup = runsStorePass(organizerKind, "search-index-backfill")
@@ -9534,7 +9557,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
       const [requestsMs, backfillMs, mailboxesMs] = await Promise.all([
         writer(plan.requests ?? Promise.resolve(), requestsBy),
-        writer(searchBackfill?.stop() ?? Promise.resolve(), passBy),
+        writer(Promise.all([searchBackfill?.stop(), htmlWordsBackfill?.stop()]), passBy),
         writer(Promise.all(detaching.map((d) => d.passSettled)), passBy),
       ]);
       /* A quarter second at least, for a pass cut at `passBy` to unwind its last statement, or a
@@ -11124,7 +11147,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         stopVitals();
         if (plan !== undefined) return quit(plan);
         // A round in flight finishes before the store closes under it.
-        await searchBackfill?.stop();
+        await Promise.all([searchBackfill?.stop(), htmlWordsBackfill?.stop()]);
         searchWarmup?.stop();
         /* AND THE CLAIM GOES BACK WITH EACH MAILBOX, inside `detach()` — see the block there.
            NOT a `handBack()` pass in front of this one: that queues BEHIND an in-flight cycle, so

@@ -2772,6 +2772,14 @@ export const accountSettings = pgTable("account_settings", {
    * afterwards is ingest's to record. LAST: `ADD COLUMN` appends and the twins are compared in order.
    */
   listAddressesScannedAt: timestamp("list_addresses_scanned_at", { withTimezone: true }),
+  /**
+   * Mail 0172 — when the html-words backfill had walked every stored message: an html-only letter
+   * stored before ingest kept its html's words now has them as its text. NULL = still owed.
+   * LAST, with its cursor below: `ADD COLUMN` appends and the twins are compared in order.
+   */
+  htmlWordsBackfillAt: timestamp("html_words_backfill_at", { withTimezone: true }),
+  /** The walk's resume point: the last message id it decided, in id order. NULL = from the start. */
+  htmlWordsBackfillCursor: uuid("html_words_backfill_cursor"),
 });
 
 /**

@@ -15,6 +15,7 @@ import {
 import {
   resetSensitiveBackfillProgress, sensitiveBackfillPass, __fromStoredRow, __snippetOf,
 } from "../src/sensitive-backfill.js";
+import { htmlWordsBackfillPass } from "../src/html-words-backfill.js";
 
 /**
  * REPAIRING THE BODIES A CLASSIFIER FALSE POSITIVE STORED REDACTED.
@@ -823,6 +824,29 @@ describe("an html-only letter, whose stored text is its html's words", () => {
     expect(classifySensitivity(norm).flags).toMatchObject({ no_ai: true, no_kb: true });
 
     const id = await seedWithheld(w, { raw: SIGN_IN_RELATED_RAW, storedText, storedHtml });
+    const r = await run(w, undefined, { maxBytes: 8 });
+    expect(r).toMatchObject({ examined: 1, candidates: 0, fetched: 0, clearedFromStored: 0 });
+    const [m] = await w.db.select().from(messages).where(eq(messages.id, id));
+    expect([m!.noAi, m!.noKb]).toEqual([true, true]);
+  });
+
+  it("stored before the words and filled by the html-words backfill, it keeps its flags and its verdict", async () => {
+    const w = await newWorld();
+    const norm = await normalizeMime(Buffer.from(SIGN_IN_RELATED_RAW, "utf8"));
+    const storedHtml = prepareHtmlForStorage(norm.htmlBody);
+    const blank = __fromStoredRow({
+      messageId: "m", dedupKey: "k", messageIdHeader: null, subject: norm.subject, storedText: "", storedHtml, locator: null,
+    });
+    const id = await seedWithheld(w, { raw: SIGN_IN_RELATED_RAW, storedText: "", storedHtml });
+    expect(await htmlWordsBackfillPass(w.db, { accountId: w.accountId })).toMatchObject({ filled: 1, marked: true });
+    const [body] = await w.db.select({ text: messageBodies.text }).from(messageBodies).where(eq(messageBodies.messageId, id));
+    expect(body!.text).toBe(norm.textBody);
+    const filled = __fromStoredRow({
+      messageId: "m", dedupKey: "k", messageIdHeader: null, subject: norm.subject, storedText: body!.text, storedHtml, locator: null,
+    });
+    expect(classifySensitivity(filled)).toEqual(classifySensitivity(norm));
+    expect(classifySensitivity(filled)).toEqual(classifySensitivity(blank));
+
     const r = await run(w, undefined, { maxBytes: 8 });
     expect(r).toMatchObject({ examined: 1, candidates: 0, fetched: 0, clearedFromStored: 0 });
     const [m] = await w.db.select().from(messages).where(eq(messages.id, id));

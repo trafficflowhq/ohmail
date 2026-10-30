@@ -906,6 +906,9 @@ describe("the baseline cutoff is frozen", () => {
       "0170_outbound_sent_copies",
       // The arrival index on its new key: CREATE INDEX IF NOT EXISTS, no data. Safe over any history.
       "0171_messages_arrival_key",
+      // The html-words backfill's stamp and cursor: two nullable ADD COLUMN IF NOT EXISTS on
+      // account_settings, no data. Safe over any history.
+      "0172_html_words_backfill",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting
