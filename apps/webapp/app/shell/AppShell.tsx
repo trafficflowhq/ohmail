@@ -2034,6 +2034,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frPhase, frCode]);
 
+  /** The Screener's standing says the balance is empty: the draft offer says so instead of a price. */
+  const draftNoCredits = suggestions.standing === "no_budget";
 
   const chrome = useMemo(
     () => ({
@@ -2120,7 +2122,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       // same reason: `MessagePane` is mounted TWICE while the reader is open, and an offer
       // held per-pane would be two offers, each able to spend an AI action the other one
       // knew nothing about.
-      draftReply: draftReplyChrome,
+      draftReply: draftNoCredits ? { ...draftReplyChrome, noCredits: true } : draftReplyChrome,
       openSenderMenu, senderSheetFor: senderMenu?.messageId ?? null,
       // The "me" chip's identity and the contact popover's two verbs (viewer redesign). Write seeds
       // a compose; the Screener entry is the WIDENED openSenderMenu — the chip's address rides
@@ -2159,7 +2161,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
           });
         },
     }),
-    [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
+    [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome, draftNoCredits,
       forwardAsk, confirmForward, replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit, replyForwardFiles,
       onReplySig, onReplySubject,
       consent.signatures, consent.signaturesHtml, consent.signaturesKnown,

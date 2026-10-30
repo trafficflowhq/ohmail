@@ -63,6 +63,8 @@ export function useTrashPage(
   active: boolean,
   /** Ids a held restore is hiding — the shell's window publishes this set. See the header. */
   hidden: ReadonlySet<string>,
+  /** Deletes the server has confirmed so far (`useDeleteUndo`'s `landed`); a rise re-reads page one. */
+  landed = 0,
 ): TrashPage {
   const [items, setItems] = useState<TrashRowWire[]>([]);
   const [loading, setLoading] = useState(false);
@@ -134,6 +136,27 @@ export function useTrashPage(
     // that would ask for page one again the moment the walk finished.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
+
+  /* A DELETE THAT LANDS WHILE TRASH IS OPEN. Page one was read on arrival, often while the delete
+     was still held for its Undo, so it is read again and its new rows go on top; the cursor and
+     the rows below are kept. Away from Trash nothing is read: the next arrival reads page one. */
+  const visit = useRef(0);
+  const seenLanded = useRef(landed);
+  useEffect(() => { visit.current += 1; }, [active]);
+  useEffect(() => {
+    if (seenLanded.current === landed) return;
+    seenLanded.current = landed;
+    if (!active || !available) return;
+    const at = visit.current;
+    void engine.listTrash({ limit: TRASH_PAGE_LIMIT }).then((outcome) => {
+      if (visit.current !== at || outcome.state !== "ready") return;
+      setItems((prev) => {
+        const have = new Set(prev.map((r) => r.id));
+        const fresh = outcome.items.filter((r) => !have.has(r.id));
+        return fresh.length === 0 ? prev : [...fresh, ...prev];
+      });
+    });
+  }, [landed, active, available, engine]);
 
   return {
     available,

@@ -136,4 +136,44 @@ describe("the scroll-spy during a programmatic jump", () => {
     await flush();
     expect(onCurrentChange.mock.calls.map((c) => c[0])).toContain("c2");
   });
+
+  it("a jump onto short cards keeps the CLICKED card current — never one that also fits above the line", async () => {
+    // Collapsed receipt cards are one line high: parked at 14px, the target's next two neighbours
+    // also start above the 90px line, and the spy handed the cursor to the second of them.
+    const onCurrentChange = vi.fn();
+    const ref = React.createRef<StreamHandle>();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    const ids = ["c1", "c2", "c3", "c4", "c5", "c6"];
+    await act(async () => {
+      root.render(h(StreamShell, {
+        ref, ariaLabel: "stream", onCurrentChange, onSeen: () => {}, contentKey: 1,
+        children: ids.map((sid) => h("div", { className: "scast", "data-sid": sid, key: sid })),
+      }));
+    });
+    const el = container.querySelector<HTMLElement>(".stream")!;
+    Object.defineProperty(el, "clientHeight", { configurable: true, value: 600 });
+    Object.defineProperty(el, "scrollHeight", { configurable: true, value: 2000 });
+    let scrollTop = 0;
+    Object.defineProperty(el, "scrollTop", {
+      configurable: true, get: () => scrollTop, set: (v: number) => { scrollTop = Math.min(1400, Math.max(0, v)); },
+    });
+    el.getBoundingClientRect = () => rect(0, 600);
+    container.querySelectorAll<HTMLElement>(".scast").forEach((c, i) => {
+      c.getBoundingClientRect = () => rect(i * 38 - scrollTop, 38);
+    });
+    el.scrollTo = ((opts: ScrollToOptions) => {
+      el.scrollTop = opts.top ?? 0;
+      el.dispatchEvent(new Event("scroll"));
+    }) as typeof el.scrollTo;
+
+    await act(async () => { ref.current!.scrollTo("c2"); });
+    await flush();
+
+    const announced = onCurrentChange.mock.calls.map((c) => c[0]);
+    expect(announced, `the spy announced: ${announced.join(", ") || "(nothing)"}`).not.toContain("c3");
+    expect(announced).not.toContain("c4");
+  });
 });

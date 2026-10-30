@@ -88,6 +88,8 @@ export interface DraftReplyChrome {
   pending: { draft: DraftedReply; messageId: string } | null;
   /** Place it. `replace` drops what was typed; `append` puts the draft below it. */
   resolve: (mode: "replace" | "append") => void;
+  /** The account's last AI refusal was an empty balance (the Screener's standing): no price is quoted. */
+  noCredits?: boolean;
 }
 
 /**
@@ -964,10 +966,11 @@ export function DraftReplyCard({
   messageId: string;
 }) {
   const t = useTranslations("draftReply");
+  const tAi = useTranslations("aiRefusal");
   /* THE PRICE IS SAID ONLY WHERE IT IS CHARGED: an unmetered host (`managed-service.ts`) takes no
      credits, so its offer says what happens and no number. The number is `control.cost`. */
   const metered = useManagedService();
-  const { control, pending, resolve } = chrome;
+  const { control, pending, resolve, noCredits } = chrome;
 
   // The placement question wins when both could render: the purchase is over, and the offer
   // it came from has already closed itself.
@@ -993,7 +996,7 @@ export function DraftReplyCard({
     <div className="dr-card" role="group" aria-label={t("offerTitle")}>
       <b className="dr-title">{t("offerTitle")}</b>
       <p className="dr-body">
-        {metered ? t("offerBody", { cost: control.cost }) : t("offerBodyUnmetered")}
+        {!metered ? t("offerBodyUnmetered") : noCredits ? tAi("insufficientCredits") : t("offerBody", { cost: control.cost })}
       </p>
       <div className="dr-btns">
         <Button variant="primary" disabled={running} onClick={control.confirm}>

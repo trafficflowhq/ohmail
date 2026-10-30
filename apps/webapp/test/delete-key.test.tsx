@@ -889,12 +889,14 @@ describe("the durable intent", () => {
 /* ── the hook's own lifetimes ──────────────────────────────────────────────────────────────── */
 
 describe("useDeleteUndo", () => {
-  async function mountHook(sent: Sent[]): Promise<{ remove: (t: { id: string; mailboxId: string }) => boolean }> {
+  async function mountHook(
+    sent: Sent[], status = "confirmed",
+  ): Promise<{ remove: (t: { id: string; mailboxId: string }) => boolean; landed: number }> {
     await unmount();
-    const api = { remove: (() => false) as (t: { id: string; mailboxId: string }) => boolean };
+    const api = { remove: (() => false) as (t: { id: string; mailboxId: string }) => boolean, landed: -1 };
     function Probe(): null {
       const d = useDeleteUndo({
-        mutate: async (messageId) => { sent.push({ kind: "message_delete", messageId }); return { status: "confirmed" }; },
+        mutate: async (messageId) => { sent.push({ kind: "message_delete", messageId }); return { status }; },
         toast: () => {},
         copy: {
           deleted: en.ohbox.toastDeleted, undo: en.screener.toastUndo,
@@ -904,6 +906,7 @@ describe("useDeleteUndo", () => {
         refusal: () => null,
       });
       api.remove = d.remove;
+      api.landed = (d as { landed?: number }).landed ?? -1;
       return null;
     }
     host = document.createElement("div");
@@ -912,6 +915,21 @@ describe("useDeleteUndo", () => {
     await act(async () => { root!.render(h(Probe)); });
     return api;
   }
+
+  it("counts the deletes the server took, so an open Trash can read them in", async () => {
+    const sent: Sent[] = [];
+    const api = await mountHook(sent);
+    expect(api.landed).toBe(0);
+    api.remove({ id: "m1", mailboxId: "mb1" });
+    await act(async () => { window.dispatchEvent(new Event("pagehide")); });
+    await act(async () => { await Promise.resolve(); });
+    expect(api.landed).toBe(1);
+    const refused = await mountHook([], "rolled_back");
+    refused.remove({ id: "m2", mailboxId: "mb1" });
+    await act(async () => { window.dispatchEvent(new Event("pagehide")); });
+    await act(async () => { await Promise.resolve(); });
+    expect(refused.landed, "a refused delete put nothing in Trash").toBe(0);
+  });
 
   it("UNMOUNT commits the open window — the cleanup effect is not decoration", async () => {
     /* The queue's own `flush()` is covered above; what is covered HERE is that something calls
