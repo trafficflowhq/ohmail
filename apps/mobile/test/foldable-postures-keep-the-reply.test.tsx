@@ -56,9 +56,17 @@ vi.mock("../src/ui/base", async () => {
   const { rnDom } = await import("./_rendered-dom");
   return {
     Screen: ({ children, style }: { children: unknown; style?: unknown }) => rnDom.View({ style, children: children as never, testID: "screen" }),
-    Empty: () => null, Rule: () => null, Tap: () => null, Txt: () => null,
+    Empty: () => null, Rule: () => null, Tap: () => null, Txt: () => null, useTopPad: (gap: number) => 24 + gap,
   };
 });
+vi.mock("../src/ui/FadeOut", async () => {
+  const { rnDom } = await import("./_rendered-dom");
+  return { FadeOut: (p: { edge?: string; height?: number }) => rnDom.View({ testID: `fade-${p.edge ?? "bottom"}`, style: { height: p.height } }) };
+});
+/* The chrome's own state, which a bar-less pane's top reads none of. */
+vi.mock("../src/state/live", () => ({ firstSyncContinuesSaid: () => null, topLineSaid: () => null }));
+vi.mock("../src/net/network-door", () => ({ useNetworkNow: () => "online" }));
+vi.mock("../src/ui/UnsavedChanges", () => ({ UnsavedChanges: () => null }));
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: ({ children }: { children: unknown }) => children }));
 vi.mock("../src/ui/glass", () => ({ GlassRail: () => null, GlassSidebar: (p: { open: boolean }) => (p.open ? "sidebar" : null) }));
 vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
@@ -390,6 +398,20 @@ describe("the sidebar opens beside the floating rail, never under it", () => {
     expect(d.left, "the sidebar's edge clears the rail's column").toBeGreaterThanOrEqual(rail.x + rail.width);
     const box = styleOf(r.el.querySelector('[data-testid="screen"] > div > div'));
     expect(d.left + d.width, "it covers the list pane to its edge").toBe((box.paddingLeft as number) + (styleOf(slot(r.el, 0)).width as number));
+    r.unmount();
+  });
+});
+
+/* A reader or a sender page in the pair's pane draws no bar; a line scrolled to its top was cut
+   bare under the status bar, where the list pane beside it ends in a fade. */
+describe("a bar-less pane's top edge", () => {
+  it("pays the status bar's inset and ends a scrolled line in a fade, taking no room", async () => {
+    const { PaneTop } = await import("../src/ui/chrome");
+    const r = mount(<PaneTop />);
+    const fade = r.el.querySelector('[data-testid="fade-top"]');
+    expect(fade, "a scrolled line meets a bare cut").not.toBeNull();
+    expect(styleOf(fade!.parentElement), "the edge takes no room").toMatchObject({ height: 0 });
+    expect(styleOf(r.el.firstElementChild)).toMatchObject({ paddingTop: 24 });
     r.unmount();
   });
 });

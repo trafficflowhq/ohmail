@@ -16,7 +16,7 @@ import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useKeyboardLift } from "./keyboard-lift";
 import { useReaderCover } from "./reader-cover";
-import { separatingVerticalHinge, usePosture } from "./posture";
+import { creaseAcross, separatingVerticalHinge, usePosture } from "./posture";
 import { detailPaneRect, scaffoldPlan } from "./scaffold/plan";
 import { sheetPanelBounds, sheetRoom } from "./sheet-bounds";
 import { Tap, Txt } from "./base";
@@ -37,6 +37,14 @@ export function useSheetPanelBounds(): ViewStyle {
   /* One pane hands no hinge (a flat fold has no width), except a book fold, which a sheet keeps off. */
   const hinge = posture.panes === 2 || separatingVerticalHinge(posture.fold, posture.hinge) !== null ? posture.hinge : null;
   return sheetPanelBounds(w, h, insets.top, pane, hinge);
+}
+
+/** The room a sheet rises in, above the keyboard and, over a crease, above the crease (`sheetRoom`). */
+export function useSheetRoom(keyboardLift: number): ViewStyle {
+  const { height: h } = useWindowDimensions();
+  const posture = usePosture();
+  const insets = useSafeAreaInsets();
+  return sheetRoom(insets.top, keyboardLift, creaseAcross(posture.fold, posture.hinge), h);
 }
 
 /**
@@ -78,6 +86,7 @@ export function Sheet({
   const keyboardLift = useKeyboardLift();
   const insets = useSafeAreaInsets();
   const bounds = useSheetPanelBounds();
+  const room = useSheetRoom(keyboardLift);
   const modalKey = useModalKey();
   /* A shown sheet stands over the reader: nothing under it is read (`reader-cover.ts`). */
   useReaderCover(open);
@@ -95,6 +104,7 @@ export function Sheet({
             borderTopRightRadius: t.radius.panel,
             paddingTop: 12,
             paddingBottom: 8 + insets.bottom,
+            flexShrink: 1,
           },
           bounds,
           t.liftUp("l3"),
@@ -117,7 +127,7 @@ export function Sheet({
       {avoidKeyboard ? (
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={sheetRoom(insets.top, keyboardLift)}
+          style={room}
         >
           {body}
         </KeyboardAvoidingView>

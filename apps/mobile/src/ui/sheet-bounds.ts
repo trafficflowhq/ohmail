@@ -39,8 +39,15 @@ export function sheetPanelBounds(
  * `maxHeight` is the window less the top inset, which binds only while the keyboard is down; with it
  * up the room is the window less the keyboard, measured from y=0, and at accessibility text sizes the
  * reply sheet's head rose under the clock. The top inset is the room's own padding, so
- * it holds on both platforms whatever lifts the foot.
+ * it holds on both platforms whatever lifts the foot. Over a crease (tabletop, `creaseAcross`) the
+ * keyboard takes the lower half, and the sheet then ends above the crease, never with its buttons on it.
  */
-export function sheetRoom(top: number, keyboardLift: number): ViewStyle {
-  return { flex: 1, justifyContent: "flex-end", paddingTop: Math.max(0, top), paddingBottom: keyboardLift };
+export function sheetRoom(
+  top: number,
+  keyboardLift: number,
+  crease: { y: number } | null = null,
+  windowH = 0,
+): ViewStyle {
+  const foot = keyboardLift > 0 && crease !== null ? Math.max(keyboardLift, windowH - crease.y) : keyboardLift;
+  return { flex: 1, justifyContent: "flex-end", paddingTop: Math.max(0, top), paddingBottom: foot };
 }
