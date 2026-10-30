@@ -13,7 +13,7 @@
  * the wait only past `OUTBOX_TRY_AGAIN_ENDS_HOLD_MS` (`try-again-keeps-the-order.test.ts`).
  * Mutations: the ceiling's race removed → cases 1, 3, 4 and 5 red; `retryQueued` not ending the
  * hold → case 3 red; ending it at any age → cases 3 and 3b red; the ended change not sent ahead of
- * the press → case 3b red; a `queued` late answer recorded for a decide → case 1b red; dropped for
+ * the press → case 3c red; a `queued` late answer recorded for a decide → case 1b red; dropped for
  * a draft's first save too → case 5 red; a send ended at its ceiling, or its barrier kept → case 6 red;
  * an ended write's request not stopped, or stopped after it is queued again → cases 3 and 7 red;
  * a create behind the hold left out of the take-back, or its row left unmarked → case 8 red.
@@ -182,7 +182,7 @@ describe("the hold behind a hung write ends at its ceiling", () => {
     expect(engine.pendingMutations()).toEqual([]);
   });
 
-  it("3b — Try again sends the hung change ahead of the press: a newer unread never lands under an older read", async () => {
+  it("3b — Try again ends the hung read, and a newer unread on its only letter leaves nothing to send again", async () => {
     // The host owns the replay here (the phone's shape), so the press alone decides the order.
     const { engine, sent } = await scene((_m, n) => (n === 1 ? "hang" : "ok"), { autoReplay: false });
     const first = engine.mutate({ kind: "mark_seen", messageIds: ["m1"], unread: false } as EngineMutation);
@@ -200,8 +200,29 @@ describe("the hold behind a hung write ends at its ceiling", () => {
     const pressed = engine.retryQueued(unread.id);
     await vi.advanceTimersByTimeAsync(10);
     expect((await pressed)?.status).toBe("confirmed");
-    expect(keys(sent), "the newer unread went out before the older read it must land after")
-      .toEqual([read.key, read.key, unread.key]);
+    expect(keys(sent), "the older read went again over the newer unread").toEqual([read.key, unread.key]);
+    expect(sent[0]!.signal?.aborted, "the attempt Try again ended was left free to be sent again").toBe(true);
+    expect(engine.pendingMutations()).toEqual([]);
+    expect((await engine.flushPending()).filter((r) => r.key === read.key)).toEqual([]);
+  });
+
+  it("3c — Try again sends what the newer unread leaves of the hung read ahead of the press", async () => {
+    const bodies: string[] = [];
+    const { engine, sent } = await scene((m, n) => {
+      const r = m as { messageIds?: string[]; unread?: boolean };
+      bodies.push(`${(r.messageIds ?? []).join(",")} ${r.unread ? "unread" : "read"}`);
+      return n === 1 ? "hang" : "ok";
+    }, { autoReplay: false });
+    const first = engine.mutate({ kind: "mark_seen", messageIds: ["m1", "s1"], unread: false } as EngineMutation);
+    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    const read = await first;
+    const unread = await engine.mutate({ kind: "mark_seen", messageIds: ["m1"], unread: true } as EngineMutation);
+    await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_REPLAY_DEADLINE_MS + 10);
+    const pressed = engine.retryQueued(unread.id);
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await pressed)?.status).toBe("confirmed");
+    expect(bodies, "the newer unread went out before what is left of the older read").toEqual(["m1,s1 read", "s1 read", "m1 unread"]);
+    expect(keys(sent)).toEqual([read.key, read.key, unread.key]);
     expect(engine.pendingMutations()).toEqual([]);
     // The read's confirmation waits for the host's flush, as a late answer does.
     expect((await engine.flushPending()).filter((r) => r.key === read.key).map((r) => r.status)).toEqual(["confirmed"]);

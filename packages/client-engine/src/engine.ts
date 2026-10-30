@@ -356,7 +356,7 @@ interface SupersedeEffect {
    * loses the only expressed intent, so the mark is part of the rollback.
    */
   markedInFlight: PendingMutation[];
-  /** The app's reads on their way to the wire or on it whose ids this call took — {@link PendingMutation.readsTaken}. */
+  /** The reads on their way to the wire or on it whose ids this call took — {@link PendingMutation.readsTaken}. */
   takenOnWire: Array<{ entry: PendingMutation; by: string }>;
 }
 
@@ -400,7 +400,7 @@ interface PendingMutation {
    */
   supersededBy?: string;
   /**
-   * A PERSON'S READS AND UNREADS, by entry id, that named this involuntary read's ids while it was on
+   * A PERSON'S READS AND UNREADS, by entry id, that named this read's ids while it was on
    * its way to the wire or on it — {@link supersededBy} for the read verbs, which carry no key. The
    * request cannot be narrowed in the air, so each is kept and applied by the queue's own rule
    * ({@link readLeftBy}) before this read is sent or sent again: only the ids none of them names go.
@@ -2896,9 +2896,9 @@ export class OhmailEngine {
    */
   private readonly inFlight = new Map<string, PendingMutation>();
   /**
-   * THE APP'S OWN READS FROM THEIR PRESS TO THEIR DISPATCH: waiting for their write or their turn at
-   * the gate, they are in no queue and not on the wire, and a person's read or unread must still
-   * reach them ({@link PendingMutation.readsTaken}).
+   * THE READS FROM THEIR PRESS TO THEIR DISPATCH, the app's and a person's: waiting for their write or
+   * their turn at the gate, they are in no queue and not on the wire, and a newer read or unread must
+   * still reach them ({@link PendingMutation.readsTaken}).
    */
   private readonly freshReads = new Set<PendingMutation>();
 
@@ -7503,8 +7503,8 @@ export class OhmailEngine {
     };
     // A create waits its turn painted and in no collection: a take-back reaches it here.
     if (awaitsHold) this.awaitingTurn.set(key, pending);
-    // So does the app's own read: a person's read or unread on its letters reaches it here (`readsTaken`).
-    if (involuntaryRead(enriched)) this.freshReads.add(pending);
+    // So does a read: a newer read or unread on its letters reaches it here (`readsTaken`).
+    if (enriched.kind === "mark_seen" || enriched.kind === "feed_mark_seen") this.freshReads.add(pending);
     try {
       return await this.dispatchFresh(pending, superseded, settleMarks, opts, awaitsHold);
     } finally {
@@ -8640,13 +8640,13 @@ export class OhmailEngine {
         if (sameSend && q.createdRow !== undefined) createdRow = q.createdRow;
       }
     }
-    /* THE APP'S OWN READ ON ITS WAY TO THE WIRE OR ON IT carries no key, so the scan above misses it:
-       a person's read or unread on its letters is recorded on it (`readsTaken`), and only what that
-       leaves of it is sent, or sent again. */
+    /* A READ ON ITS WAY TO THE WIRE OR ON IT carries no key, so the scan above misses it: a person's
+       read or unread on its letters is recorded on it (`readsTaken`), and only what that leaves of it
+       is sent, or sent again. The newest press wins per letter, whoever made the older read. */
     const takenOnWire: Array<{ entry: PendingMutation; by: string }> = [];
     if (explicitRead(m)) {
       for (const q of new Set([...this.inFlight.values(), ...this.freshReads])) {
-        if (!involuntaryRead(q.mutation) || readLeftBy(m, q.mutation) === undefined) continue;
+        if (readLeftBy(m, q.mutation) === undefined) continue;
         (q.readsTaken ??= new Map()).set(by, m);
         takenOnWire.push({ entry: q, by });
       }
@@ -8876,7 +8876,7 @@ export class OhmailEngine {
   }
 
   /**
-   * THE APP'S READ WHOSE IDS A PERSON'S READ OR UNREAD TOOK ({@link PendingMutation.readsTaken}),
+   * THE READ WHOSE IDS A PERSON'S READ OR UNREAD TOOK ({@link PendingMutation.readsTaken}),
    * before it is sent or sent again: each mark waits for its verb's write, as a wire mark does
    * ({@link replacementDecided}), and the queue's rule then leaves only the ids none of them names.
    * `false`: nothing is left, and the read's row and paint are gone.
@@ -8918,7 +8918,7 @@ export class OhmailEngine {
     p: PendingMutation,
     opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
   ): Promise<MutationResult> {
-    /* THE APP'S READ A PERSON'S PRESS TOOK LETTERS FROM while it waited, read here for the
+    /* THE READ A PERSON'S PRESS TOOK LETTERS FROM while it waited, read here for the
        withdrawal's reason below: only the rest goes, and nothing when none is left. */
     if (p.readsTaken !== undefined && !(await this.narrowTaken(p))) {
       return { id: p.id, key: p.key, status: "superseded", seq: null };
@@ -9194,8 +9194,8 @@ export class OhmailEngine {
         : new MutationRejectedError(String(err), { retryable: false });
       // THE BELT: a hand-built rejection carrying an unjudged code is still kept, never dropped.
       if (rejection.retryable || UNJUDGED_WRITE_CODES.has((rejection.code ?? "") as UnjudgedWriteCode)) {
-        /* THE APP'S READ A PERSON'S PRESS TOOK LETTERS FROM while it was on the wire goes again without
-           them: a glance answered 500, or dropped after the server took it, must not land over a later
+        /* THE READ A PERSON'S PRESS TOOK LETTERS FROM while it was on the wire goes again without
+           them: a read answered 500, or dropped after the server took it, must not land over a later
            Mark unread. */
         if (p.readsTaken !== undefined && !(await this.narrowTaken(p))) {
           return { id: p.id, key: p.key, status: "superseded", seq: null };

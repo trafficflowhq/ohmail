@@ -3653,6 +3653,43 @@ describe("a read on the wire and a newer read whose write is refused", () => {
     expect(new Set(wire.map((w) => w.key)).size, "the glance went again under a second key").toBe(1);
     store.close();
   });
+
+  it("a person's own Mark read on the wire: the same, the refused Mark unread reaches no wire", async () => {
+    const faulty = faultyFactory(new IDBFactory());
+    const store = new IndexedDbMirrorStore({ owner: "acct-person-read-refused", factory: faulty.factory });
+    const wire: Array<{ said: string; key: string }> = [];
+    let failRead!: (e: unknown) => void;
+    const inner = new FixturesAdapter();
+    const engine = new OhmailEngine({
+      adapter: {
+        fetchBody: (...a: Parameters<FixturesAdapter["fetchBody"]>) => inner.fetchBody(...a),
+        sync: (...a: Parameters<FixturesAdapter["sync"]>) => inner.sync(...a),
+        mutate: async (m: EngineMutation, opts: { idempotencyKey: string }) => {
+          const r = m as { messageIds?: string[]; unread?: boolean };
+          wire.push({ said: `${(r.messageIds ?? []).join(",")} ${r.unread ? "unread" : "read"}`, key: opts.idempotencyKey });
+          if (wire.length === 1) await new Promise((_r, rej) => { failRead = rej as never; });
+          return { changes: [], seq: 1 };
+        },
+      } as never,
+      store, now: () => new Date(Date.parse("2026-10-29T09:00:00.000Z")),
+    } as never);
+    await engine.start();
+
+    const read = engine.mutate({ kind: "mark_seen", messageIds: ["giulia"], unread: false } as EngineMutation);
+    for (let i = 0; i < 30 && wire.length === 0; i++) await tick();
+    faulty.arm({ mode: "none", onWrite: (_op, key) => (key.startsWith(`${OUTBOX_TYPE}:`) ? "quota" : "pass") });
+    const unread = engine.mutate({ kind: "mark_seen", messageIds: ["giulia"], unread: true } as EngineMutation);
+    for (let i = 0; i < 10; i++) await tick();
+    faulty.heal();
+    failRead(new MutationRejectedError("net", { code: "network", retryable: true }));
+    const [, refused] = await Promise.all([read, unread]);
+    expect(refused.error?.code, "the unrecordable Mark unread went out anyway").toBe("storage_refused");
+    await engine.flushPending();
+
+    expect(wire.map((w) => w.said), "the read lost its letter to a Mark unread that never happened").toEqual(["giulia read", "giulia read"]);
+    expect(new Set(wire.map((w) => w.key)).size, "the read went again under a second key").toBe(1);
+    store.close();
+  });
 });
 
 /**
