@@ -48,12 +48,16 @@ export function organizedHere<R extends SeedMailbox>(rows: readonly R[]): R[] {
 /**
  * An EMPTY waiting shelf while an organized mailbox's first import runs, by the web's bounded floor
  * (`importFloorInWindow`): the gate has judged nobody yet. A shelf with rows counts them, as the
- * badges do; an unwritten stamp a day old withholds nothing.
+ * badges do; an unwritten stamp a day old withholds nothing. On the standalone door the engine's
+ * own word (`standaloneHere`) says it too: the mailbox read may predate this phone's start.
  */
 export function firstPassWithholds(
   waiting: number, mailboxes: { known: boolean; rows: readonly SeedMailbox[] }, now: number,
+  door: { organizing: boolean | null; firstSync: string | null } | null = null,
 ): boolean {
-  return waiting === 0 && mailboxes.known && organizedHere(mailboxes.rows).some((r) => importFloorInWindow(r, now));
+  if (waiting !== 0) return false;
+  if (door !== null && door.organizing === true && door.firstSync === "pending") return true;
+  return mailboxes.known && organizedHere(mailboxes.rows).some((r) => importFloorInWindow(r, now));
 }
 
 /** Whether Settings offers the review again: the door carries the seed and organizes a mailbox. */

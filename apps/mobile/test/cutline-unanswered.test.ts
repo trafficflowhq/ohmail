@@ -329,6 +329,22 @@ describe("a withheld list is a surface of its own, and it speaks", () => {
     expect(firstPassWithholds(0, mailboxes, NOW)).toBe(true);
   });
 
+  it("a standalone phone on its own first pass withholds the shelf by the door's word, whatever its last mailbox read said", () => {
+    // The mailbox read predates this phone's start (a reader row), or carried no clock: the door still knows.
+    const before = { known: true, rows: [row(null, "reader")] };
+    const clockless = { known: true, rows: [{ status: "connected", organizerRole: "organizer" as const, initialImportCompletedAt: null }] };
+    const reading = { organizing: true, firstSync: "pending" };
+    expect(firstPassWithholds(0, before, NOW, reading)).toBe(true);
+    expect(firstPassWithholds(0, clockless, NOW, reading)).toBe(true);
+    expect(firstPassWithholds(0, { known: false, rows: [] }, NOW, reading), "the door needs no mailbox read").toBe(true);
+    expect(listSurface({ settled: true, count: 0, pending: firstPassWithholds(0, before, NOW, reading) })).toBe("pending");
+    expect(firstPassWithholds(4, before, NOW, reading), "rows are counted").toBe(false);
+    expect(firstPassWithholds(0, before, NOW, { organizing: true, firstSync: "finished" })).toBe(false);
+    expect(firstPassWithholds(0, before, NOW, { organizing: false, firstSync: "pending" }), "nothing organizes: no gate to wait for").toBe(false);
+    expect(firstPassWithholds(0, before, NOW, { organizing: null, firstSync: "pending" })).toBe(false);
+    expect(firstPassWithholds(0, before, NOW, null), "a paired door reads its rows alone").toBe(false);
+  });
+
   it("the count line is silenced while the list is withheld", () => {
     // "0 first-time senders waiting" over a shelf this phone declined to work out is not a small
     // number, it is the wrong one — `metaWhen`'s own rule, one state further on.

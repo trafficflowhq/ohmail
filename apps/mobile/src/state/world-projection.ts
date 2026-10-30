@@ -66,12 +66,15 @@ import {
 import { routingReader } from "./held-routing";
 import { holderKind } from "../ui/standalone-form";
 
-/** The Screener's meta: the count, and beside a folder-whole one the sentence that says why (RULING-026). */
-export function screenerMetaOf(source: string, waiting: number, posture: ScreeningPosture): string {
+/**
+ * The Screener's meta: the count, and beside a folder-whole one the sentence that says why (RULING-026).
+ * `organizingHere`: a standalone phone that organizes the mailbox, whose last window read predates its start.
+ */
+export function screenerMetaOf(source: string, waiting: number, posture: ScreeningPosture, organizingHere = false): string {
   const count = source === "server" ? Copy.metaWaiting(waiting) : Copy.metaWaitingOnDevice(waiting);
   const d = screeningDegradeOf(posture);
   if (d === null) return count;
-  const reason = d.state === "unread"
+  const reason = organizingHere ? Copy.screeningUnreadHere : d.state === "unread"
     ? (d.holderName === null ? Copy.screeningUnreadNoName : Copy.screeningUnread(d.holderName))
     : (d.holderName === null ? Copy.screeningUnstatedNoName : Copy.screeningUnstated(d.holderName));
   return Copy.metaWithReason(count, reason);
@@ -222,12 +225,13 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
     const { base, pres } = presented;
     inp.onPresented(pres, presented.options, presented.world.reader);
     const openHeld = engine.openRowHeld();
-    const screener = () => kept("screener", [pres, v, inp.scopes, inp.screenerServer, inp.leavingWaiting, inp.relayed], () => {
+    const organizingHere = inp.standaloneClaim?.k === "ours";
+    const screener = () => kept("screener", [pres, v, inp.scopes, inp.screenerServer, inp.leavingWaiting, inp.relayed, organizingHere], () => {
       const s = liveScreener(pres, v, inp.scopes, waitingOnScreen(inp.screenerServer, inp.leavingWaiting));
       return {
         ...s,
         relayed: inp.relayed,
-        meta: screenerMetaOf(s.source, s.waiting.length, posture),
+        meta: screenerMetaOf(s.source, s.waiting.length, posture, organizingHere),
       };
     });
     const piles = () => kept("piles", [pres, v], () => livePiles(pres, v));
