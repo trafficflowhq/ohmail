@@ -11,11 +11,22 @@ import { createElement as h, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** `at`: where the list stands, by its last report or the last scroll it was told. */
-const win = vi.hoisted(() => ({ ids: null as null | string[], scroller: null as any, held: "", scrolls: [] as number[], at: 0 }));
+const win = vi.hoisted(() => ({ ids: null as null | string[], scroller: null as any, held: "", scrolls: [] as number[], at: 0, view: null as any }));
 vi.mock("react-native", async () => {
   const React = await import("react");
   const keep = (props: any) => (el: any) => { if (el) el.__props = props; };
   const host = (name: string) => (props: any) => React.createElement("div", { "data-rn": name, ref: keep(props) }, props.children);
+  /** React Native 0.86's ScrollView: it takes a touch for itself, stopping the glide, while a momentum it was told began has not ended (`_isAnimating`). */
+  class ScrollView extends React.Component<any> {
+    began = 0;
+    ended = 0;
+    componentDidMount() { win.view = this; }
+    getScrollResponder = () => this;
+    _handleMomentumScrollBegin = (e: any) => { this.began = Date.now(); this.props.onMomentumScrollBegin?.(e); };
+    _handleMomentumScrollEnd = (e: any) => { this.ended = Date.now(); this.props.onMomentumScrollEnd?.(e); };
+    takesTouch = () => Date.now() - this.ended < 16 || this.ended < this.began;
+    render() { return React.createElement("div", { "data-rn": "ScrollView", ref: keep(this.props) }, this.props.children); }
+  }
   /** The key VirtualizedSectionList gives a cell: the section's header, then its rows. */
   const cellKey = (p: any, at: number) => {
     const s = p.sections[0];
@@ -30,13 +41,17 @@ vi.mock("react-native", async () => {
     const rows = p.sections.flatMap((s: any) => s.data).filter((r: any) => win.ids === null || win.ids.includes(p.keyExtractor(r)));
     const Cell = p.CellRendererComponent;
     // VirtualizedList hands the scroll view the hold one further on, past its own head cell.
-    const scroll = p.renderScrollComponent({ maintainVisibleContentPosition: mvcp && { ...mvcp, minIndexForVisible: mvcp.minIndexForVisible + 1 } });
+    const scroll = p.renderScrollComponent({
+      maintainVisibleContentPosition: mvcp && { ...mvcp, minIndexForVisible: mvcp.minIndexForVisible + 1 },
+      onScroll: p.onScroll, onScrollBeginDrag: p.onScrollBeginDrag, onScrollEndDrag: p.onScrollEndDrag,
+      onMomentumScrollBegin: p.onMomentumScrollBegin, onMomentumScrollEnd: p.onMomentumScrollEnd,
+    });
     return React.cloneElement(scroll, {}, ...rows.map((r: any) =>
       React.createElement(Cell, { key: p.keyExtractor(r), item: r, onLayout: () => undefined, style: null },
         React.createElement("i", { "data-row": p.keyExtractor(r) }, p.renderItem({ item: r })))));
   };
   return {
-    View: host("View"), Text: host("Text"), ScrollView: host("ScrollView"), Pressable: host("Pressable"), SectionList,
+    View: host("View"), Text: host("Text"), ScrollView, Pressable: host("Pressable"), SectionList,
     AppState: { addEventListener: () => ({ remove: () => undefined }), currentState: "active" },
     Platform: { OS: "android", select: (o: any) => o.android ?? o.default },
     StyleSheet: { absoluteFill: {}, create: (s: any) => s, hairlineWidth: 1 },
@@ -45,7 +60,8 @@ vi.mock("react-native", async () => {
 vi.mock("../src/ui/base", async () => {
   const React = await import("react");
   const box = (p: any) => React.createElement("div", null, p.children);
-  return { Badge: () => null, Empty: () => null, Tail: () => null, Waterline: () => null, Panel: box, Screen: box, TapRow: box,
+  const tap = (p: any) => React.createElement("div", { "data-tap": "", ref: (el: any) => { if (el) el.__props = p; } }, p.children);
+  return { Badge: () => null, Empty: () => null, Tail: () => null, Waterline: () => null, Panel: box, Screen: box, TapRow: tap,
     Txt: () => null, Section: () => null, panelSurface: () => ({}), pullRefreshControl: () => undefined,
     useListInsets: () => ({ paddingLeft: 0, paddingRight: 0, paddingBottom: 0 }) };
 });
@@ -64,11 +80,11 @@ vi.mock("expo-router", async () => {
   };
 });
 const st = vi.hoisted(() => {
-  const s = { items: [] as any[], marked: [] as string[], actions: null as any };
+  const s = { items: [] as any[], marked: [] as string[], opened: [] as string[], actions: null as any };
   // One object for the app's life, as the world's actions are: a new one per render re-runs the focus effect.
   s.actions = {
     markSeenThrough: (_p: string, ids: string[]) => { for (const id of ids) if (!s.marked.includes(id)) s.marked.push(id); },
-    leaveFeed: () => undefined, markAllSeen: () => undefined, hydrateMessage: () => undefined, holdFiles: () => undefined, releaseFiles: () => undefined,
+    leaveFeed: () => undefined, markAllSeen: () => undefined, hydrateMessage: (id: string) => { s.opened.push(id); }, holdFiles: () => undefined, releaseFiles: () => undefined,
   };
   return s;
 });
@@ -428,5 +444,180 @@ describe("phone News and Receipts read only what rests on screen", () => {
       expect(deck.readsTail(3)).toContain(says[locale][0]);
       expect(deck.readsTail(3)).toContain(says[locale][1]);
     }
+  });
+});
+
+/* Android ends no glide its next touch cancels: a fast fling toward the top with the list already there
+   (the touch taken by the pull to refresh) leaves one begun for good, and the scroll view took every
+   press as stopping it until a small scroll. */
+describe("phone lists: a fling at the top edge leaves every press live", () => {
+  /** The device's own report, through the scroll view as the native view sends it. */
+  const native = (name: string, y: number) => act(() => {
+    const e = { nativeEvent: { contentOffset: { x: 0, y }, layoutMeasurement: { width: 400, height: VIEW }, velocity: { x: 0, y: 0 } } };
+    if (name === "onMomentumScrollBegin") win.view._handleMomentumScrollBegin(e);
+    else if (name === "onMomentumScrollEnd") win.view._handleMomentumScrollEnd(e);
+    else win.view.props[name]?.(e);
+  });
+  /** A fast fling toward the top at the top (200 ms over 1300 px): the list cannot move, a glide begins, the next touch comes 50 ms on.
+      `cancelled`: each starts with a touch the pull to refresh takes, which Android ends with no end drag and no glide end. */
+  const edgeFlings = (n: number, cancelled = false) => {
+    for (let i = 0; i < n; i++) {
+      if (cancelled) {
+        native("onScrollBeginDrag", 0);
+        pass(120);
+      }
+      native("onScrollBeginDrag", 0);
+      pass(200);
+      native("onScrollEndDrag", 0);
+      native("onMomentumScrollBegin", 0);
+      pass(50);
+    }
+  };
+  /** A press on a letter's card: the scroll view keeps it while it holds a glide running, else the card's own press runs. */
+  const press = (id: string) => act(() => {
+    if (win.view.takesTouch()) return;
+    (screen!.el.querySelector(`[data-row="${id}"] [data-tap]`) as any).__props.onPress();
+  });
+  beforeEach(() => { st.opened = []; });
+
+  it("three fast flings at the top: a press on a letter opens it", () => {
+    open(letters("NW", 40));
+    edgeFlings(3);
+    pass(450);
+    press("NW39");
+    expect(st.opened).toEqual(["NW39"]);
+  });
+
+  it("eight fast flings at the top: a press on a letter opens it, and one a minute later too", () => {
+    open(letters("NW", 40));
+    edgeFlings(8);
+    pass(450);
+    press("NW38");
+    pass(60_000);
+    press("NW37");
+    expect(st.opened).toEqual(["NW38", "NW37"]);
+  });
+
+  it("a touch the pull to refresh takes after the flings (a begin drag, no end drag, no glide end): presses open, and a minute later too", () => {
+    open(letters("NW", 40));
+    edgeFlings(2);
+    native("onScrollBeginDrag", 0);
+    pass(450);
+    press("NW39");
+    pass(60_000);
+    press("NW38");
+    expect(st.opened).toEqual(["NW39", "NW38"]);
+    expect(st.marked.sort()).toEqual(["NW37", "NW38", "NW39"]);
+  });
+
+  it("three and eight flings each starting with a touch the pull to refresh takes: a press on a letter opens it", () => {
+    open(letters("NW", 40));
+    edgeFlings(3, true);
+    native("onScrollBeginDrag", 0);
+    pass(450);
+    press("NW39");
+    expect(st.opened).toEqual(["NW39"]);
+    edgeFlings(8, true);
+    native("onScrollBeginDrag", 0);
+    pass(450);
+    press("NW38");
+    pass(60_000);
+    press("NW37");
+    expect(st.opened).toEqual(["NW39", "NW38", "NW37"]);
+  });
+
+  it("control: a finger dragging the list keeps it, its glide still pressing nothing until it lands", () => {
+    open(letters("NW", 40));
+    native("onScrollBeginDrag", 0);
+    native("onScrollEndDrag", 120);
+    native("onMomentumScrollBegin", 120);
+    pass(100);
+    native("onScrollBeginDrag", 120);
+    let y = 120;
+    for (let i = 0; i < 30; i++) {
+      y += 20;
+      place(y);
+      native("onScroll", y);
+      pass(16);
+    }
+    native("onScrollEndDrag", y);
+    native("onMomentumScrollBegin", y);
+    for (let i = 0; i < 20; i++) {
+      y += 20;
+      place(y);
+      native("onScroll", y);
+      pass(16);
+      if (i === 10) press("NW38");
+    }
+    expect(st.opened).toEqual([]);
+    native("onMomentumScrollEnd", y);
+    pass(100);
+    press("NW38");
+    expect(st.opened).toEqual(["NW38"]);
+  });
+
+  it("the glide at the edge ends without the device's end: the letters resting at the top read after the rest, none other", () => {
+    open(letters("NW", 40));
+    edgeFlings(3);
+    pass(5000);
+    expect(st.marked.sort()).toEqual(["NW37", "NW38", "NW39"]);
+  });
+
+  /* A finger catching a glide and holding still: Android sends a begin drag and cancels its own end, so
+     only the list's still end comes; the finger then drags on. */
+  for (const hold of [400, 1500]) {
+    it(`a glide caught and held ${hold} ms, the list redrawn, then dragged on: the list follows the finger, never back to the held place`, () => {
+      open(letters("NW", 40));
+      let y = 3000;
+      native("onScrollBeginDrag", y);
+      for (; y < 3120; y += 60) { place(y); native("onScroll", y); pass(16); }
+      native("onScrollEndDrag", y);
+      native("onMomentumScrollBegin", y);
+      for (; y < 3550; y += 100) { place(y); native("onScroll", y); pass(16); }
+      y = 3550;
+      place(y);
+      native("onScroll", y);
+      native("onScrollBeginDrag", y);
+      pass(hold);
+      place(y);
+      for (let i = 0; i < 6; i++) { y += 40; place(y); native("onScroll", y); pass(16); }
+      expect(win.scrolls).toEqual([]);
+      native("onScrollEndDrag", y);
+    });
+  }
+
+  it("control: a press while a fling still glides stops it and opens nothing; once it lands a press opens", () => {
+    open(letters("NW", 40));
+    native("onScrollBeginDrag", 0);
+    native("onScrollEndDrag", 120);
+    native("onMomentumScrollBegin", 120);
+    let y = 120;
+    for (let i = 0; i < 40; i++) {
+      y += 30;
+      place(y);
+      native("onScroll", y);
+      pass(16);
+      if (i === 20) press("NW38");
+    }
+    expect(st.opened).toEqual([]);
+    native("onMomentumScrollEnd", y);
+    pass(100);
+    press("NW38");
+    expect(st.opened).toEqual(["NW38"]);
+  });
+
+  it("control: a fling the device ends reads its landing after the rest, as before", () => {
+    open(letters("NW", 40));
+    native("onScrollBeginDrag", 0);
+    native("onScrollEndDrag", 0);
+    native("onMomentumScrollBegin", 0);
+    pass(60);
+    native("onMomentumScrollEnd", 0);
+    pass(650);
+    expect(st.marked).toEqual([]);
+    pass(100);
+    expect(st.marked.sort()).toEqual(["NW37", "NW38", "NW39"]);
+    press("NW39");
+    expect(st.opened).toEqual(["NW39"]);
   });
 });
