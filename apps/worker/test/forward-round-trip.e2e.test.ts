@@ -128,8 +128,10 @@ describe("forward round trip (GreenMail SMTP+IMAP + Postgres)", () => {
     const [orig] = await h.db.select().from(messages).where(byMessageId(h.mailboxId, origHeader));
     expect(orig, "the original was ingested").toBeDefined();
     const [origBody] = await h.db.select().from(messageBodies).where(eq(messageBodies.messageId, orig!.id));
-    expect(origBody!.text.trim(), "the fixture IS html-only at rest").toBe("");
+    expect(origBody!.text, "the html-only original keeps its html's words as its text").toContain("Quarterly numbers attached");
     expect(origBody!.html).toContain("Quarterly <b>numbers</b>");
+    // As stored before the parse kept those words (no backfill): the forward derives them from the html.
+    await h.db.update(messageBodies).set({ text: "" }).where(eq(messageBodies.messageId, orig!.id));
     const origParts = await h.db.select().from(attachments).where(eq(attachments.messageId, orig!.id));
     expect(origParts).toHaveLength(3);
 

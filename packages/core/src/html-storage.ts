@@ -97,8 +97,7 @@ function truncateToBytes(s: string, maxBytes: number): string {
  * html, and a sensitive message whose html is deliberately never stored, both pass unchanged.
  * The result satisfies `octet_length(html) <= STORED_HTML_CAP_BYTES`, the `message_bodies_html_cap`
  * CHECK, and that is checked here rather than assumed: a cut a runtime got wrong stores NO html,
- * where a refused insert would hold the message's whole folder. The text part shows instead, and an
- * html-only message past the text bound (`MAX_HTML_TO_TEXT_CHARS`) has none: it stores no body text.
+ * where a refused insert would hold the message's whole folder. The text shows instead: the html's words when it has no text part.
  */
 export function prepareHtmlForStorage(html: string | null): string | null {
   if (html === null) return null;

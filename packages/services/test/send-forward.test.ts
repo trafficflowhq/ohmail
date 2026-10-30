@@ -541,6 +541,24 @@ describe("a forward whose original cannot be loaded is refused; an html-only one
     expect(msg.html).toContain("<blockquote>");
     expect(msg.html).toContain("Quarterly <b>numbers</b> attached.");
   });
+
+  it("a plain forward of a letter whose stored text is its html's words keeps the link targets", async () => {
+    const parsed = await normalizeMime(["Message-ID: <invite@meet.example>", "From: Meet <no-reply@meet.example>", "Subject: Invite",
+      "MIME-Version: 1.0", 'Content-Type: multipart/related; boundary="R"', "", "--R", "Content-Type: text/html; charset=utf-8", "",
+      '<p>You are invited.</p><p><a href="https://meet.example/j/9876543210">Join the meeting</a></p><img src="cid:logo@x">',
+      "--R", "Content-Type: image/png", "Content-ID: <logo@x>", "Content-Transfer-Encoding: base64", "", "iVBORw0KGgo=", "--R--", ""].join("\r\n"));
+    expect(parsed.textBody).toBe("You are invited.\n\nJoin the meeting");
+    const w = await world({ note: "See below." });
+    await w.db.update(messageBodies).set({ text: parsed.textBody, html: prepareHtmlForStorage(parsed.htmlBody) })
+      .where(eq(messageBodies.messageId, w.originalId));
+    const send = sendSpy();
+    const fetch = fetchSpy({});
+    await sendService.send(w.ctx, w.draftId, "fwd-key-words", { openSendAdapter: send.openSendAdapter, openFetchAdapter: fetch.openFetchAdapter },
+      { forwardOf: w.originalId });
+    const msg = send.delivered[0]!;
+    expect(msg.html).toBeUndefined();
+    expect(msg.text).toContain("Join the meeting (https://meet.example/j/9876543210)");
+  });
 });
 
 /**

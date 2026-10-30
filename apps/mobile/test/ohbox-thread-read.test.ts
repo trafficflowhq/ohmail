@@ -258,10 +258,12 @@ describe("an older member whose body is html inside multipart/related, with no t
     const single = await normalizeMime(Buffer.from(["Message-ID: <s6@fake.test>", "From: sender@fake.test", "To: me@fake.test", "Subject: s",
       "MIME-Version: 1.0", 'Content-Type: text/html; charset="us-ascii"', "", `<html><body><img src="https://pictures.fake.test/b.png"></body></html>`, ""].join("\r\n")));
     expect(single.textBody.trim(), "the premise: a text that is no words of its own").not.toBe("");
-    expect([worded.textBody, bare.textBody], "the premise: the parse stores no text for this shape").toEqual(["", ""]);
+    expect([worded.textBody, bare.textBody], "the premise: the parse stores the html's words, and none for an html without")
+      .toEqual(["Top of member 1.\n\nEnd of member 1.", ""]);
     const s = await session();
     try {
-      s.fake.setBody("p1", worded.textBody); s.fake.setHtml("p1", worded.htmlBody!);
+      // p1 as stored before the parse kept an html-only letter's words (no backfill): drawn from its html.
+      s.fake.setBody("p1", ""); s.fake.setHtml("p1", worded.htmlBody!);
       s.fake.setBody("p2", bare.textBody); s.fake.setHtml("p2", bare.htmlBody!);
       s.fake.setFiles("p2", [{ id: "a-p2", filename: "p.png", contentType: "image/png", sizeBytes: 8, inline: true }]);
       s.fake.setBody("p3", ""); s.fake.setHtml("p3", `<html><body><img src="https://pictures.fake.test/a.png"></body></html>`);
