@@ -637,7 +637,7 @@ export const DE: Deck = {
     (shown === 1
       ? "Die eine Ausgabe wird gezeigt."
       : `Alle ${shown} Ausgaben werden gezeigt.`)
-    + " Vorbeiscrollen markiert einen Beitrag als gesehen.",
+    + " Ein Beitrag gilt als gelesen, sobald er im Strom auf dem Bildschirm stehen bleibt. Schnelles Vorbeiscrollen lässt ihn ungelesen.",
   receiptsTail: (shown: number) =>
     shown === 1 ? "Der eine Beleg wird gezeigt." : `Alle ${shown} Belege werden gezeigt.`,
   readsEmptyTitle: "Noch keine Ausgaben.",
@@ -645,7 +645,7 @@ export const DE: Deck = {
   receiptsEmptyTitle: "Noch keine Belege.",
   receiptsEmptyHint: "Bestellungen, Rechnungen und Tickets, die du hier ablegst, kommen an, sobald sie synchronisiert werden.",
   today: "heute",
-  streamSeenHint: "Vorbeiscrollen markiert als gesehen",
+  streamSeenHint: "ein Beitrag gilt als gelesen, sobald er auf dem Bildschirm stehen bleibt; schnelles Vorbeiscrollen lässt ihn ungelesen",
 
   /* ------------------------------------------------------------- protected */
 

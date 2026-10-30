@@ -1,12 +1,12 @@
 /**
  * Receipts — orders, invoices and tickets, grouped by day. The one list where
  * a number is the point: amounts get their own right-aligned tabular column.
- * Scrolling past marks seen on the same read line as Reads; leaving commits
- * this stream's own waterline (`feedPartition` keeps the two views' lines
- * independent). The sweep measures in scroll-content coordinates: `MailList`
- * reports each row's cell frame there, so the {@link GroupedSweepLedger}'s
- * chain above the row is zero and it answers only rows whose absolute foot has
- * really cleared the line. The rows are a window, never the whole stream.
+ * A row turns read once it rests on screen, by the same rule as Reads; leaving
+ * commits this stream's own waterline (`feedPartition` keeps the two views'
+ * lines independent). The sweep measures in scroll-content coordinates:
+ * `MailList` reports each row's cell frame there, so the {@link GroupedSweepLedger}'s
+ * chain above the row is zero and it answers each row where it really stands.
+ * The rows are a window, never the whole stream.
  */
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { AppState, View } from "react-native";
@@ -19,15 +19,13 @@ import { GroupedSweepLedger } from "../../src/state/sweep";
 import { useWorld, type WorldMail } from "../../src/state/world";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MessageReader } from "../../src/ui/MessageReader";
-import { Empty, Screen, Tail, Txt, Waterline } from "../../src/ui/base";
+import { Empty, Screen, Tail, Txt, Waterline, useListInsets } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { MailList, type ListGroup, type RowFrame } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
-
-const READ_LINE = 0.62;
 
 /**
  * A group's ledger identity is its FIRST ROW's id, never the display label: day labels
@@ -93,10 +91,13 @@ function ReceiptsBody() {
   );
 
   const onRowGone = useCallback((m: WorldMail) => ledger.drop(m.id), [ledger]);
+  const foot = useListInsets().paddingBottom;
+  const rows = useMemo(() => groups.flatMap((g) => g.items), [groups]);
   const { run, gestures } = useSeenRun(
-    READ_LINE,
     () => ledger.frames(),
     (ids) => actions.markSeenThrough("receipts", ids),
+    () => foot,
+    rows,
   );
 
   // The leave commit for this stream's own waterline — including the APP backgrounding while
@@ -107,11 +108,15 @@ function ReceiptsBody() {
     useCallback(() => {
       run.restart();
       const sub = AppState.addEventListener("change", (s) => {
-        if (s === "background") void actions.leaveFeed("receipts");
+        if (s === "background") {
+          run.restart();
+          void actions.leaveFeed("receipts");
+        }
         if (s === "active") run.restart();
       });
       return () => {
         sub.remove();
+        run.restart();
         void actions.leaveFeed("receipts");
       };
     }, [actions, run]),

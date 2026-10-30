@@ -379,7 +379,7 @@ edge — the desktop dock's shape, at thumb height.
 | `/` **Ohbox** | New / previously seen (+ a Resurfaced pin group), the Screener doorbell, routing rationale, tracker chips. Reading never moves the unread count. |
 | `/screener` **Screener** | Three shelves (waiting · screened out · spam). A row shows an AI suggestion only where the server sent one — no classifier runs client-side. |
 | `/sender/[seg]/[id]` | **The decision.** Every held message in full — each body hydrates and says so while it is still a snippet — then the bar: five destinations, each a split capsule whose ✓ half files *and* marks read. |
-| `/reads` **Reads** | The skim stream. Scrolling past marks seen **in place**; leaving the screen commits the waterline, once per visit. |
+| `/reads` **Reads** | The skim stream. An item turns read **in place** once it rests on screen; a quick scroll past leaves it unread; leaving the screen commits the waterline, once per visit. |
 | `/receipts` **Receipts** | Day groups, right-aligned tabular amounts, same scroll-seen rule, its own waterline. |
 | `/message/[id]` | Reading view: why it landed here, what was blocked, the protected-OTP block, the conversation, triage actions. Opening marks read through the engine and asks for the full text — the pane says when it is still showing the preview. |
 | `/servers` | The pairings this phone holds: switch, forget (which also revokes server-side), live sync status, and the three add choices. |
