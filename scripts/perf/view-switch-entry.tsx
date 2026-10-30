@@ -4,7 +4,8 @@
  * also serves html bodies). Local fixtures only; nothing here reaches a network.
  *
  * Query: ?n=Ohbox rows &nr=News rows &nc=Receipts rows &heavy=1 (50 KB newsletters) &bodyMs=body
- * latency &demo=0 &store=full|windowed
+ * latency &demo=0 &store=full|windowed &ns=screened-out senders &nsh=letters each &np=spam senders
+ * &nph=letters each (without ns/np the demo world's few)
  */
 import "../../apps/webapp/app/app.css";
 import "../../apps/webapp/app/zero-layout.css";
@@ -20,7 +21,7 @@ import { OhmailEngine } from "../../packages/client-engine/src/index";
 import { FixturesAdapter } from "../../packages/client-engine/src/adapters/fixtures-adapter";
 import type { MessageBodyWire } from "../../packages/client-engine/src/index";
 import { getFixtures } from "../../packages/fixtures/src/index";
-import type { Address, Fixtures, MessageFixture, Folder } from "../../packages/fixtures/src/types";
+import type { Address, Fixtures, HeldMailFixture, MessageFixture, Folder } from "../../packages/fixtures/src/types";
 
 const THEME_DOOR = localStorageDoor("theme");
 const params = new URLSearchParams(window.location.search);
@@ -31,6 +32,10 @@ const BODY_MS = Number(params.get("bodyMs") ?? "0");
 const DEMO = params.get("demo") !== "0";
 const STORE = params.get("store") ?? "full";
 const HEAVY = params.get("heavy") === "1";
+const NS = Number(params.get("ns") ?? "0");
+const NSH = Number(params.get("nsh") ?? "40");
+const NP = Number(params.get("np") ?? "0");
+const NPH = Number(params.get("nph") ?? "40");
 
 function mulberry32(a: number) {
   return function () {
@@ -131,12 +136,36 @@ class BodyAdapter extends FixturesAdapter {
   }
 }
 
+/** `senders` held senders with `each` letters apiece, oldest first (the Screener's two held segments). */
+function held(senders: number, each: number, kind: "so" | "sp"): Array<{ address: string; held: HeldMailFixture[] }> {
+  const rnd = mulberry32(kind === "so" ? 99 : 999);
+  return Array.from({ length: senders }, (_, s) => ({
+    address: `${kind}-${s}@${DOMAINS[s % DOMAINS.length]}`,
+    held: Array.from({ length: each }, (_, k) => {
+      const topic = TOPICS[Math.floor(rnd() * TOPICS.length)]!;
+      return {
+        id: `${kind}-${s}-${k}`, subject: `${topic} (${s}.${k})`, time: `d${each - k}`,
+        body: `Hello,\n\nLetter ${k} from sender ${s} about ${topic.toLowerCase()}.\n\n${"A line of held copy. ".repeat(20)}`,
+        ...(k % 3 === 0 ? { trackerNote: "3 tracking links · 1 spy pixel blocked" } : {}),
+      };
+    }),
+  }));
+}
+
 function world(): Fixtures {
   const base = getFixtures();
   const reads = gen(NR, "reads", 42);
   const receipts = gen(NC, "receipts", 4242);
+  const screenedOut = NS > 0 ? held(NS, NSH, "so").map((x) => ({ ...x, screenedOn: "12 Jul" })) : base.screener.screenedOut;
+  const spam = NP > 0
+    ? held(NP, NPH, "sp").map(({ address, held: h }) => ({
+      from: address, held: h,
+      detection: { source: "auto-detected" as const, confidence: 0.97, reason: "bulk", label: "auto-detected · 0.97 · bulk" },
+    }))
+    : base.screener.spam;
   return {
     ...base,
+    screener: { ...base.screener, screenedOut, spam },
     ohbox: [...base.ohbox, ...gen(NO, "ohbox", 7)],
     reads,
     readsWaterline: { ...base.readsWaterline, newestSeenId: reads[Math.min(10, reads.length - 1)]!.id },
