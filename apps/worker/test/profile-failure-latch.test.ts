@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { tags, type Tx } from "@trafficflow/db";
+import { accounts, mailboxes, tags, type Tx } from "@trafficflow/db";
 import { createLogger, describeError } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
@@ -133,10 +133,13 @@ async function rig(opts: { withStoredConfiguration?: boolean } = {}): Promise<Ri
     createLogger({ service: "worker", sink: (l) => { out.push(l); } }).error(event, detail);
     return out;
   };
+  await db.insert(accounts).values({ id: accountId, name: "latch", createdAt: new Date("2026-01-01T00:00:00Z") });
+  const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${randomUUID()}@x.test`, createdAt: new Date("2026-01-01T00:00:00Z") })
+    .returning({ id: mailboxes.id });
   const sync = new OrganizerProfileSync({
     db,
     accountId,
-    mailboxId: randomUUID(),
+    mailboxId: mb!.id,
     /* THE ONLY METHOD THIS MODULE USES. `hasProfileIo` is a structural check for exactly this
        one, and a fixture carrying the whole adapter surface would be asserting a coupling that
        does not exist. */

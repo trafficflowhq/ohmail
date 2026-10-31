@@ -7,7 +7,7 @@ import type {
 import { formatClaim, type LeaseIo, type RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import {
   formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage,
-  type ParsedProfileMessage, type ProfileIo, type RawProfileMessage,
+  type OrganizerProfileDoc, type ParsedProfileMessage, type ProfileIo, type RawProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { mailboxes, organizerRequests } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -75,23 +75,30 @@ describe("an edit during and after a takeover reaches the mailbox beside the hel
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
-  async function boot(): Promise<{ sidecar: Sidecar; meta: MemoryMeta; call: (m: string, p: string, b?: unknown) => Promise<Response> }> {
+  /** `own`: settings this install left under an earlier mailbox row, in place of W-old's claim and settings. */
+  async function boot(o: { own?: OrganizerProfileDoc } = {}): Promise<{ sidecar: Sidecar; meta: MemoryMeta; call: (m: string, p: string, b?: unknown) => Promise<Response> }> {
     const meta = new MemoryMeta();
     const at = new Date(Date.now() - 12 * DAY);
-    await meta.appendClaim(formatClaim({
-      installId: "local:w-old", kind: "local", displayName: "W-old", heartbeat: at, claimedAt: at,
-      nonce: "old", authorizedAt: null, capabilities: ["requests", "profile"],
-    }));
-    await meta.appendProfile(formatProfileMessage(OLD_DOC, { installId: "local:w-old" }));
+    if (o.own === undefined) {
+      await meta.appendClaim(formatClaim({
+        installId: "local:w-old", kind: "local", displayName: "W-old", heartbeat: at, claimedAt: at,
+        nonce: "old", authorizedAt: null, capabilities: ["requests", "profile"],
+      }));
+      await meta.appendProfile(formatProfileMessage(OLD_DOC, { installId: "local:w-old" }));
+    }
     const dataDir = await freshDataDir("ohmail-takeover-publish-");
     const sidecar = await createSidecar({
       dataDir,
       imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
       address: "owner@trafficflow.test", machineName: "the new laptop",
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
+      // The stored credential the import card's route asks for.
+      ...(o.own === undefined ? {} : { keks: { 1: Buffer.alloc(32, 9) } }),
       adapterFactory: factory(meta), log: () => {},
     });
     cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
+    // The desktop's install id is its store's account row, which outlives a removed mailbox row.
+    if (o.own !== undefined) await meta.appendProfile(formatProfileMessage(o.own, { installId: sidecar.world.accountId }));
     await sidecar.start();
     const call = (method: string, path: string, body?: unknown) => sidecar.handle(new Request(`http://engine.invalid${path}`, {
       method, headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
@@ -128,5 +135,22 @@ describe("an edit during and after a takeover reaches the mailbox beside the hel
       status: 201, role: "organizer", requests: 0,
       docs: [["w-old", []], ["this install", ["new@b.test"]]],
     });
+  }, 60_000);
+
+  /* THE MAILBOX REMOVED AND ADDED AGAIN on this desktop: the new row's store says nothing yet, and
+     the settings the earlier row left are kept and offered, never replaced by an empty copy. */
+  it("settings this install left under an earlier mailbox row stand, and the card asks about them", async () => {
+    const earlier = makeProfileDoc({
+      screener: [{ address: "friend@elsewhere.example", source: "person" }],
+      rules: [{ kind: "sender", match: "promo@shop.example", destination: "ohmail/Screened", priority: 0, enabled: true, provenance: "manual" }],
+      notifyRules: [], awayResponder: null, tagNames: ["kept"], signature: "-- \nfrom this laptop",
+    }, { updatedAt: new Date(Date.now() - 2 * DAY), producer: { kind: "local", version: "0.30.16" } });
+    const w = await boot({ own: earlier });
+    for (let i = 0; i < 3; i++) await w.sidecar.syncUntilQuiet();
+    const card = await w.call("GET", `/mailboxes/${w.sidecar.world.mailboxId}/profile-import`);
+    expect({
+      docs: w.meta.docs().map((d) => [d.doc!.rules.map((r) => r.match), d.doc!.signature]),
+      card: ((await card.json()) as { state?: string }).state,
+    }).toEqual({ docs: [[["promo@shop.example"], "-- \nfrom this laptop"]], card: "found" });
   }, 60_000);
 });

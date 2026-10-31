@@ -45,7 +45,10 @@ function docsIn(folder: ProfileFolder): OrganizerProfileDoc[] {
 async function rig(o: { baselineAt?: Date | null; dormancyDays?: number | null; installId?: string } = {}) {
   const db = (await makeTestDb()) as unknown as Tx;
   const accountId = randomUUID();
-  const mailboxId = randomUUID();
+  await db.insert(accounts).values({ id: accountId, name: "window", createdAt: new Date("2026-01-01T00:00:00Z") });
+  const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${randomUUID()}@x.test`, createdAt: new Date("2026-01-01T00:00:00Z") })
+    .returning({ id: mailboxes.id });
+  const mailboxId = mb!.id;
   await db.insert(accountSettings).values({
     accountId, updatedAt: new Date(),
     screeningBaselineAt: o.baselineAt ?? null, dormancyDays: o.dormancyDays ?? null,

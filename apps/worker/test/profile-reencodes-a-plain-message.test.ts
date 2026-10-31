@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { tags, type Tx } from "@trafficflow/db";
+import { accounts, mailboxes, tags, type Tx } from "@trafficflow/db";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
   formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
@@ -54,7 +54,10 @@ class ProfileFolder implements ProfileIo {
 async function rig(o: { form: "plain" | "escaped"; normalises?: boolean }) {
   const db = (await makeTestDb()) as unknown as Tx;
   const accountId = randomUUID();
-  const mailboxId = randomUUID();
+  await db.insert(accounts).values({ id: accountId, name: "reencode", createdAt: new Date("2026-01-01T00:00:00Z") });
+  const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${randomUUID()}@x.test`, createdAt: new Date("2026-01-01T00:00:00Z") })
+    .returning({ id: mailboxes.id });
+  const mailboxId = mb!.id;
   await db.insert(tags).values({ accountId, name: PERSON });
   const payload = await serializeOrganizerProfile(db, accountId, mailboxId);
   // The copy states the window this store publishes (RULING-026), so the only difference a pass can

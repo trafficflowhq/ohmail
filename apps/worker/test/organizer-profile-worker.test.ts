@@ -52,14 +52,17 @@ const INSTALL = "cloud-profile-test";
  * claim — *"the lease gate is the single-writer mechanism"* — was asserted on a fixture in which
  * the gate had already said no and the profile was appended regardless. The single-writer
  * mechanism was the one thing the file could not see.
+ *
+ * `createdAt` dates the row: it must predate any copy a test plants as this organizer's own.
  */
-async function seedMailbox(db: Db, accountId = randomUUID()): Promise<{ accountId: string; mailboxId: string }> {
+async function seedMailbox(db: Db, accountId = randomUUID(), createdAt?: Date): Promise<{ accountId: string; mailboxId: string }> {
   await db.insert(accounts).values({ id: accountId, name: "profile" });
   const [row] = await db.insert(mailboxes)
     .values({
       accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test`,
       organizerRole: "organizer",
       organizeConsentedAt: new Date(Date.now() - 60 * 60 * 1000),
+      ...(createdAt === undefined ? {} : { createdAt }),
     }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
@@ -870,7 +873,7 @@ describe("the worker's portable profile write-behind", () => {
   it("our OWN stale document is refreshed on resume — same install id, no hold", async () => {
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
-    const mb = await seedMailbox(db);
+    const mb = await seedMailbox(db, undefined, new Date("2026-07-01T00:00:00Z"));
     // A previous run of THIS organizer wrote a document; configuration changed while it was down.
     const stale = makeProfileDoc(
       { screener: [], rules: [], notifyRules: [], awayResponder: null, tagNames: ["old-tag"], signature: null },
@@ -892,6 +895,39 @@ describe("the worker's portable profile write-behind", () => {
     expect(await db.select().from(auditLog)
       .where(and(eq(auditLog.accountId, mb.accountId), eq(auditLog.action, PROFILE_FOUND_AUDIT_ACTION))))
       .toHaveLength(0);
+  }, 60_000);
+
+  /* ONE INSTALL ID PER DEPLOYMENT: a new account, a second signup or a database made afresh meets
+     settings this id wrote under a mailbox row that is gone. Dated before this row, they are found
+     settings: kept, held and offered, never replaced by this store's empty ones. */
+  it("our install id on a document older than this mailbox row is found: kept, held and offered on the card", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db);
+    const left = makeProfileDoc({
+      screener: [{ address: "friend@elsewhere.example" }],
+      rules: [{ kind: "sender", match: "friend@elsewhere.example", destination: "INBOX", priority: 0, enabled: true, provenance: "promoted" }],
+      notifyRules: [], awayResponder: null, tagNames: ["left"], signature: null,
+    }, { updatedAt: new Date(Date.now() - 24 * 60 * 60 * 1000), producer: { kind: "cloud", version: "dev" } });
+    const meta = fleet.metaFor(mb.mailboxId);
+    await meta.appendProfile(formatProfileMessage(left, { installId: INSTALL }));
+    const raw = meta.messages.find((m) => parseProfileMessage(m.raw) !== null)!.raw;
+
+    const worker = await startWorker(workerConfig(fleet));
+    closers.push(() => worker.stop());
+
+    const held = async (): Promise<boolean> => (await latestProfileFoundMarker(db, mb.accountId, mb.mailboxId))?.heldForImport === true;
+    const settled = async (): Promise<boolean> => (await held()) || !meta.messages.some((m) => m.raw === raw);
+    expect(await waitFor(settled), "the worker never read the settings").toBe(true);
+    await new Promise((r) => setTimeout(r, 900));
+    // The card offers what this marker names while no answer closes it.
+    const marker = await latestProfileFoundMarker(db, mb.accountId, mb.mailboxId);
+    const fingerprint = profileFingerprint(left);
+    expect({
+      kept: meta.messages.filter((m) => parseProfileMessage(m.raw) !== null).map((m) => m.raw),
+      marker: marker === null ? null : [marker.state, marker.heldForImport, marker.fingerprint === fingerprint],
+      answered: await profileImportResolutionExists(db, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint }),
+    }).toEqual({ kept: [raw], marker: ["found", true, true], answered: false });
   }, 60_000);
 });
 
@@ -2704,6 +2740,8 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
   beforeAll(async () => { DB = await prepareIsolatedDb("trafficflow_worker_profile"); }, 120_000);
   beforeEach(async () => { await truncateAll(DB); }, ISOLATED_DB_RESET_BUDGET_MS);
 
+  /** The organizer's mailbox row, older than the September copies and clocks below: they are its own. */
+  const ROW_AT = new Date("2026-01-01T00:00:00Z");
   /** `n` copies of what the store says, ours, one second apart; the last is current. */
   async function seedOwnCopies(db: Db, fleet: FakeAdapterFleet, mb: { accountId: string; mailboxId: string }, n: number): Promise<void> {
     // What the store says includes the window it publishes (RULING-026), or the first tick writes it.
@@ -2734,7 +2772,7 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
   it("an applied request id rides the next write and never causes one", async () => {
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
-    const mb = await seedMailbox(db);
+    const mb = await seedMailbox(db, undefined, ROW_AT);
     await db.insert(tags).values({ accountId: mb.accountId, name: "mine", hue: "moss" });
     let t = Date.UTC(2026, 8, 28, 0, 0, 0);
     const sync = clockedSync(db, fleet, mb, [], () => new Date(t));
@@ -2761,8 +2799,8 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
     // The hosted store holds every account's request keys in one table.
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
-    const a = await seedMailbox(db);
-    const b = await seedMailbox(db);
+    const a = await seedMailbox(db, undefined, ROW_AT);
+    const b = await seedMailbox(db, undefined, ROW_AT);
     const t = Date.UTC(2026, 8, 28, 0, 0, 0);
     const applied = (accountId: string, id: string) => ({
       accountId, key: `meta-request:${id}`, requestHash: "h", responseStatus: 200,
@@ -2780,7 +2818,7 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
   it("five copies of what the store says — found_own, planned removable 4, removed 4, and no APPEND", async () => {
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
-    const mb = await seedMailbox(db);
+    const mb = await seedMailbox(db, undefined, ROW_AT);
     await db.insert(tags).values({ accountId: mb.accountId, name: "mine", hue: "moss" });
     await seedOwnCopies(db, fleet, mb, 5);
     const meta = fleet.metaFor(mb.mailboxId);
@@ -2803,7 +2841,7 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
   it("a pile past one pass is finished by the next tidy, and still nothing is appended", async () => {
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
-    const mb = await seedMailbox(db);
+    const mb = await seedMailbox(db, undefined, ROW_AT);
     await db.insert(tags).values({ accountId: mb.accountId, name: "mine", hue: "moss" });
     await seedOwnCopies(db, fleet, mb, 150);
     const meta = fleet.metaFor(mb.mailboxId);
@@ -2828,7 +2866,7 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
   it("count mode removes nothing, and a settings change replaces only the current copy — five stays five", async () => {
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
-    const mb = await seedMailbox(db);
+    const mb = await seedMailbox(db, undefined, ROW_AT);
     await db.insert(tags).values({ accountId: mb.accountId, name: "mine", hue: "moss" });
     await seedOwnCopies(db, fleet, mb, 5);
     const events: string[] = [];

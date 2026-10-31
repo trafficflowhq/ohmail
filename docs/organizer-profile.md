@@ -423,6 +423,19 @@ refuses to answer it itself:
   profile pass when the document changed under an open question. Mail kept in
   place while the question was open is not re-filed afterwards.
 
+A document is the organizer's own only when it carries the organizer's install
+id and was written no earlier than the organizer's record of the mailbox. An
+install id outlives the store that wrote under it: a phone keeps it when a
+mailbox is removed and connected again, a desktop keeps it when a mailbox is
+removed and added again, and a server uses one for every account it
+organizes. Settings left under the same id before that record existed are
+found settings like any other install's: kept, held for the person's answer,
+and never replaced by the new store's own settings. Until the person answers,
+the organizer writes nothing beside them, not even settings made in the
+meantime: they stay the mailbox's newest settings, so the next store under that
+id, or another install that takes over, finds them and asks about them too. A
+hand-back before the answer says this install's own settings stayed on it.
+
 ## What a reader in another mail client sees
 
 `ohmail/_meta` is unsubscribed; some mail apps, Apple Mail among them, still
