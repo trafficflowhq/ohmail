@@ -340,9 +340,23 @@ describe("a withheld list is a surface of its own, and it speaks", () => {
     expect(listSurface({ settled: true, count: 0, pending: firstPassWithholds(0, before, NOW, reading) })).toBe("pending");
     expect(firstPassWithholds(4, before, NOW, reading), "rows are counted").toBe(false);
     expect(firstPassWithholds(0, before, NOW, { organizing: true, firstSync: "finished" })).toBe(false);
-    expect(firstPassWithholds(0, before, NOW, { organizing: false, firstSync: "pending" }), "nothing organizes: no gate to wait for").toBe(false);
     expect(firstPassWithholds(0, before, NOW, { organizing: null, firstSync: "pending" })).toBe(false);
     expect(firstPassWithholds(0, before, NOW, null), "a paired door reads its rows alone").toBe(false);
+  });
+
+  it("a fresh mailbox's first pass withholds the shelf before any claim is written: the first sync is the phone's own", () => {
+    // Never organized: the phone reads the whole mailbox first and writes its claim after, so the door says not organizing.
+    const unclaimed = { organizing: false, firstSync: "pending" };
+    const agreed = { known: true, rows: [{ ...row(null, "reader"), organizeConsentedAt: FRESH }] };
+    expect(firstPassWithholds(0, agreed, NOW, unclaimed)).toBe(true);
+    expect(firstPassWithholds(0, { known: true, rows: [] }, NOW, unclaimed), "connected before the mailbox read").toBe(true);
+    expect(firstPassWithholds(0, { known: false, rows: [] }, NOW, unclaimed)).toBe(true);
+    expect(listSurface({ settled: true, count: 0, pending: firstPassWithholds(0, agreed, NOW, unclaimed) })).toBe("pending");
+    expect(firstPassWithholds(0, agreed, NOW, { organizing: false, firstSync: "finished" }), "the pass ended: the count shows").toBe(false);
+    expect(firstPassWithholds(3, agreed, NOW, unclaimed)).toBe(false);
+    const declined = { known: true, rows: [{ ...row(null, "reader"), organizeConsentedAt: null }] };
+    expect(firstPassWithholds(0, declined, NOW, unclaimed), "never agreed: nothing will screen, the shelf says so").toBe(false);
+    expect(firstPassWithholds(0, declined, NOW, { organizing: true, firstSync: "pending" }), "the engine's own claim wins").toBe(true);
   });
 
   it("the count line is silenced while the list is withheld", () => {

@@ -927,6 +927,8 @@ const TABLE = {
   /** …on a standalone phone that organizes the mailbox: the window read predates its start. */
   screeningUnreadHere:
     "Showing everyone in the Screener folder until this phone’s own screening settings apply at its next check.",
+  /** …on a standalone phone whose mailbox no device holds. */
+  screeningUnreadNobody: "Showing everyone in the Screener folder — nothing organizes this mailbox.",
   /** Beside a folder-whole count: the organizer is an older ohmail that states no window. */
   screeningUnstated: (holder: string) =>
     `${holder} runs an older ohmail that doesn’t share its screening window — showing everyone in the Screener folder.`,

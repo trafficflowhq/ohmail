@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screenerMetaOf } from "../src/state/world-projection";
+import { screenerMetaOf, windowHolderOf } from "../src/state/world-projection";
 import { EN } from "../src/copy.en";
 import { DE } from "../src/copy.de";
 import {
@@ -29,11 +29,28 @@ describe("the phone's Screener meta", () => {
   });
   it("on a standalone phone that organizes the mailbox, a window read before it started is not another device's", () => {
     for (const w of [W("unread", null), W("unread"), W("unstated")]) {
-      const said = screenerMetaOf("server", 0, screeningAnswered({ ...BASE, byMailbox: { mb: w } }), true);
+      const said = screenerMetaOf("server", 0, screeningAnswered({ ...BASE, byMailbox: { mb: w } }), "here");
       expect(said).toBe("0 first-time senders waiting. Showing everyone in the Screener folder until this phone’s own screening settings apply at its next check.");
     }
-    expect(screenerMetaOf("server", 2, screeningAnswered({ ...BASE, byMailbox: { mb: W("own") } }), true)).toBe("2 first-time senders waiting");
+    expect(screenerMetaOf("server", 2, screeningAnswered({ ...BASE, byMailbox: { mb: W("own") } }), "here")).toBe("2 first-time senders waiting");
     expect(DE.screeningUnreadHere).not.toBe(EN.screeningUnreadHere);
+  });
+  it("on a standalone phone whose mailbox no device holds, no organizing device is named", () => {
+    for (const w of [W("unread", null), W("unread"), W("unstated")]) {
+      const said = screenerMetaOf("server", 0, screeningAnswered({ ...BASE, byMailbox: { mb: w } }), "nobody");
+      expect(said).toBe("0 first-time senders waiting. Showing everyone in the Screener folder — nothing organizes this mailbox.");
+    }
+    expect(screenerMetaOf("server", 2, screeningAnswered({ ...BASE, byMailbox: { mb: W("own") } }), "nobody")).toBe("2 first-time senders waiting");
+    expect(DE.screeningUnreadNobody).not.toBe(EN.screeningUnreadNobody);
+  });
+  it("the standalone claim decides whose window the sentence names", () => {
+    expect(windowHolderOf({ k: "ours" })).toBe("here");
+    expect(windowHolderOf({ k: "free" }), "a fresh mailbox before this phone's claim").toBe("nobody");
+    expect(windowHolderOf({ k: "handedBack" })).toBe("nobody");
+    expect(windowHolderOf({ k: "theirs", name: "Studio Mac", kind: "local" })).toBeNull();
+    expect(windowHolderOf({ k: "unknown" })).toBeNull();
+    expect(windowHolderOf(null)).toBeNull();
+    expect(windowHolderOf(undefined), "a paired world names its holder").toBeNull();
   });
   it("CONTROL: stated windows, no map, and the two map-less postures say the count alone", () => {
     expect(screenerMetaOf("server", 3, screeningAnswered({ ...BASE, byMailbox: { mb: W("organizer"), mc: W("own") } })))

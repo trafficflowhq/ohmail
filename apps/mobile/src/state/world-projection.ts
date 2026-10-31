@@ -69,16 +69,25 @@ import { holderKind } from "../ui/standalone-form";
 
 /**
  * The Screener's meta: the count, and beside a folder-whole one the sentence that says why (RULING-026).
- * `organizingHere`: a standalone phone that organizes the mailbox, whose last window read predates its start.
+ * `holder` on a standalone phone: `here` organizes the mailbox, whose last window read predates its
+ * start; `nobody` holds it, so no organizing device is named.
  */
-export function screenerMetaOf(source: string, waiting: number, posture: ScreeningPosture, organizingHere = false): string {
+export function screenerMetaOf(source: string, waiting: number, posture: ScreeningPosture, holder: WindowHolder = null): string {
   const count = source === "server" ? Copy.metaWaiting(waiting) : Copy.metaWaitingOnDevice(waiting);
   const d = screeningDegradeOf(posture);
   if (d === null) return count;
-  const reason = organizingHere ? Copy.screeningUnreadHere : d.state === "unread"
+  const reason = holder === "here" ? Copy.screeningUnreadHere : holder === "nobody" ? Copy.screeningUnreadNobody : d.state === "unread"
     ? (d.holderName === null ? Copy.screeningUnreadNoName : Copy.screeningUnread(d.holderName))
     : (d.holderName === null ? Copy.screeningUnstatedNoName : Copy.screeningUnstated(d.holderName));
   return Copy.metaWithReason(count, reason);
+}
+
+/** Whose screening window a standalone phone's Screener waits on; `null` where a holder is named or unread. */
+export type WindowHolder = "here" | "nobody" | null;
+
+export function windowHolderOf(claim: StandaloneClaim | null | undefined): WindowHolder {
+  if (claim?.k === "ours") return "here";
+  return claim?.k === "free" || claim?.k === "handedBack" ? "nobody" : null;
 }
 import type { World } from "./world";
 
@@ -226,13 +235,13 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
     const { base, pres } = presented;
     inp.onPresented(pres, presented.options, presented.world.reader);
     const openHeld = engine.openRowHeld();
-    const organizingHere = inp.standaloneClaim?.k === "ours";
-    const screener = () => kept("screener", [pres, v, inp.scopes, inp.screenerServer, inp.leavingWaiting, inp.relayed, organizingHere], () => {
+    const holder = windowHolderOf(inp.standaloneClaim);
+    const screener = () => kept("screener", [pres, v, inp.scopes, inp.screenerServer, inp.leavingWaiting, inp.relayed, holder], () => {
       const s = liveScreener(pres, v, inp.scopes, waitingOnScreen(inp.screenerServer, inp.leavingWaiting));
       return {
         ...s,
         relayed: inp.relayed,
-        meta: screenerMetaOf(s.source, s.waiting.length, posture, organizingHere),
+        meta: screenerMetaOf(s.source, s.waiting.length, posture, holder),
       };
     });
     const piles = () => kept("piles", [pres, v], () => livePiles(pres, v));
