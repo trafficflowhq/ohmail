@@ -970,6 +970,7 @@ export {
   REMOTE_URL,
   SAFE_HREF,
   tinyDimension,
+  withoutFiller,
 } from "./mail-render-rules.js";
 // Where a body's quoted history starts and ends — one reading for every reader. See `quoted-history.ts`.
 export {

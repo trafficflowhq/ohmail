@@ -39,7 +39,7 @@ import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
 import { DEFERRED_SHEET_ATTR, DEFERRED_SRC_ATTR, DEFERRED_STYLE_ATTR, DEFERRED_URLS_ATTR, PARK_FLAT_ATTR, proxiedImages } from "./proxied-images";
-import { QUOTED_HISTORY_LIMITS, drawsNoWords, hiddenByOwnStyle, isForwardSubject, quotedDomTree, quotedHistoryVerdictOfHtml, type QuotedDomNode, type QuotedVerdict } from "@ohmail/client-engine";
+import { QUOTED_HISTORY_LIMITS, drawsNoWords, hiddenByOwnStyle, isForwardSubject, quotedDomTree, quotedHistoryVerdictOfHtml, withoutFiller, type QuotedDomNode, type QuotedVerdict } from "@ohmail/client-engine";
 import { scrollProgrammatically } from "../shell/programmatic-scroll";
 import { useEngineOrNull } from "../shell/engine";
 import { mailDocCacheFor, type MailDocCache, type MailDocInputs } from "./mail-doc-cache";
@@ -883,22 +883,476 @@ function neutraliseStyleAttr(
  * a link labelled "Manage your subscription" pointing at
  * `tracker.example.com/ls/click?u=…` — the honest thing is to say the
  * destination out loud rather than hide it or refuse the link. The test is
- * deliberately narrow: the visible text NAMES A HOST, and it is not the
- * host the link goes to. Broadening to "the text is not the url" would
- * flag every ordinary link — a warning that means nothing by the second one.
+ * deliberately narrow: the visible text NAMES A HOST (any one it names),
+ * and it is not the host the link goes to. Broadening to "the text is not
+ * the url" would flag every ordinary link — a warning that means nothing by
+ * the second one. A label a bidi control reorders is judged by whether it
+ * could spell a host at all: it may draw an order its text does not hold.
  */
 export function textDisagreesWithHref(text: string, host: string): boolean {
-  // BOUNDED BEFORE IT IS MATCHED. The subject is a sender-authored link label, so it can be
-  // any size at all, and `(?:[a-z0-9-]+\.)+` over a megabyte of dotted junk is the same class
-  // of main-thread stall the CSS scanner above is written to avoid. A link whose visible text
-  // names a host names it at the front; 2 KiB is far past any label a reader can see.
-  const claimed = /(?:^|\s)(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?:[/\s]|$)/i.exec(
-    text.trim().slice(0, 2048),
-  );
-  if (!claimed) return false;
-  const claimedHost = claimed[1]!.toLowerCase();
-  if (!host) return true;
-  return claimedHost !== host && !host.endsWith(`.${claimedHost}`);
+  if (REORDERS_LABEL.test(text) && maySpellHost(text)) return true;
+  // Read twice: without what draws nothing, and with the hair-thin spaces closed up too.
+  const read = withoutFiller(text).replace(DRAWS_NOTHING, "").normalize("NFC");
+  const joined = read.replace(NARROW_SPACE, "");
+  return namesAnotherHost(read, host) || (joined !== read && namesAnotherHost(joined, host));
+}
+
+/** Explicit embeddings, overrides and isolates: what follows may be drawn in another order. */
+const BIDI_CONTROL = /[\u{202a}-\u{202e}\u{2066}-\u{2069}]/u;
+const BIDI_CONTROLS = /[\u{202a}-\u{202e}\u{2066}-\u{2069}]/gu;
+/** Those, and the strong right-to-left marks: drawing nothing, they still carry digits across a dot. */
+const REORDERS_LABEL = /[\u{061c}\u{200f}\u{202a}-\u{202e}\u{2066}-\u{2069}]/u;
+/** What draws nothing beyond the shared filler: variation selectors, Hangul fillers, U+007F to U+009F. */
+const DRAWS_NOTHING = /[\p{Default_Ignorable_Code_Point}\u007f-\u009f]/gu;
+/** Spaces thin enough to pass for none: six-per-em to hair, narrow no-break, medium mathematical. */
+const NARROW_SPACE = /[\u{2006}-\u{200a}\u{202f}\u{205f}]/gu;
+
+/** Whether a label could spell an ASCII host in some order: a full stop and two ASCII letters. */
+function maySpellHost(text: string): boolean {
+  return text.includes(".") && /[a-z][^a-z]*[a-z]/i.test(text);
+}
+
+/** Every host the text names, in one linear pass with no window: a decoy can stand anywhere. */
+function namesAnotherHost(text: string, host: string): boolean {
+  for (const word of text.split(/\s+/)) {
+    const named = hostNamedBy(word);
+    if (named !== "" && (!host || (named !== host && !host.endsWith(`.${named}`)))) return true;
+  }
+  return false;
+}
+
+/** Runs of the characters an ASCII host is spelled with. No `u` flag: `iu` folds U+017F and U+212A into it. */
+const HOST_RUN = /[a-z0-9.-]+/gi;
+const LETTER_OR_DIGIT_LAST = /[\p{L}\p{N}]$/u;
+const LETTER_OR_DIGIT_FIRST = /^[\p{L}\p{N}]/u;
+
+/**
+ * The host one word of a label names, lower-cased, or "": its first run of host characters that
+ * spells one decides. A letter or digit of another script touching that run makes the word an
+ * IDN label's (`bücher.example`), whose ASCII tail is no host the reader sees.
+ */
+function hostNamedBy(word: string): string {
+  HOST_RUN.lastIndex = 0;
+  for (let m = HOST_RUN.exec(word); m !== null; m = HOST_RUN.exec(word)) {
+    const named = hostOfRun(m[0]);
+    if (named === "") continue;
+    const end = m.index + m[0].length;
+    const idn = LETTER_OR_DIGIT_LAST.test(word.slice(Math.max(0, m.index - 2), m.index)) ||
+      LETTER_OR_DIGIT_FIRST.test(word.slice(end, end + 2));
+    return idn ? "" : named;
+  }
+  return "";
+}
+
+/**
+ * The host a run of `[a-z0-9.-]` spells, lower-cased, or "": with its edge dots dropped, two or
+ * more non-empty labels, the last two or more letters. Split, never a nested quantifier.
+ */
+function hostOfRun(run: string): string {
+  const parts = run.toLowerCase().split(".");
+  let from = 0;
+  let to = parts.length;
+  while (from < to && parts[from] === "") from++;
+  while (to > from && parts[to - 1] === "") to--;
+  if (to - from < 2 || !/^[a-z]{2,}$/.test(parts[to - 1]!)) return "";
+  for (let i = from; i < to; i++) if (parts[i] === "") return "";
+  return parts.slice(from, to).join(".");
+}
+
+/**
+ * The frame's note: a link is marked when any reading of its label names a host it does not go
+ * to — whole, as the shared rule draws it ({@link unseen}), or as the browser draws it from its
+ * defaults and the letter's sheets ({@link drawHints}). A label that it, what surrounds it
+ * ({@link reorderedAround}) or the sheets may draw in another order is judged by whether it could
+ * spell one. A link holding a link is marked outright and no label is read past one, so each text
+ * node is read once.
+ */
+function markElsewhere(root: Element, links: readonly Element[]): void {
+  if (links.length === 0) return;
+  const hints = drawHints(root);
+  const around = hints.reordersAll ? null : reorderedAround(root, new Set(links), hints);
+  for (const a of links) {
+    const host = a.getAttribute("data-ohmail-host") ?? "";
+    const label = labelOfLink(a, hints);
+    const reordered = label !== null && (label.reordered || around === null || around.has(a));
+    if (label === null || (reordered && maySpellHost(label.whole)) || textDisagreesWithHref(label.whole, host) ||
+      (label.drawn !== label.whole && textDisagreesWithHref(label.drawn, host)) ||
+      (label.sheetDrawn !== label.drawn && textDisagreesWithHref(label.sheetDrawn, host))) {
+      a.setAttribute("data-ohmail-elsewhere", "1");
+    }
+  }
+}
+
+interface LinkLabel { whole: string; drawn: string; sheetDrawn: string; reordered: boolean }
+
+/**
+ * A frame link's label read three ways in one iterative walk, never `innerText`, or null when it
+ * holds a link. A node's level: 0 drawn, 1 hidden from the sheet reading, 2 from both drawn ones.
+ */
+function labelOfLink(a: Element, hints: DrawHints): LinkLabel | null {
+  const label: LinkLabel = { whole: "", drawn: "", sheetDrawn: "", reordered: reorders(a, hints) };
+  const nodes: Node[] = [];
+  const levels: number[] = [];
+  const pushChildren = (el: Element, level: number): void => {
+    // A closed details draws its first summary and nothing else.
+    const summary = el.localName === "details" && !el.hasAttribute("open") ? firstSummaryOf(el) : undefined;
+    for (let c = el.lastChild; c !== null; c = c.previousSibling) {
+      nodes.push(c);
+      levels.push(summary !== undefined && c !== summary ? Math.max(level, 1) : level);
+    }
+  };
+  pushChildren(a, 0);
+  while (nodes.length > 0) {
+    const n = nodes.pop()!;
+    const level = levels.pop()!;
+    if (n.nodeType === 3) {
+      const text = n.nodeValue ?? "";
+      label.whole += text;
+      if (level < 2) label.drawn += text;
+      if (level < 1) label.sheetDrawn += text;
+      continue;
+    }
+    if (n.nodeType !== 1) continue;
+    const el = n as Element;
+    if (el.localName === "a" && el.hasAttribute("href")) return null;
+    if (reorders(el, hints)) label.reordered = true;
+    pushChildren(el, Math.max(level, unseen(el) ? 2 : el.localName === "rp" || hints.hidden.has(el) ? 1 : 0));
+  }
+  return label;
+}
+
+function firstSummaryOf(details: Element): Element | null {
+  for (const c of details.children) if (c.localName === "summary") return c;
+  return null;
+}
+
+/**
+ * The embedding, override and isolate controls left open, each with the node whose text holds it,
+ * and where the isolates among them stand, so a PDI finds its isolate in one step.
+ */
+interface OpenControls { at: (Node | null)[]; isolates: number[] }
+
+/**
+ * The links that what surrounds them may draw in another order: an ancestor that may
+ * ({@link reorders}), or a control left open before them. One walk in document order. A control
+ * closes only by its own PDF or PDI in the same element (an isolate between them keeps it open),
+ * and never at a block, which the letter can draw inline.
+ */
+function reorderedAround(root: Element, links: ReadonlySet<Element>, hints: DrawHints): Set<Element> {
+  const out = new Set<Element>();
+  const open: OpenControls = { at: [], isolates: [] };
+  const nodes: Node[] = [root];
+  const under: boolean[] = [false];
+  while (nodes.length > 0) {
+    const n = nodes.pop()!;
+    const up = under.pop()!;
+    if (n.nodeType === 3) {
+      const text = n.nodeValue ?? "";
+      if (BIDI_CONTROL.test(text)) trackControls(text, n.parentNode, open);
+      continue;
+    }
+    if (n.nodeType !== 1) continue;
+    const el = n as Element;
+    if ((up || open.at.length > 0) && links.has(el)) out.add(el);
+    const below = up || reorders(el, hints);
+    for (let c = el.lastChild; c !== null; c = c.previousSibling) {
+      nodes.push(c);
+      under.push(below);
+    }
+  }
+  return out;
+}
+
+/** One text's controls: PDF closes the last embedding or override, PDI the last isolate and all it holds. */
+function trackControls(text: string, at: Node | null, open: OpenControls): void {
+  for (const [c] of text.matchAll(BIDI_CONTROLS)) {
+    const top = open.at.length - 1;
+    const isolate = open.isolates[open.isolates.length - 1] ?? -1;
+    if (c === "\u{202c}") {
+      if (top > isolate && open.at[top] === at) open.at.pop();
+    } else if (c === "\u{2069}") {
+      if (isolate >= 0 && open.at[isolate] === at) {
+        open.at.length = isolate;
+        open.isolates.pop();
+      }
+    } else {
+      if (c >= "\u{2066}") open.isolates.push(open.at.length);
+      open.at.push(at);
+    }
+  }
+}
+
+/** A declaration that may draw text out of its order: a direction but ltr, a unicode-bidi but normal. */
+const BIDI_DECLARATION = /(?:^|[;\s])(?:direction\s*:\s*(?!ltr\b)[a-z-]|unicode-bidi\s*:\s*(?!normal\b)[a-z-])/i;
+/** Right-to-left letters and marks, and the bidi controls: what a dir of auto can resolve right to left on. */
+const RTL_CAPABLE = /[\u{0590}-\u{08ff}\u{200f}\u{202a}-\u{202e}\u{2066}-\u{2069}\u{fb1d}-\u{fdff}\u{fe70}-\u{fefe}\u{10800}-\u{10fff}\u{1e800}-\u{1efff}]/u;
+
+/**
+ * Whether an element may draw its text in another order: a bdo (an override whatever its dir), a
+ * dir of rtl, or of auto (a bdi's unless it says ltr or rtl) in a letter whose text could resolve
+ * it right to left, or such a declaration in its style or the letter's sheets. Left to right
+ * reorders no ASCII.
+ */
+function reorders(el: Element, hints: DrawHints): boolean {
+  const said = (el.getAttribute("dir") ?? "").trim().toLowerCase();
+  const dir = el.localName === "bdi" && said !== "ltr" && said !== "rtl" ? "auto" : said;
+  return el.localName === "bdo" || dir === "rtl" || (dir === "auto" && hints.autoRtl) ||
+    BIDI_DECLARATION.test(cssPlain(el.getAttribute("style") ?? "")) || hints.reordered.has(el);
+}
+
+/** CSS as its tokenizer reads a keyword: comments out (none inside a string), escapes decoded. Linear. */
+function cssPlain(css: string): string {
+  if (!css.includes("\\") && !css.includes("/*")) return css;
+  let out = "";
+  let from = 0;
+  let quote = "";
+  for (let i = 0; i < css.length; i++) {
+    const ch = css[i]!;
+    if (ch === "\\") i = pastCssEscape(css, i) - 1;
+    else if (quote !== "") quote = ch === quote || ch === "\n" ? "" : quote;
+    else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "/" && css[i + 1] === "*") {
+      const end = css.indexOf("*/", i + 2);
+      out += css.slice(from, i);
+      i = end < 0 ? css.length : end + 1;
+      from = i + 1;
+    }
+  }
+  return decodeCssEscapes(out + css.slice(from));
+}
+
+/**
+ * What the letter's own sheets hide or reorder, as far as {@link sheetSubjects} reads them; whether
+ * they may reorder any link (by a rule the reading cannot match, a rule for the frame's own html or
+ * body, or a control drawn as generated content); and whether a dir of auto may resolve right to
+ * left (the letter's text holds a right-to-left letter, mark or control).
+ */
+interface DrawHints { hidden: ReadonlySet<Element>; reordered: ReadonlySet<Element>; reordersAll: boolean; autoRtl: boolean }
+
+/** The subjects a letter's rules ask the sheet reading to match. */
+interface SheetRules { hide: string[]; bidi: string[]; reordersAll: boolean }
+
+/**
+ * At most this many rule subjects are matched per letter, each at most this long and of this
+ * many simple selectors ({@link cheapSubject}).
+ */
+const MAX_SHEET_SUBJECTS = 32;
+const MAX_SUBJECT_CHARS = 64;
+const MAX_SUBJECT_PARTS = 4;
+
+/**
+ * What a `display:none` rule, or one that may draw right to left, in the letter's sheets matches
+ * by its subject, cascade and media ignored: more hidden only quiets the sheet reading, which the
+ * other two back. A subject is one cheap compound, so each match is one pass over the letter at a
+ * few compares per element.
+ */
+function drawHints(root: Element): DrawHints {
+  const rules: SheetRules = { hide: [], bidi: [], reordersAll: false };
+  let readsAttributes = false;
+  for (const style of root.querySelectorAll("style")) {
+    const css = style.textContent ?? "";
+    // Generated content draws a control the sheet spells, or one an attribute holds.
+    const plain = cssPlain(css);
+    if (BIDI_CONTROL.test(plain)) rules.reordersAll = true;
+    if (/\battr\(/i.test(plain)) readsAttributes = true;
+    sheetSubjects(css, rules);
+  }
+  if (!rules.reordersAll) rules.reordersAll = attributeHoldsControl(root, readsAttributes);
+  if (!rules.reordersAll && rules.bidi.length > 0) rules.reordersAll = rules.bidi.some(matchesFrameRoot(root.ownerDocument));
+  const matched = (list: readonly string[]): Set<Element> => {
+    const out = new Set<Element>();
+    for (const s of list) {
+      try {
+        for (const el of root.querySelectorAll(s)) out.add(el);
+      } catch {
+        // A subject this engine cannot parse matches nothing, as in the browser.
+      }
+    }
+    return out;
+  };
+  return {
+    hidden: matched(rules.hide),
+    reordered: rules.reordersAll ? new Set() : matched(rules.bidi),
+    reordersAll: rules.reordersAll,
+    autoRtl: RTL_CAPABLE.test(root.textContent ?? ""),
+  };
+}
+
+/** Whether a subject matches the frame's own html or body as {@link buildMailDocument} writes them. */
+function matchesFrameRoot(doc: Document): (subject: string) => boolean {
+  const html = doc.createElement("html");
+  for (const name of ["data-ohmail-dark", "data-ohmail-reflow", "style"]) html.setAttribute(name, "");
+  const body = doc.createElement("body");
+  return (s) => {
+    try {
+      return html.matches(s) || body.matches(s);
+    } catch {
+      return false;
+    }
+  };
+}
+
+/**
+ * Whether a style in the letter, decoded, holds an embedding, override or isolate control (a q's
+ * quotes, a list marker), or any attribute does when a sheet or a style reads attributes.
+ */
+function attributeHoldsControl(root: Element, sheetReads: boolean): boolean {
+  let reads = sheetReads;
+  for (const el of root.querySelectorAll("[style]")) {
+    const plain = cssPlain(el.getAttribute("style") ?? "");
+    if (BIDI_CONTROL.test(plain)) return true;
+    if (/\battr\(/i.test(plain)) reads = true;
+  }
+  if (!reads) return false;
+  for (const el of root.querySelectorAll("*")) {
+    const attrs = el.attributes;
+    for (let i = 0; i < attrs.length; i++) if (BIDI_CONTROL.test(attrs[i]!.value)) return true;
+  }
+  return false;
+}
+
+/**
+ * Collect the subjects of one sheet's rules that hide or reorder, up to {@link MAX_SHEET_SUBJECTS}.
+ * At-rule blocks are read through and a nested rule stands alone; comments are skipped, strings
+ * and escapes kept whole. A reordering rule left unmatched may reorder any link. Linear.
+ */
+function sheetSubjects(css: string, into: SheetRules): void {
+  const stack: { selector: string | null; decl: string }[] = [{ selector: null, decl: "" }];
+  let pending = "";
+  const close = (): void => {
+    const level = stack.pop()!;
+    const decl = cssPlain(level.decl + pending);
+    pending = "";
+    if (level.selector === null) return;
+    const hides = hiddenByOwnStyle(decl);
+    const bidi = BIDI_DECLARATION.test(decl);
+    if (!hides && !bidi) return;
+    for (const s of subjectsOf(level.selector)) {
+      if (into.hide.length + into.bidi.length < MAX_SHEET_SUBJECTS && cheapSubject(s)) {
+        if (hides) into.hide.push(s);
+        if (bidi) into.bidi.push(s);
+      } else if (bidi) {
+        into.reordersAll = true;
+      }
+    }
+  };
+  for (let i = 0; i < css.length; i++) {
+    const ch = css[i]!;
+    if (ch === "/" && css[i + 1] === "*") {
+      const end = css.indexOf("*/", i + 2);
+      i = end < 0 ? css.length : end + 1;
+    } else if (ch === "\\") {
+      const past = pastCssEscape(css, i);
+      pending += css.slice(i, past);
+      i = past - 1;
+    } else if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      while (j < css.length && css[j] !== ch && css[j] !== "\n") j = css[j] === "\\" ? pastCssEscape(css, j) : j + 1;
+      pending += css.slice(i, j + 1);
+      i = j;
+    } else if (ch === "{") {
+      const selector = pending.trim();
+      pending = "";
+      stack.push({ selector: selector.startsWith("@") ? null : selector, decl: "" });
+    } else if (ch === ";") {
+      stack[stack.length - 1]!.decl += `${pending};`;
+      pending = "";
+    } else if (ch === "}") {
+      if (stack.length > 1) close();
+      else pending = "";
+    } else {
+      pending += ch;
+    }
+  }
+  while (stack.length > 1) close();
+}
+
+/**
+ * Whether a subject costs a few compares per element: a type or `*`, then classes, ids and
+ * attributes tested for presence or equality, {@link MAX_SUBJECT_PARTS} in all. A word-list,
+ * prefix, suffix or substring test reads a whole value each time, so a letter's long values set
+ * its cost; a namespace, pseudo-class, function or nesting is never plain.
+ */
+function cheapSubject(s: string): boolean {
+  if (s.length > MAX_SUBJECT_CHARS) return false;
+  let i = 0;
+  const name = (): boolean => {
+    const from = i;
+    while (i < s.length && (s[i] === "\\" || /[\w-]/.test(s[i]!) || s.charCodeAt(i) > 0x7f)) {
+      i = s[i] === "\\" ? pastCssEscape(s, i) : i + 1;
+    }
+    return i > from;
+  };
+  const gap = (): void => {
+    while (i < s.length && /\s/.test(s[i]!)) i++;
+  };
+  if (s[0] === "*") i = 1;
+  else name();
+  let parts = i > 0 ? 1 : 0;
+  while (i < s.length) {
+    const ch = s[i++];
+    if (ch === "[") {
+      gap();
+      if (!name()) return false;
+      gap();
+      if (s[i] === "=") {
+        i++;
+        gap();
+        const quote = s[i];
+        if (quote === '"' || quote === "'") {
+          i++;
+          while (i < s.length && s[i] !== quote) i = s[i] === "\\" ? pastCssEscape(s, i) : i + 1;
+          if (i >= s.length) return false;
+          i++;
+        } else if (!name()) return false;
+        gap();
+        if (/[is]/i.test(s[i] ?? "")) {
+          i++;
+          gap();
+        }
+      }
+      if (s[i++] !== "]") return false;
+    } else if ((ch !== "." && ch !== "#") || !name()) {
+      return false;
+    }
+    if (++parts > MAX_SUBJECT_PARTS) return false;
+  }
+  return parts > 0;
+}
+
+/**
+ * The last compound of each alternative in a selector list ({@link cheapSubject} decides which
+ * are matched). Commas and combinators inside brackets, strings and escapes are data.
+ */
+function subjectsOf(selector: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote = "";
+  let start = -1;
+  let fresh = true;
+  const take = (end: number): void => {
+    const s = start < 0 ? "" : selector.slice(start, end).trim();
+    if (s !== "") out.push(s);
+    start = -1;
+    fresh = true;
+  };
+  for (let i = 0; i < selector.length; i++) {
+    const ch = selector[i]!;
+    if (quote !== "") {
+      if (ch === "\\") i = pastCssEscape(selector, i) - 1;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+    if (depth === 0 && ch === ",") { take(i); continue; }
+    if (depth === 0 && (ch === ">" || ch === "+" || ch === "~" || /\s/.test(ch))) { fresh = true; continue; }
+    if (fresh) { start = i; fresh = false; }
+    if (ch === "\\") i = pastCssEscape(selector, i) - 1;
+    else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "[" || ch === "(") depth++;
+    else if (ch === "]" || ch === ")") depth = Math.max(0, depth - 1);
+  }
+  take(selector.length);
+  return out;
 }
 
 // ── how light is this mail? ────────────────────────────────────────────────────────────
@@ -1846,6 +2300,25 @@ function textOfInline(nodes: InlineNode[]): string {
 }
 
 /**
+ * A link's own words: {@link textOfInline} up to a link inside it, where it answers null — such a
+ * link is named outright, and the inner one reads its own words, so each run is read once.
+ */
+function ownLabelOf(nodes: InlineNode[]): string | null {
+  let s = "";
+  for (const n of nodes) {
+    if (n.kind === "link") return null;
+    if (n.kind === "text") s += n.text;
+    else if (n.kind === "break") s += "\n";
+    else if (n.kind !== "image") {
+      const inner = ownLabelOf(n.children);
+      if (inner === null) return null;
+      s += inner;
+    }
+  }
+  return s;
+}
+
+/**
  * One node of inline content. Text becomes a text run; `strong`/`b`, `em`/`i`, `u` become
  * styled runs; `a` passes {@link anchorFor} or dissolves into its own label; EVERYTHING else
  * is transparent — its children are walked in place, the element is never emitted.
@@ -1911,12 +2384,13 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
     if (gate === null) { out.push(...children); return; }
     const host = hostOfUrl(gate.href);
     if (spend(b)) {
+      // The label as drawn: hidden words must not stand in for the host.
+      const own = ownLabelOf(children);
       out.push({
         kind: "link",
         href: gate.href,
         host,
-        // The label as drawn: hidden words must not stand in for the host.
-        elsewhere: textDisagreesWithHref(textOfInline(children), host),
+        elsewhere: own === null || textDisagreesWithHref(own, host),
         children,
       });
     }
@@ -2443,6 +2917,8 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     if (resolved === null) recordCid(cid);
     return resolved;
   };
+  // The http(s) links the post-pass names a host for; {@link markElsewhere} judges their labels.
+  const hosted: Element[] = [];
 
   /**
    * THE POST-PASS, ONE ELEMENT AT A TIME. Attributes only — see the header of this function
@@ -2620,9 +3096,8 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
       if (host) {
         node.setAttribute("data-ohmail-host", host);
         node.setAttribute("title", `Goes to ${host}`);
-        if (textDisagreesWithHref(node.textContent ?? "", host)) {
-          node.setAttribute("data-ohmail-elsewhere", "1");
-        }
+        // Judged after the pass, when the sheets match the document the frame gets.
+        hosted.push(node);
       }
     }
   };
@@ -2761,6 +3236,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
   for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
   metAt = null;
+  markElsewhere(sanitized, hosted);
   markDataTables(sanitized);
 
   // Read AFTER the post-pass, from the final document, for the same reason the post-pass runs

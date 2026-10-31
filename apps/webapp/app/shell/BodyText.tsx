@@ -456,7 +456,8 @@ function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<str
             title={COPY.linkTitle(node.host)}
           >
             {renderInline(node.children, key, own, links)}
-            {node.elsewhere ? <span className="msg-link-host"> ({node.host})</span> : null}
+            {/* Isolated: an override the label leaves open cannot reorder the host. */}
+            {node.elsewhere ? <bdi className="msg-link-host" dir="ltr"> ({node.host})</bdi> : null}
           </a>
         );
       case "image":
