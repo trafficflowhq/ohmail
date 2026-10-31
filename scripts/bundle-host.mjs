@@ -51,6 +51,15 @@ const bundlePath = join(binDir, `ohmail-${name}.mjs`);
 
 const { build } = await loadEsbuild(ROOT);
 
+/* The tree's own version: the release this bundle is a build of, baked in as `__OHMAIL_RELEASE__` (the
+ * organizer names it in each settings copy it writes, `apps/worker/src/build-version.ts`) and the build
+ * label's fallback below. */
+const version = String(JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version ?? "").trim();
+if (!version) {
+  console.error("the workspace root declares no version — the image's build label cannot be written");
+  process.exit(1);
+}
+
 rmSync(out, { recursive: true, force: true });
 mkdirSync(binDir, { recursive: true });
 
@@ -72,6 +81,7 @@ const result = await build({
   // the engine bundle's reproducibility argument, verbatim.
   absWorkingDir: ROOT,
   external: ["@electric-sql/pglite"],
+  define: { __OHMAIL_RELEASE__: JSON.stringify(version) },
   banner: {
     js: [
       "#!/usr/bin/env node",
@@ -114,11 +124,6 @@ cpSync(join(ROOT, "packages", "db", "drizzle-cloud"), join(out, "drizzle-cloud")
  * durable-failure retry is woken by a CHANGE of build and by nothing else, so a container
  * that always answers "dev" is a container whose failed messages are never retried across
  * releases. The tree's own version is what a from-source image is a build of. */
-const version = String(JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version ?? "").trim();
-if (!version) {
-  console.error("the workspace root declares no version — the image's build label cannot be written");
-  process.exit(1);
-}
 /* A COMMIT WINS OVER A RELEASE NUMBER, when the build was given one. The version alone cannot tell
  * two builds of one release apart — the trap the released 0.20.0 images walked into — so the image
  * recipes pass the tagged commit as `TF_BUILD_VERSION` and it becomes the label. Read here, at the

@@ -454,7 +454,8 @@ export { GATE_SCREENING_AUTH_VERDICTS, storedAuthScreens, authScreensSql, unconf
  * and the module reaches `schema-mail.js` alone.
  */
 export {
-  PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION,
+  PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, PROFILE_WRITTEN_AUDIT_ACTION,
+  recordProfileWrite, profileWritesRecorded,
   latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased,
   profileImportResolutionSince, recordProfileImportResolution, profileImportResult,
   type ProfileFoundMarker, type ProfileImportDecision, type ProfileImportResult, type ProfileImportSubject,

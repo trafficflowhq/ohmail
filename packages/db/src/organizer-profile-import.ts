@@ -33,6 +33,61 @@ export const PROFILE_FOUND_AUDIT_ACTION = "organizer_profile_found";
 export const PROFILE_IMPORT_RESOLVED_AUDIT_ACTION = "organizer_profile_import_resolved";
 
 /**
+ * The `audit_log.action` under which an organizer records, BEFORE it appends, the write second of a
+ * settings copy it is about to write (and the second of a copy a build that records nothing wrote under
+ * its id, once it has judged that copy its own). Payload: `{ mailboxId, installId, second, version }`,
+ * `version` the recording build's. A copy under this install's id is this store's own only at a second
+ * it recorded: a store restored from a backup has no record of what its later life wrote. A copy's
+ * record is written again while the copy is the store's current one, so the audit log's age-out never
+ * takes the record of a copy still in the mailbox.
+ */
+export const PROFILE_WRITTEN_AUDIT_ACTION = "organizer_profile_written";
+
+/**
+ * Record a second this store vouches for, before the append it covers; `at` is the organizer's clock,
+ * the one its age-out and renewal read. Throws when the database refuses.
+ */
+export async function recordProfileWrite(
+  db: Tx, o: { accountId: string; mailboxId: string; installId: string; second: number; version: string; at?: Date },
+): Promise<void> {
+  await db.insert(auditLog).values({
+    accountId: o.accountId,
+    action: auditAction(PROFILE_WRITTEN_AUDIT_ACTION),
+    payload: { mailboxId: o.mailboxId, installId: o.installId, second: o.second, version: o.version },
+    inverse: null,
+    ...(o.at === undefined ? {} : { createdAt: o.at }),
+  });
+}
+
+/**
+ * The seconds this store recorded for the mailbox under this install id, each with the time of its
+ * newest record (epoch milliseconds), read from the newest records: the copies a store has in the
+ * mailbox are its newest few writes, since every write removes the copy it replaces.
+ */
+export async function profileWritesRecorded(
+  db: Tx, o: { accountId: string; mailboxId: string; installId: string },
+): Promise<Map<number, number>> {
+  const rows = await db.select({ payload: auditLog.payload, createdAt: auditLog.createdAt })
+    .from(auditLog)
+    .where(and(
+      eq(auditLog.accountId, o.accountId),
+      eq(auditLog.action, PROFILE_WRITTEN_AUDIT_ACTION),
+      sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
+      sql`${auditLog.payload}->>'installId' = ${o.installId}`,
+    ))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(64);
+  const seconds = new Map<number, number>();
+  for (const r of rows) {
+    const p = r.payload as { second?: unknown; ours?: unknown } | null;
+    if (typeof p?.second !== "number" || !Number.isFinite(p.second) || p.ours === false) continue;
+    const at = new Date(r.createdAt as unknown as string | number | Date).getTime();
+    if (!seconds.has(p.second)) seconds.set(p.second, Number.isFinite(at) ? at : 0);
+  }
+  return seconds;
+}
+
+/**
  * `replaced` is the explicit "save this ohmail's settings to the mailbox": nothing is applied, and
  * the organizer may now overwrite the answered document.
  */

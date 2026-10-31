@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
@@ -16,6 +17,7 @@ import {
   type OrganizerProfilePayload, type ParsedProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { startWorker } from "../src/index.js";
+import { buildReleaseOf, profileProducerVersion } from "../src/build-version.js";
 import { OrganizerProfileSync, serializeOrganizerProfile, serializeOrganizerProfileCounted, PROFILE_FOUND_AUDIT_ACTION } from "../src/profile.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
@@ -929,6 +931,82 @@ describe("the worker's portable profile write-behind", () => {
       answered: await profileImportResolutionExists(db, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint }),
     }).toEqual({ kept: [raw], marker: ["found", true, true], answered: false });
   }, 60_000);
+
+  /* A DATABASE RESTORED FROM A DUMP keeps its mailbox row and the record of what it wrote before
+     the dump; a newer copy under this deployment's id was written by the life the restore undid.
+     Kept, held and offered, never rolled back to the restored store's settings. */
+  it("a restored database meets its deployment's newer copy: kept, held and offered", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db, undefined, new Date("2026-07-01T00:00:00Z"));
+    await db.insert(tags).values({ accountId: mb.accountId, name: "before", hue: "moss" });
+    const meta = fleet.metaFor(mb.mailboxId);
+    const first = await startWorker(workerConfig(fleet));
+    expect(await waitFor(async () => meta.profileAppends === 1), "the first life never wrote").toBe(true);
+    await first.stop();
+
+    // The life after the dump replaced that copy with a newer one, which the restored store never saw.
+    await new Promise((r) => setTimeout(r, 1_100));
+    const after = makeProfileDoc({
+      screener: [{ address: "friend@elsewhere.example" }], rules: [], notifyRules: [], awayResponder: null,
+      tagNames: ["after", "before"], signature: null,
+    }, { updatedAt: new Date(), producer: { kind: "cloud", version: profileProducerVersion("dev") } });
+    await meta.removeProfiles(meta.messages.filter((m) => parseProfileMessage(m.raw) !== null).map((m) => m.ref));
+    const raw = formatProfileMessage(after, { installId: INSTALL });
+    await meta.appendProfile(raw);
+
+    const worker = await startWorker(workerConfig(fleet));
+    closers.push(() => worker.stop());
+    const held = async (): Promise<boolean> => (await latestProfileFoundMarker(db, mb.accountId, mb.mailboxId))?.heldForImport === true;
+    expect(await waitFor(async () => (await held()) || !meta.messages.some((m) => m.raw === raw)), "the worker never read the settings").toBe(true);
+    await new Promise((r) => setTimeout(r, 900));
+    const marker = await latestProfileFoundMarker(db, mb.accountId, mb.mailboxId);
+    expect({
+      kept: meta.messages.filter((m) => parseProfileMessage(m.raw) !== null).map((m) => m.raw),
+      marker: marker === null ? null : [marker.state, marker.heldForImport, marker.fingerprint === profileFingerprint(after)],
+    }).toEqual({ kept: [raw], marker: ["found", true, true] });
+  }, 60_000);
+
+  /* A SERVER IMAGE'S LABEL IS ITS COMMIT, which says nothing about its release: the copy names the release
+     first and the commit beside it, so a store tells a rolled-back release's copy from a restored one's. */
+  it("a copy a worker labelled by its commit writes names the release beside the commit", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db);
+    await db.insert(tags).values({ accountId: mb.accountId, name: "mine", hue: "moss" });
+    const meta = fleet.metaFor(mb.mailboxId);
+    const commit = "52a56a5fc5b2b1d8f9d4a1b7e0c3d2f1a9b8c7d6";
+    const worker = await startWorker({ ...workerConfig(fleet), buildVersion: commit });
+    closers.push(() => worker.stop());
+    expect(await waitFor(async () => meta.profileAppends >= 1), "the worker never wrote").toBe(true);
+    expect(profileDocs(fleet, mb.mailboxId).map((d) => d.doc!.producer.version)).toEqual([`${RELEASE}+${commit}`]);
+  }, 60_000);
+});
+
+/** The release this checkout is, as its manifest states it. */
+const RELEASE = (JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version: string }).version;
+
+describe("the release a settings copy names", () => {
+  it("the release first, the build's own label beside it; a label that starts with a release stays", () => {
+    expect([
+      profileProducerVersion("52a56a5fc5b2b1d8f9d4a1b7e0c3d2f1a9b8c7d6", "0.31.2"),
+      profileProducerVersion("dev", "0.31.2"),
+      profileProducerVersion("0.31.2", "0.31.2"),
+      profileProducerVersion("1a6b4fb2", null),
+      profileProducerVersion("dev"),
+    ]).toEqual(["0.31.2+52a56a5fc5b2b1d8f9d4a1b7e0c3d2f1a9b8c7d6", "0.31.2+dev", "0.31.2", "0.0.0+1a6b4fb2", `${RELEASE}+dev`]);
+  });
+
+  it("the release the host bundler bakes in wins over the checkout's manifest", () => {
+    const g = globalThis as Record<string, unknown>;
+    try {
+      g.__OHMAIL_RELEASE__ = "9.8.7";
+      expect([buildReleaseOf(() => "0.31.2"), buildReleaseOf()]).toEqual(["9.8.7", "9.8.7"]);
+    } finally {
+      delete g.__OHMAIL_RELEASE__;
+    }
+    expect([buildReleaseOf(() => "0.31.2"), buildReleaseOf(() => ""), buildReleaseOf()]).toEqual(["0.31.2", null, RELEASE]);
+  });
 });
 
 describe("the hold's OTHER release — the user's durable answer", () => {
@@ -2496,8 +2574,9 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     const mb = await seedMailbox(db);
     await db.insert(tags).values({ accountId: mb.accountId, name: "mine", hue: "moss" });
 
-    // The database refuses audit inserts until told otherwise — the transient blip, held open.
-    let failing = true;
+    // The database refuses audit inserts until told otherwise — the transient blip, held open — from
+    // after the first write: a write whose record is refused appends nothing.
+    let failing = false;
     const flakyDb = failingInserts(db, () => failing);
 
     const events: string[] = [];
@@ -2506,6 +2585,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
 
     await sync.onOrganize(); // seed (none found) + first flush: our own document
     expect(meta.profileAppends).toBe(1);
+    failing = true;
 
     // The overlap's loser lands a differing document under the established organizer, written
     // after ours — the newest, so it is the one that can refuse the write.
@@ -2832,7 +2912,7 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
     await sync.onOrganize();
 
     expect(events.some((e) => e.startsWith("organizer_profile_detected ") && e.includes("found_own"))).toBe(true);
-    expect(planned(events)[0]).toMatchObject({ records: 5, current: 1, removable: 4, own: 4 });
+    expect(planned(events)[0]).toMatchObject({ records: 5, current: 1, removable: 4, duplicate: 4 });
     expect(events.some((e) => e.startsWith("profile_tidied ") && e.includes("\"removed\":4"))).toBe(true);
     expect(profileDocs(fleet, mb.mailboxId)).toHaveLength(1);
     expect(meta.profileAppends, "the heal appended a copy").toBe(appends);
