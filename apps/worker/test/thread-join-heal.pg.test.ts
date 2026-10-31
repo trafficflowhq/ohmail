@@ -237,6 +237,29 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
     expect(new Set(remaining.map((t) => t.id))).toEqual(new Set([a1, a2, b1]));
   });
 
+  it("a widespread set handed in is used instead of read; a call fills it for its own account only", async () => {
+    const marked = await seedProductionSplit();
+    const r1 = await threadJoinHealPass({
+      db: db as unknown as Tx, apply: true, accountId: marked.s.accountId,
+      widespread: new Map([[marked.s.accountId, new Set([COUNTERPART])]]),
+    });
+    expect(r1.merged).toBe(0);
+
+    const empty = await seedProductionSplit();
+    const memo = new Map<string, ReadonlySet<string>>();
+    const r2 = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: empty.s.accountId, widespread: memo });
+    expect(r2.merged).toBe(1);
+    expect([...memo.keys()]).toEqual([empty.s.accountId]);
+    expect(memo.get(empty.s.accountId)!.size).toBe(0);
+
+    const other = await seedProductionSplit();
+    const r3 = await threadJoinHealPass({
+      db: db as unknown as Tx, apply: true, accountId: other.s.accountId,
+      widespread: new Map([[randomUUID(), new Set([COUNTERPART])]]),
+    });
+    expect(r3.merged).toBe(1);
+  });
+
   it("an overlap consisting only of a PROMISCUOUS witness is no evidence — the mailbox owner's former identity cannot join threads", async () => {
     const s = await seedAccount();
     const oldSelf = "former-identity@own.example";
@@ -623,12 +646,19 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
     const s = await seedAccount();
     await seedThreeGroups(s);
     const until = () => true;
-    const one = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId, until });
+    // One memo through all three slices, as the tail's walk hands it: read once, then kept.
+    const widespread = new Map<string, ReadonlySet<string>>();
+    const one = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId, until, widespread });
     expect(one).toMatchObject({ groupsScanned: 1, merged: 1, cut: true, capped: false, cursor: { accountId: s.accountId, subject: "Alpha" } });
-    const two = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId, until, cursor: one.cursor! });
+    expect(widespread.size).toBe(1);
+    const sentinel = new Set(["sentinel@nowhere.example"]);
+    widespread.set(s.accountId, sentinel);
+    const two = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId, until, cursor: one.cursor!, widespread });
     expect(two).toMatchObject({ groupsScanned: 1, merged: 0, cut: true, cursor: { accountId: s.accountId, subject: "Bravo" } });
-    const three = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId, until, cursor: two.cursor! });
+    const three = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId, until, cursor: two.cursor!, widespread });
     expect(three).toMatchObject({ groupsScanned: 1, merged: 1, cut: false, capped: false });
+    expect(widespread.get(s.accountId)).toBe(sentinel);
+    expect([...sentinel]).toEqual(["sentinel@nowhere.example"]);
 
     const twin = await seedAccount();
     await seedThreeGroups(twin);
@@ -667,6 +697,7 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
 
 describe("the thread-join heal walk", () => {
   const EVERY = 1_000;
+  const WALK = 100;
   const result = (over: Partial<ThreadJoinHealResult>): ThreadJoinHealResult => ({
     groupsScanned: 0, merged: 0, messagesMoved: 0, skipped: 0, failed: 0, refusedUncorroborated: 0,
     capped: false, cut: false, cursor: null, ...over,
@@ -674,75 +705,110 @@ describe("the thread-join heal walk", () => {
   const at = (subject: string) => ({ accountId: "a", subject });
 
   it("starts due, and a finished walk keeps the gate shut until the period passes", () => {
-    const w = makeThreadJoinHealWalk(EVERY);
+    const w = makeThreadJoinHealWalk(EVERY, WALK);
     expect(w.due(0)).toBe(true);
-    expect(w.slice("a", ["a"])).toEqual({ maxGroups: 200 });
-    w.settle("a", result({ groupsScanned: 3 }));
+    expect(w.slice("a", ["a"])).toMatchObject({ maxGroups: 200 });
+    w.settle("a", result({ groupsScanned: 3 }), 1);
     expect(w.slice("a", ["a"])).toBeNull();
     expect(w.due(EVERY - 1)).toBe(false);
     expect(w.due(EVERY)).toBe(true);
-    expect(w.slice("a", ["a"])).toEqual({ maxGroups: 200 });
+    expect(w.slice("a", ["a"])).toMatchObject({ maxGroups: 200 });
   });
 
   it("a cut keeps the account owed with what is left of its group budget", () => {
-    const w = makeThreadJoinHealWalk(EVERY);
+    const w = makeThreadJoinHealWalk(EVERY, WALK);
     w.due(0);
     w.slice("a", ["a", "b"]);
-    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }));
+    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }), 1);
     w.slice("b", ["a", "b"]);
-    w.settle("b", result({}));
+    w.settle("b", result({}), 1);
     expect(w.due(10)).toBe(true);
-    expect(w.slice("a", ["a", "b"])).toEqual({ cursor: at("Alpha"), maxGroups: 199 });
+    expect(w.slice("a", ["a", "b"])).toMatchObject({ cursor: at("Alpha"), maxGroups: 199 });
     expect(w.slice("b", ["a", "b"])).toBeNull();
-    w.settle("a", result({ groupsScanned: 2 }));
+    w.settle("a", result({ groupsScanned: 2 }), 1);
     expect(w.due(20)).toBe(false);
   });
 
   it("a capped account resumes at its cursor in the next walk; an exhausted one starts over", () => {
-    const w = makeThreadJoinHealWalk(EVERY);
+    const w = makeThreadJoinHealWalk(EVERY, WALK);
     w.due(0);
     w.slice("a", ["a", "b"]);
-    w.settle("a", result({ groupsScanned: 200, capped: true, cursor: at("Mike") }));
+    w.settle("a", result({ groupsScanned: 200, capped: true, cursor: at("Mike") }), 1);
     w.slice("b", ["a", "b"]);
-    w.settle("b", result({ groupsScanned: 4, cursor: { accountId: "b", subject: "Zulu" } }));
+    w.settle("b", result({ groupsScanned: 4, cursor: { accountId: "b", subject: "Zulu" } }), 1);
     expect(w.due(EVERY)).toBe(true);
-    expect(w.slice("a", ["a", "b"])).toEqual({ cursor: at("Mike"), maxGroups: 200 });
-    expect(w.slice("b", ["a", "b"])).toEqual({ maxGroups: 200 });
+    expect(w.slice("a", ["a", "b"])).toMatchObject({ cursor: at("Mike"), maxGroups: 200 });
+    expect(w.slice("b", ["a", "b"])).toMatchObject({ maxGroups: 200 });
   });
 
   it("an abandoned slice closes the account and keeps its last settled cursor", () => {
-    const w = makeThreadJoinHealWalk(EVERY);
+    const w = makeThreadJoinHealWalk(EVERY, WALK);
     w.due(0);
     w.slice("a", ["a"]);
-    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }));
+    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }), 1);
     expect(w.due(10)).toBe(true);
     w.slice("a", ["a"]);
     w.abandon("a");
     expect(w.due(20)).toBe(false);
     expect(w.due(EVERY)).toBe(true);
-    expect(w.slice("a", ["a"])).toEqual({ cursor: at("Alpha"), maxGroups: 200 });
+    expect(w.slice("a", ["a"])).toMatchObject({ cursor: at("Alpha"), maxGroups: 200 });
   });
 
   it("an owed account that left the shard releases the gate", () => {
-    const w = makeThreadJoinHealWalk(EVERY);
+    const w = makeThreadJoinHealWalk(EVERY, WALK);
     w.due(0);
     w.slice("a", ["a", "b"]);
-    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }));
+    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }), 1);
     w.slice("b", ["a", "b"]);
-    w.settle("b", result({}));
+    w.settle("b", result({}), 1);
     expect(w.due(10)).toBe(true);
     expect(w.slice("b", ["b"])).toBeNull();
     expect(w.due(20)).toBe(false);
     expect(w.due(EVERY)).toBe(true);
-    expect(w.slice("a", ["a"])).toEqual({ cursor: at("Alpha"), maxGroups: 200 });
+    expect(w.slice("a", ["a"])).toMatchObject({ cursor: at("Alpha"), maxGroups: 200 });
   });
 
   it("a walk never outlives its period", () => {
-    const w = makeThreadJoinHealWalk(EVERY);
+    const w = makeThreadJoinHealWalk(EVERY, WALK);
     w.due(0);
     w.slice("a", ["a"]);
-    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }));
+    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }), 1);
     expect(w.due(EVERY)).toBe(true);
-    expect(w.slice("a", ["a"])).toEqual({ cursor: at("Alpha"), maxGroups: 200 });
+    expect(w.slice("a", ["a"])).toMatchObject({ cursor: at("Alpha"), maxGroups: 200 });
+  });
+
+  it("a walk whose slices keep being cut closes once its time is spent, and the next walk resumes at its cursor", () => {
+    const w = makeThreadJoinHealWalk(EVERY, WALK);
+    w.due(0);
+    w.slice("a", ["a"]);
+    expect(w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }), 60)).toBeNull();
+    expect(w.slice("a", ["a"])).toMatchObject({ cursor: at("Alpha"), maxGroups: 199 });
+    expect(w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Bravo") }), 50))
+      .toEqual({ scanned: 2, slices: 2, ms: 110, more: true });
+    expect(w.slice("a", ["a"])).toBeNull();
+    expect(w.due(120)).toBe(false);
+    expect(w.due(EVERY)).toBe(true);
+    expect(w.slice("a", ["a"])).toMatchObject({ cursor: at("Bravo"), maxGroups: 200 });
+    // A clock stepping back counts as no time; an exhausted walk closes with nothing left.
+    expect(w.settle("a", result({ groupsScanned: 3 }), -5)).toEqual({ scanned: 3, slices: 1, ms: 0, more: false });
+  });
+
+  it("the widespread memo is one account's for one walk", () => {
+    const w = makeThreadJoinHealWalk(EVERY, WALK);
+    w.due(0);
+    const memo = w.slice("a", ["a", "b"])!.widespread;
+    memo.set("a", new Set(["x@example.test"]));
+    w.settle("a", result({ groupsScanned: 1, cut: true, cursor: at("Alpha") }), 1);
+    expect(w.slice("a", ["a", "b"])!.widespread).toBe(memo);
+    expect(memo.has("a")).toBe(true);
+    w.slice("b", ["a", "b"]);
+    memo.set("b", new Set(["y@example.test"]));
+    w.settle("a", result({ groupsScanned: 1 }), 1);
+    expect([...memo.keys()]).toEqual(["b"]);
+    w.abandon("b");
+    expect(memo.size).toBe(0);
+    memo.set("a", new Set(["x@example.test"]));
+    w.due(EVERY);
+    expect(w.slice("a", ["a"])!.widespread.size).toBe(0);
   });
 });
