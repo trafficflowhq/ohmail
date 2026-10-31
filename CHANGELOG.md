@@ -21,6 +21,86 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.19] — 2026-10-31
+
+### The desktop window answers clicks and keys after a mailbox is connected again
+
+Removing a mailbox in Settings and connecting the same one again on the desktop app left the window drawing
+the Ohbox while it ignored every click, scroll and key until a menu command or a relaunch: setup had been
+opened with nothing to show, and the app stayed locked behind it. Setup now hands the window back when it has
+nothing to show, and a mailbox nobody has decided about yet is then asked what ohmail will do to it, as it is
+after a relaunch.
+
+### A search result opened in Receipts or News lands on screen
+
+On the desktop and the web, a search result opened in Receipts or News could end up scrolled out of view
+when the cards above it finished drawing while the stream was moving to it or just after it arrived, so
+Delete then filed a letter that was not on screen. The stream now follows the letter until it stands at the
+top of the stream, and holds it there.
+A wheel, a key or the scrollbar during the move still takes the stream at once.
+
+### Answers typed into a new Outlook history no longer fold away
+
+In a reply from the new Outlook, such as Outlook for Mac's, the quoted history was checked for answers
+typed into it only as far as its first quoted message, while under the other Outlook headers it is checked to
+the end. An answer typed below the earlier writer's own question above an attribution and a quote, between
+the parts of a Word-style quote, or in an older message of the chain could fold away behind Show history on
+the desktop, web and phone apps. New Outlook histories are now checked to their end too, and such a history
+stays open with the answer on screen. The cost: on new Outlook, an earlier message with a coloured signature
+over a quoted older message now stays open, as it already did under the other Outlook headers.
+
+### Answers typed into an Outlook history stay on screen in more shapes
+
+A reply's quoted history could still fold away an answer typed into it on the desktop, web and phone apps
+in three shapes: under the classic Outlook header, a red answer above an attribution and a long older
+message quoted in one colour, in the earlier message or in any Outlook message below it; in a Yahoo reply,
+red or blue answers in an Outlook message further down the chain; and in a new Outlook history, comments
+under a heading such as "Meine Anmerkungen:", "Kommentare:" or "Comments:", or answers the reply announces
+once its own text holds a quote. Outlook header blocks outside a quote box are now read the same way under
+the classic Outlook header, in new Outlook and in a Yahoo reply that quotes an Outlook message, and such a
+history stays open with the answer on screen. The cost: under the classic Outlook header and in a Yahoo
+reply, an earlier message with its writer's own coloured or highlighted line between their sentences now
+keeps its history open, as new Outlook already did.
+
+### A tab left open across an update offers Reload instead of blaming the connection
+
+On the web app (your own server and Cloud), a tab that stayed open while the server was updated could no
+longer open Compose, Settings or the editor: it said to check the connection, and Try again asked for a file
+the new server no longer has. ohmail now asks the server whether that file is gone; if it is, it says ohmail was
+updated and offers Reload. A real connection problem still says so, with Try again.
+
+### A link whose text names another site asks before it opens
+
+On the desktop and the web, in a designed letter or any letter after "Show original", a link whose text
+names a different site from the one it opens now asks before it opens, outside the letter, where the
+letter's own styles cannot hide the question. The desktop app asks in its own window and names the site
+the link really goes to; the web app opens a page of ohmail's own in a new tab that names that site and
+holds the one link to it.
+
+On the desktop the question goes with the address: once a letter has drawn such a link, a link to the same
+address asks wherever it is pressed until the app quits, up to a megabyte of such addresses. Past that,
+every link asks while a letter whose address no longer fit is open.
+
+Such a link is also found in more cases: when the hidden part of its text sits in an element of its own
+(at size zero, behind a class or hover rule, or invisible), when the letter's styles draw its text rather
+than write it (a site named anywhere in its styles counts), and when a site's name is split across two
+elements; the last two give some honest links the note and the question too. Still out of reach: a decoy
+drawn by a picture or a font, one assembled from several pieces of a single word, and a link laid over
+another.
+
+### A left-out word no longer loses a sender's first name in search
+
+A search for a sender's first name the english stemmer shortens, such as Ines or Tomas, beside a left-out
+word (`ines ledger -pdf`) or in quotes (`"ines varga"`) found the letters only as close words; now it finds
+them exactly, as the same search without the left-out word does. `-ines` now also leaves out the letters
+Ines sent. On ohmail Cloud, your own server and the desktop app; the phone already found them.
+
+### A new database migration no longer breaks unrelated tests
+
+The tests that check the migration journals keep the migrations already released pinned by name and
+read the newer ones from the journals themselves, so adding a migration no longer turns them red,
+while renaming or removing a released one still does. Nothing changes in the apps.
+
 ## [0.30.18] — 2026-10-31
 
 ### Quoted history folds when the earlier message quotes and answers something itself
@@ -15628,7 +15708,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.18...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.19...HEAD
+[0.30.19]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.19
 [0.30.18]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.18
 [0.30.17]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.17
 [0.30.16]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.16
