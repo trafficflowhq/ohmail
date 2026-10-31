@@ -1,0 +1,40 @@
+{
+  "id": "139",
+  "file": "139-outlook-win-de-reply-older-hop-red-answer-above-inked-quote.eml",
+  "shape": "outlook-win-de-reply-older-hop-red-answer-above-inked-quote",
+  "description": "Outlook for Windows, German, html only: 135's reply and border-top Von block; below the earlier message an older one under its own Von block holds the writer's red answer under its writer's question, then her sign-off, an attribution and a long cite-quoted older message all in #500050",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 3,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Dana Example",
+    "Finn Beispiel"
+  ],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Finn"
+    },
+    "inlineAnswers": [
+      "JA, er kommt um 10 Uhr."
+    ],
+    "trailingTail": null
+  },
+  "notes": "Synthetic. Every Outlook header block of the history's own level has its message read on its own up to its attribution: the older quote's one ink sets no hop ink, and the red answer in the second hop keeps the history open."
+}

@@ -1,0 +1,39 @@
+{
+  "id": "137",
+  "file": "137-outlook-win-de-reply-history-red-answer-above-inked-quote.eml",
+  "shape": "outlook-win-de-reply-history-red-answer-above-inked-quote",
+  "description": "Outlook for Windows, German, html only: 133's reply and border-top Von block; in the earlier message the writer's red answer under the earlier writer's question, then his sign-off, an attribution and a long Gmail-quoted older message all in #1F497D",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Dana Example"
+  ],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Dana"
+    },
+    "inlineAnswers": [
+      "JA, er kommt um 10 Uhr."
+    ],
+    "trailingTail": null
+  },
+  "notes": "Synthetic. The Windows header path reads the earlier message on its own up to the attribution, as new Outlook reads its container: the older quote's one ink sets no hop ink, and the writer's red answer keeps the history open."
+}

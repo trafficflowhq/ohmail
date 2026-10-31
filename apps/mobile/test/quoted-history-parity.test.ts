@@ -7,9 +7,9 @@
 import { describe, expect, it } from "vitest";
 import { parseDocument } from "htmlparser2";
 import { Element, type AnyNode } from "domhandler";
-import { quotedDomTree, quotedHistoryOfHtml, type QuotedDomNode, type QuotedTree } from "@ohmail/client-engine";
+import { quotedDomTree, quotedHistoryOfHtml, quotedHistoryVerdictOfHtml, type QuotedDomNode, type QuotedTree } from "@ohmail/client-engine";
 import { phoneQuotedTree } from "../src/mail/quoted-tree";
-import { qhFixtures } from "../../../packages/client-engine/test/quoted-history-fixtures";
+import { qhFixtures, qhHostileBodies } from "../../../packages/client-engine/test/quoted-history-fixtures";
 import { qhProbeCases } from "../../../packages/client-engine/test/quoted-history-probes";
 
 const SKIP = new Set(["style", "script", "head", "title", "template", "noscript", "svg", "math", "xml"]);
@@ -78,4 +78,14 @@ describe("the phone's tree reads a hostile body in one linear pass", () => {
     quotedHistoryOfHtml(phone, phoneQuotedTree);
     expect(Date.now() - t0).toBeLessThan(1000);
   });
+
+  for (const b of qhHostileBodies()) {
+    it(b.name, { timeout: 4000 }, () => {
+      const phone = phoneBody(b.html);
+      const t0 = Date.now();
+      const v = quotedHistoryVerdictOfHtml(phone, phoneQuotedTree);
+      expect(Date.now() - t0).toBeLessThan(1000);
+      expect(v, "read to a verdict, within the budget").not.toBe("unread");
+    });
+  }
 });
