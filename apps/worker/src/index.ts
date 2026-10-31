@@ -64,6 +64,7 @@ import {
   AttachAbortedError, AttachDeadlineError, AttachPool, hostKeyOf, type AttachTicket,
 } from "./attach-pool.js";
 import { TAIL_SECTION_PLAN, type TailSectionName } from "./cycle-tail-plan.js";
+import { profileProducerVersion } from "./build-version.js";
 import {
   anyDegradedCause, type DegradedCauses, type UnservedBreakdown,
 } from "./health.js";
@@ -2964,12 +2965,13 @@ export async function startWorkerWithLock(
           // to LIGHT here and not to heavy.
           owesBacklog: false,
           // The profile's write-behind, beside the lease it rides: same identity, same store,
-          // ticked only from a cycle the gate admitted. `config.buildVersion` is the label the
-          // health endpoint reports — provenance in the document, never a decision.
+          // ticked only from a cycle the gate admitted. The release, then `config.buildVersion`
+          // (the label the health endpoint reports): which release wrote a copy is what tells a
+          // rollback's copy from a restored store's.
           profile: new OrganizerProfileSync({
             db, accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
             self: { installId: organizerInstallId, kind: "cloud" },
-            producerVersion: config.buildVersion ?? "dev",
+            producerVersion: profileProducerVersion(config.buildVersion ?? "dev"),
             ...(config.organizer?.profileFlushIntervalMs !== undefined
               ? { flushIntervalMs: config.organizer.profileFlushIntervalMs } : {}),
             ...(config.organizer?.profileTidy !== undefined ? { tidyMode: config.organizer.profileTidy } : {}),

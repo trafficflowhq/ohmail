@@ -182,11 +182,12 @@ describe("the staff-visible free-text channels are closed sets", () => {
     expect(isAuditLogAction("admin.credits.adjust")).toBe(true);
   });
 
-  it("the set holds the two audit actions writers name through a constant", () => {
-    // `packages/db/src/organizer-profile-import.ts` exports both; the writers pass the constant,
+  it("the set holds the audit actions writers name through a constant", () => {
+    // `packages/db/src/organizer-profile-import.ts` exports them; the writers pass the constant,
     // so the literal scan above cannot see them.
     expect(isAuditLogAction("organizer_profile_found")).toBe(true);
     expect(isAuditLogAction("organizer_profile_import_resolved")).toBe(true);
+    expect(isAuditLogAction("organizer_profile_written")).toBe(true);
     expect(AUDIT_LOG_ACTIONS.length).toBe(new Set(AUDIT_LOG_ACTIONS).size);
   });
 
