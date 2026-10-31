@@ -11,6 +11,8 @@ interface TriageWireBody {
   state: TriageState;
   bubbleUpAt?: string;
   untilTs?: string;
+  /** An Undo's press-time open read, with `state: "none"` only. */
+  restoreOpenReadAt?: string | null;
 }
 
 /**
@@ -29,7 +31,10 @@ export const triageRoutes: Route[] = [
     options: { idempotent: true, pressAge: true },
     handler: async (req, deps, params) => {
       const body = await readBody<TriageWireBody>(req);
-      const setBody: TriageSetBody = { state: body.state, bubbleUpAt: body.bubbleUpAt ?? body.untilTs };
+      const setBody: TriageSetBody = {
+        state: body.state, bubbleUpAt: body.bubbleUpAt ?? body.untilTs,
+        ...(body.restoreOpenReadAt != null ? { restoreOpenReadAt: body.restoreOpenReadAt } : {}),
+      };
       const dto = await triage(deps).setState(serviceContext(deps, req), params.id!, setBody, {
         idempotency: deps.idempotency ?? null,
       });

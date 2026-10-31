@@ -64,7 +64,8 @@ export const UNDO_CLASS: Record<UndoSubject, UndoClass> = {
 function triageRestore(msg: EngineMessage): EngineMutation {
   const prior = msg.triage;
   if (!prior || prior.state === "none") {
-    return { kind: "triage_set", messageId: msg.id, state: "none" };
+    // A row in Earlier with an open read: the press ends it, the Undo puts it back.
+    return { kind: "triage_set", messageId: msg.id, state: "none", ...(msg.openReadAt ? { restoreOpenReadAt: msg.openReadAt } : {}) };
   }
   if (prior.state === "bubbled_up") {
     return { kind: "triage_set", messageId: msg.id, state: "bubbled_up", bubbleUpAt: prior.bubbleUpAt ?? null };

@@ -479,13 +479,18 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         // (nulling it would file the row into the unstamped basement — the "lost" this exists
         // to remove), and a stamp NEWER than the pile entry is a fresh deliberate act that
         // wins (ISO strings compare lexicographically).
-        const rehomed = leftPile && !msg.unread && msg.date != null
+        // An Undo restores the open read the press ended instead (the server's same three bounds).
+        const restore = m.restoreOpenReadAt;
+        const rehomed = restore === undefined && leftPile && !msg.unread && msg.date != null
           && (msg.lastReadAt == null || (msg.triage?.setAt != null && msg.lastReadAt <= msg.triage.setAt))
           ? { lastReadAt: msg.date }
           : {};
+        const restored = restore !== undefined && !msg.unread && msg.openReadAt == null && Number.isFinite(Date.parse(restore))
+          ? { openReadAt: new Date(Math.min(Date.parse(restore), ctx.now().getTime())).toISOString() }
+          : {};
         return [
           { type: "message_state", id: recordId, entity: null },
-          { type: "message", id: msg.id, entity: { ...msg, triage: null, ...rehomed, updatedAt: iso } },
+          { type: "message", id: msg.id, entity: { ...msg, triage: null, ...rehomed, ...restored, updatedAt: iso } },
         ];
       }
       const state: MessageStateDTO = {

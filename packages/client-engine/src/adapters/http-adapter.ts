@@ -1621,7 +1621,10 @@ export class HttpAdapter implements EngineAdapter {
 
       case "triage_set": {
         const res = await this.request("POST", `/messages/${m.messageId}/triage`, {
-          body: { state: m.state, ...(m.bubbleUpAt ? { bubbleUpAt: m.bubbleUpAt } : {}) },
+          body: {
+            state: m.state, ...(m.bubbleUpAt ? { bubbleUpAt: m.bubbleUpAt } : {}),
+            ...(m.restoreOpenReadAt ? { restoreOpenReadAt: m.restoreOpenReadAt } : {}),
+          },
           idempotencyKey: opts.idempotencyKey, ...sig, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);

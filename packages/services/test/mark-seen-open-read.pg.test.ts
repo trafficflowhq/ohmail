@@ -152,6 +152,22 @@ describe.skipIf(!PG_UP)("the open read, on real Postgres", () => {
     expect(await stampOf(accountId, ids)).toEqual(expect.any(Number));
   });
 
+  it("Park, then Undo with the press-time open read: the stamp comes back through postgres-js, last_read_at unchanged", async () => {
+    const { accountId, ids } = await seed(ONE);
+    const id = ids.get("f")!;
+    const c = ctx(accountId);
+    await new MessageService().markSeen(c, { ids: [id], unread: false, openRead: true });
+    const before = (await stamps(accountId, ids)).get("f")!;
+    expect(before.openReadAt, "the premise: stamped").toEqual(expect.any(Number));
+    const triage = new TriageService();
+    await triage.setState(c, id, { state: "set_aside" });
+    expect(await stampOf(accountId, ids)).toBeNull();
+    await triage.setState(c, id, { state: "none", restoreOpenReadAt: new Date(before.openReadAt!).toISOString() });
+    const after = (await stamps(accountId, ids)).get("f")!;
+    expect(after.openReadAt).toBe(before.openReadAt);
+    expect(after.lastReadAt).toBe(before.lastReadAt);
+  });
+
   for (const shape of OPEN_READ_SHAPES) {
     it(`server parity: ${shape.name}`, async () => {
       const { accountId, ids } = await seed(shape.rows);
