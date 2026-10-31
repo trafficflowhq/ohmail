@@ -279,6 +279,44 @@ describe("mark_seen", () => {
     const reader = await seeded([msg("m1", { unread: true, triage: pin("m1", "resurfaced") })]);
     expect(inverseMutations(reader, { kind: "mark_seen", messageIds: ["m1"], unread: true })).toEqual([]);
   });
+
+  it("the Undo of a Mark unread carries each flipped row's open read, {} when none had one", async () => {
+    const read = "2026-09-19T11:00:00.000Z";
+    const reader = await seeded([
+      msg("m1", { unread: false, openReadAt: read }), msg("m2", { unread: false, openReadAt: null }), msg("m3", { unread: true }),
+    ]);
+    expect(inverseMutations(reader, { kind: "mark_seen", messageIds: ["m1", "m2", "m3"], unread: true }))
+      .toEqual([{ kind: "mark_seen", messageIds: ["m1", "m2"], unread: false, restoreOpenReadAt: { m1: read } }]);
+    expect(inverseMutations(reader, { kind: "mark_seen", messageIds: ["m2"], unread: true }))
+      .toEqual([{ kind: "mark_seen", messageIds: ["m2"], unread: false, restoreOpenReadAt: {} }]);
+  });
+
+  it("Mark unread, then Undo: the open read comes back and a resurfaced pin stands", async () => {
+    const read = "2026-09-19T11:00:00.000Z";
+    const store = await seeded([
+      msg("m1", { unread: false, openReadAt: read, lastReadAt: read }),
+      msg("m2", { unread: false, triage: pin("m2", "resurfaced") }),
+    ]);
+    const m: EngineMutation = { kind: "mark_seen", messageIds: ["m1", "m2"], unread: true };
+    const inv = inverseMutations(store, m);
+    await apply(store, m);
+    expect(visible(store, "m1").openReadAt, "the press ended the open read").toBeNull();
+    for (const u of inv) await apply(store, u);
+    expect(visible(store, "m1")).toMatchObject({ unread: false, openReadAt: read, lastReadAt: iso });
+    expect(visible(store, "m2")).toMatchObject({ unread: false, triage: "resurfaced", openReadAt: null });
+  });
+
+  it("the overlay's restore: never after now, never over a newer open read, never on a parked row, nothing placed anew", async () => {
+    const newer = "2026-09-19T11:30:00.000Z";
+    const store = await seeded([
+      msg("m1"), msg("m2", { triage: pin("m2", "set_aside") }), msg("m3", { unread: false, openReadAt: newer }), msg("m4"),
+    ]);
+    await apply(store, {
+      kind: "mark_seen", messageIds: ["m1", "m2", "m3", "m4"], unread: false,
+      restoreOpenReadAt: { m1: "2099-01-01T00:00:00.000Z", m2: "2026-09-19T11:00:00.000Z", m3: "2026-09-19T11:00:00.000Z" },
+    });
+    expect(["m1", "m2", "m3", "m4"].map((id) => visible(store, id).openReadAt)).toEqual([iso, null, newer, null]);
+  });
 });
 
 describe("tag_assign", () => {

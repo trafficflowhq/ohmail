@@ -4,6 +4,7 @@ import {
   DEMO_NOW,
   FixturesAdapter,
   MemoryMirrorStore,
+  inverseMutations,
   OhmailEngine,
   mutationEffects,
   ohboxView,
@@ -271,6 +272,27 @@ describe("the positive controls: every other read keeps arrival", () => {
     expect(ids(box(engine).newForYou)).toEqual(["fri"]);
     await engine.mutate({ kind: "mark_seen", messageIds: ["fri", "tue"], unread: false });
     expect(ids(box(engine).previouslySeen)).toEqual([...ARRIVAL, "fri"]);
+  });
+
+  it("Mark unread on a lifted row, held again, then Undo: no open read on the wire, back below the newer one once left", async () => {
+    const { engine, sent } = await liftedFri();
+    const friAt = openReadOf(engine.read().get<EngineMessage>("message", "fri")!);
+    await engine.mutate({ kind: "mark_seen", messageIds: ["tue"], unread: true });
+    engine.holdOpenRow("tue");
+    await engine.mutate({ kind: "mark_seen", messageIds: ["tue"], unread: false, via: "glance" });
+    engine.releaseOpenRow("tue");
+    expect(ids(box(engine).previouslySeen).slice(0, 2), "the premise: tue's open read is newer").toEqual(["tue", "fri"]);
+
+    const press: EngineMutation = { kind: "mark_seen", messageIds: ["fri"], unread: true };
+    const undo = inverseMutations(engine.verbRead(), press);
+    await engine.mutate(press);
+    expect(engine.holdOpenRow("fri"), "the Undo link re-takes the hold").toBe(true);
+    const before = sent.length;
+    for (const u of undo) expect((await engine.mutate(u)).status).toBe("confirmed");
+    expect(sent.slice(before).filter((m) => m.kind === "mark_seen").map(flagged), "an Undo's read placed the row anew").toEqual([false]);
+    engine.releaseOpenRow("fri");
+    expect(openReadOf(engine.read().get<EngineMessage>("message", "fri")!)).toBe(friAt);
+    expect(ids(box(engine).previouslySeen)).toEqual(["tue", "fri", ...ARRIVAL.slice(1)]);
   });
 
   it("re-opening a read row holds nothing and writes nothing", async () => {

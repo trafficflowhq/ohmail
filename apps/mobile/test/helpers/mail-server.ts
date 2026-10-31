@@ -311,7 +311,7 @@ export function mailServer() {
         return;
       }
       if (method === "PATCH" && url.pathname === "/messages") {
-        const parsed = JSON.parse(body) as { ids: string[]; unread: boolean; openRead?: boolean };
+        const parsed = JSON.parse(body) as { ids: string[]; unread: boolean; openRead?: boolean; restoreOpenReadAt?: Record<string, string> };
         // The server's open-read rule (`MessageService.markSeen`): with `openRead`, the rows that
         // WERE unread take `openReadAt`, only when every id is one conversation; every unread clears it.
         const at = new Date().toISOString();
@@ -319,10 +319,15 @@ export function mailServer() {
         const oneConversation = new Set(held.map((m) => m.threadId ?? `msg:${m.id}`)).size === 1;
         const stamp = new Set(parsed.openRead === true && !parsed.unread && oneConversation
           ? held.filter((m) => m.unread && ((m.triage as { state?: string } | null)?.state ?? "none") === "none").map((m) => m.id) : []);
+        // An Undo's read puts back each named row's open read: a row holding none, in no pile, never after now.
+        const restore = parsed.restoreOpenReadAt ?? {};
+        const restored = (m: Dto) => !parsed.unread && Object.hasOwn(restore, m.id) && !m.openReadAt
+          && ((m.triage as { state?: string } | null)?.state ?? "none") === "none" ? { openReadAt: restore[m.id]! < at ? restore[m.id]! : at } : {};
         for (const id of parsed.ids) {
+          const m = messages.get(id);
           updateMessage(id, {
             unread: parsed.unread, lastReadAt: parsed.unread ? null : at,
-            ...(parsed.unread ? { openReadAt: null } : stamp.has(id) ? { openReadAt: at } : {}),
+            ...(parsed.unread ? { openReadAt: null } : stamp.has(id) ? { openReadAt: at } : m ? restored(m) : {}),
           });
         }
         json(200, {}, seq);

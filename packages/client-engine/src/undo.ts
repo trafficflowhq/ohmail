@@ -121,9 +121,13 @@ export function inverseMutations(reader: EntityReader, m: EngineMutation): Engin
       const known = m.messageIds
         .map((id) => reader.get<EngineMessage>("message", id))
         .filter((x): x is EngineMessage => x != null);
-      const flipped = known.filter((msg) => msg.unread !== m.unread).map((msg) => msg.id);
+      const flipped = known.filter((msg) => msg.unread !== m.unread);
       const out: EngineMutation[] = [];
-      if (flipped.length > 0) out.push({ kind: "mark_seen", messageIds: flipped, unread: !m.unread });
+      // A Mark unread ends each row's open read; its Undo carries them back (possibly none).
+      const restore = m.unread
+        ? { restoreOpenReadAt: Object.fromEntries(flipped.filter((x) => x.openReadAt).map((x) => [x.id, x.openReadAt!])) }
+        : {};
+      if (flipped.length > 0) out.push({ kind: "mark_seen", messageIds: flipped.map((x) => x.id), unread: !m.unread, ...restore });
       /* A deliberate read spends resurfaced pins; the reversal re-pins each spent row. */
       if (!m.unread && m.via !== "glance") {
         for (const msg of known.filter(spendsPin)) {

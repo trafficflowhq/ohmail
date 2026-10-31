@@ -54,6 +54,27 @@ describe("batch mark-read", () => {
     expect(forMany, `1 id cost ${forOne} statements and 200 cost ${forMany}`).toBe(forOne);
   });
 
+  it("an Undo restoring 1 open read and 200 at 200 instants issues the same statements, and restores each", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const one = await seedMessage(db, accountId, mailboxId, { unread: true });
+    const many: string[] = [];
+    for (let i = 0; i < 200; i++) many.push(await seedMessage(db, accountId, mailboxId, { unread: true }));
+    const seen = recordStatements(db);
+    if (seen === null) return;
+    const svc = new MessageService();
+    const at = (i: number) => new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString();
+
+    const a = seen.length;
+    await svc.markSeen(ctx, { ids: [one], unread: false, restoreOpenReadAt: { [one]: at(0) } });
+    const forOne = seen.length - a;
+    const b = seen.length;
+    await svc.markSeen(ctx, { ids: many, unread: false, restoreOpenReadAt: Object.fromEntries(many.map((id, i) => [id, at(i)])) });
+    expect(seen.length - b, `1 restore cost ${forOne} statements`).toBe(forOne);
+    const rows = await db.select({ id: messages.id, openReadAt: messages.openReadAt }).from(messages).where(inArray(messages.id, many));
+    const byId = new Map(rows.map((r) => [r.id, r.openReadAt?.toISOString() ?? null]));
+    expect(many.map((id) => byId.get(id))).toEqual(many.map((_, i) => at(i)));
+  });
+
   it("flips every row, writes each intent against its own observed flag, one change each in order", async () => {
     const { db, accountId, mailboxId, ctx } = await makeCtx();
     const ids: string[] = [];

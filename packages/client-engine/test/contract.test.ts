@@ -20,6 +20,7 @@ import {
   screenerSegments,
   triagePiles,
   type EngineMessage,
+  type EngineMutation,
   type FetchLike,
   type MessageStateDTO,
   type RuleDTO,
@@ -377,6 +378,38 @@ describe("HttpAdapter ⇄ real backend (PGlite, in-process)", () => {
     const undo = inverseMutations(engine.verbRead(), park);
     expect((await engine.mutate(park)).status).toBe("confirmed");
     expect(await serverOpenRead(), "the park ended the open read").toBeNull();
+    for (const u of undo) expect((await engine.mutate(u)).status).toBe("confirmed");
+    await engine.syncOnce();
+    expect(await serverOpenRead()).toBe(read);
+    expect(openReadOf()).toBe(read);
+    expect(earlier()).toEqual([opened.id, newer.id]);
+  });
+
+  it("Mark unread, then its Undo: the open read comes back on the server and in the mirror, and Earlier's order is back", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const fetchImpl = bridgeFetch(deps, { bearer: s.token });
+    const day = 86_400_000;
+    const opened = await seedMessage(db, { accountId: s.accountId, folder: "INBOX", subject: "Opened", unread: true, date: new Date(FIXED_NOW.getTime() - 3 * day) });
+    const newer = await seedMessage(db, { accountId: s.accountId, mailboxId: opened.mailboxId, folder: "INBOX", subject: "Newer", unread: false, date: new Date(FIXED_NOW.getTime() - day) });
+    const engine = new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl }) });
+    await engine.start();
+    const earlier = () => ohboxView(engine.store).previouslySeen.map((m) => m.id);
+    const openReadOf = () => engine.store.get<EngineMessage>("message", opened.id)?.openReadAt ?? null;
+    const serverOpenRead = async () => ((await (await fetchImpl(`http://localhost/messages/${opened.id}`, {})).json()) as EngineMessage).openReadAt ?? null;
+
+    expect(engine.holdOpenRow(opened.id)).toBe(true);
+    expect((await engine.mutate({ kind: "mark_seen", messageIds: [opened.id], unread: false })).status).toBe("confirmed");
+    engine.releaseOpenRow(opened.id);
+    await engine.syncOnce();
+    const read = openReadOf();
+    expect(read, "the premise: the server stamped the open read").toEqual(expect.any(String));
+    expect(earlier(), "the premise: the open read files it first").toEqual([opened.id, newer.id]);
+
+    const press: EngineMutation = { kind: "mark_seen", messageIds: [opened.id], unread: true };
+    const undo = inverseMutations(engine.verbRead(), press);
+    expect((await engine.mutate(press)).status).toBe("confirmed");
+    expect(await serverOpenRead(), "Mark unread ended the open read").toBeNull();
     for (const u of undo) expect((await engine.mutate(u)).status).toBe("confirmed");
     await engine.syncOnce();
     expect(await serverOpenRead()).toBe(read);

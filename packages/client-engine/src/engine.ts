@@ -37,6 +37,7 @@ import { replaceRecordedSentFolders } from "./sent-folders.js";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { consentIndex, decidedDestination, namedByBodyTerm, warmBodyTermNames } from "./consent-cutline.js";
 import { flattenResponse } from "./apply.js";
+import { narrowRead } from "./mark-seen-chunk.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
 import {
   HISTORY_PAGE_CACHE_ROWS, HISTORY_PAGE_ROWS, StorePageCache, mirrorCoverage, storePageKey, storeSearchList,
@@ -901,7 +902,7 @@ function readLeftBy(newer: EngineMutation, older: EngineMutation): EngineMutatio
   const remaining = qids.filter((mid) => !readIds.has(mid));
   const keepsLine = older.kind === "feed_mark_seen" && older.upToId !== undefined && !lineSuperseded;
   if (remaining.length === 0 && !keepsLine) return null;
-  const narrowed = { ...older, messageIds: remaining } as EngineMutation;
+  const narrowed = (older.kind === "mark_seen" ? narrowRead(older, remaining) : { ...older, messageIds: remaining }) as EngineMutation;
   if (lineSuperseded && narrowed.kind === "feed_mark_seen") delete narrowed.upToId;
   return narrowed;
 }
@@ -7329,7 +7330,8 @@ export class OhmailEngine {
        * stands in New, takes no hold, and is dropped here too.
        */
       const { openRead: _surfaceFlag, readRow, ...given } = m;
-      if (given.unread) return given;
+      // An Undo's read puts back what the press ended and places nothing anew.
+      if (given.unread || given.restoreOpenReadAt !== undefined) return given;
       const reader = this.read();
       const named = readRow !== undefined && readRow !== this.openRow
         && ohboxView(reader).newForYou.some((x) => x.id === readRow) ? readRow : this.openRow;
@@ -8509,7 +8511,7 @@ export class OhmailEngine {
         if (remaining.length === older.length) continue; // no overlap at all
         next = remaining.length === 0
           ? { ...e, superseded: true }
-          : { ...e, mutation: { ...e.mutation, messageIds: remaining } as EngineMutation };
+          : { ...e, mutation: (om.kind === "mark_seen" ? narrowRead(om, remaining) : { ...om, messageIds: remaining }) as EngineMutation };
       } else if (retiresAbandoned(m, e.mutation)) {
         next = { ...e, superseded: true };
       }
