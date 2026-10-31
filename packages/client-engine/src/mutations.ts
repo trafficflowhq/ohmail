@@ -479,13 +479,18 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         // (nulling it would file the row into the unstamped basement — the "lost" this exists
         // to remove), and a stamp NEWER than the pile entry is a fresh deliberate act that
         // wins (ISO strings compare lexicographically).
-        const rehomed = leftPile && !msg.unread && msg.date != null
+        // An Undo restores the open read the press ended instead (the server's same three bounds).
+        const restore = m.restoreOpenReadAt;
+        const rehomed = restore === undefined && leftPile && !msg.unread && msg.date != null
           && (msg.lastReadAt == null || (msg.triage?.setAt != null && msg.lastReadAt <= msg.triage.setAt))
           ? { lastReadAt: msg.date }
           : {};
+        const restored = restore !== undefined && !msg.unread && msg.openReadAt == null && Number.isFinite(Date.parse(restore))
+          ? { openReadAt: new Date(Math.min(Date.parse(restore), ctx.now().getTime())).toISOString() }
+          : {};
         return [
           { type: "message_state", id: recordId, entity: null },
-          { type: "message", id: msg.id, entity: { ...msg, triage: null, ...rehomed, updatedAt: iso } },
+          { type: "message", id: msg.id, entity: { ...msg, triage: null, ...rehomed, ...restored, updatedAt: iso } },
         ];
       }
       const state: MessageStateDTO = {
@@ -797,14 +802,19 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         // A GLANCE (`via: "glance"` — the Ohbox dwell commit) reads WITHOUT spending, and the
         // wire says so on the same request, so overlay and server agree (2026-08-26 ruling:
         // the read sticks, the pin is answered only by dealing with the row).
-        const spent = m.unread || m.via === "glance" ? null : spentResurface(msg, iso);
+        // An Undo's read (`restoreOpenReadAt`) is no dealing with the row either: it spends nothing.
+        const spent = m.unread || m.via === "glance" || m.restoreOpenReadAt !== undefined ? null : spentResurface(msg, iso);
+        // Its restore, the server's bounds: a row holding no open read, in no pile, never after now.
+        const back = !m.unread && m.restoreOpenReadAt && Object.hasOwn(m.restoreOpenReadAt, id) ? Date.parse(m.restoreOpenReadAt[id]!) : Number.NaN;
+        const restored = Number.isFinite(back) && msg.openReadAt == null && !parkedOrPinned(msg)
+          ? new Date(Math.min(back, ctx.now().getTime())).toISOString() : null;
         effects.push({
           type: "message",
           id,
           entity: {
             ...msg, unread: m.unread, lastReadAt: m.unread ? null : iso,
             openReadAt: m.unread ? null
-              : (paintedAt !== null && msg.unread && !parkedOrPinned(msg) ? paintedAt : (msg.openReadAt ?? null)),
+              : restored ?? (paintedAt !== null && msg.unread && !parkedOrPinned(msg) ? paintedAt : (msg.openReadAt ?? null)),
             ...(spent ? { triage: spent } : {}), updatedAt: iso,
           },
         });

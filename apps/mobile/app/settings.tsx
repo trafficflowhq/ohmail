@@ -419,7 +419,7 @@ function SettingsBody() {
             onPress={() => {
               const mail = phoneSupportMail(
                 {
-                  mailboxes: w.mailboxes.rows,
+                  mailboxes: w.mailboxes.all,
                   accountId: conn.state.k === "live" && !w.standalone ? conn.state.session.profile.accountId : null,
                 },
                 { platform: { os: Platform.OS, osVersion: Platform.Version ?? null }, build: { version: Constants.expoConfig?.version ?? null, commit } },
@@ -449,14 +449,14 @@ function DiagnosticPanel() {
     try {
       const engine = connection.state.k === "live" ? connection.state.session.engine : null;
       const where = await writePhoneDiagnostics(
-        { reader: engine?.read() ?? null, mailboxes: w.mailboxes.rows, selfChecks: selfChecksThisSession() },
+        { reader: engine?.read() ?? null, mailboxes: w.mailboxes.all, selfChecks: selfChecksThisSession() },
         nativePhoneDiagnosticDeps(),
       );
       setPress(where === null ? { k: "failed" } : { k: "written", where });
     } catch {
       setPress({ k: "failed" });
     }
-  }, [connection.state, w.mailboxes.rows]);
+  }, [connection.state, w.mailboxes.all]);
   const share = useCallback(async (where: string) => {
     if (!(await shareDiagnosticFile(where))) setPress({ k: "share_failed", where });
   }, []);

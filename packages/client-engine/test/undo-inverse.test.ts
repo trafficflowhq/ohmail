@@ -113,7 +113,11 @@ async function apply(store: MemoryMirrorStore, m: EngineMutation): Promise<void>
 
 const visible = (store: MemoryMirrorStore, id: string) => {
   const row = store.get<EngineMessage>("message", id)!;
-  return { folder: row.folder, unread: row.unread, labels: row.labels, triage: row.triage?.state ?? null };
+  return {
+    folder: row.folder, unread: row.unread, labels: row.labels, triage: row.triage?.state ?? null,
+    // The row's place in Earlier: an Undo that loses either stamp moves the row.
+    openReadAt: row.openReadAt ?? null, lastReadAt: row.lastReadAt ?? null,
+  };
 };
 
 describe("move", () => {
@@ -203,6 +207,45 @@ describe("triage_set", () => {
     expect("bubbleUpAt" in inv[0]!).toBe(false);
   });
 
+  it("a row in Earlier with an open read carries it back on the Undo; no other inverse does", async () => {
+    const read = "2026-09-19T11:00:00.000Z";
+    const reader = await seeded([
+      msg("m1", { unread: false, openReadAt: read }),
+      msg("m2", { unread: false, openReadAt: null }),
+      msg("m3", { unread: false, openReadAt: read, triage: pin("m3", "set_aside") }),
+    ]);
+    expect(inverseMutations(reader, { kind: "triage_set", messageId: "m1", state: "set_aside" }))
+      .toEqual([{ kind: "triage_set", messageId: "m1", state: "none", restoreOpenReadAt: read }]);
+    expect(inverseMutations(reader, { kind: "triage_set", messageId: "m2", state: "set_aside" })[0]!)
+      .not.toHaveProperty("restoreOpenReadAt");
+    expect(inverseMutations(reader, { kind: "triage_set", messageId: "m3", state: "none" })[0]!)
+      .not.toHaveProperty("restoreOpenReadAt");
+  });
+
+  for (const state of ["set_aside", "reply_later", "muted", "resurfaced", "bubbled_up"] as const) {
+    it(`round-trips ${state} on a row in Earlier: the open read and the reading stamp come back`, async () => {
+      const store = await seeded([msg("m1", {
+        unread: false, date: "2026-09-10T08:00:00.000Z", lastReadAt: "2026-09-19T11:00:00.000Z", openReadAt: "2026-09-19T11:00:00.000Z",
+      })]);
+      const before = visible(store, "m1");
+      const m: EngineMutation = { kind: "triage_set", messageId: "m1", state, ...(state === "bubbled_up" ? { bubbleUpAt: "2026-09-26T09:00:00.000Z" } : {}) };
+      const inv = inverseMutations(store, m);
+      await apply(store, m);
+      expect(visible(store, "m1").openReadAt, "the press ended the open read").toBeNull();
+      for (const u of inv) await apply(store, u);
+      expect(visible(store, "m1")).toEqual(before);
+    });
+  }
+
+  it("the overlay's restore is never later than now and lands only on a read row without an open read", async () => {
+    const store = await seeded([msg("m1", { unread: false }), msg("m2", { unread: true }), msg("m3", { unread: false, openReadAt: "2026-09-19T11:30:00.000Z" })]);
+    const undo = (id: string, at: string) => apply(store, { kind: "triage_set", messageId: id, state: "none", restoreOpenReadAt: at });
+    await undo("m1", "2099-01-01T00:00:00.000Z");
+    await undo("m2", "2026-09-19T11:00:00.000Z");
+    await undo("m3", "2026-09-19T11:00:00.000Z");
+    expect(["m1", "m2", "m3"].map((id) => visible(store, id).openReadAt)).toEqual([iso, null, "2026-09-19T11:30:00.000Z"]);
+  });
+
   it("round-trips a Later press on a booked row", async () => {
     const when = "2026-09-26T09:00:00.000Z";
     const store = await seeded([msg("m1", { triage: pin("m1", "bubbled_up", when) })]);
@@ -235,6 +278,44 @@ describe("mark_seen", () => {
   it("marking unread never touches the pin, and a no-op set answers nothing", async () => {
     const reader = await seeded([msg("m1", { unread: true, triage: pin("m1", "resurfaced") })]);
     expect(inverseMutations(reader, { kind: "mark_seen", messageIds: ["m1"], unread: true })).toEqual([]);
+  });
+
+  it("the Undo of a Mark unread carries each flipped row's open read, {} when none had one", async () => {
+    const read = "2026-09-19T11:00:00.000Z";
+    const reader = await seeded([
+      msg("m1", { unread: false, openReadAt: read }), msg("m2", { unread: false, openReadAt: null }), msg("m3", { unread: true }),
+    ]);
+    expect(inverseMutations(reader, { kind: "mark_seen", messageIds: ["m1", "m2", "m3"], unread: true }))
+      .toEqual([{ kind: "mark_seen", messageIds: ["m1", "m2"], unread: false, restoreOpenReadAt: { m1: read } }]);
+    expect(inverseMutations(reader, { kind: "mark_seen", messageIds: ["m2"], unread: true }))
+      .toEqual([{ kind: "mark_seen", messageIds: ["m2"], unread: false, restoreOpenReadAt: {} }]);
+  });
+
+  it("Mark unread, then Undo: the open read comes back and a resurfaced pin stands", async () => {
+    const read = "2026-09-19T11:00:00.000Z";
+    const store = await seeded([
+      msg("m1", { unread: false, openReadAt: read, lastReadAt: read }),
+      msg("m2", { unread: false, triage: pin("m2", "resurfaced") }),
+    ]);
+    const m: EngineMutation = { kind: "mark_seen", messageIds: ["m1", "m2"], unread: true };
+    const inv = inverseMutations(store, m);
+    await apply(store, m);
+    expect(visible(store, "m1").openReadAt, "the press ended the open read").toBeNull();
+    for (const u of inv) await apply(store, u);
+    expect(visible(store, "m1")).toMatchObject({ unread: false, openReadAt: read, lastReadAt: iso });
+    expect(visible(store, "m2")).toMatchObject({ unread: false, triage: "resurfaced", openReadAt: null });
+  });
+
+  it("the overlay's restore: never after now, never over a newer open read, never on a parked row, nothing placed anew", async () => {
+    const newer = "2026-09-19T11:30:00.000Z";
+    const store = await seeded([
+      msg("m1"), msg("m2", { triage: pin("m2", "set_aside") }), msg("m3", { unread: false, openReadAt: newer }), msg("m4"),
+    ]);
+    await apply(store, {
+      kind: "mark_seen", messageIds: ["m1", "m2", "m3", "m4"], unread: false,
+      restoreOpenReadAt: { m1: "2099-01-01T00:00:00.000Z", m2: "2026-09-19T11:00:00.000Z", m3: "2026-09-19T11:00:00.000Z" },
+    });
+    expect(["m1", "m2", "m3", "m4"].map((id) => visible(store, id).openReadAt)).toEqual([iso, null, newer, null]);
   });
 });
 

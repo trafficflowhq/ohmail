@@ -311,7 +311,7 @@ export function mailServer() {
         return;
       }
       if (method === "PATCH" && url.pathname === "/messages") {
-        const parsed = JSON.parse(body) as { ids: string[]; unread: boolean; openRead?: boolean };
+        const parsed = JSON.parse(body) as { ids: string[]; unread: boolean; openRead?: boolean; restoreOpenReadAt?: Record<string, string> };
         // The server's open-read rule (`MessageService.markSeen`): with `openRead`, the rows that
         // WERE unread take `openReadAt`, only when every id is one conversation; every unread clears it.
         const at = new Date().toISOString();
@@ -319,10 +319,15 @@ export function mailServer() {
         const oneConversation = new Set(held.map((m) => m.threadId ?? `msg:${m.id}`)).size === 1;
         const stamp = new Set(parsed.openRead === true && !parsed.unread && oneConversation
           ? held.filter((m) => m.unread && ((m.triage as { state?: string } | null)?.state ?? "none") === "none").map((m) => m.id) : []);
+        // An Undo's read puts back each named row's open read: a row holding none, in no pile, never after now.
+        const restore = parsed.restoreOpenReadAt ?? {};
+        const restored = (m: Dto) => !parsed.unread && Object.hasOwn(restore, m.id) && !m.openReadAt
+          && ((m.triage as { state?: string } | null)?.state ?? "none") === "none" ? { openReadAt: restore[m.id]! < at ? restore[m.id]! : at } : {};
         for (const id of parsed.ids) {
+          const m = messages.get(id);
           updateMessage(id, {
             unread: parsed.unread, lastReadAt: parsed.unread ? null : at,
-            ...(parsed.unread ? { openReadAt: null } : stamp.has(id) ? { openReadAt: at } : {}),
+            ...(parsed.unread ? { openReadAt: null } : stamp.has(id) ? { openReadAt: at } : m ? restored(m) : {}),
           });
         }
         json(200, {}, seq);
@@ -549,13 +554,18 @@ export function mailServer() {
           return;
         }
         if (method === "POST" && perMessage[2] === "triage") {
-          const parsed = JSON.parse(body) as { state: string; bubbleUpAt?: string };
+          const parsed = JSON.parse(body) as { state: string; bubbleUpAt?: string; restoreOpenReadAt?: string };
           const iso = new Date().toISOString();
           const state = { messageId: id, state: parsed.state, bubbleUpAt: parsed.bubbleUpAt ?? null, setAt: iso, updatedAt: iso };
           push("message_state", "create", `st-${id}-${seq + 1}`, state);
           // The server's rule (`TriageService.setState`): a pile or a pin ends the open read. Only a
           // stamped row is re-emitted, carrying its state as the real DTO does.
           if (parsed.state !== "none" && messages.get(id)?.openReadAt) updateMessage(id, { openReadAt: null, triage: state as never });
+          // An Undo's `none` puts the press-time open read back on a read row holding none, never after now.
+          const held = messages.get(id);
+          if (parsed.state === "none" && parsed.restoreOpenReadAt && held && !held.unread && !held.openReadAt) {
+            updateMessage(id, { openReadAt: parsed.restoreOpenReadAt < iso ? parsed.restoreOpenReadAt : iso, triage: null });
+          }
           json(200, state, seq);
           return;
         }

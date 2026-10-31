@@ -1621,7 +1621,10 @@ export class HttpAdapter implements EngineAdapter {
 
       case "triage_set": {
         const res = await this.request("POST", `/messages/${m.messageId}/triage`, {
-          body: { state: m.state, ...(m.bubbleUpAt ? { bubbleUpAt: m.bubbleUpAt } : {}) },
+          body: {
+            state: m.state, ...(m.bubbleUpAt ? { bubbleUpAt: m.bubbleUpAt } : {}),
+            ...(m.restoreOpenReadAt ? { restoreOpenReadAt: m.restoreOpenReadAt } : {}),
+          },
           idempotencyKey: opts.idempotencyKey, ...sig, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
@@ -1744,7 +1747,11 @@ export class HttpAdapter implements EngineAdapter {
         // marks read without spending a resurface pin (`MessageService.markSeen`). Deliberate reads (no `via`) keep
         // answering pins exactly as before.
         const res = await this.request("PATCH", "/messages", {
-          body: { ids: m.messageIds, unread: m.unread, ...(m.via ? { via: m.via } : {}), ...(m.openRead ? { openRead: true } : {}) },
+          body: {
+            ids: m.messageIds, unread: m.unread, ...(m.via ? { via: m.via } : {}), ...(m.openRead ? { openRead: true } : {}),
+            // An Undo's restore travels whenever present, `{}` included: it also says "spend no pin".
+            ...(m.restoreOpenReadAt !== undefined ? { restoreOpenReadAt: m.restoreOpenReadAt } : {}),
+          },
           idempotencyKey: opts.idempotencyKey, ...sig, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);

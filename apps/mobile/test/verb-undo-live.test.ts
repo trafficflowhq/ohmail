@@ -120,6 +120,36 @@ describe("the pill's undo drives the engine's inverse on the wire", () => {
     live.fake.server.close();
   }, CASE_MS);
 
+  it("Undo of Later on a row in Earlier sends the open read back, and the row holds it again", async () => {
+    const read = "2026-08-19T09:00:00.000Z";
+    const live = await scene((f) => f.addMessage({ ...dto("m1", { unread: false }), openReadAt: read }));
+    expect(await live.actions.pileToggle("m1", "replyLater")).toBe(true);
+    live.toasts.find((t) => t.undo)!.undo!();
+    await postsArrive(live.fake, 2, "the inverse's POST on the wire");
+    const bodies = live.fake.seen.filter((r) => r.method === "POST" && r.url === "/messages/m1/triage").map((r) => JSON.parse(r.body) as object);
+    expect(bodies).toEqual([{ state: "reply_later" }, { state: "none", restoreOpenReadAt: read }]);
+    await arrived("the open read back in the mirror", () => live.engine.read().get<{ openReadAt?: string | null }>("message", "m1")?.openReadAt === read,
+      () => String(live.engine.read().get<{ openReadAt?: string | null }>("message", "m1")?.openReadAt));
+    live.store.close();
+    live.fake.server.close();
+  }, CASE_MS);
+
+  it("Undo of Mark unread on a row in Earlier sends the open read back, and the row holds it again", async () => {
+    const read = "2026-08-19T09:00:00.000Z";
+    const live = await scene((f) => f.addMessage({ ...dto("m1", { unread: false }), openReadAt: read }));
+    expect(await live.actions.markSeen("m1", true)).toBe(true);
+    live.toasts.find((t) => t.say === Copy.toastUnread)!.undo!();
+    const bodies = () => live.fake.seen.filter((r) => r.method === "PATCH" && r.url === "/messages").map((r) => JSON.parse(r.body) as object);
+    await arrived("the inverse's PATCH on the wire", () => bodies().length >= 2, () => JSON.stringify(bodies()));
+    expect(bodies().at(-1)).toEqual({ ids: ["m1"], unread: false, restoreOpenReadAt: { m1: read } });
+    await live.engine.flushPending();
+    await live.engine.syncOnce();
+    expect(live.fake.message("m1")?.openReadAt, "the server").toBe(read);
+    expect(live.engine.read().get<{ openReadAt?: string | null }>("message", "m1")?.openReadAt, "the mirror, after the drain").toBe(read);
+    live.store.close();
+    live.fake.server.close();
+  }, CASE_MS);
+
   /**
    * THE SENTENCE IS THE PRESS'S (FIX-026 row 92). Undo took the offer off the screen and put
    * nothing in its place until the inverse had been answered — seconds on a phone. It is said at

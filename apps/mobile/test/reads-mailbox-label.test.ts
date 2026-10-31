@@ -39,6 +39,14 @@ describe("the phone labels a delivery only where there is something to disambigu
     expect(mailboxLabelOf(TWO, "mb-gone")).toBeUndefined();
   });
 
+  it("removed copies of the one address are no second mailbox; a removed mailbox of another address is", () => {
+    const A = TWO[1]!;
+    const copies = [{ ...A, id: "mb-home-1" }, { ...A, id: "mb-home-2" }, A];
+    expect(mailboxLabelOf(copies, A.id)).toBeUndefined();
+    expect(mailboxLabelOf(copies, "mb-home-1")).toBeUndefined();
+    expect(mailboxLabelOf([...copies, { id: "mb-c", address: "c@x.invalid" }], "mb-c")).toBe("c@x.invalid");
+  });
+
   it("a whitespace-only label is no label", () => {
     expect(mailboxLabelOf([{ id: "a", address: "a@x.invalid", displayName: " " }, TWO[1]!], "a"))
       .toBe("a@x.invalid");

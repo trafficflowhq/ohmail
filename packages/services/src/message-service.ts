@@ -217,6 +217,12 @@ export interface MarkSeenBody {
    * arrival. `true` beside `unread: true` is refused: nothing an unread does may place a row.
    */
   openRead?: unknown;
+  /**
+   * AN UNDO OF A MARK UNREAD: `{ [id]: ISO }`, each row's open read before the press, `{}` for none.
+   * A read only, never beside `openRead`. Restored on a live id that is read, holds no open read and
+   * is in no pile, never later than now; a key outside `ids` is ignored. Its read spends no pin.
+   */
+  restoreOpenReadAt?: unknown;
 }
 
 /**
@@ -1263,6 +1269,13 @@ export class MessageService {
       throw new ServiceError("validation_failed", 400, "openRead is a read; it cannot mark unread");
     }
     const openRead = body.openRead === true;
+    const restore = this.validRestore(body.restoreOpenReadAt);
+    if (restore !== null && unread) {
+      throw new ServiceError("validation_failed", 400, "restoreOpenReadAt is a read; it cannot mark unread");
+    }
+    if (restore !== null && openRead) {
+      throw new ServiceError("validation_failed", 400, "an Undo's read places nothing anew: openRead is refused beside restoreOpenReadAt");
+    }
     // De-duplicated but ORDER-PRESERVING: the same id twice is one update and one change, and
     // the caller's order is the order the deltas land in.
     const ids = [...new Set(body.ids as string[])];
@@ -1327,6 +1340,24 @@ export class MessageService {
               ))),
           ));
       }
+      // AN UNDO PUTS BACK EACH ROW'S OPEN READ, in one statement whatever the count: the stamp's
+      // scopes plus `is null` (a newer open read wins), never after this read's instant.
+      const restoredIds = restore === null ? [] : live.filter((id) => restore.has(id));
+      if (!unread && restoredIds.length > 0) {
+        const d = dialect(ctx.db);
+        const arms = restoredIds.map((id) => sql`when ${d.castUuid(id)} then ${d.ts(new Date(Math.min(restore!.get(id)!, at.getTime())))}`);
+        const restoredAt = sql`(case ${messages.id} ${sql.join(arms, sql` `)} end)`;
+        await tx.update(messages).set({ openReadAt: restoredAt })
+          .where(and(
+            inArray(messages.id, restoredIds), eq(messages.accountId, ctx.accountId),
+            eq(messages.unread, false), isNull(messages.openReadAt),
+            notExists(tx.select({ id: messageStates.id }).from(messageStates)
+              .where(and(
+                eq(messageStates.messageId, messages.id), eq(messageStates.accountId, ctx.accountId),
+                ne(messageStates.state, "none"),
+              ))),
+          ));
+      }
       await upsertDesiredSeenMany(
         tx, live.map((id) => ({ id, observedSeen: observedById.get(id) ?? false })), !unread, at,
         decisionInstant(floor, at),
@@ -1340,8 +1371,8 @@ export class MessageService {
       // (`unread === false`), and never for a GLANCE (`via: "glance"` — the Ohbox dwell commit):
       // the glance's read lands like any other (owner ruling 2026-08-26), but the pin is
       // answered by dealing with the row, and nobody pressed anything to get here. Marking
-      // unread must not touch triage either way.
-      if (!unread && !glance) {
+      // unread must not touch triage either way. An Undo's read is not dealing with the row either.
+      if (!unread && !glance && restore === null) {
         const spent = await this.spendResurface(tx, ctx, live);
         if (spent !== null) last = spent;
       }
@@ -2025,6 +2056,27 @@ export class MessageService {
       throw new ServiceError("validation_failed", 400, "via must be \"glance\" when present");
     }
     return true;
+  }
+
+  /** `restoreOpenReadAt` as id -> epoch ms, or null when absent; anything malformed is a 400. */
+  private validRestore(v: unknown): Map<string, number> | null {
+    if (v === undefined || v === null) return null;
+    if (typeof v !== "object" || Array.isArray(v)) {
+      throw new ServiceError("validation_failed", 400, "restoreOpenReadAt must map message ids to ISO datetimes");
+    }
+    const entries = Object.entries(v as Record<string, unknown>);
+    if (entries.length > MARK_SEEN_MAX_IDS) {
+      throw new ServiceError("payload_too_large", 413, `restoreOpenReadAt names at most ${MARK_SEEN_MAX_IDS} messages`);
+    }
+    const out = new Map<string, number>();
+    for (const [id, at] of entries) {
+      const t = typeof at === "string" ? Date.parse(at) : Number.NaN;
+      if (!UUID_RE.test(id) || !Number.isFinite(t)) {
+        throw new ServiceError("validation_failed", 400, "restoreOpenReadAt must map message ids to ISO datetimes");
+      }
+      out.set(id, t);
+    }
+    return out;
   }
 }
 

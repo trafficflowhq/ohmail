@@ -21,6 +21,14 @@ export function ownAddressesOf(rows: readonly Pick<PhoneMailbox, "address" | "ad
   return rows.filter((r) => r.addressIsOwn !== false).map((r) => r.address);
 }
 
+/**
+ * The roster without its removed copies: a removal leaves a `disabled` row, one per remove of the
+ * address, still carrying its role and holder. The same array when nothing was removed.
+ */
+export function liveMailboxRows<T extends { status: string | null }>(rows: readonly T[]): readonly T[] {
+  return rows.some((r) => r.status === "disabled") ? rows.filter((r) => r.status !== "disabled") : rows;
+}
+
 export interface PhoneMailbox {
   id: string;
   /** The mailbox's own address — what makes the reader recognisable in a To/Cc list. */

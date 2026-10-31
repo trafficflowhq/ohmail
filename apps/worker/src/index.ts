@@ -189,6 +189,13 @@ export const BUBBLE_UP_EVERY_MS = 60_000;
 export const THREAD_JOIN_HEAL_EVERY_MS = 6 * 60 * 60 * 1000;
 
 /**
+ * Each account's heal time per walk, summed over its slices, and NOT CONFIGURABLE for the reason above.
+ * Ten slice clocks: when one slice covers a group or two, the group budget alone kept an account owed
+ * for hundreds of tails, so the gate never shut and every tail paid for a walk that merged nothing.
+ */
+export const THREAD_JOIN_HEAL_WALK_MS = 10 * TAIL_SLICE_BUDGET_MS;
+
+/**
  * How often the leader runs the INBOUND-QUIET pass (the forwarding-detection heuristic,
  * mail 0078), and NOT CONFIGURABLE — a `const` for the reason {@link BUBBLE_UP_EVERY_MS} is:
  * an unset `?? something` would silently pick a period nobody chose.
@@ -896,9 +903,10 @@ export async function startWorkerWithLock(
      * {@link THREAD_JOIN_HEAL_EVERY_MS} would otherwise mean the pass NEVER runs — a
      * scheduled pass that no schedule ever reaches, which this repo has paid for before. Each
      * slice runs under the tail's slice clock; a cut account stays owed and keeps the gate open
-     * for the next tail walks until it finishes. In memory: a leader handover starts from the top.
+     * for the next tail walks until it finishes or spends {@link THREAD_JOIN_HEAL_WALK_MS}. In memory:
+     * a leader handover starts from the top.
      */
-    const joinHealWalk = makeThreadJoinHealWalk(THREAD_JOIN_HEAL_EVERY_MS);
+    const joinHealWalk = makeThreadJoinHealWalk(THREAD_JOIN_HEAL_EVERY_MS, THREAD_JOIN_HEAL_WALK_MS);
     /**
      * Time-gate for the inbound-quiet pass. Starts "due" like the thread-join heal and for
      * its exact reason: a deployment cadence shorter than {@link INBOUND_QUIET_EVERY_MS} would
@@ -5381,6 +5389,7 @@ export async function startWorkerWithLock(
           const slice = joinHealWalk.slice(accountId, walk.accounts);
           if (slice === null) return;
           await runTailStage("cycle.threadJoinHealPass", "database", async () => {
+            const at = Date.now();
             const r = await threadJoinHealPass({
               db: db as unknown as Tx, apply: true, accountId, log, ...slice, until: sliceUntil(),
               noteFault: tailFaultNote("cycle.threadJoinHealPass"),
@@ -5388,13 +5397,18 @@ export async function startWorkerWithLock(
             // The resume point is carried whatever `failed` says: a group that fails
             // deterministically must not pin every walk to its own page. Transients are already
             // retried once inside the pass.
-            joinHealWalk.settle(accountId, r);
+            const closed = joinHealWalk.settle(accountId, r, Date.now() - at);
             if (r.merged > 0 || r.skipped > 0 || r.failed > 0 || r.cut) {
               // Named fields, not a spread: `r.cursor` carries a thread SUBJECT (user content
               // the census deny-lists), and the counters must land on registered names.
               log.info("thread_join_heal_pass", {
                 accountId, scanned: r.groupsScanned, merged: r.merged,
                 moved: r.messagesMoved, skipped: r.skipped, failed: r.failed, capped: r.capped, more: r.cut,
+              });
+            }
+            if (closed) {
+              log.info("thread_join_heal_walk_closed", {
+                accountId, scanned: closed.scanned, slices: closed.slices, ms: closed.ms, more: closed.more,
               });
             }
           }, (err) => {

@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
-import { phoneOrganizer } from "../src/state/live";
-import { leaveFilings, readFilings, readMailboxes, retryFilings } from "../src/net/mailboxes";
+import { phoneOrganizer, SCREENING_UNSUPPLIED, type WorldActions } from "../src/state/live";
+import { leaveFilings, readFilings, readMailboxes, retryFilings, type PhoneMailbox } from "../src/net/mailboxes";
+import { createProjector, type ProjectionInputs } from "../src/state/world-projection";
 
 /**
  * ═══ THE PHONE READS THE MAILBOX IT IS SHOWING ═══════════════════════════════════════════════
@@ -89,6 +91,51 @@ describe("phoneOrganizer — the banner's one fact, or silence", () => {
       box({ organizedBy: { kind: "local", name: "the laptop" }, organizerState: "held" }),
     ]);
     expect(mixed?.stopped, "a claim still being renewed was reported as stopped").toBe(false);
+  });
+});
+
+/**
+ * A REMOVED MAILBOX IS NO CARD AND NO HOLDER. `GET /mailboxes` keeps a `disabled` row per removal,
+ * with the role and the holder it last had; the world hands the screens the live rows, and the raw
+ * roster only where a message on a removed mailbox is named.
+ */
+describe("the world's mailboxes over removed copies", () => {
+  const phoneBox = (id: string, address: string, o: Partial<PhoneMailbox> = {}): PhoneMailbox => ({
+    id, address, status: "connected", organizerRole: "organizer", organizedByThisInstall: false,
+    organizedBy: null, organizerState: null, organizeConsentedAt: null, junkFolder: null, sentFolder: null,
+    smtpMaxSizeBytes: null, firstSyncStopFolder: null, ...o,
+  } as PhoneMailbox);
+  const gone = (id: string, address: string) => phoneBox(id, address, {
+    status: "disabled", organizedBy: { kind: "local", name: "Old laptop" }, organizerState: "held",
+  });
+  const project = async (mailboxes: PhoneMailbox[]) => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const engine = new OhmailEngine({ store, storePolicy: { mode: "full" }, adapter: {} as never });
+    return createProjector().project({
+      engine, worldKey: "rig", standalone: false, bearer: null, images: "direct" as never,
+      zone: "UTC", locale: "en", now: new Date(), foldersOn: false, foldersPending: false, foldersStorable: true,
+      signatures: null, resurfaceTime: null, screenerServer: null, relayed: null, mailboxes, mailboxesReadAt: () => null,
+      walker: null, searchWalker: null, openOffMirror: () => undefined,
+      scopes: {}, leavingWaiting: [], heldDeletes: new Set<string>(), heldPlaces: new Map(),
+      ownAddresses: [], posture: SCREENING_UNSUPPLIED,
+      actions: {} as WorldActions, onPresented: () => undefined, account: () => ({ name: "rig", email: "" }),
+      setFoldersEnabled: async () => true, folderSummary: async () => null, rememberResurfaceTime: () => undefined,
+    } as unknown as ProjectionInputs).mailboxes;
+  };
+  const A = phoneBox("mb-a", "a@x.invalid");
+  const B = phoneBox("mb-b", "b@x.invalid");
+
+  it("one live mailbox beside its removed copies is one row, and no removed copy's holder heads the banner", async () => {
+    const w = await project([gone("mb-a-1", A.address), gone("mb-a-2", A.address), A]);
+    expect(w.rows.map((r) => r.id)).toEqual([A.id]);
+    expect(w.organizer, "a removed copy's old holder named the banner").toBeNull();
+    expect(w.all.map((r) => r.id)).toEqual(["mb-a-1", "mb-a-2", A.id]);
+  });
+
+  it("CONTROL — two live mailboxes are two rows", async () => {
+    const w = await project([gone("mb-b-1", B.address), A, B]);
+    expect(w.rows.map((r) => r.id)).toEqual([A.id, B.id]);
   });
 });
 

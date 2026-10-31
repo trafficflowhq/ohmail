@@ -834,19 +834,16 @@ describe("links look like links and say where they go", () => {
   });
 
   it("…reading the letter's controls in one pass, however many stay open", async () => {
-    // As many controls closed in pairs, so only how many stay open differs. Mutation: a PDI looks
-    // down the open controls for its isolate → quadratic, minutes over the bound.
+    // 100,000 embeddings left open, then as many PDIs, which close none of them: the link is read as
+    // reordered. Held to an absolute ceiling, never a ratio: one pass takes a fraction of a second.
+    // Mutation: a PDI looks down the open controls for its isolate → quadratic, 28 s in jsdom.
     const { sanitizeMailHtml } = await mod();
-    const timed = (controls: string): number => {
-      const started = performance.now();
-      sanitizeMailHtml(`<p>${controls}<a href="https://shop.example/x">shop.example</a></p>`);
-      return performance.now() - started;
-    };
-    const pairs = "\u{202a}\u{202c}".repeat(100_000);
     const open = "\u{202a}".repeat(100_000) + "\u{2069}".repeat(100_000);
-    timed(pairs);
-    expect(Math.min(timed(open), timed(open))).toBeLessThan(1.75 * Math.min(timed(pairs), timed(pairs)) + 50);
-  });
+    const started = performance.now();
+    const { html } = sanitizeMailHtml(`<p>${open}<a href="https://shop.example/x">shop.example</a></p>`);
+    expect(performance.now() - started).toBeLessThan(10_000);
+    expect(html).toContain("data-ohmail-elsewhere");
+  }, 60_000);
 
   it("…and when the letter's sheets may draw any of it in another order", async () => {
     // A bidi rule the sheet reading cannot match, a control a sheet draws as generated content
@@ -910,67 +907,85 @@ describe("links look like links and say where they go", () => {
   });
 
   it("the sheet reading matches a few dozen rules, however many the letter has", async () => {
-    // Mutation: no cap → every one of the rules is matched over the letter, seconds over the bound.
+    // Counted in matches over the letter, not timed: a busy machine stretches milliseconds alike.
+    // Mutation: no cap → every one of the rules is matched over the letter, 2,000 matches.
     const { sanitizeMailHtml } = await mod();
-    const rules = Array.from({ length: 20_000 }, (_, i) => `.c${i}{display:none}`).join("");
-    const body = `<div><a href="https://shop.example/x"><span class="c1">shop.example</span></a></div>`.repeat(1_000);
-    const timed = (sheet: string): number => {
-      const started = performance.now();
-      sanitizeMailHtml(`<style>${sheet}</style>${body}`);
-      return performance.now() - started;
+    const rules = Array.from({ length: 2_000 }, (_, i) => `.c${i}{display:none}`).join("");
+    const body = `<div><a href="https://shop.example/x"><span class="c1">shop.example</span></a></div>`.repeat(100);
+    const matches = (sheet: string): number => {
+      const all = vi.spyOn(Element.prototype, "querySelectorAll");
+      const one = vi.spyOn(Element.prototype, "matches");
+      try {
+        sanitizeMailHtml(`<style>${sheet}</style>${body}`);
+        return all.mock.calls.length + one.mock.calls.length;
+      } finally {
+        all.mockRestore();
+        one.mockRestore();
+      }
     };
-    timed("");
-    const plain = timed(`/*${rules}*/`);
-    expect(timed(rules)).toBeLessThan(1.75 * plain + 50);
+    const extra = matches(rules) - matches(`/*${rules}*/`);
+    expect(extra).toBeGreaterThan(0);
+    expect(extra).toBeLessThanOrEqual(32);
   });
 
   it("…and each in a few compares per element, however long the letter's values", async () => {
     // A word-list test reads a whole value per element, and a compound of many classes reads a class
-    // list as many times: 32 such rules took the first letter 2.3 s in Chromium. Only a few plain
-    // tests per subject are matched now. Mutations: no limit on a subject's parts → the second
-    // letter; the first goes red only with every limit lifted, each held alone by (v)-(x) above.
-    const { sanitizeMailHtml, MAX_HTML_CHARS } = await mod();
-    const letters = (subject: string, element: string): [string, string] => {
+    // list as many times: 32 such rules took a 512 KiB letter 2.3 s in Chromium. Only subjects of a
+    // few plain tests are matched over the letter. Counted in the subjects matched (querySelectorAll),
+    // not timed. Mutations: no limit on a subject's parts → (b) matched 32 times; the word list (a)
+    // goes red only with every limit lifted, each held alone by (v)-(x) above.
+    const { sanitizeMailHtml } = await mod();
+    const body = `<span dir="b a" class="a">x</span><a href="https://shop.example/x">shop.example</a>`.repeat(20);
+    const matched = (subject: string): string[] => {
       const rules = Array.from({ length: 32 }, () => `${subject}{display:none}`).join("");
-      const n = Math.max(1, Math.floor((MAX_HTML_CHARS - 200 - rules.length) / element.length));
-      const body = `<table width="600"><tr><td>${element.repeat(n)}<a href="https://shop.example/x">shop.example</a></td></tr></table>`;
-      return [`<style>${rules}</style>${body}`, `<style>/*${rules}*/</style>${body}`];
+      const all = vi.spyOn(Element.prototype, "querySelectorAll");
+      const selectors = (sheet: string): string[] => {
+        all.mockClear();
+        sanitizeMailHtml(`<style>${sheet}</style>${body}`);
+        return all.mock.calls.map(([s]) => String(s));
+      };
+      try {
+        const off = selectors(`/*${rules}*/`);
+        const live = selectors(rules);
+        for (const s of off) live.splice(live.indexOf(s), 1);
+        return live;
+      } finally {
+        all.mockRestore();
+      }
     };
-    const timed = (html: string): number => {
-      const started = performance.now();
-      sanitizeMailHtml(html);
-      return performance.now() - started;
-    };
-    for (const [hostile, plain] of [
-      letters("[dir~=a]".repeat(32), `<span dir="${"b".repeat(4000)} a">x</span>`),
-      letters(".a".repeat(32), `<div class="${"b ".repeat((MAX_HTML_CHARS - 12_000) / 2)}a">x</div>`),
-    ]) {
-      expect(hostile.length).toBeLessThanOrEqual(MAX_HTML_CHARS);
-      timed(plain);
-      expect(Math.min(timed(hostile), timed(hostile))).toBeLessThan(1.5 * Math.min(timed(plain), timed(plain)) + 25);
-    }
+    expect(matched("[dir~=a]".repeat(32)), "(a)").toEqual([]);
+    expect(matched(".a".repeat(32)), "(b)").toEqual([]);
+    // The limits in full: four parts, 64 characters.
+    expect(matched(".a.a.a.a")).toEqual(Array(32).fill(".a.a.a.a"));
+    expect(matched(`span[dir="${"b".repeat(52)}"]`)).toEqual(Array(32).fill(`span[dir="${"b".repeat(52)}"]`));
+    expect(matched(`span[dir="${"b".repeat(53)}"]`)).toEqual([]);
   });
 
   it("a link that holds another link names its host, and each label is read once", async () => {
     // Links nest through table markers. A link that holds one is marked outright and no label is
     // read past a link inside it, so the links cost about what the same letter nested through
-    // <b> costs. Mutation: read each link's whole subtree again → about three times the plain letter.
+    // <b> costs. Counted in the characters the label readings fold (normalize), linked letter minus
+    // the <b> letter, not timed. Mutation: read each link's whole subtree again → 40 times the label.
     const { sanitizeMailHtml } = await mod();
-    const nested = (open: string, close: string, levels = 40, words = 30_000): string =>
-      `${open}<table><caption>`.repeat(levels) + "e.ee ".repeat(words) + `</caption></table>${close}`.repeat(levels);
-    sanitizeMailHtml(nested(`<a href="https://e.ee/x">`, "</a>", 2, 10));
-    const timed = (html: string): [number, string] => {
-      const started = performance.now();
-      const { html: out } = sanitizeMailHtml(html);
-      return [performance.now() - started, out];
+    const label = "e.ee ".repeat(3_000);
+    const nested = (open: string, close: string): string =>
+      `${open}<table><caption>`.repeat(40) + label + `</caption></table>${close}`.repeat(40);
+    const read = (html: string): [number, string] => {
+      const fold = vi.spyOn(String.prototype, "normalize");
+      try {
+        const { html: out } = sanitizeMailHtml(html);
+        return [fold.mock.contexts.reduce((n: number, s) => n + String(s).length, 0), out];
+      } finally {
+        fold.mockRestore();
+      }
     };
-    const [plain] = timed(nested("<b>", "</b>"));
-    const [linked, out] = timed(nested(`<a href="https://e.ee/x">`, "</a>"));
-    const [again] = timed(nested(`<a href="https://e.ee/x">`, "</a>"));
+    const [plain] = read(nested("<b>", "</b>"));
+    const [linked, out] = read(nested(`<a href="https://e.ee/x">`, "</a>"));
     const marked = [...new DOMParser().parseFromString(out, "text/html").querySelectorAll("a")]
       .map((a) => a.hasAttribute("data-ohmail-elsewhere"));
     expect(marked).toEqual([...Array(39).fill(true), false]);
-    expect(Math.min(linked, again)).toBeLessThan(1.75 * plain);
+    expect(linked - plain).toBeGreaterThanOrEqual(label.length);
+    expect(linked - plain).toBeLessThan(3 * label.length);
   });
 
   it("…and each piece of its label alone, whatever hides the rest", async () => {
@@ -999,23 +1014,27 @@ describe("links look like links and say where they go", () => {
   });
 
   it("…reading a label of many pieces once each", async () => {
-    // A 512 KiB label of small pieces costs about what the same pieces cost outside a link.
-    // Mutation: read each piece together with every piece before it → quadratic, far over the bound.
-    const { sanitizeMailHtml, MAX_HTML_CHARS } = await mod();
+    // A label of a thousand small pieces is read a few times over, as a whole and piece by piece.
+    // Counted in the characters every reading folds (normalize), not timed: a busy machine
+    // stretches milliseconds alike. Mutation: read each piece together with every piece before
+    // it → about 500 times the label.
+    const { sanitizeMailHtml } = await mod();
     const piece = `<b>${"e.ee ".repeat(8)}</b>`;
-    const pieces = piece.repeat(Math.floor((MAX_HTML_CHARS - 200) / piece.length));
-    const letter = (open: string, close: string): string => `<table width="600"><tr><td>${open}${pieces}${close}</td></tr></table>`;
-    const timed = (html: string): number => {
-      const started = performance.now();
-      sanitizeMailHtml(html);
-      return performance.now() - started;
+    const label = 8 * "e.ee ".length * 1_000;
+    const read = (open: string, close: string): number => {
+      const fold = vi.spyOn(String.prototype, "normalize");
+      try {
+        const { asks } = sanitizeMailHtml(`<table width="600"><tr><td>${open}${piece.repeat(1_000)}${close}</td></tr></table>`);
+        expect(asks).toEqual([]);
+        return fold.mock.contexts.reduce((n: number, s) => n + String(s).length, 0);
+      } finally {
+        fold.mockRestore();
+      }
     };
-    const plain = letter("<p>", "</p>");
-    const linked = letter(`<a href="https://e.ee/x">`, "</a>");
-    expect(linked.length).toBeLessThanOrEqual(MAX_HTML_CHARS);
-    timed(`<a href="https://e.ee/x">${piece.repeat(100)}</a>`);
-    expect(Math.min(timed(linked), timed(linked))).toBeLessThan(1.75 * Math.min(timed(plain), timed(plain)) + 50);
-  }, 30_000);
+    const linked = read(`<a href="https://e.ee/x">`, "</a>") - read("<p>", "</p>");
+    expect(linked).toBeGreaterThanOrEqual(label);
+    expect(linked).toBeLessThan(3 * label);
+  });
 
   it("…and what the letter's styles draw as its text, read alone", async () => {
     // A label its styles draw holds no text node: a string in content, quotes or a list marker

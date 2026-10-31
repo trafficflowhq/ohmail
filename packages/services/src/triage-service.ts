@@ -39,6 +39,11 @@ export interface TriageSetBody {
    * `resurfaceAt`) would read it as "still scheduled".
    */
   bubbleUpAt?: string;
+  /**
+   * An Undo's press-time open read, with `state: "none"` only: restored on a read row with none,
+   * never later than now, and the un-park reset is skipped. Absent or null is an ordinary `none`.
+   */
+  restoreOpenReadAt?: string | null;
 }
 
 /** Idempotency handle threaded in by the route; the row is written IN the setState tx. */
@@ -87,6 +92,14 @@ export class TriageService {
     const bubbleUpAt = b.state === "bubbled_up" ? new Date(b.bubbleUpAt!) : null;
     if (bubbleUpAt && Number.isNaN(bubbleUpAt.getTime())) {
       throw new ServiceError("validation_failed", 400, "bubbleUpAt is not a valid ISO datetime");
+    }
+    const restore = b.restoreOpenReadAt == null ? null
+      : typeof b.restoreOpenReadAt === "string" ? new Date(b.restoreOpenReadAt) : new Date(Number.NaN);
+    if (restore && b.state !== "none") {
+      throw new ServiceError("validation_failed", 400, "restoreOpenReadAt is only taken with state 'none'");
+    }
+    if (restore && Number.isNaN(restore.getTime())) {
+      throw new ServiceError("validation_failed", 400, "restoreOpenReadAt is not a valid ISO datetime");
     }
 
     // The account row FOR SHARE first: the key's claim reads it, and after the counter it deadlocked.
@@ -158,6 +171,12 @@ export class TriageService {
         await tx.update(messages).set({ openReadAt: null })
           .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId), isNotNull(messages.openReadAt)));
       }
+      // AN UNDO PUTS IT BACK: the press-time open read, on a read row holding none, never after now.
+      if (restore) {
+        await tx.update(messages).set({ openReadAt: restore > now ? now : restore })
+          .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId),
+            eq(messages.unread, false), isNull(messages.openReadAt)));
+      }
 
       /**
        * UN-PARKING DISOWNS THE PARKED INTERLUDE'S READING STAMP. Since the arrival ruling
@@ -171,7 +190,7 @@ export class TriageService {
        */
       const LEFT_PILE = prior !== undefined
         && ["reply_later", "set_aside", "bubbled_up", "muted"].includes(prior.state);
-      if (b.state === "none" && LEFT_PILE) {
+      if (b.state === "none" && LEFT_PILE && !restore) {
         /**
          * The scopes live IN the row predicate, atomically: `unread = false` — an unread row
          * returns to "New for you", and a raced mark-unread must not leave `unread = true` beside
