@@ -126,17 +126,10 @@ describe("mail 0160 on the device store, from 0159", () => {
     const counts = db.prepare(BY_JOIN).all();
     expect(counts.length).toBe(4);
 
-    expect(await migrateSqlite(target)).toEqual([
-      "0160_folder_state_outstanding.sql", "0161_mailboxes_account_idx.sql", "0162_outbound_sends_offer_state.sql",
-      "0163_folder_state_fresh_intent.sql", "0164_messages_server_missing.sql", "0166_account_storage_facts.sql",
-      "0167_rules_refile.sql",
-      "0168_drafts_forward_parts.sql",
-      "0169_mailboxes_organized_through.sql",
-      "0170_outbound_sent_copies.sql",
-      "0171_messages_arrival_key.sql",
-      "0172_html_words_backfill.sql",
-      "0173_device_header_words.sql",
-    ]);
+    // The owed tail comes from the journal, so a later entry does not redden this file.
+    const applied = await migrateSqlite(target);
+    expect(applied).toEqual(SQLITE_JOURNAL.slice(at).map((e) => e.name));
+    expect(applied[0]).toBe("0160_folder_state_outstanding.sql");
     // Replayed: every statement but the column's, which the ledger never runs twice.
     for (const e of SQLITE_JOURNAL.slice(at)) for (const s of e.statements) if (!/^ALTER TABLE/i.test(s)) db.exec(s);
 
