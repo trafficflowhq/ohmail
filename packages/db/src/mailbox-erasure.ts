@@ -1,4 +1,4 @@
-import { and, eq, exists, inArray, isNotNull, isNull, ne, notExists, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, isNotNull, isNull, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import type { Dialect } from "./dialect/index.js";
 import {
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
@@ -191,7 +191,8 @@ export async function sweepMailboxStep(
     .where(eq(mailboxCredentials.mailboxId, mailboxId)));
   deleted["idempotency_keys"] = await eraseIdempotentResponses(tx, accountId, now, { mailboxId });
   const seq = await recordMailboxRemoved(tx, accountId, mailboxId);
-  await tx.update(mailboxes).set({ erasureDoneAt: now })
+  // The receipt retains nothing for the mailbox, its signature included.
+  await tx.update(mailboxes).set({ erasureDoneAt: now, signature: null, signatureHtml: null })
     .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)));
   return out({ seq, done: true });
 }
@@ -402,6 +403,30 @@ export async function eraseOwedMailbox(
     if (step.done) { run.done = true; return run; }
   }
   return run;
+}
+
+/** How many finished erasures one {@link clearErasedSignatures} call clears. */
+const SIGNATURE_BACKLOG_PAGE = 50;
+
+/**
+ * A finished erasure retains nothing, its signature included; the last step clears it, and this
+ * clears the ones finished before it did (nothing re-runs a finished erasure). Safe to repeat;
+ * one row per statement, so it holds at most one mailbox lock. Returns how many it cleared.
+ */
+export async function clearErasedSignatures(db: Tx, scope?: SQL): Promise<number> {
+  const kept = and(
+    isNotNull(mailboxes.erasureDoneAt),
+    or(isNotNull(mailboxes.signature), isNotNull(mailboxes.signatureHtml)),
+  );
+  const rows = await db.select({ id: mailboxes.id, accountId: mailboxes.accountId }).from(mailboxes)
+    .where(scope ? and(kept, scope) : kept).limit(SIGNATURE_BACKLOG_PAGE);
+  let cleared = 0;
+  for (const r of rows) {
+    cleared += (await db.update(mailboxes).set({ signature: null, signatureHtml: null })
+      .where(and(eq(mailboxes.id, r.id), eq(mailboxes.accountId, r.accountId), kept))
+      .returning({ id: mailboxes.id })).length;
+  }
+  return cleared;
 }
 
 /** Messages an owed erasure has left, for the list's `erasure.remaining`. */

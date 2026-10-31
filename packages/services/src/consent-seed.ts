@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
@@ -1252,7 +1252,9 @@ export async function effectiveMailboxSignatures(
       eq(mailboxProfileMirror.mailboxId, mailboxes.id),
       eq(mailboxProfileMirror.accountId, accountId),
     ))
-    .where(eq(mailboxes.accountId, accountId));
+    /* A removed mailbox's signature is inert on its tombstone: never served, so never shown as the
+       live address's sign-off and never offered to a Save the server refuses. */
+    .where(and(eq(mailboxes.accountId, accountId), ne(mailboxes.status, "disabled")));
 
   const signatures: Record<string, string> = {};
   const signaturesHtml: Record<string, string> = {};

@@ -687,7 +687,7 @@ describe("a footer or a tracking pixel after the quote ends the history", () => 
   });
 });
 
-describe("a quote and its answer inside the history are the history's (132-135)", () => {
+describe("a quote and its answer inside the history are the history's (132-135, 140)", () => {
   const P = (t: string): string => `<p class="MsoNormal">${t}<o:p></o:p></p>`;
   const red = (t: string): string => `<span style="color:#C00000">${t}</span>`;
   const box = (x: string): string => `<blockquote style="margin:0cm 0cm 0cm 4.8pt;border-left:solid #CCCCCC 1.0pt;padding:0cm 0cm 0cm 6.0pt">${x}</blockquote>`;
@@ -698,12 +698,92 @@ describe("a quote and its answer inside the history are the history's (132-135)"
   const cm = (t: string): string => `<b><i>[CM] </i></b>${t}`;
 
   it("the text part held by its html folds at the header", () => {
-    for (const id of ["132", "133", "134", "135"]) {
+    for (const id of ["132", "133", "134", "135", "140"]) {
       const fx = fixture(id);
       const r = foldText(fx.text, { html: verdictOf(fx.html!, fx.subject), subject: fx.subject });
       expect(r, id).not.toBeNull();
       expect(fx.text.split("\n")[r!.start], id).toMatch(/^Von: Ben Sample/);
     }
+  });
+
+  // A message that opens with its quote box (140): the box its only one, in its ink, answered and signed by its sender.
+  const MOVE = "Können wir die Begehung des Technikraums auf Donnerstag verschieben?";
+  const ANS = "Ja, Donnerstag um 10 Uhr passt uns gut.";
+  const shut = (html: string, why: string): void => {
+    const c = htmlCase(html);
+    expect(c.r, why).not.toBeNull();
+    expect(c.historyText, why).toMatch(/^Von: Ben Sample/);
+    expect(c.visibleText, why).not.toContain(ANS);
+  };
+  const open = (html: string, why: string, answer: string): void => {
+    const c = htmlCase(html);
+    expect(c.r, why).toBeNull();
+    expect(verdictOf(html), why).toBeNull();
+    expect(c.visibleText, why).toContain(answer);
+  };
+
+  it("a message that opens with its quote folds at the header when its sender signs it", () => {
+    const fx = fixture("140");
+    const c = htmlCase(fx.html!, fx.subject);
+    expect(c.r).not.toBeNull();
+    expect(c.historyText).toMatch(/^Von: Ben Sample/);
+    expect(c.visibleText).not.toContain("Sag Bescheid, wenn etwas fehlt.");
+    expect(c.visibleText).toContain("danke, so machen wir es.");
+    // A closing nobody says to the sender, and his name: on one line or over it, under a signature block too.
+    for (const sign of [P("Viele Grüsse") + P("Ben"), P("Viele Grüsse, Ben"), P("Freundliche Grüsse") + P("Ben Sample") + P("Projektleiter Haustechnik"),
+      P("Best regards,") + P("Ben Sample"), P("Herzlichst, Ben"), P("LG Ben")]) shut(earlier("132", box(P(MOVE)) + P(ANS) + sign), sign);
+  });
+
+  it("control: a closing the writer can say to the sender, or his name alone, signs nothing", () => {
+    // Ben's own message signed so stays open, as on 0.30.18: the same line could be the writer's.
+    for (const sign of [P("Gruss") + P("Ben"), P("Gruss Ben"), P("Ben Sample"), P("Ben"), P("Thanks, Ben"), P("Thanks,") + P("Ben"), P("Danke und Gruss, Ben"),
+      P("Danke und Gruss") + P("Ben"), P("Merci, Ben"), P("Ciao") + P("Ben"), P("Cheers Ben!")]) open(earlier("132", box(P(MOVE)) + P(ANS) + sign), sign, ANS);
+    // The writer's farewell to Ben below his unsigned box keeps her answer on screen.
+    const answer = "Ja, Donnerstag um 10 Uhr passt mir gut, ich komme.";
+    const ask = P("Hallo Clara,") + P("Bitte schick mir die Liegeplatzliste bis Freitag.");
+    for (const bye of ["Ciao Ben", "Cheers Ben!", "À bientôt, Ben", "Saludos, Ben", "Grüessli Ben", "Gruss Ben"]) open(earlier("132", box(ask) + P(answer) + P(bye)), bye, answer);
+  });
+
+  it("control: a box ending in the sender's signature block or a phone line holds his whole message", () => {
+    const answer = "Ja, Donnerstag um 10 Uhr passt mir gut, ich komme.";
+    const ask = P("Hallo Clara,") + P("Bitte schick mir die Liegeplatzliste bis Freitag.");
+    for (const [why, end] of [["signature block", P("Freundliche Grüsse") + P("Ben Sample") + P("Projektleiter Haustechnik") + P("Beispiel AG, Musterstrasse 1, 8000 Zürich")],
+      ["phone line", P("Gruss") + P("Ben") + P("Tel. 044 123 45 67")]] as const) {
+      for (const below of [P("Cheers Ben"), P("Viele Grüsse") + P("Ben"), P("Viele Grüsse, Ben")]) open(earlier("132", box(ask + end) + P(answer) + below), `${why}, ${below}`, answer);
+    }
+    // Another writer's signature block names someone else: the box is Ben's quote of her, and his signed answer folds.
+    const clara = box(P("Hallo Ben,") + P("Bitte schick mir die Liegeplatzliste bis Freitag.") + P("Gruss") + P("Clara") + P("Tel. 044 987 65 43"));
+    shut(earlier("132", clara + P(ANS) + P("Viele Grüsse") + P("Ben")), "Clara's signature block ends the box");
+  });
+
+  it("control: an unsigned message that opens with its quote stays open", () => {
+    open(earlier("132", box(P(MOVE)) + P(ANS) + P("Gruss")), "no name", ANS);
+    open(earlier("132", box(P(MOVE)) + P(ANS) + P("Gruss") + P("Clara")), "another name", ANS);
+  });
+
+  it("control: a coloured opening quote stays open", () => {
+    const purple = (t: string): string => `<span style="color:#500050">${t}</span>`;
+    open(earlier("132", box(P(purple(MOVE))) + P(ANS) + P("Viele Grüsse") + P("Ben")), "#500050", ANS);
+  });
+
+  it("control: a second box under an opening quote stays open", () => {
+    open(earlier("132", box(P(MOVE)) + P(ANS) + box(P("Bringt ihr die Pläne der Lüftung mit?")) + P("Ja, die Pläne bringen wir mit.") + P("Viele Grüsse") + P("Ben")),
+      "two boxes", "Ja, die Pläne bringen wir mit.");
+  });
+
+  it("control: the writer's answer under a wholly boxed message stays open", () => {
+    const answer = "Ja, Donnerstag um 10 Uhr passt mir gut, ich komme.";
+    open(earlier("132", box(P("Hallo Clara,") + P(MOVE) + P("Gruss") + P("Ben")) + P(answer)), "black", answer);
+    open(earlier("132", box(P("Hallo Clara,") + P(MOVE) + P("Gruss") + P("Ben")) + P(answer) + P("Danke Ben")), "'Danke Ben' below", answer);
+    // A box with no question: only the sign-off rule keeps these open.
+    const ask = P("Hallo Clara,") + P("Bitte schick mir die Liegeplatzliste bis Freitag.");
+    for (const [why, below] of [["'Danke Ben'", P("Danke Ben")], ["'Danke dir, Ben!'", P("Danke dir, Ben!")], ["'Bis Freitag, Ben.'", P("Bis Freitag, Ben.")],
+      ["'Danke Ben' and her own sign-off", P("Danke Ben") + P("Gruss Clara")], ["the writer is a Ben too", P("Gruss") + P("Ben")],
+      ["the writer is a Ben too and signs as only a sender does", P("Viele Grüsse") + P("Ben")]] as const) {
+      open(earlier("132", box(ask + P("Gruss") + P("Ben")) + P(answer) + below), `signed box, ${why}`, answer);
+    }
+    open(earlier("132", box(ask) + P(answer) + P("Danke Ben")), "unsigned box, 'Danke Ben'", answer);
+    open(earlier("132", box(P("Hallo Clara,") + P(MOVE)) + P(answer) + P("Danke Ben")), "unsigned box ending on a question, 'Danke Ben'", answer);
   });
 
   it("answers in another hand under a new-Mac header stay open, red or marked", () => {
