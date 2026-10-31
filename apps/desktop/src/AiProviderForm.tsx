@@ -61,6 +61,7 @@ const VENDOR: Record<AiProviderKind, string> = {
   openai: "OpenAI",
   ollama: "Ollama",
   "opencode-go": "OpenCode Go",
+  "custom-local": "Custom Local Endpoint",
 };
 
 /**
@@ -100,12 +101,20 @@ function goAwaitsModels(status: LocalAiStatus): boolean {
 /** An engine that predates the Go block omits it; read that as nothing stored. */
 const NO_GO_SETTINGS = { classifyModel: "", draftModel: "", hasKey: false } as const;
 
+export const DEFAULT_CUSTOM_LOCAL_SETTINGS = {
+  baseUrl: "http://127.0.0.1:1235/v1",
+  classifyModel: "google/gemma-4-e2b",
+  draftModel: "google/gemma-4-e2b",
+  hasKey: false,
+} as const;
+
 function settingsForProvider(settings: LocalAiSettings, provider: AiProviderKind) {
   switch (provider) {
     case "anthropic": return settings.anthropic;
     case "openai": return settings.openai;
     case "opencode-go": return settings.opencodeGo ?? NO_GO_SETTINGS;
     case "ollama": return settings.ollama;
+    case "custom-local": return settings.customLocal ?? DEFAULT_CUSTOM_LOCAL_SETTINGS;
   }
 }
 
@@ -164,7 +173,11 @@ export function verdictOf(
   if (!p) return { state: "off", headline: t("summaryOff") };
 
   const vendor = VENDOR[p];
-  const host = p === "ollama" ? ollamaHost(status.settings.ollama.baseUrl) : VENDOR_HOST[p];
+  const host = p === "ollama"
+    ? ollamaHost(status.settings.ollama.baseUrl)
+    : p === "custom-local"
+      ? ollamaHost((status.settings.customLocal ?? DEFAULT_CUSTOM_LOCAL_SETTINGS).baseUrl)
+      : VENDOR_HOST[p];
   const when = status.probe ? t("checked", { when: agoStamp(status.probe.at, now).rel }) : undefined;
   const stamped = when === undefined ? {} : { when };
 
@@ -327,8 +340,13 @@ export function liveConsequence(status: LocalAiStatus, t: Copy): string | null {
       return t("choiceOpenaiWhy");
     case "opencode-go":
       return t("choiceOpenCodeGoWhy");
-    case "this_machine":
+    case "this_machine": {
+      if (status.provider === "custom-local") {
+        const base = (status.settings.customLocal ?? DEFAULT_CUSTOM_LOCAL_SETTINGS).baseUrl;
+        return t("choiceCustomLocalWhy", { host: ollamaHost(base) });
+      }
       return t("choiceOllamaWhy", { host: ollamaHost(status.settings.ollama.baseUrl) });
+    }
     case null:
       return t("choiceNoneWhy");
     default:
@@ -350,6 +368,12 @@ function ollamaConsequence(status: LocalAiStatus, t: Copy): string {
   return ollamaIsLocal(base) ? t("choiceOllamaWhy", { host }) : t("choiceOllamaWhyElsewhere", { host });
 }
 
+function customLocalConsequence(status: LocalAiStatus, t: Copy): string {
+  const base = (status.settings.customLocal ?? DEFAULT_CUSTOM_LOCAL_SETTINGS).baseUrl;
+  const host = ollamaHost(base);
+  return ollamaIsLocal(base) ? t("choiceCustomLocalWhy", { host }) : t("choiceCustomLocalWhyElsewhere", { host });
+}
+
 /**
  * A MODEL WRITE, SPELLED OUT PER VENDOR rather than composed with a computed key.
  *
@@ -364,6 +388,7 @@ function modelWrite(kind: AiProviderKind, classifyModel: string, draftModel: str
   if (kind === "anthropic") return { provider: kind, anthropic: models };
   if (kind === "openai") return { provider: kind, openai: models };
   if (kind === "opencode-go") return { provider: kind, opencodeGo: models };
+  if (kind === "custom-local") return { provider: kind, customLocal: models };
   return { provider: kind, ollama: models };
 }
 
@@ -394,6 +419,8 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
   const [problem, setProblem] = useState<string | null>(null);
   const [classify, setClassify] = useState("");
   const [draft, setDraft] = useState("");
+  const [customBaseUrl, setCustomBaseUrl] = useState<string>(DEFAULT_CUSTOM_LOCAL_SETTINGS.baseUrl);
+  const [customModel, setCustomModel] = useState<string>(DEFAULT_CUSTOM_LOCAL_SETTINGS.classifyModel);
   const [saved, setSaved] = useState(false);
 
   /**
@@ -413,6 +440,11 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
     // Cleared on every landing, success or not: a field still holding a key after a save is a
     // secret sitting in the window's memory for as long as the form is open.
     setApiKey("");
+    if (next) {
+      const custom = next.settings.customLocal ?? DEFAULT_CUSTOM_LOCAL_SETTINGS;
+      setCustomBaseUrl(custom.baseUrl);
+      setCustomModel(custom.classifyModel);
+    }
     if (next?.provider) {
       const settings = settingsForProvider(next.settings, next.provider);
       setClassify(settings.classifyModel);
@@ -481,10 +513,12 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
      with Save disabled. `null` is genuinely absent, which is what that dead end should mean. */
   const classifyOn = installedModelName(models, classify);
   const draftOn = installedModelName(models, draft);
-  const listed = models.length > 0 && choice !== "none";
+  const listed = models.length > 0 && choice !== "none" && choice !== "custom-local";
   const stored = choice === "none" ? null : settingsForProvider(status.settings, choice);
   const dirty =
     stored !== null && (classify !== stored.classifyModel || draft !== stored.draftModel);
+  const customStored = status.settings.customLocal ?? DEFAULT_CUSTOM_LOCAL_SETTINGS;
+  const customHasKey = customStored.hasKey === true;
   const working = busy !== null;
 
   const run = async (
@@ -549,6 +583,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
           { id: "openai", label: t("choiceOpenai"), description: t("choiceOpenaiWhy") },
           { id: "opencode-go", label: t("choiceOpenCodeGo"), description: t("choiceOpenCodeGoWhy") },
           { id: "ollama", label: t("choiceOllama"), description: ollamaConsequence(status, t) },
+          { id: "custom-local", label: t("choiceCustomLocal"), description: customLocalConsequence(status, t) },
         ]}
       />
 
@@ -605,6 +640,111 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
             {t("testServer")}
           </Button>
         </SettingsActions>
+      ) : null}
+
+      {choice === "custom-local" ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const base = customBaseUrl.trim();
+            const model = customModel.trim();
+            const typedKey = apiKey.trim();
+            if (!base || !model) return;
+            void run("save", choice, async () => {
+              const next = await saveAiSettings({
+                provider: "custom-local",
+                customLocal: {
+                  baseUrl: base,
+                  model,
+                  classifyModel: model,
+                  draftModel: model,
+                  ...(typedKey !== "" ? { apiKey: typedKey } : {}),
+                },
+              });
+              setSaved(true);
+              return next;
+            });
+          }}
+        >
+          <div className="set-fields">
+            <SettingsField
+              htmlFor="ai-custom-base-url"
+              label={t("customBaseUrlLabel")}
+              hint={t("customBaseUrlHint")}
+            >
+              <input
+                id="ai-custom-base-url"
+                type="url"
+                autoComplete="off"
+                spellCheck={false}
+                className="set-mono"
+                placeholder={t("customBaseUrlPlaceholder")}
+                value={customBaseUrl}
+                onChange={(e) => {
+                  setCustomBaseUrl(e.target.value);
+                  setSaved(false);
+                }}
+                disabled={working}
+              />
+            </SettingsField>
+            <SettingsField
+              htmlFor="ai-custom-model"
+              label={t("customModelLabel")}
+              hint={t("customModelHint")}
+            >
+              <input
+                id="ai-custom-model"
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                className="set-mono"
+                placeholder={t("customModelPlaceholder")}
+                value={customModel}
+                onChange={(e) => {
+                  setCustomModel(e.target.value);
+                  setClassify(e.target.value);
+                  setDraft(e.target.value);
+                  setSaved(false);
+                }}
+                disabled={working}
+              />
+            </SettingsField>
+            <SettingsField
+              htmlFor="ai-custom-key"
+              label={customHasKey ? t("customKeyStoredLabel") : t("customKeyLabel")}
+              hint={t("customKeyHint")}
+            >
+              <input
+                id="ai-custom-key"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                className="set-mono"
+                placeholder={customHasKey ? t("keyStoredPlaceholder") : t("customKeyPlaceholder")}
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  setSaved(false);
+                }}
+                disabled={working}
+              />
+            </SettingsField>
+          </div>
+          <SettingsActions>
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={working || !customBaseUrl.trim() || !customModel.trim()}
+            >
+              {t("customSaveAndTest")}
+            </Button>
+            {saved ? (
+              <span className="set-note-inline" role="status">
+                {t("saved")}
+              </span>
+            ) : null}
+          </SettingsActions>
+        </form>
       ) : null}
 
       {/* THE ANSWER TO A PRESS, UNDER THE PRESS THAT ASKED FOR IT. The old pane rendered its
@@ -698,7 +838,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
             ) : null}
           </SettingsActions>
         </>
-      ) : choice !== "none" && status.probe === null ? (
+      ) : choice !== "none" && choice !== "custom-local" && status.probe === null ? (
         /* "Test first — the list comes from Ollama" is true ONLY while nothing has asked it. After
            a probe that came back with no models it is the fourth dead end in the same block: the
            person has just tested, and is told to test. Once a probe has run the verdict above is
@@ -713,7 +853,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
           while it named Anthropic's alone, a stored OpenAI key with no provider selected had no
           way to be removed at all. It is also what restores a non-default Ollama origin. */}
       {status.provider || status.settings.anthropic.hasKey || status.settings.openai.hasKey
-        || status.settings.opencodeGo?.hasKey ? (
+        || status.settings.opencodeGo?.hasKey || status.settings.customLocal?.hasKey ? (
         <SettingsRow
           label={t("remove")}
           description={t("removeWhy")}
