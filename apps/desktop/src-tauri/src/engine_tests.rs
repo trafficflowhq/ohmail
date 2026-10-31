@@ -6765,6 +6765,57 @@ fn every_new_window_request_is_denied_and_routed_links_leave_once() {
     }
 }
 
+/// A MARKED LINK IS ASKED ABOUT, NEVER OPENED BY ITS PRESS ALONE: the person's press of a link a
+/// surface drew as marked is held for the window's ask, in any spelling of the address; the same
+/// address unmarked opens; a script's request is refused for its gesture before anything is held.
+/// Mutations: no ask arm → the first rows open; the ask before the gesture → the script row asks;
+/// asked by the raw string → the second spelling opens.
+#[test]
+fn a_marked_link_is_held_for_the_ask_and_an_unmarked_one_opens() {
+    use crate::rendered_links::{Rendered, Why};
+    let marked = "https://evil.example/login?x=1";
+    let plain = "https://shop.example/";
+    let mut set = Rendered::default();
+    set.report_asking("s1", &[marked.to_string(), plain.to_string()], &[marked.to_string()]).expect("report");
+    assert_eq!(popup_route(marked, Some(&set), Activation::Person), PopupRoute::Ask(marked.to_string()));
+    let spelled = "HTTPS://EVIL.EXAMPLE/login?x=1";
+    assert_eq!(popup_route(spelled, Some(&set), Activation::Person), PopupRoute::Ask(spelled.to_string()));
+    assert_eq!(popup_route(plain, Some(&set), Activation::Person), PopupRoute::Browser(plain.to_string()));
+    assert_eq!(
+        popup_route(marked, Some(&set), Activation::Script),
+        PopupRoute::Refused { url: marked.to_string(), why: Why::Gesture }
+    );
+    // Answered off the UI thread like every routed link, and denied like every request.
+    let jobs = std::cell::RefCell::new(Vec::new());
+    let response = answer::<tauri::Wry>(marked, Some(&set), Activation::Person, |route| jobs.borrow_mut().push(route));
+    assert!(matches!(response, tauri::webview::NewWindowResponse::Deny));
+    assert_eq!(jobs.into_inner(), vec![PopupRoute::Ask(marked.to_string())]);
+}
+
+/// THE HELD PRESS OPENS ONCE, BY ITS TOKEN, WITHIN ITS TIME, AND A NEWER PRESS REPLACES IT.
+/// Mutations: no token check → the wrong token opens; no take → the second answer opens; no clock →
+/// the stale answer opens; a queue instead of one slot → the replaced press opens.
+#[test]
+fn a_held_press_opens_once_by_its_token_within_its_time() {
+    let held = LinkAskHeld::default();
+    let t0 = Instant::now();
+    let token = "0123abcd".repeat(4);
+    let url = "https://evil.example/a";
+    held.hold(token.clone(), url.to_string(), t0);
+    assert!(held.take(&"dcba3210".repeat(4), t0).is_err(), "another token opened the held press");
+    assert_eq!(held.take(&token, t0 + LINK_ASK_HOLD), Ok(url.to_string()));
+    let again = held.take(&token, t0).expect_err("the held press opened twice");
+    assert!(again.starts_with("ohmail: that link is no longer waiting"), "{again}");
+    held.hold(token.clone(), url.to_string(), t0);
+    assert!(held.take(&token, t0 + LINK_ASK_HOLD + Duration::from_secs(1)).is_err(), "a stale press opened");
+    let (first, second) = ("a".repeat(32), "b".repeat(32));
+    held.hold(first.clone(), "https://one.example/".to_string(), t0);
+    held.hold(second.clone(), "https://two.example/".to_string(), t0);
+    assert!(held.take(&first, t0).is_err(), "a replaced press opened");
+    assert_eq!(held.take(&second, t0), Ok("https://two.example/".to_string()));
+    assert_eq!(LINK_ASK_HOLD, Duration::from_secs(120));
+}
+
 /// The refusal a window hears is never longer than its parser admits, and cut on a character.
 #[test]
 fn a_refusal_payload_is_cut_to_the_gate_bound() {

@@ -70,6 +70,9 @@ const WINDOW_COMMANDS: &[&str] = &[
     // nothing, and no command here takes an address to open: a link leaves only as the webview's
     // own new-window request on the person's click (`src/link_gate.rs`).
     "rendered_links_batch",
+    // …and the one answer to a press the shell held because the link's label names another site:
+    // the token it handed the window with the ask, never an address (`src/engine.rs`, `link:ask`).
+    "link_ask_open",
     // One attachment, named by its id with a display name, saved into the PERSON'S Downloads
     // folder — the desktop's answer to the `<a download>` a webview cancels. The engine streams
     // the part to a file `engine.rs` names; it owns the folder, the sanitiser and the numbering.

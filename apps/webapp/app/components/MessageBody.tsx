@@ -34,8 +34,10 @@ import {
 } from "../shell/BodyText";
 import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
 import { linkHref, useRenderedLinks } from "../shell/rendered-links";
+import { externalLinksEnabled } from "../shell/open-external";
 import "./message-body.css";
-import { liveCopy } from "../shell/locale";
+import { activeFormatLocale, liveCopy } from "../shell/locale";
+import { ASK_ATTR, armAsks, askPage, type AskCopy } from "./link-ask";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
 import { DEFERRED_SHEET_ATTR, DEFERRED_SRC_ATTR, DEFERRED_STYLE_ATTR, DEFERRED_URLS_ATTR, PARK_FLAT_ATTR, proxiedImages } from "./proxied-images";
@@ -120,6 +122,18 @@ const EN = {
   oversize: "This message's HTML part is too large to render safely. Showing the plain-text version.",
   /** What a screen reader calls a picture the sender gave no alt text. */
   picture: "Picture",
+  /**
+   * THE ASK BEFORE A MARKED LINK OPENS, outside the letter: the web's page in a tab of its own
+   * (`link-ask.ts`), the desktop's dialog (`apps/desktop/src/LinkAsk.tsx`). The host is where the
+   * link goes, never the one its label names.
+   */
+  linkAskTitle: "Open this link?",
+  linkAskElsewhere: "The text of this link names a different site.",
+  linkAskGoes: (host: string) => `It goes to ${host}.`,
+  linkAskOpen: (host: string) => `Open ${host}`,
+  linkAskCancel: "Cancel",
+  linkAskStay: "To stay, close this tab.",
+  linkAskGone: "That link is no longer waiting. Press it again.",
 };
 
 /**
@@ -131,7 +145,20 @@ const EN = {
  */
 export const COPY: typeof EN = liveCopy("mailBody", EN, {
   blockedMany: ["count"], pixelMany: ["count"], pixelsRefusedMany: ["count"], sheetMany: ["n"],
+  linkAskGoes: ["host"], linkAskOpen: ["host"],
 });
+
+/** The ask page's sentences in the active language (`link-ask.ts`). */
+function askCopy(): AskCopy {
+  return {
+    lang: activeFormatLocale(),
+    title: COPY.linkAskTitle,
+    elsewhere: COPY.linkAskElsewhere,
+    goes: COPY.linkAskGoes,
+    open: COPY.linkAskOpen,
+    stay: COPY.linkAskStay,
+  };
+}
 
 
 // ── the allow-lists ────────────────────────────────────────────────────────────────────
@@ -960,37 +987,80 @@ function hostOfRun(run: string): string {
 }
 
 /**
+ * Every host a text names read alone, as {@link textDisagreesWithHref} reads it, for a reading
+ * made once per letter; null when it may be drawn in an order that spells one.
+ */
+function hostsNamedBy(text: string): string[] | null {
+  if (REORDERS_LABEL.test(text) && maySpellHost(text)) return null;
+  const read = withoutFiller(text).replace(DRAWS_NOTHING, "").normalize("NFC");
+  const joined = read.replace(NARROW_SPACE, "");
+  const out: string[] = [];
+  for (const reading of joined === read ? [read] : [read, joined]) {
+    for (const word of reading.split(/\s+/)) {
+      const named = hostNamedBy(word);
+      if (named !== "") out.push(named);
+    }
+  }
+  return out;
+}
+
+/** Whether a host in `named` (null: any host) is neither `host` nor a domain `host` sits under. */
+function namesOtherThan(named: ReadonlySet<string> | null, host: string): boolean {
+  if (named === null) return true;
+  // Only `host` and the domains above it agree, so this answers within a few steps.
+  for (const n of named) if (n !== host && !host.endsWith(`.${n}`)) return true;
+  return false;
+}
+
+/**
  * The frame's note: a link is marked when any reading of its label names a host it does not go
  * to — whole, as the shared rule draws it ({@link unseen}), or as the browser draws it from its
- * defaults and the letter's sheets ({@link drawHints}). A label that it, what surrounds it
- * ({@link reorderedAround}) or the sheets may draw in another order is judged by whether it could
- * spell one. A link holding a link is marked outright and no label is read past one, so each text
- * node is read once.
+ * defaults and the letter's sheets ({@link drawHints}), each of its text nodes alone, and what the
+ * letter's styles draw as text ({@link generatedIn}) — or when it holds a link. A label that it,
+ * what surrounds it ({@link reorderedAround}) or the sheets may draw in another order is judged by
+ * whether it could spell one. No label is read past a link inside it, so each text node is read
+ * once.
  */
 function markElsewhere(root: Element, links: readonly Element[]): void {
   if (links.length === 0) return;
   const hints = drawHints(root);
   const around = hints.reordersAll ? null : reorderedAround(root, new Set(links), hints);
+  // A string the styles draw stands wherever a rule puts it: read once, held against every link.
+  let generated: Set<string> | null = new Set();
+  for (const text of hints.drawn) {
+    const named = hostsNamedBy(text);
+    if (named === null) {
+      generated = null;
+      break;
+    }
+    for (const n of named) generated.add(n);
+  }
   for (const a of links) {
     const host = a.getAttribute("data-ohmail-host") ?? "";
     const label = labelOfLink(a, hints);
     const reordered = label !== null && (label.reordered || around === null || around.has(a));
-    if (label === null || (reordered && maySpellHost(label.whole)) || textDisagreesWithHref(label.whole, host) ||
+    if (label === null || namesOtherThan(generated, host) || (reordered && maySpellHost(label.whole)) ||
+      textDisagreesWithHref(label.whole, host) ||
       (label.drawn !== label.whole && textDisagreesWithHref(label.drawn, host)) ||
-      (label.sheetDrawn !== label.drawn && textDisagreesWithHref(label.sheetDrawn, host))) {
+      (label.sheetDrawn !== label.drawn && textDisagreesWithHref(label.sheetDrawn, host)) ||
+      (label.texts.length > 1 && label.texts.some((t) => textDisagreesWithHref(t, host))) ||
+      label.attrs.some((v) => textDisagreesWithHref(v, host))) {
       a.setAttribute("data-ohmail-elsewhere", "1");
     }
   }
 }
 
-interface LinkLabel { whole: string; drawn: string; sheetDrawn: string; reordered: boolean }
+/** A label's three readings, its text nodes one by one, and the attribute values attr() may draw. */
+interface LinkLabel { whole: string; drawn: string; sheetDrawn: string; reordered: boolean; texts: string[]; attrs: string[] }
 
 /**
  * A frame link's label read three ways in one iterative walk, never `innerText`, or null when it
  * holds a link. A node's level: 0 drawn, 1 hidden from the sheet reading, 2 from both drawn ones.
+ * Every text node is also kept alone, hidden ones too.
  */
 function labelOfLink(a: Element, hints: DrawHints): LinkLabel | null {
-  const label: LinkLabel = { whole: "", drawn: "", sheetDrawn: "", reordered: reorders(a, hints) };
+  const label: LinkLabel = { whole: "", drawn: "", sheetDrawn: "", reordered: reorders(a, hints), texts: [], attrs: [] };
+  readAttrs(a, hints.attrs, label.attrs);
   const nodes: Node[] = [];
   const levels: number[] = [];
   const pushChildren = (el: Element, level: number): void => {
@@ -1008,6 +1078,7 @@ function labelOfLink(a: Element, hints: DrawHints): LinkLabel | null {
     if (n.nodeType === 3) {
       const text = n.nodeValue ?? "";
       label.whole += text;
+      label.texts.push(text);
       if (level < 2) label.drawn += text;
       if (level < 1) label.sheetDrawn += text;
       continue;
@@ -1016,9 +1087,22 @@ function labelOfLink(a: Element, hints: DrawHints): LinkLabel | null {
     const el = n as Element;
     if (el.localName === "a" && el.hasAttribute("href")) return null;
     if (reorders(el, hints)) label.reordered = true;
+    readAttrs(el, hints.attrs, label.attrs);
     pushChildren(el, Math.max(level, unseen(el) ? 2 : el.localName === "rp" || hints.hidden.has(el) ? 1 : 0));
   }
   return label;
+}
+
+/** The values of the attributes attr() may draw on one element: those named, or every one (null). */
+function readAttrs(el: Element, names: readonly string[] | null, into: string[]): void {
+  if (names === null) {
+    for (let i = 0; i < el.attributes.length; i++) into.push(el.attributes[i]!.value);
+    return;
+  }
+  for (const name of names) {
+    const value = el.getAttribute(name);
+    if (value !== null) into.push(value);
+  }
 }
 
 function firstSummaryOf(details: Element): Element | null {
@@ -1127,7 +1211,16 @@ function cssPlain(css: string): string {
  * body, or a control drawn as generated content); and whether a dir of auto may resolve right to
  * left (the letter's text holds a right-to-left letter, mark or control).
  */
-interface DrawHints { hidden: ReadonlySet<Element>; reordered: ReadonlySet<Element>; reordersAll: boolean; autoRtl: boolean }
+interface DrawHints {
+  hidden: ReadonlySet<Element>;
+  reordered: ReadonlySet<Element>;
+  reordersAll: boolean;
+  autoRtl: boolean;
+  /** The strings the letter's styles may draw as text, decoded ({@link generatedIn}). */
+  drawn: readonly string[];
+  /** The attributes attr() reads, or null for every one (past {@link MAX_ATTR_NAMES} names). */
+  attrs: readonly string[] | null;
+}
 
 /** The subjects a letter's rules ask the sheet reading to match. */
 interface SheetRules { hide: string[]; bidi: string[]; reordersAll: boolean }
@@ -1148,6 +1241,7 @@ const MAX_SUBJECT_PARTS = 4;
  */
 function drawHints(root: Element): DrawHints {
   const rules: SheetRules = { hide: [], bidi: [], reordersAll: false };
+  const generated: Generated = { strings: [], attrs: new Set() };
   let readsAttributes = false;
   for (const style of root.querySelectorAll("style")) {
     const css = style.textContent ?? "";
@@ -1156,6 +1250,11 @@ function drawHints(root: Element): DrawHints {
     if (BIDI_CONTROL.test(plain)) rules.reordersAll = true;
     if (/\battr\(/i.test(plain)) readsAttributes = true;
     sheetSubjects(css, rules);
+    generatedIn(css, plain, generated, false);
+  }
+  for (const el of root.querySelectorAll("[style]")) {
+    const css = el.getAttribute("style") ?? "";
+    generatedIn(css, cssPlain(css), generated, true);
   }
   if (!rules.reordersAll) rules.reordersAll = attributeHoldsControl(root, readsAttributes);
   if (!rules.reordersAll && rules.bidi.length > 0) rules.reordersAll = rules.bidi.some(matchesFrameRoot(root.ownerDocument));
@@ -1175,6 +1274,8 @@ function drawHints(root: Element): DrawHints {
     reordered: rules.reordersAll ? new Set() : matched(rules.bidi),
     reordersAll: rules.reordersAll,
     autoRtl: RTL_CAPABLE.test(root.textContent ?? ""),
+    drawn: generated.strings,
+    attrs: generated.attrs.size > MAX_ATTR_NAMES ? null : [...generated.attrs],
   };
 }
 
@@ -1353,6 +1454,123 @@ function subjectsOf(selector: string): string[] {
   }
   take(selector.length);
   return out;
+}
+
+/** What a letter's styles may draw as text: the strings they draw, and the attributes attr() reads. */
+interface Generated { strings: string[]; attrs: Set<string> }
+
+/** Attribute names read per element; a letter whose styles read more has every attribute read. */
+const MAX_ATTR_NAMES = 8;
+
+/** An attr() and the attribute it reads, a namespace prefix aside. Read over decoded, comment-free CSS. */
+const ATTR_READ = /\battr\(\s*(?:[\w-]*\|)?([\w-]+)/gi;
+
+/**
+ * Collect what one sheet, or one style attribute (`declarations`), may draw as text: the strings of
+ * every declaration and at-rule descriptor, whatever its name (a list of the properties that draw
+ * misses the next one: an `@property`'s initial value, a hyphen, an overflow mark), the identifiers
+ * of an `@counter-style` too (a list marker draws its symbols), and the attributes attr() reads
+ * (`plain`: the CSS with comments out and escapes decoded). A selector's or a prelude's strings
+ * draw nothing. Comments are skipped, strings and escapes kept whole. Linear.
+ */
+function generatedIn(css: string, plain: string, into: Generated, declarations: boolean): void {
+  for (const m of plain.matchAll(ATTR_READ)) into.attrs.add(m[1]!.toLowerCase());
+  const counterStyle: boolean[] = [];
+  let pending = "";
+  const declare = (): void => {
+    const text = pending;
+    pending = "";
+    if (counterStyle.length === 0 && !declarations) return;
+    const colon = text.indexOf(":");
+    if (colon < 0) return;
+    drawnStrings(text.slice(colon + 1), into.strings, counterStyle[counterStyle.length - 1] === true);
+  };
+  for (let i = 0; i < css.length; i++) {
+    const ch = css[i]!;
+    if (ch === "/" && css[i + 1] === "*") {
+      const end = css.indexOf("*/", i + 2);
+      i = end < 0 ? css.length : end + 1;
+    } else if (ch === "\\") {
+      const past = pastCssEscape(css, i);
+      pending += css.slice(i, past);
+      i = past - 1;
+    } else if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      while (j < css.length && css[j] !== ch && css[j] !== "\n") j = css[j] === "\\" ? pastCssEscape(css, j) : j + 1;
+      pending += css.slice(i, j + 1);
+      i = j;
+    } else if (ch === "{") {
+      counterStyle.push(/^@counter-style\b/i.test(decodeCssEscapes(pending).trim()));
+      pending = "";
+    } else if (ch === ";") {
+      declare();
+    } else if (ch === "}") {
+      declare();
+      counterStyle.pop();
+    } else {
+      pending += ch;
+    }
+  }
+  declare();
+}
+
+/**
+ * The text a declaration's value draws, decoded: its strings, each alone and all of them side by
+ * side (`"bank" ".example"` draws one word), and with `idents` its identifiers (an `@counter-style`
+ * symbol may be one). A url() or an image-set() draws none of its own. Linear.
+ */
+function drawnStrings(value: string, out: string[], idents = false): void {
+  let depth = 0;
+  let skip = -1;
+  let i = 0;
+  let joined = "";
+  let strings = 0;
+  while (i < value.length) {
+    const c = value[i]!;
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      let body = "";
+      while (j < value.length && value[j] !== c && value[j] !== "\n") {
+        if (value[j] === "\\") {
+          const past = pastCssEscape(value, j);
+          // A backslash before a line break continues the string.
+          if (!/[\n\r\f]/.test(value[j + 1] ?? "")) body += value.slice(j, past);
+          j = past;
+        } else {
+          body += value[j];
+          j += 1;
+        }
+      }
+      if (skip < 0) {
+        const text = decodeCssEscapes(body);
+        out.push(text);
+        joined += text;
+        strings += 1;
+      }
+      i = j + 1;
+      continue;
+    }
+    if (continuesIdent(value.charCodeAt(i))) {
+      const ident = escapedIdentAt(value, i);
+      const name = decodeCssEscapes(ident.name);
+      if (value[ident.end] === "(") {
+        depth += 1;
+        if (skip < 0 && /^(?:-webkit-)?(?:url|image-set)$/i.test(name.trim())) skip = depth;
+        i = ident.end + 1;
+        continue;
+      }
+      if (idents && skip < 0) out.push(name);
+      i = Math.max(ident.end, i + 1);
+      continue;
+    }
+    if (c === "(") depth += 1;
+    else if (c === ")") {
+      if (depth === skip) skip = -1;
+      depth = Math.max(0, depth - 1);
+    }
+    i += 1;
+  }
+  if (strings > 1) out.push(joined);
 }
 
 // ── how light is this mail? ────────────────────────────────────────────────────────────
@@ -2379,7 +2597,8 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
      * label≡href construction never had to defend — so the disagreement check rides along: a
      * label naming another host gets the destination's host printed beside it.
      */
-    const gate = anchorFor((el.getAttribute("href") ?? "").trim());
+    // A marked link asked about in the page holds its address in {@link ASK_ATTR} alone.
+    const gate = anchorFor((el.getAttribute("href") ?? el.getAttribute(ASK_ATTR) ?? "").trim());
     const children = inlineOf(el, b, nest);
     if (gate === null) { out.push(...children); return; }
     const host = hostOfUrl(gate.href);
@@ -2663,6 +2882,12 @@ export interface SanitizeOptions {
   history?: boolean;
   /** The message's subject, read with {@link history}: a forward's prefix keeps the forwarded message open. */
   subject?: string | null;
+  /**
+   * The page asks before a marked link opens, in a tab of its own (`link-ask.ts`): such a link
+   * loses its `href` and keeps its address in `data-ohmail-ask` until the frame is armed. `false`
+   * by default; the desktop asks in its own window and keeps the `href`.
+   */
+  askInPage?: boolean;
 }
 
 export interface SanitizedMail {
@@ -2741,6 +2966,11 @@ export interface SanitizedMail {
    */
   links: string[];
   /**
+   * The marked links' addresses ({@link markElsewhere}), as in {@link links} and a subset of it:
+   * what the desktop shell asks about before it opens one (`rendered_links.rs`).
+   */
+  asks: string[];
+  /**
    * THE DOCUMENT WITH ITS QUOTED HISTORY CUT OUT (`quoted-fold.ts`), or `null`: no history, or not
    * asked for ({@link SanitizeOptions.history}). Its lists are the folded document's own; every
    * field above keeps its whole-document meaning.
@@ -2814,7 +3044,10 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   const cidsSeen = new Set<string>();
   // Where the post-pass met each entry, so the folded document keeps only its own (`quoted-fold.ts`).
   let metAt: Element | null = null;
-  const met = { blocked: new Map<string, Element[]>(), cids: new Map<string, Element[]>(), links: new Map<string, Element[]>() };
+  const met = {
+    blocked: new Map<string, Element[]>(), cids: new Map<string, Element[]>(), links: new Map<string, Element[]>(),
+    asks: new Map<string, Element[]>(),
+  };
   const note = (m: Map<string, Element[]>, key: string): void => {
     if (metAt === null) return;
     const els = m.get(key);
@@ -2838,6 +3071,8 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     linksSeen.add(link);
     links.push(link);
   };
+  // The marked links' addresses — distinct, in document order. See {@link SanitizedMail.asks}.
+  const asks: string[] = [];
 
   // `light: true`, `reflow: false` and `prose: false` on both refusals are not readings of
   // anything — neither path renders a frame, so nothing consults any of them. They are stated
@@ -2845,10 +3080,13 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // conservative side: these branches produce no document to have read, and a `true` here would
   // send an unparseable message down the frameless path on the strength of nothing.
   if (!sanitizerAvailable()) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, fold: null };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, asks, fold: null };
   }
   if (html.length > MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, fold: null, oversize: true };
+    return {
+      html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, asks, fold: null,
+      oversize: true,
+    };
   }
 
   const seen = new Set<string>();
@@ -3231,12 +3469,29 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     }) as unknown as HTMLElement | null;
 
   // `IS_EMPTY_INPUT` returns null under `RETURN_DOM`, which is a message with no html left.
-  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, fold: null };
+  if (!sanitized) {
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, asks, fold: null };
+  }
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
   for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
   metAt = null;
   markElsewhere(sanitized, hosted);
+  // A marked link asks before it opens (`link-ask.ts`): its address rides beside it, and a page
+  // that asks in a tab of its own takes the `href` away until the frame is armed.
+  for (const a of hosted) {
+    if (!a.hasAttribute("data-ohmail-elsewhere")) continue;
+    const url = linkHref((a.getAttribute("href") ?? "").trim());
+    if (url === null) continue;
+    a.setAttribute(ASK_ATTR, url);
+    if (opts.askInPage === true) a.removeAttribute("href");
+    const at = met.asks.get(url);
+    if (at) at.push(a);
+    else {
+      met.asks.set(url, [a]);
+      asks.push(url);
+    }
+  }
   markDataTables(sanitized);
 
   // Read AFTER the post-pass, from the final document, for the same reason the post-pass runs
@@ -3265,7 +3520,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // Last, because it cuts the tree: everything above is about the whole document.
   const folded = opts.history === true
     ? foldSanitized(sanitized, {
-      prose: rich !== null, blocked, cids, links, met, walk: (holder) => buildRichNodesOf(holder, ownImages), subject: opts.subject,
+      prose: rich !== null, blocked, cids, links, asks, met, walk: (holder) => buildRichNodesOf(holder, ownImages), subject: opts.subject,
     })
     : null;
   return {
@@ -3279,6 +3534,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     background,
     cids,
     links,
+    asks,
     fold: folded?.fold ?? null,
     historyAt: folded?.historyAt,
   };
@@ -4182,6 +4438,9 @@ export function MessageBody({
    * bare mount) or no message id (a live Junk window card) is the uncached path, as before.
    */
   const engine = useEngineOrNull();
+  /* Where a marked link asks before it opens: the desktop shell asks in its own window (its links
+     interception is on), every other page in a tab of its own (`link-ask.ts`). */
+  const askInPage = !externalLinksEnabled();
   const mail = useMemo(() => {
     if (!html) return null;
     // `historyAt`: the html's own reading of its quoted history, which the text part rendered instead follows.
@@ -4189,7 +4448,7 @@ export function MessageBody({
     const cache = engine && messageId ? mailDocCacheFor<ReturnType<typeof sanitizeView>>(engine) : null;
     const inputs: MailDocInputs = {
       messageId: messageId ?? "", html, proxied: proxy !== null, imgSource, cidImages, resolvedRemoteImages,
-      loadPixels: loadTrackingPixels, hasText, darkWanted, forward: isForwardSubject(subject),
+      loadPixels: loadTrackingPixels, hasText, darkWanted, forward: isForwardSubject(subject), askInPage,
     };
     const kept = cache?.read(inputs);
     if (kept) return kept.value;
@@ -4203,9 +4462,9 @@ export function MessageBody({
     if (html.length > MAX_HTML_CHARS || !treeWithin(html, { elements: MAX_PARSE_ELEMENTS }).fits) {
       return { state: "oversize" as const, historyAt: unrenderedHtmlVerdict(html, subject) };
     }
-    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids, links, fold, historyAt = "unread" } =
+    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids, links, asks, fold, historyAt = "unread" } =
       sanitizeMailHtml(html, {
-        imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels, history: true, subject,
+        imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels, history: true, subject, askInPage,
       });
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
@@ -4272,6 +4531,8 @@ export function MessageBody({
       cids,
       /** The frame's http(s) links, reported while the frame is on screen. */
       links,
+      /** The marked ones among them, which the desktop shell asks about before it opens one. */
+      asks,
       /** The quoted history's cut (`quoted-fold.ts`): the folded document and its own lists. */
       fold,
       historyAt,
@@ -4286,7 +4547,7 @@ export function MessageBody({
     // for the same reason `proxy` is — it is half of the document the frame gets — and it is
     // memoized on `imageProxy`, so it moves only when the proxy itself does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId, subject]);
+  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId, subject, askInPage]);
 
   /**
    * THE THREE-TERM ANSWER, IN ONE PLACE SO NOTHING DISAGREES WITH ANYTHING ELSE.
@@ -4563,9 +4824,21 @@ export function MessageBody({
   /**
    * THE FRAME'S LINKS, ON THE SHELL'S LIST WHILE THE FRAME IS ON SCREEN (`rendered-links.ts`): the
    * desktop shell opens a frame's link only when it is reported. The frameless path draws its own
-   * anchors through `BodyText`, which reports those, so a message is one surface either way.
+   * anchors through `BodyText`, which reports those, so a message is one surface either way. The
+   * marked ones ride along: the shell asks before it opens one.
    */
-  useRenderedLinks(shown !== null && !framelessView ? shown.links : NO_LINKS);
+  const framedLinks = shown !== null && !framelessView ? shown : null;
+  useRenderedLinks(framedLinks?.links ?? NO_LINKS, framedLinks?.asks ?? NO_LINKS);
+
+  /**
+   * THE ASK PAGES THE LOADED FRAME'S MARKED LINKS POINT AT (`link-ask.ts`), taken back when the
+   * next document loads and on unmount.
+   */
+  const disarm = useRef<(() => void) | null>(null);
+  useEffect(() => () => {
+    disarm.current?.();
+    disarm.current = null;
+  }, []);
 
   /** A press in the frame hands the app's keys back once it is over (`letter-focus.ts`). */
   useEffect(() => holdLetterFocusWatch(window), []);
@@ -4870,7 +5143,11 @@ export function MessageBody({
               /* THE SENDER'S LINKS leave as the new-window request each `target=_blank` click
                  makes: a browser answers it with a tab, the desktop shell through `popup_route`
                  (`engine.rs`). No listener goes on this document — WebKit calls none in a frame
-                 sandboxed without scripts. */
+                 sandboxed without scripts. A marked link the page asks about gets its ask page
+                 here, before anything else reads the document. */
+              disarm.current?.();
+              const copy = askCopy();
+              disarm.current = armAsks(frameRef.current?.contentDocument, (url) => askPage(url, copy));
               setLoadedKey(shownKey);
               measure();
               proxiedImages.admit(frameRef.current?.contentDocument);

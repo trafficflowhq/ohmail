@@ -97,9 +97,10 @@ import { useLocalFirstRun } from "./local-first-run.js";
 import { LocalSuggest } from "./local-suggest.js";
 import { CloudSuggest } from "./CloudSuggest.js";
 import {
-  claimMailto, offLinkRefused, onLinkRefused, postOsNotice, onMailto, onMenuCommand, onMenuNavigate, setBadge,
-  type MenuCommand,
+  claimMailto, offLinkAsk, offLinkRefused, onLinkAsk, onLinkRefused, postOsNotice, onMailto, onMenuCommand, onMenuNavigate,
+  setBadge, type LinkAsk as HeldPress, type MenuCommand,
 } from "./native.js";
+import { LinkAsk } from "./LinkAsk.js";
 import { decideNotices } from "@ohmail/client-engine";
 import { readChannels } from "../../webapp/app/shell/notification-settings";
 import { parseMailto, type MailtoDraft } from "@trafficflow/core/mailto";
@@ -258,7 +259,21 @@ function lifecycleMark(shell: Shell): string {
   ]);
 }
 
+/**
+ * THE GATE, AND THE ASK A HELD LINK PRESS PUTS OVER WHICHEVER SCREEN IT SHOWS (`LinkAsk.tsx`): the
+ * shell may hold a marked link's press on any of them, so the ask stands outside them all.
+ */
 export function DesktopGate() {
+  const [ask, setAsk] = useState<HeldPress | null>(null);
+  return (
+    <>
+      <GateScreens onLinkAsk={setAsk} />
+      {ask ? <LinkAsk key={ask.token} ask={ask} onClose={() => setAsk(null)} /> : null}
+    </>
+  );
+}
+
+function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => void }) {
   const [shell, setShell] = useState<Shell | null>(null);
   /* The door chooser, opened from Settings over a working install. Distinct from the chooser a
      fresh install lands on: this one is cancellable, because there is something to go back to. */
@@ -376,6 +391,14 @@ export function DesktopGate() {
       offLinkRefused(say);
     };
   }, [toast]);
+  /* …AND WHO ASKS WHEN THE SHELL HOLDS A MARKED LINK'S PRESS: the gate draws the ask over every
+     screen (`LinkAsk.tsx`), and a newer press replaces one still up, as in the shell's one slot. */
+  useEffect(() => {
+    void onLinkAsk(showAsk);
+    return () => {
+      offLinkAsk(showAsk);
+    };
+  }, [showAsk]);
 
   const onStatus = useCallback((
     next: EngineStatus, stillListedFrom: EngineStatus | null = null, waiting: SignedOut["waiting"] = null,

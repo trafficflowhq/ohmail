@@ -1141,6 +1141,10 @@ describe("the Rust side", () => {
       // process at launch — 0.9.7 shipped that way, so the set equality below is the guard that
       // was missing.
       "rendered_links_batch",
+      // The window's Open on a press the shell held because the link's label names another site:
+      // it takes the token the shell handed out with the ask and no address, and the shell opens
+      // the one link it holds, once, within two minutes of the press (`engine.rs`, `link:ask`).
+      "link_ask_open",
       // One attachment, by id, saved into the PERSON'S Downloads folder, which is what a button
       // that says Download has always promised. The shell picks the folder, sanitises the name,
       // and numbers a collision rather than overwriting anything already there. (`open_attachment`,

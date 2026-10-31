@@ -4065,7 +4065,14 @@
     "design": "Show original",
     "designTitle": "Show this message with the sender's own formatting",
     "plain": "Show as text",
-    "plainTitle": "Show this message as text, in the app's own type"
+    "plainTitle": "Show this message as text, in the app's own type",
+    "linkAskTitle": "Open this link?",
+    "linkAskElsewhere": "The text of this link names a different site.",
+    "linkAskGoes": "It goes to {host}.",
+    "linkAskOpen": "Open {host}",
+    "linkAskCancel": "Cancel",
+    "linkAskStay": "To stay, close this tab.",
+    "linkAskGone": "That link is no longer waiting. Press it again."
   },
   "bodyText": {
     "show": "Show history",

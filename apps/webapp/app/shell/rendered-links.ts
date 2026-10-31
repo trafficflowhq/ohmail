@@ -14,12 +14,14 @@
 import { useEffect, useState } from "react";
 
 /** Where a report goes: the shell's list in the desktop window, nowhere elsewhere. */
-export type RenderedLinksSink = (surface: string, hrefs: readonly string[]) => void;
+export type RenderedLinksSink = (surface: string, hrefs: readonly string[], asks: readonly string[]) => void;
 
 /** One surface's report inside a batch: the same meaning as one {@link RenderedLinksSink} call. */
 export interface RenderedLinksReport {
   surface: string;
   hrefs: readonly string[];
+  /** The marked ones among them (`markElsewhere`): the shell asks before it opens one. */
+  asks: readonly string[];
 }
 
 /** The batched sink: every surface's latest report since the last flush, in report order. */
@@ -50,7 +52,7 @@ export function setRenderedLinksBatchSink(next: RenderedLinksBatchSink | null): 
 }
 
 /** Held reports by surface, in the order their latest report came. */
-const pending = new Map<string, readonly string[]>();
+const pending = new Map<string, { hrefs: readonly string[]; asks: readonly string[] }>();
 let flushArmed = false;
 let fallback: ReturnType<typeof setTimeout> | null = null;
 
@@ -72,20 +74,23 @@ export function flushRenderedLinks(): void {
   if (fallback !== null) clearTimeout(fallback);
   fallback = null;
   if (pending.size === 0) return;
-  const reports = [...pending].map(([surface, hrefs]) => ({ surface, hrefs }));
+  const reports = [...pending].map(([surface, { hrefs, asks }]) => ({ surface, hrefs, asks }));
   pending.clear();
   batchSink?.(reports);
 }
 
-/** Report one surface's links; an empty list removes the surface. Nothing happens with no sink. */
-export function reportRenderedLinks(surface: string, hrefs: readonly string[]): void {
+/**
+ * Report one surface's links, and the marked ones among them; an empty list removes the surface.
+ * Nothing happens with no sink.
+ */
+export function reportRenderedLinks(surface: string, hrefs: readonly string[], asks: readonly string[] = []): void {
   if (batchSink) {
     pending.delete(surface);
-    pending.set(surface, hrefs);
+    pending.set(surface, { hrefs, asks });
     armFlush();
     return;
   }
-  sink?.(surface, hrefs);
+  sink?.(surface, hrefs, asks);
 }
 
 /** The address a renderer reports for `raw`: its `URL.href` when it is absolute http(s), else `null`. */
@@ -104,14 +109,15 @@ let mounts = 0;
  * Report what this mount draws while it is mounted: a change reports again, the unmount takes the
  * surface away. Keyed on the content, so a render that draws the same links says nothing. The
  * surface id is this module's own counter, ASCII as the shell requires, rather than `useId`, whose
- * spelling React has changed between releases.
+ * spelling React has changed between releases. `asks` are the marked links among `hrefs`.
  */
-export function useRenderedLinks(hrefs: readonly string[]): void {
+export function useRenderedLinks(hrefs: readonly string[], asks: readonly string[] = []): void {
   const [surface] = useState(() => `links-${++mounts}`);
-  const key = hrefs.length === 0 ? "" : JSON.stringify([...new Set(hrefs)]);
+  const key = hrefs.length === 0 ? "" : JSON.stringify([[...new Set(hrefs)], [...new Set(asks)]]);
   useEffect(() => {
     if (key === "") return undefined;
-    reportRenderedLinks(surface, JSON.parse(key) as string[]);
+    const [drawn, asked] = JSON.parse(key) as [string[], string[]];
+    reportRenderedLinks(surface, drawn, asked);
     return () => reportRenderedLinks(surface, []);
   }, [surface, key]);
 }

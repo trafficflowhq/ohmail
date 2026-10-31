@@ -33,13 +33,16 @@ function sourcesUnder(root: string): string[] {
 
 type Role = { mints: boolean; asks: boolean; releases: boolean };
 
-/** What one source DOES about object URLs, read from calls and never from a mention. */
+/**
+ * What one source DOES about object URLs, read from calls and never from a mention. A source that
+ * mints blobs of its own making, never an attachment's, releases them by revoking them.
+ */
 function roleOf(src: string): Role {
   const code = withoutComments(src);
   return {
     mints: /(?<![A-Za-z0-9_$])createObjectURL\s*\(/.test(code),
     asks: /\.openAttachment\s*\(/.test(code),
-    releases: /\.release(?:All)?Attachments\s*\(/.test(code),
+    releases: /\.release(?:All)?Attachments\s*\(/.test(code) || /(?<![A-Za-z0-9_$])revokeObjectURL\s*\(/.test(code),
   };
 }
 
@@ -64,6 +67,10 @@ const PINNED: Record<string, Role> = {
   // mints nothing. It is here because a forwarding line is still a call, and a census that could
   // not see one would be blind to the door the cleanup travels through.
   "apps/mobile/src/state/world.tsx": { mints: false, asks: false, releases: true },
+  // The one minter that holds no attachment's bytes: the page the reader builds for a link whose
+  // label names another site (`link-ask.ts`), a few kilobytes of its own text per address and at
+  // most 256 per frame, revoked when the frame's next document loads and when the reader unmounts.
+  "apps/webapp/app/components/link-ask.ts": { mints: true, asks: false, releases: true },
 };
 
 describe("every reader that materialises an attachment URL is accounted for", () => {
@@ -142,7 +149,9 @@ describe("every reader that materialises an attachment URL is accounted for", ()
     const role = roleOf("await engine.openAttachment(id, a); // engine.releaseAttachments(id)");
     expect(role).toEqual({ mints: false, asks: true, releases: false });
     expect(roleOf("const u = URL.createObjectURL(b);").mints).toBe(true);
+    expect(roleOf("URL.revokeObjectURL(u);").releases).toBe(true);
     // A mention is not a call.
     expect(roleOf("// createObjectURL and releaseAttachments are the pair").mints).toBe(false);
+    expect(roleOf("// revokeObjectURL is the other half").releases).toBe(false);
   });
 });
