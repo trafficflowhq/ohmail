@@ -122,3 +122,20 @@ export function qhTypedAnswers(): Array<{ name: string; html: string; text: stri
     shape("a coloured signature above answers between a quote's parts", long[0]!, [p("Hallo Clara,", "siehe unten."), sig, attribution, ...asked]),
   ];
 }
+
+/**
+ * Bodies the html half must read in one linear pass: a long run of date lines above an Outlook header
+ * block (a date line starts GMX's header block, so every line of the run starts one), in a pre, between
+ * line breaks, under Outlook's border-top marker and in new Outlook's container.
+ */
+export function qhHostileBodies(): Array<{ name: string; html: string }> {
+  const run = (n: number, sep: string): string => [...Array.from({ length: n }, () => "Date:"),
+    "Von: Dana Example", "An: Ben Sample", "Betreff: Termin", "-> eins", "Das ist ein ganzer Satz mit Inhalt."].join(sep);
+  const pre = `<pre>${run(43_000, "\n")}</pre>`;
+  return [
+    { name: "43,000 date lines over an Outlook header block in a pre", html: `<div>Hallo Ben</div>${pre}` },
+    { name: "8,000 date lines over an Outlook header block between line breaks", html: `<div>Hallo Ben</div><div>${run(8_000, "<br>")}</div>` },
+    { name: "the same pre under Outlook's border-top marker", html: `<div>Hallo Ben</div><div style="border:none;border-top:solid #E1E1E1 1.0pt">${pre}</div>` },
+    { name: "the same pre in new Outlook's container", html: `<div>Hallo Ben, siehe unten.</div><div>Gruss Clara</div><div id="mail-editor-reference-message-container">${pre}</div>` },
+  ];
+}
