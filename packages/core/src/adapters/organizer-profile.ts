@@ -2057,9 +2057,15 @@ function locatedIn(view: ProfileView, at: ProfileLocator | undefined): ProfileEn
  * (epoch seconds, when the caller's store began organizing the mailbox). An install id outlives a
  * store (a phone's Stop and remove, one id per server deployment), so a copy under the same id
  * dated before is a store's that is gone, read as another install's. Absent `ownSince`: the id alone.
+ * `owns`, when given, is the caller's record: a copy under its id is its own only when the caller's
+ * store recorded writing a copy at that second (a store restored from a backup has no record of the
+ * copies its later life wrote).
  */
-export function ownCopy(installId: string | null, second: number | null, self: string | null, ownSince?: number): boolean {
-  return installId !== null && installId === self && (ownSince === undefined || (second !== null && second >= ownSince));
+export function ownCopy(
+  installId: string | null, second: number | null, self: string | null, ownSince?: number, owns?: (second: number) => boolean,
+): boolean {
+  return installId !== null && installId === self && (ownSince === undefined || (second !== null && second >= ownSince))
+    && (owns === undefined || (second !== null && owns(second)));
 }
 
 /** A readable document's write second, as its Date header carries it. */
@@ -2069,10 +2075,10 @@ function secondOfDoc(doc: OrganizerProfileDoc): number | null {
 }
 
 /** This install's newest settings message, read by body or header — what its next write replaces. */
-function ownNewest(view: ProfileView, installId: string, ownSince?: number): ProfileEntry | null {
+function ownNewest(view: ProfileView, installId: string, ownSince?: number, owns?: (second: number) => boolean): ProfileEntry | null {
   const uid = (e: ProfileEntry): number => (typeof e.msg.ref === "number" ? e.msg.ref : -1);
   return view.entries
-    .filter((e) => e.shape.exact && ownCopy(e.shape.installId, e.shape.dateSecond, installId, ownSince))
+    .filter((e) => e.shape.exact && ownCopy(e.shape.installId, e.shape.dateSecond, installId, ownSince, owns))
     .sort((a, b) => (b.shape.dateSecond ?? -1) - (a.shape.dateSecond ?? -1) || uid(b) - uid(a))[0] ?? null;
 }
 
@@ -2102,6 +2108,8 @@ export interface TidyCounts {
   keptHeld: number;
   /** This install's own copy, kept while the current document is another install's it has not seen. */
   keptOwnBesideUnseen: number;
+  /** A copy under this install's id that is not its own (a removed store's, a later life's): found settings. */
+  keptFound: number;
   unseenCurrent: 0 | 1;
 }
 
@@ -2117,11 +2125,11 @@ export interface TidyCounts {
 function planTidy(
   view: ProfileView, selfInstallId: string | null, now: Date, claims: readonly MetaClaimSeen[],
   retain?: ProfileLocator, released: readonly ProfileLocator[] = [], replaceable: ReadonlySet<string> = new Set(),
-  ownSince?: number,
+  ownSince?: number, owns?: (second: number) => boolean,
 ): { counts: TidyCounts; refs: unknown[] } {
   const counts: TidyCounts = {
     records: view.entries.length, current: 0, removable: 0, own: 0, foreignStale: 0, duplicate: 0, released: 0,
-    malformed: 0, keptForeignFresh: 0, keptUnrecognised: 0, keptNewerDated: 0, keptHeld: 0, keptOwnBesideUnseen: 0, unseenCurrent: 0,
+    malformed: 0, keptForeignFresh: 0, keptUnrecognised: 0, keptNewerDated: 0, keptHeld: 0, keptOwnBesideUnseen: 0, keptFound: 0, unseenCurrent: 0,
   };
   const held = locatedIn(view, retain);
   const C = view.current;
@@ -2133,7 +2141,7 @@ function planTidy(
   /* THE WRITE'S OWN RULE: a current document another install wrote, which this install has not
      seen (`replaceable`) and does not hold, may be the one that holds THIS install's older copy as
      its question. This install's copies stay until it has seen it. */
-  const cSeen = ownCopy((C.record as ParsedProfileMessage).installId, C.shape.dateSecond, selfInstallId, ownSince)
+  const cSeen = ownCopy((C.record as ParsedProfileMessage).installId, C.shape.dateSecond, selfInstallId, ownSince, owns)
     || C === held || replaceable.has(cFingerprint);
   const freshClaim = (installId: string | null): boolean => claims.some((c) => c.installId === installId
     && now.getTime() - c.heartbeat.getTime() < DEFAULT_STALE_AFTER_MS);
@@ -2153,13 +2161,18 @@ function planTidy(
     if (e.record !== null && isMalformedProfile(e.record)
       && (e.shape.version === null || (typeof e.shape.version === "number" && e.shape.version <= PROFILE_VERSION))) {
       counts.malformed += 1;
-    } else if (ownCopy(e.shape.installId, e.shape.dateSecond, selfInstallId, ownSince)) {
+    } else if (ownCopy(e.shape.installId, e.shape.dateSecond, selfInstallId, ownSince, owns)) {
       if (!cSeen) { counts.keptOwnBesideUnseen += 1; continue; }
       counts.own += 1;
     } else if (ok && profileFingerprint((e.record as ParsedProfileMessage).doc!, cDoc.v) === cFingerprint) {
       counts.duplicate += 1;
     } else if (released.some((at) => locatedIn(view, at) === e)) {
       counts.released += 1;
+    } else if (e.shape.installId !== null && e.shape.installId === selfInstallId) {
+      /* UNDER THIS INSTALL'S ID AND NOT ITS OWN: a removed store's copy or a later life's, found settings.
+         Never removed by age, whatever the claims say; only once answered (`released`) or as C's twin. */
+      counts.keptFound += 1;
+      continue;
     } else if (C.shape.dateSecond !== null && e.shape.dateSecond !== null
       && (C.shape.dateSecond - e.shape.dateSecond) * 1000 >= DEFAULT_STALE_AFTER_MS
       && !freshClaim(e.shape.installId)) {
@@ -2189,11 +2202,12 @@ export async function readOrganizerProfile(
    * the question an organizer holds, which its own newer document beside it does not answer.
    * `ownSince`: {@link ownCopy}'s floor for `foreignTo` and the residue.
    */
-  opts?: { installId?: string; now?: Date; retain?: ProfileLocator; foreignTo?: string; ownSince?: number },
+  opts?: { installId?: string; now?: Date; retain?: ProfileLocator; foreignTo?: string; ownSince?: number; owns?: (second: number) => boolean },
 ): Promise<ProfileReadResult> {
   let listing: ProfileListing;
   const foreignTo = opts?.foreignTo;
   const ownSince = opts?.ownSince;
+  const owns = opts?.owns;
   try {
     listing = await listingOf(io, opts?.retain === undefined ? undefined : retainingList(opts.retain));
     /* A SERVER SENDS BODIES FOR THE NEWEST DATE ONLY, so the other install's document beside a
@@ -2201,10 +2215,10 @@ export async function readOrganizerProfile(
        of the newest record another install's header names — one body, never the whole folder. */
     const first = foreignTo === undefined ? null : viewOf(listing.messages);
     if (foreignTo !== undefined && first !== null && first.newerV === null
-      && !first.ok.some((r) => !ownCopy(r.installId, secondOfDoc(r.doc!), foreignTo, ownSince))) {
+      && !first.ok.some((r) => !ownCopy(r.installId, secondOfDoc(r.doc!), foreignTo, ownSince, owns))) {
       const pick = first.entries
         .filter((e) => e.record === null && e.shape.exact && e.shape.installId !== null
-          && !ownCopy(e.shape.installId, e.shape.dateSecond, foreignTo, ownSince))
+          && !ownCopy(e.shape.installId, e.shape.dateSecond, foreignTo, ownSince, owns))
         .sort((a, b) => (b.shape.dateSecond ?? -1) - (a.shape.dateSecond ?? -1))[0];
       if (pick !== undefined) {
         const also: ProfileListOptions = opts?.retain === undefined ? {} : retainingList(opts.retain);
@@ -2254,11 +2268,11 @@ export async function readOrganizerProfile(
     };
   }
   const foreign = foreignTo === undefined ? []
-    : view.ok.filter((r) => !ownCopy(r.installId, secondOfDoc(r.doc!), foreignTo, ownSince));
+    : view.ok.filter((r) => !ownCopy(r.installId, secondOfDoc(r.doc!), foreignTo, ownSince, owns));
   const newest = (locatedIn(view, opts?.retain)?.record
     ?? (foreign.length > 0 ? newestOf(foreign) : view.current.record)) as ParsedProfileMessage;
   const plan = planTidy(view, opts?.installId ?? newest.installId, opts?.now ?? new Date(), listing.claims, opts?.retain,
-    [], new Set(), ownSince);
+    [], new Set(), ownSince, owns);
   return {
     state: "found", doc: newest.doc!, installId: newest.installId, ref: newest.ref,
     encoded: newest.encoded === true,
@@ -2348,6 +2362,8 @@ export async function tidyOrganizerProfile(input: {
   replaceable?: readonly string[];
   /** {@link ownCopy}'s floor: a copy under the caller's id dated before it is another install's. */
   ownSince?: number;
+  /** {@link ownCopy}'s record: a copy under the caller's id at a second it did not record is not the caller's. */
+  owns?: (second: number) => boolean;
 }): Promise<TidyOutcome> {
   const log = input.log ?? ((): void => undefined);
   const released = input.released ?? [];
@@ -2369,7 +2385,7 @@ export async function tidyOrganizerProfile(input: {
     return { removed: 0, remaining: 0, planned: null, refused: "newer" };
   }
   const plan = planTidy(view, input.installId, input.now ?? new Date(), listing.claims, input.retain, released,
-    new Set(input.replaceable ?? []), input.ownSince);
+    new Set(input.replaceable ?? []), input.ownSince, input.owns);
   return tidyPass(input.io, view, plan, {
     mode: input.mode ?? "remove", max: input.max ?? PROFILE_TIDY_MAX_PER_PASS, log,
   });
@@ -2400,6 +2416,13 @@ export interface WriteProfileInput {
   log?: ProfileLog;
   /** {@link ownCopy}'s floor: a copy under this writer's id dated before it is another install's. */
   ownSince?: number;
+  /** {@link ownCopy}'s record: a copy under this writer's id at a second it did not record is not this writer's. */
+  owns?: (second: number) => boolean;
+  /**
+   * Called with the new copy's Date second after every refusal and before the append; a throw writes
+   * nothing. The organizer records the second here, so no copy of its own is ever in the folder unrecorded.
+   */
+  beforeAppend?: (second: number) => Promise<void>;
 }
 
 export type WriteProfileResult =
@@ -2460,7 +2483,7 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   const newest = view.current === null || view.current === held ? null : view.current.record as ParsedProfileMessage;
   const unseen = [newest].find((r): r is ParsedProfileMessage => {
     if (r === null) return false;
-    if (ownCopy(r.installId, secondOfDoc(r.doc!), installId, input.ownSince)) return false;
+    if (ownCopy(r.installId, secondOfDoc(r.doc!), installId, input.ownSince, input.owns)) return false;
     // HAVE I SEEN THIS DOCUMENT — asked at the document's OWN version, the identity the caller stored.
     if (known.has(profileFingerprint(r.doc!))) return false;
     // IS IT THE SAME CONFIGURATION — asked at ONE version, so a v1 twin is not a conflict.
@@ -2473,7 +2496,7 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   if (mode === "remove") {
     // The `unseen` refusal above cleared the newest: it is this writer's, held, seen or the same.
     const plan = planTidy(view, installId, now, claims, input.retain, [],
-      new Set([...known, ...(newest === null ? [] : [profileFingerprint(newest.doc!)])]), input.ownSince);
+      new Set([...known, ...(newest === null ? [] : [profileFingerprint(newest.doc!)])]), input.ownSince, input.owns);
     if (plan.refs.length > 0) {
       log("profile_write_held_for_cleanup", { removable: plan.refs.length });
       const pass = await tidyPass(io, view, plan, { mode, max: PROFILE_TIDY_MAX_PER_PASS, log });
@@ -2488,6 +2511,8 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
     const s = shapeOf(headerBlock);
     return s.installId === installId && s.dateSecond === second;
   };
+  // The caller's record of this copy, before it exists: a store vouches for what it is about to write.
+  if (input.beforeAppend !== undefined) await input.beforeAppend(second);
   try {
     await io.appendProfile(formatProfileMessage(doc, { installId }));
   } catch (err) {
@@ -2531,7 +2556,7 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   }
 
   // ── THEN THE C THIS WRITE REPLACED, and nothing else — never the held record ─────────────────
-  const C = view.current !== null && view.current === held ? ownNewest(view, installId, input.ownSince) : view.current;
+  const C = view.current !== null && view.current === held ? ownNewest(view, installId, input.ownSince, input.owns) : view.current;
   if (C === null || C.msg.ref === undefined) return { written: true, removed: 0 };
   try {
     /* C's uid is a fact only under the numbering it was LISTED under. The read-back re-listed the

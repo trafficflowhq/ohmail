@@ -93,7 +93,7 @@ describe("the selector census", () => {
     expect(lines[0]?.[0], "the plan is the first line").toBe("profile_tidy_planned");
     expect(r.planned).toEqual({
       records: 316, current: 1, removable: 310, own: 300, foreignStale: 8, duplicate: 1, released: 0, malformed: 1,
-      keptForeignFresh: 4, keptUnrecognised: 1, keptNewerDated: 0, keptHeld: 0, keptOwnBesideUnseen: 0, unseenCurrent: 0,
+      keptForeignFresh: 4, keptUnrecognised: 1, keptNewerDated: 0, keptHeld: 0, keptOwnBesideUnseen: 0, keptFound: 0, unseenCurrent: 0,
     });
     expect(r).toMatchObject({ removed: 0, remaining: 310 });
   });

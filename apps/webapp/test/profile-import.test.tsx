@@ -190,16 +190,17 @@ describe("the restore card", () => {
    * ── WHAT NOT ANSWERING LEAVES IN THE MAILBOX IS ON THE CARD (QAO-OWN-PUBLISH-BESIDE-A-RETAINED-HOLD)
    * While this question stands unanswered, the organizer publishes its OWN settings beside the found
    * document and keeps that document in the mailbox until the person answers ("Not now" keeps it:
-   * `organizer-profile-worker.test.ts`). The card says both stay. The needle is the rendered card,
-   * from the catalogue's own sentence; the literal pins the claim, so a reword that drops it reddens.
+   * `organizer-profile-worker.test.ts`); beside a copy under its own install id it publishes nothing
+   * until then. The card says the found settings stay. The needle is the rendered card, from the
+   * catalogue's own sentence; the literal pins the claim, so a reword that drops it reddens.
    */
-  it("the card says what NOT answering leaves: both settings stay in the mailbox until you choose", async () => {
+  it("the card says what NOT answering leaves: the found settings stay in the mailbox until you choose", async () => {
     await mount({ active: true });
     const el = card();
     expect(el).not.toBeNull();
     const willDo = (messages as unknown as { profileImport: { willDo: string } }).profileImport.willDo;
     expect(willDo, "the catalogue's sentence no longer says what not answering leaves in the mailbox")
-      .toContain("Until you choose, both stay in the mailbox: these settings beside the ones you make here.");
+      .toContain("Until you choose, these settings stay in the mailbox.");
     expect(el!.textContent, "the cost sentence is in the catalogue and not on the card").toContain(willDo);
     expect(el!.textContent, "the card says an imported screen-out marks mail read").not.toMatch(/marked read/i);
   });
