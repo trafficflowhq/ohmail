@@ -68,6 +68,13 @@ export function zonedFields(instant: Date, zone: string): ZonedFields {
         hour: w.getUTCHours(), minute: w.getUTCMinutes(), second: w.getUTCSeconds(),
       };
     }
+    // A transition inside the hour: this second's own offset.
+    const whole = Math.floor(ms / 1000) * 1000;
+    const w = new Date(ms + offsetAtSecond(whole, zone));
+    return {
+      year: w.getUTCFullYear(), month: w.getUTCMonth() + 1, day: w.getUTCDate(),
+      hour: w.getUTCHours(), minute: w.getUTCMinutes(), second: w.getUTCSeconds(),
+    };
   }
   return formattedFields(instant, zone);
 }
@@ -76,8 +83,8 @@ export function zonedFields(instant: Date, zone: string): ZonedFields {
  * THE OFFSET, READ ONCE PER UTC HOUR. `formatToParts` is the expensive call — on the phone it is a
  * native round trip per row — and a zone's offset is constant between transitions. The hour's first
  * and last whole second are read; equal, every instant inside it is `utc + offset`; unequal (a
- * transition inside the hour, at :30 or :45 in some zones), `null`, and the caller formats that
- * instant itself. Bounded: the map is dropped whole at its ceiling.
+ * transition inside the hour, at :30 or :45 in some zones), `null`, and the caller reads that
+ * second's own offset. Bounded: the map is dropped whole at its ceiling.
  */
 const HOUR_MS = 3_600_000;
 const HOUR_OFFSETS = new Map<string, number | null>();
@@ -88,8 +95,8 @@ function hourOffset(ms: number, zone: string): number | null {
   const key = `${zone}|${start}`;
   let offset = HOUR_OFFSETS.get(key);
   if (offset === undefined) {
-    const first = formattedOffsetAt(start, zone);
-    const last = formattedOffsetAt(start + HOUR_MS - 1000, zone);
+    const first = offsetAtSecond(start, zone);
+    const last = offsetAtSecond(start + HOUR_MS - 1000, zone);
     offset = first === last ? first : null;
     if (HOUR_OFFSETS.size >= HOUR_OFFSETS_MAX) HOUR_OFFSETS.clear();
     HOUR_OFFSETS.set(key, offset);
@@ -97,9 +104,66 @@ function hourOffset(ms: number, zone: string): number | null {
   return offset;
 }
 
-function formattedOffsetAt(utcMs: number, zone: string): number {
+/**
+ * THE OFFSET AT A WHOLE SECOND, NOT READ OFF THE HOUR PART where anything better exists. Hermes on
+ * Android has answered the hour part "00" for the local 12 o'clock hour, which the cache above spread
+ * over the whole hour (12:05 read 00:05). The device's own zone asks `Date#getTimezoneOffset`, which
+ * uses no `Intl`; another zone reads its `longOffset` name ("GMT+01:00"); the hour part only where
+ * the runtime has neither.
+ */
+function offsetAtSecond(utcMs: number, zone: string): number {
+  if (zone === deviceZone()) {
+    const own = -Math.round(new Date(utcMs).getTimezoneOffset() * 60) * 1000;
+    if (plausibleOffset(own)) return own;
+  }
+  const named = namedOffsetAt(utcMs, zone);
+  if (named !== null && plausibleOffset(named)) return named;
   const f = formattedFields(new Date(utcMs), zone);
   return Date.UTC(f.year, f.month - 1, f.day, f.hour, f.minute, f.second) - utcMs;
+}
+
+const MAX_OFFSET_MS = 14 * HOUR_MS;
+
+function plausibleOffset(ms: number): boolean {
+  return Number.isInteger(ms / 1000) && Math.abs(ms) <= MAX_OFFSET_MS;
+}
+
+let DEVICE_ZONE: string | null | undefined;
+
+/** The runtime's own zone, read once — the zone `Date`'s local methods answer in. */
+function deviceZone(): string | null {
+  if (DEVICE_ZONE === undefined) {
+    try {
+      DEVICE_ZONE = new Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+    } catch {
+      DEVICE_ZONE = null;
+    }
+  }
+  return DEVICE_ZONE;
+}
+
+/** `null` where the runtime has no `longOffset` (it throws on the option) or for an unknown zone,
+ *  which then throws from the field formatter instead. */
+const OFFSET_FORMATTERS = new Map<string, Intl.DateTimeFormat | null>();
+const LONG_OFFSET = /^(?:GMT|UTC)(?:([+\-\u2212])(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?)?$/;
+
+function namedOffsetAt(utcMs: number, zone: string): number | null {
+  let fmt = OFFSET_FORMATTERS.get(zone);
+  if (fmt === undefined) {
+    try {
+      fmt = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" });
+    } catch {
+      fmt = null;
+    }
+    OFFSET_FORMATTERS.set(zone, fmt);
+  }
+  if (fmt === null) return null;
+  const name = fmt.formatToParts(new Date(utcMs)).find((p) => p.type === "timeZoneName")?.value;
+  const m = name === undefined ? null : LONG_OFFSET.exec(name);
+  if (!m) return null;
+  if (!m[1]) return 0;
+  const ms = ((Number(m[2]) * 60 + Number(m[3] ?? 0)) * 60 + Number(m[4] ?? 0)) * 1000;
+  return m[1] === "+" ? ms : -ms;
 }
 
 /** The wall clock as the platform formats it — the reading every cached answer must equal. */
@@ -146,9 +210,7 @@ export function zonedWeekday(instant: Date, zone: string): number {
 function offsetAt(utcMs: number, zone: string): number {
   /* Floored to the second because `formatToParts` cannot report milliseconds: comparing a
      sub-second instant against a whole-second reading would report an offset up to 999 ms out. */
-  const whole = Math.floor(utcMs / 1000) * 1000;
-  const f = formattedFields(new Date(whole), zone);
-  return Date.UTC(f.year, f.month - 1, f.day, f.hour, f.minute, f.second) - whole;
+  return offsetAtSecond(Math.floor(utcMs / 1000) * 1000, zone);
 }
 
 /** A wall clock to mint an instant from. Out-of-range fields normalize, as `Date.UTC` does. */

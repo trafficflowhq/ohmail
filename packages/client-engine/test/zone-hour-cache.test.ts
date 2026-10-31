@@ -66,3 +66,87 @@ describe("zonedFields' hour cache", () => {
     expect(() => zonedFields(new Date(Number.NaN), "Europe/Zurich")).toThrow(RangeError);
   });
 });
+
+/**
+ * A PLATFORM THAT MISREADS THE NOON HOUR. Hermes on Android answered `formatToParts`' hour part "00"
+ * for every minute of the local 12 o'clock hour, and the hour cache spread that one reading over the
+ * whole hour: 12:05 read 00:05. The fake below reads the hour that way; the device's zone takes its
+ * offset from `Date#getTimezoneOffset`, any other zone from its `longOffset` name.
+ */
+const RealDTF = Intl.DateTimeFormat;
+const Z = "Europe/Zurich";
+const CLOCKS = ["00:00", "00:30", "11:59", "12:00", "12:05", "12:59", "13:00", "23:59"];
+// Two Fridays: one in CET (UTC+1), one in CEST (UTC+2).
+const DAYS = [{ y: 2026, m: 10, d: 30, utcOffset: 1 }, { y: 2026, m: 7, d: 10, utcOffset: 2 }];
+
+function realOffsetMs(ms: number, zone: string): number {
+  const parts = new RealDTF("en-US", {
+    timeZone: zone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(new Date(ms));
+  const n = (t: string) => Number(parts.find((p) => p.type === t)!.value);
+  const whole = Math.floor(ms / 1000) * 1000;
+  return Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second")) - whole;
+}
+
+function installNoonMisreading(device: string, longOffset: boolean): () => void {
+  class NoonMisreading extends RealDTF {
+    readonly zoneAsked: string | undefined;
+    constructor(locale?: string | string[], opts: Intl.DateTimeFormatOptions = {}) {
+      if (opts.timeZoneName === "longOffset" && !longOffset) throw new RangeError("timeZoneName");
+      super(locale, opts);
+      this.zoneAsked = opts.timeZone;
+    }
+    override formatToParts(date?: Date | number): Intl.DateTimeFormatPart[] {
+      return super.formatToParts(date).map((p) => (p.type === "hour" && p.value === "12" ? { ...p, value: "00" } : p));
+    }
+    override resolvedOptions(): Intl.ResolvedDateTimeFormatOptions {
+      const o = super.resolvedOptions();
+      return this.zoneAsked === undefined ? { ...o, timeZone: device } : o;
+    }
+  }
+  Object.defineProperty(Intl, "DateTimeFormat", { value: NoonMisreading, configurable: true, writable: true });
+  const own = vi.spyOn(Date.prototype, "getTimezoneOffset").mockImplementation(function (this: Date) {
+    return -realOffsetMs(this.getTime(), device) / 60_000;
+  });
+  return () => {
+    Object.defineProperty(Intl, "DateTimeFormat", { value: RealDTF, configurable: true, writable: true });
+    own.mockRestore();
+  };
+}
+
+describe("a platform that reads the noon hour as 00", () => {
+  const platforms: [string, (() => () => void) | null][] = [
+    ["the device's own zone, no longOffset", () => installNoonMisreading(Z, false)],
+    ["another zone, read by its longOffset", () => installNoonMisreading("America/New_York", true)],
+    ["the real Intl", null],
+  ];
+  for (const [name, install] of platforms) {
+    it(`${name}: every clock of a Zurich day reads as the wall clock`, async () => {
+      vi.resetModules();
+      const restore = install ? install() : () => {};
+      try {
+        const { clock, fullDateTime, messageStamp, weekdayClock } = await import("../src/stamp.js");
+        for (const { y, m, d, utcOffset } of DAYS) {
+          const now = new Date(Date.UTC(y, m - 1, d, 23 - utcOffset, 59, 30));
+          for (const hhmm of CLOCKS) {
+            const [h, min] = hhmm.split(":").map(Number);
+            const at = new Date(Date.UTC(y, m - 1, d, h - utcOffset, min));
+            const iso = at.toISOString();
+            expect(clock(at, Z), `${iso}`).toBe(hhmm);
+            for (const locale of ["en", "de"]) {
+              const name = (o: Intl.DateTimeFormatOptions) => new RealDTF(locale, { ...o, timeZone: Z }).format(at);
+              const weekday = name({ weekday: "short" });
+              expect(messageStamp({ date: iso, sortAt: iso }, now, Z, locale), `${iso} ${locale}`).toBe(hhmm);
+              expect(weekdayClock(at, Z, locale), `${iso} ${locale}`).toBe(`${weekday} ${hhmm}`);
+              expect(fullDateTime(at, Z, locale), `${iso} ${locale}`)
+                .toBe(`${weekday} ${d} ${name({ month: "short" })} ${y}, ${hhmm}`);
+            }
+          }
+        }
+      } finally {
+        restore();
+      }
+    });
+  }
+});
