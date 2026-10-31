@@ -78,6 +78,20 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.19" date="2026-10-31">
+      <description>
+        <ul>
+          <li>The desktop window answers clicks and keys after a mailbox is connected again</li>
+          <li>A search result opened in Receipts or News lands on screen</li>
+          <li>Answers typed into a new Outlook history no longer fold away</li>
+          <li>Answers typed into an Outlook history stay on screen in more shapes</li>
+          <li>A tab left open across an update offers Reload instead of blaming the connection</li>
+          <li>A link whose text names another site asks before it opens</li>
+          <li>A left-out word no longer loses a sender's first name in search</li>
+          <li>A new database migration no longer breaks unrelated tests</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.18" date="2026-10-31">
       <description>
         <ul>
@@ -148,21 +162,6 @@
           <li>A downloaded attachment is no longer served from the browser cache to the next account</li>
           <li>The .deb, .rpm and Flatpak builds no longer vanish when an accessibility tool reads their window</li>
           <li>A pull request under a Next route group runs only the tests it reaches</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.14" date="2026-10-29">
-      <description>
-        <ul>
-          <li>The sidebar no longer spends a line on the version number</li>
-          <li>A letter you stop on with the arrow keys turns read in History, folders, tags and the piles</li>
-          <li>A conversation you mark unread stays unread when j or k comes back to it</li>
-          <li>ohmail says why a sign-in was ended everywhere</li>
-          <li>A browser stays signed in for the full ninety days without use</li>
-          <li>The desktop app's ohmail Cloud sign-in stays on the computer that saved it</li>
-          <li>A letter delivered just before a restart or an IMAP outage reaches Sent once it can</li>
-          <li>A letter with embedded pictures and no plain text reads whole in a phone conversation</li>
-          <li>Undo after Mark all read in News keeps the new letters new, and two phone fixes</li>
         </ul>
       </description>
     </release>
