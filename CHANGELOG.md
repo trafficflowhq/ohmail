@@ -21,6 +21,86 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.18] — 2026-10-31
+
+### Quoted history folds when the earlier message quotes and answers something itself
+
+A reply's quoted history stayed open when the earlier message under the reply header held its own quote box
+with its author's answer below it: for example a new Outlook for Mac reply whose quoted message answers a
+quoted bullet, or a quote in a coloured font under an Outlook for Windows header. Such a history now folds at
+the reply header behind Show history on the desktop, web and phone apps when the quotes and the answers below
+them are the earlier messages' own: each answer a sentence in the message's one colour, with no mark. A
+history with answers typed in later, in another colour or a highlight or marked with initials, a name or an
+arrow, and an earlier message with a coloured signature, banner or greeting are read as before. Sentences
+typed into such a history in its own colour, with no mark, now fold with it in new Outlook histories and under
+a coloured quote, as they already did under a black quote below the other Outlook headers.
+
+### Connecting a mailbox again keeps the settings stored in it
+
+On the phone, removing a mailbox (More > Connect to a server > Stop and remove) and connecting it again
+replaced the settings stored in the mailbox with empty ones about a minute later: screened senders, rules
+and tags were gone for every device reading that mailbox, known senders waited in the Screener as
+first-time senders, and their recent letters moved there. The settings a removed mailbox left are now kept
+in the mailbox and offered for import, like settings another device left, and the senders they let in keep
+their folders until you answer. Until then nothing is saved beside them, so connecting again or organizing
+on another device still offers them; settings you change in the meantime reach the mailbox once you import
+them or save this device's own. The same fault met a mailbox removed and added again on the desktop (its
+signature), and a new account or a fresh database on ohmail Cloud or your own server.
+
+### Delete after opening a search result acts on the letter you opened
+
+On the desktop app and the web, opening a search result in Receipts or News among letters that share one
+date could leave the list's selected row on a neighbouring letter while the reader showed the one you
+pressed, so Delete, Archive and the other message keys acted on a letter you had not seen. Pressing
+another card's Expand did the same. The letter you open, press, step to or arrive on now stays the
+selected one, for the row, the card and every key, while its first lines are on screen; reading on by
+scrolling moves the selection as before.
+
+### Search finds a letter by any part of a file name beside your other words
+
+A search of two or more words matched a file name only by its first part. For a letter from Ines with `harbour-ledger-7731.pdf` attached, `ines harbour` found it, but `ines ledger`, `ines pdf` and `scan 7731` answered "Nothing matched exactly", although `ledger` alone found it. Each part of a file name, between dashes, dots and underscores, is now a word of its letter, and `-pdf` leaves out a letter that carries a PDF. A letter found by its file name ranks as one found by a word of its text, however many letters carry the name and whether the name is written with dashes or with spaces: the name no longer lifts it above a letter whose subject or sender holds the word, nor above a newer letter whose text holds it.
+
+On the desktop app, Cloud and your own server, words and numbers written together count too, as in `HarbourLedger2026`, and letters already in your mailbox are brought up to date a batch at a time, newest first: between syncs on Cloud and your own server, and while the desktop app is idle on power. A letter whose text ohmail does not hold for space keeps every word it was found by. The desktop app and your own server build two search indexes the first time they start after the update, a few seconds on a large mailbox. On the phone, the names of senders and recipients and the parts of file names are now words beside your others too, for every letter the phone has indexed.
+
+### Letters no longer show the preview text their sender hid
+
+On the desktop and the web, a newsletter's hidden preview line (the text a sender puts above the letter for
+the inbox list, often padded with invisible characters) no longer shows as a stray first line, and screen
+readers no longer read it. Lines that hold nothing but such invisible characters are left out too. In a
+letter set in the app's own type, a link whose label hides another name now shows where it really goes.
+
+### Links show where they really go in more cases
+
+On the desktop and the web, a link whose label names one site but opens another shows the site it really
+opens beside its label. It now does so in more cases: when that name stands anywhere in the label, in
+brackets or before a full stop; when a zero-width space, a hair-thin space, a variation selector or a
+right-to-left mark, override or isolate inside the label makes it read as a trusted name; and, in a
+designed letter or any letter after "Show original", in more of the cases where the letter hides part of
+the label so that only a trusted name shows. In a letter set in the app's own type, a right-to-left override
+or isolate before a link no longer turns its label around. In a designed letter, a link gets the note when
+an override before it, right-to-left markup around it or a control the letter's styles draw beside it may
+turn it around, though the note can then read backwards. A designed letter's own styles can still hide that
+note.
+
+### The phone's Screener says a fresh mailbox is still being read before the phone organizes it
+
+On a phone that connects to the mail server itself, a mailbox nothing had organized before showed "0
+first-time senders waiting" on the Screener's Waiting shelf for minutes while the phone read it for the
+first time, and blamed "the organizing device's" unread settings. The phone writes its organizer claim only
+after that first pass, so the "still being read" note from the last release never showed there. The shelf
+now says the mailbox is still being read for the whole first pass, claim or not, and shows the count once
+the pass is done. While no device organizes the mailbox, the count line no longer names an organizing
+device. A mailbox nobody agreed to organize keeps its own "not organizing" state, and paired phones are
+unchanged.
+
+### New mail no longer waits behind the split-conversation repair
+
+The six-hourly pass that rejoins conversations a forward split in two could hold a Cloud or self-hosted
+worker for minutes, and new mail for every mailbox on that worker waited until it finished. It now
+reads only the account it is repairing, finds each group's threads in one read instead of one per
+group, and stops between two groups once its share of the cycle is spent, picking up where it left off
+on the next cycles. The conversations it joins, and how it joins them, are unchanged.
+
 ## [0.30.17] — 2026-10-30
 
 ### Older letters made only of html and pictures get their words too
@@ -15548,7 +15628,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.17...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.18...HEAD
+[0.30.18]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.18
 [0.30.17]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.17
 [0.30.16]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.16
 [0.30.15]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.15
