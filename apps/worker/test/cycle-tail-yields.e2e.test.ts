@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { accountSettings, accounts, mailboxes, mailboxCredentials, type Tx } from "@trafficflow/db";
@@ -8,6 +8,12 @@ import { startWorker, type RunningWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { threadJoinHealPass } from "../src/thread-join-heal.js";
+
+vi.mock("../src/thread-join-heal.js", async (load) => {
+  const real = await load<typeof import("../src/thread-join-heal.js")>();
+  return { ...real, threadJoinHealPass: vi.fn(real.threadJoinHealPass) };
+});
 
 /**
  * THE CYCLE TAIL YIELDS TO NEW MAIL, AND ONLY TO NEW MAIL. The per-account passes run as their own
@@ -229,5 +235,34 @@ describe("the cycle tail yields to new mail", () => {
     expect(visits.length, `no visit ran inside a walk past its budget — trace ${fleet.describeTrace()}`)
       .toBeGreaterThan(0);
     expect(Number(phases[walks + 1]!.turns), "the walk never yielded to its budget").toBeGreaterThan(1);
+  }, 120_000);
+
+  // A heal its slice clock cut is owed: the next walk goes on at its cursor with what is left of
+  // the group budget, and once it finishes the six-hour gate is shut again.
+  it("resumes a heal its slice clock cut in the next walk, then shuts the gate", async () => {
+    const heal = vi.mocked(threadJoinHealPass);
+    heal.mockClear();
+    heal.mockImplementationOnce(async (deps) => ({
+      groupsScanned: 1, merged: 0, messagesMoved: 0, skipped: 0, failed: 0, refusedUncorroborated: 0,
+      capped: false, cut: true, cursor: { accountId: deps.accountId!, subject: "Alpha" },
+    }));
+    const db = makeDb(DB);
+    const { fleet, phases, a } = await warm(db);
+    const cutAccount = heal.mock.calls[0]![0].accountId!;
+
+    let walks = phases.length;
+    fleet.signal.get(a.mailboxId)!();
+    await waitFor(() => heal.mock.calls.length >= 3, 20_000, "the cut heal to resume");
+    const resumed = heal.mock.calls[2]![0];
+    expect(resumed.accountId).toBe(cutAccount);
+    expect(resumed.cursor).toEqual({ accountId: cutAccount, subject: "Alpha" });
+    expect(resumed.maxGroups).toBe(199);
+    expect(typeof resumed.until).toBe("function");
+
+    await waitFor(() => phases.length > walks, 20_000, "the resuming walk to finish");
+    walks = phases.length;
+    fleet.signal.get(a.mailboxId)!();
+    await waitFor(() => phases.length > walks, 20_000, "one more walk");
+    expect(heal.mock.calls, "a finished heal ran again inside its period").toHaveLength(3);
   }, 120_000);
 });
