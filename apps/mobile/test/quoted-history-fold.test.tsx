@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount, rnDom } from "./_rendered-dom";
-import { qhFixtures, qhFolds, qhNorm } from "../../../packages/client-engine/test/quoted-history-fixtures";
+import { qhFixtures, qhFolds, qhNorm, qhTypedAnswers } from "../../../packages/client-engine/test/quoted-history-fixtures";
 
 vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
 vi.mock("../src/ui/base", async () => {
@@ -117,12 +117,29 @@ describe("a body with an html part folds its text only where that html folds", (
     expect(shown(el)).toContain("Ja, Sie erhalten das Protokoll am selben Tag als PDF.");
   });
 
-  for (const id of ["01", "104"]) {
+  // 132-135: the history holds its own quote and answer.
+  for (const [id, greeting] of [["01", "Hallo Herr Sample,"], ["104", "Hallo Herr Sample,"], ["132", "Hallo Clara,"], ["133", "Hallo Clara,"],
+    ["134", "Hallo Clara,"], ["135", "Hallo Clara,"]] as const) {
     it(`control: ${id}, a reply whose html folds, folds its text as a member`, () => {
       const fx = FIXTURES.find((f) => f.id === id)!;
       const el = body(fx.text, "streamBody", [], fx.html);
       expect(row(el)).not.toBeNull();
-      expect(shown(el)).not.toContain("Hallo Herr Sample,");
+      expect(shown(el)).not.toContain(greeting);
+    });
+  }
+
+  for (const t of qhTypedAnswers()) {
+    it(`answers typed into the history keep it open, member and frame: ${t.name}`, () => {
+      for (const variant of ["streamBody", "readerBody"] as const) {
+        const el = body(t.text, variant, [], t.html);
+        expect(row(el), variant).toBeNull();
+        expect(shown(el), variant).toContain(qhNorm(t.answer));
+        mounted?.unmount();
+        mounted = null;
+      }
+      const framed = sanitizeMailHtmlPhone(t.html, { fold: true });
+      expect(framed.history ?? null).toBeNull();
+      expect(framed.html).toContain(t.answer);
     });
   }
 

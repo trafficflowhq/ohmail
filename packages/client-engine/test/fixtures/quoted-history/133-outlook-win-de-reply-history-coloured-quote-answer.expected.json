@@ -1,0 +1,43 @@
+{
+  "id": "133",
+  "file": "133-outlook-win-de-reply-history-coloured-quote-answer.eml",
+  "shape": "outlook-win-de-reply-history-coloured-quote-answer",
+  "description": "Outlook for Windows, German: a short reply over a border-top Von/Gesendet/An/Cc/Betreff block; the earlier message quotes a bullet in a blockquote written in #500050 and answers it in a sentence",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Ben,",
+      "visibleLastLine": "Clara",
+      "historyStartLine": "Von: Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "Von: Ben Sample <ben.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Clara"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "A coloured quote inside the history is the earlier message's own quote, not an answer in another hand."
+}
