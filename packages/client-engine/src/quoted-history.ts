@@ -779,7 +779,9 @@ function decide(
       // Answers typed inside the first quote: the lead says so, or they are in another hand.
       if (firstRun && ANNOUNCEMENT.test(leadOf(L, s))) return NO;
       if (fwd) return belowForward(L, f, s, k, html);
-      if (firstRun && answersInside(L, f, c.line, html, firstHopEnd(L, f, c.line, c.end))) return NO;
+      // A container led by its own header block (new Outlook's) is read to its end, as the header path reads the body.
+      if ((firstRun && answersInside(L, f, c.line, html, firstHopEnd(L, f, c.line, c.end)))
+        || (f.header[c.line] && answersInside(L, f, c.line, html, c.end))) return NO;
       return { at: "trailing", start: s, end: k, node: L[s]!.at };
     }
     // Bottom-posted: an introducer and its quote come first, the reply below, nothing quoted after.
