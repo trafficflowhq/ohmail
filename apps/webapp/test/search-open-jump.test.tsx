@@ -709,8 +709,9 @@ describe("a search arrival among letters sharing one Date: Delete files the lett
     ({ text: "Thank you.\nTotal: CHF 10.00", state: "full", html: null, loadedRemoteContent: false,
        unsubscribe: "no_header", unsubscribeUrl: null }) as unknown as MessageBody;
 
-  async function arrive(view: "receipts" | "reads", start: string | null) {
-    const pile = [0, 1, 2, 3, 4].map((i) => letter(i, view === "reads" ? "ohmail/News" : "ohmail/Receipts"));
+  async function arrive(view: "receipts" | "reads", start: string | null, more = 0, { port = 860, at = 3 } = {}) {
+    const folder = view === "reads" ? "ohmail/News" : "ohmail/Receipts";
+    const pile = Array.from({ length: 5 + more }, (_, i) => letter(i, folder));
     const filed: string[] = [];
     let land: (id: string) => void = () => {};
     let show: (v: boolean) => void = () => {};
@@ -743,27 +744,29 @@ describe("a search arrival among letters sharing one Date: Delete files the lett
     // Short cards that bottom out one port; an open card is taller, so opening raises the end.
     const el = host.querySelector<HTMLElement>(".stream")!;
     const order = () => [...el.querySelectorAll<HTMLElement>(".scast[data-sid]")].map((c) => c.dataset.sid!);
-    const height = (sid: string) => (el.querySelector(`.scast.open[data-sid="${sid}"]`) ? 400 : 180);
+    const shrunk = new Map<string, number>();
+    const height = (sid: string) =>
+      (el.querySelector(`.scast.open[data-sid="${sid}"]`) ? 400 : 180) + (shrunk.get(sid) ?? 0);
     const topOf = (sid: string) => {
       let t = 100;
       for (const s of order()) { if (s === sid) return t; t += height(s) + 20; }
       return t;
     };
-    const max = () => Math.max(0, topOf("") + 48 - 860);
+    const max = () => Math.max(0, topOf("") + 48 - port);
     let scrollTop = 0;
-    Object.defineProperty(el, "clientHeight", { configurable: true, get: () => 860 });
-    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => max() + 860 });
+    Object.defineProperty(el, "clientHeight", { configurable: true, get: () => port });
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => max() + port });
     Object.defineProperty(el, "scrollTop", {
       configurable: true, get: () => scrollTop, set: (v: number) => { scrollTop = Math.min(max(), Math.max(0, v)); },
     });
     el.scrollTo = ((o: ScrollToOptions) => { el.scrollTop = o.top ?? 0; el.dispatchEvent(new Event("scroll")); }) as typeof el.scrollTo;
     const real = HTMLElement.prototype.getBoundingClientRect;
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      if (this === el) return rect(0, 860);
+      if (this === el) return rect(0, port);
       if (this.classList.contains("scast") && el.contains(this)) return rect(topOf(this.dataset.sid!) - scrollTop, height(this.dataset.sid!));
       return real.call(this);
     });
-    const press = order()[3]!; // a neighbour above it, and the pile's last below it
+    const press = pile[at]!.id; // a neighbour above it, and the pile's last below it
     const state = () => ({
       open: [...host.querySelectorAll<HTMLElement>(".scast.open")].map((c) => c.dataset.sid),
       card: host.querySelector<HTMLElement>(".scast.cur")?.dataset.sid ?? null,
@@ -773,9 +776,80 @@ describe("a search arrival among letters sharing one Date: Delete files the lett
     const del = () => act(async () => {
       document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
     });
-    return { el, order, press, land: () => act(async () => { land(press); }), state, del,
+    // The cards above the pressed one measure in 85px shorter (their viewers mounting), once.
+    const measureIn = (by = -85) => {
+      for (const sid of order().slice(0, order().indexOf(press))) {
+        shrunk.set(sid, by);
+        el.querySelector(`.scast[data-sid="${sid}"]`)!.setAttribute("data-measured", "");
+      }
+    };
+    const top = (sid: string) => topOf(sid) - scrollTop;
+    return { el, order, press, land: () => act(async () => { land(press); }), state, del, measureIn, top,
       show: (v: boolean) => act(async () => { show(v); }) };
   }
+
+  /** A smooth scroll flies in four frames; `first` runs on its first. Counts the scrolls asked for. */
+  const flights = (el: HTMLElement, first: () => void) => {
+    const f = { asked: 0, flew: false, frame: 0 };
+    el.scrollTo = ((o: ScrollToOptions) => {
+      f.asked += 1;
+      cancelAnimationFrame(f.frame);
+      const to = o.top ?? 0;
+      if (o.behavior !== "smooth") { el.scrollTop = to; el.dispatchEvent(new Event("scroll")); return; }
+      const from = el.scrollTop;
+      let step = 0;
+      const fly = () => {
+        el.scrollTop = from + ((to - from) * ++step) / 4;
+        el.dispatchEvent(new Event("scroll"));
+        if (!f.flew) { f.flew = true; first(); }
+        if (step < 4) f.frame = requestAnimationFrame(fly);
+      };
+      f.frame = requestAnimationFrame(fly);
+    }) as typeof el.scrollTo;
+    return f;
+  };
+
+  for (const view of ["receipts", "reads"] as const) {
+    it(`${view}: cards above that measure in during the flight leave the pressed letter at the landing, and Delete files it`, async () => {
+      const a = await arrive(view, null, 10);
+      const f = flights(a.el, a.measureIn);
+      await a.land();
+      // The stream arms after a paint; the flight waits for it.
+      await vi.waitFor(() => expect(f.flew, "the flight never flew").toBe(true), { timeout: 3000 });
+      await settle(400);
+      expect(a.top(a.press), "the pressed card's head is at the landing, on screen").toBeCloseTo(14, 0);
+      await a.del();
+      expect(a.state()).toEqual({ open: [a.press], card: a.press, row: a.press, filed: [a.press] });
+    });
+  }
+
+  for (const [view, by] of [["receipts", -85], ["reads", -85], ["receipts", 85], ["reads", 85]] as const) {
+    it(`${view}: cards above that measure in ${by}px after a far landing leave the pressed letter at the landing, and Delete files it`, async () => {
+      const a = await arrive(view, null, 20, { port: 300, at: 15 });
+      await a.land();
+      await settle(400);
+      expect(a.top(a.press), "control: the far landing put the card at the landing").toBeCloseTo(14, 0);
+      await act(async () => { a.measureIn(by); });
+      await settle(400);
+      expect(a.top(a.press), "the pressed card's head is at the landing, on screen").toBeCloseTo(14, 0);
+      await a.del();
+      expect(a.state()).toEqual({ open: [a.press], card: a.press, row: a.press, filed: [a.press] });
+    });
+  }
+
+  it("a wheel during the flight is the person's: the landing never pulls the pane back", async () => {
+    const a = await arrive("receipts", null, 10);
+    let asked = 0;
+    const f = flights(a.el, () => {
+      a.el.dispatchEvent(new WheelEvent("wheel", { deltaY: 40 }));
+      a.measureIn();
+      asked = f.asked;
+    });
+    await a.land();
+    await vi.waitFor(() => expect(f.flew).toBe(true), { timeout: 3000 });
+    await settle(400);
+    expect(f.asked - asked, "a scroll asked after the wheel").toBe(0);
+  });
 
   for (const view of ["receipts", "reads"] as const) {
     it(`${view}: the opened card, the card cursor, the selected row and Delete stay on the pressed letter`, async () => {

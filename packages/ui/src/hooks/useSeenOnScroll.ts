@@ -126,6 +126,8 @@ export interface SeenObserver {
    * nothing is marked until a wheel, a touch or a scroll key moves the pane again.
    */
   moved: () => void;
+  /** How many times a hand (wheel, touch, a scroll key) has moved this pane: a change means the person took it. */
+  hands: () => number;
 }
 
 export function useSeenOnScroll({
@@ -162,6 +164,7 @@ export function useSeenOnScroll({
   /** An app move (`moved`): "flying" until the pane is quiet, then "resting" until a hand moves it. */
   const movedRef = useRef<"flying" | "resting" | null>(null);
   const moveRef = useRef<() => void>(() => {});
+  const handsRef = useRef(0);
 
   useEffect(() => {
     const el = root.current;
@@ -173,6 +176,7 @@ export function useSeenOnScroll({
     let settle = 0;
     /** The person's own wheel, touch or scroll key: an app move (`moved`) is over. */
     const handMoves = () => {
+      handsRef.current += 1;
       movedRef.current = null;
       window.clearTimeout(settle);
     };
@@ -520,6 +524,7 @@ export function useSeenOnScroll({
   );
 
   const appMoved = useCallback(() => moveRef.current(), []);
+  const hands = useCallback(() => handsRef.current, []);
 
-  return { observe, userHasDriven, restart, landing, judging, own, moved: appMoved };
+  return { observe, userHasDriven, restart, landing, judging, own, moved: appMoved, hands };
 }
