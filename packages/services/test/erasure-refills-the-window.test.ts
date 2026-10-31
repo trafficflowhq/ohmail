@@ -4,8 +4,8 @@ import { dialect } from "@trafficflow/db/dialect";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
-  accounts, drafts, eraseOwedMailbox, mailboxes, messages, outboundSends, recordChanges, threadNotes, threads,
-  type LedgerTx,
+  PROFILE_FOUND_AUDIT_ACTION, accounts, auditLog, drafts, eraseOwedMailbox, mailboxes, messages, outboundSends, recordChanges,
+  threadNotes, threads, type LedgerTx,
 } from "@trafficflow/db";
 import {
   OhmailEngine, consentPartition, presentationReader, screenerSegments,
@@ -114,7 +114,7 @@ describe("erasing a mailbox on the hosted door", () => {
     expect(rows.length, "the window was not refilled").toBe(4);
   });
 
-  it("keeps what the other mailbox still holds — its reply's words, a shared conversation and its note, its send", async () => {
+  it("keeps what the other mailbox still holds — its reply's words, a shared conversation and its note, its send, its signature's receipt", async () => {
     /* The census's SHARED writes, measured on this door (`erasure-coverage-census.test.ts`
        names this case): each is a row that is not the erased mailbox's alone. */
     const db = await makeTestDb();
@@ -149,6 +149,13 @@ describe("erasing a mailbox on the hosted door", () => {
     const [goneSend] = await db.insert(outboundSends).values({
       accountId, draftId: goneDraft!.id, idempotencyKey: randomUUID(), mintedMessageId: "<g@y>",
     }).returning();
+    // The organizer's found-markers, each naming its copy's signature by receipt.
+    const marker = (mailboxId: string, signatureReceipt: string) => ({
+      accountId, action: PROFILE_FOUND_AUDIT_ACTION, inverse: null,
+      payload: { mailboxId, state: "found", fingerprint: "f".repeat(64), heldForImport: true, signatureReceipt },
+    });
+    const [keptMarker, goneMarker] = await db.insert(auditLog)
+      .values([marker(kept!.id, "1".repeat(32)), marker(gone!.id, "2".repeat(32))]).returning({ id: auditLog.id });
 
     await svc.delete(ctx, gone!.id, { erase: { confirmAddress: goneAddress } });
     expect((await eraseOwedMailbox(db, dialect(db), { accountId, mailboxId: gone!.id, now: () => NOW, maxSteps: 20 })).done).toBe(true);
@@ -170,5 +177,9 @@ describe("erasing a mailbox on the hosted door", () => {
     expect(survivor?.threadId, "the other mailbox's message lost its conversation").toBe(shared!.id);
     const [row] = await db.select().from(mailboxes).where(eq(mailboxes.id, kept!.id));
     expect([row?.status, row?.erasedAt], "the other mailbox's own row was written").toEqual([kept!.status, null]);
+    const payloadOf = async (id: string) => (await db.select({ p: auditLog.payload }).from(auditLog).where(eq(auditLog.id, id)))[0]?.p;
+    expect(await payloadOf(keptMarker!.id), "the other mailbox's marker lost its receipt").toMatchObject({ signatureReceipt: "1".repeat(32) });
+    expect(await payloadOf(goneMarker!.id), "the erased mailbox's marker still names its signature").not.toHaveProperty("signatureReceipt");
+    expect(await payloadOf(goneMarker!.id), "the marker row went with its receipt").toMatchObject({ mailboxId: gone!.id, state: "found" });
   });
 });

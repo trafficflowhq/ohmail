@@ -282,6 +282,10 @@ const SHARED_WRITES: Record<string, SharedWrite> = {
     keeps: "the removed mailbox's own row becomes its tombstone; no other mailbox's row is written",
     hosted: HOSTED_CASE, device: DEVICE_CASE,
   },
+  auditLog: {
+    keeps: "every row stays; only a receipt naming the removed mailbox's signature comes off its own rows, another mailbox's keep theirs",
+    hosted: HOSTED_CASE, device: DEVICE_CASE,
+  },
 };
 
 /** The tables `swept` writes that are neither keyed to the mailbox nor ruled shared. */

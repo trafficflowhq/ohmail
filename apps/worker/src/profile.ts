@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
-  profileImportWriteReleased, askStands, readImportAsk, resolveImportAsk,
+  profileImportWriteReleased, askStands, importAskSignature, readImportAsk, resolveImportAsk,
   type ImportAskRefusal,
   mailboxProfileMirror, mailboxes, recordChanges, recordMailboxProfileChange, profileWritesRecorded, recordProfileWrite,
   type LedgerTx, type Tx, auditAction, fenceErased, fencedAccountWrite, lockAccountRuleKeys,} from "@trafficflow/db";
@@ -23,7 +23,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
-  localSaysWhatAFingerprintSays, ownCopy, profileFingerprint, profileGateView, readOrganizerProfile, tidyOrganizerProfile,
+  localSaysWhatAFingerprintSays, ownCopy, profileFingerprint, profileGateView, readOrganizerProfile, signatureReceipt, tidyOrganizerProfile,
   writeOrganizerProfile,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
   type ProfileReadResult, type ProfileTidyMode, type ProfileLocator, profileLocatorOf, type ProfileScreening,
@@ -45,6 +45,12 @@ const REENCODED = new Set<string>();
  */
 function localSaysWhatTheDocumentSays(local: OrganizerProfilePayload, doc: OrganizerProfileDoc): boolean {
   return localSaysWhatAFingerprintSays(local, profileFingerprint(doc));
+}
+
+/** The found-marker's name for the copy's signature (`signatureReceipt`), when it carries one (blank is none). */
+function signatureOf(doc: OrganizerProfileDoc): { signatureReceipt?: string } {
+  const receipt = signatureReceipt(doc.signature, doc.signatureHtml);
+  return receipt === null ? {} : { signatureReceipt: receipt };
 }
 
 /**
@@ -1141,7 +1147,7 @@ export class OrganizerProfileSync {
 
       // The press first, so the hold blocks below read its answer on this same tick.
       if (expired !== null) await this.closeImportAsk(expired, "timed_out", log);
-      if (ask !== null) await this.answerImportAsk(io, ask.fingerprint, now, log);
+      if (ask !== null) await this.answerImportAsk(io, ask, now, log);
 
       // ── THE NEWER-FORMAT HOLD'S RELEASE VALVES — before the `blockedByNewer` wall ─────────
       //
@@ -1437,9 +1443,10 @@ export class OrganizerProfileSync {
    * throws is not an answer: the ask stands and the next tick tries again, until its TTL.
    */
   private async answerImportAsk(
-    io: ProfileIo, fingerprint: string, now: Date, log: (event: string, detail: Record<string, unknown>) => void,
+    io: ProfileIo, ask: { fingerprint: string; askedAt: Date }, now: Date, log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
     const { deps } = this;
+    const { fingerprint } = ask;
     let read: ProfileReadResult;
     try {
       // THE DOCUMENT THE PERSON WAS SHOWN, by locator: this install's own may be newer beside it.
@@ -1455,12 +1462,15 @@ export class OrganizerProfileSync {
       return;
     }
     const doc = read.doc;
+    // The signature the person's card said the copy's replaces, if it said so (`importAskSignature`).
+    const signatureReplaces = await importAskSignature(deps.db, {
+      accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint, since: ask.askedAt,
+    });
     // Account row shared (exclusive deadlocks writers that read it after the counter); the mailbox row is the merge's.
     let retiredRules = 0;
     await fencedAccountWrite(deps.db, { accountId: deps.accountId }, async (tx) => {
-      await lockAccountRuleKeys(tx as Tx, deps.accountId);
       ({ retiredRules } = await applyOrganizerProfile(tx as LedgerTx, {
-        accountId: deps.accountId, mailboxId: deps.mailboxId, doc, fingerprint, now,
+        accountId: deps.accountId, mailboxId: deps.mailboxId, doc, fingerprint, now, signatureReplaces,
       }));
       // THE SETTINGS DOORBELL: the card waiting on this press re-asks at the drain that carries it.
       await recordChanges(tx as LedgerTx, [
@@ -1855,7 +1865,10 @@ export class OrganizerProfileSync {
                 notifyRules: fact.doc.notifyRules.length,
                 tagNames: fact.doc.tagNames.length,
                 awayResponder: fact.doc.awayResponder === null ? 0 : 1,
+                signature: signatureOf(fact.doc).signatureReceipt === undefined ? 0 : 1,
               },
+              // The copy's signature by its receipt: the offer compares it with this mailbox's own.
+              ...signatureOf(fact.doc),
             }
             : { mailboxId: deps.mailboxId, state: fact.state, fingerprint, heldForImport, v },
           inverse: null,

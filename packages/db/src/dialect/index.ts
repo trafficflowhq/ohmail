@@ -835,16 +835,10 @@ export interface Dialect {
      * where there is nothing to shape: `typoThreshold` makes the index-served typo operator mean
      * that similarity; `preferIndexes` keeps a word read on its GIN where the planner would scan
      * the table — it does not price reading a compressed vector per row, so for a word in most
-     * messages it picks a scan several times slower than the index.
+     * messages it picks a scan several times slower than the index. `statementTimeoutMs` bounds
+     * each later statement of the transaction.
      */
-    searchSession(opts: { typoThreshold?: number; preferIndexes?: boolean }): SQL | null;
-    /**
-     * How many rows the planner expects `statement` to return — from its statistics, reading no
-     * row — or `null` on a store that keeps none worth asking. An ESTIMATE, labelled as one.
-     */
-    estimateRows(db: unknown, statement: SQL): Promise<number | null>;
-    /** {@link estimateRows} for several statements in ONE plan, in their order; `null` each where none is kept. */
-    estimateRowsEach(db: unknown, statements: readonly SQL[]): Promise<Array<number | null>>;
+    searchSession(opts: { typoThreshold?: number; preferIndexes?: boolean; statementTimeoutMs?: number }): SQL | null;
     /**
      * The body's INSERT and its search document's upsert as ONE statement — a data-modifying CTE
      * whose answer is how many body rows the first half wrote — or `null` on a store that has no

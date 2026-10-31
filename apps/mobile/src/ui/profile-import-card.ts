@@ -72,18 +72,37 @@ export function savedRows(rows: readonly MailboxQuestion[]): MailboxQuestion[] {
 
 /**
  * The counts in words, joined by the deck. Zero-count parts vanish. Not `Intl.ListFormat`: Hermes
- * has none, so the phone would read a bare comma list where node reads the conjunction.
+ * has none, so the phone would read a bare comma list where node reads the conjunction. The
+ * signature says it replaces this mailbox's when the offer names one, except with `replacing: false`
+ * (the Replace note speaks of the copy in the mailbox).
  */
-export function countsSaid(counts: ProfileImportCounts): string {
+export function countsSaid(counts: ProfileImportCounts, opts: { replacing?: boolean } = {}): string {
   const parts: string[] = [];
   if (counts.screener > 0) parts.push(Copy.pfiScreenerPart(counts.screener));
   if (counts.rules > 0) parts.push(Copy.pfiRulesPart(counts.rules));
   if (counts.notifyRules > 0) parts.push(Copy.pfiNotifyPart(counts.notifyRules));
   if (counts.tags > 0) parts.push(Copy.pfiTagsPart(counts.tags));
   if (counts.awayResponder) parts.push(Copy.pfiAwayPart);
+  if (counts.signature === true) {
+    parts.push(opts.replacing !== false && counts.signatureReplaces !== undefined ? Copy.pfiSignatureReplacingPart : Copy.pfiSignaturePart);
+  }
   if (parts.length <= 1) return parts.join("");
   if (parts.length === 2) return Copy.pfiListPair(parts[0]!, parts[1]!);
   return Copy.pfiListMany(parts.slice(0, -1).join(", "), parts[parts.length - 1]!);
+}
+
+/**
+ * What Import sends: the fingerprint shown, and the receipt of the signature the card said the
+ * copy's replaces — only then, so no other press replaces a signature on the mailbox.
+ */
+export function importSubject(q: { fingerprint: string; counts: ProfileImportCounts }): { fingerprint: string; signatureReplaces?: string } {
+  const replaces = q.counts.signatureReplaces;
+  return replaces === undefined ? { fingerprint: q.fingerprint } : { fingerprint: q.fingerprint, signatureReplaces: replaces };
+}
+
+/** The done line's word when the signature typed on this mailbox stayed, or null. */
+export function keptSaid(imported: ProfileImportCounts | null): string | null {
+  return imported?.signatureKept === true ? Copy.pfiDoneSignatureKept : null;
 }
 
 /** Who saved it and when. Nothing where the stamp does not parse — a date is never invented. */
@@ -106,7 +125,7 @@ export type CardPhase =
   /** Handed to the organizer (202); the result replaces it when the status read has one. */
   | { kind: "importing"; fingerprint: string; reason: "slow" | "unreachable" | null }
   | { kind: "failed"; message: string | null }
-  | { kind: "imported"; details: string; skippedRules: number };
+  | { kind: "imported"; details: string; skippedRules: number; kept: string | null };
 
 /** How often a press the organizer is finishing is asked about when the doorbell rings nothing. */
 export const IMPORT_STATUS_BEAT_MS = 15 * 1000;

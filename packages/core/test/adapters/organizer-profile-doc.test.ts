@@ -10,6 +10,7 @@ import {
   parseProfileMessage,
   profileFingerprint,
   readOrganizerProfile,
+  signatureReceipt,
   type OrganizerProfilePayload,
 } from "../../src/adapters/organizer-profile.js";
 import { publicPath } from "../../../../test/support/public-root.mjs";
@@ -195,6 +196,18 @@ describe("the field-by-field table covers the format", () => {
  * is restored in a `finally`, and the second case proves the patch really does bite so this one
  * cannot be vacuously green.
  */
+describe("a signature's receipt names text and markup as one value", () => {
+  it("blank text is no signature, blank markup is no markup, and any other difference is a different receipt", () => {
+    for (const none of [null, undefined, "", "  \n "]) expect(signatureReceipt(none, "<p>x</p>"), JSON.stringify(none)).toBeNull();
+    const plain = signatureReceipt("-- \nMila");
+    expect(plain).toMatch(/^[0-9a-f]{32}$/);
+    expect(signatureReceipt("-- \nMila", null)).toBe(plain);
+    expect(signatureReceipt("-- \nMila", "  ")).toBe(plain);
+    expect(signatureReceipt("-- \nMila", "<p>-- <br>Mila</p>")).not.toBe(plain);
+    expect(signatureReceipt("-- \nMila ")).not.toBe(plain);
+  });
+});
+
 describe("the profile fingerprint does not depend on the runtime's collation", () => {
   /** Names chosen so ICU and code-unit order genuinely disagree: case, and a diacritic. */
   const PAYLOAD: OrganizerProfilePayload = {

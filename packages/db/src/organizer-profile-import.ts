@@ -109,7 +109,11 @@ export interface ProfileFoundMarker {
   producer?: { kind: string; version: string };
   counts?: {
     screener: number; rules: number; notifyRules: number; tagNames: number; awayResponder: number;
+    /** 1 when the document carries a signature; absent on a marker an older organizer wrote. */
+    signature?: number;
   };
+  /** `found` only: the document's signature's receipt (`signatureReceipt`), when it carries one. */
+  signatureReceipt?: string;
 }
 
 /**
@@ -179,6 +183,7 @@ export async function latestProfileFoundMarker(
       ...(typeof p.installId === "string" ? { installId: p.installId } : {}),
       ...(p.producer && typeof p.producer === "object" ? { producer: p.producer as { kind: string; version: string } } : {}),
       ...(p.counts && typeof p.counts === "object" ? { counts: p.counts as ProfileFoundMarker["counts"] } : {}),
+      ...(typeof p.signatureReceipt === "string" ? { signatureReceipt: p.signatureReceipt } : {}),
     };
   }
   return null;
@@ -315,7 +320,10 @@ export async function recordProfileImportResolution(
 
 /** What an import ARRIVED with, carried on its `imported` resolution for the card to read back. */
 export interface ProfileImportResult {
-  imported: { screener: number; rules: number; notifyRules: number; tags: number; awayResponder: boolean };
+  imported: {
+    screener: number; rules: number; notifyRules: number; tags: number; awayResponder: boolean; signature?: boolean;
+    signatureKept?: boolean;
+  };
   skippedRules: number;
   /** Local rule rows the import retired (`applyOrganizerProfile`); absent from an older row. */
   retiredRules?: number;

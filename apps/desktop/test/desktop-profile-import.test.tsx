@@ -229,6 +229,17 @@ describe("the restore card over the bridge", () => {
     expect(card()!.textContent).toContain("Your settings are back");
   });
 
+  it("an offer that replaces the signature on this mailbox says so, and the press carries its receipt to the engine", async () => {
+    const receipt = "7".repeat(32);
+    candidate = { ...candidate, counts: { screener: 1, rules: 2, notifyRules: 0, tags: 1, awayResponder: false, signature: true, signatureReplaces: receipt } };
+    await mountCard();
+    expect(card()!.textContent).toContain("your signature, replacing the one on this mailbox now");
+    await click(button("Import settings"));
+    expect(asked.filter((a) => a.method === "POST")).toEqual([
+      { method: "POST", url: profileImportPath(MB.id), body: { fingerprint: FINGERPRINT, signatureReplaces: receipt } },
+    ]);
+  });
+
   it("Not now records the durable dismissal, keyed to the content it dismisses", async () => {
     await mountCard();
     await click(button("Not now"));

@@ -51,8 +51,11 @@ export const ADDRESS_DIRECTIONS: readonly AddressDirection[] = ["any", "from", "
  */
 export type AddressArchive =
   | { state: "searching" }
-  /** `importing`: the store has not taken in the whole mailbox, so `total` is of the mail synced so far. */
-  | { state: "ready"; items: EngineMessage[]; total: number; direction: AddressDirection; importing: boolean }
+  /**
+   * `importing`: the store has not taken in the whole mailbox, so `total` is of the mail synced so far.
+   * `atLeast`: the store counted up to its cap, so `total` is a lower bound.
+   */
+  | { state: "ready"; items: EngineMessage[]; total: number; direction: AddressDirection; importing: boolean; atLeast?: true }
   /**
    * `retry` hangs off THIS arm and no other, so "ask again" cannot be offered where there is
    * nothing to ask again: `unavailable` means there is no archive behind this client at all and
@@ -251,6 +254,7 @@ export function useAddressView({
                 total: outcome.total,
                 direction: outcome.direction,
                 importing: outcome.importing === true,
+                ...(outcome.totalExact === false ? { atLeast: true as const } : {}),
               }
               : outcome.state === "failed"
                 ? {

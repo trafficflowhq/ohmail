@@ -194,7 +194,8 @@ export function AddressView({
         </button>
       </>
     ) : view.coverage === "complete" ? (
-      t(archive.importing ? "addressArchiveSynced" : "addressArchive", { count: archive.total })
+      t(archive.importing ? (archive.atLeast ? "addressArchiveSyncedAtLeast" : "addressArchiveSynced")
+        : archive.atLeast ? "addressArchiveAtLeast" : "addressArchive", { count: archive.total })
     ) : direction === "to" ? (
       <>
         {t("addressArchiveNoRecipients")}{" "}
@@ -202,7 +203,8 @@ export function AddressView({
       </>
     ) : (
       <>
-        {t(archive.importing ? "addressArchiveBySenderSynced" : "addressArchiveBySender", { count: archive.total })}{" "}
+        {t(archive.importing ? (archive.atLeast ? "addressArchiveBySenderSyncedAtLeast" : "addressArchiveBySenderSynced")
+          : archive.atLeast ? "addressArchiveBySenderAtLeast" : "addressArchiveBySender", { count: archive.total })}{" "}
         <Gloss placement="meta" text={t("addressArchiveBySenderWhy")} />
       </>
     );

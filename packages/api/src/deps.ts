@@ -806,6 +806,8 @@ export interface ApiDeps {
   press?: PressContext | null;
   /** The desktop engine's own door only: a search a newer one replaced stops (`ServiceContext.searchSupersede`). */
   searchSupersede?: SearchSupersede;
+  /** Set by `withSession`: how long resolving the request's session took, in ms (`search_timing`'s `session`). */
+  sessionMs?: number;
   /**
    * The platform scheduler's own credential (`CRON_SECRET`), independent of the alerting block.
    * Absent or `null` ⇒ this host has no cron credential; a scheduled route then falls back to

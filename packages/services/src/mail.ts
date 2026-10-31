@@ -205,6 +205,7 @@ export {
   type SearchOptions, type SearchFilters, type SearchResult, type Facets, type SearchSort, type SearchParts,
   type AddressSearchDirection, type AddressSearchOptions, type AddressSearchResult,
 } from "./search-service.js";
+export { SearchTiming, SEARCH_TIMING_PHASES, type SearchTimingPhase, type SearchTimingFacts } from "./search-timing.js";
 export {
   PrivacyService, makePrivacyService, nodeRemoteFetch, makeNodeRemoteFetch,
   PROXY_URL_MAX_CHARS, proxyImageRefusal,

@@ -672,6 +672,18 @@ export function profileFingerprint(
   return version === 1 ? hash : `${version}:${hash}`;
 }
 
+/**
+ * A SIGNATURE'S RECEIPT — an opaque name for one sign-off, text and markup together, or null for
+ * none (text empty after trimming; blank markup is no markup). The organizer's found-marker names the
+ * copy's; an Import offer names the one on the mailbox the copy's would replace, and only a press
+ * that sends that receipt back replaces it (`applyOrganizerProfile`).
+ */
+export function signatureReceipt(signature: string | null | undefined, signatureHtml?: string | null): string | null {
+  if (signature == null || signature.trim().length === 0) return null;
+  const markup = signatureHtml != null && signatureHtml.trim().length > 0 ? signatureHtml : null;
+  return createHash("sha256").update(JSON.stringify([signature, markup]), "utf8").digest("hex").slice(0, 32);
+}
+
 /** Which canonical form a fingerprint was taken in. An untagged one is v1, by construction. */
 export function profileFingerprintVersion(fingerprint: string): number {
   const at = fingerprint.indexOf(":");

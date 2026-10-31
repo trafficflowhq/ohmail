@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { messages } from "@trafficflow/db";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
+import { createLogger } from "@trafficflow/core/mail";
 import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
@@ -42,6 +43,39 @@ describe("GET /search — hybrid search endpoint", () => {
     expect(body.facets.folder.INBOX).toBe(1);
     expect(body.facets).toHaveProperty("sender");
     expect(body.facets.unread).toEqual({ true: 1, false: 0 });
+  });
+
+  it("every answer says where its time went in Server-Timing and one log line, never what was asked", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mb = await seedMailbox(db, { accountId: s.accountId });
+    const inv = await seedMessage(db, {
+      accountId: s.accountId, mailboxId: mb, folder: "INBOX",
+      subject: "Invoice from Anna", fromAddress: "anna@acme-com.example", unread: true, date: FIXED_NOW,
+    });
+    await seedBody(db, { messageId: inv.id, text: "Please pay the invoice." });
+    const lines: string[] = [];
+    const logged = { ...deps, logger: createLogger({ service: "api", level: "debug", sink: (l: string) => { lines.push(l); } }) };
+    for (const [path, part] of [["/search?q=invoice&parts=page", "page"], ["/search?q=invoice&parts=summary", "summary"],
+      ["/search?address=anna%40acme-com.example&direction=from", "address"]] as const) {
+      lines.length = 0;
+      const res = await H(req("GET", path, { bearer: s.token }), logged);
+      expect(res.status).toBe(200);
+      const header = res.headers.get("server-timing") ?? "";
+      // Each entry a phase with its duration, or a closed fact.
+      for (const entry of header.split(", ")) {
+        expect(entry, header).toMatch(/^(session|acquire|flight|dto|total);dur=\d+(\.\d)?$|^(part;desc=(page|summary|estimate|both|address)|tier;desc=(exact|similar)|cut;desc=[01]|items;desc=\d+|statements;desc=\d+)$/);
+      }
+      expect(header).toContain(`part;desc=${part}`);
+      expect(header).toMatch(/total;dur=/);
+      const line = lines.find((l) => l.includes("search_timing"));
+      expect(line, lines.join("\n")).toBeDefined();
+      expect(JSON.parse(line!)).toMatchObject({ searchPart: part, searchItems: part === "summary" ? 0 : 1 });
+      expect(JSON.parse(line!).totalMs).toEqual(expect.any(Number));
+      for (const told of [header, line!]) {
+        for (const secret of ["invoice", "anna", "acme", inv.id, s.accountId]) expect(told.toLowerCase()).not.toContain(secret.toLowerCase());
+      }
+    }
   });
 
   it("parts=estimate answers the candidates' count and facets with no rows; an unknown part is refused", async () => {

@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { exactAsked, showSimilar, substringOpen, type SearchTier } from "@trafficflow/core/search-rank";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
-import { accountSettings, messageSearch, messages } from "@trafficflow/db";
+import { accountSettings, messageSearch, messages, readFlightOf } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
 import { boolLiteral, dialect, pgOnly, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
@@ -92,6 +92,27 @@ const SEARCH_SET_DATED_CUTS = 4;
 const SEARCH_SET_WALK_FACTOR = 20;
 /** How many senders the sender facet returns. */
 const SENDER_FACET_LIMIT = 10;
+/**
+ * THE SERVER'S COUNTS READ AT MOST THIS MANY DOCUMENTS A BRANCH. Up to it the count and the facets
+ * are exact; past it the count is "at least" and the facets are the page's candidates'. A broad
+ * word's whole set was read for its count: about a million buffers, 4-7 s cold.
+ */
+const SUMMARY_EXACT_CAP = 2_000;
+/** The exact count's own time box, transaction-local; past it the summary answers as past the cap. */
+const SUMMARY_EXACT_TIMEOUT_MS = 1_500;
+/** The address view counts exactly up to this many letters, then says "at least". */
+const ADDRESS_EXACT_CAP = 10_000;
+/**
+ * NEWEST FIRST walks at most this many of the newest letters after its cursor, each asked once,
+ * before it reads the query's matches as one set of at most {@link SUMMARY_EXACT_CAP}
+ * ({@link SearchService.newestPage}).
+ */
+const NEWEST_WALK = 2_000;
+/**
+ * Under a filter a branch reads at most this many of its documents to find the
+ * {@link SUMMARY_EXACT_CAP} the filter keeps: a filter that keeps fewer is counted exactly up to here.
+ */
+const FILTERED_SCAN = 20_000;
 
 export interface SearchFilters {
   folder?: string;            // a Destination (folder_state.desiredFolder, else native/INBOX)
@@ -143,11 +164,13 @@ export const SEARCH_QUERY_MAX_CHARS = 200;
  */
 
 /**
- * WHAT ONE ANSWER CARRIES. `both` (the default) is the page, the exact `total` and the facets;
- * `page` is the first page alone, so a search answers at index speed — `total` is then the
- * fused candidates' count, exact only when `totalExact`; `estimate` is the count and facets over
- * those candidates with no rows — exact when `totalExact`, else `totalEstimate` says about how
- * many; `summary` is the exact `total` and facets, asked only when the estimate was not exact.
+ * WHAT ONE ANSWER CARRIES. `both` (the default) is the page, the `total` and the facets; `page` is
+ * the first page alone, so a search answers at index speed — `total` is then the fused candidates'
+ * count, exact only when `totalExact`; `estimate` is the count and facets over those candidates
+ * with no rows, exact when `totalExact`; `summary` is the count and facets over the match set,
+ * asked only when the estimate was not exact. On the server a summary is exact up to
+ * {@link SUMMARY_EXACT_CAP} matches; past it `total` is a lower bound and the facets are the
+ * candidates' (`totalExact` false).
  */
 export const SEARCH_PARTS = ["both", "page", "summary", "estimate"] as const;
 export type SearchParts = (typeof SEARCH_PARTS)[number];
@@ -171,19 +194,21 @@ export interface SearchOptions {
 
 export interface SearchResult {
   items: MessageDTO[];
-  /** `null` when only the page was asked for (`parts: "page"`); over the candidates for `estimate`. */
+  /**
+   * `null` when only the page was asked for (`parts: "page"`), and on a summary past its cap: the
+   * estimate's, over the page's candidates, stand. Over the candidates for `estimate`.
+   */
   facets: Facets | null;
   /** How many messages match, over the tier being returned — never over both tiers. */
   total: number;
   /** WHICH TIER THIS ANSWER IS: `exact` literal matches, or `similar` typo guesses. Never mixed. */
   tier: SearchTier;
-  /** `false` when `total` is a lower bound: the page alone was asked for and an arm was cut. */
-  totalExact: boolean;
   /**
-   * With `parts: "estimate"` and a cut arm: about how many match — the planner's estimate for
-   * each cut arm, the largest of them, read from statistics and no row. Never on a page.
+   * `false` when `total` is a lower bound: an arm was cut, or the summary passed its cap. Then the
+   * facets, when present, count only the page's candidates. No count is ever read from planner
+   * statistics: they cover every account's mail.
    */
-  totalEstimate?: number;
+  totalExact: boolean;
   /** This answer's server time in milliseconds. */
   ms: number;
   /** The next page's cursor, or `null` on the last page (always `null` for `summary`). */
@@ -220,21 +245,19 @@ interface SearchPage {
   importing?: true;
 }
 
-/** The counts over the whole match set. */
+/** The counts over the match set: exact unless `exact` is false (past the cap, a lower bound). */
 interface SearchSummary {
   total: number;
-  facets: Facets;
+  /** `null` past the cap when the candidates' facets were not asked ({@link SearchService.summary}). */
+  facets: Facets | null;
   tier: SearchTier;
+  exact: boolean;
   indexed?: { done: number; total: number };
   importing?: true;
 }
 
 /** The counts over the fused candidates: the whole match set exactly when no arm was cut. */
-interface SearchEstimate extends SearchSummary {
-  exact: boolean;
-  /** When cut: the planner's estimate of the match set, as the page's. */
-  estimate: number | null;
-}
+type SearchEstimate = SearchSummary & { facets: Facets };
 
 export interface Facets {
   /** desiredFolder (else native locator, else INBOX) → count. */
@@ -282,6 +305,8 @@ export interface AddressSearchResult {
   items: MessageDTO[];
   /** How many messages match, over the whole archive rather than over this page. */
   total: number;
+  /** `false` past {@link ADDRESS_EXACT_CAP}: `total` is then a lower bound. Absent: exact. */
+  totalExact?: false;
   /**
    * WHICH DIRECTION THIS ANSWER IS ABOUT — on the wire rather than inferred: a client that fell
    * back to `from` against an older server labels its rows by this field, not by what it asked.
@@ -351,8 +376,67 @@ function storeIndexes(db: Db): Promise<{ readonly trigram: boolean; readonly wor
       })).then(() => indexFacts.get(key) ?? NO_INDEXES);
 }
 
+type Transaction = <R>(f: (t: unknown) => Promise<R>) => Promise<R>;
+
+/**
+ * A SEARCH'S READ-ONLY TRANSACTION: on a pooled handle its one flight (`readFlightOf`: begin, the
+ * settings and the first read in one write, commit after the answer), else the handle's own. With
+ * `ctx.timing`, the wait for the connection is `acquire`, the reads less their DTOs `flight`, and
+ * every statement is counted, begin and commit included.
+ */
+function txOf(ctx: ServiceContext): Transaction {
+  const handle = (readFlightOf(ctx.db as unknown as object) ?? ctx.db) as unknown as { transaction: Transaction };
+  const timing = ctx.timing;
+  if (timing === undefined) return (f) => handle.transaction(f);
+  return async (f) => {
+    const t0 = performance.now();
+    return handle.transaction(async (t) => {
+      const t1 = performance.now();
+      timing.add("acquire", t1 - t0);
+      const dto0 = timing.get("dto");
+      let n = 2;
+      try {
+        return await f(counted(t, () => { n++; }));
+      } finally {
+        timing.add("flight", performance.now() - t1 - (timing.get("dto") - dto0));
+        timing.countStatements(n);
+      }
+    });
+  };
+}
+
+/** `t` with each statement it is asked for counted: `execute`, a `select` builder, and inside a nested transaction. */
+function counted(t: unknown, tick: () => void): unknown {
+  return new Proxy(t as object, {
+    get(target, prop) {
+      const v = Reflect.get(target, prop) as unknown;
+      if (typeof v !== "function") return v;
+      const fn = v as (...a: unknown[]) => unknown;
+      if (prop === "execute" || prop === "select") return (...a: unknown[]) => { tick(); return fn.apply(target, a); };
+      if (prop === "transaction") {
+        return (f: (inner: unknown) => unknown, ...rest: unknown[]) => fn.call(target, (inner: unknown) => f(counted(inner, tick)), ...rest);
+      }
+      return fn.bind(target);
+    },
+  });
+}
+
+/** The DTO phase's sink for a materializing read. */
+function dtoOf(ctx: ServiceContext): { onDto?: (ms: number) => void } {
+  const timing = ctx.timing;
+  return timing === undefined ? {} : { onDto: (ms) => timing.add("dto", ms) };
+}
+
+/** A statement the server stopped at its `statement_timeout` (57014). */
+function isStatementTimeout(err: unknown): boolean {
+  const e = err as { code?: unknown; cause?: { code?: unknown } } | null;
+  return e?.code === "57014" || e?.cause?.code === "57014";
+}
+
 /** Wheres {@link SearchService.whereSql} wrote with a filter: there a bounded arm reads as it always did. */
 const filteredWheres = new WeakSet<SQL>();
+/** Wheres that name the folder (`fs`): a read under one joins `folder_state`. */
+const folderWheres = new WeakSet<SQL>();
 
 /**
  * What the store says before a search composes its arms: the backfill marker, pg_trgm, the
@@ -380,6 +464,8 @@ interface Branch {
   readonly set?: readonly SQL[];
   /** Over the account's documents: left out while it has none ({@link SearchService.arms}). */
   readonly doc?: true;
+  /** This account's documents in the index `raw` reads: the word index's key, else the account. */
+  readonly keyRead?: SQL;
 }
 /**
  * An arm: its branches (one per index), cut at its top-K after they are merged. `ranked`: ordered
@@ -519,8 +605,12 @@ export class SearchService {
     // account too, so an index that leads with the account reads one account's candidates. A
     // store whose word index is over the rows keeps every row, document or not.
     const documents = d.search.document({ subject: "", people: "", body: "" }) !== null;
-    const own = (b: SearchArm): Branch =>
-      documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank, raw: b.pred, doc: true } : b;
+    const account = sql`s.account_id = ${ctx.accountId}`;
+    const own = (b: SearchArm, keyRead: SQL = account): Branch =>
+      documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank, raw: b.pred, doc: true, keyRead } : b;
+    // A word branch's own documents on the account-keyed word index, where the server has it.
+    const wordRead = d.name === "pg" && documents && store.words && this.opts.localStore !== true ? d.search.wordKey(ctx.accountId) ?? account : account;
+    const ownWords = (b: SearchArm): Branch => own(b, wordRead);
     if (tier === "similar") {
       // A guess never holds a word the reader excluded, anywhere in the letter.
       const held = (b: SearchArm, none: SQL | undefined): SearchArm => (none ? { pred: sql`(${b.pred} and ${none})`, rank: b.rank } : b);
@@ -552,8 +642,8 @@ export class SearchService {
     const rank = words.text.rank;
     const across = words.across === true;
     const text = alone
-      ? alone.flatMap((g) => [{ ...own({ pred: g.pred, rank }), pos: g.letter }, ...(g.whole ? [] : [{ ...held(own({ pred: g.letter, rank })), pos: g.letter }])])
-      : [keyed(held(own(words.text)), keep !== undefined ? null : across ? d.search.letterTerms(q) : [words.text.pred])];
+      ? alone.flatMap((g) => [{ ...ownWords({ pred: g.pred, rank }), pos: g.letter }, ...(g.whole ? [] : [{ ...held(ownWords({ pred: g.letter, rank })), pos: g.letter }])])
+      : [keyed(held(ownWords(words.text)), keep !== undefined ? null : across ? d.search.letterTerms(q) : [words.text.pred])];
     const on = key !== null ? { key } : {};
     // The query's characters inside the file names, where the store reads them apart: a branch of the
     // arm that reads a body word's start (the part arm once it opens, else the text arm), so a letter its
@@ -562,7 +652,7 @@ export class SearchService {
     const names = named === null ? [] : [keyed(own(named), [sql`(s.account_id = ${ctx.accountId} and ${named.pred})`])];
     const part = exactAsked(q) ? null : d.search.partWords(q);
     const out: Arm[] = [
-      { name: "head", ranked: true, branches: [held(own(words.head)), ...(legacy ? [bare(legacy.words.head)] : [])] },
+      { name: "head", ranked: true, branches: [held(ownWords(words.head)), ...(legacy ? [bare(legacy.words.head)] : [])] },
       {
         name: "text", ranked: false,
         ...(across && d.name === "pg" ? { bounded: true, ...on } : key !== null && !q.includes('"') ? { bounded: true, keyedOnly: true, ...on } : {}),
@@ -579,17 +669,17 @@ export class SearchService {
       // No set: a common word's prefix over every account would be read.
       out.push({
         name: "part", ranked: false, ...(d.name === "pg" ? { bounded: true, ...on } : {}),
-        branches: [own(part.text), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
+        branches: [ownWords(part.text), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
       });
     } else if (part !== null && d.name === "pg") {
       out.push({
         name: "part", ranked: false, bounded: true, ...on,
-        branches: [keyed(own(part.head), [part.head.pred]), keyed(own(part.text), [part.text.pred]), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
+        branches: [keyed(ownWords(part.head), [part.head.pred]), keyed(ownWords(part.text), [part.text.pred]), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
       });
     } else if (part !== null) {
       out.push(
-        { name: "part-head", ranked: false, branches: [own(part.head), ...(old ? [bare(old.head)] : [])] },
-        { name: "part-text", ranked: false, branches: [own(part.text), ...(old ? [bare(old.text)] : [])] },
+        { name: "part-head", ranked: false, branches: [ownWords(part.head), ...(old ? [bare(old.head)] : [])] },
+        { name: "part-text", ranked: false, branches: [ownWords(part.text), ...(old ? [bare(old.text)] : [])] },
       );
     }
     if (substringOpen(q)) {
@@ -931,26 +1021,6 @@ export class SearchService {
   }
 
   /**
-   * THE ESTIMATE of a cut match set, off the index and the statistics: an arm under its cut is
-   * counted exactly by its own size, a cut arm by the planner's expected rows; the union is at
-   * least its largest arm and at least the candidates it fused, and at most the planner's reading
-   * of the mailbox under the filters (a join's estimate can exceed the table it reads: "about
-   * 75,246" of 74,003). Every cut arm and the mailbox are asked in ONE plan. Never asked for the
-   * typo tier: `<%` has no selectivity estimator, so its planner rows are a default, and a cut
-   * typo arm is said as "at least" until the exact count lands.
-   */
-  private async estimateOf(
-    ctx: ServiceContext, d: Dialect, where: SQL, arms: readonly Arm[], sizes: readonly number[], k: number, candidates: number,
-  ): Promise<number> {
-    const cut = arms.flatMap((_, i) => (sizes[i]! < k ? [] : [i]));
-    const mailbox = sql`select m.id as id from messages m left join folder_state fs on fs.message_id = m.id where ${where}`;
-    const read = await d.search.estimateRowsEach(ctx.db, [...cut.map((i) => this.unionSql(where, [arms[i]!])), mailbox]);
-    const about = Math.max(candidates, ...arms.map((_, i) => (cut.includes(i) ? read[cut.indexOf(i)] ?? sizes[i]! : sizes[i]!)));
-    const upper = read[cut.length] ?? null;
-    return upper === null ? about : Math.max(candidates, Math.min(about, upper));
-  }
-
-  /**
    * ONE PAGE — the first response, with nothing counted on its path. Relevance: the arms' top-K,
    * fused by reciprocal rank and paged by `(score, date, id)`. A chosen order: the union of the
    * arms' predicates, walked by its own keyset. The tier is the exact tier unless it has no row.
@@ -973,8 +1043,10 @@ export class SearchService {
       }
       let t: SearchTier = cursor?.t ?? "exact";
       let rows = await this.pageRows(ctx, db, d, q, t, where, sort, limit, cursor, built);
-      // In every order the tier the first relevance page answers: a cut exact tier with no row stays.
-      if (cursor === null && t === "exact" && rows.items.length === 0 && !(await this.cutEmpty(ctx, db, d, q, where, limit, built))) {
+      // The typo tier only when the exact tier is truly empty: never beside a cursor, and a cut exact
+      // tier with no row stays exact.
+      if (cursor === null && t === "exact" && rows.items.length === 0 && rows.next === null
+        && !(await this.cutEmpty(ctx, db, d, q, where, limit, built))) {
         t = "similar";
         rows = await this.pageRows(ctx, db, d, q, t, where, sort, limit, null, built);
       }
@@ -1019,7 +1091,7 @@ export class SearchService {
       limit ${limit + 1}`,
       keys: ["score", "t", "fused", ...e.sizeNames, ...s.sizeNames],
       order: sql`p.score desc, ${messages.date} desc nulls last, ${messages.id} desc`,
-    });
+    }, dtoOf(ctx));
     if (rows.length > 0 && Number(rows[0]!.keys[1]) === 2) {
       return { tier: "exact", got: { items: [], next: null, cut: true, candidates: 0 } };
     }
@@ -1064,7 +1136,7 @@ export class SearchService {
     // The page's arms read newest first off the History index or their own GIN — never a table
     // scan, which the planner picks for a word in a large share of the store (it does not price
     // the per-row vector read), so the page runs in the session that prices the scan out.
-    const read = (source: MaterializeSource) => materializePage(db as Db, ctx.accountId, source);
+    const read = (source: MaterializeSource) => materializePage(db as Db, ctx.accountId, source, dtoOf(ctx));
     const dateOf = (dto: MessageDTO): number | null => millisOf(dto.date);
     if (sort === "relevance") {
       if (cursor !== null && cursor.k !== "r") throw new ServiceError("validation_failed", 400, "cursor belongs to another order");
@@ -1097,7 +1169,12 @@ export class SearchService {
       throw new ServiceError("validation_failed", 400, "cursor belongs to another order");
     }
     const c = cursor as OrderedCursor | null;
-    const { statement, key } = this.orderedPage(d, where, arms, sort, limit, c);
+    // Newest first reads within a bound on the server where it lists exactly the rows every match
+    // read whole lists: a query with no excluded word ({@link newestPage}). Every other order, and
+    // newest first beside an excluded word, reads every match ({@link orderedPage}).
+    const { statement, key } = sort === "date_desc" && this.bounds(d) && !arms.some((a) => SearchService.capped(a))
+      ? this.newestPage(d, where, this.whereSql(d, ctx.accountId, {}), arms, limit, c)
+      : this.orderedPage(d, where, arms, sort, limit, c);
     const order = sort === "date_asc" ? sql`${messages.date} asc nulls last, ${messages.id} asc`
       : key === null ? sql`${messages.date} desc nulls last, ${messages.id} desc`
       : sql`p.k asc, ${messages.date} desc nulls last, ${messages.id} desc`;
@@ -1112,6 +1189,52 @@ export class SearchService {
       // A date order walks the whole match set, so its page says nothing about the count.
       cut: true,
       candidates: page.length,
+    };
+  }
+
+  /**
+   * NEWEST FIRST ON THE SERVER, within a bound, for a query with no excluded word: the page
+   * {@link orderedPage} reads, row for row. The newest {@link NEWEST_WALK} letters after the cursor
+   * are walked in order, each asked the filters and every branch once; a walk that holds the page is
+   * the page. Short of it, the query's matches are read as one set ({@link matchSet}), every match
+   * after the cursor while the set is within its cap; past the cap, each arm's newest matches after
+   * the cursor, as the relevance page reads them, every one of an arm's newest since no branch asks
+   * an excluded word of its rows. The page is the newest of the three.
+   */
+  private newestPage(
+    d: Dialect, where: SQL, base: SQL, arms: readonly Arm[], limit: number, c: OrderedCursor | null,
+  ): { statement: SQL; key: null } {
+    const past = c === null ? null : afterDateDesc(d, c.d, c.i, sql`m.id`);
+    const at = past === null ? where : sql`${where} and ${past}`;
+    const from = past === null ? base : sql`${base} and ${past}`;
+    const need = limit + 1;
+    if (filteredWheres.has(where)) filteredWheres.add(at);
+    if (folderWheres.has(where)) folderWheres.add(at);
+    const branches = arms.flatMap((a) => a.branches);
+    const docOnly = branches.every((b) => b.raw !== undefined);
+    const hit = docOnly
+      ? sql`exists (select 1 from message_search s where s.message_id = w.id and (${sql.join(branches.map((b) => b.raw ?? b.pred), sql` or `)}) limit 1 offset 0)`
+      : sql`exists (select 1 from messages m left join message_search s on s.message_id = m.id
+          left join message_bodies b on b.message_id = m.id where m.id = w.id and (${sql.join(branches.map((b) => b.pred), sql` or `)}) limit 1 offset 0)`;
+    // The History index either way. A filter is asked of the letters walked, whatever it keeps.
+    const newest = sql`select m.id as id, m.date as date from messages m where ${from}
+          order by m.date desc nulls last, m.id desc limit ${NEWEST_WALK}`;
+    const walked = filteredWheres.has(where)
+      ? sql`select n.id as id, n.date as date from (${newest}) n join messages m on m.id = n.id left join folder_state fs on fs.message_id = m.id where ${at}`
+      : newest;
+    const dir = sql`date desc nulls last, id desc`;
+    const short = sql`(select count(*) from ow) < ${need}`;
+    const set = this.matchSet(at, branches, { gate: short });
+    // Past the set's cap (a word dense in older mail): each arm's newest matches, as the relevance page reads them.
+    const arm = (i: number): SQL => sql.raw("oa" + String(i));
+    const reads = arms.map((a, i) => sql`, ${arm(i)} as (select * from (${this.armSql(at, { ...a, ranked: false }, need, need)}) a
+      where ${short} and ${set.over})`);
+    const rows = arms.map((_, i) => sql` union select id, date from ${arm(i)}`);
+    return {
+      key: null,
+      statement: sql`with ow as (select w.id as id, w.date as date from (${walked}) w where ${hit} order by ${dir} limit ${need}), ${set.named}${sql.join(reads, sql``)},
+        found as (select id, date from ow union select id, date from ur where not (${short} and ${set.over})${sql.join(rows, sql``)})
+        select f.id as id, f.date as date, null as k from (select id, date from found order by ${dir} limit ${need}) f`,
     };
   }
 
@@ -1147,36 +1270,150 @@ export class SearchService {
    * THE SECOND RESPONSE — `total` and the facets over the whole match set of the tier the page
    * answered in, and the backfill's progress while it runs. Off the first page's path.
    */
-  async summary(ctx: ServiceContext, opts: SearchOptions): Promise<SearchSummary> {
+  async summary(ctx: ServiceContext, opts: SearchOptions, pastCap = false): Promise<SearchSummary> {
     const q = SearchService.termOf(opts.q);
-    if (!q) return { total: 0, facets: emptyFacets(), tier: "exact" };
+    if (!q) return { total: 0, facets: emptyFacets(), tier: "exact", exact: true };
     const d = dialect(ctx.db);
     const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
-    return this.session(ctx, d, async (db, built) => {
+    const limit = SearchService.pageOf(opts.limit);
+    const counts = (whole: boolean) => this.session(ctx, d, async (db, built) => {
       let tier: SearchTier = "exact";
-      let counted = await this.facets(ctx, db, d, this.unionSql(where, this.arms(ctx, d, q, "exact", built)));
+      const count = (t: SearchTier) => (whole ? this.wholeFacets(ctx, db, d, where, this.arms(ctx, d, q, t, built), t, limit, pastCap)
+        : this.candidateFacets(ctx, db, d, where, this.arms(ctx, d, q, t, built), t, limit));
+      let counted = await count(tier);
       await ctx.searchSupersede?.turn();
       // The page's tier: a first page cut with no row stayed exact, so its count is this one, 0.
-      if (showSimilar(counted.total) && !(await this.cutEmpty(ctx, db, d, q, where, SearchService.pageOf(opts.limit), built))) {
+      if (counted.exact && showSimilar(counted.total) && !(await this.cutEmpty(ctx, db, d, q, where, limit, built))) {
         tier = "similar";
-        counted = await this.facets(ctx, db, d, this.unionSql(where, this.arms(ctx, d, q, "similar", built)));
+        counted = await count(tier);
         await ctx.searchSupersede?.turn();
       }
-      const { total, facets } = counted;
+      const { total, facets, exact } = counted;
       const indexed = await this.indexing(ctx, db, built);
-      return { total, facets, tier, ...(indexed ? { indexed } : {}) };
-    }, true);
+      return { total, facets, tier, exact, ...(indexed ? { indexed } : {}) };
+    }, true, this.bounds(d));
+    try {
+      return await counts(true);
+    } catch (err) {
+      // Out of its time box: the candidates' count and facets, in a session of their own.
+      if (!isStatementTimeout(err)) throw err;
+      await ctx.searchSupersede?.turn();
+      return counts(false);
+    }
+  }
+
+  /** Whose counts are bounded: the server's store. The desktop's own and the phone's read as they did. */
+  private bounds(d: Dialect): boolean {
+    return d.name === "pg" && this.opts.localStore !== true;
+  }
+
+  /**
+   * THE COUNT AND FACETS OVER ONE TIER'S MATCH SET, in one statement and within a bound on the
+   * server ({@link matchSet}; the summary's session holds it to {@link SUMMARY_EXACT_TIMEOUT_MS}).
+   * Up to {@link SUMMARY_EXACT_CAP} matches they are exact; past it the count is of the matches
+   * read, said as "at least", with no facets — the estimate's, over the page's candidates, stand —
+   * unless `pastCap` asks the candidates' facets here (an answer with no estimate before it).
+   */
+  private async wholeFacets(
+    ctx: ServiceContext, db: unknown, d: Dialect, where: SQL, arms: readonly Arm[], tier: SearchTier, limit: number, pastCap = false,
+  ): Promise<{ total: number; facets: Facets | null; exact: boolean }> {
+    if (!this.bounds(d)) return { ...(await this.facets(ctx, db, d, this.unionSql(where, arms))), exact: true };
+    const { named, over } = this.matchSet(where, arms.flatMap((a) => a.branches), { facets: true });
+    const read = await this.facets(ctx, db, d, sql`select unread, att, date, addr, folder from ur where not ${over}`, {
+      named, shaped: true,
+      extras: [sql`${d.castInt(sql`case when ${over} then 1 else 0 end`)} as x0`, sql`${d.castInt(sql`(select count(*) from ur)`)} as x1`],
+    });
+    if (read.extras[0] === 0) return { total: read.total, facets: read.facets, exact: true };
+    // Past the cap: at least the matches read; their facets are not counted (the estimate's stand).
+    if (!pastCap) return { total: read.extras[1] ?? 0, facets: null, exact: false };
+    const cand = await this.candidateFacets(ctx, db, d, where, arms, tier, limit);
+    return { total: Math.max(cand.total, read.extras[1] ?? 0), facets: cand.facets, exact: false };
+  }
+
+  /** The page's candidates' count and facets: never exact. */
+  private async candidateFacets(
+    ctx: ServiceContext, db: unknown, d: Dialect, where: SQL, arms: readonly Arm[], tier: SearchTier, limit: number,
+  ): Promise<{ total: number; facets: Facets; exact: boolean }> {
+    const { named, all, sizes } = this.fusedArms(d, where, arms, tier, limit);
+    const cand = await this.facets(ctx, db, d, sql`select id from (${all}) x group by id`, { named, extras: sizes });
+    return { total: cand.total, facets: cand.facets, exact: false };
+  }
+
+  /**
+   * A TIER'S MATCHES AS ONE BOUNDED SET, as named statements: each branch reads at most
+   * {@link SUMMARY_EXACT_CAP} + 1 of the account's own documents off its keyed index (`sdN`; under a
+   * filter, those the filter keeps of at most {@link FILTERED_SCAN} read, `srN`), and none once the
+   * documents before it passed the cap. An excluded word, whose check reads the body, is
+   * asked of a held branch's documents only while every branch is within the cap (`kdN`). Their union
+   * is at most that many letters (`ud`), each looked up once under `where`, the newest
+   * {@link SUMMARY_EXACT_CAP} kept (`ur`: id, date and what the facets count). `over`: the set passed
+   * the cap, so `ur` holds the newest of the matches read rather than all of them, and a held branch
+   * adds none. Nothing is read unless `gate` holds.
+   */
+  private matchSet(where: SQL, branches: readonly Branch[], opts: { gate?: SQL; facets?: boolean } = {}): { named: SQL; over: SQL } {
+    const cap = SUMMARY_EXACT_CAP;
+    const doc = (i: number): SQL => sql.raw("sd" + String(i));
+    const scan = (i: number): SQL => sql.raw("sr" + String(i));
+    const kept = (i: number): SQL => sql.raw("kd" + String(i));
+    const held = (b: Branch): boolean => b.after !== undefined && b.keyRead !== undefined;
+    // Under a filter a branch's documents are those the filter keeps, of at most FILTERED_SCAN read.
+    const filtered = filteredWheres.has(where);
+    const scanned = (b: Branch): boolean => filtered && b.raw !== undefined && b.keyRead !== undefined;
+    const hit = (j: number): SQL => (scanned(branches[j]!)
+      ? sql`((select count(*) from ${doc(j)}) > ${cap} or (select count(*) from ${scan(j)}) >= ${FILTERED_SCAN})`
+      : sql`(select count(*) from ${doc(j)}) > ${cap}`);
+    const raw = (n: number): SQL => sql`(select count(*) from (${sql.join(branches.slice(0, n).map((_, j) => sql`select id from ${doc(j)}`), sql` union `)}) r) <= ${cap}
+      ${sql.join(branches.slice(0, n).map((_, j) => sql` and not ${hit(j)}`), sql``)}`;
+    // A branch reads nothing once the documents before it passed the cap: the set is cut already.
+    const room = (i: number): SQL | undefined => (i === 0 ? opts.gate : opts.gate === undefined ? raw(i) : sql`${opts.gate} and ${raw(i)}`);
+    // Every branch within the cap, together too: only then is the excluded word asked (it reads the body).
+    const within = sql`(select v from rw)`;
+    const named = [
+      ...branches.flatMap((b, i) => (scanned(b) ? [
+        sql`${scan(i)} as materialized (${this.docsOf(where, b, FILTERED_SCAN, room(i))})`,
+        sql`${doc(i)} as materialized (select m.id as id from ${scan(i)} dd join messages m on m.id = dd.id
+          left join folder_state fs on fs.message_id = m.id where ${where} limit ${cap + 1})`,
+      ] : [sql`${doc(i)} as materialized (${this.docsOf(where, b, cap + 1, room(i))})`])),
+      sql`rw as materialized (select ${raw(branches.length)} as v)`,
+      ...branches.flatMap((b, i) => (held(b) ? [sql`${kept(i)} as materialized (select d.id from ${doc(i)} d
+        where ${within} and ${this.keeps(b.after!, sql`d.id`)})`] : [])),
+    ];
+    const ids = branches.map((b, i) => (held(b) ? sql`select id from ${kept(i)}` : sql`select id from ${doc(i)}`));
+    const over = sql`(not ${within} or (select count(*) from ud) > ${cap})`;
+    // The folder: joined where a filter names it; for the facets of an exact set, looked up per letter.
+    const foldered = folderWheres.has(where);
+    const folder = foldered ? this.folderExpr
+      : sql`coalesce((select fs.desired_folder from folder_state fs where fs.message_id = m.id and not ${over}), m.native_locator->>'folder', 'INBOX')`;
+    return {
+      over,
+      named: sql`${sql.join(named, sql`, `)},
+        ud as materialized (select id from (${sql.join(ids, sql` union `)}) u limit ${cap + 1}),
+        ur as (select m.id as id, m.date as date${opts.facets === true ? sql`, m.unread as unread, m.has_attachments as att, m.from_address as addr, ${folder} as folder` : sql``}
+          from ud join messages m on m.id = ud.id${foldered ? sql` left join folder_state fs on fs.message_id = m.id` : sql``} where ${where}
+          order by m.date desc nulls last, m.id desc limit ${cap})`,
+    };
+  }
+
+  /**
+   * At most `n` of a branch's documents: off its keyed index by itself (`keyRead`, `raw`), or for a
+   * branch over the older columns, its matches under `where`. `gate` holds or none is read.
+   */
+  private docsOf(where: SQL, b: Branch, n: number, gate?: SQL): SQL {
+    const g = gate === undefined ? sql`` : sql` and ${gate}`;
+    return b.raw !== undefined && b.keyRead !== undefined
+      ? sql`select s.message_id as id from message_search s where ${b.keyRead} and ${b.raw}${g} limit ${n}`
+      : sql`select m.id as id ${this.from} where ${where} and ${b.pred}${g} limit ${n}`;
   }
 
   /**
    * THE SUMMARY'S FIRST ANSWER, at the page's cost — the count and facets over the tier's fused
    * candidates: the whole match set, exactly, when no arm was cut; otherwise the candidates as a
-   * lower bound, `estimate` from the statistics, and the facets over those candidates. The tier
-   * is the page's: exact unless it has no candidate.
+   * lower bound, said as "at least", and the facets over those candidates. The tier is the page's:
+   * exact unless it has no candidate.
    */
   async estimate(ctx: ServiceContext, opts: SearchOptions): Promise<SearchEstimate> {
     const q = SearchService.termOf(opts.q);
-    if (!q) return { total: 0, facets: emptyFacets(), tier: "exact", exact: true, estimate: null };
+    if (!q) return { total: 0, facets: emptyFacets(), tier: "exact", exact: true };
     const limit = SearchService.pageOf(opts.limit);
     const d = dialect(ctx.db);
     const where = this.whereSql(d, ctx.accountId, opts.filters ?? {});
@@ -1185,17 +1422,17 @@ export class SearchService {
         const arms = this.arms(ctx, d, q, t, built);
         const { k, named, all, sizes } = this.fusedArms(d, where, arms, t, limit);
         const counted = await this.facets(ctx, db, d, sql`select id from (${all}) x group by id`, { named, extras: sizes });
-        const cut = counted.extras.some((n) => n >= k);
-        return { ...counted, arms, cut, estimateOf: cut && t !== "similar" ? (): Promise<number> => this.estimateOf(ctx, d, where, arms, counted.extras, k, counted.total) : null };
+        return { ...counted, arms, cut: counted.extras.some((n) => n >= k) };
       };
       let t: SearchTier = "exact";
       let counted = await ofTier(t);
       await ctx.searchSupersede?.turn();
       if (counted.cut && counted.total === 0) {
-        // A cut exact tier is never replaced by guesses, though no row survived. The planner's
-        // reading counts the letters the walk found excluded, so it is no estimate here: the whole
-        // set is counted, the summary's count — 0 when nothing matches, never "about N".
-        counted = { ...(await this.facets(ctx, db, d, this.unionSql(where, counted.arms))), arms: counted.arms, cut: false, estimateOf: null };
+        // A cut exact tier is never replaced by guesses, though no row survived: the set is counted
+        // as the summary counts it — 0 when nothing matches.
+        // No candidate: past the cap their facets are empty.
+        const whole = await this.wholeFacets(ctx, db, d, where, counted.arms, "exact", limit);
+        counted = { ...whole, facets: whole.facets ?? emptyFacets(), extras: [], arms: counted.arms, cut: !whole.exact };
         await ctx.searchSupersede?.turn();
       } else if (showSimilar(counted.total)) {
         t = "similar";
@@ -1204,11 +1441,8 @@ export class SearchService {
       }
       return { tier: t, got: counted, indexed: await this.indexing(ctx, db, built) };
     }, true);
-    // The planner's estimate reads statistics, outside the session and only for a cut arm.
-    if (got.estimateOf !== null) await ctx.searchSupersede?.turn();
-    const estimate = got.estimateOf === null ? null : await got.estimateOf();
     return {
-      total: got.total, facets: got.facets, tier, exact: !got.cut, estimate,
+      total: got.total, facets: got.facets, tier, exact: !got.cut,
       ...(indexed ? { indexed } : {}), ...(importing ? { importing } : {}),
     };
   }
@@ -1239,8 +1473,15 @@ export class SearchService {
   async search(ctx: ServiceContext, opts: SearchOptions & { parts?: "both" }): Promise<SearchResult & { facets: Facets }>;
   async search(ctx: ServiceContext, opts: SearchOptions): Promise<SearchResult>;
   async search(ctx: ServiceContext, opts: SearchOptions): Promise<SearchResult> {
-    ctx.searchSupersede?.check();
     const t0 = performance.now();
+    const out = await this.answer(ctx, opts, t0);
+    ctx.timing?.add("total", performance.now() - t0);
+    ctx.timing?.note({ part: opts.parts ?? "both", tier: out.tier, cut: !out.totalExact, items: out.items.length });
+    return out;
+  }
+
+  private async answer(ctx: ServiceContext, opts: SearchOptions, t0: number): Promise<SearchResult> {
+    ctx.searchSupersede?.check();
     const parts: SearchParts = opts.parts ?? "both";
     const ms = (): number => Math.round(performance.now() - t0);
     // Each part reads the store's coverage in its own session statement; the latest part's stands.
@@ -1248,7 +1489,7 @@ export class SearchService {
     if (parts === "summary") {
       const s = await this.summary(ctx, opts);
       return {
-        items: [], facets: s.facets, total: s.total, tier: s.tier, totalExact: true,
+        items: [], facets: s.facets, total: s.total, tier: s.tier, totalExact: s.exact,
         nextCursor: null, bounded: false, ...(s.indexed ? { indexed: s.indexed } : {}), ...cov(s), ms: ms(),
       };
     }
@@ -1256,7 +1497,6 @@ export class SearchService {
       const e = await this.estimate(ctx, opts);
       return {
         items: [], facets: e.facets, total: e.total, tier: e.tier, totalExact: e.exact,
-        ...(e.estimate !== null ? { totalEstimate: e.estimate } : {}),
         nextCursor: null, bounded: false, ...(e.indexed ? { indexed: e.indexed } : {}), ...cov(e), ms: ms(),
       };
     }
@@ -1267,9 +1507,10 @@ export class SearchService {
         nextCursor: page.nextCursor, bounded: page.bounded, ...cov(page), ms: ms(),
       };
     }
-    const s = await this.summary(ctx, opts);
+    // Asked with the page, past the cap the summary's facets are the page's candidates'.
+    const s = await this.summary(ctx, opts, true);
     return {
-      items: page.items, facets: s.facets, total: s.total, tier: page.tier, totalExact: true,
+      items: page.items, facets: s.facets ?? emptyFacets(), total: s.total, tier: page.tier, totalExact: s.exact,
       nextCursor: page.nextCursor, bounded: page.bounded, ...(s.indexed ? { indexed: s.indexed } : {}), ...cov(s), ms: ms(),
     };
   }
@@ -1310,7 +1551,7 @@ export class SearchService {
     const pred = sql`lower(m.from_address) = lower(${address})`;
 
     // The count carries the coverage fact in its own statement: no round trip for it.
-    const [total, importing] = await this.count(ctx, d, sql`select m.id as id ${this.from} where ${where} and ${pred}`);
+    const [total, importing, exact] = await this.count(ctx, d, [sql`select m.id as id ${this.from} where ${where} and ${pred}`]);
     /* THROUGH THE SEAM, AND THE ROWS COME BACK POSITIONAL.
      *
      * `d.exec` answers `unknown[][]` on both stores — its own contract says positional is the shape
@@ -1333,7 +1574,7 @@ export class SearchService {
       const dto = byId.get(id);
       if (dto) items.push(dto);
     }
-    return { items, total, direction: opts.direction, ...(importing ? { importing: true as const } : {}) };
+    return { items, total, direction: opts.direction, ...(exact ? {} : { totalExact: false as const }), ...(importing ? { importing: true as const } : {}) };
   }
 
   /**
@@ -1350,7 +1591,7 @@ export class SearchService {
     const branches: Branch[] = [{ pred: d.search.recipient({ accountId: ctx.accountId, address: opts.address }), rank: sql`0` }];
     if (opts.direction === "any") branches.push({ pred: sql`lower(m.from_address) = lower(${opts.address})`, rank: sql`0` });
     const arm: Arm = { name: "recipient", ranked: false, bounded: true, branches };
-    const [total, importing] = await this.count(ctx, d, this.unionSql(where, [arm]));
+    const [total, importing, exact] = await this.count(ctx, d, branches.map((b) => this.unionSql(where, [{ ...arm, branches: [b] }])));
     const hitRows = await d.exec(ctx.db, sql`
       select a.id from (${this.armSql(where, arm, limit, limit)}) a
       order by a.r
@@ -1362,7 +1603,7 @@ export class SearchService {
       const dto = byId.get(id);
       if (dto) items.push(dto);
     }
-    return { items, total, direction: opts.direction, ...(importing ? { importing: true as const } : {}) };
+    return { items, total, direction: opts.direction, ...(exact ? {} : { totalExact: false as const }), ...(importing ? { importing: true as const } : {}) };
   }
 
   // ── counts & facets over the union of the tier's arms ─────────────────────────────────
@@ -1375,7 +1616,7 @@ export class SearchService {
    * the import on its own handle, no round trip away.
    */
   private async session<T extends object>(
-    ctx: ServiceContext, d: Dialect, fn: (db: unknown, store: StoreFacts) => Promise<T>, followUp = false,
+    ctx: ServiceContext, d: Dialect, fn: (db: unknown, store: StoreFacts) => Promise<T>, followUp = false, box = false,
   ): Promise<T & Coverage> {
     const covered = (out: T, open: boolean): T & Coverage => (open ? { ...out, importing: true as const } : out);
     /* A SUPERSEDED SEARCH STOPS BEFORE ITS FIRST STATEMENT. A queued transaction is reached by
@@ -1385,7 +1626,9 @@ export class SearchService {
     const gate = sup === undefined ? null : followUp ? () => sup.turn() : async () => sup.check();
     // Before the transaction: the probe runs on the handle, and memoized, once per handle.
     const { trigram, words } = await storeIndexes(ctx.db);
-    const setup = d.search.searchSession({ typoThreshold: FUZZY_THRESHOLD, preferIndexes: true });
+    const setup = d.search.searchSession({
+      typoThreshold: FUZZY_THRESHOLD, preferIndexes: true, ...(box ? { statementTimeoutMs: SUMMARY_EXACT_TIMEOUT_MS } : {}),
+    });
     if (setup === null) {
       if (gate) await gate();
       const [built, open] = await Promise.all([searchIndexBuilt(ctx.db as never, ctx.accountId), storeStillImporting(ctx)]);
@@ -1394,11 +1637,11 @@ export class SearchService {
     const handle = ctx.db as unknown as object;
     const known = markerWritten.get(handle) ?? new Set<string>();
     markerWritten.set(handle, known);
-    const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
+    const tx = txOf(ctx);
     if (known.has(ctx.accountId)) {
       // The warm settings carry no parameter, so the import rides them with the account inlined.
       const warm = sql`select ${importOpen(d, ctx.accountId, ctx.now(), { inline: true })} as importing, s.* from (${setup}) s`;
-      return tx.transaction(async (t) => {
+      return tx(async (t) => {
         if (gate) await gate();
         const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram, words, docs: true }));
         return covered(out, truthy(settings[0]?.[0]));
@@ -1408,7 +1651,7 @@ export class SearchService {
     const marker = sql`exists (select 1 from ${accountSettings}
       where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchIndexBuiltAt} is not null)`;
     const docs = sql`exists (select 1 from ${messageSearch} where ${messageSearch.accountId} = ${ctx.accountId})`;
-    return tx.transaction(async (t) => {
+    return tx(async (t) => {
       if (gate) await gate();
       const [row] = await d.exec(t, sql`select ${marker} as built, ${importOpen(d, ctx.accountId, ctx.now())} as importing, ${docs} as docs, s.* from (${setup}) s`);
       const built = truthy(row?.[0]);
@@ -1434,15 +1677,22 @@ export class SearchService {
       preferIndexes: opts.preferIndexes,
     });
     if (setup === null) return fn(ctx.db);
-    const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
-    return tx.transaction((t) => afterSettings(t, d, setup, () => fn(t)));
+    return txOf(ctx)((t) => afterSettings(t, d, setup, () => fn(t)));
   }
 
-  /** How many messages the union matches — ONE count over the union, each branch on its index — and {@link importOpen}. */
-  private async count(ctx: ServiceContext, d: Dialect, ids: SQL, tier: SearchTier = "exact"): Promise<[number, boolean]> {
-    const rows = await this.inSession(ctx, d, { tier, preferIndexes: true }, (db) =>
+  /**
+   * How many messages the union of the branches matches — ONE count, each branch on its index — and
+   * {@link importOpen}. On the server each branch reads at most {@link ADDRESS_EXACT_CAP} + 1: past
+   * it the count is that cap, not exact.
+   */
+  private async count(ctx: ServiceContext, d: Dialect, branches: readonly SQL[]): Promise<[number, boolean, boolean]> {
+    const capped = this.bounds(d);
+    const ids = sql.join(branches.map((b, i) => (capped ? sql`(select id from (${b}) ${sql.raw("c" + String(i))} limit ${ADDRESS_EXACT_CAP + 1})` : b)), sql` union `);
+    const rows = await this.inSession(ctx, d, { tier: "exact", preferIndexes: true }, (db) =>
       d.exec(db, sql`select ${d.castInt(sql`count(*)`)} as n, ${importOpen(d, ctx.accountId, ctx.now())} as importing from (${ids}) u`));
-    return [Number(rows[0]?.[0] ?? 0), truthy(rows[0]?.[1])];
+    const n = Number(rows[0]?.[0] ?? 0);
+    const exact = !capped || n <= ADDRESS_EXACT_CAP;
+    return [exact ? n : ADDRESS_EXACT_CAP, truthy(rows[0]?.[1]), exact];
   }
 
   /**
@@ -1453,7 +1703,7 @@ export class SearchService {
    */
   private async facets(
     ctx: ServiceContext, db: unknown, d: Dialect, ids: SQL,
-    arms?: { named: SQL; extras: readonly SQL[] },
+    arms?: { named: SQL; extras: readonly SQL[]; shaped?: true },
   ): Promise<{ total: number; facets: Facets; extras: number[] }> {
     const now = ctx.now();
     const todayStart = new Date(now); todayStart.setUTCHours(0, 0, 0, 0);
@@ -1475,9 +1725,9 @@ export class SearchService {
       sql`count(*) filter (where h.date is null or h.date < ${d30})`,
     ].map((e, i) => sql`${n(e)} as ${sql.raw("c" + String(i))}`);
     const statement = sql`
-      with ${arms ? sql`${arms.named}, ` : sql``}u as (${ids}),
+      with ${arms ? sql`${arms.named}, ` : sql``}${arms?.shaped ? sql`h as (${ids})` : sql`u as (${ids}),
       h as (select m.unread as unread, m.has_attachments as att, m.date as date, m.from_address as addr, ${this.folderExpr} as folder
-            from u join messages m on m.id = u.id left join folder_state fs on fs.message_id = m.id)
+            from u join messages m on m.id = u.id left join folder_state fs on fs.message_id = m.id)`}
       select 0 as k, null as key, ${n(sql`count(*)`)} as n, 0 as o, ${sql.join([...scalars, ...extras], sql`, `)} from h
       union all
       select 1, folder, ${n(sql`count(*)`)}, 0, ${nulls} from h group by folder
@@ -1540,6 +1790,7 @@ export class SearchService {
     }
     const out = sql.join(preds, sql` and `);
     if (preds.length > 2) filteredWheres.add(out);
+    if (f.folder !== undefined) folderWheres.add(out);
     return out;
   }
 }

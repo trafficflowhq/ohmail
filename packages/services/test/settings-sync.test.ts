@@ -2,10 +2,15 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { changeLog, mailboxes, mailboxFolders } from "@trafficflow/db";
+import {
+  accounts, auditLog, changeLog, mailboxes, mailboxFolders, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION,
+} from "@trafficflow/db";
+import {
+  makeProfileDoc, profileFingerprint, type ProfileReadResult,
+} from "@trafficflow/core/adapters/organizer-profile";
 import {
   SyncService, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
-  setBlockTrackingPixels, setDormancyDays, setFoldersEnabled, setLocale,
+  setBlockTrackingPixels, setDormancyDays, setFoldersEnabled, setLocale, effectiveMailboxSignatures, profileImportService,
   setMailboxFoldersEnabled, setThemeFace,
   type ServiceContext, type SettingsDTO,
 } from "../src/index.js";
@@ -200,5 +205,56 @@ describe("the delta materializes the settings entity — and never as a tombston
     expect(rows[0]!.id).toBe(accountId);
     const entity = rows[0]!.entity as SettingsDTO;
     expect(entity.foldersEnabledAt).toBeNull(); // default-shaped: no knob has been written
+  });
+});
+
+/**
+ * IMPORT RINGS THE DOORBELL. Import writes the copy's signature to the re-added mailbox, and a
+ * window holds the signature map from `GET /consent` until the settings stamp moves; an import
+ * that left the stamp and the change log alone was a write no window ever saw.
+ */
+describe("Import settings brings the signature back to every window", () => {
+  it("a removed row beside the re-added one: the drain carries a later stamp, the live row is served", async () => {
+    const db = await makeTestDb();
+    const accountId = randomUUID();
+    const OLD = "-- \nthe old sign-off";
+    await db.insert(accounts).values({ id: accountId, name: `sig-${accountId.slice(0, 8)}` });
+    const [gone] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: "own@example.com", status: "disabled", signature: OLD,
+    }).returning();
+    const [live] = await db.insert(mailboxes)
+      .values({ accountId, provider: "imap", address: "own@example.com" }).returning();
+    let tick = 0;
+    const ctx: ServiceContext = {
+      db, accountId, userId: null,
+      now: () => new Date(Date.parse("2026-08-26T00:00:00.000Z") + ++tick * 1_000), requestId: "r",
+    };
+    await setBlockRemoteImages(ctx, true); // a first stamp, as every window holds one
+    const before = settingsChanges(await svc.getChanges(ctx, { since: "0" })).updates.pop()!.entity as SettingsDTO;
+
+    const doc = makeProfileDoc({
+      screener: [{ address: "anna@example.com" }], rules: [], notifyRules: [], awayResponder: null,
+      tagNames: [], signature: OLD,
+    }, { updatedAt: new Date("2026-08-20T00:00:00.000Z"), producer: { kind: "local", version: "0.30.20" } });
+    const read = async (): Promise<ProfileReadResult> => ({
+      state: "found", doc, installId: "elsewhere", ref: 1, residue: 0, generation: 1,
+    });
+    const first = await profileImportService.apply(ctx, live!.id, { fingerprint: profileFingerprint(doc) }, { read });
+
+    const after = settingsChanges(await svc.getChanges(ctx, { since: "0" })).updates.pop()!.entity as SettingsDTO;
+    expect(after.updatedAt > before.updatedAt,
+      `the import left the stamp at ${before.updatedAt}: no window re-asks for the signature`).toBe(true);
+    expect("seq" in first && first.seq, "the signature write appended no change row").not.toBeNull();
+    const served = await effectiveMailboxSignatures(db as never, accountId);
+    expect(served.signatures[live!.id]).toBe(OLD);
+    expect(gone!.id in served.signatures, "the removed row's signature is served").toBe(false);
+
+    const rows = (await settingsRows(db, accountId)).length;
+    await db.delete(auditLog).where(eq(auditLog.action, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION));
+    const again = await profileImportService.apply(ctx, live!.id, { fingerprint: profileFingerprint(doc) }, { read });
+    expect("seq" in again && again.seq).toBeNull();
+    expect((await settingsRows(db, accountId)).length, "an import that changed nothing rang the doorbell").toBe(rows);
+    const later = settingsChanges(await svc.getChanges(ctx, { since: "0" })).updates.pop()!.entity as SettingsDTO;
+    expect(later.updatedAt, "an import that changed nothing moved the stamp every window compares").toBe(after.updatedAt);
   });
 });

@@ -2192,6 +2192,8 @@ export const DE: Deck = {
   pfiNotifyPart: (n: number) => (n === 1 ? "1 Benachrichtigungswahl" : `${n} Benachrichtigungswahlen`),
   pfiTagsPart: (n: number) => (n === 1 ? "1 Tag" : `${n} Tags`),
   pfiAwayPart: "deine Abwesenheitsantwort",
+  pfiSignaturePart: "deine Signatur",
+  pfiSignatureReplacingPart: "deine Signatur, die die jetzige Signatur dieses Postfachs ersetzt",
   pfiListPair: (first: string, second: string) => `${first} und ${second}`,
   pfiListMany: (head: string, last: string) => `${head} und ${last}`,
   pfiSavedByLocal: (when: string) => `Gespeichert ${when} von ohmail auf einem anderen Computer.`,
@@ -2213,6 +2215,7 @@ export const DE: Deck = {
   pfiDoneDetails: (details: string) => `Importiert: ${details}.`,
   pfiDoneSkipped: (n: number) =>
     (n === 1 ? "1 Regel konnte nicht importiert werden." : `${n} Regeln konnten nicht importiert werden.`),
+  pfiDoneSignatureKept: "Die Signatur, die du in diesem Postfach eingegeben hast, bleibt; die gespeicherte wurde nicht importiert.",
   pfiDoneAction: "Fertig",
   pfiErrorTitle: "Das hat nicht geklappt.",
   pfiErrorGeneric: "Etwas ist schiefgelaufen.",
