@@ -52,9 +52,10 @@ const QUOTE_PREFIX = /^[ \t]{0,3}((?:>[ \t]?)+)/;
 const MAX_LINE = 400;
 
 const SUBJECT_LABEL = /^(?:betreff|subject|objet|oggetto|asunto|onderwerp)\s?:\s*(.*)$/i;
+const FROM_LABEL = /^(?:von|from|de|da|van)\s?:\s*(.*)$/i;
 type Label = "from" | "date" | "to" | "cc" | "subject" | "other";
 const LABELS: Array<[Label, RegExp]> = [
-  ["from", /^(?:von|from|de|da|van)\s?:\s*(.*)$/i],
+  ["from", FROM_LABEL],
   ["date", /^(?:gesendet|sent|datum|date|envoy[ée]|inviato|enviado(?: el)?|fecha|verzonden|verstuurd|data)\s?:\s*(.*)$/i],
   ["to", /^(?:an|to|[àa]|para|aan)\s?:\s*(.*)$/i],
   ["cc", /^(?:cc|bcc|kopie|copie|cco)\s?:\s*(.*)$/i],
@@ -524,10 +525,140 @@ function opensAnswer(t: string): boolean {
   return /^\[[A-Z]{1,4}\]/.test(t) || ANSWER_MARK.test(t) || ANSWER_PREFIX.test(t);
 }
 
+/** The words of the display name on the From line of the header block at `h` ("Von: Ben Sample <…>": ben, sample), folded. */
+function senderWords(L: Line[], f: Facts, h: number): Set<string> {
+  const words = new Set<string>();
+  for (let j = h; j < L.length && f.inHeader[j]; j++) {
+    const m = L[j]!.text.length <= MAX_LINE ? FROM_LABEL.exec(L[j]!.text) : null;
+    if (!m) continue;
+    for (const w of (m[1] ?? "").replace(/<[^>]*>|\[mailto:[^\]]*\]|["'()]/g, " ").split(/[\s,;]+/)) {
+      if (/^\p{Lu}[\p{L}'-]*\p{L}$/u.test(w)) words.add(foldWord(w));
+    }
+    break;
+  }
+  return words;
+}
+
+/**
+ * CLOSING FORMULAS, by whether the writer of a reply can also say them TO the sender. `signOff`: a person
+ * signs with these and says them to nobody ("Viele Grüsse, Ben" is Ben's own line), so with the sender's
+ * name they sign his message. `address`: thanks, farewells and greetings the writer may say to the sender
+ * ("Danke Ben", "Ciao Ben", "Cheers Ben!"), and a bare "Gruss", "Grüsse" or "Saludos", which greets him as
+ * well ("Grüsse Ben"): these never sign his message, even where he signed it so, and a level line made of
+ * them stays open. At a quote box's end, either side and his name mark the box as his whole message.
+ */
+const CLOSINGS = {
+  signOff: [
+    "viele grüsse", "viele liebe grüsse", "liebe grüsse", "ganz liebe grüsse", "beste grüsse", "freundliche grüsse", "herzliche grüsse",
+    "schöne grüsse", "sonnige grüsse", "mit freundlichen grüssen", "mit besten grüssen", "mit herzlichen grüssen", "mit lieben grüssen",
+    "mit vielen grüssen", "mit freundlichem gruss", "mit bestem gruss", "lieben gruss", "herzlichen gruss", "besten gruss", "herzlichst",
+    "lg", "vg", "mfg", "liebi grüess", "schöni grüess", "herzlichi grüess", "fründlichi grüess",
+    "regards", "best regards", "kind regards", "kindest regards", "warm regards", "warmest regards", "with best regards", "with kind regards",
+    "best", "sincerely", "yours sincerely", "sincerely yours", "yours faithfully", "yours truly", "yours",
+    "cordialement", "bien cordialement", "très cordialement", "bien à vous", "meilleures salutations", "cordiales salutations",
+    "sincères salutations", "salutations distinguées", "amicalement", "bien amicalement",
+    "saluti", "un saluto", "cordiali saluti", "distinti saluti", "cari saluti", "un caro saluto", "un cordiale saluto", "cordialmente",
+    "atentamente", "saludos cordiales", "un cordial saludo",
+    "met vriendelijke groet", "met vriendelijke groeten", "vriendelijke groet", "vriendelijke groeten", "hartelijke groet",
+    "hartelijke groeten", "met hartelijke groet", "met hartelijke groeten", "mvg",
+  ],
+  address: [
+    // A greeting with no word of its own ("Grüsse Ben", "Saludos, Ben" also greet him).
+    "gruss", "grüsse", "en gruess", "grüessli", "groet", "groeten", "saludos", "un saludo", "salutations",
+    // Thanks, said to him, also joined to a closing.
+    "danke", "danke dir", "danke schön", "vielen dank", "besten dank", "danke und gruss", "danke und grüsse", "danke und liebe grüsse",
+    "merci", "merci vielmals", "merci beaucoup", "thanks", "thank you", "many thanks", "thanks and regards", "grazie", "gracias", "bedankt", "dank je",
+    // Farewells and wishes, said to him.
+    "ciao", "cheers", "tschüss", "bis bald", "bis dann", "bis morgen", "à bientôt", "à plus", "a presto", "hasta pronto", "tot ziens",
+    "bye", "see you", "take care", "all the best", "best wishes", "bises",
+    // Greetings, said to him.
+    "hi", "hallo", "hello", "hey", "hoi", "sali", "grüezi", "servus", "salut", "bonjour", "hola",
+  ],
+} as const;
+
+/** A word as closings and names are compared: lower-case, no accents, ß as ss, ae/oe/ue as a/o/u ("Grüße", "Gruesse": grusse). */
+function foldWord(w: string): string {
+  return w.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/ß/g, "ss").replace(/’/g, "'").replace(/([aou])e/g, "$1");
+}
+
+const foldPhrase = (p: string): string => p.split(" ").map(foldWord).join(" ");
+const SIGN_OFF = new Set(CLOSINGS.signOff.map(foldPhrase));
+const SIGN_OFF_WORDS = Math.max(...CLOSINGS.signOff.map((p) => p.split(" ").length));
+const CLOSING_WORDS = new Set([...CLOSINGS.signOff, ...CLOSINGS.address].flatMap((p) => foldPhrase(p).split(" ")));
+/** A sign-off is a short line: a longer one is never split into words. */
+const SIGN_OFF_CHARS = 100;
+const LETTER = /\p{L}/u;
+
+/**
+ * The folded words of a line of at most SIGN_OFF_CHARS characters, or null past that or past `max` words:
+ * letters with inner apostrophes and hyphens, any other character ends a word. One pass, no backtracking.
+ */
+function signWords(t: string, max: number): string[] | null {
+  if (t.length > SIGN_OFF_CHARS) return null;
+  const out: string[] = [];
+  let w = "";
+  let end = 0;
+  for (const ch of `${t} `) {
+    if (LETTER.test(ch)) { w += ch; end = w.length; continue; }
+    if (w !== "" && (ch === "'" || ch === "’" || ch === "-")) { w += ch; continue; }
+    if (w === "") continue;
+    if (out.push(foldWord(w.slice(0, end))) > max) return null;
+    w = "";
+  }
+  return out;
+}
+
+/** A sign-off-only closing, then one to three words of the sender's name ("Viele Grüsse, Ben", "Best regards, Ben Sample"). */
+function closingAndName(ws: readonly string[], names: ReadonlySet<string>): boolean {
+  for (let k = 1; k <= SIGN_OFF_WORDS && k < ws.length; k++) {
+    if (ws.length - k <= 3 && SIGN_OFF.has(ws.slice(0, k).join(" ")) && ws.slice(k).every((w) => names.has(w))) return true;
+  }
+  return false;
+}
+
+/**
+ * A level line signs the hop: a sign-off-only closing and the sender's name, or his name alone right below
+ * a line that is such a closing (`above`). A closing the writer can say to him, or his name alone, never
+ * does: it may be the writer's farewell to him, or the writer may share his name.
+ */
+function signsHop(t: string, above: string, names: ReadonlySet<string>): boolean {
+  const ws = signWords(t, SIGN_OFF_WORDS + 3);
+  if (ws === null || ws.length === 0) return false;
+  if (closingAndName(ws, names)) return true;
+  if (ws.length > 3 || !ws.every((w) => names.has(w))) return false;
+  const cs = signWords(above, SIGN_OFF_WORDS);
+  return cs !== null && SIGN_OFF.has(cs.join(" "));
+}
+
+/** A line that names the sender as a sign-off does: his name's words and closing words of either side, one of them his name. */
+function namesSender(t: string, names: ReadonlySet<string>): boolean {
+  const ws = signWords(t, 6);
+  return ws !== null && ws.some((w) => names.has(w)) && ws.every((w) => names.has(w) || CLOSING_WORDS.has(w));
+}
+
+/** How many of an opening quote box's last lines are read back for its sender's sign-off. */
+const SIGNATURE_LINES = 6;
+
+/**
+ * The opening quote box ending in `tail` (its last lines) holds the sender's whole message: its last line
+ * names him as a sign-off does, or a line does above a block of short lines that end no sentence (his
+ * title, company, phone line). A block that never names him leaves the box his quote of someone else.
+ */
+function boxSigned(tail: readonly Line[], names: ReadonlySet<string>): boolean {
+  for (let k = tail.length - 1; k >= 0; k--) {
+    const t = tail[k]!.text;
+    if (namesSender(t, names)) return true;
+    if (t.length > SIGN_OFF_CHARS || SENTENCE_END.test(t)) return false;
+  }
+  return false;
+}
+
 /**
  * THE EARLIER MESSAGES' OWN QUOTES, AND NOTHING ELSE (html): from the header block at `from` to `to`,
- * each hop opens with its header block and its first body line at the header's level; every body line
- * is one ink, unhighlighted, with no answer opener; the level's lines share one ink; each run of
+ * each hop opens with its header block and its first body line at the header's level, or with its only
+ * quote box, in the level's ink and not ending with the header's sender's sign-off ({@link boxSigned}),
+ * answered below and signed below the answer by that sender ({@link signsHop}); every
+ * body line is one ink, unhighlighted, with no answer opener; the level's lines share one ink; each run of
  * deeper lines (a quote box) shares one ink, is not right below the message's own question, holds only
  * questions below a question and is followed by a sentence of the message, not a word or two. A box in
  * another ink than the message's ends with the question the message answers; all such boxes of a hop
@@ -544,11 +675,17 @@ function ownQuotesOnly(L: Line[], f: Facts, from: number, to: number): boolean {
     let boxInk: string | null = null;
     let quoteInk: string | null = null;
     let above: Line | null = null;
+    // A hop that opens with its quote box: its sender's name, the box's last lines, and whether the answer and a sign-off came.
+    let names: Set<string> | null = null;
+    const tail: Line[] = [];
+    let answered = false;
+    let signed = false;
     for (let i = a; i <= b; i++) {
       const l = i < b && bodyLine(L, f, i, true) ? L[i]! : null;
       if (i < b && l === null) continue;
       if (boxInk !== null && (l === null || l.nest <= lv)) {
-        if (boxInk !== levelInk && !above!.text.endsWith("?")) return false;
+        // The opening box is answered at the level, in its own ink; a box that ends signed is the whole message.
+        if (levelInk === null ? l === null || l.ink !== boxInk || boxSigned(tail, names!) : boxInk !== levelInk && !above!.text.endsWith("?")) return false;
         if (l !== null && l.text.split(" ").length < 4) return false;
         boxInk = null;
       }
@@ -557,20 +694,31 @@ function ownQuotesOnly(L: Line[], f: Facts, from: number, to: number): boolean {
       if (l.nest === lv) {
         if (levelInk === null) levelInk = l.ink;
         else if (l.ink !== levelInk) return false;
+        if (names !== null) {
+          if (answered && signsHop(l.text, above!.text, names)) signed = true;
+          answered = true;
+        }
+      } else if (boxInk === null && above === null) {
+        names = senderWords(L, f, a);
+        boxInk = l.ink;
       } else if (boxInk === null) {
         // A box opens: never right below the message's own question; in another ink, below a
-        // greeting or lead-in the first time, and in that one ink every time.
-        if (above === null || levelInk === null || above.text.endsWith("?")) return false;
+        // greeting or lead-in the first time, and in that one ink every time. Never a second box
+        // in a hop that opened with one.
+        if (names !== null || levelInk === null || above!.text.endsWith("?")) return false;
         if (l.ink !== levelInk) {
-          if (quoteInk === null ? SENTENCE_END.test(above.text) : l.ink !== quoteInk) return false;
+          if (quoteInk === null ? SENTENCE_END.test(above!.text) : l.ink !== quoteInk) return false;
           quoteInk = l.ink;
         }
         boxInk = l.ink;
       } else if (l.ink !== boxInk || (above!.text.endsWith("?") && !l.text.endsWith("?"))) {
         return false;
       }
+      // The opening box's last lines, read back for its sender's sign-off when it closes.
+      if (names !== null && levelInk === null && tail.push(l) > SIGNATURE_LINES) tail.shift();
       above = l;
     }
+    if (names !== null && !signed) return false;
     a = b;
   }
   return true;

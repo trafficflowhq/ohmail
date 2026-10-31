@@ -1,0 +1,19 @@
+Hallo Ben,
+
+danke, so machen wir es. Ich reserviere den Raum für Donnerstag.
+
+Gruss
+Clara
+
+Von: Ben Sample <ben.sample@example.org>
+Datum: Mittwoch, 28. Oktober 2026 um 14:12
+An: Clara Muster <clara.muster@example.org>, Dana Example <dana.example@example.net>
+Cc: Finn Beispiel <finn.beispiel@example.com>
+Betreff: Re: Begehung Technikraum
+
+> • Können wir die Begehung des Technikraums auf Donnerstag verschieben?
+
+Ja, Donnerstag um 10 Uhr passt uns. Den Plan des Technikraums findest du hier: Plan Technikraum<https://example.com/plan-technikraum> Sag Bescheid, wenn etwas fehlt.
+
+Viele Grüsse
+Ben
