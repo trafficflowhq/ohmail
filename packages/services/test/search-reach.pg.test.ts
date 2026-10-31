@@ -13,11 +13,10 @@ import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 
 /**
- * WHAT A SEARCH SAYS ABOUT ITS REACH, on real Postgres (pg_trgm lives only here). The typo tier's
- * `<%` has no selectivity estimator, so its planner rows are a default: a cut typo arm gives no
- * estimate and the line says "at least N" until the exact count lands.
- * A cut word arm keeps its planner estimate, the control. And the import's clock through the warm
- * session's inline literals, which only real Postgres compares as timestamptz.
+ * WHAT A SEARCH SAYS ABOUT ITS REACH, on real Postgres (pg_trgm lives only here). A cut arm says
+ * "at least N" until the exact count lands, and no number it shows comes from planner statistics,
+ * which cover every account's mail: a neighbour's mail moves none of them. And the import's clock
+ * through the warm session's inline literals, which only real Postgres compares as timestamptz.
  */
 const URL = pgTestUrl(import.meta.url);
 /**
@@ -32,6 +31,9 @@ const OWN_TABLES = ["messages", "message_search", "message_bodies", "folder_stat
 const db = brandDialect(drizzle(client, { schema }), "pg");
 const NOW = new Date("2026-08-20T12:00:00.000Z");
 const A = randomUUID();
+/** The neighbour: another account on the same tables, which gains the word in many letters. */
+const N = randomUUID();
+const NEIGHBOUR_MATCHES = 30_000;
 const MATCHES = 300;
 let mailboxId = "";
 const ctx = (): ServiceContext => ({ db, accountId: A, userId: null, now: () => NOW, requestId: "search-reach" });
@@ -75,6 +77,9 @@ describe("what a search says about its reach (real Postgres)", () => {
   }, 240_000);
 
   afterAll(async () => {
+    await db.execute(sql`delete from message_search where account_id = ${N}`);
+    await db.execute(sql`delete from messages where account_id = ${N}`);
+    await db.execute(sql`delete from mailboxes where account_id = ${N}`);
     await db.execute(sql`delete from message_search where message_id in (select id from messages where account_id = ${A})`);
     await db.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${A})`);
     await db.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${A})`);
@@ -87,7 +92,7 @@ describe("what a search says about its reach (real Postgres)", () => {
   it("a cut typo arm gives no estimate: the page's count is a lower bound, and the summary is exact", async () => {
     const svc = new SearchService();
     const e = await svc.search(ctx(), { q: "invoce", parts: "estimate", limit: 5 });
-    expect({ tier: e.tier, exact: e.totalExact, estimate: e.totalEstimate }).toEqual({ tier: "similar", exact: false, estimate: undefined });
+    expect({ tier: e.tier, exact: e.totalExact, estimate: "totalEstimate" in e }).toEqual({ tier: "similar", exact: false, estimate: false });
     expect(e.total, "the cut, said as at least").toBe(20);
     const s = await svc.search(ctx(), { q: "invoce", parts: "summary", limit: 5 });
     expect({ tier: s.tier, total: s.total, exact: s.totalExact }).toEqual({ tier: "similar", total: MATCHES, exact: true });
@@ -105,9 +110,24 @@ describe("what a search says about its reach (real Postgres)", () => {
     await set({ initialImportCompletedAt: NOW, syncProgressAt: null });
   });
 
-  it("the control: a cut word arm keeps the planner's estimate", async () => {
-    const e = await new SearchService().search(ctx(), { q: "invoice", parts: "estimate", limit: 5 });
-    expect({ tier: e.tier, exact: e.totalExact }).toEqual({ tier: "exact", exact: false });
-    expect(e.totalEstimate, "about the mailbox's matches").toBeGreaterThan(MATCHES / 2);
-  });
+  it("a neighbour gaining the word in 30,000 letters moves none of this account's numbers", async () => {
+    const svc = new SearchService();
+    const numbers = async () => Promise.all((["page", "estimate", "summary"] as const).map(async (parts) => {
+      const r = await svc.search(ctx(), { q: "invoice", parts, limit: 5 });
+      return { parts, tier: r.tier, total: r.total, exact: r.totalExact, estimate: (r as { totalEstimate?: number }).totalEstimate ?? null };
+    }));
+    const before = await numbers();
+    expect(before.find((x) => x.parts === "summary")).toMatchObject({ total: MATCHES, exact: true });
+    const [mb] = await db.insert(mailboxes).values({ accountId: N, provider: "imap", address: "neighbour@tf.example" }).returning();
+    await db.execute(sql`insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator)
+      select gen_random_uuid(), ${N}::uuid, ${mb!.id}::uuid, 'h', 'reach-n:' || g, 'Your invoice ' || g, 'billing@shop.example',
+        ${NOW.toISOString()}::timestamptz - make_interval(mins => g), false, false, jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g)
+      from generate_series(1, ${NEIGHBOUR_MATCHES}) g`);
+    await db.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
+      select m.id, m.account_id, to_tsvector('english', m.subject), to_tsvector('english', 'The amount is due.'), lower(m.subject), 'text'
+      from messages m where m.account_id = ${N}::uuid`);
+    await db.execute(sql`analyze messages`);
+    await db.execute(sql`analyze message_search`);
+    expect(await numbers()).toEqual(before);
+  }, 120_000);
 });

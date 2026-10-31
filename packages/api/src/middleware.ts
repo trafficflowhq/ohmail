@@ -477,7 +477,9 @@ export const withSessionAcquireCeiling: Middleware = (next) => async (req, deps,
 export const withSession: Middleware = (next, route) => async (req, deps, params) => {
   const token = readSessionToken(req, deps.allowCookieAuth !== false);
   if (token) {
+    const t0 = performance.now();
     const core = await resolveSession(deps.db, token.value, deps.now());
+    deps.sessionMs = performance.now() - t0;
     if (core) deps.session = { ...core, via: token.via };
   }
   if (deps.session?.scope === "enrollment" && !route.options?.enrollmentOk) {

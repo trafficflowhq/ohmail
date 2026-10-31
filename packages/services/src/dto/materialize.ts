@@ -406,6 +406,8 @@ export function messageRowToDTO(
 export interface MaterializeMessagesOpts {
   /** Default `"omit"` — the living-view rule. See the header before passing `"include"`. */
   deleted?: "omit" | "include";
+  /** Told how long the rows took to become DTOs, in ms, once they have (a search's `dto` phase). */
+  onDto?: (ms: number) => void;
 }
 
 /**
@@ -432,8 +434,10 @@ export async function materializeMessages(
 }
 
 /** The DTOs of a joined page, in its `order` — the search page's rows and their DTOs at once. */
-export function materializePage(db: Db, accountId: string, source: MaterializeSource): Promise<MaterializedRow[]> {
-  return materializeRows(db, accountId, { source }, {});
+export function materializePage(
+  db: Db, accountId: string, source: MaterializeSource, opts: Pick<MaterializeMessagesOpts, "onDto"> = {},
+): Promise<MaterializedRow[]> {
+  return materializeRows(db, accountId, { source }, opts);
 }
 
 /** Each key becomes a quoted identifier drizzle 0.36 does not escape: only a plain one is admitted. */
@@ -508,6 +512,7 @@ async function materializeRows(
     ))
     .orderBy(source ? source.order : sql`${messages.id}`, sql`${messageTags.createdAt}`, sql`${messageTags.tagId}`);
   const rows = (await q) as Row[];
+  const dto0 = opts.onDto === undefined ? 0 : performance.now();
 
   const isYes = (v: unknown): boolean => v === true || v === 1;
   const byId = new Map<string, { row: Row; tags: string[] }>();
@@ -532,6 +537,7 @@ async function materializeRows(
       keys: (source?.keys ?? []).map((_, i) => r[`k${i}`]),
     });
   }
+  opts.onDto?.(performance.now() - dto0);
   return out;
 }
 

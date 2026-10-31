@@ -329,8 +329,11 @@ describe("a recency arm reads its account's words off the keyed index (real Post
         expect(chain, what).toEqual(truth.slice(0, Math.min(truth.length, K)));
         const dated = await svc.search(c, { q, parts: "page", filters: f, sort: "date_desc" });
         expect(dated.items.map((i) => i.id), what).toEqual(truth.slice(0, 50));
+        // Exact up to 2,000 matches (a filter's, of at most 20,000 of the word's letters); past it "at least".
         const summary = await svc.search(c, { q, parts: "summary", filters: f });
-        expect(summary.total, what).toBe(truth.length);
+        expect({ exact: summary.totalExact, total: Math.min(summary.total, truth.length) }, what)
+          .toEqual({ exact: truth.length <= 2_000, total: summary.total });
+        if (summary.totalExact) expect(summary.total, what).toBe(truth.length);
       }
     }
   }, 120_000);

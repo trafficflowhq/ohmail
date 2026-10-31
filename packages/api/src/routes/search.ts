@@ -1,4 +1,5 @@
 import {
+  SearchTiming,
   ADDRESS_DIRECTIONS,
   isAddressSearchDirection,
   SEARCH_PARTS,
@@ -14,6 +15,7 @@ import { errorResponse, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { search } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
+import type { ApiDeps } from "../deps.js";
 
 /**
  * Search over the store's search documents, paged by `cursor`; `parts=page` is the fast first
@@ -23,6 +25,9 @@ import { pagingNumber } from "../query-bounds.js";
  * superset). `?address=` is a different question on the same path, handled before `q`; its
  * `direction` is refused by name where an index cannot serve it — defaulting to `from` would
  * answer "mail I sent" with mail they sent to me.
+ *
+ * Every answer carries `Server-Timing` (each phase's ms, and the part, tier, cut, items and
+ * statement count) and logs one `search_timing` line with the same: never the query or an address.
  */
 
 /** "true"/"1" → true, "false"/"0" → false, else undefined (filter omitted). */
@@ -66,7 +71,12 @@ export const searchRoutes: Route[] = [
           direction: directionRaw,
           ...(addrLimit !== undefined ? { limit: addrLimit } : {}),
         };
-        return jsonResponse(await search(deps).searchByAddress(serviceContext(deps, req), addrOpts));
+        const timing = new SearchTiming();
+        const t0 = performance.now();
+        const found = await search(deps).searchByAddress({ ...serviceContext(deps, req), timing }, addrOpts);
+        timing.add("total", performance.now() - t0);
+        timing.note({ part: "address", cut: found.totalExact === false, items: found.items.length });
+        return timed(jsonResponse(found), timing, deps);
       }
 
       const q = url.searchParams.get("q") ?? "";
@@ -99,10 +109,20 @@ export const searchRoutes: Route[] = [
         ...(partsRaw !== null ? { parts: partsRaw } : {}),
         ...(cursor ? { cursor } : {}),
       };
-      return jsonResponse(await search(deps).search(serviceContext(deps, req), opts));
+      const timing = new SearchTiming();
+      const answer = await search(deps).search({ ...serviceContext(deps, req), timing }, opts);
+      return timed(jsonResponse(answer), timing, deps);
     },
   },
 ];
+
+/** The answer with its `Server-Timing`, the session's phase added, and its one `search_timing` log line. */
+function timed(res: Response, timing: SearchTiming, deps: ApiDeps): Response {
+  if (deps.sessionMs !== undefined) timing.add("session", deps.sessionMs);
+  res.headers.set("Server-Timing", timing.header());
+  deps.logger?.info("search_timing", timing.fields());
+  return res;
+}
 
 /** The facet filters a search URL carries. */
 function filtersOf(url: URL): SearchFilters {

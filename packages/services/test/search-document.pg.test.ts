@@ -617,14 +617,13 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
     const cut = await svc.search(ctx(L), { q: "filler", parts: "page", limit: 5 });
     expect(cut.totalExact).toBe(false);
     expect(cut.nextCursor).not.toBeNull();
-    expect(cut.totalEstimate).toBeUndefined();
-    // The estimate part says ABOUT how many, from the planner's statistics: within a factor of two.
-    const about = await svc.search(ctx(L), { q: "filler", parts: "estimate", limit: 5 });
+    expect("totalEstimate" in cut).toBe(false);
+    // The estimate part says AT LEAST its candidates: no count from the planner's statistics.
+    const least = await svc.search(ctx(L), { q: "filler", parts: "estimate", limit: 5 });
     const exact = (await svc.search(ctx(L), { q: "filler", parts: "summary" })).total;
-    expect(about.totalExact).toBe(false);
-    expect(about.totalEstimate).toBeGreaterThanOrEqual(about.total);
-    expect(about.totalEstimate! / exact).toBeGreaterThan(0.5);
-    expect(about.totalEstimate! / exact).toBeLessThan(2);
+    expect(least.totalExact).toBe(false);
+    expect("totalEstimate" in least).toBe(false);
+    expect(least.total).toBeLessThanOrEqual(exact);
   });
 
   it("(9) a typo falls to the similar tier, over the document's header corpus", async () => {

@@ -414,16 +414,19 @@ export function SearchView({
    * THE FACETS ARE THE STORE'S once its summary lands — counts over the WHOLE match set, kept from
    * the unnarrowed question so pressing one does not zero the others. Before that, the device's
    * own, counted over what is on screen. Kept under the text of the question that PRODUCED them
-   * (`question` is this render's): the render after a new text still holds the old answer.
+   * (`question` is this render's): the render after a new text still holds the old answer. Their
+   * numbers only while the total is exact: past the store's cap they count the first page's
+   * candidates, so the chips stand without them.
    */
-  const [storeFacets, setStoreFacets] = useState<{ q: string; facets: ServerSearchFacets } | null>(null);
+  const [storeFacets, setStoreFacets] = useState<{ q: string; facets: ServerSearchFacets; exact: boolean } | null>(null);
   useEffect(() => {
     const own = askedText.current;
     if (ready?.facets && filter === null && own !== null && own.question === question) {
-      setStoreFacets({ q: own.text, facets: ready.facets });
+      setStoreFacets({ q: own.text, facets: ready.facets, exact: ready.totalExact });
     }
-  }, [ready?.facets, filter, question]);
+  }, [ready?.facets, ready?.totalExact, filter, question]);
   const facets = storeFacets && storeFacets.q === trimmed ? storeFacets.facets : null;
+  const counted = (count: number): { count?: number } => (storeFacets?.exact === true ? { count } : {});
 
   /** The rows a facet fallback may count: the device's paint, or the store's held pages. */
   const countedRows = (): EngineMessage[] => {
@@ -443,7 +446,7 @@ export function SearchView({
       if (facets.sender.length) {
         groups.push({
           title: t("facetFrom"),
-          items: facets.sender.slice(0, 5).map((x) => ({ label: displayAddress(x.address), count: x.count })),
+          items: facets.sender.slice(0, 5).map((x) => ({ label: displayAddress(x.address), ...counted(x.count) })),
         });
       }
       const folders = new Map<string, number>();
@@ -454,11 +457,11 @@ export function SearchView({
       if (folders.size) {
         groups.push({
           title: t("facetFolder"),
-          items: [...folders.entries()].map(([key, count]) => ({ label: PLACE_LABEL[key] ?? key, count })),
+          items: [...folders.entries()].map(([key, count]) => ({ label: PLACE_LABEL[key] ?? key, ...counted(count) })),
         });
       }
       if (facets.hasAttachments.true > 0) {
-        groups.push({ title: t("facetRefine"), items: [{ label: t("facetAttachment"), count: facets.hasAttachments.true }] });
+        groups.push({ title: t("facetRefine"), items: [{ label: t("facetAttachment"), ...counted(facets.hasAttachments.true) }] });
       }
       return groups;
     }
@@ -489,7 +492,7 @@ export function SearchView({
     }
     return groups;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result, facets, merged, mergedSimilar, similarOn, t, storeReady, storeLength, rev]);
+  }, [result, facets, storeFacets?.exact, merged, mergedSimilar, similarOn, t, storeReady, storeLength, rev]);
 
   const facetOf = (groupTitle: string, label: string): { group: Filter["group"]; value: string } => {
     const group: Filter["group"] =
