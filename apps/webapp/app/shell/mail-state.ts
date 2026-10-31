@@ -122,6 +122,23 @@ export function isRemovedMailbox(m: { status?: string; legacyStandDown?: boolean
   return m.status === "disabled" && m.legacyStandDown !== true;
 }
 
+type Removable = { status?: string; legacyStandDown?: boolean };
+const liveSeen = new WeakMap<readonly Removable[], readonly Removable[]>();
+
+/**
+ * THE MAILBOXES A SURFACE MAY OFFER OR COUNT: the roster without its removed copies
+ * ({@link isRemovedMailbox}). Every remove and reconnect of one address adds a tombstone, so a chooser
+ * over the raw roster drew one button per removal. The same array for the same roster, so memos keep.
+ */
+export function liveMailboxes<T extends Removable>(rows: readonly T[] | null): readonly T[] | null {
+  if (rows === null) return null;
+  const seen = liveSeen.get(rows);
+  if (seen !== undefined) return seen as readonly T[];
+  const live = rows.some(isRemovedMailbox) ? rows.filter((m) => !isRemovedMailbox(m)) : rows;
+  liveSeen.set(rows, live);
+  return live;
+}
+
 export function readerStandDown(m: {
   status?: string;
   disabledReason?: string | null;

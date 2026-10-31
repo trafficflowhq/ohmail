@@ -459,7 +459,7 @@ export function MessageReader({
     !m.protected && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
       : !m.protected && m.bodyState === "withheld"
-        ? withheldNote(m, refillExpired, mailboxStatusOf(w.mailboxes.rows, m.mailboxId))
+        ? withheldNote(m, refillExpired, mailboxStatusOf(w.mailboxes.all, m.mailboxId))
         : !m.protected && m.bodyState === "failed"
           ? Copy.liveBodyFailed
           : null;

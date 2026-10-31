@@ -289,9 +289,12 @@ export interface World {
      *
      * Settings → This phone names a mailbox by ADDRESS and hands it back by ID, and neither is
      * derivable from `organizer` or `ownAddresses`. The read has both; it was throwing them away.
-     * Empty where nothing has been read, which `known` is what distinguishes.
+     * Empty where nothing has been read, which `known` is what distinguishes. Removed copies are
+     * left out (`liveMailboxRows`); {@link all} keeps them.
      */
     rows: readonly PhoneMailbox[];
+    /** Every row the read returned, removed copies too: for naming a message on a removed mailbox. */
+    all: readonly PhoneMailbox[];
     /**
      * WHICH MAILBOX A MAIL WITH NO PARENT LEAVES FROM — the engine's own
      * `sendingMailboxId`: the first mirrored mailbox, else the newest message's. A reply and a
@@ -701,7 +704,7 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
     // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
     // — the same honest-unknown the boot facts keep between a teardown and the redirect.
     mailboxes: {
-      known: false, ownAddresses: [], organizer: null, rows: [], sendingId: null, settingsBell: null, readAt: () => null,
+      known: false, ownAddresses: [], organizer: null, rows: [], all: [], sendingId: null, settingsBell: null, readAt: () => null,
     },
     ohbox: { resurfaced: [], fresh: [], seen: [], unreadIds: [], unread: 0, total: 0, meta: "", unscreened: null, filed: null },
     doorbell: { initials: [], count: 0 },

@@ -202,7 +202,7 @@ import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
 import {
-  isRemovedMailbox, nothingOrganizesOf, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode,
+  isRemovedMailbox, liveMailboxes, nothingOrganizesOf, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode,
   serverUnreachable,
 } from "./mail-state";
 /* Every press that changes mail leaves through here. See the module. */
@@ -1209,6 +1209,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   const {
     mailboxes: facts, rosterProbed, state: mailState, refresh: refreshFacts, pulled, importOver: importOverById,
   } = useMailState();
+  /** The roster a chooser or a count may read: `GET /mailboxes` keeps every removed copy. */
+  const liveFacts = liveMailboxes(facts);
   /**
    * THE MIRROR AS IT IS. Where each message physically sits on the server.
    *
@@ -1530,7 +1532,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * `first-run-subject.ts`'s: the answer this mount could not make before is `vanished`, and it
    * used to fall through to the connect form, whose mode is `seed`.
    */
-  const firstRunSubjectNow = firstRunSubject(facts, route.firstRunMailboxId, route.firstRunAdd);
+  const firstRunSubjectNow = firstRunSubject(liveFacts, route.firstRunMailboxId, route.firstRunAdd);
   const firstRunMailbox = firstRunSubjectNow.mailbox;
   /** The holder's "since" instant as a DATE in the app's own language — see the mount below. */
   const holderSince = useMemo(() => {
@@ -1550,8 +1552,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     screener.waiting.filter((row) => !("pinned" in row)),
     (id) => reader.get<EngineMessage>("message", id)?.mailboxId,
     firstRunMailbox?.id ?? null,
-    (facts?.length ?? 0) > 1,
-  ), [screener.waiting, reader, derived, firstRunMailbox, facts]);
+    (liveFacts?.length ?? 0) > 1,
+  ), [screener.waiting, reader, derived, firstRunMailbox, liveFacts]);
   /* THE PULL SCREEN'S TWO COUNTERS, AND THE SUMMARY'S TWO ROWS. They were `mirroredCount -
    * history.length` and `history.length` — the install's — on a screen naming one mailbox.
    * ONLY WHILE THE STAGE IS OPEN: `reader.list("message")` materialises the whole mirror, which is
@@ -1571,7 +1573,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     reread: () => engine.refreshScreenerWaiting(),
   });
   const onboardingFacts: OnboardingFacts | null = useMemo(() => {
-    if (!firstRun || facts === null) return null;
+    if (!firstRun || liveFacts === null) return null;
     return {
       door: firstRun.door,
       mailbox: firstRunMailbox === null ? null : {
@@ -1598,9 +1600,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       /* THE COUNT AND THE CARD COME FROM ONE LIST, or an empty guided-decision card reaches the
          screen. Untouched on a single-mailbox install, where the Screener's own count is sharper
          (it subtracts rows mid-exit). */
-      queuedSenders: (facts.length ?? 0) > 1 ? firstRunQueue.length : screener.waitingCount,
+      queuedSenders: liveFacts.length > 1 ? firstRunQueue.length : screener.waitingCount,
     };
-  }, [firstRun, facts, firstRunMailbox, firstRunQueue, consent.onboardingCompletedAt,
+  }, [firstRun, liveFacts, firstRunMailbox, firstRunQueue, consent.onboardingCompletedAt,
     screener.waitingCount, firstRunStripOver, queueSettling]);
   /**
    * The one sender the guided decision is about — the head of the real queue, decided through the real
@@ -1619,7 +1621,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       address: row.from.address,
       held: row.held.length,
       // The rail's own count, so the step and the rail cannot say different numbers; `many` as `firstRunQueue`.
-      waiting: screener.waitingCount, many: (facts?.length ?? 0) > 1,
+      waiting: screener.waitingCount, many: (liveFacts?.length ?? 0) > 1,
       /* THE SCREENER'S OWN CAPTION, not a second sentence written for this card. `heldCaption`
          carries the first-contact time and `heldCaptionAll` does not, split by `firstContactTime`
          as every surface's caption is: one held message has no "first contact" apart from its own
@@ -1630,7 +1632,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       onDecide: (dest, opts) =>
         screener.decide(row, dest, { read: opts.markRead, scope: opts.scope }),
     };
-  }, [firstRunQueue, screener, t, facts?.length]);
+  }, [firstRunQueue, screener, t, liveFacts?.length]);
 
   /**
    * THE LIVE JUNK WINDOW (FOLDERS-SPEC.md §16.2) — the Screener's third segment, flag-on.
@@ -3387,7 +3389,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                       void engine.syncOnce().catch(() => { /* the poll owns retries */ });
                       return r;
                     }}
-                    mailboxes={facts ?? undefined}
+                    mailboxes={liveFacts ?? undefined}
                     mailboxesOff={consent.folderMailboxesOff}
                     mailboxesKnown={consent.folderMailboxesKnown}
                     setMailboxFoldersEnabled={async (mailboxId, enabled) => {
@@ -3882,15 +3884,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
           subjectVanished={firstRunSubjectNow.state === "vanished"}
           /* A RUN NAMING NO MAILBOX ON AN INSTALL WITH SEVERAL — the stage asks which, and the
              press is that mailbox's own run (a re-run stays one). */
-          {...(firstRunSubjectNow.state === "choose" && facts
+          {...(firstRunSubjectNow.state === "choose" && liveFacts
             ? {
-                subjectChoices: facts.map((m) => ({ id: m.id, address: m.address })),
+                subjectChoices: liveFacts.map((m) => ({ id: m.id, address: m.address })),
                 onChooseMailbox: (id: string) => goFirstRun({ rerun: route.firstRunRerun, mailboxId: id }),
               }
             : {})}
           /* WHO ORGANIZES THIS ACCOUNT'S MAIL — the one holder the connect form can read, since the
              mailbox it is about does not exist yet. */
-          accountOrganizer={accountOrganizer(facts)}
+          accountOrganizer={accountOrganizer(liveFacts)}
           /* THE RE-RUN INTENT, off the route. See `Route.firstRunRerun`: it cannot be derived,
              because a finished account derives to "nothing to do" — which is right for a boot
              and wrong for somebody who just asked to run setup again. */

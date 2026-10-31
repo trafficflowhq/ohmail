@@ -876,7 +876,7 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
     return () => { live = false; };
   }, [askKey, w.actions]);
   // A mailbox by its own label beside a folder two mailboxes share a name for; never its address.
-  const labelOf = (id: string) => w.mailboxes.rows.find((r) => r.id === id)?.displayName?.trim() || null;
+  const labelOf = (id: string) => w.mailboxes.all.find((r) => r.id === id)?.displayName?.trim() || null;
   const stayed = stayedRows(ask, why && why.key === askKey ? why.map : null, labelOf);
   const press = (dest: Destination) => {
     const f = w.actions.screeningForecast(m.id, dest, scope, applyRetro);
@@ -1333,7 +1333,7 @@ export function ComposeSheet({
   /* A NEW MAIL OPENED FROM DRAFTS whose mailbox cannot send (kept from a removed one) leaves from
      one that can, said under From (`compose-sender.ts`); its keeps still name its own. */
   const sender = fresh && draft !== undefined
-    ? composeSenderOf({ bound: mailboxId, fallback: w.mailboxes.sendingId, known: w.mailboxes.known, rows: w.mailboxes.rows })
+    ? composeSenderOf({ bound: mailboxId, fallback: w.mailboxes.sendingId, known: w.mailboxes.known, rows: w.mailboxes.all })
     : null;
   const sendFrom = sender?.sendFrom ?? mailboxId;
   /* The sending address, only where the phone has read the mailbox list — `null` is "not

@@ -39,6 +39,7 @@ import { SHELL_CURSOR_VIEWS } from "./cursor-placer";
 import { useEnabledBinding, useKeyBindings, useKeyPress, type KeyBinding } from "./keymap";
 import { pressResurfaceKey } from "./message-verbs";
 import type { MailboxFacts } from "./mail-state";
+import { mailboxAddressCount } from "./mailbox-label";
 import { isModalOpen } from "./modal-gate";
 import { useFocusFollows } from "./focus-follows";
 import {
@@ -1191,7 +1192,7 @@ export function useShellKeys({
                    mailboxes where only one has folders still section, or the lone tree is
                    ambiguous (spec §14). `facts` is the host's probe; null (demo, standalone)
                    falls back to what the entities show. */
-                mailboxCount={facts?.length}
+                mailboxCount={facts ? mailboxAddressCount(facts) : undefined}
                 activeFolderId={route.view === "folder" ? (route.folderId ?? undefined) : undefined}
                 onNavigate={(id) => {
                   setRailOpen(false);
