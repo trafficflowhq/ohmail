@@ -73,8 +73,23 @@ function partLetter(q: string, head: SQL, text: SQL): SQL | null {
 function inLetter(o: QueryOperand, head: SQL, text: SQL, fold: boolean): SQL {
   const typed = o.quoted ? `"${o.text}"` : o.text;
   const t = fold ? foldedTsquery(typed) : sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${typed})`;
-  return sql`(${head} @@ ${t} or ${text} @@ ${t})`;
+  return sql`(${head} @@ ${headTsquery(typed, fold)} or ${text} @@ ${t})`;
 }
+
+/**
+ * The typed text as the HEAD vector is asked it: its subject is english words, its people `simple`
+ * ones (`ines` stays `ines`, english reads `ine`), so each form is asked both ways, OR-ed.
+ */
+function headTsquery(q: string, fold = true): SQL {
+  const forms = fold ? eszettForms(q) : [q];
+  return sql`(${sql.join(forms.flatMap((f) => [sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${f})`, sql`websearch_to_tsquery('simple', ${f})`]), sql` || `)})`;
+}
+
+/** An operand as `websearch_to_tsquery` reads it. */
+const typedOf = (o: QueryOperand): string => (o.quoted ? `"${o.text}"` : o.text);
+
+/** The excluded operand in neither form of the head (`headTsquery`). */
+const notInHead = (o: QueryOperand, headTsv: SQL): SQL => sql`not ${headTsv} @@ ${headTsquery(typedOf(o), false)}`;
 
 /** No excluded operand anywhere in the letter; undefined when nothing is excluded. */
 function noneOf(ops: QueryOperands, head: SQL, text: SQL): SQL | undefined {
@@ -97,10 +112,9 @@ function acrossOf(q: string, head: SearchArm, headTsv: SQL, textTsv: SQL, recenc
   // Each group with every excluded operand as one tsquery, which the text GIN answers whole: one
   // group is the typed query itself; of several, `websearch_to_tsquery` would hold only the last
   // group to an exclusion, so each is typed again with them.
-  const typed = (o: QueryOperand): string => (o.quoted ? `"${o.text}"` : o.text);
-  const noHead = ops.none.map((o) => sql`not ${headTsv} @@ websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${typed(o)})`);
+  const noHead = ops.none.map((o) => notInHead(o, headTsv));
   const alone = none ? ops.any.map((g, i) => {
-    const t = ops.any.length === 1 ? tsq : foldedTsquery([...g.map(typed), ...ops.none.map((o) => `-${typed(o)}`)].join(" "));
+    const t = ops.any.length === 1 ? tsq : foldedTsquery([...g.map(typedOf), ...ops.none.map((o) => `-${typedOf(o)}`)].join(" "));
     return { pred: sql`(${textTsv} @@ ${t} and ${sql.join(noHead, sql` and `)})`, letter: groups[i]!, whole: g.length === 1 };
   }) : null;
   return {
@@ -121,8 +135,9 @@ function letterTermsOf(q: string): SQL[] | null {
     if (g.length > LETTER_TERMS_MAX || g.some((o) => o.quoted)) return null;
     // The same tsquery per operand as `inLetter(o, …, true)`.
     const t = g.map((o) => foldedTsquery(o.text));
+    const h = g.map((o) => headTsquery(o.text));
     for (let mask = 0; mask < 1 << g.length; mask++) {
-      const head = t.filter((_, i) => (mask & (1 << i)) !== 0);
+      const head = h.filter((_, i) => (mask & (1 << i)) !== 0);
       const text = t.filter((_, i) => (mask & (1 << i)) === 0);
       const parts = [
         ...(head.length > 0 ? [sql`s.head_tsv @@ (${sql.join(head, sql` && `)})`] : []),
@@ -386,10 +401,15 @@ export function pgDialect(): Dialect {
       },
       words: (q: string): MailWordArms => {
         const tsq = foldedTsquery(q);
-        const head = { pred: sql`s.head_tsv @@ ${tsq}`, rank: sql`ts_rank_cd(s.head_tsv, ${tsq})` };
+        const hq = headTsquery(q);
+        const head = { pred: sql`s.head_tsv @@ ${hq}`, rank: sql`ts_rank_cd(s.head_tsv, ${hq})` };
         const recency = sql`coalesce(extract(epoch from m.date), 0)`;
-        return acrossOf(q, head, sql`s.head_tsv`, sql`s.text_tsv`, recency, tsq)
-          ?? { head, text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: recency } };
+        const across = acrossOf(q, head, sql`s.head_tsv`, sql`s.text_tsv`, recency, tsq);
+        if (across) return across;
+        // Each half of `hq` refuses only its own form of an excluded word: the head refuses both.
+        const none = queryOperandsOf(q).none.map((o) => notInHead(o, sql`s.head_tsv`));
+        const pred = none.length === 0 ? head.pred : sql`(${head.pred} and ${sql.join(none, sql` and `)})`;
+        return { head: { pred, rank: head.rank }, text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: recency } };
       },
       partWords: (q: string): MailWordArms | null => {
         const tsq = partTsquery(q);

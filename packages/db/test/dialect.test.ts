@@ -224,9 +224,10 @@ describe("the two arms answer the same questions differently", () => {
     const terms = pgDialect().search.letterTerms("heron kestrel")!;
     expect(terms.map(asPg)).toEqual([
       "(s.text_tsv @@ (websearch_to_tsquery($1, $2) && websearch_to_tsquery($3, $4)))",
-      "(s.head_tsv @@ (websearch_to_tsquery($1, $2)) and s.text_tsv @@ (websearch_to_tsquery($3, $4)))",
-      "(s.head_tsv @@ (websearch_to_tsquery($1, $2)) and s.text_tsv @@ (websearch_to_tsquery($3, $4)))",
-      "(s.head_tsv @@ (websearch_to_tsquery($1, $2) && websearch_to_tsquery($3, $4)))",
+      // The head's people are `simple` words: each operand asked there both ways.
+      "(s.head_tsv @@ ((websearch_to_tsquery($1, $2) || websearch_to_tsquery('simple', $3))) and s.text_tsv @@ (websearch_to_tsquery($4, $5)))",
+      "(s.head_tsv @@ ((websearch_to_tsquery($1, $2) || websearch_to_tsquery('simple', $3))) and s.text_tsv @@ (websearch_to_tsquery($4, $5)))",
+      "(s.head_tsv @@ ((websearch_to_tsquery($1, $2) || websearch_to_tsquery('simple', $3)) && (websearch_to_tsquery($4, $5) || websearch_to_tsquery('simple', $6))))",
     ]);
     expect(pgDialect().search.letterTerms("heron or kestrel")).toHaveLength(4);
     for (const q of ["heron kestrel plover egret", '"heron" kestrel', "heron -kestrel"]) expect(pgDialect().search.letterTerms(q), q).toBeNull();
