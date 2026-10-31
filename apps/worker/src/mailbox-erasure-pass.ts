@@ -1,5 +1,5 @@
 import { and, asc, isNotNull, isNull, type SQL } from "drizzle-orm";
-import { eraseOwedMailbox, mailboxes, type Tx } from "@trafficflow/db";
+import { clearErasedSignatures, eraseOwedMailbox, mailboxes, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 
 /**
@@ -26,6 +26,8 @@ interface MailboxErasurePassResult {
   /** Erasures this pass finished. */
   finished: number;
   messagesErased: number;
+  /** Erasures finished before the last step cleared the signature, cleared now. */
+  signaturesCleared: number;
 }
 
 export async function mailboxErasurePass(
@@ -42,7 +44,10 @@ export async function mailboxErasurePass(
   const seen = new Set<string>();
   const queue = owed.filter((r) => (seen.has(r.accountId) ? false : (seen.add(r.accountId), true)));
 
-  const out: MailboxErasurePassResult = { mailboxes: 0, steps: 0, finished: 0, messagesErased: 0 };
+  const out: MailboxErasurePassResult = {
+    mailboxes: 0, steps: 0, finished: 0, messagesErased: 0,
+    signaturesCleared: await clearErasedSignatures(db, opts.shard),
+  };
   const spent = (): boolean => clock() - started >= MAILBOX_ERASURE_PASS_BUDGET_MS;
   for (const r of queue) {
     if (out.steps >= MAILBOX_ERASURE_STEPS_PER_PASS || spent()) break;

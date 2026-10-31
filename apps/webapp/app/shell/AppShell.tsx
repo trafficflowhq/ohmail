@@ -202,7 +202,8 @@ import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
 import {
-  nothingOrganizesOf, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode, serverUnreachable,
+  isRemovedMailbox, nothingOrganizesOf, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode,
+  serverUnreachable,
 } from "./mail-state";
 /* Every press that changes mail leaves through here. See the module. */
 import { useShellDispatch } from "./shell-dispatch";
@@ -3403,9 +3404,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    editors render server-confirmed values only — a pane drawn before the live
                    read landed would show empty editors over stored text) and on the mailbox
                    facts being readable (an editor for an unnameable mailbox is a control over
-                   nothing). Absent on the demo and wherever no consent row is reachable. */
+                   nothing), and on there being a live one (a removed mailbox gets no editor). Absent on
+                   the demo and wherever no consent row is reachable. */
                 signaturesSection={
-                  demo || !consent.signaturesKnown || !facts || facts.length === 0 ? undefined : (
+                  demo || !consent.signaturesKnown || !facts || !facts.some((m) => !isRemovedMailbox(m)) ? undefined : (
                     <SignaturesRow
                       mailboxes={facts}
                       signatures={consent.signatures}

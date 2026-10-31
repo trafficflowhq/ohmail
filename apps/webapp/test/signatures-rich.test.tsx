@@ -277,6 +277,103 @@ describe("SignaturesRow — the compose editor, and one of two save shapes", () 
   }
 });
 
+/* ══ a removed mailbox, and the reconnected one beside it ═══════════════════════════════════ */
+
+describe("SignaturesRow — a removed mailbox has no editor; the live one owns the signature", () => {
+  type Row = { id: string; address: string; status?: string; legacyStandDown?: boolean;
+    organizerRole?: string; takeoverAuthorizedAt?: string | null };
+  const OLD = "-- \nbefore the removal";
+  let calls: Array<[string, string | null, string | null | undefined]>;
+
+  async function mountRows(
+    rows: Row[], signatures: Record<string, string>,
+    answer: (id: string) => Promise<void> = async () => {},
+  ): Promise<void> {
+    calls = [];
+    const { SignaturesRow } = await import("../app/shell/SignaturesRow.js");
+    await mount(h(SignaturesRow, {
+      mailboxes: rows, signatures, signaturesHtml: {}, signatureSources: {},
+      setMailboxSignature: (async (id: string, t: string | null, ht?: string | null) => {
+        calls.push([id, t, ht]);
+        await answer(id);
+        return {};
+      }) as never,
+    }));
+    await settleEditor();
+  }
+  const blocks = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".sig-settings")];
+  const typeInto = async (block: HTMLElement, words: string): Promise<void> => {
+    const dom = block.querySelector(".sig-settings-editor .ProseMirror") as unknown as {
+      editor?: { commands: { focus: (at: string) => void; insertContent: (s: string) => void } };
+    } | null;
+    if (!dom?.editor) throw new Error("the signature editor did not mount");
+    await act(async () => { dom.editor!.commands.focus("end"); dom.editor!.commands.insertContent(words); });
+  };
+  const pressSave = async (block: HTMLElement): Promise<void> => {
+    const save = [...block.querySelectorAll("button")]
+      .find((b) => b.textContent?.trim() === messages.settings.signatures.save)!;
+    await act(async () => { save.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    for (let i = 0; i < 3; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  };
+  const SAME = "one@example.test";
+  const refusal = (reason: string) => Object.assign(new Error("refused"), {
+    status: 409, code: "organized_elsewhere", details: { reason, by: null },
+  });
+
+  it("a removed copy with a signature beside the live row: one block, the live one, Save writes it", async () => {
+    await mountRows([
+      { id: "mb-gone", address: SAME, status: "disabled", organizerRole: "organizer" },
+      { id: "mb-live", address: SAME, status: "connected", organizerRole: "organizer" },
+    ], { "mb-gone": OLD });
+    expect(blocks(), "the removed copy still has its own editor").toHaveLength(1);
+    expect(host!.textContent, "the removed copy's sign-off is on screen").not.toContain("before the removal");
+    expect(blocks()[0]!.textContent).toContain(messages.settings.signatures.mailboxOff);
+
+    await typeInto(blocks()[0]!, "-- new");
+    await pressSave(blocks()[0]!);
+    expect(calls.map((c) => c[0]), "the save went to the removed copy").toEqual(["mb-live"]);
+  });
+
+  it("every row removed: no editor at all", async () => {
+    await mountRows([
+      { id: "mb-gone", address: SAME, status: "disabled" },
+      { id: "mb-gone-2", address: SAME, status: "disabled" },
+    ], { "mb-gone": OLD });
+    expect(blocks()).toHaveLength(0);
+  });
+
+  it("a legacy stand-down row is not a removal and keeps its block", async () => {
+    await mountRows([{ id: "mb-one", address: SAME, status: "disabled", legacyStandDown: true }], {});
+    expect(blocks()).toHaveLength(1);
+  });
+
+  it("a refusal because nothing organizes the mailbox says why, not 'try again'", async () => {
+    await mountRows([{ id: "mb-one", address: SAME, organizerRole: "reader" }], {},
+      async () => { throw refusal("no_organizer"); });
+    await typeInto(blocks()[0]!, "-- mine");
+    await pressSave(blocks()[0]!);
+    expect(host!.textContent).toContain(messages.ohbox.whyRefused.nobody);
+    expect(host!.textContent).not.toContain(messages.settings.signatures.failed);
+  });
+
+  it("the same refusal while this install's Organize-here press stands says it is starting", async () => {
+    await mountRows([{
+      id: "mb-one", address: SAME, organizerRole: "reader", takeoverAuthorizedAt: "2026-10-30T10:00:00Z",
+    }], {}, async () => { throw refusal("no_organizer"); });
+    await typeInto(blocks()[0]!, "-- mine");
+    await pressSave(blocks()[0]!);
+    expect(host!.textContent).toContain(messages.ohbox.whyRefused.starting);
+    expect(host!.textContent).not.toContain(messages.settings.signatures.failed);
+  });
+
+  it("any other failure keeps the try-again sentence", async () => {
+    await mountRows([{ id: "mb-one", address: SAME }], {}, async () => { throw new Error("offline"); });
+    await typeInto(blocks()[0]!, "-- mine");
+    await pressSave(blocks()[0]!);
+    expect(host!.textContent).toContain(messages.settings.signatures.failed);
+  });
+});
+
 /* ══ claims — the published sentence, and the copy that describes the pane ═════════════════ */
 
 describe("the copy does not claim a signature is plain text", () => {
