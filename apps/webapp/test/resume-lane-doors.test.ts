@@ -176,6 +176,7 @@ const DOORS: Record<string, { count: number; why: string }> = {
   "shell/session-truth.ts": { count: 1, why: "exempt: the fallback when no transport is registered (no `api-client` loaded, the desktop)" },
   "shell/engine-config.ts": { count: 1, why: "exempt: the wake stream; on a return the scheduler dials it after the delta's lead (`afterLead`)" },
   "shell/build-watch.ts": { count: 1, why: "exempt: `/version` is the web host's own, off the API base" },
+  "shell/lazy-view.tsx": { count: 1, why: "exempt: a HEAD on the web host's own build chunk (/_next/static/, same origin, off the API base) to tell a replaced build from a dropped connection; it reads no session and nothing waits for it beyond its 5 s timeout" },
   "session-gate.ts": { count: 1, why: "exempt: server side (the sign-in gate's route)" },
   "manage-handoff.ts": { count: 1, why: "exempt: server side (the manage route's handoff)" },
 };
