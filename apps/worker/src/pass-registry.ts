@@ -183,9 +183,11 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     // The SAME module the desktop engine's composition imports from `@trafficflow/core/mail`,
     // gated there on idle and power; here it runs in the cycle tail.
     triggers: ["cycle-tail"],
-    cadence: "every cycle tail, for this shard's accounts with living mail and no account_settings.search_index_built_at — synced or not, parked or not",
+    cadence: "every cycle tail, for this shard's accounts with living mail and no account_settings.search_index_built_at, or one older than "
+      + "SEARCH_DOCUMENT_SHAPE_AT — synced or not, parked or not",
     budget: "SEARCH_INDEX_ACCOUNTS_PER_TAIL accounts × SEARCH_INDEX_ROUNDS_PER_CYCLE rounds × SEARCH_INDEX_BATCH rows, one transaction per round",
-    owns: "every living message has its search document, built from the store alone (no mailbox read)",
+    owns: "every living message has its search document in the present shape (an older document of a letter with a file name gets its head again without "
+      + "the names, the names whole and in parts appended to its text, and the substring corpus with the names behind its mark), from the store alone (no mailbox read)",
     fence: "store-only — no adapter, no lease; the document's FK refuses a row whose message is gone, and a failure is logged and never fails the tail",
   },
   {

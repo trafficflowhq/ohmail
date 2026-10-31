@@ -12,7 +12,7 @@ import { pgDialect } from "./dialect/pg.js";
  * Idempotent — `IF NOT EXISTS` throughout. The tsvector columns and their GIN indexes are NOT
  * here: they are core-Postgres generated columns in migration 0008 and replay fine into PGlite.
  * This file adds only the `pg_trgm` extension plus the trigram GIN indexes on subject,
- * from_address and the search document's header corpus.
+ * from_address and the search document's substring corpus, whole and each of its two sides.
  */
 
 /**
@@ -34,9 +34,8 @@ export const TRIGRAM_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
       on public.messages using gin ("from_address" gin_trgm_ops)`,
   },
   {
-    // The substring and typo arms over the search document's header corpus (mail 0125): subject,
-    // senders, recipients and attachment names in one column, so `axa` inside `myAXA` or inside a
-    // recipient's domain is one index read. The ACCOUNT leads (btree_gin): a trigram's candidates
+    // The typo arm over the search document's substring corpus (mail 0125): subject, senders,
+    // recipients and file names in one column. The ACCOUNT leads (btree_gin): a trigram's candidates
     // are then one account's, where the plain index handed a smaller account every account's
     // candidates to re-check, and its typo page ran past the budget. The pending list is bounded as
     // mail 0152 bounds the journal's two: every search reads it whole.
@@ -44,6 +43,22 @@ export const TRIGRAM_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
     table: "message_search",
     ddl: sql`create index concurrently if not exists "message_search_terms_trgm_idx"
       on public.message_search using gin ("account_id", "terms" gin_trgm_ops) with (gin_pending_list_limit = 256)`,
+  },
+  {
+    // The substring arm: the corpus's header text (subject, people), before the names' mark (U+001F),
+    // so `axa` inside `myAXA` or inside a recipient's domain is one index read. The expression is the
+    // dialect's own (`split_part`, the mark inline as `chr(31)`); a test holds the two equal.
+    name: "message_search_head_terms_trgm_idx",
+    table: "message_search",
+    ddl: sql`create index concurrently if not exists "message_search_head_terms_trgm_idx"
+      on public.message_search using gin ("account_id", (split_part("terms", chr(31), 1)) gin_trgm_ops) with (gin_pending_list_limit = 256)`,
+  },
+  {
+    // The file names after the mark: the branch of the arm that reads a body word's start.
+    name: "message_search_names_trgm_idx",
+    table: "message_search",
+    ddl: sql`create index concurrently if not exists "message_search_names_trgm_idx"
+      on public.message_search using gin ("account_id", (split_part("terms", chr(31), 2)) gin_trgm_ops) with (gin_pending_list_limit = 256)`,
   },
 ];
 

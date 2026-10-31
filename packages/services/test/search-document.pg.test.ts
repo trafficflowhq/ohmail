@@ -8,9 +8,10 @@ import { accountSettings, attachments, folderState, mailboxes, messageBodies, me
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS } from "@trafficflow/db/testing";
-import { searchBodyOf, upsertMessageSearch, type EmailAddress } from "@trafficflow/core/mail";
+import { searchBodyOf, upsertMessageSearch, upsertMessageSearchRows, type EmailAddress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
+import { FRAGMENT_FILES, FRAGMENTS } from "./helpers/file-name-fragments.js";
 
 /**
  * SEARCH OVER THE SEARCH DOCUMENT (mail 0125) — real Postgres with pg_trgm, every row written by
@@ -41,6 +42,14 @@ const H = randomUUID();
 const J = randomUUID();
 /** Three older letters that only resemble `kai survey`, 130 newer of Kai's survey samples, 20 newest holding none. */
 const N = randomUUID();
+/** Ines Varga's letter with `harbour-ledger-7731.pdf`, and one with the same words apart. */
+const V = randomUUID();
+/** (4b)'s four mailboxes: a subject, a sender or a body hit beside letters found by a file name's part. */
+const RANKED = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+/** (4c)'s two per case: an older hit under 250 newer letters a file name finds, and under 250 a body word finds. */
+const SCALED = Array.from({ length: 18 }, () => randomUUID());
+/** (4d)'s file names' fragments. */
+const FRAG = randomUUID();
 const ids: Record<string, string> = {};
 /** The setup hook's own settling, which the teardown awaits. */
 let setupDone: Promise<void> = Promise.resolve();
@@ -71,6 +80,29 @@ async function seed(o: {
     accountId: o.accountId, subject: o.subject, from: o.from, to: o.to ?? [], cc: [],
     attachmentNames: o.files ?? [], bodyText: body.bodyText, source: body.source,
   });
+}
+
+/** {@link seed} for many letters at once: one statement a table and the writer's own bulk upsert, each keyed `<prefix>-<key>`. */
+async function seedAll(accountId: string, mailboxId: string, prefix: string, rows: ReadonlyArray<{
+  key: string; subject: string; from: EmailAddress; to: EmailAddress[]; text: string; daysAgo: number; files: string[];
+}>): Promise<void> {
+  const keyed = rows.map((r) => ({ r, dedup: `doc:${randomUUID()}` }));
+  const made = await db.insert(messages).values(keyed.map(({ r, dedup }) => ({
+    accountId, mailboxId, bodyHash: "h", dedupKey: dedup, subject: r.subject, fromAddress: r.from.address, fromName: r.from.name,
+    toAddresses: r.to, date: new Date(NOW.getTime() - r.daysAgo * 86_400_000), unread: false, hasAttachments: r.files.length > 0,
+    nativeLocator: { folder: "INBOX", ref: "1:1" },
+  }))).returning({ id: messages.id, dedupKey: messages.dedupKey });
+  const idOf = new Map(made.map((m) => [m.dedupKey, m.id]));
+  const id = (dedup: string): string => idOf.get(dedup)!;
+  await db.insert(messageBodies).values(keyed.map(({ r, dedup }) => ({ messageId: id(dedup), text: r.text })));
+  await db.insert(folderState).values(keyed.map(({ dedup }) => ({ messageId: id(dedup), desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" })));
+  const files = keyed.flatMap(({ r, dedup }) => r.files.map((f) => ({ accountId, messageId: id(dedup), filename: f, contentType: "application/pdf" })));
+  if (files.length > 0) await db.insert(attachments).values(files);
+  await upsertMessageSearchRows(db as never, keyed.map(({ r, dedup }) => ({
+    messageId: id(dedup),
+    input: { accountId, subject: r.subject, from: r.from, to: r.to, cc: [], attachmentNames: r.files, bodyText: r.text, source: "text" as const },
+  })));
+  for (const { r, dedup } of keyed) ids[`${prefix}-${r.key}`] = id(dedup);
 }
 
 const person = (name: string, address: string): EmailAddress => ({ name, address });
@@ -213,7 +245,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
 
   afterAll(async () => {
     await setupDone;
-    for (const a of [D, P, L, K, KL, F, G, H, J, N]) {
+    for (const a of [D, P, L, K, KL, F, G, H, J, N, V, ...RANKED, ...SCALED, FRAG]) {
       await db.execute(sql`delete from message_search where account_id = ${a}`);
       await db.execute(sql`delete from attachments where account_id = ${a}`);
       await db.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${a})`);
@@ -386,10 +418,156 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
     ]);
   }, 120_000);
 
+  it("(3f) any part of a file name beside another word, in the exact tier", async () => {
+    const [mv] = await db.insert(mailboxes).values({ accountId: V, provider: "imap", address: "v@tf.example" }).returning();
+    await seed({ key: "v-sr2", accountId: V, mailboxId: mv!.id, subject: "Papers for SR2", from: person("Ines Varga", "iv@post.example"), text: "SR2: the scan is attached.", daysAgo: 1, files: ["harbour-ledger-7731.pdf"] });
+    await seed({ key: "v-d2", accountId: V, mailboxId: mv!.id, subject: "Ledger copy", from: person("Port Office", "office@port.example"), text: "The harbour scan.", daysAgo: 2, files: ["notes.txt"] });
+    await seed({ key: "v-q3", accountId: V, mailboxId: mv!.id, subject: "Q3 papers", from: person("Desk", "po@desk.example"), text: "See attached.", daysAgo: 3, files: ["INV-123.pdf"] });
+    await db.insert(accountSettings).values({ accountId: V, searchIndexBuiltAt: NOW })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    const keyOf = new Map([[ids["v-sr2"], "sr2"], [ids["v-d2"], "d2"], [ids["v-q3"], "q3"]]);
+    const table: ReadonlyArray<readonly [string, readonly string[]]> = [
+      ["ledger", ["d2", "sr2"]], ["ines harbour", ["sr2"]], ["ines ledger", ["sr2"]], ["ines pdf", ["sr2"]], ["ines 7731", ["sr2"]],
+      ["ines harbour-ledger-7731.pdf", ["sr2"]], ["scan pdf", ["sr2"]], ["scan 7731", ["sr2"]], ["papers ledger", ["sr2"]],
+      ["harbour ledger", ["d2", "sr2"]], ["ledger 7731 scan", ["sr2"]], ["ines harbour 7731", ["sr2"]],
+      ["Ines LEDGER", ["sr2"]], ["SCAN Pdf 7731", ["sr2"]],
+      // A whole name of runs under four letters beside a subject word: the name itself is a word of the text.
+      ["q3 inv-123.pdf", ["q3"]],
+    ];
+    const read = async (q: string) => {
+      const r = await svc.search(ctx(V), { q });
+      return { q, tier: r.tier, keys: r.items.map((m) => keyOf.get(m.id) ?? m.id).sort() };
+    };
+    const got = [];
+    for (const [q] of table) got.push(await read(q));
+    expect(got).toEqual(table.map(([q, keys]) => ({ q, tier: "exact", keys: [...keys] })));
+    // A phrase reads whole words; a part under three characters is not looked for inside a name.
+    const whole = [];
+    for (const q of ['"ines ledger"', "ines 77"]) whole.push(await read(q));
+    expect(whole.filter((r) => r.tier === "exact" && r.keys.length > 0)).toEqual([]);
+  });
+
   it("(4) a subject hit ranks above a newer, louder body-only hit", async () => {
     const r = await svc.page(ctx(D), { q: "renewal" });
     expect(r.items.map((m) => m.id).slice(0, 2)).toEqual([ids.subjectHit, ids.bodyHit]);
   });
+
+  it("(4b) a file name's part ranks like a body word, by recency, never above a subject or sender hit", async () => {
+    type Row = { key: string; subject: string; from: EmailAddress; text: string; daysAgo: number; files: string[] };
+    const filed = (key: string, file: string, daysAgo: number): Row =>
+      ({ key, subject: `Papers ${key}`, from: person(`Clerk ${key}`, `${key}@desk.example`), text: "See attached.", daysAgo, files: [file] });
+    const ORDERS: ReadonlyArray<readonly [q: string, rows: readonly Row[], first: readonly string[]]> = [
+      ["ledger", [{ key: "subj", subject: "Ledger copy", from: person("Port Office", "office@port.example"), text: "The harbour scan.", daysAgo: 10, files: ["notes.txt"] },
+        filed("f1", "harbour-ledger-7731.pdf", 1), filed("f2", "harbour-ledger-7732.pdf", 2), filed("f3", "harbour-ledger-7733.pdf", 3)],
+      ["subj", "f1", "f2", "f3"]],
+      ["varga", [{ key: "sender", subject: "Hello", from: person("Ines Varga", "iv@post.example"), text: "Short note.", daysAgo: 10, files: ["notes.txt"] },
+        filed("g1", "varga-contract-1.pdf", 1), filed("g2", "varga-contract-2.pdf", 2), filed("g3", "varga-contract-3.pdf", 3)],
+      ["sender", "g1", "g2", "g3"]],
+      ["ledger", [{ key: "body", subject: "Weekly note", from: person("Port Office", "office@port.example"), text: "The ledger is closed for the month.", daysAgo: 1, files: ["notes.txt"] },
+        filed("file", "harbour-ledger-7731.pdf", 3)], ["body", "file"]],
+      ["contract", [{ key: "subj", subject: "Contract renewal", from: person("Port Office", "office@port.example"), text: "See you Monday.", daysAgo: 40, files: ["notes.txt"] },
+        ...Array.from({ length: 80 }, (_, i) => filed(`c${i}`, `Contract_v${i}.docx`, i / 4))], ["subj"]],
+    ];
+    const got: Array<{ q: string; svc: string; first: string[] }> = [];
+    const want: typeof got = [];
+    for (const [i, [q, rows, first]] of ORDERS.entries()) {
+      const account = RANKED[i]!;
+      const [mb] = await db.insert(mailboxes).values({ accountId: account, provider: "imap", address: `ranked${i}@tf.example` }).returning();
+      for (const row of rows) await seed({ ...row, key: `ranked${i}-${row.key}`, accountId: account, mailboxId: mb!.id });
+      await db.insert(accountSettings).values({ accountId: account, searchIndexBuiltAt: NOW })
+        .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+      const keyOf = new Map(rows.map((row) => [ids[`ranked${i}-${row.key}`], row.key]));
+      for (const [label, s] of [["store", svc], ["desktop", new SearchService({ indexFills: true, localStore: true })]] as const) {
+        const r = await s.search(ctx(account), { q, limit: 50 });
+        got.push({ q, svc: label, first: r.items.map((m) => keyOf.get(m.id) ?? m.id).slice(0, first.length) });
+        want.push({ q, svc: label, first: [...first] });
+      }
+    }
+    expect(got).toEqual(want);
+  }, 60_000);
+
+  // (4c): 250 newer letters a file name finds beside an older subject or sender hit, against 250 newer
+  // letters whose text holds the word: names with marks and with spaces, a word's start, a short word.
+  // Second, where the newest of 250 newer letters a body word finds ties the older hit and is newer;
+  // first for `pdf`, which no part-word arm reads.
+  type Scaled = { key: string; subject: string; from: EmailAddress; text: string; daysAgo: number; files: string[] };
+  const newer = (i: number, text: string, file: string): Scaled =>
+    ({ key: `n${i}`, subject: `Papers ${i}`, from: person(`Clerk ${i}`, `c${i}@desk.example`), text, daysAgo: i / 8, files: [file] });
+  const olderHit = (subject: string, from: EmailAddress, text: string): Scaled => ({ key: "T", subject, from, text, daysAgo: 100, files: ["notes.txt"] });
+  const LEDGER = olderHit("Ledger copy", person("Port Office", "office@port.example"), "The harbour scan.");
+  const VARGA = olderHit("Hello", person("Ines Varga", "iv@post.example"), "Short note.");
+  const ADDRESS = olderHit("Address change", person("Port Office", "office@port.example"), "From Monday.");
+  const PDF = olderHit("PDF guide", person("Port Office", "office@port.example"), "From Monday.");
+  const ledgerBody = (i: number) => newer(i, "The ledger is closed.", "notes.txt");
+  const vargaBody = (i: number) => newer(i, "Varga sent the papers.", "notes.txt");
+  const addressBody = (i: number) => newer(i, "The address list is attached.", "notes.txt");
+  const DEEP: ReadonlyArray<readonly [label: string, q: string, older: Scaled, file: (i: number) => Scaled, body: (i: number) => Scaled]> = [
+    ["ledger, a name with marks", "ledger", LEDGER, (i) => newer(i, "See attached.", `harbour-ledger-${i}.pdf`), ledgerBody],
+    ["ledger, a name with spaces", "ledger", LEDGER, (i) => newer(i, "See attached.", `Annual Ledger ${i}.pdf`), ledgerBody],
+    ["ledg, a word's start", "ledg", LEDGER, (i) => newer(i, "See attached.", `harbour-ledger-${i}.pdf`), ledgerBody],
+    ["varga, a name with marks", "varga", VARGA, (i) => newer(i, "See attached.", `offer-varga-${i}.pdf`), vargaBody],
+    ["varga, a name with spaces", "varga", VARGA, (i) => newer(i, "See attached.", `Offer Varga ${i}.pdf`), vargaBody],
+    ["varg, a word's start", "varg", VARGA, (i) => newer(i, "See attached.", `offer-varga-${i}.pdf`), vargaBody],
+    ["address, beside the recipient lists' keys", "address", ADDRESS, (i) => newer(i, "See attached.", `address-list-${i}.pdf`), addressBody],
+    ["addre, a word's start", "addre", ADDRESS, (i) => newer(i, "See attached.", `address-list-${i}.pdf`), addressBody],
+    ["pdf, under four letters", "pdf", PDF, (i) => newer(i, "See attached.", `report-${i}.pdf`), (i) => newer(i, "The pdf is attached.", "notes.txt")],
+  ];
+  for (const [c, [label, q, older, file, body]] of DEEP.entries()) {
+    it(`(4c) past the arms' cut (${label}): an older subject or sender hit stands where it stands beside as many newer body hits`, async () => {
+      const SVCS = [["store", svc], ["desktop", new SearchService({ indexFills: true, localStore: true })]] as const;
+      const placeOf = async (s: SearchService, account: string, target: string): Promise<number> => {
+        let seen = 0;
+        let cursor: string | undefined;
+        for (let page = 0; page < 8; page++) {
+          const r = await s.search(ctx(account), { q, limit: 50, parts: "page", ...(cursor ? { cursor } : {}) });
+          const at = r.items.findIndex((m) => m.id === target);
+          if (at >= 0) return seen + at + 1;
+          seen += r.items.length;
+          if (!r.nextCursor) return -1;
+          cursor = r.nextCursor;
+        }
+        return -1;
+      };
+      const at = new Map<string, { file: number; body: number }>();
+      for (const [k, [kind, row]] of ([["file", file], ["body", body]] as const).entries()) {
+        const n = 2 * c + k;
+        const account = SCALED[n]!;
+        const [mb] = await db.insert(mailboxes).values({ accountId: account, provider: "imap", address: `scaled${n}@tf.example` }).returning();
+        const to = [person("Mila Hartmann", "mila@lichtgrat.example")];
+        await seedAll(account, mb!.id, `scaled${n}`, [older, ...Array.from({ length: 250 }, (_, i) => row(i))].map((r) => ({ ...r, to })));
+        await db.insert(accountSettings).values({ accountId: account, searchIndexBuiltAt: NOW })
+          .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+        for (const [l, s] of SVCS) at.set(l, { ...(at.get(l) ?? { file: 0, body: 0 }), [kind]: await placeOf(s, account, ids[`scaled${n}-T`]!) });
+      }
+      const place = q === "pdf" ? 1 : 2;
+      expect(SVCS.map(([l]) => ({ svc: l, ...at.get(l)! }))).toEqual(SVCS.map(([l]) => ({ svc: l, file: place, body: place })));
+    }, 120_000);
+  }
+
+  it("(4d) a file name's fragment typed with its marks: the exact tier, the letter first, as many letters as before", async () => {
+    const [mb] = await db.insert(mailboxes).values({ accountId: FRAG, provider: "imap", address: "frag@tf.example" }).returning();
+    const to = [person("Mila Hartmann", "mila@lichtgrat.example")];
+    for (const [i, [key, file]] of FRAGMENT_FILES.entries()) {
+      const from = key === "hl" ? person("Ines Varga", "iv@post.example") : person(`Clerk ${key}`, `${key}@desk.example`);
+      await seed({ key: `frag-${key}`, accountId: FRAG, mailboxId: mb!.id, subject: key === "hl" ? "Papers for SR2" : `Papers ${key}`, from, to, text: "See attached.", daysAgo: 1 + i, files: [file] });
+    }
+    for (let n = 100; n <= 160; n++) {
+      await seed({ key: `frag-n${n}`, accountId: FRAG, mailboxId: mb!.id, subject: `Papers n${n}`, from: person(`Clerk n${n}`, `n${n}@desk.example`), to, text: "See attached.", daysAgo: 20 + n / 10, files: [`INV-${n}.pdf`] });
+    }
+    await db.insert(accountSettings).values({ accountId: FRAG, searchIndexBuiltAt: NOW })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    await db.execute(sql`analyze message_search`);
+    const keyOf = new Map(Object.entries(ids).filter(([k]) => k.startsWith("frag-")).map(([k, id]) => [id, k.slice("frag-".length)]));
+    const SVCS = [["store", svc], ["desktop", new SearchService({ indexFills: true, localStore: true })]] as const;
+    const got: Array<{ q: string; svc: string; tier: string; first: string | null; letters: number }> = [];
+    for (const [q] of FRAGMENTS) {
+      for (const [label, s] of SVCS) {
+        const r = await s.search(ctx(FRAG), { q, limit: 50, parts: "page" });
+        got.push({ q, svc: label, tier: r.tier, first: r.items[0] ? keyOf.get(r.items[0].id) ?? r.items[0].id : null, letters: r.items.length });
+      }
+    }
+    expect(got).toEqual(FRAGMENTS.flatMap(([q, first, letters]) => SVCS.map(([label]) => ({ q, svc: label, tier: "exact", first, letters }))));
+  }, 60_000);
 
   it("(5) relevance pages continue each other: no repeat, no skip, the last page ends it", async () => {
     const seen: string[] = [];

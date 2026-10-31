@@ -220,6 +220,8 @@ describe("the SQLite journal, applied", () => {
       "0171_messages_arrival_key.sql",
       // The html-words backfill's stamp and cursor, the pg columns' twins.
       "0172_html_words_backfill.sql",
+      // Device-only: the people's and the file names' words, as FTS5 words keyed by the letter.
+      "0173_device_header_words.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -368,6 +370,8 @@ describe("the SQLite journal, applied", () => {
       "0171_messages_arrival_key.sql",
       // The html-words backfill's stamp and cursor, the pg columns' twins.
       "0172_html_words_backfill.sql",
+      // Device-only: the people's and the file names' words, as FTS5 words keyed by the letter.
+      "0173_device_header_words.sql",
     ]);
   });
 

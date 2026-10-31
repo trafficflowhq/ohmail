@@ -141,6 +141,14 @@ function foldedTsquery(q: string): SQL {
     : sql`(${sql.join(forms.map((f) => sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${f})`), sql` || `)})`;
 }
 
+/**
+ * The substring corpus's header text and its file names (`SEARCH_NAMES_MARK`, U+001F, between them),
+ * each spelled as its own trigram index keys it (search-setup.ts): inline, never a bound parameter, or
+ * the planner sees another expression and reads every one of the account's documents.
+ */
+const HEAD_TERMS = sql.raw("split_part(s.terms, chr(31), 1)");
+const NAME_TERMS = sql.raw("split_part(s.terms, chr(31), 2)");
+
 /** `col ilike '%q%'` for every ß/ss form of `q`; one form is the old single predicate. */
 function likeAny(col: SQL, q: string): SQL {
   const forms = eszettForms(q);
@@ -395,10 +403,12 @@ export function pgDialect(): Dialect {
         };
       },
       substring: (q: string, opts): SearchArm => ({
-        // `message_search_terms_trgm_idx` serves the ILIKE where pg_trgm exists (search-setup.ts).
-        pred: likeAny(sql`s.terms`, q),
-        rank: opts.trigram ? sql`word_similarity(${q}, s.terms)` : sql`coalesce(extract(epoch from m.date), 0)`,
+        // The header text alone (subject, people): `message_search_head_terms_trgm_idx` serves the ILIKE.
+        pred: likeAny(HEAD_TERMS, q),
+        rank: opts.trigram ? sql`word_similarity(${q}, ${HEAD_TERMS})` : sql`coalesce(extract(epoch from m.date), 0)`,
       }),
+      // The file names: `message_search_names_trgm_idx` serves the ILIKE.
+      names: (q: string): SearchArm => ({ pred: likeAny(NAME_TERMS, q), rank: sql`coalesce(extract(epoch from m.date), 0)` }),
       unindexed: (q: string, opts): UnindexedMailArms => {
         // The pre-0125 columns, one index per branch (subject_tsv / body_tsv GINs, the two trgm
         // GINs) — never an OR, which is the shape that seq-scanned.
@@ -490,9 +500,9 @@ export function pgDialect(): Dialect {
       withDocument: (bodyInsert: SQL, documentUpsert: SQL): SQL =>
         sql`with body as (${bodyInsert}) ${documentUpsert} returning (select count(*) from body)::int as body_rows`,
       document: (p: SearchDocumentParts) => ({
+        // No file name in the head: the names, whole and in parts, are words of the text (`p.body`).
         head: sql`(setweight(to_tsvector(${TEXT_SEARCH_CONFIG}, ${p.subject}), 'A')
-          || setweight(to_tsvector('simple', ${p.people}), 'B')
-          || setweight(to_tsvector('simple', ${p.attachments}), 'B'))`,
+          || setweight(to_tsvector('simple', ${p.people}), 'B'))`,
         text: sql`to_tsvector(${TEXT_SEARCH_CONFIG}, ${p.body})`,
       }),
     },

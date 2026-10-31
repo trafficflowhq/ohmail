@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
+import { pgDialect } from "@trafficflow/db/dialect";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { openLocalDb } from "../src/db.js";
@@ -71,10 +72,11 @@ const get = async (s: Sidecar, path: string): Promise<{ status: number; body: an
 };
 const rows = (r: unknown): any[] => (Array.isArray(r) ? r : ((r as { rows?: any[] }).rows ?? []));
 const idsOf = (body: any): string[] => (body?.items ?? []).map((i: { id: string }) => i.id);
-/** The plan for a substring match on the header corpus, with the table scan priced out. */
+/** The plan of the substring arm's own predicate (the header text, before the names), with the table scan priced out. */
 const substringPlan = (s: Sidecar): Promise<string> => s.db.transaction(async (tx) => {
   await tx.execute(sql`set local enable_seqscan = off`);
-  return rows(await tx.execute(sql`explain select message_id from message_search where terms ilike '%axa%'`))
+  const arm = pgDialect().search.substring("axa", { trigram: true }).pred;
+  return rows(await tx.execute(sql`explain select s.message_id from message_search s where ${arm}`))
     .map((r) => String(Object.values(r)[0])).join("\n");
 });
 
@@ -88,14 +90,14 @@ describe("the local store searches with the server's own indexes", () => {
     const idx = rows(await s.db.execute(sql`select indexname from pg_indexes where schemaname = 'public'`)).map((r) => r.indexname);
     expect(idx).toEqual(expect.arrayContaining([
       "messages_subject_trgm_idx", "messages_from_address_trgm_idx", "message_search_terms_trgm_idx",
-      "messages_account_msg_order_idx",
+      "message_search_head_terms_trgm_idx", "message_search_names_trgm_idx", "messages_account_msg_order_idx",
     ]));
     // The server's account-keyed word index is not the desktop's: its arms read the store bounded.
     expect(idx).not.toContain("message_search_words_idx");
     const before = await get(s, "/search?q=axa");
     expect(before.status).toBe(200);
     expect(idsOf(before.body)).toEqual([hit]);
-    expect(await substringPlan(s)).toContain("Bitmap Index Scan on message_search_terms_trgm_idx");
+    expect(await substringPlan(s)).toContain("Bitmap Index Scan on message_search_head_terms_trgm_idx");
   });
 
   it("the same one hit through the degrade on a store that refused the extensions", async () => {

@@ -9,7 +9,7 @@ import { mailboxes } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes, ensureWordIndex } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
-import { searchIndexProgress } from "@trafficflow/core/mail";
+import { searchIndexBackfillPass, searchIndexProgress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { CALIBRATED_REF_MS, LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, judgedClockOf, judgedVerdicts, mustJudge, outcomeOf, scaleOf, verdicts, windowOf, type Round, type Verdict, type Window } from "./_budget-clock.js";
@@ -142,8 +142,11 @@ async function seed(acct: string, n: number): Promise<void> {
 /**
  * `D`'s mailbox as production holds it: a pseudo-word vocabulary (word k is 3-5 syllables from
  * md5, so words share trigrams the way a language does and the typo tier has real candidates),
- * skewed k = floor(5000 · u⁴); planted rare words; each message's search document as
- * `searchDocumentOf` writes it for a sender and no recipients; the backfill marker written.
+ * skewed k = floor(5000 · u⁴); planted rare words; file names on about two letters in five, as
+ * mail carries them (signature images, dated invoices, scans, phone photos, joined words, reports,
+ * camel-case sheets). A letter with no file name gets its document as `searchDocumentOf` writes it
+ * for a sender and no recipients; one with a file name gets the writer's own, through the backfill,
+ * which writes the marker.
  */
 async function seedDocumented(acct: string, n: number, salt: string): Promise<void> {
   const [mb] = await base.insert(mailboxes).values({ accountId: acct, provider: "imap", address: `${acct.slice(0, 8)}@tf.example` }).returning();
@@ -174,19 +177,40 @@ async function seedDocumented(acct: string, n: number, salt: string): Promise<vo
     insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
     select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
   await base.execute(sql`
+    insert into attachments (account_id, message_id, filename, content_type)
+    select m.account_id, m.id, f.name, 'application/octet-stream'
+    from messages m
+    cross join lateral (select split_part(m.dedup_key, ':', 3)::int as g) x
+    join vocab v1 on v1.k = (x.g * 7) % 5000
+    join vocab v2 on v2.k = (x.g * 13 + 1) % 5000
+    cross join lateral (values
+      (case when x.g % 5 = 0 then 'image001.png' end),
+      (case when x.g % 10 = 0 then 'image002.jpg' end),
+      (case when x.g % 12 = 1 then 'Invoice_' || (2024 + x.g % 3) || '-' || lpad(((x.g % 12) + 1)::text, 2, '0') || '-' || lpad(((x.g % 28) + 1)::text, 2, '0') || '.pdf' end),
+      (case when x.g % 25 = 2 then 'scan' || lpad((x.g % 10000)::text, 4, '0') || '.PDF' end),
+      (case when x.g % 33 = 3 then 'IMG_' || (20240101 + x.g % 1000) || '_' || lpad((x.g % 2400)::text, 4, '0') || '.jpg' end),
+      (case when x.g % 50 = 4 then v1.w || '-' || v2.w || '-' || (x.g % 10000) || '.pdf' end),
+      (case when x.g % 100 = 5 then 'Report Q' || (1 + x.g % 4) || ' ' || (2024 + x.g % 3) || '.docx' end),
+      (case when x.g % 100 = 6 then initcap(v1.w) || initcap(v2.w) || (x.g % 100) || '.xlsx' end)
+    ) f(name)
+    where f.name is not null and m.account_id = ${acct}::uuid`);
+  await base.execute(sql`
     insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
     select m.id, m.account_id,
       setweight(to_tsvector('english', coalesce(m.subject, '')), 'A')
         || setweight(to_tsvector('simple', m.from_address || ' ' || regexp_replace(m.from_address, '[@.+_-]+', ' ', 'g')), 'B'),
       to_tsvector('english', b.text), left(lower(trim(coalesce(m.subject, '') || ' ' || m.from_address)), 2048), 'text'
-    from messages m join message_bodies b on b.message_id = m.id where m.account_id = ${acct}::uuid`);
-  await base.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${acct}::uuid, now())`);
+    from messages m join message_bodies b on b.message_id = m.id
+    where m.account_id = ${acct}::uuid and not exists (select 1 from attachments a where a.account_id = m.account_id and a.message_id = m.id)`);
+  const filled = await searchIndexBackfillPass({ db: base as never, accountId: acct, batch: 2_000, rounds: 1_000 });
+  expect(filled.marked).toBe(true);
 }
 
 /** Every row the seeds wrote, by the fixed account ids. */
 async function removeSeeded(): Promise<void> {
   for (const acct of [A, D, NOISE]) {
     await base.execute(sql`delete from message_search where account_id = ${acct}::uuid`);
+    await base.execute(sql`delete from attachments where account_id = ${acct}::uuid`);
     await base.execute(sql`delete from account_settings where account_id = ${acct}::uuid`);
     await base.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${acct}::uuid)`);
     await base.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${acct}::uuid)`);
@@ -275,6 +299,11 @@ const HARNESS: Array<{ cls: Cls; q?: string; k?: number; of?: string }> = [
   ...["{100}", "{300}", "{1000}", "{1500}", "{0} {100}", "{0} {1000}"].map((of) => ({ cls: "mid" as const, of })),
   ...["kestrel", "osprey", "plover", "heron", "egret", "avocet", "dunlin", "unlin"].map((q) => ({ cls: "rare" as const, q })),
   ...["heron {0}", "dunlin {1}", "heron -{3000}", "heron {0} -{3000}", "heron or dunlin -{3000}"].map((of) => ({ cls: "rare" as const, of })),
+  // Parts of file names: alone and beside other words (a sender's in the last), and fragments typed with
+  // their marks, which only the file names' own index reads.
+  { cls: "common", q: "image001" },
+  ...["pdf", "jpg", "scan", "img", "scan pdf", "invoice pdf", "invoice 2025", "{0} pdf", "{0} {1} jpg", "ice_2025-02", "img_20240"].map((of) => ({ cls: "mid" as const, of })),
+  ...["heron pdf", "avocet pdf", "sender1237 pdf", "can0102"].map((of) => ({ cls: "rare" as const, of })),
   ...["zqxjv", "quokka", "xylograph"].map((q) => ({ cls: "none" as const, q })),
   { cls: "typo", k: 77_777 }, { cls: "typo", q: "heorn" },
 ];
@@ -598,6 +627,23 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       const reads = seen.filter((st) => !isSession(st) && !isExplain(st));
       expect(reads.length, `${h.q}: the page's statements were not recorded`).toBeGreaterThan(0);
       for (const st of reads) expect(await seqScans(st, session), h.q).toEqual([]);
+    }
+  }, 300_000);
+
+  // The corpus's two sides, each read off its own trigram index: a part of a sender's address (`unlin`
+  // inside `dunlin`) through the header text's, a fragment of a scan's file name through the names'.
+  it("the substring arm reads the header text's own index, and a file name's fragment the names' own index", async () => {
+    const svc = new SearchService();
+    for (const [q, index] of [["unlin", "message_search_head_terms_trgm_idx"], ["can0102", "message_search_names_trgm_idx"]] as const) {
+      seen.length = 0;
+      const r = await svc.search(ctx(D), { q, parts: "page" });
+      expect({ q, tier: r.tier, found: r.items.length > 0 }).toEqual({ q, tier: "exact", found: true });
+      const session = seen.filter(isSession);
+      const read = new Set<string>();
+      for (const st of seen.filter((x) => !isSession(x) && !isExplain(x))) {
+        for (const p of await planNodes(st, session)) if (p["Index Name"] !== undefined && Number(p["Actual Loops"]) > 0) read.add(String(p["Index Name"]));
+      }
+      expect([...read], q).toContain(index);
     }
   }, 300_000);
 

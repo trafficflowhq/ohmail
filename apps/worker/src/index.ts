@@ -5689,7 +5689,7 @@ export async function startWorkerWithLock(
       search_index_backfill: {
         // ── THE SEARCH DOCUMENTS THE STORE STILL OWES (mail 0125) ─────────────────────────
         // Store-only: built from stored text, html and headers, no mailbox read. Its list is the
-        // accounts with living mail and no marker, read here rather than taken from the snapshot:
+        // accounts with living mail and no marker in the present shape, read here rather than taken from the snapshot:
         // an account whose only mailbox is disabled, or whose account is parked, never syncs and
         // was never indexed. Bounded per account (rounds × batch); a failure never fails the tail.
         enter: async () => {

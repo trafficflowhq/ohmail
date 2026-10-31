@@ -250,6 +250,8 @@ export default defineConfig({
       "packages/services/test/search-punctuation-parity.test.ts",
       // The device answers what the server answers: stems, joined forms, part-words (the census).
       "packages/services/test/search-device-parity.test.ts",
+      /* The phone's own search budget at 40,000 letters: this store only (the file skips elsewhere). */
+      "packages/services/test/search-budget-phone.test.ts",
       /* The address search by recipient: mail 0154's side table on this store. */
       "packages/services/test/search-address-recipients.test.ts",
       "packages/db/test/sqlite-recipients.test.ts",

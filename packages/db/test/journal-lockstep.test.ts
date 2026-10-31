@@ -59,7 +59,7 @@ describe("the two journals stay in lockstep", () => {
   });
 
   it("reads the device-only declaration it admits, and only from a header line", () => {
-    expect(device.filter(deviceOnly), "the declared device-only entries").toEqual(["0138_device_search_stems.sql"]);
+    expect(device.filter(deviceOnly), "the declared device-only entries").toEqual(["0138_device_search_stems.sql", "0173_device_header_words.sql"]);
     expect(deviceOnly("0137_draft_forward_of.sql"), "an ordinary twin is not device-only").toBe(false);
   });
 });

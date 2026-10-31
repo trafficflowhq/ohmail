@@ -4,15 +4,15 @@ import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
+import { brandDialect, dialect } from "@trafficflow/db/dialect";
 import { accounts, accountSettings, attachments, mailboxes, messageBodies, messages } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import {
-  SEARCH_BODY_MAX_CHARS, searchIndexBackfillPass, searchIndexBuilt, searchIndexOwedAccounts, searchIndexProgress,
-  searchInputsFromStore,
+  SEARCH_BODY_MAX_CHARS, SEARCH_DOCUMENT_SHAPE_AT, searchDocumentOf, searchIndexBackfillPass, searchIndexBuilt, searchIndexOwedAccounts,
+  searchIndexProgress, searchInputsFromStore,
 } from "@trafficflow/core/mail";
 
 /* @reads: packages/core/src/message-search.ts
@@ -34,6 +34,20 @@ const ids: string[] = [];
 
 const docs = async (): Promise<Array<{ id: string; source: string; terms: string }>> =>
   (await db.execute(sql`select message_id as id, source, terms from message_search where account_id = ${A}`)) as never;
+
+/**
+ * Where a document holds a file name: a word of its head, a word of its text whole, its first part a word
+ * of its text; and whether its head is the one the writer builds now from the letter's stored headers.
+ */
+const vectorsOf = async (id: string, name: string): Promise<Record<string, boolean>> => {
+  const [stored] = await searchInputsFromStore(db as never, A, [id]);
+  const head = dialect(db).search.document(searchDocumentOf(stored!.input).parts)!.head;
+  const part = name.split(/[^\p{L}\p{N}]+/u)[0]!;
+  const [r] = (await db.execute(sql`select head_tsv @@ plainto_tsquery('simple', ${name}) as head,
+    text_tsv @@ plainto_tsquery('english', ${name}) as text, text_tsv @@ plainto_tsquery('english', ${part}) as parts,
+    head_tsv = ${head} as writers from message_search where message_id = ${id}`)) as unknown as Array<Record<string, boolean>>;
+  return { ...r! };
+};
 
 describe("the search index backfill (real Postgres)", () => {
   beforeAll(async () => {
@@ -84,12 +98,97 @@ describe("the search index backfill (real Postgres)", () => {
     expect(byId.get(ids[7]!)!.source).toBe("html");
     expect(byId.get(ids[2]!)!.source).toBe("headers_only");
     expect(byId.get(ids[0]!)!.source).toBe("text");
-    expect(byId.get(ids[5]!)!.terms).toContain("quince-invoice.pdf");
-    expect(byId.get(ids[0]!)!.terms).toContain("claims@axa.example");
+    // The substring corpus: the header text, then the mark and the file name whole; none without a name.
+    expect(byId.get(ids[5]!)!.terms).toBe("backfill 5 s5@club.example claims desk claims@axa.example\u001fquince-invoice.pdf");
+    expect(byId.get(ids[0]!)!.terms).toBe("backfill 0 s0@club.example claims desk claims@axa.example");
+    // The file name is a word of the text, whole and in parts, and never of the head.
+    expect(await vectorsOf(ids[5]!, "quince-invoice.pdf")).toEqual({ head: false, text: true, parts: true, writers: true });
     const svc = new SearchService();
     const ctx: ServiceContext = { db, accountId: A, userId: null, now: () => new Date(), requestId: "bf" } as never;
     expect((await svc.page(ctx, { q: "marzipan" })).items.map((m) => m.id)).toEqual([ids[7]]);
     expect((await svc.page(ctx, { q: "quince" })).items.map((m) => m.id)).toEqual([ids[5]]);
+  });
+
+  const BEFORE = new Date("2026-10-01T00:00:00Z");
+  /**
+   * A letter's document as 0.30.16's writer built it: the file names whole as words of the head (`B`, as
+   * the people), the text the body alone, the substring corpus the subject, the people and the names in
+   * one run with no mark, built `at`.
+   */
+  const builtBefore = async (id: string, at: Date = BEFORE, body?: string): Promise<void> => {
+    const [stored] = await searchInputsFromStore(db as never, A, [id]);
+    const input = stored!.input;
+    const { parts } = searchDocumentOf({ ...input, attachmentNames: [] });
+    const names = input.attachmentNames.join(" ");
+    const head = sql`(setweight(to_tsvector('english', ${parts.subject}), 'A') || setweight(to_tsvector('simple', ${parts.people}), 'B')
+      || setweight(to_tsvector('simple', ${names}), 'B'))`;
+    const people = [input.from, ...input.to, ...input.cc].map((a) => (a === null ? "" : `${a.name ?? ""} ${a.address}`.trim()));
+    const terms = [input.subject, ...people, names].filter((t) => t.trim() !== "").join(" ").replace(/\s+/g, " ").toLowerCase().slice(0, 2048);
+    await db.execute(sql`update message_search set head_tsv = ${head}, text_tsv = to_tsvector('english', ${body ?? input.bodyText}), terms = ${terms},
+      built_at = ${at.toISOString()}::timestamptz where message_id = ${id}`);
+  };
+  const termsOf = async (id: string): Promise<string> =>
+    ((await db.execute(sql`select terms from message_search where message_id = ${id}`)) as unknown as Array<{ terms: string }>)[0]!.terms;
+  const markerAt = (at: Date) => db.execute(sql`update account_settings set search_index_built_at = ${at.toISOString()}::timestamptz where account_id = ${A}`);
+  const exact = async (q: string): Promise<string[]> => {
+    const ctx: ServiceContext = { db, accountId: A, userId: null, now: () => new Date(), requestId: "bf" } as never;
+    const r = await new SearchService().search(ctx, { q, parts: "page" });
+    return r.tier === "exact" ? r.items.map((m) => m.id).sort() : [];
+  };
+
+  it("refills a document an older writer built: one pass and the letter is found by its file name, whole or a part, beside another word", async () => {
+    await builtBefore(ids[5]!);
+    await markerAt(BEFORE);
+    expect(await exact("plain invoice")).toEqual([]);
+    expect(await termsOf(ids[5]!)).toBe("backfill 5 s5@club.example claims desk claims@axa.example quince-invoice.pdf");
+    expect(await vectorsOf(ids[5]!, "quince-invoice.pdf")).toEqual({ head: true, text: false, parts: false, writers: false });
+    expect(await searchIndexBackfillPass({ db: db as never, accountId: A })).toMatchObject({ ran: true, written: 1, marked: true });
+    expect(await exact("plain invoice")).toEqual([ids[5]]);
+    expect(await exact("plain quince-invoice.pdf")).toEqual([ids[5]]);
+    // Its substring corpus is the one the writer writes now: the header text, the mark, the name whole.
+    const [stored] = await searchInputsFromStore(db as never, A, [ids[5]!]);
+    expect(await termsOf(ids[5]!)).toBe(searchDocumentOf(stored!.input).terms);
+    expect(await termsOf(ids[5]!)).toBe("backfill 5 s5@club.example claims desk claims@axa.example\u001fquince-invoice.pdf");
+    // Its head is built again from the stored headers, with no name in it; its text gains the name whole and its parts.
+    expect(await vectorsOf(ids[5]!, "quince-invoice.pdf")).toEqual({ head: false, text: true, parts: true, writers: true });
+    // The marker is the shape's now: nothing is owed, and nothing is read.
+    expect(await searchIndexBackfillPass({ db: db as never, accountId: A })).toMatchObject({ ran: false, written: 0 });
+  });
+
+  it("the refill keeps the backfill's bound: newest first, batch × rounds a pass, the marker after the last", async () => {
+    for (const i of [8, 6, 3]) await db.insert(attachments).values({ accountId: A, messageId: ids[i]!, filename: `fig-${i}-ledger.pdf`, contentType: "application/pdf" });
+    for (const i of [8, 6, 5, 3, 1]) await builtBefore(ids[i]!);
+    await markerAt(BEFORE);
+    const built = async (): Promise<string[]> => ((await db.execute(sql`select message_id as id from message_search
+      where account_id = ${A} and built_at >= ${SEARCH_DOCUMENT_SHAPE_AT.toISOString()}::timestamptz`)) as unknown as Array<{ id: string }>).map((r) => r.id);
+    const before = await built();
+    // 1 has no file name: its document has no part to gain, so it is not owed again.
+    expect(await searchIndexBackfillPass({ db: db as never, accountId: A, batch: 1, rounds: 2 })).toMatchObject({ ran: true, written: 2, rounds: 2, marked: false });
+    expect((await built()).filter((id) => !before.includes(id)).sort()).toEqual([ids[8], ids[6]].sort());
+    expect(await searchIndexBackfillPass({ db: db as never, accountId: A, batch: 1, rounds: 5 })).toMatchObject({ ran: true, written: 2, marked: true });
+    expect(await exact("ledger plain")).toEqual([ids[8], ids[6], ids[3]].sort());
+    expect((await built()).includes(ids[1]!)).toBe(false);
+  });
+
+  it("an older writer's document and marker dated after any calendar day are refilled all the same", async () => {
+    await builtBefore(ids[8]!, new Date("2027-05-10T00:00:00Z"));
+    await markerAt(new Date("2027-05-10T00:00:00Z"));
+    expect(await exact("ledger plain")).not.toContain(ids[8]);
+    const late = () => new Date("2027-06-01T00:00:00Z");
+    expect(await searchIndexBackfillPass({ db: db as never, accountId: A, now: late })).toMatchObject({ ran: true, written: 1, marked: true });
+    expect(await exact("ledger plain")).toContain(ids[8]);
+  });
+
+  it("a withheld body keeps the words its document holds and gains its file names' parts", async () => {
+    const id = ids[6]!;
+    // Ingested whole, then evicted for space: the store holds no text, the document its words.
+    await builtBefore(id, BEFORE, "lagoon minutes");
+    await db.update(messageBodies).set({ text: "", html: null, withheldReason: "storage_cap" }).where(eq(messageBodies.messageId, id));
+    await markerAt(BEFORE);
+    expect(await searchIndexBackfillPass({ db: db as never, accountId: A })).toMatchObject({ ran: true, marked: true });
+    expect(await exact("lagoon")).toEqual([id]);
+    expect(await exact("lagoon ledger")).toEqual([id]);
+    expect(await vectorsOf(id, "fig-6-ledger.pdf")).toEqual({ head: false, text: true, parts: true, writers: true });
   });
 
   it("takes no mailbox: the pass's arguments carry no adapter, and its module imports none", () => {
@@ -102,14 +201,15 @@ describe("the search index backfill (real Postgres)", () => {
 });
 
 /**
- * WHICH ACCOUNTS THE TAIL'S BACKFILL SECTION VISITS: living mail and no marker, nothing else. An
- * account whose messages are all tombstoned owes nothing, and neither does one whose marker is
- * written. The caller's `shard` predicate narrows the list and the limit bounds it. The store read
- * is bounded too: a body longer than the document keeps is read only as far as it keeps.
+ * WHICH ACCOUNTS THE TAIL'S BACKFILL SECTION VISITS: living mail and no marker, or a marker older
+ * than the document's shape, nothing else. An account whose messages are all tombstoned owes
+ * nothing, and neither does one whose marker is written in the present shape. The caller's `shard`
+ * predicate narrows the list and the limit bounds it. The store read is bounded too: a body longer
+ * than the document keeps is read only as far as it keeps.
  */
 describe("the accounts the backfill owes (real Postgres)", () => {
-  const owedA = randomUUID(), owedB = randomUUID(), done = randomUUID(), gone = randomUUID(), empty = randomUUID();
-  const mine = [owedA, owedB, done, gone, empty];
+  const owedA = randomUUID(), owedB = randomUUID(), done = randomUUID(), gone = randomUUID(), empty = randomUUID(), older = randomUUID();
+  const mine = [owedA, owedB, done, gone, empty, older];
   // Its own connection: the describe above ends the shared one in its afterAll.
   const ownClient = postgres(PG_URL, { max: 2, onnotice: () => {} });
   const own = brandDialect(drizzle(ownClient, { schema }), "pg");
@@ -118,7 +218,7 @@ describe("the accounts the backfill owes (real Postgres)", () => {
   beforeAll(async () => {
     await runMigrations(PG_URL);
     for (const id of mine) await own.insert(accounts).values({ id, name: "owed" });
-    for (const id of [owedA, owedB, done, gone]) {
+    for (const id of [owedA, owedB, done, gone, older]) {
       const [mb] = await own.insert(mailboxes).values({ accountId: id, provider: "imap", address: `${id}@tf.example` }).returning();
       const [m] = await own.insert(messages).values({
         accountId: id, mailboxId: mb!.id, bodyHash: "h", dedupKey: `owed:${id}`, subject: "Owed",
@@ -128,7 +228,8 @@ describe("the accounts the backfill owes (real Postgres)", () => {
       if (id === owedA) longId = m!.id;
       await own.insert(messageBodies).values({ messageId: m!.id, text: id === owedA ? `lead ${"w".repeat(SEARCH_BODY_MAX_CHARS * 2)}` : "short", html: null });
     }
-    await own.insert(accountSettings).values({ accountId: done, searchIndexBuiltAt: new Date() });
+    await own.insert(accountSettings).values({ accountId: done, searchIndexBuiltAt: SEARCH_DOCUMENT_SHAPE_AT });
+    await own.insert(accountSettings).values({ accountId: older, searchIndexBuiltAt: new Date("2026-10-01T00:00:00Z") });
   });
 
   afterAll(async () => {
@@ -140,9 +241,9 @@ describe("the accounts the backfill owes (real Postgres)", () => {
     await ownClient.end({ timeout: 5 });
   });
 
-  it("lists living mail without a marker, and neither a built account, an all-tombstoned one nor an empty one", async () => {
+  it("lists living mail without a marker or with one older than the shape, and neither a built account, an all-tombstoned one nor an empty one", async () => {
     const listed = await searchIndexOwedAccounts(own as never, { limit: 1000, shard: inArray(accounts.id, mine) });
-    expect(listed.sort()).toEqual([owedA, owedB].sort());
+    expect(listed.sort()).toEqual([owedA, owedB, older].sort());
   });
 
   it("the shard predicate narrows the list and the limit bounds it", async () => {

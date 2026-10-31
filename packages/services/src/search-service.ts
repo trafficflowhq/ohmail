@@ -518,7 +518,7 @@ export class SearchService {
     // Where the arms read the document (a store with vectors), a branch names the document's own
     // account too, so an index that leads with the account reads one account's candidates. A
     // store whose word index is over the rows keeps every row, document or not.
-    const documents = d.search.document({ subject: "", people: "", attachments: "", body: "" }) !== null;
+    const documents = d.search.document({ subject: "", people: "", body: "" }) !== null;
     const own = (b: SearchArm): Branch =>
       documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank, raw: b.pred, doc: true } : b;
     if (tier === "similar") {
@@ -555,31 +555,36 @@ export class SearchService {
       ? alone.flatMap((g) => [{ ...own({ pred: g.pred, rank }), pos: g.letter }, ...(g.whole ? [] : [{ ...held(own({ pred: g.letter, rank })), pos: g.letter }])])
       : [keyed(held(own(words.text)), keep !== undefined ? null : across ? d.search.letterTerms(q) : [words.text.pred])];
     const on = key !== null ? { key } : {};
+    // The query's characters inside the file names, where the store reads them apart: a branch of the
+    // arm that reads a body word's start (the part arm once it opens, else the text arm), so a letter its
+    // file names find is one row there, merged before the arm's cut. Its set leads with the account.
+    const named = substringOpen(q) ? d.search.names(q) : null;
+    const names = named === null ? [] : [keyed(own(named), [sql`(s.account_id = ${ctx.accountId} and ${named.pred})`])];
+    const part = exactAsked(q) ? null : d.search.partWords(q);
     const out: Arm[] = [
       { name: "head", ranked: true, branches: [held(own(words.head)), ...(legacy ? [bare(legacy.words.head)] : [])] },
       {
         name: "text", ranked: false,
         ...(across && d.name === "pg" ? { bounded: true, ...on } : key !== null && !q.includes('"') ? { bounded: true, keyedOnly: true, ...on } : {}),
-        branches: [...text, ...(legacy ? [bare(legacy.words.text)] : [])],
+        branches: [...text, ...(part === null ? names : []), ...(legacy ? [bare(legacy.words.text)] : [])],
       },
     ];
     // A part of a word finds what the whole word finds: the same vectors as `head` and `text`,
     // each word also read as the start of a longer one (`elevat` reaches `elevation`). On Postgres
     // ONE bounded arm over both, so a common part's walk fills at once; the device store's FTS5
     // reads have no such misplan and keep two plain arms (one branch each: no union there).
-    const part = exactAsked(q) ? null : d.search.partWords(q);
     const old = legacy?.part ?? null;
     if (part !== null && part.across === true) {
       // Words that may straddle the letter's parts: one predicate over the whole letter.
       // No set: a common word's prefix over every account would be read.
       out.push({
         name: "part", ranked: false, ...(d.name === "pg" ? { bounded: true, ...on } : {}),
-        branches: [own(part.text), ...(old ? [bare(old.head), bare(old.text)] : [])],
+        branches: [own(part.text), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
       });
     } else if (part !== null && d.name === "pg") {
       out.push({
         name: "part", ranked: false, bounded: true, ...on,
-        branches: [keyed(own(part.head), [part.head.pred]), keyed(own(part.text), [part.text.pred]), ...(old ? [bare(old.head), bare(old.text)] : [])],
+        branches: [keyed(own(part.head), [part.head.pred]), keyed(own(part.text), [part.text.pred]), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
       });
     } else if (part !== null) {
       out.push(
