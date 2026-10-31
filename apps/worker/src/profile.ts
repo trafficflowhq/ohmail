@@ -3,7 +3,7 @@ import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
   profileImportWriteReleased, askStands, readImportAsk, resolveImportAsk,
   type ImportAskRefusal,
-  mailboxProfileMirror, mailboxes, recordChanges, recordMailboxProfileChange,
+  mailboxProfileMirror, mailboxes, recordChanges, recordMailboxProfileChange, profileWritesRecorded, recordProfileWrite,
   type LedgerTx, type Tx, auditAction, fenceErased, fencedAccountWrite, lockAccountRuleKeys,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 /* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
@@ -124,6 +124,34 @@ export function sweepHeld(c: SweepClearance): boolean | "unread" {
  */
 export { serializeOrganizerProfile, serializeOrganizerProfileCounted };
 
+/** The first release whose builds record each settings copy before appending it (0.30.20 shipped without it). */
+const FIRST_RECORDING_RELEASE: readonly number[] = [0, 30, 21];
+
+/** How old a current copy's newest record may grow before it is recorded again (the audit log keeps a year). */
+export const PROFILE_RECORD_RENEW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * WRITTEN BY A BUILD THAT RECORDS NOTHING — one from before stores recorded their writes, so a copy of
+ * the store's own that it wrote has no record (a rollback to it and forward again, a downgrade). A build
+ * that records writes one of three labels: a release with its build label after a `+` (a server,
+ * `0.30.21+<commit>`), a release of at least {@link FIRST_RECORDING_RELEASE} (an app, a server built
+ * from source), or `0.0.0` (an engine run unbundled). A copy under our id that carries one was recorded
+ * by its writer, so when this store has no record of it a later life of this store wrote it (a
+ * restore). Every other label (a commit alone, an earlier release, `dev`) is a build that records
+ * nothing. A store's settings and the times it changed them never decide whose a copy is.
+ */
+export function writtenByABuildThatRecordsNothing(version: unknown): boolean {
+  if (typeof version !== "string") return true;
+  const v = version.trim();
+  if (v === "0.0.0") return false;
+  const m = /^(\d+)\.(\d+)\.(\d+)(\+)?/.exec(v);
+  if (m === null) return true;
+  if (m[4] === "+") return false;
+  const n = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const i = n.findIndex((x, k) => x !== FIRST_RECORDING_RELEASE[k]);
+  return i >= 0 && n[i]! < FIRST_RECORDING_RELEASE[i]!;
+}
+
 export interface OrganizerProfileSyncDeps {
   db: Tx;
   accountId: string;
@@ -131,7 +159,7 @@ export interface OrganizerProfileSyncDeps {
   adapter: MailboxAdapter;
   /** The organizer's lease identity — the same values `LeaseSelf` carries. */
   self: { installId: string; kind: string };
-  /** The running build's label, recorded as `producer.version`. Provenance, never a decision. */
+  /** The running build's label, recorded as `producer.version` and beside each write the store records. */
   producerVersion: string;
   flushIntervalMs?: number;
   /**
@@ -217,7 +245,9 @@ export class OrganizerProfileSync {
    * landing. The asymmetry with {@link holdFingerprint} is principled: at SEED we may be a NEW organizer
    * meeting travelling configuration (held, and kept beside our own document); mid-flight we are
    * ESTABLISHED and an appearing document is a transient overlap's loser (last-incumbent-wins), and the
-   * engine's `foreign` refusal guarantees we surfaced it before superseding it.
+   * engine's `foreign` refusal guarantees we surfaced it before superseding it. A copy under our own id
+   * that is not ours lands here only once the person imported or replaced it, or the store says exactly
+   * what it says; until then it is held and asked about.
    */
   private seenForeignFingerprints = new Set<string>();
   /**
@@ -276,6 +306,12 @@ export class OrganizerProfileSync {
   private failuresNoted = 0;
   /** {@link ownSince}, read once per attachment. */
   private ownSinceSecond: number | null = null;
+  /** {@link recorded}: the seconds this store recorded writing, each with its newest record's time; unread. */
+  private recordedSeconds: Map<number, number> | undefined = undefined;
+  /** Whether this tick already re-read the record for a copy under our id it did not find there. */
+  private recordReread = false;
+  /** The write second of this store's current copy in the mailbox: the record {@link keepRecordAlive} renews. */
+  private currentOwnSecond: number | null = null;
   constructor(private readonly deps: OrganizerProfileSyncDeps) {}
 
   /**
@@ -294,9 +330,83 @@ export class OrganizerProfileSync {
     return this.ownSinceSecond;
   }
 
-  /** A document THIS store wrote: under this install's id, and not before this store's mailbox row. */
+  /**
+   * THE SECONDS THIS STORE RECORDED WRITING under this install's id, each with its newest record's
+   * time: read once per attachment, again before each write, and once per tick before a copy under our
+   * id is called a later life's ({@link isOwn}), since another attachment of this store may have recorded.
+   */
+  private async recorded(): Promise<Map<number, number>> {
+    if (this.recordedSeconds === undefined) {
+      const { deps } = this;
+      this.recordedSeconds = await profileWritesRecorded(deps.db, {
+        accountId: deps.accountId, mailboxId: deps.mailboxId, installId: deps.self.installId,
+      });
+    }
+    return this.recordedSeconds;
+  }
+
+  /** {@link ownCopy}'s record test, over what {@link recorded} last read. */
+  private async owns(): Promise<(second: number) => boolean> {
+    const seconds = await this.recorded();
+    return (second) => seconds.has(second);
+  }
+
+  /**
+   * VOUCH FOR A SECOND — recorded before the append it covers, or for a copy a build that records
+   * nothing wrote under our id once judged ours. THROWS when the database refuses: the tick appends
+   * nothing and the write is tried again on the next, so no copy of this store's is ever unrecorded.
+   */
+  private async vouch(second: number): Promise<void> {
+    const { deps } = this;
+    const at = (deps.now ?? ((): Date => new Date()))();
+    await fencedAccountWrite(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId }, async (tx) => {
+      await recordProfileWrite(tx as Tx, {
+        accountId: deps.accountId, mailboxId: deps.mailboxId, installId: deps.self.installId, second, version: deps.producerVersion, at,
+      });
+    });
+    (await this.recorded()).set(second, at.getTime());
+  }
+
+  /**
+   * THE CURRENT COPY'S RECORD OUTLIVES THE AUDIT LOG'S AGE-OUT: recorded again once its newest record is
+   * {@link PROFILE_RECORD_RENEW_MS} old, so a store whose settings do not change for a year still knows
+   * its own copy, and a backup of it still tells a later life's copies apart. And once anything was
+   * recorded after it (a write the mailbox refused), so a run of refused writes never pushes it out of
+   * the newest records {@link recorded} reads. Never throws: a refused renewal is tried again at the next
+   * write-due tick.
+   */
+  private async keepRecordAlive(now: Date): Promise<void> {
+    const second = this.currentOwnSecond;
+    if (second === null) return;
+    try {
+      const seconds = await this.recorded();
+      const at = seconds.get(second);
+      if (at !== undefined && now.getTime() - at < PROFILE_RECORD_RENEW_MS && at >= Math.max(...seconds.values())) return;
+      await this.vouch(second);
+    } catch {
+      // The record stands until its age-out; the next write-due tick renews it.
+    }
+  }
+
+  /**
+   * A DOCUMENT THIS STORE WROTE: under this install's id, not before its mailbox row, and at a second
+   * this store recorded writing, or written by a build that records nothing (a rollback's, recorded
+   * now so the folder's other readings agree). A copy a recording build wrote under our id that this
+   * store has no record of is a later life's after a restore: found settings, whatever the store holds
+   * or decides since.
+   */
   private async isOwn(read: { installId: string | null; doc: OrganizerProfileDoc }): Promise<boolean> {
-    return ownCopy(read.installId, Math.floor(Date.parse(read.doc.updatedAt) / 1000), this.deps.self.installId, await this.ownSince());
+    const second = Math.floor(Date.parse(read.doc.updatedAt) / 1000);
+    if (!ownCopy(read.installId, second, this.deps.self.installId, await this.ownSince())) return false;
+    if ((await this.recorded()).has(second)) return true;
+    if (!this.recordReread) {
+      this.recordReread = true;
+      this.recordedSeconds = undefined;
+      if ((await this.recorded()).has(second)) return true;
+    }
+    if (!writtenByABuildThatRecordsNothing(read.doc.producer?.version)) return false;
+    await this.vouch(second);
+    return true;
   }
 
   private noteLocator(installId: string | null, doc: OrganizerProfileDoc): void {
@@ -315,7 +425,7 @@ export class OrganizerProfileSync {
    * took it for the question — a release re-derived onto nothing, a rehold lapsed a live question.
    */
   private async readQuestion(io: ProfileIo): Promise<ProfileReadResult> {
-    const opts = { foreignTo: this.deps.self.installId, ownSince: await this.ownSince() };
+    const opts = { foreignTo: this.deps.self.installId, ownSince: await this.ownSince(), owns: await this.owns() };
     const read = await readOrganizerProfile(io, opts);
     /* A copy under this install's own id never displaces the held question (a clock set back dates
        this store's own copies before its row); another install's newer document still does. */
@@ -328,7 +438,7 @@ export class OrganizerProfileSync {
   /** The held record while it stands (its locator), the newest document otherwise. */
   private async readRetained(io: ProfileIo): Promise<ProfileReadResult> {
     const retain = this.retained();
-    return readOrganizerProfile(io, { ownSince: await this.ownSince(), ...(retain === undefined ? {} : { retain }) });
+    return readOrganizerProfile(io, { ownSince: await this.ownSince(), owns: await this.owns(), ...(retain === undefined ? {} : { retain }) });
   }
 
   /**
@@ -346,8 +456,8 @@ export class OrganizerProfileSync {
     if (typeof m.installId !== "string" || typeof m.updatedAt !== "string") return null;
     const at = Date.parse(m.updatedAt);
     if (!Number.isFinite(at)) return null;
-    // A question about this install's own copy asks only when a gone store wrote it.
-    if (ownCopy(m.installId, Math.floor(at / 1000), deps.self.installId, await this.ownSince())) return null;
+    // A question about a copy under this install's id asks only when a gone store or a later life wrote it.
+    if (ownCopy(m.installId, Math.floor(at / 1000), deps.self.installId, await this.ownSince(), await this.owns())) return null;
     if (await profileImportWriteReleased(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: m.fingerprint })) return null;
     const read = await readOrganizerProfile(io, { retain: { installId: m.installId, second: Math.floor(at / 1000), fingerprint: m.fingerprint } });
     if (read.state !== "found" || read.installId !== m.installId || profileFingerprint(read.doc) !== m.fingerprint) return null;
@@ -664,92 +774,6 @@ export class OrganizerProfileSync {
   }
 
   /**
-   * THE CYCLE-EDGE READ OF THE HOLD — releases a hold whose release is already on record without
-   * waiting out the debounced flush tick. A found hold releases on `imported`/`replaced` only (a
-   * decline keeps the declined document from being overwritten; routing reads a decline through
-   * {@link importHoldNow}); a newer-format hold releases on its dismissal. One indexed
-   * read per cycle, only while a hold is armed. A read fault keeps the hold — the reversible
-   * direction.
-   */
-  async importDecisionOpenFresh(): Promise<boolean> {
-    if (this.holdFingerprint === null && this.holdNewerV === null) return false;
-    const { deps } = this;
-    const log = deps.log ?? ((): void => undefined);
-    try {
-      // THE EXACT SUBJECT ONLY. A mailbox-wide "any answer since the hold
-      // began" valve used to ride along here, from the era when a hold never re-armed: now that
-      // `reholdFromFolder` tracks the folder, a STALE answer — a tab declining document A after
-      // the folder moved on to B — must not release B's hold. The valve's one legitimate case
-      // (the surface answered the folder's CURRENT document while this hold still keys the old
-      // one) is covered by the rehold itself: its replacement check refuses an already-answered
-      // document, so the swap lands as a lapse and the gate resumes within a flush interval.
-      const answered = this.holdFingerprint !== null
-        ? await profileImportWriteReleased(deps.db, {
-          accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint,
-        })
-        : await profileImportResolutionExists(deps.db, {
-          accountId: deps.accountId, mailboxId: deps.mailboxId, newerV: this.holdNewerV!,
-        });
-      if (answered) {
-        // RE-DERIVE before the gate resumes (rounds 7 and 8): the folder may already ask a NEW
-        // question — the previous organizer's late flush replacing the answered document — and
-        // an answer to A is not an answer to B. Every fallible read runs BEFORE the release
-        // commits, so a fault leaves the answered hold standing (retried next cycle) rather
-        // than stranding the mailbox released with B's question open and nothing re-deriving.
-        let next: Awaited<ReturnType<OrganizerProfileSync["deriveNextHold"]>> = { kind: "lapse" };
-        if (hasProfileIo(deps.adapter)) {
-          const still = await this.readQuestion(deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId }));
-          const local = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
-          next = await this.deriveNextHold(still, local);
-        }
-        // Nothing below throws. The answered subject is released and the folder's current
-        // question (or clean lapse) committed in one motion.
-        log("organizer_profile_detected", {
-          mailboxId: deps.mailboxId, accountId: deps.accountId, state: "resolved",
-        });
-        await this.commitNextHold(next, log);
-      } else if (this.holdFingerprint !== null) {
-        const local = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
-        if (localSaysWhatAFingerprintSays(local, this.holdFingerprint)) {
-          // CONVERGENCE: the store is ACCOUNT-scoped, so the same travelling profile imported through
-          // a SIBLING mailbox — or a hand-edit — can make local state equal the held document with no
-          // resolution row for THIS mailbox; the candidate leaves the confirm surface the moment they
-          // match, so the hold must not outlive the comparison. Round 8: the folder is re-read BEFORE
-          // the release commits (the held document may have moved to B while local converged onto A),
-          // and when it still holds the converged document it becomes our own last-written baseline
-          // with NOTHING rewritten — putting it on `seenForeignFingerprints` would supersede a
-          // byte-equivalent document just to change its author.
-          let next: Awaited<ReturnType<OrganizerProfileSync["deriveNextHold"]>> | null = null;
-          let stillConverged = true;
-          if (hasProfileIo(deps.adapter)) {
-            const still = await this.readQuestion(deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId }));
-            stillConverged = still.state === "found" && profileFingerprint(still.doc) === this.holdFingerprint;
-            if (!stillConverged) next = await this.deriveNextHold(still, local);
-          }
-          if (stillConverged) {
-            const converged = this.holdFingerprint;
-            this.lastWrittenFingerprint = converged;
-            this.holdFingerprint = null;
-            this.holdSince = null;
-            // The DURABLE half too: the in-memory release alone leaves the
-            // held marker standing for ever — `latestProfileFoundMarker` reading a held question and the
-            // candidate surface dialing IMAP for a question nothing asks. The lapse names the
-            // converged subject, closing exactly it.
-            await this.writeMarker({ state: "lapsed", fingerprint: converged, v: null }, log);
-          } else {
-            await this.commitNextHold(next!, log);
-          }
-        }
-      }
-    } catch {
-      // The hold stands; the next cycle retries. Deliberately silent: this runs on every cycle
-      // while a decision is open, and the debounced tick's own failure arm already reports a
-      // database that keeps refusing.
-    }
-    return this.holdFingerprint !== null || this.holdNewerV !== null;
-  }
-
-  /**
    * ARM THE HOLD BEFORE THE FIRST ORGANIZE — called from `attach()`, before any routing cycle.
    * The seed inside {@link onOrganize} discovers a travelling document too, but runs at the END of a
    * completed cycle, so the first takeover cycles moved screened-in history into the Screener while the
@@ -786,7 +810,7 @@ export class OrganizerProfileSync {
     }
     try {
       const io = deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
-      const read: ProfileReadResult = await readOrganizerProfile(io, { ownSince: await this.ownSince() });
+      const read: ProfileReadResult = await readOrganizerProfile(io, { ownSince: await this.ownSince(), owns: await this.owns() });
       // A NEWER format's document is an open question too — "update ohmail, or organize with
       // what you have" — and until it is answered (the `newerV` resolution the dismiss writes),
       // routing a takeover past decisions this build cannot read is the same defect (round 2).
@@ -872,7 +896,7 @@ export class OrganizerProfileSync {
     // cleared first left the gate open for a debounce interval when the replacement's resolution
     // read faulted). The caller's catch retries next tick either way.
     const next = await this.deriveNextHold(still, local);
-    await this.commitNextHold(next, log);
+    await this.commitNextHold(next, log, { unanswered: true });
     return next.kind === "lapse" ? "lapsed" : "standing";
   }
 
@@ -915,6 +939,8 @@ export class OrganizerProfileSync {
   private async commitNextHold(
     next: Awaited<ReturnType<OrganizerProfileSync["deriveNextHold"]>>,
     log: (event: string, detail: Record<string, unknown>) => void,
+    /** `unanswered`: the held subject was neither answered nor converged onto; the folder moved on. */
+    opts: { unanswered?: true } = {},
   ): Promise<void> {
     const { deps } = this;
     // The released found subject moves to `seenForeignFingerprints` so a later write may
@@ -922,12 +948,20 @@ export class OrganizerProfileSync {
     // question it did not hold (round 12).
     const releasedFingerprint = this.holdFingerprint;
     const releasedNewerV = this.holdNewerV;
-    if (this.holdFingerprint !== null) this.seenForeignFingerprints.add(this.holdFingerprint);
-    /* A RELEASED held record is surfaced residue now, beside this install's own document: the
-       next tick's tidy removes it at once rather than after its usual spacing. */
     const releasedAt = releasedFingerprint === null ? undefined : this.locators.get(releasedFingerprint);
-    if (releasedAt !== undefined) this.released = [...this.released.slice(-3), releasedAt];
-    if (releasedFingerprint !== null) { this.tidyOwed = true; this.lastTidyAt = 0; }
+    /* A copy under our id leaves the mailbox only on the person's answer: moved off unanswered (another
+       install's newer settings asked first), it stays, the tidy's found settings. */
+    const stays = opts.unanswered === true && releasedAt?.installId === deps.self.installId;
+    if (releasedFingerprint !== null && !stays) {
+      this.seenForeignFingerprints.add(releasedFingerprint);
+      /* A RELEASED held record is surfaced residue now, beside this install's own document: the
+         next tick's tidy removes it at once rather than after its usual spacing. */
+      if (releasedAt !== undefined) this.released = [...this.released.slice(-3), releasedAt];
+      this.tidyOwed = true;
+      this.lastTidyAt = 0;
+    }
+    // Released onto no question: the store as the answer left it is published on the next tick.
+    if (releasedFingerprint !== null && next.kind === "lapse") this.lastAttemptAt = 0;
     this.holdFingerprint = null;
     this.holdNewerV = null;
     this.holdSince = null;
@@ -1033,8 +1067,16 @@ export class OrganizerProfileSync {
        tick counts the folder. */
     const tidyDue = (): boolean => this.tidyOwed
       && now.getTime() - this.lastTidyAt >= (tidyMode === "count" ? interval : PROFILE_TIDY_SPACING_MS);
-    const writeDue = !this.seeded || ask !== null || expired !== null || now.getTime() - this.lastAttemptAt >= interval;
+    let writeDue = !this.seeded || ask !== null || expired !== null || now.getTime() - this.lastAttemptAt >= interval;
+    /* AN ANSWER TO THE HELD QUESTION does not wait out the interval either: one indexed read per tick,
+       only while a found hold stands. */
+    if (!writeDue && this.holdFingerprint !== null) {
+      writeDue = await profileImportWriteReleased(deps.db, {
+        accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint,
+      }).catch(() => false);
+    }
     if (!writeDue && !tidyDue()) return;
+    this.recordReread = false;
     this.inFlight = true;
     const failuresAtEntry = this.failuresNoted;
     try {
@@ -1073,6 +1115,7 @@ export class OrganizerProfileSync {
         await this.seed(io, payload, log);
         this.seeded = true;
       }
+      if (writeDue) await this.keepRecordAlive(now);
 
       if (tidyDue()) {
         this.lastTidyAt = now.getTime();
@@ -1081,7 +1124,7 @@ export class OrganizerProfileSync {
            on this pass beside this install's own document, whatever its age. */
         const released = this.released;
         const tidied = await tidyOrganizerProfile({
-          io, installId: deps.self.installId, mode: tidyMode, now, ownSince: await this.ownSince(),
+          io, installId: deps.self.installId, mode: tidyMode, now, ownSince: await this.ownSince(), owns: await this.owns(),
           ...(keep === undefined ? {} : { retain: keep }),
           ...(released.length === 0 ? {} : { released }),
           // What this organizer has seen, as the write's `replaceable`: its own copies stay beside an unseen one.
@@ -1108,7 +1151,7 @@ export class OrganizerProfileSync {
       // it, and `reholdFromFolder` tracks a folder whose question changed or vanished. The
       // answer settles the ROUTING question only — the write posture deliberately stands.
       if (this.holdNewerV !== null) {
-        // The exact subject only — see the same rule in `importDecisionOpenFresh` (round 6).
+        // The exact subject only (round 6): an answer to a version the folder moved on from releases nothing.
         const resolvedNewer = await profileImportResolutionExists(deps.db, {
           accountId: deps.accountId, mailboxId: deps.mailboxId, newerV: this.holdNewerV,
         });
@@ -1133,8 +1176,8 @@ export class OrganizerProfileSync {
         if (localSaysWhatAFingerprintSays(payload, this.holdFingerprint)) {
           // Local state converged onto the found document (the import was applied, exactly):
           // the hold is over, and there is nothing to write — the document already says this.
-          // The folder is re-read BEFORE the release commits (the same rule as
-          // the cycle-edge convergence arm): the held document may have been REPLACED since —
+          // The folder is re-read BEFORE the release commits (the rule of every
+          // release here): the held document may have been REPLACED since —
           // local converged onto A, the folder moved on to unanswered B — and a release that
           // never looked would leave B to surface later as an unheld mid-flight document.
           const stillConverged = await (async (): Promise<boolean> => {
@@ -1145,13 +1188,34 @@ export class OrganizerProfileSync {
             return false;
           })();
           if (!stillConverged) return;
+          const converged = this.holdFingerprint;
+          const convergedAt = this.locators.get(converged);
+          /* The copy readers read beside it, read before the release commits. A copy of ours is newer: the next
+             tick replaces it and the released record goes, rather than adopting what readers do not see. A copy
+             under our id that is not ours (a later life's) is the next question, never replaced by what the
+             store now says. */
+          const newest = await readOrganizerProfile(io, { ownSince: await this.ownSince(), owns: await this.owns() });
+          const beside = newest.state === "found" && profileFingerprint(newest.doc) !== converged ? newest : null;
+          const ours = beside !== null && (await this.isOwn(beside));
+          const next = beside === null || ours || beside.installId !== deps.self.installId ? null : await this.deriveNextHold(beside, payload);
           this.holdFingerprint = null;
           this.holdNewerV = null;
           this.holdSince = null;
-          this.lastWrittenFingerprint = fp;
-          // The durable half, as at the cycle edge (round 14): the held marker must not outlive
-          // the question.
-          await this.writeMarker({ state: "lapsed", fingerprint: fp, v: null }, log);
+          // Our baseline now, unless the later copy beside it is the question: then nothing of ours is said to stand.
+          this.lastWrittenFingerprint = next?.kind === "found" ? null : fp;
+          // The durable half (round 14): the held marker must not outlive the question. The lapse names
+          // the held subject: the store's own fingerprint can differ from it (a version, a screener source).
+          await this.writeMarker({ state: "lapsed", fingerprint: converged, v: null }, log);
+          if (beside !== null && ours) {
+            this.lastWrittenFingerprint = profileFingerprint(beside.doc);
+            this.seenForeignFingerprints.add(converged);
+            if (convergedAt !== undefined) this.released = [...this.released.slice(-3), convergedAt];
+            this.tidyOwed = true;
+            this.lastTidyAt = 0;
+            this.lastAttemptAt = 0;
+          } else if (next?.kind === "found") {
+            await this.commitNextHold(next, log);
+          }
           return;
         }
         // THE OTHER RELEASE: an import MERGED into local config (fingerprints never meet) or an
@@ -1235,11 +1299,18 @@ export class OrganizerProfileSync {
          document it met and then publishes this install's own settings beside it. */
       const publish = async (): Promise<"again" | "done"> => {
         const keep = this.retained();
-        /* Nothing beside a removed store's copy under our id: ours would be the newest, and the next store or
-           another install would ask about ours and tidy that copy away. */
-        if (keep?.installId === deps.self.installId) return "done";
+        /* Nothing beside a copy under our id that is not ours until the person answers: ours would be the
+           newest, and the next store or another install would ask about ours and tidy that copy away. Not
+           now is an answer: from then on this store's decisions are published beside it, as beside another
+           install's, and the held copy stays in the mailbox to import. */
+        if (keep?.installId === deps.self.installId && !(await profileImportResolutionExists(deps.db, {
+          accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: keep.fingerprint,
+        }))) return "done";
+        // The record as it stands now: another attachment of this store may have written since this one read it.
+        this.recordedSeconds = undefined;
         const result = await writeOrganizerProfile({
-          io, doc, installId: deps.self.installId, tidyMode, now, ownSince: await this.ownSince(),
+          io, doc, installId: deps.self.installId, tidyMode, now, ownSince: await this.ownSince(), owns: await this.owns(),
+          beforeAppend: (second) => this.vouch(second),
           ...(keep === undefined ? {} : { retain: keep }),
           // What this writer may replace: its own last write, and any foreign document it has
           // already SURFACED. Anything else refuses as `foreign` below — the engine's guarantee
@@ -1255,6 +1326,7 @@ export class OrganizerProfileSync {
           this.lastWrittenFingerprint = fp;
           this.lastWrittenScreening = screeningKey;
           this.lastWrittenGap = gapKey;
+          this.currentOwnSecond = Math.floor(now.getTime() / 1000);
           this.seenForeignFingerprints.clear();
           if (result.owed === true) this.tidyOwed = true;
           log("organizer_profile_written", {
@@ -1292,25 +1364,40 @@ export class OrganizerProfileSync {
           }
         } else if (result.reason === "foreign") {
           const foreignFp = profileFingerprint(result.doc);
-          // A NEVER-OWNED organizer meeting a document that landed after its seed takes the takeover
-          // posture: hold it and write the held marker the surface answers, unless an import or a
-          // replace already released it. Superseding here would prune it with nobody asked.
-          if (this.lastWrittenFingerprint === null && !(await profileImportWriteReleased(deps.db, {
+          const underOurId = result.installId === deps.self.installId;
+          // A copy a build that records nothing wrote under our id is ours, recorded now: replaced at once.
+          if (underOurId && (await this.isOwn(result))) return "again";
+          /* A copy under our id never displaces the held question (`readQuestion`); it is asked after it, so
+             once that one is answered (Not now included) it is the question, and nothing is written beside it
+             until the person answers it too. */
+          if (underOurId && this.holdFingerprint !== null && this.holdFingerprint !== foreignFp
+            && !(await profileImportResolutionExists(deps.db, {
+              accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint,
+            }))) return "done";
+          // A NEVER-OWNED organizer meeting a document that landed after its seed, and any organizer meeting
+          // a copy under its id that is not its own (a later life's, a gone store's), takes the takeover
+          // posture: hold it and write the held marker the surface answers, unless an import or a replace
+          // already released it. Superseding here would prune it with nobody asked.
+          if ((this.lastWrittenFingerprint === null || underOurId) && !(await profileImportWriteReleased(deps.db, {
             accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: foreignFp,
           }))) {
             this.noteLocator(result.installId, result.doc);
             this.holdFingerprint = foreignFp;
             this.holdSince = now;
+            // Readers read the later copy, and our copies beside it are the tidy's: nothing of ours is said to stand.
+            if (underOurId) this.lastWrittenFingerprint = null;
             log("organizer_profile_detected", {
               mailboxId: deps.mailboxId, accountId: deps.accountId, state: "found",
             });
             await this.writeMarker({ state: "found", doc: result.doc, installId: result.installId, fingerprint: foreignFp, heldForImport: true }, log);
-            // …AND PUBLISHES BESIDE IT, keeping the held record: asked, never pruned unasked.
-            return this.retained() === undefined ? "done" : "again";
+            // …AND PUBLISHES BESIDE IT, keeping the held record: asked, never pruned unasked —
+            // unless there is nothing to say: readers would take an empty copy as the newest settings.
+            return this.retained() === undefined || isEmptyProfilePayload(payload) ? "done" : "again";
           }
-          // An ESTABLISHED organizer meeting one (the transient overlap's loser, or a hand-back
-          // mid-race) surfaces it unheld — last-incumbent-wins — and records its fingerprint so the
-          // NEXT write may supersede it. If the lease changes hands first, the document stands.
+          // An ESTABLISHED organizer meeting another install's (the transient overlap's loser, or a
+          // hand-back mid-race), or a copy an import or a replace answered, surfaces it unheld —
+          // last-incumbent-wins — and records its fingerprint so the NEXT write may supersede it. If
+          // the lease changes hands first, the document stands.
           this.seenForeignFingerprints.add(foreignFp);
           log("organizer_profile_detected", {
             mailboxId: deps.mailboxId, accountId: deps.accountId, state: "found_midflight",
@@ -1408,7 +1495,8 @@ export class OrganizerProfileSync {
    * two ticks (an answer's release, then the write), and no I/O when the store already says what
    * the last write said. `kept_other`: a newer-format document stands, which this install may
    * not overwrite; a found or declined one no longer does, because the write publishes beside it
-   * (beside a removed store's copy under this install's id it writes nothing: `not_saved`).
+   * (beside a copy under this install's id that is not its own it writes nothing until the person
+   * answers, Not now included: `not_saved` before that).
    * Each tick first asks whether the pass's permit stood down, the drain's own publish rule: a
    * mailbox that changed hands is not written. Never throws.
    *
@@ -1458,7 +1546,7 @@ export class OrganizerProfileSync {
     log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
     const { deps } = this;
-    const read: ProfileReadResult = await readOrganizerProfile(io, { ownSince: await this.ownSince() });
+    const read: ProfileReadResult = await readOrganizerProfile(io, { ownSince: await this.ownSince(), owns: await this.owns() });
     // The preflight (`armHoldFromFolder`) may have armed a hold on a document this read no
     // longer sees — expunged, replaced, or converged-onto in the window between attach and the
     // first tick. The seed is the authoritative reading, so each arm below SUPERSEDES the
@@ -1500,7 +1588,7 @@ export class OrganizerProfileSync {
         // `blockedByNewer` with the hold unarmed would leave this attachment screening past an
         // unanswered question with nothing ever retrying. An already-dismissed version is
         // released by the verify; a fault leaves the hold armed, the reversible direction
-        // (`importDecisionOpenFresh` re-checks the resolution every cycle).
+        // (routing reads the dismissal every cycle, and the next write-due tick releases the hold).
         clearProvisionalHold();
         this.holdNewerV = read.v;
         this.holdSince = (this.deps.now ?? ((): Date => new Date()))();
@@ -1522,14 +1610,17 @@ export class OrganizerProfileSync {
         const docFingerprint = profileFingerprint(read.doc);
         // Our id on a copy older than this store's row is a gone store's: asked about, never ours to replace.
         const ours = await this.isOwn(read);
+        const second = Math.floor(Date.parse(read.doc.updatedAt) / 1000);
+        if (ours) this.currentOwnSecond = second;
         /* OURS NEWEST, AND A QUESTION STILL STANDING BESIDE IT: the restart shape of a hold, since
            this install publishes beside the document it asks about. The marker names it; a copy under
-           our id that it does not name is ours, even when a clock set back dated it before our row. */
+           our id that it does not name is ours when this store recorded writing it, even when a clock set
+           back dated it before our row; any other (a later life's, a gone store's) is kept beside it. */
         const marked = read.installId === deps.self.installId ? await this.markerQuestion(io, local) : null;
         const asked = marked !== null && marked.fingerprint !== docFingerprint ? marked : null;
         if (asked !== null) {
           clearProvisionalHold();
-          this.lastWrittenFingerprint = docFingerprint;
+          if (ours || (second < await this.ownSince() && (await this.recorded()).has(second))) this.lastWrittenFingerprint = docFingerprint;
           this.noteLocator(asked.installId, asked.doc);
           this.holdFingerprint = asked.fingerprint;
           this.holdSince = (this.deps.now ?? ((): Date => new Date()))();
@@ -1627,9 +1718,21 @@ export class OrganizerProfileSync {
           return;
         }
         if (ours) {
+          this.currentOwnSecond = Math.floor(Date.parse(read.doc.updatedAt) / 1000);
           // Our own write that our memory does not match (another process sharing our install
           // id, or memory lost to a code path we did not foresee): trust the store, rewrite.
           this.lastWrittenFingerprint = docFingerprint;
+          return;
+        }
+        /* A copy under our id that is not ours (a later life's, a gone store's) is found settings: the
+           question, never surfaced for a supersede unless an import or a replace answered it. */
+        if (read.installId === deps.self.installId && !(await profileImportWriteReleased(deps.db, {
+          accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: docFingerprint,
+        }))) {
+          if (this.holdFingerprint === null) {
+            this.lastWrittenFingerprint = null;
+            await this.commitNextHold({ kind: "found", fingerprint: docFingerprint, doc: read.doc, installId: read.installId }, log);
+          }
           return;
         }
         // A differing foreign document under an established organizer — surface, record, and
@@ -1668,8 +1771,11 @@ export class OrganizerProfileSync {
       ...(applied === undefined ? {} : { applied }),
     });
     const keep = this.retained();
+    // The record as it stands now, as before every write.
+    this.recordedSeconds = undefined;
     const result = await writeOrganizerProfile({
       io, doc, installId: deps.self.installId, tidyMode: deps.tidyMode ?? "remove", now, ownSince: await this.ownSince(),
+      owns: await this.owns(), beforeAppend: (second) => this.vouch(second),
       ...(keep === undefined ? {} : { retain: keep }),
       replaceable: [
         profileFingerprint(read.doc),
@@ -1682,6 +1788,7 @@ export class OrganizerProfileSync {
       this.lastWrittenFingerprint = profileFingerprint(doc);
       this.lastWrittenScreening = screeningKeyOf(screening);
       this.lastWrittenGap = GAP_ABSENT;
+      this.currentOwnSecond = Math.floor(now.getTime() / 1000);
       if (result.owed === true) this.tidyOwed = true;
     } else if (result.reason === "cleanup_owed") {
       this.tidyOwed = true;

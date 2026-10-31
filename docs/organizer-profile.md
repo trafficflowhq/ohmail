@@ -424,17 +424,73 @@ refuses to answer it itself:
   place while the question was open is not re-filed afterwards.
 
 A document is the organizer's own only when it carries the organizer's install
-id and was written no earlier than the organizer's record of the mailbox. An
-install id outlives the store that wrote under it: a phone keeps it when a
+id, was written no earlier than the organizer's record of the mailbox, and is a
+copy the organizer's store recorded writing. The store records each copy's
+write second before it appends the copy, and appends nothing while the database
+refuses that record: no copy of its own is ever in the mailbox unrecorded. A
+store restored from a backup (a desktop's data folder, a phone's database, a
+server's database) has no record of the copies it wrote after the backup, so a
+copy under its id that it has no record of is found settings: kept, held and
+asked about, never rolled back to the restored settings, whatever the store
+decides before or after it first reads the folder. The store's settings and the
+times it changed them never decide whose a copy is. The store records its
+current copy again while it stays current, every 30 days and after a write the
+mailbox refused, so neither the audit log's one-year age-out nor a run of
+refused writes takes the record of a copy still in the mailbox.
+
+The one exception is a copy written by a build that records nothing: one from a
+release before 0.30.21, the first that records (0.30.20 does not), after a
+rollback to it or a downgrade. It is the store's own, recorded as such and
+replaced by the store's later settings without a question; so is a copy a
+restored store's later life wrote while it ran such a build, which nothing tells
+from a rollback's. Each copy names the release that wrote it in
+`producer.version`: a build that records writes the release with the build's own
+label after a `+` (a server, `0.30.21+<commit>`), a release from 0.30.21 on (an
+app, a server built from source), or `0.0.0` (an engine run unbundled); a server
+image before 0.30.21 wrote its commit alone. A copy under the store's id that
+names a recording build and that the store has no record of was written by a
+later life of the store. A copy under the store's id that is not its own is
+never removed by the organizer's tidy on account of its age; only once the
+person has answered it.
+
+A restored store that was asking about another install's settings asks about
+those first; its later copy stays in the mailbox meanwhile. Once those are
+answered, "Not now" included, the later copy is the question: the organizer
+writes nothing beside it until the person answers it too, and the other
+install's settings then stay in the mailbox as long as any other install's do.
+An Import that makes the store say exactly what the other install's settings
+say answers them the same way.
+
+Wherever the organizer meets a copy under its id that is not its own (at its
+first read, beside settings just answered, at a write, or reading the folder
+with nothing to write), that copy is the question in the same way: held and
+asked about, never surfaced for the next write to replace. Only an Import or
+"Save this ohmail's settings" on it lets the organizer replace it. Another
+install's newer settings are asked about before it, and it stays in the
+mailbox meanwhile.
+
+An install id outlives the store that wrote under it: a phone keeps it when a
 mailbox is removed and connected again, a desktop keeps it when a mailbox is
 removed and added again, and a server uses one for every account it
 organizes. Settings left under the same id before that record existed are
 found settings like any other install's: kept, held for the person's answer,
 and never replaced by the new store's own settings. Until the person answers,
-the organizer writes nothing beside them, not even settings made in the
-meantime: they stay the mailbox's newest settings, so the next store under that
-id, or another install that takes over, finds them and asks about them too. A
-hand-back before the answer says this install's own settings stayed on it.
+the organizer writes nothing beside a copy under its own id that is not its own,
+not even settings made in the meantime: it stays the mailbox's newest settings,
+so the next store under that id, or another install that takes over, finds it
+and asks about it too. A hand-back before the answer says this install's own
+settings stayed on it. "Not now" is an answer: from then on the organizer
+publishes its own settings beside that copy, as it does beside another
+install's, and the copy stays in the mailbox to import until the person imports
+or replaces it.
+
+An empty store writes no copy beside found settings, so a reader never takes
+an empty copy for the mailbox's newest settings. An answer reaches the mailbox
+within two profile passes, whatever the flush interval: the pass that reads the
+answer releases the question, and the next one writes the store as the answer
+left it. When an import makes the store say exactly what the found document
+says and a copy of this install's is newer beside it, that copy is replaced, so
+readers read the imported settings.
 
 ## What a reader in another mail client sees
 

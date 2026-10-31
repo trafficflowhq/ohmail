@@ -54,3 +54,35 @@ export const buildIdentityOf = (
 
 export const buildVersionOf = (env: NodeJS.ProcessEnv, file: () => string = buildVersionFile): string =>
   buildIdentityOf(env, file).version;
+
+declare const __OHMAIL_RELEASE__: string | undefined;
+
+/** The checkout's own manifest version, where the worker runs unbundled (`src` or `dist`, three levels down). */
+const workspaceVersion = (): string => {
+  try {
+    const v = (JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: unknown }).version;
+    return typeof v === "string" ? v.trim() : "";
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * WHICH RELEASE THIS BUILD IS: the workspace version the host bundler bakes in (`scripts/bundle-host.mjs`),
+ * else the checkout's manifest; null where neither answers. The build label names a commit on Cloud and on
+ * the published images, which says nothing about the release.
+ */
+export const buildReleaseOf = (manifest: () => string = workspaceVersion): string | null => {
+  const baked = typeof __OHMAIL_RELEASE__ === "string" ? __OHMAIL_RELEASE__.trim() : "";
+  if (baked !== "") return baked;
+  const read = manifest().trim();
+  return read === "" ? null : read;
+};
+
+/**
+ * THE LABEL A SETTINGS COPY CARRIES as its producer's version: the release first, the build label beside it
+ * (`0.30.21+<commit>`, `0.30.21+dev`), so a store reads which release wrote a copy on every build. A label
+ * that starts with a release already stays as it is; `0.0.0` stands for a release nothing names.
+ */
+export const profileProducerVersion = (label: string, release: string | null = buildReleaseOf()): string =>
+  /^\d+\.\d+\.\d+/.test(label) ? label : `${release ?? "0.0.0"}+${label}`;
