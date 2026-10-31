@@ -189,7 +189,7 @@ describe("the documents are one engine's", () => {
 describe("the keep itself", () => {
   const inputs = (over: Partial<MailDocInputs> = {}): MailDocInputs => ({
     messageId: "m1", html: "<p>x</p>", proxied: false, imgSource: null, cidImages: undefined,
-    resolvedRemoteImages: undefined, loadPixels: false, hasText: true, darkWanted: false, forward: false, ...over,
+    resolvedRemoteImages: undefined, loadPixels: false, hasText: true, darkWanted: false, forward: false, askInPage: false, ...over,
   });
 
   it("a proxied document is served only while the window may read the account", () => {
@@ -214,6 +214,7 @@ describe("the keep itself", () => {
     cache.write(inputs(), "light", 10);
     expect(cache.read(inputs({ darkWanted: true })), "a light document was served to a dark theme").toBeUndefined();
     expect(cache.read(inputs({ forward: true })), "a reply's fold was served to a forward").toBeUndefined();
+    expect(cache.read(inputs({ askInPage: true })), "a frame keeping marked addresses was served to a page that asks").toBeUndefined();
     for (let i = 0; i < MAIL_DOC_ENTRIES_MAX + 20; i += 1) cache.write(inputs({ messageId: `n${i}` }), "x", 1);
     expect(cache.size).toBe(MAIL_DOC_ENTRIES_MAX);
     expect(cache.read(inputs()), "the oldest entry outlived the bound").toBeUndefined();

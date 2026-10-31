@@ -1,8 +1,10 @@
 /* The mechanism page of `inline-pictures-frame-mechanism.test.ts`: the real sanitizer and frame
  * document, a picture minted in THIS window (an object URL, or a `data:` URI), and the sandboxed
  * frame the reader mounts — or one control: the frame without `allow-same-origin`, or the frame's
- * policy without `blob:`. Bundled by the test; nothing here is product code. */
-import { buildMailDocument, FRAME_SANDBOX, sanitizeMailHtml } from "../../app/components/MessageBody";
+ * policy without `blob:`. And the web's ask: a marked link and an honest one in the reader's
+ * frame, armed (`link-ask.ts`) or not. Bundled by the test; nothing here is product code. */
+import { buildMailDocument, COPY, FRAME_SANDBOX, sanitizeMailHtml } from "../../app/components/MessageBody";
+import { armAsks, askPage } from "../../app/components/link-ask";
 
 const LETTER = `<p>A picture.</p><p><img src="cid:pic@rig" width="32" height="32" alt="pic"></p>`;
 
@@ -67,4 +69,37 @@ async function redPixels(b64: string): Promise<number> {
   return n;
 }
 
-(window as unknown as { rig: unknown }).rig = { mount, redPixels, FRAME_SANDBOX };
+const ASK_LETTER = `<table width="600"><tr><td>` +
+  `<p><a id="ask" href="https://evil.ohmail.test/x?n=1">bank.ohmail.test</a></p>` +
+  `<p><a id="honest" href="https://elsewhere.ohmail.test/page">elsewhere.ohmail.test</a></p></td></tr></table>`;
+
+/** The letter in the reader's frame as the web builds it, armed once loaded as the reader arms it, or not. */
+async function mountAsk(arm: boolean): Promise<Record<string, unknown>> {
+  const { html, asks } = sanitizeMailHtml(ASK_LETTER, { askInPage: true });
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", FRAME_SANDBOX);
+  frame.style.cssText = "width:480px;height:200px;border:0;display:block;background:#fff";
+  const loaded = new Promise((done) => frame.addEventListener("load", done, { once: true }));
+  frame.srcdoc = buildMailDocument(html);
+  document.body.replaceChildren(frame);
+  await loaded;
+  const copy = {
+    lang: "en", title: COPY.linkAskTitle, elsewhere: COPY.linkAskElsewhere, goes: COPY.linkAskGoes, open: COPY.linkAskOpen,
+    stay: COPY.linkAskStay,
+  };
+  if (arm) armAsks(frame.contentDocument, (url) => askPage(url, copy));
+  const ask = frame.contentDocument?.getElementById("ask");
+  // Where each link stands on the page, read from here: the test presses there with the mouse and
+  // runs nothing inside the frame, which has no scripts.
+  const at = (id: string): { x: number; y: number } => {
+    const box = frame.getBoundingClientRect();
+    const r = frame.contentDocument!.getElementById(id)!.getBoundingClientRect();
+    return { x: box.left + r.left + r.width / 2, y: box.top + r.top + r.height / 2 };
+  };
+  return {
+    asks, href: ask?.getAttribute("href") ?? null, marked: ask?.hasAttribute("data-ohmail-elsewhere") ?? false,
+    at: { ask: at("ask"), honest: at("honest") },
+  };
+}
+
+(window as unknown as { rig: unknown }).rig = { mount, mountAsk, redPixels, FRAME_SANDBOX };

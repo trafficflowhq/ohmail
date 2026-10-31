@@ -4064,7 +4064,14 @@
     "design": "Original anzeigen",
     "designTitle": "Diese Nachricht mit der Gestaltung des Absenders anzeigen",
     "plain": "Als Text anzeigen",
-    "plainTitle": "Diese Nachricht als Text in der Schrift der App anzeigen"
+    "plainTitle": "Diese Nachricht als Text in der Schrift der App anzeigen",
+    "linkAskTitle": "Diesen Link öffnen?",
+    "linkAskElsewhere": "Der Text dieses Links nennt eine andere Website.",
+    "linkAskGoes": "Er führt zu {host}.",
+    "linkAskOpen": "{host} öffnen",
+    "linkAskCancel": "Abbrechen",
+    "linkAskStay": "Um zu bleiben, schließ diesen Tab.",
+    "linkAskGone": "Dieser Link wartet nicht mehr. Drück ihn noch einmal."
   },
   "bodyText": {
     "show": "Verlauf anzeigen",

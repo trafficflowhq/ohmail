@@ -34,6 +34,11 @@ pub const PER_SURFACE_MAX: usize = 2048;
 /// keeps more than this, so the newest surface always fits.
 pub const BYTES_MAX: usize = 4 * 1024 * 1024;
 
+/// Bytes of marked addresses kept, each for the rest of the session: a press of one asks wherever
+/// it is drawn, whether or not its own link was kept. A surface whose mark finds no room makes
+/// every press ask until that surface reports again.
+pub const MARKS_BYTES_MAX: usize = 1024 * 1024;
+
 /// The longest surface id taken. Printable ASCII only; anything else fails the report.
 pub const SURFACE_ID_MAX: usize = 64;
 
@@ -60,11 +65,20 @@ pub const OWN_LINKS: [&str; 10] = [
 /// [`external_url`]'s own wording.
 const UNRENDERED: &str = "ohmail: this is not an address the app opens (it is not a link on screen)";
 
-/// The links each surface reported, oldest surface first.
+/// The links each surface reported, oldest surface first, and the marked addresses (a label naming
+/// another site), which the door asks the person about before it opens one.
 #[derive(Debug, Default)]
 pub struct Rendered {
     surfaces: VecDeque<(String, HashSet<String>)>,
     bytes: usize,
+    /// Every marked address reported, for the session ([`MARKS_BYTES_MAX`]).
+    marks: HashSet<String>,
+    marks_bytes: usize,
+    /// The surfaces whose report held a mark `marks` had no room for, until each reports again:
+    /// kept past eviction, since an evicted surface may still be on screen.
+    short: HashSet<String>,
+    /// More such surfaces than [`SURFACES_MAX`]: every press asks for the rest of the session.
+    short_for_good: bool,
 }
 
 /// What one report could not keep: entries refused by shape or past a cap, and older surfaces
@@ -76,15 +90,73 @@ pub struct Trimmed {
 }
 
 impl Rendered {
-    /// Replace one surface's links with `urls`; an empty list removes the surface. Each entry is
-    /// judged alone — a shape refusal or a cap drops it and its siblings stay — and only a surface
-    /// id this shell does not keep fails the report.
+    /// [`Rendered::report_asking`] with no marked links.
+    #[cfg(test)]
     pub fn report(&mut self, surface: &str, urls: &[String]) -> Result<Trimmed, String> {
+        self.report_asking(surface, urls, &[])
+    }
+
+    /// Replace one surface's links with `urls`, and add the marked ones, `asks`, to the marks kept
+    /// for the session; an empty list removes the surface. Each entry is judged alone — a shape
+    /// refusal or a cap drops it and its siblings stay — and a mark is kept whether or not its
+    /// link is. Only a surface id this shell does not keep fails the report.
+    pub fn report_asking(&mut self, surface: &str, urls: &[String], asks: &[String]) -> Result<Trimmed, String> {
+        self.apply(surface, urls, asks)
+    }
+
+    /// Several surfaces' reports, applied in order, each exactly as [`Rendered::report_asking`]
+    /// applies it. Every surface id is checked BEFORE any report is applied, and one this shell
+    /// does not keep (or a batch whose three lists differ in length) refuses the whole batch, so a
+    /// refused batch changes nothing.
+    pub fn report_batch(&mut self, surfaces: &[String], urls: &[Vec<String>], asks: &[Vec<String>]) -> Result<Trimmed, String> {
+        if surfaces.len() != urls.len() || surfaces.len() != asks.len() || surfaces.len() > SURFACES_MAX {
+            return Err(BATCH_REFUSED.to_string());
+        }
+        if !surfaces.iter().all(|s| surface_id_ok(s)) {
+            return Err(SURFACE_REFUSED.to_string());
+        }
+        let mut total = Trimmed::default();
+        for ((surface, list), asked) in surfaces.iter().zip(urls.iter()).zip(asks.iter()) {
+            let one = self.apply(surface, list, asked)?;
+            total.dropped += one.dropped;
+            total.evicted += one.evicted;
+        }
+        Ok(total)
+    }
+
+    /// One report, as [`Rendered::report_asking`] describes it; a mark with no room left makes
+    /// every press ask until this surface reports again ([`Rendered::asks`]).
+    fn apply(&mut self, surface: &str, urls: &[String], asks: &[String]) -> Result<Trimmed, String> {
         if !surface_id_ok(surface) {
             return Err(SURFACE_REFUSED.to_string());
         }
         self.remove(surface);
+        self.short.remove(surface);
         let mut trimmed = Trimmed::default();
+        let mut lost = false;
+        for raw in asks {
+            let Some(key) = key_of(raw) else {
+                trimmed.dropped += 1;
+                continue;
+            };
+            if self.marks.contains(&key) {
+                continue;
+            }
+            if self.marks_bytes + key.len() > MARKS_BYTES_MAX {
+                trimmed.dropped += 1;
+                lost = true;
+                continue;
+            }
+            self.marks_bytes += key.len();
+            self.marks.insert(key);
+        }
+        if lost {
+            if self.short.len() < SURFACES_MAX {
+                self.short.insert(surface.to_string());
+            } else {
+                self.short_for_good = true;
+            }
+        }
         let mut kept = HashSet::new();
         let mut bytes = 0;
         for raw in urls {
@@ -116,26 +188,6 @@ impl Rendered {
         Ok(trimmed)
     }
 
-    /// Several surfaces' reports, applied in order, each exactly as [`Rendered::report`] applies
-    /// it. Every surface id is checked BEFORE any report is applied, and one this shell does not
-    /// keep (or a batch whose two lists differ in length) refuses the whole batch, so a refused
-    /// batch changes nothing.
-    pub fn report_batch(&mut self, surfaces: &[String], urls: &[Vec<String>]) -> Result<Trimmed, String> {
-        if surfaces.len() != urls.len() || surfaces.len() > SURFACES_MAX {
-            return Err(BATCH_REFUSED.to_string());
-        }
-        if !surfaces.iter().all(|s| surface_id_ok(s)) {
-            return Err(SURFACE_REFUSED.to_string());
-        }
-        let mut total = Trimmed::default();
-        for (surface, list) in surfaces.iter().zip(urls.iter()) {
-            let one = self.report(surface, list)?;
-            total.dropped += one.dropped;
-            total.evicted += one.evicted;
-        }
-        Ok(total)
-    }
-
     fn remove(&mut self, surface: &str) {
         if let Some(at) = self.surfaces.iter().position(|(id, _)| id == surface) {
             if let Some((_, gone)) = self.surfaces.remove(at) {
@@ -147,6 +199,13 @@ impl Rendered {
     /// Whether any surface holds this comparison key ([`key_of`]).
     pub fn holds(&self, key: &str) -> bool {
         self.surfaces.iter().any(|(_, links)| links.contains(key))
+    }
+
+    /// Whether a press of this comparison key ([`key_of`]) asks: a surface reported it as marked,
+    /// or a mark found no room ([`MARKS_BYTES_MAX`]) and its surface has not reported since, when
+    /// every press asks.
+    pub fn asks(&self, key: &str) -> bool {
+        self.short_for_good || !self.short.is_empty() || self.marks.contains(key)
     }
 
     #[cfg(test)]
@@ -252,6 +311,15 @@ pub fn admitted<'a>(url: &'a str, set: Option<&Rendered>) -> Result<&'a str, Ref
     }
 }
 
+/// Whether the person is asked before `url` opens ([`Rendered::asks`]), compared in [`key_of`]'s
+/// form. No set asks nothing (it admits nothing either).
+pub fn asked(url: &str, set: Option<&Rendered>) -> bool {
+    match (set, key_of(url)) {
+        (Some(set), Some(key)) => set.asks(&key),
+        _ => false,
+    }
+}
+
 /// Which door refused. One is left: no command opens an address any more.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Door {
@@ -284,6 +352,12 @@ pub fn log_refusal(door: Door, why: Why, url: &str) {
     crate::engine::log_json_line(&refusal_line(door, why, url));
 }
 
+/// The line a press held for the window's answer writes: the host's class, nothing of the address.
+pub fn ask_line(url: &str) -> String {
+    let class = Url::parse(url).map_or("none", |u| crate::navigation::host_class(&u));
+    format!("{{\"service\":\"shell\",\"event\":\"link_ask\",\"hostClass\":\"{class}\"}}")
+}
+
 /// A report's trim, as counts.
 pub fn trimmed_line(trimmed: Trimmed) -> String {
     format!(
@@ -293,18 +367,23 @@ pub fn trimmed_line(trimmed: Trimmed) -> String {
 }
 
 /// The window's renderers report the http(s) links their surfaces draw, in batches: `surfaces[i]`
-/// draws `urls[i]`, and an empty list removes that surface. One call per frame's worth of reports
-/// (`rendered-links.ts`), where a call per surface was sixty across the bridge for one switch into
-/// a stream. SYNC, so a batch is applied in IPC order, on the thread that answers the new-window
-/// request a later click makes. Opens nothing.
+/// draws `urls[i]`, the marked ones among them `asks[i]`, and an empty list removes that surface.
+/// One call per frame's worth of reports (`rendered-links.ts`), where a call per surface was sixty
+/// across the bridge for one switch into a stream. SYNC, so a batch is applied in IPC order, on the
+/// thread that answers the new-window request a later click makes. Opens nothing.
 #[tauri::command]
-pub fn rendered_links_batch(set: tauri::State<'_, RenderedLinks>, surfaces: Vec<String>, urls: Vec<Vec<String>>) -> Result<(), String> {
+pub fn rendered_links_batch(
+    set: tauri::State<'_, RenderedLinks>,
+    surfaces: Vec<String>,
+    urls: Vec<Vec<String>>,
+    asks: Vec<Vec<String>>,
+) -> Result<(), String> {
     let trimmed = {
         let mut held = set
             .0
             .lock()
             .map_err(|_| "ohmail: the shell lost its list of links on screen".to_string())?;
-        held.report_batch(&surfaces, &urls)?
+        held.report_batch(&surfaces, &urls, &asks)?
     };
     if trimmed != Trimmed::default() {
         crate::engine::log_json_line(&trimmed_line(trimmed));

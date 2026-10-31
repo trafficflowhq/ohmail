@@ -50,10 +50,10 @@ const OPEN = "window.open";
 
 /** Every command the window sent the shell and every new-window request it made, in order. */
 const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
-/** The shell's command; one call carries a batch, `surfaces[i]` drawing `urls[i]`. */
+/** The shell's command; one call carries a batch, `surfaces[i]` drawing `urls[i]`, `asks[i]` the marked ones. */
 const LINKS = "rendered_links_batch";
-const batches = (): Array<{ surfaces: string[]; urls: string[][] }> =>
-  sent.filter((s) => s.command === LINKS).map((s) => s.payload as { surfaces: string[]; urls: string[][] });
+const batches = (): Array<{ surfaces: string[]; urls: string[][]; asks: string[][] }> =>
+  sent.filter((s) => s.command === LINKS).map((s) => s.payload as { surfaces: string[]; urls: string[][]; asks: string[][] });
 /** Every surface's report, in the order the shell applies them. */
 const reports = (): Array<{ surface: string; urls: string[] }> =>
   batches().flatMap((b) => b.surfaces.map((surface, i) => ({ surface, urls: b.urls[i]! })));
@@ -247,6 +247,26 @@ describe("a message's links are on the shell's list while it is on screen", () =
     expect(batches().length, "the unmount's removals were not one call").toBe(2);
     expect(batches()[1]!.urls.every((u) => u.length === 0), "the unmount left links on the list").toBe(true);
     expect([...batches()[1]!.surfaces].sort()).toEqual([...batches()[0]!.surfaces].sort());
+  });
+
+  it("a frame's marked links ride with its links, one list per surface, in step", async () => {
+    /* The shell asks before it opens a marked link (`rendered_links.rs`), and the desktop's frame
+       keeps that link's address for the new-window request. Mutations: the asks not sent → no
+       lists; sent as one flat list → the lists stop pairing with the surfaces; the frame built as
+       the web's (no address on a marked link) → the press would open nothing. */
+    const marked = FRAMED.replace(">one</a>", ">bank.example</a>");
+    const el = await mount(h("div", null,
+      h(MessageBody, { key: 1, messageId: "k1", text: "one two three", html: marked }),
+      h(MessageBody, { key: 2, messageId: "k2", text: "one two three", html: FRAMED })));
+    const [batch, ...more] = batches();
+    expect(more).toEqual([]);
+    expect(batch!.urls.map((u) => u.length)).toEqual([3, 3]);
+    expect(batch!.asks, "the marked link never reached the shell beside its surface").toEqual([["https://example.test/a?b=1&c=2#f"], []]);
+    const frame = new DOMParser().parseFromString(el.querySelector("iframe")?.getAttribute("srcdoc") ?? "", "text/html");
+    const link = frame.querySelector("a[data-ohmail-elsewhere]");
+    expect(link?.getAttribute("href"), "the desktop's frame took the marked link's address").toBe("https://example.test/a?b=1&c=2#f");
+    await unmount();
+    expect(batches().at(-1)?.asks.every((a) => a.length === 0), "the unmount left marked links on the list").toBe(true);
   });
 
   it("with no sink armed — the web app's state — nothing is reported", async () => {

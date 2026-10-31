@@ -88,6 +88,8 @@ async function render(props: Parameters<Mod["MessageBody"]>[0]): Promise<HTMLDiv
 
 const frame = (): HTMLIFrameElement | null => host!.querySelector("iframe");
 const srcdoc = (): string => frame()?.getAttribute("srcdoc") ?? "";
+/** Where a frame's link goes: its href, or the address a marked link keeps until its frame is armed. */
+const addressOf = (a: Element): string | null => a.getAttribute("href") ?? a.getAttribute("data-ohmail-ask");
 
 /**
  * A url in a position the BROWSER WOULD FETCH — `src`, `srcset`, `background`, CSS `url()`.
@@ -742,7 +744,7 @@ describe("links look like links and say where they go", () => {
     });
     expect(frame(), "the designed letter did not render in a frame").not.toBeNull();
     const doc = new DOMParser().parseFromString(srcdoc(), "text/html");
-    expect([...doc.querySelectorAll("a")].map((a) => [a.getAttribute("href"), a.hasAttribute("data-ohmail-elsewhere")]))
+    expect([...doc.querySelectorAll("a")].map((a) => [addressOf(a), a.hasAttribute("data-ohmail-elsewhere")]))
       .toEqual([
         ["https://evil.example/a", true],
         ["https://evil.example/b", true],
@@ -751,6 +753,9 @@ describe("links look like links and say where they go", () => {
         ["https://shop.example/e", false],
         ["https://bank.example/guide.html", false],
       ]);
+    // The web asks in a page of its own (`link-ask.ts`), so the frame it builds holds no address on a
+    // marked link until it is armed. Mutation: the reader not passing `askInPage` → red.
+    expect([...doc.querySelectorAll("a")].map((a) => a.hasAttribute("href"))).toEqual([false, false, false, false, true, true]);
   });
 
   it("…and as the browser draws it from its defaults and the letter's sheets, in any order", async () => {
@@ -775,7 +780,7 @@ describe("links look like links and say where they go", () => {
     });
     expect(frame(), "the designed letter did not render in a frame").not.toBeNull();
     const doc = new DOMParser().parseFromString(srcdoc(), "text/html");
-    expect([...doc.querySelectorAll("a")].map((a) => [a.getAttribute("href"), a.hasAttribute("data-ohmail-elsewhere")]))
+    expect([...doc.querySelectorAll("a")].map((a) => [addressOf(a), a.hasAttribute("data-ohmail-elsewhere")]))
       .toEqual([
         ["https://evil.example/f", true],
         ["https://evil.example/g", true],
@@ -886,9 +891,10 @@ describe("links look like links and say where they go", () => {
     // A rule whose subject holds a pseudo-class is left out, as a hover that hides draws nothing (u);
     // so is one costing more than a few compares per element: a whole-value test (v), more than
     // four simple selectors (w), more than 64 characters (x). Mutations: each limit lifted → its own.
+    // The glue sits inside the host, where no piece of the label names one alone.
     const { sanitizeMailHtml } = await mod();
     const glue = (id: string, cls: string): string =>
-      `<div><a href="https://evil.example/${id}"><span class="${cls}" title="${"x".repeat(64)}">evil.example/</span>bank.example</a></div>`;
+      `<div><a href="https://bankx.example/${id}">bank<span class="${cls}" title="${"x".repeat(64)}">x</span>.example</a></div>`;
     const { html } = sanitizeMailHtml(
       `<style>.p{/* } */display:none} [title="}{"], .q{display:none}` +
       `@media screen{@supports (display:grid){.r{display:none!important}}} .wrap{color:red; .s{display:none}}` +
@@ -965,6 +971,214 @@ describe("links look like links and say where they go", () => {
       .map((a) => a.hasAttribute("data-ohmail-elsewhere"));
     expect(marked).toEqual([...Array(39).fill(true), false]);
     expect(Math.min(linked, again)).toBeLessThan(1.75 * plain);
+  });
+
+  it("…and each piece of its label alone, whatever hides the rest", async () => {
+    // Glue in an element of its own is read apart from the host beside it, so it names that host
+    // however the letter hides it: font-size:0, a word-list or hover rule the sheet reading leaves
+    // out, visibility, or glue after the host. Honest labels split across elements stay quiet; a
+    // host whose own name is split (mail.example, then .com) gets the note, the accepted cost.
+    // Mutation: no reading per piece → (a)-(e) and (i).
+    const { sanitizeMailHtml } = await mod();
+    const { html } = sanitizeMailHtml(
+      `<style>[class~=v]{display:none} .u:hover{display:none} .z{visibility:hidden}</style><table width="600"><tr><td>` +
+      `<p><a href="https://evil.example/a"><span style="font-size:0">evil.example/</span>bank.example</a></p>` +
+      `<p><a href="https://evil.example/b"><span class="v">evil.example/</span>bank.example</a></p>` +
+      `<p><a href="https://evil.example/c"><span class="u">evil.example/</span>bank.example</a></p>` +
+      `<p><a href="https://evil.example/d"><span class="z">evil.example/</span>bank.example</a></p>` +
+      `<p><a href="https://bank.example.evil.example/e">bank.example<span style="font-size:0">.evil.example</span></a></p>` +
+      `<p><a href="https://shop.example/f">https://<b>shop.example</b>/f</a></p>` +
+      `<p><a href="https://docs.example.org/g"><b>docs</b>.example.org</a></p>` +
+      `<p><a href="https://www.example.com/h"><span>www.</span><span>example.com</span></a></p>` +
+      `<p><a href="https://mail.example.com/i"><span>mail.example</span>.com</a></p></td></tr></table>`,
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    expect([...doc.querySelectorAll("a")].map((a) => [a.getAttribute("href")!.slice(-1), a.hasAttribute("data-ohmail-elsewhere")]))
+      .toEqual([["a", true], ["b", true], ["c", true], ["d", true], ["e", true], ["f", false], ["g", false], ["h", false],
+        ["i", true]]);
+  });
+
+  it("…reading a label of many pieces once each", async () => {
+    // A 512 KiB label of small pieces costs about what the same pieces cost outside a link.
+    // Mutation: read each piece together with every piece before it → quadratic, far over the bound.
+    const { sanitizeMailHtml, MAX_HTML_CHARS } = await mod();
+    const piece = `<b>${"e.ee ".repeat(8)}</b>`;
+    const pieces = piece.repeat(Math.floor((MAX_HTML_CHARS - 200) / piece.length));
+    const letter = (open: string, close: string): string => `<table width="600"><tr><td>${open}${pieces}${close}</td></tr></table>`;
+    const timed = (html: string): number => {
+      const started = performance.now();
+      sanitizeMailHtml(html);
+      return performance.now() - started;
+    };
+    const plain = letter("<p>", "</p>");
+    const linked = letter(`<a href="https://e.ee/x">`, "</a>");
+    expect(linked.length).toBeLessThanOrEqual(MAX_HTML_CHARS);
+    timed(`<a href="https://e.ee/x">${piece.repeat(100)}</a>`);
+    expect(Math.min(timed(linked), timed(linked))).toBeLessThan(1.75 * Math.min(timed(plain), timed(plain)) + 50);
+  }, 30_000);
+
+  it("…and what the letter's styles draw as its text, read alone", async () => {
+    // A label its styles draw holds no text node: a string in content, quotes or a list marker
+    // (escapes decoded, in a sheet or a style attribute), an @counter-style symbol, or an attribute
+    // attr() reads on the link or inside it, or any other declaration or descriptor that holds a
+    // string: an @property's initial value, a hyphen or an overflow mark. Such a string naming
+    // another site marks every link of the letter that goes elsewhere, and so do strings one value
+    // draws side by side; a url() draws no text, nor does a string in a selector. Mutations: no
+    // reading of what the styles draw → (a)-(f); escapes not decoded → (b); style attributes not
+    // read → (c), (d), (j); no @counter-style reading → (e); no attr() reading → (f); url()
+    // arguments read → (g); only the properties that draw a pseudo-element's or a marker's text
+    // read → (i)-(k); selectors read → (l); each string read only alone → (m).
+    const { sanitizeMailHtml } = await mod();
+    const marks = (sheet: string, body: string): boolean[] =>
+      [...new DOMParser().parseFromString(
+        sanitizeMailHtml(`<style>${sheet}</style><table width="600"><tr><td>${body}</td></tr></table>`).html,
+        "text/html",
+      ).querySelectorAll("a")].map((a) => a.hasAttribute("data-ohmail-elsewhere"));
+    const empty = `<p><a class="x" href="https://evil.example/"></a></p>`;
+    const signIn = (li: string): string => `<ul><li ${li}><a href="https://evil.example/">Sign in</a></li></ul>`;
+    expect(marks(`.x::before{content:"bank.example"}`, empty), "(a)").toEqual([true]);
+    expect(marks(`.x::before{content:"bank\\2e example"}`, empty), "(b)").toEqual([true]);
+    expect(marks("", `<p><a href="https://evil.example/"><q style='quotes:"bank.example" ""'></q></a></p>`), "(c)").toEqual([true]);
+    expect(marks("", signIn(`style='list-style-type:"bank.example"'`)), "(d)").toEqual([true]);
+    expect(marks(`@counter-style b{system:cyclic;symbols:"bank.example"}.c{list-style:b inside}`, signIn(`class="c"`)), "(e)")
+      .toEqual([true]);
+    expect(marks(".t::before{content:attr(title)}", `<p><a href="https://evil.example/"><span class="t" title="bank.example"></span></a></p>`), "(f)")
+      .toEqual([true]);
+    expect(marks(`.x::before{content:url("data:text/plain,bank.example")}`, empty), "(g)").toEqual([false]);
+    expect(marks(`.x::before{content:"bank.example"}`, `<p><a class="x" href="https://bank.example/"></a></p>`), "(h)").toEqual([false]);
+    expect(marks(`@property --l{syntax:"*";inherits:true;initial-value:"bank.example"} .x::before{content:var(--l)}`, empty), "(i)")
+      .toEqual([true]);
+    const glue = `<span style="font-size:0">x</span>&shy;<span style="font-size:0">y</span>`;
+    expect(marks("", `<p><a style='width:0;hyphens:manual;hyphenate-character:"bank.example"' href="https://evil.example/">${glue}</a></p>`), "(j)")
+      .toEqual([true]);
+    expect(marks(`.o{overflow:hidden;white-space:nowrap;text-overflow:"bank.example"}`, `<p><a class="o" href="https://evil.example/">zzz</a></p>`), "(k)")
+      .toEqual([true]);
+    expect(marks(`a[title="bank.example"]{color:red}`, `<p><a href="https://evil.example/" title="x">Sign in</a></p>`), "(l)").toEqual([false]);
+    expect(marks(`.x::before{content:"bank" "\\2e" "example"}`, empty), "(m)").toEqual([true]);
+  });
+
+  it("`asks` is exactly the marked links' addresses, and the folded document keeps its own", async () => {
+    // What the desktop shell asks about before it opens one (`rendered_links.rs`). Mutations: every
+    // link listed → the honest one; the raw href → a second spelling; the whole letter's list on the
+    // fold → the address only its history holds.
+    const { links, asks } = await clean(
+      `<p><a href="HTTPS://EVIL.EXAMPLE/a">bank.example</a> <a href="https://shop.example/">shop.example</a> ` +
+      `<a href="https://evil.example/a">bank.example</a> <a href="https://evil.example/b">Sign in at bank.example</a></p>`,
+    );
+    expect(asks).toEqual(["https://evil.example/a", "https://evil.example/b"]);
+    expect(asks.filter((u) => !links.includes(u))).toEqual([]);
+    const reply = await clean(
+      `<div dir="ltr"><p>Thanks, see <a href="https://evil.example/new">bank.example</a></p></div>` +
+      `<div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Mon, Oct 26, 2026 at 9:00 AM Anna &lt;anna@example.test&gt; wrote:<br></div>` +
+      `<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">` +
+      `<p>Old news at <a href="https://evil.example/old">bank.example</a></p></blockquote></div>`,
+      { history: true },
+    );
+    expect(reply.asks).toEqual(["https://evil.example/new", "https://evil.example/old"]);
+    expect(reply.fold?.asks).toEqual(["https://evil.example/new"]);
+  });
+
+  it("asked in the page, a marked link has no address until its frame is armed", async () => {
+    // The web's frame (`askInPage`): the link keeps everything but its href, which waits in
+    // data-ohmail-ask. Mutations: href kept under askInPage → the first row; removed by default →
+    // the default rows; the honest link touched → its rows; ALLOW_DATA_ATTR → the sender's own
+    // data-ohmail-ask survives; the prose walk reading href alone → the letter's link is lost.
+    const letter = `<p><a href="https://evil.example/x" target="_self" title="mine">bank.example</a> ` +
+      `<a href="https://shop.example/" data-ohmail-ask="https://evil.example/x">shop.example</a></p>`;
+    const anchors = (html: string): HTMLAnchorElement[] =>
+      [...new DOMParser().parseFromString(html, "text/html").querySelectorAll("a")];
+    const [marked, honest] = anchors((await clean(letter, { askInPage: true })).html);
+    expect(marked!.hasAttribute("href"), "a marked link kept its address").toBe(false);
+    expect(Object.fromEntries([...marked!.attributes].map((a) => [a.name, a.value]))).toEqual({
+      "data-ohmail-ask": "https://evil.example/x",
+      "data-ohmail-elsewhere": "1",
+      "data-ohmail-host": "evil.example",
+      rel: "noopener noreferrer nofollow",
+      target: "_blank",
+      title: "Goes to evil.example",
+    });
+    expect(honest!.getAttribute("href")).toBe("https://shop.example/");
+    expect(honest!.hasAttribute("data-ohmail-ask"), "the sender's own ask marker survived").toBe(false);
+    const [kept, plain] = anchors((await clean(letter)).html);
+    expect([kept!.getAttribute("href"), kept!.getAttribute("data-ohmail-ask")]).toEqual(["https://evil.example/x", "https://evil.example/x"]);
+    expect(plain!.hasAttribute("data-ohmail-ask")).toBe(false);
+    // A letter set in the app's own type still links there: the prose path is unchanged.
+    const { rich } = await clean(`<p>See <a href="https://evil.example/x">bank.example</a>.</p>`, { askInPage: true });
+    expect(JSON.stringify(rich)).toContain('"href":"https://evil.example/x"');
+  });
+
+  it("the ask page names where the link goes, holds the one link there and runs nothing", async () => {
+    // Built as elements and serialised, never joined from strings. Mutations: the address written
+    // into markup as a string → the second address's script; the policy or referrer meta dropped →
+    // their rows; the decoy host or a second link added → the link count.
+    const { askPage } = await import("../app/components/link-ask.js");
+    const copy = {
+      lang: "en", title: "Open this link?", elsewhere: "The text of this link names a different site.",
+      goes: (host: string) => `It goes to ${host}.`, open: (host: string) => `Open ${host}`, stay: "To stay, close this tab.",
+    };
+    for (const url of ["https://evil.example/x?a=1&b=2", `https://evil.example/x?q="><script>alert(1)</script></title>`]) {
+      const page = new DOMParser().parseFromString(askPage(url, copy), "text/html");
+      expect(page.querySelectorAll("script")).toHaveLength(0);
+      expect(page.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content"))
+        .toBe("default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'");
+      expect(page.querySelector('meta[name="referrer"]')?.getAttribute("content")).toBe("no-referrer");
+      expect(page.querySelector('link[rel="icon"]')?.getAttribute("href")).toBe("data:,");
+      const links = page.querySelectorAll("a");
+      expect(links).toHaveLength(1);
+      expect([links[0]!.getAttribute("href"), links[0]!.getAttribute("rel"), links[0]!.textContent])
+        .toEqual([url, "noopener noreferrer", "Open evil.example"]);
+      expect(page.title).toBe("Open this link?");
+      expect(page.documentElement.lang).toBe("en");
+      expect(page.body.textContent).toContain(url);
+      expect(page.body.textContent).toContain("It goes to evil.example.");
+      expect(page.body.textContent).toContain("To stay, close this tab.");
+    }
+  });
+
+  it("arming gives the asked links one page per address, at most 256, and takes them back", async () => {
+    // Attributes only. Mutations: a page per link → three pages for two addresses; no cap → every
+    // link past it armed; a link that has an address armed → the honest link changes; the address
+    // not checked again → the script row armed; the disposer revoking nothing → none taken back.
+    const { armAsks, ASK_PAGES_MAX } = await import("../app/components/link-ask.js");
+    const made: string[] = [];
+    const revoked: string[] = [];
+    const urlStatics = URL as unknown as Record<string, unknown>;
+    const had = { create: urlStatics.createObjectURL, revoke: urlStatics.revokeObjectURL };
+    urlStatics.createObjectURL = (blob: Blob): string => {
+      expect(blob.type).toBe("text/html;charset=utf-8");
+      made.push(`blob:https://app.example.test/${made.length}`);
+      return made.at(-1)!;
+    };
+    urlStatics.revokeObjectURL = (url: string): void => { revoked.push(url); };
+    try {
+      const doc = new DOMParser().parseFromString(
+        `<a data-ohmail-ask="https://evil.example/a">1</a><a data-ohmail-ask="https://evil.example/a">2</a>` +
+        `<a data-ohmail-ask="https://evil.example/b">3</a><a href="https://shop.example/" data-ohmail-ask="https://evil.example/c">4</a>` +
+        `<a data-ohmail-ask="javascript:alert(1)">5</a>`,
+        "text/html",
+      );
+      const pages: string[] = [];
+      const disarm = armAsks(doc, (url) => { pages.push(url); return `<p>${url}</p>`; });
+      const hrefs = [...doc.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+      expect(pages).toEqual(["https://evil.example/a", "https://evil.example/b"]);
+      expect(hrefs).toEqual([made[0], made[0], made[1], "https://shop.example/", null]);
+      disarm();
+      expect(revoked).toEqual(made);
+
+      const many = new DOMParser().parseFromString(
+        Array.from({ length: ASK_PAGES_MAX + 4 }, (_, i) => `<a data-ohmail-ask="https://evil.example/${i}">x</a>`).join(""),
+        "text/html",
+      );
+      armAsks(many, () => "<p>x</p>");
+      const armed = [...many.querySelectorAll("a")].map((a) => a.hasAttribute("href"));
+      expect(ASK_PAGES_MAX).toBe(256);
+      expect(armed.filter(Boolean)).toHaveLength(ASK_PAGES_MAX);
+      expect(armed.slice(ASK_PAGES_MAX)).toEqual([false, false, false, false]);
+      expect(armAsks(null, () => "")).toBeTypeOf("function");
+    } finally {
+      urlStatics.createObjectURL = had.create;
+      urlStatics.revokeObjectURL = had.revoke;
+    }
   });
 
   it("`links` is exactly the http(s) anchors the frame keeps, as `URL.href`", async () => {
