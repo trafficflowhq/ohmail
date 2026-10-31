@@ -78,6 +78,20 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.18" date="2026-10-31">
+      <description>
+        <ul>
+          <li>Quoted history folds when the earlier message quotes and answers something itself</li>
+          <li>Connecting a mailbox again keeps the settings stored in it</li>
+          <li>Delete after opening a search result acts on the letter you opened</li>
+          <li>Search finds a letter by any part of a file name beside your other words</li>
+          <li>Letters no longer show the preview text their sender hid</li>
+          <li>Links show where they really go in more cases</li>
+          <li>The phone's Screener says a fresh mailbox is still being read before the phone organizes it</li>
+          <li>New mail no longer waits behind the split-conversation repair</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.17" date="2026-10-30">
       <description>
         <ul>
@@ -149,20 +163,6 @@
           <li>A letter delivered just before a restart or an IMAP outage reaches Sent once it can</li>
           <li>A letter with embedded pictures and no plain text reads whole in a phone conversation</li>
           <li>Undo after Mark all read in News keeps the new letters new, and two phone fixes</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.13" date="2026-10-29">
-      <description>
-        <ul>
-          <li>The sign-in form shows at once when a sign-in has ended</li>
-          <li>Signing out and deleting your account finish at once</li>
-          <li>The Linux AppImage no longer vanishes when an accessibility tool reads its window</li>
-          <li>A device that reconnects is no longer refused live updates by its own earlier connection</li>
-          <li>A letter you read is marked read on the mail server at once</li>
-          <li>The keyboard keeps working after a click into a designed letter</li>
-          <li>The search speed test no longer fails on a busy machine</li>
-          <li>The nightly search speed test judges a slower machine fairly</li>
         </ul>
       </description>
     </release>
