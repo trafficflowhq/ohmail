@@ -3272,6 +3272,25 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
+/**
+ * The newest entry of each journal the list above was read against. The oracle is closed up to it;
+ * an entry after it is new work, and the idempotent-forms and lockstep checks review it instead.
+ */
+const POST_SPLIT_HEAD: Readonly<Record<string, string>> = {
+  [MAIL_DIR]: "0172_html_words_backfill",
+  [CLOUD_DIR]: "0055_account_storage_holds",
+};
+
+/** The tags a journal gained after its head, outside the permutation oracle. */
+function pastHead(dir: string): ReadonlySet<string> {
+  const head = POST_SPLIT_HEAD[dir];
+  if (!head) return new Set();
+  const entries = journal(dir);
+  const at = entries.findIndex((e) => e.tag === head);
+  if (at < 0) throw new Error(`${head} is no longer in its journal`);
+  return new Set(entries.slice(at + 1).map((e) => e.tag));
+}
+
 /** Short, stable identity for one normalized statement. */
 const hashOf = (normalized: string): string =>
   createHash("sha256").update(normalized).digest("hex").slice(0, 16);
@@ -4203,13 +4222,14 @@ describe("the two journals are well-formed", () => {
   // cloud 38 → 39 for `0053_connect_reminder_notices`: its `when` (1792901976213) is strictly above 0052's.
   // cloud 39 → 40 for `0054_connect_attempts`: its `when` (1793059413550) is strictly above 0053's.
   // cloud 40 → 41 for `0055_account_storage_holds`: its `when` (1793139772651) is strictly above 0054's.
+  // The counts above are now a FLOOR: a shorter journal still fails, a new entry no longer does.
   it.each([["mail", MAIL_DIR, 173], ["cloud", CLOUD_DIR, 41]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
-    (_name, dir, expectedEntries) => {
+    (_name, dir, floor) => {
       const entries = journal(dir);
-      // A literal count, so a journal that silently lost an entry cannot pass by being
+      // A literal floor, so a journal that silently lost an entry cannot pass by being
       // internally consistent about a shorter list.
-      expect(entries).toHaveLength(expectedEntries);
+      expect(entries.length).toBeGreaterThanOrEqual(floor);
       expect(entries.map((e) => e.idx)).toEqual(entries.map((_, i) => i));
       expect(new Set(entries.map((e) => e.tag)).size).toBe(entries.length);
       for (const e of entries) {
@@ -4514,7 +4534,9 @@ describe("the split is a permutation of the pre-split journal", () => {
   function multiset(dirs: string[], skipHashes: ReadonlySet<string> = new Set()): Map<string, number> {
     const m = new Map<string, number>();
     for (const dir of dirs) {
+      const later = pastHead(dir);
       for (const c of allChunks(dir)) {
+        if (later.has(c.tag)) continue;
         const n = normalise(c.sql);
         if (!n || skipHashes.has(hashOf(n))) continue;
         m.set(n, (m.get(n) ?? 0) + 1);

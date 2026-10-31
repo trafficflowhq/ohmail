@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
 import { readdirSync } from "node:fs";
 // The journal's own directory, from the package that owns it — never a path composed here.
-import { SQLITE_MIGRATIONS_DIR } from "@ohmail/db-mail";
+import { SQLITE_JOURNAL, SQLITE_MIGRATIONS_DIR } from "@ohmail/db-mail";
 
 // Reached through `createRequire` rather than a static import: the bundler this suite runs under
 // does not yet know this module is a builtin, and resolves the bare name to a package that does
@@ -66,6 +66,33 @@ function open(): { db: DatabaseSync; target: Parameters<typeof migrateSqlite>[0]
   };
 }
 
+/**
+ * The device migrations release 0.30.17 shipped, frozen. A device's ledger records these names, so
+ * a rename re-runs the entry on every upgraded store and a deletion strands the stores that ran it.
+ * Newer entries follow them and are read from the journal.
+ */
+const RELEASED_SQLITE: readonly string[] = [
+  "0001_baseline", "0093_outbound_send_fingerprints", "0094_request_kinds_moves_profile",
+  "0095_outbound_send_resolution", "0096_away_piles", "0097_folder_state_last_error_class", "0098_signature_html",
+  "0099_folder_state_trashed_from", "0107_release_held_at", "0108_mailbox_signed_out_at", "0109_gate_release_done_at",
+  "0110_resurface_time", "0111_mailbox_erased_at", "0112_idempotency_erased_at", "0113_refresh_consumed_by_attempt",
+  "0114_away_rotation_stamp", "0115_first_sync_budget_stop", "0116_unsub_drain_cursor", "0117_junk_rescues",
+  "0118_account_isolation", "0119_messages_arrived_at", "0120_held_release_dismissed", "0121_release_refusal",
+  "0122_change_log_retention", "0125_message_search", "0126_mailbox_erasure_done", "0127_mailbox_signed_out_meta",
+  "0128_rule_person_decided", "0129_profile_import_ask", "0130_mailbox_sync_soft_states", "0132_mailbox_sent_folder",
+  "0133_screener_auto_act", "0135_organizer_parked_at", "0136_screener_probe_indexes", "0137_draft_forward_of",
+  "0138_auto_filing_undone_at", "0138_device_search_stems", "0139_messages_arrival_order",
+  "0141_screener_floor_version", "0144_rule_person_decided_backfill", "0145_press_decided_at",
+  "0146_rule_person_decided_followup", "0147_messages_open_read_at", "0148_messages_sender_check",
+  "0149_messages_sender_check_by", "0150_list_addresses", "0151_mailboxes_gap_since", "0154_messages_recipient_keys",
+  "0155_outbound_sends_rearm", "0156_routing_decisions_sender_reason", "0157_messages_sender_date",
+  "0158_mailboxes_gap_strangers", "0159_rules_settled_press_at", "0160_folder_state_outstanding",
+  "0161_mailboxes_account_idx", "0162_outbound_sends_offer_state", "0163_folder_state_fresh_intent",
+  "0164_messages_server_missing", "0166_account_storage_facts", "0167_rules_refile", "0168_drafts_forward_parts",
+  "0169_mailboxes_organized_through", "0170_outbound_sent_copies", "0171_messages_arrival_key",
+  "0172_html_words_backfill",
+].map((tag) => `${tag}.sql`);
+
 const declared = (Object.values(sqliteSchema) as unknown[])
   .filter((v): v is SQLiteTable => is(v, SQLiteTable))
   .map((t) => getTableConfig(t));
@@ -74,305 +101,20 @@ describe("the SQLite journal, applied", () => {
   it("replays into an empty store and records what it applied", async () => {
     const { db, target } = open();
     const applied = await migrateSqlite(target);
-    expect(applied).toEqual([
-      "0001_baseline.sql", "0093_outbound_send_fingerprints.sql",
-      "0094_request_kinds_moves_profile.sql", "0095_outbound_send_resolution.sql",
-      "0096_away_piles.sql", "0097_folder_state_last_error_class.sql",
-      "0098_signature_html.sql", "0099_folder_state_trashed_from.sql",
-      // mail 0104 — the press that releases mail held at the screening gate. 0100–0103 are
-      // `.noop` on this store (each widens a server CHECK, which is a table rebuild here and has
-      // never shipped), so this list skips straight to it. Carried rather than noop'd because the
-      // column is on the shared twin: a device whose `rules` lacks it reads through a schema that
-      // no longer matches.
-      "0107_release_held_at.sql",
-      // mail 0108 — the sign-out's durable stamp. Carried for 0107's reason: the column is on the
-      // shared twin, so a device whose `mailboxes` lacks it reads through a schema that no longer
-      // matches.
-      "0108_mailbox_signed_out_at.sql",
-      // mail 0109 — the one-time gate release's per-account marker. Carried for 0107's reason:
-      // the column is on the shared twin, so a device whose `account_settings` lacks it reads
-      // through a schema that no longer matches.
-      "0109_gate_release_done_at.sql",
-      // mail 0110 — the resurface time. Carried for 0107's reason: the column is on the shared
-      // twin, so a device whose `account_settings` lacks it reads through a schema that no
-      // longer matches.
-      "0110_resurface_time.sql",
-      // mail 0111 — the MAILBOX erasure fence's stamp. Carried for 0107's reason: the column is
-      // on the shared twin, so a device whose `mailboxes` lacks it reads through a schema that no
-      // longer matches.
-      "0111_mailbox_erased_at.sql",
-      // mail 0112 — when an erasure replaced an idempotency row's stored response. Carried for
-      // 0107's reason: the column is on the shared twin, so a device whose `idempotency_keys`
-      // lacks it reads through a schema that no longer matches.
-      "0112_idempotency_erased_at.sql",
-      // mail 0113 — which attempt consumed a refresh token. Carried for 0107's reason: the column
-      // is on the shared twin, so a device whose `refresh_tokens` lacks it reads through a schema
-      // that no longer matches and fails at its first rotation.
-      "0113_refresh_consumed_by_attempt.sql",
-      // mail 0114 — the away responder's rotation stamp. Carried for 0107's reason: the column is
-      // on the shared twin and the pass orders by it on this store too, so a device whose
-      // `away_responders` lacks it fails at the probe.
-      "0114_away_rotation_stamp.sql",
-      // mail 0115 — where a budgeted first sync stopped. Carried for 0107's reason and one of its
-      // own: this store runs the same sync pass through the same cursor, so a device whose
-      // `mailbox_folders` lacks the pair cannot resume either and begins again at INBOX.
-      "0115_first_sync_budget_stop.sql",
-      // mail 0116 — the unsubscribe drain's per-message mark, where its window walk stopped, and
-      // the index over that window. Carried rather than noop'd: the standalone phone runs the
-      // same pass over this store, so a device without them re-reads a list it has already left
-      // and restarts its walk at the head at every tick.
-      "0116_unsub_drain_cursor.sql",
-      // mail 0117 — the junk rescue's desired state. A REAL twin: the standalone phone serves the
-      // screener routes through its own local door, so the press records a row here.
-      "0117_junk_rescues.sql",
-      // mail 0118 — the unique indexes the server's composite account keys reference. The keys
-      // themselves are not carried: adding one here is a table rebuild, and this store holds
-      // exactly one account. The indexes are, so the two schemas stay one schema.
-      "0118_account_isolation.sql",
-      // mail 0119 — the honest arrival (`messages.arrived_at`), the sort clamp's truth.
-      "0119_messages_arrived_at.sql",
-      // mail 0120 — the dismissed held-release offer, the pg column's twin on account_settings.
-      "0120_held_release_dismissed.sql",
-      // mail 0121 — the sibling-lapse refusal, the pg column's twin on mailboxes.
-      "0121_release_refusal.sql",
-      // mail 0122 — the retention floor; the pg prune index is not mirrored on a device.
-      "0122_change_log_retention.sql",
-      // mail 0125 — the search document's twin (no vectors: FTS5 is this store's word index).
-      "0125_message_search.sql",
-      // mail 0126 — when a per-mailbox erasure finished, the pg column's twin on mailboxes.
-      "0126_mailbox_erasure_done.sql",
-      // mail 0127 — where a signed-out mailbox lives, the pg column's twin on mailboxes.
-      "0127_mailbox_signed_out_meta.sql",
-      // mail 0128 — who made a rule's decision, the pg column's twin on rules.
-      "0128_rule_person_decided.sql",
-      // mail 0129 — a press of Import settings the organizer finishes, the pg columns' twins.
-      "0129_profile_import_ask.sql",
-      // mail 0130 — when a cycle last read a never-completed mailbox, the pg column's twin.
-      "0130_mailbox_sync_soft_states.sql",
-      // mail 0132 — the mailbox's own Sent folder, the pg column's twin on mailboxes.
-      "0132_mailbox_sent_folder.sql",
-      // mail 0133 — the act on suggestions' consent and its refusal, the pg columns' twins.
-      "0133_screener_auto_act.sql",
-      // mail 0135 — when the wall released a mailbox, the pg column's twin on mailboxes.
-      "0135_organizer_parked_at.sql",
-      // mail 0136 — the Screener probe indexes, carried as the pg entry builds them.
-      "0136_screener_probe_indexes.sql",
-      // The message a draft forwards, the pg column's twin on drafts.
-      "0137_draft_forward_of.sql",
-      // The Screener's automatic filing, put back: the pg column's twin on folder_state.
-      "0138_auto_filing_undone_at.sql",
-      // The mail word index stemmed as the server's is (device-only: the server already stems).
-      "0138_device_search_stems.sql",
-      // The arrival order index, the pg entry's twin on this store's milliseconds.
-      "0139_messages_arrival_order.sql",
-      // The Screener floor's version mark, the pg column's twin on folder_state (0140 is a noop here).
-      "0141_screener_floor_version.sql",
-      // The person's decisions before their stamp, and the rules key index, the pg entry's twin
-      // (0142 and 0143 are noops here).
-      "0144_rule_person_decided_backfill.sql",
-      // The stale-press stamp on folder_state, flag_state and message_states, the pg entry's twin.
-      "0145_press_decided_at.sql",
-      // The stamps 0144 could not give, the pg entry's two arms.
-      "0146_rule_person_decided_followup.sql",
-      // The open read, the pg column's twin on `messages`.
-      "0147_messages_open_read_at.sql",
-      // The identity fact and who made a contact, the pg columns' twins, with the backfill's index.
-      "0148_messages_sender_check.sql",
-      // Which writer gave the fact, the pg column's twin on `messages`.
-      "0149_messages_sender_check_by.sql",
-      // The list addresses and the backfill's stamp, the pg twins.
-      "0150_list_addresses.sql",
-      // The gap window and its offer, the pg columns' twins.
-      "0151_mailboxes_gap_since.sql",
-      // The recipients side table and its triggers, the pg expression index's twin.
-      "0154_messages_recipient_keys.sql",
-      // The send re-arm's two columns, the pg columns' twins.
-      "0155_outbound_sends_rearm.sql",
-      // The fact that capped a stored suggestion, the pg column's twin.
-      "0156_routing_decisions_sender_reason.sql",
-      // The Screener cutline probe's index, the pg index's twin.
-      "0157_messages_sender_date.sql",
-      // The gap offer's stranger count, the pg column's twin.
-      "0158_mailboxes_gap_strangers.sql",
-      // The reader's press ordering on rules, the pg column's twin.
-      "0159_rules_settled_press_at.sql",
-      // The poll's outstanding filings: the column, its two triggers, the index and the backfill.
-      "0160_folder_state_outstanding.sql",
-      // The list read's index, the pg index's twin.
-      "0161_mailboxes_account_idx.sql",
-      // The send's offer state, the pg column's twin.
-      "0162_outbound_sends_offer_state.sql",
-      // A new filing's schedule reset, the pg trigger's twin.
-      "0163_folder_state_fresh_intent.sql",
-      // A letter the server lost, kept: the pg column's twin.
-      "0164_messages_server_missing.sql",
-      // The storage counter's facts, the pg columns' twins.
-      "0166_account_storage_facts.sql",
-      // A Rules-page Change's re-filing, the pg columns' twins.
-      "0167_rules_refile.sql",
-      // A forward's kept files, the pg column's twin.
-      "0168_drafts_forward_parts.sql",
-      // Where a hand-back's gap window starts: the pg column's twin.
-      "0169_mailboxes_organized_through.sql",
-      // A delivered send's owed Sent copy, the pg table's twin.
-      "0170_outbound_sent_copies.sql",
-      // The arrival index on its new key, replacing 0139's.
-      "0171_messages_arrival_key.sql",
-      // The html-words backfill's stamp and cursor, the pg columns' twins.
-      "0172_html_words_backfill.sql",
-      // Device-only: the people's and the file names' words, as FTS5 words keyed by the letter.
-      "0173_device_header_words.sql",
-    ]);
+    // Every file of the journal's directory, in order: a list written here reddened on each new entry.
+    expect(applied).toEqual(readdirSync(SQLITE_MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort());
+    expect(applied[0]).toBe("0001_baseline.sql");
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
-    expect(rows.map((r) => r.name)).toEqual([
-      "0001_baseline.sql", "0093_outbound_send_fingerprints.sql",
-      "0094_request_kinds_moves_profile.sql", "0095_outbound_send_resolution.sql",
-      "0096_away_piles.sql", "0097_folder_state_last_error_class.sql",
-      "0098_signature_html.sql", "0099_folder_state_trashed_from.sql",
-      // mail 0104 — the press that releases mail held at the screening gate. 0100–0103 are
-      // `.noop` on this store (each widens a server CHECK, which is a table rebuild here and has
-      // never shipped), so this list skips straight to it. Carried rather than noop'd because the
-      // column is on the shared twin: a device whose `rules` lacks it reads through a schema that
-      // no longer matches.
-      "0107_release_held_at.sql",
-      // mail 0108 — the sign-out's durable stamp. Carried for 0107's reason: the column is on the
-      // shared twin, so a device whose `mailboxes` lacks it reads through a schema that no longer
-      // matches.
-      "0108_mailbox_signed_out_at.sql",
-      // mail 0109 — the one-time gate release's per-account marker. Carried for 0107's reason:
-      // the column is on the shared twin, so a device whose `account_settings` lacks it reads
-      // through a schema that no longer matches.
-      "0109_gate_release_done_at.sql",
-      // mail 0110 — the resurface time. Carried for 0107's reason: the column is on the shared
-      // twin, so a device whose `account_settings` lacks it reads through a schema that no
-      // longer matches.
-      "0110_resurface_time.sql",
-      // mail 0111 — the MAILBOX erasure fence's stamp. Carried for 0107's reason: the column is
-      // on the shared twin, so a device whose `mailboxes` lacks it reads through a schema that no
-      // longer matches.
-      "0111_mailbox_erased_at.sql",
-      // mail 0112 — when an erasure replaced an idempotency row's stored response. Carried for
-      // 0107's reason: the column is on the shared twin, so a device whose `idempotency_keys`
-      // lacks it reads through a schema that no longer matches.
-      "0112_idempotency_erased_at.sql",
-      // mail 0113 — which attempt consumed a refresh token. Carried for 0107's reason: the column
-      // is on the shared twin, so a device whose `refresh_tokens` lacks it reads through a schema
-      // that no longer matches and fails at its first rotation.
-      "0113_refresh_consumed_by_attempt.sql",
-      // mail 0114 — the away responder's rotation stamp. Carried for 0107's reason: the column is
-      // on the shared twin and the pass orders by it on this store too, so a device whose
-      // `away_responders` lacks it fails at the probe.
-      "0114_away_rotation_stamp.sql",
-      // mail 0115 — where a budgeted first sync stopped. Carried for 0107's reason and one of its
-      // own: this store runs the same sync pass through the same cursor, so a device whose
-      // `mailbox_folders` lacks the pair cannot resume either and begins again at INBOX.
-      "0115_first_sync_budget_stop.sql",
-      // mail 0116 — the unsubscribe drain's per-message mark, where its window walk stopped, and
-      // the index over that window. Carried rather than noop'd: the standalone phone runs the
-      // same pass over this store, so a device without them re-reads a list it has already left
-      // and restarts its walk at the head at every tick.
-      "0116_unsub_drain_cursor.sql",
-      // mail 0117 — the junk rescue's desired state. A REAL twin: the standalone phone serves the
-      // screener routes through its own local door, so the press records a row here.
-      "0117_junk_rescues.sql",
-      // mail 0118 — the unique indexes the server's composite account keys reference. The keys
-      // themselves are not carried: adding one here is a table rebuild, and this store holds
-      // exactly one account. The indexes are, so the two schemas stay one schema.
-      "0118_account_isolation.sql",
-      // mail 0119 — the honest arrival (`messages.arrived_at`), the sort clamp's truth.
-      "0119_messages_arrived_at.sql",
-      // mail 0120 — the dismissed held-release offer, the pg column's twin on account_settings.
-      "0120_held_release_dismissed.sql",
-      // mail 0121 — the sibling-lapse refusal, the pg column's twin on mailboxes.
-      "0121_release_refusal.sql",
-      // mail 0122 — the retention floor; the pg prune index is not mirrored on a device.
-      "0122_change_log_retention.sql",
-      // mail 0125 — the search document's twin.
-      "0125_message_search.sql",
-      // mail 0126 — when a per-mailbox erasure finished, the pg column's twin on mailboxes.
-      "0126_mailbox_erasure_done.sql",
-      // mail 0127 — where a signed-out mailbox lives, the pg column's twin on mailboxes.
-      "0127_mailbox_signed_out_meta.sql",
-      // mail 0128 — who made a rule's decision, the pg column's twin on rules.
-      "0128_rule_person_decided.sql",
-      // mail 0129 — a press of Import settings the organizer finishes, the pg columns' twins.
-      "0129_profile_import_ask.sql",
-      // mail 0130 — when a cycle last read a never-completed mailbox, the pg column's twin.
-      "0130_mailbox_sync_soft_states.sql",
-      // mail 0132 — the mailbox's own Sent folder, the pg column's twin on mailboxes.
-      "0132_mailbox_sent_folder.sql",
-      // mail 0133 — the act on suggestions' consent and its refusal, the pg columns' twins.
-      "0133_screener_auto_act.sql",
-      // mail 0135 — when the wall released a mailbox, the pg column's twin on mailboxes.
-      "0135_organizer_parked_at.sql",
-      // mail 0136 — the Screener probe indexes, carried as the pg entry builds them.
-      "0136_screener_probe_indexes.sql",
-      // The message a draft forwards, the pg column's twin on drafts.
-      "0137_draft_forward_of.sql",
-      // The Screener's automatic filing, put back: the pg column's twin on folder_state.
-      "0138_auto_filing_undone_at.sql",
-      // The mail word index stemmed as the server's is (device-only: the server already stems).
-      "0138_device_search_stems.sql",
-      // The arrival order index, the pg entry's twin on this store's milliseconds.
-      "0139_messages_arrival_order.sql",
-      // The Screener floor's version mark, the pg column's twin on folder_state (0140 is a noop here).
-      "0141_screener_floor_version.sql",
-      // The person's decisions before their stamp, and the rules key index, the pg entry's twin
-      // (0142 and 0143 are noops here).
-      "0144_rule_person_decided_backfill.sql",
-      // The stale-press stamp on folder_state, flag_state and message_states, the pg entry's twin.
-      "0145_press_decided_at.sql",
-      // The stamps 0144 could not give, the pg entry's two arms.
-      "0146_rule_person_decided_followup.sql",
-      // The open read, the pg column's twin on `messages`.
-      "0147_messages_open_read_at.sql",
-      // The identity fact and who made a contact, the pg columns' twins, with the backfill's index.
-      "0148_messages_sender_check.sql",
-      // Which writer gave the fact, the pg column's twin on `messages`.
-      "0149_messages_sender_check_by.sql",
-      // The list addresses and the backfill's stamp, the pg twins.
-      "0150_list_addresses.sql",
-      // The gap window and its offer, the pg columns' twins.
-      "0151_mailboxes_gap_since.sql",
-      // The recipients side table and its triggers, the pg expression index's twin.
-      "0154_messages_recipient_keys.sql",
-      // The send re-arm's two columns, the pg columns' twins.
-      "0155_outbound_sends_rearm.sql",
-      // The fact that capped a stored suggestion, the pg column's twin.
-      "0156_routing_decisions_sender_reason.sql",
-      // The Screener cutline probe's index, the pg index's twin.
-      "0157_messages_sender_date.sql",
-      // The gap offer's stranger count, the pg column's twin.
-      "0158_mailboxes_gap_strangers.sql",
-      // The reader's press ordering on rules, the pg column's twin.
-      "0159_rules_settled_press_at.sql",
-      // The poll's outstanding filings: the column, its two triggers, the index and the backfill.
-      "0160_folder_state_outstanding.sql",
-      // The list read's index, the pg index's twin.
-      "0161_mailboxes_account_idx.sql",
-      // The send's offer state, the pg column's twin.
-      "0162_outbound_sends_offer_state.sql",
-      // A new filing's schedule reset, the pg trigger's twin.
-      "0163_folder_state_fresh_intent.sql",
-      // A letter the server lost, kept: the pg column's twin.
-      "0164_messages_server_missing.sql",
-      // The storage counter's facts, the pg columns' twins.
-      "0166_account_storage_facts.sql",
-      // A Rules-page Change's re-filing, the pg columns' twins.
-      "0167_rules_refile.sql",
-      // A forward's kept files, the pg column's twin.
-      "0168_drafts_forward_parts.sql",
-      // Where a hand-back's gap window starts: the pg column's twin.
-      "0169_mailboxes_organized_through.sql",
-      // A delivered send's owed Sent copy, the pg table's twin.
-      "0170_outbound_sent_copies.sql",
-      // The arrival index on its new key, replacing 0139's.
-      "0171_messages_arrival_key.sql",
-      // The html-words backfill's stamp and cursor, the pg columns' twins.
-      "0172_html_words_backfill.sql",
-      // Device-only: the people's and the file names' words, as FTS5 words keyed by the letter.
-      "0173_device_header_words.sql",
-    ]);
+    expect(rows.map((r) => r.name)).toEqual(applied);
+  });
+
+  it("upgrades a store from the last release by applying only what came after it", async () => {
+    const { target } = open();
+    const shipped = SQLITE_JOURNAL.filter((e) => RELEASED_SQLITE.includes(e.name));
+    expect(shipped.map((e) => e.name), "a shipped device migration was renamed, removed or moved")
+      .toEqual(RELEASED_SQLITE);
+    await migrateSqlite(target, shipped);
+    expect(await migrateSqlite(target)).toEqual(SQLITE_JOURNAL.slice(RELEASED_SQLITE.length).map((e) => e.name));
   });
 
   it("applies nothing the second time, which is what makes a relaunch safe", async () => {
