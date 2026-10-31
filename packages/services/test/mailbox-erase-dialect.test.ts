@@ -3,11 +3,11 @@ import { and, eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  accounts, accountStorage, drafts, eraseOwedMailbox, evictOldestBodies, mailboxCredentials, mailboxFolders, mailboxes,
+  accounts, accountStorage, clearErasedSignatures, drafts, eraseOwedMailbox, evictOldestBodies, mailboxCredentials, mailboxFolders, mailboxes,
   messageBodies, messages, reserveBodyBytes, storageUsageOf, threads, type Tx,
 } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { effectiveMailboxSignatures, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * ERASING ONE MAILBOX HAS TO RUN ON THE STORE A STANDALONE PHONE CARRIES.
@@ -96,6 +96,53 @@ describe("removing one mailbox WITH erase, on either store", () => {
     expect(await db.select().from(drafts).where(eq(drafts.id, draftId))).toHaveLength(0);
     expect(await db.select().from(mailboxFolders)
       .where(eq(mailboxFolders.mailboxId, mailboxId))).toHaveLength(0);
+  });
+
+  /* The receipt says nothing is retained for the mailbox, so its signature goes with the mail. */
+  it("the finished erasure leaves no signature on the tombstone and none on the wire", async () => {
+    const db = await makeTestDb();
+    const { accountId, mailboxId, address } = await seed(db);
+    await db.update(mailboxes).set({
+      signature: "-- \nAnna", signatureHtml: "<p>-- <br>Anna</p>",
+    }).where(eq(mailboxes.id, mailboxId));
+
+    await svc.delete(ctxFor(db, accountId), mailboxId, { erase: { confirmAddress: address } });
+    const run = await eraseOwedMailbox(db, dialect(db), { accountId, mailboxId, now: () => NOW, maxSteps: 10 });
+    expect(run.done).toBe(true);
+
+    const [row] = await db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
+    expect(row!.signature, "the erased mailbox kept its signature").toBeNull();
+    expect(row!.signatureHtml).toBeNull();
+    const maps = await effectiveMailboxSignatures(db, accountId);
+    expect(maps.signatures[mailboxId]).toBeUndefined();
+    expect(maps.signaturesHtml[mailboxId]).toBeUndefined();
+  });
+
+  /* Erasures finished before the sweep cleared the signature kept it; nothing re-runs a finished one. */
+  it("an erasure finished the old way loses its signature on the next clear, and nothing else does", async () => {
+    const db = await makeTestDb();
+    const { accountId, mailboxId, address } = await seed(db);
+    await svc.delete(ctxFor(db, accountId), mailboxId, { erase: { confirmAddress: address } });
+    expect((await eraseOwedMailbox(db, dialect(db), { accountId, mailboxId, now: () => NOW, maxSteps: 10 })).done).toBe(true);
+    // The old last step set only the finish stamp.
+    await db.update(mailboxes).set({ signature: "-- \nAnna", signatureHtml: "<p>Anna</p>" })
+      .where(eq(mailboxes.id, mailboxId));
+    const sig = { signature: "-- \nBea", signatureHtml: "<p>Bea</p>" };
+    const [removed] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `r-${address}`, status: "disabled", ...sig,
+    }).returning();
+    const [live] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `l-${address}`, ...sig })
+      .returning();
+
+    expect(await clearErasedSignatures(db)).toBe(1);
+    const read = async (id: string) => (await db.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]!;
+    expect(await read(mailboxId)).toMatchObject({ signature: null, signatureHtml: null });
+    expect(await read(removed!.id), "a plain removal stays reversible with its signature").toMatchObject(sig);
+    expect(await read(live!.id)).toMatchObject(sig);
+    const maps = await effectiveMailboxSignatures(db, accountId);
+    expect(maps.signatures[mailboxId]).toBeUndefined();
+    expect(maps.signaturesHtml[mailboxId]).toBeUndefined();
+    expect(await clearErasedSignatures(db), "a second run finds nothing").toBe(0);
   });
 
   it("refuses an unconfirmed erase with the PRODUCT's 400 and writes nothing", async () => {

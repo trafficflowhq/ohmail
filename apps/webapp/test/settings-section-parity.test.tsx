@@ -178,7 +178,7 @@ const DESKTOP_CLOUD_DOOR: Record<PaneId, Ruling> = {
   // ── Built by the shared shell over the consent row, exactly as folders is ───────────────────
   signatures: {
     kind: "shellConsentGated",
-    shellWire: "demo || !consent.signaturesKnown || !facts || facts.length === 0 ? undefined : (",
+    shellWire: "demo || !consent.signaturesKnown || !facts || !facts.some((m) => !isRemovedMailbox(m)) ? undefined : (",
     why: "the per-mailbox signature is a mailboxes column written through PATCH /consent/settings " +
       "(mail 0075). The shell builds the pane itself because every compose surface's signature " +
       "block reads the SAME useConsentState map — a host-injected pane with its own fetch could " +
