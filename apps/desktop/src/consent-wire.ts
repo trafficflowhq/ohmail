@@ -29,14 +29,21 @@ export const CONSENT_SETTINGS_PATH = "/consent/settings";
  * The engine's own sentence for a refusal, or the status line when it composed none — carrying
  * the STATUS, which the shared hook reports when a consent read fails (never the body).
  */
-async function refusal(res: Response): Promise<Error & { status: number }> {
-  let said: string | undefined;
+async function refusal(
+  res: Response,
+): Promise<Error & { status: number; code?: string; details?: unknown }> {
+  let env: { message?: string; code?: string; details?: unknown } | undefined;
   try {
-    said = ((await res.json()) as { error?: { message?: string } }).error?.message;
+    env = ((await res.json()) as { error?: typeof env }).error;
   } catch {
     /* Not JSON, or an empty body. The status is all there is. */
   }
-  return Object.assign(new Error(said ?? `the mail engine answered ${res.status}`), { status: res.status });
+  // `code` and `details` as the web's `ApiError` carries them: the pane reads why from them.
+  return Object.assign(new Error(env?.message ?? `the mail engine answered ${res.status}`), {
+    status: res.status,
+    ...(typeof env?.code === "string" ? { code: env.code } : {}),
+    ...(env?.details !== undefined ? { details: env.details } : {}),
+  });
 }
 
 async function jsonOf<T>(res: Response): Promise<T> {

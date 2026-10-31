@@ -213,6 +213,19 @@ describe("the consent wire a paired device's gate hands the shared shell", () =>
     expect(platformFetchCalls, "a second fetch door was opened").toBe(0);
   });
 
+  /* The pane reads WHY a write was refused from the envelope's code and details, as the web's
+     `ApiError` carries them; a door that kept only the sentence left the pane saying "try again". */
+  it("a refused write keeps the envelope's status, code and details", async () => {
+    const { consentVia } = await import("../src/consent-wire.js");
+    const details = { reason: "no_organizer", by: null };
+    const wire = consentVia(async () => new Response(JSON.stringify({
+      error: { code: "organized_elsewhere", message: "nothing organizes this mailbox", details },
+    }), { status: 409, headers: { "content-type": "application/json" } }));
+    await expect(wire.setMailboxSignature("mb-one", "-- mine")).rejects.toMatchObject({
+      status: 409, code: "organized_elsewhere", details, message: "nothing organizes this mailbox",
+    });
+  });
+
   it("the routes it asks for are served on the paired-device table", () => {
     /* A cross-package read rather than an import: `apps/desktop` does not depend on the api
        package. `desktopHostRoutes` spreads `localRoutes`, and `localRoutes` mounts the consent

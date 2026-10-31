@@ -43,6 +43,8 @@ import { RichEditor } from "./RichEditorLazy";
 import { isRichEmpty, type RichValue } from "./rich-text";
 import { standingNote, TravelledChangeNote, type TravelledChangeWire } from "./travelled-change";
 import { holdLeave } from "./routing";
+import { isRemovedMailbox } from "./mail-state";
+import { organizerRefusalOf, organizerRefusalSentence } from "./organizer-refusal";
 
 export function SignaturesRow({
   mailboxes,
@@ -60,7 +62,10 @@ export function SignaturesRow({
    * reads as "this install organizes it" — the column's own default and the only safe direction:
    * a roster too old to carry the field would otherwise lock every editor on the account.
    */
-  mailboxes: ReadonlyArray<{ id: string; address: string; organizerRole?: string | null }>;
+  mailboxes: ReadonlyArray<{
+    id: string; address: string; organizerRole?: string | null;
+    status?: string; legacyStandDown?: boolean; takeoverAuthorizedAt?: string | null;
+  }>;
   /**
    * The stored text map, server-confirmed — `{ mailboxId: text }`, absent key = none. On a mailbox
    * this install only reads, the value is the ORGANIZER'S published one rather than the local row
@@ -93,11 +98,15 @@ export function SignaturesRow({
   ) => Promise<unknown>;
 }) {
   const t = useTranslations("settings");
+  const tWhy = useTranslations("ohbox");
+  /* A removed mailbox's tombstone keeps its signature inert: no editor, and the server refuses its writes. */
+  const live = mailboxes.filter((m) => !isRemovedMailbox(m));
   /** Editors that DIFFER from the stored value, keyed by mailbox. Absent = showing the store. */
   const [drafts, setDrafts] = useState<Record<string, RichValue>>({});
   /** The mailbox whose save is in flight, or null — one write at a time, the pane's rule. */
   const [pending, setPending] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+  /** The sentence under the pane after a refused save, or null. */
+  const [failed, setFailed] = useState<string | null>(null);
 
   /** Unmounted-after-await guard — the pane is swapped by a nav press, so this really happens. */
   const alive = useRef(true);
@@ -119,7 +128,7 @@ export function SignaturesRow({
     return d !== undefined
       && (d.text !== (signatures[id] ?? "") || d.html !== (signaturesHtml[id] ?? ""));
   };
-  const firstDirty = mailboxes.find((mb) => dirtyOf(mb.id))?.id ?? null;
+  const firstDirty = live.find((mb) => dirtyOf(mb.id))?.id ?? null;
   const holding = firstDirty !== null && pending === null;
   useEffect(() => {
     if (!holding) { setLeaving(null); return; }
@@ -134,10 +143,10 @@ export function SignaturesRow({
     askRef.current?.focus();
   }, [leaving]);
 
-  const save = (mailboxId: string, value: RichValue) => {
+  const save = (mailboxId: string, value: RichValue, takeoverAsked: boolean) => {
     if (pending !== null) return;
     setPending(mailboxId);
-    setFailed(false);
+    setFailed(null);
     void (async () => {
       try {
         /**
@@ -164,10 +173,13 @@ export function SignaturesRow({
             return rest;
           });
         }
-      } catch {
+      } catch (err) {
         // The draft STAYS — the words are the user's and the write did not land; the sentence
-        // below says so and Save remains offered.
-        if (alive.current) setFailed(true);
+        // below says so (and why, when nothing organizes the mailbox) and Save remains offered.
+        const why = organizerRefusalSentence(
+          organizerRefusalOf(err as Parameters<typeof organizerRefusalOf>[0], { starting: takeoverAsked }), tWhy,
+        );
+        if (alive.current) setFailed(why ?? t("signatures.failed"));
       } finally {
         if (alive.current) setPending(null);
       }
@@ -177,7 +189,7 @@ export function SignaturesRow({
   return (
     <>
       <p className="set-note-inline">{t("signatures.note")}</p>
-      {mailboxes.map((mb) => {
+      {live.map((mb) => {
         /** What the database holds for this mailbox, in both shapes. */
         const stored: RichValue = {
           text: signatures[mb.id] ?? "",
@@ -260,7 +272,7 @@ export function SignaturesRow({
                 variant="primary"
                 disabled={!dirty || pending !== null}
                 aria-busy={pending === mb.id || undefined}
-                onClick={() => save(mb.id, shown)}
+                onClick={() => save(mb.id, shown, Boolean(mb.takeoverAuthorizedAt))}
               >
                 {pending === mb.id ? t("signatures.saving") : t("signatures.save")}
               </Button>
@@ -277,7 +289,7 @@ export function SignaturesRow({
           </div>
         );
       })}
-      {failed ? <span className="scn-sg-note">{t("signatures.failed")}</span> : null}
+      {failed !== null ? <span className="scn-sg-note">{failed}</span> : null}
     </>
   );
 }

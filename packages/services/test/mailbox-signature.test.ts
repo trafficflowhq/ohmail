@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { changeLog, mailboxes } from "@trafficflow/db";
+import { StaticKeyProvider } from "@trafficflow/core";
 import {
-  MAILBOX_SIGNATURE_MAX_CHARS, SyncService, mailboxSignatures, setMailboxSignature,
+  MAILBOX_SIGNATURE_MAX_CHARS, MailboxService, SyncService, mailboxSignatures, setMailboxSignature,
   type ServiceContext, type SettingsDTO,
 } from "../src/index.js";
 
@@ -116,6 +117,34 @@ describe("setMailboxSignature — store, clear, refuse", () => {
       eq(changeLog.entityType, "settings"),
     ));
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe("a removed mailbox keeps its signature inert; the same address added again starts empty", () => {
+  it("the tombstone keeps its text, a Save on it is a 404 that writes nothing, the new row is empty", async () => {
+    const { db, ctx } = await setup();
+    const service = new MailboxService({
+      keyProvider: StaticKeyProvider.fromSecret(Buffer.alloc(32, 7), 1), allowance: async () => {},
+    });
+    const body = {
+      provider: "imap", address: "again@example.test",
+      imap: { host: "imap.example.test", port: 993, secure: true, user: "again@example.test", pass: "pw" },
+    };
+    const probe = { probe: async () => ({ verdict: "ok" as const }) };
+    const first = await service.create(ctx, body as never, probe);
+    await db.update(mailboxes).set({ organizerRole: "organizer", organizeConsentedAt: new Date() })
+      .where(eq(mailboxes.id, first.id));
+    await setMailboxSignature(ctx, first.id, "old sign-off");
+    await service.delete(ctx, first.id);
+
+    // A plain removal stays reversible, so the text stays on the tombstone.
+    expect(await column(db, first.id)).toBe("old sign-off");
+    await expect(setMailboxSignature(ctx, first.id, "new")).rejects.toMatchObject({ httpStatus: 404 });
+    expect(await column(db, first.id), "a Save reached the removed copy").toBe("old sign-off");
+
+    const second = await service.create(ctx, body as never, probe);
+    expect(second.id).not.toBe(first.id);
+    expect(await column(db, second.id), "the new row was seeded from the tombstone").toBeNull();
   });
 });
 

@@ -236,6 +236,30 @@ describe("the signature a reader composes with is the organizer's", () => {
       .toBe("-- \nmine");
   });
 
+  /* A REMOVED MAILBOX'S SIGNATURE IS INERT. Its tombstone keeps the text so a plain removal stays
+     reversible, but nothing serves it: listed, it showed as the live address's sign-off beside
+     the reconnected row, and every Save on it was refused. */
+  for (const role of ["organizer", "reader"] as const) {
+    it(`a removed ${role} row is in none of the maps, beside the live row of the same address`, async () => {
+      const w = await makeCtx();
+      await w.db.update(mailboxes).set({
+        status: "disabled", organizerRole: role,
+        signature: "-- \nbefore the removal", signatureHtml: "<p>-- <br>before the removal</p>",
+      }).where(eq(mailboxes.id, w.mailboxId));
+      await mirrorDoc(w, DOC({ signature: "-- \nthe old document" }));
+      const [live] = await w.db.insert(mailboxes).values({
+        accountId: w.accountId, provider: "imap", address: "mila@lichtgrat.example",
+      }).returning();
+
+      const maps = await effectiveMailboxSignatures(w.db, w.accountId);
+      for (const map of [maps.signatures, maps.signaturesHtml, maps.signatureSources]) {
+        expect(map[w.mailboxId], "a removed copy's signature was served").toBeUndefined();
+      }
+      expect(maps.signatureSources[live!.id]).toBe("local");
+      expect(maps.signatures[live!.id], "the live row inherited the removed copy's text").toBeUndefined();
+    });
+  }
+
   it("no signature anywhere leaves the key absent, never an empty string", async () => {
     const w = await makeCtx();
     await readsOnly(w);

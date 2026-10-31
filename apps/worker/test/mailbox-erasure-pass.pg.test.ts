@@ -107,6 +107,24 @@ describe.skipIf(!PG_UP)("mailboxErasurePass — the worker's half of the per-mai
     expect(await done(z1)).toBe(true);
   });
 
+  it("an erasure an older worker finished keeps no signature after the next pass, in its shard only", async () => {
+    const w = randomUUID(); const o = randomUUID();
+    await db.insert(accounts).values([{ id: w, name: "erase-w" }, { id: o, name: "erase-o" }]);
+    const sig = { signature: "-- \nAnna", signatureHtml: "<p>Anna</p>" };
+    // The old last step: the finish stamp alone, the signature left on the row.
+    const old = { status: "disabled" as const, erasedAt: NOW, erasureDoneAt: NOW, ...sig };
+    const w1 = await mailbox(w, "w1", 0);
+    const o1 = await mailbox(o, "o1", 0);
+    await db.update(mailboxes).set(old).where(inArray(mailboxes.id, [w1, o1]));
+    const read = async (id: string) => (await db.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]!;
+
+    const r = await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([w]) });
+    expect(r).toMatchObject({ steps: 0, signaturesCleared: 1 });
+    expect(await read(w1)).toMatchObject({ signature: null, signatureHtml: null });
+    expect(await read(o1), "another shard's row was touched").toMatchObject(sig);
+    expect((await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([w]) })).signaturesCleared).toBe(0);
+  });
+
   describe("and the storage counter", () => {
     const BODY = "y".repeat(1_000);
     /** A mailbox whose bodies are counted through the reserve, oldest first by `daysAgo`. */

@@ -260,7 +260,7 @@ export {
 // pass's step, one module so the table walk has one spelling. Mail schema and change log only.
 export {
   ERASE_BATCH, stampMailboxErasure, sweepMailboxStep, sweepMailboxData, eraseOwedMailbox,
-  erasureRemaining,
+  erasureRemaining, clearErasedSignatures,
   type MailboxErasureStamp, type MailboxSweepStep, type MailboxSweepResult, type OwedErasureRun,
 } from "./mailbox-erasure.js";
 export { rowsAffected } from "./rows-affected.js";
