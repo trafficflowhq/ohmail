@@ -53,7 +53,7 @@ export const LANDING_QUIET_MS = 150;
 export const READ_HOLD_MS = 700;
 
 /** A card's first lines: its sender line and about three lines of its text, or the whole card when shorter. */
-const FIRST_LINES_PX = 140;
+export const FIRST_LINES_PX = 140;
 
 /** Are `el`'s first lines wholly inside `view`, half a pixel either way? */
 function firstLinesIn(el: Element, view: Pick<CssRect, "top" | "bottom">): boolean {

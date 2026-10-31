@@ -20,7 +20,7 @@ import {
   type ReactNode,
 } from "react";
 /* Every rect here meets `scrollTop`, so every rect is read in CSS px (`ui-zoom.ts`). */
-import { cssRect, useSeenOnScroll } from "@ohmail/ui";
+import { cssRect, FIRST_LINES_PX, useSeenOnScroll } from "@ohmail/ui";
 import { createThreadRead } from "@ohmail/client-engine";
 import { useVisit } from "./visit";
 import { readStreamCards, type StreamRead } from "./stream-landing-read";
@@ -89,6 +89,9 @@ export interface StreamHandle {
  * is unambiguously that card and not the one above it.
  */
 const LANDING_LEAD_PX = 14;
+
+/** The reading line: the scroll-spy's current card is the last one whose top is at or above it. */
+const READING_LINE_PX = 90;
 
 /** Near enough to be the same pixel to a reader; below this the loop stops correcting. */
 const ANCHOR_TOLERANCE_PX = 2;
@@ -191,9 +194,11 @@ export const StreamShell = forwardRef<
     pileIndexOf?: (id: string) => number;
     /** Changes re-scan the container for [data-unseen] cards. */
     contentKey: unknown;
+    /** The view's cursor: one this stream did not announce itself was put there by the person, and is held. */
+    cursor?: string | null;
     children: ReactNode;
   }
->(function StreamShell({ ariaLabel, onCurrentChange, onSeen, onNear, onApproach, onLeave, pileIndexOf, contentKey, children }, ref) {
+>(function StreamShell({ ariaLabel, onCurrentChange, onSeen, onNear, onApproach, onLeave, pileIndexOf, contentKey, cursor, children }, ref) {
   const divRef = useRef<HTMLDivElement>(null);
   /**
    * ONE READ FOR THE WHOLE COLUMN — see {@link StreamCardWidth}. A layout effect, so the measured
@@ -231,6 +236,15 @@ export const StreamShell = forwardRef<
    * the spy for the life of the view.
    */
   const jumpRef = useRef<{ id: string; until: number } | null>(null);
+  /**
+   * THE HELD CURSOR: the card a jump, a step, a press or an open put the cursor on. It stays the
+   * cursor while its first lines are on screen or it covers the reading line, whoever scrolled.
+   */
+  const heldRef = useRef<string | null>(null);
+  const pin = useCallback((id: string): void => {
+    heldRef.current = id;
+    curRef.current = id;
+  }, []);
   /** The last revealed letter's growth watch (`reveal`). */
   const followRef = useRef<ResizeObserver | null>(null);
   useEffect(() => () => followRef.current?.disconnect(), []);
@@ -464,6 +478,7 @@ export const StreamShell = forwardRef<
       landingRef.current = false;
       curRef.current = null;
       jumpRef.current = null;
+      heldRef.current = null;
       owedRef.current = false;
       const el = divRef.current;
       // `behavior` explicit: `.stream` scrolls smoothly by default (see `scrollTo` below). The
@@ -613,7 +628,21 @@ export const StreamShell = forwardRef<
   const holdRafRef = useRef(0);
   /** The hold loop's half of {@link StreamCardToggled}, bound while the loop is mounted. */
   const toggledRef = useRef<(sid: string, open: boolean) => void>(() => {});
-  const onCardToggled = useCallback((sid: string, open: boolean) => toggledRef.current(sid, open), []);
+  /** The view's cursor as last rendered; `curRef` can differ (a quiet reading, a cursor cleared by Back). */
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
+  const onCardToggled = useCallback((sid: string, open: boolean) => {
+    // The card the person opened is the reading, and the cursor: its pill alone does not select it.
+    if (open) {
+      pin(sid);
+      if (cursorRef.current !== sid) onCurrentRef.current(sid);
+    }
+    toggledRef.current(sid, open);
+  }, [pin]);
+  useLayoutEffect(() => {
+    if (cursor == null) heldRef.current = null;
+    else if (cursor !== curRef.current) pin(cursor);
+  }, [cursor, pin]);
   /** Drift too small to be worth a `scrollTop` write yet — see the accumulator below. */
   const holdAccRef = useRef(0);
   useEffect(() => {
@@ -782,7 +811,7 @@ export const StreamShell = forwardRef<
       if (observerRef.current.landing() || observerRef.current.judging()) return;
       const cards = Array.from(el.querySelectorAll<HTMLElement>(".scast[data-sid]"));
       if (!cards.length) return;
-      // A jump in flight owns the cursor — see {@link jumpRef}.
+      // A jump in flight emits nothing — see {@link jumpRef}.
       const jump = jumpRef.current;
       if (jump) {
         const card = Date.now() > jump.until
@@ -793,18 +822,28 @@ export const StreamShell = forwardRef<
           const raw = cssRect(card).top - cssRect(el).top + el.scrollTop - LANDING_LEAD_PX;
           const aim = Math.min(Math.max(raw, 0), Math.max(0, el.scrollHeight - el.clientHeight));
           if (Math.abs(aim - el.scrollTop) > ANCHOR_TOLERANCE_PX) return; // still travelling — emit nothing
-          jumpRef.current = null;
-          // Landed, or bottomed out short of the line: the target IS the cursor. Falling
-          // through would pin the pile's last card, or a short card below the target that
-          // also starts above the 90px line.
-          if (curRef.current !== jump.id) {
-            curRef.current = jump.id;
-            onCurrentRef.current(jump.id);
+        }
+        jumpRef.current = null; // landed, expired, or the card left the stream mid-flight
+      }
+      // The held cursor stands while its first lines are on screen or it covers the reading line.
+      const held = heldRef.current;
+      if (held) {
+        const pIdx = pileIndexOfRef.current;
+        const hc = el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(held)}"]`);
+        const inPile = pIdx ? pIdx(held) >= 0 : hc != null;
+        const port = cssRect(el);
+        const box = hc ? cssRect(hc) : null;
+        const head = box != null && box.top >= port.top - 0.5 && box.top + Math.min(box.height, FIRST_LINES_PX) <= port.bottom + 0.5;
+        const line = box != null && box.top - port.top <= READING_LINE_PX && box.bottom - port.top > READING_LINE_PX;
+        if (inPile && (port.height <= 0 || head || line)) {
+          quietRef.current = false; // the hold took the visit's reset reading
+          if (curRef.current !== held) {
+            curRef.current = held;
+            onCurrentRef.current(held);
           }
           return;
-        } else {
-          jumpRef.current = null; // expired, or the card left the stream mid-flight
         }
+        heldRef.current = null;
       }
       let current: HTMLElement | null = null;
       if (el.scrollTop + el.clientHeight >= el.scrollHeight - 2) {
@@ -812,7 +851,7 @@ export const StreamShell = forwardRef<
       } else {
         const top = cssRect(el).top;
         for (const c of cards) {
-          if (cssRect(c).top - top <= 90) current = c;
+          if (cssRect(c).top - top <= READING_LINE_PX) current = c;
           else break;
         }
       }
@@ -932,7 +971,7 @@ export const StreamShell = forwardRef<
       if (!card) return;
       // The app's move, not the reader's scroll: the band reads nothing it carries or lands on by itself.
       observerRef.current.moved();
-      curRef.current = id;
+      pin(id);
       owedRef.current = false; // the jump sets the cursor
       // One landing at a time: a second jump while the first is still correcting must not have
       // two loops fighting over `scrollTop`.
