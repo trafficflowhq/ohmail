@@ -8,7 +8,7 @@
  * History's rows are built only when read. Getters read the caches, never a run's locals.
  */
 import { Copy } from "../copy";
-import type { PhoneMailbox } from "../net/mailboxes";
+import { liveMailboxRows, type PhoneMailbox } from "../net/mailboxes";
 import type { ServerWaitingSender } from "../net/screener";
 import type { ImageRoute } from "../mail/remote-images";
 import type { RelayedDecision } from "./relay";
@@ -212,6 +212,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
     const now = inp.now;
     const day = zonedDayNumber(now, zone);
     const mailboxes = inp.mailboxes ?? EMPTY_MAILBOXES;
+    const liveRows = kept("liveRows", [mailboxes], () => liveMailboxRows(mailboxes));
     /* The tags keep their identity while they read the same, so a mail change does not re-key every row. */
     const tagsNow = kept("tagsRead", [engine, stamp], () => liveTags(raw));
     const tags = kept("tags", [JSON.stringify(tagsNow)], () => tagsNow);
@@ -260,7 +261,8 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
           : inp.standaloneClaim !== undefined
             ? organizerOfClaim(inp.standaloneClaim, inp.standaloneHolder ?? null, inp.mailboxes)
             : phoneOrganizer(inp.mailboxes),
-        rows: mailboxes,
+        rows: liveRows,
+        all: mailboxes,
         sendingId: kept("sendingId", [base, stamp], () => sendingMailboxId(base)),
         settingsBell: raw.entries("settings")[0]?.seq ?? null,
         readAt: inp.mailboxesReadAt,

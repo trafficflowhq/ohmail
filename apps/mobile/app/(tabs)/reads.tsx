@@ -214,7 +214,7 @@ function StreamCard({
     open && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
       : open && m.bodyState === "withheld"
-        ? withheldNote(m, true, mailboxStatusOf(w.mailboxes.rows, m.mailboxId))
+        ? withheldNote(m, true, mailboxStatusOf(w.mailboxes.all, m.mailboxId))
         : open && m.bodyState === "failed"
           ? Copy.liveBodyFailed
           : null;

@@ -268,7 +268,7 @@ export function SenderDetail({
                  about not taking a consent decision over a truncation presented as the mail,
                  and a withheld body is permanently exactly that. */
               <Txt variant="caption" tone="ink3" style={{ marginTop: 12 }}>
-                {withheldNote(h, true, mailboxStatusOf(w.mailboxes.rows, h.mailboxId))}
+                {withheldNote(h, true, mailboxStatusOf(w.mailboxes.all, h.mailboxId))}
               </Txt>
             ) : h.bodyState === "failed" ? (
               <Txt variant="caption" tone="ink3" style={{ marginTop: 12 }}>

@@ -293,7 +293,8 @@ export function mailboxLabelOf(
   rows: readonly MailboxLabelRow[] | undefined,
   mailboxId: string,
 ): string | undefined {
-  if (rows === undefined || rows.length <= 1) return undefined;
+  // Removed copies of one address are one mailbox (a removal leaves a row behind).
+  if (rows === undefined || new Set(rows.map((m) => m.address.trim().toLowerCase())).size <= 1) return undefined;
   const row = rows.find((m) => m.id === mailboxId);
   if (row === undefined) return undefined;
   return row.displayName?.trim() || row.address;
@@ -895,10 +896,13 @@ export interface PhoneOrganizer {
 
 export function phoneOrganizer(
   mailboxes: readonly { organizedBy: { kind: string | null; name: string | null } | null;
-                       organizerState: "held" | "stopped" | null; organizerParkedAt?: string | null }[],
+                       organizerState: "held" | "stopped" | null; organizerParkedAt?: string | null;
+                       status?: string | null }[],
 ): PhoneOrganizer | null {
   // A mailbox the closed account paused names nobody who stopped (mail 0135): it resumes on its own.
-  const named = mailboxes.filter((m) => (m.organizerParkedAt ?? null) === null && (m.organizedBy?.name ?? "") !== "");
+  // A removed copy keeps the holder it last had, which organizes nothing now.
+  const named = mailboxes.filter((m) => m.status !== "disabled"
+    && (m.organizerParkedAt ?? null) === null && (m.organizedBy?.name ?? "") !== "");
   if (named.length === 0) return null;
   const distinct = new Set(named.map((m) => m.organizedBy!.name!));
   if (distinct.size !== 1) return null;

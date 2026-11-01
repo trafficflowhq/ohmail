@@ -133,7 +133,7 @@ describe("AppShell's first-run mount", () => {
   });
 
   it("DOCTORED CONTROL — a call reduced to a mention is not read as a call", () => {
-    const doctored = real.replace("firstRunSubject(facts,", "firstRunSubject; void (facts,");
+    const doctored = real.replace("firstRunSubject(liveFacts,", "firstRunSubject; void (liveFacts,");
     expect(doctored).not.toBe(real);
     expect(calls(doctored, "firstRunSubject")).toBe(false);
   });
@@ -169,11 +169,11 @@ describe("AppShell's first-run mount", () => {
   });
 
   it("the decide subject says whether the install has several mailboxes, by `firstRunQueue`'s rule (R20-03)", () => {
-    expect(decideMany(real), "the decide step cannot tell an added mailbox from a single one").toBe("(facts?.length ?? 0) > 1");
+    expect(decideMany(real), "the decide step cannot tell an added mailbox from a single one").toBe("(liveFacts?.length ?? 0) > 1");
   });
 
   it("DOCTORED CONTROL — a subject without `many` is read as without it", () => {
-    const doctored = real.replace(/ many: \(facts\?\.length \?\? 0\) > 1,/, "");
+    const doctored = real.replace(/ many: \(liveFacts\?\.length \?\? 0\) > 1,/, "");
     expect(doctored, "`many` was not doctored").not.toBe(real);
     expect(decideMany(doctored)).toBeNull();
   });

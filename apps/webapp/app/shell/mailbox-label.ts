@@ -36,17 +36,27 @@ export function mailboxLabelKey(facts: readonly MailboxLabelFact[] | null): stri
  * the label, else the half of the address that tells this account's mailboxes apart (the local
  * part, the domain when two share a local part, the address only when both halves collide).
  */
+/**
+ * HOW MANY ADDRESSES the account's mailboxes carry. A removal leaves a row behind, one per remove of
+ * the address, so a removed copy of a connected address is no second mailbox, while a removed mailbox
+ * of another address still names the mail and folders it left.
+ */
+export function mailboxAddressCount(facts: readonly { address: string }[]): number {
+  return new Set(facts.map((m) => m.address.trim().toLowerCase())).size;
+}
+
 export function mailboxLabelResolver(
   facts: readonly MailboxLabelFact[] | null,
 ): (mailboxId: string, form?: "short" | "label") => string | null {
-  if (facts === null || facts.length <= 1) return () => null;
+  if (facts === null || mailboxAddressCount(facts) <= 1) return () => null;
   const byId = new Map(facts.map((m) => [m.id, m.displayName?.trim() || m.address] as const));
   const halves = (a: string): [string, string] => {
     const at = a.lastIndexOf("@");
     return at < 0 ? [a, ""] : [a.slice(0, at), a.slice(at + 1)];
   };
+  const addresses = [...new Set(facts.map((m) => m.address.trim().toLowerCase()))];
   const seen = (i: 0 | 1, v: string): number =>
-    facts.filter((m) => halves(m.address)[i].toLowerCase() === v.toLowerCase()).length;
+    addresses.filter((a) => halves(a)[i] === v.toLowerCase()).length;
   const shortById = new Map(facts.map((m) => {
     const named = m.displayName?.trim();
     if (named) return [m.id, named] as const;
