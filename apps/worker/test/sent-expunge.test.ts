@@ -1,7 +1,9 @@
-import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
+import { searchIndexBackfillPass, UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
-import { accounts, changeLog, mailboxes, messages, type Tx } from "@trafficflow/db";
+import {
+  accounts, changeLog, mailboxes, messageBodies, messages, messageSearch, routingDecisions, trackerEvents, type Tx,
+} from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
@@ -23,18 +25,19 @@ import { FIXTURE_LEASE } from "./_door.js";
 interface Stored { uid: number; raw: Buffer; messageId: string }
 
 /** A server with an INBOX and a name-matched Sent folder whose messages another client can delete. */
-function server(seed: Record<"INBOX" | "Sent", Array<{ uid: number; messageId: string; subject: string; from: string }>>) {
+type Seeded = { uid: number; messageId: string; subject: string; from: string };
+
+function server(seed: Record<"INBOX" | "Sent", Seeded[]>) {
   const folders = new Map<string, Stored[]>();
-  for (const [path, list] of Object.entries(seed)) {
-    folders.set(path, list.map((m) => ({
-      uid: m.uid, messageId: m.messageId,
-      raw: Buffer.from([
-        `Message-ID: <${m.messageId}>`, `From: ${m.from}`, "To: someone@example.test",
-        `Subject: ${m.subject}`, "Date: Fri, 25 Sep 2026 07:46:00 +0000",
-        "Content-Type: text/plain; charset=utf-8", "", "the whole text of the message",
-      ].join("\r\n")),
-    })));
-  }
+  const stored = (m: Seeded): Stored => ({
+    uid: m.uid, messageId: m.messageId,
+    raw: Buffer.from([
+      `Message-ID: <${m.messageId}>`, `From: ${m.from}`, "To: someone@example.test",
+      `Subject: ${m.subject}`, "Date: Fri, 25 Sep 2026 07:46:00 +0000",
+      "Content-Type: text/plain; charset=utf-8", "", "the whole text of the message",
+    ].join("\r\n")),
+  });
+  for (const [path, list] of Object.entries(seed)) folders.set(path, list.map(stored));
   const uidsOf = (path: string) => (folders.get(path) ?? []).map((m) => m.uid);
   const box = (path: string) => {
     const uids = uidsOf(path);
@@ -78,7 +81,9 @@ function server(seed: Record<"INBOX" | "Sent", Array<{ uid: number; messageId: s
   const expunge = (path: string, uid: number) => {
     folders.set(path, (folders.get(path) ?? []).filter((m) => m.uid !== uid));
   };
-  return { client, expunge };
+  /** Another mail app puts a letter back: the same bytes under a new UID. */
+  const append = (path: string, m: Seeded) => { folders.set(path, [...(folders.get(path) ?? []), stored(m)]); };
+  return { client, expunge, append };
 }
 
 async function world() {
@@ -149,6 +154,56 @@ describe("a message deleted on the mail server leaves History, Search and the mi
     const deletes = (await w.db.select().from(changeLog).where(eq(changeLog.accountId, w.accountId)))
       .filter((r) => r.entityType === "message" && r.op === "delete").map((r) => r.entityId);
     expect(deletes.sort()).toEqual([sent, inbox].sort());
+  });
+
+  it("the deleted row keeps who, when and what about, not its preview or words; its return brings them back", async () => {
+    const w = await world();
+    await w.cycle();
+    await w.cycle();
+    const inbox = await idOf(w.db, "inbox-1@example.test");
+    // The header block stays with the identity: it is written once, at ingest.
+    const identity = async () => ({
+      ...(await w.db.select({
+        dedupKey: messages.dedupKey, header: messages.messageIdHeader, from: messages.fromAddress,
+        subject: messages.subject, date: messages.date, bodyHash: messages.bodyHash,
+      }).from(messages).where(eq(messages.id, inbox)))[0],
+      headers: (await w.db.select({ h: messageBodies.headers }).from(messageBodies).where(eq(messageBodies.messageId, inbox)))[0]!.h,
+    });
+    // What was drawn from its words: the classifier's summary, a tracker's address.
+    await w.db.insert(routingDecisions).values({
+      accountId: w.accountId, messageId: inbox, inputProvenance: "ai", destination: "INBOX", status: "auto_applied",
+      rationale: "Anna asks about the fixture",
+    });
+    await w.db.insert(trackerEvents).values({
+      accountId: w.accountId, messageId: inbox, kind: "pixel", trackerHost: "t.example.test", url: "https://t.example.test/o?r=anna",
+    });
+    const kept = async () => ({
+      snippet: (await w.db.select({ s: messages.snippet }).from(messages).where(eq(messages.id, inbox)))[0]!.s,
+      documents: (await w.db.select({ id: messageSearch.messageId }).from(messageSearch).where(eq(messageSearch.messageId, inbox))).length,
+      drawn: [
+        ...(await w.db.select({ v: routingDecisions.rationale }).from(routingDecisions).where(eq(routingDecisions.messageId, inbox))),
+        ...(await w.db.select({ v: trackerEvents.url }).from(trackerEvents).where(eq(trackerEvents.messageId, inbox))),
+      ].flatMap((r) => (r.v === null ? [] : [r.v])),
+    });
+    const found = async () => (await new SearchService().search(w.ctx, { q: "whole", limit: 50 })).items.map((m) => m.id);
+    const before = await identity();
+    expect(Object.keys(before.headers as object), "the precondition: a header block").not.toEqual([]);
+    expect(await kept(), "the precondition: a preview and a search document").toEqual({
+      snippet: "the whole text of the message", documents: 1, drawn: ["Anna asks about the fixture", "https://t.example.test/o?r=anna"],
+    });
+
+    w.imap.expunge("INBOX", 10);
+    await w.cycle();
+    expect(await identity(), "the deleted row lost what identifies it").toEqual(before);
+    expect(await kept(), "a letter gone from the server kept its preview or words").toEqual({ snippet: "", documents: 0, drawn: [] });
+    await searchIndexBackfillPass({ db: w.db, accountId: w.accountId });
+    expect((await kept()).documents, "the backfill wrote a gone letter's words back").toBe(0);
+
+    w.imap.append("INBOX", { uid: 11, messageId: "inbox-1@example.test", subject: "ohmail-fixture question", from: "anna@example.test" });
+    await w.cycle();
+    expect(await kept(), "the returned letter has no preview or words")
+      .toEqual({ snippet: "the whole text of the message", documents: 1, drawn: [] });
+    expect(await found(), "search does not find the returned letter by its words").toContain(inbox);
   });
 
   it("a Sent reply the server still holds stays — the scan below the watermark is no delete of its own", async () => {

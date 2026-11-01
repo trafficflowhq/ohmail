@@ -181,7 +181,10 @@ export async function completeFiling(
   const physical = newLoc.folder;
   await r.updateLocator(p.messageId, newLoc, p.nativeLocator ?? undefined);
   if (!parksLocator(p, physical, special)) {
-    const claimed = await settle(r, accountId, p, physical, { observedFolder: p.desiredFolder, lastSetBy: "us" });
+    // Filed back where an Undo of a delete put it: the Undo's mark is spent.
+    const claimed = await settle(r, accountId, p, physical, {
+      observedFolder: p.desiredFolder, lastSetBy: "us", ...(p.trashedFrom === p.desiredFolder ? { clearTrashedFrom: true } : {}),
+    });
     /* THE MOVE DID NOT GO TO TRASH, SO THE MESSAGE IS NOT DELETED — see
        {@link unDeleteOnLandedMove} for the invariant and the measured defect it closes.
        GATED ON THE CLAIM, and the ungated form was a defect: a restore's move landing while a

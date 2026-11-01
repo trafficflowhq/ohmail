@@ -10,6 +10,7 @@ import {
   isDestinationMissing, isRefusedCommand, type MoveManyResult,
   epochOf, epochOfRef, epochVerdict, sameEpoch, UNKNOWN_EPOCH, isImapBoundExceeded, makeRef, type Epoch,
   type BudgetStop, type NativeLocator, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
+  type FindLettersAnswer, type LetterVerdict,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 // The role vocabulary lives in `@trafficflow/db` (mail 0083) because both the worker and the
@@ -39,6 +40,7 @@ import {
 } from "./junk-filing.js";
 import { junkRestorePass } from "./junk-restore.js";
 import { junkGonePass } from "./junk-gone.js";
+import { forgetTrashProof, trashGonePass, TRASH_GONE_PAGE } from "./trash-gone.js";
 import { storageRefillPass } from "./storage-refill.js";
 import { blankRepairPass } from "./blank-repair.js";
 import { folderOpsPass } from "./folder-ops.js";
@@ -1801,6 +1803,28 @@ async function syncCycleWithin(
     }
   }
 
+  // THE TRASH CHECK: letters a landed delete parked in Trash and another client removed there leave
+  // ohmail's Trash (`trash-gone.ts`). Same placement and error handling as the Junk check.
+  if (deferred.size === 0) {
+    try {
+      await trashGonePass({
+        repo, adapter, accountId, mailboxId,
+        ...(log !== undefined ? { log } : {}),
+        write: (fn) => fencedLiveGroup(deps, fn),
+      });
+    } catch (err) {
+      if (refusalIsRemoval(err)) {
+        log?.info("trash_gone_mailbox_removed", {
+          mailboxId, accountId,
+          reason: "the mailbox was removed while this pass was reading it, so nothing was dropped",
+        });
+        throw err;
+      }
+      rethrowRefusal(err);
+      log?.warn("trash_gone_pass_failed", { mailboxId, accountId, err });
+    }
+  }
+
   // THE STORAGE REFILL: letters whose text the trim emptied for space get it back from the mail
   // server once the account has room (`storage-refill.ts`). Same placement and error handling.
   if (deferred.size === 0) {
@@ -2323,6 +2347,8 @@ async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor, beforeWalk 
   // keep honest — see `completeFiling`). A capabilities() that is absent or throws reads as
   // "unknown", which merely disables that exclusion.
   const special = { ...(await specialFoldersOf(repo, mailboxId)), ...(await sentFolderOf(deps)) };
+  // The letters this pass may look for in Trash ({@link trashCopiesFound}).
+  const refind = refindBudget();
   // ── ONLY USER-COMMANDED VERDICTS MAY FILE INTO THE PROVIDER'S JUNK ─────────────────────────
   //
   // `desired_folder = 'ohmail/Quarantine'` has three authors: a press, a rule (promoted by a
@@ -2348,17 +2374,16 @@ async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor, beforeWalk 
    * exclusion above, and a chunk issues ONE `UID MOVE` for its whole membership.
    */
   const groups = new Map<string, PendingPhysical[]>();
+  // The copies of the Undos' status repairs, read first: a move landed with its answer lost may
+  // have taken one to Trash ({@link repairStatus}). Every other repair settles without asking.
+  const repairs = work.filter((p) => undoneDelete(p) && p.nativeLocator != null);
+  const held = await copiesHeld(deps, repairs);
+  const undone = await trashCopiesFound(deps, special, repairs.filter((p) => held.get(p.messageId) === "missing"), refind);
+  let repaired = false;
   for (const p of work) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external move
     if (p.desiredFolder === p.observedFolder) {
-      // A status repair, not an intent: the pair already agrees and only `reconcile_status` is
-      // stale. `completeFolderState` and not `upsertFolderState` for the reason the method's own
-      // doc gives — this write is derived from a row read before the pass's network work, so it
-      // may not put `p.desiredFolder` back over a decision committed since. Nothing is written
-      // when the desire moved on; the row is then genuinely pending and the next loop files it.
-      await fencedLiveGroup(deps, (r) => r.completeFolderState(p.messageId, {
-        expectDesiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us",
-      }));
+      repaired = (await repairStatus(deps, p, held.get(p.messageId), undone.get(p.messageId))) || repaired;
       continue;
     }
     if (oneServerFolder(deps.adapter, p.observedFolder, p.desiredFolder)) {
@@ -2370,6 +2395,13 @@ async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor, beforeWalk 
       aiAuthored: aiAuthored.has(p.messageId),
     });
     if (oneServerFolder(deps.adapter, p.nativeLocator.folder, physical)) {
+      // A Restore of a letter kept in Trash at a copy that was gone when it was parked there: settled
+      // in place it would leave Trash with no copy anywhere, so it goes back as a gone Restore does.
+      if (special.trashFolder !== null && p.observedFolder === special.trashFolder && p.nativeLocator.folder !== special.trashFolder
+        && await fencedLiveGroup(deps, (r) => voidGoneFiling(r, accountId, mailboxId, p, special, true, false))) {
+        recheckTrashAfter(deps, p, special);
+        continue;
+      }
       await settleSameFolder(deps, p, physical);
       continue;
     }
@@ -2396,13 +2428,94 @@ async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor, beforeWalk 
   for (const group of groups.values()) {
     for (let i = 0; i < group.length; i += FILING_BATCH_MAX) {
       const chunk = group.slice(i, i + FILING_BATCH_MAX);
-      const batched = await fileChunk(deps, chunk, special, at, beforeWalk, remade);
+      const batched = await fileChunk(deps, chunk, special, at, beforeWalk, remade, refind);
       if (batched !== null) { reopened = reopened || batched.reopened; continue; }
-      for (const p of chunk) reopened = (await fileOne(deps, p, special, at, beforeWalk, remade)) || reopened;
+      for (const p of chunk) reopened = (await fileOne(deps, p, special, at, beforeWalk, remade, refind)) || reopened;
     }
   }
   await refillLeftJunk(deps, groups, special);
-  return owesMore || reopened;
+  return owesMore || reopened || repaired || refind.owed;
+}
+
+/**
+ * The row an Undo of a delete leaves (`MessageService.restore`'s cancel): ours, pending, its folders
+ * agreeing on the origin the delete recorded. A move and a reader's request write no origin, so a
+ * move, its undo or a press into the letter's own folder settles without asking Trash.
+ */
+function undoneDelete(p: PendingFolderState): boolean {
+  return p.lastSetBy === "us" && p.desiredFolder === p.observedFolder && p.trashedFrom === p.desiredFolder;
+}
+
+/** Where a row's copy stands, read at its locator ({@link copiesHeld}). */
+type CopyHeld = "present" | "missing" | "unanswered" | "renumbered" | "no_folder";
+
+/**
+ * Whether each row's copy is still at its locator: one `uidsHeld` per folder and epoch, outside
+ * every write group. A row no read could ask about (no such method, an unnamed epoch) is left out;
+ * a refusal is rethrown and any other failure is `unanswered`.
+ */
+async function copiesHeld(
+  deps: SyncDeps, rows: readonly PendingFolderState[],
+): Promise<ReadonlyMap<string, CopyHeld>> {
+  const out = new Map<string, CopyHeld>();
+  if (rows.length === 0 || typeof deps.adapter.uidsHeld !== "function") return out;
+  const groups = new Map<string, { folder: string; epoch: string; rows: PendingFolderState[] }>();
+  for (const p of rows) {
+    const e = epochOfRef(p.nativeLocator!.ref);
+    if (!e.known) continue;
+    const key = JSON.stringify([p.nativeLocator!.folder, e.value]);
+    const g = groups.get(key) ?? { folder: p.nativeLocator!.folder, epoch: e.value, rows: [] };
+    g.rows.push(p);
+    groups.set(key, g);
+  }
+  for (const g of groups.values()) {
+    const read = await deps.adapter.uidsHeld(g.folder, g.epoch, g.rows.map((p) => parseRef(p.nativeLocator!.ref).uid))
+      .catch((err: unknown) => { rethrowRefusal(err); return { k: "unanswered" as const }; });
+    for (const p of g.rows) {
+      out.set(p.messageId, read.k === "renumbered" ? "renumbered" : read.k === "absent" ? "no_folder"
+        : read.k !== "held" ? "unanswered"
+        : read.present.has(parseRef(p.nativeLocator!.ref).uid) ? "present" : "missing");
+    }
+  }
+  return out;
+}
+
+/**
+ * A status repair: desired and observed agree and only `reconcile_status` is stale. On an Undo of a
+ * delete ({@link undoneDelete}) the delete's move may have landed with its answer lost: so a copy gone
+ * from its locator is looked for in Trash before the row settles, which hands the letter to the reaper.
+ * Found, the letter is recorded there and the next filing moves it back; absent, it settles and the
+ * next reap runs; undecided, it stays, deferred on the ladder; unanswered, nothing is written. Settled
+ * or found, the Undo's mark is spent. `completeFolderState` for the method's own reason: this row was
+ * read before the pass's network work, so it may not put `p.desiredFolder` back over a decision
+ * committed since. Answers whether filing work is now owed.
+ */
+async function repairStatus(
+  deps: SyncDeps, p: PendingFolderState, held: CopyHeld | undefined, again: Refound | undefined,
+): Promise<boolean> {
+  const spent = undoneDelete(p) ? { clearTrashedFrom: true } : {};
+  const settle = () => fencedLiveGroup(deps, (r) => r.completeFolderState(p.messageId, {
+    expectDesiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us", ...spent,
+  }));
+  if (held === "unanswered" || again?.k === "unanswered") return false;
+  if (held !== "missing" || again === undefined || again.k === "absent") {
+    await settle();
+    if (held === "missing") reaperDrained.set(deps.adapter, false);
+    return false;
+  }
+  if (again.k === "found") {
+    const trash = again.locator.folder;
+    await fencedLiveGroup(deps, async (r) => {
+      await r.updateLocator(p.messageId, again.locator, p.nativeLocator ?? undefined);
+      await r.completeFolderState(p.messageId, {
+        expectDesiredFolder: p.desiredFolder, observedFolder: trash, lastSetBy: "us", physicalObservation: true, ...spent,
+      });
+    });
+    return true;
+  }
+  await fencedLiveGroup(deps, (r) => recordFilingFailure(r, deps.accountId, p, p.desiredFolder, "unconfirmed",
+    "the letter left its folder and no copy in Trash was proved to be it; it stays, and the check is retried"));
+  return false;
 }
 
 /**
@@ -2472,7 +2585,7 @@ async function sentFolderOf(deps: SyncDeps): Promise<{ sentFolder?: string | nul
  */
 async function fileChunk(
   deps: SyncDeps, chunk: PendingPhysical[], special: SpecialFolderMap, at: CyclePageCursor,
-  beforeWalk = false, remade: Map<string, boolean> = new Map(),
+  beforeWalk = false, remade: Map<string, boolean> = new Map(), refind: RefindBudget = refindBudget(),
 ): Promise<{ reopened: boolean } | null> {
   const { adapter, accountId, mailboxId, log } = deps;
   if (typeof adapter.moveMany !== "function") return null;
@@ -2566,12 +2679,37 @@ async function fileChunk(
     return { reopened: false };
   }
   if (result.outcome === "moved_unmapped") {
-    log?.warn("reconcile_move_batch_unmapped", {
-      mailboxId, accountId, size: chunk.length, to: folderLabel(toFolder),
-      reason: "the mail server moved this group and did not say where each message landed; " +
-        "nothing was recorded, every row stays pending, and the next scan adopts the moves",
+    // Trash is never walked, so no scan adopts a delete's letter there: it is looked for now, by its bytes.
+    const trash = special.trashFolder;
+    const into = trash !== null && oneServerFolder(adapter, toFolder, trash)
+      ? await trashCopiesFound(deps, special, chunk.filter((p) => p.desiredFolder === trash && p.observedFolder !== trash), refind)
+      : new Map<string, Refound>();
+    const found = chunk.flatMap((p) => {
+      const v = into.get(p.messageId);
+      return v?.k === "found" ? [{ p, at: v.locator }] : [];
     });
-    return { reopened: false };
+    let reopened = false;
+    if (found.length > 0) {
+      try {
+        await fencedLiveGroup(deps, async (r) => {
+          for (const { p, at } of found) reopened = (await completeFiling(r, accountId, mailboxId, p, at, special)) || reopened;
+          await recordAudits(r, accountId, found.map(({ p, at }) => refoundAudit(p, at)));
+        });
+      } catch (err) {
+        rethrowRefusal(err);
+        reopened = false;
+        log?.error("reconcile_refound_uncommitted", {
+          mailboxId, accountId, size: found.length, err,
+          reason: "letters a move took to Trash were found there and their bookkeeping did not commit; they stay pending and due",
+        });
+      }
+    }
+    log?.warn("reconcile_move_batch_unmapped", {
+      mailboxId, accountId, size: chunk.length, to: folderLabel(toFolder), resolved: found.length,
+      reason: "the mail server moved this group and did not say where each message landed; " +
+        "what was found in Trash by its own bytes is recorded, every other row stays pending, and the next pass decides it",
+    });
+    return { reopened };
   }
 
   // ONE WRITE GROUP for the whole chunk's bookkeeping — a transaction whether or not there is a fence
@@ -2584,12 +2722,20 @@ async function fileChunk(
   // due, and the next `changesSince` adopts what the server shows — the same convergence a crash takes.
   let reopened = false;
   let landed = 0;
+  // Read before the write group: which gone restores Trash, read whole, also lacks, and where in
+  // Trash a gone delete's letter is.
+  const gone = chunk.filter((p) => !result.moved.has(p.nativeLocator!.ref));
+  const proved = await trashCopiesGone(deps, special, gone);
+  const refound = await trashCopiesFound(deps, special, gone.filter((p) => deleteFromItsOrigin(p, special)), refind);
+  const kept = await heldAtOrigin(deps, gone.filter((p) => deleteFromItsOrigin(p, special) && notFoundInTrash(refound.get(p.messageId))));
   try {
     await fencedLiveGroup(deps, async (r) => {
       const audits: Array<{ action: string; payload: unknown; inverse: unknown }> = [];
       for (const p of chunk) {
         const ref = p.nativeLocator!.ref;
-        const newLoc = result.moved.get(ref);
+        const again = refound.get(p.messageId);
+        // A gone delete's letter found in Trash is the landed move it was.
+        const newLoc = result.moved.get(ref) ?? (again?.k === "found" ? again.locator : undefined);
         // NOT NAMED IN `moved` ⇒ the member was gone from the source, the batch's form of
         // `MessageGoneError` — and the response is the per-message path's, exactly: leave the row
         // pending for `changesSince` to adopt, unless the disappearance is on record or the member
@@ -2597,7 +2743,13 @@ async function fileChunk(
         // filing is voided. See {@link voidGoneFiling}. Cross-checking
         // `result.gone` as well would be a second reading of one fact, with a branch no test can
         // redden.
-        if (!newLoc) { await voidGoneFiling(r, accountId, p, special, !beforeWalk); continue; }
+        if (!newLoc) {
+          if (again?.k === "unanswered" || kept.has(p.messageId)) continue;
+          if (await voidGoneFiling(r, accountId, mailboxId, p, special, !beforeWalk, proved.has(p.messageId), again?.k === "undecided")) {
+            recheckTrashAfter(deps, p, special);
+          }
+          continue;
+        }
         // Mail 0065: ONE completion writer for every path that lands a move — the ordinary
         // converge, the junk filing's satisfied/parked/husked shape, and the delete's park.
         // Written ONLY here, after `moveMany` reported the batch whole: the claim follows the
@@ -2608,7 +2760,7 @@ async function fileChunk(
         // fifty, and the same rows a per-message pass would have written — the admin surface and the
         // inverse both read this table and neither can tell which path filed the mail.
         const junk = junkAuditCode(p.desiredFolder, newLoc.folder, special);
-        audits.push({
+        audits.push(again?.k === "found" ? refoundAudit(p, newLoc) : {
           action: "reconcile.move",
           payload: {
             messageId: p.messageId, from: p.nativeLocator, to: newLoc.folder, newLocator: newLoc,
@@ -2635,6 +2787,13 @@ async function fileChunk(
     log?.info("reconcile_move_batched", {
       mailboxId, accountId, moved: landed,
       fromFolder: folderLabel(srcFolder), toFolder: folderLabel(toFolder),
+    });
+  }
+  if (kept.size > 0) {
+    log?.warn("reconcile_move_gone_unconfirmed", {
+      mailboxId, accountId, size: kept.size, fromFolder: folderLabel(srcFolder),
+      reason: "the batched move read these deleted letters as gone and a search of their folder still holds them, "
+        + "or could not say; nothing was written and the move is retried",
     });
   }
   return { reopened };
@@ -2701,6 +2860,139 @@ async function recordAudits(
 }
 
 /**
+ * The gone restores out of Trash that a whole read of Trash also finds gone. The move's own reading
+ * is not proof enough to empty a letter: imapflow answers a FETCH throttled four times in a row as no
+ * message. One bounded `UID SEARCH` under the locators' UIDVALIDITY, outside the write group; any
+ * other answer, or a failed read, proves none.
+ */
+async function trashCopiesGone(
+  deps: SyncDeps, special: SpecialFolderMap, rows: readonly PendingFolderState[],
+): Promise<ReadonlySet<string>> {
+  const trash = special.trashFolder;
+  const restores = rows.filter((p) => trash !== null && p.observedFolder === trash && p.desiredFolder !== trash
+    && p.nativeLocator?.folder === trash);
+  if (trash === null || restores.length === 0 || typeof deps.adapter.uidsHeld !== "function") return new Set();
+  // One epoch per read: a batch shares one, a single move has one.
+  const epoch = epochOfRef(restores[0]!.nativeLocator!.ref);
+  if (!epoch.known) return new Set();
+  const asked = restores.filter((p) => sameEpoch(epochOfRef(p.nativeLocator!.ref), epoch));
+  const held = await deps.adapter.uidsHeld(trash, epoch.value, asked.map((p) => parseRef(p.nativeLocator!.ref).uid))
+    .catch((err: unknown) => { rethrowRefusal(err); return null; });
+  if (held === null || held.k !== "held") return new Set();
+  return new Set(asked.filter((p) => !held.present.has(parseRef(p.nativeLocator!.ref).uid)).map((p) => p.messageId));
+}
+
+/** The letters one reconcile pass may look for in Trash, and whether one was left for the next pass. */
+interface RefindBudget { left: number; owed: boolean }
+const refindBudget = (): RefindBudget => ({ left: TRASH_GONE_PAGE, owed: false });
+
+/** Where a gone delete's letter is in Trash; `unanswered` writes nothing. */
+type Refound = LetterVerdict | { k: "unanswered" };
+
+/**
+ * The delete {@link voidGoneFiling} empties when its source is gone: filed to Trash from the folder it
+ * was pressed in and still observed there. Its move may have landed with the answer lost.
+ */
+function deleteFromItsOrigin(p: PendingFolderState, special: SpecialFolderMap): boolean {
+  const trash = special.trashFolder;
+  return trash !== null && p.desiredFolder === trash && p.observedFolder !== trash && p.serverMissing === false
+    && p.trashedFrom != null && p.observedFolder === p.trashedFrom;
+}
+
+/**
+ * Where in Trash these rows' letters are, proved by their own bytes ({@link MailboxAdapter.findLetters};
+ * a Message-ID only nominates). One read outside every write group, at most {@link TRASH_GONE_PAGE}
+ * letters a pass: the rest are `unanswered` and owed to the next. A refusal is rethrown and any other
+ * failure is `unanswered`; a Trash the server calls missing proves nothing (`undecided`). An adapter
+ * or repo that cannot ask answers `absent`, the path taken before.
+ */
+async function trashCopiesFound(
+  deps: SyncDeps, special: SpecialFolderMap, rows: readonly PendingFolderState[], budget: RefindBudget,
+): Promise<ReadonlyMap<string, Refound>> {
+  const out = new Map<string, Refound>();
+  const trash = special.trashFolder;
+  const { adapter, repo, accountId } = deps;
+  if (rows.length === 0 || trash === null) return out;
+  if (typeof adapter.findLetters !== "function" || typeof repo.letterIdentities !== "function") {
+    for (const p of rows) out.set(p.messageId, { k: "absent" });
+    return out;
+  }
+  const asked = rows.slice(0, Math.max(0, budget.left));
+  budget.left -= asked.length;
+  for (const p of rows.slice(asked.length)) { out.set(p.messageId, { k: "unanswered" }); budget.owed = true; }
+  if (asked.length === 0) return out;
+  let read: FindLettersAnswer;
+  try {
+    const identities = await repo.letterIdentities(accountId, asked.map((p) => p.messageId));
+    read = await adapter.findLetters(trash, asked.flatMap((p) => {
+      const id = identities.get(p.messageId);
+      return id === undefined ? [] : [{ key: p.messageId, ...id }];
+    }));
+  } catch (err) {
+    rethrowRefusal(err);
+    read = { k: "unanswered" };
+  }
+  for (const p of asked) {
+    out.set(p.messageId, read.k === "read" ? read.verdicts.get(p.messageId) ?? { k: "undecided" }
+      : read.k === "absent" ? { k: "undecided" } : { k: "unanswered" });
+  }
+  return out;
+}
+
+/** A gone delete's re-find that leaves the letter where its move read it gone. */
+const notFoundInTrash = (v: Refound | undefined): boolean => v?.k === "absent" || v?.k === "undecided";
+
+/**
+ * Which of these gone deletes their folder still holds, or could not be read for: the move's own
+ * reading is no proof (imapflow answers a FETCH throttled four times in a row as no message), so
+ * nothing is written for them and the move is retried. A folder gone from the server, or no read to
+ * ask, takes the path taken before.
+ */
+async function heldAtOrigin(deps: SyncDeps, rows: readonly PendingFolderState[]): Promise<ReadonlySet<string>> {
+  const held = await copiesHeld(deps, rows);
+  return new Set(rows.filter((p) => {
+    const h = held.get(p.messageId);
+    return h === "present" || h === "unanswered" || h === "renumbered";
+  }).map((p) => p.messageId));
+}
+
+/** The audit row of a delete's letter found in Trash: the move that landed, said so. */
+function refoundAudit(p: PendingFolderState, at: NativeLocator): { action: string; payload: unknown; inverse: unknown } {
+  return {
+    action: "reconcile.move",
+    payload: { messageId: p.messageId, from: p.nativeLocator, to: at.folder, newLocator: at, refound: true },
+    inverse: { action: "move", locator: at, toFolder: p.nativeLocator!.folder },
+  };
+}
+
+/** A gone delete's letter found in Trash, completed as the landed move it was: the park and its audit, one group. */
+async function completeRefound(deps: SyncDeps, p: PendingFolderState, at: NativeLocator, special: SpecialFolderMap): Promise<boolean> {
+  const { accountId, mailboxId, log } = deps;
+  let reopened = false;
+  try {
+    await fencedLiveGroup(deps, async (r) => {
+      reopened = await completeFiling(r, accountId, mailboxId, p, at, special);
+      const a = refoundAudit(p, at);
+      await r.recordAudit(accountId, a.action, a.payload, a.inverse);
+    });
+  } catch (err) {
+    rethrowRefusal(err);
+    log?.error("reconcile_refound_uncommitted", {
+      mailboxId, accountId, messageId: p.messageId, err,
+      reason: "the deleted letter was found in Trash and its bookkeeping did not commit; the row stays pending and due",
+    });
+    return false;
+  }
+  return reopened;
+}
+
+/** A closed void of a delete or a Restore can leave a letter parked in Trash after this visit's check. */
+function recheckTrashAfter(deps: SyncDeps, p: PendingFolderState, special: SpecialFolderMap): void {
+  const trash = special.trashFolder;
+  if (trash !== null && (p.desiredFolder === trash || p.observedFolder === trash)) forgetTrashProof(deps.adapter);
+}
+
+/**
  * The terminal check for a GONE member: void the filing if the message no longer exists anywhere this
  * mailbox's record knows of. "Gone from the source" has two readings needing opposite treatment. A
  * message MID-MOVE (a prior run's crash before the DB write, or an external move whose create is a
@@ -2711,8 +3003,12 @@ async function recordAudits(
  * true only once the DELETE is durably observed under a matching epoch. The write is the COMPLETION write (`observed := desired`), and `native_locator` is left alone deliberately (clearing it would erase the adoption evidence). Takes the repo it must write through, because one caller is already fenced.
  */
 async function voidGoneFiling(
-  repo: WorkerRepo, accountId: string, p: PendingFolderState, special: SpecialFolderMap,
+  repo: WorkerRepo, accountId: string, mailboxId: string, p: PendingFolderState, special: SpecialFolderMap,
   absentAtSource: boolean,
+  /** The locator is a Trash UID that a whole read of Trash under its UIDVALIDITY lacks ({@link trashCopiesGone}). */
+  trashCopyGone: boolean,
+  /** Trash may hold the deleted letter ({@link trashCopiesFound} undecided): never empty it. */
+  maybeInTrash = false,
 ): Promise<boolean> {
   /* `absentAtSource` is FALSE from the pass before the walk: there an absent UID is most often an
      external move the walk has not read yet, and the walk adopts it by Message-ID. Only a delete
@@ -2726,15 +3022,25 @@ async function voidGoneFiling(
     && typeof repo.onlyInstanceAt === "function" && await repo.onlyInstanceAt(p.messageId, p.nativeLocator);
   // `false`: the row is kept for ingest to adopt — the caller owes a stale epoch its own answer.
   if (!vanished && !absentOnly) return false;
-  /* A RESTORE OUT OF TRASH IS VOIDED AGAINST THE OBSERVATION, NEVER `observed := desired`.
-   * A mail server empties its own Trash on its own schedule, so between the delete's move and the
-   * restore's the copy can be gone — and completing the restore would say the message is back in
-   * INBOX with the server holding nothing anywhere. The observation is what is true: it is still
-   * where it last was, and there is no copy left to carry. The tombstone stands (nothing here
-   * clears `deleted_at`; only a LANDED move does), the row leaves the queue converged on the
-   * truth, and the restore verb refuses at the door rather than queueing a move that cannot run. */
+  /* A RESTORE OUT OF TRASH WHOSE COPY IS GONE NEVER COMPLETES: `observed := desired` would say the
+   * letter is back with the server holding nothing anywhere. The tombstone stands either way (only a
+   * LANDED move clears `deleted_at`). */
   const trash = special.trashFolder;
   if (trash !== null && p.observedFolder === trash && p.desiredFolder !== trash) {
+    // Its Trash copy proved gone: no server holds the letter, so it leaves Trash rather than going
+    // back there, and the restore verb answers `not_in_trash`. Not gated on the walk, which never
+    // reads Trash.
+    if (trashCopyGone && p.nativeLocator !== null && typeof repo.dropGoneFromTrash === "function"
+      && (await repo.dropGoneFromTrash(accountId, mailboxId, trash, [
+        { messageId: p.messageId, locator: p.nativeLocator, expectDesired: p.desiredFolder },
+      ])).length > 0) {
+      await repo.recordAudit(accountId, "reconcile.move.voided", {
+        messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, outcome: "gone", evidence: "absent_at_move",
+      }, null);
+      return true;
+    }
+    // Nothing else proves it gone (a stale epoch, an unanswered Trash, a copy outside Trash, a drop
+    // the row no longer matched): the letter goes back to Trash as it was, or the newer desire stands.
     const adopted = await repo.adoptFolderState(
       p.messageId,
       { desiredFolder: p.observedFolder, observedFolder: p.observedFolder, lastSetBy: p.lastSetBy },
@@ -2751,8 +3057,8 @@ async function voidGoneFiling(
       {
         messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder,
         reason: adopted
-          ? "the copy this restore would have carried is no longer on the mail server — the "
-            + "message stays deleted, and the restore is not offered again"
+          ? "the copy this restore would have carried was not found, and Trash was not read whole without it — "
+            + "the message stays deleted and in Trash, and the next Trash check decides"
           : "the gone-restore void was computed against a desired folder that has since changed; "
             + "nothing was written and the newer intent stands",
       },
@@ -2763,9 +3069,9 @@ async function voidGoneFiling(
   /* A DELETE OF A LETTER ALREADY GONE stays where it was observed, body emptied, never listed in
      Trash: no server holds it there. Only while it is still where the press found it: a delete
      park that promoted a survivor moved it off that origin, and its first copy is in Trash.
-     Mail 0164 rows keep today's path. */
-  if (trash !== null && p.desiredFolder === trash && p.observedFolder !== trash && p.serverMissing === false
-    && p.trashedFrom != null && p.observedFolder === p.trashedFrom) {
+     Mail 0164 rows keep today's path. A letter Trash may hold takes the completion below instead:
+     in Trash with its text. */
+  if (!maybeInTrash && deleteFromItsOrigin(p, special)) {
     const adopted = await repo.adoptFolderState(
       p.messageId,
       { desiredFolder: p.observedFolder, observedFolder: p.observedFolder, lastSetBy: p.lastSetBy },
@@ -2899,7 +3205,7 @@ async function recordFilingFailure(
  */
 async function fileOne(
   deps: SyncDeps, p: PendingPhysical, special: SpecialFolderMap, at: CyclePageCursor,
-  beforeWalk = false, remade: Map<string, boolean> = new Map(),
+  beforeWalk = false, remade: Map<string, boolean> = new Map(), refind: RefindBudget = refindBudget(),
 ): Promise<boolean> {
   const { adapter, accountId, mailboxId, log } = deps;
   // Mail 0065: the physical destination was decided when the row was grouped — a spam verdict
@@ -2937,8 +3243,24 @@ async function fileOne(
       if (stale && await relocateToLiveEpoch(deps, p, err)) return true;
       // Already moved (crash between IMAP move and DB update) → leave pending; the next
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
-      // voidGoneFiling for how the two are told apart.
-      const closed = await fencedLiveGroup(deps, (r) => voidGoneFiling(r, accountId, p, special, err.absent && !beforeWalk));
+      // voidGoneFiling for how the two are told apart. A delete's letter is looked for in Trash
+      // first, which no walk reads.
+      const again = err.absent && deleteFromItsOrigin(p, special)
+        ? (await trashCopiesFound(deps, special, [p], refind)).get(p.messageId) : undefined;
+      if (again?.k === "found") return completeRefound(deps, p, again.locator, special);
+      if (again?.k === "unanswered") return false;
+      if (notFoundInTrash(again) && (await heldAtOrigin(deps, [p])).has(p.messageId)) {
+        log?.warn("reconcile_move_gone_unconfirmed", {
+          mailboxId, accountId, messageId: p.messageId, fromFolder: folderLabel(p.nativeLocator!.folder),
+          reason: "the move read this deleted letter as gone and a search of its folder still holds it, "
+            + "or could not say; nothing was written and the move is retried",
+        });
+        return false;
+      }
+      const proved = err.absent ? await trashCopiesGone(deps, special, [p]) : new Set<string>();
+      const closed = await fencedLiveGroup(deps, (r) =>
+        voidGoneFiling(r, accountId, mailboxId, p, special, err.absent && !beforeWalk, proved.has(p.messageId), again?.k === "undecided"));
+      if (closed) recheckTrashAfter(deps, p, special);
       // A stale epoch with no copy on record is NEVER silent: an audit row, a deferral on the
       // ladder under a class that is not a refusal, and a log line.
       if (!closed && stale) {

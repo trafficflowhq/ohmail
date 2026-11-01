@@ -210,6 +210,18 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
     how: "bounded_by_input",
     why: "over the caller's group, bounded by FILING_BATCH_MAX before it reaches the adapter",
   },
+  "messageIdsGone|fetchAll": {
+    how: "bounded_by_input",
+    why: "the envelopes of one group's SEARCH hits, at most two per asked Message-ID and BY_MESSAGE_ID_CHUNK ids a group (a group with more is not read)",
+  },
+  "findLetters|fetchAll": {
+    how: "bounded_by_input",
+    why: "the envelopes of one group's SEARCH hits, at most two per asked Message-ID and BY_MESSAGE_ID_CHUNK ids a group (a group with more is not read)",
+  },
+  "letterProof|download": {
+    how: "bounded_bytes",
+    why: "one candidate body per probe, under the same two ceilings as destinationLook: at most IMAP_CANDIDATE_BODY_PROBES_MAX candidates per letter, each read with `maxBytes` MAX_RAW_MESSAGE_BYTES + 1 and refused past the ceiling or short of its size",
+  },
 
   // ── COMMANDS WHOSE RESULT THE SERVER DOES NOT SIZE ─────────────────────────────────────────
   "connect|connect": { how: "no_server_sized_result", why: "the greeting and login; bounded by the connect and greeting timeouts" },
@@ -283,6 +295,8 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
   "scanSentRecipients|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "searchFolderPage|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "uidsHeld|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
+  "messageIdsGone|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
+  "findLetters|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "sourceFingerprintOf|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "setFlags|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "watch|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },

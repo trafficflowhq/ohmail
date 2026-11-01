@@ -110,10 +110,21 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "the visit's leased adapter, read-only; writes through the fenced group",
   },
   {
+    name: "trash_gone",
+    module: `${W}/trash-gone.ts`, entry: "trashGonePass",
+    triggers: ["visit"],
+    cadence: "at the visit's tail after junk_gone, only when the cycle deferred nothing; skipped while the Trash folder's keys equal the last proof",
+    budget: "one STATUS (or the pass's LIST-STATUS) and bounded UID SEARCHes over one page of TRASH_GONE_PAGE rows per visit; "
+      + "for letters parked at a copy outside Trash, bounded Message-ID SEARCHes and the hits' envelopes",
+    owns: "a letter deleted in ohmail that another client removed from Trash leaves ohmail's Trash, its body emptied, "
+      + "one parked at a copy the server dropped included",
+    fence: "the visit's leased adapter, read-only; writes through the fenced group",
+  },
+  {
     name: "storage_refill",
     module: `${W}/storage-refill.ts`, entry: "storageRefillPass",
     triggers: ["visit"],
-    cadence: "at the visit's tail after junk_gone, only when the cycle deferred nothing; a mailbox at most every REFILL_EVERY_MS, "
+    cadence: "at the visit's tail after trash_gone, only when the cycle deferred nothing; a mailbox at most every REFILL_EVERY_MS, "
       + "on a numeric cap with room under the trim's mark, while no mailbox of the account is erasing or on its first import",
     budget: "REFILL_FETCHES_PER_RUN letters, REFILL_RUN_BUDGET_MS and REFILL_MAX_PAGES pages per run; REFILL_BYTES_PER_DAY raw bytes "
       + "per mailbox per rolling day; REFILL_MAX_BYTES per letter",
