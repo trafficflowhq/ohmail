@@ -1,4 +1,6 @@
-import { rmSync } from "node:fs";
+import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type {
@@ -6,10 +8,11 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import { formatClaim, type LeaseIo, type RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import {
-  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage,
+  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
   type OrganizerProfileDoc, type ParsedProfileMessage, type ProfileIo, type RawProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
-import { mailboxes, organizerRequests } from "@trafficflow/db";
+import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
+import { fencedAccountWrite, lockAccountRuleKeys, mailboxes, organizerRequests } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { freshDataDir } from "./_datadir.js";
 
@@ -49,9 +52,22 @@ class MemoryMeta implements LeaseIo, ProfileIo {
   }
 }
 const EMPTY: ChangeBatch = { creates: [], moves: [], flagChanges: [], deletes: [], newCursor: { folders: {} } };
-const factory = (meta: MemoryMeta) => (_cfg: ImapConfig): MailboxAdapter => ({
-  leaseIo: () => meta, leasePeekIo: () => ({ listClaims: () => meta.listClaims() }), profileIo: () => meta,
-  async connect(): Promise<void> {}, async close(): Promise<void> {},
+/** The folder as an unreachable server answers it while `net.offline` holds: every call refused. */
+const reachable = <T extends object>(io: T, net: { offline: boolean }): T => new Proxy(io, {
+  get(target, prop, receiver) {
+    const v = Reflect.get(target, prop, receiver) as unknown;
+    if (typeof v !== "function") return v;
+    return (...args: unknown[]) => {
+      if (net.offline) throw Object.assign(new Error("offline"), { code: "ENOTFOUND" });
+      return (v as (...a: unknown[]) => unknown).apply(target, args);
+    };
+  },
+});
+const factory = (meta: MemoryMeta, net: { offline: boolean } = { offline: false }) => (_cfg: ImapConfig): MailboxAdapter => ({
+  leaseIo: () => reachable(meta, net), leasePeekIo: () => ({ listClaims: () => reachable(meta, net).listClaims() }),
+  profileIo: () => reachable(meta, net),
+  async connect(): Promise<void> { if (net.offline) throw Object.assign(new Error("offline"), { code: "ENOTFOUND" }); },
+  async close(): Promise<void> {},
   async capabilities(): Promise<ImapCapabilities> {
     return { move: true, uidplus: true, condstore: true, qresync: false, idle: true, specialUse: true, sentFolder: null };
   },
@@ -153,4 +169,209 @@ describe("an edit during and after a takeover reaches the mailbox beside the hel
       card: ((await card.json()) as { state?: string }).state,
     }).toEqual({ docs: [[["promo@shop.example"], "-- \nfrom this laptop"]], card: "found" });
   }, 60_000);
+});
+
+/* A DATA FOLDER RESTORED FROM A BACKUP: the store keeps its install id and mailbox row but not the
+   rule made after the backup. That rule's copy stays in the mailbox and the card asks about it. */
+describe("a desktop restored from a backup", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
+  const launch = async (meta: MemoryMeta, dir: string, net?: { offline: boolean }) => {
+    const sidecar = await createSidecar({
+      dataDir: dir,
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      address: "owner@trafficflow.test", machineName: "the laptop",
+      pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
+      keks: { 1: Buffer.alloc(32, 9) }, adapterFactory: factory(meta, net), log: () => {},
+    });
+    await sidecar.start();
+    const call = (method: string, path: string, body?: unknown) => sidecar.handle(new Request(`http://engine.invalid${path}`, {
+      method, headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }));
+    return { sidecar, call };
+  };
+  const rule = (match: string) => ({ kind: "sender", match, destination: "INBOX" });
+  /** Rule a, a clean stop and a backup; rule b in the later life; then the backup launched, three passes. */
+  const lives = async (meta: MemoryMeta, organize: object, offline?: string) => {
+    const dataDir = await freshDataDir("ohmail-restore-");
+    const backup = mkdtempSync(join(tmpdir(), "ohmail-restore-backup-"));
+    cleanups.push(() => { rmSync(dataDir, { recursive: true, force: true }); rmSync(backup, { recursive: true, force: true }); });
+    const rules = (): string[][] => meta.docs().map((d) => d.doc!.rules.map((r) => r.match).sort());
+    const one = await launch(meta, dataDir);
+    expect((await one.call("POST", `/local/mailboxes/${one.sidecar.world.mailboxId}/organize`, organize)).status).toBe(200);
+    expect((await one.call("POST", "/rules", rule("a@b.test"))).status).toBe(201);
+    await one.sidecar.syncUntilQuiet();
+    const first = rules();
+    await one.sidecar.stop();
+    cpSync(dataDir, backup, { recursive: true });
+
+    // A second apart: a copy's write stamp is whole seconds.
+    await new Promise((r) => setTimeout(r, 1_100));
+    const two = await launch(meta, dataDir);
+    expect((await two.call("POST", "/rules", rule("b@b.test"))).status).toBe(201);
+    await two.sidecar.syncUntilQuiet();
+    const second = rules();
+    await two.sidecar.stop();
+
+    await new Promise((r) => setTimeout(r, 1_100));
+    // Opened offline when `offline` names a rule: made on the restored laptop before it first reads the folder.
+    const net = { offline: offline !== undefined };
+    const three = await launch(meta, backup, net);
+    cleanups.push(async () => { await three.sidecar.stop(); });
+    if (offline !== undefined) {
+      await three.sidecar.syncUntilQuiet().catch(() => undefined);
+      expect((await three.call("POST", "/rules", rule(offline))).status).toBe(201);
+      net.offline = false;
+    }
+    for (let i = 0; i < 3; i++) await three.sidecar.syncUntilQuiet();
+    const card = await three.call("GET", `/mailboxes/${three.sidecar.world.mailboxId}/profile-import`);
+    return { first, second, restored: rules(), card: ((await card.json()) as { state?: string }).state };
+  };
+
+  it("keeps the settings it wrote after the backup, and the card asks", async () => {
+    expect(await lives(new MemoryMeta(), { screening: { scope: "window" } })).toEqual({
+      first: [["a@b.test"]], second: [["a@b.test", "b@b.test"]], restored: [["a@b.test", "b@b.test"]], card: "found",
+    });
+  }, 120_000);
+
+  /* A RULE MADE BEFORE THE FIRST READ is newer than the later life's copy and still does not make that copy
+     the restored store's own: kept, and the card asks. */
+  it("a rule made before its first read of the folder: keeps the later settings, and the card asks", async () => {
+    expect(await lives(new MemoryMeta(), { screening: { scope: "window" } }, "c@b.test")).toEqual({
+      first: [["a@b.test"]], second: [["a@b.test", "b@b.test"]], restored: [["a@b.test", "b@b.test"]], card: "found",
+    });
+  }, 120_000);
+
+  /* Not now on W-old's settings, a backup, a rule in the later life: the restored laptop's card asks about
+     the later settings next, and after Not now on them its own rules reach the mailbox, across a restart. */
+  it("Not now on another install's settings before the backup: the card asks about the later settings, then the rules made here reach the mailbox", async () => {
+    const meta = new MemoryMeta();
+    const at = new Date(Date.now() - 12 * DAY);
+    await meta.appendClaim(formatClaim({
+      installId: "local:w-old", kind: "local", displayName: "W-old", heartbeat: at, claimedAt: at,
+      nonce: "old", authorizedAt: null, capabilities: ["requests", "profile"],
+    }));
+    await meta.appendProfile(formatProfileMessage(OLD_DOC, { installId: "local:w-old" }));
+    const dataDir = await freshDataDir("ohmail-restore-");
+    const backup = mkdtempSync(join(tmpdir(), "ohmail-restore-backup-"));
+    cleanups.push(() => { rmSync(dataDir, { recursive: true, force: true }); rmSync(backup, { recursive: true, force: true }); });
+    const ours = (): string[][] => meta.docs().filter((d) => d.installId !== "local:w-old").map((d) => d.doc!.rules.map((r) => r.match).sort());
+    const card = async (s: Awaited<ReturnType<typeof launch>>) =>
+      (await (await s.call("GET", `/mailboxes/${s.sidecar.world.mailboxId}/profile-import`)).json()) as { state?: string; fingerprint?: string };
+    const decline = async (s: Awaited<ReturnType<typeof launch>>, fingerprint?: string) =>
+      (await s.call("POST", `/mailboxes/${s.sidecar.world.mailboxId}/profile-import/decline`, { fingerprint })).status;
+    const one = await launch(meta, dataDir);
+    expect((await one.call("POST", `/local/mailboxes/${one.sidecar.world.mailboxId}/organize`, { screening: { scope: "window" }, intent: "takeover" })).status).toBe(200);
+    expect((await one.call("POST", "/rules", rule("a@b.test"))).status).toBe(201);
+    await one.sidecar.syncUntilQuiet();
+    const theirs = await card(one);
+    expect([theirs.state, await decline(one, theirs.fingerprint)]).toEqual(["found", 200]);
+    await one.sidecar.syncUntilQuiet();
+    await one.sidecar.stop();
+    cpSync(dataDir, backup, { recursive: true });
+
+    await new Promise((r) => setTimeout(r, 1_100));
+    const two = await launch(meta, dataDir);
+    expect((await two.call("POST", "/rules", rule("b@b.test"))).status).toBe(201);
+    await two.sidecar.syncUntilQuiet();
+    await two.sidecar.stop();
+
+    await new Promise((r) => setTimeout(r, 1_100));
+    const three = await launch(meta, backup);
+    cleanups.push(async () => { await three.sidecar.stop(); });
+    await three.sidecar.syncUntilQuiet();
+    expect((await three.call("POST", "/rules", rule("c@b.test"))).status).toBe(201);
+    for (let i = 0; i < 3; i++) await three.sidecar.syncUntilQuiet();
+    const later = await card(three);
+    const waiting = ours();
+    expect(await decline(three, later.fingerprint)).toBe(200);
+    for (let i = 0; i < 3; i++) await three.sidecar.syncUntilQuiet();
+    const published = ours();
+    await three.sidecar.stop();
+
+    const four = await launch(meta, backup);
+    cleanups.push(async () => { await four.sidecar.stop(); });
+    expect((await four.call("POST", "/rules", rule("d@b.test"))).status).toBe(201);
+    for (let i = 0; i < 3; i++) await four.sidecar.syncUntilQuiet();
+    expect({ later: [later.state, later.fingerprint !== theirs.fingerprint], waiting, published, restarted: ours(), card: (await card(four)).state }).toEqual({
+      later: ["found", true],
+      waiting: [["a@b.test", "b@b.test"]],
+      published: [["a@b.test", "b@b.test"], ["a@b.test", "c@b.test"]],
+      restarted: [["a@b.test", "b@b.test"], ["a@b.test", "c@b.test", "d@b.test"]],
+      card: "declined",
+    });
+  }, 120_000);
+
+  /* Backed up while the card asked about W-old's settings: the later life's copy beside them stays too. */
+  it("restored while it asked about another install's settings, keeps both", async () => {
+    const meta = new MemoryMeta();
+    const at = new Date(Date.now() - 12 * DAY);
+    await meta.appendClaim(formatClaim({
+      installId: "local:w-old", kind: "local", displayName: "W-old", heartbeat: at, claimedAt: at,
+      nonce: "old", authorizedAt: null, capabilities: ["requests", "profile"],
+    }));
+    await meta.appendProfile(formatProfileMessage(OLD_DOC, { installId: "local:w-old" }));
+    expect(await lives(meta, { screening: { scope: "window" }, intent: "takeover" })).toEqual({
+      first: [[], ["a@b.test"]], second: [[], ["a@b.test", "b@b.test"]], restored: [[], ["a@b.test", "b@b.test"]], card: "found",
+    });
+  }, 120_000);
+
+  /* IMPORT OF W-OLD'S SETTINGS ON THE RESTORED LAPTOP, merged where the store is, makes an empty store say
+     exactly what they say: the later settings beside them stay and are the card's next question. The press
+     handed to the organizer, and a store with a rule of its own, end the same way. */
+  it.each([
+    ["an empty store, merged where it is", null, "inline"],
+    ["a store with a rule of its own, merged where it is", "a@b.test", "inline"],
+    ["an empty store, handed to the organizer", null, "route"],
+  ] as const)("Import of another install's settings on a restored laptop (%s): the later settings stay and the card asks", async (_, own, via) => {
+    const meta = new MemoryMeta();
+    const at = new Date(Date.now() - 12 * DAY);
+    await meta.appendClaim(formatClaim({
+      installId: "local:w-old", kind: "local", displayName: "W-old", heartbeat: at, claimedAt: at,
+      nonce: "old", authorizedAt: null, capabilities: ["requests", "profile"],
+    }));
+    await meta.appendProfile(formatProfileMessage(OLD_DOC, { installId: "local:w-old" }));
+    const dataDir = await freshDataDir("ohmail-restore-");
+    const backup = mkdtempSync(join(tmpdir(), "ohmail-restore-backup-"));
+    cleanups.push(() => { rmSync(dataDir, { recursive: true, force: true }); rmSync(backup, { recursive: true, force: true }); });
+    const card = async (s: Awaited<ReturnType<typeof launch>>) =>
+      (await (await s.call("GET", `/mailboxes/${s.sidecar.world.mailboxId}/profile-import`)).json()) as { state?: string; fingerprint?: string };
+    const one = await launch(meta, dataDir);
+    expect((await one.call("POST", `/local/mailboxes/${one.sidecar.world.mailboxId}/organize`, { screening: { scope: "window" }, intent: "takeover" })).status).toBe(200);
+    if (own !== null) expect((await one.call("POST", "/rules", rule(own))).status).toBe(201);
+    await one.sidecar.syncUntilQuiet();
+    await one.sidecar.stop();
+    cpSync(dataDir, backup, { recursive: true });
+
+    await new Promise((r) => setTimeout(r, 1_100));
+    const two = await launch(meta, dataDir);
+    expect((await two.call("POST", "/rules", rule("b@b.test"))).status).toBe(201);
+    await two.sidecar.syncUntilQuiet();
+    await two.sidecar.stop();
+    const later = meta.docs().find((d) => d.installId !== "local:w-old")!.doc!;
+
+    await new Promise((r) => setTimeout(r, 1_100));
+    const three = await launch(meta, backup);
+    cleanups.push(async () => { await three.sidecar.stop(); });
+    for (let i = 0; i < 3; i++) await three.sidecar.syncUntilQuiet();
+    const asked = await card(three);
+    const { accountId, mailboxId } = three.sidecar.world;
+    if (via === "route") {
+      expect((await three.call("POST", `/mailboxes/${mailboxId}/profile-import`, { fingerprint: asked.fingerprint })).status).toBe(202);
+    } else {
+      // The route's own merge, as the import service runs it once its read of the mailbox fits the request.
+      await fencedAccountWrite(three.sidecar.db as never, { accountId }, async (tx) => {
+        await lockAccountRuleKeys(tx as never, accountId);
+        await applyOrganizerProfile(tx as never, { accountId, mailboxId, doc: OLD_DOC, fingerprint: profileFingerprint(OLD_DOC), now: new Date() });
+      });
+    }
+    for (let i = 0; i < 4; i++) await three.sidecar.syncUntilQuiet();
+    const next = await card(three);
+    expect({
+      asked: asked.fingerprint === profileFingerprint(OLD_DOC),
+      kept: meta.docs().some((d) => d.installId !== "local:w-old" && profileFingerprint(d.doc!) === profileFingerprint(later)),
+      card: [next.state, next.fingerprint === profileFingerprint(later)],
+    }).toEqual({ asked: true, kept: true, card: ["found", true] });
+  }, 120_000);
 });

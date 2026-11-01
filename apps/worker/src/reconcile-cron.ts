@@ -22,6 +22,7 @@ import { LeaderFencedError, refusalIsRemoval, runSyncCycle, type SyncDeps } from
 import { isSharedDatabaseFault } from "./dead-letter.js";
 import { applyMetaRequests } from "./request-drain.js";
 import { OrganizerProfileSync } from "./profile.js";
+import { profileProducerVersion } from "./build-version.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit, writeDoorOf,
@@ -388,7 +389,7 @@ export async function runReconcileCron(
         installId: config.organizer?.installId ?? cloudInstallId(config.environment ?? "production"),
         kind: "cloud",
       },
-      producerVersion: config.buildVersion ?? "dev",
+      producerVersion: profileProducerVersion(config.buildVersion ?? "dev"),
       log: (event, detail) => {
         if (/_failed$/.test(event)) log.warn(event, { ...detail });
         else log.info(event, { ...detail });

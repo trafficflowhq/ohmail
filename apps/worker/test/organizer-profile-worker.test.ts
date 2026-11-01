@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
@@ -16,6 +17,7 @@ import {
   type OrganizerProfilePayload, type ParsedProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { startWorker } from "../src/index.js";
+import { buildReleaseOf, profileProducerVersion } from "../src/build-version.js";
 import { OrganizerProfileSync, serializeOrganizerProfile, serializeOrganizerProfileCounted, PROFILE_FOUND_AUDIT_ACTION } from "../src/profile.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
@@ -929,6 +931,82 @@ describe("the worker's portable profile write-behind", () => {
       answered: await profileImportResolutionExists(db, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint }),
     }).toEqual({ kept: [raw], marker: ["found", true, true], answered: false });
   }, 60_000);
+
+  /* A DATABASE RESTORED FROM A DUMP keeps its mailbox row and the record of what it wrote before
+     the dump; a newer copy under this deployment's id was written by the life the restore undid.
+     Kept, held and offered, never rolled back to the restored store's settings. */
+  it("a restored database meets its deployment's newer copy: kept, held and offered", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db, undefined, new Date("2026-07-01T00:00:00Z"));
+    await db.insert(tags).values({ accountId: mb.accountId, name: "before", hue: "moss" });
+    const meta = fleet.metaFor(mb.mailboxId);
+    const first = await startWorker(workerConfig(fleet));
+    expect(await waitFor(async () => meta.profileAppends === 1), "the first life never wrote").toBe(true);
+    await first.stop();
+
+    // The life after the dump replaced that copy with a newer one, which the restored store never saw.
+    await new Promise((r) => setTimeout(r, 1_100));
+    const after = makeProfileDoc({
+      screener: [{ address: "friend@elsewhere.example" }], rules: [], notifyRules: [], awayResponder: null,
+      tagNames: ["after", "before"], signature: null,
+    }, { updatedAt: new Date(), producer: { kind: "cloud", version: profileProducerVersion("dev") } });
+    await meta.removeProfiles(meta.messages.filter((m) => parseProfileMessage(m.raw) !== null).map((m) => m.ref));
+    const raw = formatProfileMessage(after, { installId: INSTALL });
+    await meta.appendProfile(raw);
+
+    const worker = await startWorker(workerConfig(fleet));
+    closers.push(() => worker.stop());
+    const held = async (): Promise<boolean> => (await latestProfileFoundMarker(db, mb.accountId, mb.mailboxId))?.heldForImport === true;
+    expect(await waitFor(async () => (await held()) || !meta.messages.some((m) => m.raw === raw)), "the worker never read the settings").toBe(true);
+    await new Promise((r) => setTimeout(r, 900));
+    const marker = await latestProfileFoundMarker(db, mb.accountId, mb.mailboxId);
+    expect({
+      kept: meta.messages.filter((m) => parseProfileMessage(m.raw) !== null).map((m) => m.raw),
+      marker: marker === null ? null : [marker.state, marker.heldForImport, marker.fingerprint === profileFingerprint(after)],
+    }).toEqual({ kept: [raw], marker: ["found", true, true] });
+  }, 60_000);
+
+  /* A SERVER IMAGE'S LABEL IS ITS COMMIT, which says nothing about its release: the copy names the release
+     first and the commit beside it, so a store tells a rolled-back release's copy from a restored one's. */
+  it("a copy a worker labelled by its commit writes names the release beside the commit", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db);
+    await db.insert(tags).values({ accountId: mb.accountId, name: "mine", hue: "moss" });
+    const meta = fleet.metaFor(mb.mailboxId);
+    const commit = "52a56a5fc5b2b1d8f9d4a1b7e0c3d2f1a9b8c7d6";
+    const worker = await startWorker({ ...workerConfig(fleet), buildVersion: commit });
+    closers.push(() => worker.stop());
+    expect(await waitFor(async () => meta.profileAppends >= 1), "the worker never wrote").toBe(true);
+    expect(profileDocs(fleet, mb.mailboxId).map((d) => d.doc!.producer.version)).toEqual([`${RELEASE}+${commit}`]);
+  }, 60_000);
+});
+
+/** The release this checkout is, as its manifest states it. */
+const RELEASE = (JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version: string }).version;
+
+describe("the release a settings copy names", () => {
+  it("the release first, the build's own label beside it; a label that starts with a release stays", () => {
+    expect([
+      profileProducerVersion("52a56a5fc5b2b1d8f9d4a1b7e0c3d2f1a9b8c7d6", "0.31.2"),
+      profileProducerVersion("dev", "0.31.2"),
+      profileProducerVersion("0.31.2", "0.31.2"),
+      profileProducerVersion("1a6b4fb2", null),
+      profileProducerVersion("dev"),
+    ]).toEqual(["0.31.2+52a56a5fc5b2b1d8f9d4a1b7e0c3d2f1a9b8c7d6", "0.31.2+dev", "0.31.2", "0.0.0+1a6b4fb2", `${RELEASE}+dev`]);
+  });
+
+  it("the release the host bundler bakes in wins over the checkout's manifest", () => {
+    const g = globalThis as Record<string, unknown>;
+    try {
+      g.__OHMAIL_RELEASE__ = "9.8.7";
+      expect([buildReleaseOf(() => "0.31.2"), buildReleaseOf()]).toEqual(["9.8.7", "9.8.7"]);
+    } finally {
+      delete g.__OHMAIL_RELEASE__;
+    }
+    expect([buildReleaseOf(() => "0.31.2"), buildReleaseOf(() => ""), buildReleaseOf()]).toEqual(["0.31.2", null, RELEASE]);
+  });
 });
 
 describe("the hold's OTHER release — the user's durable answer", () => {
@@ -949,7 +1027,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
   /** A sync driven tick by tick — the marker-retry test's harness, shared by these. */
   function directSync(
     db: Db, fleet: FakeAdapterFleet, mb: { accountId: string; mailboxId: string }, events: string[],
-    flushIntervalMs = 0,
+    flushIntervalMs = 0, now?: () => Date,
   ) {
     const adapter = fleet.factory(
       { host: "fake.invalid", port: 1143, secure: false, auth: { user: "u", pass: "p" }, sentDomain: "t" } as never,
@@ -958,6 +1036,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     return new OrganizerProfileSync({
       db, accountId: mb.accountId, mailboxId: mb.mailboxId, adapter,
       self: { installId: INSTALL, kind: "cloud" }, producerVersion: "dev", flushIntervalMs,
+      ...(now === undefined ? {} : { now }),
       log: (event, detail) => { events.push(`${event} ${JSON.stringify(detail)}`); },
     });
   }
@@ -992,10 +1071,10 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     return profileFingerprint(payload);
   }
 
-  it("the answer releases at the CYCLE EDGE — `importDecisionOpenFresh` does not wait out the flush debounce", async () => {
+  it("the answer releases at the next pass — the flush debounce does not hold it", async () => {
     // Review round 1: the write-behind's five-minute debounce is a WRITE cadence, and a hold
     // released only on the flush tick keeps adopting strangers' mail as `external` for a whole
-    // interval after the person decided. The cycle-edge read releases without a flush.
+    // interval after the person decided. Each pass reads the answer before its debounce.
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
     const mb = await seedMailbox(db);
@@ -1004,25 +1083,25 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     const sync = directSync(db, fleet, mb, events, 600_000); // the debounce that must NOT gate the release
 
     await sync.onOrganize(); // seed: hold armed
-    expect(sync.importDecisionOpen()).toBe(true);
-    expect(await sync.importDecisionOpenFresh(), "unanswered ⇒ still open").toBe(true);
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen(), "unanswered ⇒ still open").toBe(true);
 
     // "Not now" settles ROUTING at once and keeps the WRITE hold: the declined document stays.
     await recordProfileImportResolution(db, {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", fingerprint,
     });
     expect(await holdOf(sync), "a decline closes the routing question").toBe("closed");
-    expect(await sync.importDecisionOpenFresh(), "a decline is not a write release").toBe(true);
-    expect(sync.importDecisionOpen()).toBe(true);
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen(), "a decline is not a write release").toBe(true);
     // Not even one that re-arms onto the same document: `resolved` is the release, and it waits.
     expect(events.some((e) => e.includes("\"state\":\"resolved\"")), "a decline released the hold").toBe(false);
 
     await recordProfileImportResolution(db, {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "replaced", fingerprint,
     });
-    // No onOrganize tick between the answer and this read — the debounce would swallow one.
-    expect(await sync.importDecisionOpenFresh(), "replaced ⇒ released before the next flush").toBe(false);
-    expect(sync.importDecisionOpen()).toBe(false);
+    // One pass well inside the debounce.
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen(), "replaced ⇒ released before the next flush").toBe(false);
     expect(events.some((e) => e.includes("\"state\":\"resolved\""))).toBe(true);
   }, 30_000);
 
@@ -1176,15 +1255,16 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: await seedForeignDocFingerprint(),
     });
-    expect(await sync.importDecisionOpenFresh(),
-      "an answer to the superseded document is not an answer to this one").toBe(true);
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen(), "an answer to the superseded document is not an answer to this one").toBe(true);
 
     // …and the answer for the REPLACEMENT (what the surface actually offers) releases it.
     await recordProfileImportResolution(db, {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: profileFingerprint(replacement),
     });
-    expect(await sync.importDecisionOpenFresh()).toBe(false);
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen()).toBe(false);
   }, 30_000);
 
   it("a NEWER format's document arms the routing hold too, and the dismiss releases it — the write posture stands", async () => {
@@ -1216,7 +1296,9 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await recordProfileImportResolution(db, {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", newerV: PROFILE_VERSION + 1,
     });
-    expect(await sync.importDecisionOpenFresh(), "the dismiss settles the ROUTING question").toBe(false);
+    expect(await holdOf(sync), "the dismiss settles the ROUTING question at once").toBe("closed");
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen(), "and the next pass releases the hold").toBe(false);
 
     // The WRITE posture stands: a local change after the dismiss still writes nothing over a
     // document this build cannot represent.
@@ -1321,7 +1403,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     expect(sync.importDecisionOpen(), "a half-run preflight must not be remembered as done").toBe(true);
   }, 30_000);
 
-  it("CONVERGENCE releases at the cycle edge too — a sibling mailbox's import must not leave this one adopting", async () => {
+  it("CONVERGENCE closes the question — a sibling mailbox's import must not leave this one adopting", async () => {
     // Review round 4: the store is account-scoped; the same travelling profile imported through
     // another mailbox makes local state equal this hold's document with no resolution row for
     // THIS mailbox, and the candidate vanishes from the confirm surface the moment they match.
@@ -1330,17 +1412,21 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     const mb = await seedMailbox(db);
     await seedForeignDoc(fleet, mb.mailboxId); // screener: a foreign sender, tag "theirs"
     const events: string[] = [];
-    const sync = directSync(db, fleet, mb, events, 600_000); // the debounce must not gate this
+    const clock = { at: Date.now() };
+    const sync = directSync(db, fleet, mb, events, 600_000, () => new Date(clock.at));
 
     await sync.onOrganize(); // seed: hold armed
-    expect(await sync.importDecisionOpenFresh()).toBe(true);
+    expect(await holdOf(sync)).toBe("document");
 
     // The sibling's import lands: the ACCOUNT store now says exactly what the document says.
     await db.insert(contacts).values({ accountId: mb.accountId, address: "friend@elsewhere.example" });
     await db.insert(tags).values({ accountId: mb.accountId, name: "theirs", hue: "moss" });
 
-    expect(await sync.importDecisionOpenFresh(),
-      "local == document is the answered state, however it was reached").toBe(false);
+    // Routing does not wait out the debounce: local == document is the answered state, however it was reached.
+    expect(await holdOf(sync)).toBe("closed");
+    clock.at += 600_000;
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen(), "the next flush releases the hold").toBe(false);
     // …and the DURABLE half closes with it (round 14): the held marker must not outlive the
     // question, or the backstop adopts and the candidate surface dials IMAP for nothing.
     expect(await durableOpen(db, mb.accountId, mb.mailboxId),
@@ -1558,14 +1644,16 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: seedForeignDocFingerprint(),
     });
-    expect(await sync.importDecisionOpenFresh(),
-      "the release must arm the question the folder now asks").toBe(true);
+    // The answer is read on the next pass, inside the debounce.
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen(), "the release must arm the question the folder now asks").toBe(true);
 
     await recordProfileImportResolution(db, {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: profileFingerprint(replacement),
     });
-    expect(await sync.importDecisionOpenFresh()).toBe(false);
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen()).toBe(false);
   }, 30_000);
 
   it("an answered release that meets a DECLINED replacement re-holds it at once — never a lapse", async () => {
@@ -1677,18 +1765,22 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       decision: "replaced", fingerprint: seedForeignDocFingerprint(),
     });
 
-    // The answered check (read 1) succeeds; the derivation's replacement check (read 2) faults.
+    // The pass's two answer reads (before the debounce, then the release's) succeed; the derivation's
+    // replacement check (read 3) faults, and no read follows it.
     auditReads = 0;
-    failFrom = 2;
-    expect(await sync.importDecisionOpenFresh(),
-      "a fault mid-release must leave the hold held — retried, never stranded").toBe(true);
+    failFrom = 3;
+    await sync.onOrganize();
+    expect({ open: sync.importDecisionOpen(), reads: auditReads, resolved: events.some((e) => e.includes("\"state\":\"resolved\"")) },
+      "a fault mid-release must leave the hold held — retried, never stranded").toEqual({ open: true, reads: 3, resolved: false });
     failFrom = Number.POSITIVE_INFINITY;
-    expect(await sync.importDecisionOpenFresh(), "the retry completes the swap onto B").toBe(true);
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen(), "the retry completes the swap onto B").toBe(true);
     await recordProfileImportResolution(db, {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: profileFingerprint(replacement),
     });
-    expect(await sync.importDecisionOpenFresh()).toBe(false);
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen()).toBe(false);
   }, 30_000);
 
   it("a NEWER document landing MID-WRITE arms the routing hold before the write wall rises", async () => {
@@ -1720,14 +1812,15 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await recordProfileImportResolution(db, {
       accountId: mb.accountId, mailboxId: mb.mailboxId, decision: "declined", newerV: PROFILE_VERSION + 1,
     });
-    expect(await sync.importDecisionOpenFresh()).toBe(false);
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen()).toBe(false);
   }, 30_000);
 
   it("the debounced CONVERGENCE release re-reads the folder — a replaced document re-arms instead of slipping out", async () => {
     // Review round 9: local converged onto held document A, but the folder had moved on to
     // unanswered B; the debounced convergence arm released without looking, and B surfaced later
-    // as an unheld mid-flight document — the hold must swap to B here exactly as it does at the
-    // cycle edge.
+    // as an unheld mid-flight document — the hold must swap to B here exactly as it does on an
+    // answer.
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
     const mb = await seedMailbox(db);
@@ -1761,13 +1854,15 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: profileFingerprint(replacement),
     });
-    expect(await sync.importDecisionOpenFresh()).toBe(false);
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen()).toBe(false);
   }, 30_000);
 
-  it("a marker that LANDED supersedes an older fact still owed from a failed write", async () => {
+  it("a fact still owed from a failed write lands before the release's own — the latest marker stays the folder's question", async () => {
     // Review round 9: a pending failed marker retried AFTER a newer successful one would file
     // the stale fact as the LATEST row — an answered or replaced question resurrected over the
-    // current one, read newest-first by the confirm surface and the backstop predicate alike.
+    // current one, read newest-first by the confirm surface and the backstop predicate alike. A
+    // pass retries what is owed before its hold blocks write anything.
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
     const mb = await seedMailbox(db);
@@ -1790,9 +1885,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await sync.onOrganize(); // seed: hold on A armed, A's marker write FAILS and is owed
     expect(events.some((e) => e.includes("organizer_profile_marker_failed"))).toBe(true);
 
-    // The folder moves on to B, and the CYCLE-EDGE release commits B's marker — the path that
-    // does not run the owed-marker retry first (`onOrganize` retries pending facts before its
-    // hold blocks, so it cannot reproduce this ordering on its own).
+    // The folder moves on to B, and A is answered.
     const i = meta.messages.findIndex((m) => parseProfileMessage(m.raw) !== null);
     meta.messages.splice(i, 1);
     const replacement: OrganizerProfilePayload = {
@@ -1810,7 +1903,8 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: seedForeignDocFingerprint(),
     });
-    expect(await sync.importDecisionOpenFresh(), "the release re-derives onto B").toBe(true); // B's marker lands here
+    await sync.onOrganize(); // A's owed fact first, then the release re-derives onto B: B's marker lands last
+    expect(sync.importDecisionOpen(), "the release re-derives onto B").toBe(true);
     await sync.onOrganize(); // a further tick must NOT re-file A's stale owed fact over B's
     const markers = await db.select().from(auditLog)
       .where(and(eq(auditLog.accountId, mb.accountId), eq(auditLog.action, PROFILE_FOUND_AUDIT_ACTION)))
@@ -1883,11 +1977,11 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     expect(await durableOpen(db, mb2.accountId, mb2.mailboxId)).toBe(false);
   }, 30_000);
 
-  it("an owed `found` fact survives a lapse landing — found-before-lapse ordering is preserved", async () => {
+  it("an owed `found` fact and the answer's lapse land in order — found before lapse", async () => {
     // Review round 14: marker A durable, B's marker write transiently FAILS (owed), the user
-    // answers B, and the answered release writes `lapsed(B)`. Dropping the owed `found(B)` at
-    // that landing would leave the reader walking past lapsed(B) onto unmatched A — an already
-    // answered mailbox reported open for ever.
+    // answers B, and the answered release writes `lapsed(B)`. Dropping the owed `found(B)` would
+    // leave the reader walking past lapsed(B) onto unmatched A — an already answered mailbox
+    // reported open for ever. The pass files what is owed before its release writes the lapse.
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
     const mb = await seedMailbox(db);
@@ -1926,13 +2020,14 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     expect(events.some((e) => e.includes("organizer_profile_marker_failed"))).toBe(true);
     expect(sync.importDecisionOpen()).toBe(true);
 
-    // The user answers B; the release writes lapsed(B) — the owed found(B) must survive it.
+    // The user answers B; the pass files the owed found(B), then the release's lapsed(B).
     await recordProfileImportResolution(db, {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: profileFingerprint(replacement),
     });
-    expect(await sync.importDecisionOpenFresh()).toBe(false);
-    await sync.onOrganize(); // the owed found(B) is retried and files ABOVE the lapse
+    await sync.onOrganize();
+    expect(sync.importDecisionOpen()).toBe(false);
+    await sync.onOrganize(); // nothing owed is filed again
     expect(await durableOpen(db, mb.accountId, mb.mailboxId),
       "an answered mailbox must not read as open through a dropped owed marker").toBe(false);
   }, 30_000);
@@ -2496,8 +2591,9 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     const mb = await seedMailbox(db);
     await db.insert(tags).values({ accountId: mb.accountId, name: "mine", hue: "moss" });
 
-    // The database refuses audit inserts until told otherwise — the transient blip, held open.
-    let failing = true;
+    // The database refuses audit inserts until told otherwise — the transient blip, held open — from
+    // after the first write: a write whose record is refused appends nothing.
+    let failing = false;
     const flakyDb = failingInserts(db, () => failing);
 
     const events: string[] = [];
@@ -2506,6 +2602,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
 
     await sync.onOrganize(); // seed (none found) + first flush: our own document
     expect(meta.profileAppends).toBe(1);
+    failing = true;
 
     // The overlap's loser lands a differing document under the established organizer, written
     // after ours — the newest, so it is the one that can refuse the write.
@@ -2832,7 +2929,7 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
     await sync.onOrganize();
 
     expect(events.some((e) => e.startsWith("organizer_profile_detected ") && e.includes("found_own"))).toBe(true);
-    expect(planned(events)[0]).toMatchObject({ records: 5, current: 1, removable: 4, own: 4 });
+    expect(planned(events)[0]).toMatchObject({ records: 5, current: 1, removable: 4, duplicate: 4 });
     expect(events.some((e) => e.startsWith("profile_tidied ") && e.includes("\"removed\":4"))).toBe(true);
     expect(profileDocs(fleet, mb.mailboxId)).toHaveLength(1);
     expect(meta.profileAppends, "the heal appended a copy").toBe(appends);

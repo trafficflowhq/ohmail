@@ -115,7 +115,7 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   "inline_cid_backfill", "inline_cid_backfill_row",
   "hey_migrate", "undo_hey_migration",
   // ── account settings and the organizer profile import (`packages/db`) ────────────────────
-  "account.ai_enabled", "organizer_profile_found", "organizer_profile_import_resolved",
+  "account.ai_enabled", "organizer_profile_found", "organizer_profile_import_resolved", "organizer_profile_written",
   // ── the AI workflow runner's per-step inverse row ────────────────────────────────────────
   "workflow_step",
   // ── the Screener's held-release press (`packages/services/src/held-release-service.ts`) ───
