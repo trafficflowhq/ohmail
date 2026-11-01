@@ -166,6 +166,8 @@ export function ReceiptsView({
   /** Dedup for the per-card sweep — a card marks itself once per visit (`useVisit` below). A ref:
    *  it is bookkeeping and draws nothing, so marking a card re-renders nothing. */
   const justSeen = useRef<Set<string>>(new Set());
+  /** The letter the fallback showed, kept current while listed: a letter listed above it never takes the cursor. */
+  const keptCur = useRef<string | null>(null);
   /**
    * THE CARD WHOSE VERBS ARE SHOWING — the one the reader has EXPANDED, and never the one the
    * scroll-spy happens to have made `current`. Scrolling moves `current` (selection, the dwell
@@ -271,6 +273,7 @@ export function ReceiptsView({
   useVisit(
     () => {
       justSeen.current = new Set();
+      keptCur.current = null;
       // The list keeps its offset through the hide; the revisit opens it where a mount does.
       win.toTop();
       if (!streamArmed) {
@@ -339,7 +342,11 @@ export function ReceiptsView({
     closeRefs.current.onClosed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [closeTo]);
-  const current = cur ?? all.find(isUnread)?.id ?? all[0]?.id ?? null;
+  const current = cur ?? (keptCur.current !== null && pileIndex.has(keptCur.current) ? keptCur.current : null)
+    ?? all.find(isUnread)?.id ?? all[0]?.id ?? null;
+  useEffect(() => {
+    keptCur.current = cur === null ? current : null;
+  }, [cur, current]);
 
   const seenMark = (id: string) => {
     const m = all.find((x) => x.id === id);

@@ -527,9 +527,8 @@ export function SearchView({
   /**
    * The keyboard path that did not exist. Reported as "search does not allow a message to be
    * opened" — every hit was always clickable; what was true is that this view declared ZERO
-   * bindings, so the surface you reach by pressing `/` was mouse-only. The cursor is visible: `at`
-   * indexes the RENDERED rows, clamped rather than remembered (the list re-derives per keystroke,
-   * and an index held across that points at a different message), reset when the question changes.
+   * bindings, so the surface you reach by pressing `/` was mouse-only. The cursor is visible: it
+   * indexes the RENDERED rows and stays on its hit as they re-derive, reset when the question changes.
    * `j`/`k` are deliberately NOT bound here — the ruling: they follow PILE order, never search-hit
    * order; arrows are what the box's own focus makes available (`inInput`), and after ↵ opens a hit
    * the pile's own `j`/`k` take over where the message lives.
@@ -553,12 +552,29 @@ export function SearchView({
   const isEgg = trimmed.toLowerCase() === "blanc" && shownCount === 0;
   /** The count on the result line: the store's own once it answered, else the rows on screen. */
   const found = storeReady && filter === null ? Math.max(ready.total, shownCount) : shownCount;
-  const [at, setAt] = useState(0);
-  // Reset on the ORDER too, not only on the query. The cursor is an index into the rendered
-  // rows; reordering them under a held index leaves it pointing at a different message than the
-  // one that was highlighted, which is the same reason it resets when the question changes.
-  useEffect(() => setAt(0), [trimmed, sort]);
-  const cursor = shownCount === 0 ? -1 : Math.min(at, shownCount - 1);
+  // Reset on the ORDER too, not only on the query: a new question or order starts at the top.
+  const asked = `${trimmed}\u0000${sort}`;
+  /** The cursor's slot and the hit on it, for the question asked; a stale question's reads as the top. */
+  const [pos, setPos] = useState<{ asked: string; i: number; id: string | null }>({ asked, i: 0, id: null });
+  const held = pos.asked === asked ? pos : { asked, i: 0, id: null };
+  const hitIdAt = (i: number): string | null => {
+    const x = hitAt(i);
+    return x === null || x === "gone" ? null : x.message.id;
+  };
+  /* THE CURSOR STAYS ON ITS HIT: a hit listed above it later moves the hit's slot, never the cursor. */
+  const cursor = (() => {
+    if (shownCount === 0) return -1;
+    const i = Math.min(held.i, shownCount - 1);
+    if (held.id === null || hitIdAt(i) === held.id) return i;
+    for (let k = 0; k < shownCount; k++) if (hitIdAt(k) === held.id) return k;
+    return i;
+  })();
+  const cursorId = cursor < 0 ? null : hitIdAt(cursor) ?? held.id;
+  const cursorAt = Math.max(cursor, 0);
+  useEffect(() => {
+    if (pos.asked !== asked || pos.i !== cursorAt || pos.id !== cursorId) setPos({ asked, i: cursorAt, id: cursorId });
+  });
+  const stepTo = (i: number) => setPos({ asked, i, id: hitIdAt(i) });
 
   /** The store's list is a window over the walker's slots; the device's paint renders whole. */
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -645,7 +661,7 @@ export function SearchView({
       // this is a binding that never fires — the same reason Escape and ⌘K opt in.
       inInput: true,
       disabled: shownCount === 0 || !inList,
-      run: () => setAt((i) => Math.min(i + 1, shownCount - 1)),
+      run: () => stepTo(Math.min(cursor + 1, shownCount - 1)),
     },
     {
       chord: "ArrowUp",
@@ -653,7 +669,7 @@ export function SearchView({
       label: t("keyPrev"),
       inInput: true,
       disabled: shownCount === 0 || !inList,
-      run: () => setAt((i) => Math.max(i - 1, 0)),
+      run: () => stepTo(Math.max(cursor - 1, 0)),
     },
     {
       chord: "Enter",

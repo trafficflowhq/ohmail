@@ -230,6 +230,35 @@ describe("a search result opens from the keyboard", () => {
     expect(opened).toEqual([]);
   });
 
+  it("a result listed late above the cursor leaves the cursor, and ↵, on the row it was on", async () => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const put = (rows: EngineMessage[]) => store.applyChanges(rows.map((m): SyncChange => ({
+      type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
+    })));
+    await put(CORPUS);
+    const engine = new OhmailEngine({ adapter: baseAdapter(), store, now: () => NOW });
+    const draw = (version: number) => act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages, timeZone: "UTC", now: NOW,
+        children: h(KeymapProvider, { children: h(SearchView, {
+          engine, version, now: NOW, query: "invoice", onQuery: () => {},
+          onOpen: (hit) => { opened.push(hit.message.id); },
+        }) }),
+      }));
+    });
+    await draw(1);
+    const rows = hits();
+    await key("ArrowDown");
+    expect(focused()).toBe(rows[1]);
+    await put([{ ...msg("inv-0", "Invoice 081 for the invoice run, invoice attached", "billing@erdton.example"), date: "2026-08-04T09:00:00.000Z" }]);
+    await draw(2);
+    expect(hits().indexOf("inv-0"), `listed above the cursor: ${hits().join(",")}`).toBeLessThan(hits().indexOf(rows[1]!));
+    expect(focused()).toBe(rows[1]);
+    await key("Enter");
+    expect(opened).toEqual([rows[1]]);
+  });
+
   it("Escape clears the question and leaves the caret in the box, ready for the next one", async () => {
     const engine = await engineWith(CORPUS);
     await render(engine, "invoice");
