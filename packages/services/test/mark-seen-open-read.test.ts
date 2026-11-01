@@ -203,3 +203,75 @@ describe("H1 a park or a pin ends the open read; LOW 6 a parked member is never 
     expect(rows.get("a2")!.openReadAt, "the unparked unread member is stamped").toBeInstanceOf(Date);
   });
 });
+
+/**
+ * UNDO PUTS BACK THE PLACE IN EARLIER. The Undo of a press on a row in Earlier sends `none` with the
+ * open read the row held before the press; the server restores it and skips the un-park reset. Every
+ * other `none` (no field) still files at arrival: the H1 arms above are its controls.
+ */
+describe("Undo restores the open read the press ended", () => {
+  const PRESSES = [
+    { state: "set_aside" }, { state: "reply_later" }, { state: "muted" }, { state: "resurfaced" },
+    { state: "bubbled_up", bubbleUpAt: "2031-02-01T00:00:00.000Z" },
+  ] as const;
+  for (const press of PRESSES) {
+    it(`${press.state}, then Undo: open_read_at is the press-time instant, last_read_at unchanged`, async () => {
+      const { db, accountId, mailboxId, ctx } = await makeCtx();
+      const t = tickingCtx(ctx);
+      const ids = await seedShape(db, accountId, mailboxId, PRESS.rows);
+      await new MessageService().markSeen(t, { ids: PRESS.ids.map((l) => ids.get(l)!), unread: false, openRead: true });
+      const before = (await rowsOf(db, ids)).get("a1")!;
+      expect(before.openReadAt, "the premise: stamped").toBeInstanceOf(Date);
+      const triage = new TriageService();
+      await triage.setState(t, ids.get("a1")!, press);
+      expect((await rowsOf(db, ids)).get("a1")!.openReadAt, "the press ended the open read").toBeNull();
+      await triage.setState(t, ids.get("a1")!, { state: "none", restoreOpenReadAt: before.openReadAt!.toISOString() });
+      const after = (await rowsOf(db, ids)).get("a1")!;
+      expect(ms(after.openReadAt)).toBe(ms(before.openReadAt));
+      expect(ms(after.lastReadAt), "the un-park reset ran beside the restore").toBe(ms(before.lastReadAt));
+    });
+  }
+
+  it("bounds: a future instant is stored as now, an unread row and a newer open read are left alone", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const t = tickingCtx(ctx);
+    const ids = await seedShape(db, accountId, mailboxId, PRESS.rows);
+    const svc = new MessageService();
+    await svc.markSeen(t, { ids: PRESS.ids.map((l) => ids.get(l)!), unread: false, openRead: true });
+    const triage = new TriageService();
+    const at = new Date(t0 + 60_000);
+    await triage.setState(t, ids.get("a1")!, { state: "set_aside" });
+    await triage.setState({ ...t, now: () => at }, ids.get("a1")!, { state: "none", restoreOpenReadAt: "2099-01-01T00:00:00.000Z" });
+    expect(ms((await rowsOf(db, ids)).get("a1")!.openReadAt), "a future instant").toBe(at.getTime());
+
+    await triage.setState(t, ids.get("a1")!, { state: "set_aside" });
+    await svc.markSeen(t, { ids: [ids.get("a1")!], unread: true });
+    await triage.setState(t, ids.get("a1")!, { state: "none", restoreOpenReadAt: new Date(t0).toISOString() });
+    expect((await rowsOf(db, ids)).get("a1")!.openReadAt, "an unread row took a stamp").toBeNull();
+
+    const kept = ms((await rowsOf(db, ids)).get("a2")!.openReadAt);
+    await triage.setState(t, ids.get("a2")!, { state: "none", restoreOpenReadAt: new Date(t0 - 86_400_000).toISOString() });
+    expect(ms((await rowsOf(db, ids)).get("a2")!.openReadAt), "an open read was replaced").toBe(kept);
+  });
+
+  it("the field with a pile state, or a malformed one, is a 400 and writes nothing", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const t = tickingCtx(ctx);
+    const ids = await seedShape(db, accountId, mailboxId, PRESS.rows);
+    await new MessageService().markSeen(t, { ids: PRESS.ids.map((l) => ids.get(l)!), unread: false, openRead: true });
+    const triage = new TriageService();
+    await triage.setState(t, ids.get("a1")!, { state: "set_aside" });
+    for (const body of [
+      { state: "reply_later", restoreOpenReadAt: new Date(t0).toISOString() },
+      { state: "none", restoreOpenReadAt: "not a date" },
+      { state: "none", restoreOpenReadAt: 42 },
+    ]) {
+      const err = await triage.setState(t, ids.get("a1")!, body as never).then(() => null, (e: unknown) => e);
+      expect(err, JSON.stringify(body)).toBeInstanceOf(ServiceError);
+      expect((err as ServiceError).httpStatus).toBe(400);
+    }
+    expect((await rowsOf(db, ids)).get("a1")!.openReadAt, "a refused body wrote the stamp").toBeNull();
+    const err = await triage.setState(t, ids.get("a1")!, { state: "none", restoreOpenReadAt: null } as never).then(() => null, (e: unknown) => e);
+    expect(err, "null is an ordinary un-park").toBeNull();
+  });
+});

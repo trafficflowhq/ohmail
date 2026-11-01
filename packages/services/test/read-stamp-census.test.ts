@@ -86,11 +86,12 @@ describe("read-stamp census", () => {
 });
 
 /**
- * THE OPEN READ HAS ONE WRITER AND EVERY UNREAD CLEARS IT (owner 2026-10-07). (a) A `.set` literal
+ * THE OPEN READ HAS TWO WRITERS AND EVERY UNREAD CLEARS IT (owner 2026-10-07). (a) A `.set` literal
  * that flips `unread` to anything but the literal `false` names `openReadAt` — the batch, the single
  * PATCH, the `\Seen` adoption clear it in the statement that flips the flag (the Screener and retro
- * writers only ever mark read, so they are exempt by that literal). (b) Exactly ONE `.set` literal
- * writes it a non-null value, inside `MessageService.markSeen`.
+ * writers only ever mark read, so they are exempt by that literal). (b) Exactly TWO `.set` literals
+ * write it a non-null value: the read in `MessageService.markSeen`, and the Undo's restore of the
+ * press-time value in `TriageService.setState`.
  */
 const mayUnread = (lit: string): boolean => /\bunread\s*[,:}]/.test(lit) && !/\bunread\s*:\s*false\b/.test(lit);
 const namesOpenRead = (lit: string): boolean => /\bopenReadAt\s*:/.test(lit);
@@ -135,18 +136,24 @@ describe("open-read census", () => {
     expect(clears).toBeGreaterThanOrEqual(3);
   });
 
-  it("(b) exactly one .set literal stamps it, inside MessageService.markSeen", () => {
+  it("(b) exactly two .set literals stamp it: the read in MessageService.markSeen, the Undo's restore in TriageService.setState", () => {
     const stamps: Array<{ path: string; at: number }> = [];
     for (const f of files) {
       for (const { at, lit } of setLiteralsAt(f.code)) if (stampsOpenRead(lit)) stamps.push({ path: f.path, at });
     }
-    expect(stamps.map((x) => x.path)).toEqual(["packages/services/src/message-service.ts"]);
-    const svc = files.find((f) => f.path === "packages/services/src/message-service.ts")!.code;
-    const start = svc.indexOf("async markSeen(");
-    const end = svc.indexOf("\n  async ", start + 1);
-    expect(start).toBeGreaterThan(0);
-    expect(stamps[0]!.at, "the stamp is outside markSeen").toBeGreaterThan(start);
-    expect(stamps[0]!.at).toBeLessThan(end);
+    const WRITERS = [
+      { path: "packages/services/src/message-service.ts", method: "async markSeen(" },
+      { path: "packages/services/src/triage-service.ts", method: "async setState(" },
+    ];
+    expect(stamps.map((x) => x.path)).toEqual(WRITERS.map((w) => w.path));
+    WRITERS.forEach((w, i) => {
+      const code = files.find((f) => f.path === w.path)!.code;
+      const start = code.indexOf(w.method);
+      const end = code.indexOf("\n  async ", start + 1);
+      expect(start).toBeGreaterThan(0);
+      expect(stamps[i]!.at, `the stamp is outside ${w.method}`).toBeGreaterThan(start);
+      expect(stamps[i]!.at).toBeLessThan(end);
+    });
   });
 });
 

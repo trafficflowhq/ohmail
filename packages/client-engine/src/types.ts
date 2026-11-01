@@ -1173,9 +1173,14 @@ export type EngineMutation =
   /**
    * `state: "resurfaced"` is the "Now" horizon and takes no `bubbleUpAt` — the server forces it
    * null, and so does the optimistic effect, so the two halves agree. See
-   * {@link TriageWireState}.
+   * {@link TriageWireState}. `restoreOpenReadAt` is set by an Undo alone (`undo.ts#triageRestore`):
+   * with `state: "none"` it puts back the open read the press ended, so the row keeps its place in
+   * Earlier instead of filing at arrival.
    */
-  | { kind: "triage_set"; messageId: string; state: TriageWireState; bubbleUpAt?: ISODateTime | null }
+  | {
+      kind: "triage_set"; messageId: string; state: TriageWireState; bubbleUpAt?: ISODateTime | null;
+      restoreOpenReadAt?: ISODateTime;
+    }
   | {
       kind: "screener_decide";
       senderId: string;

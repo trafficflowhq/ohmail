@@ -549,13 +549,18 @@ export function mailServer() {
           return;
         }
         if (method === "POST" && perMessage[2] === "triage") {
-          const parsed = JSON.parse(body) as { state: string; bubbleUpAt?: string };
+          const parsed = JSON.parse(body) as { state: string; bubbleUpAt?: string; restoreOpenReadAt?: string };
           const iso = new Date().toISOString();
           const state = { messageId: id, state: parsed.state, bubbleUpAt: parsed.bubbleUpAt ?? null, setAt: iso, updatedAt: iso };
           push("message_state", "create", `st-${id}-${seq + 1}`, state);
           // The server's rule (`TriageService.setState`): a pile or a pin ends the open read. Only a
           // stamped row is re-emitted, carrying its state as the real DTO does.
           if (parsed.state !== "none" && messages.get(id)?.openReadAt) updateMessage(id, { openReadAt: null, triage: state as never });
+          // An Undo's `none` puts the press-time open read back on a read row holding none, never after now.
+          const held = messages.get(id);
+          if (parsed.state === "none" && parsed.restoreOpenReadAt && held && !held.unread && !held.openReadAt) {
+            updateMessage(id, { openReadAt: parsed.restoreOpenReadAt < iso ? parsed.restoreOpenReadAt : iso, triage: null });
+          }
           json(200, state, seq);
           return;
         }
