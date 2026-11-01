@@ -11,6 +11,7 @@ import { sayArg } from "../src/refusal";
 import type { EngineMessage } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, type LiveWorldActions } from "../src/state/live";
+import { trashLanded } from "../src/state/trash-hold";
 import { Copy } from "../src/copy";
 import { setActiveLocale } from "../src/i18n/locale";
 import { dto, listen, mailServer } from "./helpers/mail-server";
@@ -83,6 +84,20 @@ describe("the page lists what the server's Trash holds", () => {
   });
 });
 
+describe("an open Trash hears a delete land", () => {
+  it("each delete the server took moves the landing signal; a refused one does not", async () => {
+    const live = await scene((f) => { f.addMessage(dto("m1")); f.addMessage(dto("m2")); });
+    const at = trashLanded();
+    expect(await live.actions.deleteMessage("m1")).toBe(true);
+    expect(trashLanded()).toBe(at + 1);
+    live.fake.failNext("DELETE", "/messages/m2");
+    expect(await live.actions.deleteMessage("m2")).toBe(false);
+    expect(trashLanded()).toBe(at + 1);
+    live.store.close();
+    live.fake.server.close();
+  });
+});
+
 describe("restore moves it back", () => {
   it("the row leaves Trash, the mirror regains the message, the toast says restoring-to", async () => {
     const live = await scene((f) => f.addMessage(dto("m1", { subject: "Back soon" })));
@@ -119,6 +134,17 @@ describe("restore moves it back", () => {
     setActiveLocale("de");
     expect(Copy.trashToastRestored("Q1")).toBe("In Q1 wiederhergestellt.");
     setActiveLocale("en");
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("a restore of a letter no longer in Trash says so and drops the row, never 'still in Trash'", async () => {
+    const live = await scene((f) => f.addMessage(dto("m1")));
+    await live.actions.deleteMessage("m1");
+    expect(await live.actions.trashRestore("m1")).toBe(true);
+    expect(await live.actions.trashRestore("m1"), "the row leaves the list").toBe(true);
+    expect(live.toasts.at(-1)).toBe(Copy.trashToastRestoreGone);
+    expect(live.toasts).not.toContain(Copy.trashToastRestoreFailed);
     live.store.close();
     live.fake.server.close();
   });

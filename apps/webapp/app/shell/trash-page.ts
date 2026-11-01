@@ -18,6 +18,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OhmailEngine, TrashRowWire } from "@ohmail/client-engine";
 
+const NO_IDS: readonly string[] = [];
+
 /** How many rows one page asks for. The server clamps; this is the ask. */
 export const TRASH_PAGE_LIMIT = 50;
 
@@ -65,8 +67,18 @@ export function useTrashPage(
   hidden: ReadonlySet<string>,
   /** Deletes the server has confirmed so far (`useDeleteUndo`'s `landed`); a rise re-reads page one. */
   landed = 0,
+  /** Restores the server has taken (the restore window's `landedIds`, append-only): each leaves the list. */
+  restored: readonly string[] = NO_IDS,
 ): TrashPage {
   const [items, setItems] = useState<TrashRowWire[]>([]);
+  /* A LANDED RESTORE LEAVES THE LIST. `hidden` covers a restore only until the server answers; the row itself stayed
+     in `items` and was listed again after. Adjusted during render, so no frame shows it back. */
+  const [restoredSeen, setRestoredSeen] = useState(restored.length);
+  if (restoredSeen !== restored.length) {
+    const gone = new Set(restored.slice(restoredSeen));
+    setRestoredSeen(restored.length);
+    setItems((prev) => (prev.some((r) => gone.has(r.id)) ? prev.filter((r) => !gone.has(r.id)) : prev));
+  }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exhausted, setExhausted] = useState(false);

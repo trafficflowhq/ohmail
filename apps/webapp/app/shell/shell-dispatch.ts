@@ -219,6 +219,7 @@ export function useShellDispatch({
       restoreDispatch(
         (id, opts) => engine.restoreFromTrash(id, opts),
         (restoreTo) => toast(t("trash.toastRestoringTo", { place: placeLabel(restoreTo) })),
+        () => toast(t("trash.toastRestoreGone")),
       )(messageId, pressId),
     ),
     toast,

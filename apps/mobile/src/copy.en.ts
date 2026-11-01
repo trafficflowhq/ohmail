@@ -2077,6 +2077,7 @@ const TABLE = {
   /** The server answered `pending: false`: the move is already done. */
   trashToastRestored: (place: string) => `Restored to ${place}.`,
   trashToastRestoreFailed: "Couldn't restore — it's still in Trash.",
+  trashToastRestoreGone: "It's no longer in Trash.",
   trashNoErase: "ohmail never erases mail — to remove it for good, use your own mail client.",
   trashListFailed: "Trash couldn't be read just now.",
   trashRetry: "Try again",
