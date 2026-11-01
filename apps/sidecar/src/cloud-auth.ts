@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describeError } from "@trafficflow/core/mail";
 import type { KeyProvider } from "@trafficflow/core/mail";
 import { normalizePathname } from "@trafficflow/api/relay-allowlist";
@@ -362,7 +363,50 @@ export async function sealTokens(
       : JSON.stringify({ v: 2, sealed: sealed.ciphertext, keyVersion: sealed.keyVersion } satisfies BoundTokenFile),
     0o600,
   );
+  // A hint, written in place once the seal landed: a torn or lost one names nothing and costs only
+  // the server's cleanup, so it never stands in the seal's way or holds a renewal back.
+  try {
+    const marker: SessionMarkerFile = { v: 1, family: familyDigest(pair.refreshToken), machine };
+    writeFileSync(join(dirname(path), SESSION_MARKER_FILE), JSON.stringify(marker), { mode: 0o600 });
+  } catch {
+    /* the seal stands; a sign-in after a sign-out the server never heard names nothing */
+  }
   return true;
+}
+
+/**
+ * THE FAMILY THIS INSTALL HELD, named beside the seal and kept when a sign-out removes it: a sign-out
+ * whose server half was not confirmed, or a seal this key cannot open, leaves that family live, and
+ * the next sign-in sends this name (`previousSession`) so the server ends it. The digest of a refresh
+ * token of the family, the server's `refresh_tokens.token_hash`: it grants nothing.
+ */
+export const SESSION_MARKER_FILE = "cloud-session.marker";
+
+interface SessionMarkerFile {
+  v: 1;
+  family: string;
+  /** The computer the seal beside it was bound to; null for one that cannot name itself. */
+  machine: string | null;
+}
+
+const FAMILY_DIGEST = /^[A-Za-z0-9_-]{43}$/;
+
+/** The server's `hashToken`: SHA-256 of the token's UTF-8 bytes, base64url, unpadded. */
+function familyDigest(refreshToken: string): string {
+  return createHash("sha256").update(refreshToken, "utf8").digest("base64url");
+}
+
+/** The family the last seal in `dataDir` named, when it was written on this computer (`machine`); else null. */
+export function readSessionMarker(dataDir: string, machine: string | null): string | null {
+  try {
+    const file = JSON.parse(readFileSync(join(dataDir, SESSION_MARKER_FILE), "utf8")) as Partial<SessionMarkerFile> | null;
+    if (file?.v !== 1 || typeof file.family !== "string" || !FAMILY_DIGEST.test(file.family)) return null;
+    const written = file.machine;
+    if (written !== null && typeof written !== "string") return null;
+    return written === machine ? file.family : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

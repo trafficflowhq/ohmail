@@ -666,12 +666,16 @@ export class SessionLifecycle {
     // rather than at seven call sites, one of which would eventually be added without it.
     // `revokeEnrollmentSessions` below is a write, so the check precedes it.
     refuseCrossAccountCredential(ctx, user.accountId);
-    const jar = { accessToken: ctx.supersedes || null, marker: ctx.supersedesMarker || null };
-    if (!jar.accessToken && !jar.marker) return this.mintEstablished(ctx, user, o);
+    const jar = {
+      accessToken: ctx.supersedes || null, marker: ctx.supersedesMarker || null,
+      // An install's previous family is a desktop's, and only a desktop's sign-in names one.
+      install: AUTO_MINT_DEVICE_LABELS[o.kind] !== undefined ? ctx.supersedesInstall || null : null,
+    };
+    if (!jar.accessToken && !jar.marker && !jar.install) return this.mintEstablished(ctx, user, o);
     // THE SUPERSEDE AND THE MINT COMMIT TOGETHER, never as two calls: a new session beside a
-    // previous one that still renews is the state this exists to remove. Both carriers are cleared
+    // previous one that still renews is the state this exists to remove. Every carrier is cleared
     // on the inner context so a nested mint cannot run it twice.
-    return this.inTransaction({ ...ctx, supersedes: null, supersedesMarker: null }, async (txCtx) => {
+    return this.inTransaction({ ...ctx, supersedes: null, supersedesMarker: null, supersedesInstall: null }, async (txCtx) => {
       await this.supersede(asTx(txCtx), txCtx, user, jar, txCtx.now());
       return this.mintEstablished(txCtx, user, o);
     }, { fence: { accountId: user.accountId } });
@@ -682,13 +686,14 @@ export class SessionLifecycle {
    * browser presented beside the ceremony. The access token: an expired one still names its
    * session; an enrollment token or an unknown hash revokes nothing. The resume marker, which
    * outlives the access cookie: the family whose refresh token it digests, only when that is the
-   * signer's own plain browser session. The FAMILY goes, not only the row a hash found, so a
+   * signer's own plain browser session. The install's digest, a desktop's same marker in its body:
+   * only the signer's own desktop's family. The FAMILY goes, not only the row a hash found, so a
    * rotation that lands after this read leaves no live successor; each once, and each of the
    * signer's own written down as a `logout`.
    */
   protected async supersede(
     db: Tx, ctx: ServiceContext, user: typeof users.$inferSelect,
-    jar: { accessToken: string | null; marker: string | null }, now: Date,
+    jar: { accessToken: string | null; marker: string | null; install: string | null }, now: Date,
   ): Promise<void> {
     const named = new Map<string, { familyId: string; userId: string; sessionId: string }>();
     const found = { familyId: sessions.familyId, userId: sessions.userId, sessionId: sessions.id };
@@ -716,6 +721,22 @@ export class SessionLifecycle {
         ))
         .limit(1);
       if (own) named.set(own.familyId, own);
+    }
+    if (jar.install) {
+      // The hash is unique, so the kind is asked of the one row it finds: a desktop's, never a phone's.
+      const [prev] = await db.select({ ...found, kind: devices.kind }).from(refreshTokens)
+        .innerJoin(sessions, eq(sessions.id, refreshTokens.sessionId))
+        .innerJoin(devices, eq(devices.id, sessions.deviceId))
+        .where(and(
+          eq(refreshTokens.tokenHash, jar.install),
+          eq(sessions.userId, user.id),
+          eq(sessions.scope, "full"),
+          isNull(sessions.revokedAt),
+        ))
+        .limit(1);
+      if (prev && Object.hasOwn(AUTO_MINT_DEVICE_LABELS, prev.kind)) {
+        named.set(prev.familyId, { familyId: prev.familyId, userId: prev.userId, sessionId: prev.sessionId });
+      }
     }
     // In session id order, the order every claim of several sessions takes.
     const byId = (a: { sessionId: string }, b: { sessionId: string }): number =>
@@ -891,7 +912,8 @@ export class SessionLifecycle {
       // the family. A hash-only lookup answered 409 first and returned — so anyone holding a
       // stolen, already-spent token of B's could SUPPRESS B's theft detection indefinitely by
       // also holding any session of their own. Falling through grants nothing new: presenting B's
-      // spent token with NO session reaches the same sweep.
+      // spent token with NO session reaches the same sweep, and an arm that would answer it again
+      // refuses in `mintRotation`.
       const [presentedRow] = await db.select({ accountId: refreshTokens.accountId })
         .from(refreshTokens)
         .where(and(
@@ -1128,6 +1150,9 @@ export class SessionLifecycle {
     now: Date,
     ttls: SurfaceTtls,
   ): Promise<OAuthTokens> {
+    // Every arm mints here, the ones answering a SPENT token included: the throw rolls back the
+    // arm's claim, its kills and its row, so another account's line is left as it was.
+    refuseCrossAccountCredential(ctx, base.accountId);
     const newRefresh = generateToken();
     const newAccess = generateToken();
     await db.insert(refreshTokens).values({
@@ -1410,12 +1435,13 @@ export class SessionLifecycle {
        * falls into the reuse sweep below the call — so a driver error or a lock timeout inside
        * the recovery revoked the family and told the person their token had been stolen. An
        * erased account is not a replay either: the fence's refusal goes back to the door, which
-       * answers it as its plain 401. Only another REFUSAL may answer `null`, and nothing here
-       * makes one. Everything else is rethrown: the transaction rolled back, so the presented
-       * token, the dormant tail and the family are exactly as they were.
+       * answers it as its plain 401. Only a refusal of the SESSION may answer `null`; a refusal of
+       * the REQUEST (another account's session, 409) is the door's answer, never the sweep's.
+       * Everything else is rethrown: the transaction rolled back, so the presented token, the
+       * dormant tail and the family are exactly as they were.
        */
       if (isAccountErased(err)) throw err;
-      if (classifyRefreshFailure(err) !== "fault") return null;
+      if (classifyRefreshFailure(err) === "session_refused") return null;
       throw err;
     }
   }

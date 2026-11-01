@@ -41,11 +41,16 @@ export function mayLeaveFor(raw: unknown): raw is string {
 
 export async function manageHandoff(input: {
   sessionToken: string | null;
+  /** `tf_owner` reads `signed_out_pending`: a sign-out the server has not confirmed yet. */
+  signOutPending: boolean;
   locale: AppLocale | null;
   apiOrigin: string | null;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 }): Promise<Handoff> {
+  // Before the token is read: the session left in the jar is the previous person's, and the
+  // sign-in page finishes that sign-out before anything else.
+  if (input.signOutPending) return TO_LOGIN;
   const token = input.sessionToken?.trim() ?? "";
   if (token === "" || !looksLikeSessionToken(token)) return TO_LOGIN;
   if (input.apiOrigin === null) return TO_APP;
