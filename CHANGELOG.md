@@ -21,6 +21,23 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.21] — 2026-11-01
+
+### A restored backup no longer rolls back the settings stored in the mailbox
+
+A desktop whose data folder was restored from a backup, or a phone or server whose database was, could
+replace the settings stored in the mailbox with its older ones on its next write: a rule or a screener
+decision made after the backup was gone for every device reading that mailbox. The newer settings are now
+kept and offered for import, like settings another device left, also when a decision was made on the
+restored device before it first went online or another device's settings were imported there first. A
+server or app rolled back to an earlier release and forward again, ohmail Cloud and the published server
+images included, still treats the settings that release saved as its own. After "Not now" on settings
+found under this device's own name, the decisions made on this device reach the mailbox beside them, so
+removing the mailbox from a phone after that no longer loses them. On the phone, a fresh install meeting a
+mailbox's settings no longer saves an empty copy beside them, and after Import the mailbox carries the
+imported settings within two passes instead of many minutes later, so another device reading the mailbox
+meanwhile no longer reads empty settings.
+
 ## [0.30.20] — 2026-10-31
 
 ### A new Outlook history folds when the earlier message opens with its quote
@@ -15740,7 +15757,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.20...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.21...HEAD
+[0.30.21]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.21
 [0.30.20]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.20
 [0.30.19]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.19
 [0.30.18]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.18

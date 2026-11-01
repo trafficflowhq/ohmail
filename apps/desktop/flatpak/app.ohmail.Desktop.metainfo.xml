@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.21" date="2026-11-01">
+      <description>
+        <ul>
+          <li>A restored backup no longer rolls back the settings stored in the mailbox</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.20" date="2026-10-31">
       <description>
         <ul>
@@ -127,23 +134,6 @@
           <li>Your own letters count as yours when your Sent folder has another name</li>
           <li>A screen reader calls an unnamed picture in a letter a picture</li>
           <li>An Undo that waits to be sent says Undone, and the command palette reaches every place</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.16" date="2026-10-30">
-      <description>
-        <ul>
-          <li>Sign-in notes reach every open window</li>
-          <li>The sign-in card after a refused session fits the desktop window</li>
-          <li>The first click on Screened out or Spam does less work on the desktop</li>
-          <li>The Screener opens faster the first time</li>
-          <li>Mark unread stays when an earlier Mark read is sent again</li>
-          <li>The desktop window follows older and low-contrast Omarchy themes, and says when it cannot</li>
-          <li>Letters on the phone open again after a quick flick at the top of the list</li>
-          <li>A letter you send to yourself shows once in its conversation</li>
-          <li>Search opens the letter you pressed, and Trash and Junk show what you just moved there</li>
-          <li>Rule dates, Send later on the night the clocks go back, and scheduled letters on the desktop</li>
-          <li>Forwarding a letter with a long run of blank lines or deeply nested quotes no longer stalls</li>
         </ul>
       </description>
     </release>
