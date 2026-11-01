@@ -9,7 +9,7 @@
  * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partWordKept, partWordTails, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands } from "./index.js";
+import { assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partWordKept, partWordTails, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands, SEARCH_WEEK_AHEAD, SEARCH_WEEK_UNDATED, monthIndexOf, monthStartOf } from "./index.js";
 import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -622,6 +622,11 @@ export function sqliteDialect(): Dialect {
       withDocument: (): null => null,
       // No `tsv` column on this store (see the migration's twin).
       document: (): null => null,
+      // The server function's meaning over epoch milliseconds; nothing on this store reads it.
+      week: (date: SQL, written: Date): SQL => sql`(case when ${date} is null then ${SEARCH_WEEK_UNDATED}
+        when ${date} >= ${monthStartOf(monthIndexOf(written) + 2).getTime()} then ${SEARCH_WEEK_AHEAD}
+        else cast(strftime('%Y', ${date} / 1000.0, 'unixepoch') as integer) * 12
+          + cast(strftime('%m', ${date} / 1000.0, 'unixepoch') as integer) - 1 end)`,
     },
   };
 }

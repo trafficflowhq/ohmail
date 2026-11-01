@@ -13,7 +13,9 @@ import { sql, type SQL } from "drizzle-orm";
 import { pgDialect } from "./pg.js";
 import { sqliteDialect } from "./sqlite.js";
 
-export { pgDialect } from "./pg.js";
+export {
+  pgDialect, datedAccount, datedMonths, datedRead, datedShared, type DatedArmSpec, type DatedBranch, type DatedSpec,
+} from "./pg.js";
 export {
   sqliteDialect, assertSqliteCapabilities, SQLITE_MINIMUM, onLocalNotify,
   deliverLocalNotifyAtCommit,
@@ -219,6 +221,11 @@ export interface MailWordArms {
   /** `text` reads the whole letter: each operand in any part, joined as typed ({@link straddlesParts}). */
   readonly across?: boolean;
   /**
+   * The whole-letter `text` as terms to be OR-ed, each one index read: every split of each group's
+   * operands over head and text. Absent where there are too many (past three) or a quoted one.
+   */
+  readonly terms?: readonly SQL[];
+  /**
    * No excluded operand anywhere in the letter. Not in `head` or `text`: the caller holds every arm
    * and the typo tier to it, on rows an arm has already cut where the store can.
    */
@@ -354,6 +361,21 @@ export interface UnindexedMailArms {
  * name. The server reads each side apart, each through its own trigram index.
  */
 export const SEARCH_NAMES_MARK = "\u001f";
+
+/** `message_search.search_week` of a letter with no Date header (mail 0174). */
+export const SEARCH_WEEK_UNDATED = -1;
+/** `message_search.search_week` of a letter dated past the month after it was written: every dated read asks it. */
+export const SEARCH_WEEK_AHEAD = -2;
+
+/** A UTC instant's month as `search_week` counts it: year × 12 + month − 1. */
+export function monthIndexOf(at: Date): number {
+  return at.getUTCFullYear() * 12 + at.getUTCMonth();
+}
+
+/** The first instant of a `search_week` month, in UTC. */
+export function monthStartOf(month: number): Date {
+  return new Date(Date.UTC(Math.floor(month / 12), ((month % 12) + 12) % 12, 1));
+}
 
 /** From this many characters a query word is also read as the START of a longer word. */
 export const PART_PREFIX_MIN_CHARS = 4;
@@ -790,20 +812,28 @@ export interface Dialect {
      * outside ASCII always passes. Never a match by itself; the operator still decides.
      */
     typoPrefilter(q: string, opts: { threshold: number; terms: SQL; lowered: SQL }): SQL | null;
-    /** See {@link MailWordArms}. A quoted span is a phrase on both stores' query parsers. */
-    words(q: string): MailWordArms;
+    /**
+     * See {@link MailWordArms}. A quoted span is a phrase on both stores' query parsers.
+     *
+     * `dated` (here and on {@link partWords}, {@link substring} and {@link names}): the server's dated reads'
+     * spelling (mail 0174). The vectors and the corpus are spelled as only the dated indexes key them, so the
+     * read takes its key and its words in one scan of those, and the typed text reaches the operator as a
+     * run-time value, which the planner does not price against the column's statistics. Ignored where there
+     * are no dated indexes. Asked only of a query with no excluded word: beside one the server reads as before.
+     */
+    words(q: string, opts?: { dated?: boolean }): MailWordArms;
     /**
      * THE PART-WORD ARMS, over the same indexed text as {@link words}: each word of
      * {@link partWordsOf} matches as itself and, from {@link PART_PREFIX_MIN_CHARS} characters,
      * as the start of a longer word, ANDed across words. A part therefore finds at least what the
      * whole word finds. `null` when the query has no such word.
      */
-    partWords(q: string): MailWordArms | null;
+    partWords(q: string, opts?: { dated?: boolean }): MailWordArms | null;
     /**
      * The query's characters inside the mail corpus's header text (subject, people) — `axa` inside
      * `myAXA`; on the device the file names too. Ranked by word similarity where trigrams exist, else recency.
      */
-    substring(q: string, opts: { trigram: boolean }): SearchArm;
+    substring(q: string, opts: { trigram: boolean; dated?: boolean }): SearchArm;
     /**
      * The query's characters inside the letter's file names, where the store reads them apart from
      * the header text (the server: `terms` after {@link SEARCH_NAMES_MARK}), by recency: a branch of
@@ -811,7 +841,7 @@ export interface Dialect {
      * a letter its file names find is one row there. `null` where the substring arm reads the names
      * itself (the device).
      */
-    names(q: string): SearchArm | null;
+    names(q: string, opts?: { dated?: boolean }): SearchArm | null;
     /** See {@link UnindexedMailArms}. */
     unindexed(q: string, opts: { trigram: boolean; threshold: number }): UnindexedMailArms | null;
     /**
@@ -851,6 +881,12 @@ export interface Dialect {
      * that has no such columns (its word index is over the rows themselves).
      */
     document(parts: SearchDocumentParts): { readonly head: SQL; readonly text: SQL } | null;
+    /**
+     * `message_search.search_week` (mail 0174) for a letter dated `date`, written at `written`: its UTC
+     * month as year × 12 + month − 1, {@link SEARCH_WEEK_UNDATED} with no date, {@link SEARCH_WEEK_AHEAD}
+     * dated past the month after `written`. The server's is mail 0174's own function.
+     */
+    week(date: SQL, written: Date): SQL;
   };
 }
 

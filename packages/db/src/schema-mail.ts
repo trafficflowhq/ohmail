@@ -2543,6 +2543,12 @@ export const messageSearch = pgTable("message_search", {
   terms: text("terms").notNull().default(""),
   source: text("source").notNull(),
   builtAt: timestamp("built_at", { withTimezone: true }).defaultNow().notNull(),
+  /**
+   * Mail 0174 — the letter's month (UTC year × 12 + month − 1) from `messages.date`, the server's dated
+   * search reads by it: -1 with no Date, -2 dated past the month after it was written (asked by every
+   * dated read). NULL = not filled yet (`search_dates_fill`). The name is kept; it holds a month. LAST.
+   */
+  searchWeek: integer("search_week"),
 }, (t) => ({
   // Pending list bounded at 256 kB (mail 0152): every search reads it whole.
   ixHeadTsv: index("message_search_head_tsv_idx").using("gin", t.headTsv).with({ gin_pending_list_limit: 256 }),
@@ -2781,6 +2787,11 @@ export const accountSettings = pgTable("account_settings", {
   htmlWordsBackfillAt: timestamp("html_words_backfill_at", { withTimezone: true }),
   /** The walk's resume point: the last message id it decided, in id order. NULL = from the start. */
   htmlWordsBackfillCursor: uuid("html_words_backfill_cursor"),
+  /**
+   * Mail 0174 — when every search document of this account had its month (`message_search.search_week`):
+   * the server's search reads by month only after it. NULL = owed. LAST: `ADD COLUMN` appends.
+   */
+  searchDatedAt: timestamp("search_dated_at", { withTimezone: true }),
 });
 
 /**

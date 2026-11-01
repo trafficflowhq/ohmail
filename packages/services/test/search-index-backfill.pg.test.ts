@@ -11,8 +11,8 @@ import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 import { eq, inArray } from "drizzle-orm";
 import {
-  SEARCH_BODY_MAX_CHARS, SEARCH_DOCUMENT_SHAPE_AT, searchDocumentOf, searchIndexBackfillPass, searchIndexBuilt, searchIndexOwedAccounts,
-  searchIndexProgress, searchInputsFromStore,
+  SEARCH_BODY_MAX_CHARS, SEARCH_DOCUMENT_SHAPE_AT, searchDated, searchDatesFillPass, searchDatesOwedAccounts, searchDocumentOf,
+  searchIndexBackfillPass, searchIndexBuilt, searchIndexOwedAccounts, searchIndexProgress, searchInputsFromStore,
 } from "@trafficflow/core/mail";
 
 /* @reads: packages/core/src/message-search.ts
@@ -191,6 +191,62 @@ describe("the search index backfill (real Postgres)", () => {
     expect(await vectorsOf(id, "fig-6-ledger.pdf")).toEqual({ head: false, text: true, parts: true, writers: true });
   });
 
+  const weeks = async (): Promise<Map<string, number | null>> => new Map(((await db.execute(sql`select message_id as id, search_week as w
+    from message_search where account_id = ${A}`)) as unknown as Array<{ id: string; w: number | null }>).map((r) => [r.id, r.w]));
+  const JANUARY_2026 = 2026 * 12;
+
+  it("every document carries its letter's month from the stored date, an older writer's too, and the dates fill marks the account once", async () => {
+    // The backfill and the refill wrote every document's month: the letters are dated in January 2026.
+    const written = await weeks();
+    expect(written.size).toBe(8);
+    expect([...written.values()]).toEqual(Array(8).fill(JANUARY_2026));
+    // An older writer's document, written with no month: the database fills it from the letter's date.
+    const [mb] = await db.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, A));
+    const letter = async (key: string, date: Date | null): Promise<string> => {
+      const [m] = await db.insert(messages).values({
+        accountId: A, mailboxId: mb!.id, bodyHash: "h", dedupKey: `bf:${key}`, subject: `Dated ${key}`, fromAddress: "d@club.example",
+        date, nativeLocator: { folder: "INBOX", ref: `2:${key}` },
+      }).returning();
+      await db.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
+        values (${m!.id}, ${A}, to_tsvector('english', ${key}), to_tsvector('english', ''), ${key}, 'headers_only')`);
+      return m!.id;
+    };
+    const december = await letter("december", new Date("2025-12-15T10:00:00Z"));
+    const undated = await letter("undated", null);
+    const ahead = await letter("ahead", new Date(Date.now() + 90 * 86_400_000));
+    const filled = await weeks();
+    expect([filled.get(december), filled.get(undated), filled.get(ahead)]).toEqual([2025 * 12 + 11, -1, -2]);
+    // Documents written before mail 0174 have none: the fill gives each its month, in rounds, and marks the
+    // account once its walk has read the last document, and only then.
+    await db.execute(sql`update message_search set search_week = null where account_id = ${A}`);
+    expect(await searchDated(db as never, A)).toBe(false);
+    expect(await searchDatesFillPass({ db: db as never, accountId: A, batch: 4, until: () => true })).toMatchObject({ ran: true, filled: 4, rounds: 1, marked: false });
+    expect([...(await weeks()).values()].filter((w) => w === null)).toHaveLength(7);
+    expect(await searchDatesFillPass({ db: db as never, accountId: A, batch: 4, limit: 100 })).toMatchObject({ ran: true, filled: 7, marked: true });
+    expect(await searchDated(db as never, A)).toBe(true);
+    expect(await weeks()).toEqual(filled);
+    expect(await searchDatesFillPass({ db: db as never, accountId: A })).toMatchObject({ ran: false, filled: 0 });
+    for (const id of [december, undated, ahead]) {
+      await db.execute(sql`delete from message_search where message_id = ${id}`);
+      await db.execute(sql`delete from messages where id = ${id}`);
+    }
+  });
+
+  it("the dates fill writes a batch a statement, stops between statements once its slice is spent, and at its share", async () => {
+    await db.execute(sql`update message_search set search_week = null where account_id = ${A}`);
+    await db.execute(sql`update account_settings set search_dated_at = null where account_id = ${A}`);
+    const owed = async (): Promise<number> => [...(await weeks()).values()].filter((w) => w === null).length;
+    // The slice is spent from the start: one statement's documents, then it stops, unmarked.
+    expect(await searchDatesFillPass({ db: db as never, accountId: A, batch: 3, until: () => true })).toMatchObject({ ran: true, filled: 3, rounds: 1, marked: false, cut: true });
+    expect(await owed()).toBe(5);
+    // A share of two: two written, in one statement of two.
+    expect(await searchDatesFillPass({ db: db as never, accountId: A, batch: 3, limit: 2 })).toMatchObject({ filled: 2, rounds: 1, marked: false, cut: true });
+    expect(await owed()).toBe(3);
+    // The rest, in statements of three, and the mark once the walk has read the last document.
+    expect(await searchDatesFillPass({ db: db as never, accountId: A, batch: 3, limit: 100 })).toMatchObject({ filled: 3, marked: true, cut: false });
+    expect(await owed()).toBe(0);
+  });
+
   it("takes no mailbox: the pass's arguments carry no adapter, and its module imports none", () => {
     const src = readFileSync(new URL("../../core/src/message-search.ts", import.meta.url), "utf8");
     const sig = src.slice(src.indexOf("export async function searchIndexBackfillPass"), src.indexOf("): Promise<SearchIndexBackfillResult>"));
@@ -249,6 +305,16 @@ describe("the accounts the backfill owes (real Postgres)", () => {
   it("the shard predicate narrows the list and the limit bounds it", async () => {
     expect(await searchIndexOwedAccounts(own as never, { limit: 1000, shard: inArray(accounts.id, [owedB, done]) })).toEqual([owedB]);
     expect(await searchIndexOwedAccounts(own as never, { limit: 1, shard: inArray(accounts.id, mine) })).toHaveLength(1);
+  });
+
+  it("the dates fill owes every account with living mail and no dates mark, and none once it is written", async () => {
+    expect((await searchDatesOwedAccounts(own as never, { limit: 1000, shard: inArray(accounts.id, mine) })).sort())
+      .toEqual([owedA, owedB, done, older].sort());
+    expect(await searchDatesFillPass({ db: own as never, accountId: owedB })).toMatchObject({ ran: true, marked: true });
+    expect(await searchDatesFillPass({ db: own as never, accountId: gone })).toMatchObject({ ran: true, marked: false });
+    expect((await searchDatesOwedAccounts(own as never, { limit: 1000, shard: inArray(accounts.id, mine) })).sort())
+      .toEqual([owedA, done, older].sort());
+    expect(await searchDatesOwedAccounts(own as never, { limit: 1, shard: inArray(accounts.id, mine) })).toHaveLength(1);
   });
 
   it("reads a long body only as far as the document keeps it, and the document still starts with its words", async () => {

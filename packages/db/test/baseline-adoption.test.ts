@@ -920,6 +920,10 @@ describe("the baseline cutoff is frozen", () => {
       // The html-words backfill's stamp and cursor: two nullable ADD COLUMN IF NOT EXISTS on
       // account_settings, no data. Safe over any history.
       "0172_html_words_backfill",
+      // A search document's month and the account's mark: two nullable ADD COLUMN IF NOT EXISTS, a
+      // function and a trigger function replaced in place, a trigger created only where missing. No
+      // data. Safe over any history.
+      "0174_search_dated",
     ]);
 
     // The cloud half of the same set, read the same way.

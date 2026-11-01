@@ -191,6 +191,16 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "store-only — no adapter, no lease; the document's FK refuses a row whose message is gone, and a failure is logged and never fails the tail",
   },
   {
+    name: "search_dates_fill",
+    module: `${CORE}/message-search.ts`, entry: "searchDatesFillPass",
+    triggers: ["cycle-tail"],
+    cadence: "every cycle tail, for this shard's accounts with living mail and no account_settings.search_dated_at",
+    budget: "SEARCH_DATES_PER_TAIL documents a tail over at most SEARCH_DATES_ACCOUNTS_PER_TAIL accounts, statements of SEARCH_DATES_BATCH; a TAIL_SLICE_BUDGET_MS `until` clock in the tail, checked between statements",
+    owns: "every search document has its letter's month (mail 0174), and the account's search_dated_at is written once the walk has read the last one, "
+      + "after which the server's search reads by month",
+    fence: "store-only — no adapter, no lease; each round's UPDATE fills only documents without a month, and a failure is logged and never fails the tail",
+  },
+  {
     name: "html_words_backfill",
     module: `${W}/html-words-backfill.ts`, entry: "htmlWordsBackfillPass",
     triggers: ["cycle-tail", "sidecar-drain"],

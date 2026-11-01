@@ -6,7 +6,8 @@ import { sql, type SQL } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { mailboxes } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes, ensureWordIndex } from "@trafficflow/db/admin";
+import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes, ensureWordIndex, ensureDatedIndexes } from "@trafficflow/db/admin";
+import { searchDatesFillPass } from "@trafficflow/core/mail";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
@@ -296,9 +297,9 @@ describe("a recency arm reads its account's words off the keyed index (real Post
     }
   }, 120_000);
 
-  it("every answer is exact: the relevance chain is the newest matches, the date order agrees, the total counts them", async () => {
+  /** Every case under every filter: the relevance chain, the date order and the total, against the store's own matches. */
+  const exactAnswers = async (c: ServiceContext): Promise<void> => {
     const svc = new SearchService();
-    const c: ServiceContext = { ...ctx, accountId: W };
     const CASES: Array<{ q: string; words: string[] }> = [
       { q: "lantern", words: ["lantern"] }, { q: "ribbon", words: ["ribbon"] }, { q: "oldtide", words: ["oldtide"] },
       { q: "lante", words: ["lantern"] }, { q: "midto", words: ["midtown"] }, { q: "alpha ribbon", words: ["alpha", "ribbon"] },
@@ -336,6 +337,10 @@ describe("a recency arm reads its account's words off the keyed index (real Post
         if (summary.totalExact) expect(summary.total, what).toBe(truth.length);
       }
     }
+  };
+
+  it("every answer is exact: the relevance chain is the newest matches, the date order agrees, the total counts them", async () => {
+    await exactAnswers({ ...ctx, accountId: W });
   }, 120_000);
 
   it("a small working memory keeps the History walk's membership test a hashed set", async () => {
@@ -378,6 +383,20 @@ describe("a recency arm reads its account's words off the keyed index (real Post
       }
     } finally {
       await ensureWordIndex(base, { concurrently: false });
+    }
+  }, 120_000);
+
+  // Read by month (mail 0174): once W's documents carry their months, its pages read the dated index and
+  // every answer is the same exact one.
+  it("read by month, every answer is the same exact one", async () => {
+    await ensureDatedIndexes(base, { concurrently: false });
+    expect(await searchDatesFillPass({ db: base as never, accountId: W, limit: 1_000_000 })).toMatchObject({ marked: true });
+    try {
+      const { nodes } = await pageOf("lantern", { on: brandDialect(drizzle(client, { schema }), "pg") });
+      expect(nodes.map((n) => n["Index Name"])).toContain("message_search_dated_words_idx");
+      await exactAnswers({ ...ctx, db: brandDialect(drizzle(client, { schema }), "pg") as never, accountId: W });
+    } finally {
+      await base.execute(sql`update account_settings set search_dated_at = null where account_id = ${W}::uuid`);
     }
   }, 120_000);
 });

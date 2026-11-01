@@ -164,12 +164,20 @@ function shaped(db: unknown): boolean {
   return dialect(db).search.document(NO_PARTS) !== null;
 }
 
+/**
+ * A document's month (mail 0174), from the letter's stored date: the date the dated reads sort by, so
+ * the two never disagree, whatever the writer was handed.
+ */
+function weekOf(db: unknown, messageId: SQL | string, written: Date): SQL {
+  return sql`(select ${dialect(db).search.week(sql`m.date`, written)} from messages m where m.id = ${messageId})`;
+}
+
 /** One document's row values on the store the handle belongs to. */
-function rowOf(db: unknown, messageId: string, input: MessageSearchInput, builtAt: Date): Record<string, unknown> {
+function rowOf(db: unknown, messageId: string, input: MessageSearchInput, builtAt: Date, written: Date): Record<string, unknown> {
   const { parts, terms } = searchDocumentOf(input);
   const vectors = dialect(db).search.document(parts);
   return {
-    messageId, accountId: input.accountId, terms, source: input.source, builtAt,
+    messageId, accountId: input.accountId, terms, source: input.source, builtAt, searchWeek: weekOf(db, messageId, written),
     ...(vectors === null ? {} : { headTsv: vectors.head, textTsv: vectors.text }),
   };
 }
@@ -182,10 +190,13 @@ export function messageSearchUpsert(
   const vectors = dialect(db).search.document(NO_PARTS) === null ? {} : {
     headTsv: sql`excluded.head_tsv`, textTsv: sql`excluded.text_tsv`,
   };
-  const values = rows.map((r) => rowOf(db, r.messageId, r.input, shapeFloor(now)));
+  const values = rows.map((r) => rowOf(db, r.messageId, r.input, shapeFloor(now), now));
   return db.insert(messageSearch).values(values as never).onConflictDoUpdate({
     target: messageSearch.messageId,
-    set: { terms: sql`excluded.terms`, source: sql`excluded.source`, builtAt: sql`excluded.built_at`, ...vectors } as never,
+    set: {
+      terms: sql`excluded.terms`, source: sql`excluded.source`, builtAt: sql`excluded.built_at`,
+      searchWeek: sql`excluded.search_week`, ...vectors,
+    } as never,
   });
 }
 
@@ -273,7 +284,7 @@ async function fileNamesOf(db: Tx, accountId: string, ids: string[]): Promise<Ma
  * shape's stamp. No body is read, so a withheld body's document keeps the words it was built with. One
  * statement per {@link INSERT_CHUNK}.
  */
-async function refillFileNames(db: Tx, accountId: string, ids: string[]): Promise<void> {
+async function refillFileNames(db: Tx, accountId: string, ids: string[], now: Date): Promise<void> {
   if (ids.length === 0) return;
   const d = dialect(db);
   const namesOf = await fileNamesOf(db, accountId, ids);
@@ -295,7 +306,8 @@ async function refillFileNames(db: Tx, accountId: string, ids: string[]): Promis
     await d.exec(db, sql`update message_search set built_at = ${shape},
       head_tsv = case message_id ${sql.join(head, sql` `)} end,
       text_tsv = text_tsv || case message_id ${sql.join(text, sql` `)} end,
-      terms = case message_id ${sql.join(terms, sql` `)} end
+      terms = case message_id ${sql.join(terms, sql` `)} end,
+      search_week = ${weekOf(db, sql`message_search.message_id`, now)}
       where account_id = ${accountId} and built_at < ${shape} and message_id in (${sql.join(chunk.map((h) => sql`${h.id}`), sql`, `)})`);
   }
 }
@@ -421,9 +433,10 @@ export async function searchIndexBackfillPass(args: {
         .orderBy(sql`${messages.date} desc nulls last`, desc(messages.id))
         .limit(batch);
       const t = tx as unknown as Tx;
+      const at = now();
       const inputs = await searchInputsFromStore(t, accountId, ids.filter((r) => r.doc === null).map((r) => r.id));
-      await upsertMessageSearchRows(t, inputs, now());
-      await refillFileNames(t, accountId, ids.filter((r) => r.doc !== null).map((r) => r.id));
+      await upsertMessageSearchRows(t, inputs, at);
+      await refillFileNames(t, accountId, ids.filter((r) => r.doc !== null).map((r) => r.id), at);
       return ids;
     });
     written += page.length;
@@ -437,6 +450,130 @@ export async function searchIndexBackfillPass(args: {
     if (p.total > 0 && p.done >= p.total) marked = await stampSearchIndexBuilt(db, accountId, now());
   }
   return { ran: true, written, rounds, marked };
+}
+
+/**
+ * Documents one dates statement reads and writes at most. A month written rewrites the whole document and
+ * every index entry it has (the month is indexed, so the update is never HOT): a statement this size stays
+ * well inside the cycle tail's slice.
+ */
+export const SEARCH_DATES_BATCH = 200;
+/** Documents one cycle tail's dates section writes, over all its accounts: the fill is spread over many tails. */
+export const SEARCH_DATES_PER_TAIL = 1_000;
+/** Accounts one cycle tail's dates section visits, at most. */
+export const SEARCH_DATES_ACCOUNTS_PER_TAIL = 16;
+
+/**
+ * Where an account's dates walk stopped, per handle: the last document id it read. Kept in memory,
+ * because a walk from the start only re-reads documents that already have their month.
+ */
+const datesWalked = new WeakMap<object, Map<string, string>>();
+
+/** The accounts the dates fill still owes: living mail and no `search_dated_at`. `shard` is over `accounts.id`. */
+export async function searchDatesOwedAccounts(db: Tx, opts: { limit: number; shard?: SQL }): Promise<string[]> {
+  const rows = await db.select({ id: accounts.id }).from(accounts)
+    .leftJoin(accountSettings, eq(accountSettings.accountId, accounts.id))
+    .where(and(
+      isNull(accountSettings.searchDatedAt),
+      sql`exists (select 1 from ${messages} where ${messages.accountId} = ${accounts.id} and ${messages.deletedAt} is null)`,
+      opts.shard,
+    ))
+    .orderBy(accounts.id)
+    .limit(opts.limit);
+  return rows.map((r) => r.id);
+}
+
+/** Has every document of this account its month? `false` for no settings row or a failed read. */
+export async function searchDated(db: Tx, accountId: string): Promise<boolean> {
+  try {
+    const [row] = await db.select({ at: accountSettings.searchDatedAt }).from(accountSettings)
+      .where(eq(accountSettings.accountId, accountId)).limit(1);
+    return row?.at != null;
+  } catch {
+    return false;
+  }
+}
+
+export interface SearchDatesFillResult {
+  /** False when the account's mark was already written: nothing was read. */
+  readonly ran: boolean;
+  /** Documents given their month by this run. */
+  readonly filled: number;
+  /** Statements this run wrote with. */
+  readonly rounds: number;
+  /** The mark was written by this run. */
+  readonly marked: boolean;
+  /** The run stopped at its slice or its share, documents still unread. */
+  readonly cut: boolean;
+}
+
+/**
+ * THE DATES FILL — `search_dates_fill` in the worker's pass registry (mail 0174). The account's documents
+ * in id order, `batch` a statement: a document without its month gets it from its letter's stored date.
+ * Every writer since mail 0174 writes the month (its trigger where an older writer leaves it out), so once
+ * the walk has read the last document none is left without one, and the account's `search_dated_at` is
+ * written; the server's search reads by month only after it. Deleted letters' documents are dated too, so
+ * a letter that comes back has its month. Store-only, no mailbox read. It writes at most `limit` documents
+ * (the tail's share) and stops between statements once `until` says the caller's slice is spent.
+ */
+export async function searchDatesFillPass(args: {
+  db: Tx; accountId: string; now?: () => Date; batch?: number; limit?: number; until?: () => boolean;
+}): Promise<SearchDatesFillResult> {
+  const { db, accountId } = args;
+  const batch = args.batch ?? SEARCH_DATES_BATCH;
+  const limit = args.limit ?? SEARCH_DATES_PER_TAIL;
+  const until = args.until ?? (() => false);
+  const now = args.now ?? (() => new Date());
+  if (await searchDated(db, accountId)) return { ran: false, filled: 0, rounds: 0, marked: false, cut: false };
+  const d = dialect(db);
+  const handle = db as unknown as object;
+  const walked = datesWalked.get(handle) ?? new Map<string, string>();
+  datesWalked.set(handle, walked);
+  let after = walked.get(accountId) ?? null;
+  let filled = 0;
+  let rounds = 0;
+  let drained = false;
+  while (filled < limit && !(rounds > 0 && until())) {
+    rounds += 1;
+    // Never more read than the share has left to write: every document read may be one written.
+    const want = Math.min(batch, limit - filled);
+    const ids = await db.select({ id: messageSearch.messageId }).from(messageSearch)
+      .where(and(eq(messageSearch.accountId, accountId), ...(after === null ? [] : [sql`${messageSearch.messageId} > ${after}`])))
+      .orderBy(messageSearch.messageId)
+      .limit(want);
+    const last = ids[ids.length - 1]?.id;
+    if (last !== undefined) {
+      const written = await d.exec(db, sql`update message_search set search_week = ${weekOf(db, sql`message_search.message_id`, now())}
+        where account_id = ${accountId} and search_week is null${after === null ? sql`` : sql` and message_id > ${after}`}
+          and message_id <= ${last}
+        returning message_id`);
+      filled += written.length;
+      after = last;
+      walked.set(accountId, last);
+    }
+    if (ids.length < want) { drained = true; break; }
+  }
+  let marked = false;
+  if (drained) {
+    walked.delete(accountId);
+    marked = await stampSearchDated(db, accountId, now());
+  }
+  return { ran: true, filled, rounds, marked, cut: !drained };
+}
+
+/**
+ * Write the account's dates mark once. An account with no settings row gains one, but only while it
+ * still has living mail: an erased account's empty store must not grow a settings row back.
+ */
+async function stampSearchDated(db: Tx, accountId: string, at: Date): Promise<boolean> {
+  const d = dialect(db);
+  await d.exec(db, sql`
+    insert into account_settings (account_id, search_dated_at)
+    select ${accountId}, ${d.ts(at)}
+    where exists (select 1 from messages where account_id = ${accountId} and deleted_at is null)
+    on conflict (account_id) do update
+      set search_dated_at = coalesce(account_settings.search_dated_at, excluded.search_dated_at)`);
+  return searchDated(db, accountId);
 }
 
 /** Strictly after `(date, id)` under `date desc nulls last, id desc` — the History keyset. */

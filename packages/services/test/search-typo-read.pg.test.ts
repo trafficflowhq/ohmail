@@ -5,7 +5,8 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { schema } from "@trafficflow/db/cloud";
-import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
+import { runMigrations, ensureSearchExtensions, ensureDatedIndexes } from "@trafficflow/db/admin";
+import { searchDatesFillPass } from "@trafficflow/core/mail";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
@@ -70,4 +71,14 @@ describe("the typo arm's read (real Postgres, pg_trgm)", () => {
     const p = typoPaths(await planOf(q, filters));
     expect(p, q).toEqual(path === "walk" ? { walked: true, read: false } : path === "index" ? { walked: false, read: true } : { walked: true, read: true });
   });
+
+  // Read by month (mail 0174), once the documents carry their months: the same pages, the oracle's.
+  it("read by month, every relevance page still equals the newest cut of the operator's matches", async () => {
+    await ensureDatedIndexes(db, { concurrently: false });
+    expect(await searchDatesFillPass({ db: db as never, accountId: A, limit: 1_000_000 })).toMatchObject({ marked: true });
+    const c = { ...ctx(), db: brandDialect(drizzle(client, { schema }), "pg") };
+    for (const { q, filters } of TYPO_CASES) {
+      expect(await typoPages(svc, c, q, filters), `${q} ${JSON.stringify(filters)}`).toMatchObject({ tier: "similar", ids: await typoOracle(db, A, q, filters) });
+    }
+  }, 120_000);
 });

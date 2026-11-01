@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { ensureConcurrentIndexes, plainIndexDdl } from "../src/concurrent-index.js";
 import { HOT_PATH_INDEX_SPECS, ensureHotPathIndexes } from "../src/hot-path-indexes.js";
-import { TRIGRAM_INDEX_SPECS } from "../src/search-setup.js";
+import { DATED_INDEX_SPECS, TRIGRAM_INDEX_SPECS, ensureDatedIndexes } from "../src/search-setup.js";
 import { makeTestDb } from "../src/testing.js";
 
 /**
@@ -79,5 +79,37 @@ describe("the plain form of an index statement", () => {
     expect(rows.rows.every((r) => r.valid)).toBe(true);
     expect(sent.filter((q) => /^\s*create index/i.test(q)).length, "at least one index was built here").toBeGreaterThan(0);
     expect(sent.filter((q) => /concurrently/i.test(q))).toEqual([]);
+  });
+});
+
+/**
+ * MAIL 0174's DATED INDEXES WAIT FOR THE MONTHS. Built before the worker's fill, every month it writes
+ * re-inserts the document into four more indexes; so setup builds them only once no account with living
+ * mail is still owed its documents' months, and a later setup run builds them then.
+ */
+describe("the dated search indexes, after the month fill", () => {
+  const run = async (owed: boolean): Promise<{ sent: string[]; built: boolean }> => {
+    const sent: string[] = [];
+    const fake = {
+      execute: async (q: ReturnType<typeof sql>) => {
+        const text = render(q);
+        sent.push(text);
+        if (text.includes("search_dated_at")) return [{ owed }];
+        if (text.includes("information_schema")) return [{ present: true }];
+        return [];
+      },
+    };
+    const built = await ensureDatedIndexes(fake, { afterFill: true });
+    return { sent, built };
+  };
+
+  it("while an account with living mail has no dates mark none is built; once none has, all four, concurrently", async () => {
+    const waiting = await run(true);
+    expect({ built: waiting.built, ddl: waiting.sent.filter((q) => /create index/i.test(q)) }).toEqual({ built: false, ddl: [] });
+    const filled = await run(false);
+    expect(filled.built).toBe(true);
+    for (const spec of DATED_INDEX_SPECS) {
+      expect(filled.sent.some((q) => /create index concurrently/i.test(q) && q.includes(`"${spec.name}"`)), spec.name).toBe(true);
+    }
   });
 });

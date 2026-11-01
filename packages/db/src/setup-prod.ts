@@ -11,7 +11,9 @@ import {
 } from "./migration-provenance.js";
 import { runMigrations, openMigrationSession, JOURNALS } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
-import { ensureSearchExtensions, ensureWithheldProvenanceIndex, ensureWordIndex, TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC } from "./search-setup.js";
+import {
+  DATED_INDEX_SPECS, ensureDatedIndexes, ensureSearchExtensions, ensureWithheldProvenanceIndex, ensureWordIndex, TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC,
+} from "./search-setup.js";
 import {
   ensureHotPathIndexes, HOT_PATH_INDEXES, DEFERRED_HOT_PATH_INDEXES,
 } from "./hot-path-indexes.js";
@@ -104,8 +106,10 @@ export interface ProdSetupReport {
   appliedThisRun: string[];
   pgTrgm: boolean;
   pgTrgmVersion: string | null;
-  /** The trigram GIN indexes and the word index that exist, sorted. */
+  /** The trigram GIN indexes, the word index and the dated search indexes that exist, sorted. */
   trigramIndexes: string[];
+  /** The dated search indexes waited for the worker's month fill (mail 0174): a later setup builds them. */
+  datedIndexesWait: boolean;
   /** Which of {@link HOT_PATH_INDEXES} exist, sorted — verified fail-closed below. */
   hotPathIndexes: string[];
   /** Deferred indexes whose table has crossed its ceiling and which are still missing. */
@@ -573,6 +577,7 @@ export async function setupProdDatabase(
   const clientSession = await openMigrationSession(url, { log });
   const client = clientSession.sql;
   const db = drizzle(client);
+  let datedIndexesWait = false;
   try {
     // Same reasoning as the `pre` session above: `ensureSearchExtensions` builds trigram GIN
     // indexes, and the role default this function itself installs (below) must not be able to
@@ -584,6 +589,8 @@ export async function setupProdDatabase(
     await ensureSearchExtensions(db);
     log("ensuring the account-keyed word index");
     await ensureWordIndex(db, { log: (m) => log(m) });
+    log("ensuring the dated search indexes");
+    datedIndexesWait = !(await ensureDatedIndexes(db, { log: (m) => log(m), afterFill: true }));
 
     // AFTER the migrator, not before it: these index tables the journal creates, and unlike the
     // provenance prebuild there is no journal statement to beat to the punch. Same session, so
@@ -772,7 +779,7 @@ export async function setupProdDatabase(
       db,
       sql`select indexname from pg_indexes where schemaname = 'public'
           and (tablename::text, indexname::text) in (${sql.join(
-            [...TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC].map((s) => sql`(${s.table}::text, ${s.name}::text)`), sql`, `)})`,
+            [...TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC, ...DATED_INDEX_SPECS].map((s) => sql`(${s.table}::text, ${s.name}::text)`), sql`, `)})`,
     );
     // Every `ensureHotPathIndexes` build, read back by name — the list is DERIVED from the specs,
     // never typed here. `indisvalid` as well as existence: a failed CONCURRENTLY build leaves an
@@ -850,6 +857,7 @@ export async function setupProdDatabase(
       pgTrgm: ext.length > 0,
       pgTrgmVersion: ext[0]?.extversion ?? null,
       trigramIndexes: idx.map((r) => r.indexname).sort(),
+      datedIndexesWait,
       hotPathIndexes: hotIdx.map((r) => r.indexname).sort(),
       deferredIndexesOverCeiling: deferredOverCeiling.sort(),
       changeLogCompositeIndex: composite[0]?.indexname ?? null,
@@ -873,6 +881,10 @@ export async function setupProdDatabase(
       if (!report.trigramIndexes.includes(want)) problems.push(`trigram GIN index missing: ${want}`);
     }
     if (!report.trigramIndexes.includes(WORD_INDEX_SPEC.name)) problems.push(`search word index missing: ${WORD_INDEX_SPEC.name}`);
+    // Waiting for the month fill, they are built by a later setup run, and search reads without months until then.
+    for (const spec of report.datedIndexesWait ? [] : DATED_INDEX_SPECS) {
+      if (!report.trigramIndexes.includes(spec.name)) problems.push(`dated search index missing: ${spec.name}`);
+    }
     for (const want of HOT_PATH_INDEXES) {
       if (!report.hotPathIndexes.includes(want)) {
         problems.push(`hot-path index missing or INVALID: ${want}`);
