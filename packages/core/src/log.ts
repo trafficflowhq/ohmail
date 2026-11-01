@@ -227,6 +227,10 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // itself; never an address, a subject or a folder name.
   "current", "removable", "own", "foreignStale", "duplicate", "malformed",
   "keptForeignFresh", "keptUnrecognised", "keptNewerDated", "keptHeld", "keptOwnBesideUnseen", "keptFound", "unseenCurrent", "owed", "tidyMode",
+  // A settings copy that did not read back (`profile_append_unreadable`), WITH its call site: the transfer
+  // encoding the stored copy's header names, one of seven literals the writer spells, and the longest line of
+  // the copy as written, a count. Its `why`, `malformed` and `sections` are our own literals and names.
+  "transfer", "longestLine",
   "sample", "claims", "threadsCreated", "contactsImported", "sentRecipients", "truncated",
   "maxPages", "healthPort", "signal",
   // ── The desktop host door's loopback listener (`host_listening`), added WITH the call site ──

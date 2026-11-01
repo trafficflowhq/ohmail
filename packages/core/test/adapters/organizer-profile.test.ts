@@ -10,6 +10,7 @@ import {
   localSaysWhatAFingerprintSays,
   profileFingerprint,
   profileGateView,
+  profilePayloadAsRead,
   readOrganizerProfile,
   writeOrganizerProfile,
   isMalformedProfile,
@@ -19,7 +20,7 @@ import {
 } from "../../src/adapters/organizer-profile.js";
 import { formatClaim, parseClaim } from "../../src/adapters/organizer-lease.js";
 import { resetMetaMemos } from "../../src/adapters/meta-memo.js";
-import { memoryImapServer } from "./_metaworld.js";
+import { memoryImapServer, reencodeBody } from "./_metaworld.js";
 
 /**
  * THE PORTABLE ORGANIZER PROFILE — the format half, pure.
@@ -894,5 +895,78 @@ describe("the requests an organizer applied travel in the envelope", () => {
     const parsed = read(raw);
     expect(parsed.doc!.applied).toBeUndefined();
     expect(parsed.doc!.rules.length).toBe(richPayload().rules.length);
+  });
+});
+
+/**
+ * A COPY READS BACK AS WRITTEN: a reader undoes a transfer encoding the server applied to the
+ * stored body, and a writer publishes each value the way a reader reads it back. Either half
+ * missing, the write's read-back removed every new copy of one account's settings.
+ */
+describe("a copy reads back as written, whatever the server's transfer encoding and the store's values", () => {
+  const raw = formatProfileMessage(makeProfileDoc({ ...richPayload(), signature: "s".repeat(400) }, { updatedAt: AT, producer: PRODUCER }), { installId: "i" });
+  const read = (r: string) => {
+    const parsed = parseProfileMessage(r);
+    if (parsed === null || isMalformedProfile(parsed) || parsed.status !== "ok") throw new Error(`unreadable: ${JSON.stringify(parsed)}`);
+    return parsed;
+  };
+  const ZERO = { screener: 0, rules: 0, notifyRules: 0, tagNames: 0 };
+
+  it("a copy served as quoted-printable or base64 reads as the copy written", () => {
+    for (const cte of ["quoted-printable", "base64"] as const) {
+      const parsed = read(reencodeBody(raw, cte));
+      expect(profileFingerprint(parsed.doc!), cte).toBe(profileFingerprint(read(raw).doc!));
+      expect(parsed.encoded, `${cte}: the decoded body is not the escaped form`).toBe(true);
+    }
+    // A plain copy an older build wrote carries names as UTF-8 bytes, and they decode as such.
+    const doc = makeProfileDoc({ ...richPayload(), tagNames: ["Grüße"] }, { updatedAt: AT, producer: PRODUCER });
+    const escaped = formatProfileMessage(doc, { installId: "i" });
+    const plain = `${escaped.slice(0, escaped.indexOf("{"))}${JSON.stringify(doc, null, 2).replace(/\n/g, "\r\n")}\r\n`;
+    for (const cte of ["quoted-printable", "base64"] as const) expect(read(reencodeBody(plain, cte)).doc!.tagNames, cte).toEqual(["Grüße"]);
+  });
+
+  it("a 7bit copy, and one naming two transfer encodings, read as before", () => {
+    const odd = formatProfileMessage(makeProfileDoc(richPayload(), { updatedAt: AT, producer: { kind: "local", version: "1.0=41" } }), { installId: "i" });
+    expect(read(odd).doc!.producer.version, "a 7bit body was decoded").toBe("1.0=41");
+    const doubled = reencodeBody(raw, "quoted-printable").replace(/^(Content-Transfer-Encoding: .*)$/m, "$1\r\nContent-Transfer-Encoding: 7bit");
+    expect(parseProfileMessage(doubled)).toEqual({ malformed: true, reason: "document is not JSON" });
+  });
+
+  it("the payload as read moves no well-formed or parsed fingerprint, and reading it twice changes nothing more", () => {
+    const rich = richPayload();
+    expect(profilePayloadAsRead(rich).changed).toEqual(ZERO);
+    expect(profileFingerprint(profilePayloadAsRead(rich).payload)).toBe(profileFingerprint(rich));
+    const parsed = read(raw).doc!;
+    expect(profilePayloadAsRead(parsed).changed).toEqual(ZERO);
+    expect(profileFingerprint(profilePayloadAsRead(parsed).payload)).toBe(profileFingerprint(parsed));
+    const once = profilePayloadAsRead({ ...rich, tagNames: ["", "x"], rules: [{ ...rich.rules[0]!, priority: 1500 }] });
+    expect(profilePayloadAsRead(once.payload)).toEqual({ payload: once.payload, changed: ZERO });
+  });
+
+  it("each value a reader reads otherwise is published as the reader reads it", () => {
+    const rule = { kind: "sender", match: "hi@example.com", destination: "ohmail/News", priority: 0, enabled: true, provenance: "manual" };
+    const CASES: Array<[string, keyof typeof ZERO, Partial<OrganizerProfilePayload>]> = [
+      ["an address with spaces around it", "screener", { screener: [{ address: " carol@example.com " }] }],
+      ["an empty address", "screener", { screener: [{ address: "" }] }],
+      ["a priority past the bound", "rules", { rules: [{ ...rule, priority: 1500 }] }],
+      ["a priority below it", "rules", { rules: [{ ...rule, priority: -1 }] }],
+      ["an empty kind", "rules", { rules: [{ ...rule, kind: "" }] }],
+      ["an empty match", "rules", { rules: [{ ...rule, match: "" }] }],
+      ["an empty destination", "rules", { rules: [{ ...rule, destination: "" }] }],
+      ["an empty notification target", "notifyRules", { notifyRules: [{ kind: "sender", target: "" }] }],
+      ["an empty tag name", "tagNames", { tagNames: [""] }],
+    ];
+    const selfReads = (p: OrganizerProfilePayload): boolean => {
+      const doc = makeProfileDoc(p, { updatedAt: AT, producer: PRODUCER });
+      const back = parseProfileMessage(formatProfileMessage(doc, { installId: "i" }));
+      return back !== null && !isMalformedProfile(back) && profileFingerprint(back.doc!) === profileFingerprint(doc);
+    };
+    for (const [name, list, over] of CASES) {
+      const p = { ...richPayload(), ...over };
+      expect(selfReads(p), `${name}: the fixture reads back as written`).toBe(false);
+      const asRead = profilePayloadAsRead(p);
+      expect(asRead.changed, name).toEqual({ ...ZERO, [list]: 1 });
+      expect(selfReads(asRead.payload), `${name}: published otherwise than a reader reads it`).toBe(true);
+    }
   });
 });

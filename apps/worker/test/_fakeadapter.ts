@@ -360,11 +360,14 @@ export class FakeMetaFolder implements LeaseIo, ProfileIo {
     return this.messages.map((m) => ({ ...m, generation: this.profileGeneration }));
   }
 
+  /** What the server stores for a profile APPEND when it does not keep the bytes it was handed. */
+  profileStoredAs: ((raw: string) => string) | null = null;
+
   async appendProfile(raw: string): Promise<void> {
     this.refuseIfDead();
     this.profileAppends++;
     this.onEvent("profile_append");
-    this.messages.push({ ref: this.nextUid++, raw });
+    this.messages.push({ ref: this.nextUid++, raw: this.profileStoredAs === null ? raw : this.profileStoredAs(raw) });
   }
 
   async removeProfiles(refs: readonly unknown[]): Promise<void> {

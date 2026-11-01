@@ -9,7 +9,8 @@ import {
   type Tx,
 } from "@trafficflow/db";
 import {
-  PROFILE_VERSION, makeProfileDoc, profileFingerprint, signatureReceipt,
+  PROFILE_VERSION, formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
+  signatureReceipt,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { effectiveMailboxSignatures } from "../src/consent-seed.js";
@@ -273,6 +274,19 @@ describe("the import candidate", () => {
     await seedHeldMarker(w, older);
     const dto = await profileImportService.candidate(w.ctx, w.mailboxId);
     expect(dto).toEqual({ state: "none" });
+  });
+
+  it("a copy of a store holding a priority past the bound, as every reader reads both, asks nothing", async () => {
+    const w = await world();
+    const rule = { kind: "sender", match: "hi@example.com", destination: "ohmail/News", priority: 1500, enabled: true, provenance: "manual" };
+    await w.db.insert(rules).values({ accountId: w.accountId, ...rule });
+    // The copy another install wrote from the same store, as a reader parses it: the priority at the bound.
+    const parsed = parseProfileMessage(formatProfileMessage(makeProfileDoc({
+      screener: [], rules: [rule], notifyRules: [], awayResponder: null, tagNames: [], signature: null,
+    }, { updatedAt: new Date("2026-08-10T09:00:00.000Z"), producer: { kind: "local", version: "0.25.3" } }), { installId: "someone-elses-install" }));
+    if (parsed === null || isMalformedProfile(parsed)) throw new Error("the fixture copy is unreadable");
+    await seedHeldMarker(w, parsed.doc!);
+    expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toEqual({ state: "none" });
   });
 
   it("a newer-format document surfaces as `newer` and offers no import", async () => {

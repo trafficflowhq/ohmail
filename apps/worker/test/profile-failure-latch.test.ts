@@ -65,6 +65,9 @@ class ScriptedProfileIo implements ProfileIo {
   /** One generation per LIST call, as the real io stamps it inside the mailbox lock. */
   generation: number = 1_000;
   appends = 0;
+  private nextRef = 1;
+  /** What the server stores for an APPEND when it does not keep the bytes it was handed. */
+  storedAs: ((raw: string) => string) | null = null;
 
   async ensureMetaFolder(): Promise<void> {
     if (this.ensureThrows) throw this.ensureThrows;
@@ -78,10 +81,12 @@ class ScriptedProfileIo implements ProfileIo {
 
   async appendProfile(raw: string): Promise<void> {
     this.appends += 1;
-    this.messages.push({ ref: this.messages.length + 1, raw, generation: this.generation });
+    this.messages.push({ ref: this.nextRef++, raw: this.storedAs === null ? raw : this.storedAs(raw), generation: this.generation });
   }
 
-  async removeProfiles(): Promise<void> { /* nothing this file measures */ }
+  async removeProfiles(refs: readonly unknown[]): Promise<void> {
+    this.messages = this.messages.filter((m) => !refs.includes(m.ref));
+  }
 }
 
 /**
@@ -110,7 +115,7 @@ interface Rig {
   emitted: string[];
 }
 
-async function rig(opts: { withStoredConfiguration?: boolean } = {}): Promise<Rig> {
+async function rig(opts: { withStoredConfiguration?: boolean; now?: () => Date } = {}): Promise<Rig> {
   const db = (await makeTestDb()) as unknown as Tx;
   const accountId = randomUUID();
   if (opts.withStoredConfiguration) {
@@ -155,6 +160,7 @@ async function rig(opts: { withStoredConfiguration?: boolean } = {}): Promise<Ri
        in force the second and third calls would return before reaching either arm, and a test
        that measured one tick three times could not tell a latch from a debounce. */
     flushIntervalMs: 0,
+    ...(opts.now === undefined ? {} : { now: opts.now }),
     log: (event, detail) => {
       lines.push({ event, detail });
       emitted.push(...capture(event, detail));
@@ -448,6 +454,30 @@ describe("a standing profile refusal is readable off the sync, not only off the 
     await r.sync.onOrganize();
 
     expect(r.sync.profileBlock(), "the sentence outlived the fault").toBeNull();
+  });
+
+  it("a copy the server does not keep as written is a refusal: named on the row while it is not sent again, said once, and a kept copy clears both", async () => {
+    let t = Date.UTC(2026, 9, 1, 3, 0, 0);
+    const r = await rig({ withStoredConfiguration: true, now: () => new Date(t) });
+    r.io.storedAs = (raw) => raw.replace(/"tagNames": \[[^\]]*\]/, "\"tagNames\": []");
+
+    await r.sync.onOrganize();
+    t += 60_000;
+    await r.sync.onOrganize();
+
+    expect(r.io.appends, "the second tick appended the same copy again").toBe(1);
+    expect(r.sync.profileBlock()).toEqual({ code: "profile_append_unreadable", confirmed: true });
+    expect(r.seen("organizer_profile_write_failed")).toHaveLength(1);
+
+    // The server is fixed; the same settings are tried again a day later.
+    r.io.storedAs = null;
+    t += 24 * 60 * 60 * 1000;
+    await r.sync.onOrganize();
+
+    expect(r.io.appends).toBe(2);
+    expect(r.sync.profileBlock(), "the sentence outlived the kept copy").toBeNull();
+    expect(r.seen("organizer_profile_recovered")).toHaveLength(1);
+    expect(r.seen("organizer_profile_write_failed")).toHaveLength(1);
   });
 
   it("a demotion forgets it with the rest of the organizing life", async () => {
