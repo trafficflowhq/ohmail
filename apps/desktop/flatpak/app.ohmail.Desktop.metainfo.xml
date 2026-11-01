@@ -78,6 +78,16 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.26" date="2026-11-02">
+      <description>
+        <ul>
+          <li>The desktop app keeps syncing after a mailbox is removed and connected again while it is closed</li>
+          <li>Shift+J, Shift+K and Shift-click select only the messages you step over, even after a read message</li>
+          <li>A minus word only leaves letters out of a search</li>
+          <li>A new search order starts at the top result again</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.25" date="2026-11-01">
       <description>
         <ul>
@@ -113,13 +123,6 @@
           <li>Setup offers each connected mailbox once after a remove and reconnect</li>
           <li>Undo puts a parked, queued or resurfaced conversation back where it was in Earlier</li>
           <li>Undo of Mark unread puts the conversation back where it was</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.21" date="2026-11-01">
-      <description>
-        <ul>
-          <li>A restored backup no longer rolls back the settings stored in the mailbox</li>
         </ul>
       </description>
     </release>

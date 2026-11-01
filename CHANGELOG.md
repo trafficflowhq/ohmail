@@ -21,6 +21,57 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.26] — 2026-11-02
+
+### The desktop app keeps syncing after a mailbox is removed and connected again while it is closed
+
+On the desktop app with ohmail Cloud, your own server or a paired computer, a mailbox removed and connected
+again while the app was closed could stop every sync at the next launch: the window kept showing the mail it
+had before and said only "Syncing your mail". The app now takes the account's mailboxes in any order, and a
+copy that was already stuck catches up on its first sync after the update.
+
+When this computer cannot store what it syncs three times in a row, the status line now says so with the
+mailbox's address and a Write to us link, instead of "Syncing your mail" or "As of … · catching up", and
+Settings → Mailboxes says this computer cannot store mail right now. While it lasts, a mail sent from the app
+waits until a sync completes, so Write to us gives the support address and the diagnostics to copy into any
+mail app, and the changes still waiting say this computer cannot store mail instead of "could not reach your
+account". All of it goes once a sync completes.
+
+### Shift+J, Shift+K and Shift-click select only the messages you step over, even after a read message
+
+On the web app, ohmail Cloud and the desktop, extending a selection in the Ohbox with Shift+J, Shift+K or a
+Shift-click from a message you had just read could select every message between its place in New and the top
+of Earlier, where it moved as the cursor left it: two presses showed "5 selected" where three were meant, and a
+bulk action would have acted on messages you never chose. A message you read now keeps its place while you build
+a selection and files under Earlier once the selection ends.
+
+### A minus word only leaves letters out of a search
+
+A word you exclude with a minus (`mail -thanks`) now only leaves out the letters that hold it. The
+rest of the search finds what it finds on its own: `mail` inside a sender's address (`mailroom`,
+`webmail`), a word's start, and a stopword such as `you` inside a subject. Before, any minus word
+dropped those matches, so `mail -google` found far fewer letters than `mail`, though none held `google`.
+The same holds for a minus word in parentheses (`mail -(thanks)`), for many minus words in one search,
+for more than eight words beside a minus word, and beside `or`: ohmail Cloud and your own server now read
+`mail or -thanks` as `mail` without `thanks`, as the desktop and the phone do, instead of listing every
+letter without `thanks`.
+
+A minus word beside only common words (`you -thanks`, `the -thanks`) or on its own (`-thanks`) no
+longer makes the search fail on ohmail Cloud and your own server. A minus word on its own finds
+nothing; the phone and the desktop no longer list every letter without it.
+
+The list a device shows while the server answers leaves out the letters holding the minus word too,
+and when your server answers a search with an error, the web app and the phone say it could not run
+the search instead of saying it did not answer. The web app's count of a large search reads "at least
+2,000 matched" with its thousands separator, as every other count does.
+
+### A new search order starts at the top result again
+
+Changing the search order kept the cursor on the previous order's top result, wherever that letter
+landed in the new order, scrolled the results there and opened it on Enter. A new question, a new
+order or a pressed filter now starts the cursor on the first result again, also when the archive
+holds letters the device does not. Web and desktop; a regression in 0.30.24.
+
 ## [0.30.25] — 2026-11-01
 
 ### Trash lists what it holds
@@ -15905,7 +15956,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.25...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.26...HEAD
+[0.30.26]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.26
 [0.30.25]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.25
 [0.30.24]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.24
 [0.30.23]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.23
