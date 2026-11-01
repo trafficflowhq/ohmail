@@ -288,6 +288,13 @@ describe("isModalOpen", () => {
     add('<div role="dialog" aria-hidden="true"></div>');
     expect(isModalOpen(document)).toBe(false);
   });
+
+  it("a card that stands BESIDE the mail is not either; a question inside it still is", () => {
+    const card = add('<div role="dialog" data-key-beside=""></div>');
+    expect(isModalOpen(document)).toBe(false);
+    card.querySelector("div")!.innerHTML = '<div role="menu"></div>';
+    expect(isModalOpen(document), "a menu opened from the card").toBe(true);
+  });
 });
 
 /* ── who may write to this mailbox ─────────────────────────────────────────────────────────── */

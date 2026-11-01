@@ -113,6 +113,13 @@ function showing(el: Element): boolean {
 export const KEY_PEEK = "data-key-peek";
 
 /**
+ * A surface that stands BESIDE the mail, not over it: a card that takes no focus and covers no
+ * row (the desktop's one-time default-mail ask). It keeps its dialog role; every key, ⌫ and ⌦
+ * included, still reaches the mail. Declared on the surface, as {@link KEY_PEEK} is.
+ */
+export const KEY_BESIDE = "data-key-beside";
+
+/**
  * THE MODAL THAT OWNS THE PAGE: the topmost showing `aria-modal="true"` surface that is neither
  * the reading surface nor a peek. The keymap asks it before every dispatch and the shell's focus
  * rule lands in it, so a key or a focus that fell to the page root never reaches the mail behind
@@ -140,6 +147,7 @@ export function isModalOpen(doc: Document): boolean {
        states — and the popovers that open inside the reader are exactly the ones `.senderm` is in
        the selector for. See the header. */
     if (el.matches(READING_SURFACE)) continue;
+    if (el.hasAttribute(KEY_BESIDE)) continue;
     if (!showing(el)) continue;
     return true;
   }

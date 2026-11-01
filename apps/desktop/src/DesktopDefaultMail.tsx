@@ -209,6 +209,8 @@ export function DefaultMailAsk() {
     <div
       role="dialog"
       aria-label={DOOR_COPY.mailtoLabel}
+      /* Beside the mail, not over it: ⌫ and ⌦ on the open message still move it to Trash. */
+      data-key-beside=""
       style={{
         position: "fixed",
         insetInline: 0,
