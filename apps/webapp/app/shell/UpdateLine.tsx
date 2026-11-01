@@ -59,13 +59,15 @@ export function UpdateLine() {
   if (offer === null) return null;
 
   const version = offer.version ?? "";
-  // A restart while a send waits or a draft holds files is held by the shell too; the line says
-  // which and presses nothing.
-  const held = offer.kind === "ready" && hold !== null;
+  // A restart or a tab's reload while a send waits or a draft holds files would drop bytes that
+  // live in memory only; the line says which and presses nothing.
+  const holds = (kind: UpdateOffer["kind"]): boolean => kind === "ready" || kind === "reload";
+  const held = holds(offer.kind) && hold !== null;
+  const reload = offer.kind === "reload";
   const [why, whyTitle] =
     hold === "files"
-      ? [t("lineAfterFiles"), t("lineAfterFilesTitle")]
-      : [t("lineAfterSend"), t("lineAfterSendTitle")];
+      ? [t("lineAfterFiles"), t(reload ? "lineReloadAfterFilesTitle" : "lineAfterFilesTitle")]
+      : [t("lineAfterSend"), t(reload ? "lineReloadAfterSendTitle" : "lineAfterSendTitle")];
   const text =
     offer.kind === "reload"
       ? t("lineReload")
@@ -85,6 +87,8 @@ export function UpdateLine() {
     pressing.current = true;
     try {
       await flushBeforeRestart();
+      // A hold that began while the editors were written stops the press.
+      if (holds(offer.kind) && restartHold() !== null) return;
       act();
     } finally {
       pressing.current = false;

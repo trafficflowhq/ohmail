@@ -23,6 +23,7 @@ import {
   lineOf,
   POLL_EVERY_MS,
   REQUEST_RETRIES,
+  startLeaveSave,
   startUpdateCadence,
 } from "../src/update-cadence.js";
 import type { UpdateReport } from "../src/update.js";
@@ -1278,6 +1279,69 @@ describe("the menu's Restart, answered by this window", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(order).toEqual(["saved after 1 calls"]);
       expect(calls.map((c) => c.command)).toEqual(["plugin:event|listen", "update_press"]);
+      stop();
+    } finally {
+      delete host.__TAURI_INTERNALS__;
+    }
+  });
+});
+
+describe("a quit or a close, answered by this window", () => {
+  const asker = () => {
+    let run: (() => void) | null = null;
+    return { asked: async (r: () => void) => { run = r; return () => { run = null; }; }, ask: () => run?.() };
+  };
+
+  it("WRITES THE OPEN EDITORS, THEN SAYS SO ONCE", async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const a = asker();
+    holdForRestart(async () => void order.push("saved"));
+    const stop = startLeaveSave({ asked: a.asked, saved: async () => void order.push("leave_saved") });
+    await vi.advanceTimersByTimeAsync(0);
+    a.ask();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).toEqual(["saved", "leave_saved"]);
+    stop();
+  });
+
+  it("a save that never settles is answered at RESTART_FLUSH_MS, no later", async () => {
+    vi.useFakeTimers();
+    const said: number[] = [];
+    const a = asker();
+    holdForRestart(() => new Promise<void>(() => {}));
+    const stop = startLeaveSave({ asked: a.asked, saved: async () => void said.push(1) });
+    await vi.advanceTimersByTimeAsync(0);
+    a.ask();
+    a.ask();
+    await vi.advanceTimersByTimeAsync(RESTART_FLUSH_MS - 1);
+    expect(said).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(said, "the quit waited out the shell's bound, or was answered twice").toEqual([1]);
+    stop();
+  });
+
+  it("listens on the shell's event and answers leave_saved after the save", async () => {
+    vi.useFakeTimers();
+    const calls: Array<{ command: string; event?: unknown }> = [];
+    const callbacks: Array<(payload: unknown) => void> = [];
+    const host = globalThis as { __TAURI_INTERNALS__?: unknown };
+    host.__TAURI_INTERNALS__ = {
+      invoke: async (command: string, payload?: { event?: unknown }) => {
+        calls.push({ command, event: payload?.event });
+      },
+      transformCallback: (callback: (payload: unknown) => void) => callbacks.push(callback) - 1,
+    };
+    try {
+      const order: string[] = [];
+      holdForRestart(async () => void order.push(`saved after ${calls.length} calls`));
+      const stop = startLeaveSave();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toEqual([{ command: "plugin:event|listen", event: "shell://leave-asked" }]);
+      callbacks[0]!(null);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(order).toEqual(["saved after 1 calls"]);
+      expect(calls.map((c) => c.command)).toEqual(["plugin:event|listen", "leave_saved"]);
       stop();
     } finally {
       delete host.__TAURI_INTERNALS__;

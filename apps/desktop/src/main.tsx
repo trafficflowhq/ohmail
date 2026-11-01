@@ -32,7 +32,7 @@ import { bridgeAvailable, bridgeFetch, connectLocalEngine, engineStatus } from "
 import { startNetworkReturnRelay } from "./network-return.js";
 import { omarchySchemeSource, startOmarchyFeed } from "./omarchy.js";
 import { configureSchemeTransitions } from "./scheme-platform.js";
-import { startUpdateCadence } from "./update-cadence.js";
+import { startLeaveSave, startUpdateCadence } from "./update-cadence.js";
 import { DesktopGate } from "./DesktopGate.js";
 import { DOOR_COPY } from "./door-copy.js";
 import { errorSentence, GateBoundary } from "./GateBoundary.js";
@@ -141,6 +141,8 @@ void startOmarchyFeed();
    presses and can install nothing; `update-cadence.ts` carries the whole reasoning. The teardown
    it hands back is dropped deliberately: this window's life IS the cadence's life. */
 startUpdateCadence();
+/* …and a quit or a close asks the open editors to save first (`update-cadence.ts`). */
+startLeaveSave();
 
 /* THE NETWORK'S RETURN, TO THE LOCAL ENGINE — a capability of the WINDOW, like the arms above.
    The engine's re-dial ladder otherwise holds a dead connection for up to five minutes after the

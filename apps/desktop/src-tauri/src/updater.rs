@@ -865,6 +865,149 @@ impl RestartAsk {
     }
 }
 
+/// The event that asks the main window to write its open editors before a quit or a close.
+/// Spelled again in `src/update.ts`.
+pub const LEAVE_ASKED_EVENT: &str = "shell://leave-asked";
+
+/// How long a quit or a close waits for the window's answer: the restart's bound, longer than the
+/// window's own save bound (`RESTART_FLUSH_MS`, 3 s).
+pub const LEAVE_ASK_BOUND: Duration = RESTART_ASK_BOUND;
+
+/// A quit's or a close's ask to the window while it stands: answered by [`leave_saved`], or out of
+/// time at its bound. A second leave meanwhile joins it rather than asking again.
+pub struct LeaveAsk {
+    slot: Mutex<LeaveSlot>,
+    answered: Condvar,
+}
+
+struct LeaveSlot {
+    run: u64,
+    /// When the standing ask gives up.
+    standing: Option<Instant>,
+    /// The last run the window answered.
+    answered: u64,
+}
+
+impl LeaveAsk {
+    pub const fn new() -> Self {
+        Self {
+            slot: Mutex::new(LeaveSlot { run: 0, standing: None, answered: 0 }),
+            answered: Condvar::new(),
+        }
+    }
+
+    /// This leave's ask, and whether it starts one (`false`: it joined the ask standing).
+    pub fn ask(&self, now: Instant, bound: Duration) -> (u64, bool) {
+        let mut slot = lock(&self.slot);
+        if slot.standing.is_some_and(|ends| now < ends) {
+            return (slot.run, false);
+        }
+        slot.run += 1;
+        slot.standing = Some(now + bound);
+        (slot.run, true)
+    }
+
+    /// The window saved: the standing ask is answered and every wait on it goes on at once.
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    pub fn answer(&self) -> bool {
+        let mut slot = lock(&self.slot);
+        if slot.standing.take().is_none() {
+            return false;
+        }
+        slot.answered = slot.run;
+        self.answered.notify_all();
+        true
+    }
+
+    /// Wait for `run`'s answer, never past its bound. `false` when nobody answered.
+    pub fn wait(&self, run: u64) -> bool {
+        let mut slot = lock(&self.slot);
+        loop {
+            if slot.answered >= run {
+                return true;
+            }
+            let Some(ends) = slot.standing.filter(|_| slot.run == run) else {
+                return false;
+            };
+            let now = Instant::now();
+            if now >= ends {
+                slot.standing = None;
+                return false;
+            }
+            slot = match self.answered.wait_timeout(slot, ends - now) {
+                Ok((slot, _)) => slot,
+                Err(poisoned) => poisoned.into_inner().0,
+            };
+        }
+    }
+}
+
+/// The app's one leave ask.
+pub static LEAVE: LeaveAsk = LeaveAsk::new();
+
+/// EVERY QUIT AND CLOSE SAVES FIRST: the window is hidden at once (unless an install is writing,
+/// which keeps it, as before), asked to write its open editors, and `then` runs once it answers or
+/// [`LEAVE_ASK_BOUND`] passes, on a thread of its own: the save travels through the main loop. With
+/// no main window, or in the preview (whose window can call nothing), `then` runs at once.
+pub fn leave_saving<R: Runtime>(app: &AppHandle<R>, then: impl FnOnce() + Send + 'static) {
+    let window = app.get_webview_window("main");
+    let asks = cfg!(feature = "local-engine") && window.is_some();
+    let teller = app.clone();
+    leave_saving_with(
+        &LEAVE,
+        asks,
+        FENCE.must_wait(),
+        move || {
+            if let Some(window) = window {
+                let _ = window.hide();
+            }
+        },
+        move || {
+            let _ = teller.emit(LEAVE_ASKED_EVENT, ());
+        },
+        then,
+    );
+}
+
+/// [`leave_saving`] with its acts handed in: `hide` takes the window off the screen, `tell` asks it.
+pub(crate) fn leave_saving_with(
+    ask: &'static LeaveAsk,
+    asks: bool,
+    installing: bool,
+    hide: impl FnOnce(),
+    tell: impl FnOnce(),
+    then: impl FnOnce() + Send + 'static,
+) {
+    if !asks {
+        return then();
+    }
+    if !installing {
+        hide();
+    }
+    let began = Instant::now();
+    let (run, first) = ask.ask(began, LEAVE_ASK_BOUND);
+    if first {
+        tell();
+    }
+    std::thread::Builder::new()
+        .name("ohmail-leave-save".into())
+        .spawn(move || {
+            let answered = ask.wait(run);
+            let waited = began.elapsed().as_millis().to_string();
+            emit(line("leave_save", &[("answered", if answered { "true" } else { "false" }), ("waited_ms", &waited)]));
+            then();
+        })
+        .expect("ohmail: failed to start the leave thread");
+}
+
+/// The window wrote its open editors: a quit or close under way goes now rather than at its bound.
+/// No argument; it can only end a wait already standing, never start or delay a leave.
+#[cfg(feature = "local-engine")]
+#[tauri::command]
+pub fn leave_saved() {
+    LEAVE.answer();
+}
+
 /// WHAT THE MENU ITEM SAYS, and whether it can be pressed — the flow and the install, composed.
 ///
 /// Pure, so `updater_tests.rs` drives every pair, and the only place the two are put together:

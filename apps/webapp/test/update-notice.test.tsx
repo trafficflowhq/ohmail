@@ -162,6 +162,54 @@ describe("the update line", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  it("RELOAD IS HELD by files only in memory and by a waiting send, as Restart is", async () => {
+    const reload = vi.fn();
+    const el = await mount(h(UpdateLine));
+    let release = (): void => {};
+    await act(async () => {
+      announceUpdate({ kind: "reload", act: reload });
+      release = holdFilesForRestart();
+    });
+    expect(verb()!.getAttribute("aria-disabled")).toBe("true");
+    expect(verb()!.getAttribute("title")).toBe(copy.lineReloadAfterFilesTitle);
+    expect(el.textContent).toContain(copy.lineAfterFiles);
+    await click(verb());
+    expect(reload, "a reload dropped the draft's files").not.toHaveBeenCalled();
+    await act(async () => release());
+    await click(verb());
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    await act(async () => setSendWaits(true));
+    expect(verb()!.getAttribute("title")).toBe(copy.lineReloadAfterSendTitle);
+    expect(el.textContent).toContain(copy.lineAfterSend);
+    await click(verb());
+    expect(reload).toHaveBeenCalledTimes(1);
+    await act(async () => setSendWaits(false));
+    await click(verb());
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  it("a hold that starts while the editors are written stops the reload and the restart", async () => {
+    for (const kind of ["reload", "ready"] as const) {
+      const go = vi.fn();
+      let release = (): void => {};
+      const drop = holdForRestart(async () => {
+        release = holdFilesForRestart();
+      });
+      await mount(h(UpdateLine));
+      await act(async () => announceUpdate({ kind, version: "0.30.6", act: go, key: kind }));
+      await click(verb());
+      expect(go, kind).not.toHaveBeenCalled();
+      drop();
+      await act(async () => release());
+      await click(verb());
+      expect(go, kind).toHaveBeenCalledTimes(1);
+      await act(async () => root!.unmount());
+      root = null;
+      host?.remove();
+    }
+  });
+
   it("LATER puts the line away, and its key stays put away for the rest of the run", async () => {
     const el = await mount(h(UpdateLine));
     await act(async () => announceUpdate({ kind: "ready", version: "0.30.6", act: () => {}, key: "ready:0.30.6" }));

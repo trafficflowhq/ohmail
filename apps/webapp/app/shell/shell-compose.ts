@@ -2819,7 +2819,12 @@ export function useShellCompose({
     setComposeForwardSaid(false);
     onComposeFields({ ...compose, forwardParts: next });
   });
-  const onComposeFields = useStableCallback((next: ComposeFields) => {
+  const onComposeFields = useStableCallback((input: ComposeFields) => {
+    // The composer's own edit of a recipient line: typed text, unlike a door's prefill.
+    const prev = composeRef.current;
+    const next = input.recipientsTyped !== true && (input.to !== prev.to
+      || (input.cc ?? "") !== (prev.cc ?? "") || (input.bcc ?? "") !== (prev.bcc ?? ""))
+      ? { ...input, recipientsTyped: true as const } : input;
     setCompose(next);
     writeComposeDraft(next);
     // The close's refusal was about the text as it stood; an edit makes it a stale sentence.
