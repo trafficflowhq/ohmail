@@ -78,6 +78,17 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.22" date="2026-11-01">
+      <description>
+        <ul>
+          <li>The worker's conversation-join repair finishes its rounds again</li>
+          <li>The link label tests no longer fail on a busy machine</li>
+          <li>Setup offers each connected mailbox once after a remove and reconnect</li>
+          <li>Undo puts a parked, queued or resurfaced conversation back where it was in Earlier</li>
+          <li>Undo of Mark unread puts the conversation back where it was</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.21" date="2026-11-01">
       <description>
         <ul>
@@ -118,22 +129,6 @@
           <li>Links show where they really go in more cases</li>
           <li>The phone's Screener says a fresh mailbox is still being read before the phone organizes it</li>
           <li>New mail no longer waits behind the split-conversation repair</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.17" date="2026-10-30">
-      <description>
-        <ul>
-          <li>Older letters made only of html and pictures get their words too</li>
-          <li>The Screener's open Junk lists a letter you just marked spam</li>
-          <li>The phone suggests recipients as you type them</li>
-          <li>News and Receipts on the phone match the web</li>
-          <li>The phone's Screener says a mailbox is still being read on its own first pass</li>
-          <li>A picture-only letter with invisible preheader filler no longer reads as words on the phone</li>
-          <li>A letter with deeply nested html no longer stalls mail sync</li>
-          <li>Your own letters count as yours when your Sent folder has another name</li>
-          <li>A screen reader calls an unnamed picture in a letter a picture</li>
-          <li>An Undo that waits to be sent says Undone, and the command palette reaches every place</li>
         </ul>
       </description>
     </release>

@@ -21,6 +21,56 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.22] — 2026-11-01
+
+### The worker's conversation-join repair finishes its rounds again
+
+Since 0.30.18 the background repair that joins a conversation a forward split in two read the whole account's
+address list again in every short slice of its work. On a large mailbox each slice then covered only one or two
+conversations, so a round never finished and every sync round on ohmail Cloud spent about ten seconds on it. The
+address list is now read once per account per round, and each account gets at most 30 seconds of repair per
+six-hour round; a round cut short goes on where it stopped in the next one. Cloud and your own server.
+
+### The link label tests no longer fail on a busy machine
+
+Five tests that hold the reader's link check to a linear read timed it against a plain letter, so a loaded
+test machine could fail them on code that was no slower. Four now count the work instead: a label of a
+thousand pieces must be read at most a few times over, a link that holds forty nested links reads its
+label once, a letter of 2,000 hiding rules may match at most 32 of them, and a rule too costly to match
+(a word-list test, more than four parts or 64 characters) is never matched. The fifth, 100,000 bidi
+controls left open, has a ceiling of ten seconds where one pass takes well under a tenth of one. Breaking
+any limit still fails them on any machine. Measured on letters up to the 512 KiB cap, a linked label costs
+about what the same text costs outside a link, and the check's time does not grow with the number of rules.
+
+### Setup offers each connected mailbox once after a remove and reconnect
+
+A removed mailbox leaves a record behind, one per removal of the same address, and Settings →
+Mailboxes → Run setup listed each of them as a button beside the connected mailbox. Picking one ran to
+"How far back" and then said the mailbox was no longer connected, while the connected one stayed
+unorganized. Setup now lists only connected mailboxes, runs straight on when only one is left, and a
+setup opened for a removed copy says it is no longer connected at once. The same removed copies no
+longer put a "delivered to" label on every message, a mailbox heading over a single folder list or a
+switch per copy under Settings → Folders → Per mailbox, while a removed mailbox of another address
+keeps its heading and label. On the phone, Settings → This phone and the organizer banner show
+connected mailboxes only. On the web, the desktop app's hosted door, the phone, Cloud and your own
+server.
+
+### Undo puts a parked, queued or resurfaced conversation back where it was in Earlier
+
+A conversation you had read in ohmail sits at the top of the Ohbox's Earlier. Parking it, putting it in
+Answer Later, resurfacing it or muting it and then pressing Undo used to file it at its arrival date further
+down, and it stayed there after a reload. Undo now puts it back in the place it had before the press, on the
+desktop, the web, the phone, Cloud and your own server. Leaving a pile any other way still files the
+conversation at its arrival date, as before.
+
+### Undo of Mark unread puts the conversation back where it was
+
+A conversation you had read in ohmail sits at the top of the Ohbox's Earlier. Marking it unread and then
+pressing Undo used to file it at its arrival date further down, or at the very top when it was still open,
+and it stayed there after a reload. Undo now puts it back in the place it had before the press. The same
+Undo on a resurfaced conversation also took it out of Resurfaced; it now stays there. This holds on the
+desktop, the web, the phone, Cloud and your own server.
+
 ## [0.30.21] — 2026-11-01
 
 ### A restored backup no longer rolls back the settings stored in the mailbox
@@ -15757,7 +15807,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.21...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.22...HEAD
+[0.30.22]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.22
 [0.30.21]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.21
 [0.30.20]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.20
 [0.30.19]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.19
