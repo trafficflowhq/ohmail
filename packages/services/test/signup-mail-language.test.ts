@@ -3,7 +3,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { users } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import {
-  AuthService, makeTestAuthDeps, MailService, SpyMailer, type ServiceContext,
+  AuthService, makeTestAuthDeps, MailService, SpyMailer, throttleKeysFor, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -26,6 +26,7 @@ async function harness(ttlMs?: number) {
       appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app", supportEmail: "support@ohmail.app",
       ...(ttlMs === undefined ? {} : { emailVerifyTtlMs: ttlMs }),
     },
+    throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
   });
   const deps = makeTestAuthDeps({ publicSignup: true, maxPublicRegistrationsPerWindow: 50 }, mail);
   const svc = new AuthService(deps);

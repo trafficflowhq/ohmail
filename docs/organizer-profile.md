@@ -174,12 +174,16 @@ import card said so before the press ("your signature, replacing the one on this
 press names that exact signature; otherwise the mailbox keeps its own and the confirmation says so. A
 mailbox with no signature takes the document's. Text and markup are compared and written as one value.
 
-What ohmail keeps of a signature for this: the organizer's record of a found document names the
-document's signature by a receipt (a sha256 of text and markup together, cut to 32 hex digits), and a
-press handed to the organizer keeps the receipt of the signature its card said would be replaced. Both
-are rows of the account's audit trail, which are deleted after 365 days or with the account. Erasing
-the mailbox takes the receipts off those rows when it is pressed, and again when the erasure finishes;
-removing a mailbox from a computer takes them off that computer's store. The rows themselves stay.
+What ohmail keeps of the settings and a signature for this: the organizer's record of a found document
+names the document by its fingerprint (a sha256 of its canonical settings, the signature among them)
+and the document's signature by a receipt (a sha256 of text and markup together, cut to 32 hex digits);
+the answer to it (Import, Not now, or saving this ohmail's settings over it) names the document by its
+fingerprint; and a press handed to the organizer keeps the fingerprint and the receipt of the signature
+its card said would be replaced. All are rows of the account's audit trail, which are deleted after 365
+days or with the account. Erasing the mailbox takes the fingerprints and the receipts off those rows
+when it is pressed, and again when the erasure finishes; an erasure an earlier ohmail finished loses
+them on the server's next erasure pass. Removing a mailbox from a computer takes them off that
+computer's store. The rows themselves stay.
 
 **`signatureHtml`** — the same sign-off's formatting, when it has any. Optional, and ABSENT rather
 than `null` when there is none: a document that never carried this key must keep the fingerprint it

@@ -7,8 +7,8 @@ import { brandDialect, dialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accounts, accountStorage, erasureRemaining, mailboxes, messageBodies, messages, reserveBodyBytes,
-  stampMailboxErasure, storageUsageOf, type Tx,
+  PROFILE_FOUND_AUDIT_ACTION, accounts, accountStorage, auditLog, erasureRemaining, mailboxes, messageBodies, messages,
+  reserveBodyBytes, stampMailboxErasure, storageUsageOf, type Tx,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import type { Logger } from "@trafficflow/core/mail";
@@ -107,22 +107,31 @@ describe.skipIf(!PG_UP)("mailboxErasurePass — the worker's half of the per-mai
     expect(await done(z1)).toBe(true);
   });
 
-  it("an erasure an older worker finished keeps no signature after the next pass, in its shard only", async () => {
+  it("an erasure an older worker finished keeps no signature and no settings hash after the next pass, in its shard only", async () => {
     const w = randomUUID(); const o = randomUUID();
     await db.insert(accounts).values([{ id: w, name: "erase-w" }, { id: o, name: "erase-o" }]);
     const sig = { signature: "-- \nAnna", signatureHtml: "<p>Anna</p>" };
-    // The old last step: the finish stamp alone, the signature left on the row.
+    // The old last step: the finish stamp alone, the signature and the marker's fingerprint left.
     const old = { status: "disabled" as const, erasedAt: NOW, erasureDoneAt: NOW, ...sig };
     const w1 = await mailbox(w, "w1", 0);
     const o1 = await mailbox(o, "o1", 0);
     await db.update(mailboxes).set(old).where(inArray(mailboxes.id, [w1, o1]));
+    const FP = `2:${"b5".repeat(32)}`;
+    const [wMarker, oMarker] = await db.insert(auditLog).values([[w, w1], [o, o1]].map(([accountId, mailboxId]) => ({
+      accountId: accountId!, action: PROFILE_FOUND_AUDIT_ACTION, inverse: null,
+      payload: { mailboxId, state: "found", fingerprint: FP, heldForImport: true },
+    }))).returning({ id: auditLog.id });
     const read = async (id: string) => (await db.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]!;
+    const payloadOf = async (id: string) => (await db.select({ p: auditLog.payload }).from(auditLog).where(eq(auditLog.id, id)))[0]!.p;
 
     const r = await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([w]) });
-    expect(r).toMatchObject({ steps: 0, signaturesCleared: 1 });
+    expect(r).toMatchObject({ steps: 0, signaturesCleared: 1, settingsHashesCleared: 1 });
     expect(await read(w1)).toMatchObject({ signature: null, signatureHtml: null });
+    expect(await payloadOf(wMarker!.id)).toEqual({ mailboxId: w1, state: "found", heldForImport: true });
     expect(await read(o1), "another shard's row was touched").toMatchObject(sig);
-    expect((await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([w]) })).signaturesCleared).toBe(0);
+    expect(await payloadOf(oMarker!.id), "another shard's marker was touched").toMatchObject({ fingerprint: FP });
+    expect(await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([w]) }))
+      .toMatchObject({ signaturesCleared: 0, settingsHashesCleared: 0 });
   });
 
   describe("and the storage counter", () => {

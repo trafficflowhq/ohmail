@@ -2,9 +2,10 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
+import { dialect } from "@trafficflow/db/dialect";
 import {
-  accountSettings, accounts, auditLog, awayResponders, changeLog, contacts, folderState, mailboxCredentials, mailboxes, mailboxProfileMirror, messages,
-  organizerRequests, profileImportWriteReleased, rules, settleReaderRuleRows, tags,
+  accountSettings, accounts, auditLog, awayResponders, changeLog, contacts, eraseOwedMailbox, folderState, mailboxCredentials, mailboxes,
+  mailboxProfileMirror, messages, organizerRequests, profileImportWriteReleased, rules, settleReaderRuleRows, tags,
   PROFILE_COPY_AUDIT_ACTION, PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, recordProfileCopy,
   type Tx,
 } from "@trafficflow/db";
@@ -17,6 +18,7 @@ import { effectiveMailboxSignatures } from "../src/consent-seed.js";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
 import { PROFILE_IMPORT_MAX, profileImportService, type ProfileImportApplied } from "../src/profile-import-service.js";
+import { mailboxService } from "../src/mailbox-service.js";
 import { ServiceError } from "../src/errors.js";
 import type { Db, ServiceContext } from "../src/context.js";
 
@@ -1247,6 +1249,23 @@ describe("replace — the explicit write release, after a decline or instead of 
       .rejects.toMatchObject({ httpStatus: 404 });
     expect(await w.db.select().from(auditLog)
       .where(eq(auditLog.action, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION))).toHaveLength(0);
+  });
+
+  it("an erased mailbox takes no answer: a stale card's Not now and Save these are 410 and write nothing", async () => {
+    // The erasure takes the fingerprint off every row; an answer written after it would put it back.
+    const w = await world();
+    const fingerprint = await seedHeldMarker(w, doc());
+    const [row] = await w.db.select({ address: mailboxes.address }).from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
+    await mailboxService.delete(w.ctx, w.mailboxId, { erase: { confirmAddress: row!.address } });
+    const run = await eraseOwedMailbox(w.db as unknown as Tx, dialect(w.db), {
+      accountId: w.accountId, mailboxId: w.mailboxId, now: () => NOW, maxSteps: 10,
+    });
+    expect(run.done).toBe(true);
+    await expect(profileImportService.decline(w.ctx, w.mailboxId, { fingerprint }))
+      .rejects.toMatchObject({ code: "mailbox_erased", httpStatus: 410 });
+    await expect(profileImportService.replace(w.ctx, w.mailboxId, { fingerprint }))
+      .rejects.toMatchObject({ code: "mailbox_erased", httpStatus: 410 });
+    expect(await resolutionRows(w.db, w.accountId), "an answer was written for an erased mailbox").toHaveLength(0);
   });
 });
 

@@ -339,8 +339,8 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     module: `${W}/mailbox-erasure-pass.ts`, entry: "mailboxErasurePass",
     triggers: ["cycle-tail"],
     cadence: "every cycle, leader-only, over this shard's owed stamps (mailboxes_erasure_owed_idx)",
-    budget: "MAILBOX_ERASURE_STEPS_PER_PASS steps of ERASE_BATCH messages and MAILBOX_ERASURE_PASS_BUDGET_MS of wall clock; one indexed read, empty when nothing is owed; one read of finished erasures still holding a signature, each cleared by its own one-row update",
-    owns: "a \"Remove and erase\" press erases ohmail's copy of that mailbox's mail — every row, its signature included, one receipt, erasure_done_at set — and nothing on the mail server",
+    budget: "MAILBOX_ERASURE_STEPS_PER_PASS steps of ERASE_BATCH messages and MAILBOX_ERASURE_PASS_BUDGET_MS of wall clock; one indexed read, empty when nothing is owed; one read of finished erasures still holding a signature, each cleared by its own one-row update; one read of finished erasures whose audit rows still hold a settings hash, each such row cleared by its own update",
+    owns: "a \"Remove and erase\" press erases ohmail's copy of that mailbox's mail — every row, its signature and every hash of its settings included, one receipt, erasure_done_at set — and nothing on the mail server",
     fence: "per step: the account row FOR SHARE, the thread-structure advisory lock, the mailbox row FOR UPDATE — the order every erasure holds",
   },
   {

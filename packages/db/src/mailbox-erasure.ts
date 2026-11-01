@@ -10,7 +10,7 @@ import {
 } from "./schema-mail.js";
 import { recordChanges, recordMailboxRemoved, type LedgerTx, type Tx } from "./change-log.js";
 import { eraseIdempotentResponses } from "./idempotency.js";
-import { signatureReceiptRows } from "./profile-import-ask.js";
+import { SETTINGS_HASH_KEYS, settingsHashRows } from "./profile-import-ask.js";
 import { readAccountErasedAt } from "./erasure-fence.js";
 import { rowsAffected as n } from "./rows-affected.js";
 import { lockAccountStorage, recomputeAccountStorage, releaseBodyBytes } from "./storage.js";
@@ -75,8 +75,8 @@ export async function stampMailboxErasure(
     .where(and(
       eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNull(mailboxes.erasedAt),
     ));
-  // …and the receipts by which the press and the found copy named its signature.
-  await forgetSignatureReceipts(tx, accountId, mailboxId);
+  // …and every hash of its settings or its signature that its audit rows hold.
+  await forgetSettingsHashes(tx, accountId, mailboxId);
   const [row] = await tx.select({ done: mailboxes.erasureDoneAt }).from(mailboxes)
     .where(eq(mailboxes.id, mailboxId)).limit(1);
   if (row?.done) return { messages: 0, drafts: 0, draftsUnanchored: 0, done: true };
@@ -194,23 +194,25 @@ export async function sweepMailboxStep(
     .where(eq(mailboxCredentials.mailboxId, mailboxId)));
   deleted["idempotency_keys"] = await eraseIdempotentResponses(tx, accountId, now, { mailboxId });
   const seq = await recordMailboxRemoved(tx, accountId, mailboxId);
-  // The receipt retains nothing for the mailbox, its signature included, nor any receipt of it.
-  await forgetSignatureReceipts(tx, accountId, mailboxId);
+  // The receipt retains nothing for the mailbox, its signature included, nor a hash of it or the settings.
+  await forgetSettingsHashes(tx, accountId, mailboxId);
   await tx.update(mailboxes).set({ erasureDoneAt: now, signature: null, signatureHtml: null })
     .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)));
   return out({ seq, done: true });
 }
 
 /**
- * The receipts naming this mailbox's signature come off its audit rows, which stay
- * (`signatureReceiptRows`). At the stamp, after which the fence refuses a new one, and again at the
- * finish, for the rows a stamp by an older build left.
+ * The hashes naming this mailbox's settings or signature come off its audit rows, which stay
+ * (`settingsHashRows`). At the stamp, after which the fence refuses a new row, and again at the
+ * finish, for the rows a stamp by an older build left. Returns how many rows it wrote.
  */
-async function forgetSignatureReceipts(tx: Tx, accountId: string, mailboxId: string): Promise<void> {
-  for (const r of await signatureReceiptRows(tx, { accountId, mailboxId })) {
+async function forgetSettingsHashes(tx: Tx, accountId: string, mailboxId: string): Promise<number> {
+  const rows = await settingsHashRows(tx, { accountId, mailboxId });
+  for (const r of rows) {
     await tx.update(auditLog).set({ payload: r.payload })
       .where(and(eq(auditLog.id, r.id), eq(auditLog.accountId, accountId)));
   }
+  return rows.length;
 }
 
 /**
@@ -421,7 +423,7 @@ export async function eraseOwedMailbox(
   return run;
 }
 
-/** How many finished erasures one {@link clearErasedSignatures} call clears. */
+/** How many finished erasures one backlog clear reads (signatures, settings hashes). */
 const SIGNATURE_BACKLOG_PAGE = 50;
 
 /**
@@ -441,6 +443,34 @@ export async function clearErasedSignatures(db: Tx, scope?: SQL): Promise<number
     cleared += (await db.update(mailboxes).set({ signature: null, signatureHtml: null })
       .where(and(eq(mailboxes.id, r.id), eq(mailboxes.accountId, r.accountId), kept))
       .returning({ id: mailboxes.id })).length;
+  }
+  return cleared;
+}
+
+/**
+ * …nor any hash of its settings or signature on its audit rows: the stamp and the last step take
+ * them off ({@link SETTINGS_HASH_KEYS}), and this takes them off the erasures finished before they
+ * did, instead of leaving them to the audit trail's year. Safe to repeat; one audit row per
+ * statement. Returns how many mailboxes it cleared.
+ */
+export async function clearErasedSettingsHashes(db: Tx, scope?: SQL): Promise<number> {
+  const holdsAHash = or(...Object.entries(SETTINGS_HASH_KEYS).map(([action, keys]) => and(
+    eq(auditLog.action, action),
+    or(...keys.map((k) => sql`${auditLog.payload}->>${k} is not null`)),
+  )));
+  const owed = and(
+    isNotNull(mailboxes.erasureDoneAt),
+    exists(db.select({ one: sql`1` }).from(auditLog).where(and(
+      eq(auditLog.accountId, mailboxes.accountId),
+      sql`${auditLog.payload}->>'mailboxId' = cast(${mailboxes.id} as text)`,
+      holdsAHash,
+    ))),
+  );
+  const rows = await db.select({ id: mailboxes.id, accountId: mailboxes.accountId }).from(mailboxes)
+    .where(scope ? and(owed, scope) : owed).limit(SIGNATURE_BACKLOG_PAGE);
+  let cleared = 0;
+  for (const r of rows) {
+    if ((await forgetSettingsHashes(db, r.accountId, r.id)) > 0) cleared += 1;
   }
   return cleared;
 }

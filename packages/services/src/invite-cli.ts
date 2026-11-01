@@ -5,11 +5,14 @@
  * invite-gated, and the only correct authentication is a staff role plus step-up, which the gate
  * predates — the mint stays with an operator holding the production database URL; an admin route
  * would call `WaitlistService.mintInvite`. `DATABASE_URL_POOLED` required;
- * `RESEND_API_KEY`/`MAIL_FROM` unless `--no-send`. Constructed through `MailService`, never a
- * bare `ResendMailer`. The code is printed ONCE — `--force` re-issue is the remedy.
+ * `RESEND_API_KEY`/`MAIL_FROM` and the deployment's KEK ring (it keys the recipient's mail slot)
+ * unless `--no-send`. Constructed through `MailService`, never a bare `ResendMailer`. The code is
+ * printed ONCE — `--force` re-issue is the remedy.
  */
 import { pathToFileURL } from "node:url";
+import { keyProviderFromEnv } from "@trafficflow/core/mail";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
+import { throttleKeysFor } from "./auth/throttle-keys.js";
 import { MailService } from "./mail/mail-service.js";
 import { ResendMailer } from "./mail/resend-mailer.js";
 import { makeWaitlistService, DEFAULT_INVITE_TTL_MS } from "./waitlist-service.js";
@@ -71,7 +74,8 @@ function requireEnv(key: string): string {
  * The three link bases are validated by `MailService`'s constructor against
  * `DEFAULT_LINK_ORIGINS`, so a mistyped `MAIL_APP_URL` fails HERE, loudly, before an invite
  * row exists — rather than producing a valid-looking ohmail invite that points somewhere
- * else. No `operatorEmail`: this instance must not be able to mail the pager.
+ * else. No `operatorEmail`: this instance must not be able to mail the pager. A missing KEK
+ * fails here too, before anything is minted.
  */
 function mailerOrNull(send: boolean): MailService | null {
   if (!send) return null;
@@ -86,6 +90,7 @@ function mailerOrNull(send: boolean): MailService | null {
       siteUrl: process.env.MAIL_SITE_URL?.trim() || "https://ohmail.app",
       supportEmail: process.env.MAIL_SUPPORT_EMAIL?.trim() || "support@ohmail.app",
     },
+    throttleKeys: throttleKeysFor(keyProviderFromEnv()),
   });
 }
 
@@ -100,7 +105,7 @@ ohmail invites
   --ttl 14d       how long the code lives (30m | 12h | 14d). Default 14d.
   --note "…"      free-text provenance stored on the row (mint), or the reason (revoke).
   --force         REVOKE the address's live invite and issue a replacement.
-  --no-send       print the code, mail nothing (no Resend credentials needed).
+  --no-send       print the code, mail nothing (no Resend credentials or KEK needed).
 
 Revoking is the remedy for a code that reached the wrong inbox. It is idempotent, it
 never touches an invite that was already redeemed, and it cannot be undone — mint a

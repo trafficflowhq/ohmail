@@ -4,7 +4,7 @@ import { accounts, users } from "@trafficflow/db";
 import { authThrottle, invites } from "@trafficflow/db/cloud";
 import { eq } from "drizzle-orm";
 import {
-  AuthService, makeTestAuthDeps, issueInvite, revokeInvitesFor, MailService, SpyMailer,
+  AuthService, makeTestAuthDeps, issueInvite, revokeInvitesFor, MailService, SpyMailer, throttleKeysFor,
   type AuthDeps, type Db, type ServiceContext, type ServiceError, type Tx,
 } from "@trafficflow/services";
 
@@ -64,6 +64,7 @@ async function harness(
       appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app",
       supportEmail: "support@ohmail.app",
     },
+    throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
   });
   const deps = makeTestAuthDeps(cfg, mail);
   return {
@@ -460,6 +461,7 @@ describe("a fresh address and a taken one are indistinguishable on the open path
         appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app",
         supportEmail: "support@ohmail.app",
       },
+      throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
     });
     const svc = new AuthService(makeTestAuthDeps({ publicSignup: true }, failing));
 

@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { type Tx } from "@trafficflow/db";
 import { authThrottle } from "@trafficflow/db/cloud";
-import { hashToken } from "./auth/crypto.js";
+import type { ThrottleKeys } from "./auth/throttle-keys.js";
 
 /**
  * The ONE per-IP slot limiter, shared — the waitlist's `reserveJoinSlot`, lifted and given more
@@ -10,14 +10,17 @@ import { hashToken } from "./auth/crypto.js";
  * N+1th, in ONE `INSERT … ON CONFLICT DO UPDATE … WHERE … RETURNING` (a read-modify-write
  * counter collapses concurrent attempts into one increment), compared BEFORE it counts: a claim
  * at the ceiling updates nothing, so a refused attempt never moves the counter and the row reads
- * at most `max`. ISO strings in the raw `sql` templates, never `Date`s. The IP is
- * HASHED: `${namespace}:${sha256(ip)}` — no plaintext addresses in a rate-limit table.
+ * at most `max`. ISO strings in the raw `sql` templates, never `Date`s. The IP is KEYED:
+ * `${namespace}:${keys.client(ip)}`, the deployment's keyed hash (`throttle-keys.ts`) — no address
+ * in a rate-limit table, and no plain digest a walk of the address space reverses. A host whose
+ * key provider refuses throws here and counts nothing.
  */
 export async function reserveIpSlot(
   tx: Tx,
+  keys: ThrottleKeys,
   input: { namespace: string; ip: string; now: Date; max: number; windowMs: number },
 ): Promise<boolean> {
-  const key = `${input.namespace}:${hashToken(input.ip)}`;
+  const key = `${input.namespace}:${keys.client(input.ip)}`;
   const floorIso = new Date(input.now.getTime() - input.windowMs).toISOString();
   const nowIso = input.now.toISOString();
   const rolled = sql`${authThrottle.windowStartedAt} < ${floorIso}::timestamptz`;
