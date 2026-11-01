@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { folderState, mailboxes, messageInstances, messages } from "@trafficflow/db";
+import { folderState, mailboxes, messageBodies, messageInstances, messages } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { DrizzleRepo } from "../src/adapters/drizzle-repo.js";
 
@@ -16,7 +16,7 @@ const MAILBOX = "00000000-0000-4000-8000-0000000000b1";
 const OTHER = "00000000-0000-4000-8000-0000000000b2";
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
 
-type Shape = "ordinary" | "orphan" | "junkParked" | "tombstoned" | "locatorless" | "keepsSecond" | "otherMailbox";
+type Shape = "ordinary" | "orphan" | "junkParked" | "trashParked" | "tombstoned" | "locatorless" | "keepsSecond" | "otherMailbox";
 
 async function seeded(shapes: Shape[], opts: { strayInOther?: boolean } = {}) {
   const db = await makeTestDb();
@@ -45,6 +45,14 @@ async function seeded(shapes: Shape[], opts: { strayInOther?: boolean } = {}) {
         messageId: id(n), desiredFolder: "Junk", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled",
       });
     }
+    if (shape === "trashParked") {
+      // A landed delete: tombstoned, parked at its Trash UID, no copy on record.
+      await db.update(messages).set({ deletedAt: new Date(), nativeLocator: { folder: "Trash", ref: `1:${n}` } }).where(eq(messages.id, id(n)));
+      await db.insert(folderState).values({
+        messageId: id(n), desiredFolder: "Trash", observedFolder: "Trash", lastSetBy: "us", reconcileStatus: "reconciled",
+      });
+      await db.insert(messageBodies).values({ messageId: id(n), text: "the text of a deleted letter", html: null });
+    }
   }
   // A located, instance-less message in the OTHER mailbox: never this mailbox's victim.
   if (opts.strayInOther) await put(9_000, OTHER, true);
@@ -70,7 +78,7 @@ async function seeded(shapes: Shape[], opts: { strayInOther?: boolean } = {}) {
   const repo = new DrizzleRepo(counted as never);
   /* As the cycle runs it: in a transaction (the victims' change rows need one). */
   const reap = (limit: number) => repo.transaction((r) => r.tombstoneInstanceless(ACCOUNT, MAILBOX, limit));
-  return { repo, reap, oracle, deleted, selects: () => selects };
+  return { db, repo, reap, oracle, deleted, selects: () => selects };
 }
 
 const crowd = (n: number, s: Shape = "ordinary"): Shape[] => Array.from({ length: n }, () => s);
@@ -115,6 +123,25 @@ describe("the reaper finds the whole scan's victims from the instance-less rows 
     /* The candidate read is one statement built from two selects (the EXCEPT's halves); a check of
        the candidates would be a third, and a per-message walk of the rows would be five more. */
     expect(selects() - at, "the reaper walked the mailbox instead of reading its instance-less rows").toBe(2);
+  });
+
+  it("a letter whose delete landed in Trash is never the reaper's; this store lists and drops it", async () => {
+    const { db, repo, reap, oracle } = await seeded([...crowd(20), ...crowd(4, "trashParked"), ...crowd(3, "orphan")]);
+    const list = (afterId?: string, limit = 10) =>
+      repo.listTrashParked(ACCOUNT, MAILBOX, { folder: "Trash", limit, ...(afterId !== undefined ? { afterId } : {}) });
+    const parked = await list();
+    expect(parked).toHaveLength(4);
+    expect(await list(parked[1]!.messageId, 2), "a page after the second row").toEqual(parked.slice(2));
+    expect(await reap(200), "the reaper took a letter parked in Trash").toBe(3);
+    expect(await oracle(200)).toEqual([]);
+    expect(await list()).toEqual(parked);
+
+    const gone = parked.slice(0, 3).map((p) => ({ ...p, expectDesired: "Trash" }));
+    expect(await repo.transaction((r) => r.dropGoneFromTrash(ACCOUNT, MAILBOX, "Trash", gone))).toEqual(gone.map((g) => g.messageId));
+    expect(await list()).toEqual(parked.slice(3));
+    const husks = await db.select({ id: messageBodies.messageId }).from(messageBodies)
+      .where(eq(messageBodies.withheldReason, "expunged")).orderBy(asc(messageBodies.messageId));
+    expect(husks.map((h) => h.id)).toEqual(gone.map((g) => g.messageId));
   });
 
   it("the check runs once per chunk of candidates, not once per message", async () => {

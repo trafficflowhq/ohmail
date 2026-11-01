@@ -237,6 +237,10 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "the stored id is compared with the re-read message's before a body is rewritten",
   },
+  "apps/worker/src/trash-gone.ts": {
+    terms: ["messageIdHeader"], classes: ["presence-keeps"],
+    why: "a letter parked at a copy the server already dropped leaves Trash only when no letter in Trash carries its id; a forged id keeps it",
+  },
   "apps/worker/src/storage-refill.ts": {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "a letter emptied for space gets its text back only from bytes whose id and dedup key match the stored row",
