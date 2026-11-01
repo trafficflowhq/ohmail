@@ -309,7 +309,7 @@ describe("the worker's portable profile write-behind", () => {
         priority: 0, enabled: true, provenance: "promoted",
       }],
       notifyRules: [], awayResponder: null, tagNames: [],
-      signature: null,
+      signature: "-- \nfriend",
     };
     const foreignDoc = makeProfileDoc(foreignPayload, {
       updatedAt: new Date("2026-08-01T00:00:00Z"), producer: { kind: "local", version: "0.9.3" },
@@ -341,7 +341,7 @@ describe("the worker's portable profile write-behind", () => {
     expect(marker!.payload).toMatchObject({
       mailboxId: mb.mailboxId, state: "found",
       producer: { kind: "local", version: "0.9.3" },
-      counts: { screener: 1, rules: 1, notifyRules: 0, tagNames: 0, awayResponder: 0 },
+      counts: { screener: 1, rules: 1, notifyRules: 0, tagNames: 0, awayResponder: 0, signature: 1 },
     });
 
     // …NOT overwritten, cycle after cycle, and this install's own settings published beside it.
@@ -362,6 +362,7 @@ describe("the worker's portable profile write-behind", () => {
         accountId: mb.accountId, kind: "sender", match: "friend@elsewhere.example",
         destination: "INBOX", provenance: "promoted", enabled: true,
       });
+      await tx.update(mailboxes).set({ signature: "-- \nfriend" }).where(eq(mailboxes.id, mb.mailboxId));
     });
     // The hold releases, and the NEXT change leaves one document, ours, carrying it: the
     // released foreign copy is residue the write gate removes before it appends.

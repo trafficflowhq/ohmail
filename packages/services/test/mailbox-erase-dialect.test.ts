@@ -1,13 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { and, eq, sql } from "drizzle-orm";
+import { Table, and, eq, getTableName, is, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { dialect } from "@trafficflow/db/dialect";
+import * as store from "@trafficflow/db";
 import {
-  accounts, accountStorage, clearErasedSignatures, drafts, eraseOwedMailbox, evictOldestBodies, mailboxCredentials, mailboxFolders, mailboxes,
-  messageBodies, messages, reserveBodyBytes, storageUsageOf, threads, type Tx,
+  PROFILE_FOUND_AUDIT_ACTION, accounts, accountStorage, auditLog, clearErasedSignatures, drafts, eraseOwedMailbox, evictOldestBodies,
+  mailboxCredentials, mailboxFolders, mailboxes, messageBodies, messages, reserveBodyBytes, storageUsageOf, threads, type Tx,
 } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { effectiveMailboxSignatures, makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import {
+  ProfileUnavailableError, signatureReceipt, type ProfileReadResult,
+} from "@trafficflow/core/adapters/organizer-profile";
+import { effectiveMailboxSignatures, makeMailboxService, profileImportService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * ERASING ONE MAILBOX HAS TO RUN ON THE STORE A STANDALONE PHONE CARRIES.
@@ -33,6 +37,18 @@ type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
   ({ db, accountId, userId: null, now: () => NOW, requestId: "erase-dialect" });
+
+/** Every row of every table the store declares, as text: where a receipt would have to hide. */
+async function everyRow(db: Db): Promise<string[]> {
+  const out: string[] = [];
+  for (const table of Object.values(store)) {
+    if (!is(table, Table)) continue;
+    for (const row of await db.select().from(table as unknown as typeof mailboxes)) {
+      out.push(`${getTableName(table)} ${JSON.stringify(row, (_k, v: unknown) => (typeof v === "bigint" ? String(v) : v))}`);
+    }
+  }
+  return out;
+}
 
 /** One mailbox with the mail an ordinary sync leaves behind: a folder, a message, a body, a draft. */
 async function seed(db: Db): Promise<{
@@ -116,6 +132,60 @@ describe("removing one mailbox WITH erase, on either store", () => {
     const maps = await effectiveMailboxSignatures(db, accountId);
     expect(maps.signatures[mailboxId]).toBeUndefined();
     expect(maps.signaturesHtml[mailboxId]).toBeUndefined();
+  });
+
+  /* Nor a receipt of it: the organizer's found-marker names the copy's signature, a press handed to
+     the organizer the mailbox's own, both by `signatureReceipt`. Every row of every table is read. */
+  it("the finished erasure leaves no receipt of the signature in any row; another mailbox keeps its own", async () => {
+    const db = await makeTestDb();
+    const { accountId, mailboxId, address } = await seed(db);
+    const typed = { signature: "-- \nAnna", signatureHtml: "<p>-- <br>Anna</p>" };
+    await db.update(mailboxes).set(typed).where(eq(mailboxes.id, mailboxId));
+    const [other] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `o-${address}` }).returning();
+    const FP = `2:${"f".repeat(64)}`;
+    const copy = signatureReceipt("-- \nAnna Rossi")!;
+    const live = signatureReceipt(typed.signature, typed.signatureHtml)!;
+    const kept = signatureReceipt("-- \nBea")!;
+    const marker = (id: string, receipt: string) => ({
+      accountId, action: PROFILE_FOUND_AUDIT_ACTION, inverse: null,
+      payload: { mailboxId: id, state: "found", fingerprint: FP, heldForImport: true, signatureReceipt: receipt },
+    });
+    await db.insert(auditLog).values([marker(mailboxId, copy), marker(other!.id, kept)]);
+    const slow = async (): Promise<ProfileReadResult> => {
+      throw new ProfileUnavailableError("the mailbox did not answer in time", { op: "list_profiles", code: "mailbox_read_timeout" });
+    };
+    // The press the request could not finish, handed over with the receipt its card named.
+    await profileImportService.apply(ctxFor(db, accountId), mailboxId, { fingerprint: FP, signatureReplaces: live }, { read: slow });
+    const before = await everyRow(db);
+    expect([copy, live, kept].filter((r) => !before.some((row) => row.includes(r))), "the probe sees no receipt").toEqual([]);
+
+    await svc.delete(ctxFor(db, accountId), mailboxId, { erase: { confirmAddress: address } });
+    expect((await eraseOwedMailbox(db, dialect(db), { accountId, mailboxId, now: () => NOW, maxSteps: 10 })).done).toBe(true);
+
+    const after = await everyRow(db);
+    expect(after.filter((row) => row.includes(copy) || row.includes(live)), "a row still names the erased signature").toEqual([]);
+    const hex32 = /(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/;
+    expect(after.filter((row) => row.startsWith("audit_log ") && row.includes(mailboxId) && hex32.test(row)),
+      "an audit row of the erased mailbox carries a receipt").toEqual([]);
+    expect(after.filter((row) => row.startsWith("audit_log ") && row.includes(mailboxId)).length, "the audit rows themselves stay")
+      .toBe(2);
+    expect(after.some((row) => row.includes(kept)), "the other mailbox's marker lost its receipt").toBe(true);
+  });
+
+  /* A stamp by an older build left the receipts; the finish takes them off. */
+  it("an erasure stamped the old way still leaves no receipt of the signature once it finishes", async () => {
+    const db = await makeTestDb();
+    const { accountId, mailboxId } = await seed(db);
+    const [marker] = await db.insert(auditLog).values({
+      accountId, action: PROFILE_FOUND_AUDIT_ACTION, inverse: null,
+      payload: { mailboxId, state: "found", fingerprint: "f".repeat(64), heldForImport: true, signatureReceipt: "7".repeat(32) },
+    }).returning({ id: auditLog.id });
+    // The old stamp: the tombstone and its instant, nothing more.
+    await db.update(mailboxes).set({ status: "disabled", erasedAt: NOW }).where(eq(mailboxes.id, mailboxId));
+    expect((await eraseOwedMailbox(db, dialect(db), { accountId, mailboxId, now: () => NOW, maxSteps: 10 })).done).toBe(true);
+    const [row] = await db.select({ p: auditLog.payload }).from(auditLog).where(eq(auditLog.id, marker!.id));
+    expect(row?.p, "the finished erasure left the receipt").not.toHaveProperty("signatureReceipt");
+    expect(row?.p).toMatchObject({ mailboxId, state: "found" });
   });
 
   /* Erasures finished before the sweep cleared the signature kept it; nothing re-runs a finished one. */

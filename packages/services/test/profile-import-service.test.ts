@@ -3,15 +3,16 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accounts, auditLog, awayResponders, changeLog, contacts, folderState, mailboxCredentials, mailboxes, mailboxProfileMirror, messages,
-  organizerRequests, rules, settleReaderRuleRows, tags,
+  accountSettings, accounts, auditLog, awayResponders, changeLog, contacts, folderState, mailboxCredentials, mailboxes, mailboxProfileMirror, messages,
+  organizerRequests, profileImportWriteReleased, rules, settleReaderRuleRows, tags,
   PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION,
   type Tx,
 } from "@trafficflow/db";
 import {
-  PROFILE_VERSION, makeProfileDoc, profileFingerprint,
+  PROFILE_VERSION, makeProfileDoc, profileFingerprint, signatureReceipt,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
+import { effectiveMailboxSignatures } from "../src/consent-seed.js";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
 import { PROFILE_IMPORT_MAX, profileImportService, type ProfileImportApplied } from "../src/profile-import-service.js";
@@ -140,7 +141,7 @@ const neverReader = (): (() => Promise<ProfileReadResult>) => async () => {
 };
 
 /** Seed the organizer's found-marker exactly as `apps/worker/src/profile.ts#writeMarker` shapes it. */
-async function seedHeldMarker(w: World, d: OrganizerProfileDoc): Promise<string> {
+async function seedHeldMarker(w: World, d: OrganizerProfileDoc, signature?: number, copyReceipt?: string): Promise<string> {
   const fingerprint = profileFingerprint(d);
   await w.db.insert(auditLog).values({
     accountId: w.accountId,
@@ -148,9 +149,11 @@ async function seedHeldMarker(w: World, d: OrganizerProfileDoc): Promise<string>
     payload: {
       mailboxId: w.mailboxId, state: "found", fingerprint, heldForImport: true,
       updatedAt: d.updatedAt, producer: d.producer,
+      ...(copyReceipt === undefined ? {} : { signatureReceipt: copyReceipt }),
       counts: {
         screener: d.screener.length, rules: d.rules.length, notifyRules: d.notifyRules.length,
         tagNames: d.tagNames.length, awayResponder: d.awayResponder === null ? 0 : 1,
+        ...(signature === undefined ? {} : { signature }),
       },
     },
     inverse: null,
@@ -192,8 +195,20 @@ describe("the import candidate", () => {
       fingerprint: profileFingerprint(d),
       updatedAt: d.updatedAt,
       producer: { kind: "local", version: "0.9.3" },
-      counts: { screener: 2, rules: 3, notifyRules: 1, tags: 2, awayResponder: true },
+      counts: { screener: 2, rules: 3, notifyRules: 1, tags: 2, awayResponder: true, signature: false },
     });
+  });
+
+  it("the card names the signature when the organizer counted one; a marker without the key says none", async () => {
+    const w = await world();
+    const d = doc({ ...PAYLOAD, signature: "-- \nMila" });
+    await seedHeldMarker(w, d, 1);
+    expect(await profileImportService.candidate(w.ctx, w.mailboxId))
+      .toMatchObject({ state: "found", counts: { signature: true } });
+    const older = await world();
+    await seedHeldMarker(older, d);
+    expect(await profileImportService.candidate(older.ctx, older.mailboxId))
+      .toMatchObject({ state: "found", counts: { signature: false } });
   });
 
   it("a marker the organizer wrote as the INCUMBENT (unheld) is not an import question", async () => {
@@ -316,7 +331,7 @@ describe("apply — natural keys, one transaction, convergence", () => {
     const result = await inlineApply(
       w.ctx, w.mailboxId, { fingerprint: profileFingerprint(d) }, { read: foundReader(d).read },
     );
-    expect(result.imported).toEqual({ screener: 2, rules: 3, notifyRules: 1, tags: 2, awayResponder: true });
+    expect(result.imported).toEqual({ screener: 2, rules: 3, notifyRules: 1, tags: 2, awayResponder: true, signature: false });
     expect(result.skippedRules).toBe(0);
     // THE CONVERGENCE PROOF. The organizer's hold releases when the local store's own
     // serialization equals the held document — the exact comparison its dirty check makes —
@@ -342,9 +357,10 @@ describe("apply — natural keys, one transaction, convergence", () => {
       .from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
     expect(before[0]!.signature, "the fixture already carried a signature").toBeNull();
 
-    await profileImportService.apply(
+    const result = await inlineApply(
       w.ctx, w.mailboxId, { fingerprint: profileFingerprint(d) }, { read: foundReader(d).read },
     );
+    expect(result.imported.signature, "the done line cannot say the signature came back").toBe(true);
 
     const after = await w.db.select({ signature: mailboxes.signature })
       .from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
@@ -361,29 +377,32 @@ describe("apply — natural keys, one transaction, convergence", () => {
       .toBe(profileFingerprint(d));
   });
 
-  it("mail 0094 — a document saying NO signature CLEARS one this machine had, rather than leaving it", async () => {
-    /* `null` in the document is a statement about the configuration, not the absence of one. If
-       the importer treated it as "leave whatever is here" the import would not be idempotent
-       against a machine that had a signature — and, again, the serialization would never converge
-       on the document, so the hold would never lift. */
+  it("a copy with NO signature leaves the one typed on this mailbox, text and markup; the hold still ends", async () => {
+    /* An Import never erases a signature (ruled 2026-11-01): the card says Import adds. The hold
+       ends on the `imported` answer, not on the store converging (`profileImportWriteReleased`). */
     const w = await world();
-    await w.db.update(mailboxes).set({ signature: "-- \nsomething this machine had" })
-      .where(eq(mailboxes.id, w.mailboxId));
-
+    const TYPED = { signature: "-- \njust typed", signatureHtml: "<p>-- <br>just <em>typed</em></p>" };
+    await w.db.update(mailboxes).set(TYPED).where(eq(mailboxes.id, w.mailboxId));
     const d = doc();                       // PAYLOAD carries `signature: null`
-    await profileImportService.apply(
+    await seedHeldMarker(w, d, 0);
+    const offer = await profileImportService.candidate(w.ctx, w.mailboxId);
+    expect(offer).toMatchObject({ state: "found", counts: { signature: false } });
+    expect(offer.state === "found" && offer.counts.signatureReplaces, "a copy with no signature replaces one").toBeFalsy();
+
+    const result = await inlineApply(
       w.ctx, w.mailboxId, { fingerprint: profileFingerprint(d) }, { read: foundReader(d).read },
     );
-
-    const after = await w.db.select({ signature: mailboxes.signature })
+    expect(result.imported).toEqual({ screener: 2, rules: 3, notifyRules: 1, tags: 2, awayResponder: true, signature: false });
+    const after = await w.db.select({ signature: mailboxes.signature, signatureHtml: mailboxes.signatureHtml })
       .from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
-    expect(after[0]!.signature, "the stale local signature survived an import that said there is none")
-      .toBeNull();
-    const local = await serializeOrganizerProfile(w.db as unknown as Tx, w.accountId, w.mailboxId);
-    expect(profileFingerprint(local)).toBe(profileFingerprint(d));
+    expect(after[0], "the import erased the signature typed on this mailbox").toEqual(TYPED);
+    expect((await effectiveMailboxSignatures(w.db, w.accountId)).signatures[w.mailboxId]).toBe(TYPED.signature);
+    expect(await profileImportWriteReleased(w.db as unknown as Tx, {
+      accountId: w.accountId, mailboxId: w.mailboxId, fingerprint: profileFingerprint(d),
+    }), "the organizer's hold never ends").toBe(true);
   });
 
-  it("the signature's MARKUP travels with it, and a document with none CLEARS the local markup", async () => {
+  it("the signature's MARKUP travels with it when the press names the signature it replaces", async () => {
     /* THE HOLE THIS CASE EXISTS TO CLOSE, and it was found by watching a mutation stay GREEN:
        deleting the importer's `signatureHtml` write left all 47 cases here and in the key census
        passing, so nothing measured that the markup half is applied at all.
@@ -391,24 +410,20 @@ describe("apply — natural keys, one transaction, convergence", () => {
        Both columns are ONE value — a markup save derives the text, a plain save clears the markup
        — so an importer that wrote the text alone would leave this mailbox's old formatting under
        somebody else's words, and every message sent from it would carry a sign-off nobody wrote.
-       The convergence assertion is the same one the two cases above rest on: the hold lifts when
-       the local serialization equals the held document, and a column the importer never writes
-       makes those unequal for ever. */
+       The press names the signature it replaces (the card said so), so the copy's takes its place. */
     const w = await world();
     const SIG = "-- \nMila Brunner";
     const HTML = "<p>-- <br>Mila <strong>Brunner</strong></p>";
 
     // The precondition, asserted: this machine holds DIFFERENT markup, so a green cannot come
     // from the fixture already agreeing with the document.
-    await w.db.update(mailboxes).set({
-      signature: "-- \nsomething this machine had",
-      signatureHtml: "<p>-- <br>something <em>this machine</em> had</p>",
-    }).where(eq(mailboxes.id, w.mailboxId));
+    const HAD = { signature: "-- \nsomething this machine had", signatureHtml: "<p>-- <br>something <em>this machine</em> had</p>" };
+    await w.db.update(mailboxes).set(HAD).where(eq(mailboxes.id, w.mailboxId));
 
     const d = doc({ ...PAYLOAD, signature: SIG, signatureHtml: HTML });
-    await profileImportService.apply(
-      w.ctx, w.mailboxId, { fingerprint: profileFingerprint(d) }, { read: foundReader(d).read },
-    );
+    await profileImportService.apply(w.ctx, w.mailboxId, {
+      fingerprint: profileFingerprint(d), signatureReplaces: signatureReceipt(HAD.signature, HAD.signatureHtml),
+    }, { read: foundReader(d).read });
 
     const after = await w.db
       .select({ signature: mailboxes.signature, signatureHtml: mailboxes.signatureHtml })
@@ -422,22 +437,20 @@ describe("apply — natural keys, one transaction, convergence", () => {
       .toBe(profileFingerprint(d));
   });
 
-  it("a document whose signature is PLAIN clears markup this machine had under it", async () => {
+  it("a document whose signature is PLAIN clears markup this machine had under it, when the press names it", async () => {
     /* The other direction, and the one that decides whether the write is `?? null` or a
        conditional: an ABSENT key means "this sign-off has no formatting", which is `null` in the
        column. An importer that only wrote markup when the document carried some would leave the
        old formatting standing under the new words — the same wrong-sign-off outcome as above,
        reached by the arm a conditional would take. */
     const w = await world();
-    await w.db.update(mailboxes).set({
-      signature: "-- \nsomething this machine had",
-      signatureHtml: "<p>-- <br>something <em>this machine</em> had</p>",
-    }).where(eq(mailboxes.id, w.mailboxId));
+    const HAD = { signature: "-- \nsomething this machine had", signatureHtml: "<p>-- <br>something <em>this machine</em> had</p>" };
+    await w.db.update(mailboxes).set(HAD).where(eq(mailboxes.id, w.mailboxId));
 
     const d = doc({ ...PAYLOAD, signature: "-- \nMila Brunner" });   // no `signatureHtml` key
-    await profileImportService.apply(
-      w.ctx, w.mailboxId, { fingerprint: profileFingerprint(d) }, { read: foundReader(d).read },
-    );
+    await profileImportService.apply(w.ctx, w.mailboxId, {
+      fingerprint: profileFingerprint(d), signatureReplaces: signatureReceipt(HAD.signature, HAD.signatureHtml),
+    }, { read: foundReader(d).read });
 
     const after = await w.db
       .select({ signature: mailboxes.signature, signatureHtml: mailboxes.signatureHtml })
@@ -657,6 +670,83 @@ describe("apply — natural keys, one transaction, convergence", () => {
     const w = await world();
     await expect(profileImportService.apply(w.ctx, w.mailboxId, {}, { read: neverReader() }))
       .rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+  });
+});
+
+/**
+ * AN IMPORT NEVER LOSES A SIGNATURE TYPED ON THIS MAILBOX (ruled 2026-11-01): the card says Import
+ * adds. A copy's different signature replaces the one here only when the press names it — the
+ * receipt the offer carries, which the card says as "replacing the one on this mailbox now"; else
+ * the typed one stays and the result says so. A mailbox with no signature takes the copy's.
+ */
+describe("an import never loses a signature typed on this mailbox", () => {
+  const TYPED = "-- \njust typed";
+  const SIG = "-- \nMila Brunner";
+  const signed = (): OrganizerProfileDoc => doc({ ...PAYLOAD, signature: SIG });
+  const press = (w: World, signatureReplaces?: string) => inlineApply(
+    w.ctx, w.mailboxId, { fingerprint: profileFingerprint(signed()), signatureReplaces }, { read: foundReader(signed()).read },
+  );
+  const signatureOf = async (w: World) => (await w.db.select({ signature: mailboxes.signature, signatureHtml: mailboxes.signatureHtml })
+    .from(mailboxes).where(eq(mailboxes.id, w.mailboxId)))[0]!;
+  const replacesOf = async (w: World) => {
+    const offer = await profileImportService.candidate(w.ctx, w.mailboxId);
+    expect(offer).toMatchObject({ state: "found", counts: { signature: true } });
+    return offer.state === "found" ? offer.counts.signatureReplaces : undefined;
+  };
+  async function typedWorld(typed: string | null = TYPED): Promise<World> {
+    const w = await world();
+    await w.db.insert(accountSettings).values({ accountId: w.accountId, updatedAt: new Date("2026-08-01T00:00:00Z") });
+    if (typed !== null) await w.db.update(mailboxes).set({ signature: typed }).where(eq(mailboxes.id, w.mailboxId));
+    await seedHeldMarker(w, signed(), 1, signatureReceipt(SIG)!);
+    return w;
+  }
+  const stampOf = async (w: World) => (await w.db.select({ at: accountSettings.updatedAt }).from(accountSettings)
+    .where(eq(accountSettings.accountId, w.accountId)))[0]!.at.getTime();
+  const settingsRows = async (w: World) => (await changeRows(w.db, w.accountId)).filter((r) => r.entityType === "settings").length;
+
+  it("the offer names the different signature it replaces; a press that does not name it keeps it and says so", async () => {
+    const w = await typedWorld();
+    const replaces = await replacesOf(w);
+    const result = await press(w);
+    expect(await signatureOf(w), "an import replaced the signature typed here unasked").toEqual({ signature: TYPED, signatureHtml: null });
+    expect(result.imported).toMatchObject({ signature: false, signatureKept: true });
+    expect(await stampOf(w), "an import that changed no signature moved the consent stamp").toBe(Date.parse("2026-08-01T00:00:00Z"));
+    expect(await settingsRows(w), "an import that changed no signature appended a settings row").toBe(0);
+    expect(replaces, "the offer does not name the signature it would replace").toBe(signatureReceipt(TYPED));
+  });
+
+  it("a press that names it replaces it, moves the stamp, and the result says the signature arrived", async () => {
+    const w = await typedWorld();
+    const result = await press(w, await replacesOf(w));
+    expect(result.imported.signature).toBe(true);
+    expect(result.imported.signatureKept).toBeUndefined();
+    expect(await signatureOf(w)).toEqual({ signature: SIG, signatureHtml: null });
+    expect(await stampOf(w)).toBe(NOW.getTime());
+    expect(await settingsRows(w)).toBe(1);
+  });
+
+  it("a receipt drawn before the signature changed replaces nothing: the one typed since stays", async () => {
+    const w = await typedWorld();
+    const receipt = await replacesOf(w);
+    await w.db.update(mailboxes).set({ signature: "-- \ntyped after the card" }).where(eq(mailboxes.id, w.mailboxId));
+    expect((await press(w, receipt)).imported).toMatchObject({ signature: false, signatureKept: true });
+    expect((await signatureOf(w)).signature).toBe("-- \ntyped after the card");
+  });
+
+  it("CONTROL: a mailbox with no signature takes the copy's, and the offer names nothing it replaces", async () => {
+    const w = await typedWorld(null);
+    expect(await replacesOf(w)).toBeUndefined();
+    expect((await press(w)).imported.signature).toBe(true);
+    expect(await signatureOf(w)).toEqual({ signature: SIG, signatureHtml: null });
+    expect(await stampOf(w)).toBe(NOW.getTime());
+  });
+
+  it("the copy's signature already here: the offer names no replacement and nothing moves", async () => {
+    const w = await typedWorld(SIG);
+    expect(await replacesOf(w)).toBeUndefined();
+    expect((await press(w)).imported.signature).toBe(true);
+    expect(await stampOf(w)).toBe(Date.parse("2026-08-01T00:00:00Z"));
+    expect(await settingsRows(w)).toBe(0);
   });
 });
 
@@ -970,7 +1060,7 @@ describe("decline — durable, inert, content-keyed", () => {
       fingerprint,
       updatedAt: "2026-08-10T09:00:00.000Z",
       producer: { kind: "local", version: "0.9.3" },
-      counts: { screener: 2, rules: 3, notifyRules: 1, tags: 2, awayResponder: true },
+      counts: { screener: 2, rules: 3, notifyRules: 1, tags: 2, awayResponder: true, signature: false },
     });
   });
 

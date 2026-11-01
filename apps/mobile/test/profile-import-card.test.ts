@@ -17,8 +17,8 @@ import {
   answerProfileImport, questionOf, readImportStatus, readProfileImport, type ProfileImportQuestion, type ProfileImportSession,
 } from "../src/net/profile-import";
 import {
-  ASK_AGAIN_NONE_MS, ASK_AGAIN_OPEN_MS, askTickets, askableRows, cardQuestion, countsSaid, failureSaid, importingSaid,
-  mailboxesToAsk, savedBySaid, savedRows,
+  ASK_AGAIN_NONE_MS, ASK_AGAIN_OPEN_MS, askTickets, askableRows, cardQuestion, countsSaid, failureSaid, importSubject, importingSaid,
+  keptSaid, mailboxesToAsk, savedBySaid, savedRows,
 } from "../src/ui/profile-import-card";
 /* @reads: apps/mobile/src/ui/ProfileImportCard.tsx apps/mobile/src/state/world.tsx */
 
@@ -87,7 +87,7 @@ describe("each press reaches its own route with the exact subject", () => {
         : json(200, { dismissed: true }));
     const fp = { fingerprint: FOUND.fingerprint };
     expect(await answerProfileImport(session, "m", "import", fp))
-      .toEqual({ kind: "done", imported: FOUND.counts, skippedRules: 1 });
+      .toEqual({ kind: "done", imported: { ...FOUND.counts, signature: false }, skippedRules: 1 });
     expect(await answerProfileImport(session, "m", "notNow", fp)).toEqual({ kind: "done", imported: null, skippedRules: 0 });
     expect(await answerProfileImport(session, "m", "save", fp)).toEqual({ kind: "done", imported: null, skippedRules: 0 });
     expect(await answerProfileImport(session, "m", "notNow", { v: 3 })).toMatchObject({ kind: "done" });
@@ -133,6 +133,44 @@ describe("which mailbox asks, and where", () => {
     expect(savedBySaid({ kind: "local" }, "not a date", "en")).toBeNull();
     setActiveLocale("de");
     expect(countsSaid(FOUND.counts)).toBe("58 Screener-Entscheidungen, 3 Regeln und 1 Tag");
+    expect(countsSaid({ ...FOUND.counts, signature: true })).toBe("58 Screener-Entscheidungen, 3 Regeln, 1 Tag und deine Signatur");
+    setActiveLocale("en");
+  });
+
+  it("names the signature only when the door counted one; an older door's answer still asks", () => {
+    setActiveLocale("en");
+    const older = questionOf(FOUND);
+    expect(older.state === "found" && older.counts.signature).toBe(false);
+    const signed = questionOf({ ...FOUND, counts: { ...FOUND.counts, signature: true } });
+    expect(signed.state === "found" && countsSaid(signed.counts)).toBe("58 screener decisions, 3 rules, 1 tag, and your signature");
+    expect(countsSaid({ screener: 0, rules: 0, notifyRules: 0, tags: 0, awayResponder: false, signature: true })).toBe("your signature");
+  });
+
+  /* AN IMPORT NEVER LOSES A SIGNATURE TYPED HERE (ruled 2026-11-01): the card says so before the
+     press when the copy's replaces the one on this mailbox, only that press names it, and the
+     done line says when the typed one stayed. */
+  it("says the copy's signature replaces the one on this mailbox, Import names it, and a kept one is said", async () => {
+    setActiveLocale("en");
+    const receipt = "9".repeat(32);
+    const q = questionOf({ ...FOUND, counts: { ...FOUND.counts, signature: true, signatureReplaces: receipt } });
+    if (q.state !== "found") throw new Error("the door's answer asked nothing");
+    expect(countsSaid(q.counts)).toBe("58 screener decisions, 3 rules, 1 tag, and your signature, replacing the one on this mailbox now");
+    expect(countsSaid(q.counts, { replacing: false }), "the Replace note speaks of the mailbox's copy").toBe("58 screener decisions, 3 rules, 1 tag, and your signature");
+    expect(importSubject(q)).toEqual({ fingerprint: FOUND.fingerprint, signatureReplaces: receipt });
+    const plain = questionOf(FOUND);
+    expect(plain.state === "found" && importSubject(plain)).toEqual({ fingerprint: FOUND.fingerprint });
+    const odd = questionOf({ ...FOUND, counts: { ...FOUND.counts, signature: true, signatureReplaces: 7 } });
+    expect(odd.state === "found" && odd.counts.signatureReplaces, "a receipt that is no string was kept").toBeUndefined();
+
+    const kept = { ...FOUND.counts, signature: false, signatureKept: true };
+    const { session, sent } = sessionAnswering(() => json(200, { imported: kept, skippedRules: 0, seq: 3 }));
+    const a = await answerProfileImport(session, "m", "import", importSubject(q));
+    expect(sent[0]!.body).toEqual({ fingerprint: FOUND.fingerprint, signatureReplaces: receipt });
+    expect(a.kind === "done" && keptSaid(a.imported)).toBe("The signature you typed on this mailbox stays; the saved one was not imported.");
+    expect(keptSaid({ ...FOUND.counts, signature: true }), "a done line without the flag said the signature stayed").toBeNull();
+    setActiveLocale("de");
+    expect(countsSaid(q.counts)).toBe("58 Screener-Entscheidungen, 3 Regeln, 1 Tag und deine Signatur, die die jetzige Signatur dieses Postfachs ersetzt");
+    expect(keptSaid(kept)).toBe("Die Signatur, die du in diesem Postfach eingegeben hast, bleibt; die gespeicherte wurde nicht importiert.");
     setActiveLocale("en");
   });
 });
@@ -208,7 +246,8 @@ describe("the phone and the browser say the same words", () => {
       ["pfiErrorTitle", "errorTitle"], ["pfiErrorGeneric", "errorGeneric"], ["pfiErrorRetry", "errorRetry"],
       ["pfiNewerTitle", "newerTitle"], ["pfiAwayPart", "awayPart"], ["pfiSavedBody", "savedBody"],
       ["pfiReplace", "replace"], ["pfiReplacing", "replacing"], ["pfiReplaceNoteBare", "replaceNoteBare"],
-      ["pfiReplacedTitle", "replacedTitle"],
+      ["pfiReplacedTitle", "replacedTitle"], ["pfiSignaturePart", "signaturePart"],
+      ["pfiSignatureReplacingPart", "signatureReplacingPart"], ["pfiDoneSignatureKept", "doneSignatureKept"],
     ];
     for (const lang of ["en", "de"] as const) {
       const web = (await import(`../../webapp/messages/${lang}.json`)).default.profileImport as Record<string, string>;
@@ -230,7 +269,7 @@ describe("a press the organizer finishes (202), on the phone's own door", () => 
   it("the status read settles it: done with what arrived, or the door's refusal; importing is no answer yet", async () => {
     const counts = { screener: 1, rules: 2, notifyRules: 0, tags: 1, awayResponder: false };
     const done = sessionAnswering(() => json(200, { state: "imported", imported: counts, skippedRules: 1 }));
-    expect(await readImportStatus(done.session, "m", "f")).toEqual({ kind: "done", imported: counts, skippedRules: 1 });
+    expect(await readImportStatus(done.session, "m", "f")).toEqual({ kind: "done", imported: { ...counts, signature: false }, skippedRules: 1 });
     expect(done.sent[0]!.url).toBe("http://sidecar/mailboxes/m/profile-import/status?fingerprint=f");
     const refused = sessionAnswering(() => json(200, { state: "refused", reason: "changed", message: "The settings changed." }));
     expect(await readImportStatus(refused.session, "m", "f")).toEqual({ kind: "refused", status: 200, message: "The settings changed." });

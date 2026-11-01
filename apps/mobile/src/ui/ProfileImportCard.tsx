@@ -18,8 +18,8 @@ import { useWorld } from "../state/world";
 import { publishProfileQuestion } from "../state/seed-offer";
 import { Button, Panel, Txt, useTopPad } from "./base";
 import {
-  IMPORT_STATUS_BEAT_MS, askTickets, askableRows, cardQuestion, countsSaid, failureSaid, importingSaid, mailboxesToAsk,
-  savedBySaid, savedRows, type CardPhase, type MailboxQuestion,
+  IMPORT_STATUS_BEAT_MS, askTickets, askableRows, cardQuestion, countsSaid, failureSaid, importSubject, importingSaid, keptSaid,
+  mailboxesToAsk, savedBySaid, savedRows, type CardPhase, type MailboxQuestion,
 } from "./profile-import-card";
 
 /**
@@ -125,7 +125,7 @@ export function ProfileImportCard() {
     if (session === null || current === null || q === undefined) return;
     if (q.state !== "found" && q.state !== "newer") return;
     if (verb === "import" && q.state !== "found") return;
-    const subject = q.state === "newer" ? { v: q.v } : { fingerprint: q.fingerprint };
+    const subject = q.state === "newer" ? { v: q.v } : verb === "import" ? importSubject(q) : { fingerprint: q.fingerprint };
     setPhase({ kind: "busy" });
     void answerProfileImport(session, current.mailboxId, verb, subject).then((a) => {
       if (a.kind === "refused") { setPhase({ kind: "failed", message: a.message }); return; }
@@ -135,6 +135,7 @@ export function ProfileImportCard() {
           kind: "imported",
           details: a.imported === null ? "" : countsSaid(a.imported),
           skippedRules: a.skippedRules,
+          kept: keptSaid(a.imported),
         });
         set(current.mailboxId, { state: "none" });
         return;
@@ -149,7 +150,9 @@ export function ProfileImportCard() {
   useImportStatus(session, importingFor, bell, (a) => {
     if (a.kind === "refused") { setPhase({ kind: "failed", message: a.message }); return; }
     if (a.kind !== "done") return;
-    setPhase({ kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported), skippedRules: a.skippedRules });
+    setPhase({
+      kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported), skippedRules: a.skippedRules, kept: keptSaid(a.imported),
+    });
     if (importingFor !== null) set(importingFor.mailboxId, { state: "none" });
   });
 
@@ -159,6 +162,7 @@ export function ProfileImportCard() {
         <Txt variant="body" accessibilityRole="summary">{Copy.pfiDoneTitle}</Txt>
         {phase.details ? <Txt variant="note" tone="ink2">{Copy.pfiDoneDetails(phase.details)}</Txt> : null}
         {phase.skippedRules > 0 ? <Txt variant="note" tone="ink2">{Copy.pfiDoneSkipped(phase.skippedRules)}</Txt> : null}
+        {phase.kept !== null ? <Txt variant="note" tone="ink2">{phase.kept}</Txt> : null}
         <Button label={Copy.pfiDoneAction} variant="quiet" onPress={() => setPhase({ kind: "asking" })} />
       </Panel>
     );
@@ -208,7 +212,7 @@ type RowPhase =
   | { kind: "busy"; verb: "import" | "save" }
   | { kind: "importing"; fingerprint: string; reason: "slow" | "unreachable" | null }
   | { kind: "failed"; message: string | null }
-  | { kind: "imported"; details: string }
+  | { kind: "imported"; details: string; kept: string | null }
   | { kind: "saved" };
 
 /**
@@ -228,11 +232,12 @@ export function SavedSettingsPanel() {
     const put = (p: RowPhase): void => setPhases((prev) => ({ ...prev, [row.mailboxId]: p }));
     put({ kind: "busy", verb });
     setPressed((prev) => ({ ...prev, [row.mailboxId]: row }));
-    void answerProfileImport(session, row.mailboxId, verb, { fingerprint: row.question.fingerprint }).then((a) => {
+    const subject = verb === "import" ? importSubject(row.question) : { fingerprint: row.question.fingerprint };
+    void answerProfileImport(session, row.mailboxId, verb, subject).then((a) => {
       if (a.kind === "refused") { put({ kind: "failed", message: a.message }); return; }
       if (a.kind === "importing") { put({ kind: "importing", fingerprint: a.fingerprint, reason: a.reason }); return; }
       put(verb === "import"
-        ? { kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported) }
+        ? { kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported), kept: keptSaid(a.imported) }
         : { kind: "saved" });
       set(row.mailboxId, { state: "none" });
     });
@@ -245,7 +250,9 @@ export function SavedSettingsPanel() {
     const [mailboxId] = waiting;
     if (a.kind === "refused") { setPhases((prev) => ({ ...prev, [mailboxId]: { kind: "failed", message: a.message } })); return; }
     if (a.kind !== "done") return;
-    setPhases((prev) => ({ ...prev, [mailboxId]: { kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported) } }));
+    setPhases((prev) => ({
+      ...prev, [mailboxId]: { kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported), kept: keptSaid(a.imported) },
+    }));
     set(mailboxId, { state: "none" });
   });
 
@@ -274,6 +281,7 @@ export function SavedSettingsPanel() {
                 <>
                   <Txt variant="note" tone="ink2" accessibilityRole="summary">{Copy.pfiDoneTitle}</Txt>
                   {phase.details ? <Txt variant="note" tone="ink2">{Copy.pfiDoneDetails(phase.details)}</Txt> : null}
+                  {phase.kept !== null ? <Txt variant="note" tone="ink2">{phase.kept}</Txt> : null}
                 </>
               ) : phase.kind === "saved" ? (
                 <Txt variant="note" tone="ink2" accessibilityRole="summary">{Copy.pfiReplacedTitle}</Txt>
@@ -284,7 +292,7 @@ export function SavedSettingsPanel() {
                   ) : null}
                   {phase.kind === "importing" ? <Txt variant="note" tone="ink2">{importingSaid(phase.reason)}</Txt> : null}
                   <Txt variant="caption" tone="ink3">
-                    {details ? Copy.pfiReplaceNote(details) : Copy.pfiReplaceNoteBare}
+                    {details ? Copy.pfiReplaceNote(countsSaid(q.counts, { replacing: false })) : Copy.pfiReplaceNoteBare}
                   </Txt>
                   <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
                     <Button

@@ -3,13 +3,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import postgres from "postgres";
 import {
-  PROFILE_IMPORT_ASK_TTL_MS, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, SCREENER_FOLDER, accountSyncState, accounts, auditLog, changeLog,
-  contacts, fencedAccountWrite, folderState, idempotencyKeys, lockAccountRuleKeys, mailboxes, messageStates, messages, recordImportAsk, tags,
+  PROFILE_IMPORT_ASK_TTL_MS, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, SCREENER_FOLDER, accountSettings, accountSyncState, accounts, auditLog, changeLog,
+  contacts, fencedAccountWrite, folderState, idempotencyKeys, latestProfileFoundMarker, lockAccountRuleKeys, mailboxes, messageStates, messages,
+  profileImportResult, recordImportAsk, recordImportAskSignature, tags,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { makeDb } from "@trafficflow/db/cloud";
-import { formatProfileMessage, makeProfileDoc, profileFingerprint, type OrganizerProfilePayload } from "@trafficflow/core/adapters/organizer-profile";
+import {
+  formatProfileMessage, makeProfileDoc, profileFingerprint, signatureReceipt, type OrganizerProfilePayload,
+} from "@trafficflow/core/adapters/organizer-profile";
 import { ScreenerService, TriageService, type ServiceContext } from "@trafficflow/services";
 import { OrganizerProfileSync } from "../src/profile.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
@@ -138,6 +141,7 @@ describe("the organizer's tick answers a handed-over press", () => {
     await s.onOrganize(); // seed: the foreign document is held
     now = new Date(now.getTime() + 1000); // well inside the five-minute debounce
     await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
+    await db.insert(accountSettings).values({ accountId: mb.accountId, updatedAt: new Date("2026-09-01T00:00:00Z") });
     const reads = fleet.metaFor(mb.mailboxId).profileReads;
     await s.onOrganize();
     expect(await askOf(db, mb.mailboxId)).toMatchObject({ fp: FP, outcome: "imported", reason: null });
@@ -147,9 +151,56 @@ describe("the organizer's tick answers a handed-over press", () => {
     const bells = await db.select().from(changeLog)
       .where(and(eq(changeLog.accountId, mb.accountId), eq(changeLog.entityType, "settings")));
     expect(bells.length, "the settings doorbell").toBeGreaterThanOrEqual(1);
+    // No signature changed, so the stamp every window compares for `GET /consent` stays put.
+    const [stamp] = await db.select({ at: accountSettings.updatedAt }).from(accountSettings)
+      .where(eq(accountSettings.accountId, mb.accountId));
+    expect(stamp!.at.toISOString(), "a merge that changed no signature moved the settings stamp").toBe("2026-09-01T00:00:00.000Z");
     // One read for the ask, and the resolved arm's re-derivation — on the one pinned connection.
     expect(fleet.metaFor(mb.mailboxId).profileReads - reads).toBeLessThanOrEqual(2);
     expect(events.some((e) => e.startsWith("organizer_profile_import_answered") && e.includes("imported"))).toBe(true);
+  }, 60_000);
+
+  /* AN IMPORT NEVER LOSES A SIGNATURE TYPED HERE (ruled 2026-11-01): the organizer's answer replaces
+     a different one only when the press named it, and moves the stamp only when it writes one. */
+  it("a handed-over press replaces the signature typed here only when it named it; the marker names the copy's", async () => {
+    const SIGNED = makeProfileDoc({ ...PAYLOAD, signature: "-- \nfriend" }, {
+      updatedAt: new Date("2026-09-01T00:00:00Z"), producer: { kind: "local", version: "0.25.1" },
+    });
+    const fp = profileFingerprint(SIGNED);
+    const run = async (named: boolean) => {
+      const db = makeDb(DB);
+      const fleet = new FakeAdapterFleet();
+      const mb = await seed(db);
+      await db.update(mailboxes).set({ signature: "-- \ntyped here" }).where(eq(mailboxes.id, mb.mailboxId));
+      await db.insert(accountSettings).values({ accountId: mb.accountId, updatedAt: new Date("2026-09-01T00:00:00Z") });
+      await fleet.metaFor(mb.mailboxId).appendProfile(formatProfileMessage(SIGNED, { installId: "another-mac" }));
+      let now = new Date("2026-09-26T20:00:00Z");
+      const s = sync(db, fleet, mb, () => now, []);
+      await s.onOrganize();
+      const marker = await latestProfileFoundMarker(db as unknown as Tx, mb.accountId, mb.mailboxId);
+      now = new Date(now.getTime() + 1000);
+      await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: fp, now });
+      if (named) {
+        await recordImportAskSignature(db as unknown as Tx, {
+          accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: fp, signatureReplaces: signatureReceipt("-- \ntyped here")!, at: now,
+        });
+      }
+      await s.onOrganize();
+      expect(await askOf(db, mb.mailboxId)).toMatchObject({ fp, outcome: "imported" });
+      const [row] = await db.select({ signature: mailboxes.signature }).from(mailboxes).where(eq(mailboxes.id, mb.mailboxId));
+      const [stamp] = await db.select({ at: accountSettings.updatedAt }).from(accountSettings).where(eq(accountSettings.accountId, mb.accountId));
+      const result = await profileImportResult(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: fp });
+      return { marker, signature: row!.signature, stamp: stamp!.at.toISOString(), imported: result?.imported, now: now.toISOString() };
+    };
+    const kept = await run(false);
+    expect(kept.signature, "the organizer replaced the signature typed here unasked").toBe("-- \ntyped here");
+    expect(kept.imported).toMatchObject({ signature: false, signatureKept: true });
+    expect(kept.stamp).toBe("2026-09-01T00:00:00.000Z");
+    expect(kept.marker?.signatureReceipt, "the marker does not name the copy's signature").toBe(signatureReceipt("-- \nfriend"));
+    const replaced = await run(true);
+    expect(replaced.signature).toBe("-- \nfriend");
+    expect(replaced.imported).toMatchObject({ signature: true });
+    expect(replaced.stamp).toBe(replaced.now);
   }, 60_000);
 
   it("a document that changed since the press is refused `changed`, and nothing is applied", async () => {

@@ -230,7 +230,7 @@ export {
 
 export {
   allocateSeq, allocateSeqRange, recordChange, recordChanges, recordRuleDelta, ruleDelta, minRetainedSeq, prunedThroughSeq, seqBounds,
-  recordMailboxRemoved, recordMailboxProfileChange,
+  recordMailboxRemoved, recordMailboxProfileChange, lockSettingsStamp, moveSettingsStamp,
   CHANGE_LOG_CHANNEL, changeWakePayload, parseChangeWake,
   // The guard that refuses a bare `PgDatabase` where a transaction handle is required. It lives
   // beside `LedgerTx` because that is the type it enforces at runtime; it used to reach callers
@@ -462,8 +462,8 @@ export {
 } from "./organizer-profile-import.js";
 /* A press the request could not finish, handed to the organizer — one interface, see the module. */
 export {
-  IMPORT_ASK_REFUSALS, PROFILE_IMPORT_ASK_TTL_MS, askStands, isImportAskRefusal, readImportAsk,
-  recordImportAsk, resolveImportAsk,
+  IMPORT_ASK_REFUSALS, PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION, PROFILE_IMPORT_ASK_TTL_MS, askStands, importAskSignature,
+  isImportAskRefusal, readImportAsk, recordImportAsk, recordImportAskSignature, resolveImportAsk, signatureReceiptRows,
   type ImportAskRefusal, type ImportAskRow,
 } from "./profile-import-ask.js";
 

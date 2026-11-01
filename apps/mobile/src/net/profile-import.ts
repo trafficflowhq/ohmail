@@ -24,6 +24,12 @@ export interface ProfileImportCounts {
   notifyRules: number;
   tags: number;
   awayResponder: boolean;
+  /** The copy carries a signature; absent from an older door. On a result: it is this mailbox's now. */
+  signature?: boolean;
+  /** An offer's: the copy's signature replaces this mailbox's, named by this receipt (Import sends it back). */
+  signatureReplaces?: string;
+  /** A result's: the copy carried a signature, and the different one on this mailbox stayed. */
+  signatureKept?: boolean;
 }
 
 /** What the door answered, narrowed to the three shapes a person is asked about. */
@@ -58,7 +64,9 @@ function countsOf(raw: unknown): ProfileImportCounts | null {
   if (typeof c.awayResponder !== "boolean") return null;
   return {
     screener: c.screener as number, rules: c.rules as number, notifyRules: c.notifyRules as number,
-    tags: c.tags as number, awayResponder: c.awayResponder,
+    tags: c.tags as number, awayResponder: c.awayResponder, signature: c.signature === true,
+    ...(typeof c.signatureReplaces === "string" && c.signatureReplaces.length > 0 ? { signatureReplaces: c.signatureReplaces } : {}),
+    ...(c.signatureKept === true ? { signatureKept: true } : {}),
   };
 }
 
@@ -117,14 +125,15 @@ async function refusalOf(res: Response): Promise<ProfileImportAnswer> {
 
 /**
  * ANSWER THE QUESTION — `import` applies the exact document shown (the fingerprint is the
- * consent), `notNow` records the decline durably for that document or that newer format,
- * `save` puts this ohmail's settings in the mailbox in place of the declined document.
+ * consent; `signatureReplaces`, the receipt the card said the copy's signature replaces), `notNow`
+ * records the decline durably for that document or that newer format, `save` puts this ohmail's
+ * settings in the mailbox in place of the declined document.
  */
 export async function answerProfileImport(
   session: ProfileImportSession,
   mailboxId: string,
   verb: "import" | "notNow" | "save",
-  subject: { fingerprint: string } | { v: number },
+  subject: { fingerprint: string; signatureReplaces?: string } | { v: number },
 ): Promise<ProfileImportAnswer> {
   const tail = verb === "import" ? "" : verb === "notNow" ? "/decline" : "/replace";
   let res: Response;

@@ -429,7 +429,8 @@ export const mailboxRoutes: Route[] = [
     // fingerprint — the exact content the user was shown, re-verified against the mailbox.
     cost: "connection",
     handler: async (req, deps, params) => {
-      const body = await readBody<{ fingerprint?: string }>(req);
+      // `signatureReplaces`: the receipt of the signature the card said the copy's replaces.
+      const body = await readBody<{ fingerprint?: string; signatureReplaces?: string }>(req);
       const result = await profileImport(deps).apply(
         serviceContext(deps, req), params.id!, body, { read: profileReader(deps, params.id!) },
       );

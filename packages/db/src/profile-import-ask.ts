@@ -1,5 +1,9 @@
-import { and, eq } from "drizzle-orm";
-import { mailboxes } from "./schema-mail.js";
+import { and, desc, eq, gte, or, sql } from "drizzle-orm";
+import { auditLog, mailboxes } from "./schema-mail.js";
+import { auditAction } from "./staff-channels.js";
+import { dialect } from "./dialect/index.js";
+import { fenceErased } from "./erasure-fence.js";
+import { PROFILE_FOUND_AUDIT_ACTION } from "./organizer-profile-import.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -73,6 +77,81 @@ export async function recordImportAsk(
     profileImportAskOutcome: null, profileImportAskReason: null,
   }).where(and(eq(mailboxes.id, o.mailboxId), eq(mailboxes.accountId, o.accountId)));
   return true;
+}
+
+/**
+ * WHAT THE CARD SAID OF THE SIGNATURE, for a press handed to the organizer: the receipt of the
+ * mailbox's signature the card said the copy's replaces (`signatureReceipt`). An audit row beside
+ * the ask's columns, written with the ask only when the press named one.
+ */
+export const PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION = "organizer_profile_import_ask_signature";
+
+/** Record the receipt a handed-over press named, at the ask's own instant. */
+export async function recordImportAskSignature(
+  tx: Tx, o: { accountId: string; mailboxId: string; fingerprint: string; signatureReplaces: string; at: Date },
+): Promise<void> {
+  // Fenced at its own site: no row lands for an erased account or mailbox (a fenced caller's account arm is free).
+  await fenceErased(tx, dialect(tx), { accountId: o.accountId, mailboxId: o.mailboxId });
+  await tx.insert(auditLog).values({
+    accountId: o.accountId,
+    action: auditAction(PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION),
+    payload: { mailboxId: o.mailboxId, fingerprint: o.fingerprint, signatureReplaces: o.signatureReplaces },
+    inverse: null,
+    createdAt: o.at,
+  });
+}
+
+/**
+ * The receipt the press behind the standing ask named, or null: the newest row for this document at
+ * or after the ask's instant (`since`), so an earlier ask's word never carries over to a later one.
+ */
+export async function importAskSignature(
+  db: Tx, o: { accountId: string; mailboxId: string; fingerprint: string; since: Date },
+): Promise<string | null> {
+  const [row] = await db.select({ payload: auditLog.payload }).from(auditLog)
+    .where(and(
+      eq(auditLog.accountId, o.accountId),
+      eq(auditLog.action, PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION),
+      sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
+      sql`${auditLog.payload}->>'fingerprint' = ${o.fingerprint}`,
+      gte(auditLog.createdAt, o.since),
+    ))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(1);
+  const said = (row?.payload as { signatureReplaces?: unknown } | null | undefined)?.signatureReplaces;
+  return typeof said === "string" && said.length > 0 ? said : null;
+}
+
+/** The key under which each action's payload names a signature by its receipt. */
+const RECEIPT_KEY: Readonly<Record<string, string>> = {
+  [PROFILE_FOUND_AUDIT_ACTION]: "signatureReceipt",
+  [PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION]: "signatureReplaces",
+};
+
+/**
+ * THE AUDIT ROWS THAT NAME ONE MAILBOX'S SIGNATURE BY A RECEIPT — the found-marker's (the copy's) and
+ * a handed-over press's (the mailbox's own) — each with its payload as it reads with the receipt
+ * taken off. They age out with the audit trail; a mailbox's erasure writes these payloads back
+ * (`mailbox-erasure.ts`, and the device's removal walk), so no receipt outlives the mailbox's signature.
+ */
+export async function signatureReceiptRows(
+  db: Tx, o: { accountId?: string; mailboxId: string },
+): Promise<Array<{ id: string; payload: Record<string, unknown> }>> {
+  const rows = await db.select({ id: auditLog.id, action: auditLog.action, payload: auditLog.payload }).from(auditLog)
+    .where(and(
+      o.accountId === undefined ? undefined : eq(auditLog.accountId, o.accountId),
+      or(eq(auditLog.action, PROFILE_FOUND_AUDIT_ACTION), eq(auditLog.action, PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION)),
+      sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
+    ));
+  const out: Array<{ id: string; payload: Record<string, unknown> }> = [];
+  for (const r of rows) {
+    const key = RECEIPT_KEY[r.action];
+    if (key === undefined || r.payload === null || typeof r.payload !== "object" || !(key in r.payload)) continue;
+    const payload = { ...(r.payload as Record<string, unknown>) };
+    delete payload[key];
+    out.push({ id: r.id, payload });
+  }
+  return out;
 }
 
 /**

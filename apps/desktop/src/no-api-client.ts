@@ -503,6 +503,9 @@ export interface ProfileImportCountsWire {
     notifyRules: number;
     tags: number;
     awayResponder: boolean;
+    signature?: boolean;
+    signatureReplaces?: string;
+    signatureKept?: boolean;
 }
 
 export type ProfileImportCandidateWire = {
@@ -548,7 +551,7 @@ export type ProfileImportStatusWire = {
 
 export const profileImport: {
     candidate: (mailboxId: string) => Promise<ProfileImportCandidateWire>;
-    apply: (mailboxId: string, fingerprint: string) => Promise<ProfileImportAppliedWire | ProfileImportPendingWire>;
+    apply: (mailboxId: string, fingerprint: string, signatureReplaces?: string) => Promise<ProfileImportAppliedWire | ProfileImportPendingWire>;
     status: (mailboxId: string, fingerprint: string) => Promise<ProfileImportStatusWire>;
     decline: (mailboxId: string, subject: {
         fingerprint?: string;

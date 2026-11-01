@@ -2,7 +2,7 @@ import { and, eq, exists, inArray, isNotNull, isNull, ne, notExists, or, sql, ty
 import type { Dialect } from "./dialect/index.js";
 import {
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
-  approvals, attachments, awayReplies, awayResponderSent, drafts, flagState, folderOps,
+  approvals, attachments, auditLog, awayReplies, awayResponderSent, drafts, flagState, folderOps,
   folderState, junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, mailboxes,
   messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messageTags, messages,
   organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends, routingDecisions, threadNotes,
@@ -10,6 +10,7 @@ import {
 } from "./schema-mail.js";
 import { recordChanges, recordMailboxRemoved, type LedgerTx, type Tx } from "./change-log.js";
 import { eraseIdempotentResponses } from "./idempotency.js";
+import { signatureReceiptRows } from "./profile-import-ask.js";
 import { readAccountErasedAt } from "./erasure-fence.js";
 import { rowsAffected as n } from "./rows-affected.js";
 import { lockAccountStorage, recomputeAccountStorage, releaseBodyBytes } from "./storage.js";
@@ -74,6 +75,8 @@ export async function stampMailboxErasure(
     .where(and(
       eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNull(mailboxes.erasedAt),
     ));
+  // …and the receipts by which the press and the found copy named its signature.
+  await forgetSignatureReceipts(tx, accountId, mailboxId);
   const [row] = await tx.select({ done: mailboxes.erasureDoneAt }).from(mailboxes)
     .where(eq(mailboxes.id, mailboxId)).limit(1);
   if (row?.done) return { messages: 0, drafts: 0, draftsUnanchored: 0, done: true };
@@ -191,10 +194,23 @@ export async function sweepMailboxStep(
     .where(eq(mailboxCredentials.mailboxId, mailboxId)));
   deleted["idempotency_keys"] = await eraseIdempotentResponses(tx, accountId, now, { mailboxId });
   const seq = await recordMailboxRemoved(tx, accountId, mailboxId);
-  // The receipt retains nothing for the mailbox, its signature included.
+  // The receipt retains nothing for the mailbox, its signature included, nor any receipt of it.
+  await forgetSignatureReceipts(tx, accountId, mailboxId);
   await tx.update(mailboxes).set({ erasureDoneAt: now, signature: null, signatureHtml: null })
     .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)));
   return out({ seq, done: true });
+}
+
+/**
+ * The receipts naming this mailbox's signature come off its audit rows, which stay
+ * (`signatureReceiptRows`). At the stamp, after which the fence refuses a new one, and again at the
+ * finish, for the rows a stamp by an older build left.
+ */
+async function forgetSignatureReceipts(tx: Tx, accountId: string, mailboxId: string): Promise<void> {
+  for (const r of await signatureReceiptRows(tx, { accountId, mailboxId })) {
+    await tx.update(auditLog).set({ payload: r.payload })
+      .where(and(eq(auditLog.id, r.id), eq(auditLog.accountId, accountId)));
+  }
 }
 
 /**
