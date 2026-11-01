@@ -39,6 +39,7 @@ import {
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
+  type FailedAtGateDTO,
   type Folder,
   type HeldReleaseGroupDTO,
   type UnscreenedGroupDTO,
@@ -311,6 +312,14 @@ export interface ScreenerState {
    * a derivation here would put one number on screen and move another.
    */
   unscreened: UnscreenedOffer | null;
+  /**
+   * HELD LETTERS THEIR PROVIDER FAILED THAT NO WAITING ROW DECIDES (`failedAtGateOf`): one claiming
+   * the account's own address, a contact's, a decided sender's. Not counted; each is decided alone.
+   * Absent reads as none.
+   */
+  failedAtGate?: FailedAtGateDTO[];
+  /** One such letter out of the gate: `spam` ("Not from …") or `ohbox` ("It's from …"); no rule, no decision. */
+  fileFailed: (id: string, to: "spam" | "ohbox") => void;
   suggestedCount: number;
   /**
    * The distinct piles those rows would be filed into, in {@link APPLY_PILE_ORDER}.
@@ -553,7 +562,7 @@ export function joinSuggestion(
  * the memos downstream see a stable identity across the pre-settle renders.
  */
 const UNDERIVED_SEGMENTS: ScreenerSegments = Object.freeze({
-  waiting: [], screenedOut: [], spam: [], source: "mirror", waitingTotal: 0, waitingCursor: null,
+  waiting: [], screenedOut: [], spam: [], source: "mirror", waitingTotal: 0, waitingCursor: null, failedAtGate: [],
 });
 
 /** The walk past the first page: `cursor` undefined = not started, null = the queue ended. */
@@ -2046,6 +2055,29 @@ export function useScreenerState(
     toast(t("toastDeleted", { sender: senderLabel(row.sender) }));
   };
 
+  /* A LETTER ITS PROVIDER FAILED, decided alone: one `move` out of the gate, never a rule, a decision
+     or a contact. "Not from …" files it in Spam; "It's from …" places it in the Ohbox as the person's
+     own placement. The move's inverse is its Undo. */
+  const fileFailed = async (id: string, to: "spam" | "ohbox"): Promise<void> => {
+    const letter = segments.failedAtGate.find((f) => f.id === id);
+    if (letter === undefined) return;
+    const move: EngineMutation = { kind: "move", messageId: id, folder: FOLDER_OF_VIEW[to], from: FOLDER_OF_VIEW.screener };
+    const inverses = inverseMutations(engine.verbRead(), move);
+    const sender = displayAddressee(letter.from.name, letter.from.address);
+    const tally = tallyVerdicts([await engine.mutate(move).then(pressVerdict, () => PRESS_THREW)]);
+    if (tally.silent > 0) return;
+    if (tally.refused > 0) { toast(t("toastReleaseFailed", { sender, place: t("title") }), { duration: UNDO_MS }); return; }
+    if (tally.queued > 0) {
+      toast(tally.holder
+        ? t("toastReleaseQueued", { sender, name: tally.holder })
+        : t("toastReleaseQueuedUnknown", { sender }), { duration: UNDO_MS });
+      return;
+    }
+    const sentence = ts("toastMoved", { place: piles[to], count: 1, sender });
+    if (releaseWindow) releaseWindow.toastWithUndo(sentence, inverses);
+    else toast(sentence);
+  };
+
   const flush = () => {
     for (const id of [...s.pending.keys()]) commit(id);
   };
@@ -2367,6 +2399,8 @@ export function useScreenerState(
   return {
     heldRelease,
     unscreened,
+    failedAtGate: segments.failedAtGate,
+    fileFailed: guardMove((id: string, to: "spam" | "ohbox") => { void fileFailed(id, to); }),
     waiting: visibleWaiting,
     reachOf,
     unsubClaimOf,

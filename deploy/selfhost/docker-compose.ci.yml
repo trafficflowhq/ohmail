@@ -30,7 +30,9 @@
 #     `rustfs:9000`, so the smoke dials the published port while preserving that Host);
 #   · the organizer polls fast, so "seeded mail appears in /sync" is seconds, not minutes;
 #   · the api's pager runs armed, on a TF_ALERT_SECRET the env file must carry (minted per run),
-#     so the smoke can read the api's own alert pass through GET /internal/alerts.
+#     so the smoke can read the api's own alert pass through GET /internal/alerts;
+#   · the database's first start is slow, so the smoke reads that the api waits for the db's final
+#     listener without a restart or a retry (selfhost-smoke.sh counts both).
 
 services:
   proxy:
@@ -83,6 +85,11 @@ services:
       TF_ROSTER_INTERVAL_MS: "5000"
       # The api's value: the organizer checks the host again on every dial.
       TF_PROBE_ALLOW_PRIVATE: "1"
+
+  db:
+    volumes:
+      # Postgres runs it on its socket-only init server, and only on an empty volume, which a smoke run has.
+      - ./ci-slow-db-init.sh:/docker-entrypoint-initdb.d/00-slow-start.sh:ro
 
   rustfs:
     ports:

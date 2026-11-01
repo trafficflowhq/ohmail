@@ -532,6 +532,9 @@ export const DE: Deck = {
     "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server war nicht "
     + "erreichbar, um die Sitzung zu beenden, und zählt dieses Handy womöglich noch als "
     + "verbunden — widerrufe dieses Gerät in seiner Geräteliste, um das abzuschließen.",
+  forgetServerOwed:
+    "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server war nicht "
+    + "erreichbar, um die Sitzung zu beenden; dieses Handy sagt es ihm, sobald es ihn wieder erreicht.",
   forgetClaimStands: (minutes: number) =>
     "Das Postfach und seine Mails sind von diesem Handy weg. Sein Anspruch auf das Postfach ließ "
     + `sich nicht zurückgeben, deshalb kann eine andere Maschine das Postfach in etwa ${minutes} `
@@ -745,6 +748,9 @@ export const DE: Deck = {
       case "wake_queue_full": return "dieses Handy hat bereits mehr unerledigte Weckruf-Abmeldungen, als es erfassen kann";
       case "wake_not_recorded": return "dieses Handy konnte nicht erfassen, dass für die Weckruf-Registrierung eine Abmeldung aussteht";
       case "wake_still_owed": return "dieses Handy führt für diese Registrierung noch eine ausstehende Abmeldung";
+      case "sign_out_queue_full": return "dieses Handy hat bereits mehr unerledigte Abmeldungen, als es erfassen kann";
+      case "sign_out_not_recorded": return "dieses Handy konnte nicht erfassen, dass einem Server eine Abmeldung aussteht";
+      case "sign_out_still_owed": return "dieses Handy hält noch eine Abmeldung, die es einem Server schuldet";
       case "index_unreadable": return "die Kopplungsliste dieses Handys ließ sich nicht lesen";
       case "purge_refused": return "der Schlüsselspeicher wollte die Kopplungen der früheren Installation nicht hergeben";
       case "mirror_not_deleted":
@@ -1805,6 +1811,13 @@ export const DE: Deck = {
   senderCheckList: "Über eine Mailingliste verschickt — alle auf der Liste können unter dieser Adresse schreiben.",
   senderCheckUnverified: (brand: string): string =>
     `Diese Nachricht gibt an, von ${brand} zu kommen. Dein Mailanbieter hat das nicht bestätigt.`,
+  senderCheckFailed: (address: string): string =>
+    `Dein Mailanbieter hat geprüft, ob diese Nachricht von ${address} kommt, und die Prüfung ist fehlgeschlagen.`,
+  failedAria: "Nachrichten, die die Absenderprüfung nicht bestanden haben",
+  failedNotFromYou: "Nicht von dir",
+  failedFromYou: "Doch von dir",
+  failedNotFromThem: "Nicht vom Absender",
+  failedFromThem: "Doch vom Absender",
   screeningScopeShared: (domain: string): string =>
     `${domain} ist ein geteilter Anbieter. Entscheide hier pro Adresse.`,
   rulesSharedProviderInert: (domain: string): string =>
@@ -2286,4 +2299,15 @@ export const DE: Deck = {
   waitingOther: "Eine Änderung",
   waitingTheOrganizer: "Der Organizer",
   waitingRefused: (holder: string) => `${holder} hat das nicht ausgeführt.`,
+  deleteNoTrash: "Dieses Postfach hat keinen Papierkorb, und ohmail löscht nie endgültig — die Nachricht ist noch an ihrem Platz.",
+  trashEmptyHintStandalone: "Mails, die du auf diesem Handy löschst, erscheinen hier.",
+  composeReplyAside: "Eine Antwort auf diese Nachricht liegt schon in den Entwürfen.",
+  previewClose: "Schließen",
+  previewShare: "Teilen",
+  previewPreparing: "Die Vorschau wird vorbereitet…",
+  previewCantShow: "Diese Datei kann hier nicht angezeigt werden.",
+  previewTooLarge: "Diese Datei ist zu groß, um sie hier anzuzeigen.",
+  previewShareHint: "Teile sie, um sie in einer anderen App zu öffnen.",
+  previewPdfMore: (n: number) => `Die ersten ${n} Seiten werden angezeigt.`,
+  previewFrameLabel: "Anhangvorschau",
 };

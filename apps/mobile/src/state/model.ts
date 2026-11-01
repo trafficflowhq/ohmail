@@ -23,6 +23,11 @@ export function screenerSegParam(raw: unknown): ScreenerSeg | null {
   return raw === "waiting" || raw === "screened" || raw === "spam" ? raw : null;
 }
 
+/** A `pile` route param as a pile, or `null` for anything else. */
+export function pileParam(raw: unknown): PileKind | null {
+  return raw === "replyLater" || raw === "setAside" || raw === "resurface" ? raw : null;
+}
+
 export interface Address {
   name: string;
   address: string;
@@ -75,6 +80,11 @@ export interface Mail {
    * `unverified`): the reader's line only. No chip, nothing spoken on the row, no pictures held.
    */
   senderUnverified?: { brand: string };
+  /**
+   * The mail provider failed this letter's sender check (`MessageDTO.authVerdict`, a verdict the gate
+   * screens on): the reader's line, before any claim. No chip, nothing spoken on the row.
+   */
+  senderFailed?: true;
   /**
    * A meeting invitation whose event ohmail cannot show, by its stored headers
    * (`MessageDTO.invitationWithoutEvent`). Absent on every other message.

@@ -42,13 +42,14 @@ const POSTGRES: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
 
 /**
  * THE ONE DIFFERENCE, bounded: the device index reads no punctuation, so where the server's word
- * arms keep a hyphenated compound whole (quoted, OR, or no part of four letters) the device also
+ * arms keep a hyphenated compound whole (quoted, or no part of four letters) the device also
  * finds the same words written apart. Its answer holds the server's and adds only those.
  */
 const SPACED: ReadonlyArray<readonly [q: string, keys: readonly string[], spaced: readonly string[]]> = [
   ['"ohmail-fixture"', ["hyph"], ["spaced"]], ['"sign-in"', ["bodyhyph"], ["bodysplit"]], ["co-op", ["coop"], ["coopspaced"]], ["and-or", [], ["andor"]],
   ["ohmail-fixture OR node.js", ["hyph", "nodejs"], ["spaced"]],
-  ["sign-in OR co-op", ["bodyhyph", "coop"], ["bodysplit", "coopspaced"]],
+  // Each side of an OR answers what it answers alone (`sign-in` above).
+  ["sign-in OR co-op", ["bodyhyph", "bodysplit", "coop", "signed", "signin"], ["coopspaced"]],
 ];
 
 describe.each([

@@ -654,6 +654,7 @@ const NO_ACTIONS: WorldActions = {
   // Nothing is connected, so nothing can be kept: the sheet says so and stays open.
   draftKeep: () => Promise.resolve("refused" as const),
   keepEnvelope: () => null,
+  keptReply: () => ({ kind: "none" as const }),
   forwardFiles: () => ({ state: "failed" as const, parts: [] }),
   forwardPartsSupported: () => false,
   draftSent: () => false,
@@ -669,6 +670,7 @@ const NO_ACTIONS: WorldActions = {
   stayedWhy: async () => new Map(),
   moveStayed: () => undefined,
   screenUnscreened: async () => false,
+  fileFailed: () => undefined,
   folderCreate: () => undefined,
   folderRename: () => undefined,
   folderDelete: () => undefined,
@@ -710,7 +712,7 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, unreadIds: [], waterLabel: Copy.waterline, newCount: 0, meta: "" },
     receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, unreadIds: [], newCount: 0, meta: "" },
-    screener: { waiting: [], screened: [], spam: [], meta: "", source: "device", waitingPending: false, relayed: null },
+    screener: { waiting: [], screened: [], spam: [], meta: "", source: "device", waitingPending: false, relayed: null, failedAtGate: [] },
     history: { items: [], total: 0, meta: "", pending: false },
     piles: [],
     pilesMeta: "",
@@ -1731,6 +1733,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           draftSendAgain: (draftId) => acts.draftSendAgain(draftId),
           draftKeep: (keep) => acts.draftKeep(keep),
           keepEnvelope: (mode, messageId) => acts.keepEnvelope(mode, messageId),
+          keptReply: (messageId) => acts.keptReply(messageId),
           draftSent: (draftId) => acts.draftSent(draftId),
           draftLeft: (draftId) => acts.draftLeft(draftId),
           sendOutcome: (key) => outcomeOf(key),
@@ -1749,6 +1752,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
             if (held) void machine?.refresh();
             return held;
           },
+          fileFailed: (id, to) => void acts.fileFailed(id, to),
           folderCreate: (mailboxId, name) => void acts.folderCreate(mailboxId, name),
           folderRename: (id, name) => void acts.folderRename(id, name),
           folderDelete: (id) => void acts.folderDelete(id),

@@ -36,3 +36,13 @@ apps/desktop/src-tauri/gen/
 
 # macOS
 .DS_Store
+
+# Secrets a checkout or an install may hold: env files (the self-host .env carries the key ring and the
+# database password; the templates stay tracked), a linked Vercel project's pulled env, keys, and two
+# credential files by name. CI refuses a pull request that adds a path these rules match.
+.env*
+!.env.example
+.vercel/
+*.pem
+.access-tokens
+.testmailaccounts

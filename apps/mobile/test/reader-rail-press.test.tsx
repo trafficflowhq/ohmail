@@ -147,6 +147,7 @@ vi.mock("../src/ui/HistoryFold", async () => {
 });
 vi.mock("../src/ui/EventCard", () => ({ EventCards: () => null }));
 vi.mock("../src/ui/MailBodyFrame", () => ({ MailBodyFrame: () => null }));
+vi.mock("../src/ui/AttachmentPreview", () => ({ AttachmentPreview: () => null }));
 vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));
 vi.mock("../src/ui/MessageActions", () => ({ MessageActions: () => null }));
 vi.mock("../src/ui/posture", () => ({ usePosture: () => ({}) }));
@@ -1565,5 +1566,23 @@ describe("a reply that arrives below the opened message never moves the reader o
     settle(300);
     quiet();
     expect(world.glanced.flat()).toContain("p5");
+  });
+});
+
+describe("each member names who wrote it", () => {
+  it("its sender line carries the name and the address, its title stays under it, the opened line is unchanged", () => {
+    const ada = { ...memberOf("m1", "Ada"), address: "ada@fake.test" };
+    const cy = { ...memberOf("m2", "Cy"), address: "cy@fake.test", face: "Forwarded to Dee" };
+    world.mail = mailOf("o1", [ada, cy]);
+    const el = mountReader("o1");
+    const v = views(el);
+    for (const [id, name, address, title] of [["m1", "Ada", "ada@fake.test", "Q3 plan"], ["m2", "Cy", "cy@fake.test", "Forwarded to Dee"]]) {
+      const m = v.member(id);
+      expect(m.header!.textContent, "the read rule's sender line is the one that names the sender").toBe(`${name}${address}09:00`);
+      const titleEl = [...m.panel.querySelectorAll("span")].find((s) => s.textContent === title)!;
+      expect(m.header!.compareDocumentPosition(titleEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(titleEl.compareDocumentPosition(m.body!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(v.from!.textContent).toBe("Benben@fake.test10:00");
   });
 });

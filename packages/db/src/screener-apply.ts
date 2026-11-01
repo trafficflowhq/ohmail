@@ -372,8 +372,9 @@ export async function rerouteAdvisedLetter(
 
 /**
  * The two doors' one body: the erased account, the rule-key lock before the bag's mailbox locks, a
- * ruled key skipped, the sender's held letters `within` admits (none put back) filed, and an
- * automatic filing's audit row with its inverse per letter. Deny destinations only.
+ * ruled key skipped, the sender's held letters `within` admits (none put back, none an automatic path
+ * may not read: a code or a reset stays where the person sees it) filed, and an automatic filing's
+ * audit row with its inverse per letter. Deny destinations only.
  */
 async function fileWithoutRule(
   tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date }, door: string, within: SQL,
@@ -389,7 +390,9 @@ async function fileWithoutRule(
     kind: "sender", match: ruleMatchKey(address), subjectContains: null, bodyContains: null,
   });
   if (ruled.length > 0) return { skipped: "ruled", rerouted: [], heldElsewhere: [], lastSeq: null };
-  const held = await heldRowsForSender(tx, accountId, address, undefined, { skipPutBack: true, within });
+  const held = await heldRowsForSender(tx, accountId, address, undefined, {
+    skipPutBack: true, within: and(within, automaticAiAdmits(messages))!,
+  });
   const { rerouted, heldElsewhere, lastSeq } = await rerouteHeldBag(tx, accountId, held, appliedFolder, now);
   for (let i = 0; i < rerouted.length; i += DECISION_BATCH_MAX) {
     await tx.insert(auditLog).values(rerouted.slice(i, i + DECISION_BATCH_MAX).map((m) => ({
@@ -581,8 +584,10 @@ export interface ApplyScreenerDecisionResult {
    * `ruled`: `overExisting: "skip"` met a key with a rule, and nothing was written or filed.
    * `identity`: a pass's yes met held mail carrying the identity fact (mail 0148), and nothing was
    * written or filed — only a person's press admits that sender.
+   * `sensitive`: a pass's decision met a held letter no automatic path may read (a code, a reset),
+   * and nothing was written or filed — the person decides that sender.
    */
-  skipped?: "ruled" | "identity";
+  skipped?: "ruled" | "identity" | "sensitive";
   /** The subset of the held bag this decision ACTUALLY re-routed — see `decide`'s own `desired=Screener` guard. */
   rerouted: AppliedScreenerRow[];
   /** The LAST `change_log` seq this call emitted — an HTTP caller re-emits it as `X-Sync-Seq` on an idempotent replay. `null` when it emitted none. */
@@ -657,6 +662,17 @@ export async function applyScreenerDecision(
       : await heldRowsForSender(tx, accountId, address, undefined, { skipPutBack: true });
     if (bag.some((r) => r.senderCheck !== "none")) {
       return { createdRuleId: null, retargetedRuleIds: [], rerouted: [], lastSeq: null, heldElsewhere: [], skipped: "identity" };
+    }
+  }
+  /* A PASS NEVER FILES A SENSITIVE LETTER: its bag holding one (a code, a reset) leaves the sender
+     whole for the person, before anything is written. A person's press still moves it. */
+  if (decidedBy === "pass") {
+    const closed = { skipPutBack: true, within: sql`not ${automaticAiAdmits(messages)}` };
+    const sensitive = scope === "domain"
+      ? await heldRowsForDomain(tx, accountId, domain, undefined, closed)
+      : await heldRowsForSender(tx, accountId, address, undefined, closed);
+    if (sensitive.length > 0) {
+      return { createdRuleId: null, retargetedRuleIds: [], rerouted: [], lastSeq: null, heldElsewhere: [], skipped: "sensitive" };
     }
   }
 

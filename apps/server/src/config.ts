@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import {
-  keyProviderFromEnv, kekEnvIdentity, msDeviceEnv,
+  KEK_RETIRED_ENV, keyProviderFromEnv, kekEnvIdentity, msDeviceEnv,
   type KeyProvider, type KekEnvIdentity, type MicrosoftDeviceClient,
 } from "@trafficflow/core";
 import { aiProviderEnv, type AiProviderEnv } from "@trafficflow/core/ai-provider-env";
@@ -21,7 +21,8 @@ import { parseTlsTerminatorList, parseTrustedProxyEntry, splitTrustedProxyList, 
  * TO START on a misshapen value: a crash-looping container with the reason on stderr is the
  * operator-visible failure here, and it happens before the migrator touches anything. The one
  * deliberate exception is the KEK (captured, poisoned provider, `/health` 503s naming it), because
- * a broken key ring must not hide the health endpoint that reports it.
+ * a broken key ring must not hide the health endpoint that reports it. `TF_KEK_RETIRED` is not that
+ * exception: it is a setting this server does not support yet, not a broken ring, so it refuses.
  *
  * EVERY refusal names the VARIABLE and NEVER echoes its value. No exceptions: an origin can embed
  * credentials, a connection string always does, and the pattern gets copied.
@@ -259,6 +260,16 @@ export function poisonedKeyProvider(reason: string): KeyProvider {
 const trimmed = (env: NodeJS.ProcessEnv, key: string): string => (env[key] ?? "").trim();
 
 /**
+ * Why `TF_KEK_RETIRED` refuses the boot here. Cloud's hosts check at boot and on `/health` that no stored
+ * secret still names a retired version; this one has neither check, so it takes no retirement at all.
+ * The variable is named, never its value, and the advice keeps every key that may still be needed.
+ */
+export const KEK_RETIRED_REFUSED =
+  `${KEK_RETIRED_ENV} is set, and a self-hosted server does not retire key versions yet: it cannot check that no ` +
+  `stored secret still needs one. Unset ${KEK_RETIRED_ENV} and set again every TF_KEK_V<n> it retired; those keys ` +
+  "still open what was sealed under them.";
+
+/**
  * WHICH BUILD THIS IS — the worker's source order minus the platform arm (nothing hosts this
  * process): the `BUILD_VERSION` file `scripts/bundle-host.mjs` writes into the layout, then
  * `TF_BUILD_VERSION`, then `dev`. The file wins so a compose-override variable can no longer
@@ -379,10 +390,20 @@ export const COLLAPSED_SENTENCE =
 
 /**
  * The proxy's front door. `tls`: the proxy terminates TLS and `OHMAIL_TLS_TERMINATOR` means nothing.
- * `external`: `OHMAIL_EXTERNAL_TLS` is non-empty (compose's `:+` test), and `raw` is the terminator
- * list the proxy trusts; empty means the proxy's entrypoint takes its network's gateway.
+ * `external`: `OHMAIL_EXTERNAL_TLS` is non-empty (compose's `:+` test), and `raw` is the value as
+ * written: the terminator list the proxy trusts, or {@link TLS_TERMINATOR_GATEWAY} (no `entries`),
+ * which the proxy's entrypoint reads as its network's gateway.
  */
 export type ExternalDoor = { door: "tls" } | { door: "external"; raw: string; entries: readonly string[] };
+
+/** The one word `OHMAIL_TLS_TERMINATOR` may be, as the whole value: the proxy's own network gateway. */
+export const TLS_TERMINATOR_GATEWAY = "gateway";
+
+/** Unset on the external door; `deploy/selfhost/proxy/entrypoint.sh` refuses with the same sentence. */
+export const TLS_TERMINATOR_UNSET_REFUSED =
+  "OHMAIL_TLS_TERMINATOR is unset on the external door, so nothing says whose X-Forwarded-For to believe: " +
+  "set it to gateway for a terminator on this box that sets that header (OHMAIL_BIND left at 127.0.0.1), " +
+  "to your terminator's addresses or CIDRs separated by single spaces, or to 0.0.0.0/32 for a relay that adds none.";
 
 /** What to write instead, per refused shape. The value itself is never echoed. */
 const TLS_TERMINATOR_FIX: Record<TlsTerminatorRefusal, string> = {
@@ -396,20 +417,26 @@ const TLS_TERMINATOR_FIX: Record<TlsTerminatorRefusal, string> = {
 
 /**
  * `OHMAIL_EXTERNAL_TLS` and `OHMAIL_TLS_TERMINATOR`, the two values compose hands the proxy and
- * this server alike. The proxy decides whose `X-Forwarded-For` to believe; this server only refuses
- * to start on a list the proxy would read differently ({@link parseTlsTerminatorList}), so the
- * stack never serves on two readings of one value. On the TLS door the list is ignored.
+ * this server alike. The proxy decides whose `X-Forwarded-For` to believe; this server refuses to
+ * start on a list the proxy would read differently ({@link parseTlsTerminatorList}), and on no value
+ * at all, which the proxy refuses too: there is no default trust. On the TLS door the value is ignored.
  */
 function loadTlsTerminator(env: NodeJS.ProcessEnv): ExternalDoor {
   if ((env.OHMAIL_EXTERNAL_TLS ?? "") === "") return { door: "tls" };
   // UNTRIMMED: the proxy's entrypoint and Caddy read the value exactly as compose hands it over.
   const raw = env.OHMAIL_TLS_TERMINATOR ?? "";
+  if (raw === TLS_TERMINATOR_GATEWAY) return { door: "external", raw, entries: [] };
   const parsed = parseTlsTerminatorList(raw);
   if (!parsed.ok) {
     const which = parsed.position > 0 ? `OHMAIL_TLS_TERMINATOR entry ${parsed.position}` : "OHMAIL_TLS_TERMINATOR";
+    // Entries are single-space separated once a refusal names a position, so the split finds the one refused.
+    if (parsed.refusal === "word" && raw.split(" ")[parsed.position - 1] === TLS_TERMINATOR_GATEWAY) {
+      throw new Error(`${which} is gateway, which stands only as the whole value: in a list, write the gateway's address instead`);
+    }
     throw new Error(`${which} ${TLS_TERMINATOR_FIX[parsed.refusal]}`);
   }
-  return parsed.entries.length === 0 ? { door: "external", raw: "", entries: [] } : { door: "external", raw, entries: parsed.entries };
+  if (parsed.entries.length === 0) throw new Error(TLS_TERMINATOR_UNSET_REFUSED);
+  return { door: "external", raw, entries: parsed.entries };
 }
 
 /** Both, or neither. Half an SMTP block is a mailer that looks configured and sends nothing. */
@@ -600,6 +627,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("PORT must be an integer between 1 and 65535");
   }
+
+  // Thrown, not captured: nothing migrates, mints or listens, so every sealed secret opens again once the keys are back.
+  if (trimmed(env, KEK_RETIRED_ENV) !== "") throw new Error(KEK_RETIRED_REFUSED);
 
   let keyProvider: KeyProvider;
   let kek: KekEnvIdentity | null;

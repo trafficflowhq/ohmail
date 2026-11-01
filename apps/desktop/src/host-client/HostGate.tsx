@@ -22,7 +22,7 @@
  * hosted constant, under-selling the door.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "../../../webapp/app/shell/AppShell";
 import { dropLocalStorageKeys, type LocalSweep } from "../../../webapp/app/shell/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../../../webapp/app/shell/compose";
@@ -32,7 +32,8 @@ import { DELETE_INTENTS_PREFIX } from "../../../webapp/app/shell/delete-intents"
 import { ROUTING_INTENTS_PREFIX, type OhmailEngine } from "@ohmail/client-engine";
 import { SEND_LOCKS_PREFIX } from "../../../webapp/app/shell/send-lock";
 import { setStorageOwner } from "../../../webapp/app/shell/storage-owner";
-import { BearerManager } from "./bearer.js";
+import { BearerManager, type SignOutOutcome } from "./bearer.js";
+import { HostAccountPane } from "./HostAccountPane.js";
 import { createHostClientEngine } from "./host-engine.js";
 import { HostOutboxNotice } from "./HostOutboxNotice.js";
 import { discardHostOutbox, type HostOutboxDiscard } from "./outbox-store.js";
@@ -102,10 +103,15 @@ function reportDiscard(verdict: HostOutboxDiscard): void {
   console.warn("ohmail host client: the queued changes kept in this browser could not be discarded");
 }
 
+/** How the CURRENT unpaired state came about, for the landing: ended at the computer, or signed out here. */
+type Ended = { kind: "revoked" } | { kind: "signed-out"; outcome: SignOutOutcome | null };
+
 export function HostGate({ bearer }: { bearer: BearerManager }) {
   const [paired, setPaired] = useState(bearer.paired());
-  /** True when the CURRENT unpaired state was a mid-use death — the landing says so. */
-  const [died, setDied] = useState(false);
+  /** `null` until the session ends in this page; the landing says which way it ended. */
+  const [ended, setEnded] = useState<Ended | null>(null);
+  /** Set across this page's own Sign out, so the death it causes is said as a sign-out. */
+  const signingOut = useRef(false);
   /** `/pair` opens the landing even while paired — that is what a fresh QR scan is. */
   const [onPairPath, setOnPairPath] = useState(
     typeof window !== "undefined" && window.location.pathname === "/pair",
@@ -124,12 +130,23 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
         // Land on /pair with the plain sentence — the ruled shape for a rotation failure. The
         // path is replaced (not pushed) so Back cannot return to a dead mailbox.
         window.history.replaceState(null, "", "/pair");
-        setDied(true);
+        setEnded(signingOut.current ? { kind: "signed-out", outcome: null } : { kind: "revoked" });
         setPaired(false);
         setOnPairPath(true);
       }),
     [bearer],
   );
+
+  /** This page's own Sign out: the death above sweeps, and the landing says what the computer heard. */
+  const signOut = useCallback(async (): Promise<void> => {
+    signingOut.current = true;
+    try {
+      const outcome = await bearer.signOut();
+      setEnded({ kind: "signed-out", outcome });
+    } finally {
+      signingOut.current = false;
+    }
+  }, [bearer]);
 
   /**
    * ONE engine per pairing, built only once this browser holds one. `paired` is the dependency
@@ -188,6 +205,8 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
   const gapLetters = useMemo(() => gapLettersOverBearer(bearer), [bearer]);
   /* The draft reply's two calls, memoised: the shared control reads the wire as a dependency. */
   const draftReply = useMemo(() => draftReplyOverBearer(bearer), [bearer]);
+  /* The Account pane, memoised: the shell's settings read it as a dependency. */
+  const accountPane = useMemo(() => <HostAccountPane onSignOut={signOut} />, [signOut]);
 
   /**
    * WHOSE `localStorage` PARTITION THE SHARED SHELL USES ON THIS DOOR — established in
@@ -205,7 +224,8 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
     return (
       <PairScreen
         bearer={bearer}
-        revoked={died}
+        ended={ended?.kind ?? null}
+        signedOut={ended?.kind === "signed-out" ? ended.outcome : null}
         onPaired={() => {
           // A FRESH PAIRING IS ALSO A DEPARTURE, and only the death path used to say so.
           // `/pair` opens this landing while still paired — the case just above — so a person can
@@ -217,7 +237,7 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
           // Every earlier pairing's queued changes; the new one keeps its own.
           void discardHostOutbox({ except: bearer.pairScope() }).then(reportDiscard);
           window.history.replaceState(null, "", "/");
-          setDied(false);
+          setEnded(null);
           setOnPairPath(false);
           setPaired(true);
         }}
@@ -278,6 +298,9 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
       accountNotice={unkept !== null && unkept.scope === scope && !unkept.dismissed
         ? <HostOutboxNotice onDismiss={() => setUnkept((u) => (u ? { ...u, dismissed: true } : u))} />
         : undefined}
+      /* SETTINGS → ACCOUNT: this browser's own Sign out — the shell has none, and this page's
+         `api-client` is the refusing stub, so it runs the bearer's sign-out. */
+      accountSection={accountPane}
     />
   );
 }

@@ -87,12 +87,14 @@ const st = vi.hoisted(() => {
     /* The header's Mark all read as drawn, its presses, the composer mounted, and each letter's forward ask. */
     markAll: null as any, pressed: [] as unknown[][], composer: null as any, asks: {} as Record<string, string>, fetched: [] as string[],
     reading: null as null | Promise<void>,
+    kept: {} as Record<string, unknown>,
   };
   // One object for the app's life, as the world's actions are: a new one per render re-runs the focus effect.
   s.actions = {
     markSeenThrough: (_p: string, ids: string[]) => { for (const id of ids) if (!s.marked.includes(id)) s.marked.push(id); },
     leaveFeed: () => undefined, markAllSeen: (...a: unknown[]) => { s.pressed.push(a); }, hydrateMessage: (id: string) => { s.opened.push(id); }, holdFiles: () => undefined, releaseFiles: () => undefined,
     forwardFetch: (id: string) => { s.fetched.push(id); return s.reading; },
+    keptReply: (id: string) => s.kept[id] ?? { kind: "none" },
   };
   return s;
 });
@@ -666,6 +668,25 @@ describe("phone News and Receipts carry the web stream's verbs", () => {
     expect(st.composer?.m.id).toBe("NW2");
     act(() => st.composer.onClose());
     expect(has("[data-composer]")).toBe(false);
+  });
+
+  it("Reply on a card whose reply is kept resumes it", () => {
+    const draft = { id: "r-1", body: "kept words", mailboxId: "mb", to: "", cc: "", bcc: "", subject: "Re: x", forwardOf: null, forwardParts: null, revision: null };
+    st.kept = { NW2: { kind: "resume", draft } };
+    open(letters("NW", 3));
+    press('[data-row="NW2"] [data-tap]');
+    press(reply);
+    expect([st.composer?.mode, st.composer?.draft, st.composer?.replyAside]).toEqual(["reply", draft, false]);
+    st.kept = {};
+  });
+
+  it("Reply on a card whose kept reply cannot be resumed opens fresh and says one is in Drafts", () => {
+    st.kept = { NW2: { kind: "aside" } };
+    open(letters("NW", 3));
+    press('[data-row="NW2"] [data-tap]');
+    press(reply);
+    expect([st.composer?.mode, st.composer?.draft, st.composer?.replyAside]).toEqual(["reply", undefined, true]);
+    st.kept = {};
   });
 
   it("Forward opens the composer on the letter, read through the reader's door first", async () => {

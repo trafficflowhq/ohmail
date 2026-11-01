@@ -1249,3 +1249,41 @@ describe("rulesOnly: a ruled sender is placed by its rule before the window is k
     expect(part.history.map((m) => m.id).sort()).toEqual(["retired", "sent-old"]);
   });
 });
+
+/**
+ * A HELD LETTER ITS PROVIDER FAILED PRESENTS AT THE GATE, where the router put it — for the account's
+ * own address and for a sender the store says is not waiting (a contact the person wrote to) alike.
+ * Only the place moves: every count stays the cutline's own.
+ */
+describe("a held letter that failed its sender check presents at the gate", () => {
+  const verdict = (m: EngineMessage, v: AuthVerdict): EngineMessage => ({ ...m, authVerdict: v });
+  /** The store's queue page, answered and whole, listing nobody: every sender at the gate is not waiting. */
+  const nobodyWaiting: SyncChange[] = [{
+    type: "screener_waiting", op: "create", id: "page", seq: ++seq, updatedAt: NOW.toISOString(),
+    entity: { id: "page", kind: "page", total: 0, nextCursor: null, inFlight: [], ask: 1, rows: 0 },
+  }] as SyncChange[];
+  const mirrorWith = async (messages: EngineMessage[], extra: SyncChange[] = []) => {
+    const store = await mirrorOf(messages);
+    await store.applyChanges(extra.map((c) => ({ ...c, seq: ++seq })));
+    return store;
+  };
+  const own = { ...opts, ownAddresses: ["me@example.com"] };
+
+  it("the account's own address: a failed letter stays at the gate, an authenticated one presents in the INBOX", async () => {
+    const at = () => msg({ id: "letter", from: "me@example.com", folder: "ohmail/Screener", date: RECENT, unread: true });
+    const forged = consentPartition(await mirrorWith([verdict(at(), "fail")]), own);
+    const genuine = consentPartition(await mirrorWith([verdict(at(), "pass")]), own);
+    expect(forged.placeOf.get("letter")).toBe("ohmail/Screener");
+    expect(genuine.placeOf.get("letter")).toBe("INBOX");
+    expect(forged.counts).toEqual(genuine.counts);
+  });
+
+  it("a sender the store does not list: a failed held letter stays at the gate, `unavailable` presents in the INBOX", async () => {
+    const at = () => msg({ id: "letter", from: "accountant@smallfirm.example", folder: "ohmail/Screener", date: RECENT, unread: true });
+    const forged = consentPartition(await mirrorWith([verdict(at(), "fail")], nobodyWaiting), opts);
+    const blind = consentPartition(await mirrorWith([verdict(at(), "unavailable")], nobodyWaiting), opts);
+    expect(forged.placeOf.get("letter")).toBe("ohmail/Screener");
+    expect(blind.placeOf.get("letter")).toBe("INBOX");
+    expect(forged.counts).toEqual(blind.counts);
+  });
+});

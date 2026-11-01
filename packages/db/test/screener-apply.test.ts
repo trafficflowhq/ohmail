@@ -7,7 +7,7 @@ import { makeTestDb } from "../src/testing.js";
 import { carryDialect } from "../src/dialect/index.js";
 import { mailboxes, messages, folderState, rules, contacts, flagState } from "../src/schema.js";
 import {
-  applyScreenerDecision, heldRowById, heldRowsForSender, heldRowsForDomain,
+  applyScreenerDecision, heldRowById, heldRowsForSender, heldRowsForDomain, rerouteUnconfirmedHeld,
   SCREENER_FOLDER, DECIDABLE_FOLDERS, LEGACY_NEWS_FOLDER, admitsDestination, domainOf,
   validateRequestPayload,
 } from "../src/screener-apply.js";
@@ -24,6 +24,10 @@ async function seedHeldMessage(
     lastSetBy?: "us" | "external" | "peer";
     /** `messages.sender_check`; NULL (never checked) unless a case says what the ingest wrote. */
     senderCheck?: "none" | "impersonation";
+    /** `messages.sensitivity_category`, as the detector stores it; NULL unless a case says. */
+    sensitivityCategory?: string;
+    /** `messages.auth_verdict`; NULL unless a case says. */
+    authVerdict?: string;
   } = {},
 ): Promise<{ mailboxId: string; messageId: string }> {
   let mailboxId = over.mailboxId;
@@ -37,6 +41,7 @@ async function seedHeldMessage(
     accountId: ACCT, mailboxId, bodyHash: "h", dedupKey: crypto.randomUUID(),
     subject: "s", fromAddress: over.fromAddress ?? "person@example.com",
     unread: over.unread ?? true, ...(over.senderCheck ? { senderCheck: over.senderCheck } : {}),
+    sensitivityCategory: over.sensitivityCategory ?? null, authVerdict: over.authVerdict ?? null,
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
     messageId: msg!.id, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
@@ -424,6 +429,46 @@ describe("applyScreenerDecision", () => {
     const { accountSettings } = await import("../src/schema.js");
     const [row] = await db.select().from(accountSettings).where(eq(accountSettings.accountId, ACCT));
     expect(row?.screeningBaselineAt ?? null).toBeNull();
+  });
+
+  /* A SENSITIVE HELD LETTER IS NEVER FILED AUTOMATICALLY: a pass's decision over a bag holding one
+     writes nothing and says why; a person's press files it. */
+  for (const [decision, appliedFolder] of [["no", "ohmail/Quarantine"], ["yes", "INBOX"]] as const) {
+    it(`a pass's ${decision} over a held one-time code writes nothing (\`sensitive\`); a press files it`, async () => {
+      const db = await makeTestDb();
+      const code = await seedHeldMessage(db, { fromAddress: "login@shop.example", senderCheck: "none", sensitivityCategory: "otp" });
+      const benign = await seedHeldMessage(db, { fromAddress: "login@shop.example", senderCheck: "none", mailboxId: code.mailboxId });
+      const decide = (decidedBy: "pass" | "person") => db.transaction((tx) => applyScreenerDecision(carryDialect(db, tx), {
+        accountId: ACCT, scope: "sender", address: "login@shop.example", appliedFolder, decision,
+        triggeringActionId: `screener:${decidedBy}:${code.messageId}`, now: NOW, stampBaseline: false,
+        decidedBy, overExisting: decidedBy === "pass" ? "skip" : "converge", liftOverDomain: decidedBy === "person",
+      }));
+      const r = await decide("pass");
+      expect(r.skipped).toBe("sensitive");
+      expect(r.rerouted).toEqual([]);
+      expect(await db.select().from(rules)).toEqual([]);
+      for (const m of [code, benign]) {
+        const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, m.messageId));
+        expect(fs?.desiredFolder).toBe(SCREENER_FOLDER);
+      }
+      const pressed = await decide("person");
+      expect(pressed.skipped).toBeUndefined();
+      expect(new Set(pressed.rerouted.map((m) => m.messageId))).toEqual(new Set([code.messageId, benign.messageId]));
+    });
+  }
+
+  it("rerouteUnconfirmedHeld leaves a sensitive letter where it is and files the rest", async () => {
+    const db = await makeTestDb();
+    const reset = await seedHeldMessage(db, {
+      fromAddress: "accounts@shop.example", sensitivityCategory: "password_reset", authVerdict: "unavailable",
+    });
+    const other = await seedHeldMessage(db, { fromAddress: "accounts@shop.example", authVerdict: "unavailable", mailboxId: reset.mailboxId });
+    const r = await db.transaction((tx) => rerouteUnconfirmedHeld(carryDialect(db, tx), {
+      accountId: ACCT, address: "accounts@shop.example", appliedFolder: "ohmail/Quarantine", now: NOW,
+    }));
+    expect(r.rerouted.map((m) => m.messageId)).toEqual([other.messageId]);
+    const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, reset.messageId));
+    expect(fs?.desiredFolder).toBe(SCREENER_FOLDER);
   });
 });
 

@@ -51,7 +51,7 @@ env_file=$RUNNER_TEMP/selfhost-smoke.env
 for p in "$dir" "$env_file" "$DOCKER"; do
   if [[ "$p" =~ [[:space:]] ]]; then die "a path with whitespace cannot pass through SMOKE_COMPOSE: '$p'"; fi
 done
-for f in docker-compose.yml docker-compose.ci.yml .env.example boot-smoke.mjs; do
+for f in docker-compose.yml docker-compose.ci.yml ci-slow-db-init.sh .env.example boot-smoke.mjs; do
   [ -f "$dir/$f" ] || die "$dir carries no $f"
 done
 
@@ -151,6 +151,13 @@ for svc in $OURS; do
 done
 
 SMOKE_COMPOSE="${C[*]}" SMOKE_ENV_FILE="$env_file" SMOKE_BASE="$ORIGIN" "$NODE" "$dir/boot-smoke.mjs"
+
+# The overlay slows the db's first start: the api must have waited on the db's healthcheck, not restarted
+# or retried. Its log is counted, never printed (it holds the setup token).
+restarts=$("$DOCKER" inspect --format '{{.RestartCount}}' "$("${C[@]}" ps -a -q api)")
+[ "$restarts" = 0 ] || die "the api restarted $restarts time(s) during the boot"
+waits=$("${C[@]}" logs --no-color api | awk '/boot_database_waiting/ { n++ } END { print n + 0 }') || die "could not read the api's log"
+[ "$waits" = 0 ] || die "the api waited for the database $waits time(s): the db read healthy before its final listener took connections"
 
 # The api's own account of its build: the commit baked into the image, from the build's file.
 health=$("$CURL" -fsS "$ORIGIN/health" | jq -r '"\(.version) \(.buildSource)"')

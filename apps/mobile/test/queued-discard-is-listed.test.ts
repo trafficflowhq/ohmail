@@ -147,7 +147,7 @@ describe("a discard the bearer holds across a rotation past the outbox's ceiling
     };
     const bearer = new BearerManagerRN({
       origin, accessToken: "acc-1", refreshToken: "ref-1", fetchImpl,
-      vault: { save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed" },
+      vault: { save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed", oweSignOut: async () => false },
     });
     const store = new MemoryMirrorStore();
     await store.load();

@@ -1299,6 +1299,11 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
      kept. `info`: the repair ran. Its failure is `error` by its name — the password is still stored. */
   signed_out_residue_removed: "info",
   signed_out_residue_remove_failed: "error",
+  /* THE FIRST LOCAL DOOR NOBODY SAVED, kept by its save or undone at the next start
+     (`first-door.ts`). `info`: each is the decision made; a failure fails the start itself. */
+  first_door_attempt_saved: "info",
+  first_door_attempt_undone: "info",
+  first_door_attempt_unreadable: "info",
   /* THE LAUNCH THE MAIL SERVER ANSWERED WITH A NO, refused rather than handed back as an engine
      (`mobile.ts`). `info` by its name, and the level is right rather than merely derived: the
      failure itself is already filed under `mailbox_start_failed`/`mailbox_sign_in_failed`, and

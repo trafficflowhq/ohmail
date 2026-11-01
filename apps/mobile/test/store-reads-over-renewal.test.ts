@@ -30,7 +30,9 @@ function row(n: number): EngineMessage {
 }
 
 const ROWS = Array.from({ length: 30 }, (_, i) => row(i));
-const vault: RefreshVault = { save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed" };
+const vault: RefreshVault = {
+  save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed", oweSignOut: async () => false,
+};
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 

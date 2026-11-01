@@ -37,6 +37,8 @@ async function mirror() {
     msg("sent-1", "Sent" as Folder, "alias@trafficflow.example", ["friend@example.com"]),
     msg("note-1", "INBOX", ME),
     msg("friend-1", "INBOX", "friend@example.com"),
+    // A letter claiming our address that its provider failed, held at the gate.
+    { ...msg("forged-1", "ohmail/Screener", ME), authVerdict: "fail" as const },
   ].map((m): SyncChange => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: NOW, entity: m })) as SyncChange[]);
   return store;
 }
@@ -78,6 +80,17 @@ describe("the sender sheet on the account's own mail", () => {
       expect(el.querySelector(".sm-rule")).toBeNull();
       expect(el.querySelector(".sm-now")!.textContent).toBe((locale === "de" ? de : en).screening.toastOwnAddress);
       expect(el.querySelectorAll(".sm-links .sm-detail")).toHaveLength(2);
+    });
+  }
+
+  for (const locale of ["en", "de"] as const) {
+    it(`on a letter claiming our address that its provider failed, the check is said instead, still with no press (${locale})`, async () => {
+      const el = await sheet("forged-1", true, locale);
+      expect(el.querySelectorAll("[data-dest]")).toHaveLength(0);
+      expect(el.querySelector(".sm-rule")).toBeNull();
+      expect(el.querySelector(".sm-now")).toBeNull();
+      const words = (locale === "de" ? de : en).screener.senderCheck.failed.replace("{address}", ME);
+      expect(el.querySelector('.sm-check[data-reason="failed"]')!.textContent).toBe(words);
     });
   }
 

@@ -846,6 +846,10 @@ const TABLE = {
     "The pairing and the mail this phone had copied are gone. The server could not be reached to "
     + "end the session, so it may still count this phone as connected — revoke this device from its "
     + "Devices list to finish.",
+  /** The server was out of reach, and the sign-out is kept for the next time it is not. */
+  forgetServerOwed:
+    "The pairing and the mail this phone had copied are gone. The server could not be reached to "
+    + "end the session; this phone tells it the next time it reaches it.",
   forgetClaimStands: (minutes: number) =>
     "The mailbox and its mail are gone from this phone. Its claim on the mailbox could not be "
     + `given back, so another machine can take the mailbox in about ${minutes} minutes.`,
@@ -1128,6 +1132,9 @@ const TABLE = {
       case "wake_queue_full": return "this phone already has more unfinished wake removals than it can record";
       case "wake_not_recorded": return "this phone could not record that the wake registration is owed a removal";
       case "wake_still_owed": return "this phone still records a wake removal owed for that registration";
+      case "sign_out_queue_full": return "this phone already has more unfinished sign-outs than it can record";
+      case "sign_out_not_recorded": return "this phone could not record that a server is owed a sign-out";
+      case "sign_out_still_owed": return "this phone still holds a sign-out it owes a server";
       case "index_unreadable": return "this phone's list of pairings could not be read";
       case "purge_refused": return "the keystore would not give up the earlier installation's pairings";
       case "mirror_not_deleted":
@@ -2657,6 +2664,15 @@ const TABLE = {
   /** The company's own address, and the mail provider did not confirm the sender: the web's words. */
   senderCheckUnverified: (brand: string): string =>
     `This message says it is from ${brand}. Your mail provider did not confirm that.`,
+  /** The mail provider failed the letter's sender check: the web's words. */
+  senderCheckFailed: (address: string): string =>
+    `Your mail provider checked whether this message is from ${address}, and the check failed.`,
+  /** Such a letter held at the gate with no waiting row, decided alone: the two verbs and the block's name. */
+  failedAria: "Messages that failed the sender check",
+  failedNotFromYou: "Not from you",
+  failedFromYou: "It's from you",
+  failedNotFromThem: "Not from them",
+  failedFromThem: "It's from them",
   /** A shared provider's domain is never a scope: the sentence in the place of the choice. */
   screeningScopeShared: (domain: string): string =>
     `${domain} is a shared provider. Decisions here are per address.`,
@@ -3255,6 +3271,21 @@ const TABLE = {
   waitingOther: "A change",
   waitingTheOrganizer: "The organizer",
   waitingRefused: (holder: string) => `${holder} did not carry this out.`,
+  /* A delete refused for want of a Trash folder (worded as `folderErrNoTrash`). */
+  deleteNoTrash: "This mailbox has no Trash folder, and ohmail never erases mail — the message is where it was.",
+  /* Trash on the standalone phone lists this phone's own deletes. */
+  trashEmptyHintStandalone: "Mail you delete on this phone appears here.",
+  /* Reply over a kept reply this phone cannot write whole. */
+  composeReplyAside: "A reply to this message is already in Drafts.",
+  /* The attachment preview: a picture or a PDF shown in the app, Share beside it. */
+  previewClose: "Close",
+  previewShare: "Share",
+  previewPreparing: "Preparing the preview…",
+  previewCantShow: "This file can't be shown here.",
+  previewTooLarge: "This file is too large to show here.",
+  previewShareHint: "Share it to open it in another app.",
+  previewPdfMore: (n: number) => `The first ${n} pages are shown.`,
+  previewFrameLabel: "Attachment preview",
 };
 
 /**

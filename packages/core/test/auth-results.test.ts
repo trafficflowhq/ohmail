@@ -62,13 +62,29 @@ describe("authVerdictFromHeaders — GUARD 5: only the trusted position is read"
     expect(authVerdictFromHeaders(h, "ceo@bank.example", PROVIDER)).toBe("unavailable");
   });
 
-  it("finds the PROVIDER's header even when a forged one is above it — not `values[0]`", () => {
-    // The shape the mutation gets wrong: an untrusted header first, the provider's second.
+  it("reads only the topmost field: an untrusted one on top hides a provider-id field below it", () => {
+    // Nothing outside the provider can write above its stamp at SMTP, so a provider-id field below
+    // an untrusted top was written by the sender, in either direction.
     const h = ar(
       "evil.example; dkim=pass header.d=bank.example",
       "mx.provider.example; dkim=fail header.d=bank.example",
     );
-    expect(authVerdictFromHeaders(h, "ceo@bank.example", PROVIDER)).toBe("fail");
+    expect(authVerdictFromHeaders(h, "ceo@bank.example", PROVIDER)).toBe("unavailable");
+  });
+
+  // Microsoft stamps its own field with no authserv-id; a sender can write one naming it below.
+  const NO_ID_STAMP = "spf=fail (sender IP is 192.0.2.1) smtp.mailfrom=bank.example; dkim=none (message not signed) "
+    + "header.d=none;dmarc=fail action=none header.from=bank.example;compauth=fail reason=001";
+  const MS = new Set(["mx.microsoft.com"]);
+
+  it("a no-id stamp on top: a sender-written provider-id `pass` below is never read", () => {
+    const h = ar(NO_ID_STAMP, "mx.microsoft.com; dkim=pass header.d=bank.example; dmarc=pass header.from=bank.example");
+    expect(authVerdictFromHeaders(h, "alerts@bank.example", MS)).toBe("unavailable");
+  });
+
+  it("a no-id stamp on top: a provider-id `fail` below is not read either", () => {
+    const h = ar(NO_ID_STAMP, "mx.microsoft.com; dmarc=fail header.from=bank.example");
+    expect(authVerdictFromHeaders(h, "alerts@bank.example", MS)).toBe("unavailable");
   });
 
   it("reads the TOPMOST trusted header when two claim the provider's id — the last hop prepends", () => {

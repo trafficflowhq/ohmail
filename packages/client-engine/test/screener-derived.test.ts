@@ -588,3 +588,37 @@ describe("SCREENER-020 — the account-wide echo covers the second mailbox", () 
     expect(screenerSegments(engine.read(), NOW).waiting.map((s) => s.id)).toEqual(["w1"]);
   });
 });
+
+describe("failedAtGate — a held letter its provider failed, with no waiting row to decide it", () => {
+  const ME = "me@example.com";
+  const failed = (m: EngineMessage): EngineMessage => ({ ...m, authVerdict: "fail" });
+  /** The store's whole queue, answered, listing `listed` alone. */
+  const storePage = (listed: string): SyncChange[] => [
+    { type: "screener_waiting", op: "create", id: "page", seq: ++seq, updatedAt: NOW.toISOString(),
+      entity: { id: "page", kind: "page", total: 1, nextCursor: null, inFlight: [], ask: 1, rows: 1 } },
+    { type: "screener_waiting", op: "create", id: `sender:${listed}`, seq: ++seq, updatedAt: NOW.toISOString(),
+      entity: { id: `sender:${listed}`, kind: "sender", order: 0, messageId: "stranger", address: listed, name: null,
+        receivedAt: "2026-08-02T06:00:00.000Z", subject: "s", snippet: "", mailboxId: "mb", total: 1 } },
+  ] as SyncChange[];
+  const segmentsOf = async (messages: EngineMessage[], extra: SyncChange[]) => {
+    const store = await mirrorOf(messages);
+    await store.applyChanges(extra);
+    const presented = presentationReader(store, consentPartition(store, { now: NOW, ownAddresses: [ME] }));
+    return screenerSegments(presented, NOW, "en", "UTC", [ME]);
+  };
+
+  it("lists a forged own letter and a forged contact's, newest first, and never as a waiting row", async () => {
+    const seg = await segmentsOf([
+      failed(msg({ id: "own", from: ME, folder: "ohmail/Screener", date: "2026-08-02T08:00:00.000Z" })),
+      failed(msg({ id: "contact", from: "accountant@smallfirm.example", folder: "ohmail/Screener", date: "2026-08-02T09:00:00.000Z" })),
+      failed(msg({ id: "stranger", from: "someone@else.example", folder: "ohmail/Screener", date: "2026-08-02T06:00:00.000Z" })),
+      { ...msg({ id: "mine", from: ME, folder: "ohmail/Screener" }), authVerdict: "pass" },
+      failed(msg({ id: "filed", from: "accountant@smallfirm.example", folder: "ohmail/Quarantine" })),
+    ], storePage("someone@else.example"));
+    expect(seg.failedAtGate.map((f) => [f.id, f.own])).toEqual([["contact", false], ["own", true]]);
+    expect(seg.failedAtGate[0]).toMatchObject({ from: { address: "accountant@smallfirm.example" }, subject: "Subject contact" });
+    // The stranger the store lists is a waiting row and decides its own letter; nothing else is counted.
+    expect(seg.waiting.map((w) => w.from.address)).toEqual(["someone@else.example"]);
+    expect(seg.waitingTotal).toBe(1);
+  });
+});

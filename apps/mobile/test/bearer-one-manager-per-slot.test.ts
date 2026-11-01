@@ -401,7 +401,7 @@ describe("one bearer manager per pairing slot, for the process", () => {
     const thiefDeaths: SessionDeath[] = [];
     const thief = new BearerManagerRN({
       origin: ORIGIN, refreshToken: "ref-1",
-      vault: { save: async () => "no_row", clear: async () => "no_row", armAttempt: async () => "no_row" },
+      vault: { save: async () => "no_row", clear: async () => "no_row", armAttempt: async () => "no_row", oweSignOut: async () => false },
       fetchImpl: door.fetchImpl,
     });
     thief.onSessionDead((why) => thiefDeaths.push(why));

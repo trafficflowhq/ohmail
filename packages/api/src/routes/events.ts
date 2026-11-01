@@ -157,8 +157,9 @@ export const eventsRoutes: Route[] = [
       let lifetime: ReturnType<typeof setTimeout> | undefined;
       let wake: (() => void) | undefined;          // resolves the poll loop's sleep early
       let self: LiveStream | null = null;
+      const now = (): number => (cfg.now ? cfg.now() : Date.now());
       /** When the consumer last took every queued frame (the source's `pull`). */
-      let deliveredAt = Date.now();
+      let deliveredAt = now();
       /** The hub unsubscribe, once subscribed. Idempotent by the hub's contract. */
       let unhook: (() => void) | null = null;
       let unlisten: (() => void) | null = null;
@@ -238,7 +239,7 @@ export const eventsRoutes: Route[] = [
             finish();
           };
           try {
-            const issuedAt = Date.now();
+            const issuedAt = now();
             const first = await readSeqAndSession(deps.db, accountId, sessionId);
             if (!first.live) { finish(); return; }
             lastSeq = first.seq;                          // don't replay backlog: start at current max
@@ -263,7 +264,7 @@ export const eventsRoutes: Route[] = [
           try {
             unhook = deps.changeWake?.subscribe(accountId, (seq) => {
               if (closed) return;
-              if (Date.now() - liveReadAt > 2 * cfg.pollMs) return;   // stale: the next read decides
+              if (now() - liveReadAt > 2 * cfg.pollMs) return;   // stale: the next read decides
               if (seq > lastSeq) {
                 lastSeq = seq;
                 send(`event: sync\ndata: {"seq":${seq}}\n\n`);
@@ -282,7 +283,7 @@ export const eventsRoutes: Route[] = [
           // stopped, and its cap slot is freed now rather than at the lifetime. A runtime that keeps
           // reading into a dead socket is not seen here; the lifetime bounds that one.
           heartbeat = setInterval(() => {
-            if (Date.now() - deliveredAt >= 2 * cfg.heartbeatMs) { finish(); return; }
+            if (now() - deliveredAt >= 2 * cfg.heartbeatMs) { finish(); return; }
             send("event: ping\ndata: {}\n\n");
           }, cfg.heartbeatMs);
 
@@ -299,7 +300,7 @@ export const eventsRoutes: Route[] = [
               });
               if (closed) return;
               try {
-                const issuedAt = Date.now();
+                const issuedAt = now();
                 const t = await readSeqAndSession(deps.db, accountId, sessionId);
                 if (!t.live) { finish(); return; }        // the session ended: so does its stream
                 if (!(await accessHolds())) { accessRefused(); return; }   // so does a refused account's
@@ -312,7 +313,7 @@ export const eventsRoutes: Route[] = [
             }
           })();
         },
-        pull() { deliveredAt = Date.now(); },
+        pull() { deliveredAt = now(); },
         cancel() { closed = true; stop(); },
       });
 

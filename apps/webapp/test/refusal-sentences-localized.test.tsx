@@ -30,7 +30,7 @@ const ENROLLED = (webauthn: boolean) => ({
 
 type Answer = { status: number; body?: unknown };
 let answers: Record<string, Answer> = {};
-let calls: Array<{ method: string; url: string }> = [];
+let calls: Array<{ method: string; url: string; body: string | null }> = [];
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
@@ -41,7 +41,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    calls.push({ method, url });
+    calls.push({ method, url, body: typeof init?.body === "string" ? init.body : null });
     const hit = Object.entries(answers).find(([key]) => {
       const [m, p] = key.split(" ");
       return m === method && url.includes(p!);
@@ -164,6 +164,60 @@ describe("the step-up prompt says a server refusal in the reader's language", ()
     await submitCode(c);
     expect(c.querySelector('[role="alert"]')).toBeNull();
     expect(calls.some((r) => r.url.includes("/api/auth/step-up/totp")), "the code was sent").toBe(true);
+  });
+});
+
+describe("a recovery code earns the step-up, for an authenticator that is gone", () => {
+  const ENROLLED_NO_SHEET = {
+    status: 200,
+    body: { user: { accountId: A, email: "a@example.test", twofaEnrolled: { webauthn: false, totp: true, recoveryCodes: false } }, scope: "full" },
+  };
+  const toggleIn = (c: HTMLElement, m: typeof en): HTMLButtonElement | undefined =>
+    [...c.querySelectorAll("button")].find((b) => b.textContent === m.devices.stepUpRecoveryToggle);
+
+  async function recoveryArm(locale: "en" | "de", onVerified: () => void = () => {}): Promise<HTMLElement> {
+    const { StepUpPrompt } = await import("../app/(product)/mailbox/StepUpPrompt.js");
+    const c = await mount(locale, h(StepUpPrompt, { onVerified, onCancel: () => {}, onDiscarded: () => {} }));
+    const toggle = toggleIn(c, locale === "de" ? de : en);
+    expect(toggle, "the recovery arm is offered").toBeTruthy();
+    await act(async () => { toggle!.click(); });
+    const input = c.querySelector<HTMLInputElement>("#stepup-recovery")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, " abcd-efgh-ijkl ");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { c.querySelector("form")!.requestSubmit(); });
+    await settle(30);
+    return c;
+  }
+
+  it("the code goes to the step-up's own door, and a code it takes continues the parked verb", async () => {
+    await signedIn();
+    answers["GET /api/auth/session"] = ENROLLED(false);
+    answers["POST /api/auth/step-up/recovery-code"] = { status: 200, body: { ok: true, remainingCodes: 9 } };
+    let verified = 0;
+    const c = await recoveryArm("en", () => { verified += 1; });
+    const sent = calls.filter((r) => r.url.includes("/api/auth/step-up/recovery-code"));
+    expect(sent.map((r) => JSON.parse(r.body!))).toEqual([{ code: "abcd-efgh-ijkl" }]);
+    expect(calls.some((r) => r.url.includes("/api/auth/step-up/totp")), "the code went to the authenticator's door").toBe(false);
+    expect(verified).toBe(1);
+    expect(c.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("a refused code, in German, is the recovery code's sentence", async () => {
+    await signedIn();
+    answers["GET /api/auth/session"] = ENROLLED(false);
+    answers["POST /api/auth/step-up/recovery-code"] = { status: 401, body: { error: { code: "credential_refused", message: WIRE_401 } } };
+    const c = await recoveryArm("de");
+    expect(alertOf(c)).toBe(de.devices.stepUpBadRecoveryCode);
+    expect(de.devices.stepUpBadRecoveryCode).not.toBe(en.devices.stepUpBadRecoveryCode);
+  });
+
+  it("control: an account with no recovery codes is not offered the arm", async () => {
+    await signedIn();
+    answers["GET /api/auth/session"] = ENROLLED_NO_SHEET;
+    const c = await prompt("en");
+    expect(toggleIn(c, en)).toBeUndefined();
   });
 });
 

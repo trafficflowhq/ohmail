@@ -138,3 +138,48 @@ describe("an unconfirmed brand sender on the phone", () => {
     expect(rows.waiting[0]?.unverified).toEqual({ brand: "admin.ch" });
   });
 });
+
+/** A LETTER ITS PROVIDER FAILED (`authVerdict` the gate screens on): the reader says the check, in both languages. */
+describe("a letter its provider failed, on the phone", () => {
+  const view: WorldView = { now: new Date("2026-11-01T10:42:00Z"), zone: "UTC" };
+  const date = "2026-11-01T10:30:00.000Z";
+  const letter = (authVerdict: EngineMessage["authVerdict"]): EngineMessage => ({
+    id: "m-f", accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
+    subject: "New bank details", from: { name: "Accountant", address: "accountant@smallfirm.example" },
+    to: [], cc: [], date, folder: "ohmail/Screener", snippet: "s", unread: true, hasAttachments: false, attachmentCount: 0,
+    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+    triage: null, labels: [], remoteContent: "none", updatedAt: date, authVerdict,
+  } as EngineMessage);
+  const opened = async (m: EngineMessage) => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    await store.applyChanges([{ type: "message", op: "create", id: m.id, seq: 1, updatedAt: date, entity: m } as SyncChange]);
+    const engine = new OhmailEngine({
+      store, now: () => view.now,
+      adapter: {
+        sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: store.getCursor(), hasMore: false, serverTime: date }),
+        mutate: async () => ({ changes: [], seq: null }),
+        withdrawSend: async () => ({ outcome: "unsupported" as const }),
+        fetchBody: async () => null,
+      },
+    });
+    return liveMessage(engine, m.id, view);
+  };
+
+  it("the copy says the check that failed, the German addressing the reader as du; the verbs in both", () => {
+    expect(en.senderCheckFailed("me@example.test"))
+      .toBe("Your mail provider checked whether this message is from me@example.test, and the check failed.");
+    expect(de.senderCheckFailed("me@example.test"))
+      .toBe("Dein Mailanbieter hat geprüft, ob diese Nachricht von me@example.test kommt, und die Prüfung ist fehlgeschlagen.");
+    expect(/\b(Sie|Ihnen|Ihr|Ihre)\b/.test(de.senderCheckFailed("me@example.test"))).toBe(false);
+    expect([en.failedNotFromYou, en.failedFromYou, en.failedNotFromThem, en.failedFromThem])
+      .toEqual(["Not from you", "It's from you", "Not from them", "It's from them"]);
+    expect([de.failedNotFromYou, de.failedFromYou, de.failedNotFromThem, de.failedFromThem])
+      .toEqual(["Nicht von dir", "Doch von dir", "Nicht vom Absender", "Doch vom Absender"]);
+  });
+
+  it("the open message carries it as its own fact; a verdict the gate does not screen on carries none", async () => {
+    expect((await opened(letter("fail")))?.senderFailed).toBe(true);
+    expect((await opened(letter("unavailable")))?.senderFailed).toBeUndefined();
+  });
+});

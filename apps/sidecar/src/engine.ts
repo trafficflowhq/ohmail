@@ -269,6 +269,7 @@ import {
 import { mirroredFirstSyncFacts, mirroredMessageCount, mirrorRowsRemain, wipeLocalMirror } from "./local-mirror.js";
 // An earlier build's sign-out left the outgoing password behind; the boot removes it.
 import { removeSignedOutResidue } from "./signed-out-residue.js";
+import { settleFirstDoorAttempt } from "./first-door.js";
 import { stampSynced } from "./sync-stamp.js";
 import {
   handleWindowConsentReadFailure, handleWindowSearchPhases, handleWindowSyncFailure,
@@ -353,6 +354,13 @@ export interface SidecarConfig {
   imap: SidecarImapConfig;
   /** The mailbox address. Defaults to the IMAP username, which is what it is for most servers. */
   address?: string;
+  /**
+   * The shell's first local door, not saved yet (`OHMAIL_DOOR_PENDING`): this start records the
+   * attempt, and the next start keeps it only as the save of the same address (`first-door.ts`).
+   */
+  doorPending?: boolean;
+  /** The shell's save of its own pending first local door (`OHMAIL_DOOR_SAVE`): the start that keeps it. */
+  doorSave?: boolean;
   displayName?: string;
   /** How long to wait between cycles when the mailbox is quiet. */
   pollIntervalMs?: number;
@@ -2258,6 +2266,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       else if (waited === "timed-out" && waitedMs > 0) log("first_page_grace_expired", { waitedMs });
     };
     const tWorld = Date.now();
+    /* AN UNSAVED FIRST DOOR IS KEPT OR UNDONE before any row is found or connects. Not the phone's. */
+    if (organizerKind === "local") {
+      await settleFirstDoorAttempt(db, {
+        dataDir: config.dataDir, address, pending: config.doorPending === true, save: config.doorSave === true,
+        now: now(), log,
+      });
+    }
     const world = await ensureLocalWorld(db, { address, ...(config.displayName ? { displayName: config.displayName } : {}), now: now() });
     const session = await mintLaunchBearer(db, world, now(), log);
     // The two identity writes, together: the mailbox row this install serves and the launch

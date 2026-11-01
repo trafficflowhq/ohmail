@@ -13,12 +13,12 @@
 # header at the terminator, which is the half that knows: max-age=63072000.
 #
 # X-Forwarded-For is believed from OHMAIL_TLS_TERMINATOR and nowhere else, and this proxy alone
-# decides it: routes.caddy hands the api the one address it settled on. There is no default below.
-# Unset, the entrypoint sets this network's gateway, where a same-box terminator arrives from;
-# without the entrypoint nothing is trusted. Strict: the client is the rightmost address not in the
-# list, the one the terminator added, so a header a visitor wrote to its left is not believed while
-# the terminator adds an address (strict skips an entry that is not one). A relay that adds nothing
-# arrives from the same gateway: set 0.0.0.0/32 with one.
+# decides it: routes.caddy hands the api the one address it settled on. There is no default below,
+# and the entrypoint will not start this door without a value: `gateway` becomes this network's
+# gateway, where a same-box terminator arrives from; any other value is used as written; without the
+# entrypoint nothing is trusted. Strict: the client is the rightmost address not in the list, the one
+# the terminator added, so a header a visitor wrote to its left is not believed while the terminator
+# adds an address (strict skips an entry that is not one). A relay that adds nothing: set 0.0.0.0/32.
 {
 	servers {
 		trusted_proxies static {$OHMAIL_TLS_TERMINATOR}
