@@ -210,6 +210,8 @@ export function ReadsView({
   /** Dedup for the per-card sweep — a card marks itself once per visit (`useVisit` below). A ref:
    *  it is bookkeeping and draws nothing, so marking a card re-renders nothing. */
   const justSeen = useRef<Set<string>>(new Set());
+  /** The letter the fallback showed, kept current while listed: a letter listed above it never takes the cursor. */
+  const keptCur = useRef<string | null>(null);
   /**
    * THE CARDS WHOSE VERBS ARE SHOWING — the one the reader EXPANDED last, not the scroll-spy's
    * `current`. Gating the bar on `current` made it pop in on every card a scroll settled on; it
@@ -329,6 +331,7 @@ export function ReadsView({
   useVisit(
     () => {
       justSeen.current = new Set();
+      keptCur.current = null;
       // The list keeps its offset through the hide; the revisit opens it where a mount does.
       win.toTop();
       if (!streamArmed) {
@@ -479,7 +482,11 @@ export function ReadsView({
   const wlStamp = partition.waterline?.at ? waterlineStamp(partition.waterline.at, now, locale) : "";
   const wlMeta =
     partition.waterline?.meta ?? (wlStamp ? t("waterlineMeta", { stamp: wlStamp }) : undefined);
-  const current = cur ?? all.find((m) => m.unread)?.id ?? all[0]?.id ?? null;
+  const current = cur ?? (keptCur.current !== null && pileIndex.has(keptCur.current) ? keptCur.current : null)
+    ?? all.find((m) => m.unread)?.id ?? all[0]?.id ?? null;
+  useEffect(() => {
+    keptCur.current = cur === null ? current : null;
+  }, [cur, current]);
 
   const seenMark = (id: string) => {
     const m = all.find((x) => x.id === id);

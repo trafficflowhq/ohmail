@@ -179,6 +179,7 @@ export function FolderView({
     settled: !older.available || older.exhausted,
     pending: older.loading,
     picked: selectedId,
+    scope: folder.id,
     first: (locateId ? messages.find((m) => m.id === locateId) : null) ?? messages[0] ?? older.items[0] ?? null,
   });
   const shown = list.shown;
