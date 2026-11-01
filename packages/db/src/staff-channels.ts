@@ -117,6 +117,7 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   // ── account settings and the organizer profile import (`packages/db`) ────────────────────
   "account.ai_enabled", "organizer_profile_found", "organizer_profile_import_resolved", "organizer_profile_written",
   "organizer_profile_import_ask_signature",
+  "organizer_profile_copy",
   // ── the AI workflow runner's per-step inverse row ────────────────────────────────────────
   "workflow_step",
   // ── the Screener's held-release press (`packages/services/src/held-release-service.ts`) ───

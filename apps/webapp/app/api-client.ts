@@ -2294,7 +2294,12 @@ export interface ProfileImportCountsWire {
  * back, so what gets applied is exactly what was shown. `newer` means a later ohmail wrote it;
  * nothing is offered, because a partial import would silently drop what this build cannot read.
  */
-export type ProfileImportCandidateWire =
+export type ProfileImportCandidateWire = ProfileImportQuestionWire & {
+  /** Whether the mailbox keeps this ohmail's settings copy, as its organizer last recorded it; absent when never refused. */
+  copy?: { kept: boolean; code: string | null };
+};
+
+type ProfileImportQuestionWire =
   | { state: "none" }
   | {
     state: "found";

@@ -1974,7 +1974,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
     receiptsNew,
     accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection,
-    aboutSection, helpOffered: support != null, desktopSection, devicesSection, onUnread, savedSettings: profileImportOffer.declined.length > 0,
+    aboutSection, helpOffered: support != null, desktopSection, devicesSection, onUnread, savedSettings: profileImportOffer.declined.length + profileImportOffer.unkept.length > 0,
     runArmedUndo,
     allOhbox, presented, pressSendAndDone,
     drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
@@ -3283,10 +3283,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    be a form posting to a server this tab is not talking to. The demo keeps
                    the fixture list, which is the honest thing for it to show. */
                 mailboxSection={demo ? undefined : mailboxSection}
-                /* "Not now" answers standing in a mailbox, read by the shell (`useProfileImport`), so the
-                   pane exists on a surface with no mailbox node of its own while one stands. */
-                savedSettingsSection={demo || profileImportOffer.declined.length === 0 ? undefined : (
-                  <SavedProfileSection rows={profileImportOffer.declined} transport={profileImportTransport} />
+                /* "Not now" answers standing in a mailbox, and mailboxes that cannot keep the settings copy, read by
+                   the shell (`useProfileImport`), so the pane exists on a surface with no mailbox node of its own. */
+                savedSettingsSection={demo || profileImportOffer.declined.length + profileImportOffer.unkept.length === 0 ? undefined : (
+                  <SavedProfileSection rows={profileImportOffer.declined} unkept={profileImportOffer.unkept} transport={profileImportTransport} />
                 )}
                 /* THE DOOR BACK TO THE REVIEW. Built here rather than injected from
                    `CloudShell` like the four panes above it, because the only thing it does

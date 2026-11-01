@@ -383,7 +383,9 @@ A writer publishes every value the way a reader reads it back (an address
 trimmed, a priority within 0 to 1000, an entry without its name left out), and
 it never appends a copy that would not read back as written. A copy the server
 stores so that it reads back otherwise is removed, and the same document is not
-appended again until it changes or a day has passed.
+appended again until it changes or a day has passed. The organizer records in
+its own store when a mailbox cannot keep its copy, and when it keeps one again,
+so Settings names that mailbox wherever it is open.
 Exactly one current profile message is the steady state. Settings another
 install left in the folder (or a removed store under the same install id) stay
 beside the organizer's own until the person imports them or saves this

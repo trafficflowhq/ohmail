@@ -632,6 +632,43 @@ describe("Settings → Mailboxes: a declined document, with Import and Replace",
   });
 });
 
+describe("Settings → Mailboxes: a mailbox that cannot keep its settings copy says so", () => {
+  /** The hook and the section, wired as `AppShell` wires them; a new doorbell re-asks. */
+  async function mountPane(): Promise<(bell: number) => Promise<void>> {
+    const { SavedProfileSection, useProfileImport } = await import("../app/shell/ProfileImportCard.js");
+    function Pane({ bell }: { bell: number }) {
+      const state = useProfileImport(true, [MB], undefined, 60 * 60 * 1000, bell);
+      return h(SavedProfileSection, { rows: state.declined, unkept: state.unkept });
+    }
+    const render = async (bell: number): Promise<void> => {
+      const el = h(NextIntlClientProvider, {
+        locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-17T12:00:00.000Z"),
+        children: h(Pane, { bell }),
+      });
+      if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
+      await act(async () => { root!.render(el); });
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    };
+    await render(1);
+    return render;
+  }
+
+  it("names the mailbox while its organizer cannot keep the copy, and goes once a copy is kept", async () => {
+    candidate = { state: "none", copy: { kept: false, code: "profile_append_unreadable" } };
+    const ring = await mountPane();
+    expect(host!.textContent).toContain("ohmail can't save a copy of your settings in mila@example.com");
+    candidate = { state: "none", copy: { kept: true, code: null } };
+    await ring(2);
+    expect(host!.textContent).toBe("");
+  });
+
+  it("CONTROL: an answer with no copy record says nothing", async () => {
+    candidate = { state: "none" };
+    await mountPane();
+    expect(host!.textContent).toBe("");
+  });
+});
+
 describe("the doorbell: a find is asked for on the drain that carries it", () => {
   /** A transport whose candidate answers are HELD until the test releases them, in order. */
   function heldWire() {
@@ -721,8 +758,8 @@ describe("the shell wiring, pinned by source", () => {
   /* Re-decided (HOST-CLIENT-DECLINED-SETTINGS-HAS-NO-ROW): the SHELL reads the declined rows, so
      the pane exists on a surface with no mailbox node while one stands. */
   it("the Mailboxes pane carries the declined rows over the same transport, withheld on the demo", () => {
-    expect(shell).toContain("<SavedProfileSection rows={profileImportOffer.declined} transport={profileImportTransport} />");
-    expect(shell).toContain("savedSettingsSection={demo || profileImportOffer.declined.length === 0 ? undefined : (");
+    expect(shell).toContain("<SavedProfileSection rows={profileImportOffer.declined} unkept={profileImportOffer.unkept} transport={profileImportTransport} />");
+    expect(shell).toContain("savedSettingsSection={demo || profileImportOffer.declined.length + profileImportOffer.unkept.length === 0 ? undefined : (");
     // The rows are the card's own answers, never a second request (`useProfileImport`'s `declined`).
     const hook = sliceOfDeclaration(read("shell/ProfileImportCard.tsx"), "useProfileImport");
     expect(hook).toContain("const saved = asDeclined(dto);");
