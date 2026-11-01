@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_NOW, FixturesAdapter, OhmailEngine } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter, OhmailEngine, SearchIndex, type EngineMessage } from "@ohmail/client-engine";
 
 /** The instant local search over the mirror — incl. the canonical 'invoce' typo. */
 
@@ -84,5 +84,42 @@ describe("local search", () => {
     await engine.mutate({ kind: "screener_decide", senderId: "lena", decision: "yes" });
     const res = engine.search("Werkstatt");
     expect(res.items.some((h) => h.message.subject.startsWith("Werkstatt-Besuch"))).toBe(true);
+  });
+});
+
+/** The first paint of a query with a minus word: the words asked, less every letter that holds the excluded one. */
+describe("a minus word only leaves letters out of the first paint", () => {
+  const letter = (id: string, subject: string, address: string, snippet: string): EngineMessage => ({
+    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null, subject, from: { name: null, address },
+    to: [], cc: [], date: "2026-09-01T09:00:00.000Z", folder: "INBOX", snippet, unread: false, hasAttachments: false,
+    attachmentCount: 0, sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+    triage: null, labels: [], remoteContent: "none", updatedAt: "2026-09-01T09:00:00.000Z",
+  });
+  const index = new SearchIndex();
+  for (const m of [
+    letter("subject", "Mail delivery", "ada@lind.example", "Thanks for waiting."),
+    letter("body", "Weekend", "bo@ek.example", "Send me the mail later."),
+    letter("prefix", "Quarterly statement", "post@mailroom.example", "Your statement is ready."),
+    letter("orchard", "Apples", "cy@lund.example", "The orchard is ready. You can come."),
+    letter("thank", "Thank you", "fay@hill.example", "Flowers arrived."),
+    letter("feast", "Thanksgiving menu", "gus@bay.example", "Mail me your order."),
+  ]) index.add(m);
+  const painted = (q: string): string[] => {
+    const r = index.search(q);
+    return [...r.items, ...r.similar].map((h) => h.message.id).sort();
+  };
+
+  it("paints the words asked, less the letters holding the word, its start or a longer word", () => {
+    expect(painted("mail")).toEqual(["body", "feast", "prefix", "subject"]);
+    expect(painted("mail -thanks")).toEqual(["body", "prefix"]);
+    expect(painted("you -thanks")).toEqual(["orchard", "prefix"]);
+    expect(painted("is -orchard")).toEqual(["prefix"]);
+    expect(painted("mail -zzzqx")).toEqual(painted("mail"));
+  });
+
+  it("a minus word alone paints nothing, and a guess never holds the excluded word", () => {
+    expect(painted("-thanks")).toEqual([]);
+    expect(index.search("delivry").similar.map((h) => h.message.id)).toEqual(["subject"]);
+    expect(painted("delivry -thanks")).toEqual([]);
   });
 });

@@ -16,6 +16,7 @@ import {
   STORE_ANSWER_TIMEOUT_MS,
   STORE_SEARCH_FOLLOWUP_HOLD_MS,
   StoreSearchWalker,
+  storeRefused,
   VIEW_OF_FOLDER,
   type EngineMessage,
   type LocalSearchResult,
@@ -717,9 +718,10 @@ export function SearchView({
       {t("scopeNoArchive")}
     </>
   ) : passState === "unanswered" || ready === null ? (
-    /* The retry stays: a stated dead end with no way out of it is half a sentence. */
+    /* The retry stays: a stated dead end with no way out of it is half a sentence. A server that
+       answered with a fault could not run the search; it did answer. */
     <>
-      {t("scopeUnanswered")}{" "}
+      {t(storeRefused(cause) ? "scopeFailed" : "scopeUnanswered")}{" "}
       <button type="button" className="btn ghost" onClick={() => setRetryTick((n) => n + 1)}>
         {t("scopeWholeRetry")}
       </button>

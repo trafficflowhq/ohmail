@@ -1,8 +1,10 @@
 import {
   compareRanked,
   compoundForms,
+  excludedOperands,
   MIN_FUZZY_QUERY_LEN,
   MIN_FUZZY_TERM_LEN,
+  positiveText,
   showSimilar,
   type RankedRow,
   type SearchTier,
@@ -644,6 +646,18 @@ export class SearchIndex {
     return candidates ?? new Map();
   }
 
+  /**
+   * The letters excluded words leave out, or `null` when none is excluded: a letter whose terms hold
+   * one of their words, a longer word starting with it, or a start of it of four letters or more
+   * (`thank` for `thanks`). The stores stem the word; a letter in doubt is left out.
+   */
+  private holding(excluded: readonly string[]): ((id: string) => boolean) | null {
+    const words = excluded.flatMap((t) => t.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+    if (words.length === 0) return null;
+    const holds = (term: string): boolean => words.some((w) => term.startsWith(w) || (term.length >= HELD_START_MIN && w.startsWith(term)));
+    return (id) => this.postedBy.get(id)?.terms.some(holds) ?? true;
+  }
+
   /** Score → hit, phrase bonus applied, ordered by {@link compareRanked}, then cut to `limit`. */
   private rank(
     candidates: Map<string, { score: number; matches: SearchMatch[] }>,
@@ -687,7 +701,7 @@ export class SearchIndex {
    * beside "messages" as a count of somebody's mail). `tier` is `exact`: the reader's characters are present, in
    * order, in the field — not a guess, and not Similar.
    */
-  private verbatim(query: string, limit: number): LocalSearchResult {
+  private verbatim(query: string, limit: number, leftOut: ((id: string) => boolean) | null): LocalSearchResult {
     const needle = query.trim().toLowerCase();
     if (needle === "") {
       return { items: [], similar: [], tier: "exact", facets: emptyFacets(), coverage: this.coverage(), indexing: false };
@@ -712,7 +726,7 @@ export class SearchIndex {
         : `${m.from.name ?? ""} ${m.from.address}`.toLowerCase().includes(needle)
           ? FIELD_WEIGHT.from
           : 0;
-      if (weight === 0) continue;
+      if (weight === 0 || leftOut?.(id) === true) continue;
       rows.push({ score: weight, dateMs: stampOf(m), id });
     }
     rows.sort(compareRanked);
@@ -733,14 +747,18 @@ export class SearchIndex {
    * rule the common case — a query with an answer — never pays it.
    */
   search(query: string, opts: { limit?: number } = {}): LocalSearchResult {
-    const qTokens = tokenize(query);
+    // AN EXCLUDED WORD ONLY LEAVES LETTERS OUT, as in the stores: the words asked are searched, and
+    // a letter holding an excluded word is left out of both tiers. Excluded words alone paint nothing.
+    const asked = positiveText(query);
+    const leftOut = this.holding(excludedOperands(query));
+    const qTokens = tokenize(asked);
     const limit = opts.limit ?? 50;
-    if (qTokens.length === 0) return this.verbatim(query, limit);
+    if (qTokens.length === 0) return this.verbatim(asked, limit, leftOut);
     // A single-token query has no phrase to prefer — the token IS the phrase, and every hit
     // would earn the same bonus, which is not an ordering.
-    const phrase = qTokens.length > 1 ? phraseField(query) : null;
+    const phrase = qTokens.length > 1 ? phraseField(asked) : null;
 
-    const exact = this.intersect(qTokens, (q) => this.literalHits(q));
+    const exact = without(this.intersect(qTokens, (q) => this.literalHits(q)), leftOut);
     if (!showSimilar(exact.size)) {
       const items = this.rank(exact, phrase, limit);
       return { items, similar: [], tier: "exact", facets: facetsOf(items), coverage: this.coverage(), indexing: false };
@@ -748,7 +766,7 @@ export class SearchIndex {
 
     // `exact` is empty here under today's floor; the subtraction below does not assume that, so
     // the floor can move without this quietly listing a message under both headings.
-    const withFuzzy = this.intersect(qTokens, (q) => this.fuzzyHits(q));
+    const withFuzzy = without(this.intersect(qTokens, (q) => this.fuzzyHits(q)), leftOut);
     for (const id of exact.keys()) withFuzzy.delete(id);
     const items = this.rank(exact, phrase, limit);
     const similar = this.rank(withFuzzy, phrase, limit);
@@ -773,6 +791,15 @@ function fillSync(idx: SearchIndex, rows: readonly EngineMessage[]): SearchIndex
     // `fillAll` never yields; the loop exists to drive the generator to completion.
   }
   return idx;
+}
+
+/** The shortest start of an excluded word that holds it, as a stem would (`thank` of `thanks`). */
+const HELD_START_MIN = 4;
+
+/** `hits` less the letters `leftOut` names. */
+function without<V>(hits: Map<string, V>, leftOut: ((id: string) => boolean) | null): Map<string, V> {
+  if (leftOut !== null) for (const id of [...hits.keys()]) if (leftOut(id)) hits.delete(id);
+  return hits;
 }
 
 /** `Date:` as millis for the tie-break, or `null` for a message that has none. */

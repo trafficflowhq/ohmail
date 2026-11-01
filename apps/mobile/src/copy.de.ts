@@ -906,6 +906,7 @@ export const DE: Deck = {
   searchSyncing: "Der Rest deiner Mails ist noch nicht synchronisiert.",
   searchServerMs: (ms: number) => `${ms} ms`,
   searchUnanswered: "Dein Server hat nicht geantwortet. Angezeigt werden die neueren Mails, die dieses Gerät hat.",
+  searchFailed: "Dein Server konnte diese Suche nicht ausführen. Angezeigt werden die neueren Mails, die dieses Gerät hat.",
   searchWholeRetry: "Ganzes Postfach erneut durchsuchen",
   searchIndexingProgress: (percent: number) => `Ältere Mails werden noch indexiert: ${percent} % erledigt.`,
   searchBounded: (n: number) => `Angezeigt werden die ${n} besten Treffer — nach Datum sortieren, um alle durchzugehen.`,

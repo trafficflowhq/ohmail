@@ -100,7 +100,14 @@ describe("offline is said where the person looks", () => {
     expect(unansweredSaid("online", "search")).toBe(Copy.searchUnanswered);
     expect(unansweredSaid("unknown", "history")).toBe(Copy.historyStoreUnavailable);
     expect(Copy.networkOfflineHeld).not.toMatch(/server/i);
-    expect(read("../app/search.tsx")).toContain('unansweredSaid(network, "search")');
+    // A search the server answered with a fault could not run there; an outage and a timeout did not answer.
+    expect(unansweredSaid("online", "search", "MutationRejectedError 500 internal")).toBe(Copy.searchFailed);
+    expect(unansweredSaid("offline", "search", "MutationRejectedError 500 internal")).toBe(Copy.networkOfflineHeld);
+    for (const cause of ["MutationRejectedError 504 server_error", "MutationRejectedError 503", "timeout", "TypeError", null]) {
+      expect(unansweredSaid("online", "search", cause)).toBe(Copy.searchUnanswered);
+    }
+    expect(unansweredSaid("online", "history", "MutationRejectedError 500 internal")).toBe(Copy.historyStoreUnavailable);
+    expect(read("../app/search.tsx")).toContain('unansweredSaid(network, "search", store.cause)');
     expect(read("../app/history.tsx")).toContain('unansweredSaid(network, "history")');
   });
 });

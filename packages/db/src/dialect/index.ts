@@ -324,11 +324,12 @@ function queryTokens(q: string): Array<QueryOperand & { readonly negated: boolea
 
 /**
  * Can the operands sit in different parts of one letter: two ANDed, or one excluded? Past
- * {@link PART_MAX_WORDS} operands no: each costs one index read per part, so the query is read per part.
+ * {@link PART_MAX_WORDS} operands asked no: each costs one index read per part, so the query is read
+ * per part. An excluded operand never counts: the stores ask all of them of a letter at once.
  */
 export function straddlesParts(ops: QueryOperands): boolean {
-  const total = ops.none.length + ops.any.reduce((n, g) => n + g.length, 0);
-  return total <= PART_MAX_WORDS && (ops.none.length > 0 || ops.any.some((g) => g.length > 1));
+  const asked = ops.any.reduce((n, g) => n + g.length, 0);
+  return asked <= PART_MAX_WORDS && (ops.none.length > 0 || ops.any.some((g) => g.length > 1));
 }
 
 /**
@@ -343,7 +344,7 @@ export interface UnindexedMailArms {
   readonly part: MailWordArms | null;
   readonly substring: readonly SearchArm[];
   readonly fuzzy: readonly SearchArm[];
-  /** No excluded operand in the subject or the body: what the typo tier's guesses hold. */
+  /** No excluded operand in the subject or the body: what every branch over these columns is held to. */
   readonly excluded?: SQL;
 }
 

@@ -44,6 +44,14 @@ export function sessionRefused(cause: string | null): boolean {
   return cause !== null && cause.split(" ").includes("401");
 }
 
+/** The statuses that are no answer about the read: the session's, a timeout's, and an unreachable server's. */
+const NO_ANSWER_STATUSES = new Set(["401", "408", "502", "503", "504"]);
+
+/** Did the server answer the read with a refusal of its own (a status the read itself caused, a 500)? */
+export function storeRefused(cause: string | null): boolean {
+  return cause !== null && cause.split(" ").some((w) => /^\d{3}$/.test(w) && !NO_ANSWER_STATUSES.has(w));
+}
+
 export { REASK_MAX, wireFailed };
 
 export interface SessionReask {

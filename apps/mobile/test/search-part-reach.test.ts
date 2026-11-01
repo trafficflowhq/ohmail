@@ -21,6 +21,8 @@ describe("the phone's reach sentence for a part inside a word", () => {
   it("on the store's empty and closest-words answers for a part", () => {
     expect(partReachSaid("levation", EMPTY)).toBe(true);
     expect(partReachSaid(" levation ", { ...EMPTY, tier: "similar", length: 3 })).toBe(true);
+    // Beside an excluded word, the words asked are looked for as they are alone.
+    expect(partReachSaid("mail -thanks", EMPTY)).toBe(true);
   });
 
   it.each([

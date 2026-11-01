@@ -9,7 +9,7 @@
  * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partWordKept, partWordTails, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts } from "./index.js";
+import { assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partWordKept, partWordTails, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands } from "./index.js";
 import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -250,6 +250,11 @@ function textRows(q: string, mode: "words" | "parts" = "words"): SQL {
   return armRows(ftsRows(sql`b.rowid`, "message_bodies_fts", q, mode), "message_files_fts", q, mode);
 }
 
+/** No excluded operand anywhere in the letter, each table read once for all of them; undefined when nothing is excluded. */
+function noneOf(ops: QueryOperands): SQL | undefined {
+  return ops.none.length === 0 ? undefined : sql`(NOT ${inLetter(ops.none.map((o) => operandMatch(o.text, false)).join(" OR "))})`;
+}
+
 /**
  * The query over the whole letter once it straddles its parts ({@link straddlesParts}), as the
  * server's: every operand of a group in either table, `head` held to it; no excluded one in either
@@ -259,8 +264,7 @@ function acrossOf(q: string, head: SearchArm, recency: SQL): MailWordArms | null
   const ops = queryOperandsOf(q);
   if (!straddlesParts(ops)) return null;
   const groups = ops.any.map((g) => sql`(${sql.join(g.map((o) => inLetter(operandMatch(o.text, true))), sql` AND `)})`);
-  const none = ops.none.length === 0 ? undefined
-    : sql`(${sql.join(ops.none.map((o) => sql`NOT ${inLetter(operandMatch(o.text, false))}`), sql` AND `)})`;
+  const none = noneOf(ops);
   const letter = groups.length === 0 ? sql`1` : sql`(${sql.join(groups, sql` OR `)})`;
   return {
     head: { pred: sql`(${head.pred} AND ${letter})`, rank: head.rank }, text: { pred: letter, rank: recency },
@@ -566,7 +570,11 @@ export function sqliteDialect(): Dialect {
       words: (q: string): MailWordArms => {
         const head = { pred: headRows(q), rank: headRank(q) };
         const recency = sql`coalesce(m.date, 0)`;
-        return acrossOf(q, head, recency) ?? { head, text: { pred: textRows(q), rank: recency } };
+        const across = acrossOf(q, head, recency);
+        if (across) return across;
+        // Past eight words asked each part is read alone, and `excluded` holds the letter all the same.
+        const excluded = noneOf(queryOperandsOf(q));
+        return { head, text: { pred: textRows(q), rank: recency }, ...(excluded ? { excluded } : {}) };
       },
       // The same two FTS5 tables as `words`, each word as itself and, from four letters, as the
       // start of a longer one or as itself plus a tail (`ftsQueryOf`): the tables stem (porter,

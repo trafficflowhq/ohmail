@@ -60,6 +60,7 @@ export {
   createSessionReask,
   REASK_MAX,
   sessionRefused,
+  storeRefused,
   wireFailed,
   type DrainDoor,
   type SessionReask,
