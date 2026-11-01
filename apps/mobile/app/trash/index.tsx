@@ -8,11 +8,11 @@
  * with the screen, so no visit renders yesterday's Trash. Unavailable is its own sentence and
  * never an empty list; a failed page renders the failure and a retry, never "empty".
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { View } from "react-native";
 import { Copy } from "../../src/copy";
 import { type WorldTrashRow } from "../../src/state/live";
-import { holdTrashRows } from "../../src/state/trash-hold";
+import { holdTrashRows, subscribeTrashLanded, subscribeTrashRestored, trashLanded, trashRestored } from "../../src/state/trash-hold";
 import { useWorld } from "../../src/state/world";
 import { Empty, Screen, Scroller, TapRow, Tail, Txt } from "../../src/ui/base";
 import { DetailBar } from "../../src/ui/chrome";
@@ -97,7 +97,36 @@ function TrashBody() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onRestored = (id: string) => setItems((prev) => prev.filter((r) => r.mail.id !== id));
+  /* A DELETE THAT LANDS WHILE TRASH IS OPEN: page one is read again and its new rows go on top; the rows below and
+     the cursor are kept (the webapp `trash-page.ts`'s rule). */
+  const landed = useSyncExternalStore(subscribeTrashLanded, trashLanded, trashLanded);
+  const seenLanded = useRef(landed);
+  useEffect(() => {
+    if (seenLanded.current === landed) return;
+    seenLanded.current = landed;
+    let here = true;
+    void trashList(null).then((page) => {
+      if (!here || page.state !== "ready") return;
+      holdTrashRows(page.items, false);
+      setItems((prev) => {
+        const have = new Set(prev.map((r) => r.mail.id));
+        const fresh = page.items.filter((r) => !have.has(r.mail.id));
+        return fresh.length === 0 ? prev : [...fresh, ...prev];
+      });
+    });
+    return () => { here = false; };
+  }, [landed, trashList]);
+
+  /* A RESTORE FROM EITHER HOST drops its row: the pushed reader's own `onRestored` only goes back. Only restores
+     after this mount count, and only once, so a letter deleted again is listed again. */
+  const restored = useSyncExternalStore(subscribeTrashRestored, trashRestored, trashRestored);
+  const seenRestored = useRef(restored.length);
+  useEffect(() => {
+    if (seenRestored.current >= restored.length) return;
+    const gone = new Set(restored.slice(seenRestored.current));
+    seenRestored.current = restored.length;
+    setItems((prev) => prev.filter((r) => !gone.has(r.mail.id)));
+  }, [restored]);
 
   if (!w.trash.available) {
     return (
@@ -177,7 +206,7 @@ function TrashBody() {
       toRoute={(mid) => `/trash/${mid}`}
       list={list}
       renderDetail={(mid, ctx) => (
-        <TrashReader id={mid} onRestored={onRestored} onClose={ctx.onClose} />
+        <TrashReader id={mid} onClose={ctx.onClose} />
       )}
     />
   );

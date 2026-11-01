@@ -1467,6 +1467,7 @@ export const DE: Deck = {
   trashToastRestoring: (place: string) => `Wird in ${place} wiederhergestellt…`,
   trashToastRestored: (place: string) => `In ${place} wiederhergestellt.`,
   trashToastRestoreFailed: "Konnte nicht wiederhergestellt werden — sie ist noch im Papierkorb.",
+  trashToastRestoreGone: "Sie ist nicht mehr im Papierkorb.",
   trashNoErase: "ohmail löscht nie unwiderruflich — zum endgültigen Entfernen nutze deinen eigenen Mail-Client.",
   trashListFailed: "Der Papierkorb ließ sich gerade nicht lesen.",
   trashRetry: "Nochmal versuchen",

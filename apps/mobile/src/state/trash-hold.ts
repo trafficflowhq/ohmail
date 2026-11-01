@@ -22,3 +22,40 @@ export function heldTrashRow(id: string): WorldTrashRow | undefined {
 export function dropTrashRow(id: string): void {
   held.delete(id);
 }
+
+/* LETTERS RESTORED, in order, from either host: the list under a pushed reader drops each one it has not seen yet. */
+let restored: readonly string[] = [];
+const restoreHearers = new Set<() => void>();
+
+export function noteTrashRestored(id: string): void {
+  restored = [...restored, id];
+  for (const hear of [...restoreHearers]) hear();
+}
+
+export function trashRestored(): readonly string[] {
+  return restored;
+}
+
+export function subscribeTrashRestored(hear: () => void): () => void {
+  restoreHearers.add(hear);
+  return () => { restoreHearers.delete(hear); };
+}
+
+/* DELETES THE SERVER TOOK, counted: an open Trash reads page one again on each, since the move of a letter deleted
+   just before the open often lands after it. */
+let landed = 0;
+const hearers = new Set<() => void>();
+
+export function noteTrashLanded(): void {
+  landed += 1;
+  for (const hear of [...hearers]) hear();
+}
+
+export function trashLanded(): number {
+  return landed;
+}
+
+export function subscribeTrashLanded(hear: () => void): () => void {
+  hearers.add(hear);
+  return () => { hearers.delete(hear); };
+}

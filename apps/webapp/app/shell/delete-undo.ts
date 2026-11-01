@@ -229,7 +229,13 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
   const mailboxOf = new Map<string, string>();
   const noTrash = new Set<string>();
 
-  const publish = () => deps.onHeld(new Set(heldBy.keys()));
+  /* A restore has no local effect to hide its row once the window closes, so the row stays held until the server
+     answers: released at the press's end it was listed again in Trash for the whole round trip. */
+  const holdsThroughAnswer = deps.verb === "restore";
+  const answering = new Set<string>();
+  const heldNow = (): Set<string> => new Set([...heldBy.keys(), ...answering]);
+
+  const publish = () => deps.onHeld(heldNow());
 
   /** The right sentence for a press of this size. Singular is the key's own, word for word. */
   const say = (
@@ -275,8 +281,10 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
       if (waiting > 0 && deps.copy.queued) deps.toast(say(deps.copy.queued, deps.copy.queuedMany, waiting));
     };
     for (const messageId of ids) {
+      const answered = () => { if (answering.delete(messageId)) publish(); };
       void deps.mutate(messageId, pressId).then(
         (res) => {
+          answered();
           const mailbox = mailboxOf.get(messageId);
           mailboxOf.delete(messageId);
           if (res.status === "rolled_back" && res.error?.code === NO_TRASH) {
@@ -287,7 +295,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
           else if (res.status === "awaiting_organizer") waiting += 1;
           settled();
         },
-        () => { mailboxOf.delete(messageId); refused += 1; settled(); },
+        () => { answered(); mailboxOf.delete(messageId); refused += 1; settled(); },
       );
     }
   };
@@ -295,6 +303,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
   const commit = (pressId: string) => {
     const ids = forget(pressId);
     if (ids.length === 0) return;
+    if (holdsThroughAnswer) for (const id of ids) answering.add(id);
     publish();
     dispatch(pressId, ids);
   };
@@ -344,7 +353,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
       const seen = new Set<string>();
       const ids: string[] = [];
       for (const t of targets) {
-        if (!t.id || seen.has(t.id) || heldBy.has(t.id)) continue;
+        if (!t.id || seen.has(t.id) || heldBy.has(t.id) || answering.has(t.id)) continue;
         seen.add(t.id);
         ids.push(t.id);
         if (t.mailboxId) mailboxOf.set(t.id, t.mailboxId);
@@ -390,7 +399,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
     flush: () => {
       for (const pressId of [...open.keys()]) commit(pressId);
     },
-    held: () => new Set(heldBy.keys()),
+    held: heldNow,
   };
 }
 
@@ -432,6 +441,9 @@ const NO_TRASH = "no_trash_folder";
 
 /** The code the engine and the server both use for a row that is not there. */
 const ROW_ABSENT = "not_found";
+
+/** The server's 409 for a restore of a message that is not in Trash. */
+const NOT_IN_TRASH = "not_in_trash";
 
 /**
  * ONE MESSAGE, ONE ATTEMPT, CLASSIFIED. Anything but `rolled_back` is settled — a queued verb is
@@ -577,12 +589,18 @@ export function restoreDispatch(
    * one that lands, and it says the mail is still in Trash.
    */
   onRestored?: (restoreTo: string) => void,
+  /** The server found it in Trash no more (restored or moved elsewhere): nothing is owed, and it is not "still in Trash". */
+  onGone?: () => void,
 ): HeldDispatch {
   return async (messageId, pressId) => {
     const outcome = await restoreFromTrash(messageId, { intentId: pressId });
     if (outcome.state === "restored") {
       onRestored?.(outcome.restoreTo && outcome.restoreTo !== "" ? outcome.restoreTo : "INBOX");
-      return { status: "applied" };
+      return { status: "confirmed" };
+    }
+    if (outcome.state === "rolled_back" && (outcome as { code?: string | null }).code === NOT_IN_TRASH) {
+      onGone?.();
+      return { status: "confirmed" };
     }
     return { status: "rolled_back" };
   };
@@ -686,9 +704,11 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   remove: (target: DeleteTarget | readonly DeleteTarget[], undone?: () => void) => boolean;
   /** How many dispatches the server confirmed — what an open Trash reads in. */
   landed: number;
+  /** Which ids those were, in order, for this mount: an open Trash drops the restored ones. */
+  landedIds: readonly string[];
 } {
   const [held, setHeld] = useState<ReadonlySet<string>>(EMPTY);
-  const [landed, setLanded] = useState(0);
+  const [landedIds, setLandedIds] = useState<readonly string[]>(NO_IDS);
   /* THE DEPS ARE READ THROUGH A REF, never closed over: `refusal`, `toast` and `copy` change
      identity on most renders, and rebuilding the queue would drop every armed timer — a press
      silently un-deleted by an unrelated re-render. */
@@ -697,7 +717,9 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   const queue = useMemo(
     () => createDeleteUndo({
       mutate: (id, pressId) => latest.current.mutate(id, pressId).then((res) => {
-        if (pressVerdict(res as PressAnswer).kind === "applied") setLanded((n) => n + 1);
+        if (pressVerdict(res as PressAnswer).kind === "applied") {
+          setLandedIds((ids) => [...ids, id]);
+        }
         return res;
       }),
       ...(latest.current.verb ? { verb: latest.current.verb } : {}),
@@ -731,7 +753,8 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
   return {
     held,
     remove: useCallback((t: DeleteTarget | readonly DeleteTarget[], undone?: () => void) => queue.remove(t, undone), [queue]),
-    landed,
+    landed: landedIds.length,
+    landedIds,
   };
 }
 
@@ -779,3 +802,4 @@ export function useDeleteIntentReplay(opts: DeleteIntentReplayOptions): void {
 }
 
 const EMPTY: ReadonlySet<string> = new Set<string>();
+const NO_IDS: readonly string[] = [];
