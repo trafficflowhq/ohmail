@@ -956,7 +956,10 @@ export function OhboxView({
   const [heldRow, setHeldRow] = useState<string | null>(null);
   const onHoldRowRef = useRef(onHoldRow);
   onHoldRowRef.current = onHoldRow;
+  /** The held row a cursor move left while a pick was live: it keeps its place until the pick ends. */
+  const keptForPick = useRef<string | null>(null);
   const hold = useCallback((id: string | null) => {
+    keptForPick.current = null;
     heldRead.current = id;
     setHeldRow(id);
     onHoldRowRef.current?.(id);
@@ -1027,12 +1030,28 @@ export function OhboxView({
   /**
    * Move the cursor because the USER moved it — j, k, and the first click on a row (which enters it
    * too). Landing on a different message is leaving the one before it: its place is let go and its
-   * visit ends. A move onto the SAME id releases nothing.
+   * visit ends. A move onto the SAME id releases nothing. While a pick is being built (`extend`, or a
+   * live set) the held row keeps its place until the pick ends: a re-file under a range moves its ends.
    */
-  const selectByUser = useCallback((id: string) => {
-    if (heldRead.current !== id) leaveRead();
+  const pickedRef = useRef(picked);
+  pickedRef.current = picked;
+  const selectByUser = useCallback((id: string, extend = false) => {
+    if (heldRead.current !== id) {
+      if ((extend || pickedRef.current.size > 0) && heldRead.current !== null) {
+        visit.current.clear();
+        keptForPick.current = heldRead.current;
+      } else leaveRead();
+    }
     onSelect(id);
   }, [onSelect, leaveRead]);
+  /* The pick ended: the place kept for it is let go, unless the cursor came back to the row. */
+  const picking = picked.size > 0;
+  useEffect(() => {
+    const kept = keptForPick.current;
+    if (picking || kept === null) return;
+    keptForPick.current = null;
+    if (heldRead.current === kept && selectedId !== kept) leaveRead();
+  }, [picking, selectedId, leaveRead]);
 
   /**
    * Opening a message — Enter, a second click on the selected row, a tap where there is no column.
@@ -1400,8 +1419,8 @@ export function OhboxView({
    * text field does, and it needs a second piece of state beside the set — a live range with a direction — because
    * the set alone cannot say which members came from THIS gesture; worse, it would remove rows picked by other means
    * (⌘-click four rows, then ⇧↓ ⇧↑, and two are gone). So the range only ever adds, exactly as ⇧-click does; removal
-   * is the way you added — `x`, ⌘-click, or Escape. With no anchor the cursor's own row becomes one, so the first ⇧↓
-   * picks the row you are on and the row you land on — the pair the gesture visibly spans.
+   * is the way you added — `x`, ⌘-click, or Escape. Each press adds the row you are on and the row you land on — the
+   * pair the gesture visibly spans — and the row read before it keeps its place until the pick ends (`selectByUser`).
    */
 
   /**
@@ -1411,11 +1430,14 @@ export function OhboxView({
    */
   const extendPick = useCallback((dir: 1 | -1) => {
     if (order.length === 0) return;
-    if (anchor.current === null && selectedId) anchor.current = selectedId;
+    // Range from the cursor's row, never an older anchor whose row may have moved since.
+    if (at >= 0) anchor.current = order[at]!;
+    else if (anchor.current === null && selectedId) anchor.current = selectedId;
     const next = at < 0 ? order[dir === 1 ? 0 : order.length - 1] : order[at + dir];
     if (!next) return;
-    selectByUser(next);
+    selectByUser(next, true);
     pickRangeTo(next);
+    anchor.current = next;
     // `order`/`at` are rebuilt each render and must be read AS RENDERED, the same reason
     // `togglePick` and `pickRangeTo` state above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
