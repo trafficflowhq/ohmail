@@ -78,6 +78,18 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.24" date="2026-11-01">
+      <description>
+        <ul>
+          <li>Close setup stays closed when the page loads again</li>
+          <li>Settings put aside with "Not now" stay in the mailbox until you answer them</li>
+          <li>Backspace and Delete move the open message to Trash on the desktop again</li>
+          <li>A letter that lists late no longer takes the cursor</li>
+          <li>The settings copy in the mailbox reads back when a stored value or the server's encoding changed it</li>
+          <li>Cloud Settings names a mailbox that cannot keep the settings copy</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.23" date="2026-11-01">
       <description>
         <ul>
@@ -109,20 +121,6 @@
         <ul>
           <li>A new Outlook history folds when the earlier message opens with its quote</li>
           <li>A mailbox added again after its removal can save its signature</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.19" date="2026-10-31">
-      <description>
-        <ul>
-          <li>The desktop window answers clicks and keys after a mailbox is connected again</li>
-          <li>A search result opened in Receipts or News lands on screen</li>
-          <li>Answers typed into a new Outlook history no longer fold away</li>
-          <li>Answers typed into an Outlook history stay on screen in more shapes</li>
-          <li>A tab left open across an update offers Reload instead of blaming the connection</li>
-          <li>A link whose text names another site asks before it opens</li>
-          <li>A left-out word no longer loses a sender's first name in search</li>
-          <li>A new database migration no longer breaks unrelated tests</li>
         </ul>
       </description>
     </release>
