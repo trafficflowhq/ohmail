@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_ASK_TTL_MS, accounts, auditLog, importAskSignature, latestProfileFoundMarker, mailboxCredentials,
-  mailboxes, rules, recordImportAsk, resolveImportAsk, stampMailboxErasure, type Tx,
+  mailboxes, profileImportResolutionExists, rules, recordImportAsk, resolveImportAsk, stampMailboxErasure, type Tx,
 } from "@trafficflow/db";
 import {
   ProfileUnavailableError, makeProfileDoc, profileFingerprint, type ProfileReadResult,
@@ -221,7 +221,7 @@ describe("the candidate and the erasure", () => {
     expect(await askRow(w.db, w.mailboxId)).toMatchObject({ fp: null, at: null, outcome: null, reason: null });
   });
 
-  it("the erasure's stamp takes the signature's receipts off the press's row and the found copy's marker", async () => {
+  it("the erasure's stamp takes the signature's receipts and the settings fingerprint off the marker, the answer and the press's row", async () => {
     const w = await world();
     const live = "5".repeat(32);
     const copy = "6".repeat(32);
@@ -229,15 +229,23 @@ describe("the candidate and the erasure", () => {
       accountId: w.accountId, action: PROFILE_FOUND_AUDIT_ACTION, inverse: null,
       payload: { mailboxId: w.mailboxId, state: "found", fingerprint: FP, heldForImport: true, signatureReceipt: copy },
     });
+    await profileImportService.decline(w.ctx, w.mailboxId, { fingerprint: FP });
     await profileImportService.apply(w.ctx, w.mailboxId, { fingerprint: FP, signatureReplaces: live }, { read: slow });
-    const said = () => importAskSignature(w.db as unknown as Tx, { accountId: w.accountId, mailboxId: w.mailboxId, fingerprint: FP, since: NOW });
-    const marker = () => latestProfileFoundMarker(w.db as unknown as Tx, w.accountId, w.mailboxId);
-    expect([await said(), (await marker())?.signatureReceipt]).toEqual([live, copy]);
-    await (w.db as unknown as Tx).transaction(async (tx) => {
-      await stampMailboxErasure(tx as unknown as Tx, { accountId: w.accountId, mailboxId: w.mailboxId, now: NOW });
+    const tx = w.db as unknown as Tx;
+    const said = () => importAskSignature(tx, { accountId: w.accountId, mailboxId: w.mailboxId, fingerprint: FP, since: NOW });
+    const marker = () => latestProfileFoundMarker(tx, w.accountId, w.mailboxId);
+    const answered = () => profileImportResolutionExists(tx, { accountId: w.accountId, mailboxId: w.mailboxId, fingerprint: FP });
+    expect([await said(), (await marker())?.signatureReceipt, (await marker())?.fingerprint, await answered()])
+      .toEqual([live, copy, FP, true]);
+    await tx.transaction(async (t) => {
+      await stampMailboxErasure(t as unknown as Tx, { accountId: w.accountId, mailboxId: w.mailboxId, now: NOW });
     });
     expect([await said(), (await marker())?.signatureReceipt], "a receipt outlived the stamp").toEqual([null, undefined]);
-    expect((await marker())?.fingerprint, "the marker row went with its receipt").toBe(FP);
+    // Changed on purpose: the stamp takes the whole-settings fingerprint as well, from every row.
+    expect((await marker())?.fingerprint, "the marker kept the fingerprint").toBeNull();
+    expect(await answered(), "the answer still names the copy").toBe(false);
+    const rows = await w.db.select({ action: auditLog.action }).from(auditLog).where(eq(auditLog.accountId, w.accountId));
+    expect(rows.length, "the audit rows themselves stay").toBe(3);
   });
 
   it("a removal takes the ask with it, beside the credential: nothing answers a tombstone", async () => {

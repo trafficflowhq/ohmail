@@ -5,14 +5,18 @@ import type { KeyProvider } from "@trafficflow/core/mail";
 export const THROTTLE_SUBKEY_INFO = "ohmail auth-throttle v1";
 
 /**
- * THE ONE SPELLING OF A THROTTLE KEY THAT NAMES A PERSON OR A CLIENT. A typed address and a client
- * IP are stored only as a keyed hash: HMAC-SHA256 under a subkey of the deployment's KEK, 32 HEX
- * characters. Hex, because a key is matched by `LIKE '<prefix><hash>:%'` at erasure and base64url
- * carries `_`, a LIKE wildcard. The subkey is derived on first use, so a host whose KEK is broken
- * boots and answers `/health`, and refuses a sign-in rather than counting it in the clear.
+ * THE ONE SPELLING OF A THROTTLE KEY THAT NAMES A PERSON OR A CLIENT. A typed address, a mail
+ * recipient and a client IP are stored only as a keyed hash: HMAC-SHA256 under a subkey of the
+ * deployment's KEK, 32 HEX characters. Hex, because a key is matched by `LIKE '<prefix><hash>:%'`
+ * at erasure and base64url carries `_`, a LIKE wildcard. The subkey is derived on first use, so a
+ * host whose KEK is broken boots and answers `/health`, and refuses a sign-in rather than counting
+ * it in the clear.
  */
 export interface ThrottleKeys {
-  /** A sign-in address, normalized (trimmed, lowercased) by the caller. */
+  /**
+   * A sign-in address or a mail recipient, normalized (trimmed, lowercased) by the caller —
+   * `normalizeRecipient` does the same, so one address is one key for both.
+   */
   address(email: string): string;
   /**
    * A client identity — the trusted client IP; `""` is one bucket for callers the host cannot
