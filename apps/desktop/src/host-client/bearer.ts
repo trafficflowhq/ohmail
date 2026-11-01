@@ -36,7 +36,7 @@
  * window, and the legitimate retry rotates straight past it.
  */
 
-import { isCredentialRefusal, readRefreshAnswer } from "@ohmail/client-engine";
+import { isCredentialRefusal, isSessionRefusal, readRefreshAnswer } from "@ohmail/client-engine";
 import { durableIdbCommit, storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
 
 /** The wire pair the redeem and the refresh both answer. */
@@ -628,15 +628,48 @@ export class BearerManager {
 
   /**
    * Sign this device out on purpose: tell the door (best-effort — the local clear must not hang
-   * on an unreachable laptop), then clear. `/auth/logout` on this door revokes the session
-   * server-side; `allDevices` stays step-up-gated there, so this can only ever end ITSELF.
+   * on an unreachable laptop), then clear; answers whether the door said the session is over.
+   * `allDevices` stays step-up-gated there, so this can only ever end ITSELF. The sidecar's
+   * `revokeHeldSession` contract: `/auth/logout` with a held access token, and on its 401, or with
+   * none held, `/auth/refresh/logout` with the refresh token, which names the family in any state —
+   * after a rotation whose answer was lost too. Never a renewal, and a rotation in flight is not
+   * waited for: the door ends the family whichever of its tokens it is shown.
    */
-  async logout(): Promise<void> {
+  async logout(): Promise<boolean> {
+    let told = this.access === null && this.refresh === null;
     try {
-      await this.fetchImpl("/auth/logout", { method: "POST", headers: this.headers() });
+      if (!told) told = await this.endAtHost();
     } catch {
       /* unreachable laptop — the server-side session ages out; this device is out now */
     }
     this.die();
+    return told;
+  }
+
+  /** A 2xx, or the refresh door's own 401: nothing is left to end. */
+  private async endAtHost(): Promise<boolean> {
+    const refresh = this.refresh;
+    if (this.access !== null) {
+      const res = await this.fetchImpl("/auth/logout", { method: "POST", headers: this.headers() });
+      if (res.ok) return true;
+      if (res.status !== 401) return false;
+    }
+    if (refresh === null) return false;
+    const door = await this.fetchImpl("/auth/refresh/logout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken: refresh }),
+    });
+    return door.ok || isSessionRefusal(door.status, await envelopeCode(door));
+  }
+}
+
+/** The code our error envelope names, or null: a door's own refusal said apart from a page in front of it. */
+async function envelopeCode(res: Response): Promise<string | null> {
+  try {
+    const code = ((await res.json()) as { error?: { code?: unknown } } | null)?.error?.code;
+    return typeof code === "string" ? code : null;
+  } catch {
+    return null;
   }
 }

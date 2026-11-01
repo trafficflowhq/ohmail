@@ -892,8 +892,8 @@ export async function pairWithServer(
  * Best-effort SERVER-SIDE revocation of a profile's session — what "forget this server" owes
  * beyond deleting the local row: without it the refresh family stays live on the server until
  * it ages out. Ridden through the slot's manager, or a throwaway one when this process holds
- * none: a cold manager's logout 401s, its one recovery spends the refresh token and replays, and
- * that revokes the session (`allDevices` stays step-up-gated server-side, so this can only end
+ * none: a cold manager presents the refresh token at the refresh door, which ends its family in
+ * any state and renews nothing (`allDevices` stays step-up-gated server-side, so this can only end
  * ITSELF). Never throws, and ANSWERS: `false` means the server was not told. The slot is then
  * nobody's. See {@link forgetProfile}.
  */
@@ -912,8 +912,8 @@ export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Pr
   const bearer = slots.managerFor(profile.id, () => ({
     origin: profile.origin,
     refreshToken: profile.refreshToken,
-    // The attempt a killed rotation left owed: the logout's recovery retries as itself, not as a
-    // stranger presenting a spent token, so the logout lands instead of sweeping the family.
+    // The attempt a killed rotation left owed: an older server's routed sign-out renews, and its
+    // recovery retries as itself, not as a stranger presenting a spent token that sweeps the family.
     refreshAttempt: profile.refreshAttempt,
     accountId: null,
     // A throwaway vault, used only when no manager holds the slot: the profile is being
@@ -924,8 +924,7 @@ export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Pr
   try {
     // A manager that already died holds nothing to revoke with — the same answer as a cleared row.
     if (bearer.ended()) return false;
-    // 401 counts as told only when the family was JUDGED — the manager clears its credential on a
-    // refusal and nothing on a transient one; `BearerManagerRN.logout` states the rule.
+    // What counts as told is `BearerManagerRN.logout`'s rule.
     return await bearer.logout();
   } catch {
     /* unreachable server — the server-side session ages out; the phone forgot it already */

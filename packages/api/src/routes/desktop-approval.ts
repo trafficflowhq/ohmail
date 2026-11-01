@@ -1,4 +1,5 @@
 import { serviceContext } from "../context.js";
+import { presentedResumeMarker } from "../cookies.js";
 import type { Route } from "../router.js";
 import { json, readBody } from "./shared.js";
 import { auth } from "./shared-cloud.js";
@@ -36,8 +37,10 @@ export const desktopApprovalRoutes: Route[] = [
     cost: "ceremony",
     options: { public: true, credentialSubject: true },
     handler: async (req, deps) => {
-      const body = await readBody<{ approvalId?: unknown; verifier?: unknown; kind?: unknown }>(req);
-      const result = await auth(deps).claimDesktopApproval(serviceContext(deps, req), body);
+      const body = await readBody<{ approvalId?: unknown; verifier?: unknown; kind?: unknown; previousSession?: unknown }>(req);
+      // `/auth/desktop-claim`'s carrier: the install's previous family, or nothing.
+      const ctx = { ...serviceContext(deps, req), supersedesInstall: presentedResumeMarker(body.previousSession) };
+      const result = await auth(deps).claimDesktopApproval(ctx, body);
       return "tokens" in result ? json(result, 200) : json(result, 202);
     },
   },

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -176,6 +177,27 @@ describe("an access token that lapsed", () => {
     expect(e.at("/auth/refresh/logout")).toHaveLength(1);
     expect(e.sealed()).toBe(false);
     expect(await e.read()).toBe(409);
+  });
+});
+
+describe("signing in again after a sign-out the server never heard", () => {
+  it("names the family this install held, so the server can end it", { timeout: 30_000 }, async () => {
+    const e = await door({
+      script: (path) => path === "/auth/logout" ? Promise.reject(new TypeError("fetch failed"))
+        : path === "/auth/login" ? json({ status: "twofa_required", loginToken: "lt" })
+        : path === "/auth/2fa/totp/verify" ? json({ tokens: { accessToken: "next-access", refreshToken: "next-refresh" } })
+        : path === "/auth/session" ? json({ user: { email: "me@ohmail.test" } }) : null,
+    });
+    expect((await e.signOut()).body).toEqual({ status: "signed_out", revokedAtHost: false, queued: 0 });
+    const res = await e.sidecar.handle(new Request("http://sidecar/cloud/signin", {
+      method: "POST", headers: { authorization: `Bearer ${e.sidecar.sessionToken}` },
+      body: JSON.stringify({ email: "me@ohmail.test", password: "pw", totp: "123456" }),
+    }));
+    expect(res.status, await res.clone().text()).toBe(200);
+    const [verify] = e.at("/auth/2fa/totp/verify");
+    expect(JSON.parse(verify!.body).previousSession, "the server cannot end a family nobody names")
+      .toBe(createHash("sha256").update("held-refresh", "utf8").digest("base64url"));
+    expect(JSON.parse(e.at("/auth/login")[0]!.body).previousSession, "only the minting step carries it").toBeUndefined();
   });
 });
 
