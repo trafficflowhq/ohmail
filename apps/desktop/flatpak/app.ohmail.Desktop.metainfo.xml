@@ -78,6 +78,14 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.23" date="2026-11-01">
+      <description>
+        <ul>
+          <li>Search answers sooner on Cloud, and a broad word's count no longer takes seconds</li>
+          <li>Import settings brings a reconnected mailbox's signature back where you can see it</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.22" date="2026-11-01">
       <description>
         <ul>
@@ -115,20 +123,6 @@
           <li>A link whose text names another site asks before it opens</li>
           <li>A left-out word no longer loses a sender's first name in search</li>
           <li>A new database migration no longer breaks unrelated tests</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.18" date="2026-10-31">
-      <description>
-        <ul>
-          <li>Quoted history folds when the earlier message quotes and answers something itself</li>
-          <li>Connecting a mailbox again keeps the settings stored in it</li>
-          <li>Delete after opening a search result acts on the letter you opened</li>
-          <li>Search finds a letter by any part of a file name beside your other words</li>
-          <li>Letters no longer show the preview text their sender hid</li>
-          <li>Links show where they really go in more cases</li>
-          <li>The phone's Screener says a fresh mailbox is still being read before the phone organizes it</li>
-          <li>New mail no longer waits behind the split-conversation repair</li>
         </ul>
       </description>
     </release>
