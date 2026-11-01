@@ -1226,6 +1226,14 @@ export interface MailboxAdapter {
    * or a lost selection answers `unanswered`; a re-numbered folder `renumbered`. Optional.
    */
   uidsHeld?(folder: string, uidValidity: string, uids: readonly number[]): Promise<UidsHeldAnswer>;
+  /**
+   * Which of `messageIds` no letter in the folder carries under `uidValidity`: bounded `UID SEARCH`
+   * (an OR of `HEADER Message-ID`) per group, then the hits' envelopes, never a write. A letter
+   * counts as carrying an id as the server matches it, a substring in any case, so a near or forged
+   * id only keeps one; an id it cannot search for is never named. A refused or partial read, a
+   * changed epoch or a lost selection answers `unanswered`. Optional.
+   */
+  messageIdsGone?(folder: string, uidValidity: string, messageIds: readonly string[]): Promise<MessageIdsGoneAnswer>;
   watch(onSignal: () => void): Promise<() => Promise<void>>;
   /**
    * Re-establish what {@link watch} set up — INBOX selected, IDLE running — after other
@@ -1269,4 +1277,7 @@ export interface FolderKeys { uidValidity: string; uidNext: number; messages: nu
 export type FolderKeysAnswer = { k: "keys"; keys: FolderKeys } | { k: "absent" } | { k: "unanswered" };
 /** {@link MailboxAdapter.uidsHeld}'s answer; `present` holds only UIDs that were asked. */
 export type UidsHeldAnswer = { k: "held"; uidValidity: string; present: ReadonlySet<number> }
+  | { k: "renumbered"; uidValidity: string } | { k: "absent" } | { k: "unanswered" };
+/** {@link MailboxAdapter.messageIdsGone}'s answer: the asked Message-IDs, spelled as asked, that no letter there carries. */
+export type MessageIdsGoneAnswer = { k: "read"; uidValidity: string; gone: ReadonlySet<string> }
   | { k: "renumbered"; uidValidity: string } | { k: "absent" } | { k: "unanswered" };
