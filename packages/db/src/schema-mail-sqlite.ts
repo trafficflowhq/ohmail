@@ -2160,6 +2160,8 @@ export const messageSearch = sqliteTable("message_search", {
   terms: text("terms").notNull().default(""),
   source: text("source").notNull(),
   builtAt: integer("built_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  /** Mail 0174 — the letter's month. See the server twin; nothing on this store reads it. LAST. */
+  searchWeek: integer("search_week"),
 }, (t) => ({
   ixAccount: index("message_search_account_idx").on(t.accountId, t.messageId),
   ckSource: check("message_search_source_closed", sql`${t.source} in ('text', 'html', 'headers_only')`),
@@ -2362,6 +2364,8 @@ export const accountSettings = sqliteTable("account_settings", {
   /** The html-words backfill's stamp and cursor (mail 0172). See the server twin. LAST. */
   htmlWordsBackfillAt: integer("html_words_backfill_at", { mode: "timestamp_ms" }),
   htmlWordsBackfillCursor: text("html_words_backfill_cursor"),
+  /** Mail 0174 — every search document's month written. See the server twin. LAST. */
+  searchDatedAt: integer("search_dated_at", { mode: "timestamp_ms" }),
 });
 
 /**

@@ -124,7 +124,10 @@ import { refundObligationDrainPass } from "./refund-obligation-drain.js";
 import { mailboxErasurePass } from "./mailbox-erasure-pass.js";
 import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
-import { SEARCH_INDEX_ACCOUNTS_PER_TAIL, searchIndexBackfillPass, searchIndexOwedAccounts } from "@trafficflow/core/mail";
+import {
+  SEARCH_DATES_ACCOUNTS_PER_TAIL, SEARCH_DATES_PER_TAIL, SEARCH_INDEX_ACCOUNTS_PER_TAIL, searchDatesFillPass, searchDatesOwedAccounts,
+  searchIndexBackfillPass, searchIndexOwedAccounts,
+} from "@trafficflow/core/mail";
 import { HTML_WORDS_ACCOUNTS_PER_TAIL, htmlWordsBackfillPass, htmlWordsOwedAccounts } from "./html-words-backfill.js";
 import { storageEvictPass } from "./storage-evict.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
@@ -5020,6 +5023,8 @@ export async function startWorkerWithLock(
     let tailQueued = false;
     /** The owed serve's read instant: a hold landing mid-walk keeps its mark for the next walk. */
     let owedReadAt = new Date(0);
+    /** What this tail's dates section may still write, over all its accounts (`search_dates_fill`). */
+    let datesLeft = 0;
     /** An `until` for one pass call — the shape `mailboxErasurePass` takes. */
     const sliceUntil = (): (() => boolean) => {
       const at = Date.now();
@@ -5720,6 +5725,45 @@ export async function startWorkerWithLock(
             log.error("search_index_backfill_failed", {
               accountId, err,
               reason: "no marker was written, so the next tail resumes at the first message without a search document; search still reads those through the older columns",
+            });
+          });
+        },
+      },
+      search_dates_fill: {
+        // ── THE MONTH EACH SEARCH DOCUMENT IS DATED IN (mail 0174) ────────────────────────
+        // Store-only: each document without a month gets it from its letter's stored date, in id
+        // order; once the walk has read the account's last document its mark is written and the
+        // server's search reads by month. Each written month rewrites the document and its index
+        // entries, so the section writes at most SEARCH_DATES_PER_TAIL documents a tail over all its
+        // accounts, in statements of SEARCH_DATES_BATCH, under the slice's clock; a failure never fails the tail.
+        enter: async () => {
+          datesLeft = SEARCH_DATES_PER_TAIL;
+          let owed: string[] = [];
+          await runTailStage("cycle.searchDatesOwedAccounts", "database", async () => {
+            owed = await searchDatesOwedAccounts(db as unknown as Tx, {
+              limit: SEARCH_DATES_ACCOUNTS_PER_TAIL, shard: accountShardFilter(selection, accounts.id),
+            });
+          }, (err) => {
+            log.warn("search_dates_owed_read_failed", {
+              err, reason: "the accounts owed their documents' months could not be read; the next tail reads them again",
+            });
+          });
+          return owed;
+        },
+        run: async (accountId) => {
+          if (datesLeft <= 0) return;
+          await runTailStage("cycle.searchDatesFillPass", "database", async () => {
+            const dated = await searchDatesFillPass({ db: db as unknown as Tx, accountId, until: sliceUntil(), limit: datesLeft });
+            datesLeft -= dated.filled;
+            if (dated.ran && (dated.filled > 0 || dated.marked)) {
+              log.info("search_dates_fill_pass", {
+                accountId, written: dated.filled, rounds: dated.rounds, marked: dated.marked,
+              });
+            }
+          }, (err) => {
+            log.error("search_dates_fill_failed", {
+              accountId, err,
+              reason: "no mark was written, so the next tail walks on; search reads this account without months until it is",
             });
           });
         },

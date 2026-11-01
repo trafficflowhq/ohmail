@@ -3,13 +3,15 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { runMigrations, ensureSearchExtensions, ensureWordIndex } from "@trafficflow/db/admin";
+import { runMigrations, ensureSearchExtensions, ensureWordIndex, ensureDatedIndexes } from "@trafficflow/db/admin";
+import { searchDatesFillPass } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { SearchFilters, ServiceContext } from "@trafficflow/services";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
+import { differing, readsEachOf, recording, type Read } from "./_search-reads.js";
 
 /**
  * Phase 2c-1 golden-relevance — the search tests PGlite cannot host (pg_trgm lives
@@ -450,22 +452,25 @@ describe("a chosen order answers the exact tier while a match exists (real Postg
  * from p(g mod 5), unread when g mod 3 is 0, with a file when g mod 50 is 0, and in Archive for g
  * 5,001-5,100 (its folder) and 15,001-15,050 or 40,001-40,050 (moved there). Its subject holds "item",
  * g and "wren", "heron" in the newest 2,300, "osprey" in 501-2,700, "plover" in the oldest 2,500 and
- * "egret" in every 997th; its body holds "lark" in the newest 2,300. 0.30.19 listed every match of a
+ * "egret" in every 997th; its body holds "lark" in the newest 2,300, and "moss" in every one but those
+ * with "egret". 0.30.19 listed every match of a
  * chosen order in that order, and the closest words (header text within the similarity, holding no
  * excluded word) only when no letter matched.
  */
 describe("every order under every filter answers 0.30.19's rows (real Postgres, keyed)", () => {
-  type Acct = { readonly name: string; readonly id: string; readonly n: number; readonly moved: readonly [number, number] };
+  type Acct = { readonly name: string; readonly id: string; readonly n: number; readonly moved: readonly [number, number]; readonly hours: number };
+  // Hours apart, so the letters span years of months: 115 and 164.
   const ACCTS: readonly Acct[] = [
-    { name: "21,000", id: randomUUID(), n: 21_000, moved: [15_001, 15_050] },
-    { name: "60,000", id: randomUUID(), n: 60_000, moved: [40_001, 40_050] },
+    { name: "21,000", id: randomUUID(), n: 21_000, moved: [15_001, 15_050], hours: 4 },
+    { name: "60,000", id: randomUUID(), n: 60_000, moved: [40_001, 40_050], hours: 2 },
   ];
   const keyed = brandDialect(drizzle(client, { schema }), "pg");
-  const sctx = (a: Acct): ServiceContext => ({ db: keyed, accountId: a.id, userId: null, now: () => NOW, requestId: "search-sweep" });
-  const ageOf = (m: { date: string | null }): number => (m.date === null ? -1 : (NOW.getTime() - Date.parse(m.date)) / 60_000);
+  const sctx = (a: Acct, on: typeof keyed = keyed): ServiceContext => ({ db: on, accountId: a.id, userId: null, now: () => NOW, requestId: "search-sweep" });
+  /** Letter g's g, from its date. */
+  const ageIn = (a: Acct) => (m: { date: string | null }): number => (m.date === null ? -1 : Math.round((NOW.getTime() - Date.parse(m.date)) / (a.hours * 3_600_000)));
   const IN: Record<string, (g: number, n: number) => boolean> = {
     item: () => true, wren: () => true, heron: (g) => g <= 2_300, osprey: (g) => g >= 501 && g <= 2_700,
-    plover: (g, n) => g > n - 2_500, egret: (g) => g % 997 === 0, lark: (g) => g <= 2_300,
+    plover: (g, n) => g > n - 2_500, egret: (g) => g % 997 === 0, lark: (g) => g <= 2_300, moss: (g) => g % 997 !== 0,
   };
   // Single words, two words (one of them across the subject and the body), an excluded word in the subject or the body.
   const QUERIES = ["wren", "osprey", "heron", "egret", "plover", "lark", "wren item", "osprey item", "egret item", "wren lark",
@@ -507,7 +512,7 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
         select gen_random_uuid(), ${a.id}::uuid, case when g % 2 = 0 then ${ma!.id}::uuid else ${mb!.id}::uuid end, 'h', 'sweep:' || g,
           'item ' || g || ' wren' || case when g <= 2300 then ' heron' else '' end || case when g between 501 and 2700 then ' osprey' else '' end
             || case when g > ${a.n - 2_500} then ' plover' else '' end || case when g % 997 = 0 then ' egret' else '' end,
-          'p' || (g % 5) || '@sweep.example', ${NOW.toISOString()}::timestamptz - make_interval(mins => g), g % 3 = 0, g % 50 = 0,
+          'p' || (g % 5) || '@sweep.example', ${NOW.toISOString()}::timestamptz - make_interval(hours => g * ${a.hours}), g % 3 = 0, g % 50 = 0,
           jsonb_build_object('folder', case when g between 5001 and 5100 then 'Archive' else 'INBOX' end, 'ref', '1:' || g)
         from generate_series(${a.n}, 1, -1) g`);
       await db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
@@ -515,7 +520,8 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
         where m.account_id = ${a.id}::uuid and x.g between ${a.moved[0]} and ${a.moved[1]}`);
       await db.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
         select m.id, m.account_id, to_tsvector('english', m.subject),
-          to_tsvector('english', 'nothing here' || case when split_part(m.dedup_key, ':', 2)::int <= 2300 then ' lark' else '' end), lower(m.subject), 'text'
+          to_tsvector('english', 'nothing here' || case when split_part(m.dedup_key, ':', 2)::int <= 2300 then ' lark' else '' end
+            || case when split_part(m.dedup_key, ':', 2)::int % 997 = 0 then '' else ' moss' end), lower(m.subject), 'text'
         from messages m where m.account_id = ${a.id}::uuid order by m.date asc nulls first`);
       await db.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${a.id}::uuid, ${NOW.toISOString()}::timestamptz)
         on conflict (account_id) do update set search_index_built_at = excluded.search_index_built_at`);
@@ -535,29 +541,97 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
     }
   });
 
+  type Ranked = { tier: string; gs: number[]; bounded: boolean };
+  /** Every relevance page of a question (twenty at most): its tier, its letters in order, and whether the last says bounded. */
+  const relevanceOf = async (a: Acct, q: string, f: SearchFilters, on: typeof keyed): Promise<Ranked> => {
+    const out: Ranked = { tier: "", gs: [], bounded: false };
+    let cursor: string | undefined;
+    for (let p = 0; p < 20; p++) {
+      const r = await svc.search(sctx(a, on), { q, parts: "page", filters: f, ...(cursor ? { cursor } : {}) });
+      Object.assign(out, { tier: r.tier, bounded: r.bounded });
+      out.gs.push(...r.items.map(ageIn(a)));
+      cursor = r.nextCursor ?? undefined;
+      if (!cursor) break;
+    }
+    return out;
+  };
+
+  /** Every statement a reading sends ({@link readingsOf}). */
+  const seen: SQL[] = [];
+  type Reading = { answer: string; reads: Read[] };
+  const ORDERED = [["relevance", 3], ["date_desc", 3], ["date_asc", 2], ["sender", 2], ["mailbox", 2]] as const;
+  /**
+   * One unfiltered question's answers and the shared buffers each read: every order's pages, the estimate and
+   * the summary, on a new handle that has asked once already (a server's handle keeps what it learnt of its store).
+   */
+  const readingsOf = async (a: Acct, q: string): Promise<Map<string, Reading>> => {
+    const at = sctx(a, recording(brandDialect(drizzle(client, { schema }), "pg"), seen));
+    await svc.search(at, { q, parts: "page" });
+    const out = new Map<string, Reading>();
+    for (const [sort, pages] of ORDERED) {
+      let cursor: string | undefined;
+      for (let p = 1; p <= pages; p++) {
+        const { out: r, reads } = await readsEachOf(db, seen, () => svc.search(at, { q, parts: "page", sort, ...(cursor ? { cursor } : {}) }));
+        out.set(`${sort} ${p}`, { answer: JSON.stringify({ tier: r.tier, ids: r.items.map((m) => m.id), next: r.nextCursor, bounded: r.bounded }), reads });
+        cursor = r.nextCursor ?? undefined;
+        if (!cursor) break;
+      }
+    }
+    for (const parts of ["estimate", "summary"] as const) {
+      const { out: r, reads } = await readsEachOf(db, seen, () => svc.search(at, { q, parts }));
+      out.set(parts, { answer: JSON.stringify({ tier: r.tier, total: r.total, exact: r.totalExact, facets: r.facets }), reads });
+    }
+    return out;
+  };
+  /**
+   * Each reading that is not `was`'s answer, or whose statements read more buffers than `was`'s where they
+   * differ from them ({@link differing}: other files write to this database meanwhile, so the same statement
+   * reads a page more or less; the alone budget file holds whole pages).
+   */
+  const worse = (label: string, now: ReadonlyMap<string, Reading>, was: ReadonlyMap<string, Reading>): string[] =>
+    [...new Set([...was.keys(), ...now.keys()])].flatMap((k) => {
+      const w = was.get(k);
+      const n = now.get(k);
+      if (w === undefined || n === undefined || n.answer !== w.answer) return [`${label} ${k}: not 0.30.19's answer`];
+      const d = differing(n.reads, w.reads);
+      return d.now > d.was ? [`${label} ${k}: ${d.now} buffers, 0.30.19 ${d.was}`] : [];
+    });
+
   /**
    * Relevance: its tier, and a page of the letters 0.30.19 lists, each once (a full one but beside an
-   * excluded word, which may cut it). Newest first: its first three pages. Oldest first and the sender
-   * and mailbox orders: their first page.
+   * excluded word, which may cut it); beside an excluded word, given 0.30.19's own answers (`was`,
+   * unfiltered), every letter they listed, in their tier, bounded only where they were. Newest first: its
+   * first three pages. Oldest first and the sender and mailbox orders: their first page. Every
+   * disagreement, by query, filter and order.
    */
-  it.each(ACCTS.map((a) => [a.name, a] as const))("on %s letters, every order under every filter: 0.30.19's rows, in its tier", async (_, a) => {
+  const sweep = async (a: Acct, on: typeof keyed, was?: ReadonlyMap<string, Ranked>): Promise<string[]> => {
     const wrong: string[] = [];
+    const ageOf = ageIn(a);
     for (const q of QUERIES) {
       for (const [name, f] of Object.entries(FILTERS)) {
         const { tier, all } = await answerOf(a, q, name);
         const label = `${q} under ${name}`;
-        const rel = await svc.search(sctx(a), { q, parts: "page", filters: f.filters });
-        const ranked = rel.items.map(ageOf);
-        const full = excludedOf(q).length > 0 || ranked.length === Math.min(50, all.length);
-        if (rel.tier !== tier || !full || new Set(ranked).size !== ranked.length || ranked.some((g) => !all.includes(g))) {
-          wrong.push(`${label} relevance: ${rel.tier} ${ranked.length}, 0.30.19 ${tier} of ${all.length}`);
+        // Beside an excluded word, 0.30.19's own list.
+        const before = name === "none" && excludedOf(q).length > 0 ? was?.get(q) : undefined;
+        if (before !== undefined) {
+          const rel = await relevanceOf(a, q, f.filters, on);
+          if (rel.tier !== before.tier || before.gs.some((g) => !rel.gs.includes(g)) || new Set(rel.gs).size !== rel.gs.length || (rel.bounded && !before.bounded)) {
+            wrong.push(`${label} relevance: ${rel.tier} ${rel.gs.length}${rel.bounded ? " bounded" : ""}, 0.30.19 ${before.tier} ${before.gs.length}${before.bounded ? " bounded" : ""}`);
+          }
+        } else {
+          const rel = await svc.search(sctx(a, on), { q, parts: "page", filters: f.filters });
+          const ranked = rel.items.map(ageOf);
+          const full = excludedOf(q).length > 0 || ranked.length === Math.min(50, all.length);
+          if (rel.tier !== tier || !full || new Set(ranked).size !== ranked.length || ranked.some((g) => !all.includes(g))) {
+            wrong.push(`${label} relevance: ${rel.tier} ${ranked.length}, 0.30.19 ${tier} of ${all.length}`);
+          }
         }
         const newest = ordered("date_desc", all).slice(0, 150);
         const got: number[] = [];
         let cursor: string | undefined;
         let last: Awaited<ReturnType<typeof svc.search>> | null = null;
         for (let p = 0; p < 3; p++) {
-          last = await svc.search(sctx(a), { q, parts: "page", sort: "date_desc", filters: f.filters, ...(cursor ? { cursor } : {}) });
+          last = await svc.search(sctx(a, on), { q, parts: "page", sort: "date_desc", filters: f.filters, ...(cursor ? { cursor } : {}) });
           if (last.tier !== tier) wrong.push(`${label} date_desc page ${p + 1}: ${last.tier}, 0.30.19 ${tier}`);
           got.push(...last.items.map(ageOf));
           cursor = last.nextCursor ?? undefined;
@@ -567,7 +641,7 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
           wrong.push(`${label} date_desc: ${got.length} ${JSON.stringify(got.slice(0, 3))}${last!.bounded ? " bounded" : ""}, 0.30.19 ${all.length} ${JSON.stringify(newest.slice(0, 3))}`);
         }
         for (const sort of ["date_asc", "sender", "mailbox"] as const) {
-          const r = await svc.search(sctx(a), { q, parts: "page", sort, filters: f.filters });
+          const r = await svc.search(sctx(a, on), { q, parts: "page", sort, filters: f.filters });
           const page = r.items.map(ageOf);
           const want = ordered(sort, all).slice(0, 50);
           if (r.tier !== tier || JSON.stringify(page) !== JSON.stringify(want) || (r.nextCursor !== null) !== (all.length > 50) || r.bounded) {
@@ -576,14 +650,20 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
         }
       }
     }
-    expect(wrong).toEqual([]);
+    return wrong;
+  };
+
+  it.each(ACCTS.map((a) => [a.name, a] as const))("on %s letters, every order under every filter: 0.30.19's rows, in its tier", async (_, a) => {
+    expect(await sweep(a, keyed)).toEqual([]);
   }, 1_200_000);
 
-  it.each([
+  const CASES = [
     ["osprey", "sender", "none"], ["wren", "sender", "folder"], ["plover", "mailbox", "unread"], ["heron", "mailbox", "file"],
     ["egret", "sender", "from"], ["osprey item", "mailbox", "from"], ["wren -heron", "sender", "none"], ["heron", "date_asc", "none"],
     ["wren", "date_asc", "folder"], ["plover", "date_desc", "from"], ["wren lark", "date_desc", "unread"], ["wren -lark", "date_desc", "none"],
-  ] as const)("%s, %s under %s, on 21,000 letters: every page in order, each match once, never bounded", async (q, sort, filter) => {
+  ] as const;
+  /** Every page of one question on 21,000 letters, in order, each match once, never bounded. */
+  const pagesOf = async (q: string, sort: Order, filter: string, on: typeof keyed): Promise<void> => {
     const a = ACCTS[0]!;
     const { all } = await answerOf(a, q, filter);
     // Every match where there are at most 2,500 of them, else the first five pages.
@@ -592,13 +672,282 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
     let cursor: string | undefined;
     let last: Awaited<ReturnType<typeof svc.search>> | null = null;
     do {
-      last = await svc.search(sctx(a), { q, parts: "page", sort, filters: FILTERS[filter]!.filters, ...(cursor ? { cursor } : {}) });
+      last = await svc.search(sctx(a, on), { q, parts: "page", sort, filters: FILTERS[filter]!.filters, ...(cursor ? { cursor } : {}) });
       expect(last.tier).toBe("exact");
       expect(last.bounded).toBe(false);
-      got.push(...last.items.map(ageOf));
+      got.push(...last.items.map(ageIn(a)));
       cursor = last.nextCursor ?? undefined;
     } while (cursor && got.length < want.length);
     expect(got.slice(0, want.length)).toEqual(want);
     expect(cursor === undefined).toBe(want.length === all.length);
+  };
+
+  it.each(CASES)("%s, %s under %s, on 21,000 letters: every page in order, each match once, never bounded", async (q, sort, filter) => {
+    await pagesOf(q, sort, filter, keyed);
   }, 300_000);
+
+  /**
+   * READ BY MONTH (mail 0174): the same accounts once every document carries its month and the account its
+   * dates mark, the dated indexes built. Every order and filter answers 0.30.19's rows in its tier, and so
+   * does every page of each question above. Unfiltered, every answer is 0.30.19's own, read before the
+   * accounts were marked, and where its statements differ from 0.30.19's (by month: relevance, oldest first and
+   * the estimate) reads at most its buffers; newest first, the sender and mailbox orders, the summary and every
+   * order beside an excluded word (here one that leaves no letter, or a few) read 0.30.19's own statements.
+   */
+  describe("read by month", () => {
+    // A handle of its own: the store's index facts are read after the dated indexes exist.
+    const dated = brandDialect(drizzle(client, { schema }), "pg");
+    /** 0.30.19's relevance answers to every unfiltered question, read before the accounts are marked. */
+    const was = new Map<string, Map<string, Ranked>>();
+    // Beside the questions above: an excluded word that leaves no letter, or a few, and closest words.
+    const MONTHLY = [...QUERIES, "wren -item", "wren -moss", "heron -moss", "heronn"];
+    /** 0.30.19's own readings of every question in {@link MONTHLY}, by account and question. */
+    const before = new Map<string, Map<string, Reading>>();
+
+    beforeAll(async () => {
+      // The dated indexes built and the tables settled before any reading, so 0.30.19's answers (the accounts
+      // unmarked: its own statements) and the answers by month are planned over the same statistics.
+      await ensureDatedIndexes(db, { concurrently: false });
+      for (const t of ["messages", "message_search", "folder_state"]) await db.execute(sql.raw(`vacuum (parallel 0, analyze) ${t}`));
+      for (const a of ACCTS) {
+        const answers = new Map<string, Ranked>();
+        for (const q of QUERIES.filter((x) => excludedOf(x).length > 0)) answers.set(q, await relevanceOf(a, q, {}, keyed));
+        was.set(a.id, answers);
+        for (const q of MONTHLY) before.set(`${a.id} ${q}`, await readingsOf(a, q));
+      }
+      for (const a of ACCTS) expect(await searchDatesFillPass({ db: db as never, accountId: a.id, limit: 1_000_000 })).toMatchObject({ marked: true });
+    }, 900_000);
+
+    it.each(ACCTS.map((a) => [a.name, a] as const))("on %s letters, every unfiltered answer is 0.30.19's own and reads at most its buffers", async (_, a) => {
+      const wrong: string[] = [];
+      for (const q of MONTHLY) {
+        const now = await readingsOf(a, q);
+        const w = before.get(`${a.id} ${q}`)!;
+        const sum = (r: Reading | undefined): number | string => (r === undefined ? "-" : r.reads.reduce((n, x) => n + x.buffers, 0));
+        console.log(`search sweep by month ${a.name} "${q}" (by month/0.30.19): ${[...w].map(([k, x]) => `${k} ${sum(now.get(k))}/${sum(x)}`).join(", ")}`);
+        wrong.push(...worse(`"${q}"`, now, w));
+      }
+      expect(wrong).toEqual([]);
+    }, 1_200_000);
+
+    it.each(ACCTS.map((a) => [a.name, a] as const))("on %s letters, every order under every filter: 0.30.19's rows, in its tier", async (_, a) => {
+      expect(await sweep(a, dated, was.get(a.id))).toEqual([]);
+    }, 1_200_000);
+
+    it.each(CASES)("%s, %s under %s, on 21,000 letters: every page in order, each match once, never bounded", async (q, sort, filter) => {
+      await pagesOf(q, sort, filter, dated);
+    }, 300_000);
+
+    // Cut, the count says at least the matches it read, as 0.30.19's does: an "about" from the account's own mail
+    // counts every letter of the account, which on 60,000 letters reads more than 0.30.19's whole estimate.
+    it("a word in every letter is counted as at least the matches read, never by counting the account's letters", async () => {
+      for (const a of ACCTS) {
+        const est = await svc.search(sctx(a, dated), { q: "wren", parts: "estimate" });
+        expect({ exact: est.totalExact, about: "totalEstimate" in est }).toEqual({ exact: false, about: false });
+      }
+    }, 120_000);
+  });
+});
+
+/**
+ * READ BY MONTH OVER YEARS OF MAIL (mail 0174): 6,000 letters 18 hours apart, 148 months, past the 128 a
+ * dated read walks month by month; every 997th has no Date, every 1,499th is dated years ahead (the ahead
+ * bucket), every 701st is deleted. "kite" is in every subject, "lynx" in every 7th subject and every 11th
+ * body, "moth" in the newest 300, "newt" in the oldest 200, "orca" in every 1,000th; "wasp" is in the body
+ * of each of the newest 1,000, "zebra" in the newest 500 subjects and "zebre" in the next 2,500. The
+ * letters are in five mailboxes, the first by address holding one in 97, and six in ten are from one
+ * sender, the first by address: "yak" is in all of that sender's bodies and "pika" in every other subject,
+ * so in the sender order neither "pika" nor "kite -yak" matches for 3,600 letters. Every order lists the
+ * living matches in its order, page after page, whichever bucket a letter is in, and every question
+ * answers 0.30.19's tier and rows, beside an excluded word (one that leaves none too) and in the closest
+ * words, its counts too, each reading at most the buffers 0.30.19's own statements read there before the
+ * account was marked.
+ */
+describe("read by month over years of mail (real Postgres, dated)", () => {
+  const Y = randomUUID();
+  const N = 6_000;
+  // A handle of its own: the store's index facts are read after the dated indexes exist. Both record what they send.
+  const seen: SQL[] = [];
+  const on = recording(brandDialect(drizzle(client, { schema }), "pg"), seen);
+  // Another for 0.30.19's answers, read before the account's dates mark is written.
+  const was = recording(brandDialect(drizzle(client, { schema }), "pg"), seen);
+  const yctx = (h: typeof on = on): ServiceContext => ({ db: h, accountId: Y, userId: null, now: () => NOW, requestId: "search-months" });
+  const IN: Record<string, (g: number) => boolean> = {
+    kite: () => true, lynx: (g) => g % 7 === 0 || g % 11 === 0, moth: (g) => g <= 300, newt: (g) => g > N - 200, orca: (g) => g % 1_000 === 0,
+    wasp: (g) => g <= 1_000, zebra: (g) => g <= 500, yak: (g) => g % 10 < 6, pika: (g) => g % 10 >= 6,
+  };
+  const QS = ["kite", "lynx", "moth", "newt", "orca", "kite lynx", "kite -lynx", "newt -lynx", "newt or orca", "pika", "kite -yak"];
+  /**
+   * An excluded word in the newest letters' bodies or subjects, in the exact tier and in the closest words (one
+   * that leaves no letter, too), and the closest words alone.
+   */
+  const HELD = ["kite -wasp", "kite lynx -wasp", "kitte -wasp", "kitte -moth", "zebra -wasp", "moth -wasp", "kitte"];
+  const matchOf = (q: string, g: number): boolean => {
+    const words = q.split(" ").filter((w) => w !== "or");
+    if (words.some((w) => w.startsWith("-") && IN[w.slice(1)]!(g))) return false;
+    return q.split(" or ").some((group) => group.split(" ").filter((w) => !w.startsWith("-")).every((w) => IN[w]!(g)));
+  };
+  type Row = { id: string; g: number; date: number | null; from: string; box: string };
+  let rows: Row[] = [];
+  const newest = (x: Row, y: Row): number => (x.date === y.date ? (x.id < y.id ? 1 : -1)
+    : x.date === null ? 1 : y.date === null ? -1 : y.date - x.date);
+  const ORDERS = {
+    date_desc: newest,
+    date_asc: (x: Row, y: Row): number => (x.date === y.date ? (x.id < y.id ? -1 : 1)
+      : x.date === null ? 1 : y.date === null ? -1 : x.date - y.date),
+    sender: (x: Row, y: Row): number => (x.from === y.from ? newest(x, y) : x.from < y.from ? -1 : 1),
+    mailbox: (x: Row, y: Row): number => (x.box === y.box ? newest(x, y) : x.box < y.box ? -1 : 1),
+  } as const;
+  /** Up to `most` rows of one order, page after page from its first; the whole order when it holds no more. */
+  const listed = async (q: string, sort: keyof typeof ORDERS, most: number): Promise<{ ids: string[]; ended: boolean }> => {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const r = await svc.search(yctx(), { q, parts: "page", sort, ...(cursor ? { cursor } : {}) });
+      if (r.tier !== "exact" || r.bounded) return { ids: [`${r.tier}${r.bounded ? " bounded" : ""}`], ended: true };
+      ids.push(...r.items.map((m) => m.id));
+      cursor = r.nextCursor ?? undefined;
+    } while (cursor && ids.length < most);
+    return { ids, ended: cursor === undefined };
+  };
+  type Answer = { tier: string; ids: string[]; bounded: boolean };
+  /** A question's first `pages` pages in one order, as the page answers them on `h`, and what each statement read. */
+  const answerOf = async (q: string, sort: "relevance" | keyof typeof ORDERS, pages: number, h: typeof on): Promise<{ answer: Answer; reads: Read[] }> => {
+    const out: Answer = { tier: "", ids: [], bounded: false };
+    const reads: Read[] = [];
+    let cursor: string | undefined;
+    for (let p = 0; p < pages; p++) {
+      const read = await readsEachOf(db, seen, () => svc.search(yctx(h), { q, parts: "page", ...(sort === "relevance" ? {} : { sort }), ...(cursor ? { cursor } : {}) }));
+      const r = read.out;
+      reads.push(...read.reads);
+      Object.assign(out, { tier: r.tier, bounded: r.bounded });
+      out.ids.push(...r.items.map((m) => m.id));
+      cursor = r.nextCursor ?? undefined;
+      if (!cursor) break;
+    }
+    return { answer: out, reads };
+  };
+  /** A question's estimate or summary on `h`, and what each statement read. */
+  const countOf = async (q: string, parts: "estimate" | "summary", h: typeof on): Promise<{ answer: string; reads: Read[] }> => {
+    const { out: r, reads } = await readsEachOf(db, seen, () => svc.search(yctx(h), { q, parts }));
+    return { answer: JSON.stringify({ tier: r.tier, total: r.total, exact: r.totalExact, facets: r.facets }), reads };
+  };
+  /** 0.30.19's answers: every relevance page and each order's first page of every question, and its counts. */
+  const before = new Map<string, { answer: Answer; reads: Read[] }>();
+  const counted = new Map<string, { answer: string; reads: Read[] }>();
+  const RELEVANCE_PAGES = 20;
+
+  beforeAll(async () => {
+    await ensureWordIndex(db, { concurrently: false });
+    const boxes: string[] = [];
+    for (const name of ["a", "b", "c", "d", "e"]) {
+      const [box] = await db.insert(mailboxes).values({ accountId: Y, provider: "imap", address: `${name}-${Y.slice(0, 8)}@months.example` }).returning();
+      boxes.push(box!.id);
+    }
+    await db.execute(sql`insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator, deleted_at)
+      select gen_random_uuid(), ${Y}::uuid,
+        case when g % 97 = 0 then ${boxes[0]}::uuid else (array[${boxes[1]}::uuid, ${boxes[2]}::uuid, ${boxes[3]}::uuid, ${boxes[4]}::uuid])[g % 4 + 1] end,
+        'h', 'months:' || g,
+        'item ' || g || ' kite' || case when g % 7 = 0 then ' lynx' else '' end || case when g <= 300 then ' moth' else '' end
+          || case when g > ${N - 200} then ' newt' else '' end || case when g % 1000 = 0 then ' orca' else '' end
+          || case when g <= 500 then ' zebra' when g <= 3000 then ' zebre' else '' end || case when g % 10 >= 6 then ' pika' else '' end,
+        case when g % 10 < 6 then 'aa-bulk@months.example' else 'p' || (g % 5) || '@months.example' end,
+        case when g % 997 = 0 then null when g % 1499 = 0 then timestamptz '2030-01-01T00:00:00Z' + make_interval(mins => g)
+          else ${NOW.toISOString()}::timestamptz - make_interval(hours => g * 18) end, false, false,
+        jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g), case when g % 701 = 0 then ${NOW.toISOString()}::timestamptz end
+      from generate_series(${N}, 1, -1) g`);
+    await db.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
+      select m.id, m.account_id, to_tsvector('english', m.subject),
+        to_tsvector('english', 'body' || case when split_part(m.dedup_key, ':', 2)::int % 11 = 0 then ' lynx' else '' end
+          || case when split_part(m.dedup_key, ':', 2)::int <= 1000 then ' wasp' else '' end
+          || case when split_part(m.dedup_key, ':', 2)::int % 10 < 6 then ' yak' else '' end), lower(m.subject), 'text'
+      from messages m where m.account_id = ${Y}::uuid`);
+    await db.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${Y}::uuid, ${NOW.toISOString()}::timestamptz)
+      on conflict (account_id) do update set search_index_built_at = excluded.search_index_built_at`);
+    // The dated indexes built and the tables analyzed before 0.30.19's answers (the account unmarked, so they are
+    // 0.30.19's own statements), so they and the answers by month are planned over the same statistics.
+    await ensureDatedIndexes(db, { concurrently: false });
+    await db.execute(sql`analyze messages`);
+    await db.execute(sql`analyze message_search`);
+    // The handle has asked what its store holds once already, as a server's has.
+    await svc.search(yctx(was), { q: "kite", parts: "page" });
+    for (const q of [...QS, ...HELD]) {
+      for (const sort of ["relevance", ...Object.keys(ORDERS)] as const) before.set(`${q} ${sort}`, await answerOf(q, sort as never, sort === "relevance" ? RELEVANCE_PAGES : 1, was));
+      for (const parts of ["estimate", "summary"] as const) counted.set(`${q} ${parts}`, await countOf(q, parts, was));
+    }
+    expect(await searchDatesFillPass({ db: db as never, accountId: Y, limit: 1_000_000 })).toMatchObject({ marked: true });
+    const got = (await db.execute(sql`select m.id::text as id, split_part(m.dedup_key, ':', 2)::int as g,
+        extract(epoch from m.date) * 1000 as date, lower(m.from_address) as "from", lower(mb.address) as box
+      from messages m join mailboxes mb on mb.id = m.mailbox_id where m.account_id = ${Y}::uuid and m.deleted_at is null`)) as unknown as
+      Array<{ id: string; g: number; date: string | number | null; from: string; box: string }>;
+    rows = got.map((r) => ({ ...r, g: Number(r.g), date: r.date === null ? null : Number(r.date) }));
+  }, 600_000);
+
+  afterAll(async () => {
+    await db.execute(sql`delete from message_search where account_id = ${Y}`);
+    await db.execute(sql`delete from messages where account_id = ${Y}`);
+    await db.execute(sql`delete from account_settings where account_id = ${Y}`);
+    await db.execute(sql`delete from mailboxes where account_id = ${Y}`);
+  });
+
+  it("the documents carry their letters' months: the undated, the ahead and the dated ones", async () => {
+    const [b] = (await db.execute(sql`select count(*) filter (where s.search_week = -1) as undated, count(*) filter (where s.search_week = -2) as ahead,
+        count(distinct s.search_week) filter (where s.search_week >= 0) as months, count(*) filter (where s.search_week is null) as owed
+      from message_search s where s.account_id = ${Y}::uuid`)) as unknown as Array<Record<string, string | number>>;
+    expect({ undated: Number(b!.undated), ahead: Number(b!.ahead), owed: Number(b!.owed), past128: Number(b!.months) > 128 })
+      .toEqual({ undated: 6, ahead: 4, owed: 0, past128: true });
+  });
+
+  it("every order lists the living matches in its order, page after page", async () => {
+    const wrong: string[] = [];
+    for (const q of QS) {
+      const all = rows.filter((r) => matchOf(q, r.g));
+      for (const sort of Object.keys(ORDERS) as Array<keyof typeof ORDERS>) {
+        const want = [...all].sort(ORDERS[sort]).map((r) => r.id);
+        const most = Math.min(want.length, 400);
+        const { ids, ended } = await listed(q, sort, most);
+        const g = (id: string): number | string => rows.find((r) => r.id === id)?.g ?? id;
+        if (JSON.stringify(ids.slice(0, most)) !== JSON.stringify(want.slice(0, most)) || (most === want.length && !ended)) {
+          const at = ids.findIndex((id, i) => id !== want[i]);
+          wrong.push(`${q} ${sort}: ${ids.length} listed, ${want.length} match; first difference at ${at}: ${g(ids[at] ?? "-")} for ${g(want[at] ?? "-")}`);
+        }
+      }
+      const rel = await svc.search(yctx(), { q, parts: "page" });
+      const ranked = rel.items.map((m) => m.id);
+      const full = q.includes("-") || ranked.length === Math.min(50, all.length);
+      if (rel.tier !== "exact" || !full || new Set(ranked).size !== ranked.length || ranked.some((id) => !all.some((r) => r.id === id))) {
+        wrong.push(`${q} relevance: ${rel.tier} ${ranked.length} of ${all.length}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  }, 600_000);
+
+  /**
+   * Every question's relevance pages, each order's first page and its two counts are 0.30.19's, row for row,
+   * and read at most the buffers 0.30.19's own statements read for them.
+   */
+  it("every question answers 0.30.19's tier, rows and counts, reading at most its buffers", async () => {
+    const wrong: string[] = [];
+    const say = (a: Answer): string => `${a.tier} ${a.ids.length}${a.bounded ? " bounded" : ""}`;
+    // The handle has asked what its store holds once already, as a server's has.
+    await svc.search(yctx(on), { q: "kite", parts: "page" });
+    for (const q of [...QS, ...HELD]) {
+      for (const sort of ["relevance", ...Object.keys(ORDERS)] as const) {
+        const want = before.get(`${q} ${sort}`)!;
+        const got = await answerOf(q, sort as never, sort === "relevance" ? RELEVANCE_PAGES : 1, on);
+        const d = differing(got.reads, want.reads);
+        if (JSON.stringify(got.answer) !== JSON.stringify(want.answer)) {
+          wrong.push(`${q} ${sort}: ${say(got.answer)}, 0.30.19 ${say(want.answer)}; first difference at ${got.answer.ids.findIndex((id, i) => id !== want.answer.ids[i])}`);
+        } else if (d.now > d.was) wrong.push(`${q} ${sort}: ${d.now} buffers, 0.30.19 ${d.was}`);
+      }
+      for (const parts of ["estimate", "summary"] as const) {
+        const want = counted.get(`${q} ${parts}`)!;
+        const got = await countOf(q, parts, on);
+        const d = differing(got.reads, want.reads);
+        if (got.answer !== want.answer) wrong.push(`${q} ${parts}: ${got.answer}, 0.30.19 ${want.answer}`);
+        else if (d.now > d.was) wrong.push(`${q} ${parts}: ${d.now} buffers, 0.30.19 ${d.was}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  }, 600_000);
 });

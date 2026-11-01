@@ -98,6 +98,94 @@ export const WORD_INDEX_SPEC: ConcurrentIndexSpec = {
       where ((account_id)::text) is not null`,
 };
 
+/**
+ * A document's DATED KEY (mail 0174): its account and its letter's month, as the dated indexes key it and
+ * the server's dated reads ask for it (`= <one month's key>`, one bitmap index scan). The dialect's reads
+ * spell it from here, so the planner sees the index's own expression.
+ */
+export const DATED_KEY = "((((account_id)::text || ':'::text) || (search_week)::text))";
+
+/**
+ * The dated indexes' ACCOUNT, as no read but theirs spells it: the word index and the reads without months key
+ * the account as `((account_id)::text)`, and an index keyed that way too was taken into their plans for the
+ * account alone (a summary's branch read every one of the account's documents off it, beside its own index).
+ */
+export const DATED_ACCOUNT = "(((account_id)::text || ''::text))";
+
+/**
+ * THE DATED INDEXES (mail 0174): the account-keyed search indexes with the dated key beside the account, so
+ * a read of one of an account's months is one GIN read of that month, at any reach of the word, and the
+ * read past the months asks the account alone. The account, the vectors and the corpus are keyed as
+ * expressions no other index and no other read holds (`|| ''`, the same value, {@link DATED_ACCOUNT}), which
+ * the dated reads spell alike (the dialect's `dated`): keyed by the plain columns, the planner paired the key
+ * with a smaller unkeyed index over every account's words and checked the other vector letter by letter (a
+ * two-word page read 170,000 buffers), and took these for other reads' account. Partial on the account as
+ * {@link WORD_INDEX_SPEC} is. Built after the migrator (the key names mail 0174's column), beside their
+ * undated twins, which every read not by month keeps.
+ */
+export const DATED_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
+  {
+    name: "message_search_dated_words_idx",
+    table: "message_search",
+    requiresColumn: "search_week",
+    ddl: sql.raw(`create index concurrently if not exists "message_search_dated_words_idx"
+      on public.message_search using gin (${DATED_ACCOUNT}, ${DATED_KEY}, (head_tsv || ''::tsvector), (text_tsv || ''::tsvector))
+      with (gin_pending_list_limit = 256) where ((account_id)::text) is not null`),
+  },
+  {
+    name: "message_search_dated_terms_trgm_idx",
+    table: "message_search",
+    requiresColumn: "search_week",
+    ddl: sql.raw(`create index concurrently if not exists "message_search_dated_terms_trgm_idx"
+      on public.message_search using gin (${DATED_ACCOUNT}, ${DATED_KEY}, ("terms" || ''::text) gin_trgm_ops)
+      with (gin_pending_list_limit = 256) where ((account_id)::text) is not null`),
+  },
+  {
+    name: "message_search_dated_head_terms_trgm_idx",
+    table: "message_search",
+    requiresColumn: "search_week",
+    ddl: sql.raw(`create index concurrently if not exists "message_search_dated_head_terms_trgm_idx"
+      on public.message_search using gin (${DATED_ACCOUNT}, ${DATED_KEY}, (split_part("terms", chr(31), 1) || ''::text) gin_trgm_ops)
+      with (gin_pending_list_limit = 256) where ((account_id)::text) is not null`),
+  },
+  {
+    name: "message_search_dated_names_trgm_idx",
+    table: "message_search",
+    requiresColumn: "search_week",
+    ddl: sql.raw(`create index concurrently if not exists "message_search_dated_names_trgm_idx"
+      on public.message_search using gin (${DATED_ACCOUNT}, ${DATED_KEY}, (split_part("terms", chr(31), 2) || ''::text) gin_trgm_ops)
+      with (gin_pending_list_limit = 256) where ((account_id)::text) is not null`),
+  },
+];
+
+/**
+ * Builds {@link DATED_INDEX_SPECS}, after the migrator and {@link ensureSearchExtensions}; `concurrently: false`
+ * as there. `afterFill` (setup): none is built while an account with living mail still has no dates mark, since
+ * every month the worker's fill writes would re-insert its document into four more indexes; a later setup
+ * run builds them. Answers whether it built (or found) them.
+ */
+export async function ensureDatedIndexes(
+  db: SqlExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean; afterFill?: boolean } = {},
+): Promise<boolean> {
+  if (opts.afterFill === true) {
+    const [row] = rowsOf<{ owed: unknown }>(await db.execute(sql`select exists (select 1 from accounts a
+        where exists (select 1 from messages m where m.account_id = a.id and m.deleted_at is null)
+          and not exists (select 1 from account_settings st where st.account_id = a.id and st.search_dated_at is not null)) as owed`));
+    if (row?.owed === true || row?.owed === "t") {
+      opts.log?.("the dated search indexes wait: an account's search documents are still owed their months (search_dates_fill)");
+      return false;
+    }
+  }
+  await ensureConcurrentIndexes(db, DATED_INDEX_SPECS, {
+    label: "the dated search index build",
+    ...(opts.log ? { log: opts.log } : {}),
+    ...(opts.concurrently === false ? { concurrently: false } : {}),
+  });
+  return true;
+}
+
+const rowsOf = <T,>(r: unknown): T[] => (Array.isArray(r) ? r : ((r as { rows?: T[] }).rows ?? [])) as T[];
+
 /** Builds {@link WORD_INDEX_SPEC}, after {@link ensureSearchExtensions}; `concurrently: false` as there. */
 export async function ensureWordIndex(
   db: SqlExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},

@@ -7,12 +7,13 @@ import { sql, type SQL } from "drizzle-orm";
 import { brandDialect, pgDialect } from "@trafficflow/db/dialect";
 import { mailboxes } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes, ensureWordIndex } from "@trafficflow/db/admin";
+import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes, ensureWordIndex, ensureDatedIndexes, DATED_INDEX_SPECS } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
-import { searchIndexBackfillPass, searchIndexProgress } from "@trafficflow/core/mail";
+import { searchDatesFillPass, searchIndexBackfillPass, searchIndexProgress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { CALIBRATED_REF_MS, LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, judgedClockOf, judgedVerdicts, mustJudge, outcomeOf, scaleOf, verdicts, windowOf, type Round, type Verdict, type Window } from "./_budget-clock.js";
+import { buffersOf, isExplain, isSession, readsOf, recording } from "./_search-reads.js";
 
 /**
  * SEARCH IS MILLISECONDS: the first page of a search answers inside 100 ms of server time at p95
@@ -62,45 +63,8 @@ const idOf = (acct: string, g: SQL): SQL => sql`md5('budget-id:' || ${acct} || '
  * page runs — so the test can ask Postgres how it ran them under the same session settings.
  */
 const seen: SQL[] = [];
-const wrap = <T extends object>(target: T): T => new Proxy(target, {
-  get(t, p, r) {
-    if (p === "execute") return (st: SQL) => { seen.push(st); return (t as { execute: (s: SQL) => unknown }).execute(st); };
-    if (p === "select") return (...a: unknown[]) => recorded((t as { select: (...x: unknown[]) => object }).select(...a), seen);
-    if (p === "transaction") {
-      return (fn: (tx: unknown) => Promise<unknown>) =>
-        (t as { transaction: (f: (tx: object) => Promise<unknown>) => Promise<unknown> }).transaction((tx) => fn(wrap(tx)));
-    }
-    return Reflect.get(t, p, r);
-  },
-});
+const wrap = <T extends object>(target: T): T => recording(target, seen);
 const db = wrap(base);
-
-/**
- * A query builder whose statement is recorded when it runs: a search page's rows and their DTOs
- * are ONE builder read, so a recorder that saw only `execute` would miss the statement it guards.
- */
-function recorded<B extends object>(b: B, seen: SQL[]): B {
-  return new Proxy(b, {
-    get(t, p) {
-      const v = Reflect.get(t, p, t) as unknown;
-      if (p === "then" && typeof v === "function") {
-        seen.push((t as unknown as { getSQL: () => SQL }).getSQL());
-        return (v as (...x: unknown[]) => unknown).bind(t);
-      }
-      if (typeof v !== "function") return v;
-      return (...a: unknown[]) => {
-        const out = (v as (...x: unknown[]) => unknown).apply(t, a);
-        return out !== null && typeof out === "object" && ("from" in out || "getSQL" in out) ? recorded(out, seen) : out;
-      };
-    },
-  });
-}
-/** A statement's text as Postgres receives it. */
-const textOf = (st: SQL): string =>
-  (base as unknown as { dialect: { sqlToQuery: (s: SQL) => { sql: string } } }).dialect.sqlToQuery(st).sql;
-const isSession = (st: SQL): boolean => textOf(st).includes("set_config");
-/** The service's own planner estimate is an EXPLAIN already; it is not a read to plan. */
-const isExplain = (st: SQL): boolean => /^\s*explain\b/i.test(textOf(st));
 
 // A skewed vocabulary — word k = floor(5000 · u⁴) — so `w1` is in almost every body and `w3000`
 // in a rare few; subjects of 3–6 words, bodies of 100–227.
@@ -238,15 +202,6 @@ async function planNodes(st: SQL, session: SQL[]): Promise<PlanNode[]> {
   walk(((r[0]!["QUERY PLAN"] as PlanNode[])[0]!)["Plan"] as PlanNode);
   return out;
 }
-/** The shared buffers (hit and read) a statement touched as it ran, under the session settings. */
-async function buffersOf(st: SQL, session: SQL[]): Promise<number> {
-  const r = (await base.transaction(async (tx) => {
-    for (const s of session) await tx.execute(s);
-    return tx.execute(sql`explain (analyze, buffers, format json) ${st}`);
-  })) as unknown as Array<Record<string, unknown>>;
-  const top = ((r[0]!["QUERY PLAN"] as PlanNode[])[0]!)["Plan"] as PlanNode;
-  return Number(top["Shared Hit Blocks"] ?? 0) + Number(top["Shared Read Blocks"] ?? 0);
-}
 /** The relations a statement read by a sequential scan, from its own plan, under the session settings. */
 async function seqScans(st: SQL, session: SQL[]): Promise<string[]> {
   return (await planNodes(st, session)).filter((p) => p["Node Type"] === "Seq Scan").map((p) => String(p["Relation Name"]))
@@ -316,6 +271,8 @@ const HARNESS: Array<{ cls: Cls; q?: string; k?: number; of?: string }> = [
   ...["zqxjv", "quokka", "xylograph"].map((q) => ({ cls: "none" as const, q })),
   { cls: "typo", k: 77_777 }, { cls: "typo", q: "heorn" },
 ];
+/** A query of one word, which oldest first reads by month (mail 0174). */
+const ONE_WORD = /^[a-z0-9]+$/i;
 /** A first page is begin, the session's settings, one read and commit; the typo tier is in that read. */
 const PAGE_STATEMENTS: Record<Cls, number> = { common: 4, mid: 4, rare: 4, none: 4, typo: 4 };
 
@@ -433,8 +390,11 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     await seed(A, N);
     await seedDocumented(D, N, D_SALT);
     await seedDocumented(NOISE, 20_000, NOISE_SALT);
-    // Built over the seeded documents, as setup builds it over a live store.
+    // Built over the seeded documents, as setup builds them over a live store; D and the neighbour then
+    // carry their dates mark (mail 0174) and are read by month, A (before its backfill) never is.
     await ensureWordIndex(base, { concurrently: false });
+    await ensureDatedIndexes(base, { concurrently: false });
+    for (const acct of [D, NOISE]) expect(await searchDatesFillPass({ db: base as never, accountId: acct, limit: 1_000_000 })).toMatchObject({ marked: true });
     // Settled as production's are: a vacuumed `messages` lets the History index answer without the
     // heap (fresh rows have no visibility map). The bodies are only analyzed: the page never scans
     // them, and their vacuum is a minute of disk here.
@@ -627,6 +587,68 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     }
   }, 600_000);
 
+  /**
+   * OLDEST FIRST, TIMED, in production's shape: the first page on D, read by month, for every harness query of
+   * one word (beside an excluded word, for words across a letter's parts, and in every other order the search
+   * reads 0.30.19's own statement); the p95 over its queries' medians inside the budget, 8 ms a statement.
+   */
+  it(`oldest first in production's shape: the first page inside ${BUDGET_MS} ms at p95, 8 ms a statement`, async () => {
+    const svc = new SearchService();
+    const count = { n: 0 };
+    const pooled = postgres(PG_URL, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
+    const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, RTT_MS, count);
+    const at: ServiceContext = { ...ctx(D), db: far as never };
+    const QS = HARNESS.filter((h) => h.cls !== "typo" && ONE_WORD.test(h.q!));
+    type Case = { figure: string; sort: "date_asc"; q: string };
+    const cases: Case[] = QS.map((h) => ({ figure: "date_asc", sort: "date_asc", q: h.q! }));
+    const ask = (c: Case) => svc.search(at, { q: c.q, parts: "page", sort: c.sort });
+    for (const c of cases) await ask(c);
+    const fewest: Record<string, number> = {};
+    const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+    const best = await bestOfRounds("orders", async (tick) => {
+      const ms = cases.map(() => [] as number[]);
+      for (let pass = 0; pass < 3; pass++) {
+        for (const [i, c] of cases.entries()) {
+          count.n = 0;
+          ms[i]!.push((await ask(c)).ms);
+          fewest[c.figure] = Math.min(fewest[c.figure] ?? Infinity, count.n);
+          await tick();
+        }
+      }
+      console.log(`search-budget orders by case: ${cases.map((c, i) => `${c.figure} ${c.q} ${median(ms[i]!)}`).join(", ")}`);
+      const figures: Record<string, number> = {};
+      for (const figure of new Set(cases.map((c) => c.figure))) figures[figure] = p95Of(cases.flatMap((c, i) => (c.figure === figure ? [median(ms[i]!)] : [])));
+      return figures;
+    }, (figure) => RTT_MS * fewest[figure]!);
+    await pooled.end({ timeout: 5 });
+    for (const [figure, v] of Object.entries(best)) judge(v, `order ${figure}`);
+  }, 600_000);
+
+  /**
+   * FIRST ASKS: every harness query asked once a round, with no warm-up, on a new pool and a new service
+   * each round (nothing it remembers per handle), in production's shape; each class's p95 inside the budget.
+   */
+  it(`every harness query asked once, with no warm-up: every class's page inside ${BUDGET_MS} ms at p95, 8 ms a statement`, async () => {
+    const CLASSES = ["common", "mid", "rare", "none", "typo"] as const;
+    const fewest: Record<string, number> = {};
+    const best = await bestOfRounds("first asks", async (tick) => {
+      const count = { n: 0 };
+      const pooled = postgres(PG_URL, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
+      const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, RTT_MS, count);
+      const svc = new SearchService();
+      const ms: Record<string, number[]> = {};
+      for (const h of HARNESS) {
+        count.n = 0;
+        (ms[h.cls] ??= []).push((await svc.search({ ...ctx(D), db: far as never }, { q: h.q!, parts: "page" })).ms);
+        fewest[h.cls] = Math.min(fewest[h.cls] ?? Infinity, count.n);
+        await tick();
+      }
+      await pooled.end({ timeout: 5 });
+      return Object.fromEntries(CLASSES.map((cls) => [`${cls} first`, p95Of(ms[cls] ?? [0])]));
+    }, (figure) => RTT_MS * fewest[figure.split(" ")[0]!]!);
+    for (const [figure, v] of Object.entries(best)) judge(v, figure);
+  }, 600_000);
+
   it("the harness's page reads scan no table in production's shape either", async () => {
     const svc = new SearchService();
     for (const h of HARNESS) {
@@ -639,11 +661,12 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     }
   }, 300_000);
 
-  // The corpus's two sides, each read off its own trigram index: a part of a sender's address (`unlin`
-  // inside `dunlin`) through the header text's, a fragment of a scan's file name through the names'.
+  // The corpus's two sides, each read off its own trigram index: a part of a sender's address (`unlin` inside
+  // `dunlin`, in a few letters, read whole as 0.30.19 reads it) through the header text's, a fragment of a scan's
+  // file name through the names' (read by month, off its dated twin).
   it("the substring arm reads the header text's own index, and a file name's fragment the names' own index", async () => {
     const svc = new SearchService();
-    for (const [q, index] of [["unlin", "message_search_head_terms_trgm_idx"], ["can0102", "message_search_names_trgm_idx"]] as const) {
+    for (const [q, index] of [["unlin", "message_search_head_terms_trgm_idx"], ["can0102", "message_search_dated_names_trgm_idx"]] as const) {
       seen.length = 0;
       const r = await svc.search(ctx(D), { q, parts: "page" });
       expect({ q, tier: r.tier, found: r.items.length > 0 }).toEqual({ q, tier: "exact", found: true });
@@ -652,7 +675,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       for (const st of seen.filter((x) => !isSession(x) && !isExplain(x))) {
         for (const p of await planNodes(st, session)) if (p["Index Name"] !== undefined && Number(p["Actual Loops"]) > 0) read.add(String(p["Index Name"]));
       }
-      expect([...read], q).toContain(index);
+      expect([...read], `${q}: ${[...read].join(", ")}`).toContain(index);
     }
   }, 300_000);
 
@@ -745,14 +768,15 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
   }, 300_000);
 
   /**
-   * THE READS THAT GREW WITH THE MATCHES: the summary, newest first (a query with no excluded word)
-   * and the address view each read at most 30,000 shared buffers a statement (hit or read, from the
-   * statement's own plan as it ran), whatever the word's reach. Before the caps a broad word's summary
-   * or date order read about a million buffers (4-8 s cold), and the own address's count every letter.
-   * Oldest first, the sender and mailbox orders and newest first beside an excluded word read every
-   * match, as before.
+   * THE READS THAT GREW WITH THE MATCHES: the summary, newest first (a query with no excluded word), oldest
+   * first for one word (read by month) and the address view each read at most 30,000 shared buffers a
+   * statement (hit or read, from the statement's own plan as it ran), whatever the word's reach. Before the
+   * caps a broad word's summary or date order read about a million buffers (4-8 s cold), and the own address's
+   * count every letter; before mail 0174 oldest first read every match. Oldest first for words across a
+   * letter's parts, the sender and mailbox orders and the date orders beside an excluded word read every match,
+   * as before.
    */
-  it("the summary, newest first and the address view read at most 30,000 buffers a statement", async () => {
+  it("the summary, newest and oldest first and the address view read at most 30,000 buffers a statement", async () => {
     const svc = new SearchService();
     const BUFFERS = 30_000;
     const over: string[] = [];
@@ -762,7 +786,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       await run();
       const session = seen.filter(isSession);
       for (const st of seen.filter((x) => !isSession(x) && !isExplain(x))) {
-        const n = await buffersOf(st, session);
+        const n = await buffersOf(base, st, session);
         if (n > heaviest.n) heaviest = { label, n };
         if (n > BUFFERS) over.push(`${label} ${n}`);
       }
@@ -770,6 +794,8 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     for (const h of HARNESS) await measure(`summary ${h.of ?? h.q}`, () => svc.search(ctx(D), { q: h.q!, parts: "summary" }));
     const NEWEST = HARNESS.filter((h) => h.cls !== "typo").filter((_, i) => i % 3 === 0).filter((h) => !/(^|\s)-\S/.test(h.q!));
     for (const h of NEWEST) await measure(`date_desc ${h.of ?? h.q}`, () => svc.search(ctx(D), { q: h.q!, parts: "page", sort: "date_desc" }));
+    const OLDEST = HARNESS.filter((h) => h.cls !== "typo" && ONE_WORD.test(h.q!));
+    for (const h of OLDEST) await measure(`date_asc ${h.of ?? h.q}`, () => svc.search(ctx(D), { q: h.q!, parts: "page", sort: "date_asc" }));
     for (const c of ADDRESS_CLASSES) await measure(`address ${c.cls}`, () => svc.searchByAddress(ctx(), { address: c.address, direction: c.direction }));
     console.log(`search-budget buffers: heaviest ${heaviest.label} ${heaviest.n}; ${over.length === 0 ? "every statement within" : over.join(", ")}`);
     expect(over, `statements over ${BUFFERS} buffers`).toEqual([]);
@@ -781,4 +807,179 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     expect(dates).toHaveLength(50);
     expect([...dates].sort((x, y) => y - x)).toEqual(dates);
   }, 600_000);
+});
+
+/**
+ * READ BY MONTH, NEVER MORE THAN 0.30.19 ON ITS OWN INDEXES, AND ITS ANSWERS. On 40,000 letters two hours apart:
+ * FIRSTBOX files the even letters in its first mailbox by address and the odd ones in a second, "quetzal" in one
+ * in four, all in the second, and "veil" in every body but every 997th; SPARSE has four letters in ten from its
+ * first sender by address, "zorilla" in one in 97 of those and in every tenth letter of the rest. WALKS has 20,000
+ * letters, one in ten from its first sender: "alpha" is in that sender's newest 40 only, "beta" in every 18th of
+ * its letters and "gamma" in every 8th, each in one in four of the rest; "delta" is in 34 letters, "qwyxz" in none.
+ * KIWI has 30,000 letters with long bodies, one in ten from its first sender and in its first mailbox: "kiwi" is
+ * in 14 of that sender's newest 256 letters and 6 of the next 256, in none after, and in every 18th of the rest,
+ * with "zebra" in one in four of those. Every subject holds "item" and "lorem" and every body "body" and "ipsum",
+ * so "lorem -ipsum" and "item -body" leave no letter and "lorem -veil" a few; "alpah" and "kiwii" match no letter
+ * and are answered by the closest words. Each question is answered read by
+ * month (the four dated indexes valid, the dates mark written) and again on 0.30.19's own index set (the dated
+ * indexes dropped, so every read is 0.30.19's own statement): relevance, newest and oldest first and the sender
+ * and mailbox orders page after page, the estimate and the summary answer alike, and read by month each reads at
+ * most the shared buffers it read there, every statement replayed under its own session, on a handle that has
+ * asked once already (a server's handle keeps what it learnt of its store).
+ */
+describe("read by month, every answer is 0.30.19's and reads at most its buffers on 0.30.19's indexes (real Postgres)", () => {
+  // Its own connection: the suite above ends the file's.
+  const own = postgres(PG_URL, { max: 1 });
+  const on = brandDialect(drizzle(own, { schema }), "pg");
+  const NOW = new Date("2026-09-23T12:00:00Z");
+  const FIRSTBOX = "5eed0000-0000-4000-8000-0000000000f6";
+  const SPARSE = "5eed0000-0000-4000-8000-0000000000f7";
+  const WALKS = "5eed0000-0000-4000-8000-0000000000f8";
+  const KIWI = "5eed0000-0000-4000-8000-0000000000f9";
+  const g = sql`g`;
+
+  /** `n` letters two hours apart, newest first by g, with their bodies, folders and search documents. */
+  async function seedShaped(acct: string, o: { n: number; boxes: string[]; box: (ids: string[]) => SQL; from: SQL; subject: SQL; body: SQL }): Promise<void> {
+    const ids: string[] = [];
+    for (const name of o.boxes) {
+      const [mb] = await on.insert(mailboxes).values({ accountId: acct, provider: "imap", address: `${name}-${acct.slice(-4)}@shaped.example` }).returning();
+      ids.push(mb!.id);
+    }
+    await on.execute(sql`insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator)
+      select ${idOf(acct, g)}, ${acct}::uuid, ${o.box(ids)}, 'h', 'shaped:' || ${acct} || ':' || g, ${o.subject}, ${o.from},
+        ${NOW.toISOString()}::timestamptz - make_interval(hours => g * 2), g % 3 = 0, false, jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g)
+      from generate_series(1, ${o.n}) g`);
+    await on.execute(sql`insert into message_bodies (message_id, text)
+      select m.id, ${o.body} from messages m cross join lateral (select split_part(m.dedup_key, ':', 3)::int as g) x where m.account_id = ${acct}::uuid`);
+    await on.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
+      select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
+    await on.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
+      select m.id, m.account_id,
+        setweight(to_tsvector('english', coalesce(m.subject, '')), 'A') || setweight(to_tsvector('simple', m.from_address), 'B'),
+        to_tsvector('english', b.text), left(lower(trim(coalesce(m.subject, '') || ' ' || m.from_address)), 2048), 'text'
+      from messages m join message_bodies b on b.message_id = m.id where m.account_id = ${acct}::uuid`);
+    await on.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${acct}::uuid, ${NOW.toISOString()}::timestamptz)
+      on conflict (account_id) do update set search_index_built_at = excluded.search_index_built_at`);
+  }
+
+  async function removeShaped(): Promise<void> {
+    for (const acct of [FIRSTBOX, SPARSE, WALKS, KIWI]) {
+      await on.execute(sql`delete from message_search where account_id = ${acct}::uuid`);
+      await on.execute(sql`delete from account_settings where account_id = ${acct}::uuid`);
+      await on.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${acct}::uuid)`);
+      await on.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${acct}::uuid)`);
+      await on.execute(sql`delete from messages where account_id = ${acct}::uuid`);
+      await on.execute(sql`delete from mailboxes where account_id = ${acct}::uuid`);
+    }
+  }
+
+  /** KIWI's word: in 14 of its first sender's newest 256 letters, 6 of the next 256, none after, and every 18th of the rest. */
+  const kiwi = (x: SQL): SQL => sql`((${x} % 10 = 0 and ((${x} / 10 <= 256 and (${x} / 10) % 19 = 1) or (${x} / 10 between 257 and 512 and (${x} / 10) % 40 = 1)))
+    or (${x} % 10 <> 0 and ${x} % 18 = 1))`;
+
+  beforeAll(async () => {
+    await runMigrations(PG_URL);
+    await ensureSearchExtensions(on, { concurrently: false });
+    await ensureHotPathIndexes(on, { concurrently: false });
+    await on.execute(sql`set statement_timeout = '600s'`);
+    await removeShaped();
+    await seedShaped(FIRSTBOX, {
+      n: 40_000, boxes: ["a", "b"], box: (ids) => sql`case when ${g} % 2 = 0 then ${ids[0]}::uuid else ${ids[1]}::uuid end`,
+      from: sql`'p' || (${g} % 50) || '@first.example'`,
+      subject: sql`'item ' || ${g} || ' lorem' || case when ${g} % 4 = 1 then ' quetzal' else '' end`,
+      body: sql`'body text ipsum' || case when x.g % 4 = 1 then ' quetzal notes' else '' end || case when x.g % 997 = 0 then '' else ' veil' end`,
+    });
+    await seedShaped(SPARSE, {
+      n: 40_000, boxes: ["a"], box: (ids) => sql`${ids[0]}::uuid`,
+      from: sql`case when ${g} % 10 < 4 then 'aa-news@sparse.example' else 'p' || (${g} % 50) || '@sparse.example' end`,
+      subject: sql`'item ' || ${g} || ' lorem' || case when ${g} % 10 = 5 or (${g} % 10 < 4 and ${g} % 97 = 0) then ' zorilla' else '' end`,
+      body: sql`'body text ipsum' || case when x.g % 10 = 5 or (x.g % 10 < 4 and x.g % 97 = 0) then ' zorilla seen' else '' end`,
+    });
+    // The first sender's letters are g = 10, 20, 30 ... newest first; the rest are split over seven senders after it.
+    await seedShaped(WALKS, {
+      n: 20_000, boxes: ["a"], box: (ids) => sql`${ids[0]}::uuid`,
+      from: sql`case when ${g} % 10 = 0 then 'aa-first@walks.example' else 'p' || (${g} % 7) || '@walks.example' end`,
+      subject: sql`'item ' || ${g} || ' lorem'
+        || case when (${g} % 10 = 0 and ${g} <= 400) or (${g} % 10 <> 0 and ${g} % 4 = 1) then ' alpha' else '' end
+        || case when (${g} % 10 = 0 and ${g} % 180 = 0) or (${g} % 10 <> 0 and ${g} % 4 = 3) then ' beta' else '' end
+        || case when (${g} % 10 = 0 and ${g} % 80 = 0) or (${g} % 10 <> 0 and ${g} % 4 = 3) then ' gamma' else '' end
+        || case when ${g} % 600 = 7 then ' delta' else '' end`,
+      body: sql`'body text ipsum'`,
+    });
+    // Long bodies, about 250 words each, so a body's vector is stored apart as a long letter's is.
+    await seedShaped(KIWI, {
+      n: 30_000, boxes: ["a", "b"], box: (ids) => sql`case when ${g} % 10 = 0 then ${ids[0]}::uuid else ${ids[1]}::uuid end`,
+      from: sql`case when ${g} % 10 = 0 then 'aa-first@kiwi.example' else 'p' || (${g} % 7) || '@kiwi.example' end`,
+      subject: sql`'item ' || ${g} || ' lorem' || case when ${kiwi(g)} then ' kiwi' || case when ${g} % 4 = 1 then ' zebra' else '' end else '' end`,
+      body: sql`'body text ipsum ' || (select string_agg('w' || ((x.g * 7919 + i * 104729) % 20000), ' ') from generate_series(1, 250) i)
+        || case when ${kiwi(sql`x.g`)} then ' kiwi notes' else '' end`,
+    });
+    await ensureWordIndex(on, { concurrently: false });
+    await ensureDatedIndexes(on, { concurrently: false });
+    for (const acct of [FIRSTBOX, SPARSE, WALKS, KIWI]) expect(await searchDatesFillPass({ db: on as never, accountId: acct, limit: 1_000_000 })).toMatchObject({ marked: true });
+    // Every table settled, so no autovacuum runs between the two readings: one that clears an earlier test's dead
+    // rows (the large mailbox's attachments) while 0.30.19's answers are read moves what its statements read.
+    await on.execute(sql.raw("vacuum (parallel 0, analyze)"));
+    await on.execute(sql`reset statement_timeout`);
+  }, 900_000);
+
+  afterAll(async () => {
+    await on.execute(sql`set statement_timeout = '600s'`);
+    await removeShaped();
+    // The test drops the dated indexes; whatever runs next on this database finds them as setup leaves them.
+    await ensureDatedIndexes(on, { concurrently: false });
+    await own.end({ timeout: 5 });
+  }, 900_000);
+
+  // An excluded word that leaves no letter or a few, in every order, beside the dated questions.
+  const QUESTIONS: ReadonlyArray<readonly [string, string, readonly string[]]> = [
+    ["FIRSTBOX", FIRSTBOX, ["quetzal", "lorem", "quetzal notes", "lorem -ipsum", "quetzal -notes", "quetzal -lorem", "lorem -veil"]],
+    ["SPARSE", SPARSE, ["zorilla", "zorilla -seen", "lorem -ipsum", "item -body"]],
+    ["WALKS", WALKS, ["alpha", "beta", "gamma", "delta", "qwyxz", "lph", "alpah", "alpha -gamma"]],
+    ["KIWI", KIWI, ["kiwi", "kiw", "kiwii", "kiwi notes", "kiwi lor", "lorem kiw", "kiwi -zebra", "kiwi -lorem", "item -body"]],
+  ];
+  const ORDERS = [["relevance", 3], ["date_desc", 3], ["date_asc", 2], ["sender", 2], ["mailbox", 2]] as const;
+  type Reading = { answer: string; buffers: number };
+  /** One question's readings: each order's pages and the two counts, on a new handle and service. */
+  const readingsOf = async (acct: string, q: string): Promise<Map<string, Reading>> => {
+    const svc = new SearchService();
+    const at: ServiceContext = { db: wrap(brandDialect(drizzle(own, { schema }), "pg")), accountId: acct, userId: null, now: () => NOW, requestId: "search-budget-month" };
+    await svc.search(at, { q, parts: "page" });
+    const out = new Map<string, Reading>();
+    for (const [sort, pages] of ORDERS) {
+      let cursor: string | undefined;
+      for (let p = 1; p <= pages; p++) {
+        const { out: r, buffers } = await readsOf(on, seen, () => svc.search(at, { q, parts: "page", sort, ...(cursor ? { cursor } : {}) }));
+        out.set(`${sort} ${p}`, { answer: JSON.stringify({ tier: r.tier, ids: r.items.map((m) => m.id), next: r.nextCursor, bounded: r.bounded }), buffers });
+        cursor = r.nextCursor ?? undefined;
+        if (!cursor) break;
+      }
+    }
+    for (const parts of ["estimate", "summary"] as const) {
+      const { out: r, buffers } = await readsOf(on, seen, () => svc.search(at, { q, parts }));
+      out.set(parts, { answer: JSON.stringify({ tier: r.tier, total: r.total, exact: r.totalExact, facets: r.facets }), buffers });
+    }
+    return out;
+  };
+
+  it("every answer read by month is 0.30.19's own, and reads at most the buffers it reads there", async () => {
+    const dated = new Map<string, Map<string, Reading>>();
+    for (const [, acct, qs] of QUESTIONS) for (const q of qs) dated.set(`${acct} ${q}`, await readingsOf(acct, q));
+    for (const spec of DATED_INDEX_SPECS) await on.execute(sql.raw(`drop index if exists "${spec.name}"`));
+    const wrong: string[] = [];
+    for (const [name, acct, qs] of QUESTIONS) {
+      for (const q of qs) {
+        const was = await readingsOf(acct, q);
+        const now = dated.get(`${acct} ${q}`)!;
+        console.log(`search-budget by month ${name} "${q}" (by month/0.30.19): ${[...was].map(([k, w]) => `${k} ${now.get(k)?.buffers ?? "-"}/${w.buffers}`).join(", ")}`);
+        for (const k of new Set([...was.keys(), ...now.keys()])) {
+          const w = was.get(k);
+          const n = now.get(k);
+          if (w === undefined || n === undefined || n.answer !== w.answer) wrong.push(`${name} "${q}" ${k}: not 0.30.19's answer`);
+          else if (n.buffers > w.buffers) wrong.push(`${name} "${q}" ${k}: ${n.buffers} buffers, 0.30.19 ${w.buffers}`);
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
+  }, 1_800_000);
 });

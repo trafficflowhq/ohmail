@@ -617,5 +617,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "INSERT INTO message_people_fts(rowid, people) SELECT rowid, people FROM (SELECT m.rowid AS rowid, substr(trim(\n    coalesce(m.from_name, '') || ' ' || m.from_address || ' ' ||\n    coalesce((SELECT group_concat(coalesce(json_extract(e.value, '$.name'), '') || ' ' || coalesce(json_extract(e.value, '$.address'), ''), ' ')\n      FROM json_each(CASE WHEN json_valid(m.to_addresses) THEN m.to_addresses ELSE '[]' END) e WHERE e.type = 'object'), '') || ' ' ||\n    coalesce((SELECT group_concat(coalesce(json_extract(e.value, '$.name'), '') || ' ' || coalesce(json_extract(e.value, '$.address'), ''), ' ')\n      FROM json_each(CASE WHEN json_valid(m.cc_addresses) THEN m.cc_addresses ELSE '[]' END) e WHERE e.type = 'object'), '')), 1, 16384) AS people\n  FROM message_search s JOIN messages m ON m.id = s.message_id) WHERE people <> '';",
       "INSERT INTO message_files_fts(rowid, files) SELECT m.rowid, substr(group_concat(a.filename, ' '), 1, 16384)\n  FROM message_search s JOIN messages m ON m.id = s.message_id\n  JOIN attachments a ON a.account_id = s.account_id AND a.message_id = s.message_id\n  WHERE a.filename IS NOT NULL GROUP BY m.rowid;"
     ]
+  },
+  {
+    "name": "0174_search_dated.sql",
+    "statements": [
+      "ALTER TABLE \"message_search\" ADD COLUMN \"search_week\" integer;",
+      "ALTER TABLE \"account_settings\" ADD COLUMN \"search_dated_at\" integer;"
+    ]
   }
 ] as const;

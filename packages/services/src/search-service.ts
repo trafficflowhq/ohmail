@@ -3,7 +3,10 @@ import { exactAsked, positiveText, showSimilar, substringOpen, type SearchTier }
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
 import { accountSettings, messageSearch, messages, readFlightOf } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
-import { boolLiteral, dialect, pgOnly, queryOperandsOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
+import {
+  boolLiteral, datedAccount, datedMonths, datedRead, datedShared, dialect, monthIndexOf,
+  monthStartOf, pgOnly, queryOperandsOf, type DatedBranch, type Dialect, type SearchArm,
+} from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
@@ -90,6 +93,8 @@ const SEARCH_SET_DATED_CUTS = 4;
  * walked letter is a fraction of a microsecond off the index, a member's lookup a few.
  */
 const SEARCH_SET_WALK_FACTOR = 20;
+/** A trigram arm read by month is read whole with up to 8 cuts of matches: a month of a long text's trigrams costs about 150 buffers. */
+const DATED_TRIGRAM_REACH = 8;
 /** How many senders the sender facet returns. */
 const SENDER_FACET_LIMIT = 10;
 /**
@@ -340,16 +345,24 @@ function rowsOf<T>(result: unknown): T[] {
  */
 const markerWritten = new WeakMap<object, Set<string>>();
 const MARKER_MEMO_MAX = 10_000;
+/** Accounts whose dates mark (mail 0174, written once, never cleared) this handle has read as written. */
+const datedWritten = new WeakMap<object, Set<string>>();
 /** The backfill's progress as this handle last read it, per account: a count reads it again after this. */
 const progressRead = new WeakMap<object, Map<string, { at: number; p: { done: number; total: number } }>>();
 const INDEX_PROGRESS_FRESH_MS = 30_000;
 
-// pg_trgm and the word index are properties of the physical database, not the request: asked once
-// per handle, and a "no" to either asked again after a while (`storeProbe`), so a later install is seen.
+// pg_trgm, the word index and the dated indexes are properties of the physical database, not the request:
+// asked once per handle, and a "no" to any asked again after a while (`storeProbe`), so a later build is seen.
 const trgmProbe = storeProbe();
-const indexFacts = new WeakMap<object, { readonly trigram: boolean; readonly words: boolean }>();
-const NO_INDEXES = { trigram: false, words: false } as const;
-function storeIndexes(db: Db): Promise<{ readonly trigram: boolean; readonly words: boolean }> {
+interface IndexFacts { readonly trigram: boolean; readonly words: boolean; readonly dated: boolean }
+const indexFacts = new WeakMap<object, IndexFacts>();
+const NO_INDEXES: IndexFacts = { trigram: false, words: false, dated: false };
+/** Mail 0174's dated indexes, each of which the dated reads may take. */
+const DATED_INDEXES = ["message_search_dated_words_idx", "message_search_dated_terms_trgm_idx",
+  "message_search_dated_head_terms_trgm_idx", "message_search_dated_names_trgm_idx"] as const;
+const validIndexes = (names: readonly string[]): SQL => sql.raw(`((select count(*) from pg_index x where x.indexrelid in (${
+  names.map((n) => `to_regclass('public.${n}')`).join(", ")}) and x.indisvalid and x.indisready) = ${names.length})`);
+function storeIndexes(db: Db): Promise<IndexFacts> {
   // ASKED ONLY OF A STORE THAT COULD ANSWER. `to_regprocedure` is a server function, so composing
   // this for the device store would not return `false` — it would fail to parse, during a search.
   // The seam puts this probe in the caller by contract, because one dialect runs against a
@@ -367,12 +380,13 @@ function storeIndexes(db: Db): Promise<{ readonly trigram: boolean; readonly wor
     // scoped-by: reads a Postgres catalog only — an extension and an index probe, no account rows
     db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as trigram,
         exists (select 1 from pg_index x where x.indexrelid = to_regclass('public.message_search_words_idx')
-          and x.indisvalid and x.indisready) as words`))
+          and x.indisvalid and x.indisready) as words,
+        ${validIndexes(DATED_INDEXES)} as dated`))
       .then((r) => {
-        const row = rowsOf<{ trigram: boolean; words: boolean }>(r)[0];
-        const facts = { trigram: Boolean(row?.trigram), words: Boolean(row?.words) };
+        const row = rowsOf<{ trigram: boolean; words: boolean; dated: boolean }>(r)[0];
+        const facts = { trigram: Boolean(row?.trigram), words: Boolean(row?.words), dated: Boolean(row?.dated) };
         indexFacts.set(key, facts);
-        return facts.trigram && facts.words;
+        return facts.trigram && facts.words && facts.dated;
       })).then(() => indexFacts.get(key) ?? NO_INDEXES);
 }
 
@@ -440,10 +454,11 @@ const folderWheres = new WeakSet<SQL>();
 
 /**
  * What the store says before a search composes its arms: the backfill marker, pg_trgm, the
- * account-keyed word index (`message_search_words_idx`), and whether the account has any search
- * document yet (`docs`, read while the marker is unwritten).
+ * account-keyed word index (`message_search_words_idx`), whether the account has any search
+ * document yet (`docs`, read while the marker is unwritten), and whether its documents are read by
+ * month (`dated`: its `search_dated_at` written and mail 0174's indexes valid, on the server).
  */
-interface StoreFacts { readonly built: boolean; readonly trigram: boolean; readonly words: boolean; readonly docs: boolean }
+interface StoreFacts { readonly built: boolean; readonly trigram: boolean; readonly words: boolean; readonly docs: boolean; readonly dated: boolean }
 
 /** One branch of an arm: an index-served predicate and the rank the arm orders by. */
 interface Branch {
@@ -489,6 +504,28 @@ interface Arm {
    * text arm's, read off the index there; a deeper walk asks every letter's body for a page at most.
    */
   readonly besideText?: true;
+  /**
+   * Read by month on the server ({@link datedRead}), with no filter: its branches as the dated indexes answer
+   * them. Never beside an excluded word, where every arm reads as it does without months.
+   */
+  readonly dated?: DatedArm;
+}
+
+/** An arm's dated read: the account, the months it starts below, and its branches. */
+interface DatedArm {
+  readonly account: string;
+  /** The newest letter a read of the account's months starts at is dated before this. */
+  readonly top: Date;
+  readonly branches: readonly DatedBranch[];
+  /** Its branches as the reads without months read them, as a recency arm's: what a whole count before any month reads. */
+  readonly plain: readonly DatedBranch[];
+  /** Its relevance cut is its own read, as without months; only the date orders read it by month. */
+  readonly alone?: true;
+  /**
+   * Its splits read words as the starts of longer ones: a month's read of them collects every such word's
+   * documents, so no order reads it by month.
+   */
+  readonly prefixes?: true;
 }
 
 /** A relevance cursor: the last row's fused score, date and id, and the tier it belongs to. */
@@ -531,6 +568,15 @@ function millisOf(v: unknown): number | null {
   if (typeof v === "number") return v;
   const n = Date.parse(String(v));
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * A read of the account's months starts at the newest letter dated before the month after next, on the
+ * request's clock or the host's, whichever is later: no document's month is past the month after the one
+ * it was written in (a letter dated later sits in the ahead bucket).
+ */
+function datedTopOf(now: Date): Date {
+  return monthStartOf(Math.max(monthIndexOf(now), monthIndexOf(new Date())) + 2);
 }
 
 /** Strictly after `(date, id)` under `date desc nulls last, id desc` — the History keyset. */
@@ -626,6 +672,12 @@ export class SearchService {
     // A word branch's own documents on the account-keyed word index, where the server has it.
     const wordRead = d.name === "pg" && documents && store.words && this.opts.localStore !== true ? d.search.wordKey(ctx.accountId) ?? account : account;
     const ownWords = (b: SearchArm): Branch => own(b, wordRead);
+    // Read by month: the server's built documents, their months all written (mail 0174).
+    const datedAt = store.dated && legacy === null && documents && d.name === "pg" && this.opts.localStore !== true
+      ? datedAccount(ctx.accountId) : null;
+    const top = datedTopOf(ctx.now());
+    // The closest words are read without months in every order: its walk asks the newest letters a cheap
+    // condition before each similarity, where a month's read computes one for every candidate of the month.
     if (tier === "similar") {
       // A guess never holds a word the reader excluded, anywhere in the letter.
       const held = (b: SearchArm, none: SQL | undefined): SearchArm => (none ? { pred: sql`(${b.pred} and ${none})`, rank: b.rank } : b);
@@ -655,6 +707,8 @@ export class SearchService {
     // the body), elsewhere in the arm's predicate. There the text arm reads, per `or` group, what the
     // text index answers whole (`alone`), and a group of several operands also as its letter, held.
     const keep = typed.excluded;
+    // Read by month only with no excluded word: beside one every arm and order reads as it does without months.
+    const monthly = keep === undefined ? datedAt : null;
     const late = keep !== undefined && d.name === "pg" && documents && !local;
     const held = (b: Branch): Branch => (keep === undefined ? b : late ? { ...b, after: keep }
       : { ...b, pred: sql`(${b.pred} and ${keep})`, ...(b.raw ? { raw: sql`(${b.raw} and ${keep})` } : {}) });
@@ -673,8 +727,26 @@ export class SearchService {
     // arm's cut. Its set leads with the account.
     const inside = substringOpen(q);
     const named = inside ? d.search.names(pos) : null;
+    // A dated read takes the typed text as a run-time value: its key decides the index, so the planner
+    // neither prices the text nor reads a part off an index that holds no account. Each branch's twin.
+    const opaque = new Map<SQL, SQL>();
+    const twin = (a: SQL | undefined, b: SQL | undefined): void => { if (a !== undefined && b !== undefined) opaque.set(a, b); };
+    // A whole-letter predicate (each operand in head or text) is read as its splits, each one index read;
+    // one with no splits (too many operands, or a quoted one) is not read by month.
+    const splits = new Map<SQL, readonly SQL[] | undefined>();
+    if (monthly !== null) {
+      const w = d.search.words(wq, { dated: true });
+      twin(words.head.pred, w.head.pred); twin(words.head.rank, w.head.rank); twin(words.text.pred, w.text.pred);
+      if (words.across === true) splits.set(words.text.pred, w.terms);
+      if (named !== null) twin(named.pred, d.search.names(pos, { dated: true })?.pred);
+    }
     const names = named === null ? [] : [keyed(held(own(named)), sets([sql`(s.account_id = ${ctx.accountId} and ${named.pred})`]))];
     const part = exactAsked(q) ? null : d.search.partWords(pos);
+    if (part !== null && monthly !== null) {
+      const p = d.search.partWords(pos, { dated: true });
+      twin(part.head.pred, p?.head.pred); twin(part.text.pred, p?.text.pred);
+      if (part.across === true) splits.set(part.text.pred, p?.terms);
+    }
     const out: Arm[] = [
       { name: "head", ranked: true, branches: [held(ownWords(words.head)), ...(legacy ? [bare(legacy.words.head)] : [])] },
       {
@@ -708,16 +780,35 @@ export class SearchService {
       );
     }
     if (inside) {
+      const substring = d.search.substring(pos, { trigram });
+      if (monthly !== null) opaque.set(substring.pred, d.search.substring(pos, { trigram, dated: true }).pred);
       out.push({
         name: "substring",
         ranked: false,
-        branches: [held(own(d.search.substring(pos, { trigram }))), ...(part === null && typedRead ? names : []), ...(legacy?.substring ?? []).map(bare)],
+        branches: [held(own(substring)), ...(part === null && typedRead ? names : []), ...(legacy?.substring ?? []).map(bare)],
       });
     }
     // Every branch is then the document's own (`own`), so the bounded read can ask it by itself. An
     // arm with no branch matches nothing and is left out: an empty union is no statement.
-    return (local ? out.map((a) => ({ ...a, local: { account: ctx.accountId }, bounded: false })) : read(out))
-      .filter((a) => a.branches.length > 0);
+    if (local) return out.map((a) => ({ ...a, local: { account: ctx.accountId }, bounded: false })).filter((a) => a.branches.length > 0);
+    // A whole-letter branch with no splits is not read by month: the arms are read as before.
+    const unsplit = out.some((a) => a.branches.some((b) => splits.has(b.raw ?? b.pred) && splits.get(b.raw ?? b.pred) === undefined));
+    if (monthly === null || unsplit) return read(out).filter((a) => a.branches.length > 0);
+    return out.filter((a) => a.branches.length > 0).map((a) => {
+      const branches = a.branches.flatMap((b) => {
+        const raw = b.raw ?? b.pred;
+        const rank = a.ranked ? opaque.get(b.rank) ?? b.rank : sql`0`;
+        return (splits.get(raw) ?? [opaque.get(raw) ?? raw]).map((term) => ({ raw: term, rank }));
+      });
+      // The relevance cut keeps its read without months where a month's read could cost more or answer otherwise: the
+      // ranked arm (it ranks its newest window, where a month's read collects every match of the month), and words
+      // across the letter's parts (every month is a read of each split, 2^n of them, and the part arm's each a prefix
+      // read of every longer word in the store).
+      const prefixes = a.name === "part" && part?.across === true;
+      const alone = a.ranked || prefixes || (a.name === "text" && across);
+      const plain = a.branches.map((b) => ({ raw: b.pred, rank: sql`0` }));
+      return { ...a, dated: { account: monthly, top, branches, plain, ...(alone ? { alone } : {}), ...(prefixes ? { prefixes } : {}) } };
+    });
   }
 
   /**
@@ -725,7 +816,7 @@ export class SearchService {
    * ranked arm (then ordered by rank), at K otherwise — so no branch reads more than its cut off
    * an index; the branches are merged and the arm numbered by its own order.
    */
-  private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL, spare?: SQL): SQL {
+  private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL, spare?: SQL, dated?: SQL): SQL {
     const cut = arm.ranked ? window : k;
     const read = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${arm.ranked ? b.rank : sql`0`} as rank
       ${this.from} where ${where} and ${b.pred}
@@ -737,7 +828,9 @@ export class SearchService {
       ? sql`(select case when ${this.keeps(b.after, sql`c.id`)} then c.id end as id, c.date, c.rank, c.x
           from (select r.*, case when count(*) over () >= ${cut} then 1 else 0 end as x from ${read(b)} r) c)`
       : capped ? sql`(select r.*, 0 as x from ${read(b)} r)` : read(b));
-    const merged = arm.local && walk ? this.localRead(where, arm, k, cut, walk)
+    // By month ({@link fusedArms}' shared read): the arm's newest `cut` letters, exactly, or cut.
+    const merged = dated !== undefined ? dated
+      : arm.local && walk ? this.localRead(where, arm, k, cut, walk)
       : arm.typo ? this.typoRead(where, arm.branches[0]!, arm.typo, k)
       : arm.bounded && !(arm.keyedOnly && filteredWheres.has(where)) ? this.boundedRead(where, arm.branches, k, arm.key, spare)
       : arm.branches.length === 1 ? branch(arm.branches[0]!)
@@ -1023,11 +1116,27 @@ export class SearchService {
     // A local arm's rows of the one shared walk ({@link sharedWalk}), newest first, at its cut.
     const walkOf = (i: number): SQL => sql`select id, date, ${sql.raw("r" + String(i))} as rank from ${walkName}
       where ${sql.raw("f" + String(i))} order by date desc nulls last, id desc limit ${arms[i]!.ranked ? window : k}`;
+    // With no filter: the tier's dated arms read by month together ({@link datedShared}), over the account's
+    // months with mail, newest first, each to its cut (a ranked one's window, as {@link armSql}'s). Any other
+    // arm reads as before.
+    const datedAt = filteredWheres.has(where) ? [] : arms.flatMap((x, i) => (x.dated === undefined || x.dated.alone ? [] : [i]));
+    const dated = datedAt.length === 0 ? undefined : datedAt.map((i) => arms[i]!.dated!);
+    const shared = sql.raw(pre + "dx");
+    const months = pre + "dm";
+    const cutOf = (x: Arm): number => (x.ranked ? window : k);
+    // An arm's newest letters of the shared read, exactly. A dated arm is never `capped`: it holds no excluded word.
+    const datedOf = (i: number): SQL | undefined => {
+      const at = datedAt.indexOf(i);
+      if (at < 0) return undefined;
+      const bit = sql.raw(String(1 << at));
+      return sql`(select id, date, r${sql.raw(String(at))} as rank from ${shared} where (mask & ${bit}) <> 0
+          order by date desc nulls last, id desc limit ${sql.raw(String(cutOf(arms[i]!)))})`;
+    };
     const a = (i: number): SQL => sql.raw(pre + "a" + String(i));
     // A part arm beside the text arm walks on only while the text arm, named before it, is short of K.
     const text = arms.findIndex((x) => x.name === "text");
     const spare = text < 0 ? undefined : sql`(select count(id) from ${a(text)}) >= ${k}`;
-    const armSqls = arms.map((x, i) => this.armSql(where, x, k, window, x.local ? walkOf(i) : undefined, x.besideText && i > text ? spare : undefined));
+    const armSqls = arms.map((x, i) => this.armSql(where, x, k, window, x.local ? walkOf(i) : undefined, x.besideText && i > text ? spare : undefined, datedOf(i)));
     const sizeNames = armSqls.map((_, i) => pre + "n" + String(i));
     // A gated arm is counted only when its gate holds, so a count never starts the arm either.
     // A local arm whose walk fell short counts as cut ({@link localRead}'s `x`), as does an arm an
@@ -1039,6 +1148,17 @@ export class SearchService {
     return {
       k,
       named: sql.join([
+        ...(dated === undefined ? [] : [
+          sql`${sql.raw(months)} as ${datedMonths({ account: dated[0]!.account, dir: "desc", first: sql`m.date < ${d.ts(dated[0]!.top)}` })}`,
+          sql`${shared} as materialized (${datedShared({
+            account: dated[0]!.account, where, months,
+            arms: datedAt.map((i) => ({
+              branches: arms[i]!.dated!.branches, k: cutOf(arms[i]!),
+              // Without months the substring arm's matches are read off its index at once: read whole first where they are few.
+              ...(arms[i]!.name === "substring" ? { reach: DATED_TRIGRAM_REACH, wholeFrom: -1, plain: arms[i]!.dated!.plain } : {}),
+            })),
+          })})`,
+        ]),
         ...(walking ? [sql`${walkName} as (${this.sharedWalk(where, arms, k)})`] : []),
         ...armSqls.map((x, i) => sql`${a(i)} as (${x})`),
       ], sql`, `),
@@ -1151,7 +1271,9 @@ export class SearchService {
   private async cutEmpty(
     ctx: ServiceContext, db: unknown, d: Dialect, q: string, where: SQL, limit: number, built: StoreFacts,
   ): Promise<boolean> {
-    const e = this.fusedArms(d, where, this.arms(ctx, d, q, "exact", built), "exact", limit);
+    // Only an arm cut apart from its rows can answer, and none read by month is: the statement without months.
+    const arms = this.arms(ctx, d, q, "exact", built).map(({ dated: _byMonth, ...a }) => a);
+    const e = this.fusedArms(d, where, arms, "exact", limit);
     const [row] = await d.exec(db, sql`with ${e.named} select case when ${e.cutRow} then 1 else 0 end as c`);
     return Number(row?.[0] ?? 0) === 1;
   }
@@ -1201,12 +1323,14 @@ export class SearchService {
       throw new ServiceError("validation_failed", 400, "cursor belongs to another order");
     }
     const c = cursor as OrderedCursor | null;
-    // Newest first reads within a bound on the server where it lists exactly the rows every match
-    // read whole lists: a query with no excluded word ({@link newestPage}). Every other order, and
-    // newest first beside an excluded word, reads every match ({@link orderedPage}).
-    const { statement, key } = sort === "date_desc" && this.bounds(d) && !arms.some((a) => SearchService.capped(a))
-      ? this.newestPage(d, where, this.whereSql(d, ctx.accountId, {}), arms, limit, c)
-      : this.orderedPage(d, where, arms, sort, limit, c);
+    // Oldest first by month where the account's documents are dated, nothing is filtered and no word is excluded
+    // ({@link datedOldestPage}). Else newest first reads within a bound on the server where it lists exactly the
+    // rows every match read whole lists: a query with no excluded word ({@link newestPage}). Every other order,
+    // and newest first beside an excluded word, reads every match ({@link orderedPage}).
+    const { statement, key } = this.datedOldestPage(d, where, arms, sort, limit, c)
+      ?? (sort === "date_desc" && this.bounds(d) && !arms.some((a) => SearchService.capped(a))
+        ? this.newestPage(d, where, this.whereSql(d, ctx.accountId, {}), arms, limit, c)
+        : this.orderedPage(d, where, arms, sort, limit, c));
     const order = sort === "date_asc" ? sql`${messages.date} asc nulls last, ${messages.id} asc`
       : key === null ? sql`${messages.date} desc nulls last, ${messages.id} desc`
       : sql`p.k asc, ${messages.date} desc nulls last, ${messages.id} desc`;
@@ -1267,6 +1391,36 @@ export class SearchService {
       statement: sql`with ow as (select w.id as id, w.date as date from (${walked}) w where ${hit} order by ${dir} limit ${need}), ${set.named}${sql.join(reads, sql``)},
         found as (select id, date from ow union select id, date from ur where not (${short} and ${set.over})${sql.join(rows, sql``)})
         select f.id as id, f.date as date, null as k from (select id, date from found order by ${dir} limit ${need}) f`,
+    };
+  }
+
+  /**
+   * OLDEST FIRST BY MONTH, for an account whose documents are dated, a search with no filter and no excluded
+   * word, else `null`: the rows {@link orderedPage} lists, one dated read of every branch ({@link datedRead}) past
+   * the cursor, oldest month first, which counts and reads every match off the indexes the reads without months take, before any month
+   * where there are at most {@link SUMMARY_EXACT_CAP} (without months every match is read). Not where words across the
+   * letter's parts are also read as the starts of longer ones (a month's read of those is a read of every such
+   * word in the store). Every other order reads its statement without months: newest first's walk stops at the newest
+   * matches, cheaper than a month's index read a branch where a month holds a few dozen letters.
+   */
+  private datedOldestPage(
+    d: Dialect, where: SQL, arms: readonly Arm[], sort: Exclude<SearchSort, "relevance">, limit: number, c: OrderedCursor | null,
+  ): { statement: SQL; key: null } | null {
+    if (sort !== "date_asc") return null;
+    const dated = arms.map((a) => a.dated);
+    if (filteredWheres.has(where) || dated.length === 0 || dated.some((x) => x === undefined || x.prefixes)) return null;
+    const own = dated as DatedArm[];
+    const { account } = own[0]!;
+    // Past a cursor among the undated letters no month is read: they are past every step.
+    const first = c === null ? sql`m.date is not null` : c.d === null ? sql`false` : sql`m.date >= ${d.ts(new Date(c.d))}`;
+    const after = c === null ? undefined : afterDateAsc(d, c.d, c.i);
+    return {
+      key: null,
+      statement: sql`with om as ${datedMonths({ account, dir: "asc", first })}
+        select r.id as id, r.date as date, null as k from ${datedRead({
+          account, branches: own.flatMap((x) => x.branches.map((b) => ({ ...b, rank: sql`0` }))), where, k: limit + 1, dir: "asc", months: "om",
+          whole: SUMMARY_EXACT_CAP, plain: own.flatMap((x) => x.plain), ...(after ? { after } : {}),
+        })} r`,
     };
   }
 
@@ -1660,25 +1814,40 @@ export class SearchService {
     const sup = ctx.searchSupersede;
     const gate = sup === undefined ? null : followUp ? () => sup.turn() : async () => sup.check();
     // Before the transaction: the probe runs on the handle, and memoized, once per handle.
-    const { trigram, words } = await storeIndexes(ctx.db);
+    const { trigram, words, dated: datedIndexes } = await storeIndexes(ctx.db);
     const setup = d.search.searchSession({
       typoThreshold: FUZZY_THRESHOLD, preferIndexes: true, ...(box ? { statementTimeoutMs: SUMMARY_EXACT_TIMEOUT_MS } : {}),
     });
     if (setup === null) {
       if (gate) await gate();
       const [built, open] = await Promise.all([searchIndexBuilt(ctx.db as never, ctx.accountId), storeStillImporting(ctx)]);
-      return covered(await fn(ctx.db, { built, trigram, words, docs: true }), open);
+      return covered(await fn(ctx.db, { built, trigram, words, docs: true, dated: false }), open);
     }
     const handle = ctx.db as unknown as object;
     const known = markerWritten.get(handle) ?? new Set<string>();
     markerWritten.set(handle, known);
+    const datedKnown = datedWritten.get(handle) ?? new Set<string>();
+    datedWritten.set(handle, datedKnown);
+    const remember = (set: Set<string>): void => {
+      if (set.size >= MARKER_MEMO_MAX) set.clear();
+      set.add(ctx.accountId);
+    };
+    // Read by month only on the server's own store, its indexes built.
+    const datedStore = datedIndexes && this.bounds(d);
     const tx = txOf(ctx);
     if (known.has(ctx.accountId)) {
-      // The warm settings carry no parameter, so the import rides them with the account inlined.
-      const warm = sql`select ${importOpen(d, ctx.accountId, ctx.now(), { inline: true })} as importing, s.* from (${setup}) s`;
+      const dated = datedStore && datedKnown.has(ctx.accountId);
+      // The warm settings carry no parameter, so the import rides them with the account inlined, and
+      // so does the dates mark until it is read as written: this answer reads without months.
+      const account = datedAccount(ctx.accountId);
+      const asked = !dated && datedStore && account !== null;
+      const datedMark = asked ? sql`, exists (select 1 from ${accountSettings} where ${accountSettings.accountId} = ${sql.raw(`'${account}'`)}
+        and ${accountSettings.searchDatedAt} is not null) as dated` : sql``;
+      const warm = sql`select ${importOpen(d, ctx.accountId, ctx.now(), { inline: true })} as importing${datedMark}, s.* from (${setup}) s`;
       return tx(async (t) => {
         if (gate) await gate();
-        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram, words, docs: true }));
+        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram, words, docs: true, dated }));
+        if (asked && truthy(settings[0]?.[1])) remember(datedKnown);
         return covered(out, truthy(settings[0]?.[0]));
       });
     }
@@ -1686,15 +1855,17 @@ export class SearchService {
     const marker = sql`exists (select 1 from ${accountSettings}
       where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchIndexBuiltAt} is not null)`;
     const docs = sql`exists (select 1 from ${messageSearch} where ${messageSearch.accountId} = ${ctx.accountId})`;
+    const datedMark = sql`exists (select 1 from ${accountSettings}
+      where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchDatedAt} is not null)`;
     return tx(async (t) => {
       if (gate) await gate();
-      const [row] = await d.exec(t, sql`select ${marker} as built, ${importOpen(d, ctx.accountId, ctx.now())} as importing, ${docs} as docs, s.* from (${setup}) s`);
+      const [row] = await d.exec(t, sql`select ${marker} as built, ${importOpen(d, ctx.accountId, ctx.now())} as importing, ${docs} as docs,
+        ${datedMark} as dated, s.* from (${setup}) s`);
       const built = truthy(row?.[0]);
-      if (built) {
-        if (known.size >= MARKER_MEMO_MAX) known.clear();
-        known.add(ctx.accountId);
-      }
-      return covered(await fn(t, { built, trigram, words, docs: truthy(row?.[2]) }), truthy(row?.[1]));
+      if (built) remember(known);
+      const dated = built && truthy(row?.[3]);
+      if (dated) remember(datedKnown);
+      return covered(await fn(t, { built, trigram, words, docs: truthy(row?.[2]), dated: dated && datedStore }), truthy(row?.[1]));
     });
   }
 

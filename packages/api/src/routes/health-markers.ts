@@ -878,6 +878,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0172_html_words_backfill — the html-words backfill's stamp and cursor, one facet. LOUD: the
   // settings reads select `account_settings` whole. Deploy order migration → API → worker.
   ["account_settings", "html_words_backfill_at"],
+  // mail 0174_search_dated — a search document's month, and the account's mark that all have it, two
+  // facets. LOUD: every document writer names the month, and the settings reads select
+  // `account_settings` whole. Deploy order migration → setup → API → worker.
+  ["message_search", "search_week"],
+  ["account_settings", "search_dated_at"],
 ] as const;
 
 /**
@@ -1265,9 +1270,12 @@ export const MAIL_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
   // says the migration itself ran: without it the column fills no further and the poll under-counts.
   ["folder_state_outstanding_account", "NEW.outstanding_account_id := (SELECT m.account_id FROM public.messages m WHERE m.id = NEW.message_id)"],
   // Mail 0163_folder_state_fresh_intent — a new filing's schedule reset. Without it a message filed
-  // somewhere new keeps the old refusal's sleep and reason. The newest entry: the sentence about
-  // the tag moves with it.
+  // somewhere new keeps the old refusal's sleep and reason.
   ["folder_state_fresh_intent", "NEW.last_error_class := NULL"],
+  // Mail 0174_search_dated — the month an older writer leaves out, filled on insert. Without it a
+  // document written by an API or worker still on the earlier build has no month, and the dated
+  // search reads past it. The newest entry: the sentence about the tag moves with it.
+  ["message_search_week_fill", "NEW.search_week := (SELECT message_search_week(m.date, now()) FROM public.messages m WHERE m.id = NEW.message_id)"],
 ];
 
 /**
@@ -1307,7 +1315,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0172_html_words_backfill";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0174_search_dated";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

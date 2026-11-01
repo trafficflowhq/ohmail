@@ -76,6 +76,19 @@ describe("ingest writes the search document with the body (real Postgres)", () =
     expect(d?.terms).toContain("claims@axa.example");
   });
 
+  it("the document carries its letter's month from the stored date: its UTC month, -1 with no Date, -2 dated past next month", async () => {
+    const dated = (date: string | null): Buffer => Buffer.from(eml(randomUUID(), "the marzipan order").toString()
+      .replace("Subject:", date === null ? "Subject:" : `Date: ${date}\r\nSubject:`));
+    const weekOf = async (id: string): Promise<{ week: number | null; month: number | null }> => ((await db.execute(sql`select s.search_week as week,
+      (extract(year from m.date at time zone 'UTC') * 12 + extract(month from m.date at time zone 'UTC') - 1)::int as month
+      from message_search s join messages m on m.id = s.message_id where s.message_id = ${id}`)) as unknown as Array<{ week: number | null; month: number | null }>)[0]!;
+    // 23:30 at -03:00 on 31 October is 02:30 on 1 November in UTC: November, the stored date's month.
+    expect(await weekOf(await ingest(dated("Sat, 31 Oct 2026 23:30:00 -0300"), UNMETERED_STORAGE_CAP))).toEqual({ week: 2026 * 12 + 10, month: 2026 * 12 + 10 });
+    expect((await weekOf(await ingest(dated("Fri, 1 Jan 2100 10:00:00 +0000"), UNMETERED_STORAGE_CAP))).week).toBe(-2);
+    const none = await weekOf(await ingest(dated(null), UNMETERED_STORAGE_CAP));
+    expect(none.week).toBe(none.month ?? -1);
+  });
+
   it("AT THE CAP: the body is withheld, the document still carries the words", async () => {
     // The account already stands far past a 10-byte cap, so the arriving body cannot be made room
     // for and is withheld — the cap's hard edge.
