@@ -286,7 +286,14 @@
     "badToken": "Pairing codes work once and expire. Show a fresh QR code in ohmail on your computer and scan it again.",
     "footer": "ohmail · your mail, on your own computer",
     "outboxNotKept": "Changes made while your computer is out of reach are not kept on this device — this browser refuses to store them. Keep this page open until they are sent.",
-    "outboxNotKeptDismiss": "Dismiss"
+    "outboxNotKeptDismiss": "Dismiss",
+    "signOut": "Sign out",
+    "signOutBody": "Signs this browser out of your computer. Your mail stays on your computer.",
+    "signOutConfirm": "Sign this browser out? Changes not yet sent from here and unfinished drafts in this browser are discarded.",
+    "signOutCancel": "Cancel",
+    "signedOutBody": "You signed this browser out, and your computer ended its session. Scan a fresh QR code from ohmail on that computer to pair again.",
+    "signedOutOwedBody": "You signed this browser out. Your computer could not be reached, so it is told the next time this page reaches it. Scan a fresh QR code from ohmail on that computer to pair again.",
+    "signedOutNotToldBody": "You signed this browser out, but your computer could not be told and this browser could not keep a note to tell it later. To end the session there, remove this browser from the devices in ohmail on your computer."
   },
   "invites": {
     "title": "Invites",
@@ -361,6 +368,9 @@
     "stepUpVerify": "Verify code",
     "stepUpTotpToggle": "Use a one-time code instead",
     "stepUpPasskeyToggle": "Use a passkey instead",
+    "stepUpRecoveryToggle": "Use a recovery code instead",
+    "stepUpRecoveryLabel": "One of the recovery codes you saved",
+    "stepUpBadRecoveryCode": "That recovery code didn't work. Each code works once — try another one from your list.",
     "webGroup": "{count, plural, one {# other web session} other {# other web sessions}}",
     "webGroupMeta": "Browser sign-ins that aren't this one · last seen {seen}. Signing them out won't touch your paired devices.",
     "webGroupAction": "Sign out all",

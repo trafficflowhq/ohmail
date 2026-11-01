@@ -54,13 +54,14 @@ async function person(deps: ApiDeps, db: Db, clock: TestClock, email: string): P
 /** Password then TOTP, the browser's two presses; `cookie` is whatever the jar sends with them. */
 async function signIn(
   deps: ApiDeps, clock: TestClock, email: string, secret: string, cookie?: string, kind?: string,
+  extra: Record<string, unknown> = {},
 ): Promise<Response> {
   clock.advance(30_000);   // one TOTP step per verify: the step before this one is spent
   const login = await H(req("POST", "/auth/login", { cookie, body: JSON.stringify({ email, password: PW }) }), deps);
   expect(login.status, await login.clone().text()).toBe(200);
   const { loginToken } = await login.json() as { loginToken: string };
   return H(req("POST", "/auth/2fa/totp/verify", {
-    cookie, body: JSON.stringify({ loginToken, code: totpNow(secret, clock.now()), ...(kind ? { kind } : {}) }),
+    cookie, body: JSON.stringify({ loginToken, code: totpNow(secret, clock.now()), ...(kind ? { kind } : {}), ...extra }),
   }), deps);
 }
 
@@ -246,6 +247,58 @@ describe("a sign-in retires the family its jar's resume marker names", () => {
     clock.advance(ACCESS_LAPSED_MS);
     expect((await signIn(deps, clock, "legacy@x.example", secret, `tf_resume=${marker}`)).status).toBe(200);
     expect((await renew(deps, jar.tf_refresh!)).status).toBe(204);
+  });
+});
+
+/**
+ * A DESKTOP NAMES ITS PREVIOUS FAMILY. It signs in again only when it holds no session — after a
+ * sign-out the server never confirmed, or over a seal it cannot open — and that sign-in carries the
+ * digest of a refresh token of the family it held (`previousSession`). The mint ends that family when
+ * it is the signer's own desktop's and the new sign-in is a desktop's; anything else is ignored.
+ */
+describe("a desktop sign-in ends the family its install names", () => {
+  type Pair = { tokens: { accessToken: string; refreshToken: string } };
+  const renew = (deps: ApiDeps, refreshToken: string): Promise<Response> =>
+    H(req("POST", "/auth/refresh", { body: JSON.stringify({ refreshToken }) }), deps);
+  const desktop = async (
+    deps: ApiDeps, clock: TestClock, email: string, secret: string, extra: Record<string, unknown> = {},
+  ): Promise<string> => {
+    const res = await signIn(deps, clock, email, secret, undefined, "desktop-linux", extra);
+    expect(res.status, await res.clone().text()).toBe(200);
+    return setCookieMap(res).tf_refresh!;
+  };
+
+  it("a second desktop sign-in carrying the first one's digest: the first family is over", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const secret = await person(deps, db, clock, "desk@x.example");
+    const first = await desktop(deps, clock, "desk@x.example", secret);
+    const second = await desktop(deps, clock, "desk@x.example", secret, { previousSession: hashToken(first) });
+    const late = await renew(deps, first);
+    expect(`${late.status} ${await codeOf(late)}`, "the install's previous family still renews").toBe("401 refresh_revoked");
+    expect((await renew(deps, second)).status).toBe(200);
+  });
+
+  it("controls: another person's desktop, the signer's browser and phone, a malformed value, a web sign-in", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const secret = await person(deps, db, clock, "ctl@x.example");
+    const otherSecret = await person(deps, db, clock, "ctl-b@x.example");
+    const theirs = await desktop(deps, clock, "ctl-b@x.example", otherSecret);
+    const mine = await desktop(deps, clock, "ctl@x.example", secret);
+    const web = (await (await signIn({ ...deps, allowCookieAuth: false }, clock, "ctl@x.example", secret)).json() as Pair).tokens;
+    const minted = await H(req("POST", "/pair", {
+      bearer: web.accessToken, body: JSON.stringify({ grant: "device-pair", label: "Phone" }),
+    }), deps);
+    const phone = ((await (await H(req("POST", "/pair/redeem", {
+      body: JSON.stringify({ grant: "device-pair", token: ((await minted.json()) as { token: string }).token, kind: "mobile-android" }),
+    }), deps)).json()) as Pair).tokens;
+    for (const named of [hashToken(theirs), hashToken(web.refreshToken), hashToken(phone.refreshToken), "not-a-digest", 7]) {
+      await desktop(deps, clock, "ctl@x.example", secret, { previousSession: named });
+    }
+    const asWeb = await signIn(deps, clock, "ctl@x.example", secret, undefined, undefined, { previousSession: hashToken(mine) });
+    expect(asWeb.status).toBe(200);
+    for (const refresh of [theirs, web.refreshToken, phone.refreshToken, mine]) {
+      expect((await renew(deps, refresh)).status, "a family nobody named was ended").toBe(200);
+    }
   });
 });
 

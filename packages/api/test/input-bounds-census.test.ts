@@ -557,6 +557,7 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "POST /auth/2fa/totp/verify": { scalarsOnly: true },
   "POST /auth/2fa/recovery-codes/verify": { scalarsOnly: true },
   "POST /auth/step-up/totp": { scalarsOnly: true },
+  "POST /auth/step-up/recovery-code": { scalarsOnly: true },
   // A WebAuthn credential is a caller-chosen OBJECT, parsed by the authenticator library and
   // compared against a stored challenge. Nothing iterates it and nothing stores it by length.
   "POST /auth/2fa/webauthn/register/verify": { door: "an attestation blob, parsed once and compared to a stored challenge" },

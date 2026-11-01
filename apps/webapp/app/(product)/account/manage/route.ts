@@ -2,6 +2,7 @@ import { resolveApiOrigin, resolveInternalApiOrigin } from "../../../api-origin"
 import { SESSION_COOKIE } from "../../../session-gate";
 import { cookieFromJar } from "../../../shell/cookie-jar";
 import { localeFromCookieHeader } from "../../../shell/locale";
+import { readOwnerMarker } from "../../../shell/owner-cookie";
 import { LOGIN_FOR_MANAGE, manageHandoff } from "../../../manage-handoff";
 
 /**
@@ -27,13 +28,23 @@ function sessionToken(request: Request): string | null {
   return cookieFromJar(request.headers.get("cookie") ?? "", SESSION_COOKIE);
 }
 
+/** The edge gate never runs here, so its pending-sign-out branch is asked here. */
+function signOutPending(request: Request): boolean {
+  return readOwnerMarker(request.headers.get("cookie") ?? "").kind === "signed-out";
+}
+
+/** Nothing to mint for: no session, or one a sign-out has not finished with. */
+function toLogin(request: Request): boolean {
+  return sessionToken(request) === null || signOutPending(request);
+}
+
 export async function GET(request: Request): Promise<Response> {
-  const token = sessionToken(request);
   if (prefetch(request)) {
-    return token === null ? answer(307, LOGIN_FOR_MANAGE) : new Response(null, { status: 204, headers: NO_STORE });
+    return toLogin(request) ? answer(307, LOGIN_FOR_MANAGE) : new Response(null, { status: 204, headers: NO_STORE });
   }
   const handoff = await manageHandoff({
-    sessionToken: token,
+    sessionToken: sessionToken(request),
+    signOutPending: signOutPending(request),
     locale: localeFromCookieHeader(request.headers.get("cookie")),
     apiOrigin: SELF_HOST_BUILD
       ? resolveInternalApiOrigin(process.env.OHMAIL_INTERNAL_API_ORIGIN)
@@ -44,7 +55,7 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export function HEAD(request: Request): Response {
-  return sessionToken(request) === null
+  return toLogin(request)
     ? answer(307, LOGIN_FOR_MANAGE)
     : new Response(null, { status: 204, headers: NO_STORE });
 }

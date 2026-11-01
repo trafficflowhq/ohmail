@@ -36,7 +36,7 @@
  * window, and the legitimate retry rotates straight past it.
  */
 
-import { isCredentialRefusal, readRefreshAnswer } from "@ohmail/client-engine";
+import { isCredentialRefusal, isSessionRefusal, readRefreshAnswer } from "@ohmail/client-engine";
 import { durableIdbCommit, storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
 
 /** The wire pair the redeem and the refresh both answer. */
@@ -92,6 +92,43 @@ export const REFRESH_ATTEMPT_DB = "ohmail-host-session";
 const ATTEMPT_STORE = "attempt";
 const OWED_KEY = "owed";
 export const ATTEMPT_STORE_BUDGET_MS = 1_500;
+
+/**
+ * THE SIGN-OUTS THE COMPUTER WAS NOT TOLD: `[{ token, at }]`, a refresh token each — the only thing
+ * the refresh door's sign-out accepts. Written by a sign-out the door did not confirm, sent to
+ * `/auth/refresh/logout` at the next chance and never presented for a renewal; the constructor and
+ * `paired()` never read it. At most {@link OWED_SIGN_OUTS_MAX}, each for {@link OWED_SIGN_OUT_MAX_AGE_MS}.
+ */
+export const OWED_SIGN_OUTS_STORAGE_KEY = "ohmail.host.signOutsOwed";
+const OWED_SIGN_OUTS_MAX = 4;
+const OWED_SIGN_OUT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+/** The retry while a sign-out is owed: from half a minute, doubling, at most a quarter of an hour. */
+const OWED_RETRY_FIRST_MS = 30_000;
+const OWED_RETRY_MAX_MS = 15 * 60_000;
+/** How long one sign-out's dial may take, a press's or an owed one's, before it is left for the next chance. */
+export const OWED_DIAL_MS = 10_000;
+
+/** What became of a sign-out's half at the computer: said, owed for the next connection, or neither. */
+export type SignOutOutcome = "told" | "owed" | "untold";
+
+interface OwedSignOut {
+  token: string;
+  at: number;
+}
+
+/** The server's `hashToken` (SHA-256, base64url, unpadded) — what a re-pair names; `null` without WebCrypto. */
+async function familyDigest(token: string): Promise<string | null> {
+  try {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) return null;
+    const bytes = new Uint8Array(await subtle.digest("SHA-256", new TextEncoder().encode(token)));
+    let binary = "";
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  } catch {
+    return null;
+  }
+}
 
 /** A rotation's name, the mark of the token it went out with, and when it was named. */
 interface OwedAttempt {
@@ -235,6 +272,10 @@ export class BearerManager {
   /** The name's IndexedDB: `undefined` reads the browser's own on each call, `null` is none. */
   private readonly idb: IDBFactory | null | undefined;
   private readonly deadListeners = new Set<() => void>();
+  /** The owed sign-outs' one flight, and the retry armed while one is still owed. */
+  private draining: Promise<void> | null = null;
+  private owedRetry: ReturnType<typeof setTimeout> | null = null;
+  private owedRetryMs = OWED_RETRY_FIRST_MS;
 
   constructor(opts: { storage?: Storage | null; fetchImpl?: FetchLike; idb?: IDBFactory | null } = {}) {
     this.door = storageDoor(
@@ -258,6 +299,13 @@ export class BearerManager {
      */
     this.ensureScope();
     this.scopeAtStart = this.readScope();
+    // A sign-out this browser still owes its computer goes now, and again whenever it may land.
+    const page = globalThis as { addEventListener?: (type: string, cb: () => void) => void; document?: Document };
+    page.addEventListener?.("online", () => { void this.drainOwedSignOuts(); });
+    page.document?.addEventListener("visibilitychange", () => {
+      if (page.document?.visibilityState === "visible") void this.drainOwedSignOuts();
+    });
+    void this.drainOwedSignOuts();
   }
 
   /**
@@ -627,16 +675,165 @@ export class BearerManager {
   }
 
   /**
-   * Sign this device out on purpose: tell the door (best-effort — the local clear must not hang
-   * on an unreachable laptop), then clear. `/auth/logout` on this door revokes the session
-   * server-side; `allDevices` stays step-up-gated there, so this can only ever end ITSELF.
+   * Sign this device out on purpose: clear here, then tell the door (best-effort, within
+   * {@link OWED_DIAL_MS}); answers whether the door said the session is over.
+   * `allDevices` stays step-up-gated there, so this can only ever end ITSELF. The sidecar's
+   * `revokeHeldSession` contract: `/auth/logout` with a held access token, and on its 401, or with
+   * none held, `/auth/refresh/logout` with the refresh token, which names the family in any state —
+   * after a rotation whose answer was lost too. Never a renewal, and a rotation in flight is not
+   * waited for: the door ends the family whichever of its tokens it is shown.
    */
-  async logout(): Promise<void> {
-    try {
-      await this.fetchImpl("/auth/logout", { method: "POST", headers: this.headers() });
-    } catch {
-      /* unreachable laptop — the server-side session ages out; this device is out now */
-    }
+  async logout(): Promise<boolean> {
+    return (await this.signOut()) === "told";
+  }
+
+  /**
+   * {@link logout}, saying what became of the door's half. The local half comes first, before any
+   * request: the refresh token is kept as OWED ({@link OWED_SIGN_OUTS_STORAGE_KEY}) and the session
+   * dies here, so a page closed while the computer is silent leaves nothing paired and the debt
+   * kept. A door that is told forgets it; otherwise it is sent at the next chance. `untold` is a
+   * sign-out this browser could not even keep a note of.
+   */
+  async signOut(): Promise<SignOutOutcome> {
+    const access = this.access;
+    const refresh = this.refresh;
+    const owed = refresh !== null && this.oweSignOut(refresh);
     this.die();
+    if (access === null && refresh === null) return "told";
+    const told = await this.endAtHost(access, refresh);
+    if (told && refresh !== null) this.forgetOwedSignOut(refresh);
+    this.armOwedRetry();
+    if (told) return "told";
+    if (!owed) return "untold";
+    // A drain that ran meanwhile (a visible page, `online`, another tab) may have told it already.
+    return this.owedSignOuts().some((e) => e.token === refresh) ? "owed" : "told";
+  }
+
+  /**
+   * The family a re-pair of this browser names (`previousSession`): the held refresh token's
+   * digest, else the newest owed sign-out's. `null` where there is neither.
+   */
+  async previousSession(): Promise<string | null> {
+    const newest = this.owedSignOuts().reduce<OwedSignOut | null>((n, e) => (n === null || e.at >= n.at ? e : n), null);
+    const token = this.refresh ?? newest?.token ?? null;
+    return token === null ? null : familyDigest(token);
+  }
+
+  /**
+   * Tell the computer about every sign-out this browser owes it, one flight at a time. Forgotten on a
+   * 2xx, the door's own refusal, or a computer without the door (404, 405 — a debt is never renewed);
+   * kept on anything else. Never throws.
+   */
+  drainOwedSignOuts(): Promise<void> {
+    return (this.draining ??= (async () => {
+      for (const entry of this.owedSignOuts()) {
+        if (Date.now() - entry.at > OWED_SIGN_OUT_MAX_AGE_MS) {
+          this.forgetOwedSignOut(entry.token);
+          continue;
+        }
+        let settled = false;
+        // Bounded, so one dial the network never answers holds no later chance behind it.
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), OWED_DIAL_MS);
+        try {
+          const res = await this.fetchImpl("/auth/refresh/logout", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ refreshToken: entry.token }),
+            signal: abort.signal,
+          });
+          settled = res.ok || res.status === 404 || res.status === 405 || isSessionRefusal(res.status, await envelopeCode(res));
+        } catch {
+          /* not reached: kept for the next chance */
+        } finally {
+          clearTimeout(timer);
+        }
+        if (settled) this.forgetOwedSignOut(entry.token);
+      }
+    })().finally(() => {
+      this.draining = null;
+      this.armOwedRetry();
+    }));
+  }
+
+  private owedSignOuts(): OwedSignOut[] {
+    try {
+      const parsed: unknown = JSON.parse(this.door.get(OWED_SIGN_OUTS_STORAGE_KEY) ?? "[]");
+      return Array.isArray(parsed)
+        ? parsed.filter((e): e is OwedSignOut => typeof e?.token === "string" && e.token !== "" && typeof e?.at === "number")
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Keep `token` as owed, read back; `false` when the list is full or the jar will not keep it. */
+  private oweSignOut(token: string): boolean {
+    const owed = this.owedSignOuts().filter((e) => e.token !== token);
+    if (owed.length >= OWED_SIGN_OUTS_MAX) return false;
+    this.door.set(OWED_SIGN_OUTS_STORAGE_KEY, JSON.stringify([...owed, { token, at: Date.now() }]));
+    return this.owedSignOuts().some((e) => e.token === token);
+  }
+
+  private forgetOwedSignOut(token: string): void {
+    const left = this.owedSignOuts().filter((e) => e.token !== token);
+    if (left.length === 0) this.door.remove(OWED_SIGN_OUTS_STORAGE_KEY);
+    else this.door.set(OWED_SIGN_OUTS_STORAGE_KEY, JSON.stringify(left));
+  }
+
+  /** While something is owed, one timer, each wait twice the last up to the cap; none once it is all sent. */
+  private armOwedRetry(): void {
+    if (this.owedSignOuts().length === 0) {
+      if (this.owedRetry !== null) clearTimeout(this.owedRetry);
+      this.owedRetry = null;
+      this.owedRetryMs = OWED_RETRY_FIRST_MS;
+      return;
+    }
+    if (this.owedRetry !== null) return;
+    const wait = this.owedRetryMs;
+    this.owedRetryMs = Math.min(wait * 2, OWED_RETRY_MAX_MS);
+    this.owedRetry = setTimeout(() => {
+      this.owedRetry = null;
+      void this.drainOwedSignOuts();
+    }, wait);
+    // A Node timer would hold a test run open; a browser's is a number.
+    (this.owedRetry as { unref?: () => void }).unref?.();
+  }
+
+  /** A 2xx, or the refresh door's own 401: nothing is left to end. Within {@link OWED_DIAL_MS}; never throws. */
+  private async endAtHost(access: string | null, refresh: string | null): Promise<boolean> {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), OWED_DIAL_MS);
+    try {
+      if (access !== null) {
+        const res = await this.fetchImpl("/auth/logout", {
+          method: "POST", headers: { authorization: `Bearer ${access}` }, signal: abort.signal,
+        });
+        if (res.ok) return true;
+        if (res.status !== 401) return false;
+      }
+      if (refresh === null) return false;
+      const door = await this.fetchImpl("/auth/refresh/logout", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ refreshToken: refresh }),
+        signal: abort.signal,
+      });
+      return door.ok || isSessionRefusal(door.status, await envelopeCode(door));
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+/** The code our error envelope names, or null: a door's own refusal said apart from a page in front of it. */
+async function envelopeCode(res: Response): Promise<string | null> {
+  try {
+    const code = ((await res.json()) as { error?: { code?: unknown } } | null)?.error?.code;
+    return typeof code === "string" ? code : null;
+  } catch {
+    return null;
   }
 }

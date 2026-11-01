@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import messages from "../../webapp/messages/en.json";
-import { BearerManager, REFRESH_STORAGE_KEY } from "../src/host-client/bearer.js";
+import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../src/host-client/bearer.js";
 import { PairScreen } from "../src/host-client/PairScreen.js";
 
 /**
@@ -37,7 +38,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 interface Sent { url: string; body: Record<string, unknown> | null }
 let sent: Sent[];
-let answer: () => Response;
+let answer: (url: string) => Response;
 
 beforeEach(() => {
   sent = [];
@@ -49,7 +50,7 @@ beforeEach(() => {
       url: String(url),
       body: typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null,
     });
-    return answer();
+    return answer(String(url));
   }) as typeof fetch;
   window.localStorage.clear();
 });
@@ -63,13 +64,13 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
-async function mount(props: { revoked?: boolean; onPaired?: () => void; strict?: boolean } = {}): Promise<BearerManager> {
+async function mount(props: { ended?: "revoked" | null; onPaired?: () => void; strict?: boolean } = {}): Promise<BearerManager> {
   const bearer = new BearerManager({ storage: window.localStorage });
   hostEl = document.createElement("div");
   document.body.append(hostEl);
   root = createRoot(hostEl);
   const screen = h(NextIntlClientProvider, { locale: "en", messages: messages as never },
-    h(PairScreen, { bearer, revoked: props.revoked ?? false, onPaired: props.onPaired ?? (() => undefined) }));
+    h(PairScreen, { bearer, ended: props.ended ?? null, onPaired: props.onPaired ?? (() => undefined) }));
   await act(async () => {
     root.render(props.strict ? h(React.StrictMode, null, screen) : screen);
   });
@@ -131,7 +132,7 @@ describe("the fragment discipline", () => {
 
   it("a dead session lands here with the pairing-ended sentence", async () => {
     window.history.replaceState(null, "", "/pair");
-    await mount({ revoked: true });
+    await mount({ ended: "revoked" });
     expect(hostEl.textContent).toContain("pairing has ended");
   });
 });
@@ -158,5 +159,38 @@ describe("refusals", () => {
     );
     await mount();
     expect(hostEl.textContent).toContain("too many concurrent requests on this door");
+  });
+});
+
+/**
+ * A RE-PAIR NAMES THE FAMILY THIS BROWSER HELD (`previousSession`), so the computer ends it with the
+ * mint: the held refresh token's digest, else the newest sign-out still owed, which is sent beside it.
+ */
+describe("a re-pair names the family this browser held", () => {
+  const digest = (t: string): string => createHash("sha256").update(t, "utf8").digest("base64url");
+  const tokens = (): Response => new Response(JSON.stringify({ tokens: { accessToken: "a2", refreshToken: "r2" } }), {
+    status: 200, headers: { "content-type": "application/json" },
+  });
+
+  it("a browser still paired names its refresh token's family", async () => {
+    window.localStorage.setItem(REFRESH_STORAGE_KEY, "r-held");
+    window.history.replaceState(null, "", `/pair#${TOKEN}`);
+    const bearer = await mount();
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(sent.find((s) => s.url === "/pair/redeem")!.body)
+      .toEqual({ grant: "device-pair", token: TOKEN, kind: "web", previousSession: digest("r-held") });
+    expect(bearer.paired()).toBe(true);
+    expect(window.localStorage.getItem(REFRESH_STORAGE_KEY)).toBe("r1");
+  });
+
+  it("a browser whose sign-out is still owed names that family and sends the sign-out beside the redeem", async () => {
+    window.localStorage.setItem(OWED_SIGN_OUTS_STORAGE_KEY, JSON.stringify([{ token: "r-owed", at: Date.now() }]));
+    answer = (url) => (url === "/auth/refresh/logout" ? new Response(null, { status: 503 }) : tokens());
+    window.history.replaceState(null, "", `/pair#${TOKEN}`);
+    await mount();
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(sent.find((s) => s.url === "/pair/redeem")!.body).toMatchObject({ previousSession: digest("r-owed") });
+    expect(sent.filter((s) => s.url === "/auth/refresh/logout").map((s) => s.body)).toContainEqual({ refreshToken: "r-owed" });
+    expect(sent.some((s) => s.url === "/auth/refresh"), "an owed sign-out was presented for a renewal").toBe(false);
   });
 });

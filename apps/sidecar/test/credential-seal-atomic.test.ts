@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { loadSealedTokens, sealTokens } from "../src/cloud-auth.js";
+import { loadSealedTokens, readSessionMarker, sealTokens } from "../src/cloud-auth.js";
 
 /**
  * THE SEAL IS THE PREVIOUS COMPLETE FILE OR THE NEW COMPLETE FILE — never a prefix of either.
@@ -98,7 +99,9 @@ describe("the token seal is written atomically", () => {
     expect(typeof parsed.ciphertext).toBe("string");
     expect(parsed.keyVersion).toBe(1);
     expect(statSync(path).mode & 0o777, "the mode rides the staging file, never a readable window").toBe(0o600);
-    expect(readdirSync(dir)).toEqual(["cloud-tokens.seal"]);
+    // The seal and the family it names (`readSessionMarker`), both private; nothing staged.
+    expect(readdirSync(dir).sort()).toEqual(["cloud-session.marker", "cloud-tokens.seal"]);
+    expect(statSync(join(dir, "cloud-session.marker")).mode & 0o777).toBe(0o600);
     expect(await loadSealedTokens(path, kp)).toEqual({ accessToken: "a", refreshToken: "r" });
   });
 
@@ -125,6 +128,8 @@ describe("the token seal is written atomically", () => {
     flushFaultFor = null;
 
     expect(await loadSealedTokens(path, kp)).toEqual({ accessToken: "old-access", refreshToken: "old-refresh" });
-    expect(readdirSync(dir), "the staging file is cleaned up").toEqual(["cloud-tokens.seal"]);
+    expect(readdirSync(dir).sort(), "the staging file is cleaned up").toEqual(["cloud-session.marker", "cloud-tokens.seal"]);
+    expect(readSessionMarker(dir, null), "a seal that did not land names no new family")
+      .toBe(createHash("sha256").update("old-refresh", "utf8").digest("base64url"));
   });
 });

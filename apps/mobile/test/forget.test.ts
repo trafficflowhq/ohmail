@@ -21,7 +21,7 @@
  *     pairing the keystore outlived is purged before a profile is read — which is what makes
  *     deleting the app a take-back on iOS, where the Keychain survives it.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { refuse, sayRefusal } from "../src/refusal";
 import { OUTBOX_TYPE, SqlMirrorStore, mirrorDbName } from "@ohmail/client-engine";
 import {
@@ -32,9 +32,11 @@ import {
 } from "../src/engine/local-engine";
 import { KEK_KEY } from "../src/engine/kek";
 import {
-  connectProfileById, drainPendingWakeDrops, drainPendingWipes, forgetProfile, pairWithServer,
+  connectProfileById, drainPendingSignOuts, drainPendingWakeDrops, drainPendingWipes, forgetProfile, pairWithServer,
   revokeProfile, type PairingEnv,
 } from "../src/net/pairing";
+import type { FetchLike } from "../src/net/bearer";
+import { installPinning } from "../src/net/host-pinning";
 import { dropWakeRowOrOwe } from "../src/net/push";
 import {
   INSTALL_MARKER_DB, installGeneration, settleInstallGeneration,
@@ -531,12 +533,17 @@ describe("the review's own findings, each with the sequence that reaches it", ()
       });
 
       fake.mintPairToken("tok-2");
+      const from = fake.seen.length;
       const again = await pairThroughConfirm(env, { origin, token: "tok-2" });
       expect(again.kind).toBe("refused");
       if (again.kind !== "refused") return;
       expect(sayRefusal(again.reason)).toMatch(/still owes a deletion/);
-      // Nothing was stored, so nothing boots the mail this app cannot delete.
+      // Nothing was stored, so nothing boots the mail this app cannot delete…
       expect(await profiles.list()).toEqual([]);
+      // …and the session the redeem minted is ended there, after the redeem and with its bearer.
+      const after = fake.seen.slice(from).map((r) => [r.url, (r.auth ?? "").startsWith("Bearer ")]);
+      expect(after.slice(after.findIndex(([u]) => u === "/pair/redeem")).filter(([u]) => u === "/auth/logout"))
+        .toEqual([["/auth/logout", true]]);
     } finally {
       fake.server.close();
     }
@@ -1826,5 +1833,241 @@ describe("the removal records itself first, and takes the key before the store",
       // And nothing anywhere in the keystore's own values names one either.
       expect([...w.map.values()].join(" ")).not.toContain("@");
     } finally { w.engine.cleanup(); }
+  });
+});
+
+/**
+ * A FORGET THE SERVER DID NOT HEAR IS OWED, AND SENT AT THE NEXT CONNECTION. The refresh token is
+ * kept apart from the profile, sent to the refresh door (never presented for a renewal) with the
+ * pairing's own pin, and forgotten on the server's answer; the sentence says it will be told.
+ */
+describe("a sign-out the server did not hear is owed, and sent when it can be", () => {
+  /** The transport every manager of `env` rides, with a switch for the network. */
+  function switchable(): { fetchImpl: FetchLike; offline: (v: boolean) => void } {
+    let down = false;
+    return {
+      fetchImpl: (url, init) => (down ? Promise.reject(new TypeError("Network request failed")) : fetch(url, init as RequestInit)),
+      offline: (v) => { down = v; },
+    };
+  }
+  const refresh = (origin: string, refreshToken: string) => fetch(`${origin}/auth/refresh`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ refreshToken }),
+  });
+
+  it("offline: the forget says so, and the drain behind the next launch ends the session at the refresh door", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "selfhost", sessionRoute: true });
+    const origin = await listen(fake.server);
+    try {
+      fake.addMessage("m1", "Welcome");
+      fake.addMessage("m2", "Your invoice");
+      fake.mintPairToken("tok-1");
+      const net = switchable();
+      const { env, profiles } = testEnv();
+      env.fetchImpl = net.fetchImpl;
+      const session = await pairedWithMail(env, origin, "tok-1");
+      const row = (await profiles.list())[0]!;
+      net.offline(true);
+      const outcome = await forgetProfile(env, row.id, { closed: Promise.resolve(session.store.close()) });
+      expect(outcome).toEqual({ kind: "partial", reason: refuse("forgetServerOwed") });
+      const owed = await profiles.pendingSignOuts();
+      expect(owed.map((e) => [e.origin, e.pin])).toEqual([[origin, null]]);
+      const token = owed[0]!.refreshToken;
+
+      net.offline(false);
+      const from = fake.seen.length;
+      expect(await drainPendingSignOuts(env, { atLaunch: true }), "no key swap, so nothing holds the launch").toBe(1);
+      expect(await drainPendingSignOuts(env, { atLaunch: false })).toBe(0);
+      const told = fake.seen.slice(from).filter((r) => r.url.startsWith("/auth/"));
+      expect(told.map((r) => [r.url, r.auth ?? null, JSON.parse(r.body)])).toEqual([
+        ["/auth/refresh/logout", null, { refreshToken: token }],
+      ]);
+      expect(fake.seen.some((r) => r.url === "/auth/refresh"), "an owed sign-out was presented for a renewal").toBe(false);
+      expect(await profiles.pendingSignOuts()).toEqual([]);
+      expect((await refresh(origin, token)).status, "the session the forget left lives on").toBe(401);
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("a full list keeps nothing more, and the forget says the server was not told", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "selfhost", sessionRoute: true });
+    const origin = await listen(fake.server);
+    try {
+      fake.addMessage("m1", "Welcome");
+      fake.addMessage("m2", "Your invoice");
+      fake.mintPairToken("tok-1");
+      const net = switchable();
+      const { env, profiles } = testEnv();
+      env.fetchImpl = net.fetchImpl;
+      const session = await pairedWithMail(env, origin, "tok-1");
+      for (let i = 0; i < 8; i += 1) {
+        await profiles.markPendingSignOut({ origin: "https://elsewhere.example", pin: null, refreshToken: `t${i}` });
+      }
+      net.offline(true);
+      const row = (await profiles.list())[0]!;
+      const outcome = await forgetProfile(env, row.id, { closed: Promise.resolve(session.store.close()) });
+      expect(outcome).toEqual({ kind: "partial", reason: refuse("forgetServerUnreachable") });
+      expect((await profiles.pendingSignOuts()).every((e) => e.origin !== origin)).toBe(true);
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  /** One owed sign-out to `https://a.example`, and a transport that answers `answer`. */
+  async function owing(answer: () => Response | Promise<Response>, owedSince?: number) {
+    const { kv, map } = memoryKV();
+    const { env, profiles } = testEnv({}, kv);
+    const sent: Array<{ url: string; body: unknown; auth: string | null }> = [];
+    env.fetchImpl = async (url, init) => {
+      const i = (init ?? {}) as { body?: string; headers?: Record<string, string> };
+      sent.push({ url, body: i.body ? JSON.parse(i.body) : null, auth: i.headers?.authorization ?? null });
+      return answer();
+    };
+    const entry = await profiles.markPendingSignOut({ origin: "https://a.example", pin: null, refreshToken: "owed-1" });
+    if (owedSince !== undefined) {
+      const key = `ohmail.servers.v1.signout.${entry.id}`;
+      map.set(key, JSON.stringify({ ...JSON.parse(map.get(key)!), owedSince }));
+    }
+    return { env, profiles, sent };
+  }
+
+  it.each([
+    ["the server's 503", () => new Response(null, { status: 503 }), 1],
+    ["a page in front of the server", () => new Response("<!doctype html><title>Wi-Fi</title>", { status: 401 }), 1],
+    ["the network", () => Promise.reject(new TypeError("Network request failed")), 1],
+    ["the door's own refusal", () => new Response(JSON.stringify({ error: { code: "unauthorized" } }), { status: 401 }), 0],
+    ["a server without the door (404)", () => new Response("not found", { status: 404 }), 0],
+    ["the door's 204", () => new Response(null, { status: 204 }), 0],
+  ] as const)("%s: kept or forgotten as the answer says", async (_name, answer, left) => {
+    const o = await owing(answer);
+    expect(await drainPendingSignOuts(o.env, { atLaunch: false })).toBe(left);
+    expect(o.sent).toEqual([{ url: "https://a.example/auth/refresh/logout", body: { refreshToken: "owed-1" }, auth: null }]);
+    expect((await o.profiles.pendingSignOuts()).length).toBe(left);
+  });
+
+  it("one older than thirty days is dropped unsent", async () => {
+    const o = await owing(() => new Response(null, { status: 204 }), Date.now() - 31 * 24 * 60 * 60 * 1000);
+    expect(await drainPendingSignOuts(o.env, { atLaunch: true })).toBe(0);
+    expect(o.sent).toEqual([]);
+    expect(await o.profiles.pendingSignOuts()).toEqual([]);
+  });
+
+  it("dials under the pairing's own key, and never over a live pairing's different key but at launch", async () => {
+    const calls: string[] = [];
+    installPinning({
+      isInstalled: () => true, factoryUses: () => 1,
+      setPin: (_h, _p, spki) => { calls.push(`pin ${spki}`); return 1; },
+      clearPin: () => { calls.push("unpin"); return 1; },
+      clearAllPins: () => 0, pinnedCount: () => 0,
+    });
+    try {
+      const origin = "https://192.168.1.20:6245";
+      const { env, profiles } = testEnv();
+      env.fetchImpl = async (url) => { calls.push(`dial ${new URL(url).pathname}`); return new Response(null, { status: 204 }); };
+      await profiles.add({ origin, flavor: "desktop-host", accountId: "acct-1", refreshToken: "live-1", pin: "KEY-NOW" });
+      await profiles.markPendingSignOut({ origin, pin: "KEY-THEN", refreshToken: "owed-1" });
+      expect(await drainPendingSignOuts(env, { atLaunch: false }), "the network's return swapped a live pairing's key").toBe(1);
+      expect(calls).toEqual([]);
+      expect(await drainPendingSignOuts(env, { atLaunch: true })).toBe(0);
+      expect(calls).toEqual(["pin KEY-THEN", "dial /auth/refresh/logout", "pin KEY-NOW"]);
+
+      calls.length = 0;
+      await profiles.markPendingSignOut({ origin: "https://192.168.1.30:6245", pin: "KEY-GONE", refreshToken: "owed-2" });
+      expect(await drainPendingSignOuts(env, { atLaunch: false })).toBe(0);
+      expect(calls, "a key nothing pairs with was left behind").toEqual(["pin KEY-GONE", "dial /auth/refresh/logout", "unpin"]);
+    } finally {
+      installPinning(null);
+    }
+  });
+
+  it("one the network never answers holds no launch: the active pairing connects at once, the drain behind it dials", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "selfhost", sessionRoute: true });
+    const origin = await listen(fake.server);
+    installPinning({
+      isInstalled: () => true, factoryUses: () => 1, setPin: () => 1, clearPin: () => 1, clearAllPins: () => 0, pinnedCount: () => 0,
+    });
+    const gone = "https://192.168.1.20:6245";
+    /** The dials to the computer that is gone: never answered, failed only once given up. */
+    const waiting: Array<() => void> = [];
+    try {
+      fake.addMessage("m1", "Welcome");
+      fake.addMessage("m2", "Your invoice");
+      fake.mintPairToken("tok-1");
+      const { env, profiles } = testEnv();
+      env.fetchImpl = (url, init) => (url.startsWith(gone)
+        ? new Promise<Response>((_ok, fail) => {
+          const drop = (): void => fail(new TypeError("Network request failed"));
+          waiting.push(drop);
+          (init as { signal?: AbortSignal } | undefined)?.signal?.addEventListener("abort", drop);
+        })
+        : fetch(url, init as RequestInit));
+      (await pairedWithMail(env, origin, "tok-1")).store.close();
+      await profiles.markPendingSignOut({ origin: gone, pin: "KEY-GONE", refreshToken: "owed-1" });
+
+      // The launch's order (`connection.tsx`): the sign-outs, then the active pairing.
+      const from = Date.now();
+      await drainPendingSignOuts(env, { atLaunch: true });
+      const behind = drainPendingSignOuts(env, { atLaunch: false });
+      const relaunch = await connectProfileById(env, (await profiles.active())!.id);
+      expect(Date.now() - from, "the mail waited on a sign-out nobody answers").toBeLessThan(2_000);
+      if (relaunch.kind !== "connected") throw new Error(`the relaunch was refused: ${relaunch.kind}`);
+      await relaunch.session.verifyIdentity();
+      await relaunch.session.engine.start();
+      expect(relaunch.session.engine.read().list("message")).toHaveLength(2);
+      relaunch.session.store.close();
+      await vi.waitFor(() => expect(waiting).toHaveLength(1));
+      waiting[0]!();
+      expect(await behind).toBe(1);
+      expect((await profiles.pendingSignOuts()).map((e) => e.refreshToken)).toEqual(["owed-1"]);
+    } finally {
+      for (const drop of waiting) drop();
+      installPinning(null);
+      fake.server.close();
+    }
+  });
+
+  it("one only a launch may send holds it two seconds at most, and so does a drain still dialing ahead of it", async () => {
+    const calls: string[] = [];
+    installPinning({
+      isInstalled: () => true, factoryUses: () => 1,
+      setPin: (_h, _p, spki) => { calls.push(`pin ${spki}`); return 1; },
+      clearPin: () => { calls.push("unpin"); return 1; },
+      clearAllPins: () => 0, pinnedCount: () => 0,
+    });
+    vi.useFakeTimers();
+    try {
+      const origin = "https://192.168.1.20:6245";
+      const { env, profiles } = testEnv();
+      env.fetchImpl = (url, init) => new Promise<Response>((_ok, fail) => {
+        calls.push(`dial ${new URL(url).host}`);
+        (init as { signal?: AbortSignal } | undefined)?.signal?.addEventListener("abort", () => fail(new TypeError("Network request failed")));
+      });
+      await profiles.add({ origin, flavor: "desktop-host", accountId: "acct-1", refreshToken: "live-1", pin: "KEY-NOW" });
+      await profiles.markPendingSignOut({ origin, pin: "KEY-THEN", refreshToken: "owed-1" });
+      const watched = <T>(p: Promise<T>): { done: () => boolean; value: Promise<T> } => {
+        let done = false;
+        return { done: () => done, value: p.finally(() => { done = true; }) };
+      };
+      const launch = watched(drainPendingSignOuts(env, { atLaunch: true }));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(launch.done(), "the launch waited past two seconds on a computer that does not answer").toBe(true);
+      expect(await launch.value).toBe(1);
+      expect(calls, "the live pairing's key is back before anything connects")
+        .toEqual(["pin KEY-THEN", "dial 192.168.1.20:6245", "pin KEY-NOW"]);
+
+      calls.length = 0;
+      await profiles.markPendingSignOut({ origin: "https://192.168.1.30:6245", pin: "KEY-GONE", refreshToken: "owed-2" });
+      const ahead = drainPendingSignOuts(env, { atLaunch: false });
+      const next = watched(drainPendingSignOuts(env, { atLaunch: true }));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(next.done(), "a drain dialing ahead of the launch held it").toBe(true);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await ahead).toBe(2);
+      expect(await next.value).toBe(2);
+      expect(calls, "the launch's drain dialed past its two seconds").toEqual(["pin KEY-GONE", "dial 192.168.1.30:6245", "unpin"]);
+    } finally {
+      vi.useRealTimers();
+      installPinning(null);
+    }
   });
 });

@@ -31,12 +31,12 @@ import {
 import { migratingState, type BootMigrating } from "../ui/boot-migrating";
 import { phoneEngineReopen } from "../engine/engine-artifact";
 import { installGeneration, settleInstallGeneration } from "../state/install-marker";
-import { nativeServerProfiles } from "../state/servers-native";
+import { nativeFamilyDigest, nativeServerProfiles } from "../state/servers-native";
 import { installPinning } from "./host-pinning";
 import { nativeHostPinning } from "./host-pinning-native";
 import { unifiedPushDistributor } from "./unified-push";
 import type { ServerProfile } from "../state/servers";
-import type { FetchLike } from "./bearer";
+import type { FetchLike, SignOutOutcome } from "./bearer";
 import { SyncRunner, drainLine } from "./drain";
 import { keepDraining, type AppLifecycle } from "./drain-cadence";
 import { installNetworkReader, networkDoor, networkNow, onNetworkChange } from "./network-door";
@@ -44,6 +44,7 @@ import { nativeNetworkReader } from "./network-native";
 import { organizeHere, readMailboxes, type OrganizeOutcome } from "./mailboxes";
 import {
   connectProfileById,
+  drainPendingSignOuts,
   drainPendingWakeDrops,
   drainPendingWipes,
   forgetProfile,
@@ -223,6 +224,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         profiles: nativeServerProfiles(),
         engineDeps: nativeEngineDeps(),
         deviceKind: mobileDeviceKind(Platform.OS),
+        /* The digest a re-pair names the family it replaces by (`previousSession`). */
+        familyDigest: nativeFamilyDigest,
         /* THE CONNECTOR, so a forget takes down the wake registration of the pairing it is
            forgetting. Registrations became per-pairing in this slice, so an orphan is now a real
            thing to leave behind — `wake.tsx` sweeps only when the LAST pairing goes, because the
@@ -275,6 +278,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   );
   const gateRef = useRef<TransitionGate | null>(null);
   const gate = (gateRef.current ??= new TransitionGate());
+
+  /* A SIGN-OUT A SERVER WAS NOT TOLD goes when the network comes back (and at launch, below). */
+  useEffect(
+    () => onNetworkChange((s) => { if (s === "online") void drainPendingSignOuts(env, { atLaunch: false }); }),
+    [env],
+  );
 
   const [state, setState] = useState<ConnectionState>({ k: "starting" });
   const [profiles, setProfiles] = useState<ServerProfile[]>([]);
@@ -643,6 +652,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    touches either store, so a kill mid-way leaves the mail owed rather than
         //    stranded — this is where the debt is paid. A refusal keeps the debt.
         await drainPendingWipes(env);
+        //    And the sign-outs a server was not told — a forget's, or one the drain above just
+        //    made. Only those that must swap a live pairing's key in go before any session holds
+        //    an origin, two seconds at most; the rest go behind the launch, so a server that does
+        //    not answer never holds the mail back.
+        await drainPendingSignOuts(env, { atLaunch: true });
+        void drainPendingSignOuts(env, { atLaunch: false });
         // 3. AND THE WAKE ROWS THIS PHONE OWES SOMEBODY'S SERVER. Same rule as the mirrors: a
         //    take-back the server refused is written down and retried, because the endpoint it
         //    dials is shared with the profile now in use and therefore never lapses on its own.
@@ -758,7 +773,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           // only what is React: leaving the live state, and closing the store handle whose
           // database the seam is about to delete. Everything a test would want to assert about
           // a take-back is therefore assertable without rendering a component.
-          let revokeLive: (() => Promise<boolean>) | null = null;
+          let revokeLive: (() => Promise<SignOutOutcome>) | null = null;
           let closed: Promise<void> = Promise.resolve();
           /* ── FORGETTING THIS PHONE'S OWN MAILBOX IS ONE VERB WITH THREE EFFECTS ─────────────
              The claim goes back, the session and its notification stop, and the ENGINE stops —
@@ -777,7 +792,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             const bearer = atForget.session.bearer;
             /* NO LOGOUT WITHOUT A MANAGER — the standalone door's session has none, and the seam
                answers `told` for it on its own (`pairing.ts#forgetProfile`). */
-            revokeLive = bearer === null ? null : () => bearer.logout();
+            revokeLive = bearer === null ? null : () => bearer.signOut();
             closed = teardown(atForget.session);
             enter({ k: "idle" });
           } else if (atForget.k === "connecting") {

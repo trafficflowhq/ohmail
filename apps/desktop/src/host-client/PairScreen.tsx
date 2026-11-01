@@ -16,7 +16,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Icon } from "@ohmail/ui";
-import type { BearerManager, BearerTokens } from "./bearer.js";
+import type { BearerManager, BearerTokens, SignOutOutcome } from "./bearer.js";
 
 /** What this page knows, in order of discovery. `reading` is the mount tick before the hash. */
 type Phase =
@@ -32,14 +32,25 @@ interface RedeemAnswer {
   error?: { code?: string; message?: string };
 }
 
+/** The landing's sentence after a sign-out here, by what the computer heard. */
+const SIGNED_OUT_BODY = {
+  told: "signedOutBody", owed: "signedOutOwedBody", untold: "signedOutNotToldBody",
+} as const satisfies Record<SignOutOutcome, string>;
+
 export function PairScreen({
   bearer,
-  /** True when the gate sent a DEAD session here — the sentence then says the pairing ended. */
-  revoked = false,
+  /**
+   * How the gate's session ended, when it sent one here: `revoked` (ended at the computer — the
+   * sentence says the pairing ended) or `signed-out` (this page's own Sign out, said with
+   * `signedOut`, what the computer heard; `null` while that is still being found out).
+   */
+  ended = null,
+  signedOut = null,
   onPaired,
 }: {
   bearer: BearerManager;
-  revoked?: boolean;
+  ended?: "revoked" | "signed-out" | null;
+  signedOut?: SignOutOutcome | null;
   onPaired: () => void;
 }) {
   const t = useTranslations("pairLanding");
@@ -76,11 +87,15 @@ export function PairScreen({
     // 401 recovery has nothing to recover here. `kind: "web"` is this redeemer's own honest
     // declaration — a browser, not an app. `null` resolution = network failure.
     redeem.current ??= (async () => {
+      // A sign-out this browser still owes goes beside the redeem, and the family this browser held
+      // is named so the computer ends it with the mint (`previousSession`).
+      void bearer.drainOwedSignOuts();
+      const previousSession = await bearer.previousSession();
       try {
         const res = await fetch("/pair/redeem", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ grant: "device-pair", token, kind: "web" }),
+          body: JSON.stringify({ grant: "device-pair", token, kind: "web", ...(previousSession ? { previousSession } : {}) }),
         });
         return { ok: res.ok, answer: (await res.json()) as RedeemAnswer };
       } catch {
@@ -134,7 +149,11 @@ export function PairScreen({
         {phase.kind === "missing" && (
           <>
             <h1>{t("missingTitle")}</h1>
-            <p className="sub" role="alert">{revoked ? t("revokedBody") : t("missingBody")}</p>
+            <p className="sub" role="alert">
+              {ended === "revoked" ? t("revokedBody")
+                : ended === "signed-out" && signedOut !== null ? t(SIGNED_OUT_BODY[signedOut])
+                : t("missingBody")}
+            </p>
           </>
         )}
 

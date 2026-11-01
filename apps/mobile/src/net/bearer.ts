@@ -10,7 +10,8 @@
  */
 
 import {
-  ACCOUNT_ERASED, ERASED_ANSWER_HEADER, isCredentialRefusal, readRefreshAnswer, sessionEndedResponse,
+  ACCOUNT_ERASED, ERASED_ANSWER_HEADER, isCredentialRefusal, isSessionRefusal, readRefreshAnswer,
+  sessionEndedResponse,
 } from "@ohmail/client-engine";
 import type { SessionRenewalDoor } from "@ohmail/client-engine";
 import type { RefreshWrite } from "../state/servers";
@@ -40,7 +41,15 @@ export interface RefreshVault {
    * relaunches on a pair the server can answer. Adopting clears the name.
    */
   armAttempt(attemptId: string, head: string, held: ReadonlySet<string>): Promise<RefreshWrite>;
+  /**
+   * Keep a sign-out the server was not told, to be sent at the next connection
+   * (`pairing.ts#drainPendingSignOuts`); answers whether it was kept, read back.
+   */
+  oweSignOut(refreshToken: string): Promise<boolean>;
 }
+
+/** What became of a sign-out's half at the server: said, owed for the next connection, or neither. */
+export type SignOutOutcome = "told" | "owed" | "untold";
 
 /**
  * WHY A SESSION ENDED, for the surface that has to say it. `revoked` is the server withdrawing
@@ -87,6 +96,16 @@ async function erasesAccount(res: Response, accountId: string | null): Promise<b
     return code === ACCOUNT_ERASED && res.headers.get("X-Ohmail-Account") === accountId;
   } catch {
     return false;
+  }
+}
+
+/** The code our error envelope names, or null: a door's own refusal said apart from a page in front of it. */
+async function envelopeCode(res: Response): Promise<string | null> {
+  try {
+    const code = ((await res.json()) as { error?: { code?: unknown } } | null)?.error?.code;
+    return typeof code === "string" ? code : null;
+  } catch {
+    return null;
   }
 }
 
@@ -422,39 +441,77 @@ export class BearerManagerRN implements SessionRenewalDoor {
   }
 
   /**
-   * Sign this device out on purpose: tell the door (best-effort — the local clear must not
-   * hang on an unreachable server), then clear. `/auth/logout` revokes the session
-   * server-side; `allDevices` stays step-up-gated there, so this can only ever end itself.
-   * Routed through {@link fetch} — the manager's own recovery — not the raw transport:
-   * `/auth/logout` is authenticated, and a cold launch would send it bare, collect a silent
-   * 401, and clear the local half while the refresh family stayed live server-side. Under the
-   * recovery the replayed logout actually lands; if the recovery is itself refused, the
-   * manager has already died honestly — `die()`'s idempotence makes the final clear a no-op.
+   * Sign this device out on purpose: tell the server (best-effort — the local clear must not
+   * hang on an unreachable server), then clear. `allDevices` stays step-up-gated there, so this
+   * can only ever end itself. The desktop's `revokeHeldSession` contract: `/auth/logout` with a
+   * held access token, and on its 401, or with none held, `/auth/refresh/logout` with the refresh
+   * token, which names the family in any state — after a rotation whose answer was lost too.
+   * NEVER A RENEWAL, and a rotation in flight is not waited for: a renewal mints the pair this
+   * ends, and one whose answer is lost leaves the family live with a tail nobody holds.
    */
   async logout(): Promise<boolean> {
     // Answers whether the server was actually told — the whole reason for the return. The
     // local half happens either way, but the server half is what revokes the session and, on
     // the hosted tier, takes this device's wake registration down; reporting a forget over a
-    // logout that never landed leaves both alive with nothing left to retry them. A bare 401
-    // is not evidence on its own: `fetch` answers the original 401 when its one recovery could
-    // not run (a `/auth/refresh` that 500s, a dead network), and the refresh token is then
-    // still live. What separates them is what the manager DID: a refusal clears the credential
-    // (`rotate` → `die`), a transient failure clears nothing — so a 401 with no credential
-    // left is "already gone", a 401 with the credential still held did not land.
+    // logout that never landed leaves both alive with nothing left to retry them.
+    return (await this.signOut()) === "told";
+  }
+
+  /**
+   * {@link logout}, saying what became of the server's half: a sign-out the server was not told is
+   * OWED — its refresh token kept through the vault before the credential goes, and sent at the
+   * next connection — and `untold` is one this phone could not even keep a note of.
+   */
+  async signOut(): Promise<SignOutOutcome> {
     let told = true;
-    if (this.access !== null || this.refresh !== null) {
+    const held = this.refresh;
+    if (this.access !== null || held !== null) {
       told = false;
       try {
-        const res = await this.fetch(`${this.origin}/auth/logout`, { method: "POST" });
-        const judged = this.refresh === null;
-        told = (res.status >= 200 && res.status < 300) || (res.status === 401 && judged);
+        told = await this.endAtServer();
       } catch {
-        /* unreachable server — the server-side session ages out; this device is out now */
+        /* unreachable server — owed below; this device is out now */
       }
     }
+    // The newest token of the family: an older server's routed sign-out may have renewed it.
+    const owing = this.refresh ?? held;
+    const owed = !told && owing !== null && await this.vault.oweSignOut(owing).catch(() => false);
     // "refused", not "revoked": a deliberate sign-out is not a family somebody replayed, and the
     // surface must not tell the person their key was presented twice when they pressed the button.
     await this.die("refused");
-    return told;
+    return told ? "told" : owed ? "owed" : "untold";
+  }
+
+  /** Did the server say this session is over? A 2xx, or the refresh door's own 401 (nothing left to end). */
+  private async endAtServer(): Promise<boolean> {
+    const refresh = this.refresh;
+    if (this.access !== null) {
+      const res = await this.heard(
+        await this.fetchImpl(`${this.origin}/auth/logout`, { method: "POST", headers: this.headers() }),
+      );
+      // `heard` ended an erased account's manager: nothing is left to end.
+      if (res.ok || this.refresh === null) return true;
+      if (res.status !== 401) return false;
+    }
+    if (refresh === null) return false;
+    const door = await this.fetchImpl(`${this.origin}/auth/refresh/logout`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken: refresh }),
+    });
+    if (door.ok) return true;
+    // A server older than the door: the routed sign-out it always had, renewal included.
+    if (door.status === 404 || door.status === 405) return this.routedLogout();
+    return isSessionRefusal(door.status, await envelopeCode(door));
+  }
+
+  /**
+   * The routed sign-out, for a server with no refresh door: through {@link fetch}, so a 401 renews
+   * and the replay lands. A 401 is evidence only once the credential is gone: a refusal clears it
+   * (`rotate` → `die`), a transient failure clears nothing and did not land.
+   */
+  private async routedLogout(): Promise<boolean> {
+    const res = await this.fetch(`${this.origin}/auth/logout`, { method: "POST" });
+    return res.ok || (res.status === 401 && this.refresh === null);
   }
 }

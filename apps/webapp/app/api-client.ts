@@ -1719,6 +1719,10 @@ export const auth = {
   stepUpWebauthnVerify: (b: { credential: unknown }) =>
     api<{ ok: true }>("/auth/step-up/webauthn/verify", { method: "POST", body: b }),
 
+  /** One recovery code, spent: for somebody whose authenticator is gone. */
+  stepUpRecoveryCode: (b: { code: string }) =>
+    api<{ ok: true; remainingCodes: number }>("/auth/step-up/recovery-code", { method: "POST", body: b }),
+
   /**
    * The native authorize ceremony, both halves. The read describes what is about to be
    * authorized and spends nothing; the confirm is the press that mints the code and hands back

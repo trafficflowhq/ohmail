@@ -1,4 +1,6 @@
-import { existsSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -45,7 +47,7 @@ const hang = (row: Asked, init?: RequestInit): Promise<Response> => new Promise<
   releases.push(() => reject(new Error("released by the test")));
 });
 
-async function door(opts: { signedIn?: boolean; script?: Script; pollIntervalMs?: number } = {}) {
+async function door(opts: { signedIn?: boolean; script?: Script; pollIntervalMs?: number; doorFile?: string } = {}) {
   const asked: Asked[] = [];
   const lines: { event: string; detail: Record<string, unknown> }[] = [];
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -67,7 +69,10 @@ async function door(opts: { signedIn?: boolean; script?: Script; pollIntervalMs?
   const dataDir = await freshDataDir("ohmail-sign-out-at-host-");
   dirs.push(dataDir);
   const sidecar = await createCloudSidecar({
-    dataDir, cloudUrl: "https://host.test", address: "me@ohmail.test", fetchImpl,
+    dataDir, cloudUrl: "https://host.test", fetchImpl,
+    ...(opts.doorFile
+      ? { address: null, handoffBase: "https://host.test", identityPending: { doorFile: opts.doorFile } }
+      : { address: "me@ohmail.test" }),
     pollIntervalMs: opts.pollIntervalMs ?? 3_600_000,
     keks: { 1: Buffer.alloc(32, 7) },
     log: (event, detail) => { lines.push({ event, detail }); },
@@ -84,7 +89,7 @@ async function door(opts: { signedIn?: boolean; script?: Script; pollIntervalMs?
     (await sidecar.handle(new Request("http://sidecar/mailboxes", { headers: auth }))).status;
   const sealed = (): boolean => existsSync(join(dataDir, "cloud-tokens.seal"));
   const at = (path: string): Asked[] => asked.filter((r) => r.path === path);
-  return { sidecar, signOut, read, sealed, at, asked, lines };
+  return { sidecar, signOut, read, sealed, at, asked, lines, dataDir };
 }
 
 /** Wait, in real time, until `ok` holds; false when `ms` passes first. */
@@ -176,6 +181,78 @@ describe("an access token that lapsed", () => {
     expect(e.at("/auth/refresh/logout")).toHaveLength(1);
     expect(e.sealed()).toBe(false);
     expect(await e.read()).toBe(409);
+  });
+});
+
+describe("signing in again after a sign-out the server never heard", () => {
+  it("names the family this install held, so the server can end it", { timeout: 30_000 }, async () => {
+    const e = await door({
+      script: (path) => path === "/auth/logout" ? Promise.reject(new TypeError("fetch failed"))
+        : path === "/auth/login" ? json({ status: "twofa_required", loginToken: "lt" })
+        : path === "/auth/2fa/totp/verify" ? json({ tokens: { accessToken: "next-access", refreshToken: "next-refresh" } })
+        : path === "/auth/session" ? json({ user: { email: "me@ohmail.test" } }) : null,
+    });
+    expect((await e.signOut()).body).toEqual({ status: "signed_out", revokedAtHost: false, queued: 0 });
+    const res = await e.sidecar.handle(new Request("http://sidecar/cloud/signin", {
+      method: "POST", headers: { authorization: `Bearer ${e.sidecar.sessionToken}` },
+      body: JSON.stringify({ email: "me@ohmail.test", password: "pw", totp: "123456" }),
+    }));
+    expect(res.status, await res.clone().text()).toBe(200);
+    const [verify] = e.at("/auth/2fa/totp/verify");
+    expect(JSON.parse(verify!.body).previousSession, "the server cannot end a family nobody names")
+      .toBe(createHash("sha256").update("held-refresh", "utf8").digest("base64url"));
+    expect(JSON.parse(e.at("/auth/login")[0]!.body).previousSession, "only the minting step carries it").toBeUndefined();
+  });
+});
+
+/** A sign-in the server answers with a fresh pair, which this install then turns away or keeps. */
+describe("a sign-in this install turns away ends the session it was handed", () => {
+  const minting = (identity: Script): Script => (path, row, init) =>
+    path === "/auth/login" ? json({ status: "twofa_required", loginToken: "lt" })
+      : path === "/auth/2fa/totp/verify" ? json({ tokens: { accessToken: "minted-access", refreshToken: "minted-refresh" } })
+      : path === "/auth/session" ? identity(path, row, init) : null;
+  const signIn = async (e: Awaited<ReturnType<typeof door>>): Promise<number | null> => {
+    const res = await e.sidecar.handle(new Request("http://sidecar/cloud/signin", {
+      method: "POST", headers: { authorization: `Bearer ${e.sidecar.sessionToken}` },
+      body: JSON.stringify({ email: "me@ohmail.test", password: "pw", totp: "123456" }),
+    })).catch(() => null);
+    return res?.status ?? null;
+  };
+  const endedThere = (e: Awaited<ReturnType<typeof door>>): Array<string | null> =>
+    e.at("/auth/logout").map((r) => r.bearer);
+
+  it.each([
+    ["the server will not say whose session it is", (() => new Response(null, { status: 500 })) as Script, 502],
+    ["it is another account's", (() => json({ user: { email: "someone-else@ohmail.test" } })) as Script, 409],
+  ])("%s: the minted session is signed out there before the refusal", { timeout: 30_000 }, async (_name, identity, status) => {
+    const e = await door({ signedIn: false, script: minting(identity) });
+    expect(await signIn(e)).toBe(status);
+    expect(endedThere(e), "a refused sign-in left its session live at the server").toEqual(["Bearer minted-access"]);
+    expect(e.sealed()).toBe(false);
+  });
+
+  it("a seal that cannot be written: signed out there too", { timeout: 30_000 }, async () => {
+    const e = await door({ signedIn: false, script: minting(() => json({ user: { email: "me@ohmail.test" } })) });
+    mkdirSync(join(e.dataDir, "cloud-tokens.seal", "in-the-way"), { recursive: true });
+    expect(await signIn(e), "control: the seal's write failed").not.toBe(200);
+    expect(endedThere(e)).toEqual(["Bearer minted-access"]);
+  });
+
+  it("a pending door that cannot record whose install this is: signed out there too", { timeout: 30_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), "ohmail-pending-door-"));
+    dirs.push(root);
+    const doorFile = join(root, "config.json");
+    writeFileSync(doorFile, JSON.stringify({ mode: "cloud", cloudUrl: "https://elsewhere.test", address: "x@elsewhere.test" }));
+    const e = await door({ signedIn: false, doorFile, script: minting(() => json({ user: { email: "me@ohmail.test" } })) });
+    expect(await signIn(e)).toBe(409);
+    expect(endedThere(e)).toEqual(["Bearer minted-access"]);
+  });
+
+  it("control: a sign-in this install keeps signs nothing out", { timeout: 30_000 }, async () => {
+    const e = await door({ signedIn: false, script: minting(() => json({ user: { email: "me@ohmail.test" } })) });
+    expect(await signIn(e)).toBe(200);
+    expect(endedThere(e)).toEqual([]);
+    expect(e.sealed()).toBe(true);
   });
 });
 
