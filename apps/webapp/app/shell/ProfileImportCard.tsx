@@ -145,6 +145,18 @@ export interface ProfileImportState {
    * shows the pane while one stands. A "Not now" here adds its row at once.
    */
   declined: SavedRow[];
+  /** The mailboxes whose organizer cannot keep its settings copy there, from the same answers. */
+  unkept: UnkeptRow[];
+}
+
+/** A mailbox whose organizer recorded that it cannot keep its settings copy there. */
+export interface UnkeptRow { mailboxId: string; address: string }
+
+/** The tolerant reader: only an answer that says the copy is not kept names the mailbox. */
+function copyUnkept(dto: unknown): boolean {
+  if (typeof dto !== "object" || dto === null) return false;
+  const copy = (dto as { copy?: unknown }).copy;
+  return typeof copy === "object" && copy !== null && (copy as { kept?: unknown }).kept === false;
 }
 
 const HOSTED: ProfileImportTransport = {
@@ -237,6 +249,7 @@ export function useProfileImport(
   const mailboxes = askableMailboxes(listed);
   const [offers, setOffers] = useState<ProfileImportOffer[]>([]);
   const [declined, setDeclined] = useState<SavedRow[]>([]);
+  const [unkept, setUnkept] = useState<UnkeptRow[]>([]);
   const [phase, setPhase] = useState<ProfileImportPhase>({ kind: "offer" });
   const [beat, setBeat] = useState(0);
   /* A ring that met an ask in flight is OWED: the ask may predate the find, so it runs again. */
@@ -293,6 +306,7 @@ export function useProfileImport(
         return keep;
       });
       setDeclined((prev) => (prev.every((r) => known.has(r.mailboxId)) ? prev : prev.filter((r) => known.has(r.mailboxId))));
+      setUnkept((prev) => (prev.every((r) => known.has(r.mailboxId)) ? prev : prev.filter((r) => known.has(r.mailboxId))));
     }
     const via = held.current ?? (apiConfigured() ? HOSTED : null);
     if (!via) return;
@@ -321,6 +335,10 @@ export function useProfileImport(
           setDeclined((prev) => [
             ...prev.filter((r) => r.mailboxId !== m.id),
             ...(saved ? [{ mailboxId: m.id, address: m.address, candidate: saved }] : []),
+          ]);
+          setUnkept((prev) => [
+            ...prev.filter((r) => r.mailboxId !== m.id),
+            ...(copyUnkept(dto) ? [{ mailboxId: m.id, address: m.address }] : []),
           ]);
           const candidate = asOffer(dto); // unrecognised answers — including `none` — are no offer
           if (candidate === null) {
@@ -445,7 +463,7 @@ export function useProfileImport(
     return () => { live = false; };
   }, [importingKey, doorbell, statusBeat]);
 
-  return { offer, phase, importNow, notNow, acknowledge, declined };
+  return { offer, phase, importNow, notNow, acknowledge, declined, unkept };
 }
 
 /**
@@ -674,11 +692,13 @@ export function useSavedProfiles(
  * section reads for itself. Each row keeps its buttons through a refused press.
  */
 export function SavedProfileSection({
-  mailboxes: listed, transport, rows: given,
+  mailboxes: listed, transport, rows: given, unkept = [],
 }: {
   mailboxes?: ReadonlyArray<{ id: string; address: string; status?: string | null }> | null;
   transport?: ProfileImportTransport;
   rows?: SavedRow[];
+  /** Mailboxes whose organizer cannot keep its settings copy there ({@link useProfileImport}'s `unkept`). */
+  unkept?: ReadonlyArray<UnkeptRow>;
 }) {
   const t = useTranslations("profileImport");
   const locale = useLocale();
@@ -718,9 +738,14 @@ export function SavedProfileSection({
     })();
   }, []);
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && unkept.length === 0) return null;
   return (
     <>
+      {unkept.map((row) => (
+        <SettingsSection key={`unkept-${row.mailboxId}`}>
+          <p className="set-note-inline" role="status">{t("copyUnkept", { address: displayAddress(row.address) })}</p>
+        </SettingsSection>
+      ))}
       {rows.map((row) => {
         const phase = phases[row.mailboxId] ?? { kind: "idle" };
         const { counts, updatedAt, producer } = row.candidate;

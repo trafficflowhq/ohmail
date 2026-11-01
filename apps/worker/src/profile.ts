@@ -4,6 +4,7 @@ import {
   profileImportWriteReleased, askStands, importAskSignature, readImportAsk, resolveImportAsk,
   type ImportAskRefusal,
   mailboxProfileMirror, mailboxes, recordChanges, recordMailboxProfileChange, profileWritesRecorded, recordProfileWrite,
+  latestProfileCopy, recordProfileCopy,
   type LedgerTx, type Tx, auditAction, fenceErased, fencedAccountWrite, lockAccountRuleKeys,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 /* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
@@ -357,6 +358,8 @@ export class OrganizerProfileSync {
   private recordReread = false;
   /** The write second of this store's current copy in the mailbox: the record {@link keepRecordAlive} renews. */
   private currentOwnSecond: number | null = null;
+  /** What {@link recordCopy} last recorded, and when; null until this life recorded or confirmed one. */
+  private copySaid: { kept: boolean; at: number } | null = null;
   constructor(private readonly deps: OrganizerProfileSyncDeps) {}
 
   /**
@@ -761,6 +764,7 @@ export class OrganizerProfileSync {
     this.consecutiveFailures = 0;
     this.lastFailureCode = null;
     this.everSucceeded = false;
+    this.copySaid = null;
     this.lastWrittenGap = GAP_ABSENT;
     this.leavingGap = null;
   }
@@ -1649,12 +1653,44 @@ export class OrganizerProfileSync {
       this.noteFailure(err, log);
       // A seed that threw is retried by the next tick; nothing was marked seeded.
     } finally {
-      this.inFlight = false;
       /* THE TICK'S OWN VERDICT, and it counts failures rather than watching for a throw: the
          `armHoldFromFolder` call inside this try has its own catch, so a tick can complete
          normally with a failure recorded a few frames down. Comparing the count is what stops a
          recovery being announced in the same drain that reported the fault. */
       if (this.failuresNoted === failuresAtEntry) this.noteTickSucceeded(log);
+      await this.recordCopy(log);
+      this.inFlight = false;
+    }
+  }
+
+  /**
+   * THE ROW'S SENTENCE, DURABLY, for a surface without this process (Cloud Settings reads it off
+   * `GET /mailboxes/:id/profile-import`): the copy not kept while {@link profileBlock} names
+   * `profile_append_unreadable`, kept once a tick succeeds again. Looked up at most daily while
+   * nothing changes; never throws (a refused write is tried at the next tick).
+   */
+  private async recordCopy(log: (event: string, detail: Record<string, unknown>) => void): Promise<void> {
+    const { deps } = this;
+    const block = this.profileBlock();
+    const kept = this.consecutiveFailures === 0;
+    if (!kept && block?.code !== "profile_append_unreadable") return;
+    const now = (deps.now ?? ((): Date => new Date()))();
+    const said = this.copySaid;
+    if (said !== null && said.kept === kept && (kept || now.getTime() - said.at < PROFILE_UNKEPT_RETRY_MS)) return;
+    try {
+      // A mailbox with no standing refusal on record has nothing to clear: a plain read, no write.
+      if (kept && said === null && (await latestProfileCopy(deps.db, deps.accountId, deps.mailboxId))?.kept !== false) {
+        this.copySaid = { kept, at: now.getTime() };
+        return;
+      }
+      await fencedAccountWrite(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId }, async (tx) => {
+        await recordProfileCopy(tx as Tx, {
+          accountId: deps.accountId, mailboxId: deps.mailboxId, kept, code: kept ? null : block!.code, at: now,
+        });
+      });
+      this.copySaid = { kept, at: now.getTime() };
+    } catch (err) {
+      log("organizer_profile_marker_failed", { mailboxId: deps.mailboxId, accountId: deps.accountId, err });
     }
   }
 

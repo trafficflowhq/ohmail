@@ -3,8 +3,8 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole, readOrganizerRole,
   mailboxCredentials, mailboxes,
-  latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased,
-  recordProfileImportResolution,
+  latestProfileFoundMarker, latestProfileCopy, profileImportResolutionExists, profileImportWriteReleased,
+  recordProfileImportResolution, type ProfileCopyState,
   askStands, profileImportResult, readImportAsk, recordImportAsk, recordImportAskSignature, ringFilingDoorbell,
   type ImportAskRefusal, type Tx,
 } from "@trafficflow/db";
@@ -37,7 +37,15 @@ import { ServiceError } from "./errors.js";
  */
 export type ProfileReader = (retain?: ProfileLocator) => Promise<ProfileReadResult>;
 
-export type ProfileImportCandidateDTO =
+export type ProfileImportCandidateDTO = ProfileImportQuestionDTO & {
+  /**
+   * Whether the mailbox keeps this install's settings copy, as its organizer last recorded it
+   * (`profile_append_unreadable` when it could not). Absent until the organizer recorded a refusal.
+   */
+  copy?: ProfileCopyState;
+};
+
+type ProfileImportQuestionDTO =
   /** Nothing to ask about — the resting answer. */
   | { state: "none" }
   /** A document is waiting on the user's answer. `fingerprint` names its exact content. */
@@ -145,7 +153,7 @@ export const PROFILE_IMPORT_MAX = PROFILE_LIST_MAX;
  */
 function declinedFrom(
   fingerprint: string, m: Awaited<ReturnType<typeof latestProfileFoundMarker>> & object, signatureReplaces: string | null,
-): ProfileImportCandidateDTO {
+): ProfileImportQuestionDTO {
   const c = m.counts;
   if (typeof m.updatedAt !== "string" || !m.producer || !c) return { state: "none" };
   return {
@@ -199,6 +207,14 @@ export class ProfileImportService {
     const role = await readOrganizerRole(db, dialect(ctx.db), ctx.accountId, mailboxId);
     if (role?.role !== "organizer") return { state: "none" };
 
+    const question = await this.question(ctx, mailboxId);
+    const copy = await latestProfileCopy(db, ctx.accountId, mailboxId);
+    return copy === null ? question : { ...question, copy };
+  }
+
+  /** {@link candidate}'s question, for a mailbox this install organizes. */
+  private async question(ctx: ServiceContext, mailboxId: string): Promise<ProfileImportQuestionDTO> {
+    const db = asTx(ctx);
     const marker = await latestProfileFoundMarker(db, ctx.accountId, mailboxId);
     if (!marker) return { state: "none" };
 

@@ -4277,7 +4277,8 @@
     "replacing": "Saving…",
     "replaceNote": "Saving replaces {details} in the mailbox with this ohmail's own settings within a few minutes. While this ohmail has none of its own, the mailbox keeps them.",
     "replaceNoteBare": "Saving replaces the settings in the mailbox with this ohmail's own within a few minutes. While this ohmail has none of its own, the mailbox keeps them.",
-    "replacedTitle": "This ohmail's settings go to the mailbox within a few minutes."
+    "replacedTitle": "This ohmail's settings go to the mailbox within a few minutes.",
+    "copyUnkept": "ohmail can't save a copy of your settings in {address}, so a reconnect or another device won't find them there. It keeps trying."
   },
   "notFound": {
     "title": "This page doesn't exist.",

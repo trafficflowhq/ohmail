@@ -60,6 +60,64 @@ export async function recordProfileWrite(
 }
 
 /**
+ * The `audit_log.action` under which an organizer records whether the mailbox keeps its settings copy, so a
+ * surface without the organizer's process (Cloud Settings) can say so. Payload: `{ mailboxId, kept, code }`,
+ * `code` the refusal's own literal (`profile_append_unreadable`) or null. Written on a change only, and the
+ * standing refusal again once {@link PROFILE_COPY_RENEW_MS} old so the age-out never takes it.
+ */
+export const PROFILE_COPY_AUDIT_ACTION = "organizer_profile_copy";
+
+/** How old a standing "not kept" record grows before it is written again. */
+export const PROFILE_COPY_RENEW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Whether the mailbox keeps the organizer's settings copy, as the organizer last recorded it. */
+export interface ProfileCopyState { kept: boolean; code: string | null }
+
+async function newestProfileCopy(
+  db: Tx, accountId: string, mailboxId: string,
+): Promise<(ProfileCopyState & { at: number }) | null> {
+  const [row] = await db.select({ payload: auditLog.payload, createdAt: auditLog.createdAt })
+    .from(auditLog)
+    .where(and(
+      eq(auditLog.accountId, accountId),
+      eq(auditLog.action, PROFILE_COPY_AUDIT_ACTION),
+      sql`${auditLog.payload}->>'mailboxId' = ${mailboxId}`,
+    ))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(1);
+  const p = row?.payload as { kept?: unknown; code?: unknown } | null | undefined;
+  if (!p || typeof p.kept !== "boolean") return null;
+  const at = new Date(row!.createdAt as unknown as string | number | Date).getTime();
+  return { kept: p.kept, code: typeof p.code === "string" ? p.code : null, at: Number.isFinite(at) ? at : 0 };
+}
+
+/** The newest copy record for the mailbox, or null when its organizer never recorded one. */
+export async function latestProfileCopy(db: Tx, accountId: string, mailboxId: string): Promise<ProfileCopyState | null> {
+  const r = await newestProfileCopy(db, accountId, mailboxId);
+  return r === null ? null : { kept: r.kept, code: r.code };
+}
+
+/**
+ * Record whether the mailbox keeps the copy. A kept copy is recorded only over a standing "not kept" (a mailbox
+ * that never failed writes nothing); a refusal only when it is new, names another code, or is due a renewal.
+ */
+export async function recordProfileCopy(
+  db: Tx, o: { accountId: string; mailboxId: string; kept: boolean; code: string | null; at?: Date },
+): Promise<void> {
+  const latest = await newestProfileCopy(db, o.accountId, o.mailboxId);
+  if (o.kept && (latest === null || latest.kept)) return;
+  const at = (o.at ?? new Date()).getTime();
+  if (!o.kept && latest !== null && !latest.kept && latest.code === o.code && at - latest.at < PROFILE_COPY_RENEW_MS) return;
+  await db.insert(auditLog).values({
+    accountId: o.accountId,
+    action: auditAction(PROFILE_COPY_AUDIT_ACTION),
+    payload: { mailboxId: o.mailboxId, kept: o.kept, code: o.kept ? null : o.code },
+    inverse: null,
+    ...(o.at === undefined ? {} : { createdAt: o.at }),
+  });
+}
+
+/**
  * The seconds this store recorded for the mailbox under this install id, each with the time of its
  * newest record (epoch milliseconds), read from the newest records: the copies a store has in the
  * mailbox are its newest few writes, since every write removes the copy it replaces.
