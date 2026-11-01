@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
@@ -637,6 +637,9 @@ async function selectCandidates(
     .where(and(
       eq(messages.accountId, opts.accountId),
       eq(folderState.desiredFolder, SCREENER),
+      // A letter gone from the server (mail 0065) is in no list and its words are scrubbed: left out
+      // where the representative is chosen, as the queue's window does (`heldSenderReps`).
+      isNull(messages.deletedAt),
     ))
     .as("reps");
 

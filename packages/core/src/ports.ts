@@ -1,4 +1,4 @@
-import type { MailboxMustBeLive, SpendOutcome, SpendPort } from "@trafficflow/db";
+import type { MailboxMustBeLive, SearchSource, SpendOutcome, SpendPort } from "@trafficflow/db";
 import type { NormalizedMessage, Destination, AttachmentMeta, EmailAddress, MimeStructure } from "./types.js";
 import type { AuthVerdict, KnownSenders, Rule } from "./rules.js";
 import type { IdentityFact } from "./sender-check.js";
@@ -467,6 +467,18 @@ export interface RepoPort {
   restoreWithheldBody?(
     messageId: string, body: MessageBodyInput, storage: BodyStorageContext,
   ): Promise<boolean>;
+  /**
+   * A letter gone from the server lost its preview and search document with its text (the
+   * `'expunged'` husk); one that came back gets them from the arrival. Fills only what is empty:
+   * an empty preview, no document (built from the stored headers and file names with these body
+   * words). Called once `clearDeletedOnAdopt` un-deleted the row, before any change row. OPTIONAL
+   * so every fake keeps compiling.
+   */
+  refillGone?(
+    messageId: string,
+    arrival: { snippet: string; searchBody: { bodyText: string; source: SearchSource } },
+    accountId: string,
+  ): Promise<void>;
 
   // ── Physical identity: `message_instances` ──
   //

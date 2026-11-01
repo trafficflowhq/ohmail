@@ -4,7 +4,7 @@ import { MessageGoneError, type MoveManyResult } from "@trafficflow/core/adapter
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { auditLog, folderState, mailboxes, messageBodies, messageInstances, messages } from "@trafficflow/db";
+import { auditLog, folderState, mailboxes, messageBodies, messageInstances, messages, messageSearch } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
 import { MailboxService, MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
@@ -92,6 +92,13 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
       .where(eq(messageBodies.messageId, id)))[0]?.w ?? null;
     const stored = async (id: string) => (await h.db.select({ deletedAt: messages.deletedAt, loc: messages.nativeLocator })
       .from(messages).where(eq(messages.id, id)))[0];
+    /** The preview and whether the letter has a search document. */
+    const words = async (id: string) => ({
+      snippet: (await h.db.select({ s: messages.snippet }).from(messages).where(eq(messages.id, id)))[0]!.s,
+      documented: (await h.db.select({ id: messageSearch.messageId }).from(messageSearch).where(eq(messageSearch.messageId, id))).length === 1,
+    });
+    const KEPT = { snippet: "the whole text of the message", documented: true };
+    const SCRUBBED = { snippet: "", documented: false };
     /** Letters deleted in ohmail whose deletes landed in the server's Trash. */
     const deletedInto = async (n: number) => {
       const tag = randomUUID().slice(0, 8);
@@ -138,7 +145,7 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
     };
     return {
       h, c, deps, ctx, idOf, filingOf, auditsOf, facts, expunge, spamFiled, history, found, trashed, withheld, stored,
-      deletedInto, twoCopies, trash: special.trash!,
+      words, KEPT, SCRUBBED, deletedInto, twoCopies, trash: special.trash!,
     };
   }
 
@@ -153,6 +160,8 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
     const svc = new MessageService();
     expect(await w.trashed(), "Trash lists a letter no server holds").not.toContain(a);
     expect(await w.withheld(a!), "the gone letter's text is still kept").toBe("expunged");
+    expect(await w.words(a!), "the gone letter's preview or words are still kept").toEqual(w.SCRUBBED);
+    expect(await w.words(b!)).toEqual(w.KEPT);
     expect(await w.filingOf(a!)).toBeUndefined();
     expect(await w.stored(a!), "the deletion time or the locator changed").toEqual(before);
     await expect(svc.restore(w.ctx, a!)).rejects.toMatchObject({ code: "not_in_trash", httpStatus: 409 });
@@ -233,10 +242,13 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
     await runSyncCycle({ ...w.deps, adapter: frozen });
     expect(await w.trashed(), "the precondition: the moved letter left Trash").not.toContain(a);
     expect(await w.withheld(a!)).toBe("expunged");
+    expect(await w.words(a!)).toEqual(w.SCRUBBED);
 
     await runSyncCycle(w.deps);
     expect(await w.history(), "the letter moved to INBOX was not adopted").toContain(a);
     expect(await w.withheld(a!), "its text was not refilled").toBeNull();
+    expect(await w.words(a!), "its preview or words did not come back").toEqual(w.KEPT);
+    expect(await w.found("whole"), "search does not find it by its words").toContain(a);
     expect(await w.trashed()).not.toContain(a);
   });
 
@@ -333,8 +345,10 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
     const [body] = await w.h.db.select({ withheld: messageBodies.withheldReason }).from(messageBodies)
       .where(eq(messageBodies.messageId, sent!));
     expect(body?.withheld).toBe("expunged");
-    // CONTROL — the message the server still held filed to Trash.
+    expect(await w.words(sent!)).toEqual(w.SCRUBBED);
+    // CONTROL — the message the server still held filed to Trash, with its words.
     expect(trashed, "the held message is missing from Trash").toContain(inbox);
+    expect(await w.words(inbox!)).toEqual(w.KEPT);
     expect((await w.filingOf(inbox!))?.reconcileStatus).toBe("reconciled");
     expect(await uidInFolder(w.c, w.trash, inboxHeader), "the held message did not reach Trash").toHaveLength(1);
     expect(await uidInFolder(w.c, "INBOX", inboxHeader)).toHaveLength(0);
@@ -444,6 +458,72 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
     await svc.restore(w.ctx, a!);
     await runSyncCycle(w.deps);
     expect(await w.history(), "the next Restore did not land").toContain(a);
+  });
+
+  it("a delete whose move landed and whose answer was lost stays in Trash with its text, and its Restore lands", async () => {
+    const w = await world();
+    const tag = randomUUID().slice(0, 8);
+    const header = `lost-${tag}@x.example`;
+    await w.c.append("INBOX", eml({ from: "anna@x.example", to: w.h.cfg.auth.user, subject: `lost ${tag}`, messageId: header }));
+    await runSyncCycle(w.deps);
+    const id = (await w.idOf(header))!;
+    const svc = new MessageService();
+    await svc.delete(w.ctx, id);
+    // The server runs the MOVE and the answer never arrives, once: a slow server, a dropped connection.
+    let lost = false;
+    const lossy = new Proxy(w.h.adapter, {
+      get(target, prop) {
+        if (prop === "move" || prop === "moveMany") {
+          const fn = Reflect.get(target, prop, target) as (...a: unknown[]) => Promise<unknown>;
+          return async (...a: unknown[]) => {
+            const out = await fn.apply(target, a);
+            if (!lost) { lost = true; throw new Error("the connection dropped before the answer"); }
+            return out;
+          };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === "function" ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    await runSyncCycle({ ...w.deps, adapter: lossy });
+    await runSyncCycle(w.deps);
+
+    expect(lost, "the precondition: the move's answer was lost").toBe(true);
+    expect(await uidInFolder(w.c, w.trash, header), "the precondition: the server's Trash holds it").toHaveLength(1);
+    expect(await w.trashed(), "a letter the server holds in Trash is not in ohmail's Trash").toContain(id);
+    expect(await w.withheld(id), "the letter in Trash was emptied").toBeNull();
+    expect(await w.words(id)).toEqual(w.KEPT);
+    expect(((await w.stored(id))!.loc as NativeLocator).folder, "the letter was not found at its Trash copy").toBe(w.trash);
+    await svc.restore(w.ctx, id);
+    await runSyncCycle(w.deps);
+    expect(await uidInFolder(w.c, "INBOX", header), "the Restore did not land").toHaveLength(1);
+    expect(await w.history()).toContain(id);
+    expect(await w.withheld(id)).toBeNull();
+  });
+
+  it("CONTROL — a stranger in Trash under the same Message-ID is never bound: the letter keeps its text in Trash", async () => {
+    const w = await world();
+    const tag = randomUUID().slice(0, 8);
+    const header = `twin-${tag}@x.example`;
+    await w.c.append("INBOX", eml({ from: "anna@x.example", to: w.h.cfg.auth.user, subject: `ours ${tag}`, messageId: header }));
+    await runSyncCycle(w.deps);
+    const id = (await w.idOf(header))!;
+    await w.c.append(w.trash, eml({ from: "mallory@x.example", to: w.h.cfg.auth.user, subject: `theirs ${tag}`, messageId: header }));
+    const svc = new MessageService();
+    await svc.delete(w.ctx, id);
+    await w.expunge("INBOX", header);
+    await runSyncCycle(w.deps);
+
+    expect(await w.trashed(), "an unproven letter left Trash").toContain(id);
+    expect(await w.withheld(id), "an unproven letter was emptied").toBeNull();
+    expect(await w.words(id)).toEqual(w.KEPT);
+    expect(((await w.stored(id))!.loc as NativeLocator).folder, "the letter was bound to the stranger's copy").toBe("INBOX");
+    expect(await uidInFolder(w.c, w.trash, header), "the stranger is still in Trash").toHaveLength(1);
+    // Its Restore cannot carry a copy nobody proved: it stays in Trash, never in no list at all.
+    await svc.restore(w.ctx, id);
+    await runSyncCycle(w.deps);
+    expect(await w.trashed(), "the Restore took the letter out of every list").toContain(id);
+    expect((await w.facts()).pendingMoves).toBe(0);
   });
 
   it("a gone letter whose delete ingest never reports is closed by the move's own reading", async () => {

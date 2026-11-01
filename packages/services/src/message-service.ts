@@ -1696,7 +1696,9 @@ export class MessageService {
    * still has it in Trash. Sequence: intent → the organizer's move → the passive read observes →
    * `clearDeletedOnAdopt` un-deletes and re-emits the entity. A delete whose move has NOT landed
    * (observed still elsewhere, a watched copy on record) is CANCELLED instead: desired := observed,
-   * the tombstone cleared, one `update` change, `pending: false` — nothing is owed to the server.
+   * the tombstone cleared, one `update` change, `pending: false`; the row stays pending, its origin
+   * kept as the mark, until the organizer has confirmed the copy, which a move landed with its
+   * answer lost took to Trash.
    * Refusals: a READER restores nothing (asked FIRST); 409 `not_in_trash` for a row not in this
    * mailbox's Trash path; a REPLAY is answered from the idempotency key.
    */
@@ -1724,13 +1726,18 @@ export class MessageService {
         .where(eq(mailboxes.id, msg.mailboxId)).limit(1);
       const trash = mb?.trashFolder ?? null;
       /* THE UNLANDED DELETE IS CANCELLED, in one conditional write: the decision is the UPDATE,
-         so a park the worker commits first makes it miss and the landed path below runs. */
+         so a park the worker commits first makes it miss and the landed path below runs. Pending,
+         not settled: the move may have landed with its answer lost, so the organizer looks for the
+         copy (and in Trash) before the row settles, and the reaper leaves the letter until then.
+         `trashed_from` stays: an origin equal to the desire marks this row. A move and a reader's
+         request write none, so a move or its undo never sends the organizer to Trash. The organizer
+         clears it when the row settles. */
       if (trash !== null) {
         const now = ctx.now();
         // scoped-by: msg was loaded by (id, accountId) above and the organizer just asserted
         const [kept] = await tx.update(folderState).set({
-          desiredFolder: sql`${folderState.observedFolder}`, trashedFrom: null, lastSetBy: "us",
-          reconcileStatus: "reconciled", conflict: false, attempts: 0, nextAttemptAt: null, lastErrorClass: null,
+          desiredFolder: sql`${folderState.observedFolder}`, lastSetBy: "us",
+          reconcileStatus: "pending", conflict: false, attempts: 0, nextAttemptAt: null, lastErrorClass: null,
           decidedAt: decisionInstant(floor, now), updatedAt: now,
         }).where(and(
           eq(folderState.messageId, id), eq(folderState.desiredFolder, trash),
@@ -1738,6 +1745,7 @@ export class MessageService {
           sql`exists (select 1 from ${messageInstances} where ${messageInstances.messageId} = ${id} and ${messageInstances.isPrimary})`,
         )).returning({ at: folderState.observedFolder });
         if (kept) {
+          filed = msg.mailboxId;
           await tx.update(messages).set({ deletedAt: null, updatedAt: now })
             .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
           const seq = Number(await recordChange(tx, {

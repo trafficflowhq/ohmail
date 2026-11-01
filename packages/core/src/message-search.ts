@@ -314,6 +314,19 @@ export async function reindexMessageSearch(db: Tx, accountId: string, messageId:
   await upsertMessageSearchRows(db, rows);
 }
 
+/**
+ * One stored letter's input with body words the store does not hold: a letter back from the server
+ * whose body stays withheld, indexed as ingest indexes a withheld body. `null` for no such letter.
+ */
+export async function storedSearchInputWith(
+  db: Tx, accountId: string, messageId: string, body: { bodyText: string; source: SearchSource },
+): Promise<MessageSearchInput | null> {
+  const [row] = await db.select(HEADER).from(messages)
+    .where(and(eq(messages.accountId, accountId), eq(messages.id, messageId))).limit(1);
+  if (!row) return null;
+  return inputOf(accountId, row, (await fileNamesOf(db, accountId, [messageId])).get(messageId) ?? [], body);
+}
+
 /** Living messages with and without a document — the backfill's progress, derived, never stored. */
 export async function searchIndexProgress(db: Tx, accountId: string): Promise<{ done: number; total: number }> {
   const d = dialect(db);

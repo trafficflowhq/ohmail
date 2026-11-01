@@ -2105,6 +2105,12 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       accountId,
       capBytes: deps.storageCap === UNMETERED_STORAGE_CAP ? null : deps.storageCap,
     });
+    // A letter back from the server: what its expunge emptied besides the text, from these bytes.
+    if (resurrected) {
+      await repo.refillGone?.(e.messageId, {
+        snippet: snippetOfText(e.body.text), searchBody: searchBodyOf(e.body.text, e.body.html),
+      }, accountId);
+    }
   }
 
   /** A route this commit's override demoted — its switch-off runs after the commit. */

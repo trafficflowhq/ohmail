@@ -42,6 +42,7 @@ const READS: Record<string, Answer> = {
   "fetchByUid|fetch": { how: "asked_rows", carries: ["size", "source", "uid"] },
   "moveMany|fetchAll": { how: "asked_rows", carries: ["envelope", "uid"] },
   "messageIdsGone|fetchAll": { how: "asked_rows", carries: ["envelope"] },
+  "findLetters|fetchAll": { how: "asked_rows", carries: ["envelope"] },
   "listFolderPage|fetch": { how: "asked_rows", carries: ["envelope"] },
   "searchFolderPage|fetch": { how: "asked_rows", carries: ["envelope"] },
 
