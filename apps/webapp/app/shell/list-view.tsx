@@ -7,7 +7,7 @@
  * took away is GONE, said, never swapped for the first row. The views keep their own rows, pages,
  * verbs, body hydration and meta; this renders only the empty pane and the column.
  */
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode, type Ref } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { listSurface, saysEmpty, type ListSurface } from "@ohmail/client-engine";
 import { ReadColumn, Spinner } from "@ohmail/ui";
 import { MessageGone } from "./MessagePane";
@@ -64,6 +64,10 @@ export interface ListViewInput<M extends { id: string }> {
   resolve?: (id: string) => M | null | undefined;
   /** The row shown with nothing picked; the first row when absent. */
   first?: M | null;
+  /** Which list the rows are (a tag, folder or pile id): the row the fallback kept is never carried into another. */
+  scope?: string;
+  /** The row now standing for a message that was listed as a row (a pile row faces its conversation's newest member). */
+  targetOf?: (id: string) => string | null;
 }
 
 export interface ListView<M> {
@@ -84,7 +88,7 @@ export interface ListView<M> {
 export function useListView<M extends { id: string }>(o: ListViewInput<M>): ListView<M> {
   const facts = useContext(ListGone);
   if (facts === null) throw new Error("useListView: no ListGoneProvider above this view");
-  const { rows, count, settled, pending, picked, resolve, first } = o;
+  const { rows, count, settled, pending, picked, resolve, first, scope = "", targetOf } = o;
   const surface = listSurface({ settled, count: count ?? rows.length, pending });
   const held = picked === null ? undefined : rows.find((m) => m.id === picked) ?? resolve?.(picked) ?? undefined;
   /* DISMISSED — the column's ✕ was pressed. A cleared pick falls back to the first row, which is
@@ -97,15 +101,24 @@ export function useListView<M extends { id: string }>(o: ListViewInput<M>): List
   // A plain function, never useCallback: this file is handed the shell's memoized `actedIds`, and
   // a memoized closure here would pin that frame (the render-scope census refuses one).
   const dismiss = (): void => setDismissed(true);
+  /* THE ROW THE FALLBACK SHOWED STAYS SHOWN while it is listed: a row listed above it later never
+     takes the cursor and the column between the person's read and their key. */
+  const kept = useRef<{ scope: string; id: string } | null>(null);
+  const keptId = kept.current === null || kept.current.scope !== scope ? null : targetOf?.(kept.current.id) ?? kept.current.id;
   const column: ListColumn<M> = useMemo(() => {
     if (held) return { kind: "message", message: held };
     // GONE iff the pick is a tombstone; any other departure (filed out of the tag, outside the
     // window) keeps the first-row fallback, because that is not a message somebody lost.
     if (picked !== null && facts.isGone(picked)) return { kind: "gone" };
     if (dismissed) return { kind: "rest" };
-    const fallback = first === undefined ? rows[0] : first;
+    const fallback = (keptId === null ? undefined : rows.find((m) => m.id === keptId))
+      ?? (first === undefined ? rows[0] : first);
     return fallback ? { kind: "message", message: fallback } : { kind: "rest" };
-  }, [held, picked, facts, first, rows, dismissed]);
+  }, [held, picked, facts, first, rows, dismissed, keptId]);
+  const fallbackId = !held && column.kind === "message" ? column.message.id : null;
+  useEffect(() => {
+    kept.current = fallbackId === null ? null : { scope, id: fallbackId };
+  }, [fallbackId, scope]);
   return {
     surface,
     empty: saysEmpty(surface),

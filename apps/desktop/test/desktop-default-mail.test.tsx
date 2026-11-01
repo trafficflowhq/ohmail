@@ -2,7 +2,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { IntlProvider } from "use-intl";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
+import { DesktopGate } from "../src/DesktopGate.js";
+import messages from "../../webapp/messages/en.json";
+import { hostedMailbox } from "./fixtures/approval-server.js";
 import {
   DEFAULT_MAIL_ASKED_KEY,
   DefaultMailAsk,
@@ -27,7 +32,8 @@ import {
  * ── THE MUTATIONS THESE WERE WATCHED AGAINST ────────────────────────────────────────────────
  *  · stop persisting on "Not now"                → the never-twice case goes red;
  *  · show the card whatever the state            → the already-default and unknown cases go red;
- *  · drop the request wire from the row's button → the row-action case goes red.
+ *  · drop the request wire from the row's button → the row-action case goes red;
+ *  · let the card count as a question over the mail → ⌫ and ⌦ on the open row do nothing.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -196,4 +202,75 @@ describe("the sentences", () => {
     expect(stateValue("unknown")).toBe("Not known");
     expect(stateValue(null)).toBe("Checking…");
   });
+});
+
+/* The paired window behind the card: a hosted door serving three letters through the shell. */
+const MBX = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+function letter(n: number) {
+  const at = new Date(Date.UTC(2026, 9, n, 8)).toISOString();
+  return {
+    id: `m${n}`, accountId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", mailboxId: MBX, threadId: null,
+    messageIdHeader: `m${n}@example.test`, subject: `Letter ${n}`, from: { name: `Sender ${n}`, address: `s${n}@example.test` },
+    to: [{ name: null, address: "me@example.test" }], cc: [], arrivedAt: at, date: at, folder: "INBOX", snippet: "hi",
+    unread: true, lastReadAt: null, hasAttachments: false, attachmentCount: 0,
+    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+    triage: null, labels: [], remoteContent: "none", updatedAt: at,
+  };
+}
+function frame(body: unknown): Uint8Array {
+  const meta = new TextEncoder().encode(JSON.stringify({ status: 200, statusText: "OK", h: [] }));
+  const payload = new TextEncoder().encode(JSON.stringify(body));
+  const out = new Uint8Array(4 + meta.byteLength + payload.byteLength);
+  new DataView(out.buffer).setUint32(0, meta.byteLength, false);
+  out.set(meta, 4);
+  out.set(payload, 4 + meta.byteLength);
+  return out;
+}
+function pairedWindow(): void {
+  const none = { creates: [], updates: [], moves: [], deletes: [] };
+  let served = false;
+  const card = host.__TAURI_INTERNALS__!.invoke;
+  host.__TAURI_INTERNALS__!.invoke = async (command, payload) => {
+    if (command === "engine_status") {
+      return { state: "serving", mode: "cloud", flavor: "managed", address: "me@example.test", mailboxId: MBX, credentialState: "ready" };
+    }
+    if (command !== "engine_request") return card(command, payload);
+    const url = String(payload?.url ?? "");
+    if (url.startsWith("/sync/snapshot")) return frame({ asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 500 } });
+    if (url.startsWith("/mailboxes")) return frame({ items: [hostedMailbox(MBX, "me@example.test")] });
+    if (!url.startsWith("/sync")) return frame({});
+    const creates = served ? [] : [1, 2, 3].map((n) => ({ type: "message", op: "create", id: `m${n}`, seq: n, updatedAt: letter(n).updatedAt, entity: letter(n) }));
+    served = true;
+    return frame({ changes: { ...none, creates }, cursor: "c1", hasMore: false, serverTime: new Date().toISOString() });
+  };
+}
+
+describe("the ask stands beside the mail, not over it", () => {
+  afterEach(() => { window.location.hash = ""; });
+
+  it("⌫ and ⌦ still move the open message to Trash while the card is up", async () => {
+    (globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= { escape: (v: string) => v };
+    pairedWindow();
+    window.location.hash = "#/ohbox";
+    const el = await render(h(IntlProvider, { locale: "en", messages: messages as never, timeZone: "UTC" },
+      h(ThemeProvider, { storageKey: null }, h(ToastHost, null, h(DesktopGate, null)))));
+    for (let i = 0; i < 40; i++) await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    expect(el.textContent, "the card is not up").toContain("Open email links with ohmail?");
+    const row = (id: string) => el.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
+    const press = async (key: string) => {
+      await act(async () => {
+        (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+      for (let i = 0; i < 5; i++) await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    };
+
+    for (const [id, key] of [["m3", "Backspace"], ["m2", "Delete"]] as const) {
+      await click(row(id)!);
+      expect(el.querySelector(".row.sel")?.getAttribute("data-id"), "the row is not the open one").toBe(id);
+      await press(key);
+      expect(row(id), `${key} left the row in the Ohbox`).toBeNull();
+      expect(el.textContent).toContain("Moved to Trash.");
+    }
+    expect(el.textContent, "the key answered the card").toContain("Open email links with ohmail?");
+  }, 30_000);
 });

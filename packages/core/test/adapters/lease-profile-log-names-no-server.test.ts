@@ -200,7 +200,7 @@ describe("a failed settings cleanup names the error, never the mail server", () 
     io.tear = true;
     io.failRemove = true;
     const out = await writeOrganizerProfile({ io, doc: docAt(AT, ["mine"]), installId: "i", log: d.log });
-    expect(out).toEqual({ written: false, reason: "append_unreadable" });
+    expect(out).toEqual({ written: false, reason: "append_unreadable", why: "served_malformed" });
     judge(d, "profile_cleanup_failed", "remove_profiles");
   });
 

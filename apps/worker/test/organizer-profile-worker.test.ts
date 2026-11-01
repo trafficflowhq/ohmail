@@ -2467,13 +2467,15 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await sync.onOrganize();
     // FIX-026's gate: A is stale beside B, so one write-due tick tidies it instead of appending.
     await sync.onOrganize();
-    // B, the answered newest, is superseded. A, surfaced when the hold began and weeks older than
-    // the current document, is a stale copy of another install's: FIX-026's tidy removes it
-    // (fix-025 left it in the mailbox for ever). Never refused on, and never removed unsurfaced.
+    // B, the answered newest, goes. A was never answered: it stays in the mailbox and is the
+    // question again, however old, until the person imports or replaces it.
     const docs = profileDocs(fleet, mb.mailboxId);
     expect(docs.map((d) => [d.installId, d.doc!.tagNames])).toEqual([
+      ["someone-elses-mac", ["theirs"]],
       [INSTALL, ["mine"]],
     ]);
+    const asked = await latestProfileFoundMarker(db, mb.accountId, mb.mailboxId);
+    expect([asked?.installId, asked?.heldForImport]).toEqual(["someone-elses-mac", true]);
     const read = await readOrganizerProfile(fleet.metaFor(mb.mailboxId));
     expect(read.state === "found" && read.installId, "the answered mailbox's write-behind must resume")
       .toBe(INSTALL);
@@ -2983,5 +2985,100 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
     expect(docs, "count mode grew the pile or removed more than the replaced copy").toHaveLength(5);
     expect(docs.some((d) => d.doc!.tagNames.includes("changed")), "the change was never written").toBe(true);
     expect(events.some((e) => e.startsWith("profile_tidied ")), "count mode removed").toBe(false);
+  }, 30_000);
+
+  it("a store holding values a reader reads otherwise publishes them as read: one append, kept, said once", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db, undefined, ROW_AT);
+    // A priority past the bound (the API took any integer before 0.25.4), an address with a trailing space, an empty tag.
+    await db.insert(rules).values({ accountId: mb.accountId, kind: "sender", match: "hi@example.test", destination: "ohmail/News", priority: 1500 });
+    await db.insert(contacts).values({ accountId: mb.accountId, address: "spaced@example.test " });
+    await db.insert(tags).values({ accountId: mb.accountId, name: "", hue: "moss" });
+    const events: string[] = [];
+    let t = Date.UTC(2026, 8, 28, 0, 0, 0);
+    const sync = clockedSync(db, fleet, mb, events, () => new Date(t));
+
+    await sync.onOrganize();
+    t += 60_000;
+    await sync.onOrganize();
+
+    const said = (event: string): string[] => events.filter((e) => e.startsWith(`${event} `));
+    expect(fleet.metaFor(mb.mailboxId).profileAppends, "each write-due tick appended a copy").toBe(1);
+    const docs = profileDocs(fleet, mb.mailboxId);
+    expect(docs, "the copy was removed after its append").toHaveLength(1);
+    const { payload } = await serializeOrganizerProfileCounted(db, mb.accountId, mb.mailboxId);
+    expect(profileFingerprint(docs[0]!.doc!)).toBe(profileFingerprint(payload));
+    expect(said("profile_append_unreadable")).toEqual([]);
+    expect(said("profile_entries_normalized")).toHaveLength(1);
+    expect(said("profile_entries_normalized")[0]).toContain("\"count\":3");
+  }, 30_000);
+
+  it("a copy the server does not keep as written is appended once: not at the next ticks or the next attach, again a day later or when the settings change", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db, undefined, ROW_AT);
+    // An escaped line past 998 octets, which this server folds (RFC 5322's limit), so its copy is no JSON.
+    await db.update(mailboxes).set({ signature: "s".repeat(2_000) }).where(eq(mailboxes.id, mb.mailboxId));
+    const meta = fleet.metaFor(mb.mailboxId);
+    meta.profileStoredAs = (raw) => raw.split("\r\n")
+      .map((l) => (l.length <= 998 ? l : (l.match(/.{1,998}/g) ?? [l]).join("\r\n "))).join("\r\n");
+    const events: string[] = [];
+    let t = Date.UTC(2026, 8, 28, 0, 0, 0);
+    const clock = (): Date => new Date(t);
+    const said = (event: string): string[] => events.filter((e) => e.startsWith(`${event} `));
+    const refused = { code: "profile_append_unreadable", confirmed: true };
+
+    const sync = clockedSync(db, fleet, mb, events, clock);
+    for (let tick = 0; tick < 3; tick += 1) {
+      await sync.onOrganize();
+      t += 60_000;
+    }
+    expect(meta.profileAppends, "each write-due tick appended the copy again").toBe(1);
+    expect(sync.profileBlock()).toEqual(refused);
+
+    // The next attach builds a new sync for the mailbox, as the worker does.
+    const attached = clockedSync(db, fleet, mb, events, clock);
+    await attached.armHoldFromFolder();
+    await attached.onOrganize();
+    t += 60_000;
+    await attached.onOrganize();
+    expect(meta.profileAppends, "the attach appended the copy again").toBe(1);
+    expect(attached.profileBlock(), "the row lost its sentence").toEqual(refused);
+    expect(said("organizer_profile_write_failed"), "said more than once per attachment").toHaveLength(2);
+
+    t += 24 * 60 * 60 * 1000;
+    await attached.onOrganize();
+    t += 60_000;
+    await attached.onOrganize();
+    expect(meta.profileAppends, "a day later: one retry").toBe(2);
+
+    await db.insert(tags).values({ accountId: mb.accountId, name: "changed", hue: "moss" });
+    t += 60_000;
+    await attached.onOrganize();
+    t += 60_000;
+    await attached.onOrganize();
+    expect(meta.profileAppends, "a changed document waited").toBe(3);
+    expect(said("profile_append_unreadable")).toHaveLength(3);
+    expect(said("organizer_profile_write_failed")).toHaveLength(2);
+    expect(said("organizer_profile_recovered")).toEqual([]);
+
+    // The server keeps copies again: the next change lands at once and the row's sentence goes.
+    meta.profileStoredAs = null;
+    await db.insert(tags).values({ accountId: mb.accountId, name: "kept", hue: "moss" });
+    t += 60_000;
+    await attached.onOrganize();
+    expect(meta.profileAppends).toBe(4);
+    const docs = profileDocs(fleet, mb.mailboxId);
+    expect(docs).toHaveLength(1);
+    expect(docs[0]!.doc!.tagNames).toEqual(expect.arrayContaining(["changed", "kept"]));
+    expect(attached.profileBlock()).toBeNull();
+    expect(said("organizer_profile_recovered")).toHaveLength(1);
+
+    // …and a document refused before then is not held back any more.
+    await db.delete(tags).where(and(eq(tags.accountId, mb.accountId), eq(tags.name, "kept")));
+    t += 60_000;
+    await attached.onOrganize();
+    expect(meta.profileAppends, "the document refused before the server was fixed waited").toBe(5);
   }, 30_000);
 });

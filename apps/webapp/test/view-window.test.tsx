@@ -245,6 +245,40 @@ describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () =
     });
   }
 
+  /* A LETTER LISTED LATE NEVER TAKES THE CURSOR: with nothing picked, the row the list shows stays shown. */
+  for (const [name, render] of [
+    ["News", (rows: EngineMessage[]) => {
+      const partition: FeedPartition = { waterline: null, fresh: rows, seen: [], newCount: rows.filter((m) => m.unread).length };
+      return (
+        <ReadsView settled owed={false} partition={partition} tags={tags} now={new Date(ISO)} cur={null} onCur={() => {}}
+          aiChip={null} chipState={null} onChipState={() => {}} markSeen={() => {}}
+          bodyOf={body} hydrateBody={() => {}} jumpTo={null} onJumped={() => {}} onAction={() => {}} />
+      );
+    }],
+    ["Receipts", (rows: EngineMessage[]) => (
+      <ReceiptsView settled owed={false} messages={rows} tags={tags} now={new Date(ISO)}
+        cur={null} onCur={() => {}} unreadCount={rows.filter((m) => m.unread).length} isUnread={(m) => m.unread}
+        markSeen={() => {}} bodyOf={body} hydrateBody={() => {}} jumpTo={null} onJumped={() => {}} onAction={() => {}} />
+    )],
+  ] as const) {
+    it(`${name}: an unread letter listed late on top leaves the cursor on the letter shown`, async () => {
+      const rows = [message(0), message(1), message(2)];
+      const m = await mount(render(rows));
+      const cursor = () => m.host.querySelector('.list-col .row[aria-selected="true"]')?.getAttribute("data-id");
+      expect(cursor()).toBe("m0");
+      const late = { ...message(9), unread: true } as EngineMessage;
+      await act(() => {
+        roots[roots.length - 1]!.render(
+          <NextIntlClientProvider locale="en" messages={messages} now={new Date(ISO)} timeZone="UTC">
+            <KeymapProvider>{render([late, ...rows])}</KeymapProvider>
+          </NextIntlClientProvider>,
+        );
+      });
+      expect(m.rowIndices()[0], "m9 listed on top").toBe(9);
+      expect(cursor()).toBe("m0");
+    });
+  }
+
   /* The stream's own bound — an opening run that grows, never the whole pile — is guarded in
      `stream-mount-window.test.tsx`, beside the module that owns it. Here only the CSS half. */
   it("the streams opt into content-visibility, and the rule names the rendered card", async () => {

@@ -14,9 +14,9 @@ import { DEFAULT_DORMANCY_DAYS } from "../rules.js";
 import { AWAY_AUDIENCES, AWAY_THROTTLES, nextEnabledAt, type AwayAudience, type AwayThrottle } from "../away-eligibility.js";
 import { awayScopeFitsAudience, isAwayPile, type AwayPile } from "../away-scope.js";
 import {
-  PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileFingerprint, profileScreenerAddress,
-  signatureReceipt,
-  type ApplicableProfileRule, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileReadResult,
+  PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileFingerprint,
+  profilePayloadAsRead, profileScreenerAddress, signatureReceipt,
+  type ApplicableProfileRule, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileListCounts, type ProfileReadResult,
   type ProfileScreening,
 } from "./organizer-profile.js";
 
@@ -42,7 +42,10 @@ export type ProfileLeftOut = Record<keyof typeof PROFILE_LIST_MAX, number>;
 /**
  * {@link serializeOrganizerProfile}, with what the list bound left out BESIDE the payload, never
  * in it (the key census pins the document). Each list is read one past its bound, so a list at
- * exactly the bound reads 0 and one past it reads 1.
+ * exactly the bound reads 0 and one past it reads 1. The payload is the store AS A READER READS IT
+ * ({@link profilePayloadAsRead}): a row the reader reads otherwise (a priority past the bound, an
+ * address with spaces, an empty name) is published as read, never rewritten in the store, and
+ * `normalized` counts those entries per list, beside `leftOut`.
  */
 export async function serializeOrganizerProfileCounted(
   db: Tx, accountId: string,
@@ -58,7 +61,9 @@ export async function serializeOrganizerProfileCounted(
   mailboxId: string,
   /** `applied`: also read the request ids this organizer applied ({@link OrganizerProfileDoc.applied}). */
   opts: { applied?: boolean; now?: Date } = {},
-): Promise<{ payload: OrganizerProfilePayload; leftOut: ProfileLeftOut; screening: ProfileScreening; applied?: string[] }> {
+): Promise<{
+  payload: OrganizerProfilePayload; leftOut: ProfileLeftOut; normalized: ProfileListCounts; screening: ProfileScreening; applied?: string[];
+}> {
   // ONE SNAPSHOT, not five. Under READ COMMITTED each statement sees its own snapshot, so a
   // screener decide committing between the contacts read and the rules read would serialize a
   // TORN configuration — the contact without its promoted rule — and the document would say
@@ -136,7 +141,7 @@ export async function serializeOrganizerProfileCounted(
   ruleRows.splice(PROFILE_LIST_MAX.rules);
   notifyRows.splice(PROFILE_LIST_MAX.notifyRules);
   tagRows.splice(PROFILE_LIST_MAX.tagNames);
-  const payload: OrganizerProfilePayload = {
+  const stored: OrganizerProfilePayload = {
     // A person's contact says so (NULL is a person's, mail 0148); an inferred one travels unstated.
     screener: contactRows.map((c) => ({
       address: c.address, ...(c.name === null ? {} : { name: c.name }),
@@ -175,7 +180,8 @@ export async function serializeOrganizerProfileCounted(
        about what the store actually holds. */
     ...(mailboxRows[0]?.signatureHtml ? { signatureHtml: mailboxRows[0].signatureHtml } : {}),
   };
-  return { payload, leftOut, screening, ...(appliedRows === null ? {} : appliedOf(appliedRows)) };
+  const { payload, changed: normalized } = profilePayloadAsRead(stored);
+  return { payload, leftOut, normalized, screening, ...(appliedRows === null ? {} : appliedOf(appliedRows)) };
 }
 
 const APPLIED_KEY_PREFIX = "meta-request:";

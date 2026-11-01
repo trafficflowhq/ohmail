@@ -72,6 +72,9 @@ export type ProfileCanonicalVersion = 1 | 2;
 /** How many superseded settings messages one tidy pass removes at most, oldest first. */
 export const PROFILE_TIDY_MAX_PER_PASS = 100;
 
+/** The most found copies (another install's, a gone store's) one organizer keeps for the person's answer, newest first. */
+export const PROFILE_KEPT_MAX = 8;
+
 /**
  * The discriminator and bookkeeping headers. The lease's `H` table, for the profile.
  *
@@ -1129,6 +1132,85 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
   };
 }
 
+/** The bounded lists by name, each with a count ({@link profilePayloadAsRead}'s `changed`). */
+export type ProfileListCounts = Record<keyof typeof PROFILE_LIST_MAX, number>;
+
+/**
+ * THE PAYLOAD AS A READER READS IT: {@link readPayload} over its JSON, the one statement of the
+ * reader's rules, and per bounded list how many entries it changed. A writer publishes this, so its
+ * copy reads back as written; the store's rows are never changed by it.
+ */
+export function profilePayloadAsRead(p: OrganizerProfilePayload): { payload: OrganizerProfilePayload; changed: ProfileListCounts } {
+  const raw = JSON.parse(JSON.stringify(p)) as Record<string, unknown>;
+  const changed: ProfileListCounts = { screener: 0, rules: 0, notifyRules: 0, tagNames: 0 };
+  for (const list of Object.keys(changed) as Array<keyof ProfileListCounts>) {
+    for (const entry of Array.isArray(raw[list]) ? raw[list] as unknown[] : []) {
+      const [read] = readPayload({ [list]: [entry] })[list] as unknown[];
+      if (read === undefined || canonicalJson(read) !== canonicalJson(entry)) changed[list] += 1;
+    }
+  }
+  return { payload: readPayload(raw), changed };
+}
+
+/** The transfer encodings a log line names; any other value is `other`, no header `absent`. */
+const TRANSFERS: readonly string[] = ["7bit", "8bit", "binary", "quoted-printable", "base64"];
+
+/** The one `Content-Transfer-Encoding` a header block names, as {@link TRANSFERS} spells it. */
+function transferOf(headerBlock: string): string {
+  const named = headerValues(headerBlock, "Content-Transfer-Encoding");
+  if (named.length === 0) return "absent";
+  const one = named.length === 1 ? named[0]!.toLowerCase() : "";
+  return TRANSFERS.includes(one) ? one : "other";
+}
+
+/**
+ * THE BODY AS WRITTEN, where the server stored it re-encoded: one header naming quoted-printable or
+ * base64 is undone and the octets read as UTF-8. Any other message, or one that does not decode, is
+ * the body as served. String operations only: the phone's engine runs this.
+ */
+function bodyAsWritten(headerBlock: string, body: string): string {
+  const transfer = transferOf(headerBlock);
+  const octets = transfer === "quoted-printable" ? quotedPrintableOctets(body)
+    : transfer === "base64" ? base64Octets(body) : null;
+  return octets === null ? body : utf8Of(octets) ?? body;
+}
+
+/** Quoted-printable's octets, one character each: trailing blanks and soft breaks go, `=XX` decodes. */
+function quotedPrintableOctets(body: string): string {
+  return body.replace(/[ \t]+(?=\r?\n|$)/g, "").replace(/=\r?\n/g, "")
+    .replace(/=([0-9A-Fa-f]{2})/g, (_m, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** Base64's octets, one character each, up to the padding; other characters are skipped (RFC 2045 §6.8). */
+function base64Octets(body: string): string {
+  let out = "";
+  let acc = 0;
+  let bits = 0;
+  for (const ch of body.split("=", 1)[0]!) {
+    const v = BASE64.indexOf(ch);
+    if (v === -1) continue;
+    acc = ((acc << 6) | v) & 0xffffff;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out += String.fromCharCode((acc >> bits) & 0xff);
+    }
+  }
+  return out;
+}
+
+/** Octets, one character each, read as UTF-8 through the decoder every runtime has; `null` when they are not UTF-8. */
+function utf8Of(octets: string): string | null {
+  if (!/[\x80-\xff]/.test(octets)) return octets;
+  try {
+    return decodeURIComponent(octets.replace(/[%\x80-\xff]/g, (ch) => `%${ch.charCodeAt(0).toString(16).padStart(2, "0")}`));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Read one message. Returns `null` when it is not a profile at all (no discriminator) —
  * lease claims and future meta record types fall out here, exactly as profile messages fall out
@@ -1141,7 +1223,7 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
 export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord | null {
   const at = raw.search(/\r?\n\r?\n/);
   const headerBlock = at === -1 ? raw : raw.slice(0, at);
-  const body = at === -1 ? "" : raw.slice(at).replace(/^\r?\n\r?\n/, "");
+  const body = bodyAsWritten(headerBlock, at === -1 ? "" : raw.slice(at).replace(/^\r?\n\r?\n/, ""));
 
   const headers = new Map<string, string>();
   const seen = new Map<string, number>();
@@ -1877,6 +1959,11 @@ function malformedProfile(reason: string, ref: unknown): MalformedProfile {
  * the write and the tidy agree on which document is current.
  */
 function newestOf(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage {
+  return newestFirst(ok)[0]!;
+}
+
+/** {@link newestOf}'s order, whole. */
+function newestFirst(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage[] {
   return [...ok].sort((a, b) => {
     // Both are the writer's ISO spelling — the parser admits no other — so both parse the same everywhere.
     const d = Date.parse(b.doc!.updatedAt) - Date.parse(a.doc!.updatedAt);
@@ -1893,7 +1980,7 @@ function newestOf(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage {
     if (Number.isFinite(refA) && Number.isFinite(refB) && refA !== refB) return refB - refA;
     return byCodeUnit(String(b.ref ?? ""), String(a.ref ?? ""))
       || byCodeUnit(String(a.installId ?? ""), String(b.installId ?? ""));
-  })[0]!;
+  });
 }
 
 /**
@@ -2101,6 +2188,16 @@ function retainingList(at: ProfileLocator | undefined, opts: ProfileListOptions 
   return { ...opts, bodyFor: (row) => namesLocated(row.headerBlock, at) || (also?.(row) ?? false) };
 }
 
+/** {@link retainingList} for several locators. */
+function keepingList(kept: readonly (ProfileLocator | undefined)[], opts: ProfileListOptions = {}): ProfileListOptions {
+  return kept.reduce((o: ProfileListOptions, at) => retainingList(at, o), opts);
+}
+
+/** The entries the held question and the kept copies name: never removed, refused or replaced by a write. */
+function heldIn(view: ProfileView, retain: ProfileLocator | undefined, kept: readonly ProfileLocator[]): Set<ProfileEntry> {
+  return new Set([retain, ...kept].map((at) => locatedIn(view, at)).filter((e): e is ProfileEntry => e !== null));
+}
+
 /** The counts `profile_tidy_planned` carries — numbers only, never an address, subject or folder. */
 export interface TidyCounts {
   records: number;
@@ -2137,13 +2234,13 @@ export interface TidyCounts {
 function planTidy(
   view: ProfileView, selfInstallId: string | null, now: Date, claims: readonly MetaClaimSeen[],
   retain?: ProfileLocator, released: readonly ProfileLocator[] = [], replaceable: ReadonlySet<string> = new Set(),
-  ownSince?: number, owns?: (second: number) => boolean,
+  ownSince?: number, owns?: (second: number) => boolean, kept: readonly ProfileLocator[] = [],
 ): { counts: TidyCounts; refs: unknown[] } {
   const counts: TidyCounts = {
     records: view.entries.length, current: 0, removable: 0, own: 0, foreignStale: 0, duplicate: 0, released: 0,
     malformed: 0, keptForeignFresh: 0, keptUnrecognised: 0, keptNewerDated: 0, keptHeld: 0, keptOwnBesideUnseen: 0, keptFound: 0, unseenCurrent: 0,
   };
-  const held = locatedIn(view, retain);
+  const held = heldIn(view, retain, kept);
   const C = view.current;
   if (view.newerV !== null || C === null) return { counts, refs: [] };
   counts.current = 1;
@@ -2154,14 +2251,14 @@ function planTidy(
      seen (`replaceable`) and does not hold, may be the one that holds THIS install's older copy as
      its question. This install's copies stay until it has seen it. */
   const cSeen = ownCopy((C.record as ParsedProfileMessage).installId, C.shape.dateSecond, selfInstallId, ownSince, owns)
-    || C === held || replaceable.has(cFingerprint);
+    || held.has(C) || replaceable.has(cFingerprint);
   const freshClaim = (installId: string | null): boolean => claims.some((c) => c.installId === installId
     && now.getTime() - c.heartbeat.getTime() < DEFAULT_STALE_AFTER_MS);
   const older = (a: number | null, b: number | null): boolean => a !== null && b !== null && a < b;
   const picked: ProfileEntry[] = [];
   for (const e of view.entries) {
     if (e === C) continue;
-    if (e === held) { counts.keptHeld += 1; continue; }
+    if (held.has(e)) { counts.keptHeld += 1; continue; }
     if (!e.shape.exact || e.header?.kind === "unrecognised") { counts.keptUnrecognised += 1; continue; }
     const ok = e.record !== null && !isMalformedProfile(e.record) && e.record.status === "ok";
     /* SUPERSEDED: a readable body lost to C under `newestOf`; an unreadable body shares C's second
@@ -2297,6 +2394,44 @@ export async function readOrganizerProfile(
   };
 }
 
+/** A settings copy in the folder that is not the reader's own, read by body. */
+export interface FoundCopy { installId: string; doc: OrganizerProfileDoc; locator: ProfileLocator }
+
+/**
+ * THE FOUND COPIES: every readable settings copy in the folder that is not the caller's own ({@link
+ * ownCopy}), newest first, at most `max`, each read by body. A newer format anywhere answers `newer`.
+ */
+export async function readFoundCopies(
+  io: ProfileIo, opts: { installId: string; ownSince?: number; owns?: (second: number) => boolean; max?: number },
+): Promise<{ state: "read"; copies: FoundCopy[] } | { state: "newer"; v: number }> {
+  const max = opts.max ?? PROFILE_KEPT_MAX;
+  const notOurs = (installId: string | null, second: number | null): boolean => installId !== null
+    && !ownCopy(installId, second, opts.installId, opts.ownSince, opts.owns);
+  let view: ProfileView;
+  try {
+    const first = viewOf((await listingOf(io)).messages);
+    const unread = first.newerV !== null ? [] : first.entries
+      .filter((e) => e.shape.exact && notOurs(e.shape.installId, e.shape.dateSecond))
+      .sort((a, b) => (b.shape.dateSecond ?? -1) - (a.shape.dateSecond ?? -1)).slice(0, max)
+      .filter((e) => e.record === null);
+    view = unread.length === 0 ? first : viewOf((await listingOf(io, {
+      bodyFor: (row) => {
+        const s = shapeOf(row.headerBlock);
+        return unread.some((e) => e.shape.installId === s.installId && e.shape.dateSecond === s.dateSecond);
+      },
+    })).messages);
+  } catch (err) {
+    throw new ProfileUnavailableError(
+      `the organizer profile in ${META_FOLDER} could not be read`,
+      { op: "list_profiles", cause: err, code: askCodeOf(err) },
+    );
+  }
+  if (view.newerV !== null) return { state: "newer", v: view.newerV };
+  const copies = newestFirst(view.ok.filter((r) => notOurs(r.installId, secondOfDoc(r.doc!)))).slice(0, max)
+    .map((r) => ({ installId: r.installId!, doc: r.doc!, locator: profileLocatorOf(r.installId, r.doc!)! }));
+  return { state: "read", copies };
+}
+
 // ── TIDY ────────────────────────────────────────────────────────────────────────────────────
 
 /** How the organizer tidies: `remove` for real, or `count` — plan, log, remove nothing. */
@@ -2376,14 +2511,15 @@ export async function tidyOrganizerProfile(input: {
   ownSince?: number;
   /** {@link ownCopy}'s record: a copy under the caller's id at a second it did not record is not the caller's. */
   owns?: (second: number) => boolean;
+  /** Found copies kept for the person's answer beside the held one: never removed, whatever their age. */
+  kept?: readonly ProfileLocator[];
 }): Promise<TidyOutcome> {
   const log = input.log ?? ((): void => undefined);
   const released = input.released ?? [];
+  const kept = input.kept ?? [];
   let listing: ProfileListing;
   try {
-    listing = await listingOf(input.io, released.reduce(
-      (opts: ProfileListOptions, at) => retainingList(at, opts), retainingList(input.retain, { complete: true }),
-    ));
+    listing = await listingOf(input.io, keepingList([...released, ...kept], retainingList(input.retain, { complete: true })));
   } catch (err) {
     throw new ProfileUnavailableError(
       `the settings messages in ${META_FOLDER} could not be read before tidying`,
@@ -2397,7 +2533,7 @@ export async function tidyOrganizerProfile(input: {
     return { removed: 0, remaining: 0, planned: null, refused: "newer" };
   }
   const plan = planTidy(view, input.installId, input.now ?? new Date(), listing.claims, input.retain, released,
-    new Set(input.replaceable ?? []), input.ownSince, input.owns);
+    new Set(input.replaceable ?? []), input.ownSince, input.owns, kept);
   return tidyPass(input.io, view, plan, {
     mode: input.mode ?? "remove", max: input.max ?? PROFILE_TIDY_MAX_PER_PASS, log,
   });
@@ -2435,6 +2571,8 @@ export interface WriteProfileInput {
    * nothing. The organizer records the second here, so no copy of its own is ever in the folder unrecorded.
    */
   beforeAppend?: (second: number) => Promise<void>;
+  /** Found copies kept for the person's answer beside the held one: published beside, never refused or replaced. */
+  kept?: readonly ProfileLocator[];
 }
 
 export type WriteProfileResult =
@@ -2449,15 +2587,55 @@ export type WriteProfileResult =
   | { written: false; reason: "foreign"; doc: OrganizerProfileDoc; installId: string | null }
   /** Superseded copies are in the folder: one tidy pass ran instead of the append. */
   | { written: false; reason: "cleanup_owed"; removed: number }
-  /** The new copy did not read back as written: it was removed and the current one kept. */
-  | { written: false; reason: "append_unreadable" };
+  /** The new copy would not, or did not, read back as written: never appended, or removed; the current one kept. */
+  | { written: false; reason: "append_unreadable"; why: ProfileUnkeptWhy };
+
+/**
+ * Why a copy was not kept, as `profile_append_unreadable` says it: never appended (`not_self_readable`),
+ * appended and not listed back (`not_listed`), or listed back and read otherwise, so removed (the rest).
+ */
+export type ProfileUnkeptWhy = "not_self_readable" | "not_listed" | "not_a_profile" | "served_malformed" | "served_different";
+
+/** The payload's sections, as `profile_append_unreadable` names the ones a copy states otherwise. */
+const PAYLOAD_SECTIONS = ["screener", "rules", "notifyRules", "awayResponder", "tagNames", "signature", "signatureHtml"] as const;
+
+/** The sections a read copy states otherwise than the written document, compared at the document's canonical version. */
+function sectionsDiffering(written: OrganizerProfileDoc, read: OrganizerProfilePayload): string[] {
+  const v = canonicalVersionOf(written);
+  const a = canonicalizeProfilePayload(written, v) as unknown as Record<string, unknown>;
+  const b = canonicalizeProfilePayload(read, v) as unknown as Record<string, unknown>;
+  return PAYLOAD_SECTIONS.filter((k) => canonicalJson(a[k]) !== canonicalJson(b[k]));
+}
+
+/** What the parser made of a copy that did not read back: its own reason, or the sections it states otherwise. */
+function parsedDetail(written: OrganizerProfileDoc, r: ProfileRecord | null): Record<string, unknown> {
+  if (r === null) return {};
+  if (isMalformedProfile(r)) return { malformed: r.reason };
+  return r.status === "ok" ? { sections: sectionsDiffering(written, r.doc!) } : {};
+}
+
+/** Why the copy the server holds did not read back, and the transfer encoding its header names. Our literals only. */
+function servedDetail(
+  written: OrganizerProfileDoc, served: RawProfileMessage | undefined,
+): { why: ProfileUnkeptWhy } & Record<string, unknown> {
+  if (served === undefined) return { why: "not_listed" };
+  const r = served.headerOnly === true ? null : parseProfileMessage(served.raw, served.ref);
+  const why = r === null ? "not_a_profile" : isMalformedProfile(r) ? "served_malformed" : "served_different";
+  return { why, ...parsedDetail(written, r), transfer: transferOf(served.headerOnly === true ? served.raw : headerBlockOf(served.raw)) };
+}
+
+/** A message's longest line, in characters: octets, for the ASCII this writer emits. */
+function longestLineOf(message: string): number {
+  return message.split(/\r?\n/).reduce((max, line) => Math.max(max, line.length), 0);
+}
 
 /**
  * WRITE THE CURRENT PROFILE, and the folder never holds more than two settings messages.
  *
  * List the whole folder; refuse `newer` and an unseen foreign current document; if anything beside
  * the current document C is removable, run one tidy pass INSTEAD of appending (the gate: on a server
- * whose removals do not stick, the pile cannot grow). Then append N, read it back by body and
+ * whose removals do not stick, the pile cannot grow). Then format N and read it here: an N this
+ * reader would not read back as written is never appended. Append N, read it back by body and
  * compare fingerprints, and only then remove C. An N that does not read back costs N, never C.
  */
 export async function writeOrganizerProfile(input: WriteProfileInput): Promise<WriteProfileResult> {
@@ -2473,10 +2651,11 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
       { op: "ensure_meta", cause: err },
     );
   }
+  const kept = input.kept ?? [];
   let listing: ProfileListing;
   try {
     // COMPLETE: both refusals below are made from this list, and so is the gate.
-    listing = await listingOf(io, retainingList(input.retain, { complete: true }));
+    listing = await listingOf(io, keepingList(kept, retainingList(input.retain, { complete: true })));
   } catch (err) {
     throw new ProfileUnavailableError(
       `the organizer profile in ${META_FOLDER} could not be read before writing`,
@@ -2490,9 +2669,9 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   // ── AN UNSEEN FOREIGN CURRENT DOCUMENT REFUSES THE WRITE — see the result member ────────────
   const known = new Set(input.replaceable ?? []);
   const docFingerprint = profileFingerprint(doc);
-  const held = locatedIn(view, input.retain);
-  // The held record is the question the caller is asking, never a document it has not seen.
-  const newest = view.current === null || view.current === held ? null : view.current.record as ParsedProfileMessage;
+  const held = heldIn(view, input.retain, kept);
+  // The held record and the kept copies are questions the caller asks, never documents it has not seen.
+  const newest = view.current === null || held.has(view.current) ? null : view.current.record as ParsedProfileMessage;
   const unseen = [newest].find((r): r is ParsedProfileMessage => {
     if (r === null) return false;
     if (ownCopy(r.installId, secondOfDoc(r.doc!), installId, input.ownSince, input.owns)) return false;
@@ -2508,7 +2687,7 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   if (mode === "remove") {
     // The `unseen` refusal above cleared the newest: it is this writer's, held, seen or the same.
     const plan = planTidy(view, installId, now, claims, input.retain, [],
-      new Set([...known, ...(newest === null ? [] : [profileFingerprint(newest.doc!)])]), input.ownSince, input.owns);
+      new Set([...known, ...(newest === null ? [] : [profileFingerprint(newest.doc!)])]), input.ownSince, input.owns, kept);
     if (plan.refs.length > 0) {
       log("profile_write_held_for_cleanup", { removable: plan.refs.length });
       const pass = await tidyPass(io, view, plan, { mode, max: PROFILE_TIDY_MAX_PER_PASS, log });
@@ -2523,15 +2702,31 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
     const s = shapeOf(headerBlock);
     return s.installId === installId && s.dateSecond === second;
   };
+  const notWritten = (err: unknown): ProfileUnavailableError => new ProfileUnavailableError(
+    `the organizer profile in ${META_FOLDER} could not be written`,
+    { op: "append_profile", cause: err },
+  );
+  // ── N AS THIS READER READS IT: a copy that would not read back as written is never appended ──
+  let message: string;
+  try {
+    message = formatProfileMessage(doc, { installId });
+  } catch (err) {
+    throw notWritten(err);
+  }
+  const longestLine = longestLineOf(message);
+  const self = parseProfileMessage(message);
+  if (self === null || isMalformedProfile(self) || self.status !== "ok" || profileFingerprint(self.doc!) !== docFingerprint) {
+    log("profile_append_unreadable", {
+      count: 0, why: "not_self_readable", ...parsedDetail(doc, self), transfer: transferOf(headerBlockOf(message)), longestLine,
+    });
+    return { written: false, reason: "append_unreadable", why: "not_self_readable" };
+  }
   // The caller's record of this copy, before it exists: a store vouches for what it is about to write.
   if (input.beforeAppend !== undefined) await input.beforeAppend(second);
   try {
-    await io.appendProfile(formatProfileMessage(doc, { installId }));
+    await io.appendProfile(message);
   } catch (err) {
-    throw new ProfileUnavailableError(
-      `the organizer profile in ${META_FOLDER} could not be written`,
-      { op: "append_profile", cause: err },
-    );
+    throw notWritten(err);
   }
 
   // ── READ N BACK: a new message of ours with N's Date, read by body, saying what N says ──────
@@ -2563,12 +2758,13 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
         });
       }
     }
-    log("profile_append_unreadable", { count: appended.length });
-    return { written: false, reason: "append_unreadable" };
+    const served = servedDetail(doc, appended[0]);
+    log("profile_append_unreadable", { count: appended.length, ...served, longestLine });
+    return { written: false, reason: "append_unreadable", why: served.why };
   }
 
-  // ── THEN THE C THIS WRITE REPLACED, and nothing else — never the held record ─────────────────
-  const C = view.current !== null && view.current === held ? ownNewest(view, installId, input.ownSince, input.owns) : view.current;
+  // ── THEN THE C THIS WRITE REPLACED, and nothing else — never the held record or a kept copy ──
+  const C = view.current !== null && held.has(view.current) ? ownNewest(view, installId, input.ownSince, input.owns) : view.current;
   if (C === null || C.msg.ref === undefined) return { written: true, removed: 0 };
   try {
     /* C's uid is a fact only under the numbering it was LISTED under. The read-back re-listed the

@@ -122,7 +122,7 @@ export function TagView({
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   /** The column's row, or the gone notice for a pick another mail client took away — `useListView`. */
-  const list = useListView({ rows: messages, settled, pending: owed, picked: selectedId });
+  const list = useListView({ rows: messages, settled, pending: owed, picked: selectedId, scope: tag.id });
   const shown = list.shown;
   /* The column's visit: entered by an open, → or the person's own press or scroll in it. */
   const visit = useReaderVisit({ shown, markSeen: onMarkSeen });

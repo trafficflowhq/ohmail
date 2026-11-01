@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { memoryImapServer, type MemoryImapServer } from "./_metaworld.js";
+import { memoryImapServer, reencodeBody, type MemoryImapServer } from "./_metaworld.js";
 import { resetMetaMemos } from "../../src/adapters/meta-memo.js";
+import { createLogger } from "../../src/log.js";
 import {
   formatProfileMessage,
   isMalformedProfile,
@@ -380,10 +381,13 @@ describe("a copy that does not read back as written costs itself, never the curr
       updatedAt: new Date("2026-09-26T10:00:00Z"), producer: { kind: "cloud", version: "test" },
     }), { installId: WRITER }));
   };
-  const writeRich = (server: MemoryImapServer, log?: (e: string) => void) => writeOrganizerProfile({
+  const writeRich = (
+    server: MemoryImapServer, log?: (e: string, d: Record<string, unknown>) => void, next = rich("next"),
+    beforeAppend?: (second: number) => Promise<void>,
+  ) => writeOrganizerProfile({
     io: makeProfileIo(server, toServerPath, { installId: WRITER, mailboxId: "fix026-t6" }),
-    doc: makeProfileDoc(rich("next"), { updatedAt: writeAt(1), producer: { kind: "cloud", version: "test" } }),
-    installId: WRITER, ...(log === undefined ? {} : { log }),
+    doc: makeProfileDoc(next, { updatedAt: writeAt(1), producer: { kind: "cloud", version: "test" } }),
+    installId: WRITER, ...(log === undefined ? {} : { log }), ...(beforeAppend === undefined ? {} : { beforeAppend }),
   });
   /** A server that folds every line longer than 998 octets, the RFC 5322 limit. */
   const rewrap = (raw: string): string => raw.split("\r\n")
@@ -396,21 +400,59 @@ describe("a copy that does not read back as written costs itself, never the curr
     return `${raw.slice(0, at)}${JSON.stringify(doc, null, 2)}\r\n`;
   };
 
-  for (const [name, transform] of [["rewraps long lines", rewrap], ["alters a value", altered]] as const) {
-    it(`a server that ${name}: the new copy is removed, the current one kept, profile_append_unreadable`, async () => {
+  for (const [name, transform, why] of [
+    ["rewraps long lines", rewrap, { why: "served_malformed", malformed: "document is not JSON" }],
+    ["alters a value", altered, { why: "served_different", sections: ["tagNames"] }],
+  ] as const) {
+    it(`a server that ${name}: the new copy is removed, the current one kept, and the line says why`, async () => {
       resetMetaMemos();
       const server = memoryImapServer({ prefix: "INBOX.", folders: ["INBOX.ohmail", META], transformOnAppend: transform });
       seedCurrent(server);
-      const events: string[] = [];
+      const said: Array<Record<string, unknown>> = [];
 
-      await expect(writeRich(server, (e) => { events.push(e); })).resolves.toEqual({ written: false, reason: "append_unreadable" });
+      await expect(writeRich(server, (e, d) => { if (e === "profile_append_unreadable") said.push(d); }))
+        .resolves.toEqual({ written: false, reason: "append_unreadable", why: why.why });
 
-      expect(events).toContain("profile_append_unreadable");
+      expect(said).toEqual([expect.objectContaining({ count: 1, ...why, transfer: "7bit" })]);
+      expect(said[0]!.longestLine, "the written copy's long line").toBeGreaterThan(998);
+      // …in fields the real logger keeps.
+      const out: string[] = [];
+      createLogger({ service: "worker", sink: (l) => { out.push(l); } }).info("profile_append_unreadable", said[0]!);
+      expect(JSON.parse(out[0]!)).not.toHaveProperty("droppedFields");
       expect(settingsHeld(server)).toBe(1);
       const read = await readOrganizerProfile(makeProfileIo(server, toServerPath, freshId()));
       expect(read.state === "found" && read.doc.tagNames).toEqual(["current"]);
     });
   }
+
+  for (const cte of ["quoted-printable", "base64"] as const) {
+    it(`a server that stores the body as ${cte}: the write lands, and a fresh reader finds it`, async () => {
+      resetMetaMemos();
+      const server = memoryImapServer({ prefix: "INBOX.", folders: ["INBOX.ohmail", META], transformOnAppend: (raw) => reencodeBody(raw, cte) });
+      seedCurrent(server);
+      await expect(writeRich(server)).resolves.toEqual({ written: true, removed: 1 });
+      const read = await readOrganizerProfile(makeProfileIo(server, toServerPath, freshId()));
+      expect(read.state === "found" && read.doc.tagNames).toEqual(["next"]);
+    });
+  }
+
+  it("a copy this reader would not read back as written is never appended, and nothing is recorded for it", async () => {
+    resetMetaMemos();
+    const server = memoryImapServer({ prefix: "INBOX.", folders: ["INBOX.ohmail", META] });
+    seedCurrent(server);
+    const said: Array<Record<string, unknown>> = [];
+    const recorded: number[] = [];
+    const past = { ...rich("next"), rules: [{ kind: "sender", match: "hi@example.test", destination: "INBOX", priority: 1500, enabled: true, provenance: "manual" }] };
+
+    await expect(writeRich(server, (e, d) => { if (e === "profile_append_unreadable") said.push(d); }, past, async (s) => { recorded.push(s); }))
+      .resolves.toEqual({ written: false, reason: "append_unreadable", why: "not_self_readable" });
+
+    expect(server.log.filter((l) => l.startsWith("append ")), "an unreadable copy was appended").toEqual([]);
+    expect(recorded, "a copy never appended was recorded").toEqual([]);
+    expect(said).toEqual([expect.objectContaining({ count: 0, why: "not_self_readable", sections: ["rules"], transfer: "7bit" })]);
+    const read = await readOrganizerProfile(makeProfileIo(server, toServerPath, freshId()));
+    expect(read.state === "found" && read.doc.tagNames).toEqual(["current"]);
+  });
 
   it("control: a byte-faithful server admits the same write", async () => {
     resetMetaMemos();

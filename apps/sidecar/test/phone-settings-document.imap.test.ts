@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ImapFlow } from "imapflow";
 import { META_FOLDER } from "@trafficflow/core/adapters/organizer-lease";
 import {
-  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage,
+  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
 } from "@trafficflow/core/adapters/organizer-profile";
 import {
   startPhoneEngine,
@@ -210,7 +210,7 @@ async function plantOtherInstallsDocument(user: string, v?: number): Promise<voi
   });
 }
 
-interface DocOnServer { installId: string | null; rules: string[]; tagNames: string[] }
+interface DocOnServer { installId: string | null; rules: string[]; tagNames: string[]; fingerprint: string | null }
 
 /** The settings documents in `ohmail/_meta`, read by an INDEPENDENT client. */
 async function documentsOnServer(user: string): Promise<DocOnServer[]> {
@@ -227,6 +227,7 @@ async function documentsOnServer(user: string): Promise<DocOnServer[]> {
             installId: r.installId,
             rules: (r.doc?.rules ?? []).map((x) => `${x.match}>${x.destination}`),
             tagNames: r.doc?.tagNames ?? [],
+            fingerprint: r.doc ? profileFingerprint(r.doc) : null,
           });
         }
       }
@@ -694,5 +695,137 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone organizing a mailbox with 
       second: { rules: [["anna@elsewhere.test>INBOX"], ["carol@elsewhere.test>ohmail/Screened"]], left: "saved" },
       asked: 1,
     });
+  }, 600_000);
+
+  it("Not now on one phone, a decision, Stop and remove: the next phone keeps those settings and asks about them next", async () => {
+    const user = `settings-doc-${randomUUID()}@trafficflow.test`;
+    await plantOtherInstallsDocument(user);
+    const b = await bootPhone({ user, file: join(storeDir(), "engine.db"), flushMs: 0 });
+    const bId = seedMailboxId(b);
+    expect((await call(b, "POST", `/local/mailboxes/${bId}/organize`, { consent: "person" })).status).toBe(200);
+    expect(await untilLine(b, "organizer_profile_detected", (d) => d.state === "found", 120_000), `events ${events(b)}`).not.toBeNull();
+    const q = await readProfileImport(phoneSession(b), bId);
+    expect(await answerProfileImport(phoneSession(b), bId, "notNow", { fingerprint: (q as { fingerprint: string }).fingerprint }))
+      .toMatchObject({ kind: "done" });
+    await decide(b, "carol@elsewhere.test", "ohmail/Screened");
+    await twoPasses(b);
+    expect(await b.engine.stopOrganizing()).toBe("released");
+    await b.engine.stop();
+    open.splice(open.indexOf(b.engine), 1);
+
+    const c = await bootPhone({ user, file: join(storeDir(), "engine.db"), flushMs: 0 });
+    const cId = seedMailboxId(c);
+    expect((await call(c, "POST", `/local/mailboxes/${cId}/organize`, { consent: "person" })).status).toBe(200);
+    expect(await untilLine(c, "organizer_profile_detected", (d) => d.state === "found", 120_000), `events ${events(c)}`).not.toBeNull();
+    for (let i = 0; i < 2; i++) await twoPasses(c);
+    const first = await readProfileImport(phoneSession(c), cId);
+    const keptAtTakeover = (await documentsOnServer(user)).some((d) => d.installId === OTHER_INSTALL);
+    expect(await answerProfileImport(phoneSession(c), cId, "import", { fingerprint: (first as { fingerprint: string }).fingerprint }))
+      .toMatchObject({ kind: "done" });
+    for (let i = 0; i < 2; i++) await twoPasses(c);
+    const next = await readProfileImport(phoneSession(c), cId);
+    expect({
+      first: first?.state === "found" ? `${first.counts.screener}/${first.counts.rules}` : first?.state, keptAtTakeover,
+      kept: (await documentsOnServer(user)).some((d) => d.installId === OTHER_INSTALL),
+      next: next?.state === "found" ? `${next.counts.screener}/${next.counts.rules}/${next.counts.tags}` : next?.state,
+    }, `events ${events(c)}`).toEqual({ first: "0/1", keptAtTakeover: true, kept: true, next: "1/1/1" });
+  }, 600_000);
+
+  /* A RESTORED PHONE'S LATER COPY AT THE NEXT SWITCH (tester C, round 28): the store is backed up; its later life
+     lets a sender in and writes L in place of its copy, twenty minutes before the next phone writes (planted, under
+     its id, by the build this engine is). Restored, it lets another in, says Not now on L, writes its own copy
+     beside it and is removed; a fresh phone B says Not now, decides and is removed. L stays, and a fresh phone C
+     asks about B's copy, then A's, then L. */
+  it("a restored phone's later copy stays through the next phone's Stop and remove, and a third phone asks about it", async () => {
+    const user = `settings-doc-${randomUUID()}@trafficflow.test`;
+    await withServer(user, async () => undefined);
+    const installId = `install-${randomUUID()}`;
+    const live = join(storeDir(), "engine.db");
+    const first = await bootPhone({ user, file: live, flushMs: 0, installId });
+    const firstId = seedMailboxId(first);
+    expect((await call(first, "POST", `/local/mailboxes/${firstId}/organize`, { consent: "person" })).status).toBe(200);
+    expect(await untilLine(first, "organizer_row_promoted", () => true, 120_000), `events ${events(first)}`).not.toBeNull();
+    await decide(first, "anna@elsewhere.test", "INBOX");
+    await twoPasses(first);
+    await first.engine.stop();
+    open.splice(open.indexOf(first.engine), 1);
+    const backup = storeDir();
+    for (const suffix of ["", "-wal", "-shm"]) if (existsSync(live + suffix)) cpSync(live + suffix, join(backup, `engine.db${suffix}`));
+    // The store began organizing an hour ago, as on the tester's phone: L is a later life's copy, not a gone store's.
+    const db = new sqlite.DatabaseSync(join(backup, "engine.db"));
+    db.prepare("update mailboxes set created_at = ?").run(Date.now() - 60 * 60_000);
+    db.close();
+    const L = makeProfileDoc({
+      screener: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null,
+      rules: ["anna", "dora"].map((n) => ({ kind: "sender" as const, match: `${n}@elsewhere.test`, destination: "INBOX", priority: 0, enabled: true, provenance: "manual" })),
+    }, { updatedAt: new Date(Date.now() - 20 * 60_000), producer: { kind: "mobile", version: "0.0.0" } });
+    await withServer(user, async (c) => {
+      const lock = await c.getMailboxLock(META_PATH);
+      try {
+        const ours: number[] = [];
+        for await (const m of c.fetch("1:*", { uid: true, source: true })) {
+          const r = m.source ? parseProfileMessage(m.source.toString("utf8")) : null;
+          if (r && !isMalformedProfile(r) && r.installId === installId) ours.push(m.uid);
+        }
+        if (ours.length > 0) await c.messageDelete(ours.join(","), { uid: true });
+      } finally { lock.release(); }
+      await c.append(META_PATH, Buffer.from(formatProfileMessage(L, { installId }), "utf8"));
+    });
+
+    const a = await bootPhone({ user, file: join(backup, "engine.db"), flushMs: 0, installId });
+    const aId = seedMailboxId(a);
+    await decide(a, "dave@elsewhere.test", "INBOX");
+    await call(a, "POST", `/local/mailboxes/${aId}/organize`, { consent: "person" });
+    expect(await untilLine(a, "organizer_profile_detected", (d) => d.state === "found", 120_000), `events ${events(a)}`).not.toBeNull();
+    for (let i = 0; i < 2; i++) await twoPasses(a);
+    const restored = await readProfileImport(phoneSession(a), aId);
+    expect(await answerProfileImport(phoneSession(a), aId, "notNow", { fingerprint: (restored as { fingerprint: string }).fingerprint }))
+      .toMatchObject({ kind: "done" });
+    for (let i = 0; i < 2; i++) await twoPasses(a);
+    expect(await a.engine.stopOrganizing()).toBe("released");
+    await a.engine.stop();
+    open.splice(open.indexOf(a.engine), 1);
+
+    const b = await bootPhone({ user, file: join(storeDir(), "engine.db"), flushMs: 0 });
+    const bId = seedMailboxId(b);
+    expect((await call(b, "POST", `/local/mailboxes/${bId}/organize`, { consent: "person" })).status).toBe(200);
+    expect(await untilLine(b, "organizer_profile_detected", (d) => d.state === "found", 120_000), `events ${events(b)}`).not.toBeNull();
+    await twoPasses(b);
+    const bAsked = await readProfileImport(phoneSession(b), bId);
+    expect(await answerProfileImport(phoneSession(b), bId, "notNow", { fingerprint: (bAsked as { fingerprint: string }).fingerprint }))
+      .toMatchObject({ kind: "done" });
+    await decide(b, "erin@elsewhere.test", "ohmail/Screened");
+    for (let i = 0; i < 2; i++) await twoPasses(b);
+    expect(await b.engine.stopOrganizing()).toBe("released");
+    await b.engine.stop();
+    open.splice(open.indexOf(b.engine), 1);
+    const afterB = await documentsOnServer(user);
+    /* Each copy by the decision only it carries. */
+    const named = (fp: string | undefined): string => {
+      if (fp === profileFingerprint(L)) return "L";
+      const rules = afterB.find((d) => d.fingerprint === fp)?.rules ?? [];
+      return rules.some((x) => x.startsWith("dave@")) ? "A" : rules.some((x) => x.startsWith("erin@")) ? "B" : `?${fp}`;
+    };
+
+    const c = await bootPhone({ user, file: join(storeDir(), "engine.db"), flushMs: 0 });
+    const cId = seedMailboxId(c);
+    expect((await call(c, "POST", `/local/mailboxes/${cId}/organize`, { consent: "person" })).status).toBe(200);
+    expect(await untilLine(c, "organizer_profile_detected", (d) => d.state === "found", 120_000), `events ${events(c)}`).not.toBeNull();
+    for (let i = 0; i < 2; i++) await twoPasses(c);
+    const offered: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const q = await readProfileImport(phoneSession(c), cId);
+      if (q?.state !== "found") { offered.push(String(q?.state)); break; }
+      offered.push(named(q.fingerprint));
+      if (i === 2) break;
+      expect(await answerProfileImport(phoneSession(c), cId, "notNow", { fingerprint: q.fingerprint })).toMatchObject({ kind: "done" });
+      for (let j = 0; j < 2; j++) await twoPasses(c);
+    }
+    expect({
+      restored: named(restored?.state === "found" ? restored.fingerprint : undefined),
+      bAsked: named(bAsked?.state === "found" ? bAsked.fingerprint : undefined),
+      afterB: afterB.map((d) => named(d.fingerprint ?? undefined)).sort(),
+      offered, kept: (await documentsOnServer(user)).some((d) => d.fingerprint === profileFingerprint(L)),
+    }, `events ${events(c)}`).toEqual({ restored: "L", bAsked: "A", afterB: ["A", "B", "L"], offered: ["B", "A", "L"], kept: true });
   }, 600_000);
 });

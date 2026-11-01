@@ -181,7 +181,7 @@ export function TriageView({
     return e?.messageId ?? null;
   };
   const picked = rowTarget(selectedId) ?? selectedId;
-  const list = useListView({ rows: openable, settled, pending: owed, picked });
+  const list = useListView({ rows: openable, settled, pending: owed, picked, scope: pile, targetOf: rowTarget });
   const shown = list.shown;
   /* The column's visit: entered by an open, → or the person's own press or scroll in it. */
   const visit = useReaderVisit({ shown, markSeen: onMarkSeen });

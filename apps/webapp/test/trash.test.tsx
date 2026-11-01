@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import * as React from "react";
@@ -518,6 +518,57 @@ describe("the Trash view", () => {
   it("the heading is the RAIL'S OWN WORD, so the sidebar and the pane cannot differ by one", async () => {
     const el = await mount(page({ exhausted: true }));
     expect(el.querySelector(".lp-head")?.textContent ?? el.textContent).toContain(en.rail.trash);
+  });
+});
+
+describe("a letter listed late never takes the cursor or the reader", () => {
+  /* jsdom has no `CSS`; the ↓ step scrolls its row into view with `CSS.escape`. */
+  const hadCss = typeof (globalThis as { CSS?: unknown }).CSS !== "undefined";
+  beforeEach(() => {
+    if (!hadCss) (globalThis as { CSS?: unknown }).CSS = { escape: (s: string) => s.replace(/["\\]/g, "\\$&") };
+  });
+  afterEach(() => {
+    if (!hadCss) (globalThis as { CSS?: unknown }).CSS = undefined;
+  });
+  it("the delete that lands after its Undo window lists on top; the letter shown stays shown and ⇧⌫ restores it", async () => {
+    const { useTrashPage } = await import("../app/shell/trash-page");
+    const listTrash = vi.fn()
+      .mockResolvedValueOnce({ state: "ready", items: [row("m1"), row("m2")], nextCursor: null })
+      .mockResolvedValue({ state: "ready", items: [row("u8"), row("m1"), row("m2")], nextCursor: null });
+    const engine = { trashAvailable: () => true, listTrash } as never;
+    const acted: Array<[string, string]> = [];
+    function Bin({ landed }: { landed: number }) {
+      return h(TrashView, {
+        page: useTrashPage(engine, true, new Set(), landed), tags: [], now: new Date("2026-09-09T11:00:00.000Z"),
+        onOpen: () => {}, hydrateBody: () => {}, onAction: (a: string, m: { id: string }) => acted.push([a, m.id]), onAddTag: () => {},
+      } as never);
+    }
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const draw = (landed: number) => act(async () => {
+      root!.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en, timeZone: "UTC", children: h(KeymapProvider, { children: h(Bin, { landed }) }),
+      }));
+    });
+    const cursor = () => host!.querySelector('.view-trash .row[aria-selected="true"]')?.getAttribute("data-id");
+    const reader = () => host!.querySelector(".view-trash .read-col")?.textContent ?? "";
+    await draw(0);
+    expect(cursor()).toBe("m1");
+    expect(reader()).toContain("Subject m1");
+    await draw(1);
+    expect(host.querySelector(".view-trash .row")?.getAttribute("data-id"), "u8 listed on top").toBe("u8");
+    expect(cursor(), "the cursor stays on the letter the person was on").toBe("m1");
+    expect(reader()).toContain("Subject m1");
+    expect(reader()).not.toContain("Subject u8");
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", shiftKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(acted).toEqual([["restore", "m1"]]);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    });
+    expect(cursor(), "↓ steps from the letter shown").toBe("m2");
   });
 });
 

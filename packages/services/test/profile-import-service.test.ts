@@ -5,11 +5,12 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accountSettings, accounts, auditLog, awayResponders, changeLog, contacts, folderState, mailboxCredentials, mailboxes, mailboxProfileMirror, messages,
   organizerRequests, profileImportWriteReleased, rules, settleReaderRuleRows, tags,
-  PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION,
+  PROFILE_COPY_AUDIT_ACTION, PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, recordProfileCopy,
   type Tx,
 } from "@trafficflow/db";
 import {
-  PROFILE_VERSION, makeProfileDoc, profileFingerprint, signatureReceipt,
+  PROFILE_VERSION, formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
+  signatureReceipt,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { effectiveMailboxSignatures } from "../src/consent-seed.js";
@@ -275,6 +276,19 @@ describe("the import candidate", () => {
     expect(dto).toEqual({ state: "none" });
   });
 
+  it("a copy of a store holding a priority past the bound, as every reader reads both, asks nothing", async () => {
+    const w = await world();
+    const rule = { kind: "sender", match: "hi@example.com", destination: "ohmail/News", priority: 1500, enabled: true, provenance: "manual" };
+    await w.db.insert(rules).values({ accountId: w.accountId, ...rule });
+    // The copy another install wrote from the same store, as a reader parses it: the priority at the bound.
+    const parsed = parseProfileMessage(formatProfileMessage(makeProfileDoc({
+      screener: [], rules: [rule], notifyRules: [], awayResponder: null, tagNames: [], signature: null,
+    }, { updatedAt: new Date("2026-08-10T09:00:00.000Z"), producer: { kind: "local", version: "0.25.3" } }), { installId: "someone-elses-install" }));
+    if (parsed === null || isMalformedProfile(parsed)) throw new Error("the fixture copy is unreadable");
+    await seedHeldMarker(w, parsed.doc!);
+    expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toEqual({ state: "none" });
+  });
+
   it("a newer-format document surfaces as `newer` and offers no import", async () => {
     const w = await world();
     await seedNewerMarker(w, PROFILE_VERSION + 1);
@@ -313,6 +327,56 @@ describe("the import candidate", () => {
     const w = await world();
     await seedHeldMarker(w, doc());
     await w.db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, w.mailboxId));
+    expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toEqual({ state: "none" });
+  });
+
+  it("a mailbox whose organizer could not keep its settings copy says so beside every answer, until a copy is kept", async () => {
+    const w = await world();
+    const unkept = { kept: false, code: "profile_append_unreadable" };
+    await recordProfileCopy(w.db as unknown as Tx, { accountId: w.accountId, mailboxId: w.mailboxId, ...unkept, at: NOW });
+    expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toEqual({ state: "none", copy: unkept });
+    const fingerprint = await seedHeldMarker(w, doc());
+    expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toMatchObject({ state: "found", fingerprint, copy: unkept });
+    await recordProfileCopy(w.db as unknown as Tx, {
+      accountId: w.accountId, mailboxId: w.mailboxId, kept: true, code: null, at: new Date(NOW.getTime() + 60_000),
+    });
+    expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toMatchObject({ state: "found", copy: { kept: true, code: null } });
+    // Another mailbox's record says nothing here.
+    const other = await world();
+    expect(await profileImportService.candidate(other.ctx, other.mailboxId)).toEqual({ state: "none" });
+  });
+
+  it("the copy record is written on a change, renewed before the audit log's age-out, and never for a mailbox that kept its copy", async () => {
+    const w = await world();
+    const rows = async (): Promise<unknown[]> => (await w.db.select().from(auditLog).where(and(
+      eq(auditLog.accountId, w.accountId), eq(auditLog.action, PROFILE_COPY_AUDIT_ACTION),
+    )).orderBy(auditLog.createdAt)).map((r) => r.payload);
+    const at = (days: number): Date => new Date(NOW.getTime() + days * 24 * 60 * 60 * 1000);
+    const record = (kept: boolean, days: number): Promise<void> => recordProfileCopy(w.db as unknown as Tx, {
+      accountId: w.accountId, mailboxId: w.mailboxId, kept, code: kept ? null : "profile_append_unreadable", at: at(days),
+    });
+    await record(true, 0);
+    expect(await rows(), "a mailbox that never failed got a record").toEqual([]);
+    await record(false, 0);
+    await record(false, 1);
+    expect(await rows()).toHaveLength(1);
+    await record(false, 31);
+    expect(await rows(), "a standing refusal was not renewed").toHaveLength(2);
+    await record(true, 32);
+    await record(true, 33);
+    expect(await rows()).toEqual([
+      { mailboxId: w.mailboxId, kept: false, code: "profile_append_unreadable" },
+      { mailboxId: w.mailboxId, kept: false, code: "profile_append_unreadable" },
+      { mailboxId: w.mailboxId, kept: true, code: null },
+    ]);
+  });
+
+  it("…and only where this install organizes: a reader or a removed mailbox carries no copy line", async () => {
+    const w = await world();
+    await recordProfileCopy(w.db as unknown as Tx, { accountId: w.accountId, mailboxId: w.mailboxId, kept: false, code: "profile_append_unreadable" });
+    await w.db.update(mailboxes).set({ organizerRole: "reader" }).where(eq(mailboxes.id, w.mailboxId));
+    expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toEqual({ state: "none" });
+    await w.db.update(mailboxes).set({ organizerRole: "organizer", status: "disabled" }).where(eq(mailboxes.id, w.mailboxId));
     expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toEqual({ state: "none" });
   });
 
