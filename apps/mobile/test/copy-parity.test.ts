@@ -275,6 +275,7 @@ const SAME_AS_WEBAPP: Record<string, string> = {
   searchIndexing: "search.emptyTitleIndexing",
   searchWholeSearching: "search.scopeWholeSearching",
   searchUnanswered: "search.scopeUnanswered",
+  searchFailed: "search.scopeFailed",
   searchWholeRetry: "search.scopeWholeRetry",
   phoneBannerWhy: "onboarding.phoneBannerWhy",
   waterline: "reads.waterline",

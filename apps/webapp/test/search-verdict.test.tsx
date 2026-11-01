@@ -103,6 +103,7 @@ const SENTENCES = {
   matched: /Searched your whole mailbox — (at least |about )?[\d,]+ matched/,
   nothing: "Searched your whole mailbox — nothing matched",
   unanswered: "Your server did not answer — showing the recent mail this device holds.",
+  failed: "Your server could not run this search — showing the recent mail this device holds.",
 } as const;
 /** Which of the four sentences are on screen — exactly one is the invariant. */
 function verdicts(): string[] {
@@ -134,6 +135,16 @@ describe("the whole-mailbox verdict always renders", () => {
     expect(verdicts()).toEqual(["unanswered"]);
     expect(text()).not.toContain("a sentence about the account");
     expect(logged()).toEqual(["[search] the whole-mailbox pass did not answer: MutationRejectedError 504 server_error"]);
+  });
+
+  it("a pass the server ANSWERED with a fault (500) says it could not run the search, and keeps the retry", async () => {
+    const refusal = Object.assign(new Error("a sentence about the account"), { name: "MutationRejectedError", status: 500, code: "internal" });
+    const { engine } = await engineWith(CORPUS, { searchServer: async () => { throw refusal; } });
+    await render(engine, "axa");
+    await advance(300);
+    expect(verdicts()).toEqual(["failed"]);
+    expect(text()).not.toContain("a sentence about the account");
+    expect([...host.querySelectorAll("button")].map((b) => b.textContent)).toContain("Search your whole mailbox again");
   });
 
   it("a transport that throws SYNCHRONOUSLY is a failed outcome, never a rejection of the engine", async () => {

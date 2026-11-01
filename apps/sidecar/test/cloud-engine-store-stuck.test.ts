@@ -47,13 +47,13 @@ const poisonedPage = (): SyncResponse => ({
   cursor: "c1", hasMore: false, serverTime: new Date().toISOString(),
 });
 
-function hostedFetch(page: SyncResponse): typeof fetch {
+function hostedFetch(page: SyncResponse, address = "me@ohmail.test"): typeof fetch {
   return (async (input: string | URL | Request): Promise<Response> => {
     const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(raw);
     const send = (v: unknown): Response =>
       new Response(JSON.stringify(v), { status: 200, headers: { "content-type": "application/json" } });
-    if (url.pathname === "/mailboxes") return send(mailboxList([hostedMailbox(CLOUD_MAILBOX, "me@ohmail.test")]));
+    if (url.pathname === "/mailboxes") return send(mailboxList([hostedMailbox(CLOUD_MAILBOX, address)]));
     if (url.pathname === "/sync") {
       return send(url.searchParams.get("types") === "rule" ? emptyPage() : page);
     }
@@ -63,7 +63,7 @@ function hostedFetch(page: SyncResponse): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-async function standUp(page: SyncResponse): Promise<CloudSidecar> {
+async function standUp(page: SyncResponse, address?: string): Promise<CloudSidecar> {
   const dataDir = await freshDataDir("ohmail-store-stuck-");
   dirs.push(dataDir);
   const sidecar = await createCloudSidecar({
@@ -71,7 +71,7 @@ async function standUp(page: SyncResponse): Promise<CloudSidecar> {
     cloudUrl: "https://cloud.test",
     address: "me@ohmail.test",
     tokens: { accessToken: "a", refreshToken: "r" },
-    fetchImpl: hostedFetch(page),
+    fetchImpl: hostedFetch(page, address),
     pollIntervalMs: 3_600_000,
   });
   sidecars.push(sidecar);
@@ -107,5 +107,22 @@ describe("the window's mailbox list discloses a store that cannot keep up", () =
     expect(row!.status, "the wedge stayed invisible — the released 0.20.0 shape").toBe("error");
     expect(row!.errorCode, "the strip's sentence key: err_storage — 'ohmail could not store this mail'")
       .toBe("storage");
+  });
+
+  it("a pull the store refuses outside the quarantine overlays every live row with the copy's own detail", { timeout: 30_000 }, async () => {
+    const sidecar = await standUp(emptyPage(), "refused@ohmail.test");
+    await sidecar.db.execute(sql.raw("ALTER TABLE mailboxes ADD CONSTRAINT refresh_probe CHECK (address <> 'refused@ohmail.test')"));
+    await sidecar.start();
+    // The poll retries on its backoff (1 s, 2 s): the third refusal is the stuck copy.
+    const end = Date.now() + 15_000;
+    let rows = await mailboxRows(sidecar);
+    while (!rows.some((r) => r.errorDetail === "MIRROR_STORE_REFUSED") && Date.now() < end) {
+      await new Promise((r) => setTimeout(r, 250));
+      rows = await mailboxRows(sidecar);
+    }
+    const live = rows.filter((r) => r.status !== "disabled");
+    expect(live.length).toBeGreaterThan(0);
+    expect(live.map((r) => [r.status, r.errorCode, r.errorDetail]), "a copy that cannot store its pull looked healthy")
+      .toEqual(live.map(() => ["error", "storage", "MIRROR_STORE_REFUSED"]));
   });
 });

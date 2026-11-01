@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { attachments, eraseOwedMailbox, mailboxes, messageBodies, messages, stampMailboxErasure } from "@trafficflow/db";
-import { dialect } from "@trafficflow/db/dialect";
+import { dialect, queryOperandsOf } from "@trafficflow/db/dialect";
 import { reindexMessageSearch, searchIndexBackfillPass } from "@trafficflow/core/mail";
+import { positiveText } from "@trafficflow/core/search-rank";
 import { SearchIndex, type EngineMessage } from "@ohmail/client-engine";
-import { SearchService, type SearchSort } from "../src/index.js";
+import { SearchService, type SearchParts, type SearchSort } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 import { FRAGMENT_FILES, FRAGMENTS } from "./helpers/file-name-fragments.js";
 
@@ -210,6 +211,11 @@ async function lettersStore(
       return { tier: r.tier, keys: r.items.map((m) => keyOf.get(m.id)!).sort() };
     },
     mirror: (q: string) => index.search(q, { limit: 50 }).items.map((h) => keyOf.get(h.message.id)!).sort(),
+    /** One answer as a client reads it: its tier, its total and its letters. */
+    said: async (svc: SearchService, q: string, parts: SearchParts, sort: SearchSort) => {
+      const r = await svc.search(ctx, { q, limit: 50, parts, sort });
+      return { tier: r.tier, total: r.total, keys: r.items.map((m) => keyOf.get(m.id)!).sort() };
+    },
     /** The three answers a client reads at `limit`: the page, the estimate and the summary. */
     told: async (svc: SearchService, q: string, limit: number, sort?: SearchSort) => {
       const page = await svc.search(ctx, { q, limit, parts: "page", ...(sort ? { sort } : {}) });
@@ -247,8 +253,8 @@ describe("every word anywhere in the letter, on every store", () => {
     });
   }
 
-  it("rule 2: the mirror answers a subset (it reads no phrase and no exclusion)", () => {
-    const plain = ACROSS.filter(([q]) => !/["-]/.test(q));
+  it("rule 2: the mirror answers a subset (it reads no phrase; an excluded word leaves letters out)", () => {
+    const plain = ACROSS.filter(([q]) => !q.includes('"'));
     expect(plain.filter(([q, keys]) => !store.mirror(q).every((k) => keys.includes(k))).map(([q]) => ({ q, mirror: store.mirror(q) }))).toEqual([]);
   });
 
@@ -681,7 +687,8 @@ describe("no exact match behind a cut exact tier: one tier on every answer", () 
   const GUESSES: ReadonlyArray<readonly [string, string, string, string, string]> = [
     ["g1", "Kia Brand", "kia@brand.example", "Kia survy results", "Numbers from the field."],
     ["g2", "Lab Desk", "desk@lab.example", "Servey notes", "Notes from Tuesday."],
-    ["g3", "Kai Brandt", "kai.brandt@brandt.example", "Kai surveyor visit", "The visit is on Monday."],
+    // A near miss: `surveyor` starts with `survey`, which the words asked read as a word's start.
+    ["g3", "Kai Brandt", "kai.brandt@brandt.example", "Kai sorvey visit", "The visit is on Monday."],
   ];
 
   it("the page in each order, the estimate and the summary agree on the tier and the count", async () => {
@@ -728,4 +735,126 @@ describe("an excluded word keeps a letter whose body row is not there", () => {
       ]);
     }, 60_000);
   }
+});
+
+/**
+ * A MINUS WORD ONLY LEAVES LETTERS OUT (a tester's queries): `q` answers what its words without the
+ * excluded ones answer, in every order and part, less the letters that hold an excluded word. Their
+ * reach stays whole (`mail` inside a sender's address, a stopword inside a subject); a minus word
+ * alone answers nothing; the first paint holds no letter the store leaves out.
+ */
+describe("a minus word only leaves letters out", () => {
+  const MINUS: ReadonlyArray<readonly [key: string, name: string, from: string, subject: string, body: string]> = [
+    ["prefix", "Post Room", "post@mailroom.example", "Quarterly statement", "Your statement is ready."],
+    ["inside", "Web Desk", "updates@webmail.example", "Account notice", "Nothing to do today."],
+    ["domain", "Harbour News", "news@mail.harbour.example", "Weekly digest", "Tide tables inside."],
+    ["subject", "Ada Lind", "ada@lind.example", "Mail delivery", "Thanks for waiting."],
+    ["body", "Bo Ek", "bo@ek.example", "Weekend", "Send me the mail later."],
+    ["orchard", "Cy Lund", "cy@lund.example", "Apples", "The orchard is ready. You can come."],
+    ["invoice", "Dee Moss", "dee@moss.example", "Invoice 2291", "Paid in full."],
+    ["you1", "Eli Park", "eli@park.example", "Are you coming", "Saturday at noon."],
+    ["you2", "Fay Hill", "fay@hill.example", "Thank you", "Thanks for the flowers."],
+    ["weather", "Gus Bay", "gus@bay.example", "Weather alert", "Wind from the west."],
+    ["sandbox", "Hal Roy", "hal@roy.example", "Sandbox access", "Granted until May."],
+    ["long", "Ivo Rask", "ivo@rask.example", "Harvest (late)", "Alpha bravo charlie delta echo foxtrot golf hotel india."],
+  ];
+  /** Nine words asked, one past the eight a query is read across the letter's parts with. */
+  const NINE = "alpha bravo charlie delta echo foxtrot golf hotel india";
+  /** What the words asked answer alone, in the exact tier on every store. */
+  const PLAIN: Readonly<Record<string, readonly string[]>> = {
+    mail: ["body", "domain", "inside", "prefix", "subject"], you: ["you1", "you2"], the: ["weather"], and: ["sandbox"],
+    invoice: ["invoice"], orchard: ["orchard"], [NINE]: ["long"],
+  };
+  /** The letters holding each excluded word, anywhere. */
+  const HOLDERS: Readonly<Record<string, readonly string[]>> = { zzzqx: [], google: [], thanks: ["subject", "you2"], orchard: ["orchard"], harvest: ["long"] };
+  /** The query, its words asked and its excluded word some letter holds ("" for none): the tester's queries and controls. */
+  const ASKED: ReadonlyArray<readonly [q: string, words: string, out: string]> = [
+    ["mail -zzzqx", "mail", "zzzqx"], ["mail -thanks", "mail", "thanks"], ["mail -google", "mail", "google"],
+    ["you -thanks", "you", "thanks"], ["the -thanks", "the", "thanks"], ["and -google", "and", "google"],
+    ["is -orchard", "is", "orchard"], ["invoice -zzzqx", "invoice", "zzzqx"], ["orchard -zzzqx", "orchard", "zzzqx"],
+    // A minus word's parentheses go with it; a bare `or` beside it is no word asked.
+    ["mail -(thanks)", "mail", "thanks"], ["mail (-thanks)", "mail", "thanks"], ["(mail -thanks)", "mail", "thanks"],
+    ["mail -thanks)", "mail", "thanks"], ["mail ( -thanks )", "mail", "thanks"],
+    ["mail or -zzzqx", "mail or", "zzzqx"], ["-thanks or invoice", "or invoice", "thanks"], ["invoice or -thanks", "invoice or", "thanks"],
+    // Many minus words: only the words asked count toward the eight, and nine of them are held to it too.
+    ["mail -a1 -a2 -a3 -a4 -a5 -a6 -a7 -a8", "mail", ""], ["mail -thanks -a2 -a3 -a4 -a5 -a6 -a7 -a8", "mail", "thanks"],
+    ["the -a1 -a2 -a3 -a4 -a5 -a6 -a7 -a8 -a9", "the", ""], ["delivery waiting -a1 -a2 -a3 -a4 -a5 -a6 -a7", "delivery waiting", ""],
+    [`${NINE} -harvest`, NINE, "harvest"], [`-a1 ${NINE} -a2 -harvest`, NINE, "harvest"],
+  ];
+  const ANSWERS: ReadonlyArray<readonly [SearchParts, SearchSort]> = [["page", "relevance"], ["page", "date_desc"],
+    ["page", "date_asc"], ["page", "sender"], ["page", "mailbox"], ["estimate", "relevance"], ["summary", "relevance"]];
+  const SERVICES = [["store", new SearchService()], ["phone", new SearchService({ indexFills: false })], ["desktop", new SearchService({ indexFills: true, localStore: true })]] as const;
+  let built: Awaited<ReturnType<typeof lettersStore>>;
+  beforeAll(async () => { built = await lettersStore(true, undefined, MINUS); }, 60_000);
+
+  /** Every answer to each query beside its words' own, less the holders; a throw is an answer too. */
+  const law = async (store: Awaited<ReturnType<typeof lettersStore>>) => {
+    const all = async (s: SearchService, q: string) => {
+      const out = [];
+      for (const [parts, sort] of ANSWERS) {
+        try { out.push({ parts, sort, ...(await store.said(s, q, parts, sort)) }); } catch (err) { out.push({ parts, sort, threw: String(err).slice(0, 120) }); }
+      }
+      return out;
+    };
+    const got = [];
+    const want = [];
+    for (const [svc, s] of SERVICES) {
+      for (const [p, keys] of Object.entries(PLAIN)) {
+        got.push({ svc, q: p, ...(await store.said(s, p, "page", "relevance")) });
+        want.push({ svc, q: p, tier: "exact", total: keys.length, keys: [...keys] });
+      }
+      for (const [q, p, out] of ASKED) {
+        const plain = await all(s, p);
+        const held = out === "" ? [] : HOLDERS[out]!;
+        const left = ((plain[0] as { keys?: string[] }).keys ?? []).filter((k) => held.includes(k)).length;
+        const asked = await all(s, q);
+        got.push({ svc, q, answers: asked });
+        // An answer the exclusion empties may fall to either tier, and holds no letter there.
+        const tierOf = (i: number) => ({ tier: (asked[i] as { tier?: string }).tier });
+        want.push({ svc, q, answers: plain.map((a, i) => ("keys" in a
+          ? { ...a, total: a.total - left, keys: a.keys.filter((k) => !held.includes(k)), ...(a.total === left ? tierOf(i) : {}) } : a)) });
+      }
+      for (const q of ["-thanks", "-(thanks)"]) {
+        got.push({ svc, q, answers: await all(s, q) });
+        want.push({ svc, q, answers: ANSWERS.map(([parts, sort]) => ({ parts, sort, tier: "exact", total: 0, keys: [] })) });
+      }
+    }
+    return { got, want };
+  };
+
+  it("each answer is its words' answer less the letters holding the excluded word", async () => {
+    const { got, want } = await law(built);
+    expect(got).toEqual(want);
+  }, 120_000);
+
+  it("the same before the backfill (the older columns)", async () => {
+    const { got, want } = await law(await lettersStore(false, undefined, MINUS));
+    expect(got).toEqual(want);
+  }, 120_000);
+
+  it("the first paint holds no letter the store leaves out; a minus word alone paints nothing", async () => {
+    const extra = [];
+    for (const [q] of ASKED.filter(([, p]) => p.length >= 4)) {
+      const keys = (await built.read(new SearchService(), q)).keys;
+      extra.push({ q, extra: built.mirror(q).filter((k) => !keys.includes(k)) });
+    }
+    expect(extra).toEqual(ASKED.filter(([, p]) => p.length >= 4).map(([q]) => ({ q, extra: [] })));
+    expect(built.mirror("-thanks")).toEqual([]);
+  });
+
+  it("the words asked are the query's own groups, with no exclusion (the stores' reading)", () => {
+    const shapes = ["mail -zzzqx", "-thanks", "you -thanks", "-thanks mail", "mail - thanks", "mail --thanks", "mail ---thanks",
+      'mail -"thank you"', '"a -b" c', "a-b -c", "a or -b", "a -b or c", "kai survey or quarterly -samples", "-fixture code(sign)",
+      "ohmail -the", "x!-y", "mail -", '-"', '" -thanks', "D-U-N-S -pdf", "(a -b)", "mail\t-thanks"];
+    const differ = shapes.filter((q) => {
+      const p = queryOperandsOf(positiveText(q));
+      return JSON.stringify(p.any) !== JSON.stringify(queryOperandsOf(q).any) || p.none.length > 0;
+    });
+    expect(differ).toEqual([]);
+    expect(["invoice 2291", "sign-in", '"a -b"'].map(positiveText)).toEqual(["invoice 2291", "sign-in", '"a -b"']);
+    // A minus word takes its own parentheses and marks; a parenthesis around a word asked stays.
+    expect(["mail -(thanks)", "mail (-thanks)", "(mail -thanks)", "mail ( -thanks )", "-(thanks)", "mail -thanks!", "mail <-thanks",
+      "mail -thanks|x", "(mail) -thanks", "(a (b -c) d)"].map(positiveText))
+      .toEqual(["mail", "mail", "mail", "mail", "", "mail", "mail", "mail x", "(mail)", "(a b d)"]);
+  });
 });

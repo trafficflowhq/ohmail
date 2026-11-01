@@ -81,13 +81,13 @@ afterEach(async () => {
   host.remove();
 });
 
-async function said(query: string, parts: Record<string, Record<string, unknown>>, importing: boolean): Promise<string> {
+async function said(query: string, parts: Record<string, Record<string, unknown>>, importing: boolean, locale: "en" | "de" = "en"): Promise<string> {
   const store = new MemoryMirrorStore();
   await store.load();
   const engine = new OhmailEngine({ adapter: adapterOver(parts, importing), store, now: () => NOW });
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
+      locale, messages: locale === "de" ? de : messages, timeZone: "UTC", now: NOW,
       children: h(KeymapProvider, {
         children: h(SearchView, { engine, version: 1, now: NOW, query, onQuery: () => {}, onOpen: () => {} }),
       }),
@@ -140,6 +140,26 @@ describe("the complete-store control: the same answers without the field read as
       expect(host.querySelector('[data-similar="head"]')?.textContent).toBe(
         `Similar Nothing matched exactly, so these are the closest words. ${messages.search.partReach}`);
     }
+  });
+});
+
+/** A page cut at the count's cap whose estimate names no number: the line keeps its lower bound. */
+const CUT = {
+  page: { items: [letter(0, "invoice 74600")], total: 2_000, totalExact: false, tier: "exact", ms: 22 },
+  estimate: { items: [], total: 2_000, totalExact: false, tier: "exact", ms: 3 },
+};
+const MIRROR = { page: { ...CUT.page, answeredFrom: "mirror" }, estimate: { ...CUT.estimate, answeredFrom: "mirror" } };
+
+describe("a count at its cap is grouped as every other count", () => {
+  it.each([
+    ["en whole", "en", CUT, false, "Searched your whole mailbox — at least 2,000 matched · "],
+    ["en synced", "en", CUT, true, "Searched the mail synced so far — at least 2,000 matched · "],
+    ["en mirror", "en", MIRROR, false, "Search covers the mail on this computer while ohmail Cloud is unreachable — at least 2,000 matched · "],
+    ["de whole", "de", CUT, false, "Dein ganzes Postfach wurde durchsucht — mindestens 2.000 gefunden · "],
+    ["de synced", "de", CUT, true, "Bisher synchronisierte Mails durchsucht: mindestens 2.000 gefunden · "],
+    ["de mirror", "de", MIRROR, false, "Durchsucht werden die Mails auf diesem Computer, solange ohmail Cloud nicht erreichbar ist: mindestens 2.000 gefunden · "],
+  ] as const)("%s", async (_arm, locale, parts, importing, line) => {
+    expect(await said("invoice 74600", parts, importing, locale)).toContain(line);
   });
 });
 

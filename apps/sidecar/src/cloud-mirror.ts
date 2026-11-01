@@ -18,6 +18,7 @@ import {
   trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
+import { StoreStatementFaultError } from "@trafficflow/core/mail";
 // THE SHARED DRAIN POLICY — the ONE definition of "is this mirror behind", of the three
 // freshness states, and of the dense-page limit, held with `packages/client-engine`
 // (INSTANT-ARCH §6.7, stage 7's first adopted responsibility). Dependency-free core source —
@@ -614,9 +615,27 @@ export interface CloudMirror {
    * mailbox error so the shell renders a sentence instead of a settled-looking app.
    */
   quarantined(): QuarantineReading;
+  /**
+   * Since when this computer's store has refused {@link STORE_FAULT_STREAK} pulls with none completed
+   * between, or null: a copy that cannot catch up. Cleared by the next completed pull; in memory only.
+   */
+  storeFault(): string | null;
 }
 
 export const DEFAULT_CLOUD_POLL_MS = 20_000;
+
+/** Refused pulls before the copy is said to be stuck: the window's own failure streak. */
+export const STORE_FAULT_STREAK = 3;
+
+/** Did this computer's store refuse a statement of this pull? Walked through `cause`. */
+function storeRefused(err: unknown): boolean {
+  let cur: unknown = err;
+  for (let depth = 0; depth < 6 && cur !== null && typeof cur === "object"; depth++) {
+    if (cur instanceof StoreStatementFaultError) return true;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
 
 /** The shortest gap between two mid-bootstrap rules passes a queue answer can owe. */
 export const RULES_REFRESH_MIN_GAP_MS = 10_000;
@@ -1283,7 +1302,7 @@ async function dropRetiredMailboxes(tx: Tx, world: LocalWorld, hostedIds: readon
 export interface MailboxRefreshOutcome {
   /** Every local mailbox id after the refresh — what an incoming DTO's `mailboxId` is checked against. */
   known: Set<string>;
-  /** Rows that were active and are not in the hosted answer: the synthetic row, or a removed mailbox. */
+  /** Rows that were active and are not live in the hosted answer: the synthetic row, or a removed mailbox. */
   retired: string[];
   /** Retired rows nothing referenced, so they are gone rather than tombstoned. */
   dropped: string[];
@@ -1305,6 +1324,8 @@ export async function applyMailboxRefresh(
   now: Date,
 ): Promise<MailboxRefreshOutcome> {
   const hostedIds = hosted.map((m) => m.id);
+  // The index's own test: a row is live while it is not `disabled`.
+  const liveIds = hosted.filter((m) => m.status !== "disabled").map((m) => m.id);
   const dia = dialect(db);
   return db.transaction(async (tx) => {
     /* THE ACCOUNT'S TOMBSTONE, FIRST. `mailboxes` is the account's own table, and an erasure
@@ -1316,14 +1337,15 @@ export async function applyMailboxRefresh(
         .where(eq(mailboxes.accountId, world.accountId));
       return { known: new Set(all.map((r) => r.id)), retired: [], dropped: [] };
     }
-    // (i) RETIRE what the hosted account does not name — the synthetic row on a first refresh, a
-    //     mailbox somebody removed in the browser on any later one.
+    // (i) RETIRE every live row the account does not hold live — the synthetic row on a first
+    //     refresh, a mailbox removed on any later one. The list carries removed rows too, in id
+    //     order, so one still live here goes now: its address's new live row may come first in (ii).
     const retired = await tx.update(mailboxes)
       .set({ status: "disabled", disabledReason: null })
       .where(and(
         eq(mailboxes.accountId, world.accountId),
         ne(mailboxes.status, "disabled"),
-        ...(hostedIds.length > 0 ? [notInArray(mailboxes.id, hostedIds)] : []),
+        ...(liveIds.length > 0 ? [notInArray(mailboxes.id, liveIds)] : []),
       ))
       .returning({ id: mailboxes.id });
 
@@ -2559,6 +2581,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * sign-in rather than acting on a remembered verdict.
    */
   let accountErased = false;
+  /** Pulls this store refused since the last completed one, and when the streak became a stuck copy. */
+  let storeFaults = 0;
+  let storeFaultSince: string | null = null;
   /**
    * EVERY HOSTED READ THIS MIRROR MAKES, through one door, so "a 410 `account_erased` on any of
    * them stops the mirror" is a property of the door rather than of eight call sites.
@@ -2851,7 +2876,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     }
     if (out.retired.length > 0 || out.dropped.length > 0) {
       /* THREE COUNTS AND NO ADDRESS. `count` is how many mailboxes the account has, `pruned` how
-         many local rows it no longer names (retired to tombstones, because mail still points at
+         many local rows it no longer holds live (retired to tombstones, because mail still points at
          them) and `dropped` how many of those were then removed outright. The names are the ones
          `ALLOWED_FIELDS` already carries — a mailbox address on this line would be exactly the
          identifying signal that census exists to keep off it. */
@@ -2859,7 +2884,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         count: hosted.length,
         pruned: out.retired.length,
         dropped: out.dropped.length,
-        reason: "a local mailbox row the hosted account does not name was retired; mail that still " +
+        reason: "a local mailbox row the hosted account does not hold live was retired; mail that still " +
           "points at it keeps it as a tombstone, and a row nothing references is removed",
       });
     }
@@ -4215,6 +4240,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // old stamp standing, so the next pull still reads as a stale resume and freshens again.
       // What `freshness()` reports and what the freshen compares are this one write.
       cursor.lastDrainAt = now().toISOString();
+      storeFaults = 0;
+      storeFaultSince = null;
       writeCursor(cfg.cursorPath, cursor);
       // A completed pull is the definition of reachable: the local database keeps serving what it
       // holds either way, but the proxy needs to know it can forward a write again.
@@ -4241,6 +4268,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // answer, a server error, a 429, the hosting platform's own error page, an answer built here or
       // a store failure is offline: the proxy answers `503 offline_read_only` off this flag, and the
       // poll keeps retrying and flips it back on success.
+      if (storeRefused(err) && !(stopped && abortedByStop(err)) && ++storeFaults >= STORE_FAULT_STREAK) {
+        storeFaultSince ??= now().toISOString();
+      }
       reachable = cloudRefused(err);
       throw err;
     }
@@ -4481,6 +4511,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // renderers (the web ladder, the phone's wordmark line, the desktop window over
     // `GET /mirror/freshness`), so a label can never disagree with a freshen.
     freshness: () => mirrorFreshness(cursor.lastDrainAt, now()),
+    storeFault: () => storeFaultSince,
     quarantined: () => ({
       count: quarantine.size + overflow.keys.size,
       retrying: quarantine.size,

@@ -151,7 +151,7 @@ describe("a query's operands, as both stores read its structure", () => {
     expect(queryOperandsOf("the of -the")).toEqual({ any: [], none: [] });
   });
 
-  it("straddles the letter's parts with two ANDed operands or an exclusion, up to eight operands", () => {
+  it("straddles the letter's parts with two ANDed operands or an exclusion, up to eight operands asked", () => {
     expect(straddlesParts(queryOperandsOf("lanternfish"))).toBe(false);
     expect(straddlesParts(queryOperandsOf('"lanternfish survey"'))).toBe(false);
     expect(straddlesParts(queryOperandsOf("kai or food"))).toBe(false);
@@ -159,6 +159,8 @@ describe("a query's operands, as both stores read its structure", () => {
     expect(straddlesParts(queryOperandsOf("-lanternfish"))).toBe(true);
     expect(straddlesParts(queryOperandsOf("a1 a2 a3 a4 a5 a6 a7 a8"))).toBe(true);
     expect(straddlesParts(queryOperandsOf("a1 a2 a3 a4 a5 a6 a7 a8 a9")), "past eight: read per part").toBe(false);
+    expect(straddlesParts(queryOperandsOf("a1 a2 -b1 -b2 -b3 -b4 -b5 -b6 -b7")), "an excluded operand never counts").toBe(true);
+    expect(straddlesParts(queryOperandsOf("a1 a2 a3 a4 a5 a6 a7 a8 a9 -b1"))).toBe(false);
   });
 
   it("keeps a typed operand's part-words together in one part; one operand is read per part", () => {

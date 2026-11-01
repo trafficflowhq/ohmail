@@ -50,6 +50,10 @@ const RANKED = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
 const SCALED = Array.from({ length: 18 }, () => randomUUID());
 /** (4d)'s file names' fragments. */
 const FRAG = randomUUID();
+/** (3g)'s letters: `mail` inside senders' addresses, stopwords inside subjects, and `thanks`. */
+const X = randomUUID();
+/** (3h)'s: 200 newest letters hold both words, 25 older the word alone, one older the start of a longer word. */
+const Y = randomUUID();
 const ids: Record<string, string> = {};
 /** The setup hook's own settling, which the teardown awaits. */
 let setupDone: Promise<void> = Promise.resolve();
@@ -245,7 +249,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
 
   afterAll(async () => {
     await setupDone;
-    for (const a of [D, P, L, K, KL, F, G, H, J, N, V, ...RANKED, ...SCALED, FRAG]) {
+    for (const a of [D, P, L, K, KL, F, G, H, J, N, V, ...RANKED, ...SCALED, FRAG, X, Y]) {
       await db.execute(sql`delete from message_search where account_id = ${a}`);
       await db.execute(sql`delete from attachments where account_id = ${a}`);
       await db.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${a})`);
@@ -389,7 +393,8 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
     for (const [i, [subject, from, text]] of ([
       ["Kia survy results", person("Kia Brand", "kia@brand.example"), "Numbers from the field."],
       ["Servey notes", person("Lab Desk", "desk@lab.example"), "Notes from Tuesday."],
-      ["Kai surveyor visit", kai, "The visit is on Monday."],
+      // A near miss: `surveyor` starts with `survey`, which the words asked read as a word's start.
+      ["Kai sorvey visit", kai, "The visit is on Monday."],
     ] as const).entries()) await seed({ key: `n-g${i + 1}`, accountId: N, mailboxId: mn!.id, subject, from, text, daysAgo: i + 1 });
     for (let j = 0; j < 130; j++) {
       await seed({ key: `n-f${j}`, accountId: N, mailboxId: mn!.id, subject: `Field log ${j}`, from: kai, text: `Survey samples batch ${j}.`, daysAgo: (j + 21) / 2000 });
@@ -446,6 +451,105 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
     for (const q of ['"ines ledger"', "ines 77"]) whole.push(await read(q));
     expect(whole.filter((r) => r.tier === "exact" && r.keys.length > 0)).toEqual([]);
   });
+
+  // A tester's queries: `q` answers what its words without the excluded one answer, in every order
+  // and part, less the letters holding the excluded word; a minus word alone answers nothing.
+  it("(3g) a minus word only leaves letters out, and never makes the query fail", async () => {
+    const [mx] = await db.insert(mailboxes).values({ accountId: X, provider: "imap", address: "x@tf.example" }).returning();
+    for (const [i, [key, name, address, subject, text]] of ([
+      ["prefix", "Post Room", "post@mailroom.example", "Quarterly statement", "Your statement is ready."],
+      ["inside", "Web Desk", "updates@webmail.example", "Account notice", "Nothing to do today."],
+      ["domain", "Harbour News", "news@mail.harbour.example", "Weekly digest", "Tide tables inside."],
+      ["subject", "Ada Lind", "ada@lind.example", "Mail delivery", "Thanks for waiting."],
+      ["body", "Bo Ek", "bo@ek.example", "Weekend", "Send me the mail later."],
+      ["orchard", "Cy Lund", "cy@lund.example", "Apples", "The orchard is ready. You can come."],
+      ["you1", "Eli Park", "eli@park.example", "Are you coming", "Saturday at noon."],
+      ["you2", "Fay Hill", "fay@hill.example", "Thank you", "Thanks for the flowers."],
+      ["weather", "Gus Bay", "gus@bay.example", "Weather alert", "Wind from the west."],
+      ["sandbox", "Hal Roy", "hal@roy.example", "Sandbox access", "Granted until May."],
+      ["long", "Ivo Rask", "ivo@rask.example", "Harvest (late)", "Alpha bravo charlie delta echo foxtrot golf hotel india."],
+    ] as const).entries()) await seed({ key: `x-${key}`, accountId: X, mailboxId: mx!.id, subject, from: person(name, address), text, daysAgo: i + 1 });
+    await db.insert(accountSettings).values({ accountId: X, searchIndexBuiltAt: NOW })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    const keyOf = new Map(Object.entries(ids).filter(([k]) => k.startsWith("x-")).map(([k, id]) => [id, k.slice(2)]));
+    const HOLDERS: Readonly<Record<string, readonly string[]>> = { zzzqx: [], google: [], thanks: ["subject", "you2"], orchard: ["orchard"], harvest: ["long"] };
+    // Nine words asked, past the eight a query is read across the letter's parts with.
+    const NINE = "alpha bravo charlie delta echo foxtrot golf hotel india";
+    const ANSWERS = [["page", "relevance"], ["page", "date_desc"], ["page", "date_asc"], ["page", "sender"], ["page", "mailbox"],
+      ["estimate", "relevance"], ["summary", "relevance"]] as const;
+    const all = async (s: SearchService, q: string) => {
+      const out = [];
+      for (const [parts, sort] of ANSWERS) {
+        try {
+          const r = await s.search(ctx(X), { q, limit: 50, parts, sort });
+          out.push({ parts, sort, tier: r.tier, total: r.total, keys: r.items.map((m) => keyOf.get(m.id) ?? m.id).sort() });
+        } catch (err) { out.push({ parts, sort, threw: String(err).slice(0, 120) }); }
+      }
+      return out;
+    };
+    const got = [];
+    const want = [];
+    for (const [label, s] of [["store", svc], ["desktop", new SearchService({ indexFills: true, localStore: true })]] as const) {
+      for (const [q, p, out] of [["mail -zzzqx", "mail", "zzzqx"], ["mail -thanks", "mail", "thanks"], ["mail -google", "mail", "google"],
+        ["you -thanks", "you", "thanks"], ["the -thanks", "the", "thanks"], ["and -google", "and", "google"], ["is -orchard", "is", "orchard"],
+        // A minus word's parentheses go with it; a bare `or` beside it is no word asked; many minus words.
+        ["mail -(thanks)", "mail", "thanks"], ["mail (-thanks)", "mail", "thanks"], ["(mail -thanks)", "mail", "thanks"], ["mail -thanks)", "mail", "thanks"],
+        ["mail or -zzzqx", "mail or", "zzzqx"], ["-thanks or mail", "or mail", "thanks"], ["mail or -thanks", "mail or", "thanks"],
+        ["mail -a1 -a2 -a3 -a4 -a5 -a6 -a7 -a8", "mail", ""], ["mail -thanks -a2 -a3 -a4 -a5 -a6 -a7 -a8", "mail", "thanks"],
+        ["the -a1 -a2 -a3 -a4 -a5 -a6 -a7 -a8 -a9", "the", ""], ["delivery waiting -a1 -a2 -a3 -a4 -a5 -a6 -a7", "delivery waiting", ""],
+        [`${NINE} -harvest`, NINE, "harvest"]] as const) {
+        const plain = await all(s, p);
+        const held = out === "" ? [] : HOLDERS[out]!;
+        const left = ((plain[0] as { keys?: string[] }).keys ?? []).filter((k) => held.includes(k)).length;
+        const asked = await all(s, q);
+        got.push({ svc: label, q, answers: asked });
+        // An answer the exclusion empties may fall to either tier, and holds no letter there.
+        const tierOf = (i: number) => ({ tier: (asked[i] as { tier?: string }).tier });
+        want.push({ svc: label, q, answers: plain.map((a, i) => ("keys" in a
+          ? { ...a, total: a.total - left, keys: a.keys.filter((k) => !held.includes(k)), ...(a.total === left ? tierOf(i) : {}) } : a)) });
+      }
+      for (const q of ["-thanks", "-(thanks)"]) {
+        got.push({ svc: label, q, answers: await all(s, q) });
+        want.push({ svc: label, q, answers: ANSWERS.map(([parts, sort]) => ({ parts, sort, tier: "exact", total: 0, keys: [] })) });
+      }
+      // The words alone: `mail` inside each sender's address, a stopword inside a subject.
+      const plain = [];
+      for (const p of ["mail", "you", "the", "and", NINE]) plain.push({ p, keys: ((await all(s, p))[0] as { keys?: string[] }).keys });
+      expect(plain, label).toEqual([{ p: "mail", keys: ["body", "domain", "inside", "prefix", "subject"] },
+        { p: "you", keys: ["you1", "you2"] }, { p: "the", keys: ["weather"] }, { p: "and", keys: ["sandbox"] }, { p: NINE, keys: ["long"] }]);
+    }
+    expect(got).toEqual(want);
+  }, 120_000);
+
+  // At limit 5 the text arm fills its cut off the index, so the part arm beside it keeps its bound (every
+  // letter there holds `harbour`) and says it is cut: the page holds matches only, and the count and the
+  // date order still reach the letter only a word's start finds.
+  it("(3h) beside a text arm that holds its cut, the part arm keeps its bound and no match is lost", async () => {
+    const [my] = await db.insert(mailboxes).values({ accountId: Y, provider: "imap", address: "y@tf.example" }).returning();
+    const from = person("Port Office", "office@port.example");
+    const row = (key: string, subject: string, text: string, daysAgo: number) => ({ key, subject, from, to: [], text, daysAgo, files: [] });
+    await seedAll(Y, my!.id, "y", [
+      ...Array.from({ length: 200 }, (_, i) => row(`both${i}`, `Log ${i}`, "The beacon at the harbour is lit.", i / 100)),
+      ...Array.from({ length: 25 }, (_, i) => row(`word${i}`, `Note ${i}`, "The beacon is lit.", 10 + i)),
+      row("start", "Old note", "Beaconfield station is closed.", 50),
+    ]);
+    await db.insert(accountSettings).values({ accountId: Y, searchIndexBuiltAt: NOW })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    const q = "beacon -harbour";
+    const want = [...Array.from({ length: 25 }, (_, i) => ids[`y-word${i}`]!), ids["y-start"]!].sort();
+    const page = await svc.search(ctx(Y), { q, limit: 5, parts: "page" });
+    const summary = await svc.search(ctx(Y), { q, limit: 5, parts: "summary" });
+    const dated: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const r = await svc.search(ctx(Y), { q, limit: 50, parts: "page", sort: "date_desc", ...(cursor ? { cursor } : {}) });
+      dated.push(...r.items.map((m) => m.id));
+      cursor = r.nextCursor ?? undefined;
+    } while (cursor);
+    expect({ tier: page.tier, rows: page.items.length, stray: page.items.filter((m) => !want.includes(m.id)).length, summary: summary.total, exact: summary.totalExact })
+      .toEqual({ tier: "exact", rows: 5, stray: 0, summary: 26, exact: true });
+    expect(dated.sort()).toEqual(want);
+  }, 120_000);
 
   it("(4) a subject hit ranks above a newer, louder body-only hit", async () => {
     const r = await svc.page(ctx(D), { q: "renewal" });

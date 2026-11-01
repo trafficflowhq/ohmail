@@ -16,11 +16,11 @@ const BANNED = /archiv|archive|this device|dieses Gerät|this computer|diesem Co
 /** The failure sentences — the only places a device may be named. The mirror's three and the address
     view's offline line are a paired desktop's while ohmail Cloud is unreachable. */
 const ADMITTED_WEB = new Set([
-  "history.storeUnavailable", "search.scopeUnanswered",
+  "history.storeUnavailable", "search.scopeUnanswered", "search.scopeFailed",
   "search.scopeMirror", "search.scopeMirrorAtLeast", "search.scopeMirrorAbout", "search.addressOffline",
   "search.scopeMirrorNear", "search.scopeMirrorNearAtLeast",
 ]);
-const ADMITTED_PHONE = new Set(["historyStoreUnavailable", "searchUnanswered"]);
+const ADMITTED_PHONE = new Set(["historyStoreUnavailable", "searchUnanswered", "searchFailed"]);
 
 function webScope(file: string): Map<string, string> {
   const j = JSON.parse(read(file)) as Record<string, Record<string, unknown>>;

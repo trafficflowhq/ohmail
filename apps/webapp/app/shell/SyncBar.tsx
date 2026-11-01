@@ -69,7 +69,7 @@ import { useBrowserOnline } from "./browser-online";
 import { filingElsewhereKey, phoneHolder, phoneHolderKey } from "./reader-holder";
 import { useManagedService } from "./managed-service";
 import { readingAlong } from "./reading-along";
-import { mailboxErrorKey, storeRefusalsFigure } from "./mailbox-error-key";
+import { MIRROR_STORE_REFUSED_DETAIL, mailboxErrorKey, storeRefusalsFigure } from "./mailbox-error-key";
 
 /**
  * Rendered twice, in two shapes. The rail carries everything that acts on the app rather than on mail, so
@@ -234,6 +234,7 @@ function useStripSpeech(hostOffline: boolean, setupHref?: string): Speech | null
   // mail 0023). Two copies of seven sentences is how they drift, and one of them then describes
   // a failure mode the other has renamed.
   const tm = useTranslations("mailboxes");
+  const th = useTranslations("help");
   const { state } = useMailState();
   // Before the early returns — a hook may not sit behind one.
   const online = useBrowserOnline();
@@ -249,7 +250,7 @@ function useStripSpeech(hostOffline: boolean, setupHref?: string): Speech | null
   // Cloud behind it — the standalone desktop, which folds `NEXT_PUBLIC_API_BASE` away at build
   // time — so it is the seam the `stopped` sentence branches on. See `speech()`'s `stopped` arm.
   const cloud = apiConfigured();
-  const spoken = speech(state, t, tm, cloud, managed, setupHref);
+  const spoken = speech(state, t, tm, cloud, managed, setupHref, { href: "#/settings/help", label: th("write") });
   /* THE OFFLINE WORD. Both conditions, each necessary: the state must be a fetch-shaped claim —
      one a dead network makes false — AND the browser must say offline. A failing server is not
      "offline", and an offline browser over settled content has nothing to correct. The mirror IS
@@ -336,6 +337,7 @@ interface Speech {
 
 function speech(
   state: MailState, t: Translate, tm: Translate, cloud: boolean, managed: boolean, setupHref?: string,
+  help?: { href: string; label: string },
 ): Speech {
   // The label names the Mailboxes pane, so the link opens it rather than the section list's first pane.
   const settings = { href: "#/settings/mailboxes", label: t("settings") };
@@ -438,7 +440,8 @@ function speech(
         // One sentence for a server this install cannot reach, from the outage's first minute.
         title: state.unreachable && !localSaid ? t("unreachable") : tm(said.key, said.values),
         detail: readable(state.address),
-        link: settings,
+        // This computer's copy refusing its own pull is ours to fix: the person's step is telling us.
+        link: state.errorDetail === MIRROR_STORE_REFUSED_DETAIL && help ? help : settings,
       };
     }
 

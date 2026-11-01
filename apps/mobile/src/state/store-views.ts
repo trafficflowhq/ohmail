@@ -123,6 +123,8 @@ export interface PhoneStoreSearch {
   importing: boolean;
   /** The last relevance page of a cut set: the date orders walk the rest. */
   bounded: boolean;
+  /** Why the pass failed, by class (`failureCause()`), or `null`. */
+  cause: string | null;
   /** Ask for the pages covering `[start, end)` — an evicted page is asked again by its cursor. */
   want(start: number, end: number): void;
   loadMore(): void;
@@ -189,6 +191,7 @@ export function useStoreSearch(query: string, deviceIds: readonly string[]): Pho
       indexedPercent: info?.indexed ? Math.floor((100 * info.indexed.done) / info.indexed.total) : null,
       importing: info?.importing === true,
       bounded: info !== null && info.bounded && walker !== null && walker.atEnd(),
+      cause: walker?.failureCause() ?? null,
       want: (start, end) => walker?.want(start, end),
       loadMore: () => walker?.more(),
       retry: () => setTick((n) => n + 1),

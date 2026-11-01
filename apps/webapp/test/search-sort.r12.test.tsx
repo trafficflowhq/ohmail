@@ -13,6 +13,7 @@ import {
   type ServerSearchOpts,
   type SyncChange,
   type SyncResponse,
+  STORE_SEARCH_FOLLOWUP_HOLD_MS,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
@@ -263,5 +264,107 @@ describe("the search header offers an order", () => {
 
     expect(control()!.value).toBe("relevance");
     expect(pages(asked).map((o) => o.sort)).toEqual(["relevance"]);
+  });
+
+  /**
+   * The tester's shape: 28 'Berth plan' letters in the store, the newest `onDevice` of them on the
+   * device, the store answering each order and the odd-numbered letters' sender facet.
+   */
+  async function berthRig(onDevice: number) {
+    const berth = Array.from({ length: 28 }, (_, i) =>
+      msg(`b${i}`, `Berth plan ${i}`, new Date(Date.UTC(2026, 5, 1 + i, 9)).toISOString(), i % 2 ? "odd@quay.test" : `crew${i}@quay.test`));
+    const store = new MemoryMirrorStore();
+    await store.load();
+    await store.applyChanges(berth.slice(28 - onDevice).map((m): SyncChange => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })));
+    const byDate = [...berth].sort((a, b) => a.date!.localeCompare(b.date!));
+    const facets = {
+      folder: {}, sender: [{ address: "odd@quay.test", count: 14 }],
+      unread: { true: 0, false: 0 }, hasAttachments: { true: 0, false: 0 }, date: { today: 0, last7: 0, last30: 0, older: 0 },
+    };
+    const engine = new OhmailEngine({ adapter: baseAdapter({
+      searchServer: async (_q: string, o: ServerSearchOpts & { filters?: { sender?: string } }) => {
+        const all = o.sort === "date_asc" ? byDate : o.sort === "date_desc" ? [...byDate].reverse() : berth;
+        const items = o.filters?.sender ? all.filter((m) => m.from.address === o.filters!.sender) : all;
+        return { items, total: items.length, totalExact: true, nextCursor: null, ms: 3, facets };
+      },
+    } as unknown as Partial<EngineAdapter>), store, now: () => NOW });
+    const opened: string[] = [];
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages, timeZone: "UTC", now: NOW,
+        children: h(KeymapProvider, { children: h(SearchView, {
+          engine, version: 1, now: NOW, query: "berth plan", onQuery: () => {}, onOpen: (hit) => { opened.push(hit.message.id); },
+        }) }),
+      }));
+    });
+    const settle = () => act(async () => { await new Promise((r) => setTimeout(r, STORE_SEARCH_FOLLOWUP_HOLD_MS + 70)); });
+    const press = (k: string) => act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    });
+    const rows = (): string[] => [...host.querySelectorAll("[data-hit]")].map((el) => el.getAttribute("data-hit") ?? "");
+    const cursorRow = (): number => rows().indexOf(host.querySelector('[data-hit][aria-current="true"]')?.getAttribute("data-hit") ?? "");
+    const scrollTop = () => host.querySelector<HTMLElement>(".view-search .scroller")!.scrollTop;
+    await settle();
+    return { opened, settle, press, rows, cursorRow, scrollTop };
+  }
+
+  it("a new order starts the cursor at the top, also once the store answers it", async () => {
+    const { opened, settle, press, rows, cursorRow, scrollTop } = await berthRig(28);
+    const relTop = rows()[0];
+    for (let i = 0; i < 3; i++) await press("ArrowDown");
+    expect(cursorRow()).toBe(3);
+
+    await choose("date_asc");
+    await settle();
+    expect(rows()[0], "the orders must differ at the top").not.toBe(relTop);
+    expect(cursorRow(), `oldest first: ${rows().join(",")}`).toBe(0);
+
+    await choose("relevance");
+    await settle();
+    expect(cursorRow(), `relevance: ${rows().join(",")}`).toBe(0);
+    expect(scrollTop()).toBe(0);
+    await press("Enter");
+    expect(opened).toEqual([relTop]);
+  });
+
+  it("a new order starts at the top when the store holds letters the device does not", async () => {
+    // The device's oldest match is not the store's: the cursor must not follow the device's top hit.
+    const { opened, settle, press, rows, cursorRow, scrollTop } = await berthRig(10);
+    for (let i = 0; i < 3; i++) await press("ArrowDown");
+
+    await choose("date_asc");
+    await settle();
+    expect(rows()[0]).toBe("b0");
+    expect(cursorRow(), `oldest first: ${rows().join(",")}`).toBe(0);
+    expect(scrollTop()).toBe(0);
+    await press("Enter");
+    expect(opened).toEqual(["b0"]);
+  });
+
+  it("a question asked with a saved order starts at the top when the store holds more", async () => {
+    window.localStorage.setItem(searchSortKey(null), "date_asc");
+    const { opened, press, rows, cursorRow } = await berthRig(10);
+    expect(rows()[0]).toBe("b0");
+    expect(cursorRow(), `oldest first: ${rows().join(",")}`).toBe(0);
+    await press("Enter");
+    expect(opened).toEqual(["b0"]);
+  });
+
+  it("a pressed facet starts the cursor at the top", async () => {
+    const { opened, settle, press, rows, cursorRow } = await berthRig(28);
+    for (let i = 0; i < 4; i++) await press("ArrowDown");
+    const held = rows()[cursorRow()];
+    expect(held, "the cursor's letter must survive the filter").toBe("b23");
+
+    const chip = [...host.querySelectorAll<HTMLElement>(".facets button")].find((b) => (b.textContent ?? "").includes("odd@"));
+    expect(chip, "no sender facet to press").toBeTruthy();
+    await act(async () => { chip!.click(); });
+    await settle();
+    const top = rows()[0];
+    expect(rows()).toContain(held);
+    expect(top).not.toBe(held);
+    expect(cursorRow(), `odd@: ${rows().join(",")}`).toBe(0);
+    await press("Enter");
+    expect(opened).toEqual([top]);
   });
 });

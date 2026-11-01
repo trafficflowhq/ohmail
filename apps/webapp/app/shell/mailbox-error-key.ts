@@ -11,6 +11,9 @@ import type { StoreRefusals } from "./mail-state";
  */
 export const PLAINTEXT_REFUSED_DETAIL = "MAILBOX_PLAINTEXT_REFUSED";
 
+/** The desktop's own copy refused its pull: the Cloud and paired doors' spelling (`cloud-engine.ts`). */
+export const MIRROR_STORE_REFUSED_DETAIL = "MIRROR_STORE_REFUSED";
+
 /**
  * THE DETAILS THAT CHANGE THE SENTENCE, one map. The dial door's three refusals are stored by the
  * organizer; the two credential ones are the desktop's own door, derived at read time and never

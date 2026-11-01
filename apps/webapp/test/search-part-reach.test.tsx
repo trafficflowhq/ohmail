@@ -109,6 +109,10 @@ describe("the store's empty and closest-words answers say where a part inside a 
     expect(host.querySelector('[data-similar="head"]')?.textContent).toContain(SAID);
   });
 
+  it("a part beside an excluded word: the words asked are looked for inside words as they are alone", async () => {
+    expect(await reach("mail -thanks", NOTHING)).toEqual([SAID]);
+  });
+
   it.each([
     ["a quoted part (exactness asked)", '"levation"', NOTHING],
     ["an excluded part (exactness asked)", "-levation", NOTHING],

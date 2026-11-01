@@ -161,8 +161,8 @@ async function click(id: string): Promise<void> {
   await act(async () => { vi.advanceTimersByTime(20); });   // a frame: the rule looks
   await draw();
 }
-async function key(k: string): Promise<void> {
-  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
+async function key(k: string, init: KeyboardEventInit = {}): Promise<void> {
+  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init })); });
   await draw();
   await act(async () => { vi.advanceTimersByTime(20); });
   await draw();
@@ -313,6 +313,52 @@ describe("the order after a read is the order before it", () => {
     expect(idsInGroup("New")).toEqual(["b"]);
     expect(idsInGroup("Earlier"), "read here, it takes the top of Earlier").toEqual(["a", "c"]);
     expect(marked, "leaving writes nothing more").toEqual([glance("a")]);
+  });
+
+  const T = [1, 2, 3, 4, 5].map((n) => ({ id: `t${n}`, unread: true, date: `2026-08-02T09:0${9 - n}:00.000Z` }));
+  const pickedNow = (): string[] => [...host!.querySelectorAll<HTMLElement>(".row.picked[data-id]")].map((r) => r.dataset.id!).sort();
+  const barCount = (): string | null => host!.querySelector(".abar-count [role=status]")?.textContent ?? null;
+  async function readFirstThen(id: string): Promise<void> {
+    await mount([...T, C]);
+    await click(id);
+    await layout.passDwell();
+    await wait(AFTER_SLIDE_MS);
+    expect(idsInGroup("New")).toEqual(["t1", "t2", "t3", "t4", "t5"]);
+  }
+  async function shiftClick(id: string): Promise<void> {
+    await act(async () => { rowEl(id).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: true })); });
+    await draw();
+  }
+
+  it("Shift+J from a read row keeps it in New while the pick lives; Escape ends the pick and files it", async () => {
+    await readFirstThen("t1");
+    await key("J", { shiftKey: true });
+    await wait(AFTER_SLIDE_MS);
+    expect(idsInGroup("New"), "a key press re-sorted the list under the selection").toEqual(["t1", "t2", "t3", "t4", "t5"]);
+    await key("J", { shiftKey: true });
+    expect(pickedNow(), "the range spanned rows nobody stepped over").toEqual(["t1", "t2", "t3"]);
+    await key("Escape");
+    await wait(AFTER_SLIDE_MS);
+    expect(pickedNow()).toEqual([]);
+    expect(idsInGroup("Earlier"), "the read row files once the pick ends").toEqual(["t1", "c"]);
+  });
+
+  it("Shift+J then Shift+click on the next row picks the three rows between, never the ones below", async () => {
+    await readFirstThen("t1");
+    await key("J", { shiftKey: true });
+    await wait(AFTER_SLIDE_MS);
+    await shiftClick("t3");
+    expect(pickedNow()).toEqual(["t1", "t2", "t3"]);
+    expect(barCount()).toBe("3");
+  });
+
+  it("Shift+J then Shift+K from a read row picks only the rows stepped over", async () => {
+    await readFirstThen("t3");
+    await key("J", { shiftKey: true });
+    await wait(AFTER_SLIDE_MS);
+    await key("K", { shiftKey: true });
+    expect(pickedNow(), "a row above the gesture was picked").toEqual(["t3", "t4"]);
+    expect(sel).toBe("t3");
   });
 
   it("CONTROL: a row read by a sync change, not here, stays below a newer row at its arrival", async () => {

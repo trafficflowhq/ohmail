@@ -146,18 +146,91 @@ export function holdsPunctuation(q: string): boolean {
 /** The substring arm's width floor — a trigram's, below which its index cannot select. */
 export const SUBSTRING_MIN_CHARS = 3;
 
-/** A quoted phrase or a `-term`: the reader asking for exactly these words, never parts of them. */
+/** Between operands, as `websearch_to_tsquery` reads them (the stores' `queryOperandsOf`). */
+const QUERY_SEPARATOR = /[\s!&|()<:]/u;
+/** A separator that is a mark: one touching an excluded operand goes with it. */
+const QUERY_MARK = /[!&|()<:]/u;
+
+/**
+ * The typed query read as the stores read it (`queryOperandsOf`): a quoted span or a run of
+ * non-separators is one operand, excluded after an odd run of dashes, separators allowed between.
+ * `asked` is the query less each excluded operand with its dashes and the marks touching it, and
+ * less both halves of a parenthesis pair one of which goes or which holds excluded operands alone;
+ * whitespace collapsed. With nothing excluded it is the query byte for byte. `excluded` holds each
+ * excluded operand, without quotes.
+ */
+function readExclusions(q: string): { asked: string; excluded: string[] } {
+  const ops: Array<{ from: number; start: number; end: number; out: boolean }> = [];
+  // An operand's own characters: a quoted one's parentheses are words, not marks.
+  const own = new Uint8Array(q.length);
+  let dashes = 0;
+  let from = 0;
+  for (let i = 0; i < q.length;) {
+    const c = q[i]!;
+    if (QUERY_SEPARATOR.test(c)) { i++; continue; }
+    if (c === "-") { if (dashes === 0) from = i; dashes++; i++; continue; }
+    const start = i;
+    if (c === '"') {
+      const close = q.indexOf('"', i + 1);
+      i = close < 0 ? q.length : close + 1;
+    } else {
+      while (i < q.length && q[i] !== '"' && !QUERY_SEPARATOR.test(q[i]!)) i++;
+    }
+    own.fill(1, start, i);
+    ops.push({ from: dashes % 2 === 1 ? from : start, start, end: i, out: dashes % 2 === 1 });
+    dashes = 0;
+  }
+  const excluded = ops.filter((o) => o.out).map((o) => q.slice(o.start, o.end).replace(/"/g, ""));
+  if (excluded.length === 0) return { asked: q, excluded };
+  const cut = new Uint8Array(q.length);
+  const mark = (i: number): boolean => i >= 0 && i < q.length && own[i] === 0 && QUERY_MARK.test(q[i]!);
+  for (const o of ops) {
+    if (!o.out) continue;
+    cut.fill(1, o.from, o.end);
+    for (let i = o.from - 1; mark(i); i--) cut[i] = 1;
+    for (let i = o.end; mark(i); i++) cut[i] = 1;
+  }
+  const open: number[] = [];
+  for (let i = 0; i < q.length; i++) {
+    if (own[i] === 1) continue;
+    if (q[i] === "(") open.push(i);
+    if (q[i] !== ")" || open.length === 0) continue;
+    const o = open.pop()!;
+    const held = ops.filter((x) => x.start > o && x.end <= i);
+    if (cut[o] === 1 || cut[i] === 1 || (held.length > 0 && held.every((x) => x.out))) cut[o] = cut[i] = 1;
+  }
+  let asked = "";
+  for (let i = 0; i < q.length; i++) asked += cut[i] === 1 ? " " : q[i];
+  return { asked: asked.replace(/\s+/g, " ").trim(), excluded };
+}
+
+/**
+ * THE WORDS ASKED: the query less its excluded operands (`-word`, `-"a phrase"`, `-(word)`). An excluded word
+ * only leaves letters out of what these find, so the stores read them as they read a plain query.
+ */
+export function positiveText(q: string): string {
+  return readExclusions(q).asked;
+}
+
+/** Each excluded operand as typed, a quoted one without its quotes. */
+export function excludedOperands(q: string): string[] {
+  return readExclusions(q).excluded;
+}
+
+/** A quoted phrase among the words asked: the reader asking for exactly these words, never parts of them. */
 export function exactAsked(q: string): boolean {
-  return q.includes('"') || /(^|\s)-\S/.test(q);
+  return positiveText(q).includes('"');
 }
 
 /**
  * Is the query also looked for INSIDE words — the stores' substring arm, over subjects, senders,
  * recipients and attachment names, never the message text? Shut when exactness is asked; open from
- * a trigram's width, and below it for a punctuated query (`pha/Bet` inside `Alpha/Beta`). ONE
- * function: the service opens its arm with it, and the web and the phone say that arm's reach.
+ * a trigram's width of the words asked, and below it for a punctuated query (`pha/Bet` inside
+ * `Alpha/Beta`). ONE function: the service opens its arm with it, and the web and the phone say
+ * that arm's reach.
  */
 export function substringOpen(q: string): boolean {
-  if (exactAsked(q)) return false;
-  return [...q].length >= SUBSTRING_MIN_CHARS || holdsPunctuation(q);
+  const p = positiveText(q);
+  if (p.includes('"')) return false;
+  return [...p].length >= SUBSTRING_MIN_CHARS || holdsPunctuation(p);
 }

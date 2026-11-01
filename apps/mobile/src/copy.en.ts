@@ -1345,6 +1345,7 @@ const TABLE = {
   searchSyncing: "The rest of your mail has not synced yet.",
   searchServerMs: (ms: number) => `${ms} ms`,
   searchUnanswered: "Your server did not answer — showing the recent mail this device holds.",
+  searchFailed: "Your server could not run this search — showing the recent mail this device holds.",
   searchWholeRetry: "Search your whole mailbox again",
   searchIndexingProgress: (percent: number) => `Older mail is still being indexed — ${percent} % done.`,
   searchBounded: (n: number) => `Showing the ${n} best matches — sort by date to walk them all.`,
