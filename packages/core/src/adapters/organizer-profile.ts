@@ -75,6 +75,9 @@ export const PROFILE_TIDY_MAX_PER_PASS = 100;
 /** The most found copies (another install's, a gone store's) one organizer keeps for the person's answer, newest first. */
 export const PROFILE_KEPT_MAX = 8;
 
+/** How many found copies one pass of the organizer reads by body, newest first (within {@link PROFILE_MESSAGES_MAX_PER_FETCH}). */
+export const PROFILE_FOUND_READ_MAX = 64;
+
 /**
  * The discriminator and bookkeeping headers. The lease's `H` table, for the profile.
  *
@@ -2219,8 +2222,19 @@ export interface TidyCounts {
   keptOwnBesideUnseen: number;
   /** A copy under this install's id that is not its own (a removed store's, a later life's): found settings. */
   keptFound: number;
+  /** A copy under this install's id that is not its own, read and not kept, ten minutes older than C. */
+  foundStale: number;
+  /** A copy that would go by age, kept while the organizer has not read every found copy yet. */
+  keptUnread: number;
   unseenCurrent: 0 | 1;
 }
+
+/**
+ * WHAT THE ORGANIZER HAS READ OF THE FOUND COPIES. `partly`: some are not read yet, so no copy goes by
+ * age. `all`: a copy under its id that is not its own and that `kept` does not name (by install id and
+ * Date second) follows the ten-minute rule, as another install's does.
+ */
+export interface FoundRead { read: "all" | "partly"; kept: readonly ProfileLocator[] }
 
 /**
  * THE ONE SELECTOR — which settings messages beside the current document C may go.
@@ -2228,17 +2242,21 @@ export interface TidyCounts {
  * Only an ohmail-shaped copy (the header's `exact`), only while nothing newer is in the folder, only
  * superseded by a readable C and never C itself. Then: its body is unreadable, it is this install's
  * (once C is its own, held or seen), it says what C says, it is a question the caller held and
- * released (`released`), or it is another install's copy ten minutes older than C whose writer holds
- * no fresh claim. Claims, acks, requests and mail carry no settings header. Oldest first, by uid.
+ * released (`released`), or it is a copy ten minutes older than C: another install's whose writer
+ * holds no fresh claim, or one under this install's id that is not its own once `found` says every
+ * found copy was read and does not keep it, and C is this install's, held or seen. While `found` says
+ * `partly`, nothing goes by age. Claims, acks, requests and mail carry no settings header. Oldest
+ * first, by uid.
  */
 function planTidy(
   view: ProfileView, selfInstallId: string | null, now: Date, claims: readonly MetaClaimSeen[],
   retain?: ProfileLocator, released: readonly ProfileLocator[] = [], replaceable: ReadonlySet<string> = new Set(),
-  ownSince?: number, owns?: (second: number) => boolean, kept: readonly ProfileLocator[] = [],
+  ownSince?: number, owns?: (second: number) => boolean, kept: readonly ProfileLocator[] = [], found?: FoundRead,
 ): { counts: TidyCounts; refs: unknown[] } {
   const counts: TidyCounts = {
     records: view.entries.length, current: 0, removable: 0, own: 0, foreignStale: 0, duplicate: 0, released: 0,
-    malformed: 0, keptForeignFresh: 0, keptUnrecognised: 0, keptNewerDated: 0, keptHeld: 0, keptOwnBesideUnseen: 0, keptFound: 0, unseenCurrent: 0,
+    malformed: 0, keptForeignFresh: 0, keptUnrecognised: 0, keptNewerDated: 0, keptHeld: 0, keptOwnBesideUnseen: 0, keptFound: 0,
+    foundStale: 0, keptUnread: 0, unseenCurrent: 0,
   };
   const held = heldIn(view, retain, kept);
   const C = view.current;
@@ -2255,6 +2273,8 @@ function planTidy(
   const freshClaim = (installId: string | null): boolean => claims.some((c) => c.installId === installId
     && now.getTime() - c.heartbeat.getTime() < DEFAULT_STALE_AFTER_MS);
   const older = (a: number | null, b: number | null): boolean => a !== null && b !== null && a < b;
+  const staleBy = (e: ProfileEntry): boolean => C.shape.dateSecond !== null && e.shape.dateSecond !== null
+    && (C.shape.dateSecond - e.shape.dateSecond) * 1000 >= DEFAULT_STALE_AFTER_MS;
   const picked: ProfileEntry[] = [];
   for (const e of view.entries) {
     if (e === C) continue;
@@ -2277,14 +2297,21 @@ function planTidy(
       counts.duplicate += 1;
     } else if (released.some((at) => locatedIn(view, at) === e)) {
       counts.released += 1;
-    } else if (e.shape.installId !== null && e.shape.installId === selfInstallId) {
-      /* UNDER THIS INSTALL'S ID AND NOT ITS OWN: a removed store's copy or a later life's, found settings.
-         Never removed by age, whatever the claims say; only once answered (`released`) or as C's twin. */
-      counts.keptFound += 1;
+    } else if (found?.read === "partly" && staleBy(e)) {
+      // A found copy not read yet may be one the organizer keeps: nothing goes by age until it has read them all.
+      counts.keptUnread += 1;
       continue;
-    } else if (C.shape.dateSecond !== null && e.shape.dateSecond !== null
-      && (C.shape.dateSecond - e.shape.dateSecond) * 1000 >= DEFAULT_STALE_AFTER_MS
-      && !freshClaim(e.shape.installId)) {
+    } else if (e.shape.installId !== null && e.shape.installId === selfInstallId) {
+      /* UNDER THIS INSTALL'S ID AND NOT ITS OWN: a removed store's copy or a later life's, found settings. Kept
+         while the organizer keeps it, whatever the claims say (the claim under this id is the organizer's own);
+         one it read and does not keep follows the ten-minute rule once C is its own, held or seen, as its own do. */
+      const keptHere = (found?.kept ?? []).some((at) => at.installId === e.shape.installId && at.second === e.shape.dateSecond);
+      if (found?.read !== "all" || keptHere || !staleBy(e) || !cSeen) {
+        counts.keptFound += 1;
+        continue;
+      }
+      counts.foundStale += 1;
+    } else if (staleBy(e) && !freshClaim(e.shape.installId)) {
       counts.foreignStale += 1;
     } else {
       counts.keptForeignFresh += 1;
@@ -2398,26 +2425,36 @@ export async function readOrganizerProfile(
 export interface FoundCopy { installId: string; doc: OrganizerProfileDoc; locator: ProfileLocator }
 
 /**
- * THE FOUND COPIES: every readable settings copy in the folder that is not the caller's own ({@link
- * ownCopy}), newest first, at most `max`, each read by body. A newer format anywhere answers `newer`.
+ * THE FOUND COPIES, ONE BATCH AT A TIME: the `max` newest copies not the caller's own ({@link ownCopy}) nor named
+ * by `skip`, read by body. `copies` are the readable ones, newest first; `examined` names each one read, readable
+ * or not; `more` says some are unread (a body past the read's budget waits for a later call). A newer format
+ * anywhere answers `newer`.
  */
 export async function readFoundCopies(
-  io: ProfileIo, opts: { installId: string; ownSince?: number; owns?: (second: number) => boolean; max?: number },
-): Promise<{ state: "read"; copies: FoundCopy[] } | { state: "newer"; v: number }> {
+  io: ProfileIo, opts: {
+    installId: string; ownSince?: number; owns?: (second: number) => boolean; max?: number;
+    skip?: (installId: string, second: number | null) => boolean;
+  },
+): Promise<
+  | { state: "read"; copies: FoundCopy[]; examined: Array<[string, number | null]>; more: boolean }
+  | { state: "newer"; v: number }
+> {
   const max = opts.max ?? PROFILE_KEPT_MAX;
-  const notOurs = (installId: string | null, second: number | null): boolean => installId !== null
-    && !ownCopy(installId, second, opts.installId, opts.ownSince, opts.owns);
+  const keyOf = (installId: string | null, second: number | null): string => JSON.stringify([installId, second]);
+  let candidates: ProfileEntry[];
   let view: ProfileView;
   try {
     const first = viewOf((await listingOf(io)).messages);
-    const unread = first.newerV !== null ? [] : first.entries
-      .filter((e) => e.shape.exact && notOurs(e.shape.installId, e.shape.dateSecond))
-      .sort((a, b) => (b.shape.dateSecond ?? -1) - (a.shape.dateSecond ?? -1)).slice(0, max)
-      .filter((e) => e.record === null);
-    view = unread.length === 0 ? first : viewOf((await listingOf(io, {
+    candidates = first.newerV !== null ? [] : first.entries
+      .filter((e) => e.shape.exact && e.shape.installId !== null
+        && !ownCopy(e.shape.installId, e.shape.dateSecond, opts.installId, opts.ownSince, opts.owns)
+        && !(opts.skip?.(e.shape.installId, e.shape.dateSecond) ?? false))
+      .sort((a, b) => (b.shape.dateSecond ?? -1) - (a.shape.dateSecond ?? -1));
+    const unread = new Set(candidates.slice(0, max).filter((e) => e.record === null).map((e) => keyOf(e.shape.installId, e.shape.dateSecond)));
+    view = unread.size === 0 ? first : viewOf((await listingOf(io, {
       bodyFor: (row) => {
         const s = shapeOf(row.headerBlock);
-        return unread.some((e) => e.shape.installId === s.installId && e.shape.dateSecond === s.dateSecond);
+        return unread.has(keyOf(s.installId, s.dateSecond));
       },
     })).messages);
   } catch (err) {
@@ -2427,9 +2464,27 @@ export async function readFoundCopies(
     );
   }
   if (view.newerV !== null) return { state: "newer", v: view.newerV };
-  const copies = newestFirst(view.ok.filter((r) => notOurs(r.installId, secondOfDoc(r.doc!)))).slice(0, max)
-    .map((r) => ({ installId: r.installId!, doc: r.doc!, locator: profileLocatorOf(r.installId, r.doc!)! }));
-  return { state: "read", copies };
+  const batch = candidates.slice(0, max);
+  // Read: by body in the first listing, or in the second as the same message saying the same install id and second.
+  const readOf = new Map(batch.map((c) => [c, c.record !== null ? c : view.entries.find((e) => e.record !== null
+    && e.msg.ref === c.msg.ref && e.shape.installId === c.shape.installId && e.shape.dateSecond === c.shape.dateSecond)] as const));
+  // Two copies can share an install id and a second: theirs is examined once both are read.
+  const unreadKeys = new Set(candidates.filter((c) => readOf.get(c) === undefined).map((c) => keyOf(c.shape.installId, c.shape.dateSecond)));
+  const examined = new Map<string, [string, number | null]>();
+  for (const c of batch) {
+    const key = keyOf(c.shape.installId, c.shape.dateSecond);
+    if (!unreadKeys.has(key)) examined.set(key, [c.shape.installId!, c.shape.dateSecond]);
+  }
+  const ok = batch.map((c) => readOf.get(c)?.record)
+    .filter((r): r is ParsedProfileMessage => r !== undefined && r !== null && !isMalformedProfile(r) && r.status === "ok");
+  const copies = newestFirst(ok).map((r) => ({ installId: r.installId!, doc: r.doc!, locator: profileLocatorOf(r.installId, r.doc!)! }));
+  return { state: "read", copies, examined: [...examined.values()], more: unreadKeys.size > 0 };
+}
+
+/** The Date seconds of the settings copies the folder lists under `installId`, read by header. */
+export async function listedProfileSeconds(io: ProfileIo, installId: string): Promise<Set<number>> {
+  const { entries } = viewOf((await listingOf(io)).messages);
+  return new Set(entries.flatMap((e) => (e.shape.exact && e.shape.installId === installId && e.shape.dateSecond !== null ? [e.shape.dateSecond] : [])));
 }
 
 // ── TIDY ────────────────────────────────────────────────────────────────────────────────────
@@ -2513,6 +2568,8 @@ export async function tidyOrganizerProfile(input: {
   owns?: (second: number) => boolean;
   /** Found copies kept for the person's answer beside the held one: never removed, whatever their age. */
   kept?: readonly ProfileLocator[];
+  /** {@link FoundRead}. Absent, a copy under the caller's id that is not its own never goes by age. */
+  found?: FoundRead;
 }): Promise<TidyOutcome> {
   const log = input.log ?? ((): void => undefined);
   const released = input.released ?? [];
@@ -2533,7 +2590,7 @@ export async function tidyOrganizerProfile(input: {
     return { removed: 0, remaining: 0, planned: null, refused: "newer" };
   }
   const plan = planTidy(view, input.installId, input.now ?? new Date(), listing.claims, input.retain, released,
-    new Set(input.replaceable ?? []), input.ownSince, input.owns, kept);
+    new Set(input.replaceable ?? []), input.ownSince, input.owns, kept, input.found);
   return tidyPass(input.io, view, plan, {
     mode: input.mode ?? "remove", max: input.max ?? PROFILE_TIDY_MAX_PER_PASS, log,
   });
@@ -2573,6 +2630,8 @@ export interface WriteProfileInput {
   beforeAppend?: (second: number) => Promise<void>;
   /** Found copies kept for the person's answer beside the held one: published beside, never refused or replaced. */
   kept?: readonly ProfileLocator[];
+  /** {@link FoundRead}, for the gate's plan. */
+  found?: FoundRead;
 }
 
 export type WriteProfileResult =
@@ -2687,7 +2746,7 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   if (mode === "remove") {
     // The `unseen` refusal above cleared the newest: it is this writer's, held, seen or the same.
     const plan = planTidy(view, installId, now, claims, input.retain, [],
-      new Set([...known, ...(newest === null ? [] : [profileFingerprint(newest.doc!)])]), input.ownSince, input.owns, kept);
+      new Set([...known, ...(newest === null ? [] : [profileFingerprint(newest.doc!)])]), input.ownSince, input.owns, kept, input.found);
     if (plan.refs.length > 0) {
       log("profile_write_held_for_cleanup", { removable: plan.refs.length });
       const pass = await tidyPass(io, view, plan, { mode, max: PROFILE_TIDY_MAX_PER_PASS, log });
