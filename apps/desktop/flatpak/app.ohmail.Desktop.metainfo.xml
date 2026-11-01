@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.25" date="2026-11-01">
+      <description>
+        <ul>
+          <li>Trash lists what it holds</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.24" date="2026-11-01">
       <description>
         <ul>
@@ -113,14 +120,6 @@
       <description>
         <ul>
           <li>A restored backup no longer rolls back the settings stored in the mailbox</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.20" date="2026-10-31">
-      <description>
-        <ul>
-          <li>A new Outlook history folds when the earlier message opens with its quote</li>
-          <li>A mailbox added again after its removal can save its signature</li>
         </ul>
       </description>
     </release>

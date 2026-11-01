@@ -21,6 +21,16 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.25] — 2026-11-01
+
+### Trash lists what it holds
+
+A letter you restore from Trash stays out of the list once its Undo time ends; before, it came back at the top
+with the cursor and the reader on it while it was already back in your mail, and a second Restore said it was
+still in Trash. Restoring a letter that is no longer in Trash now says so and takes it off the list. On the
+phone, a letter you delete shortly before opening Trash is listed as soon as the delete reaches the server,
+without leaving and reopening Trash. Desktop, web and phone.
+
 ## [0.30.24] — 2026-11-01
 
 ### Close setup stays closed when the page loads again
@@ -15895,7 +15905,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.24...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.25...HEAD
+[0.30.25]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.25
 [0.30.24]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.24
 [0.30.23]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.23
 [0.30.22]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.22
