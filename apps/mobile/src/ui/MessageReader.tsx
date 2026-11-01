@@ -616,8 +616,17 @@ export function MessageReader({
             </Txt>
           ) : null}
           {/* THE IDENTITY FACT, under the address it is about — always drawn, never folded away, behind
-              the shield the sender detail and the web draw. */}
-          {m.senderCheck ? (
+              the shield the sender detail and the web draw. A check the provider failed comes first. */}
+          {m.senderFailed ? (
+            <View style={{ flexDirection: "row", gap: 6, marginTop: 6, alignItems: "flex-start" }}>
+              <View style={{ marginTop: 2 }}>
+                <Icon name="shield" size={13} color={t.c.accentInk} />
+              </View>
+              <Txt variant="note" tone="ink" style={{ flex: 1 }} testID="reader-sender-failed">
+                {Copy.senderCheckFailed(m.from.address)}
+              </Txt>
+            </View>
+          ) : m.senderCheck ? (
             <View style={{ flexDirection: "row", gap: 6, marginTop: 6, alignItems: "flex-start" }}>
               <View style={{ marginTop: 2 }}>
                 <Icon name="shield" size={13} color={t.c.accentInk} />

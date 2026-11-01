@@ -1801,6 +1801,31 @@ export function ScreenerView({
                 </Button>
               </div>
             ) : null}
+            {/* A LETTER ITS PROVIDER FAILED, WITH NO WAITING ROW TO DECIDE IT — one claiming the
+                account's own address, a contact's, a decided sender's. Said with the check that failed,
+                and decided letter by letter: Spam, or the Ohbox as the person's own placement. */}
+            {segment === "waiting" && state.failedAtGate !== undefined && state.failedAtGate.length > 0 ? (
+              <div className="scn-held scn-failed" role="group" aria-label={t("failedAria")}>
+                {state.failedAtGate.map((f) => (
+                  <div key={f.id} className="scn-failed-row">
+                    <p className="scn-held-lead">{displayAddress(f.from.address)}</p>
+                    <p className="scn-held-lead scn-held-sender">{f.subject}</p>
+                    <p className="scn-failed-check">
+                      <Icon name="shield" size={12} />
+                      <span>{t("senderCheck.failed", { address: displayAddress(f.from.address) })}</span>
+                    </p>
+                    <div className="scn-ask-acts">
+                      <Button onClick={() => state.fileFailed(f.id, "spam")}>
+                        {f.own ? t("failedNotFromYou") : t("failedNotFromThem")}
+                      </Button>
+                      <Button variant="ghost" onClick={() => state.fileFailed(f.id, "ohbox")}>
+                        {f.own ? t("failedFromYou") : t("failedFromThem")}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON — now the whole of the
                 strip's condition. It carried a second disjunct for the allowance line, which had
                 to appear on an EMPTY queue; that line has left this surface, so an empty queue

@@ -830,8 +830,13 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     const key = senderKey(m.from.address);
     /* The user is not one of their own correspondents: their mail is never History (a queue of
        people who have not been screened) and never a Screener decision. Held at the gate it
-       presents in the INBOX — nothing moves on the server; elsewhere it keeps its place. */
-    if (own.has(key)) { placeOf.set(m.id, m.folder === "ohmail/Screener" ? "INBOX" : m.folder); continue; }
+       presents in the INBOX — nothing moves on the server; elsewhere it keeps its place. A letter
+       claiming their address that its provider failed is no own mail: it presents at the gate,
+       where the router held it, for a person to decide (`failedAtGate`). */
+    if (own.has(key)) {
+      placeOf.set(m.id, m.folder === "ohmail/Screener" && !authScreens(m.authVerdict) ? "INBOX" : m.folder);
+      continue;
+    }
     const decided = decidedDestination(index, m.from.address, m.mailboxId);
     /* "Yes, I hear from this person" is core's one list (`isConsentingDestination`), which the
        server's queue SQL is pinned to: Screened and Quarantine are decisions that are not consent. */
@@ -895,7 +900,10 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
       // holds at the gate while the page was read ahead of it ({@link heldAheadOfTheCopy}): kept at
       // the gate until the rule lands or the copy catches up, never released early to the Ohbox.
       if (!rulesOnly) activeUndecided.add(key);
-      placeOf.set(m.id, heldAhead.has(key) ? "ohmail/Screener" : "INBOX");
+      // A held letter its provider failed stays where the router held it: a forged contact's
+      // letter never presents in the Ohbox as theirs (`failedAtGate`).
+      const failed = m.folder === "ohmail/Screener" && authScreens(m.authVerdict);
+      placeOf.set(m.id, heldAhead.has(key) || failed ? "ohmail/Screener" : "INBOX");
     } else if (rulesOnly) {
       placeOf.set(m.id, m.folder);
     } else if (active) {

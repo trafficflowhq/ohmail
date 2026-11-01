@@ -1805,6 +1805,13 @@ export const DE: Deck = {
   senderCheckList: "Über eine Mailingliste verschickt — alle auf der Liste können unter dieser Adresse schreiben.",
   senderCheckUnverified: (brand: string): string =>
     `Diese Nachricht gibt an, von ${brand} zu kommen. Dein Mailanbieter hat das nicht bestätigt.`,
+  senderCheckFailed: (address: string): string =>
+    `Dein Mailanbieter hat geprüft, ob diese Nachricht von ${address} kommt, und die Prüfung ist fehlgeschlagen.`,
+  failedAria: "Nachrichten, die die Absenderprüfung nicht bestanden haben",
+  failedNotFromYou: "Nicht von dir",
+  failedFromYou: "Doch von dir",
+  failedNotFromThem: "Nicht vom Absender",
+  failedFromThem: "Doch vom Absender",
   screeningScopeShared: (domain: string): string =>
     `${domain} ist ein geteilter Anbieter. Entscheide hier pro Adresse.`,
   rulesSharedProviderInert: (domain: string): string =>

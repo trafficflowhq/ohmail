@@ -2326,6 +2326,25 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   font-weight: 400;
   color: var(--ink2);
 }
+/* A letter its provider failed: its line, the check behind the shield, its two answers. */
+.scn-failed-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.scn-failed-check {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  font-size: calc(12px + var(--type-up));
+  line-height: 1.45;
+  color: var(--ink2);
+}
+.scn-failed-check svg {
+  color: var(--accent-ink);
+  flex: none;
+  margin-top: 2px;
+}
 /* Mark all spam's question: the held block's sentences, its two answers side by side. */
 .scn-ask-acts {
   display: flex;

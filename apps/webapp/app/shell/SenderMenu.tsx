@@ -228,7 +228,11 @@ export function SenderMenu({
   // The identity fact off the newest marked message the sheet's subject sent (mail 0148); with none
   // marked, the newest one whose provider did not confirm the brand's own address.
   const checkWords = useSenderCheckWords();
-  const checkLine = checkWords.lineAmong(sender.messages);
+  // The letter the sheet opened on, when its provider failed it: that check is said first.
+  const seed = sender.messages.find((m) => m.id === state.messageId);
+  const seedLine = seed === undefined ? null : checkWords.line(seed);
+  const failedLine = seedLine?.reason === "failed" ? seedLine : null;
+  const checkLine = failedLine ?? checkWords.lineAmong(sender.messages);
   const rootRef = useRef<HTMLDivElement>(null);
   const [scope, setScope] = useState<ScreeningScope>("sender");
   /** The sheet's step: the list, the resolve step over rules that disagree, or the unsubscribe
@@ -412,12 +416,15 @@ export function SenderMenu({
   );
   // Our own address: the sentence instead of the press, and the ways onward that write nothing.
   if (own) {
+    // A letter claiming our address that its provider failed is not our mail: the check is said.
     return (
       <div ref={rootRef} id={SENDER_SHEET_ID} className={full ? "senderm sm-full" : "senderm"} role="dialog"
         aria-modal="true" aria-label={t("aria", { sender: who })} style={style}>
         <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
         {head}
-        <div className="sm-now">{t("toastOwnAddress")}</div>
+        {failedLine ? (
+          <p className="sm-check" data-reason="failed"><Icon name="shield" size={12} /><span>{failedLine.text}</span></p>
+        ) : <div className="sm-now">{t("toastOwnAddress")}</div>}
         <div className="sm-links">
           <button type="button" className="sm-detail" onClick={() => onOpenDetail("sender")}>
             {t("auditOpen", { count: sender.scopes.sender.messages.length })}

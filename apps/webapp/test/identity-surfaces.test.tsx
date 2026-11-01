@@ -33,6 +33,7 @@ const words = (key: string, v: Record<string, string> = {}): string => ({
   "senderCheck.impersonation": `This message claims to be from ${v.brand}, but ${v.domain} isn't one of ${v.brand}'s addresses.`,
   "senderCheck.impersonationShared": `This message claims to be from ${v.brand}, but anyone can register a ${v.domain} address.`,
   "senderCheck.unverified": `This message says it is from ${v.brand}. Your mail provider did not confirm that.`,
+  "senderCheck.failed": `Your mail provider checked whether this message is from ${v.address}, and the check failed.`,
 } as Record<string, string>)[key] ?? key;
 
 /** A sender at the brand's own domain whose provider did not confirm it (`reason: "unverified"`). */
@@ -109,6 +110,19 @@ describe("the identity fact on the web", () => {
     expect(senderCheckSentence(words, f!)).toBe("This message says it is from PayPal. Your mail provider did not confirm that.");
   });
 
+  it("a letter its provider failed reads as failed, before any claim its name makes", () => {
+    const contact = { from: { name: "Accountant", address: "accountant@smallfirm.example" }, senderCheck: null };
+    const f = senderCheckFact({ ...contact, authVerdict: "fail" });
+    expect(f).toMatchObject({ reason: "failed", address: "accountant@smallfirm.example" });
+    expect(senderCheckSentence(words, f!)).toBe(
+      "Your mail provider checked whether this message is from accountant@smallfirm.example, and the check failed.");
+    expect(senderCheckFact({ ...message({ reason: "impersonation", brand: "PostFinance", domainShared: true }), authVerdict: "fail" })?.reason)
+      .toBe("failed");
+    // A verdict the gate does not screen on says nothing new.
+    expect(senderCheckFact({ ...contact, authVerdict: "unavailable" })).toBeNull();
+    expect(senderCheckFact({ ...contact, authVerdict: "pass" })).toBeNull();
+  });
+
   it("the guided first decision and every one-line name carry the claim with its denial", () => {
     const not = (brand: string) => `Not ${brand}`;
     expect(notifiedSenderName({ ...message({ reason: "impersonation", brand: "PostFinance", domainShared: true }) }, not))
@@ -122,14 +136,14 @@ describe("the identity fact on the web", () => {
     process.env.NEXT_PUBLIC_API_BASE ??= "/api";
     const { MessagePane } = await import("../app/shell/MessagePane.js");
     const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-    const open = async (senderCheck: EngineMessage["senderCheck"], reason = "identity") => {
+    const open = async (senderCheck: EngineMessage["senderCheck"], reason = "identity", authVerdict: string | null = null) => {
       const m = {
         id: "o1", accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null, subject: "Bitte bestätigen",
         from: { name: "PostFinance", address: PHISH }, to: [{ name: null, address: "me@firma.example" }], cc: [],
         date: "2026-10-07T09:00:00.000Z", folder: "ohmail/Screener", snippet: "", unread: true,
         hasAttachments: false, attachmentCount: 0,
         sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-        triage: null, labels: [], remoteContent: "none", updatedAt: "2026-10-07T09:00:00.000Z", senderCheck,
+        triage: null, labels: [], remoteContent: "none", updatedAt: "2026-10-07T09:00:00.000Z", senderCheck, authVerdict,
       };
       host = document.createElement("div");
       document.body.appendChild(host);
@@ -165,6 +179,11 @@ describe("the identity fact on the web", () => {
     // An unconfirmed sender at the brand's own domain: its own line, and never the claim's.
     expect(await open(UNVERIFIED, "unverified")).toBe("This message says it is from PayPal. Your mail provider did not confirm that.");
     expect(host!.querySelector('.msg-from-check[data-reason="identity"]')).toBeNull();
+    await act(async () => { root!.unmount(); });
+    host!.remove();
+    // A letter its provider failed says so, whatever its name claims.
+    expect(await open({ reason: "impersonation", brand: "PostFinance", domainShared: true }, "failed", "fail"))
+      .toBe(`Your mail provider checked whether this message is from ${PHISH}, and the check failed.`);
   });
 
   it("the sender sheet says the sentence, behind the shield, before any choice; an unmarked sender's says nothing", async () => {
@@ -188,6 +207,9 @@ describe("the identity fact on the web", () => {
       { id: "x1", from: { name: "PostFinance", address: "alerts@paypal.com" },
         senderCheck: { reason: "impersonation", brand: "PostFinance", domainShared: false } },
       { id: "x2", from: { name: "PayPal", address: "alerts@paypal.com" }, senderCheck: UNVERIFIED, date: "2026-10-07T10:00:00.000Z" },
+      // A contact's address, one letter its provider failed and one it did not.
+      { id: "f1", from: { name: "Accountant", address: "accountant@smallfirm.example" }, senderCheck: null, authVerdict: "fail" },
+      { id: "f2", from: { name: "Accountant", address: "accountant@smallfirm.example" }, senderCheck: null, folder: "INBOX" },
     ].map((m, i) => ({ type: "message", op: "create", id: m.id, seq: i + 1, updatedAt: base.updatedAt, entity: { ...base, ...m } })) as never);
     const sheet = async (id: string, reason = "identity") => {
       host = document.createElement("div");
@@ -215,6 +237,16 @@ describe("the identity fact on the web", () => {
     host!.remove();
     expect(await sheet("x2")).toEqual({ text: "This message claims to be from PostFinance, but paypal.com isn't one of PostFinance's addresses.", shield: true });
     expect(host!.querySelector('.sm-check[data-reason="unverified"]')).toBeNull();
+    await act(async () => { root!.unmount(); });
+    host!.remove();
+    // Opened on the failed letter, the sheet says that check; opened on the other letter, nothing.
+    expect(await sheet("f1", "failed")).toEqual({
+      text: "Your mail provider checked whether this message is from accountant@smallfirm.example, and the check failed.", shield: true,
+    });
+    await act(async () => { root!.unmount(); });
+    host!.remove();
+    expect(await sheet("f2", "failed")).toBeNull();
+    expect(host!.querySelector(".sm-check")).toBeNull();
   });
 
   it("a marked message's pictures wait for a press on an account that loads them on open", () => {

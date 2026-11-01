@@ -625,14 +625,17 @@ export function headerValues(
 }
 
 /**
- * `Authentication-Results` — trusted position only, demote-only. The header is worth nothing
- * because it is present: anyone can put one in the mail they send; RFC 8601 §5 says consume only
- * what your own boundary added. `trustedAuthservIds` comes from the CALLER, empty by default — an
- * empty set answers `"unavailable"` and demotes nothing; only the FIRST header whose authserv-id
- * is in the set is read; `"fail"` only on DKIM or DMARC, never SPF, which fails on every ordinary
- * forward. Not DKIM verification: we believe our own provider's report, which is why the
- * allowlist is required. Residual: forging our provider's authserv-id on a message it adds no
- * header to is believed — under demote-only that buys nothing.
+ * `Authentication-Results` — the provider's own field only. The header is worth nothing because it
+ * is present: anyone can put one in the mail they send; RFC 8601 §5 says consume only what your
+ * own boundary added. `trustedAuthservIds` comes from the CALLER, empty by default — an empty set
+ * answers `"unavailable"`; only the TOPMOST field is read, and only when its authserv-id is in the
+ * set: the provider stamps above everything the sender wrote, so a field below an untrusted top
+ * (Microsoft's own stamp carries no authserv-id) is the sender's, in either direction. `"fail"`
+ * only on DKIM or DMARC, never SPF, which fails on every ordinary forward. Not DKIM verification:
+ * we believe our own provider's report, which is why the allowlist is required. Residual: a letter
+ * the provider never stamped (intra-tenant mail, an append) has the sender's field on top, and it
+ * is believed. `"pass"` is not routing-inert: the unverified line, the act on suggestions and the
+ * automatic unsubscribe read it, so that residual can buy a `pass` there.
  */
 
 const AUTH_RESULTS_HEADER = "authentication-results";
@@ -791,7 +794,8 @@ function domainPart(value: string): string {
  * Is a DKIM signing domain aligned with the claimed author's domain? Deliberately RELAXED, not a
  * Public-Suffix-List check: any exact match or suffix relationship counts, so it OVER-declares
  * alignment across boundaries a real PSL would separate. Consulted in both directions: promoting
- * an aligned pass to `"pass"` (never read by routing — harmless), and gating an aligned fail to
+ * an aligned pass to `"pass"` (never read by `evaluateRules`; the act on suggestions, the
+ * unverified line and the unsubscribe read it), and gating an aligned fail to
  * `"fail"`, which DOES demote — the over-declared direction could demote a message whose
  * signature merely shares a suffix. Bounded: strictly less demotion than the unconditional fail
  * it replaces; an unrelated ESP signature is correctly not-aligned; a demote routes to the
@@ -835,19 +839,11 @@ export function authVerdictFromHeaders(
   const values = headerValues(headers, AUTH_RESULTS_HEADER);
   if (values === null) return "unavailable";
 
-  // The topmost header from a position we are entitled to believe. Scanning rather than taking
-  // index 0 is the difference between "the trusted last hop" and "whatever is on top", and a
-  // sender-inserted header must be indistinguishable from no header at all.
-  let trusted: string[] | null = null;
-  for (const value of values) {
-    const parts = splitAuthResultParts(value);
-    const head = parts[0];
-    if (head === undefined) continue;
-    if (!trustedAuthservIds.has(authservIdOf(head))) continue;
-    trusted = parts.slice(1);
-    break;
-  }
-  if (trusted === null) return "unavailable";
+  // The topmost field only: the provider stamps above everything the sender wrote, so any field
+  // below an untrusted top (Microsoft's own stamp carries no authserv-id) is the sender's writing.
+  const parts = splitAuthResultParts(values[0]!);
+  if (!trustedAuthservIds.has(authservIdOf(parts[0] ?? ""))) return "unavailable";
+  const trusted = parts.slice(1);
 
   const authorDomain = domainPart(fromAddress);
   const results: AuthMethodResult[] = [];
