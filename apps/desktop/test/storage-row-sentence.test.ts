@@ -30,4 +30,10 @@ describe("the storage row's sentence, by door and detail", () => {
     expect(storageRowSentence("cloud", null, false)).toBe("code");
     expect(storageRowSentence("paired", STORE_REFUSED_DETAIL, false)).toBe("code");
   });
+
+  it("this computer's copy refusing its own pull is this computer's store, on the cloud and paired doors", () => {
+    expect(storageRowSentence("cloud", "MIRROR_STORE_REFUSED", false)).toBe("storeRefused");
+    expect(storageRowSentence("paired", "MIRROR_STORE_REFUSED", false)).toBe("storeRefused");
+    expect(storageRowSentence("paired", STORE_REFUSED_DETAIL, false), "the host's store is not this computer's").toBe("code");
+  });
 });

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { drafts, mailboxes, messageBodies, messages, threads } from "@trafficflow/db/mail";
 import { mailboxService } from "@trafficflow/services/mail";
@@ -748,5 +748,61 @@ describe("a login that names no mailbox settles rather than piling up rows", () 
       expect(active.map((r) => r.address), `launch ${launch}`).toEqual([LOGIN]);
       expect(active.map((r) => r.id), `launch ${launch}`).toEqual([HOSTED_A]);
     }
+  });
+});
+
+describe("a mailbox removed and connected again while this computer was closed", () => {
+  // The account's list carries removed rows too, in id order, so the new live row can come first.
+  const fresh = { before: "11111111-1111-4111-8111-111111111111", after: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" };
+  for (const [order, id] of Object.entries(fresh)) {
+    it(`the new row listed ${order} the old one: the pull lands and one row per address is live`, async () => {
+      const { db, world, cursorPath } = await standUp();
+      await createCloudMirror({
+        db, world, cursorPath, now: () => new Date(), auth: fakeAuth({ boxes: () => [hostedMailbox(HOSTED_A, LOGIN)] }),
+      }).pullOnce();
+      const listed = [hostedMailbox(HOSTED_A, LOGIN, { status: "disabled" }), hostedMailbox(id, LOGIN)]
+        .sort((a, b) => (a.id < b.id ? -1 : 1));
+      const t = randomUUID();
+      const m = randomUUID();
+      await createCloudMirror({
+        db, world, cursorPath, now: () => new Date(),
+        auth: fakeAuth({
+          boxes: () => listed,
+          sync: [syncPage([change("thread", t, "create", 1, threadDTO(t)), change("message", m, "create", 2, messageDTO(m, t, id))], "c2")],
+        }),
+      }).pullOnce();
+      const live = (await db.select().from(mailboxes)).filter((r) => r.status !== "disabled");
+      expect(live.map((r) => r.id)).toEqual([id]);
+      expect((await db.select().from(messages)).map((r) => r.mailboxId)).toEqual([id]);
+    });
+  }
+});
+
+describe("a pull this computer's store keeps refusing is said, and a completed pull withdraws it", () => {
+  it("three refused pulls latch the fault; the next completed pull clears it", async () => {
+    const { db, world, cursorPath } = await standUp();
+    // A constraint the apply has not been taught: the refresh's own insert is refused.
+    await db.execute(sql.raw("ALTER TABLE mailboxes ADD CONSTRAINT refresh_probe CHECK (address <> 'refused@ohmail.test')"));
+    const mirror = createCloudMirror({
+      db, world, cursorPath, now: () => new Date(),
+      auth: fakeAuth({ boxes: () => [hostedMailbox(HOSTED_A, "refused@ohmail.test")] }),
+    });
+    for (let i = 0; i < 2; i++) await expect(mirror.pullOnce()).rejects.toThrow();
+    expect(mirror.storeFault(), "two refusals are a blip").toBeNull();
+    await expect(mirror.pullOnce()).rejects.toThrow();
+    const since = mirror.storeFault();
+    expect(since, "the third refused pull is a stuck copy").not.toBeNull();
+    await expect(mirror.pullOnce()).rejects.toThrow();
+    expect(mirror.storeFault(), "a later refusal keeps the first stamp").toBe(since);
+    await db.execute(sql.raw("ALTER TABLE mailboxes DROP CONSTRAINT refresh_probe"));
+    await mirror.pullOnce();
+    expect(mirror.storeFault()).toBeNull();
+  });
+
+  it("CONTROL: an account that does not answer is not a store fault", async () => {
+    const { db, world, cursorPath } = await standUp();
+    const mirror = createCloudMirror({ db, world, cursorPath, now: () => new Date(), auth: fakeAuth({ mailboxStatus: 500 }) });
+    for (let i = 0; i < 3; i++) await expect(mirror.pullOnce()).rejects.toThrow();
+    expect(mirror.storeFault()).toBeNull();
   });
 });

@@ -136,6 +136,23 @@ describe("the Help & contact pane", () => {
     }
   });
 
+  // The strip's Write to us under a stuck copy lands here; the door is offline, so a send from here would wait.
+  const DESK = { ...HOST, surface: "desktop" as const, mailtoLeaves: false };
+  it("on the desktop, while this computer's copy refuses its own pull, the address and block are copied, never sent from here", async () => {
+    const stuck = { ...MAILBOX, errorCode: "storage", errorDetail: "MIRROR_STORE_REFUSED" } as MailboxFacts;
+    const el = await mount(h(HelpContactPane, { host: DESK, mailboxes: [stuck], onWrite: () => { throw new Error("waits offline"); } }));
+    expect(button(el, "Write to us")).toBeUndefined();
+    expect(button(el, "Copy address")).toBeDefined();
+    expect(button(el, "Copy diagnostics")).toBeDefined();
+    expect(el.textContent).toContain(en.help.writeWhyCopy);
+  });
+
+  it("CONTROL: a paired host's own store refusal leaves the composer", async () => {
+    const host = { ...MAILBOX, errorCode: "storage", errorDetail: "MAILBOX_STORE_REFUSED" } as MailboxFacts;
+    const el = await mount(h(HelpContactPane, { host: DESK, mailboxes: [host], onWrite: () => {} }));
+    expect(button(el, "Write to us")).toBeDefined();
+  });
+
   it("speaks German", async () => {
     const seen: SupportSeed[] = [];
     const el = await mount(h(HelpContactPane, { host: HOST, mailboxes: [MAILBOX], onWrite: (s: SupportSeed) => seen.push(s) }), de, "de");

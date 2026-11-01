@@ -397,18 +397,27 @@ async function decorateHostedFilings(
 }
 
 /**
+ * This computer's copy refused its own pull, beside `storage`. Not the local door's
+ * `MAILBOX_STORE_REFUSED`: a paired host's own token is copied into the mirror and says the host's store.
+ */
+export const MIRROR_STORE_REFUSED_DETAIL = "MIRROR_STORE_REFUSED";
+
+/**
  * THE STORE-STUCK DISCLOSURE. The mirrored rows carry the HOSTED account's status — healthy —
  * so a mirror that cannot STORE what it pulls looked settled (the released 0.20.0's first-sync
  * 23503 wedge). While the mirror holds refused rows, every served row is overlaid `status:
  * "error", errorCode: "storage"` and `storeRefusals` — how many, how many "Sync now" retries,
  * and whether the count is exact — so the strip and both Settings panes can say the number.
  * The count is the ACCOUNT's (one mirror), hence on every row. Derived at read time, never written.
+ * A store that refuses the pull itself ({@link CloudMirror.storeFault}) holds no count and copies
+ * nothing new: every live row then says this computer's copy is stuck instead.
  */
 async function decorateStoreStuck(
   res: Response,
   quarantined: { count: number; retrying: number; exact: boolean },
+  storeFaultSince: string | null = null,
 ): Promise<Response> {
-  if (quarantined.count === 0) return res;
+  if (quarantined.count === 0 && storeFaultSince === null) return res;
   let body: unknown;
   try {
     body = await res.clone().json();
@@ -417,14 +426,17 @@ async function decorateStoreStuck(
   }
   const items = (body as { items?: unknown })?.items;
   if (!Array.isArray(items)) return res;
-  const overlaid = items.map((row) =>
-    row && typeof row === "object"
-      ? {
-        ...(row as object), status: "error", errorCode: "storage",
-        storeRefusals: { count: quarantined.count, retrying: quarantined.retrying, exact: quarantined.exact },
-      }
-      : row,
-  );
+  const overlaid = items.map((row) => {
+    if (!row || typeof row !== "object") return row;
+    if (storeFaultSince !== null) {
+      return (row as { status?: unknown }).status === "disabled" ? row
+        : { ...(row as object), status: "error", errorCode: "storage", errorDetail: MIRROR_STORE_REFUSED_DETAIL };
+    }
+    return {
+      ...(row as object), status: "error", errorCode: "storage",
+      storeRefusals: { count: quarantined.count, retrying: quarantined.retrying, exact: quarantined.exact },
+    };
+  });
   return json({ ...(body as object), items: overlaid }, res.status);
 }
 
@@ -2168,7 +2180,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               await decorateHostedImports(await decorateHostedCounts(answer, liveMirror.hostedCounts()), liveMirror.hostedImports()),
               liveMirror.hostedGaps()), liveMirror.hostedSyncs()), liveMirror.hostedFilings());
             // AFTER the counts: the overlay is the louder fact and must not be decorated away.
-            return await decorateStoreStuck(counted, liveMirror.quarantined());
+            return await decorateStoreStuck(counted, liveMirror.quarantined(), liveMirror.storeFault());
           }
           return answer;
         } catch (err) {

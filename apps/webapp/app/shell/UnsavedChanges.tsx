@@ -10,6 +10,7 @@ type RetryOutcome = MutationResult;
 import { useEngine, useAbandoned } from "./engine";
 import { useSendRelease } from "./send-release";
 import { discardUnsavedChange } from "./mail-send";
+import { copyRefused, type MailboxFacts } from "./mail-state";
 
 const NO_QUEUED: readonly QueuedChange[] = [];
 
@@ -36,7 +37,11 @@ import "./unsaved-changes.css";
  * replays rather than doing the thing twice; "Discard" throws it away. Deliberately no "retry all": the reasons
  * differ, and a button re-queuing eight verbs on one press has an outcome nobody can predict. One row, one decision.
  */
-export function UnsavedChanges({ variant }: { variant: "shell" | "rail" }) {
+export function UnsavedChanges({ variant, mailboxes }: {
+  variant: "shell" | "rail";
+  /** The shell's `GET /mailboxes`, a prop: many shell harnesses mock the provider without `useMailboxFacts`. */
+  mailboxes: readonly MailboxFacts[] | null;
+}) {
   const engine = useEngine();
   const abandoned = useAbandoned();
   const queued = useQueuedChanges(engine);
@@ -45,6 +50,7 @@ export function UnsavedChanges({ variant }: { variant: "shell" | "rail" }) {
       variant={variant}
       abandoned={abandoned}
       queued={queued}
+      mailboxes={mailboxes}
       // Our backoff yields to the press; `null` is a verb that is no longer waiting.
       onRetryQueued={(id) => engine.retryQueued(id)}
       // A withdrawn discard is not sent, now or after a restart: the draft stays.
@@ -74,6 +80,7 @@ export function UnsavedChangesList({
   queued = NO_QUEUED,
   onRetryQueued,
   onDiscardQueued,
+  mailboxes = null,
   variant = "shell",
 }: {
   abandoned: readonly AbandonedMutation[];
@@ -84,6 +91,8 @@ export function UnsavedChangesList({
   onRetryQueued?: (id: string) => Promise<RetryOutcome | null>;
   /** Withdraws by the verb's Idempotency-Key, the engine's handle for a queued verb. */
   onDiscardQueued?: (key: string) => Promise<void>;
+  /** `GET /mailboxes` as the shell holds it: a copy that refuses its own pull is why a change is held. */
+  mailboxes?: readonly MailboxFacts[] | null;
   /**
    * WHICH ARRANGEMENT this copy belongs to — the same two the sync line has, and for the same
    * reason. Both are mounted at once and CSS decides which is visible, so each needs a class the
@@ -93,6 +102,8 @@ export function UnsavedChangesList({
   variant?: "shell" | "rail";
 }) {
   const t = useTranslations("sync");
+  const tm = useTranslations("mailboxes");
+  const held = copyRefused(mailboxes) ? tm("desktopStateStoreRefused") : undefined;
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   /** The last retry's own sentence, when it had one — see {@link retry}. */
@@ -231,7 +242,7 @@ export function UnsavedChangesList({
               <div className="unsaved-what">
                 <b>{t(KIND_LABELS.get(m.mutation.kind) ?? "unsavedKindOther")}</b>
                 <span className="unsaved-why">
-                  {said?.id === m.id ? (said.message || t("unsavedNoReason")) : queuedReason(m, t)}
+                  {said?.id === m.id ? (said.message || t("unsavedNoReason")) : queuedReason(m, t, held)}
                 </span>
               </div>
               <div className="unsaved-acts">
@@ -326,11 +337,13 @@ const UNREACHED = new Set(["network", "timeout", "offline_read_only"]);
  * WHY A QUEUED CHANGE HAS NOT GONE THROUGH, from its own last attempt — the panel used to give every
  * one "could not reach your account". Not tried yet: it waits its turn. Never reached: that
  * sentence, still true. Kept across a sign-out (`not_signed_in`): the sentence it was kept with.
- * Anything else the server said: its own words, or plainly that it gave none.
+ * Anything else the server said: its own words, or plainly that it gave none. Held offline while
+ * this computer's copy refuses its own pull: `held`, that sentence.
  */
-export function queuedReason(m: QueuedChange, t: Translate): string {
+export function queuedReason(m: QueuedChange, t: Translate, held?: string): string {
   const e = m.error ?? null;
   if (e === null) return t("unsavedQueuedWaiting");
+  if (e.code === "offline_read_only" && held !== undefined) return held;
   if (e.code !== null && UNREACHED.has(e.code)) return t("unsavedQueuedWhy");
   if (e.code === "not_signed_in") return e.message.trim() === "" ? t("unsavedQueuedWhy") : e.message;
   return opaque(e) ? t("unsavedQueuedServerWhy") : e.message;
