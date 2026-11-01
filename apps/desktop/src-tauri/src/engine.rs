@@ -2454,12 +2454,18 @@ impl Shell {
             config::write(&path, &config)?;
         }
         log_configured(&config, false);
+        // THE SAVE OF THIS SHELL'S OWN PENDING LOCAL DOOR is the one launch that keeps its attempt
+        // (`config::DOOR_SAVE_VAR`); the engine undoes it on every other start, this address or not.
+        let saves = config.mode() == Mode::Local
+            && !config.is_door_pending()
+            && *self.pending_door.lock().expect("pending door") == Some(Mode::Local);
         // Through `planned`, so an armed host door survives a reconfigure of the SAME door and
         // is correctly absent when the door is not the local one.
         *self.pending_door.lock().expect("pending door") = pending_kind(&config);
         self.replace_with(|| {
             leave_erased_copy(&root, &config);
-            self.planned(Some(&config))
+            let plan = self.planned(Some(&config));
+            if saves { saving_first_door(plan) } else { plan }
         }, Leaving::Quit);
         Ok(self.status())
     }
@@ -2932,6 +2938,18 @@ fn pending_kind(config: &Config) -> Option<Mode> {
         Some(Mode::Local)
     } else {
         None
+    }
+}
+
+/// The launch that saves this shell's own pending local door, told so. Its supervised restarts
+/// carry the flag too; any later plan (a relaunch, a retry, a switch) does not.
+fn saving_first_door(plan: Plan) -> Plan {
+    match plan {
+        Plan::Spawn(mut launch) => {
+            launch.env.push((OsString::from(config::DOOR_SAVE_VAR), OsString::from("1")));
+            Plan::Spawn(launch)
+        }
+        inert => inert,
     }
 }
 

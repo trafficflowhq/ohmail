@@ -20,7 +20,7 @@ import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { ImapFlow } from "imapflow";
 import { eq } from "drizzle-orm";
-import { messages as messageRows } from "@trafficflow/db";
+import { mailboxCredentials, mailboxes as mailboxRows, messages as messageRows } from "@trafficflow/db";
 
 import { DesktopGate, LIFECYCLE_POLL_MS } from "../src/DesktopGate.js";
 import { DOOR_COPY } from "../src/door-copy.js";
@@ -134,6 +134,10 @@ function standInShell(dataDir: string) {
   let asked = 0;
   /** The door on disk, and the settings a PENDING engine runs from without writing one. */
   let pending: Record<string, unknown> | null = null;
+  /** The next save of a door fails as a refused write does: nothing written, the engine left running. */
+  let failCommit = false;
+  /** The serving engine's start: its mailboxes' first drains. */
+  let running: Promise<void> = Promise.resolve();
   const status = async (): Promise<Record<string, unknown>> => {
     const flag = pending ? { doorPending: true } : {};
     if (engine) {
@@ -145,7 +149,8 @@ function standInShell(dataDir: string) {
     if (starting || door || pending) return { state: "starting", mode: door ? "local" : null, ...flag };
     return { state: "not_configured", mode: null, missing: ["config.json"] };
   };
-  const launch = (config: Record<string, unknown>): void => {
+  /** `save`: this door replaces the shell's own pending engine, the one start that keeps its attempt. */
+  const launch = (config: Record<string, unknown>, save = false): void => {
     const imap = config.imap as { host: string; port: number; secure: boolean; user: string };
     const smtp = config.smtp as { host: string; port: number; secure: boolean } | undefined;
     const leaving = engine;
@@ -153,7 +158,7 @@ function standInShell(dataDir: string) {
     starting = (async () => {
       await leaving?.stop();
       const next = await createSidecar({
-        dataDir, address: String(config.address), keks,
+        dataDir, address: String(config.address), keks, doorPending: config.pending === true, doorSave: save,
         imap: {
           host: imap.host, port: imap.port, secure: imap.secure, auth: { user: imap.user },
           ...(smtp ? { smtp: { host: smtp.host, port: smtp.port, secure: smtp.secure } } : {}),
@@ -165,7 +170,7 @@ function standInShell(dataDir: string) {
       } as Parameters<typeof createSidecar>[0]);
       engine = next;
       starting = null;
-      void next.start().catch(() => undefined);
+      running = next.start().then(() => undefined, () => undefined);
     })();
   };
   let nextId = 1;
@@ -176,15 +181,19 @@ function standInShell(dataDir: string) {
       if (command === "engine_configure") {
         const config = payload!.config as Record<string, unknown>;
         configured.push(config);
+        const save = pending !== null && config.pending !== true;
         if (config.pending === true) {
           // The shell's rule: refused over a written door, and nothing is written.
           if (door) throw new Error("this install already has a door");
           pending = config;
+        } else if (failCommit) {
+          failCommit = false;
+          throw new Error("the settings could not be saved");
         } else {
           door = config;
           pending = null;
         }
-        launch(config);
+        launch(config, save);
         return status();
       }
       if (command === "engine_logout") {
@@ -232,6 +241,14 @@ function standInShell(dataDir: string) {
     stored: async (): Promise<number> => (engine
       ? (await engine.db.select({ id: messageRows.id }).from(messageRows).where(eq(messageRows.mailboxId, engine.world.mailboxId))).length
       : 0),
+    failNextCommit(): void { failCommit = true; },
+    started: async (): Promise<void> => { await starting; await running; },
+    /** Every letter in the store, whichever mailbox it is filed under. */
+    storedAll: async (): Promise<number> => (engine ? (await engine.db.select({ id: messageRows.id }).from(messageRows)).length : 0),
+    mailboxes: async (): Promise<string[]> => (engine
+      ? (await engine.db.select({ address: mailboxRows.address }).from(mailboxRows)).map((r) => r.address)
+      : []),
+    sealed: async (): Promise<number> => (engine ? (await engine.db.select({ id: mailboxCredentials.mailboxId }).from(mailboxCredentials)).length : 0),
     async stop(): Promise<void> {
       await starting?.catch(() => undefined);
       await engine?.stop().catch(() => undefined);
@@ -305,6 +322,9 @@ const CONSENT = (messages as unknown as { mailboxes: { insecureConsentLabel: str
 const consentShown = (el: HTMLElement): boolean => [...el.querySelectorAll("label")]
   .some((l) => (l.textContent ?? "").includes(CONSENT) && l.querySelector("input[type=checkbox]") !== null);
 const STRIP_CONNECTED = "Connected. The first sync";
+const STRIP_NO_PASSWORD = "no mailbox password is stored";
+const doorIdle = (el: HTMLElement): boolean => [...el.querySelectorAll("button")]
+  .some((b) => (b.textContent ?? "").trim() === DOOR_COPY.localOpen);
 const shape = (el: HTMLElement): string => (mailMounted(el) ? "mail" : el.querySelector(".gate-boot") ? "boot" : onCard(el) ? "card" : "other");
 
 async function seedServer(address: string, pass: string): Promise<void> {
@@ -344,13 +364,14 @@ async function walkTheDoor(el: HTMLElement, address: string, pass: string, serve
 function watchWindow(el: HTMLElement) {
   const t0 = Date.now();
   const shown: string[] = [];
-  const seen = { consent: false, connectedAt: null as number | null, refusal: false };
+  const seen = { consent: false, connectedAt: null as number | null, refusal: false, noPassword: false };
   const read = (): void => {
     const now = shape(el);
     if (shown[shown.length - 1]?.endsWith(now) !== true) shown.push(`${Date.now() - t0}ms ${now}`);
     seen.consent ||= consentShown(el);
     if (seen.connectedAt === null && text(el).includes(STRIP_CONNECTED)) seen.connectedAt = Date.now();
     seen.refusal ||= text(el).includes("offers no encryption");
+    seen.noPassword ||= text(el).includes(STRIP_NO_PASSWORD);
   };
   const watch = new MutationObserver(read);
   watch.observe(el, { childList: true, subtree: true, characterData: true });
@@ -470,6 +491,59 @@ describe.skipIf(!SERVER_UP)("the first launch's local door over a server that of
     await until(el, "the line offered again", () => consentShown(el), 30_000);
     expect(shell.seals.map((s) => s.imap), "the retired tick was sent").toEqual([false, false]);
   }, 180_000);
+
+  it("a refused first door, then another address: one mailbox, and nothing says a password is missing", async () => {
+    restoreDns = osAnswers("127.0.0.1");
+    const [first, second, passFirst, passSecond] = [`fd-${randomUUID()}@trafficflow.test`, `fd-${randomUUID()}@trafficflow.test`, randomUUID(), randomUUID()];
+    await seedServer(first, passFirst);
+    await seedServer(second, passSecond);
+    const dataDir = await freshDataDir("ohmail-first-door-another-");
+    dirs.push(dataDir);
+    shell = standInShell(dataDir);
+    const el = await render();
+    await walkTheDoor(el, first, passFirst, HOME_NAME);
+    await press(el, DOOR_COPY.localOpen);
+    await until(el, "the refusal", () => text(el).includes("offers no encryption"), 30_000);
+    await shell.relaunch();
+    const again = await remount();
+    await walkTheDoor(again, second, passSecond, GM);
+    const window = watchWindow(again);
+    await press(again, DOOR_COPY.localOpen);
+    await until(again, "the mail after the second door", () => mailMounted(again), 60_000);
+    await vi.waitFor(async () => { expect(await shell!.stored()).toBe(1); }, { timeout: 20_000, interval: 200 });
+    await pass_(2 * LIFECYCLE_POLL_MS + 1_000);
+    window.stop();
+    expect(await shell.mailboxes(), "the refused attempt's mailbox is still on this computer").toEqual([second]);
+    expect(window.seen.noPassword, "the window named a mailbox with no password").toBe(false);
+  }, 240_000);
+
+  it("a first door whose save failed, then another address: every stored letter is the second's", async () => {
+    const [first, second, passFirst, passSecond] = [`fd-${randomUUID()}@trafficflow.test`, `fd-${randomUUID()}@trafficflow.test`, randomUUID(), randomUUID()];
+    await seedServer(first, passFirst);
+    await seedServer(first, passFirst);
+    await seedServer(second, passSecond);
+    const dataDir = await freshDataDir("ohmail-first-door-unsaved-");
+    dirs.push(dataDir);
+    shell = standInShell(dataDir);
+    const el = await render();
+    await walkTheDoor(el, first, passFirst, GM);
+    shell.failNextCommit();
+    await press(el, DOOR_COPY.localOpen);
+    await until(el, "the failed save", () => shell!.configured.length === 2 && doorIdle(el), 60_000);
+    expect(shell.configured.map((c) => c.pending === true)).toEqual([true, false]);
+    expect(shell.door(), "the door was saved").toBeNull();
+    expect(await shell.sealed(), "the seal before the save stored nothing").toBeGreaterThan(0);
+
+    await shell.relaunch();
+    const again = await remount();
+    await walkTheDoor(again, second, passSecond, GM);
+    await press(again, DOOR_COPY.localOpen);
+    await until(again, "the mail after the second door", () => mailMounted(again), 60_000);
+    await shell.started();
+    await vi.waitFor(async () => { expect(await shell!.stored()).toBe(1); }, { timeout: 20_000, interval: 200 });
+    expect(await shell.storedAll(), "the first address's mail was fetched under the second door").toBe(1);
+    expect(await shell.mailboxes()).toEqual([second]);
+  }, 240_000);
 
   it("CONTROL: the same door over the loopback literal (exempt from the floor) seals and enters", async () => {
     const address = `fd-${randomUUID()}@trafficflow.test`;

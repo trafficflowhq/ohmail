@@ -201,6 +201,14 @@ impl Config {
 /// The engine's "identity pending" flag, composed only for the door above and always as `1`.
 pub const IDENTITY_PENDING_VAR: &str = "OHMAIL_IDENTITY_PENDING";
 
+/// The engine's "this first local door is not saved" flag (`LocalDoor::pending`), always as `1`:
+/// the engine undoes the attempt at its next start unless that start is the door's save.
+pub const DOOR_PENDING_VAR: &str = "OHMAIL_DOOR_PENDING";
+
+/// The engine's "this start is that save" flag, always as `1`. No door composes it: the shell adds
+/// it to the one launch that replaces its own pending local engine with the saved door.
+pub const DOOR_SAVE_VAR: &str = "OHMAIL_DOOR_SAVE";
+
 /// Where the pending door's claim writes this install's door — this directory's `config.json`.
 pub const DOOR_FILE_VAR: &str = "OHMAIL_DOOR_FILE";
 
@@ -1056,6 +1064,9 @@ fn env_for_door(config: &Config, root: &Path, adopt: bool) -> Vec<(OsString, OsS
                 OsString::from(OPERATOR_CA_FILE_VAR),
                 operator_ca_file(root).into_os_string(),
             ));
+            if l.pending {
+                env.push(pair(DOOR_PENDING_VAR, "1".to_string()));
+            }
         }
         Config::Cloud(c) => {
             // ── THE LINE. Removing it does not break a test about this function's shape; it
@@ -1103,18 +1114,19 @@ fn env_for_door(config: &Config, root: &Path, adopt: bool) -> Vec<(OsString, OsS
 
 /// Variables that must not reach the child, whatever this process inherited.
 ///
-/// Only the cloud door has any, and they are the IMAP settings: this process's own environment may
-/// carry them (a developer's shell, a launcher script), the child inherits everything not
-/// overridden, and the engine refuses to start in cloud mode if it finds one. Clearing them here
-/// turns "the app will not start and the log says something about IMAP" into a launch that works.
+/// The cloud door's are the IMAP settings: this process's own environment may carry them (a
+/// developer's shell, a launcher script), the child inherits everything not overridden, and the
+/// engine refuses to start in cloud mode if it finds one. Clearing them here turns "the app will
+/// not start and the log says something about IMAP" into a launch that works. The local door's are
+/// the two unsaved-door flags alone, composed again after the removal where a launch carries one.
 ///
 /// It is a list of NAMES and not a prefix sweep, because a sweep would need the child's inherited
 /// environment enumerated on this side, and `Command::env_remove` takes names. The list is the
 /// engine's own documented `OHMAIL_IMAP_*` surface.
 pub fn unset_for(config: &Config) -> Vec<OsString> {
     match config {
-        Config::Local(_) => Vec::new(),
-        // The four door facts go too: each cloud door composes its own after the removal, and an
+        Config::Local(_) => vec![OsString::from(DOOR_PENDING_VAR), OsString::from(DOOR_SAVE_VAR)],
+        // The door facts go too: each cloud door composes its own after the removal, and an
         // inherited one would give a pending door an address or a hosted door a pending flag.
         Config::Cloud(_) => [
             "OHMAIL_IMAP_HOST",
@@ -1129,6 +1141,8 @@ pub fn unset_for(config: &Config) -> Vec<OsString> {
             "OHMAIL_HOST_PIN",
             IDENTITY_PENDING_VAR,
             DOOR_FILE_VAR,
+            DOOR_PENDING_VAR,
+            DOOR_SAVE_VAR,
         ]
         .iter()
         .map(OsString::from)

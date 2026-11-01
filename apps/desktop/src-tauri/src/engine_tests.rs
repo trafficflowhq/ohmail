@@ -3547,6 +3547,41 @@ fn a_pending_local_door_that_gave_up_is_retried_onto_no_door() {
     let _ = fs::remove_dir_all(&root);
 }
 
+#[test]
+fn only_the_save_of_its_own_pending_local_door_tells_the_engine_to_keep_the_attempt() {
+    // The engine keeps an unsaved first door's attempt on this launch alone (`first-door.ts`); every
+    // other start undoes it, a door switched from Settings onto the same address included.
+    let _live = live_process();
+    let f = Fixture::new("door-save");
+    let start = |shell: &Shell, configure: &dyn Fn(&Shell)| {
+        let mut launch = f.launch("serve");
+        launch.env.push((OsString::from("FAKE_REPORT_ENV"), OsString::from("OHMAIL_DOOR_SAVE")));
+        plan_double::next(move || Plan::Spawn(launch));
+        configure(shell);
+        serving(&shell.engine());
+    };
+    let mut saved = pending_local_door();
+    saved.as_object_mut().expect("an object").remove("pending");
+    let root = candidate_root("door-save");
+    let shell = Shell::rooted_for_tests(&root);
+    start(&shell, &|s| { s.configure(&pending_local_door()).expect("the first door, pending"); });
+    start(&shell, &|s| { s.configure(&saved).expect("its save"); });
+    start(&shell, &|s| { s.configure(&saved).expect("the written door again"); });
+    start(&shell, &|s| s.replan(Leaving::Quit));
+    shell.stop(Leaving::Quit);
+    let cloud = signed_in_root("door-save-cloud", "https://api.ohmail.app");
+    let switched = Shell::rooted_for_tests(&cloud);
+    start(&switched, &|s| { s.configure(&saved).expect("a cloud door switched to this computer"); });
+    switched.stop(Leaving::Quit);
+
+    let said: Vec<String> = f.lines().iter()
+        .filter_map(|l| l.strip_prefix("env OHMAIL_DOOR_SAVE=")?.split_once(' ').map(|(v, _)| v.to_string()))
+        .collect();
+    assert_eq!(said, ["<unset>", "1", "<unset>", "<unset>", "<unset>"], "{:?}", f.lines());
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&cloud);
+}
+
 // ── THE CANDIDATE WALK: NOTHING OF THIS INSTALL'S IS TOUCHED ────────────────────────────────
 //
 // The paired door's first step asks an engine, and a fresh install has none — so where there is no
