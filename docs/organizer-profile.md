@@ -377,25 +377,24 @@ The mail itself needs no line here: it never left the mailbox.
 IMAP has no in-place update. The new copy is appended first, read back, and
 the copy it replaces expunged after, so a crash between the steps leaves two
 documents rather than none; readers coalesce by `updatedAt` (newest wins).
-Exactly one current profile message is the steady state. While the organizer
-asks the person about settings another install left in the folder, that
-install's message stays beside the organizer's own until the question is
-answered, so the folder holds at most the organizer's current copy, that held
-message and one older copy of the organizer's own that a server would not let
-it remove yet: while such an older copy is still there, the next write removes
-it instead of appending.
+Exactly one current profile message is the steady state. Settings another
+install left in the folder (or a removed store under the same install id) stay
+beside the organizer's own until the person imports them or saves this
+install's settings over them, so the folder holds at most the organizer's
+current copy, the found copies it keeps (at most eight) and one older copy of
+the organizer's own that a server would not let it remove yet: while such an
+older copy is still there, the next write removes it instead of appending.
 
 Settings messages are found by reading every message's headers in
 `ohmail/_meta`, checked against the folder's message count — never by a header
 SEARCH, which some servers answer with nothing. The organizer removes
 superseded copies: its own at once (while the current document is another
-install's, only once it has read that one), another install's once the current
-document is ten minutes newer and that install holds no fresh claim, and the
-message it held for a found-settings question once that question is answered
-by an import or by saving this install's settings. It never
-removes the current document, the message it holds for an unanswered
-found-settings question, a claim, or a message that is not an ohmail settings
-message.
+install's, only once it has read that one), a found copy once the person
+imported it or saved this install's settings over it, and another install's
+copy it does not keep once the current document is ten minutes newer and that
+install holds no fresh claim. It never removes the current document, a found
+copy it keeps ("Not now" included), a claim, or a message that is not an ohmail
+settings message.
 
 Only the active organizer writes — the organizer lease already serializes
 writers, so last-incumbent-wins and no merge algorithm exists.
@@ -416,7 +415,8 @@ refuses to answer it itself:
   organizer writes its own settings beside it. An applied import, or saving
   this install's settings to the mailbox from Settings, answers the question,
   and the organizer then removes the found document. "Not now" answers the
-  question for screening and leaves the found document in the mailbox.
+  question for screening, leaves the found document in the mailbox and moves
+  the question to the next found copy, when there is one.
 - **The consent gate holds, for the senders the document lets
   through.** While the decision is open, mail from a sender the found
   document screened in (or admits by a rule) keeps the folder the mailbox
@@ -470,9 +470,9 @@ A restored store that was asking about another install's settings asks about
 those first; its later copy stays in the mailbox meanwhile. Once those are
 answered, "Not now" included, the later copy is the question: the organizer
 writes nothing beside it until the person answers it too, and the other
-install's settings then stay in the mailbox as long as any other install's do.
-An Import that makes the store say exactly what the other install's settings
-say answers them the same way.
+install's settings stay in the mailbox until the person imports or replaces
+them. An Import that makes the store say exactly what the other install's
+settings say answers them the same way.
 
 Wherever the organizer meets a copy under its id that is not its own (at its
 first read, beside settings just answered, at a write, or reading the folder
@@ -488,8 +488,9 @@ removed and added again, and a server uses one for every account it
 organizes. Settings left under the same id before that record existed are
 found settings like any other install's: kept, held for the person's answer,
 and never replaced by the new store's own settings. Until the person answers,
-the organizer writes nothing beside a copy under its own id that is not its own,
-not even settings made in the meantime: it stays the mailbox's newest settings,
+the organizer writes nothing beside a copy under its own id that is not its own
+while that copy is the newest it keeps, not even settings made in the meantime:
+it stays the mailbox's newest settings,
 so the next store under that id, or another install that takes over, finds it
 and asks about it too. A hand-back before the answer says this install's own
 settings stayed on it. "Not now" is an answer: from then on the organizer
@@ -497,13 +498,36 @@ publishes its own settings beside that copy, as it does beside another
 install's, and the copy stays in the mailbox to import until the person imports
 or replaces it.
 
+## Every found copy is kept and asked about
+
+A mailbox can hold several found copies: a phone that said "Not now", or never
+answered, publishes its own settings beside the copy it found, and the next
+install finds both. Every copy that is not the organizer's own when it takes
+the mailbox over is found settings, whoever wrote it and however old it is, and
+so is every copy it asks about later. The organizer keeps them, at most eight,
+newest first, and asks about one at a time: the newest it has no answer for,
+then, after Import, "Save this ohmail's settings" or "Not now", the next. A
+copy answered "Not now" stays in the mailbox; once every found copy has an
+answer, Settings offers the newest one answered "Not now", and the next once
+that one is imported or replaced. The question survives a restart, and a store
+that is removed leaves every found copy in the mailbox for the next install to
+ask about. A found copy that says exactly what the store says asks nothing, and
+the store's own copy replaces it. An older copy that lands beside an organizer
+already organizing is an overlap's loser, not a question, and a found copy
+older than the eight newest follows the ten-minute rule.
+
 An empty store writes no copy beside found settings, so a reader never takes
 an empty copy for the mailbox's newest settings. An answer reaches the mailbox
 within two profile passes, whatever the flush interval: the pass that reads the
 answer releases the question, and the next one writes the store as the answer
-left it. When an import makes the store say exactly what the found document
-says and a copy of this install's is newer beside it, that copy is replaced, so
-readers read the imported settings.
+left it. The copy the answer released leaves no earlier than the pass that
+tries that write, so what was imported is in the mailbox after every pass whose
+write lands; when the mailbox refuses the append (a full mailbox) or the write
+waits for the person's answer about a copy under this install's id that is not
+its own, what was imported can be in the store alone until the next write the
+mailbox accepts. When an import makes the store say exactly what the found
+document says and a copy of this install's is newer beside it, that copy is
+replaced, so readers read the imported settings.
 
 ## What a reader in another mail client sees
 

@@ -72,6 +72,9 @@ export type ProfileCanonicalVersion = 1 | 2;
 /** How many superseded settings messages one tidy pass removes at most, oldest first. */
 export const PROFILE_TIDY_MAX_PER_PASS = 100;
 
+/** The most found copies (another install's, a gone store's) one organizer keeps for the person's answer, newest first. */
+export const PROFILE_KEPT_MAX = 8;
+
 /**
  * The discriminator and bookkeeping headers. The lease's `H` table, for the profile.
  *
@@ -1877,6 +1880,11 @@ function malformedProfile(reason: string, ref: unknown): MalformedProfile {
  * the write and the tidy agree on which document is current.
  */
 function newestOf(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage {
+  return newestFirst(ok)[0]!;
+}
+
+/** {@link newestOf}'s order, whole. */
+function newestFirst(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage[] {
   return [...ok].sort((a, b) => {
     // Both are the writer's ISO spelling — the parser admits no other — so both parse the same everywhere.
     const d = Date.parse(b.doc!.updatedAt) - Date.parse(a.doc!.updatedAt);
@@ -1893,7 +1901,7 @@ function newestOf(ok: readonly ParsedProfileMessage[]): ParsedProfileMessage {
     if (Number.isFinite(refA) && Number.isFinite(refB) && refA !== refB) return refB - refA;
     return byCodeUnit(String(b.ref ?? ""), String(a.ref ?? ""))
       || byCodeUnit(String(a.installId ?? ""), String(b.installId ?? ""));
-  })[0]!;
+  });
 }
 
 /**
@@ -2101,6 +2109,16 @@ function retainingList(at: ProfileLocator | undefined, opts: ProfileListOptions 
   return { ...opts, bodyFor: (row) => namesLocated(row.headerBlock, at) || (also?.(row) ?? false) };
 }
 
+/** {@link retainingList} for several locators. */
+function keepingList(kept: readonly (ProfileLocator | undefined)[], opts: ProfileListOptions = {}): ProfileListOptions {
+  return kept.reduce((o: ProfileListOptions, at) => retainingList(at, o), opts);
+}
+
+/** The entries the held question and the kept copies name: never removed, refused or replaced by a write. */
+function heldIn(view: ProfileView, retain: ProfileLocator | undefined, kept: readonly ProfileLocator[]): Set<ProfileEntry> {
+  return new Set([retain, ...kept].map((at) => locatedIn(view, at)).filter((e): e is ProfileEntry => e !== null));
+}
+
 /** The counts `profile_tidy_planned` carries — numbers only, never an address, subject or folder. */
 export interface TidyCounts {
   records: number;
@@ -2137,13 +2155,13 @@ export interface TidyCounts {
 function planTidy(
   view: ProfileView, selfInstallId: string | null, now: Date, claims: readonly MetaClaimSeen[],
   retain?: ProfileLocator, released: readonly ProfileLocator[] = [], replaceable: ReadonlySet<string> = new Set(),
-  ownSince?: number, owns?: (second: number) => boolean,
+  ownSince?: number, owns?: (second: number) => boolean, kept: readonly ProfileLocator[] = [],
 ): { counts: TidyCounts; refs: unknown[] } {
   const counts: TidyCounts = {
     records: view.entries.length, current: 0, removable: 0, own: 0, foreignStale: 0, duplicate: 0, released: 0,
     malformed: 0, keptForeignFresh: 0, keptUnrecognised: 0, keptNewerDated: 0, keptHeld: 0, keptOwnBesideUnseen: 0, keptFound: 0, unseenCurrent: 0,
   };
-  const held = locatedIn(view, retain);
+  const held = heldIn(view, retain, kept);
   const C = view.current;
   if (view.newerV !== null || C === null) return { counts, refs: [] };
   counts.current = 1;
@@ -2154,14 +2172,14 @@ function planTidy(
      seen (`replaceable`) and does not hold, may be the one that holds THIS install's older copy as
      its question. This install's copies stay until it has seen it. */
   const cSeen = ownCopy((C.record as ParsedProfileMessage).installId, C.shape.dateSecond, selfInstallId, ownSince, owns)
-    || C === held || replaceable.has(cFingerprint);
+    || held.has(C) || replaceable.has(cFingerprint);
   const freshClaim = (installId: string | null): boolean => claims.some((c) => c.installId === installId
     && now.getTime() - c.heartbeat.getTime() < DEFAULT_STALE_AFTER_MS);
   const older = (a: number | null, b: number | null): boolean => a !== null && b !== null && a < b;
   const picked: ProfileEntry[] = [];
   for (const e of view.entries) {
     if (e === C) continue;
-    if (e === held) { counts.keptHeld += 1; continue; }
+    if (held.has(e)) { counts.keptHeld += 1; continue; }
     if (!e.shape.exact || e.header?.kind === "unrecognised") { counts.keptUnrecognised += 1; continue; }
     const ok = e.record !== null && !isMalformedProfile(e.record) && e.record.status === "ok";
     /* SUPERSEDED: a readable body lost to C under `newestOf`; an unreadable body shares C's second
@@ -2297,6 +2315,44 @@ export async function readOrganizerProfile(
   };
 }
 
+/** A settings copy in the folder that is not the reader's own, read by body. */
+export interface FoundCopy { installId: string; doc: OrganizerProfileDoc; locator: ProfileLocator }
+
+/**
+ * THE FOUND COPIES: every readable settings copy in the folder that is not the caller's own ({@link
+ * ownCopy}), newest first, at most `max`, each read by body. A newer format anywhere answers `newer`.
+ */
+export async function readFoundCopies(
+  io: ProfileIo, opts: { installId: string; ownSince?: number; owns?: (second: number) => boolean; max?: number },
+): Promise<{ state: "read"; copies: FoundCopy[] } | { state: "newer"; v: number }> {
+  const max = opts.max ?? PROFILE_KEPT_MAX;
+  const notOurs = (installId: string | null, second: number | null): boolean => installId !== null
+    && !ownCopy(installId, second, opts.installId, opts.ownSince, opts.owns);
+  let view: ProfileView;
+  try {
+    const first = viewOf((await listingOf(io)).messages);
+    const unread = first.newerV !== null ? [] : first.entries
+      .filter((e) => e.shape.exact && notOurs(e.shape.installId, e.shape.dateSecond))
+      .sort((a, b) => (b.shape.dateSecond ?? -1) - (a.shape.dateSecond ?? -1)).slice(0, max)
+      .filter((e) => e.record === null);
+    view = unread.length === 0 ? first : viewOf((await listingOf(io, {
+      bodyFor: (row) => {
+        const s = shapeOf(row.headerBlock);
+        return unread.some((e) => e.shape.installId === s.installId && e.shape.dateSecond === s.dateSecond);
+      },
+    })).messages);
+  } catch (err) {
+    throw new ProfileUnavailableError(
+      `the organizer profile in ${META_FOLDER} could not be read`,
+      { op: "list_profiles", cause: err, code: askCodeOf(err) },
+    );
+  }
+  if (view.newerV !== null) return { state: "newer", v: view.newerV };
+  const copies = newestFirst(view.ok.filter((r) => notOurs(r.installId, secondOfDoc(r.doc!)))).slice(0, max)
+    .map((r) => ({ installId: r.installId!, doc: r.doc!, locator: profileLocatorOf(r.installId, r.doc!)! }));
+  return { state: "read", copies };
+}
+
 // ── TIDY ────────────────────────────────────────────────────────────────────────────────────
 
 /** How the organizer tidies: `remove` for real, or `count` — plan, log, remove nothing. */
@@ -2376,14 +2432,15 @@ export async function tidyOrganizerProfile(input: {
   ownSince?: number;
   /** {@link ownCopy}'s record: a copy under the caller's id at a second it did not record is not the caller's. */
   owns?: (second: number) => boolean;
+  /** Found copies kept for the person's answer beside the held one: never removed, whatever their age. */
+  kept?: readonly ProfileLocator[];
 }): Promise<TidyOutcome> {
   const log = input.log ?? ((): void => undefined);
   const released = input.released ?? [];
+  const kept = input.kept ?? [];
   let listing: ProfileListing;
   try {
-    listing = await listingOf(input.io, released.reduce(
-      (opts: ProfileListOptions, at) => retainingList(at, opts), retainingList(input.retain, { complete: true }),
-    ));
+    listing = await listingOf(input.io, keepingList([...released, ...kept], retainingList(input.retain, { complete: true })));
   } catch (err) {
     throw new ProfileUnavailableError(
       `the settings messages in ${META_FOLDER} could not be read before tidying`,
@@ -2397,7 +2454,7 @@ export async function tidyOrganizerProfile(input: {
     return { removed: 0, remaining: 0, planned: null, refused: "newer" };
   }
   const plan = planTidy(view, input.installId, input.now ?? new Date(), listing.claims, input.retain, released,
-    new Set(input.replaceable ?? []), input.ownSince, input.owns);
+    new Set(input.replaceable ?? []), input.ownSince, input.owns, kept);
   return tidyPass(input.io, view, plan, {
     mode: input.mode ?? "remove", max: input.max ?? PROFILE_TIDY_MAX_PER_PASS, log,
   });
@@ -2435,6 +2492,8 @@ export interface WriteProfileInput {
    * nothing. The organizer records the second here, so no copy of its own is ever in the folder unrecorded.
    */
   beforeAppend?: (second: number) => Promise<void>;
+  /** Found copies kept for the person's answer beside the held one: published beside, never refused or replaced. */
+  kept?: readonly ProfileLocator[];
 }
 
 export type WriteProfileResult =
@@ -2473,10 +2532,11 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
       { op: "ensure_meta", cause: err },
     );
   }
+  const kept = input.kept ?? [];
   let listing: ProfileListing;
   try {
     // COMPLETE: both refusals below are made from this list, and so is the gate.
-    listing = await listingOf(io, retainingList(input.retain, { complete: true }));
+    listing = await listingOf(io, keepingList(kept, retainingList(input.retain, { complete: true })));
   } catch (err) {
     throw new ProfileUnavailableError(
       `the organizer profile in ${META_FOLDER} could not be read before writing`,
@@ -2490,9 +2550,9 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   // ── AN UNSEEN FOREIGN CURRENT DOCUMENT REFUSES THE WRITE — see the result member ────────────
   const known = new Set(input.replaceable ?? []);
   const docFingerprint = profileFingerprint(doc);
-  const held = locatedIn(view, input.retain);
-  // The held record is the question the caller is asking, never a document it has not seen.
-  const newest = view.current === null || view.current === held ? null : view.current.record as ParsedProfileMessage;
+  const held = heldIn(view, input.retain, kept);
+  // The held record and the kept copies are questions the caller asks, never documents it has not seen.
+  const newest = view.current === null || held.has(view.current) ? null : view.current.record as ParsedProfileMessage;
   const unseen = [newest].find((r): r is ParsedProfileMessage => {
     if (r === null) return false;
     if (ownCopy(r.installId, secondOfDoc(r.doc!), installId, input.ownSince, input.owns)) return false;
@@ -2508,7 +2568,7 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   if (mode === "remove") {
     // The `unseen` refusal above cleared the newest: it is this writer's, held, seen or the same.
     const plan = planTidy(view, installId, now, claims, input.retain, [],
-      new Set([...known, ...(newest === null ? [] : [profileFingerprint(newest.doc!)])]), input.ownSince, input.owns);
+      new Set([...known, ...(newest === null ? [] : [profileFingerprint(newest.doc!)])]), input.ownSince, input.owns, kept);
     if (plan.refs.length > 0) {
       log("profile_write_held_for_cleanup", { removable: plan.refs.length });
       const pass = await tidyPass(io, view, plan, { mode, max: PROFILE_TIDY_MAX_PER_PASS, log });
@@ -2567,8 +2627,8 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
     return { written: false, reason: "append_unreadable" };
   }
 
-  // ── THEN THE C THIS WRITE REPLACED, and nothing else — never the held record ─────────────────
-  const C = view.current !== null && view.current === held ? ownNewest(view, installId, input.ownSince, input.owns) : view.current;
+  // ── THEN THE C THIS WRITE REPLACED, and nothing else — never the held record or a kept copy ──
+  const C = view.current !== null && held.has(view.current) ? ownNewest(view, installId, input.ownSince, input.owns) : view.current;
   if (C === null || C.msg.ref === undefined) return { written: true, removed: 0 };
   try {
     /* C's uid is a fact only under the numbering it was LISTED under. The read-back re-listed the

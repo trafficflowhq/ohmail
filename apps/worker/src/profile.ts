@@ -22,8 +22,8 @@ import {
   applyOrganizerProfile, importRefusalFor, serializeOrganizerProfile, serializeOrganizerProfileCounted,
 } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
-  PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
-  localSaysWhatAFingerprintSays, ownCopy, profileFingerprint, profileGateView, readOrganizerProfile, signatureReceipt, tidyOrganizerProfile,
+  PROFILE_KEPT_MAX, PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
+  localSaysWhatAFingerprintSays, ownCopy, profileFingerprint, profileGateView, readFoundCopies, readOrganizerProfile, signatureReceipt, tidyOrganizerProfile,
   writeOrganizerProfile,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
   type ProfileReadResult, type ProfileTidyMode, type ProfileLocator, profileLocatorOf, type ProfileScreening,
@@ -32,6 +32,11 @@ import {
 
 /** (install, mailbox, folder generation) the holder has re-encoded a plain settings message under. */
 const REENCODED = new Set<string>();
+
+/** One settings message named by two locators. */
+function sameLocator(a: ProfileLocator, b: ProfileLocator): boolean {
+  return a.installId === b.installId && a.second === b.second && a.fingerprint === b.fingerprint;
+}
 
 /**
  * DOES THE LOCAL STORE SAY WHAT THIS DOCUMENT SAYS — asked at ONE canonical version, the
@@ -262,6 +267,15 @@ export class OrganizerProfileSync {
    * then stays until the ordinary ten-minute rule removes it at this install's next settings change.
    */
   private released: ProfileLocator[] = [];
+  /**
+   * FOUND COPIES KEPT FOR THE PERSON'S ANSWER, newest first, at most {@link PROFILE_KEPT_MAX}: every copy not
+   * this store's own that the seed found, and every copy it held since. One leaves only on an Import or a
+   * Save of it here, once the store says what it says, or with its message; never on Not now, a newer copy
+   * or its age. Read again from the folder at each seed, so a restart forgets nothing.
+   */
+  private kept: ProfileLocator[] = [];
+  /** The held copy whose Not now already moved the question on, so it is read once, not every tick. */
+  private declinedSeen: string | null = null;
   /** A detection marker that could not be written durably yet — owed, and retried next tick. */
   private markerPending: MarkerFact | null = null;
   private lastAttemptAt = 0;
@@ -425,6 +439,112 @@ export class OrganizerProfileSync {
     return this.holdFingerprint === null ? undefined : this.locators.get(this.holdFingerprint);
   }
 
+  /** Keep a found copy for the person's answer, newest first, at most {@link PROFILE_KEPT_MAX}. */
+  private keep(at: ProfileLocator | undefined): void {
+    if (at === undefined) return;
+    this.kept = [at, ...this.kept.filter((k) => !sameLocator(k, at))].sort((a, b) => b.second - a.second).slice(0, PROFILE_KEPT_MAX);
+  }
+
+  /** A kept copy an Import or a Save answered here, or the store now says: it goes beside ours, whatever its age. */
+  private letGo(at: ProfileLocator): void {
+    this.kept = this.kept.filter((k) => !sameLocator(k, at));
+    this.released = [...this.released.filter((k) => !sameLocator(k, at)).slice(-(PROFILE_KEPT_MAX - 1)), at];
+    this.tidyOwed = true;
+    this.lastTidyAt = 0;
+  }
+
+  /**
+   * The kept copies a write publishes beside: another install's, and one under our id answered Not now here. An
+   * unanswered one under our id keeps the write's own rule.
+   */
+  private async keptElsewhere(): Promise<ProfileLocator[]> {
+    const { deps } = this;
+    const out: ProfileLocator[] = [];
+    for (const k of this.kept) {
+      if (k.installId !== deps.self.installId || (k.fingerprint !== this.holdFingerprint && await profileImportResolutionExists(deps.db, {
+        accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: k.fingerprint,
+      }))) out.push(k);
+    }
+    return out;
+  }
+
+  /** The mailbox's newest copy says what the store says: a kept copy the store also says carries nothing more. */
+  private published(local: OrganizerProfilePayload): boolean {
+    return this.lastWrittenFingerprint !== null && this.lastWrittenFingerprint === profileFingerprint(local);
+  }
+
+  /**
+   * THE FOLDER'S FOUND COPIES, read at the seed: every readable copy not this store's own, newest first, at most
+   * {@link PROFILE_KEPT_MAX}, is kept for the person's answer. One an Import or a Save answered here goes beside
+   * ours; one the store already says asks nothing.
+   */
+  private async discoverKept(io: ProfileIo, local: OrganizerProfilePayload): Promise<void> {
+    const { deps } = this;
+    const ownSince = await this.ownSince();
+    const found = await readFoundCopies(io, { installId: deps.self.installId, ownSince, owns: await this.owns() });
+    if (found.state !== "read") return;
+    this.kept = [];
+    for (const c of found.copies) {
+      // A copy under our id a build that records nothing wrote is ours (`isOwn`), judged here without recording it.
+      if (c.installId === deps.self.installId && c.locator.second >= ownSince && writtenByABuildThatRecordsNothing(c.doc.producer?.version)) continue;
+      if (await profileImportWriteReleased(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: c.locator.fingerprint })) {
+        this.letGo(c.locator);
+        continue;
+      }
+      // One the store already says asks nothing: the store's next write says it too.
+      if (localSaysWhatTheDocumentSays(local, c.doc)) continue;
+      this.noteLocator(c.installId, c.doc);
+      this.keep(c.locator);
+    }
+  }
+
+  /**
+   * Kept copies an Import or a Save answered here since go beside ours; so does one the store says, once the
+   * mailbox's newest copy says it too. The held one keeps its own release.
+   */
+  private async refreshKept(local: OrganizerProfilePayload): Promise<void> {
+    const { deps } = this;
+    const published = this.published(local);
+    for (const at of [...this.kept]) {
+      if (at.fingerprint === this.holdFingerprint) continue;
+      if ((published && localSaysWhatAFingerprintSays(local, at.fingerprint)) || await profileImportWriteReleased(deps.db, {
+        accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: at.fingerprint,
+      })) this.letGo(at);
+    }
+  }
+
+  /**
+   * THE NEXT QUESTION AMONG THE KEPT COPIES: the newest still in the folder with no answer here, else the newest
+   * answered Not now, held so it stays importable. `null` when none is left.
+   */
+  private async nextKept(
+    io: ProfileIo, local: OrganizerProfilePayload,
+  ): Promise<{ kind: "found"; fingerprint: string; doc: OrganizerProfileDoc; installId: string | null } | null> {
+    const { deps } = this;
+    // The answers first (indexed reads), the folder only for the copy that is returned.
+    const open: ProfileLocator[] = [];
+    const declined: ProfileLocator[] = [];
+    for (const at of [...this.kept]) {
+      const subject = { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: at.fingerprint };
+      if (await profileImportWriteReleased(deps.db, subject)) this.letGo(at);
+      else (await profileImportResolutionExists(deps.db, subject) ? declined : open).push(at);
+    }
+    for (const at of [...open, ...declined]) {
+      const read = await readOrganizerProfile(io, { retain: at });
+      if (read.state !== "found" || read.installId !== at.installId || profileFingerprint(read.doc) !== at.fingerprint) {
+        this.kept = this.kept.filter((k) => !sameLocator(k, at));
+        continue;
+      }
+      // What the store already says is no question; it goes once the mailbox's newest copy says it too.
+      if (localSaysWhatTheDocumentSays(local, read.doc)) {
+        if (this.published(local)) this.letGo(at);
+        continue;
+      }
+      return { kind: "found", fingerprint: at.fingerprint, doc: read.doc, installId: read.installId };
+    }
+    return null;
+  }
+
   /**
    * THE FOLDER'S QUESTION: the newest document another install wrote, where there is one. This
    * install's own document is published beside a held one and is newer, so a plain newest read
@@ -434,10 +554,13 @@ export class OrganizerProfileSync {
     const opts = { foreignTo: this.deps.self.installId, ownSince: await this.ownSince(), owns: await this.owns() };
     const read = await readOrganizerProfile(io, opts);
     /* A copy under this install's own id never displaces the held question (a clock set back dates
-       this store's own copies before its row); another install's newer document still does. */
+       this store's own copies before its row); another install's newer document still does, unless it is
+       a kept copy the person answered here (Not now): the question has moved on from it. */
     const retain = this.retained();
-    if (retain === undefined || read.state !== "found" || read.installId !== this.deps.self.installId
-      || profileFingerprint(read.doc) === retain.fingerprint) return read;
+    if (retain === undefined || read.state !== "found" || profileFingerprint(read.doc) === retain.fingerprint) return read;
+    const fp = profileFingerprint(read.doc);
+    if (read.installId !== this.deps.self.installId && !(this.kept.some((k) => k.fingerprint === fp)
+      && await profileImportResolutionExists(this.deps.db, { accountId: this.deps.accountId, mailboxId: this.deps.mailboxId, fingerprint: fp }))) return read;
     return readOrganizerProfile(io, { ...opts, retain });
   }
 
@@ -580,6 +703,8 @@ export class OrganizerProfileSync {
     this.lastTidyAt = 0;
     this.seenForeignFingerprints = new Set<string>();
     this.released = [];
+    this.kept = [];
+    this.declinedSeen = null;
     this.holdFingerprint = null;
     this.holdNewerV = null;
     this.holdSince = null;
@@ -901,9 +1026,20 @@ export class OrganizerProfileSync {
     // can throw, and a throw must leave the standing hold standing (a swap that
     // cleared first left the gate open for a debounce interval when the replacement's resolution
     // read faulted). The caller's catch retries next tick either way.
-    const next = await this.deriveNextHold(still, local);
-    await this.commitNextHold(next, log, { unanswered: true });
+    const next = await this.deriveNextHold(io, still, local);
+    await this.commitNextHold(next, log);
+    await this.noteAnswered(still);
     return next.kind === "lapse" ? "lapsed" : "standing";
+  }
+
+  /** A copy the folder now shows that an Import or a Save answered here goes too, once the store's copy says what it says. */
+  private async noteAnswered(still: ProfileReadResult): Promise<void> {
+    const { deps } = this;
+    if (still.state !== "found" || still.installId === null || profileFingerprint(still.doc) === this.holdFingerprint) return;
+    const at = profileLocatorOf(still.installId, still.doc);
+    if (at !== null && !(await this.isOwn(still)) && await profileImportWriteReleased(deps.db, {
+      accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: at.fingerprint,
+    })) this.letGo(at);
   }
 
   /**
@@ -913,6 +1049,7 @@ export class OrganizerProfileSync {
    * mailbox with no hold and no retry).
    */
   private async deriveNextHold(
+    io: ProfileIo,
     still: ProfileReadResult,
     local: OrganizerProfilePayload,
   ): Promise<
@@ -923,18 +1060,20 @@ export class OrganizerProfileSync {
     const { deps } = this;
     if (still.state === "found" && !(await this.isOwn(still))) {
       const newFp = profileFingerprint(still.doc);
+      const subject = { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: newFp };
       // The WRITE question: a declined replacement is still held, or the next write prunes it.
-      if (!localSaysWhatTheDocumentSays(local, still.doc) && !(await profileImportWriteReleased(deps.db, {
-        accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: newFp,
-      }))) {
+      if (!localSaysWhatTheDocumentSays(local, still.doc) && !(await profileImportWriteReleased(deps.db, subject))
+        // A kept copy answered Not now yields to a kept copy with no answer yet.
+        && (!this.kept.some((k) => k.fingerprint === newFp) || !(await profileImportResolutionExists(deps.db, subject)))) {
         return { kind: "found", fingerprint: newFp, doc: still.doc, installId: still.installId };
       }
-    } else if (still.state === "newer" && !(await profileImportResolutionExists(deps.db, {
-      accountId: deps.accountId, mailboxId: deps.mailboxId, newerV: still.v,
-    }))) {
-      return { kind: "newer", v: still.v };
+    } else if (still.state === "newer") {
+      if (!(await profileImportResolutionExists(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, newerV: still.v }))) {
+        return { kind: "newer", v: still.v };
+      }
     }
-    return { kind: "lapse" };
+    // THE QUEUE: the newest kept copy with no answer here, else the newest answered Not now.
+    return (await this.nextKept(io, local)) ?? { kind: "lapse" };
   }
 
   /**
@@ -945,8 +1084,8 @@ export class OrganizerProfileSync {
   private async commitNextHold(
     next: Awaited<ReturnType<OrganizerProfileSync["deriveNextHold"]>>,
     log: (event: string, detail: Record<string, unknown>) => void,
-    /** `unanswered`: the held subject was neither answered nor converged onto; the folder moved on. */
-    opts: { unanswered?: true } = {},
+    /** `leaves`: an Import or a Save answered the held subject, or the store now says it. */
+    opts: { leaves?: true } = {},
   ): Promise<void> {
     const { deps } = this;
     // The released found subject moves to `seenForeignFingerprints` so a later write may
@@ -955,24 +1094,26 @@ export class OrganizerProfileSync {
     const releasedFingerprint = this.holdFingerprint;
     const releasedNewerV = this.holdNewerV;
     const releasedAt = releasedFingerprint === null ? undefined : this.locators.get(releasedFingerprint);
-    /* A copy under our id leaves the mailbox only on the person's answer: moved off unanswered (another
-       install's newer settings asked first), it stays, the tidy's found settings. */
-    const stays = opts.unanswered === true && releasedAt?.installId === deps.self.installId;
-    if (releasedFingerprint !== null && !stays) {
+    /* A found copy leaves the mailbox only on an Import or a Save of it: moved off otherwise (Not now,
+       another install's newer settings asked first), it stays, kept. */
+    if (releasedFingerprint !== null && opts.leaves !== true && next.kind !== "lapse") this.keep(releasedAt);
+    if (releasedFingerprint !== null && opts.leaves === true) {
       this.seenForeignFingerprints.add(releasedFingerprint);
       /* A RELEASED held record is surfaced residue now, beside this install's own document: the
          next tick's tidy removes it at once rather than after its usual spacing. */
-      if (releasedAt !== undefined) this.released = [...this.released.slice(-3), releasedAt];
+      if (releasedAt !== undefined) this.letGo(releasedAt);
       this.tidyOwed = true;
       this.lastTidyAt = 0;
     }
-    // Released onto no question: the store as the answer left it is published on the next tick.
-    if (releasedFingerprint !== null && next.kind === "lapse") this.lastAttemptAt = 0;
+    if (next.kind !== "found" || next.fingerprint !== releasedFingerprint) this.evalCache = null;
+    // Released onto no question, or answered and leaving: the store as the answer left it is published on the next tick.
+    if (releasedFingerprint !== null && (next.kind === "lapse" || opts.leaves === true)) this.lastAttemptAt = 0;
     this.holdFingerprint = null;
     this.holdNewerV = null;
     this.holdSince = null;
     if (next.kind === "found") {
       this.noteLocator(next.installId, next.doc);
+      this.keep(this.locators.get(next.fingerprint));
       this.holdFingerprint = next.fingerprint;
       this.holdSince = (deps.now ?? ((): Date => new Date()))();
       log("organizer_profile_detected", {
@@ -1075,11 +1216,12 @@ export class OrganizerProfileSync {
       && now.getTime() - this.lastTidyAt >= (tidyMode === "count" ? interval : PROFILE_TIDY_SPACING_MS);
     let writeDue = !this.seeded || ask !== null || expired !== null || now.getTime() - this.lastAttemptAt >= interval;
     /* AN ANSWER TO THE HELD QUESTION does not wait out the interval either: one indexed read per tick,
-       only while a found hold stands. */
+       only while a found hold stands; a Not now too while another kept copy waits to be asked. */
     if (!writeDue && this.holdFingerprint !== null) {
-      writeDue = await profileImportWriteReleased(deps.db, {
-        accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint,
-      }).catch(() => false);
+      const subject = { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint };
+      writeDue = await profileImportWriteReleased(deps.db, subject).catch(() => false)
+        || (this.kept.length > 1 && this.holdFingerprint !== this.declinedSeen
+          && await profileImportResolutionExists(deps.db, subject).catch(() => false));
     }
     if (!writeDue && !tidyDue()) return;
     this.recordReread = false;
@@ -1122,6 +1264,7 @@ export class OrganizerProfileSync {
         this.seeded = true;
       }
       if (writeDue) await this.keepRecordAlive(now);
+      if (this.kept.length > 0) await this.refreshKept(payload);
 
       if (tidyDue()) {
         this.lastTidyAt = now.getTime();
@@ -1133,6 +1276,7 @@ export class OrganizerProfileSync {
           io, installId: deps.self.installId, mode: tidyMode, now, ownSince: await this.ownSince(), owns: await this.owns(),
           ...(keep === undefined ? {} : { retain: keep }),
           ...(released.length === 0 ? {} : { released }),
+          ...(this.kept.length === 0 ? {} : { kept: this.kept }),
           // What this organizer has seen, as the write's `replaceable`: its own copies stay beside an unseen one.
           replaceable: [
             ...(this.lastWrittenFingerprint === null ? [] : [this.lastWrittenFingerprint]),
@@ -1168,7 +1312,7 @@ export class OrganizerProfileSync {
           // two ticks would otherwise never be seen at all. Derivation reads run BEFORE the
           // release commits, so a fault leaves the answered hold standing for the next tick.
           const stillNewer = await this.readQuestion(io);
-          const nextNewer = await this.deriveNextHold(stillNewer, payload);
+          const nextNewer = await this.deriveNextHold(io, stillNewer, payload);
           log("organizer_profile_detected", {
             mailboxId: deps.mailboxId, accountId: deps.accountId, state: "resolved",
           });
@@ -1189,8 +1333,8 @@ export class OrganizerProfileSync {
           const stillConverged = await (async (): Promise<boolean> => {
             const still = await this.readQuestion(io);
             if (still.state === "found" && profileFingerprint(still.doc) === this.holdFingerprint) return true;
-            const next = await this.deriveNextHold(still, payload);
-            await this.commitNextHold(next, log);
+            const next = await this.deriveNextHold(io, still, payload);
+            await this.commitNextHold(next, log, { leaves: true });
             return false;
           })();
           if (!stillConverged) return;
@@ -1203,25 +1347,30 @@ export class OrganizerProfileSync {
           const newest = await readOrganizerProfile(io, { ownSince: await this.ownSince(), owns: await this.owns() });
           const beside = newest.state === "found" && profileFingerprint(newest.doc) !== converged ? newest : null;
           const ours = beside !== null && (await this.isOwn(beside));
-          const next = beside === null || ours || beside.installId !== deps.self.installId ? null : await this.deriveNextHold(beside, payload);
+          const next = beside === null || ours || beside.installId !== deps.self.installId ? null : await this.deriveNextHold(io, beside, payload);
+          // The kept copies' turn: the newest with no answer here, else the newest answered Not now.
+          const queued = next?.kind === "found" ? null : await this.nextKept(io, payload);
           this.holdFingerprint = null;
           this.holdNewerV = null;
           this.holdSince = null;
-          // Our baseline now, unless the later copy beside it is the question: then nothing of ours is said to stand.
-          this.lastWrittenFingerprint = next?.kind === "found" ? null : fp;
+          /* Our baseline now, unless a copy beside it is newer and not ours (the later copy that is the question,
+             another install's kept one): readers read that one, so the store's settings are written. */
+          this.lastWrittenFingerprint = next?.kind === "found" || (beside !== null && !ours) ? null : fp;
+          // The released copy goes on the next tick: what the store imported is published in that one too.
+          if (this.lastWrittenFingerprint === null) this.lastAttemptAt = 0;
           // The durable half (round 14): the held marker must not outlive the question. The lapse names
           // the held subject: the store's own fingerprint can differ from it (a version, a screener source).
           await this.writeMarker({ state: "lapsed", fingerprint: converged, v: null }, log);
           if (beside !== null && ours) {
             this.lastWrittenFingerprint = profileFingerprint(beside.doc);
             this.seenForeignFingerprints.add(converged);
-            if (convergedAt !== undefined) this.released = [...this.released.slice(-3), convergedAt];
+            if (convergedAt !== undefined) this.letGo(convergedAt);
             this.tidyOwed = true;
             this.lastTidyAt = 0;
             this.lastAttemptAt = 0;
-          } else if (next?.kind === "found") {
-            await this.commitNextHold(next, log);
           }
+          if (next?.kind === "found") await this.commitNextHold(next, log);
+          else if (queued !== null) await this.commitNextHold(queued, log);
           return;
         }
         // THE OTHER RELEASE: an import MERGED into local config (fingerprints never meet) or an
@@ -1233,6 +1382,16 @@ export class OrganizerProfileSync {
           accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint,
         });
         if (!resolved) {
+          /* NOT NOW MOVES THE QUESTION ON: the next kept copy with no answer here is asked, and the declined
+             one stays kept and in the mailbox. */
+          const held = this.holdFingerprint;
+          if (this.kept.length > 1 && held !== this.declinedSeen && await profileImportResolutionExists(deps.db, {
+            accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: held,
+          })) {
+            const next = await this.nextKept(io, payload);
+            this.declinedSeen = held;
+            if (next !== null && next.fingerprint !== held) await this.commitNextHold(next, log);
+          }
           // Still unanswered — but only a question the folder still ASKS may keep holding. The
           // hold now also defers the consent gate (`PlanDeps.importHold`), so a hold
           // whose document was expunged or replaced would otherwise track a question the
@@ -1248,11 +1407,12 @@ export class OrganizerProfileSync {
           // BEFORE the release commits, so a fault leaves the answered hold standing for the next
           // tick instead of stranding the mailbox released with the replacement unheld.
           const still = await this.readQuestion(io);
-          const next = await this.deriveNextHold(still, payload);
+          const next = await this.deriveNextHold(io, still, payload);
           log("organizer_profile_detected", {
             mailboxId: deps.mailboxId, accountId: deps.accountId, state: "resolved",
           });
-          await this.commitNextHold(next, log);
+          await this.commitNextHold(next, log, { leaves: true });
+          await this.noteAnswered(still);
           // …and RETURN, writing nothing on this tick. The payload above was serialized BEFORE
           // the answer was read, so a write here could ship a snapshot from before an import that
           // committed in between — superseding the confirmed document with pre-import state. The
@@ -1308,16 +1468,22 @@ export class OrganizerProfileSync {
         /* Nothing beside a copy under our id that is not ours until the person answers: ours would be the
            newest, and the next store or another install would ask about ours and tidy that copy away. Not
            now is an answer: from then on this store's decisions are published beside it, as beside another
-           install's, and the held copy stays in the mailbox to import. */
-        if (keep?.installId === deps.self.installId && !(await profileImportResolutionExists(deps.db, {
+           install's, and the held copy stays in the mailbox to import. A copy of ours already newer than it
+           (published beside another install's question first) is what readers read: it is kept current, and
+           the write, not holding it, refuses if that copy is the newest after all. */
+        const sameIdOpen = keep?.installId === deps.self.installId && !(await profileImportResolutionExists(deps.db, {
           accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: keep.fingerprint,
-        }))) return "done";
+        }));
+        // …while it is the newest: one older than a kept copy is not what readers read.
+        if (sameIdOpen && keep!.second >= Math.max(this.currentOwnSecond ?? Number.NEGATIVE_INFINITY,
+          ...this.kept.filter((k) => !sameLocator(k, keep!)).map((k) => k.second))) return "done";
         // The record as it stands now: another attachment of this store may have written since this one read it.
         this.recordedSeconds = undefined;
         const result = await writeOrganizerProfile({
           io, doc, installId: deps.self.installId, tidyMode, now, ownSince: await this.ownSince(), owns: await this.owns(),
           beforeAppend: (second) => this.vouch(second),
-          ...(keep === undefined ? {} : { retain: keep }),
+          ...(keep === undefined || sameIdOpen ? {} : { retain: keep }),
+          kept: await this.keptElsewhere(),
           // What this writer may replace: its own last write, and any foreign document it has
           // already SURFACED. Anything else refuses as `foreign` below — the engine's guarantee
           // that no foreign configuration is ever expunged before it was recorded. The HELD record
@@ -1387,7 +1553,11 @@ export class OrganizerProfileSync {
           if ((this.lastWrittenFingerprint === null || underOurId) && !(await profileImportWriteReleased(deps.db, {
             accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: foreignFp,
           }))) {
+            // The question it held stays kept beside the new one.
+            this.keep(this.retained());
             this.noteLocator(result.installId, result.doc);
+            this.keep(this.locators.get(foreignFp));
+            this.evalCache = null;
             this.holdFingerprint = foreignFp;
             this.holdSince = now;
             // Readers read the later copy, and our copies beside it are the tidy's: nothing of ours is said to stand.
@@ -1618,6 +1788,8 @@ export class OrganizerProfileSync {
       }
       case "found": {
         const docFingerprint = profileFingerprint(read.doc);
+        // Every copy that is not this store's own is kept for the person's answer, whatever its age.
+        await this.discoverKept(io, local);
         // Our id on a copy older than this store's row is a gone store's: asked about, never ours to replace.
         const ours = await this.isOwn(read);
         const second = Math.floor(Date.parse(read.doc.updatedAt) / 1000);
@@ -1651,6 +1823,9 @@ export class OrganizerProfileSync {
           if (!ours) this.seenForeignFingerprints.add(docFingerprint);
           detected(ours ? "found_own" : "found_in_sync");
           await this.lapseStaleMarker(read, local, log);
+          // Kept copies beside it are asked about, the newest with no answer here first.
+          const queued = this.kept.length === 0 ? null : await this.nextKept(io, local);
+          if (queued !== null) await this.commitNextHold(queued, log);
           return;
         }
         clearProvisionalHold();
@@ -1787,6 +1962,7 @@ export class OrganizerProfileSync {
       io, doc, installId: deps.self.installId, tidyMode: deps.tidyMode ?? "remove", now, ownSince: await this.ownSince(),
       owns: await this.owns(), beforeAppend: (second) => this.vouch(second),
       ...(keep === undefined ? {} : { retain: keep }),
+      kept: await this.keptElsewhere(),
       replaceable: [
         profileFingerprint(read.doc),
         ...(this.lastWrittenFingerprint === null ? [] : [this.lastWrittenFingerprint]),
