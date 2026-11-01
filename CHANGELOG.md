@@ -21,6 +21,60 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.24] — 2026-11-01
+
+### Close setup stays closed when the page loads again
+
+On the web app and your own server, a connected mailbox that nothing organizes opened the setup dialog
+again at every page load, even after Close setup said the app opens as it is now. Closing or finishing
+setup now keeps it closed for the mailboxes you already had, in every browser and on every device you
+sign in on; run setup again from Settings → Mailboxes. A mailbox you add later is still asked once.
+
+### Settings put aside with "Not now" stay in the mailbox until you answer them
+
+When you chose "Not now" on settings ohmail found in a mailbox, or removed the phone or computer before
+answering, and then organized the mailbox from another phone or computer, the settings you had put aside
+were never offered there and were deleted from the mailbox minutes later: those screener decisions and
+rules were gone for every device. Every set of settings found in a mailbox now stays there until you
+import it or save this ohmail's settings over it, and ohmail asks about each in turn, newest first: after
+Import, "Save this ohmail's settings" or "Not now" on one, it asks about the next. Settings shows the
+newest one you put aside, and the next once you import or replace it. A removed phone or computer leaves
+them all for the next one, on the desktop, the phone, ohmail Cloud and your own server.
+
+### Backspace and Delete move the open message to Trash on the desktop again
+
+On the desktop, while the one-time question about opening email links with ohmail stood at the foot of
+the window, Backspace and Delete on a selected Ohbox message did nothing: the delete keys took that card
+for a question over the mail. The card stands beside the mail, so both keys move the message to Trash
+again, with Undo, whether or not it is answered. A question that covers the mail, such as the shortcut
+sheet or a menu, still keeps them.
+
+### A letter that lists late no longer takes the cursor
+
+In Trash, a folder, a tag, Answer Later, Parked, Resurfaced, News, Receipts and search results, the letter
+the cursor and the reading column show stays shown when another letter lists above it later, until you move
+the cursor yourself; in the piles it stays on its conversation when a newer letter joins it. Before, a delete landing after its Undo window, or new mail arriving, moved the cursor
+and the reader to the newcomer with no input, so Restore or the next key acted on a letter you had not
+chosen. Desktop and web.
+
+### The settings copy in the mailbox reads back when a stored value or the server's encoding changed it
+
+ohmail keeps a copy of your settings in each mailbox, so a reconnect or another device finds them. For some
+accounts every new copy was removed right after it was written, because a stored value read back otherwise: a
+filing rule saved before 0.25.4 with a priority outside 0 to 1000, a contact address with a space around it,
+or an empty tag name or notification. ohmail now writes such values as every device reads them, without
+changing what is stored, and reads a copy the mail server stored as quoted-printable or base64. A copy the
+server changes in any other way is sent again only when your settings change, or once a day. This applies to
+ohmail Cloud, your own server, the desktop and the phone. When a mailbox the desktop app or the phone
+organizes still cannot keep its copy, its row there says that the settings cannot be saved or read.
+
+### Cloud Settings names a mailbox that cannot keep the settings copy
+
+When ohmail Cloud or your own server organizes a mailbox whose mail server will not keep the copy of your settings
+ohmail saves there, Settings, under Mailboxes, now says so for that mailbox, so you know a reconnect or another
+device would not find your settings in it. The line goes once a copy is kept again. The desktop app and the phone
+already said this on the mailbox's row.
+
 ## [0.30.23] — 2026-11-01
 
 ### Search answers sooner on Cloud, and a broad word's count no longer takes seconds
@@ -15841,7 +15895,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.23...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.24...HEAD
+[0.30.24]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.24
 [0.30.23]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.23
 [0.30.22]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.22
 [0.30.21]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.21
