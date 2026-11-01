@@ -3,11 +3,11 @@ import type { PgDatabase, PgTransaction } from "drizzle-orm/pg-core";
 /* THE MAIL HALF DIRECTLY, never `./schema.js`. `schema.ts` re-exports both halves, so naming it
  * here would put every Cloud table into the root barrel's closure — and the root barrel is what
  * the desktop engine's bundle follows. Both tables below are mail-domain. */
-import { accountSyncState, changeLog, mailboxes } from "./schema-mail.js";
+import { accountSettings, accountSyncState, changeLog, mailboxes } from "./schema-mail.js";
 import { dialect } from "./dialect/index.js";
 /* The seam owns the erasure class, and its own import of this file is TYPE-ONLY, so this edge
  * is one-way at runtime. */
-import { MailboxErasedError } from "./erasure-fence.js";
+import { MailboxErasedError, fenceErased } from "./erasure-fence.js";
 
 /**
  * A Drizzle query runner: either a top-level db handle (postgres-js in prod, PGlite in tests) or
@@ -407,6 +407,36 @@ export async function recordMailboxProfileChange(
   return recordChange(tx, {
     accountId, entityType: "mailbox_profile", entityId: mailboxId, op: "update", meta: null,
   });
+}
+
+/**
+ * The consent stamp's row held and left where it stands, for a writer that moves it only when its
+ * write changes what `GET /consent` answers ({@link moveSettingsStamp} then). First in its
+ * transaction after the account fence, before the rule-key lock and any mailbox row, as the move
+ * would be; an account without the row gets it, stamped `now`.
+ */
+export async function lockSettingsStamp(tx: LedgerTx, accountId: string, now: Date): Promise<void> {
+  const t = tx as unknown as Tx;
+  const d = dialect(t);
+  await fenceErased(t, d, { accountId });
+  // The strength the move's own update would take, so nothing it admits waits on this.
+  const row = () => d.forUpdate(t.select({ accountId: accountSettings.accountId }).from(accountSettings)
+    .where(eq(accountSettings.accountId, accountId)).limit(1), { mode: "no key update" });
+  if ((await row()).length > 0) return;
+  await t.insert(accountSettings).values({ accountId, updatedAt: now }).onConflictDoNothing();
+  await row();
+}
+
+/**
+ * The consent stamp moved, for a writer outside the consent service whose write `GET /consent`
+ * answers. First in its transaction after the account fence, before the rule-key lock and any
+ * mailbox row (or after {@link lockSettingsStamp} took the row there); its row lock holds every
+ * consent writer off until the caller commits.
+ */
+export async function moveSettingsStamp(tx: LedgerTx, accountId: string, now: Date): Promise<void> {
+  await fenceErased(tx as unknown as Tx, dialect(tx as unknown as Tx), { accountId });
+  await (tx as unknown as Tx).insert(accountSettings).values({ accountId, updatedAt: now })
+    .onConflictDoUpdate({ target: accountSettings.accountId, set: { updatedAt: now } });
 }
 
 /** Both ends of an account's retained change log. Both `null` ⇔ the log is empty and unpruned. */

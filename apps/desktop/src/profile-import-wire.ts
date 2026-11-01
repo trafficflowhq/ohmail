@@ -57,13 +57,14 @@ export function profileImportVia(fetchImpl: ProfileImportFetch): ProfileImportTr
   return {
     candidate: async (mailboxId) =>
       wireOf<ProfileImportCandidateWire>(await fetchImpl(profileImportPath(mailboxId))),
-    /* A 202 is `ok` and carries the pending shape: the engine handed the press to its organizer. */
-    apply: async (mailboxId, fingerprint) =>
+    /* A 202 is `ok` and carries the pending shape: the engine handed the press to its organizer. The
+       receipt goes only when the card said the copy's signature replaces this mailbox's. */
+    apply: async (mailboxId, fingerprint, signatureReplaces) =>
       wireOf<ProfileImportAppliedWire | ProfileImportPendingWire>(
         await fetchImpl(profileImportPath(mailboxId), {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ fingerprint }),
+          body: JSON.stringify(signatureReplaces === undefined ? { fingerprint } : { fingerprint, signatureReplaces }),
         }),
       ),
     status: async (mailboxId, fingerprint) =>

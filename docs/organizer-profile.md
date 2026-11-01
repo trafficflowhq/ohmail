@@ -166,6 +166,19 @@ one supplies the default, so a document remains readable in both directions.
 Whether an outgoing message actually carries it is the compose window's decision — the signature
 is visible and removable there. This document records what the sign-off IS, not that it is used.
 
+An import never loses a signature the mailbox already holds. A document with no signature leaves the
+mailbox's own. A document whose signature differs from one the mailbox holds replaces it only when the
+import card said so before the press ("your signature, replacing the one on this mailbox now") and the
+press names that exact signature; otherwise the mailbox keeps its own and the confirmation says so. A
+mailbox with no signature takes the document's. Text and markup are compared and written as one value.
+
+What ohmail keeps of a signature for this: the organizer's record of a found document names the
+document's signature by a receipt (a sha256 of text and markup together, cut to 32 hex digits), and a
+press handed to the organizer keeps the receipt of the signature its card said would be replaced. Both
+are rows of the account's audit trail, which are deleted after 365 days or with the account. Erasing
+the mailbox takes the receipts off those rows when it is pressed, and again when the erasure finishes;
+removing a mailbox from a computer takes them off that computer's store. The rows themselves stay.
+
 **`signatureHtml`** — the same sign-off's formatting, when it has any. Optional, and ABSENT rather
 than `null` when there is none: a document that never carried this key must keep the fingerprint it
 was written with, so writers omit it and readers treat absent, `null` and blank markup as the one

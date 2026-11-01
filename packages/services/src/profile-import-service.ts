@@ -5,12 +5,12 @@ import {
   mailboxCredentials, mailboxes,
   latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased,
   recordProfileImportResolution,
-  askStands, profileImportResult, readImportAsk, recordImportAsk, ringFilingDoorbell,
+  askStands, profileImportResult, readImportAsk, recordImportAsk, recordImportAskSignature, ringFilingDoorbell,
   type ImportAskRefusal, type Tx,
 } from "@trafficflow/db";
 import {
   PROFILE_LIST_MAX, PROFILE_VERSION, ProfileUnavailableError, localSaysWhatAFingerprintSays,
-  oversizedProfileList, type ProfileReadResult, type ProfileLocator,
+  oversizedProfileList, signatureReceipt, type ProfileReadResult, type ProfileLocator,
 } from "@trafficflow/core/adapters/organizer-profile";
 import {
   PROFILE_IMPORT_LOCK_CLASS, applyOrganizerProfile, importRefusalFor, serializeOrganizerProfile,
@@ -144,7 +144,7 @@ export const PROFILE_IMPORT_MAX = PROFILE_LIST_MAX;
  * missing any of its fields (an older row) offers nothing rather than a row with holes in it.
  */
 function declinedFrom(
-  fingerprint: string, m: Awaited<ReturnType<typeof latestProfileFoundMarker>> & object,
+  fingerprint: string, m: Awaited<ReturnType<typeof latestProfileFoundMarker>> & object, signatureReplaces: string | null,
 ): ProfileImportCandidateDTO {
   const c = m.counts;
   if (typeof m.updatedAt !== "string" || !m.producer || !c) return { state: "none" };
@@ -156,9 +156,19 @@ function declinedFrom(
     counts: {
       screener: c.screener, rules: c.rules, notifyRules: c.notifyRules, tags: c.tagNames,
       awayResponder: c.awayResponder > 0,
+      signature: (c.signature ?? 0) > 0,
+      ...(signatureReplaces === null ? {} : { signatureReplaces }),
     },
   };
 }
+
+/** A press's receipt for the signature it replaces, or null; a fingerprint's bound, as the status read's. */
+const pressedReceipt = (v: unknown): string | null =>
+  typeof v === "string" && v.length > 0 && v.length <= 200 ? v : null;
+
+/** A stored result's counts; a row written before the signature was counted says no signature. */
+const arrived = (c: Omit<ProfileImportCounts, "signature"> & { signature?: boolean }): ProfileImportCounts =>
+  ({ ...c, signature: c.signature === true });
 
 /** The first list the organizer counted over its ceiling, or null — `oversizedProfileList`'s rule. */
 function oversizedCounts(
@@ -214,10 +224,10 @@ export class ProfileImportService {
       if (await profileImportWriteReleased(db, { accountId: ctx.accountId, mailboxId, fingerprint })) {
         return { state: "none" };
       }
-      return declinedFrom(fingerprint, marker);
+      return declinedFrom(fingerprint, marker, await this.replacedSignature(ctx, mailboxId, marker));
     }
 
-    const offer = declinedFrom(fingerprint, marker);
+    const offer = declinedFrom(fingerprint, marker, await this.replacedSignature(ctx, mailboxId, marker));
     if (offer.state !== "declined") return { state: "none" };
     // A document `apply` would refuse is not offered; the fingerprint makes `too_large` dismissible.
     const over = oversizedCounts(marker.counts!);
@@ -238,9 +248,11 @@ export class ProfileImportService {
    * counts and all. A document that changed in between answers 409 `profile_changed`, and the
    * screen asks again over the new content rather than applying something nobody confirmed. A
    * read that does not fit the request hands the press to the organizer (`importing`).
+   * `signatureReplaces` is the offer's receipt for the signature the card said the copy's replaces;
+   * without it, or once that signature changed, the one on the mailbox stays.
    */
   async apply(
-    ctx: ServiceContext, mailboxId: string, body: { fingerprint?: unknown }, opts: { read: ProfileReader },
+    ctx: ServiceContext, mailboxId: string, body: { fingerprint?: unknown; signatureReplaces?: unknown }, opts: { read: ProfileReader },
   ): Promise<ProfileImportApplied | ProfileImportHandedOver> {
     await this.assertMailbox(ctx, mailboxId);
     /**
@@ -258,6 +270,7 @@ export class ProfileImportService {
     if (typeof fingerprint !== "string" || fingerprint.length === 0) {
       throw new ServiceError("validation_failed", 400, "fingerprint is required");
     }
+    const signatureReplaces = pressedReceipt(body.signatureReplaces);
 
     /* THE TICKET FIRST, and no dial when it answers: the same press already waiting is the same
        202, and one already imported is the 200 it would have been. */
@@ -267,7 +280,7 @@ export class ProfileImportService {
       if (askStands(asked, now)) return { state: "importing", fingerprint };
       if (asked.outcome === "imported") {
         const result = await profileImportResult(asTx(ctx), { accountId: ctx.accountId, mailboxId, fingerprint });
-        if (result !== null) return { ...result, retiredRules: result.retiredRules ?? 0, seq: null };
+        if (result !== null) return { ...result, imported: arrived(result.imported), retiredRules: result.retiredRules ?? 0, seq: null };
       }
     }
 
@@ -282,6 +295,10 @@ export class ProfileImportService {
       // Mailbox row FOR UPDATE, as it is written; account row shared (exclusive deadlocks counter-first writers).
       await withAccountTx(ctx, async (tx) => {
         await recordImportAsk(tx, { accountId: ctx.accountId, mailboxId, fingerprint, now });
+        // What the card said of the signature travels with the press, for the organizer's merge.
+        if (signatureReplaces !== null) {
+          await recordImportAskSignature(tx, { accountId: ctx.accountId, mailboxId, fingerprint, signatureReplaces, at: now });
+        }
         await ringFilingDoorbell(tx, mailboxId, now);
       }, { mailboxId, mailboxLock: "update" });
       return { state: "importing", fingerprint, reason: err.code === MAILBOX_READ_TIMEOUT ? "slow" : "unreachable" };
@@ -302,8 +319,22 @@ export class ProfileImportService {
     // The account fence alone: the merge takes the rule-key lock, its own lock and this mailbox's
     // row FOR UPDATE itself, in that order, before its first write.
     return withAccountTx(ctx, async (tx) => applyOrganizerProfile(tx, {
-      accountId: ctx.accountId, mailboxId, doc, fingerprint, now,
+      accountId: ctx.accountId, mailboxId, doc, fingerprint, now, signatureReplaces,
     }));
+  }
+
+  /**
+   * THE SIGNATURE AN OFFER SAYS THE COPY'S REPLACES: this mailbox's own, by its receipt, while the
+   * copy carries a different one (a marker that names no receipt is taken as different), else null.
+   */
+  private async replacedSignature(
+    ctx: ServiceContext, mailboxId: string, m: { counts?: { signature?: number }; signatureReceipt?: string },
+  ): Promise<string | null> {
+    if (!((m.counts?.signature ?? 0) > 0)) return null;
+    const [row] = await ctx.db.select({ signature: mailboxes.signature, signatureHtml: mailboxes.signatureHtml }).from(mailboxes)
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId))).limit(1);
+    const live = signatureReceipt(row?.signature, row?.signatureHtml);
+    return live === null || live === m.signatureReceipt ? null : live;
   }
 
   /**
@@ -326,7 +357,7 @@ export class ProfileImportService {
     if (row === null || row.fingerprint !== fingerprint) return refused("superseded");
     if (row.outcome === "imported") {
       const result = await profileImportResult(asTx(ctx), { accountId: ctx.accountId, mailboxId, fingerprint });
-      return { state: "imported", imported: result?.imported ?? null, skippedRules: result?.skippedRules ?? 0 };
+      return { state: "imported", imported: result ? arrived(result.imported) : null, skippedRules: result?.skippedRules ?? 0 };
     }
     if (row.outcome === "refused") return refused(row.reason ?? "unreadable");
     if (row.organizerRole !== "organizer") return refused("not_organizer");

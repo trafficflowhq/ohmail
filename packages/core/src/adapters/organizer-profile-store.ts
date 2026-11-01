@@ -2,7 +2,8 @@ import { and, asc, desc, eq, gt, isNull, like, ne, sql } from "drizzle-orm";
 import {
   accountSettings, awayResponders, contacts, idempotencyKeys, mailboxProfileMirror, mailboxes as mailboxesTbl,
   notifyRules as notifyRulesTbl, organizerRequests, rules as rulesTbl, tags as tagsTbl, IDEMPOTENCY_TTL_MS,
-  createPressKeysSince, fenceErased, lockAccountRuleKeys, profileImportResolutionExists, recordChanges, recordProfileImportResolution, rerouteOwnHeldBag,
+  createPressKeysSince, fenceErased, lockAccountRuleKeys, lockSettingsStamp, moveSettingsStamp, profileImportResolutionExists, recordChanges,
+  recordProfileImportResolution, rerouteOwnHeldBag,
   resolveImportAsk, ruleDelta,
   type ChangeInput, type ImportAskRefusal, type LedgerTx, type Tx,
 } from "@trafficflow/db";
@@ -14,6 +15,7 @@ import { AWAY_AUDIENCES, AWAY_THROTTLES, nextEnabledAt, type AwayAudience, type 
 import { awayScopeFitsAudience, isAwayPile, type AwayPile } from "../away-scope.js";
 import {
   PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileFingerprint, profileScreenerAddress,
+  signatureReceipt,
   type ApplicableProfileRule, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileReadResult,
   type ProfileScreening,
 } from "./organizer-profile.js";
@@ -234,6 +236,15 @@ export interface ProfileImportCounts {
   notifyRules: number;
   tags: number;
   awayResponder: boolean;
+  /** An offer: the copy carries a signature. A result: the copy's signature is this mailbox's now. */
+  signature: boolean;
+  /**
+   * An offer, while the copy's signature would replace a DIFFERENT one this mailbox holds: that one's
+   * `signatureReceipt`. The card says so, and its press sends it back as the consent to replace it.
+   */
+  signatureReplaces?: string;
+  /** A result: the copy carried a signature, and the different one this mailbox held stayed. */
+  signatureKept?: boolean;
 }
 
 export interface ProfileImportApplied {
@@ -362,8 +373,14 @@ export function importRefusalFor(fresh: ProfileReadResult, fingerprint: string):
  */
 export async function applyOrganizerProfile(
   tx: LedgerTx,
-  o: { accountId: string; mailboxId: string; doc: OrganizerProfileDoc; fingerprint: string; now: Date },
+  o: {
+    accountId: string; mailboxId: string; doc: OrganizerProfileDoc; fingerprint: string; now: Date;
+    /** The receipt of the signature the card said the copy's replaces, sent back by the press. */
+    signatureReplaces?: string | null;
+  },
 ): Promise<ProfileImportApplied> {
+  // The consent stamp's row before the rule-key lock, left where it stands: the signature below is a consent answer.
+  await lockSettingsStamp(tx, o.accountId, o.now);
   // The merge writes contacts and rules: the account's rule-key lock first, as every rules writer
   // takes it, so a Screener decision (rule-key, rules, then contacts) never waits crosswise on it.
   await lockAccountRuleKeys(tx as unknown as Tx, o.accountId);
@@ -618,27 +635,29 @@ export async function applyOrganizerProfile(
   }
 
   /**
-   * signature — the one PER-MAILBOX field in the document (mail 0094). Applied like every
-   * section above: a skipped section is a setting the person loses silently. It also makes
-   * the import TERMINATE: the organizer's hold releases when the local serialization equals
-   * the held document, and `signature` is part of that serialization — an importer skipping
-   * it would never converge and the prompt would return every cycle. Written to THIS mailbox,
-   * scoped by account as well as id — the same predicate the serializer reads through. `null`
-   * is written as `null`: "no signature" is a statement, and treating it as "leave what is
-   * here" would make the import non-idempotent.
+   * signature — the one PER-MAILBOX field in the document (mail 0094), written to THIS mailbox,
+   * scoped by account as well as id. AN IMPORT NEVER LOSES A SIGNATURE TYPED HERE (ruled
+   * 2026-11-01): a copy with none leaves this mailbox's; a copy with a DIFFERENT one replaces it
+   * only when the press names it by its receipt (the card said so), else it stays and the result
+   * says so; a mailbox with none takes the copy's. Text and markup are one value, compared and
+   * written together. The hold still ends: the `imported` answer below releases it whether or not
+   * the store now says what the copy says (`profileImportWriteReleased`).
    */
-  await tx.update(mailboxesTbl).set({
-    signature: o.doc.signature,
-    /* BOTH HALVES OR NEITHER, and the `??` is what makes it terminate. The two columns are one
-       value — a markup save derives the text, a plain save clears the markup — so applying the
-       text alone would leave this mailbox's old formatting under somebody else's words. An
-       ABSENT key means "this sign-off has no formatting", which is `null` in the column, so it
-       is written as `null` rather than left alone: the import's convergence test compares the
-       local serialization to the held document, and a column the importer never clears makes
-       them differ for ever. */
-    signatureHtml: o.doc.signatureHtml ?? null,
-  })
-    .where(and(eq(mailboxesTbl.id, o.mailboxId), eq(mailboxesTbl.accountId, o.accountId)));
+  const [held] = await tx.select({ signature: mailboxesTbl.signature, signatureHtml: mailboxesTbl.signatureHtml })
+    .from(mailboxesTbl).where(and(eq(mailboxesTbl.id, o.mailboxId), eq(mailboxesTbl.accountId, o.accountId)));
+  const liveSignature = signatureReceipt(held?.signature, held?.signatureHtml);
+  const copySignature = signatureReceipt(o.doc.signature, o.doc.signatureHtml);
+  const signatureHere = copySignature !== null && copySignature === liveSignature;
+  const signatureWritten = copySignature !== null && !signatureHere
+    && (liveSignature === null || o.signatureReplaces === liveSignature);
+  if (signatureWritten) {
+    // Both halves: an absent markup key is "no formatting", `null` in the column.
+    await tx.update(mailboxesTbl).set({ signature: o.doc.signature, signatureHtml: o.doc.signatureHtml ?? null })
+      .where(and(eq(mailboxesTbl.id, o.mailboxId), eq(mailboxesTbl.accountId, o.accountId)));
+    // Only a write the consent read answers moves its stamp and appends its settings row.
+    await moveSettingsStamp(tx, o.accountId, now);
+    changes.push({ accountId: o.accountId, entityType: "settings", entityId: o.accountId, op: "update", meta: null });
+  }
 
   // One allocation for every change row (contacts/notify/away are REST-only, so only the
   // rule and tag writes wake the mirrors), then the answer itself — in THIS transaction, so
@@ -654,6 +673,8 @@ export async function applyOrganizerProfile(
       notifyRules: notifyApplied,
       tags: tagsApplied,
       awayResponder: awayApplied,
+      signature: signatureWritten || signatureHere,
+      ...(copySignature !== null && !signatureWritten && !signatureHere ? { signatureKept: true } : {}),
     },
     skippedRules,
     retiredRules: retired.length,

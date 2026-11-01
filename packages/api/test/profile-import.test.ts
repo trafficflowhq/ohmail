@@ -237,7 +237,7 @@ describe("the real service, over HTTP, on the paths that need no mailbox fixture
     expect(await get()).toEqual({
       state: "declined", fingerprint,
       updatedAt: "2026-08-10T09:00:00.000Z", producer: { kind: "local", version: "0.9.3" },
-      counts: { screener: 4, rules: 2, notifyRules: 0, tags: 1, awayResponder: true },
+      counts: { screener: 4, rules: 2, notifyRules: 0, tags: 1, awayResponder: true, signature: false },
     });
     const replaced = await post("replace");
     expect(replaced.status).toBe(200);

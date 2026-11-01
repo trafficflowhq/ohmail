@@ -186,6 +186,42 @@ describe("the restore card", () => {
     expect(button("Not now")).toBeTruthy();
   });
 
+  it("a copy that carries a signature names it on the offer and on the done line; an older server's offer still renders", async () => {
+    await mount({ active: true });
+    expect(card()!.textContent, "an offer without the key named a signature").not.toContain("signature");
+    await act(async () => { root!.unmount(); });
+    host?.remove(); root = null; host = null;
+
+    candidate = { ...candidate, counts: { screener: 25, rules: 25, notifyRules: 0, tags: 0, awayResponder: false, signature: true } };
+    applied = { ...applied, imported: { screener: 25, rules: 25, notifyRules: 0, tags: 0, awayResponder: false, signature: true } };
+    await mount({ active: true });
+    expect(card()!.textContent).toContain("25 screener decisions, 25 rules, and your signature.");
+    expect(card()!.textContent, "a copy that replaces no signature said it would").not.toContain("replacing");
+    await click(button("Import settings"));
+    expect(card()!.textContent).toContain("Your settings are back.");
+    expect(card()!.textContent).toContain("and your signature");
+    expect(card()!.textContent).not.toContain("you typed on this mailbox");
+  });
+
+  /* AN IMPORT NEVER LOSES A SIGNATURE TYPED HERE (ruled 2026-11-01): the card says so before the
+     press when the copy's replaces the one on this mailbox, and only that press names it. */
+  it("a copy whose signature replaces the one on this mailbox says so before the press, and the press names it", async () => {
+    const receipt = "9".repeat(32);
+    candidate = { ...candidate, counts: { screener: 25, rules: 25, notifyRules: 0, tags: 0, awayResponder: false, signature: true, signatureReplaces: receipt } };
+    await mount({ active: true });
+    expect(card()!.textContent).toContain("25 screener decisions, 25 rules, and your signature, replacing the one on this mailbox now.");
+    await click(button("Import settings"));
+    const post = calls.find((c) => c.method === "POST" && c.path === `/mailboxes/${MB.id}/profile-import`);
+    expect(post!.body).toEqual({ fingerprint: FINGERPRINT, signatureReplaces: receipt });
+  });
+
+  it("the done line says when the signature typed on this mailbox stayed", async () => {
+    applied = { ...applied, imported: { screener: 142, rules: 8, notifyRules: 0, tags: 3, awayResponder: false, signature: false, signatureKept: true } };
+    await mount({ active: true });
+    await click(button("Import settings"));
+    expect(card()!.textContent).toContain("The signature you typed on this mailbox stays; the saved one was not imported.");
+  });
+
   /**
    * ── WHAT NOT ANSWERING LEAVES IN THE MAILBOX IS ON THE CARD (QAO-OWN-PUBLISH-BESIDE-A-RETAINED-HOLD)
    * While this question stands unanswered, the organizer publishes its OWN settings beside the found
@@ -555,6 +591,18 @@ describe("Settings → Mailboxes: a declined document, with Import and Replace",
       { method: "POST", path: `/mailboxes/${MB.id}/profile-import`, body: { fingerprint: FINGERPRINT } },
     ]);
     expect(host!.textContent).toContain("Your settings are back.");
+  });
+
+  it("a row whose copy replaces the signature here says so, its Import names it, and a kept one is said", async () => {
+    const receipt = "9".repeat(32);
+    candidate = { ...candidate, counts: { screener: 1, rules: 0, notifyRules: 0, tags: 0, awayResponder: false, signature: true, signatureReplaces: receipt } };
+    applied = { ...applied, imported: { screener: 1, rules: 0, notifyRules: 0, tags: 0, awayResponder: false, signature: false, signatureKept: true } };
+    await mountRow();
+    expect(host!.textContent).toContain("They hold 1 screener decision and your signature, replacing the one on this mailbox now.");
+    expect(host!.textContent).toContain("Saving replaces 1 screener decision and your signature in the mailbox");
+    await click(button("Import settings"));
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([{ fingerprint: FINGERPRINT, signatureReplaces: receipt }]);
+    expect(host!.textContent).toContain("The signature you typed on this mailbox stays; the saved one was not imported.");
   });
 
   it("a refused replace keeps both buttons, with the host's own sentence above them", async () => {

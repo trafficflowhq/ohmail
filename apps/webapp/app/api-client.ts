@@ -2274,6 +2274,15 @@ export interface ProfileImportCountsWire {
   notifyRules: number;
   tags: number;
   awayResponder: boolean;
+  /** The copy carries a signature; absent from an older server. On a result: it is this mailbox's now. */
+  signature?: boolean;
+  /**
+   * An offer's: the copy's signature replaces a different one on this mailbox, named by this receipt.
+   * The card says so, and Import sends it back; without it the one on the mailbox stays.
+   */
+  signatureReplaces?: string;
+  /** A result's: the copy carried a signature, and the different one on this mailbox stayed. */
+  signatureKept?: boolean;
 }
 
 /**
@@ -2348,10 +2357,12 @@ export const profileImport = {
   /**
    * Apply, on explicit confirmation only. The server re-reads the mailbox and refuses
    * (409 `profile_changed`) if the document no longer matches the fingerprint the user saw.
+   * `signatureReplaces` is the offer's receipt, sent only when the card said the copy's signature
+   * replaces the one on this mailbox.
    */
-  apply: (mailboxId: string, fingerprint: string) =>
+  apply: (mailboxId: string, fingerprint: string, signatureReplaces?: string) =>
     api<ProfileImportAppliedWire | ProfileImportPendingWire>(`/mailboxes/${mailboxId}/profile-import`, {
-      method: "POST", body: { fingerprint },
+      method: "POST", body: signatureReplaces === undefined ? { fingerprint } : { fingerprint, signatureReplaces },
     }),
   /** Where a press answered 202 stands; asked on the settings doorbell until it is terminal. */
   status: (mailboxId: string, fingerprint: string) =>

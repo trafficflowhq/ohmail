@@ -188,6 +188,7 @@ describe("the staff-visible free-text channels are closed sets", () => {
     expect(isAuditLogAction("organizer_profile_found")).toBe(true);
     expect(isAuditLogAction("organizer_profile_import_resolved")).toBe(true);
     expect(isAuditLogAction("organizer_profile_written")).toBe(true);
+    expect(isAuditLogAction("organizer_profile_import_ask_signature")).toBe(true);
     expect(AUDIT_LOG_ACTIONS.length).toBe(new Set(AUDIT_LOG_ACTIONS).size);
   });
 

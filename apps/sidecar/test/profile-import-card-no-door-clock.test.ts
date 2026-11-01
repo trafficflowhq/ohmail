@@ -111,12 +111,12 @@ function stdioDoor(sidecar: Sidecar) {
   });
   let next = 1;
   return {
-    async ask(method: string, path: string): Promise<{ status: number; json: any }> {
+    async ask(method: string, path: string, body?: unknown): Promise<{ status: number; json: any }> {
       const id = next++;
       input.write(encodeFrame({
         v: PROTOCOL_VERSION, t: "req", id, method, url: `http://sidecar${path}`,
-        h: [["authorization", `Bearer ${sidecar.sessionToken}`]],
-      }));
+        h: [["authorization", `Bearer ${sidecar.sessionToken}`], ...(body === undefined ? [] : [["content-type", "application/json"]])],
+      }, body === undefined ? undefined : Buffer.from(JSON.stringify(body))));
       for (let i = 0; i < 2_000 && !answers.has(id); i++) await new Promise((r) => setTimeout(r, 5));
       const a = answers.get(id);
       if (!a) throw new Error(`no answer to ${method} ${path}`);
@@ -135,9 +135,9 @@ describe("the settings card asks without the door's clock", () => {
     for (const c of cleanups.splice(0).reverse()) await c();
   });
 
-  async function organizerWithADocument(): Promise<{ sidecar: Sidecar; meta: MemoryMeta }> {
+  async function organizerWithADocument(doc = DOC): Promise<{ sidecar: Sidecar; meta: MemoryMeta }> {
     const meta = new MemoryMeta();
-    await meta.appendProfile(formatProfileMessage(DOC, { installId: "the-previous-mac" }));
+    await meta.appendProfile(formatProfileMessage(doc, { installId: "the-previous-mac" }));
     const box = mailbox(meta);
     const dataDir = await freshDataDir("ohmail-card-clock-");
     const sidecar = await createSidecar({
@@ -177,7 +177,7 @@ describe("the settings card asks without the door's clock", () => {
     expect(asked.status, JSON.stringify(asked.json)).toBe(200);
     expect(asked.json).toMatchObject({
       state: "found", fingerprint: FP,
-      counts: { screener: 1, rules: 0, notifyRules: 0, tags: 1, awayResponder: false },
+      counts: { screener: 1, rules: 0, notifyRules: 0, tags: 1, awayResponder: false, signature: false },
     });
     expect(connect, "the card's question dialled the mailbox").toHaveBeenCalledTimes(0);
 
@@ -189,5 +189,38 @@ describe("the settings card asks without the door's clock", () => {
     }
     expect(door.refused("/profile-import"), "a check on a removed mailbox was refused").toBe(0);
     expect(connect).toHaveBeenCalledTimes(0);
+  });
+
+  it("Import brings the copy's signature back: the card names it, /consent serves it, the window's stamp moves", async () => {
+    const SIG = "-- \nthe old sign-off";
+    const doc = makeProfileDoc({
+      screener: [{ address: "friend@elsewhere.example" }],
+      rules: [], notifyRules: [], awayResponder: null, tagNames: ["theirs"], signature: SIG,
+    }, { updatedAt: new Date("2026-09-20T08:00:00Z"), producer: { kind: "local", version: "0.30.20" } });
+    const { sidecar } = await organizerWithADocument(doc);
+    const mailboxId = sidecar.world.mailboxId;
+    const door = stdioDoor(sidecar);
+    cleanups.push(() => door.stop());
+    const route = `/mailboxes/${mailboxId}/profile-import`;
+    const asked = await door.ask("GET", route);
+    expect(asked.json).toMatchObject({ state: "found", counts: { signature: true } });
+
+    const stampOf = (page: any): string | null => {
+      const all = [...page.changes.creates, ...page.changes.updates].filter((c: any) => c.type === "settings");
+      return all.length === 0 ? null : all[all.length - 1].entity.updatedAt;
+    };
+    const before = (await door.ask("GET", "/sync?since=0")).json;
+    const pressed = await door.ask("POST", route, { fingerprint: profileFingerprint(doc) });
+    expect([200, 202], JSON.stringify(pressed.json)).toContain(pressed.status);
+    for (let i = 0; i < 20 && pressed.status === 202; i++) {
+      await sidecar.syncUntilQuiet();
+      if ((await door.ask("GET", `${route}/status?fingerprint=${profileFingerprint(doc)}`)).json.state !== "importing") break;
+    }
+    expect((await door.ask("GET", "/consent")).json.signatures[mailboxId]).toBe(SIG);
+    const after = (await door.ask("GET", `/sync?since=${before.cursor}`)).json;
+    const moved = stampOf(after);
+    expect(moved, "no settings change reached the window after Import").not.toBeNull();
+    expect(stampOf(before) === null || moved! > stampOf(before)!,
+      `the settings stamp did not move (${stampOf(before)} → ${moved}): the window keeps "No signature"`).toBe(true);
   });
 });

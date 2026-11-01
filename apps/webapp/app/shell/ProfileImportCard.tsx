@@ -14,7 +14,8 @@
 /**
  * The answers are durable and exact: Import sends back the `fingerprint` of the exact content
  * shown, and the server re-reads the mailbox and refuses if the document changed — nothing is ever
- * applied that nobody confirmed. "Not now" is recorded once, server-side, keyed to that content:
+ * applied that nobody confirmed. Only a card that said the copy's signature replaces the one on
+ * this mailbox sends that signature's receipt; without it the mailbox keeps its own. "Not now" is recorded once, server-side, keyed to that content:
  * the identical document never asks again on any device, while a genuinely different one may. A
  * document written by a NEWER ohmail offers no import at all — this build cannot read all of it,
  * and a partial import would be a silent loss dressed as a restore.
@@ -118,8 +119,11 @@ function settledPhase(st: ProfileImportStatusWire): ProfileImportPhase | null {
  */
 export interface ProfileImportTransport {
   candidate(mailboxId: string): Promise<ProfileImportCandidateWire>;
-  /** 200 applied, or 202 handed to the organizer — then {@link status} is asked. */
-  apply(mailboxId: string, fingerprint: string): Promise<ProfileImportAppliedWire | ProfileImportPendingWire>;
+  /**
+   * 200 applied, or 202 handed to the organizer — then {@link status} is asked. `signatureReplaces`:
+   * the offer's receipt, sent only when the card said the copy's signature replaces this mailbox's.
+   */
+  apply(mailboxId: string, fingerprint: string, signatureReplaces?: string): Promise<ProfileImportAppliedWire | ProfileImportPendingWire>;
   /** Where a handed-over press stands. A primary-key read; never a dial. */
   status(mailboxId: string, fingerprint: string): Promise<ProfileImportStatusWire>;
   decline(mailboxId: string, subject: { fingerprint?: string; v?: number }): Promise<unknown>;
@@ -145,7 +149,7 @@ export interface ProfileImportState {
 
 const HOSTED: ProfileImportTransport = {
   candidate: (id) => profileImportApi.candidate(id),
-  apply: (id, fingerprint) => profileImportApi.apply(id, fingerprint),
+  apply: (id, fingerprint, signatureReplaces) => profileImportApi.apply(id, fingerprint, signatureReplaces),
   status: (id, fingerprint) => profileImportApi.status(id, fingerprint),
   decline: (id, subject) => profileImportApi.decline(id, subject),
   replace: (id, fingerprint) => profileImportApi.replace(id, fingerprint),
@@ -191,6 +195,8 @@ function asOffer(dto: unknown): OfferCandidate | null {
     if (typeof counts[k] !== "number") return null;
   }
   if (typeof counts.awayResponder !== "boolean") return null;
+  // A receipt that is no string is not one: the card neither says "replacing" nor sends it back.
+  const { signatureReplaces, ...rest } = counts;
   return {
     state: "found",
     fingerprint: d.fingerprint,
@@ -199,7 +205,10 @@ function asOffer(dto: unknown): OfferCandidate | null {
       kind: typeof producer.kind === "string" ? producer.kind : "unknown",
       version: typeof producer.version === "string" ? producer.version : "",
     },
-    counts: counts as unknown as ProfileImportCountsWire,
+    counts: {
+      ...(rest as unknown as ProfileImportCountsWire),
+      ...(typeof signatureReplaces === "string" && signatureReplaces.length > 0 ? { signatureReplaces } : {}),
+    },
   };
 }
 
@@ -369,7 +378,8 @@ export function useProfileImport(
     setPhase({ kind: "applying" });
     void (async () => {
       try {
-        const applied = await via.apply(mailboxId, candidate.fingerprint);
+        // The receipt goes back only because the card said "replacing the one on this mailbox now".
+        const applied = await via.apply(mailboxId, candidate.fingerprint, candidate.counts.signatureReplaces);
         if (!mounted.current) return;
         setPhase(isPending(applied)
           ? { kind: "importing", fingerprint: applied.fingerprint, reason: applied.reason ?? null }
@@ -438,11 +448,16 @@ export function useProfileImport(
   return { offer, phase, importNow, notNow, acknowledge, declined };
 }
 
-/** The counts, in plain words, joined the way the locale joins a list. Zero-count parts vanish. */
+/**
+ * The counts, in plain words, joined the way the locale joins a list. Zero-count parts vanish. The
+ * signature says it replaces this mailbox's when the offer names one, except where `replacing` is
+ * false (the Replace note speaks of the copy in the mailbox, not of this one).
+ */
 function detailsOf(
   t: (key: string, values?: Record<string, string | number | Date>) => string,
   locale: string,
   counts: ProfileImportCountsWire,
+  replacing = true,
 ): string {
   const parts: string[] = [];
   if (counts.screener > 0) parts.push(t("screenerPart", { count: counts.screener }));
@@ -450,6 +465,9 @@ function detailsOf(
   if (counts.notifyRules > 0) parts.push(t("notifyPart", { count: counts.notifyRules }));
   if (counts.tags > 0) parts.push(t("tagsPart", { count: counts.tags }));
   if (counts.awayResponder) parts.push(t("awayPart"));
+  if (counts.signature === true) {
+    parts.push(replacing && typeof counts.signatureReplaces === "string" ? t("signatureReplacingPart") : t("signaturePart"));
+  }
   if (parts.length === 0) return "";
   try {
     return new Intl.ListFormat(locale, { style: "long", type: "conjunction" }).format(parts);
@@ -501,6 +519,8 @@ export function ProfileImportCard({
         {phase.applied.skippedRules > 0
           ? <p className="pfi-note">{t("doneSkipped", { count: phase.applied.skippedRules })}</p>
           : null}
+        {/* The copy's signature was not taken over the one typed on this mailbox: said, never silent. */}
+        {phase.applied.imported.signatureKept === true ? <p className="pfi-note">{t("doneSignatureKept")}</p> : null}
         <div className="pfi-actions">
           <Button onClick={onAcknowledge}>{t("doneAction")}</Button>
         </div>
@@ -677,7 +697,7 @@ export function SavedProfileSection({
     void (async () => {
       try {
         if (verb === "import") {
-          const applied = await via.apply(row.mailboxId, row.candidate.fingerprint);
+          const applied = await via.apply(row.mailboxId, row.candidate.fingerprint, row.candidate.counts.signatureReplaces);
           if (!isPending(applied)) { set({ kind: "imported", applied }); return; }
           set({ kind: "importing", fingerprint: applied.fingerprint, reason: applied.reason ?? null });
           /* The organizer finishes it: asked on a slow beat until the answer is terminal. */
@@ -709,6 +729,11 @@ export function SavedProfileSection({
         const when = Number.isNaN(savedDate.getTime()) ? null : format.dateTime(savedDate, { dateStyle: "long" });
         const busy = phase.kind === "busy" || phase.kind === "importing";
         const imported = phase.kind === "imported" ? detailsOf(t, locale, phase.applied.imported) : "";
+        const done = [
+          imported ? t("doneDetails", { details: imported }) : "",
+          phase.kind === "imported" && phase.applied.imported.signatureKept === true ? t("doneSignatureKept") : "",
+        ].filter((line) => line.length > 0).join(" ");
+        const plain = detailsOf(t, locale, counts, false);
         return (
           <SettingsSection key={row.mailboxId}>
             <SettingsSubhead>{t("savedTitle", { address: displayAddress(row.address) })}</SettingsSubhead>
@@ -722,11 +747,7 @@ export function SavedProfileSection({
             ) : null}
             <p className="set-note-inline">{t("savedBody")}</p>
             {phase.kind === "imported" ? (
-              <SettingsVerdict
-                state="ok"
-                headline={t("doneTitle")}
-                {...(imported ? { detail: t("doneDetails", { details: imported }) } : {})}
-              />
+              <SettingsVerdict state="ok" headline={t("doneTitle")} {...(done ? { detail: done } : {})} />
             ) : phase.kind === "replaced" ? (
               <SettingsVerdict state="ok" headline={t("replacedTitle")} />
             ) : (
@@ -745,7 +766,7 @@ export function SavedProfileSection({
                   </p>
                 ) : null}
                 <p className="set-note-inline">
-                  {details ? t("replaceNote", { details }) : t("replaceNoteBare")}
+                  {plain ? t("replaceNote", { details: plain }) : t("replaceNoteBare")}
                 </p>
                 <SettingsActions>
                   <Button onClick={() => press(row, "import")} disabled={busy}>

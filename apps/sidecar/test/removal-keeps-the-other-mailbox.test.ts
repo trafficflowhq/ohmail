@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { drafts, mailboxes, messages, outboundSends, threadNotes, threads } from "@trafficflow/db";
+import {
+  PROFILE_FOUND_AUDIT_ACTION, auditLog, drafts, mailboxes, messages, outboundSends, threadNotes, threads,
+} from "@trafficflow/db";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
 } from "@trafficflow/core/adapters/imap";
@@ -229,7 +231,7 @@ describe("removing a mailbox from this computer", () => {
     expect(engine.read().list<EngineMessage>("message").map((m) => m.mailboxId)).toEqual([s.world.mailboxId]);
   });
 
-  it("keeps what the other mailbox still holds — its reply's words, a shared conversation and its note, its send", async () => {
+  it("keeps what the other mailbox still holds — its reply's words, a shared conversation and its note, its send, its signature's receipt", async () => {
     /* The census's SHARED writes on this door (`erasure-coverage-census.test.ts` names this case). */
     const kept = world(KEPT, "imap-a.invalid", [{ uid: 11, from: SHARED, date: "Mon, 21 Sep 2026 10:00:00 +0000" }]);
     const gone = world(GONE, "imap-b.invalid", [
@@ -270,6 +272,13 @@ describe("removing a mailbox from this computer", () => {
     const [goneSend] = await s.db.insert(outboundSends).values({
       accountId, draftId: sentDraft!.id, idempotencyKey: randomUUID(), mintedMessageId: "<h@y>", status: "sent",
     }).returning();
+    // The organizer's found-markers, each naming its copy's signature by receipt.
+    const marker = (mailboxId: string, signatureReceipt: string) => ({
+      accountId, action: PROFILE_FOUND_AUDIT_ACTION, inverse: null,
+      payload: { mailboxId, state: "found", fingerprint: "f".repeat(64), heldForImport: true, signatureReceipt },
+    });
+    const [keptMarker, goneMarker] = await s.db.insert(auditLog)
+      .values([marker(s.world.mailboxId, "1".repeat(32)), marker(dto.id, "2".repeat(32))]).returning({ id: auditLog.id });
 
     expect((await remove(s, dto.id)).status).toBe(200);
 
@@ -293,5 +302,9 @@ describe("removing a mailbox from this computer", () => {
     expect(survivor?.threadId, "the other mailbox's message lost its conversation").toBe(shared!.id);
     const [row] = await s.db.select().from(mailboxes).where(eq(mailboxes.id, s.world.mailboxId));
     expect(row?.status, "the other mailbox's own row was written").not.toBe("disabled");
+    const payloadOf = async (id: string) => (await s.db.select({ p: auditLog.payload }).from(auditLog).where(eq(auditLog.id, id)))[0]?.p;
+    expect(await payloadOf(keptMarker!.id), "the other mailbox's marker lost its receipt").toMatchObject({ signatureReceipt: "1".repeat(32) });
+    expect(await payloadOf(goneMarker!.id), "the removed mailbox's marker still names its signature").not.toHaveProperty("signatureReceipt");
+    expect(await payloadOf(goneMarker!.id), "the marker row went with its receipt").toMatchObject({ mailboxId: dto.id, state: "found" });
   });
 });

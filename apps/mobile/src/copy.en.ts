@@ -3155,6 +3155,9 @@ const TABLE = {
   pfiNotifyPart: (n: number) => (n === 1 ? "1 notification choice" : `${n} notification choices`),
   pfiTagsPart: (n: number) => (n === 1 ? "1 tag" : `${n} tags`),
   pfiAwayPart: "your away reply",
+  pfiSignaturePart: "your signature",
+  /* The offer names the signature on this mailbox the copy's replaces; Import sends that receipt back. */
+  pfiSignatureReplacingPart: "your signature, replacing the one on this mailbox now",
   /* The list the counts are said in: "a and b", and "a, b, and c" (`head` is "a, b"). */
   pfiListPair: (first: string, second: string) => `${first} and ${second}`,
   pfiListMany: (head: string, last: string) => `${head}, and ${last}`,
@@ -3177,6 +3180,7 @@ const TABLE = {
   pfiDoneTitle: "Your settings are back.",
   pfiDoneDetails: (details: string) => `Imported: ${details}.`,
   pfiDoneSkipped: (n: number) => (n === 1 ? "1 rule couldn't be imported." : `${n} rules couldn't be imported.`),
+  pfiDoneSignatureKept: "The signature you typed on this mailbox stays; the saved one was not imported.",
   pfiDoneAction: "Done",
   pfiErrorTitle: "That didn't work.",
   pfiErrorGeneric: "Something went wrong.",
