@@ -1756,6 +1756,8 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // folders, each at most the page's rows, or the one message a restore asks about.
   // The open read's stamp: the rows of the batch's own checked `ids` that were unread.
   "message-service.ts :: wasUnread": { origin: { bounded: "a subset of the batch's checked ids — at most MARK_SEEN_MAX_IDS, the owned read's rows that were unread" }, count: 1 },
+  // An Undo of a Mark unread's restore: the live ids its map names.
+  "message-service.ts :: restoredIds": { origin: { bounded: "a subset of the batch's live ids — at most MARK_SEEN_MAX_IDS, the ones an Undo's read names an open read for" }, count: 1 },
   "message-service.ts :: trashMailboxIds": { origin: { bounded: "the distinct mailboxes of one listTrash page — at most MAX_PAGE_LIMIT rows (clampLimit), or the one message restore reads" }, count: 1 },
   "message-service.ts :: trashFolders": { origin: { bounded: "the distinct origin folders of the same page — at most MAX_PAGE_LIMIT rows (clampLimit), or the one message restore reads" }, count: 1 },
   "message-service.ts :: underBudget": {

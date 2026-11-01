@@ -17,8 +17,15 @@ export function chunkMarkSeen(ms: readonly EngineMutation[]): EngineMutation[] {
     if (mu.kind !== "mark_seen" || mu.messageIds.length <= MARK_SEEN_CHUNK) return [mu];
     const out: EngineMutation[] = [];
     for (let i = 0; i < mu.messageIds.length; i += MARK_SEEN_CHUNK) {
-      out.push({ ...mu, messageIds: mu.messageIds.slice(i, i + MARK_SEEN_CHUNK) });
+      out.push(narrowRead(mu, mu.messageIds.slice(i, i + MARK_SEEN_CHUNK)));
     }
     return out;
   });
+}
+
+/** A `mark_seen` over `ids` only; an Undo's restore stays present and keeps exactly those ids' entries. */
+export function narrowRead<M extends Extract<EngineMutation, { kind: "mark_seen" }>>(mu: M, ids: string[]): M {
+  const restore = mu.restoreOpenReadAt;
+  if (restore === undefined) return { ...mu, messageIds: ids };
+  return { ...mu, messageIds: ids, restoreOpenReadAt: Object.fromEntries(ids.filter((id) => Object.hasOwn(restore, id)).map((id) => [id, restore[id]!])) };
 }

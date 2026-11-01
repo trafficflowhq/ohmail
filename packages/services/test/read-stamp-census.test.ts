@@ -89,9 +89,10 @@ describe("read-stamp census", () => {
  * THE OPEN READ HAS TWO WRITERS AND EVERY UNREAD CLEARS IT (owner 2026-10-07). (a) A `.set` literal
  * that flips `unread` to anything but the literal `false` names `openReadAt` — the batch, the single
  * PATCH, the `\Seen` adoption clear it in the statement that flips the flag (the Screener and retro
- * writers only ever mark read, so they are exempt by that literal). (b) Exactly TWO `.set` literals
- * write it a non-null value: the read in `MessageService.markSeen`, and the Undo's restore of the
- * press-time value in `TriageService.setState`.
+ * writers only ever mark read, so they are exempt by that literal). (b) Exactly THREE `.set` literals
+ * write it a non-null value, each pinned by path, method and text: the read and the Undo of a Mark
+ * unread's restore in `MessageService.markSeen`, and the Undo's restore of the press-time value in
+ * `TriageService.setState`.
  */
 const mayUnread = (lit: string): boolean => /\bunread\s*[,:}]/.test(lit) && !/\bunread\s*:\s*false\b/.test(lit);
 const namesOpenRead = (lit: string): boolean => /\bopenReadAt\s*:/.test(lit);
@@ -136,16 +137,17 @@ describe("open-read census", () => {
     expect(clears).toBeGreaterThanOrEqual(3);
   });
 
-  it("(b) exactly two .set literals stamp it: the read in MessageService.markSeen, the Undo's restore in TriageService.setState", () => {
-    const stamps: Array<{ path: string; at: number }> = [];
+  it("(b) exactly three .set literals stamp it: the read and the Undo's restore in markSeen, the Undo's restore in setState", () => {
+    const stamps: Array<{ path: string; at: number; lit: string }> = [];
     for (const f of files) {
-      for (const { at, lit } of setLiteralsAt(f.code)) if (stampsOpenRead(lit)) stamps.push({ path: f.path, at });
+      for (const { at, lit } of setLiteralsAt(f.code)) if (stampsOpenRead(lit)) stamps.push({ path: f.path, at, lit: lit.replace(/\s+/g, " ") });
     }
     const WRITERS = [
-      { path: "packages/services/src/message-service.ts", method: "async markSeen(" },
-      { path: "packages/services/src/triage-service.ts", method: "async setState(" },
+      { path: "packages/services/src/message-service.ts", method: "async markSeen(", lit: "{ openReadAt: at }" },
+      { path: "packages/services/src/message-service.ts", method: "async markSeen(", lit: "{ openReadAt: restoredAt }" },
+      { path: "packages/services/src/triage-service.ts", method: "async setState(", lit: "{ openReadAt: restore > now ? now : restore }" },
     ];
-    expect(stamps.map((x) => x.path)).toEqual(WRITERS.map((w) => w.path));
+    expect(stamps.map((x) => [x.path, x.lit])).toEqual(WRITERS.map((w) => [w.path, w.lit]));
     WRITERS.forEach((w, i) => {
       const code = files.find((f) => f.path === w.path)!.code;
       const start = code.indexOf(w.method);

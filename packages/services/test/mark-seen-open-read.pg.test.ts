@@ -168,6 +168,27 @@ describe.skipIf(!PG_UP)("the open read, on real Postgres", () => {
     expect(after.lastReadAt).toBe(before.lastReadAt);
   });
 
+  it("Mark unread, then its Undo carrying each row's instant: both open reads come back through postgres-js", async () => {
+    const { accountId, ids } = await seed([
+      ...ONE, { label: "g", thread: "G", arrived: "2026-07-24T00:16:00.000Z", unread: true },
+      { label: "h", thread: "G", arrived: "2026-07-24T00:17:00.000Z", unread: false },
+    ]);
+    const c = ctx(accountId);
+    const svc = new MessageService();
+    await svc.markSeen(c, { ids: [ids.get("f")!], unread: false, openRead: true });
+    await svc.markSeen(c, { ids: [ids.get("g")!], unread: false, openRead: true });
+    const before = await stamps(accountId, ids);
+    expect(before.get("f")!.openReadAt).not.toBe(before.get("g")!.openReadAt);
+    const all = ["f", "g", "h"].map((l) => ids.get(l)!);
+    await svc.markSeen(c, { ids: all, unread: true });
+    await svc.markSeen(c, {
+      ids: all, unread: false,
+      restoreOpenReadAt: Object.fromEntries(["f", "g"].map((l) => [ids.get(l)!, new Date(before.get(l)!.openReadAt!).toISOString()])),
+    });
+    const after = await stamps(accountId, ids);
+    expect(["f", "g", "h"].map((l) => after.get(l)!.openReadAt)).toEqual(["f", "g", "h"].map((l) => before.get(l)!.openReadAt));
+  });
+
   for (const shape of OPEN_READ_SHAPES) {
     it(`server parity: ${shape.name}`, async () => {
       const { accountId, ids } = await seed(shape.rows);

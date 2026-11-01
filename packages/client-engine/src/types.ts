@@ -1363,6 +1363,13 @@ export type EngineMutation =
        * and drops it, so it never reaches the wire, the outbox or the overlay.
        */
       readRow?: string;
+      /**
+       * AN UNDO OF A MARK UNREAD — set by `inverseMutations` alone: each flipped row's open read before
+       * the press, `{}` when none had one. Present, the read is an Undo's: it puts back each named row's
+       * open read (on a row holding none, in no pile, never after now), places nothing anew (no
+       * `openRead`) and spends no resurfaced pin.
+       */
+      restoreOpenReadAt?: Record<string, ISODateTime>;
     }
   /**
    * Send mail — the one mutation whose effect leaves the building. One verb, two entry points
