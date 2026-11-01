@@ -118,6 +118,30 @@ export function headerSearchesIn(log: readonly string[]): string[] {
   return log.filter((l) => /^search \S+ \{"[^"]/.test(l));
 }
 
+/**
+ * A MESSAGE AS A SERVER THAT RE-ENCODES STORED BODIES SERVES IT: the body's UTF-8 bytes as
+ * quoted-printable (`=XX`, soft breaks under 76 columns) or base64 (76-column lines), and the
+ * transfer header saying so.
+ */
+export function reencodeBody(raw: string, cte: "quoted-printable" | "base64"): string {
+  const at = raw.indexOf("\r\n\r\n");
+  const head = raw.slice(0, at).replace(/^Content-Transfer-Encoding:.*$/im, `Content-Transfer-Encoding: ${cte}`);
+  const bytes = Buffer.from(raw.slice(at + 4), "utf8");
+  if (cte === "base64") return `${head}\r\n\r\n${bytes.toString("base64").replace(/.{76}/g, "$&\r\n")}`;
+  const lines = bytes.toString("latin1").split("\r\n").map((line) => {
+    let out = "";
+    let width = 0;
+    for (const c of line) {
+      const unit = c === "=" || c > "~" ? `=${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}` : c;
+      if (width + unit.length > 75) { out += "=\r\n"; width = 0; }
+      out += unit;
+      width += unit.length;
+    }
+    return out;
+  });
+  return `${head}\r\n\r\n${lines.join("\r\n")}`;
+}
+
 interface Folder {
   subscribed: boolean;
   messages: Array<{ uid: number; raw: string; internalDate: Date; flags: Set<string> }>;

@@ -27,7 +27,7 @@ import {
   writeOrganizerProfile,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
   type ProfileReadResult, type ProfileTidyMode, type ProfileLocator, profileLocatorOf, type ProfileScreening,
-  type ProfileGap,
+  type ProfileGap, type ProfileUnkeptWhy,
 } from "@trafficflow/core/adapters/organizer-profile";
 
 /** (install, mailbox, folder generation) the holder has re-encoded a plain settings message under. */
@@ -36,6 +36,29 @@ const REENCODED = new Set<string>();
 /** One settings message named by two locators. */
 function sameLocator(a: ProfileLocator, b: ProfileLocator): boolean {
   return a.installId === b.installId && a.second === b.second && a.fingerprint === b.fingerprint;
+}
+
+/** How long the same document waits before it is sent again to a server that did not keep it as written. */
+export const PROFILE_UNKEPT_RETRY_MS = 24 * 60 * 60 * 1000;
+
+/** The refusals of a copy the server listed back and read otherwise: appended, then removed. */
+const UNKEPT_BY_THE_SERVER: ReadonlySet<ProfileUnkeptWhy> = new Set<ProfileUnkeptWhy>(
+  ["not_a_profile", "served_malformed", "served_different"],
+);
+
+/**
+ * THE DOCUMENT A SERVER DID NOT KEEP AS WRITTEN, by (install, mailbox), and when: that document is not
+ * appended again for {@link PROFILE_UNKEPT_RETRY_MS} (a server may be fixed); another one is, and a kept
+ * copy forgets it. In process, so it outlives an attachment; a restart pays one append.
+ */
+const UNKEPT = new Map<string, { document: string; at: number }>();
+
+/** The refusal a copy that did not stay is, for the latch and the row ({@link OrganizerProfileSync.profileBlock}). */
+function appendUnreadable(): ProfileUnavailableError {
+  return new ProfileUnavailableError(
+    "the new settings copy would not read back as written, so the current one stands",
+    { op: "append_profile", code: "profile_append_unreadable" },
+  );
 }
 
 /**
@@ -281,6 +304,8 @@ export class OrganizerProfileSync {
   private lastAttemptAt = 0;
   /** The list bound's figure last logged (`profile_list_bounded`), so it is said once per change. */
   private boundedSaid: Record<string, number> = {};
+  /** The entries last said published as read (`profile_entries_normalized`), so they are said once per change. */
+  private normalizedSaid: Record<string, number> = {};
   /** When the preflight last completed a read — the seeded never-owned re-probe's clock. */
   private lastPreflightAt = 0;
   private inFlight = false;
@@ -613,6 +638,16 @@ export class OrganizerProfileSync {
       log("profile_list_bounded", { mailboxId, ...line });
     }
     this.boundedSaid = { ...leftOut };
+  }
+
+  /** {@link normalizedLine}, logged; the figures are kept so the next tick says only a change. */
+  private sayNormalized(
+    normalized: Record<string, number>, mailboxId: string,
+    log: (event: string, detail: Record<string, unknown>) => void,
+  ): void {
+    const line = normalizedLine(this.normalizedSaid, normalized);
+    if (line !== null) log("profile_entries_normalized", { mailboxId, ...line });
+    this.normalizedSaid = { ...normalized };
   }
 
   private noteFailure(
@@ -1232,13 +1267,14 @@ export class OrganizerProfileSync {
       /* THE PINNED CONNECTION, not the live getter — see the parameter. Correct wherever this
          line moves to, and no longer dependent on nothing awaiting above it. */
       const io = adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
-      const { payload, leftOut, screening, applied } = await serializeOrganizerProfileCounted(
+      const { payload, leftOut, normalized, screening, applied } = await serializeOrganizerProfileCounted(
         deps.db, deps.accountId, deps.mailboxId, { applied: true, now },
       );
       const screeningKey = screeningKeyOf(screening);
       const leavingGap = this.leavingGap;
       const gapKey = gapKeyOf(leavingGap ?? undefined);
       this.sayBounded(leftOut, payload, deps.mailboxId, log);
+      this.sayNormalized(normalized, deps.mailboxId, log);
       const fp = profileFingerprint(payload);
 
       // A detection marker that failed durably is owed, not forgotten: the hold or the newer
@@ -1451,6 +1487,17 @@ export class OrganizerProfileSync {
         await this.armHoldFromFolder();
         return;
       }
+      /* THE DOCUMENT THE SERVER DID NOT KEEP is not appended again until it changes or a day has passed: the
+         refusal stands (the row keeps its sentence, the line was said) and the folder is looked at once per
+         interval, as a store with nothing to write looks. A document is what the dirty check tells apart. */
+      const document = JSON.stringify([fp, screeningKey, gapKey]);
+      const unkeptKey = JSON.stringify([deps.self.installId, deps.mailboxId]);
+      const unkept = UNKEPT.get(unkeptKey);
+      if (unkept?.document === document && now.getTime() - unkept.at < PROFILE_UNKEPT_RETRY_MS) {
+        this.noteFailure(appendUnreadable(), log);
+        await this.verifyFolder(io, payload, screening, applied, log);
+        return;
+      }
 
       const doc = makeProfileDoc(payload, {
         updatedAt: now,
@@ -1500,6 +1547,7 @@ export class OrganizerProfileSync {
           this.lastWrittenGap = gapKey;
           this.currentOwnSecond = Math.floor(now.getTime() / 1000);
           this.seenForeignFingerprints.clear();
+          UNKEPT.delete(unkeptKey);
           if (result.owed === true) this.tidyOwed = true;
           log("organizer_profile_written", {
             mailboxId: deps.mailboxId, accountId: deps.accountId, pruned: result.removed,
@@ -1510,7 +1558,11 @@ export class OrganizerProfileSync {
              stays open, so the next write-due tick writes once the folder is clean. */
           this.tidyOwed = true;
         } else if (result.reason === "append_unreadable") {
-          // The new copy did not read back and was removed; the current one stands. Retried next interval.
+          /* The new copy did not read back and the current one stands: a refusal like any other, so it is
+             said once and the row says the settings cannot be saved. A copy the server read back otherwise is
+             not sent again for this document ({@link UNKEPT}); any other is retried next interval. */
+          if (UNKEPT_BY_THE_SERVER.has(result.why)) UNKEPT.set(unkeptKey, { document, at: now.getTime() });
+          this.noteFailure(appendUnreadable(), log);
         } else if (result.reason === "newer") {
           // A newer document arrived between the seed and this write. Same posture as at seed —
           // including the durable marker, which the log line alone is not: the confirm flow
@@ -2386,4 +2438,18 @@ export function listBoundLines(
     out.push({ list, kept: Array.isArray(value) ? value.length : 0, leftOut: n });
   }
   return out;
+}
+
+/**
+ * THE STORE'S ENTRIES A READER READS OTHERWISE are published as read (an address with spaces, a
+ * priority past the bound, an empty name), and that is said once per change of the figures (0 to
+ * start): the lists by name and the entries counted, never a value.
+ */
+export function normalizedLine(
+  before: Readonly<Record<string, number>>, normalized: Readonly<Record<string, number>>,
+): { sections: string[]; count: number } | null {
+  const lists = Object.keys(normalized);
+  if (lists.every((list) => normalized[list] === (before[list] ?? 0))) return null;
+  const sections = lists.filter((list) => normalized[list]! > 0);
+  return { sections, count: sections.reduce((n, list) => n + normalized[list]!, 0) };
 }

@@ -45,7 +45,9 @@ One RFC822 message in `ohmail/_meta`:
   and decision date, the away reply's audience, rate, dates and piles, the
   screening window's baseline and scope) is written as JSON
   `\uXXXX` escapes; any JSON parser reads the same values. The body is 7-bit ASCII
-  (`Content-Transfer-Encoding: 7bit`).
+  (`Content-Transfer-Encoding: 7bit`). Where a server stored the body re-encoded
+  and says so in one `Content-Transfer-Encoding: quoted-printable` or `base64`
+  header, a reader undoes that encoding before it takes the document.
 
 ## The JSON document, version 2
 
@@ -377,6 +379,11 @@ The mail itself needs no line here: it never left the mailbox.
 IMAP has no in-place update. The new copy is appended first, read back, and
 the copy it replaces expunged after, so a crash between the steps leaves two
 documents rather than none; readers coalesce by `updatedAt` (newest wins).
+A writer publishes every value the way a reader reads it back (an address
+trimmed, a priority within 0 to 1000, an entry without its name left out), and
+it never appends a copy that would not read back as written. A copy the server
+stores so that it reads back otherwise is removed, and the same document is not
+appended again until it changes or a day has passed.
 Exactly one current profile message is the steady state. Settings another
 install left in the folder (or a removed store under the same install id) stay
 beside the organizer's own until the person imports them or saves this

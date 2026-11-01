@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listBoundLines } from "../src/profile.js";
+import { listBoundLines, normalizedLine } from "../src/profile.js";
 
 /**
  * PAST A LIST'S BOUND THE SETTINGS DOCUMENT CARRIES THE NEWEST ONLY, and the worker says so once
@@ -20,5 +20,14 @@ describe("the list bound is said once per change", () => {
   });
   it("CONTROL: an account under every bound logs nothing, from the first tick on", () => {
     expect(listBoundLines({}, none, payload)).toEqual([]);
+  });
+});
+
+describe("entries published as a reader reads them are said once per change", () => {
+  it("one line naming the lists and counting the entries; the same figures say nothing; back to 0 is said", () => {
+    expect(normalizedLine({}, none)).toBeNull();
+    expect(normalizedLine({}, { ...none, rules: 1, tagNames: 2 })).toEqual({ sections: ["rules", "tagNames"], count: 3 });
+    expect(normalizedLine({ ...none, rules: 1, tagNames: 2 }, { ...none, rules: 1, tagNames: 2 })).toBeNull();
+    expect(normalizedLine({ ...none, rules: 1 }, none)).toEqual({ sections: [], count: 0 });
   });
 });
