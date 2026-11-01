@@ -552,8 +552,8 @@ export function SearchView({
   const isEgg = trimmed.toLowerCase() === "blanc" && shownCount === 0;
   /** The count on the result line: the store's own once it answered, else the rows on screen. */
   const found = storeReady && filter === null ? Math.max(ready.total, shownCount) : shownCount;
-  // Reset on the ORDER too, not only on the query: a new question or order starts at the top.
-  const asked = `${trimmed}\u0000${sort}`;
+  // A new query, order or pressed facet is a new question: the cursor starts at the top.
+  const asked = `${trimmed}\u0000${sort}\u0000${filter ? `${filter.group}:${filter.label}` : ""}`;
   /** The cursor's slot and the hit on it, for the question asked; a stale question's reads as the top. */
   const [pos, setPos] = useState<{ asked: string; i: number; id: string | null }>({ asked, i: 0, id: null });
   const held = pos.asked === asked ? pos : { asked, i: 0, id: null };
@@ -572,7 +572,12 @@ export function SearchView({
   const cursorId = cursor < 0 ? null : hitIdAt(cursor) ?? held.id;
   const cursorAt = Math.max(cursor, 0);
   useEffect(() => {
-    if (pos.asked !== asked || pos.i !== cursorAt || pos.id !== cursorId) setPos({ asked, i: cursorAt, id: cursorId });
+    // Only a moved cursor holds a hit: an untouched one stays on the top row while the device's
+    // paint gives way to the store's answer, whose top can be another letter.
+    if (pos.asked !== asked) setPos({ asked, i: 0, id: null });
+    else if (pos.i !== cursorAt || (pos.id !== null && pos.id !== cursorId)) {
+      setPos({ asked, i: cursorAt, id: pos.id === null ? null : cursorId });
+    }
   });
   const stepTo = (i: number) => setPos({ asked, i, id: hitIdAt(i) });
 
