@@ -1178,6 +1178,7 @@
     "toastRestoringTo": "Wird in {place} wiederhergestellt…",
     "toastRestoreUndone": "Bleibt im Papierkorb.",
     "toastRestoreFailed": "Konnte nicht wiederhergestellt werden — sie ist noch im Papierkorb.",
+    "toastRestoreGone": "Sie ist nicht mehr im Papierkorb.",
     "restoreReplayRetrying": "{count, plural, one {Das Wiederherstellen dieser Nachricht wurde nicht abgeschlossen. Neuer Versuch…} other {Das Wiederherstellen von # Nachrichten wurde nicht abgeschlossen. Neuer Versuch…}}",
     "restoreReplayFailed": "{count, plural, one {Diese Wiederherstellung konnte nicht abgeschlossen werden — sie ist noch im Papierkorb.} other {# dieser Wiederherstellungen konnten nicht abgeschlossen werden — sie sind noch im Papierkorb.}}",
     "noErase": "ohmail löscht nie unwiderruflich — zum endgültigen Entfernen nutze deinen eigenen Mail-Client.",

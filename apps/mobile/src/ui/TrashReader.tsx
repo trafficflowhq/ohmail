@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { View } from "react-native";
 import { Copy } from "../copy";
-import { heldTrashRow, dropTrashRow } from "../state/trash-hold";
+import { heldTrashRow, dropTrashRow, noteTrashRestored } from "../state/trash-hold";
 import { useWorld } from "../state/world";
 import { Button, Panel, Screen, Scroller, Txt } from "./base";
 import { DetailBar } from "./chrome";
@@ -20,8 +20,8 @@ export function TrashReader({
   onClose,
 }: {
   id: string;
-  /** The row left Trash — the list drops it; the pushed route goes back. */
-  onRestored: (id: string) => void;
+  /** The row left Trash — the pushed route goes back; the list hears `noteTrashRestored`. */
+  onRestored?: (id: string) => void;
   onClose?: () => void;
 }) {
   const w = useWorld();
@@ -49,7 +49,8 @@ export function TrashReader({
     const ok = await w.actions.trashRestore(m.id);
     if (ok) {
       dropTrashRow(m.id);
-      onRestored(m.id);
+      noteTrashRestored(m.id);
+      onRestored?.(m.id);
       onClose?.();
       return;
     }

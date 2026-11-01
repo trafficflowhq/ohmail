@@ -1178,6 +1178,7 @@
     "toastRestoringTo": "Restoring to {place}\u2026",
     "toastRestoreUndone": "Kept in Trash.",
     "toastRestoreFailed": "Couldn't restore \u2014 it's still in Trash.",
+    "toastRestoreGone": "It's no longer in Trash.",
     "restoreReplayRetrying": "{count, plural, one {Restoring that message did not finish. Retrying\u2026} other {Restoring # messages did not finish. Retrying\u2026}}",
     "restoreReplayFailed": "{count, plural, one {That restore could not be completed \u2014 it's still in Trash.} other {# of those restores could not be completed \u2014 they're still in Trash.}}",
     "noErase": "ohmail never erases mail \u2014 to remove it for good, use your own mail client.",

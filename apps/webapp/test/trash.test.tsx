@@ -597,3 +597,93 @@ describe("useTrashPage — a delete that lands while Trash is open", () => {
     expect(listTrash, "a delete away from Trash is read by the next visit").toHaveBeenCalledTimes(2);
   });
 });
+
+describe("a restored letter leaves Trash for good", () => {
+  const hadCss = typeof (globalThis as { CSS?: unknown }).CSS !== "undefined";
+  beforeEach(() => {
+    if (!hadCss) (globalThis as { CSS?: unknown }).CSS = { escape: (s: string) => s.replace(/["\\]/g, "\\$&") };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    if (!hadCss) (globalThis as { CSS?: unknown }).CSS = undefined;
+  });
+
+  /** The shell's wiring in small: the held restore window, the Trash page and the view. */
+  async function bin(answer: (id: string) => Promise<unknown>) {
+    const { useTrashPage } = await import("../app/shell/trash-page");
+    const { useDeleteUndo } = await import("../app/shell/delete-undo");
+    const listTrash = vi.fn().mockResolvedValue({ state: "ready", items: [row("m1"), row("m2")], nextCursor: null });
+    const engine = { trashAvailable: () => true, listTrash } as never;
+    const said: string[] = [];
+    function Bin() {
+      const restoring = useDeleteUndo({
+        verb: "restore",
+        mutate: restoreDispatch(answer as never, () => said.push("place"), () => said.push(en.trash.toastRestoreGone)),
+        toast: (m) => { said.push(m); },
+        copy: {
+          deleted: en.trash.restoring, undo: en.screener.toastUndo, undone: en.trash.toastRestoreUndone,
+          failed: en.trash.toastRestoreFailed, noUndo: en.session.noUndoHere,
+        },
+        refusal: () => null,
+      });
+      return h(TrashView, {
+        page: useTrashPage(engine, true, restoring.held, 0, restoring.landedIds), tags: [],
+        now: new Date("2026-09-09T11:00:00.000Z"), onOpen: () => {}, hydrateBody: () => {},
+        onAction: (_a: string, m: { id: string; mailboxId: string }) => restoring.remove({ id: m.id, mailboxId: m.mailboxId }),
+        onAddTag: () => {},
+      } as never);
+    }
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en, timeZone: "UTC", children: h(KeymapProvider, { children: h(Bin) }),
+      }));
+    });
+    const el = host;
+    return {
+      said,
+      listed: () => [...el.querySelectorAll(".view-trash .row")].map((r) => r.getAttribute("data-id")),
+      cursor: () => el.querySelector('.view-trash .row[aria-selected="true"]')?.getAttribute("data-id"),
+      reader: () => el.querySelector(".view-trash .read-col")?.textContent ?? "",
+      restoreShown: () => act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", shiftKey: true, bubbles: true, cancelable: true }));
+      }),
+      wait: (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); }),
+    };
+  }
+
+  it("past its Undo window the restored letter stays out of the list, the cursor and the reader", async () => {
+    const b = await bin(async () => ({ state: "restored", restoreTo: "INBOX", pending: true }));
+    expect(b.cursor()).toBe("m1");
+    await b.restoreShown();
+    expect(b.listed()).toEqual(["m2"]);
+    await b.wait(UNDO_MS + 1_000);
+    expect(b.listed(), "the server holds it in the inbox now").toEqual(["m2"]);
+    expect(b.cursor()).toBe("m2");
+    expect(b.reader()).not.toContain("Subject m1");
+    expect(b.said).not.toContain(en.trash.toastRestoreFailed);
+  });
+
+  it("stays hidden while the server answers, and a refusal brings it back with the refusal", async () => {
+    let refuse: (v: unknown) => void = () => {};
+    const b = await bin(() => new Promise((r) => { refuse = r; }));
+    await b.restoreShown();
+    await b.wait(UNDO_MS + 1_000);
+    expect(b.listed(), "not listed again before the server answered").toEqual(["m2"]);
+    await act(async () => { refuse({ state: "rolled_back", error: "x", code: "provider_unreachable" }); });
+    expect(b.listed()).toEqual(["m1", "m2"]);
+    expect(b.said).toContain(en.trash.toastRestoreFailed);
+  });
+
+  it("a letter already out of Trash leaves the list and is said to be out, never 'still in Trash'", async () => {
+    const b = await bin(async () => ({ state: "rolled_back", error: "this message is not in Trash", code: "not_in_trash" }));
+    await b.restoreShown();
+    await b.wait(UNDO_MS + 1_000);
+    expect(b.listed()).toEqual(["m2"]);
+    expect(b.said).toContain(en.trash.toastRestoreGone);
+    expect(b.said).not.toContain(en.trash.toastRestoreFailed);
+  });
+});

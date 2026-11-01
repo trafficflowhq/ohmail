@@ -183,6 +183,7 @@ import {
 import type { ScreeningAnswer } from "../net/consent";
 import { networkNow, type NetworkState } from "../net/network-door";
 import type { ServerWaitingSender } from "../net/screener";
+import { noteTrashLanded } from "./trash-hold";
 import {
   destDone,
   domainOf,
@@ -3701,9 +3702,9 @@ export interface LiveWorldActions {
   /**
    * Put one deleted message back where it was — the delete verb's inverse move
    * (`POST /messages/:id/restore`). Resolves `true` when the server accepted the restore
-   * (still PENDING on the mail server — the toast says "Restoring to …", never "restored");
-   * the rolled-back and unavailable arms speak their own sentence and answer `false`, so the
-   * caller keeps the row.
+   * (still PENDING on the mail server — the toast says "Restoring to …", never "restored"), and
+   * when the server says it is in Trash no more; the other rolled-back and unavailable arms speak
+   * their own sentence and answer `false`, so the caller keeps the row.
    */
   trashRestore(messageId: string): Promise<boolean>;
   /**
@@ -5291,6 +5292,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (!res || res.status === "rolled_back") { toast(refuse("deleteFailed")); return false; }
     // A newer press for this message replaced the delete: that press owns the sentence.
     if (res.status === "superseded") return true;
+    noteTrashLanded();
     // `quiet` is the held window's commit (the pill said "Moved to Trash." at the press) — it
     // suppresses ONLY the confirmed sentence; refusal and queued speak above whatever happens.
     if (!opts?.quiet) toast(refuse("toastDeleted"));
@@ -5352,6 +5354,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const res = await engine.restoreFromTrash(messageId, intent ? { intentId: intent } : {});
     if (res.state === "restored") {
       toast(refuse(res.pending ? "trashToastRestoring" : "trashToastRestored", trashRestoreLabel(res.restoreTo)));
+      return true;
+    }
+    // Restored or moved elsewhere already: the row leaves, and it is not "still in Trash".
+    if (res.state === "rolled_back" && res.code === "not_in_trash") {
+      toast(refuse("trashToastRestoreGone"));
       return true;
     }
     toast(refuse(res.state === "rolled_back" ? "trashToastRestoreFailed" : "trashUnavailable"));

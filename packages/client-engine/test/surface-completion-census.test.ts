@@ -33,14 +33,14 @@ const ROOTS = [
 /**
  * A pair the census names and deliberately does not require, with its reason. One entry, and it
  * is a fact about the VOCABULARY rather than about the site: `delete-undo.ts` branches on a
- * `HeldOutcome`, whose `status` is a `string` because `restoreDispatch` answers the literal
- * `"applied"` — `engine.restoreFromTrash` has its own words and this file owns the mapping. It
+ * `HeldOutcome`, whose `status` is a `string` because `restoreDispatch` maps the restore's
+ * answer onto `"confirmed"` or `"rolled_back"` — `engine.restoreFromTrash` has its own words and this file owns the mapping. It
  * is not a reading of a `MutationResult`, so there is no verdict for it to read, and its
  * non-refusal arm settles both waits for reasons written at the function.
  */
 const PINNED: Record<string, string> = {
   "apps/webapp/app/shell/delete-undo.ts":
-    "HeldOutcome is not a MutationResult — restoreDispatch answers the literal \"applied\" and every double in the suite spells it, so `status` is a `string` and there is no MutationStatus here for the verdict to read. Its dispatch counts the organizer's wait by name all the same, beside the refusals.",
+    "HeldOutcome is not a MutationResult — restoreDispatch maps the restore's answer onto \"confirmed\" or \"rolled_back\" and the suite's doubles spell \"applied\", so `status` is a `string` and there is no MutationStatus here for the verdict to read. Its dispatch counts the organizer's wait by name all the same, beside the refusals.",
 };
 
 /** The two spellings that reduce a status to landed-or-not. */
