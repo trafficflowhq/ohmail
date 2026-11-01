@@ -133,6 +133,8 @@ export {
 /* The shared-provider list and the one rule-door question, for the phone, which links no core:
    a domain there is never offered as a scope, the server refusing it the same way. */
 export { isSharedProviderDomain, sharedProviderAllowRefusal } from "@trafficflow/core/rule-order";
+/* The gate's one question about a stored verdict, for the phone: a letter its provider failed. */
+export { authScreens } from "@trafficflow/core/sender-headers";
 
 /**
  * THE PAIRING LINK'S SHAPE — composed by the desktop's Devices pane, parsed by the phone. Here
@@ -259,6 +261,7 @@ export {
   type ScreenerHeldMail,
   type ScreenerSegment,
   type ScreenerSenderDTO,
+  type FailedAtGateDTO,
   type ScreenerSuggestionEntity,
   type MailboxProfileEntity,
   MAILBOX_PROFILE_TYPE,
@@ -456,6 +459,7 @@ export {
   screenerAdviceAi,
   mirrorSuggestionIdOf,
   screenerSegments,
+  failedAtGateOf,
   screenerRowsOfStore,
   screenerWaitingOf,
   screenerWaitingNames,

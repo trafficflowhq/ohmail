@@ -7,7 +7,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accounts, applyRuleRequest, approvals, applyScreenerDecision, auditLog, changeLog, contacts, drafts, folderState,
-  mailboxes, messageStates, messages, reconcileRuleCreate, rules, threads, type Tx,
+  mailboxes, messageStates, messages, reconcileRuleCreate, rules, threads, SCREENER_ACT_TRIGGER_PREFIX, type Tx,
 } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { ruleRetroPass } from "../src/rule-retro.js";
@@ -1648,5 +1648,55 @@ describe("SCREENER-020 — after an account-wide decide, the retro pass is a BAC
     expect(r.moved, "the pass filed gate mail the decide already re-routed").toBe(0);
     expect(await movesFor(w, a), "one move per row — the decide's, never a second").toHaveLength(1);
     expect(await movesFor(w, b)).toHaveLength(1);
+  });
+});
+
+describe("the act's own walk never files a sensitive letter", () => {
+  /** A one-time code from `from` in `folder`, as the detector stores it. */
+  const code = async (w: World, from: string, folder: string) => {
+    const id = await seedMessage(w, { from, folder });
+    await w.db.update(messages).set({ sensitivityCategory: "otp" }).where(eq(messages.id, id));
+    return id;
+  };
+  /** The act's Spam decision about `from`, its rule owed a walk over past mail. */
+  const actDenies = async (w: World, from: string) => {
+    await seedMessage(w, { from, folder: "ohmail/Screener" });
+    const r = await w.db.transaction((tx) => applyScreenerDecision(carryDialect(w.db, tx), {
+      accountId: w.accountId, scope: "sender", address: from, appliedFolder: "ohmail/Quarantine", decision: "no",
+      triggeringActionId: `${SCREENER_ACT_TRIGGER_PREFIX}${randomUUID()}`, now: NOW, stampBaseline: false,
+      applyRetro: true, overExisting: "skip", liftOverDomain: false, decidedBy: "pass",
+    }));
+    return r.createdRuleId!;
+  };
+
+  it("leaves a held code and an Ohbox code where they are", async () => {
+    const w = await newWorld();
+    await actDenies(w, "deals@shop.test");
+    const held = await code(w, "deals@shop.test", "ohmail/Screener");
+    const inbox = await code(w, "deals@shop.test", OHBOX);
+    await run(w);
+    expect(await desiredOf(w, held), "the act's walk filed a held code").toBe("ohmail/Screener");
+    expect(await desiredOf(w, inbox), "the act's walk filed a code from the Ohbox").toBe(OHBOX);
+  });
+
+  it("CONTROL: a person's rule files both", async () => {
+    const w = await newWorld();
+    await seedRule(w, { match: "deals@shop.test", destination: "ohmail/Quarantine" });
+    const held = await code(w, "deals@shop.test", "ohmail/Screener");
+    const inbox = await code(w, "deals@shop.test", OHBOX);
+    await run(w);
+    expect(await desiredOf(w, held)).toBe("ohmail/Quarantine");
+    expect(await desiredOf(w, inbox)).toBe("ohmail/Quarantine");
+  });
+
+  it("CONTROL: a release press on the act's rule files the held code it offered", async () => {
+    const w = await newWorld();
+    const ruleId = await actDenies(w, "deals@shop.test");
+    const held = await code(w, "deals@shop.test", "ohmail/Screener");
+    const pressed = new Date("2026-08-04T11:00:00Z");
+    await w.db.update(rules).set({ releaseHeldAt: pressed, retroRequestedAt: pressed, retroDoneAt: null, retroCursor: null })
+      .where(eq(rules.id, ruleId));
+    await run(w);
+    expect(await desiredOf(w, held)).toBe("ohmail/Quarantine");
   });
 });

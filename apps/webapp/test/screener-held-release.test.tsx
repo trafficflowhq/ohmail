@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
   OhmailEngine, MemoryMirrorStore,
-  type EngineMessage, type Folder, type SyncChange,
+  type EngineMessage, type EngineMutation, type Folder, type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
@@ -335,5 +335,65 @@ describe("the held-release row in the Screener header", () => {
   it("draws no row when the door offers nothing", async () => {
     await mount(null);
     expect(row()).toBeNull();
+  });
+});
+
+/**
+ * A HELD LETTER ITS PROVIDER FAILED, WITH NO WAITING ROW: one claiming the account's own address, or a
+ * contact's the store does not list. It is said with the check that failed, and each letter is decided
+ * alone — one `move` out of the gate, never a rule, a decision or a contact.
+ */
+describe("a held letter its provider failed, in the Screener header", () => {
+  const ME = "me@example.test";
+  let sent: EngineMutation[] = [];
+  afterEach(() => { sent = []; });
+
+  async function engineWithForgery(stranger = true): Promise<OhmailEngine> {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const letters = [{ ...held("forged", ME, 10), authVerdict: "fail" as const }, ...(stranger ? [held("m0", "stranger@example.test", 9)] : [])];
+    await store.applyChanges([
+      ...letters.map((m) => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })),
+      { type: "mailbox", op: "create", id: "mb", seq: ++seq, updatedAt: NOW.toISOString(), entity: { id: "mb", address: ME } },
+    ] as SyncChange[]);
+    return new OhmailEngine({
+      store, now: () => NOW,
+      adapter: {
+        sync: async () => ({
+          changes: { creates: [], updates: [], moves: [], deletes: [] },
+          cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
+        }),
+        mutate: async (m: EngineMutation) => { sent.push(m); return { changes: [], seq: null }; },
+        fetchBody: async () => null,
+      } as never,
+    });
+  }
+  const block = (): HTMLElement | null => host!.querySelector(".scn-failed");
+  const verb = (text: string): HTMLElement => [...block()!.querySelectorAll<HTMLElement>("button")]
+    .find((b) => (b.textContent ?? "").trim() === text)!;
+
+  it("says the check that failed and offers the two verbs", async () => {
+    await mount(null, await engineWithForgery());
+    expect(block()?.textContent).toContain(`Your mail provider checked whether this message is from ${ME}, and the check failed.`);
+    expect([...block()!.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Not from you", "It's from you"]);
+  });
+
+  for (const [press, folder] of [["Not from you", "ohmail/Quarantine"], ["It's from you", "INBOX"]] as const) {
+    it(`"${press}" is one move out of the gate and nothing else`, async () => {
+      await mount(null, await engineWithForgery());
+      await act(async () => { verb(press).dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await flush();
+      expect(sent).toEqual([{ kind: "move", messageId: "forged", folder, from: "ohmail/Screener" }]);
+    });
+  }
+
+  it("is said with nobody waiting", async () => {
+    await mount(null, await engineWithForgery(false));
+    expect(block()?.textContent).toContain(`Your mail provider checked whether this message is from ${ME}, and the check failed.`);
+  });
+
+  it("CONTROL: a mirror with no failed letter draws no such block", async () => {
+    await mount(DOOR);
+    expect(block()).toBeNull();
   });
 });

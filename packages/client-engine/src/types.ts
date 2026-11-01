@@ -916,6 +916,22 @@ export interface ScreenerHeldMail {
   trackerNote?: string;
 }
 
+/**
+ * A HELD LETTER ITS PROVIDER FAILED, WITH NO WAITING ROW TO DECIDE IT — one claiming the account's own
+ * address, a contact's, or a decided sender's. Not counted and outside the queue's pages: each letter
+ * is decided alone, by a `move` out of the gate, never by a rule.
+ */
+export interface FailedAtGateDTO {
+  id: string;
+  from: EmailAddress;
+  subject: string;
+  /** The row's stamp, as every Screener row's. */
+  time: string;
+  mailboxId: string;
+  /** The letter claims one of the account's own addresses. */
+  own: boolean;
+}
+
 export interface ScreenerSenderDTO {
   id: string;
   segment: ScreenerSegment;

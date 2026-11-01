@@ -94,3 +94,42 @@ describe("the resolver's output, fed to planChange (the wiring, in both directio
     expect(await desiredWith(providerAuthservIds("mail.selfhosted.example"))).toBe("INBOX");
   });
 });
+
+/** A letter at a Microsoft mailbox: the provider's stamp with no authserv-id, then fields the sender wrote. */
+function atMicrosoft(...fields: string[]): Change {
+  const raw = Buffer.from([
+    "Message-ID: <ms-1@attacker.example>",
+    "From: alerts@bank.example",
+    "To: mila@lichtgrat.example",
+    ...fields.map((f) => `Authentication-Results: ${f}`),
+    "Subject: verify your account",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "Please confirm.",
+  ].join("\r\n"));
+  return { type: "create", locator: { folder: "INBOX", ref: "1:78" }, raw };
+}
+
+describe("a Microsoft mailbox reads only the provider's topmost field", () => {
+  const plan = async (change: Change, known: string[] = []) => {
+    const repo = new FakeRepo();
+    repo.senders = new Set(known);
+    return planChange(change, {
+      repo, accountId: "acct-1", mailboxId: "mb-1", trustedAuthservIds: providerAuthservIds("outlook.office365.com"),
+    });
+  };
+
+  it("a sender-written mx.microsoft.com pass below the no-id stamp is never the verdict", async () => {
+    const p = await plan(atMicrosoft(
+      "spf=fail (sender IP is 192.0.2.1) smtp.mailfrom=bank.example; dmarc=fail action=none header.from=bank.example;compauth=fail reason=001",
+      "mx.microsoft.com; dkim=pass header.d=bank.example; dmarc=pass header.from=bank.example",
+    ));
+    expect(p.new?.authVerdict).toBe("unavailable");
+  });
+
+  it("control: a topmost mx.microsoft.com fail still screens a forged contact", async () => {
+    const p = await plan(atMicrosoft("mx.microsoft.com; dmarc=fail header.from=bank.example"), ["alerts@bank.example"]);
+    expect(p.new?.authVerdict).toBe("fail");
+    expect(p.new?.desired).toBe("ohmail/Screener");
+  });
+});

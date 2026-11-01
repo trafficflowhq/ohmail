@@ -442,6 +442,8 @@ export async function screenerAutoActPass(
       if (applied.skipped === "ruled") { result.kept++; continue; }
       // The door's own refusal of a marked sender — the belt under the selection's flag above.
       if (applied.skipped === "identity") { result.kept++; result.identity++; continue; }
+      // …and of a sender holding a code or a reset, under the selection's exclusion.
+      if (applied.skipped === "sensitive") { result.kept++; continue; }
       result.filed++;
       result.destinations[plan.appliedFolder] = (result.destinations[plan.appliedFolder] ?? 0) + 1;
     } catch (err) {
@@ -654,8 +656,9 @@ interface WaitingSender {
  * window and ordering, so the act walks the queue the surface shows in the order it shows it.
  * The differences from that pass, each deliberate: NO watermark (advice that already exists is
  * owed an act whenever the consent was given) and no advice predicate here — the advice is
- * read per sender through its one read path. The sensitivity exclusion is kept: an automatic act
- * takes the stricter reading of both columns.
+ * read per sender through its one read path. The sensitivity exclusion reaches every held letter of
+ * the sender, not the representative alone (`automaticAiAdmits`): the door files the whole bag, so a
+ * held code or reset leaves its sender whole for the person.
  */
 async function selectWaitingSenders(
   db: Tx, opts: { accountId: string; limit: number; cutline: ResolvedCutline },
@@ -669,8 +672,6 @@ async function selectWaitingSenders(
     messageId: messages.id,
     mailboxId: messages.mailboxId,
     fromAddress: messages.fromAddress,
-    noAi: messages.noAi,
-    sensitivityCategory: messages.sensitivityCategory,
     createdAt: messages.createdAt,
     rank: sql<number>`row_number() over (
       partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
@@ -740,8 +741,16 @@ async function selectWaitingSenders(
   }).from(reps)
     .where(and(
       eq(reps.rank, 1),
-      eq(reps.noAi, false),
-      isNull(reps.sensitivityCategory),
+      // No held letter of the sender, with `identityHeld`'s reach, that an automatic path may not read.
+      sql`not exists (
+        select 1 from ${messages}
+          join ${folderState} on ${folderState.messageId} = ${messages.id}
+         where ${messages.accountId} = ${opts.accountId}
+           and lower(${messages.fromAddress}) = ${repSender}
+           and ${folderState.desiredFolder} = ${SCREENER_FOLDER}
+           and ${messages.deletedAt} is null
+           and not ${automaticAiAdmits(messages)}
+      )`,
       sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)})`,
       sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
     ))

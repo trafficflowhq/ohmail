@@ -169,6 +169,18 @@ describe("SCR-AUTOMODE — the Screener auto-apply pass", () => {
     expect((await desiredOf(byNoAi)).desired, "a no_ai message was auto-moved").toBe(SCREENER);
   });
 
+  it("a strong-bulk letter its provider failed is kept at the gate, for a person to decide", async () => {
+    const w = await newWorld();
+    await optIn(w, true);
+    const plain = await held(w, { from: "news@shop.test", headers: STRONG_BULK });
+    const forged = await held(w, { from: "news@bank.test", headers: STRONG_BULK });
+    await db.update(messages).set({ authVerdict: "fail" }).where(eq(messages.id, forged));
+    const r = await screenerAutoApplyPass(db, { accountId: w.accountId });
+    expect(r).toMatchObject({ ran: true, moved: 1 });
+    expect((await desiredOf(plain)).desired).toBe(READS);
+    expect((await desiredOf(forged)).desired, "a letter its provider failed was filed automatically").toBe(SCREENER);
+  });
+
   // ══════════════════════════════════════════════════════════════════════════════════════════
   //  (c) REVERSIBLE — a durable, undoable placement, never a delete and never a rule
   // ══════════════════════════════════════════════════════════════════════════════════════════

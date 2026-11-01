@@ -2,7 +2,7 @@ import { canonicalDestination, isSentFolderOf } from "@trafficflow/core/folder-n
 import { recordedSentFolderOf } from "./sent-folders.js";
 import { opensWithForwardPrefix } from "@trafficflow/core/reply-subject";
 import { isAcknowledgementSubject } from "@trafficflow/core/ics";
-import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
+import { authScreens, mayGroupByMessageId } from "@trafficflow/core/sender-headers";
 import { ruleMatchKey, sharedProviderAllowRefusal } from "@trafficflow/core/rule-order";
 import { resurfacedFolds } from "@trafficflow/core/conversation-fold";
 import { isHeldFolder } from "@trafficflow/core/destinations";
@@ -23,6 +23,7 @@ import {
   type EmailAddress,
   type EngineDraft,
   type EngineMessage,
+  type FailedAtGateDTO,
   type FeedView,
   type Folder,
   type MessageBody,
@@ -1349,6 +1350,8 @@ export interface ScreenerSegments {
   waitingTotal: number;
   /** Where the store's next page starts; null when `waiting` is the whole queue. */
   waitingCursor: string | null;
+  /** Held letters their provider failed that no waiting row decides ({@link failedAtGateOf}); not counted. */
+  failedAtGate: FailedAtGateDTO[];
 }
 
 /**
@@ -1708,6 +1711,35 @@ export function newestHeldBySender(messages: readonly EngineMessage[]): Readonly
   return out;
 }
 
+/**
+ * THE HELD LETTERS THEIR PROVIDER FAILED THAT NO WAITING ROW DECIDES, newest first: at the gate as
+ * presented and physically, a verdict the gate screens on, and a sender none of `waiting` names (the
+ * account's own address, a contact, a decided sender). Exempt from the queue's pages and counts. For a
+ * surface whose waiting rows are its own (the phone's route); the arguments are
+ * {@link screenerSegments}' own, so the derivation is the memoised one.
+ */
+export function failedAtGateOf(
+  reader: EntityReader, waiting: Iterable<string>, now: Date = new Date(), locale = "en", zone = "UTC",
+  ownAddresses?: Iterable<string>,
+): FailedAtGateDTO[] {
+  const segments = screenerSegments(reader, now, locale, zone, ownAddresses);
+  return withoutRows(failedHeldOf.get(segments) ?? [], waiting);
+}
+
+/** Every failed letter at the gate behind one segments answer, before any waiting row takes its sender's. */
+const failedHeldOf = new WeakMap<ScreenerSegments, readonly FailedAtGateDTO[]>();
+
+/** Is this message a held letter its provider failed (`failedAtGateOf`), as the walk meets it? */
+function failedAtTheGate(m: EngineMessage): boolean {
+  const gate = FOLDER_OF_VIEW.screener;
+  return m.folder === gate && (m.physicalFolder ?? m.folder) === gate && authScreens(m.authVerdict) && !isOwnOutbound(m);
+}
+
+function withoutRows(held: readonly FailedAtGateDTO[], waiting: Iterable<string>): FailedAtGateDTO[] {
+  const decides = new Set([...waiting].map(senderKey));
+  return held.filter((f) => !decides.has(senderKey(f.from.address)));
+}
+
 /** Does the store's queue page name this message as a sender's representative? */
 export function screenerWaitingNames(reader: EntityReader, messageId: string): boolean {
   return reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)
@@ -1886,6 +1918,8 @@ export function screenerSegments(
   // Letters each sender has PAST the gate as the lists show them: a waiting row is first contact only
   // while none is (the phone's sheet says so), and an answer the gate admitted is one.
   const reached = new Map<string, number>();
+  /** Held letters their provider failed, met on the same walk (`failedAtGateOf`). */
+  const failedHeld: EngineMessage[] = [];
   for (const m of reader.list<EngineMessage>("message")) {
     const view = VIEW_OF_FOLDER[m.folder] as OhmailView | undefined;
     const segment = view ? SEGMENT_OF_VIEW[view] : undefined;
@@ -1897,6 +1931,7 @@ export function screenerSegments(
       continue;
     }
     const key = senderKey(m.from.address);
+    if (failedAtTheGate(m)) failedHeld.push(m);
     // The account is not one of its own correspondents, so own mail mints no waiting row — the
     // guard the partition applies to its reckoning, applied to the grouping that renders it.
     // Screened and Quarantine are explicit placements somebody made and keep their rows.
@@ -2028,7 +2063,14 @@ export function screenerSegments(
     waitingTotal: store === null ? waiting.length
       : Math.max(0, store.page.total - Math.max(0, store.page.rows - store.senders.length)),
     waitingCursor: store === null ? null : store.page.nextCursor,
+    failedAtGate: [],
   };
+  const heldFailed = failedHeld.sort(byDateDesc).map((m): FailedAtGateDTO => ({
+    id: m.id, from: m.from, subject: m.subject, time: messageDisplayTime(m, now, zone, locale),
+    mailboxId: m.mailboxId, own: own.has(senderKey(m.from.address)),
+  }));
+  segments.failedAtGate = withoutRows(heldFailed, waiting.map((x) => x.from.address));
+  failedHeldOf.set(segments, heldFailed);
   derivedWaitingOf.set(segments, out.waiting);
   if (memoable) segmentsCache.set(reader, { v: reader.version(), key, out: segments });
   return segments;

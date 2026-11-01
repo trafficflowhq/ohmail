@@ -17,8 +17,9 @@ import { destDone, screenerSegParam, type ScreenerSeg } from "../../src/state/mo
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { relayMarkFor, type RelayMark } from "../../src/state/relay";
-import { useEngineQueuesAsk, useWorld, type ScreenerRow } from "../../src/state/world";
-import { Badge, Empty, Screen, Tail, TapRow, Txt } from "../../src/ui/base";
+import { useEngineQueuesAsk, useWorld, type ScreenerRow, type WorldScreener } from "../../src/state/world";
+import { Badge, Button, Empty, Panel, Screen, Tail, TapRow, Txt } from "../../src/ui/base";
+import { Icon } from "../../src/ui/Icon";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList } from "../../src/ui/MailList";
@@ -182,6 +183,7 @@ function ScreenerBody() {
                 { value: "spam", label: Copy.segSpam, ...(w.boot.settled ? { count: spam.length } : {}) },
               ]}
             />
+            {seg === "waiting" ? <FailedLetters letters={w.screener.failedAtGate} onFile={w.actions.fileFailed} /> : null}
           </>
         }
         empty={shelfEmpty}
@@ -204,6 +206,39 @@ function ScreenerBody() {
         <SenderDetail seg={seg} routeKey={key} inPane={ctx.inPane} onClose={ctx.onClose} />
       )}
     />
+  );
+}
+
+/**
+ * HELD LETTERS THEIR PROVIDER FAILED, WITH NO WAITING ROW (the web's header block): each said with the
+ * check that failed and decided alone — Spam, or the Ohbox as the person's own placement.
+ */
+function FailedLetters({ letters, onFile }: {
+  letters: WorldScreener["failedAtGate"]; onFile: (id: string, to: "spam" | "ohbox") => void;
+}) {
+  const t = useTheme();
+  if (letters.length === 0) return null;
+  return (
+    <View accessibilityRole="summary" accessibilityLabel={Copy.failedAria}>
+      <Panel style={{ marginHorizontal: 6, marginBottom: 12, padding: 14, gap: 14 }}>
+        {letters.map((f) => (
+          <View key={f.id} style={{ gap: 6 }}>
+            <Txt variant="caption" tone="ink3" numberOfLines={1}>{f.from.address}</Txt>
+            <Txt variant="rowSubject" numberOfLines={2}>{f.subject}</Txt>
+            <View style={{ flexDirection: "row", gap: 6, alignItems: "flex-start" }}>
+              <View style={{ marginTop: 2 }}>
+                <Icon name="shield" size={13} color={t.c.accentInk} />
+              </View>
+              <Txt variant="note" tone="ink" style={{ flex: 1 }}>{Copy.senderCheckFailed(f.from.address)}</Txt>
+            </View>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              <Button label={f.own ? Copy.failedNotFromYou : Copy.failedNotFromThem} onPress={() => onFile(f.id, "spam")} />
+              <Button label={f.own ? Copy.failedFromYou : Copy.failedFromThem} variant="quiet" onPress={() => onFile(f.id, "ohbox")} />
+            </View>
+          </View>
+        ))}
+      </Panel>
+    </View>
   );
 }
 
