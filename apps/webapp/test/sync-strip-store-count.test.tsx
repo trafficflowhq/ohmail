@@ -152,3 +152,19 @@ describe("web Settings → Mailboxes says the same count", () => {
     expect(await rowText(dto({}))).toBe((en.mailboxes as Record<string, string>).err_storage);
   });
 });
+
+describe("a copy this computer cannot store into says so, and what to do", () => {
+  const frozen: MailState = { ...failing(), errorDetail: "MIRROR_STORE_REFUSED" };
+  it("en and de: the storage sentence, and the link writes to us", async () => {
+    expect(await stripText(frozen, "en")).toContain((en.mailboxes as Record<string, string>).err_storage);
+    expect(host!.querySelector("a")?.getAttribute("href")).toBe("#/settings/help");
+    expect(host!.querySelector("a")?.textContent).toBe(en.help.write);
+    expect(await stripText(frozen, "de")).toContain((de.mailboxes as Record<string, string>).err_storage);
+    expect(host!.querySelector("a")?.textContent).toBe(de.help.write);
+  });
+
+  it("CONTROL: a counted storage failure keeps the Mailboxes link", async () => {
+    await stripText(failing(EXACT), "en");
+    expect(host!.querySelector("a")?.getAttribute("href")).toBe("#/settings/mailboxes");
+  });
+});

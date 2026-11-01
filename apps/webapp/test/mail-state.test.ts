@@ -1897,3 +1897,27 @@ describe("the gap offers on the shell (mail 0151)", async () => {
     }
   });
 });
+
+describe("a copy this computer cannot store into is not catching up", () => {
+  const STALE = { state: "stale" as const, asOf: new Date(NOW - 90 * 60_000).toISOString() };
+  const frozen = mailbox({ status: "error", errorCode: "storage", errorDetail: "MIRROR_STORE_REFUSED" });
+
+  it("outranks the age label", () => {
+    const s = deriveMailState(inputs({ freshness: STALE, mailboxes: [frozen] }));
+    expect(s.key).toBe("mailboxError");
+    expect(s.errorDetail).toBe("MIRROR_STORE_REFUSED");
+  });
+
+  it("outranks the first-import line ('Syncing your mail' over a stuck copy)", () => {
+    const s = deriveMailState(inputs({
+      freshness: { state: "unknown", asOf: null }, mirrored: 3040,
+      mailboxes: [frozen, mailbox({ id: "mb2", initialImportCompletedAt: null, createdAt: new Date(NOW - 5_000).toISOString() })],
+    }));
+    expect(s.key).toBe("mailboxError");
+  });
+
+  it("CONTROL: a paired host's own store refusal keeps the age label", () => {
+    const host = mailbox({ status: "error", errorCode: "storage", errorDetail: "MAILBOX_STORE_REFUSED" });
+    expect(deriveMailState(inputs({ freshness: STALE, mailboxes: [host] })).key).toBe("stale");
+  });
+});

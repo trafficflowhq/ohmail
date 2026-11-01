@@ -6,7 +6,7 @@
  * decisions not saved. The panel read the queued DISCARDS only, so a waiting Screener decision was
  * listed nowhere, and every row said "This browser could not reach your account" whatever its
  * last attempt had met. The pure half, props in and markup out: what a person reads per row.
- * Mutations: `queuedReason` answering the reach sentence for everything → cases 1, 2 and 4 red;
+ * Mutations: `queuedReason` answering the reach sentence for everything → cases 1, 2, 4 and 6 red;
  * the server's own sentence dropped → case 2 red.
  */
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMutation, QueuedChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { UnsavedChangesList } from "../app/shell/UnsavedChanges";
+import type { MailboxFacts } from "../app/shell/mail-state";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,7 +37,7 @@ const queued = (
 ): QueuedChange => ({ id, key: `key-${id}`, mutation: { kind } as unknown as EngineMutation, error });
 
 /** The panel, opened: one `[label, reason]` per listed row. */
-function rowsOf(changes: readonly QueuedChange[]): Array<[string, string]> {
+function rowsOf(changes: readonly QueuedChange[], mailboxes: MailboxFacts[] | null = null): Array<[string, string]> {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -46,6 +47,7 @@ function rowsOf(changes: readonly QueuedChange[]): Array<[string, string]> {
         <UnsavedChangesList
           abandoned={[]}
           queued={changes}
+          mailboxes={mailboxes}
           onRetry={async (id) => ({ id, key: id, status: "confirmed" as const, seq: 1 })}
           onDiscard={async () => {}}
           onRetryQueued={async () => null}
@@ -105,5 +107,16 @@ describe("the Unsaved changes panel over the queue", () => {
       S.unsavedKindScreener, S.unsavedKindRule, S.unsavedKindDraftDiscard, S.unsavedKindMove,
     ]);
     expect(host!.textContent).toContain("4 changes have not gone through yet");
+  });
+
+  it("6 — while this computer's copy refuses its own pull, a change the door held offline says so, not the reach sentence", () => {
+    const stuck = { id: "mb", address: "a", status: "error", errorCode: "storage", errorDetail: "MIRROR_STORE_REFUSED" } as MailboxFacts;
+    expect(rowsOf([
+      queued("o", "move", { code: "offline_read_only", message: "this install is offline", status: 503 }),
+      queued("n", "move", { code: "network", message: "network failure: TypeError", status: null }),
+    ], [stuck])).toEqual([
+      [S.unsavedKindMove, messages.mailboxes.desktopStateStoreRefused],
+      [S.unsavedKindMove, S.unsavedQueuedWhy],
+    ]);
   });
 });

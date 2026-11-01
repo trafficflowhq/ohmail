@@ -29,6 +29,7 @@
    why a reader's press has nowhere to go, shared with the server's refusal. Each import is the
    alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
 import { addressKey } from "./address-key";
+import { MIRROR_STORE_REFUSED_DETAIL } from "./mailbox-error-key";
 import {
   FILING_REFUSAL_REASONS, IMPORT_FLOOR_MAX_MS, filingRefusalReason, importFloorInWindow, type FilingRefusalReason,
 } from "@ohmail/client-engine";
@@ -2051,6 +2052,15 @@ function mailboxInError(mailboxes: MailStateInputs["mailboxes"]): boolean {
   return mailboxes !== null && mailboxes.some((m) => m.status === "error");
 }
 
+/**
+ * This computer's copy refused its own pull: frozen, so never labelled "catching up", and each
+ * refused pull leaves its door offline, so a write made now waits.
+ */
+export function copyRefused(mailboxes: readonly MailboxFacts[] | null | undefined): boolean {
+  return (mailboxes ?? []).some((m) =>
+    m.status === "error" && m.errorCode === "storage" && m.errorDetail === MIRROR_STORE_REFUSED_DETAIL);
+}
+
 export function deriveMailState(input: MailStateInputs): MailState {
   const state = climb(input);
   const owed = state.key === "importing"
@@ -2136,8 +2146,9 @@ function climb(input: MailStateInputs): MailState {
   // answers, and the first seconds of a days-stale resume are exactly when
   // the label is owed. Never without a time: the freshness input carries
   // `asOf` for every `stale` by construction; the guard is belt for a
-  // probe-fed desktop value.
-  if (freshness.state === "stale" && freshness.asOf !== null) {
+  // probe-fed desktop value. A copy this computer cannot store into is not catching up: it falls
+  // through to the mailbox error.
+  if (freshness.state === "stale" && freshness.asOf !== null && !copyRefused(mailboxes)) {
     // …but never a date from before the account reopened (mail 0135): it would date the closure.
     // The first drain after the lift moves `asOf` past it.
     const lifted = liftedAt();

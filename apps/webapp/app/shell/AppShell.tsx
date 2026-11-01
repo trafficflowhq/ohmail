@@ -2302,7 +2302,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             `SyncBar` renders nothing when sync has nothing to say — which is exactly the state an
             abandoned change is most likely to be in: the mailbox is fine, one verb is not. Absent
             from the DOM when there are none, like every other strip the shell mounts once. */}
-        <UnsavedChanges variant="shell" />
+        <UnsavedChanges variant="shell" mailboxes={facts} />
 
         {/* A send waiting holds every restart: the update line greys Restart, and the desktop's shell installs
             nothing meanwhile (`UpdateLine.tsx`). The line itself stands in the rail, above Command. */}
@@ -2450,7 +2450,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 {sessionRefused ? null : <SyncBar variant="rail" hostOffline={hostConnection != null} setupHref={setupHref} />}
                 {/* Same component at rail width — its own layout collapses under 520px, so the
                     rail does not need a second variant. */}
-                <UnsavedChanges variant="rail" />
+                <UnsavedChanges variant="rail" mailboxes={facts} />
               </>
             }
             /**

@@ -15,7 +15,7 @@ import {
   SUPPORT_ADDRESS, supportBlock, supportBody, supportFacts, supportMailto, type SupportSurface,
 } from "@trafficflow/core/diagnostics";
 import { defaultFrom, optionsFromFacts } from "./compose-from";
-import type { MailboxFacts } from "./mail-state";
+import { copyRefused, type MailboxFacts } from "./mail-state";
 
 /** What the host knows about itself: which surface, which build, and the account where there is one. */
 export interface SupportHost {
@@ -81,7 +81,8 @@ export function HelpContactPane({ host, mailboxes, onWrite }: {
   });
   const subject = t("subject");
   const body = supportBody(diag);
-  const canSend = onWrite !== null && defaultFrom(optionsFromFacts(mailboxes ?? [])) !== null;
+  // A copy that refuses its own pull leaves the door offline: a mail sent from here would wait.
+  const canSend = onWrite !== null && !copyRefused(mailboxes) && defaultFrom(optionsFromFacts(mailboxes ?? [])) !== null;
   const leaves = host.mailtoLeaves !== false;
   const version = `${facts.version ?? t("dNone")}${facts.commit !== null ? ` · ${t("dBuild")} ${facts.commit.slice(0, 9)}` : ""}`;
   return (
