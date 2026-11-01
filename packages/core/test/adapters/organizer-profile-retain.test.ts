@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatProfileMessage, makeProfileDoc, profileFingerprint, profileLocatorOf, readOrganizerProfile,
+  formatProfileMessage, makeProfileDoc, profileFingerprint, profileLocatorOf, readFoundCopies, readOrganizerProfile,
   tidyOrganizerProfile, writeOrganizerProfile,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileIo, type ProfileListOptions, type RawProfileMessage,
 } from "../../src/adapters/organizer-profile.js";
@@ -168,5 +168,40 @@ describe("the bound on a server that refuses every removal", () => {
     }
     expect(Math.max(...most)).toBeLessThanOrEqual(3);
     expect(folder.writers()).toContain("w-old");
+  });
+});
+
+describe("kept found copies", () => {
+  it("the tidy keeps a kept copy whatever its age; one not kept goes by the ten-minute rule", async () => {
+    const folder = new Folder();
+    const x = makeProfileDoc({ ...EMPTY, tagNames: ["x"] }, { updatedAt: OLD, producer: PRODUCER });
+    const z = makeProfileDoc({ ...EMPTY, tagNames: ["z"] }, { updatedAt: at(-120), producer: PRODUCER });
+    const y = makeProfileDoc({ ...EMPTY, tagNames: ["y"] }, { updatedAt: at(-60), producer: PRODUCER });
+    await folder.appendProfile(formatProfileMessage(x, { installId: "w-a" }));
+    await folder.appendProfile(formatProfileMessage(z, { installId: "w-z" }));
+    await folder.appendProfile(formatProfileMessage(y, { installId: "w-b" }));
+    const tidied = await tidyOrganizerProfile({ io: folder, installId: "w-c", now: NOW, kept: [profileLocatorOf("w-a", x)!] });
+    expect({ writers: folder.writers().sort(), keptHeld: tidied.planned?.keptHeld, foreignStale: tidied.planned?.foreignStale })
+      .toEqual({ writers: ["w-a", "w-b"], keptHeld: 1, foreignStale: 1 });
+  });
+
+  it("a write publishes beside a kept copy that is the newest, and never removes it", async () => {
+    const folder = new Folder();
+    const y = makeProfileDoc({ ...EMPTY, tagNames: ["y"] }, { updatedAt: at(-1), producer: PRODUCER });
+    await folder.appendProfile(formatProfileMessage(y, { installId: "w-b" }));
+    const r1 = await writeOrganizerProfile({ io: folder, doc: mine("c", NOW), installId: "w-c", now: NOW, kept: [profileLocatorOf("w-b", y)!] });
+    const r2 = await writeOrganizerProfile({ io: folder, doc: mine("d", at(1)), installId: "w-c", now: at(1), kept: [profileLocatorOf("w-b", y)!] });
+    expect({ r1, r2, writers: folder.writers().sort() })
+      .toEqual({ r1: { written: true, removed: 0 }, r2: { written: true, removed: 1 }, writers: ["w-b", "w-c"] });
+  });
+
+  it("readFoundCopies reads every copy that is not the caller's, newest first, by body, at most the bound", async () => {
+    const folder = new HeadersFolder();
+    const docs = [0, 1, 2].map((i) => makeProfileDoc({ ...EMPTY, tagNames: [`f${i}`] }, { updatedAt: at(-10 * (i + 1)), producer: PRODUCER }));
+    for (const [i, d] of docs.entries()) await folder.appendProfile(formatProfileMessage(d, { installId: `w-${i}` }));
+    await folder.appendProfile(formatProfileMessage(mine("own", NOW), { installId: "w-c" }));
+    const read = await readFoundCopies(folder, { installId: "w-c", max: 2 });
+    expect(read.state === "read" ? read.copies.map((c) => [c.installId, c.doc.tagNames]) : read)
+      .toEqual([["w-0", ["f0"]], ["w-1", ["f1"]]]);
   });
 });

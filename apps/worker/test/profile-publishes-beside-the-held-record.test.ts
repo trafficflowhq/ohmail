@@ -43,6 +43,19 @@ class Folder implements ProfileIo {
       .filter((p): p is ParsedProfileMessage => p !== null && !isMalformedProfile(p))
       .map((p) => ({ by: p.installId, screener: p.doc!.screener.length, rules: p.doc!.rules.length, tags: [...p.doc!.tagNames].sort() }));
   }
+  parsed(): ParsedProfileMessage[] {
+    return this.messages.map((m) => parseProfileMessage(m.raw, m.ref))
+      .filter((p): p is ParsedProfileMessage => p !== null && !isMalformedProfile(p));
+  }
+  holds(doc: OrganizerProfileDoc): boolean { return this.parsed().some((p) => profileFingerprint(p.doc!) === profileFingerprint(doc)); }
+  /** The newest copy under an install id. */
+  docBy(installId: string): OrganizerProfileDoc {
+    return this.parsed().filter((p) => p.installId === installId)
+      .sort((a, b) => Date.parse(b.doc!.updatedAt) - Date.parse(a.doc!.updatedAt))[0]!.doc!;
+  }
+  tagsOf(installId: string): string[][] {
+    return this.parsed().filter((p) => p.installId === installId).map((p) => [...p.doc!.tagNames].sort());
+  }
   /** The copy a reader takes: the newest by its write stamp. */
   newest(): { by: string | null; screener: number; rules: number; tags: string[] } | null {
     const all = this.messages.map((m) => parseProfileMessage(m.raw, m.ref))
@@ -1075,5 +1088,367 @@ describe("a copy's label says whether its build recorded it", () => {
     ["52a56a5fc5b2b1d8f9d4a1b7e0c3d2f1a9b8c7d6", true], ["dev", true], ["", true], [undefined, true],
   ] as const)("%s: records nothing = %s", (label, nothing) => {
     expect(writtenByABuildThatRecordsNothing(label)).toBe(nothing);
+  });
+});
+
+/* EVERY FOUND COPY IS KEPT AND ASKED ABOUT: settings put aside with Not now, or never answered, on a store
+   that is then removed, stay in the mailbox; the next store asks about each, newest first. */
+async function stores(o: { flushIntervalMs?: number } = {}) {
+  const db = (await makeTestDb()) as unknown as Tx;
+  const folder = new Folder();
+  const clock = { at: new Date("2026-10-31T20:00:00.000Z") };
+  const later = (ms: number): void => { clock.at = new Date(clock.at.getTime() + ms); };
+  const doc = (tag: string, minutesAgo: number): OrganizerProfileDoc => makeProfileDoc(
+    { screener: [{ address: `${tag}@example.test`, source: "person" }], rules: [], notifyRules: [], awayResponder: null, tagNames: [tag], signature: null },
+    { updatedAt: new Date(clock.at.getTime() - minutesAgo * 60_000), producer: { kind: "mobile", version: "0.30.22" } },
+  );
+  const plant = (installId: string, d: OrganizerProfileDoc): Promise<void> => folder.appendProfile(formatProfileMessage(d, { installId }));
+  /** A fresh store (its own account and mailbox rows, made now) organizing the one folder. */
+  const store = async (installId: string) => {
+    const accountId = randomUUID();
+    await db.insert(accounts).values({ id: accountId, name: installId, createdAt: clock.at });
+    const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${randomUUID()}@x.test`, createdAt: clock.at })
+      .returning({ id: mailboxes.id });
+    const mailboxId = mb!.id;
+    const attach = (): OrganizerProfileSync => new OrganizerProfileSync({
+      db, accountId, mailboxId, adapter: { profileIo: () => folder } as unknown as MailboxAdapter,
+      self: { installId, kind: "mobile" }, producerVersion: "0.30.22", flushIntervalMs: o.flushIntervalMs ?? 0, now: () => clock.at,
+    });
+    const s = { sync: attach() };
+    const decide = (name: string) => db.insert(tags).values({ accountId, name, createdAt: clock.at, updatedAt: clock.at });
+    const answer = (d: OrganizerProfileDoc, decision: "declined" | "replaced") => recordProfileImportResolution(db, {
+      accountId, mailboxId, decision, fingerprint: profileFingerprint(d),
+    });
+    const importIt = (d: OrganizerProfileDoc) => recordImportAsk(db, { accountId, mailboxId, fingerprint: profileFingerprint(d), now: clock.at });
+    /** Import pressed on the card, applied where the store is. */
+    const importInline = (d: OrganizerProfileDoc) => fencedAccountWrite(db, { accountId }, async (tx) => {
+      await lockAccountRuleKeys(tx as Tx, accountId);
+      await applyOrganizerProfile(tx as LedgerTx, { accountId, mailboxId, doc: d, fingerprint: profileFingerprint(d), now: clock.at });
+    });
+    const ticks = async (n: number): Promise<void> => { for (let i = 0; i < n; i++) { later(31_000); await s.sync.onOrganize(); } };
+    const marker = () => latestProfileFoundMarker(db, accountId, mailboxId);
+    const asking = async (): Promise<string | null> => {
+      const m = await marker();
+      return m?.state === "found" && m.heldForImport ? m.fingerprint : null;
+    };
+    const routing = async (): Promise<string[] | string> => {
+      const h = await s.sync.importHoldNow();
+      return h?.kind === "document" ? [...h.knownSenders.addresses].sort() : h?.kind ?? "closed";
+    };
+    const takeOver = async (): Promise<void> => { await s.sync.armHoldFromFolder(); await ticks(1); };
+    const restart = async (): Promise<void> => { s.sync = attach(); await takeOver(); };
+    /** `gap`: a phone's Stop, whose last flush writes where its gap began. */
+    const stopAndRemove = (o: { gap?: true } = {}): Promise<string> => s.sync.flushBeforeLeaving(HELD, undefined,
+      o.gap ? { gap: { since: clock.at.toISOString(), by: installId, at: clock.at.toISOString() } } : undefined);
+    return { decide, answer, importIt, importInline, ticks, asking, marker, routing, takeOver, restart, stopAndRemove };
+  };
+  return { folder, clock, later, doc, plant, store };
+}
+
+/** A organizes with three decisions and leaves; B takes over, answers Not now or nothing, decides and leaves. */
+async function aThenB(o: { idA: string; idB: string; bAnswers: "notNow" | "nothing" }) {
+  const w = await stores();
+  const A = await w.store(o.idA);
+  await A.decide("a1"); await A.decide("a2"); await A.decide("a3");
+  await A.takeOver();
+  await A.ticks(1);
+  await A.stopAndRemove();
+  const X = w.folder.docBy(o.idA);
+  w.later(30 * 60_000);
+  const B = await w.store(o.idB);
+  await B.takeOver();
+  const bAsked = (await B.asking()) === profileFingerprint(X);
+  if (o.bAnswers === "notNow") await B.answer(X, "declined");
+  await B.decide("b1");
+  w.later(6 * 60_000);
+  await B.ticks(3);
+  const bLeft = await B.stopAndRemove();
+  w.later(20 * 60_000);
+  return { w, X, Y: w.folder.docBy(o.idB), bAsked, bLeft, afterB: w.folder.copies().map((c) => c.by).sort() };
+}
+
+describe("every found copy is kept and asked about", () => {
+  it.each([["Not now", "notNow"], ["no answer", "nothing"]] as const)(
+    "%s on B, B removed, C imports B's settings: A's stay and C asks about them next",
+    async (_, bAnswers) => {
+      const { w, X, Y, bAsked, bLeft, afterB } = await aThenB({ idA: "w-a", idB: "w-b", bAnswers });
+      const C = await w.store("w-c");
+      await C.takeOver();
+      const askedFirst = (await C.asking()) === profileFingerprint(Y);
+      const keptAtTakeover = w.folder.holds(X);
+      await C.importIt(Y);
+      await C.ticks(3);
+      w.later(20 * 60_000);
+      await C.ticks(3);
+      expect({ bAsked, bLeft, afterB, askedFirst, keptAtTakeover, kept: w.folder.holds(X), askingNext: (await C.asking()) === profileFingerprint(X) })
+        .toEqual({ bAsked: true, bLeft: "saved", afterB: ["w-a", "w-b"], askedFirst: true, keptAtTakeover: true, kept: true, askingNext: true });
+    },
+  );
+
+  it("Not now on B's settings at C: A's are asked about next, and both stay", async () => {
+    const { w, X, Y } = await aThenB({ idA: "w-a", idB: "w-b", bAnswers: "notNow" });
+    const C = await w.store("w-c");
+    await C.takeOver();
+    await C.answer(Y, "declined");
+    await C.decide("c1");
+    await C.ticks(3);
+    w.later(20 * 60_000);
+    await C.ticks(3);
+    expect({ x: w.folder.holds(X), y: w.folder.holds(Y), askingNext: (await C.asking()) === profileFingerprint(X) })
+      .toEqual({ x: true, y: true, askingNext: true });
+  });
+
+  it("one install id across three stores (a phone keeps its id): the first store's settings are asked about after the second's", async () => {
+    const { w, X, Y } = await aThenB({ idA: "w-phone", idB: "w-phone", bAnswers: "notNow" });
+    const C = await w.store("w-phone");
+    await C.takeOver();
+    const askedFirst = (await C.asking()) === profileFingerprint(Y);
+    await C.importIt(Y);
+    await C.ticks(3);
+    w.later(20 * 60_000);
+    await C.ticks(3);
+    expect({ askedFirst, kept: w.folder.holds(X), askingNext: (await C.asking()) === profileFingerprint(X) })
+      .toEqual({ askedFirst: true, kept: true, askingNext: true });
+  });
+
+  it("Not now moves the question on, routing holds the next copy's senders, and a restart keeps both and the question", async () => {
+    const w = await stores();
+    const X = w.doc("anna", 120);
+    const Y = w.doc("ben", 60);
+    await w.plant("w-a", X);
+    await w.plant("w-b", Y);
+    const C = await w.store("w-c");
+    await C.takeOver();
+    const first = { asking: (await C.asking()) === profileFingerprint(Y), routing: await C.routing() };
+    await C.answer(Y, "declined");
+    await C.decide("c1");
+    await C.ticks(2);
+    const second = { asking: (await C.asking()) === profileFingerprint(X), routing: await C.routing() };
+    await C.restart();
+    await C.ticks(2);
+    expect({ first, second, restarted: { asking: (await C.asking()) === profileFingerprint(X), x: w.folder.holds(X), y: w.folder.holds(Y), ours: w.folder.tagsOf("w-c") } })
+      .toEqual({
+        first: { asking: true, routing: ["ben@example.test"] },
+        second: { asking: true, routing: ["anna@example.test"] },
+        restarted: { asking: true, x: true, y: true, ours: [["c1"]] },
+      });
+  });
+
+  it("every copy answered Not now: Settings offers the newest; Save on it offers the next", async () => {
+    const w = await stores();
+    const X = w.doc("anna", 120);
+    const Y = w.doc("ben", 60);
+    await w.plant("w-a", X);
+    await w.plant("w-b", Y);
+    const C = await w.store("w-c");
+    await C.decide("c1");
+    await C.takeOver();
+    await C.answer(Y, "declined");
+    await C.ticks(2);
+    await C.answer(X, "declined");
+    await C.ticks(2);
+    const declined = { held: (await C.marker())?.fingerprint === profileFingerprint(Y), routing: await C.routing(), x: w.folder.holds(X), y: w.folder.holds(Y) };
+    await C.answer(Y, "replaced");
+    await C.ticks(3);
+    expect({ declined, next: { held: (await C.marker())?.fingerprint === profileFingerprint(X), x: w.folder.holds(X), y: w.folder.holds(Y) } }).toEqual({
+      declined: { held: true, routing: "closed", x: true, y: true },
+      next: { held: true, x: true, y: false },
+    });
+  });
+
+  it("Import of each in turn leaves one copy that says them all", async () => {
+    const w = await stores();
+    const X = w.doc("anna", 120);
+    const Y = w.doc("ben", 60);
+    await w.plant("w-a", X);
+    await w.plant("w-b", Y);
+    const C = await w.store("w-c");
+    await C.takeOver();
+    await C.importIt(Y);
+    await C.ticks(3);
+    await C.importIt(X);
+    await C.ticks(4);
+    expect({ copies: w.folder.parsed().map((p) => [p.installId, [...p.doc!.tagNames].sort()]), asking: await C.asking() })
+      .toEqual({ copies: [["w-c", ["anna", "ben"]]], asking: null });
+  });
+
+  it("at most eight found copies are kept: the ninth, oldest, follows the ten-minute rule", async () => {
+    const w = await stores();
+    const docs = Array.from({ length: 9 }, (_, i) => w.doc(`p${i}`, 60 + i * 15));
+    for (const [i, d] of docs.entries()) await w.plant(`w-${i}`, d);
+    const C = await w.store("w-c");
+    await C.takeOver();
+    await C.decide("c1");
+    await C.ticks(3);
+    expect(docs.map((d) => w.folder.holds(d))).toEqual([true, true, true, true, true, true, true, true, false]);
+  });
+
+  // At the shipped five-minute flush interval: the released copy goes only once the store's copy says it.
+  const says = (w: Awaited<ReturnType<typeof stores>>, tag: string): boolean => w.folder.parsed().some((p) => p.doc!.tagNames.includes(tag));
+  it.each(["inline", "handed over"] as const)(
+    "Not now on the newer, Import (%s) of the older into an empty store: what it imported stays in the mailbox at every tick",
+    async (via) => {
+      const w = await stores({ flushIntervalMs: 5 * 60_000 });
+      const X = w.doc("anna", 120);
+      const Y = w.doc("ben", 60);
+      await w.plant("w-a", X);
+      await w.plant("w-b", Y);
+      const C = await w.store("w-c");
+      await C.takeOver();
+      await C.answer(Y, "declined");
+      await C.ticks(2);
+      const asked = (await C.asking()) === profileFingerprint(X);
+      if (via === "inline") await C.importInline(X); else await C.importIt(X);
+      const said: boolean[] = [];
+      for (let i = 0; i < 14; i++) {
+        await C.ticks(1);
+        if (i === 10) w.later(20 * 60_000);
+        said.push(says(w, "anna"));
+      }
+      expect({ asked, said: said.every(Boolean), ours: w.folder.tagsOf("w-c"), y: w.folder.holds(Y), writers: w.folder.writers() })
+        .toEqual({ asked: true, said: true, ours: [["anna"]], y: true, writers: ["w-b", "w-c"] });
+    },
+  );
+
+  it("a published store imports the newer copy while the older one waits: what it imported stays in the mailbox at every tick", async () => {
+    const w = await stores({ flushIntervalMs: 5 * 60_000 });
+    const X = w.doc("anna", 120);
+    const Y = w.doc("ben", 60);
+    await w.plant("w-a", X);
+    await w.plant("w-b", Y);
+    const C = await w.store("w-c");
+    await C.decide("c1");
+    await C.takeOver();
+    await C.ticks(1);
+    const published = w.folder.tagsOf("w-c");
+    await C.importIt(Y);
+    const said: boolean[] = [];
+    for (let i = 0; i < 12; i++) { await C.ticks(1); said.push(says(w, "ben")); }
+    expect({ published, said: said.every(Boolean), x: w.folder.holds(X), asking: (await C.asking()) === profileFingerprint(X) })
+      .toEqual({ published: [["c1"]], said: true, x: true, asking: true });
+  });
+
+  it("an Import, the lid shut two passes later, another store taking over: the imported settings are still in the mailbox", async () => {
+    const w = await stores({ flushIntervalMs: 5 * 60_000 });
+    const X = w.doc("anna", 120);
+    const Y = w.doc("ben", 60);
+    await w.plant("w-a", X);
+    await w.plant("w-b", Y);
+    const C = await w.store("w-c");
+    await C.takeOver();
+    await C.answer(Y, "declined");
+    await C.ticks(2);
+    await C.importInline(X);
+    await C.ticks(2);
+    w.later(30 * 60_000);
+    const D = await w.store("w-d");
+    await D.takeOver();
+    await D.ticks(3);
+    expect({ anna: says(w, "anna"), ben: says(w, "ben") }).toEqual({ anna: true, ben: true });
+  });
+
+  /* A phone keeps its install id across Stop and remove: a gone store's copies under it are found settings, and
+     Not now on the newest still lets a decision reach the mailbox beside them. */
+  it("one install id across three stores: Not now on the newest, a decision, Stop leaves the decision in the mailbox", async () => {
+    const { w, X, Y } = await aThenB({ idA: "w-phone", idB: "w-phone", bAnswers: "notNow" });
+    const C = await w.store("w-phone");
+    await C.takeOver();
+    const askedFirst = (await C.asking()) === profileFingerprint(Y);
+    await C.answer(Y, "declined");
+    await C.decide("c1");
+    await C.ticks(3);
+    const left = await C.stopAndRemove();
+    expect({ askedFirst, left, c1: says(w, "c1"), x: w.folder.holds(X), y: w.folder.holds(Y), askingNext: (await C.asking()) === profileFingerprint(X) })
+      .toEqual({ askedFirst: true, left: "saved", c1: true, x: true, y: true, askingNext: true });
+  });
+
+  it.each([
+    ["the phone's copy older, a desktop's newer", "w-phone", "w-desk"],
+    ["the phone's copy newer, a desktop's older", "w-desk", "w-phone"],
+  ] as const)("%s, an empty phone store says Not now to the newer and decides: Stop leaves the decision in the mailbox", async (_, byOlder, byNewer) => {
+    const w = await stores();
+    const X = w.doc("anna", 120);
+    const Y = w.doc("ben", 60);
+    await w.plant(byOlder, X);
+    await w.plant(byNewer, Y);
+    const C = await w.store("w-phone");
+    await C.takeOver();
+    const askedFirst = (await C.asking()) === profileFingerprint(Y);
+    await C.answer(Y, "declined");
+    await C.decide("c1");
+    await C.ticks(3);
+    const left = await C.stopAndRemove();
+    expect({ askedFirst, left, c1: says(w, "c1"), x: w.folder.holds(X), y: w.folder.holds(Y) })
+      .toEqual({ askedFirst: true, left: "saved", c1: true, x: true, y: true });
+  });
+
+  /* A RESTORED STORE'S LATER COPY AT THE NEXT SWITCH (tester C, round 28): the restored store keeps its later
+     life's copy L (a decision the backup lacks) and, after Not now on it, publishes its own (a decision since) beside
+     it; a fresh phone B says Not now, decides, and its Stop writes 18 minutes after L. L stays, and a fresh store C
+     asks about B's copy, then A's, then L. */
+  it("a restored store's later copy, Not now, its own copy beside it, then B and Stop and remove: L stays and C asks about it", async () => {
+    const w = await stores();
+    const A = await w.store("w-a");
+    await A.decide("a1");
+    await A.takeOver();
+    // The backup is taken here. The later life lets a sender in and writes L in place of the store's copy.
+    w.later(6 * 60_000);
+    const L = makeProfileDoc({ screener: [], rules: [], notifyRules: [], awayResponder: null, tagNames: ["a1", "d1"], signature: null },
+      { updatedAt: w.clock.at, producer: { kind: "mobile", version: "0.30.22" } });
+    w.folder.messages = w.folder.messages.filter((m) => !m.raw.includes("X-Ohmail-Install-Id: w-a"));
+    await w.plant("w-a", L);
+    // Restored: a decision before it reads the folder, then Not now on L and its own copy beside it.
+    w.later(60_000);
+    await A.decide("d2");
+    await A.restart();
+    const restoredAsked = (await A.asking()) === profileFingerprint(L);
+    await A.answer(L, "declined");
+    w.later(6 * 60_000);
+    await A.ticks(2);
+    const aLeft = await A.stopAndRemove({ gap: true });
+    const ofA = w.folder.docBy("w-a");
+    w.later(60_000);
+    const B = await w.store("w-b");
+    await B.takeOver();
+    const bAsked = (await B.asking()) === profileFingerprint(ofA);
+    await B.answer(ofA, "declined");
+    await B.decide("d3");
+    w.later(6 * 60_000);
+    await B.ticks(3);
+    const bLeft = await B.stopAndRemove({ gap: true });
+    const ofB = w.folder.docBy("w-b");
+    const afterB = { l: w.folder.holds(L), ofA: w.folder.holds(ofA), lOlderMin: Math.round((Date.parse(ofB.updatedAt) - Date.parse(L.updatedAt)) / 60_000) };
+    w.later(4 * 60_000);
+    const C = await w.store("w-c");
+    await C.takeOver();
+    const name = async (): Promise<string | null> => {
+      const fp = await C.asking();
+      return fp === profileFingerprint(ofB) ? "B" : fp === profileFingerprint(ofA) ? "A" : fp === profileFingerprint(L) ? "L" : fp;
+    };
+    const offered = [await name()];
+    await C.answer(ofB, "declined");
+    await C.ticks(2);
+    offered.push(await name());
+    await C.answer(ofA, "declined");
+    await C.ticks(2);
+    offered.push(await name());
+    expect({ restoredAsked, aLeft, aTags: [...ofA.tagNames].sort(), bAsked, bLeft, afterB, offered, kept: [L, ofA, ofB].map((d) => w.folder.holds(d)) })
+      .toEqual({
+        restoredAsked: true, aLeft: "saved", aTags: ["a1", "d2"], bAsked: true, bLeft: "saved",
+        afterB: { l: true, ofA: true, lOlderMin: 18 }, offered: ["B", "A", "L"], kept: [true, true, true],
+      });
+  });
+
+  // An older copy another install appends beside an established organizer, never asked about, still goes by the ten-minute rule.
+  it("an old copy appended beside an established organizer mid-life is removed by the ten-minute rule", async () => {
+    const w = await stores();
+    const E = await w.store("w-e");
+    await E.decide("e1");
+    await E.takeOver();
+    await E.ticks(1);
+    const stray = w.doc("stray", 60);
+    await w.plant("w-stray", stray);
+    await E.ticks(3);
+    expect({ stray: w.folder.holds(stray), asking: await E.asking() }).toEqual({ stray: false, asking: null });
   });
 });

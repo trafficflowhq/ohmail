@@ -2467,13 +2467,15 @@ describe("the hold's OTHER release — the user's durable answer", () => {
     await sync.onOrganize();
     // FIX-026's gate: A is stale beside B, so one write-due tick tidies it instead of appending.
     await sync.onOrganize();
-    // B, the answered newest, is superseded. A, surfaced when the hold began and weeks older than
-    // the current document, is a stale copy of another install's: FIX-026's tidy removes it
-    // (fix-025 left it in the mailbox for ever). Never refused on, and never removed unsurfaced.
+    // B, the answered newest, goes. A was never answered: it stays in the mailbox and is the
+    // question again, however old, until the person imports or replaces it.
     const docs = profileDocs(fleet, mb.mailboxId);
     expect(docs.map((d) => [d.installId, d.doc!.tagNames])).toEqual([
+      ["someone-elses-mac", ["theirs"]],
       [INSTALL, ["mine"]],
     ]);
+    const asked = await latestProfileFoundMarker(db, mb.accountId, mb.mailboxId);
+    expect([asked?.installId, asked?.heldForImport]).toEqual(["someone-elses-mac", true]);
     const read = await readOrganizerProfile(fleet.metaFor(mb.mailboxId));
     expect(read.state === "found" && read.installId, "the answered mailbox's write-behind must resume")
       .toBe(INSTALL);
