@@ -274,11 +274,12 @@ describe("the other body surfaces say the same", () => {
     expect(reportedHrefs()).toContain(HREF);
   });
 
-  it("a dull Screener preview (spam, junk, screened out) says so with no link", async () => {
+  it("a dull Screener preview (spam, junk, screened out) says nothing: a lure there gets no ohmail voice", async () => {
     const el = await mount(msg("held-dull"), { text: STUB }, { surface: "screener", dull: true });
-    expect(el.textContent).toContain(EN.invitationOwaLink);
-    expect(settingLink(el)).toBeNull();
+    expect(el.querySelector("[role=note]")).toBeNull();
+    expect(el.textContent).not.toContain(EN.invitationOwaLink);
     expect(reportedHrefs()).not.toContain(HREF);
+    expect(el.querySelector(".hm-body")!.textContent).toContain("Microsoft Outlook Web Access:");
   });
 
   it("the Screener's preview of ordinary mail says nothing", async () => {

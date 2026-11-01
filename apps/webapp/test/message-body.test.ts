@@ -91,6 +91,24 @@ const srcdoc = (): string => frame()?.getAttribute("srcdoc") ?? "";
 /** Where a frame's link goes: its href, or the address a marked link keeps until its frame is armed. */
 const addressOf = (a: Element): string | null => a.getAttribute("href") ?? a.getAttribute("data-ohmail-ask");
 
+/** How many URLs `run` constructs: the label reading's work, counted rather than timed. */
+function urlsBuilt(run: () => void): number {
+  const Real = globalThis.URL;
+  let built = 0;
+  globalThis.URL = class extends Real {
+    constructor(url: string | URL, base?: string | URL) {
+      built += 1;
+      super(url, base);
+    }
+  };
+  try {
+    run();
+  } finally {
+    globalThis.URL = Real;
+  }
+  return built;
+}
+
 /**
  * A url in a position the BROWSER WOULD FETCH — `src`, `srcset`, `background`, CSS `url()`.
  *
@@ -663,6 +681,28 @@ describe("links look like links and say where they go", () => {
     expect(doc).toContain("a[data-ohmail-host]:focus::after");
   });
 
+  it("inside an http(s) link the only hover title is where it goes", async () => {
+    // A sender's title on anything inside the link would stand in for "Goes to" on hover. A picture
+    // keeps its words as alt, which draws no tooltip; a link inside names its own host; titles
+    // outside an http(s) link stay. Mutations: no removal → the span, abbr and img; the removal
+    // after the picture is named → its alt; a link inside not named again → the inner link.
+    const gif = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+    const { html } = await clean(
+      `<p title="A note">Note</p><div><a href="https://evil.example/x" title="Goes to bank.example">` +
+      `<span title="Goes to bank.example">Sign in</span> <abbr title="bank.example">BE</abbr> <img src="${gif}" title="Bank">` +
+      `<table><tr><td><a href="https://shop.example/y" title="Goes to bank.example">Shop</a></td></tr></table></a></div>` +
+      `<p><a href="mailto:help@bank.example"><span title="Write to us">Mail us</span></a></p>`,
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const [link, , mail] = doc.querySelectorAll("a");
+    expect(link!.getAttribute("title")).toBe("Goes to evil.example");
+    expect([...link!.querySelectorAll("[title]")].map((el) => [el.localName, el.getAttribute("title")]))
+      .toEqual([["a", "Goes to shop.example"]]);
+    expect(link!.querySelector("img")!.getAttribute("alt")).toBe("Bank");
+    expect(doc.querySelector("p")!.getAttribute("title")).toBe("A note");
+    expect(mail!.querySelector("span")!.getAttribute("title")).toBe("Write to us");
+  });
+
   it("marks a link whose visible text names somewhere else", async () => {
     // THE GUARD for the phishing shape. Mutation: `return false` in
     // `textDisagreesWithHref`. Real failure text:
@@ -716,9 +756,9 @@ describe("links look like links and say where they go", () => {
       "bank\u{200a}.example",
       "bank\u{202f}.example",
     ]) expect(textDisagreesWithHref(label, "evil.example"), JSON.stringify(label)).toBe(true);
-    // And honest labels stay quiet. Mutations: every run of a word → the path; no IDN guard →
-    // the IDN label (its ASCII tail is not a host the reader sees); any bidi control → the
-    // right-to-left label, which could spell no ASCII host in any order.
+    // And honest labels stay quiet. Mutations: every run of a word → the path; the ASCII run of a
+    // word in another script trusted → the IDN label (its ASCII tail is not a host the reader sees);
+    // any bidi control → the right-to-left label, which could spell no ASCII host in any order.
     expect(textDisagreesWithHref("https://bank.example/guide.html", "bank.example")).toBe(false);
     expect(textDisagreesWithHref("Visit shop.example.", "shop.example")).toBe(false);
     expect(textDisagreesWithHref("bücher.example", "xn--bcher-kva.example")).toBe(false);
@@ -726,6 +766,66 @@ describe("links look like links and say where they go", () => {
     expect(textDisagreesWithHref("a.".repeat(262144) + "b", "evil.example")).toBe(false);
     expect(textDisagreesWithHref("\u{202b}\u{5e9}\u{5dc}\u{5d5}\u{5dd}.\u{202c}", "shop.example")).toBe(false);
     expect(textDisagreesWithHref("1\u{2009}000 offers on shop.example\u{202f}!", "shop.example")).toBe(false);
+  });
+
+  it("textDisagreesWithHref: a host in another script or width is read as the URL parser reads it", async () => {
+    // A word with a letter, mark or digit outside ASCII is folded (NFKC) and its host read through
+    // the URL parser (UTS 46); a full stop of another width is a dot only between characters that
+    // fold to ASCII letters or digits. A last label with no ASCII letter ends a host only as a
+    // delegated top-level domain or in letters drawn as ASCII ones. Mutations: no NFKC → the small
+    // full stop; no full-stop fold → the next four; every stop folded → the Japanese labels; the
+    // ASCII run of a word in another script trusted → the Cyrillic and IDN rows ("рank", "Ьank",
+    // BÜCHER); a refused parse read as no host → the Hebrew row; the right-to-left reading as it
+    // was → the office row; no root-zone list → the .рф rows; no look-alikes → раураӏ.со; small
+    // letters only → PAYPAL.СОМ; an ASCII last label held to those two → раураl.com; a run naming
+    // no host ends the word → the row after PAYPAL.СОМ; any last label → the prose below.
+    const { textDisagreesWithHref } = await mod();
+    for (const label of [
+      "\u{1d41b}ank.example",
+      "ｂａｎｋ．ｅｘａｍｐｌｅ",
+      "ｂａｎｋ\u{fe52}ｅｘａｍｐｌｅ",
+      "bank\u{3002}example",
+      "bank\u{ff61}example",
+      "bank\u{ff0e}example",
+      "bank\u{200a}\u{3002}example",
+      "раураl.com",
+      "bank.example查看",
+      "登录bank.example",
+      "bank.exampleשלום",
+      "office\u{200f}．\u{200f}３６５com",
+      "пример.рф",
+      "сбербанк.рф",
+      "раураӏ.со",
+      "PAYPAL.СОМ",
+      "1.查看详情,bank.example",
+    ]) expect(textDisagreesWithHref(label, "evil.example"), JSON.stringify(label)).toBe(true);
+    // A letter of another script before an ASCII tail: the tail is a host minus its first letter.
+    expect(textDisagreesWithHref("рank.example", "ank.example")).toBe(true);
+    expect(textDisagreesWithHref("Ьank.example", "ank.example")).toBe(true);
+    // Honest labels stay quiet: the host in other letters, an IDN label at its A-label, and prose,
+    // a word glued to the next by a dot included.
+    expect(textDisagreesWithHref("\u{1d41b}ank.example", "bank.example")).toBe(false);
+    expect(textDisagreesWithHref("ｂａｎｋ．ｅｘａｍｐｌｅ", "bank.example")).toBe(false);
+    expect(textDisagreesWithHref("BÜCHER.example", "xn--bcher-kva.example")).toBe(false);
+    expect(textDisagreesWithHref("пример.рф", "xn--e1afmkfd.xn--p1ai")).toBe(false);
+    for (const label of [
+      "テキスト\u{3002}次の文", "本日限定セール\u{3002}今すぐチェック", "т.е. Grüße", "shop.example™",
+      "1.查看详情", "点击这里.立即购买", "1.新商品のご案内", "2.セール情報", "第1章.概要", "Vol.特集",
+      "ดร.สมชาย ใจดี", "ถ.สุขุมวิท กรุงเทพฯ", "อ.เมือง จ.เชียงใหม่", "ул.Тверская, д.1", "т.е.Пример",
+      "انقر هنا.للمزيد",
+    ]) expect(textDisagreesWithHref(label, "shop.example"), label).toBe(false);
+  });
+
+  it("…reading a host through the URL parser once, however often a label names it", async () => {
+    // Counted in URLs constructed, not timed: the host, its last label, and the prose's last label.
+    // Mutation: no memo → two per host word and one per prose word, 30,000.
+    const { textDisagreesWithHref } = await mod();
+    const label = "пример.рф 1.查看详情 ".repeat(10_000);
+    let quiet = false;
+    expect(urlsBuilt(() => {
+      quiet = !textDisagreesWithHref(label, "xn--e1afmkfd.xn--p1ai");
+    })).toBeLessThanOrEqual(3);
+    expect(quiet).toBe(true);
   });
 
   it("a designed letter's link names its host when any reading of its label names another", async () => {
@@ -756,6 +856,59 @@ describe("links look like links and say where they go", () => {
     // The web asks in a page of its own (`link-ask.ts`), so the frame it builds holds no address on a
     // marked link until it is armed. Mutation: the reader not passing `askInPage` → red.
     expect([...doc.querySelectorAll("a")].map((a) => a.hasAttribute("href"))).toEqual([false, false, false, false, true, true]);
+  });
+
+  it("…and reads a label in another script or width as the URL parser does", async () => {
+    // Prose in another script, in a label or in what the styles draw, names no host. Mutations: the
+    // label reading as it was → (a) and (b) unmarked; any last label in another script → (c)-(e) marked.
+    await render({
+      text: "fallback",
+      html: `<style>.c{color:#333}.n::before{content:"1.查看详情 "}</style><table width="600"><tr><td>` +
+        `<p><a href="https://evil.example/a">ｂａｎｋ．ｅｘａｍｐｌｅ</a></p>` +
+        `<p><a href="https://evil.example/b">раураl.com</a></p>` +
+        `<p><a href="https://xn--bcher-kva.example/c">bücher.example</a></p>` +
+        `<p><a href="https://shop.example/d">1.新商品のご案内</a></p>` +
+        `<p><a href="https://shop.example/e">ดร.สมชาย ใจดี</a></p>` +
+        `<p><a href="https://evil.example/f">раураӏ.со</a></p></td></tr></table>`,
+    });
+    expect(frame(), "the designed letter did not render in a frame").not.toBeNull();
+    const doc = new DOMParser().parseFromString(srcdoc(), "text/html");
+    expect([...doc.querySelectorAll("a")].map((a) => [addressOf(a), a.hasAttribute("data-ohmail-elsewhere")]))
+      .toEqual([
+        ["https://evil.example/a", true],
+        ["https://evil.example/b", true],
+        ["https://xn--bcher-kva.example/c", false],
+        ["https://shop.example/d", false],
+        ["https://shop.example/e", false],
+        ["https://evil.example/f", true],
+      ]);
+  });
+
+  it("…and a letter's styles take at most 32 URL readings before they may name any host", async () => {
+    // What the styles draw is read once per letter; past 32 readings it may name any host, and every
+    // link is marked. Counted in URLs constructed, less the same letter whose styles name ASCII
+    // hosts, which marks both links too; reading whether prose ends in a top-level domain counts.
+    // Mutations: no budget → a reading per host and .рф's, 41; that reading free → 40 for the prose.
+    const { sanitizeMailHtml } = await mod();
+    const marks = (host: (i: number) => string): boolean[] => {
+      const sheet = Array.from({ length: 40 }, (_, i) => `.s${i}::before{content:"${host(i)}"}`).join("");
+      const { html } = sanitizeMailHtml(`<style>${sheet}</style><table width="600"><tr><td><p>` +
+        `<a href="https://shop.example/">Read more</a> <a href="https://xn--0-ktb.xn--p1ai/">ж0.рф</a></p></td></tr></table>`);
+      return [...new DOMParser().parseFromString(html, "text/html").querySelectorAll("a")].map((a) => a.hasAttribute("data-ohmail-elsewhere"));
+    };
+    let marked: boolean[][] = [];
+    const read = urlsBuilt(() => {
+      marked = [marks((i) => `ж${i}.рф`)];
+    });
+    const prose = urlsBuilt(() => {
+      marked.push(marks((i) => `1.查${String.fromCodePoint(0x4e00 + i)}`));
+    });
+    const ascii = urlsBuilt(() => {
+      expect(marks((i) => `h${i}.example`)).toEqual([true, true]);
+    });
+    expect(read - ascii).toBeGreaterThan(0);
+    expect(Math.max(read - ascii, prose - ascii)).toBeLessThanOrEqual(32);
+    expect(marked).toEqual([[true, true], [true, true]]);
   });
 
   it("…and as the browser draws it from its defaults and the letter's sheets, in any order", async () => {
