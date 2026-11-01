@@ -98,6 +98,11 @@ export interface ComposeFields {
    * to remove it or put it back (`SupportDiagnostics`). The block itself is body text.
    */
   diag?: string;
+  /**
+   * The person edited a recipient line in the composer (a door's prefill never sets it), so a
+   * recipient alone counts as typed text worth a draft. Kept in the buffer; never on the row.
+   */
+  recipientsTyped?: true;
 }
 
 export const EMPTY_COMPOSE: ComposeFields = {
@@ -471,6 +476,7 @@ export function readComposeDraft(): ComposeFields {
           ? { sig: { kind: "edited" as const, text: parsed.sig.text } }
           : {}),
       ...(typeof parsed.diag === "string" && parsed.diag !== "" ? { diag: parsed.diag } : {}),
+      ...(parsed.recipientsTyped === true ? { recipientsTyped: true as const } : {}),
     };
   } catch {
     // Blocked storage, or a value some earlier version wrote in another shape. Either way an
