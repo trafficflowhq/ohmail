@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
+import net from "node:net";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { accountSettings, folderState, mailboxes, messageBodies, messages, messageTags, tags } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { schema, makePooledDb, closePooledDbs } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 import { searchIndexBackfillPass, upsertMessageSearch } from "@trafficflow/core/mail";
@@ -74,6 +75,26 @@ async function seed(accountId: string, n: number, tagId: string, built = true): 
 }
 
 const isTx = (s: string): boolean => /^(begin|commit)\b/i.test(s);
+
+/** A TCP proxy to the database that holds every reply `ms` before passing it on: a round trip costs `ms`. */
+async function slowReplies(target: string, ms: number): Promise<{ url: string; close: () => Promise<void> }> {
+  const to = new URL(target);
+  const server = net.createServer((client) => {
+    const upstream = net.connect(Number(to.port || 5432), to.hostname);
+    const end = (): void => { client.destroy(); upstream.destroy(); };
+    client.on("data", (b) => upstream.write(b));
+    upstream.on("data", (b) => setTimeout(() => client.write(b), ms));
+    client.on("close", end);
+    upstream.on("close", () => setTimeout(end, ms + 5));
+    client.on("error", end);
+    upstream.on("error", end);
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const url = new URL(target);
+  url.hostname = "127.0.0.1";
+  url.port = String((server.address() as net.AddressInfo).port);
+  return { url: url.href, close: () => new Promise<void>((r) => server.close(() => r())) };
+}
 
 describe("a search answer is a bounded number of statements (real Postgres)", () => {
   beforeAll(async () => {
@@ -170,6 +191,31 @@ describe("a search answer is a bounded number of statements (real Postgres)", ()
     expect(await summary()).toBe(9);
     await searchIndexBackfillPass({ db: db as never, accountId: D, now: () => NOW });
     expect(await page()).toEqual(before);
+  });
+
+  it("on the pooled handle a page answers after ONE round trip: begin, the settings and the read in one flight", async () => {
+    const RTT = 40;
+    const proxy = await slowReplies(PG_URL, RTT);
+    try {
+      const far = { ...ctx(A), db: makePooledDb(proxy.url) as never };
+      const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 4 * RTT));
+      // The handle's own facts (pg_trgm, the marker) and its connections, once.
+      for (let i = 0; i < 3; i++) { await svc.search(far, { q: "heron", parts: "page", limit: PAGE }); await settle(); }
+      const ms: number[] = [];
+      for (let i = 0; i < 5; i++) {
+        const t = performance.now();
+        const r = await svc.search(far, { q: "heron", parts: "page", limit: PAGE });
+        ms.push(performance.now() - t);
+        expect(r.items).toHaveLength(PAGE);
+        await settle();
+      }
+      ms.sort((x, y) => x - y);
+      console.log(`search-round-trips one flight: ${ms.map((x) => x.toFixed(0)).join(", ")} ms at ${RTT} ms a round trip`);
+      expect(ms[2]!, "a page waits one round trip, not three").toBeLessThan(2 * RTT);
+    } finally {
+      await closePooledDbs();
+      await proxy.close();
+    }
   });
 
   it("an empty exact tier asks the typo tier in the SAME transaction", async () => {

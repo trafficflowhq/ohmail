@@ -162,7 +162,7 @@ describe("Search pages the store", () => {
     expect(hits().length).toBe(2);
   });
 
-  it("a cut search draws its facets from the estimate, and the exact set takes their places", async () => {
+  it("a cut search draws its chips from the estimate with no numbers, and the exact set numbers them in place", async () => {
     const asked: string[] = [];
     const facetsOf = (sender: Array<[string, number]>, folder: Record<string, number>) => ({
       folder, sender: sender.map(([address, count]) => ({ address, count })),
@@ -191,7 +191,9 @@ describe("Search pages the store", () => {
     expect(asked).toEqual(["page", "estimate", "summary"]);
     expect(text()).toContain("Searched your whole mailbox — about 690 matched");
     const before = read();
-    expect(before.slice(0, 3)).toEqual(["news@axa.example×28", "portal@insure.example×12", "claims@axa.example×5"]);
+    // The candidates' counts are no count of the match set: the chips stand without them.
+    expect(before.slice(0, 3)).toEqual(["news@axa.example", "portal@insure.example", "claims@axa.example"]);
+    expect(before.join(" ")).not.toContain("×");
     await act(async () => {
       summary!({ items: [], total: 712, totalExact: true, facets: facetsOf(
         [["portal@insure.example", 400], ["news@axa.example", 300], ["claims@axa.example", 12]], { "ohmail/News": 350, INBOX: 362 },
@@ -204,6 +206,22 @@ describe("Search pages the store", () => {
     expect(read().length).toBe(before.length);
     expect(chips().every((li, i) => li === drawn[i]), "the same chips, replaced in place").toBe(true);
     expect(asked, "three requests, no more").toEqual(["page", "estimate", "summary"]);
+  });
+
+  it("past the store's cap the summary raises the lower bound, and its chips carry no numbers", async () => {
+    const facets = {
+      folder: { INBOX: 40 }, sender: [{ address: "news@axa.example", count: 31 }],
+      hasAttachments: { true: 0, false: 40 }, unread: { true: 0, false: 40 },
+    };
+    const engine = await engineWith([], async (_q, o) => (o.parts === "estimate" ? { items: [], total: 200, totalExact: false, facets }
+      : o.parts === "summary" ? { items: [], total: 2_000, totalExact: false, facets }
+      : { items: page(0, 50), total: 200, totalExact: false, nextCursor: "c2", ms: 7 }));
+    await render(engine, "axa");
+    await settle();
+    expect(text()).toMatch(/Searched your whole mailbox — at least 2[,’ ]?000 matched/);
+    const chips = [...host.querySelectorAll(".facets li")].map((li) => li.textContent);
+    expect(chips).toContain("news@axa.example");
+    expect(chips.join(" ")).not.toContain("×");
   });
 
   it("while the store is still indexing it says how far; a cut relevance set says where the rest is", async () => {

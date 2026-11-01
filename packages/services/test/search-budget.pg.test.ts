@@ -238,6 +238,15 @@ async function planNodes(st: SQL, session: SQL[]): Promise<PlanNode[]> {
   walk(((r[0]!["QUERY PLAN"] as PlanNode[])[0]!)["Plan"] as PlanNode);
   return out;
 }
+/** The shared buffers (hit and read) a statement touched as it ran, under the session settings. */
+async function buffersOf(st: SQL, session: SQL[]): Promise<number> {
+  const r = (await base.transaction(async (tx) => {
+    for (const s of session) await tx.execute(s);
+    return tx.execute(sql`explain (analyze, buffers, format json) ${st}`);
+  })) as unknown as Array<Record<string, unknown>>;
+  const top = ((r[0]!["QUERY PLAN"] as PlanNode[])[0]!)["Plan"] as PlanNode;
+  return Number(top["Shared Hit Blocks"] ?? 0) + Number(top["Shared Read Blocks"] ?? 0);
+}
 /** The relations a statement read by a sequential scan, from its own plan, under the session settings. */
 async function seqScans(st: SQL, session: SQL[]): Promise<string[]> {
   return (await planNodes(st, session)).filter((p) => p["Node Type"] === "Seq Scan").map((p) => String(p["Relation Name"]))
@@ -672,7 +681,8 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       count.n = 0;
       const r = await svc.searchByAddress(at, { address: c.address, direction: c.direction });
       statements[c.cls] = count.n;
-      expect(r.total, c.cls).toBe(c.total);
+      // Exact up to 10,000 letters; past it "at least 10,000".
+      expect({ total: r.total, exact: r.totalExact ?? true }, c.cls).toEqual({ total: Math.min(c.total, 10_000), exact: c.total <= 10_000 });
       expect(r.items.length, c.cls).toBe(Math.min(50, c.total));
       expect(r.direction).toBe(c.direction);
     }
@@ -719,17 +729,56 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     }
   }, 300_000);
 
-  it("a broad page says its total is a lower bound, and the summary answers it exactly", async () => {
+  it("a broad page says its total is a lower bound, the summary says at least its cap, a rare word's is exact", async () => {
     const svc = new SearchService();
     const page = await svc.search(ctx(), { q: "w1", parts: "page" });
     expect(page.totalExact).toBe(false);
     expect(page.total).toBeGreaterThanOrEqual(page.items.length);
-    // A page asks the planner nothing: "about how many" is the estimate part's.
-    expect(page.totalEstimate).toBeUndefined();
+    // No count is read from planner statistics, which cover every account's mail.
+    expect("totalEstimate" in page).toBe(false);
     const summary = await svc.search(ctx(), { q: "w1", parts: "summary" });
     expect(summary.items).toEqual([]);
-    expect(summary.totalExact).toBe(true);
-    expect(summary.total).toBeGreaterThan(page.total);
-    expect(summary.facets).not.toBeNull();
+    expect({ total: summary.total, exact: summary.totalExact }).toEqual({ total: 2_000, exact: false });
+    expect(summary.facets, "past the cap the estimate's facets stand").toBeNull();
+    const rare = await svc.search(ctx(D), { q: "osprey", parts: "summary" });
+    expect({ total: rare.total, exact: rare.totalExact }).toEqual({ total: 4, exact: true });
   }, 300_000);
+
+  /**
+   * THE READS THAT GREW WITH THE MATCHES: the summary, newest first (a query with no excluded word)
+   * and the address view each read at most 30,000 shared buffers a statement (hit or read, from the
+   * statement's own plan as it ran), whatever the word's reach. Before the caps a broad word's summary
+   * or date order read about a million buffers (4-8 s cold), and the own address's count every letter.
+   * Oldest first, the sender and mailbox orders and newest first beside an excluded word read every
+   * match, as before.
+   */
+  it("the summary, newest first and the address view read at most 30,000 buffers a statement", async () => {
+    const svc = new SearchService();
+    const BUFFERS = 30_000;
+    const over: string[] = [];
+    let heaviest = { label: "", n: 0 };
+    const measure = async (label: string, run: () => Promise<unknown>): Promise<void> => {
+      seen.length = 0;
+      await run();
+      const session = seen.filter(isSession);
+      for (const st of seen.filter((x) => !isSession(x) && !isExplain(x))) {
+        const n = await buffersOf(st, session);
+        if (n > heaviest.n) heaviest = { label, n };
+        if (n > BUFFERS) over.push(`${label} ${n}`);
+      }
+    };
+    for (const h of HARNESS) await measure(`summary ${h.of ?? h.q}`, () => svc.search(ctx(D), { q: h.q!, parts: "summary" }));
+    const NEWEST = HARNESS.filter((h) => h.cls !== "typo").filter((_, i) => i % 3 === 0).filter((h) => !/(^|\s)-\S/.test(h.q!));
+    for (const h of NEWEST) await measure(`date_desc ${h.of ?? h.q}`, () => svc.search(ctx(D), { q: h.q!, parts: "page", sort: "date_desc" }));
+    for (const c of ADDRESS_CLASSES) await measure(`address ${c.cls}`, () => svc.searchByAddress(ctx(), { address: c.address, direction: c.direction }));
+    console.log(`search-budget buffers: heaviest ${heaviest.label} ${heaviest.n}; ${over.length === 0 ? "every statement within" : over.join(", ")}`);
+    expect(over, `statements over ${BUFFERS} buffers`).toEqual([]);
+    // Broad: the summary says at least its cap; the date order is still in order.
+    const broad = await svc.search(ctx(D), { q: HARNESS[0]!.q!, parts: "summary" });
+    expect({ total: broad.total, exact: broad.totalExact }).toEqual({ total: 2_000, exact: false });
+    const dated = await svc.search(ctx(D), { q: HARNESS[0]!.q!, parts: "page", sort: "date_desc" });
+    const dates = dated.items.map((m) => Date.parse(m.date!));
+    expect(dates).toHaveLength(50);
+    expect([...dates].sort((x, y) => y - x)).toEqual(dates);
+  }, 600_000);
 });

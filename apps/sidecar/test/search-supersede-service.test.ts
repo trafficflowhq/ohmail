@@ -14,9 +14,9 @@ vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
 /**
  * A SUPERSEDED SEARCH STOPS AT ITS NEXT CHECK POINT, through the local door's own service
  * (`searchFor("local")`): the estimate and the summary take a turn at the first line of their
- * transaction, before the typo tier and the indexing read, and before the EXPLAIN estimate; the
- * page only checks. Statements are recorded as `slow/search-budget-local.test.ts` records them.
- * Watched red: the first-line turn removed.
+ * transaction, and before the typo tier and the indexing read; the page only checks. No answer
+ * asks the planner for an estimate. Statements are recorded as `slow/search-budget-local.test.ts`
+ * records them. Watched red: the first-line turn removed.
  */
 const N = 300;
 const rows = (r: unknown): any[] => (Array.isArray(r) ? r : ((r as { rows?: any[] }).rows ?? []));
@@ -107,7 +107,7 @@ describe("a superseded search stops at its next check point", () => {
       const out = await svc.search(ctx(run.seen, hook), { q: "harbour", parts, limit: 50 });
       expect(run.seen, parts).toEqual(bare);
       expect(out.total, parts).toBe(plain.total);
-      if (parts === "estimate") expect(out.totalExact, "a cut estimate: the EXPLAIN runs").toBe(false);
+      if (parts === "estimate") expect(out.totalExact, "a cut estimate").toBe(false);
       if (parts === "summary") expect(out.total).toBe(N);
       if (parts === "page") expect(run.turns, "a page never takes a turn").toBe(0);
       else expect(run.turns).toBeGreaterThanOrEqual(2);
@@ -125,10 +125,10 @@ describe("a superseded search stops at its next check point", () => {
     }
   });
 
-  it("superseded at the second turn: no typo tier, no indexing read, no EXPLAIN", async () => {
+  it("superseded at the second turn: no typo tier, no indexing read", async () => {
     const svc = searchFor("local");
-    // The typo tier runs only for a word with no exact match; the EXPLAIN only for a cut estimate.
-    for (const [q, parts] of [["harbour", "estimate"], ["harbuor", "estimate"], ["harbuor", "summary"]] as const) {
+    // The typo tier runs only for a word with no exact match.
+    for (const [q, parts] of [["harbuor", "estimate"], ["harbuor", "summary"]] as const) {
       const control = hooked(null);
       await svc.search(ctx(control.run.seen, control.hook), { q, parts, limit: 50 });
       const { run, hook } = hooked(2);
@@ -137,16 +137,19 @@ describe("a superseded search stops at its next check point", () => {
       expect(run.seen.slice(run.cutAt!), `${q} ${parts}: statements after the second turn`).toEqual([]);
       expect(control.run.seen.length, `${q} ${parts}: the control went further`).toBeGreaterThan(run.cutAt!);
     }
-    const cut = hooked(null);
-    await svc.search(ctx(cut.run.seen, cut.hook), { q: "harbour", parts: "estimate", limit: 50 });
-    expect(cut.run.seen.some((s) => /^\s*explain/i.test(s)), "the control's estimate reads the planner").toBe(true);
   });
 
-  it("superseded before the EXPLAIN: the estimate never asks the planner", async () => {
+  it("a cut estimate asks the planner nothing: its second turn is its last, and nothing follows it", async () => {
     const svc = searchFor("local");
-    const { run, hook } = hooked(3);
-    await refused(svc.search(ctx(run.seen, hook), { q: "harbour", parts: "estimate", limit: 50 }));
-    expect(run.seen.some((s) => /^\s*explain/i.test(s))).toBe(false);
+    const { run, hook } = hooked(null);
+    const out = await svc.search(ctx(run.seen, hook), { q: "harbour", parts: "estimate", limit: 50 });
+    expect(out.totalExact).toBe(false);
+    expect(run.turns).toBe(2);
+    expect(run.seen.some((s) => /^\s*explain/i.test(s)), "no estimate reads the planner").toBe(false);
+    const cut = hooked(2);
+    await refused(svc.search(ctx(cut.run.seen, cut.hook), { q: "harbour", parts: "estimate", limit: 50 }));
+    expect(cut.run.seen.slice(cut.run.cutAt!)).toEqual([]);
+    expect(cut.run.seen).toEqual(run.seen);
   });
 
   it("a page only checks: superseded on arrival it sends nothing, otherwise it takes no turn", async () => {

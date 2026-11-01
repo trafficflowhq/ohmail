@@ -123,7 +123,8 @@ describe("a search read is planned serial and uncompiled on a stock Postgres", (
       const { reads } = await sent(run);
       const plans = await planned(control, reads);
       expect(plans.some((p) => p.jit), `${name}: some read JITs`).toBe(true);
-      expect(plans.some((p) => p.gather), `${name}: some read gathers`).toBe(true);
+      // The summary reads at most 2,001 documents a branch: too few to gather even unshaped.
+      if (name !== "summary") expect(plans.some((p) => p.gather), `${name}: some read gathers`).toBe(true);
     }
   }, 60_000);
 });

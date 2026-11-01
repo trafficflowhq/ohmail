@@ -6,7 +6,8 @@ import { makeCtx, seedMessage } from "./helpers.js";
 /**
  * THE SUMMARY'S FIRST ANSWER — `parts=estimate` counts the tier's fused candidates: when no arm was
  * cut they ARE the match set, so the count and facets equal the exact summary's; when one was, the
- * count is a lower bound, `totalEstimate` says about how many, and the facets are the candidates'.
+ * count is a lower bound said as "at least" (never a planner's estimate: its statistics cover every
+ * account's mail), and the facets are the candidates'.
  * Both stores: this file runs in the sqlite project too. Watched red: the estimate never cut and its
  * facets over the union (case 2), eight pages a cut (case 3), the sender order reversed (case 1).
  */
@@ -46,7 +47,7 @@ describe("parts=estimate — the count and facets over the fused candidates", ()
     expect(e.items).toEqual([]);
     expect(e.nextCursor).toBeNull();
     expect(e.totalExact).toBe(true);
-    expect(e.totalEstimate).toBeUndefined();
+    expect("totalEstimate" in e).toBe(false);
     expect(e.total).toBe(s.total);
     expect(e.tier).toBe(s.tier);
     expect(e.facets).toEqual(s.facets);
@@ -54,7 +55,7 @@ describe("parts=estimate — the count and facets over the fused candidates", ()
     expect(s.facets!.sender).toEqual([0, 1, 2, 3].map((i) => ({ address: `ranger${i}@reserve.example`, count: i < 2 ? 8 : 7 })));
   });
 
-  it("(2) a cut arm: a lower bound, an estimate at least it, and the candidates' facets", async () => {
+  it("(2) a cut arm: a lower bound with no estimate beside it, and the candidates' facets", async () => {
     const ctx = await corpus();
     const svc = new SearchService();
     // Two a page puts every arm's cut at eight, under the thirty that match.
@@ -64,7 +65,7 @@ describe("parts=estimate — the count and facets over the fused candidates", ()
     expect(e.totalExact).toBe(false);
     expect(e.total).toBe(page.total);
     expect(e.total).toBeLessThan(s.total);
-    expect(e.totalEstimate).toBeGreaterThanOrEqual(e.total);
+    expect("totalEstimate" in e, "no count read from planner statistics").toBe(false);
     expect(sum(e.facets!.folder)).toBe(e.total);
     expect(e.facets!.unread.true + e.facets!.unread.false).toBe(e.total);
     expect(e.facets!.sender.reduce((a, x) => a + x.count, 0)).toBe(e.total);

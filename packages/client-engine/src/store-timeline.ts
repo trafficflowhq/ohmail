@@ -845,8 +845,10 @@ export class StoreSearchWalker {
         if (epoch !== this.epoch || sum.state !== "ready" || this.meta === null || !sameStore(sum)) return;
         this.meta = {
           ...this.meta,
-          ...(sum.totalExact ? { total: sum.total, totalExact: true, about: null } : {}),
-          facets: sum.facets ? facetsInPlace(this.meta.facets, sum.facets) : this.meta.facets,
+          // Past the server's cap the summary says "at least": it raises the lower bound, never sets "about".
+          ...(sum.totalExact ? { total: sum.total, totalExact: true, about: null } : { total: Math.max(this.meta.total, sum.total) }),
+          // Not exact, the summary's facets are of the matches it read: the estimate's chips stand.
+          facets: sum.facets && sum.totalExact ? facetsInPlace(this.meta.facets, sum.facets) : this.meta.facets,
           indexed: sum.indexed,
           importing: sum.importing === true,
         };

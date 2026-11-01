@@ -610,9 +610,6 @@ export function sqliteDialect(): Dialect {
       searchSession: (): null => null,
       // The FTS5 tables are kept by triggers over every row, so nothing here is unindexed.
       unindexed: (): null => null,
-      // No planner statistics to ask; this store's exact count is its own scan anyway.
-      estimateRows: async (): Promise<null> => null,
-      estimateRowsEach: async (_db: unknown, statements: readonly SQL[]): Promise<null[]> => statements.map(() => null),
       // No INSERT inside a WITH on this store.
       withDocument: (): null => null,
       // No `tsv` column on this store (see the migration's twin).

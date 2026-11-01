@@ -144,7 +144,7 @@ describe("a cut closest-words answer says at least, never about", () => {
     expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
     const svc = new SearchService();
     const e = await svc.search(ctx, { q: "vo", parts: "estimate", limit: 1 });
-    expect({ tier: e.tier, exact: e.totalExact, estimate: e.totalEstimate }).toEqual({ tier: "similar", exact: false, estimate: undefined });
+    expect({ tier: e.tier, exact: e.totalExact, estimate: "totalEstimate" in e }).toEqual({ tier: "similar", exact: false, estimate: false });
     const s = await svc.search(ctx, { q: "vo", parts: "summary", limit: 1 });
     expect({ tier: s.tier, total: s.total }).toEqual({ tier: "similar", total: 12 });
   });

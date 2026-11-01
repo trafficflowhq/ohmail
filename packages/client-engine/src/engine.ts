@@ -1148,6 +1148,8 @@ export interface ServerAddressWire {
   items: EngineMessage[];
   /** Matches across the WHOLE corpus in the answered direction, which is more than `items.length`. */
   total: number;
+  /** `false`: the server counted up to its cap, and `total` is a lower bound. Absent ⇒ exact. */
+  totalExact?: false;
   /** Which side the server actually searched. Absent ⇒ `from`, all a server before the field served. */
   direction?: ServerAddressDirection;
   /** Present while the store has not taken in the whole mailbox: `total` is of the mail synced so far. */
@@ -1546,7 +1548,7 @@ export function errorClassOf(err: unknown): string {
  */
 export type ServerAddressOutcome =
   | { state: "unavailable" }
-  | { state: "ready"; items: EngineMessage[]; total: number; direction: ServerAddressDirection; importing?: true }
+  | { state: "ready"; items: EngineMessage[]; total: number; direction: ServerAddressDirection; importing?: true; totalExact?: false }
   /** `errorClass` is `errorClassOf`'s — which door refused, for the sentence and the wire's re-ask. */
   | { state: "failed"; error: string; errorClass: string };
 
@@ -10801,6 +10803,7 @@ export class OhmailEngine {
             ? (wire.direction as ServerAddressDirection)
             : "from",
           ...(wire.importing === true ? { importing: true as const } : {}),
+          ...(wire.totalExact === false ? { totalExact: false as const } : {}),
         };
       })
       .catch((err: unknown): ServerAddressOutcome => ({

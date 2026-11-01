@@ -5,6 +5,7 @@ import { onNotice } from "./notices.js";
 import { brandDialect } from "./dialect/index.js";
 import { withPgSocket } from "./pg-socket.js";
 import { pgTlsOptions } from "./pg-tls.js";
+import { registerReadFlight } from "./read-flight.js";
 
 let sql: ReturnType<typeof postgres> | null = null;
 
@@ -648,14 +649,18 @@ const holdConnection = (): boolean => false;
  * scoped clients `begin` and `savepoint` hand their callbacks, which are new driver handles the
  * outer proxy never sees. A caller passing its own `onexecute` keeps the driver's path.
  */
-function withOneFlush(client: ReturnType<typeof postgres>): ReturnType<typeof postgres> {
+function withOneFlush(
+  client: ReturnType<typeof postgres>, lone = true, pool: ReturnType<typeof postgres> = client, pipelined = false,
+): ReturnType<typeof postgres> {
   type Sql = ReturnType<typeof postgres>;
-  const serializers = (): Serializers => (client.options as unknown as { serializers: Serializers }).serializers;
+  // The pool's: a reserved connection's handle carries no options of its own.
+  const serializers = (): Serializers => (pool.options as unknown as { serializers: Serializers }).serializers;
   const unsafeOf = (t: Sql, lone: boolean) => (text: string, params: unknown[] = [], options: Record<string, unknown> = {}) => {
     const flat = params.length > 0 && !("onexecute" in options) ? flatArgs(params) : null;
     if (flat === null) return t.unsafe(text, params as never[], options);
-    // `onexecute` is the driver's own query option; its types do not list it.
-    const query = t.unsafe(text, flat.args as never[], { ...options, onexecute: holdConnection } as never);
+    // `onexecute` is the driver's own query option; its types do not list it. A reserved connection
+    // (`pipelined`) is this caller's alone: what follows is written behind it without a wait.
+    const query = t.unsafe(text, flat.args as never[], (pipelined ? options : { ...options, onexecute: holdConnection }) as never);
     sendInOneFlush(query, params, flat.untyped, serializers, lone);
     return query;
   };
@@ -676,7 +681,73 @@ function withOneFlush(client: ReturnType<typeof postgres>): ReturnType<typeof po
       return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
     },
   });
-  return door(client, true);
+  return door(client, lone);
+}
+
+/**
+ * ONE FLIGHT FOR A READ-ONLY TRANSACTION. `begin` through the driver waits for BEGIN's answer
+ * before the first read is written, and the caller waits for COMMIT's before it has its rows: three
+ * round trips to the pooler for one read. Here a connection is reserved under the acquire ceiling,
+ * `begin read only` is written and not awaited, so the callback's settings and first read follow it
+ * in the same write; the answer is the callback's, and COMMIT (ROLLBACK on any error) is written after
+ * it. The connection goes back to the pool only once that reply is in: never inside a transaction.
+ * A connection whose closing statement got no reply is not handed back (the driver has closed it).
+ */
+function withReadFlight(
+  pool: ReturnType<typeof postgres>, client: ReturnType<typeof postgres>, ms: number,
+): ReturnType<typeof postgres> {
+  type Sql = ReturnType<typeof postgres>;
+  type Run = { execute: () => unknown; then: Promise<unknown>["then"]; catch: Promise<unknown>["catch"] };
+  const send = (conn: Sql, text: string): Promise<unknown> => {
+    const q = conn.unsafe(text) as unknown as Run;
+    q.execute();
+    q.catch(() => { /* read where it matters */ });
+    return q as unknown as Promise<unknown>;
+  };
+  const begin = async (...args: unknown[]): Promise<unknown> => {
+    const fn = args[args.length - 1] as (s: Sql) => unknown;
+    const conn = await reserveWithin(pool, ms);
+    const scoped = withBindLimit(withOneFlush(conn, false, pool, true));
+    const close = (text: string): void => {
+      send(conn, text).then(() => conn.release(), () => undefined);
+    };
+    const opened = send(conn, "begin read only");
+    let out: unknown;
+    try {
+      out = await fn(scoped);
+      await opened;
+    } catch (err) {
+      close("rollback");
+      throw err;
+    }
+    close("commit");
+    return out;
+  };
+  return new Proxy(client, {
+    get(target, prop) {
+      if (prop === "begin") return begin;
+      const value = Reflect.get(target, prop);
+      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  }) as Sql;
+}
+
+/** A reserved connection within `ms`, or {@link DbAcquireTimeoutError}; one reserved too late goes straight back. */
+function reserveWithin(pool: ReturnType<typeof postgres>, ms: number): Promise<ReturnType<typeof postgres> & { release: () => void }> {
+  type Reserved = ReturnType<typeof postgres> & { release: () => void };
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    let refused = false;
+    const timer = setTimeout(() => {
+      refused = true;
+      reject(new DbAcquireTimeoutError(ms, "transaction"));
+    }, ms);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    (pool.reserve() as Promise<Reserved>).then(
+      (conn) => { clearTimeout(timer); if (refused) conn.release(); else resolve(conn); },
+      (err: unknown) => { clearTimeout(timer); if (!refused) reject(asBusyRefusal(err, started, "transaction")); },
+    );
+  });
 }
 
 // Serverless request-scoped Db. One pool per connection string, module-cached so a warm instance
@@ -725,7 +796,9 @@ export function makePooledDb(
     }));
     pools.set(url, pooled);
   }
-  const handle = brandDialect(drizzle(withBindLimit(withAcquireCeiling(withOneFlush(pooled), ceiling)), { schema }), "pg");
+  const client = withBindLimit(withAcquireCeiling(withOneFlush(pooled), ceiling));
+  const handle = brandDialect(drizzle(client, { schema }), "pg");
+  registerReadFlight(handle, brandDialect(drizzle(withReadFlight(pooled, client, ceiling), { schema }), "pg"));
   handles.set(key, handle);
   return handle;
 }

@@ -91,6 +91,8 @@ export {
   markFenced, fencedAccountOf, inTransactionHandle,
   AccountErasedError, MailboxErasedError, type FenceScope,
 } from "./erasure-fence.js";
+// The pooled handle's one-flight read transaction, asked by the search's session (`read-flight.ts`).
+export { readFlightOf } from "./read-flight.js";
 
 // THE SCREENER DECISION'S APPLY — the reason for all three exports above it, and the biggest
 // single move: `ScreenerService.applyDecision`'s whole transactional core, reachable by the

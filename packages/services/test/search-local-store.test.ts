@@ -106,4 +106,24 @@ describe("the desktop store's bounded arms", () => {
       .filter((g) => g % 5 === 0 && ((g > 240 && g % 2 === 0) || (g <= 240 && g % 24 === 0)));
     expect([...gs].sort((x, y) => x - y)).toEqual(expected);
   });
+
+  it.each(["date_desc", "date_asc", "sender", "mailbox"] as const)("%s: every page of a chosen order lists the word's matches in that order, as the server's do", async (sort) => {
+    const walk = async (svc: SearchService) => {
+      const out: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const r = await svc.search(ctx, { q: "rarea", parts: "page", limit: LIMIT, sort, ...(cursor ? { cursor } : {}) });
+        expect(r.tier).toBe("exact");
+        out.push(...r.items.map((m) => m.id));
+        cursor = r.nextCursor ?? undefined;
+      } while (cursor);
+      return out;
+    };
+    const ids = await walk(local);
+    const gs = ids.map((id) => byG.get(id)!);
+    expect([...gs].sort((x, y) => x - y)).toEqual(Array.from({ length: 30 }, (_, i) => 20 * (i + 1)));
+    if (sort === "date_desc") expect(gs).toEqual([...gs].sort((x, y) => x - y));
+    if (sort === "date_asc") expect(gs).toEqual([...gs].sort((x, y) => y - x));
+    expect(ids).toEqual(await walk(server));
+  });
 });

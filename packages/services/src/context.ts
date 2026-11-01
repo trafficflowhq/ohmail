@@ -7,6 +7,7 @@ import {
 } from "@trafficflow/db";
 import { asServiceRefusal } from "./erasure-fence.js";
 import { IdempotencyRaceLost } from "./errors.js";
+import type { SearchTiming } from "./search-timing.js";
 
 /**
  * The database-handle registry — an interface, so a deployment can add its own member. A local
@@ -149,6 +150,8 @@ export interface ServiceContext {
    * (`search-service.ts`). Set by the desktop engine's own door only; absent everywhere else.
    */
   searchSupersede?: SearchSupersede;
+  /** Where a search answer spent its time, by phase (`search-timing.ts`). Absent: not recorded. */
+  timing?: SearchTiming;
 }
 
 /** A search's supersede checks: `check` throws once replaced; `turn` lets the loop read the next request first, then checks. */

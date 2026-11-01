@@ -11,9 +11,10 @@ import type { ServiceContext } from "@trafficflow/services";
 
 /**
  * A SEARCH ON THE HOSTED SHAPE, counted on the wire: the host asks `makePooledDb` for a handle on
- * every request, so this does too. A warm page is three waits — begin, the settings and the page
- * in one flush, commit — and the facts the service keeps per handle survive the next request. Two
- * accounts share the handle in parallel, one with its search documents built and one without.
+ * every request, so this does too. A warm page is one wait — begin, the settings and the page in
+ * one flush, commit written after the answer — and the facts the service keeps per handle survive
+ * the next request. Two accounts share the handle in parallel, one with its search documents built
+ * and one without.
  */
 const wire = recordPgWire();
 const PG_URL = pgTestUrl(import.meta.url);
@@ -46,6 +47,22 @@ async function onWire<T>(run: () => Promise<T>): Promise<{ value: T; trips: numb
   const binds = [...r.binds];
   const flushes = r.flushes.map((kinds) => ({ kinds, params: [...kinds].filter((k) => k === "B").map(() => paramsOf(binds.shift()!)) }));
   return { value, trips: r.flushes.filter(waits).length, statements: r.statements, flushes };
+}
+
+/**
+ * ONE FLIGHT: a flush holds begin, the settings (a simple query) and the read, and no flush before it
+ * carried a bind of this answer's; COMMIT is written once the answer is in, within `ms`.
+ */
+async function oneFlight(r: Awaited<ReturnType<typeof onWire>>, ms = 500): Promise<{ kinds: string; params: number[] }> {
+  const shape = r.flushes.map((f) => f.kinds).join(" | ");
+  const at = r.flushes.findIndex((f) => /^QQP[^Q]*B[^Q]*S$/.test(f.kinds));
+  expect(at, shape).toBeGreaterThanOrEqual(0);
+  expect(r.flushes.slice(0, at).some((f) => f.kinds.includes("B")), shape).toBe(false);
+  const seen = r.flushes.length;
+  const until = Date.now() + ms;
+  while (!wire.read().flushes.slice(seen).includes("Q") && Date.now() < until) await new Promise((x) => setTimeout(x, 10));
+  expect(wire.read().flushes.slice(seen), `${shape}: the commit after the answer`).toContain("Q");
+  return r.flushes[at]!;
 }
 
 async function seed(accountId: string, n: number, documents: boolean): Promise<void> {
@@ -101,35 +118,30 @@ describe("a search on the hosted handle factory (real Postgres, on the wire)", (
     await closePooledDbs();
   });
 
-  it("a warm page is three waits: begin, the settings and the page in one flush, commit", async () => {
+  it("a warm page is one wait: begin, the settings and the page in one flush, commit after the answer", async () => {
     const r = await onWire(() => svc.search(ctx(BUILT), { q: "heron", parts: "page", limit: 4 }));
-    const shape = r.flushes.map((f) => f.kinds).join(" | ");
-    console.log(`search-pooled-handle page: ${r.trips} waits, ${r.statements} statements`);
+    console.log(`search-pooled-handle page: ${r.flushes.map((f) => f.kinds).join(" | ")}`);
     expect(r.value.items).toHaveLength(4);
-    expect(r.trips, shape).toBe(3);
-    expect(r.statements, shape).toBe(4);
-    // The settings go FIRST in the page's flush: a simple query (no parameter), then the page's bind.
-    const paired = r.flushes.find((f) => /^Q[^Q]*B/.test(f.kinds));
-    expect(paired, shape).toBeDefined();
-    expect(paired!.params, shape).toHaveLength(1);
-    expect(paired!.params[0]!, shape).toBeGreaterThan(0);
+    // Begin and the settings carry no parameter; the page's read binds its own.
+    const flight = await oneFlight(r);
+    expect(flight.params).toHaveLength(1);
+    expect(flight.params[0]!).toBeGreaterThan(0);
   });
 
-  it("the estimate and the summary are three waits too", async () => {
+  it("the estimate and the summary are one wait too", async () => {
     for (const parts of ["estimate", "summary"] as const) {
       const r = await onWire(() => svc.search(ctx(BUILT), { q: "heron", parts, limit: 4 }));
       expect(r.value.total, parts).toBe(9);
-      expect(r.trips, `${parts}: ${r.flushes.map((f) => f.kinds).join(" | ")}`).toBe(3);
+      expect(r.value.totalExact, parts).toBe(true);
+      await oneFlight(r);
     }
   });
 
-  it("an empty exact tier asks the typo tier in the same statement: three waits, as a warm page", async () => {
+  it("an empty exact tier asks the typo tier in the same statement: one wait, as a warm page", async () => {
     const r = await onWire(() => svc.search(ctx(BUILT), { q: "zzqqxx", parts: "page", limit: 4 }));
-    const shape = r.flushes.map((f) => f.kinds).join(" | ");
     expect(r.value.items).toEqual([]);
     expect(r.value.tier).toBe("similar");
-    expect(r.trips, shape).toBe(3);
-    expect(r.statements, shape).toBe(4);
+    await oneFlight(r);
   });
 
   it("two accounts in parallel on one handle read only their own rows, the unbuilt one by its old columns", async () => {
@@ -154,6 +166,6 @@ describe("a search on the hosted handle factory (real Postgres, on the wire)", (
     await svc.search(ctx(UNBUILT), { q: "heron", parts: "page", limit: 4 });
     const after = await onWire(() => svc.search(ctx(UNBUILT), { q: "heron", parts: "page", limit: 4 }));
     expect(after.value.items).toHaveLength(4);
-    expect(after.trips, after.flushes.map((f) => f.kinds).join(" | ")).toBe(3);
+    await oneFlight(after);
   });
 });
