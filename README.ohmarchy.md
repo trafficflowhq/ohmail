@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/trafficflowhq/ohmail/stargazers"><img src="https://img.shields.io/github/stars/trafficflowhq/ohmail?style=flat&amp;label=%E2%98%85&amp;color=a3461c" alt="GitHub stars" /></a>
   <a href="https://github.com/trafficflowhq/ohmail/releases"><img src="https://img.shields.io/github/downloads/trafficflowhq/ohmail/total?style=flat&amp;color=a3461c" alt="Total downloads across all releases" /></a>
-  <a href="https://github.com/trafficflowhq/ohmail/releases/latest"><img src="https://img.shields.io/badge/download-v0.30.20-a3461c" alt="Latest release" /></a>
+  <a href="https://github.com/trafficflowhq/ohmail/releases/latest"><img src="https://img.shields.io/badge/download-v0.30.21-a3461c" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-a3461c?style=flat" alt="License: AGPL-3.0" /></a>
   <img src="https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Android-a3461c?style=flat" alt="Platforms: macOS, Windows, Linux and Android" />
 </p>
