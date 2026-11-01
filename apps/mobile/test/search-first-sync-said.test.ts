@@ -81,7 +81,7 @@ describe("the phone's count line during a first sync", () => {
     const s = web.search as Record<"syncing" | "similarHintSynced" | "scopeSynced" | "scopeSyncedAtLeast" | "scopeSyncedAbout", string>;
     expect(Copy.searchSyncing).toBe(s.syncing);
     expect(Copy.searchSimilarHintSynced).toBe(s.similarHintSynced);
-    expect(Copy.searchSyncedAtLeast(7)).toBe(s.scopeSyncedAtLeast.replace("{total}", "7"));
+    expect(Copy.searchSyncedAtLeast(7)).toBe(s.scopeSyncedAtLeast.replace("{total, number}", "7"));
     expect(Copy.searchSyncedAbout(7)).toBe(s.scopeSyncedAbout.replace("{total, number}", "7"));
     expect(Copy.searchSynced(7)).toBe(s.scopeSynced.replace(/\{total, plural.*\}\}$/, "7 matched"));
     expect(Copy.searchSynced(0)).toBe(s.scopeSynced.replace(/\{total, plural.*\}\}$/, "nothing matched"));

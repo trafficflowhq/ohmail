@@ -91,10 +91,15 @@ const typedOf = (o: QueryOperand): string => (o.quoted ? `"${o.text}"` : o.text)
 /** The excluded operand in neither form of the head (`headTsquery`). */
 const notInHead = (o: QueryOperand, headTsv: SQL): SQL => sql`not ${headTsv} @@ ${headTsquery(typedOf(o), false)}`;
 
-/** No excluded operand anywhere in the letter; undefined when nothing is excluded. */
+/**
+ * No excluded operand anywhere in the letter, each vector asked once for all of them, not once per
+ * operand (each ask reads the vector); undefined when nothing is excluded.
+ */
 function noneOf(ops: QueryOperands, head: SQL, text: SQL): SQL | undefined {
-  return ops.none.length === 0 ? undefined
-    : sql`(${sql.join(ops.none.map((o) => sql`not ${inLetter(o, head, text, false)}`), sql` and `)})`;
+  if (ops.none.length === 0) return undefined;
+  if (ops.none.length === 1) return sql`(not ${inLetter(ops.none[0]!, head, text, false)})`;
+  const any = (one: (typed: string) => SQL): SQL => sql`(${sql.join(ops.none.map((o) => one(typedOf(o))), sql` || `)})`;
+  return sql`(not (${head} @@ ${any((t) => headTsquery(t, false))} or ${text} @@ ${any((t) => sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${t})`)}))`;
 }
 
 /**
@@ -103,18 +108,18 @@ function noneOf(ops: QueryOperands, head: SQL, text: SQL): SQL | undefined {
  * so no arm admits a letter this reading refuses; no excluded operand in either is `excluded`, for
  * the caller to hold every arm to.
  */
-function acrossOf(q: string, head: SearchArm, headTsv: SQL, textTsv: SQL, recency: SQL, tsq: SQL): MailWordArms | null {
+function acrossOf(q: string, head: SearchArm, headTsv: SQL, textTsv: SQL, recency: SQL): MailWordArms | null {
   const ops = queryOperandsOf(q);
   if (!straddlesParts(ops)) return null;
   const groups = ops.any.map((g) => sql`(${sql.join(g.map((o) => inLetter(o, headTsv, textTsv, true)), sql` and `)})`);
   const none = noneOf(ops, headTsv, textTsv);
   const letter = groups.length === 0 ? sql`true` : sql`(${sql.join(groups, sql` or `)})`;
-  // Each group with every excluded operand as one tsquery, which the text GIN answers whole: one
-  // group is the typed query itself; of several, `websearch_to_tsquery` would hold only the last
-  // group to an exclusion, so each is typed again with them.
+  // Each group typed again with every excluded operand, one tsquery the text GIN answers whole: as
+  // typed, `websearch_to_tsquery` reads a bare `or` beside a minus word as "or not" (`mail or -x`),
+  // and holds only the last of several groups to an exclusion.
   const noHead = ops.none.map((o) => notInHead(o, headTsv));
   const alone = none ? ops.any.map((g, i) => {
-    const t = ops.any.length === 1 ? tsq : foldedTsquery([...g.map(typedOf), ...ops.none.map((o) => `-${typedOf(o)}`)].join(" "));
+    const t = foldedTsquery([...g.map(typedOf), ...ops.none.map((o) => `-${typedOf(o)}`)].join(" "));
     return { pred: sql`(${textTsv} @@ ${t} and ${sql.join(noHead, sql` and `)})`, letter: groups[i]!, whole: g.length === 1 };
   }) : null;
   return {
@@ -404,12 +409,15 @@ export function pgDialect(): Dialect {
         const hq = headTsquery(q);
         const head = { pred: sql`s.head_tsv @@ ${hq}`, rank: sql`ts_rank_cd(s.head_tsv, ${hq})` };
         const recency = sql`coalesce(extract(epoch from m.date), 0)`;
-        const across = acrossOf(q, head, sql`s.head_tsv`, sql`s.text_tsv`, recency, tsq);
+        const across = acrossOf(q, head, sql`s.head_tsv`, sql`s.text_tsv`, recency);
         if (across) return across;
         // Each half of `hq` refuses only its own form of an excluded word: the head refuses both.
-        const none = queryOperandsOf(q).none.map((o) => notInHead(o, sql`s.head_tsv`));
+        // Past eight words asked each part is read alone, and `excluded` holds the letter all the same.
+        const ops = queryOperandsOf(q);
+        const none = ops.none.map((o) => notInHead(o, sql`s.head_tsv`));
         const pred = none.length === 0 ? head.pred : sql`(${head.pred} and ${sql.join(none, sql` and `)})`;
-        return { head: { pred, rank: head.rank }, text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: recency } };
+        const excluded = noneOf(ops, sql`s.head_tsv`, sql`s.text_tsv`);
+        return { head: { pred, rank: head.rank }, text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: recency }, ...(excluded ? { excluded } : {}) };
       },
       partWords: (q: string): MailWordArms | null => {
         const tsq = partTsquery(q);
@@ -437,8 +445,8 @@ export function pgDialect(): Dialect {
         const sim = (col: SQL): SQL => (opts.trigram ? sql`word_similarity(${q}, ${col})` : recency);
         const part = partTsquery(q);
         const ops = queryOperandsOf(q);
-        // A guess holds no excluded operand: each table's own NOT, a row without a body kept.
-        const none = !straddlesParts(ops) || ops.none.length === 0 ? null : ops.none.map((o) => {
+        // No excluded operand, each table's own NOT, a row without a body kept: every branch here is held to it.
+        const none = ops.none.length === 0 ? null : ops.none.map((o) => {
           const t = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${o.quoted ? `"${o.text}"` : o.text})`;
           return sql`not coalesce(m.subject_tsv @@ ${t}, false) and not coalesce(b.body_tsv @@ ${t}, false)`;
         });

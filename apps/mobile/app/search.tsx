@@ -100,7 +100,7 @@ function SearchBody() {
   const verdict = addr !== null ? null : store.verdict === "searching" ? Copy.searchWholeSearching
     : store.verdict === "ready"
       ? `${searchCountLine(store)}${store.ms !== null ? ` · ${Copy.searchServerMs(store.ms)}` : ""}`
-      : store.verdict === "unanswered" ? unansweredSaid(network, "search") : null;
+      : store.verdict === "unanswered" ? unansweredSaid(network, "search", store.cause) : null;
 
   /* EVERY ROW GOES THROUGH THE WINDOW. One address can hold thousands of this mailbox's
      messages — `messagesWith` returns all of them, unsliced — so the results are a `MailList`

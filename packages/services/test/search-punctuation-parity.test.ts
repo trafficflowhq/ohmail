@@ -32,10 +32,11 @@ const POSTGRES: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
   ["sign-in", ["bodyhyph", "bodysplit", "signed", "signin"]], ["one-time", ["onetime"]], ["e-mail", ["email"]],
   ["the-report", ["hyph", "report"]], ["O'Brien", ["obrien"]], ["o'brien's", ["obrien"]], ["don't", ["dont"]],
   ["it's", []], ["3.14", ["ver"]], ["node.js", ["nodejs"]], ["desk@site.example", ["addr"]], ["and/or", ["andor"]],
-  ["docs/setup", ["path"]], ["10:30", ["time"]], ["30:10", ["time"]], ["-fixture code(sign)", ["bodyhyph", "bodysplit"]], ["report:quarterly", ["report"]], ["NEAR", ["near"]],
+  ["docs/setup", ["path"]], ["10:30", ["time"]], ["30:10", ["time"]], ["-fixture code(sign)", ["bodyhyph", "bodysplit", "signin"]], ["report:quarterly", ["report"]], ["NEAR", ["near"]],
   ["NEAR(station)", ["near"]], ["AND", ["andor"]], ["NOT", ["coopspaced", "joined", "ver"]],
   ["NOT delivered", ["not"]], ["the report", ["hyph", "report"]], ["report of the", ["hyph", "report"]],
-  ["ohmail -the", ["hyph", "spaced"]], ["--fixture", ["hyph", "spaced"]], ["-fixture ohmail", []],
+  // An excluded word only leaves letters out: `-the` is a stopword and leaves out none.
+  ["ohmail -the", ["hyph", "joined", "spaced"]], ["--fixture", ["hyph", "spaced"]], ["-fixture ohmail", ["joined"]],
   ["fixture*", ["hyph", "spaced"]], ["+fixture", ["hyph", "spaced"]], ["over", ["overview"]], ["C++", []], ["***", []],
 ];
 

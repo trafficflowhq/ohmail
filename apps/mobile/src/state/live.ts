@@ -148,6 +148,7 @@ import {
   beginDerive,
   takeClientEngineVitals,
   joinableStandingSend,
+  storeRefused,
   watchWireFailedLists,
   unsubscribeClaim,
   unsubscribeLetterOf,
@@ -7185,9 +7186,13 @@ export function ohboxVisitStep(v: OhboxVisitState, ev: OhboxVisitEvent): { next:
   return { next: v, leave: false };
 }
 
-/** A read the server did not answer, said about its cause: the phone's own network first. */
-export function unansweredSaid(network: NetworkState, surface: "search" | "history"): string {
+/**
+ * A read the server did not answer, said about its cause: the phone's own network first; a search
+ * the server answered with a fault of its own (`storeRefused`) could not run there.
+ */
+export function unansweredSaid(network: NetworkState, surface: "search" | "history", cause: string | null = null): string {
   if (network === "offline") return Copy.networkOfflineHeld;
+  if (surface === "search" && storeRefused(cause)) return Copy.searchFailed;
   return surface === "search" ? Copy.searchUnanswered : Copy.historyStoreUnavailable;
 }
 

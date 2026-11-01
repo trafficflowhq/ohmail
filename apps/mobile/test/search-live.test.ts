@@ -144,7 +144,7 @@ describe("the screen and the three nav entries, in the structure idiom", () => {
       "Copy.searchWholeSearching",
       // The unanswered verdict is `unansweredSaid`'s: the server's sentence, or the phone's own
       // network when that is the cause (`offline-is-said.test.ts` drives both).
-      'unansweredSaid(network, "search")',
+      'unansweredSaid(network, "search", store.cause)',
     ]) expect(screen).toContain(needle);
     expect(screen).not.toContain("Copy.searchScopeDevice");
     // The index is warmed off the keystroke path the moment the screen opens.

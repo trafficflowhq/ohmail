@@ -1,9 +1,9 @@
 import { sql, type SQL } from "drizzle-orm";
-import { exactAsked, showSimilar, substringOpen, type SearchTier } from "@trafficflow/core/search-rank";
+import { exactAsked, positiveText, showSimilar, substringOpen, type SearchTier } from "@trafficflow/core/search-rank";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
 import { accountSettings, messageSearch, messages, readFlightOf } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
-import { boolLiteral, dialect, pgOnly, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
+import { boolLiteral, dialect, pgOnly, queryOperandsOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
@@ -483,6 +483,12 @@ interface Arm {
   readonly local?: { readonly account: string };
   /** The typo arm's walk test, a cheap necessary condition first: read by {@link SearchService.typoRead}. */
   readonly typo?: { readonly walkPred: SQL; readonly vectors: boolean };
+  /**
+   * A part arm held to an excluded word: it walks on past its bound, or reads its index, only while
+   * the text arm is short of its cut ({@link SearchService.fusedArms}). Its words' whole forms are the
+   * text arm's, read off the index there; a deeper walk asks every letter's body for a page at most.
+   */
+  readonly besideText?: true;
 }
 
 /** A relevance cursor: the last row's fused score, date and id, and the tier it belongs to. */
@@ -575,7 +581,8 @@ export class SearchService {
     if (q.length > SEARCH_QUERY_MAX_CHARS) {
       throw new ServiceError("validation_failed", 400, `q is ${q0.length} characters; the limit is ${SEARCH_QUERY_MAX_CHARS}`);
     }
-    return q;
+    // Excluded words alone ask for nothing, so nothing matches, as for a blank query.
+    return positiveText(q) === "" ? "" : q;
   }
 
   /** The page size: the route's clamp, and at most {@link SEARCH_PAGE_MAX}. */
@@ -592,9 +599,17 @@ export class SearchService {
    */
   private arms(ctx: ServiceContext, d: Dialect, q: string, tier: SearchTier, store: StoreFacts): Arm[] {
     const { built, trigram } = store;
-    const legacy = built ? null : d.search.unindexed(q, { trigram, threshold: FUZZY_THRESHOLD });
+    // AN EXCLUDED WORD ONLY LEAVES LETTERS OUT: the words asked (`pos`) are read as the plain query
+    // reads them, every branch held to the exclusion.
+    const ops = queryOperandsOf(q);
+    const pos = positiveText(q);
+    const legacy = built ? null : d.search.unindexed(pos, { trigram, threshold: FUZZY_THRESHOLD });
+    const legacyNone = legacy !== null && pos !== q ? d.search.unindexed(q, { trigram, threshold: FUZZY_THRESHOLD })?.excluded : undefined;
     const docless = legacy !== null && !store.docs;
-    const bare = (b: SearchArm): Branch => (docless ? { pred: b.pred, rank: b.rank } : { pred: sql`(${b.pred} and s.message_id is null)`, rank: b.rank });
+    const bare = (b: SearchArm): Branch => {
+      const pred = legacyNone === undefined ? b.pred : sql`(${b.pred} and ${legacyNone})`;
+      return docless ? { pred, rank: b.rank } : { pred: sql`(${pred} and s.message_id is null)`, rank: b.rank };
+    };
     // A document branch is planned though it reads nothing (the trigram estimate alone reads
     // message_search's statistics): an arm keeps one only while it has no other branch.
     const read = (arms: Arm[]): Arm[] => (docless ? arms.map((a) => {
@@ -615,12 +630,12 @@ export class SearchService {
       // A guess never holds a word the reader excluded, anywhere in the letter.
       const held = (b: SearchArm, none: SQL | undefined): SearchArm => (none ? { pred: sql`(${b.pred} and ${none})`, rank: b.rank } : b);
       const excluded = d.search.words(q).excluded;
-      const fuzz = held(d.search.fuzzy(q, "mail", { trigram, threshold: FUZZY_THRESHOLD }), excluded);
+      const fuzz = held(d.search.fuzzy(pos, "mail", { trigram, threshold: FUZZY_THRESHOLD }), excluded);
       const old = (legacy?.fuzzy ?? []).map((b) => bare(held(b, legacy!.excluded)));
       const arm: Arm = { name: "similar", ranked: true, branches: [own(fuzz), ...old] };
       // The server's documents only: the desktop's store keeps its scans inside six cuts.
       const pre = trigram && documents && legacy === null && this.opts.localStore !== true
-        ? d.search.typoPrefilter(q, { threshold: FUZZY_THRESHOLD, terms: sql`s.terms`, lowered: sql`s.t` }) : null;
+        ? d.search.typoPrefilter(pos, { threshold: FUZZY_THRESHOLD, terms: sql`s.terms`, lowered: sql`s.t` }) : null;
       if (pre === null) return read([arm]);
       const walkPred = sql`(s.account_id = ${ctx.accountId} and (case when ${pre} then ${fuzz.pred} else false end))`;
       return [{ ...arm, typo: { walkPred, vectors: excluded !== undefined } }];
@@ -630,33 +645,42 @@ export class SearchService {
     const key = d.name === "pg" && documents && store.words && this.opts.localStore !== true && legacy === null
       ? d.search.wordKey(ctx.accountId) : null;
     const keyed = (b: Branch, set: readonly SQL[] | null | undefined): Branch => (key !== null && set ? { ...b, set } : b);
-    const words = d.search.words(q);
+    // A word asked beside the exclusion keeps the typed reading (each `or` group with the exclusion);
+    // otherwise the words asked are read alone.
+    const typedRead = ops.none.length > 0 && ops.any.length > 0;
+    const wq = typedRead ? q : pos;
+    const typed = d.search.words(q);
+    const words = wq === q ? typed : d.search.words(wq);
     // An excluded word: on the server's documents asked of each arm's cut rows only (its check reads
     // the body), elsewhere in the arm's predicate. There the text arm reads, per `or` group, what the
     // text index answers whole (`alone`), and a group of several operands also as its letter, held.
-    const keep = words.excluded;
+    const keep = typed.excluded;
     const late = keep !== undefined && d.name === "pg" && documents && !local;
     const held = (b: Branch): Branch => (keep === undefined ? b : late ? { ...b, after: keep }
       : { ...b, pred: sql`(${b.pred} and ${keep})`, ...(b.raw ? { raw: sql`(${b.raw} and ${keep})` } : {}) });
+    // A held branch takes no keyed set: the set's read asks no exclusion.
+    const sets = (set: readonly SQL[] | null): readonly SQL[] | null => (keep === undefined ? set : null);
     const alone = late && words.alone ? words.alone : null;
     const rank = words.text.rank;
     const across = words.across === true;
     const text = alone
       ? alone.flatMap((g) => [{ ...ownWords({ pred: g.pred, rank }), pos: g.letter }, ...(g.whole ? [] : [{ ...held(ownWords({ pred: g.letter, rank })), pos: g.letter }])])
-      : [keyed(held(ownWords(words.text)), keep !== undefined ? null : across ? d.search.letterTerms(q) : [words.text.pred])];
+      : [keyed(held(ownWords(words.text)), sets(across ? d.search.letterTerms(wq) : [words.text.pred]))];
     const on = key !== null ? { key } : {};
     // The query's characters inside the file names, where the store reads them apart: a branch of the
-    // arm that reads a body word's start (the part arm once it opens, else the text arm), so a letter its
-    // file names find is one row there, merged before the arm's cut. Its set leads with the account.
-    const named = substringOpen(q) ? d.search.names(q) : null;
-    const names = named === null ? [] : [keyed(own(named), [sql`(s.account_id = ${ctx.accountId} and ${named.pred})`])];
-    const part = exactAsked(q) ? null : d.search.partWords(q);
+    // arm that reads a body word's start (the part arm once it opens, else the text arm, or the substring
+    // arm beside a typed text arm), so a letter its file names find is one row there, merged before the
+    // arm's cut. Its set leads with the account.
+    const inside = substringOpen(q);
+    const named = inside ? d.search.names(pos) : null;
+    const names = named === null ? [] : [keyed(held(own(named)), sets([sql`(s.account_id = ${ctx.accountId} and ${named.pred})`]))];
+    const part = exactAsked(q) ? null : d.search.partWords(pos);
     const out: Arm[] = [
       { name: "head", ranked: true, branches: [held(ownWords(words.head)), ...(legacy ? [bare(legacy.words.head)] : [])] },
       {
         name: "text", ranked: false,
-        ...(across && d.name === "pg" ? { bounded: true, ...on } : key !== null && !q.includes('"') ? { bounded: true, keyedOnly: true, ...on } : {}),
-        branches: [...text, ...(part === null ? names : []), ...(legacy ? [bare(legacy.words.text)] : [])],
+        ...(across && d.name === "pg" ? { bounded: true, ...on } : key !== null && !wq.includes('"') ? { bounded: true, keyedOnly: true, ...on } : {}),
+        branches: [...text, ...(part === null && !typedRead ? names : []), ...(legacy ? [bare(legacy.words.text)] : [])],
       },
     ];
     // A part of a word finds what the whole word finds: the same vectors as `head` and `text`,
@@ -664,33 +688,36 @@ export class SearchService {
     // ONE bounded arm over both, so a common part's walk fills at once; the device store's FTS5
     // reads have no such misplan and keep two plain arms (one branch each: no union there).
     const old = legacy?.part ?? null;
+    const beside = late ? { besideText: true as const } : {};
     if (part !== null && part.across === true) {
       // Words that may straddle the letter's parts: one predicate over the whole letter.
       // No set: a common word's prefix over every account would be read.
       out.push({
-        name: "part", ranked: false, ...(d.name === "pg" ? { bounded: true, ...on } : {}),
-        branches: [ownWords(part.text), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
+        name: "part", ranked: false, ...(d.name === "pg" ? { bounded: true, ...on, ...beside } : {}),
+        branches: [held(ownWords(part.text)), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
       });
     } else if (part !== null && d.name === "pg") {
       out.push({
-        name: "part", ranked: false, bounded: true, ...on,
-        branches: [keyed(ownWords(part.head), [part.head.pred]), keyed(ownWords(part.text), [part.text.pred]), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
+        name: "part", ranked: false, bounded: true, ...on, ...beside,
+        branches: [keyed(held(ownWords(part.head)), sets([part.head.pred])), keyed(held(ownWords(part.text)), sets([part.text.pred])), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
       });
     } else if (part !== null) {
       out.push(
-        { name: "part-head", ranked: false, branches: [ownWords(part.head), ...(old ? [bare(old.head)] : [])] },
-        { name: "part-text", ranked: false, branches: [ownWords(part.text), ...(old ? [bare(old.text)] : [])] },
+        { name: "part-head", ranked: false, branches: [held(ownWords(part.head)), ...(old ? [bare(old.head)] : [])] },
+        { name: "part-text", ranked: false, branches: [held(ownWords(part.text)), ...(old ? [bare(old.text)] : [])] },
       );
     }
-    if (substringOpen(q)) {
+    if (inside) {
       out.push({
         name: "substring",
         ranked: false,
-        branches: [own(d.search.substring(q, { trigram })), ...(legacy?.substring ?? []).map(bare)],
+        branches: [held(own(d.search.substring(pos, { trigram }))), ...(part === null && typedRead ? names : []), ...(legacy?.substring ?? []).map(bare)],
       });
     }
-    // Every branch is then the document's own (`own`), so the bounded read can ask it by itself.
-    return local ? out.map((a) => ({ ...a, local: { account: ctx.accountId }, bounded: false })) : read(out);
+    // Every branch is then the document's own (`own`), so the bounded read can ask it by itself. An
+    // arm with no branch matches nothing and is left out: an empty union is no statement.
+    return (local ? out.map((a) => ({ ...a, local: { account: ctx.accountId }, bounded: false })) : read(out))
+      .filter((a) => a.branches.length > 0);
   }
 
   /**
@@ -698,7 +725,7 @@ export class SearchService {
    * ranked arm (then ordered by rank), at K otherwise — so no branch reads more than its cut off
    * an index; the branches are merged and the arm numbered by its own order.
    */
-  private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL): SQL {
+  private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL, spare?: SQL): SQL {
     const cut = arm.ranked ? window : k;
     const read = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${arm.ranked ? b.rank : sql`0`} as rank
       ${this.from} where ${where} and ${b.pred}
@@ -712,7 +739,7 @@ export class SearchService {
       : capped ? sql`(select r.*, 0 as x from ${read(b)} r)` : read(b));
     const merged = arm.local && walk ? this.localRead(where, arm, k, cut, walk)
       : arm.typo ? this.typoRead(where, arm.branches[0]!, arm.typo, k)
-      : arm.bounded && !(arm.keyedOnly && filteredWheres.has(where)) ? this.boundedRead(where, arm.branches, k, arm.key)
+      : arm.bounded && !(arm.keyedOnly && filteredWheres.has(where)) ? this.boundedRead(where, arm.branches, k, arm.key, spare)
       : arm.branches.length === 1 ? branch(arm.branches[0]!)
       : sql`(select id, date, max(rank) as rank${capped ? sql`, max(x) as x` : sql``}
           from (${sql.join(arm.branches.map(branch), sql` union all `)}) u group by id, date)`;
@@ -784,7 +811,7 @@ export class SearchService {
    * branch's matches are read instead, under a sort key no index serves (`date is null` first is
    * `nulls last`), so off its GIN. Exactly one of the two answers.
    */
-  private boundedRead(where: SQL, branches: readonly Branch[], k: number, key?: SQL): SQL {
+  private boundedRead(where: SQL, branches: readonly Branch[], k: number, key?: SQL, spare?: SQL): SQL {
     const newestOf = (n: number): SQL => sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
       where ${where} order by m.date desc nulls last, m.id desc limit ${n}`;
     // Every branch the document's own: each walked row asks its document alone. The walk's row is
@@ -820,7 +847,8 @@ export class SearchService {
     // is cut anyway. Otherwise the branches the index answers whole are read, and each held branch's
     // matches newest first under the bound, asked `after` one by one until K pass. The arm is cut
     // (`x`, a row of its own) when the deeper walk stopped short of K with mail past it, or a held
-    // read was full.
+    // read was full. While `spare` holds (a part arm beside a full text arm, {@link Arm.besideText}) the arm
+    // keeps what its bound held: no deeper walk, no index read, and it is cut when the bound was full.
     const bound = SEARCH_PART_WALK_FACTOR * k;
     const far = SEARCH_EXCLUSION_WALK_FACTOR * k;
     const page = Math.ceil(k / SEARCH_ARM_FACTOR);
@@ -841,7 +869,8 @@ export class SearchService {
     // The kept rate fills K inside the deeper walk, or a held branch's index read would read every match.
     const rate = sql`(select count(*) from pw) >= ${Math.ceil((k * bound) / far)}`;
     const walkOn = sql`(select v from pv)`;
-    const index = sql`${short} and ${full} and not ${walkOn}`;
+    const going = sql`${rate}${late.length === 0 ? sql`` : sql` or ${crowded}`}`;
+    const index = spare === undefined ? sql`${short} and ${full} and not ${walkOn}` : sql`${short} and ${full} and not ${walkOn} and not ${spare}`;
     const pr = (i: number): SQL => sql.raw("pr" + String(i));
     const deep = late.map(({ b, i }) => sql`, ${pr(i)} as (select m.id as id, m.date as date ${this.from}
         where ${where} and ${b.pred} and ${index} order by (m.date is null), m.date desc, m.id desc limit ${bound})`);
@@ -855,7 +884,7 @@ export class SearchService {
         order by w.date desc nulls last, w.id desc limit ${k}),
       pf as (select ${count(bound)} >= ${bound} as v),
       pb as (select (select count(*) from (${newestOf(k)}) w where ${words}) >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)} as v),
-      pv as (select ${rate}${late.length === 0 ? sql`` : sql` or ${crowded}`} as v),
+      pv as (select ${spare === undefined ? going : sql`not ${spare} and (${going})`} as v),
       pd as (select w.id as id, w.date as date from (select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
           where ${where} order by m.date desc nulls last, m.id desc limit ${far - bound} offset ${bound}) w
         where ${short} and ${full} and ${walkOn} and ${kept} order by w.date desc nulls last, w.id desc
@@ -868,7 +897,7 @@ export class SearchService {
       where ${short}
       union all
       select null, null, 0, 1 where ${short} and ${full} and (case when ${walkOn}
-        then (select count(*) from pw) + (select count(*) from pd) >= ${page} or ${count(1, far)} > 0 else ${readFull} end))`;
+        then (select count(*) from pw) + (select count(*) from pd) >= ${page} or ${count(1, far)} > 0 else ${spare === undefined ? readFull : sql`(${spare} or ${readFull})`} end))`;
   }
 
   /**
@@ -994,8 +1023,11 @@ export class SearchService {
     // A local arm's rows of the one shared walk ({@link sharedWalk}), newest first, at its cut.
     const walkOf = (i: number): SQL => sql`select id, date, ${sql.raw("r" + String(i))} as rank from ${walkName}
       where ${sql.raw("f" + String(i))} order by date desc nulls last, id desc limit ${arms[i]!.ranked ? window : k}`;
-    const armSqls = arms.map((x, i) => this.armSql(where, x, k, window, x.local ? walkOf(i) : undefined));
     const a = (i: number): SQL => sql.raw(pre + "a" + String(i));
+    // A part arm beside the text arm walks on only while the text arm, named before it, is short of K.
+    const text = arms.findIndex((x) => x.name === "text");
+    const spare = text < 0 ? undefined : sql`(select count(id) from ${a(text)}) >= ${k}`;
+    const armSqls = arms.map((x, i) => this.armSql(where, x, k, window, x.local ? walkOf(i) : undefined, x.besideText && i > text ? spare : undefined));
     const sizeNames = armSqls.map((_, i) => pre + "n" + String(i));
     // A gated arm is counted only when its gate holds, so a count never starts the arm either.
     // A local arm whose walk fell short counts as cut ({@link localRead}'s `x`), as does an arm an
@@ -1343,8 +1375,8 @@ export class SearchService {
    * A TIER'S MATCHES AS ONE BOUNDED SET, as named statements: each branch reads at most
    * {@link SUMMARY_EXACT_CAP} + 1 of the account's own documents off its keyed index (`sdN`; under a
    * filter, those the filter keeps of at most {@link FILTERED_SCAN} read, `srN`), and none once the
-   * documents before it passed the cap. An excluded word, whose check reads the body, is
-   * asked of a held branch's documents only while every branch is within the cap (`kdN`). Their union
+   * documents before it passed the cap. An excluded word, whose check reads the body, is asked once
+   * of each letter the held branches found, only while every branch is within the cap (`kdN`). Their union
    * is at most that many letters (`ud`), each looked up once under `where`, the newest
    * {@link SUMMARY_EXACT_CAP} kept (`ur`: id, date and what the facets count). `over`: the set passed
    * the cap, so `ur` holds the newest of the matches read rather than all of them, and a held branch
@@ -1356,6 +1388,7 @@ export class SearchService {
     const scan = (i: number): SQL => sql.raw("sr" + String(i));
     const kept = (i: number): SQL => sql.raw("kd" + String(i));
     const held = (b: Branch): boolean => b.after !== undefined && b.keyRead !== undefined;
+    const asks = [...new Set(branches.filter(held).map((b) => b.after!))];
     // Under a filter a branch's documents are those the filter keeps, of at most FILTERED_SCAN read.
     const filtered = filteredWheres.has(where);
     const scanned = (b: Branch): boolean => filtered && b.raw !== undefined && b.keyRead !== undefined;
@@ -1375,10 +1408,12 @@ export class SearchService {
           left join folder_state fs on fs.message_id = m.id where ${where} limit ${cap + 1})`,
       ] : [sql`${doc(i)} as materialized (${this.docsOf(where, b, cap + 1, room(i))})`])),
       sql`rw as materialized (select ${raw(branches.length)} as v)`,
-      ...branches.flatMap((b, i) => (held(b) ? [sql`${kept(i)} as materialized (select d.id from ${doc(i)} d
-        where ${within} and ${this.keeps(b.after!, sql`d.id`)})`] : [])),
+      // Each letter the held branches found is asked its exclusion once, whichever of them found it.
+      ...asks.map((after, g) => sql`${kept(g)} as materialized (select d.id from (${sql.join(branches.flatMap((b, i) => (held(b) && b.after === after
+        ? [sql`select id from ${doc(i)}`] : [])), sql` union `)}) d
+        where ${within} and ${this.keeps(after, sql`d.id`)})`),
     ];
-    const ids = branches.map((b, i) => (held(b) ? sql`select id from ${kept(i)}` : sql`select id from ${doc(i)}`));
+    const ids = [...branches.flatMap((b, i) => (held(b) ? [] : [sql`select id from ${doc(i)}`])), ...asks.map((_, g) => sql`select id from ${kept(g)}`)];
     const over = sql`(not ${within} or (select count(*) from ud) > ${cap})`;
     // The folder: joined where a filter names it; for the facets of an exact set, looked up per letter.
     const foldered = folderWheres.has(where);
