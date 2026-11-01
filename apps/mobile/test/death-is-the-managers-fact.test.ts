@@ -219,6 +219,7 @@ describe("the manager tells each listener of its death exactly once", () => {
       save: async () => "landed",
       armAttempt: async () => "landed",
       clear: async () => { await clearHeld; return "landed"; },
+      oweSignOut: async () => false,
     };
     const fetchImpl = async (url: string): Promise<Response> =>
       url.endsWith("/auth/refresh") ? json(401, REUSE) : new Response(null, { status: 401 });

@@ -1669,6 +1669,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // button again, while a claim that succeeded and is then turned away at the mirror-owner check
         // has still spent it.
         linkVerifier = null;
+        /* A PAIR THIS INSTALL DOES NOT KEEP IS SIGNED OUT THERE before the refusal is answered, as the
+           pairing redeem's refusal does: a turned-away sign-in must not leave a live session behind. */
+        const minted = tokens;
+        const endMinted = async (): Promise<void> => {
+          await revokeHeldSession(config.fetchImpl ?? fetch, cloudBase, minted, deadlineIn(SIGN_OUT_AT_HOST_MS));
+        };
 
         // One mirror, one account — the second enforcement point. `enforceMirrorOwner` settles a
         // LAUNCH but not a sign-in, which happens after the database is open: signing out leaves the
@@ -1691,6 +1697,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         } catch (err) {
           // The same mapping the sign-in itself gets, and the same refusal: an identity that could
           // not be established is not a session. Nothing has been sealed and nothing activated.
+          await endMinted();
           if (err instanceof CloudSignInError) {
             return json({ error: { code: err.code, message: err.message } }, err.status);
           }
@@ -1718,6 +1725,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // discard, one place. The message never names the other account: somebody signing in with
           // their own credentials must not be told whose mail is on the machine.
           log?.("cloud_signin_owner_mismatch", { changed: true });
+          await endMinted();
           return json(
             {
               error: {
@@ -1735,7 +1743,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         }
         if (adopting) {
           const refused = adoptIdentity(hostedAddress, recordedOwner === null);
-          if (refused) return refused;
+          if (refused) {
+            await endMinted();
+            return refused;
+          }
         }
 
         // SEALED BEFORE THE MIRROR IS TOLD ABOUT IT, and after the mirror-owner check for the reason
@@ -1743,7 +1754,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // pair that could not be written to disk is a session that survives until the next quit and
         // then silently is not there — better to say so now, while the person who typed the
         // password is still looking at the app.
-        await writeSeal(tokens);
+        try {
+          await writeSeal(tokens);
+        } catch (err) {
+          await endMinted();
+          throw err;
+        }
         /* THE PENDING ENGINE STOPS AT THE SEAL. Its world was built with no address, so its ready
            frame named no mailbox and it cannot mount mail; the window relaunches it behind the door
            just written, and that engine activates from this seal and runs the first drain. */

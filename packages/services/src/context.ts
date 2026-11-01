@@ -128,9 +128,10 @@ export interface ServiceContext {
    */
   supersedesMarker?: string | null;
   /**
-   * The same digest from a desktop's body (`previousSession`): a refresh token of the family the
-   * install held before this sign-in. Set only by the four desktop sign-in doors; the mint ends that
-   * family when it is the signer's own desktop's and the new session is a desktop's.
+   * The same digest from an install's body (`previousSession`): a refresh token of the family the
+   * install held before this sign-in. Set by the four desktop sign-in doors and the pairing redeem;
+   * the mint ends that family when it is the signer's own and the same kind of install as the new
+   * session's (a desktop's, a phone's, a paired browser's).
    */
   supersedesInstall?: string | null;
   /**

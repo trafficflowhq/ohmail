@@ -42,4 +42,16 @@ export const stepUpRoutes: Route[] = [
       return json(await auth(deps).stepUpWebauthnVerify(serviceContext(deps, req), body), 200);
     },
   },
+  {
+    /* One recovery code, spent as `/auth/2fa/recovery-codes/verify` spends one: for somebody whose
+       authenticator is gone. `{ok, remainingCodes}`. */
+    method: "POST",
+    pattern: "/auth/step-up/recovery-code",
+    relay: true,
+    cost: "ceremony",
+    handler: async (req, deps) => {
+      const body = await readBody<{ code: string }>(req);
+      return json(await auth(deps).stepUpRecoveryCode(serviceContext(deps, req), body), 200);
+    },
+  },
 ];

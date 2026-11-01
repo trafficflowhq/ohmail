@@ -286,7 +286,14 @@
     "badToken": "Kopplungscodes funktionieren einmal und laufen ab. Zeig in ohmail auf deinem Computer einen frischen QR-Code an und scanne ihn erneut.",
     "footer": "ohmail · deine Mails, auf deinem eigenen Computer",
     "outboxNotKept": "Änderungen, die du vornimmst, während dein Computer nicht erreichbar ist, werden auf diesem Gerät nicht behalten — dieser Browser verweigert das Speichern. Lass diese Seite offen, bis sie gesendet sind.",
-    "outboxNotKeptDismiss": "Ausblenden"
+    "outboxNotKeptDismiss": "Ausblenden",
+    "signOut": "Abmelden",
+    "signOutBody": "Meldet diesen Browser bei deinem Computer ab. Deine Mails bleiben auf deinem Computer.",
+    "signOutConfirm": "Diesen Browser abmelden? Noch nicht gesendete Änderungen und unfertige Entwürfe in diesem Browser werden verworfen.",
+    "signOutCancel": "Abbrechen",
+    "signedOutBody": "Du hast diesen Browser abgemeldet, und dein Computer hat seine Sitzung beendet. Scanne einen frischen QR-Code aus ohmail auf diesem Computer, um neu zu koppeln.",
+    "signedOutOwedBody": "Du hast diesen Browser abgemeldet. Dein Computer war nicht erreichbar; er erfährt es, sobald diese Seite ihn wieder erreicht. Scanne einen frischen QR-Code aus ohmail auf diesem Computer, um neu zu koppeln.",
+    "signedOutNotToldBody": "Du hast diesen Browser abgemeldet, aber dein Computer konnte es nicht erfahren, und dieser Browser konnte sich nicht merken, es später nachzuholen. Um die Sitzung dort zu beenden, entferne diesen Browser aus den Geräten in ohmail auf deinem Computer."
   },
   "invites": {
     "title": "Einladungen",
@@ -361,6 +368,9 @@
     "stepUpVerify": "Code prüfen",
     "stepUpTotpToggle": "Stattdessen Einmal-Code verwenden",
     "stepUpPasskeyToggle": "Stattdessen Passkey verwenden",
+    "stepUpRecoveryToggle": "Stattdessen Wiederherstellungscode verwenden",
+    "stepUpRecoveryLabel": "Einer der Wiederherstellungscodes, die du gespeichert hast",
+    "stepUpBadRecoveryCode": "Dieser Wiederherstellungscode hat nicht funktioniert. Jeder Code gilt nur einmal — nimm einen anderen aus deiner Liste.",
     "webGroup": "{count, plural, one {# weitere Web-Sitzung} other {# weitere Web-Sitzungen}}",
     "webGroupMeta": "Browser-Anmeldungen außer dieser · zuletzt gesehen {seen}. Deine gekoppelten Geräte bleiben unberührt.",
     "webGroupAction": "Alle abmelden",

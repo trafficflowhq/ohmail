@@ -20,6 +20,7 @@ const vault: RefreshVault = {
   save: async () => "landed",
   clear: async () => "landed",
   armAttempt: async () => "landed",
+  oweSignOut: async () => false,
 };
 
 /** The door: a factor route refuses every code with `refusal`, `/messages` refuses only the lapsed token. */

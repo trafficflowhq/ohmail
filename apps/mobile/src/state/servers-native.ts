@@ -7,8 +7,20 @@
  * another device — a restored phone re-pairs with one scan per server, which is the ceremony's
  * own recovery and cheaper than a credential that silently multiplied.
  */
+import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import { ServerProfileStore, type SecureKV } from "./servers";
+
+/**
+ * The digest a re-pair names a stored refresh token's family by (`previousSession`): the server's
+ * `hashToken`, SHA-256 of the UTF-8 bytes as base64url without padding.
+ */
+export async function nativeFamilyDigest(refreshToken: string): Promise<string> {
+  const b64 = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, refreshToken, {
+    encoding: Crypto.CryptoEncoding.BASE64,
+  });
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
 
 export function secureKV(): SecureKV {
   const opts: SecureStore.SecureStoreOptions = {

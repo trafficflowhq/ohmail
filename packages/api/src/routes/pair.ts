@@ -170,7 +170,7 @@ export const pairRedeemRoutes: Route[] = [
         if (b.grant === "device-pair") {
           // `kind` is the redeemer's own declaration — "web" when absent, whitelist-gated in
           // the service BEFORE the burn (the same wire-input division as the mint's `grant`).
-          // `previousSession`: a desktop's previous family on this host, honoured for a desktop kind only.
+          // `previousSession`: the install's previous family on this host, honoured for the same kind only.
           const minting = { ...ctx, supersedesInstall: presentedResumeMarker(b.previousSession) };
           const { tokens } = await redeemDevicePair(minting, sessionMinter(deps), {
             token,

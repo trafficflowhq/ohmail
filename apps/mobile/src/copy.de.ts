@@ -532,6 +532,9 @@ export const DE: Deck = {
     "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server war nicht "
     + "erreichbar, um die Sitzung zu beenden, und zählt dieses Handy womöglich noch als "
     + "verbunden — widerrufe dieses Gerät in seiner Geräteliste, um das abzuschließen.",
+  forgetServerOwed:
+    "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server war nicht "
+    + "erreichbar, um die Sitzung zu beenden; dieses Handy sagt es ihm, sobald es ihn wieder erreicht.",
   forgetClaimStands: (minutes: number) =>
     "Das Postfach und seine Mails sind von diesem Handy weg. Sein Anspruch auf das Postfach ließ "
     + `sich nicht zurückgeben, deshalb kann eine andere Maschine das Postfach in etwa ${minutes} `
@@ -745,6 +748,9 @@ export const DE: Deck = {
       case "wake_queue_full": return "dieses Handy hat bereits mehr unerledigte Weckruf-Abmeldungen, als es erfassen kann";
       case "wake_not_recorded": return "dieses Handy konnte nicht erfassen, dass für die Weckruf-Registrierung eine Abmeldung aussteht";
       case "wake_still_owed": return "dieses Handy führt für diese Registrierung noch eine ausstehende Abmeldung";
+      case "sign_out_queue_full": return "dieses Handy hat bereits mehr unerledigte Abmeldungen, als es erfassen kann";
+      case "sign_out_not_recorded": return "dieses Handy konnte nicht erfassen, dass einem Server eine Abmeldung aussteht";
+      case "sign_out_still_owed": return "dieses Handy hält noch eine Abmeldung, die es einem Server schuldet";
       case "index_unreadable": return "die Kopplungsliste dieses Handys ließ sich nicht lesen";
       case "purge_refused": return "der Schlüsselspeicher wollte die Kopplungen der früheren Installation nicht hergeben";
       case "mirror_not_deleted":

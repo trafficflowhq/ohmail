@@ -142,6 +142,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "POST", pattern: "/auth/logout" },
   { method: "POST", pattern: "/auth/password" },
   { method: "POST", pattern: "/auth/reuse-sweeps/ack" },
+  { method: "POST", pattern: "/auth/step-up/recovery-code" },
   { method: "POST", pattern: "/auth/step-up/totp" },
   { method: "POST", pattern: "/auth/step-up/webauthn/options" },
   { method: "POST", pattern: "/auth/step-up/webauthn/verify" },

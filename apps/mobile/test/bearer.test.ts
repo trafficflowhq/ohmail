@@ -20,12 +20,18 @@
 import { describe, expect, it } from "vitest";
 import { BearerManagerRN, type BearerTokens, type RefreshVault } from "../src/net/bearer";
 
-/** An inspectable vault — what the keystore slot sees, and when. */
-function memoryVault() {
+/** An inspectable vault — what the keystore slot sees, and when. `keeps: false` refuses an owed sign-out. */
+function memoryVault(opts: { keeps?: boolean } = {}) {
   const saves: string[] = [];
   const armed: string[] = [];
+  const owed: string[] = [];
   let cleared = 0;
   const vault: RefreshVault = {
+    oweSignOut: async (t) => {
+      if (opts.keeps === false) return false;
+      owed.push(t);
+      return true;
+    },
     save: async (t) => {
       saves.push(t);
       return "landed";
@@ -39,7 +45,7 @@ function memoryVault() {
       return "landed";
     },
   };
-  return { vault, saves, armed, clearedCount: () => cleared };
+  return { vault, saves, armed, owed, clearedCount: () => cleared };
 }
 
 interface Seen {
@@ -481,5 +487,34 @@ describe("logout", () => {
     });
     await offline.logout();
     expect(offline.paired()).toBe(false);
+  });
+});
+
+/**
+ * A SIGN-OUT THE SERVER WAS NOT TOLD IS KEPT, through the vault, before the credential goes — the
+ * refresh token, for the refresh door at the next connection — and the answer says which it was.
+ */
+describe("a sign-out the server did not hear", () => {
+  it("is kept through the vault as owed, and the session ends here all the same", async () => {
+    const { vault, owed, clearedCount } = memoryVault();
+    const bearer = manager({ access: "access-1", fetch: scripted([() => new TypeError("offline")]).fetch, vault });
+    expect(await bearer.signOut()).toBe("owed");
+    expect(owed).toEqual(["refresh-1"]);
+    expect(bearer.paired()).toBe(false);
+    expect(clearedCount()).toBe(1);
+  });
+
+  it("a sign-out the server heard keeps nothing", async () => {
+    const { vault, owed } = memoryVault();
+    const bearer = manager({ access: "access-1", fetch: scripted([() => new Response(null, { status: 204 })]).fetch, vault });
+    expect(await bearer.signOut()).toBe("told");
+    expect(owed).toEqual([]);
+  });
+
+  it("one the vault could not keep is said as untold, and logout answers false either way", async () => {
+    const refusing = manager({ fetch: scripted([() => new Response(null, { status: 503 })]).fetch, vault: memoryVault({ keeps: false }).vault });
+    expect(await refusing.signOut()).toBe("untold");
+    const kept = manager({ fetch: scripted([() => new Response(null, { status: 503 })]).fetch, vault: memoryVault().vault });
+    expect(await kept.logout()).toBe(false);
   });
 });

@@ -24,6 +24,7 @@ export type StoreFaultCode =
   | "pairing_not_recorded" | "pairing_still_held" | "pairing_still_listed" | "no_such_profile"
   | "wipe_queue_full" | "wipe_not_recorded" | "wipe_still_owed"
   | "wake_queue_full" | "wake_not_recorded" | "wake_still_owed"
+  | "sign_out_queue_full" | "sign_out_not_recorded" | "sign_out_still_owed"
   | "index_unreadable" | "purge_refused" | "index_not_removed"
   /* The engine's own failures. They used to be bare `Error`s with English messages, and
      `faultDetail` embedded those frozen sentences in German refusals — see `engine/boot.ts`. */
@@ -184,6 +185,29 @@ const ENGINE_REMOVAL_KEY = `${PREFIX}.engine-removal`;
 /** What {@link ServerProfileStore.markPendingWakeDrop} throws when that queue is full. */
 export const WAKE_QUEUE_FULL =
   "this phone already has more unfinished wake removals than it can record";
+
+/**
+ * A SIGN-OUT A SERVER WAS NOT TOLD — the forget or the sign-out ran while it was out of reach, and
+ * its session stays live there until it hears. The refresh token is kept because it is the only
+ * thing `/auth/refresh/logout` accepts; it is never presented for a renewal, and it is sent with
+ * the pin the pairing had. One keystore value per entry, their ids in a value of their own, so a
+ * token never rides the profile index and an entry never makes an unrelated write fail.
+ */
+export interface PendingSignOut {
+  id: string;
+  /** The normalized origin the session lives on. */
+  origin: string;
+  /** The key the pairing enforced for that origin, or `null` where the trust store verifies it. */
+  pin: string | null;
+  refreshToken: string;
+  /** When the sign-out could not be told, epoch milliseconds. */
+  owedSince: number;
+}
+
+const SIGN_OUTS_KEY = `${PREFIX}.signouts`;
+const signOutKey = (id: string): string => `${PREFIX}.signout.${id}`;
+/** Eight sign-outs nobody heard is a phone that has been offline a long while; past it, none is kept. */
+const MAX_PENDING_SIGN_OUTS = 8;
 
 /**
  * One persisted wipe entry, defensively. A malformed member is DROPPED rather than throwing —
@@ -698,6 +722,78 @@ export class ServerProfileStore {
     });
   }
 
+  /* ── the owed SIGN-OUTS (see {@link PendingSignOut}) ──────────────────────────────────── */
+
+  private async signOutIds(): Promise<string[]> {
+    try {
+      const parsed: unknown = JSON.parse((await this.kv.get(SIGN_OUTS_KEY)) ?? "[]");
+      return Array.isArray(parsed) ? parsed.filter((i): i is string => typeof i === "string" && i !== "") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private async readSignOut(id: string): Promise<PendingSignOut | null> {
+    try {
+      const p = JSON.parse((await this.kv.get(signOutKey(id))) ?? "null") as Partial<PendingSignOut> | null;
+      if (p === null || typeof p.origin !== "string" || typeof p.refreshToken !== "string" || p.refreshToken === ""
+        || typeof p.owedSince !== "number") return null;
+      return { id, origin: p.origin, pin: typeof p.pin === "string" ? p.pin : null, refreshToken: p.refreshToken, owedSince: p.owedSince };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Sign-outs this phone still owes a server, oldest first. An id whose value is gone is skipped. */
+  async pendingSignOuts(): Promise<PendingSignOut[]> {
+    const rows = await Promise.all((await this.signOutIds()).map((id) => this.readSignOut(id)));
+    return rows.filter((r): r is PendingSignOut => r !== null);
+  }
+
+  /**
+   * Record a sign-out the server was not told, read back. The id goes into the list before the token
+   * is written ({@link add}'s order: a name with no value is skipped, a token nothing names is not
+   * reachable). A full list refuses and records nothing; so does a token already owed.
+   */
+  markPendingSignOut(input: { origin: string; pin: string | null; refreshToken: string }): Promise<PendingSignOut> {
+    return this.enqueue(async () => {
+      const ids = await this.signOutIds();
+      const held = (await Promise.all(ids.map((id) => this.readSignOut(id))))
+        .find((e) => e !== null && e.refreshToken === input.refreshToken);
+      if (held) return held;
+      if (ids.length >= MAX_PENDING_SIGN_OUTS) {
+        throw new StoreFault("sign_out_queue_full", "this phone already has more unfinished sign-outs than it can record");
+      }
+      const entry: PendingSignOut = { id: `s${mintId()}`, ...input, owedSince: Date.now() };
+      await this.kv.set(SIGN_OUTS_KEY, JSON.stringify([...ids, entry.id]));
+      if (!(await this.signOutIds()).includes(entry.id)) {
+        throw new StoreFault("sign_out_not_recorded", "this phone could not record that a server is owed a sign-out");
+      }
+      const { id, ...body } = entry;
+      await this.kv.set(signOutKey(id), JSON.stringify(body));
+      if ((await this.readSignOut(id))?.refreshToken !== entry.refreshToken) {
+        throw new StoreFault("sign_out_not_recorded", "this phone could not record that a server is owed a sign-out");
+      }
+      return entry;
+    });
+  }
+
+  /** The server heard it, or never will: the token first, read back, then its name. */
+  clearPendingSignOut(id: string): Promise<void> {
+    return this.enqueue(async () => {
+      await this.kv.remove(signOutKey(id));
+      if ((await this.kv.get(signOutKey(id))) !== null) {
+        throw new StoreFault("sign_out_still_owed", "this phone still holds a sign-out it owes a server");
+      }
+      const left = (await this.signOutIds()).filter((i) => i !== id);
+      if (left.length === 0) await this.kv.remove(SIGN_OUTS_KEY);
+      else await this.kv.set(SIGN_OUTS_KEY, JSON.stringify(left));
+      if ((await this.signOutIds()).includes(id)) {
+        throw new StoreFault("sign_out_still_owed", "this phone still holds a sign-out it owes a server");
+      }
+    });
+  }
+
   /* ── the removal of the mailbox on this phone (see {@link ENGINE_REMOVAL_KEY}) ─────────── */
 
   /**
@@ -770,6 +866,15 @@ export class ServerProfileStore {
         // purge "still present" is the question, not "still valid".
         if ((await this.kv.get(`${PREFIX}.${id}`)) !== null) survivors.push(id);
       }
+      // The sign-outs the earlier installation owed hold its refresh tokens too.
+      for (const id of await this.signOutIds()) {
+        try {
+          await this.kv.remove(signOutKey(id));
+        } catch {
+          /* the read-back below is the judge */
+        }
+        if ((await this.kv.get(signOutKey(id))) !== null) survivors.push(id);
+      }
       if (survivors.length > 0) {
         throw new StoreFault("purge_refused",
           `the keystore refused to purge ${survivors.length} pairing(s) (${survivors.join(", ")}) — ` +
@@ -782,6 +887,11 @@ export class ServerProfileStore {
         await this.kv.remove(WAKE_DROPS_KEY);
       } catch {
         /* the index below is what makes the purge real; this is tidying */
+      }
+      try {
+        await this.kv.remove(SIGN_OUTS_KEY);
+      } catch {
+        /* names whose values are gone name nothing */
       }
       /* AND THE UNFINISHED REMOVAL. This runs when the app CONTAINER is new, which is where the
          engine store lived — so the removal it records has been completed by the uninstall, and a
