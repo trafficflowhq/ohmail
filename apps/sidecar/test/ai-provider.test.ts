@@ -779,7 +779,12 @@ describe("the source census — outbound requests live at the seam and nowhere e
   const SRC = fileURLToPath(new URL("../src/", import.meta.url));
   const TRANSPORTS = fileURLToPath(new URL("../../../packages/core/src/ai/transports/", import.meta.url));
   const PROVIDERS = new Set([
-    "ai-anthropic.ts", "ai-ollama.ts", "ai-openai.ts", "ai-opencode-go.ts", "ai-opencode-go-chat.ts",
+    "ai-anthropic.ts",
+    "ai-custom-local.ts",
+    "ai-ollama.ts",
+    "ai-openai.ts",
+    "ai-opencode-go.ts",
+    "ai-opencode-go-chat.ts",
   ]);
   /**
    * A CALL of the global `fetch`. The two lookbehinds are both load-bearing: `[\w$.]` keeps
@@ -948,5 +953,101 @@ describe("contentGoesTo — stated from the stored origin, absent when it cannot
     for (const [name, status] of states.slice(0, 3)) {
       expect(onTheWire(status), `${name} should state a destination`).toContain("contentGoesTo");
     }
+  });
+});
+
+describe("custom-local — OpenAI/Anthropic-compatible custom local endpoint", () => {
+  const customLocalOk = (): Array<[RegExp, () => Response]> => [
+    [/\/v1\/models$/, () => json({ data: [{ id: "google/gemma-4-e2b" }] })],
+    [
+      /\/v1\/chat\/completions$/,
+      () =>
+        json({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  destination: "ohmail/News",
+                  confidence: 0.92,
+                  rationale: "local gemma classification",
+                  spam: false,
+                  subject: "Re: Question",
+                  body: "I am free tomorrow afternoon.",
+                }),
+              },
+            },
+          ],
+        }),
+    ],
+  ];
+
+  it("persists custom Base URL, Model Name, and optional/dummy API key across restarts and routes chat completions", async () => {
+    const dir = dataDir();
+    const { calls, fetchImpl } = recorder(customLocalOk());
+    const ai = await make({ dataDir: dir, fetchImpl });
+
+    const saved = await ai.save({
+      provider: "custom-local",
+      customLocal: {
+        baseUrl: "http://127.0.0.1:1235/v1",
+        classifyModel: "google/gemma-4-e2b",
+        draftModel: "google/gemma-4-e2b",
+        apiKey: "lm-studio",
+      },
+    });
+
+    expect(saved.provider).toBe("custom-local");
+    expect(saved.available).toBe(true);
+    expect(saved.contentGoesTo).toBe("this_machine");
+    expect(saved.settings.customLocal).toEqual({
+      baseUrl: "http://127.0.0.1:1235/v1",
+      classifyModel: "google/gemma-4-e2b",
+      draftModel: "google/gemma-4-e2b",
+      hasKey: true,
+    });
+
+    // Classify and draft against the custom local endpoint
+    const classification = await ai.classifier()!.classify(anInput("Digest"));
+    expect(classification.destination).toBe("ohmail/News");
+
+    const draft = await ai.drafter()!.draft(aDraftInput());
+    expect(draft.body).toBe("I am free tomorrow afternoon.");
+
+    const chatCalls = calls.filter((c) => c.url === "http://127.0.0.1:1235/v1/chat/completions");
+    expect(chatCalls).toHaveLength(2);
+    expect(chatCalls[0]!.headers["authorization"]).toBe("Bearer lm-studio");
+    expect(JSON.parse(chatCalls[0]!.body!).model).toBe("google/gemma-4-e2b");
+
+    // Survives restart on disk
+    const restarted = await make({ dataDir: dir, fetchImpl });
+    expect(restarted.status().provider).toBe("custom-local");
+    expect(restarted.status().settings.customLocal).toEqual({
+      baseUrl: "http://127.0.0.1:1235/v1",
+      classifyModel: "google/gemma-4-e2b",
+      draftModel: "google/gemma-4-e2b",
+      hasKey: true,
+    });
+  });
+
+  it("works without an API key and treats local servers without /v1/models (404) as valid", async () => {
+    const { calls, fetchImpl } = recorder([
+      [/\/v1\/models$/, () => new Response("Not Found", { status: 404 })],
+    ]);
+    const ai = await make({ dataDir: dataDir(), fetchImpl });
+
+    const saved = await ai.save({
+      provider: "custom-local",
+      customLocal: {
+        baseUrl: "http://localhost:8000/v1",
+        classifyModel: "local/model",
+        draftModel: "local/model",
+      },
+    });
+
+    expect(saved.available).toBe(true);
+    expect(saved.contentGoesTo).toBe("this_machine");
+    expect(saved.settings.customLocal.hasKey).toBe(false);
+    expect(calls[0]!.url).toBe("http://localhost:8000/v1/models");
+    expect(calls[0]!.headers["authorization"]).toBeUndefined();
   });
 });
