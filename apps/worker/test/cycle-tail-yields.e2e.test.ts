@@ -76,16 +76,18 @@ function tailProbe(fleet: FakeAdapterFleet) {
   };
 }
 
-function capturingLogger(): { log: Logger; phases: Array<Record<string, unknown>> } {
+function capturingLogger(): { log: Logger; phases: Array<Record<string, unknown>>; healClosed: Array<Record<string, unknown>> } {
   const phases: Array<Record<string, unknown>> = [];
+  const healClosed: Array<Record<string, unknown>> = [];
   const log = createLogger({
     service: "worker", level: "info",
     sink: (line) => {
       const o = JSON.parse(line) as Record<string, unknown>;
       if (o.event === "cycle_phases") phases.push(o);
+      if (o.event === "thread_join_heal_walk_closed") healClosed.push(o);
     },
   });
-  return { log, phases };
+  return { log, phases, healClosed };
 }
 
 function cfgFor(
@@ -119,19 +121,20 @@ describe("the cycle tail yields to new mail", () => {
   async function warm(
     db: Db, over: Partial<WorkerConfig> = {},
   ): Promise<{ worker: RunningWorker; fleet: FakeAdapterFleet; probe: ReturnType<typeof tailProbe>;
-      phases: Array<Record<string, unknown>>; a: { accountId: string; mailboxId: string };
+      phases: Array<Record<string, unknown>>; healClosed: Array<Record<string, unknown>>;
+      a: { accountId: string; mailboxId: string };
       b: { accountId: string; mailboxId: string } }> {
     const fleet = new FakeAdapterFleet();
     const probe = tailProbe(fleet);
     releases.push(() => probe.release());
-    const { log, phases } = capturingLogger();
+    const { log, phases, healClosed } = capturingLogger();
     const a = await seedMailbox(db);
     const b = await seedMailbox(db);
     const worker = await startWorker(cfgFor(fleet, probe, log, over));
     closers.push(() => worker.stop());
     await waitFor(() => worker.stats().mailboxes === 2, 20_000, "both mailboxes attached");
     await waitFor(() => phases.length >= 1, 20_000, "the first tail walk to finish");
-    return { worker, fleet, probe, phases, a, b };
+    return { worker, fleet, probe, phases, healClosed, a, b };
   }
 
   // Parked inside a slice, B's doorbell rings: nothing visits B while the slice holds the queue
@@ -247,7 +250,7 @@ describe("the cycle tail yields to new mail", () => {
       capped: false, cut: true, cursor: { accountId: deps.accountId!, subject: "Alpha" },
     }));
     const db = makeDb(DB);
-    const { fleet, phases, a } = await warm(db);
+    const { fleet, phases, healClosed, a } = await warm(db);
     const cutAccount = heal.mock.calls[0]![0].accountId!;
 
     let walks = phases.length;
@@ -258,11 +261,16 @@ describe("the cycle tail yields to new mail", () => {
     expect(resumed.cursor).toEqual({ accountId: cutAccount, subject: "Alpha" });
     expect(resumed.maxGroups).toBe(199);
     expect(typeof resumed.until).toBe("function");
+    expect(resumed.widespread).toBeInstanceOf(Map);
+    expect(resumed.widespread, "the walk's memo was not handed to every slice").toBe(heal.mock.calls[0]![0].widespread);
 
     await waitFor(() => phases.length > walks, 20_000, "the resuming walk to finish");
     walks = phases.length;
     fleet.signal.get(a.mailboxId)!();
     await waitFor(() => phases.length > walks, 20_000, "one more walk");
     expect(heal.mock.calls, "a finished heal ran again inside its period").toHaveLength(3);
+    const closed = healClosed.filter((o) => o.accountId === cutAccount);
+    expect(closed).toHaveLength(1);
+    expect(closed[0]).toMatchObject({ scanned: 1, slices: 2, more: false });
   }, 120_000);
 });

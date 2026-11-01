@@ -73,6 +73,13 @@ export interface ThreadJoinHealDeps {
    * remains, never before the first; a group, its merge included, is never split.
    */
   until?: () => boolean;
+  /**
+   * The caller's memo of each account's addresses at or over {@link THREAD_JOIN_WITNESS_SPREAD_MAX},
+   * keyed by account id: read when absent and stored, else used as is. The cycle tail's walk hands one
+   * across an account's slices, so the account-wide witness read runs once per walk, not once per slice.
+   * Absent ⇒ read once per call.
+   */
+  widespread?: Map<string, ReadonlySet<string>>;
 }
 
 export interface ThreadJoinHealResult {
@@ -215,46 +222,53 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
         // account", which is true of every pair and proves nothing.
         self = new Set(own.map((m) => m.address.toLowerCase()));
 
-        // AND every address too widespread in the account to witness anything. The mailbox rows are not
-        // the whole disqualified set: an imported history carries the account holder's FORMER identities
-        // (not mailbox rows), and an overlap consisting only of mail involving an old address is the
-        // false-merge machine the verdict's minus-self guard exists to starve ("Re: Rechnung" from two
-        // unrelated vendors to one old address, inside the window, would merge). Measured over author AND
-        // recipient sides (the risk is the same either way — see the threshold constant for the
-        // distribution). This only ever REMOVES evidence: it can starve a true join into staying split
-        // (recoverable), never forge one.
-        /* THE TWO ADDRESS BAGS AS SEPARATE ARMS, rather than one over their concatenation.
-         *
-         * This read the elements of `to_addresses || cc_addresses` — a server-side document
-         * concatenation with no equivalent on the device store, where `||` is STRING joining and
-         * would have produced two JSON texts glued together and then parsed as one, which is not
-         * an error and not the right answer either. The elements of `a || b` are the elements of
-         * `a` followed by those of `b`, and this feeds a `count(distinct thread_id)` grouped by
-         * address, so a second union arm is the same set and the order was never read.
-         */
-        const to = d.jsonArrayElements(sql`m.to_addresses`, "xto");
-        const cc = d.jsonArrayElements(sql`m.cc_addresses`, "xcc");
-        const spread = await d.exec(db, sql`
-          select addr from (
-            select addr, count(distinct thread_id) as spread from (
-              select thread_id, lower(from_address) as addr
-              from ${messages}
-              where account_id = ${group.account_id} and from_address <> ''
-              union all
-              select m.thread_id, lower(${to.value}->>'address')
-              from ${messages} m, ${to.from}
-              where m.account_id = ${group.account_id}
-              union all
-              select m.thread_id, lower(${cc.value}->>'address')
-              from ${messages} m, ${cc.from}
-              where m.account_id = ${group.account_id}
-            ) participant
-            where addr is not null and addr <> ''
-            group by addr
-          ) freq
-          where spread >= ${THREAD_JOIN_WITNESS_SPREAD_MAX}
-        `);
-        for (const r of spread) self.add(String(r[0]));
+        let widespread = deps.widespread?.get(group.account_id);
+        if (!widespread) {
+          // AND every address too widespread in the account to witness anything. The mailbox rows are not
+          // the whole disqualified set: an imported history carries the account holder's FORMER identities
+          // (not mailbox rows), and an overlap consisting only of mail involving an old address is the
+          // false-merge machine the verdict's minus-self guard exists to starve ("Re: Rechnung" from two
+          // unrelated vendors to one old address, inside the window, would merge). Measured over author AND
+          // recipient sides (the risk is the same either way — see the threshold constant for the
+          // distribution). This only ever REMOVES evidence: it can starve a true join into staying split
+          // (recoverable), never forge one.
+          /* THE TWO ADDRESS BAGS AS SEPARATE ARMS, rather than one over their concatenation.
+           *
+           * This read the elements of `to_addresses || cc_addresses` — a server-side document
+           * concatenation with no equivalent on the device store, where `||` is STRING joining and
+           * would have produced two JSON texts glued together and then parsed as one, which is not
+           * an error and not the right answer either. The elements of `a || b` are the elements of
+           * `a` followed by those of `b`, and this feeds a `count(distinct thread_id)` grouped by
+           * address, so a second union arm is the same set and the order was never read.
+           */
+          const to = d.jsonArrayElements(sql`m.to_addresses`, "xto");
+          const cc = d.jsonArrayElements(sql`m.cc_addresses`, "xcc");
+          const spread = await d.exec(db, sql`
+            select addr from (
+              select addr, count(distinct thread_id) as spread from (
+                select thread_id, lower(from_address) as addr
+                from ${messages}
+                where account_id = ${group.account_id} and from_address <> ''
+                union all
+                select m.thread_id, lower(${to.value}->>'address')
+                from ${messages} m, ${to.from}
+                where m.account_id = ${group.account_id}
+                union all
+                select m.thread_id, lower(${cc.value}->>'address')
+                from ${messages} m, ${cc.from}
+                where m.account_id = ${group.account_id}
+              ) participant
+              where addr is not null and addr <> ''
+              group by addr
+            ) freq
+            where spread >= ${THREAD_JOIN_WITNESS_SPREAD_MAX}
+          `);
+          const found = new Set<string>();
+          for (const r of spread) found.add(String(r[0]));
+          widespread = found;
+          deps.widespread?.set(group.account_id, widespread);
+        }
+        for (const a of widespread) self.add(a);
         selfByAccount.set(group.account_id, self);
       }
 

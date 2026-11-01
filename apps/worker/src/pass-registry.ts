@@ -307,7 +307,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     module: `${W}/thread-join-heal.ts`, entry: "threadJoinHealPass",
     triggers: ["cycle-tail", "cli", "sidecar-drain"], cli: ["run-thread-join-heal.ts"],
     cadence: "time-gated THREAD_JOIN_HEAL_EVERY_MS (6 h) in the tail; a slice cut by its clock resumes in the next tail walks",
-    budget: "THREAD_JOIN_HEAL_MAX_GROUPS per account per walk / _MAX_THREADS_PER_GROUP / _MAX_MESSAGES_PER_THREAD / witness spread cap; TAIL_SLICE_BUDGET_MS per slice, checked between groups",
+    budget: "THREAD_JOIN_HEAL_MAX_GROUPS and THREAD_JOIN_HEAL_WALK_MS per account per walk / _MAX_THREADS_PER_GROUP / _MAX_MESSAGES_PER_THREAD / witness spread cap, read once per account per walk; TAIL_SLICE_BUDGET_MS per slice, checked between groups",
     owns: "conversations a forward's fresh header chain split in two are merged (core's join verdict, one implementation)",
     fence: "leader lock; per-account isolation",
   },
