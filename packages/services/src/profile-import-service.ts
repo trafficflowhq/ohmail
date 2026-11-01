@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  assertOrganizerRole, readOrganizerRole,
+  assertOrganizerRole, fenceErased, readOrganizerRole,
   mailboxCredentials, mailboxes,
   latestProfileFoundMarker, latestProfileCopy, profileImportResolutionExists, profileImportWriteReleased,
   recordProfileImportResolution, type ProfileCopyState,
@@ -404,8 +404,8 @@ export class ProfileImportService {
     // Under the same per-account lock the apply takes, in a transaction, so the write-once
     // check and its insert are one serialized step: two tabs declining together write one row,
     // and a decline racing an apply cannot interleave inside either's bookkeeping.
-    await asTx(ctx).transaction(async (tx) => {
-      await dialect(ctx.db).advisoryLock(tx, PROFILE_IMPORT_LOCK_CLASS, ctx.accountId);
+    await withAccountTx(ctx, async (tx) => {
+      await this.lockAnswer(ctx, tx, mailboxId);
       await recordProfileImportResolution(tx, fingerprint !== null
         ? { accountId: ctx.accountId, mailboxId, decision: "declined", fingerprint }
         // Dismissing the "written by a newer ohmail" notice. There is no payload to fingerprint
@@ -428,13 +428,24 @@ export class ProfileImportService {
     if (typeof fingerprint !== "string" || fingerprint.length === 0) {
       throw new ServiceError("validation_failed", 400, "fingerprint is required");
     }
-    await asTx(ctx).transaction(async (tx) => {
-      await dialect(ctx.db).advisoryLock(tx, PROFILE_IMPORT_LOCK_CLASS, ctx.accountId);
+    await withAccountTx(ctx, async (tx) => {
+      await this.lockAnswer(ctx, tx, mailboxId);
       await assertOrganizerRole(tx, dialect(ctx.db), ctx.accountId, mailboxId);
       await recordProfileImportResolution(tx, {
         accountId: ctx.accountId, mailboxId, decision: "replaced", fingerprint,
       });
     });
+  }
+
+  /**
+   * An answer's locks, in the merge's own order: the account row (the door), the import's lock,
+   * then the mailbox row FOR SHARE. An erased mailbox answers 410, so no answer puts the
+   * fingerprint its erasure took back on its audit trail.
+   */
+  private async lockAnswer(ctx: ServiceContext, tx: Tx, mailboxId: string): Promise<void> {
+    const d = dialect(ctx.db);
+    await d.advisoryLock(tx, PROFILE_IMPORT_LOCK_CLASS, ctx.accountId);
+    await fenceErased(tx, d, { accountId: ctx.accountId, mailboxId });
   }
 
   /** Ownership first, before any dial: a cross-account mailbox id is indistinguishable from a missing one. */

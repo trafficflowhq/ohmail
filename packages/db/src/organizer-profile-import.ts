@@ -38,8 +38,8 @@ export const PROFILE_IMPORT_RESOLVED_AUDIT_ACTION = "organizer_profile_import_re
  * its id, once it has judged that copy its own). Payload: `{ mailboxId, installId, second, version }`,
  * `version` the recording build's. A copy under this install's id is this store's own only at a second
  * it recorded: a store restored from a backup has no record of what its later life wrote. A copy's
- * record is written again while the copy is the store's current one, so the audit log's age-out never
- * takes the record of a copy still in the mailbox.
+ * record is written again every 30 days while the copy is in the mailbox, so the audit log's age-out
+ * never takes the record of a copy still there.
  */
 export const PROFILE_WRITTEN_AUDIT_ACTION = "organizer_profile_written";
 
@@ -119,8 +119,8 @@ export async function recordProfileCopy(
 
 /**
  * The seconds this store recorded for the mailbox under this install id, each with the time of its
- * newest record (epoch milliseconds), read from the newest records: the copies a store has in the
- * mailbox are its newest few writes, since every write removes the copy it replaces.
+ * newest record (epoch milliseconds). Every record, not the newest few: a mailbox whose removals do not
+ * stick keeps more of the store's copies than that. The audit log's one-year age-out bounds the read.
  */
 export async function profileWritesRecorded(
   db: Tx, o: { accountId: string; mailboxId: string; installId: string },
@@ -133,8 +133,7 @@ export async function profileWritesRecorded(
       sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
       sql`${auditLog.payload}->>'installId' = ${o.installId}`,
     ))
-    .orderBy(desc(auditLog.createdAt))
-    .limit(64);
+    .orderBy(desc(auditLog.createdAt));
   const seconds = new Map<number, number>();
   for (const r of rows) {
     const p = r.payload as { second?: unknown; ours?: unknown } | null;

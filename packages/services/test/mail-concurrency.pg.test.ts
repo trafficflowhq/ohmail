@@ -10,8 +10,10 @@ import { loginTokens } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  MailService, SpyMailer, EMAIL_VERIFY_PURPOSE, type MailContext,
+  MailService, SpyMailer, EMAIL_VERIFY_PURPOSE, makeTestAuthDeps, throttleKeysFor, type MailContext,
 } from "@trafficflow/services";
+
+const KEYS = throttleKeysFor(makeTestAuthDeps().keyProvider);
 
 /**
  * THE TWO CLAIMS THAT PGLITE CANNOT TEST.
@@ -74,7 +76,7 @@ describe.skipIf(!PG_UP)("on real Postgres — the claims PGlite cannot check", (
 
   it("a verification link presented 12 times AT ONCE is consumed exactly once", async () => {
     const spy = new SpyMailer();
-    const svc = new MailService({ mailer: spy, config: CONFIG });
+    const svc = new MailService({ mailer: spy, config: CONFIG, throttleKeys: KEYS });
     const { userId, email } = await seedUser();
 
     expect((await svc.issueEmailVerification(ctx(), { userId, to: email })).status).toBe("sent");
@@ -94,7 +96,7 @@ describe.skipIf(!PG_UP)("on real Postgres — the claims PGlite cannot check", (
 
   it("an expired or wrong-purpose token loses the race too, not just the second caller", async () => {
     const spy = new SpyMailer();
-    const svc = new MailService({ mailer: spy, config: CONFIG, });
+    const svc = new MailService({ mailer: spy, config: CONFIG, throttleKeys: KEYS });
     const { userId, email } = await seedUser();
     await svc.issueEmailVerification(ctx(), { userId, to: email });
     const raw = new URL(spy.only("email_verification").data.verifyUrl).searchParams.get("token")!;
@@ -116,7 +118,7 @@ describe.skipIf(!PG_UP)("on real Postgres — the claims PGlite cannot check", (
     // same `failures` value before any of them writes.
     const spy = new SpyMailer();
     const svc = new MailService({
-      mailer: spy, config: { ...CONFIG, ratePerWindow: 3, rateWindowMs: 60_000 },
+      mailer: spy, config: { ...CONFIG, ratePerWindow: 3, rateWindowMs: 60_000 }, throttleKeys: KEYS,
     });
     const to = `flood-${randomUUID()}@example.com`;
 
@@ -139,7 +141,7 @@ describe.skipIf(!PG_UP)("on real Postgres — the claims PGlite cannot check", (
     const to = `roll-${randomUUID()}@example.com`;
     let t = new Date("2026-08-01T09:00:00.000Z");
     const svc = new MailService({
-      mailer: spy, config: { ...CONFIG, ratePerWindow: 1, rateWindowMs: 60_000 },
+      mailer: spy, config: { ...CONFIG, ratePerWindow: 1, rateWindowMs: 60_000 }, throttleKeys: KEYS,
     });
     const at = (): MailContext => ({ db: db as unknown as MailContext["db"], now: () => t });
 

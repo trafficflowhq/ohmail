@@ -303,8 +303,10 @@ describe("removing a mailbox from this computer", () => {
     const [row] = await s.db.select().from(mailboxes).where(eq(mailboxes.id, s.world.mailboxId));
     expect(row?.status, "the other mailbox's own row was written").not.toBe("disabled");
     const payloadOf = async (id: string) => (await s.db.select({ p: auditLog.payload }).from(auditLog).where(eq(auditLog.id, id)))[0]?.p;
-    expect(await payloadOf(keptMarker!.id), "the other mailbox's marker lost its receipt").toMatchObject({ signatureReceipt: "1".repeat(32) });
+    expect(await payloadOf(keptMarker!.id), "the other mailbox's marker lost a hash")
+      .toMatchObject({ signatureReceipt: "1".repeat(32), fingerprint: "f".repeat(64) });
     expect(await payloadOf(goneMarker!.id), "the removed mailbox's marker still names its signature").not.toHaveProperty("signatureReceipt");
+    expect(await payloadOf(goneMarker!.id), "the removed mailbox's marker still names its settings").not.toHaveProperty("fingerprint");
     expect(await payloadOf(goneMarker!.id), "the marker row went with its receipt").toMatchObject({ mailboxId: dto.id, state: "found" });
   });
 });

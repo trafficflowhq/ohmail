@@ -342,25 +342,18 @@ describe("what a refresh refusal means", () => {
 });
 
 describe("logout", () => {
-  it("a cold logout buys an access token through the recovery, so the revocation really LANDS", async () => {
-    // A review finding: the raw request carried an empty (or stale) Authorization, the authenticated
-    // /auth/logout answered 401, the answer was ignored, and die() then cleared the only local
-    // refresh token — leaving the family live server-side. Routed through the manager's own
-    // fetch, the 401 rotates and the replayed logout is authenticated.
+  /**
+   * NEVER A RENEWAL TO SIGN OUT. The logout renewed to buy an access token for `/auth/logout`, and a
+   * renewal whose answer was lost, or that failed, left the family live with a fresh tail nobody
+   * held. The refresh door ends the family any of its tokens names, so the held token goes there.
+   */
+  it("a cold logout presents the refresh token at the refresh door, and it LANDS", async () => {
     const { vault, clearedCount } = memoryVault();
     const wire = scripted([
       (s) => {
-        expect(s.url).toBe(`${ORIGIN}/auth/logout`);
+        expect(s.url).toBe(`${ORIGIN}/auth/refresh/logout`);
         expect(s.headers.authorization).toBeUndefined(); // cold launch: no access token yet
-        return json(401, {});
-      },
-      (s) => {
-        expect(s.url).toBe(`${ORIGIN}/auth/refresh`);
-        return json(200, { tokens: ROTATED });
-      },
-      (s) => {
-        expect(s.url).toBe(`${ORIGIN}/auth/logout`);
-        expect(s.headers.authorization).toBe("Bearer access-2"); // the replay is authenticated
+        expect(JSON.parse(s.body!)).toEqual({ refreshToken: "refresh-1" });
         return new Response(null, { status: 204 });
       },
     ]);
@@ -371,10 +364,44 @@ describe("logout", () => {
     // credential this call destroys is the only thing that could ever retry the logout, and the
     // logout is what revokes the session and takes this device's wake registration down.
     expect(await bearer.logout()).toBe(true);
-    expect(wire.seen).toHaveLength(3);
+    expect(wire.seen).toHaveLength(1);
     expect(bearer.paired()).toBe(false);
     expect(clearedCount()).toBeGreaterThan(0);
     expect(died).toBe(1);
+  });
+
+  it("after a rotation whose answer was lost: the bearer's 401, then the refresh door — never a renewal", async () => {
+    const wire = scripted([
+      () => json(401, {}),
+      () => new TypeError("network error"),
+      () => refusal("unauthorized"),
+      () => new Response(null, { status: 204 }),
+    ]);
+    const bearer = manager({ access: "access-1", fetch: wire.fetch });
+    expect((await bearer.fetch(`${ORIGIN}/sync`)).status, "the rotation's answer never arrived").toBe(401);
+    expect(await bearer.logout()).toBe(true);
+    expect(wire.seen.map((s) => [s.url.slice(ORIGIN.length), s.headers.authorization ?? null])).toEqual([
+      ["/sync", "Bearer access-1"], ["/auth/refresh", null],
+      ["/auth/logout", "Bearer access-1"], ["/auth/refresh/logout", null],
+    ]);
+    expect(JSON.parse(wire.seen[3]!.body!)).toEqual({ refreshToken: "refresh-1" });
+  });
+
+  it("a server older than the refresh door (404, 405) gets the routed sign-out it always had", async () => {
+    for (const old of [404, 405]) {
+      const wire = scripted([
+        () => new Response(null, { status: old }),
+        () => json(401, {}),
+        () => json(200, { tokens: ROTATED }),
+        (s) => {
+          expect(s.headers.authorization).toBe("Bearer access-2"); // the replay is authenticated
+          return new Response(null, { status: 204 });
+        },
+      ]);
+      expect(await manager({ fetch: wire.fetch }).logout(), `door ${old}`).toBe(true);
+      expect(wire.seen.map((s) => s.url.slice(ORIGIN.length)))
+        .toEqual(["/auth/refresh/logout", "/auth/logout", "/auth/refresh", "/auth/logout"]);
+    }
   });
 
   it("says the server was NOT told when it answered a 5xx, or did not answer at all", async () => {
@@ -397,47 +424,39 @@ describe("logout", () => {
     expect(dead.paired()).toBe(false);
   });
 
-  it("a 401 whose refresh failed TRANSIENTLY is not told: the credential is still live", async () => {
-    // `fetch` answers the ORIGINAL 401 when its one recovery could not run, so a `/auth/refresh`
-    // that 500s produced a 401 with the refresh token still held — a hosted session still open,
-    // its push row still dialling — and this read it as a completed revocation. What separates
-    // the two is what the manager DID: a refusal clears the credential, a transient failure
-    // clears nothing.
+  it("a refresh door that answers no verdict is not told: the credential may still be live", async () => {
+    // A 401 at the bearer door says only that the access token was replaced. What the refresh door
+    // answers decides, and a 401 with no envelope of ours is something in front of the server.
     const wire = scripted([
-      () => json(401, {}),                      // the cold logout
-      () => new Response(null, { status: 503 }), // the refresh: transient, no judgment
+      () => refusal("unauthorized"),
+      () => new Response(null, { status: 401 }),
     ]);
-    const bearer = manager({ fetch: wire.fetch, vault: memoryVault().vault });
+    const bearer = manager({ access: "access-1", fetch: wire.fetch, vault: memoryVault().vault });
     expect(await bearer.logout()).toBe(false);
   });
 
-  it("a 401 counts as TOLD — the session it would revoke is already gone", async () => {
-    // The outcome being asked for is "this session no longer exists", and a 401 is the server
-    // saying exactly that. Treating it as a failure would make a forget report a partial
+  it("the refresh door's own 401 counts as TOLD — the family it would end is already gone", async () => {
+    // The outcome being asked for is "this session no longer exists", and the door's 401 is the
+    // server saying exactly that. Treating it as a failure would make a forget report a partial
     // take-back over a completed one, which is the same class of lie pointed the other way.
-    //
-    // The manager's own recovery turns a cold 401 into a rotation and a replay (the case above),
-    // so reaching this arm means the rotation was refused too — the family really is dead.
-    const wire = scripted([
-      () => json(401, {}),
-      () => refusal("refresh_revoked"), // the refresh is refused: nothing left to authenticate with
-    ]);
+    const wire = scripted([() => refusal("unauthorized")]);
     const bearer = manager({ fetch: wire.fetch, vault: memoryVault().vault });
     expect(await bearer.logout()).toBe(true);
     expect(bearer.paired()).toBe(false);
   });
 
-  it("the dead signal fires ONCE when the rotation's refusal and the logout both end the session", async () => {
+  it("an older server: the dead signal fires ONCE when the routed sign-out's refusal and the logout both end it", async () => {
     // The routed logout can die INSIDE its own recovery (refresh refused); the logout's final
     // clear must then be a no-op, not a second funeral.
     const wire = scripted([
+      () => new Response(null, { status: 404 }), // no refresh door on this server
       () => json(401, {}), // the unauthenticated logout attempt
       () => refusal("refresh_revoked"), // the refresh is refused — the session dies here
     ]);
     const bearer = manager({ fetch: wire.fetch });
     let died = 0;
     bearer.onSessionDead(() => died++);
-    await bearer.logout();
+    expect(await bearer.logout(), "a 401 with no credential left is already gone").toBe(true);
     expect(died).toBe(1);
     expect(bearer.paired()).toBe(false);
   });

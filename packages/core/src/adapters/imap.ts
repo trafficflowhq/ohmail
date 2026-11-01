@@ -53,7 +53,7 @@ import XOAuth2 from "nodemailer/lib/xoauth2/index.js";
 // `../mail.js`, not `../index.js`: the IMAP adapter needs the mail half only, and the default
 // barrel would pull the classifier and drafter prompts into every artifact that opens a mailbox.
 import {
-  messageFingerprint, normalizeMessageId, normalizeMime,
+  messageFingerprint, normalizeMessageId, normalizeMime, isStorableMessageId,
   type Change, type NativeLocator, type AdapterPort,
   // The folder-scan port this class also satisfies. It arrives from the same mail-half entry as
   // the other two ports, which is the point of moving it there: the adapter states what it
@@ -84,7 +84,7 @@ import {
   WriteDeclinedError, type WriteDoor, type MailboxWriteKind,
   type FolderSweepFence, type FolderSweepResult, type FolderDeleteOutcome,
   PASSIVE_EXCLUDED_SPECIAL_USE, type SpecialFolders,
-  type FolderKeysAnswer, type UidsHeldAnswer,
+  type FolderKeysAnswer, type UidsHeldAnswer, type MessageIdsGoneAnswer,
 } from "./imap-types.js";
 // The News pile's resolver (0.22): the adapter is the one place canonical names meet the live
 // tree, so `toServerPath` routes both spellings onto the folder the mailbox actually has.
@@ -2844,6 +2844,82 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const after = selected();
       if (!after || !sameEpoch(epochOf(after.uidValidity), epochOf(uidValidity))) return { k: "unanswered" };
       return { k: "held", uidValidity: live, present };
+    } finally {
+      lock.release();
+    }
+  }
+
+  private static readonly BY_MESSAGE_ID_CHUNK = 50;
+
+  /**
+   * See {@link MailboxAdapter.messageIdsGone}. One lock; per group of ids one bounded `UID SEARCH`,
+   * then the hits' envelopes to tell which of the group's ids they carry.
+   */
+  async messageIdsGone(folder: string, uidValidity: string, messageIds: readonly string[]): Promise<MessageIdsGoneAnswer> {
+    const path = this.toServerPath(folder);
+    let lock: { release(): void };
+    try {
+      lock = await this.bounded(this.client.getMailboxLock(path));
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) throw err;
+      if (!(this.client as unknown as { usable?: boolean }).usable) return { k: "unanswered" };
+      return (err as { serverResponseCode?: unknown } | null)?.serverResponseCode === "NONEXISTENT"
+        ? { k: "absent" } : { k: "unanswered" };
+    }
+    try {
+      const selected = (): MailboxObject | false => {
+        const mb = this.client.mailbox as MailboxObject | false;
+        return mb && mb.path === path ? mb : false;
+      };
+      const mb = selected();
+      if (!mb) return { k: "unanswered" };
+      const live = String(mb.uidValidity);
+      const verdict = epochVerdict(epochOf(uidValidity), epochOf(mb.uidValidity));
+      if (verdict === "stale") return { k: "renumbered", uidValidity: live };
+      if (verdict !== "usable") return { k: "unanswered" };
+      // The asked spellings of each id; an id with a space, a bracket or outside printable ASCII is not asked.
+      const spellings = new Map<string, string[]>();
+      for (const asked of messageIds) {
+        const id = normalizeMessageId(asked);
+        if (id === null || !/^[\x21-\x7e]+$/.test(id) || /[<>]/.test(id) || !isStorableMessageId(id)) continue;
+        spellings.set(id, [...(spellings.get(id) ?? []), asked]);
+      }
+      const ids = [...spellings.keys()];
+      const gone = new Set<string>();
+      const clock = this.readDeadline();
+      for (let i = 0; i < ids.length; i += ImapAdapter.BY_MESSAGE_ID_CHUNK) {
+        const chunk = ids.slice(i, i + ImapAdapter.BY_MESSAGE_ID_CHUNK);
+        const found = await this.searchBounded(
+          chunk.length === 1
+            ? { header: { "message-id": chunk[0]! } }
+            : { or: chunk.map((id) => ({ header: { "message-id": id } })) },
+          { uid: true }, folder, clock,
+        );
+        if (!Array.isArray(found)) return { k: "unanswered" };
+        const hits = new Set(found);
+        // Past two hits a Message-ID the envelopes are not read, and the group gets no verdict.
+        if (hits.size > 2 * chunk.length) continue;
+        const carried: string[] = [];
+        if (hits.size > 0) {
+          const read = new Set<number>();
+          const rows = await this.client.fetchAll([...hits].join(","), { uid: true, envelope: true }, { uid: true });
+          for (const r of rows) {
+            if (!askedRow(r, hits, "envelope")) continue;
+            read.add(r.uid);
+            carried.push((r.envelope?.messageId ?? "").toLowerCase());
+          }
+          // A hit whose envelope did not arrive, or names no Message-ID, could carry any of the ids.
+          if (read.size !== hits.size) return { k: "unanswered" };
+          if (carried.includes("")) continue;
+        }
+        for (const id of chunk) {
+          const low = id.toLowerCase();
+          if (!carried.some((m) => m.includes(low))) for (const asked of spellings.get(id)!) gone.add(asked);
+        }
+      }
+      const after = selected();
+      if (!after || !sameEpoch(epochOf(after.uidValidity), epochOf(uidValidity))) return { k: "unanswered" };
+      return { k: "read", uidValidity: live, gone };
     } finally {
       lock.release();
     }

@@ -89,7 +89,17 @@ export interface CloudSignInOptions {
    * Absent is not a lesser call: it is the retype flow, where the code was minted unbound.
    */
   verifier?: string;
+  /**
+   * The family this install held before this sign-in (`readSessionMarker`), sent beside the request
+   * that mints so the server ends it. ON THE OPTIONS for the verifier's reason: which family this
+   * install held is its own fact, never a bridge caller's to name. Absent sends nothing.
+   */
+  previousSession?: string;
 }
+
+/** The previous family as a body field, or nothing. */
+const previousOf = (opts: CloudSignInOptions): { previousSession?: string } =>
+  (opts.previousSession ? { previousSession: opts.previousSession } : {});
 
 /**
  * A PKCE pair: the secret this process keeps, and the commitment it is willing to publish.
@@ -284,6 +294,7 @@ export async function cloudSignIn(
         code: handoff,
         ...(verifier ? { verifier } : {}),
         ...(opts.deviceKind ? { kind: opts.deviceKind } : {}),
+        ...previousOf(opts),
       },
       "claim",
     );
@@ -381,7 +392,7 @@ export async function cloudSignIn(
   // be paged about. Omitted when unknown; an older hosted service ignores the extra field.
   const verifyRes = await post(
     "/auth/2fa/totp/verify",
-    { loginToken, code, ...(opts.deviceKind ? { kind: opts.deviceKind } : {}) },
+    { loginToken, code, ...(opts.deviceKind ? { kind: opts.deviceKind } : {}), ...previousOf(opts) },
     "verify",
   );
   const verifyBody = await readJson(verifyRes);
@@ -458,7 +469,7 @@ export async function redeemPairingToken(
     res = await fetchImpl(`${base}/pair/redeem`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ grant: "device-pair", token: code, kind: opts.deviceKind }),
+      body: JSON.stringify({ grant: "device-pair", token: code, kind: opts.deviceKind, ...previousOf(opts) }),
     });
   } catch (err) {
     opts.log?.("cloud_pair_redeem_failed", {
@@ -634,7 +645,9 @@ export async function pollDesktopApproval(
     res = await fetchImpl(`${base}/auth/desktop-approval/claim`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ approvalId, verifier, ...(opts.deviceKind ? { kind: opts.deviceKind } : {}) }),
+      body: JSON.stringify({
+        approvalId, verifier, ...(opts.deviceKind ? { kind: opts.deviceKind } : {}), ...previousOf(opts),
+      }),
     });
   } catch {
     return { status: "pending", retryAfterMs: 2_000, note: "unreachable" };

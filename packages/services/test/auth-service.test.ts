@@ -10,7 +10,7 @@ import {
 import {
   AuthService, makeTestAuthDeps, ServiceError, resolveSession, generateToken, hashToken,
   classifyRefreshFailure, throttleKeysFor, mintPairingToken, redeemDevicePair, OAuthCodeReplayed,
-  makeSessionLifecycle, DESKTOP_LINK_PURPOSE,
+  makeSessionLifecycle, DESKTOP_LINK_PURPOSE, MailService, SpyMailer,
   type AuthDeps, type SessionUser, type SessionEstablished, type ServiceContext, type SessionLifecycle,
 } from "../src/index.js";
 import { SoftwareAuthenticator } from "./webauthn-authenticator.js";
@@ -609,6 +609,27 @@ describe("AuthService — lockout integrity", () => {
     const [row] = await h.db.select().from(authThrottle)
       .where(like(authThrottle.key, "register:ip:%")).limit(1);
     expect(row!.failures).toBe(1);
+  });
+
+  it("every per-IP slot keys the client by the deployment's keyed hash, never a plain digest of the address", async () => {
+    const base = makeTestAuthDeps();
+    const keys = throttleKeysFor(base.keyProvider);
+    const mail = new MailService({
+      mailer: new SpyMailer(), throttleKeys: keys,
+      config: { appUrl: ORIGIN, siteUrl: ORIGIN, supportEmail: "support@ohmail.app" },
+    });
+    const h = await harness({ ...base, mail });
+    const user = await register(h);
+    await h.svc.resendVerification(sessionCtx(h, user));
+    await expect(h.svc.claimDesktopLink(h.ctxFor(), { code: generateToken() })).rejects.toBeInstanceOf(ServiceError);
+    await h.svc.issueDesktopApproval(h.ctxFor(), { challenge: hashToken(generateToken()) });
+
+    const ip = "1.2.3.4";
+    const slots = (await h.db.select({ key: authThrottle.key }).from(authThrottle).where(like(authThrottle.key, "%:ip:%")))
+      .map((r) => r.key).sort();
+    const k = keys.client(ip);
+    expect(slots).toEqual([`desktop_approval:ip:${k}`, `desktop_claim:ip:${k}`, `register:ip:invite:${k}`, `verify:ip:${k}`]);
+    expect(slots.join(" "), "a plain digest of an address is reversed by a guess").not.toContain(hashToken(ip));
   });
 
   it("the unknown-email decoy hash is computed once per hasher, not once per service", async () => {

@@ -285,9 +285,10 @@ export function putAwayThisRun(key: string): boolean {
 }
 
 /**
- * What must be written before ohmail restarts — an open editor's pending words. A restart from
- * the line or from Settings waits for these, never past {@link RESTART_FLUSH_MS}: the editors keep
- * their words locally too, so a save that hangs costs the account copy, not the words.
+ * What must be written before ohmail restarts or quits — an open editor's pending words. A restart
+ * from the line or from Settings, and on the desktop a quit or a close, waits for these, never past
+ * {@link RESTART_FLUSH_MS}: the editors keep their words locally too, so a save that hangs costs the
+ * account copy, not the words.
  */
 const beforeRestart = new Set<() => Promise<unknown>>();
 export const RESTART_FLUSH_MS = 3_000;

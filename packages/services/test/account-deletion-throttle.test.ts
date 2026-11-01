@@ -26,6 +26,8 @@ function families(userId: string, email: string): string[] {
   return [
     `pw:${hA}:${hC}`, `pwa:${hA}`, `known:${hA}:${hC}`, `user:${userId}`, `factor-day:${userId}`,
     `notice:factor:${userId}`, `notice:ceiling:${hA}`, `email:${email}`,
+    // The mail quota's two budgets for the address (`mail-service.ts`).
+    `mail:unsolicited:${hA}`, `mail:transactional:${hA}`,
   ];
 }
 

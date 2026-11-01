@@ -23,10 +23,10 @@ import {
   applyOrganizerProfile, importRefusalFor, serializeOrganizerProfile, serializeOrganizerProfileCounted,
 } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
-  PROFILE_KEPT_MAX, PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
-  localSaysWhatAFingerprintSays, ownCopy, profileFingerprint, profileGateView, readFoundCopies, readOrganizerProfile, signatureReceipt, tidyOrganizerProfile,
+  PROFILE_FOUND_READ_MAX, PROFILE_KEPT_MAX, PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
+  listedProfileSeconds, localSaysWhatAFingerprintSays, ownCopy, profileFingerprint, profileGateView, readFoundCopies, readOrganizerProfile, signatureReceipt, tidyOrganizerProfile,
   writeOrganizerProfile,
-  type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
+  type FoundRead, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
   type ProfileReadResult, type ProfileTidyMode, type ProfileLocator, profileLocatorOf, type ProfileScreening,
   type ProfileGap, type ProfileUnkeptWhy,
 } from "@trafficflow/core/adapters/organizer-profile";
@@ -162,8 +162,11 @@ export { serializeOrganizerProfile, serializeOrganizerProfileCounted };
 /** The first release whose builds record each settings copy before appending it (0.30.20 shipped without it). */
 const FIRST_RECORDING_RELEASE: readonly number[] = [0, 30, 21];
 
-/** How old a current copy's newest record may grow before it is recorded again (the audit log keeps a year). */
+/** How old a copy's newest record may grow while the copy is in the mailbox before it is recorded again (the audit log keeps a year). */
 export const PROFILE_RECORD_RENEW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** The most records one write-due tick renews; a larger pile is renewed over the next ticks. */
+const PROFILE_RECORD_RENEW_MAX = 64;
 
 /**
  * WRITTEN BY A BUILD THAT RECORDS NOTHING — one from before stores recorded their writes, so a copy of
@@ -298,6 +301,14 @@ export class OrganizerProfileSync {
    * or its age. Read again from the folder at each seed, so a restart forgets nothing.
    */
   private kept: ProfileLocator[] = [];
+  /** Seconds of copies under our id, after our row, a build that records nothing wrote: ours ({@link isOwn}); in memory. */
+  private adopted = new Set<number>();
+  /** The found copies read by body since the seed, by (install id, Date second). */
+  private judged = new Set<string>();
+  /** How much of the found copies the seed's reading has read; `null` while it has read none. */
+  private foundSoFar: FoundRead["read"] | null = null;
+  /** A pass after the seed kept a copy: asked about once no question is open, again after a fault. */
+  private askKept = false;
   /** The held copy whose Not now already moved the question on, so it is read once, not every tick. */
   private declinedSeen: string | null = null;
   /** A detection marker that could not be written durably yet — owed, and retried next tick. */
@@ -358,6 +369,8 @@ export class OrganizerProfileSync {
   private recordReread = false;
   /** The write second of this store's current copy in the mailbox: the record {@link keepRecordAlive} renews. */
   private currentOwnSecond: number | null = null;
+  /** Recorded seconds whose copy the folder no longer lists: {@link keepRecordAlive} leaves them to the age-out. */
+  private recordGone = new Set<number>();
   /** What {@link recordCopy} last recorded, and when; null until this life recorded or confirmed one. */
   private copySaid: { kept: boolean; at: number } | null = null;
   constructor(private readonly deps: OrganizerProfileSyncDeps) {}
@@ -393,10 +406,10 @@ export class OrganizerProfileSync {
     return this.recordedSeconds;
   }
 
-  /** {@link ownCopy}'s record test, over what {@link recorded} last read. */
+  /** {@link ownCopy}'s record test, over what {@link recorded} last read and the copies {@link adopted}. */
   private async owns(): Promise<(second: number) => boolean> {
     const seconds = await this.recorded();
-    return (second) => seconds.has(second);
+    return (second) => seconds.has(second) || this.adopted.has(second);
   }
 
   /**
@@ -404,35 +417,42 @@ export class OrganizerProfileSync {
    * nothing wrote under our id once judged ours. THROWS when the database refuses: the tick appends
    * nothing and the write is tried again on the next, so no copy of this store's is ever unrecorded.
    */
-  private async vouch(second: number): Promise<void> {
+  private async vouch(...seconds: number[]): Promise<void> {
     const { deps } = this;
     const at = (deps.now ?? ((): Date => new Date()))();
     await fencedAccountWrite(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId }, async (tx) => {
-      await recordProfileWrite(tx as Tx, {
-        accountId: deps.accountId, mailboxId: deps.mailboxId, installId: deps.self.installId, second, version: deps.producerVersion, at,
-      });
+      for (const second of seconds) {
+        await recordProfileWrite(tx as Tx, {
+          accountId: deps.accountId, mailboxId: deps.mailboxId, installId: deps.self.installId, second, version: deps.producerVersion, at,
+        });
+      }
     });
-    (await this.recorded()).set(second, at.getTime());
+    const recorded = await this.recorded();
+    for (const second of seconds) recorded.set(second, at.getTime());
   }
 
   /**
-   * THE CURRENT COPY'S RECORD OUTLIVES THE AUDIT LOG'S AGE-OUT: recorded again once its newest record is
-   * {@link PROFILE_RECORD_RENEW_MS} old, so a store whose settings do not change for a year still knows
-   * its own copy, and a backup of it still tells a later life's copies apart. And once anything was
-   * recorded after it (a write the mailbox refused), so a run of refused writes never pushes it out of
-   * the newest records {@link recorded} reads. Never throws: a refused renewal is tried again at the next
-   * write-due tick.
+   * THE RECORDS OF THE STORE'S COPIES OUTLIVE THE AUDIT LOG'S AGE-OUT: a copy's record is written again once its
+   * newest is {@link PROFILE_RECORD_RENEW_MS} old while the copy is in the mailbox — the current copy, and any other
+   * the folder still lists (a server that kept what a write replaced) — so a store whose settings do not change for a
+   * year still knows its own copies, and a backup of it still tells a later life's copies apart. Only a second the
+   * store recorded is renewed. Never throws: a refused renewal is tried again at the next write-due tick.
    */
-  private async keepRecordAlive(now: Date): Promise<void> {
-    const second = this.currentOwnSecond;
-    if (second === null) return;
+  private async keepRecordAlive(io: ProfileIo, now: Date): Promise<void> {
     try {
       const seconds = await this.recorded();
-      const at = seconds.get(second);
-      if (at !== undefined && now.getTime() - at < PROFILE_RECORD_RENEW_MS && at >= Math.max(...seconds.values())) return;
-      await this.vouch(second);
+      const current = this.currentOwnSecond;
+      const due = (s: number): boolean => { const at = seconds.get(s); return at === undefined || now.getTime() - at >= PROFILE_RECORD_RENEW_MS; };
+      // The current copy first, without a listing: a folder that will not list never costs it its record.
+      if (current !== null && due(current)) await this.vouch(current);
+      const others = [...seconds.keys()].filter((s) => s !== current && due(s) && !this.recordGone.has(s));
+      if (others.length === 0) return;
+      const listed = await listedProfileSeconds(io, this.deps.self.installId);
+      for (const s of others) if (!listed.has(s)) this.recordGone.add(s);
+      const renew = others.filter((s) => listed.has(s)).slice(0, PROFILE_RECORD_RENEW_MAX);
+      if (renew.length > 0) await this.vouch(...renew);
     } catch {
-      // The record stands until its age-out; the next write-due tick renews it.
+      // The records stand until their age-out; the next write-due tick renews them.
     }
   }
 
@@ -501,20 +521,44 @@ export class OrganizerProfileSync {
     return this.lastWrittenFingerprint !== null && this.lastWrittenFingerprint === profileFingerprint(local);
   }
 
+  /** {@link FoundRead} for the tidy and the write: the kept copies and the held one. Absent while none was read. */
+  private found(): FoundRead | undefined {
+    if (this.foundSoFar === null) return undefined;
+    const held = this.retained();
+    return { read: this.foundSoFar, kept: held === undefined ? [...this.kept] : [...this.kept, held] };
+  }
+
   /**
-   * THE FOLDER'S FOUND COPIES, read at the seed: every readable copy not this store's own, newest first, at most
-   * {@link PROFILE_KEPT_MAX}, is kept for the person's answer. One an Import or a Save answered here goes beside
-   * ours; one the store already says asks nothing.
+   * THE FOUND COPIES, {@link PROFILE_FOUND_READ_MAX} a pass, newest first: from the top at the seed (`reset`), then a
+   * pass before each tidy until all are read. Ours are {@link adopted}, an answered one goes, one the store says asks
+   * nothing, the rest are kept (at most {@link PROFILE_KEPT_MAX}); one a later pass keeps owes a question
+   * ({@link askKept}). A batch counts as read only once every copy in it was handled, so a pass that faults is read again.
    */
-  private async discoverKept(io: ProfileIo, local: OrganizerProfilePayload): Promise<void> {
+  private async discoverKept(io: ProfileIo, local: OrganizerProfilePayload, reset: boolean): Promise<void> {
     const { deps } = this;
     const ownSince = await this.ownSince();
-    const found = await readFoundCopies(io, { installId: deps.self.installId, ownSince, owns: await this.owns() });
+    // The record as it stands now: another attachment of this store may have written since this one read it.
+    this.recordedSeconds = undefined;
+    const recorded = await this.recorded();
+    const found = await readFoundCopies(io, {
+      installId: deps.self.installId, ownSince, max: PROFILE_FOUND_READ_MAX,
+      // The seed reads every copy again, whatever this life judged before.
+      owns: reset ? (second) => recorded.has(second) : await this.owns(),
+      ...(reset ? {} : { skip: (installId: string, second: number | null) => this.judged.has(JSON.stringify([installId, second])) }),
+    });
     if (found.state !== "read") return;
-    this.kept = [];
+    if (reset) {
+      this.kept = [];
+      this.judged = new Set();
+      this.adopted = new Set();
+      this.foundSoFar = null;
+    }
     for (const c of found.copies) {
       // A copy under our id a build that records nothing wrote is ours (`isOwn`), judged here without recording it.
-      if (c.installId === deps.self.installId && c.locator.second >= ownSince && writtenByABuildThatRecordsNothing(c.doc.producer?.version)) continue;
+      if (c.installId === deps.self.installId && c.locator.second >= ownSince && writtenByABuildThatRecordsNothing(c.doc.producer?.version)) {
+        this.adopted.add(c.locator.second);
+        continue;
+      }
       if (await profileImportWriteReleased(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: c.locator.fingerprint })) {
         this.letGo(c.locator);
         continue;
@@ -522,8 +566,14 @@ export class OrganizerProfileSync {
       // One the store already says asks nothing: the store's next write says it too.
       if (localSaysWhatTheDocumentSays(local, c.doc)) continue;
       this.noteLocator(c.installId, c.doc);
+      const fresh = !reset && !this.kept.some((k) => sameLocator(k, c.locator));
       this.keep(c.locator);
+      if (fresh && this.kept.some((k) => sameLocator(k, c.locator))) this.askKept = true;
     }
+    // Only now: after a fault above the batch stays unread, so nothing goes by age and the next pass reads it again.
+    for (const [installId, second] of found.examined) this.judged.add(JSON.stringify([installId, second]));
+    this.foundSoFar = found.more ? "partly" : "all";
+    if (found.more) this.tidyOwed = true;
   }
 
   /**
@@ -742,6 +792,11 @@ export class OrganizerProfileSync {
     this.seenForeignFingerprints = new Set<string>();
     this.released = [];
     this.kept = [];
+    this.adopted = new Set();
+    this.judged = new Set();
+    this.foundSoFar = null;
+    this.askKept = false;
+    this.recordGone = new Set();
     this.declinedSeen = null;
     this.holdFingerprint = null;
     this.holdNewerV = null;
@@ -1303,12 +1358,21 @@ export class OrganizerProfileSync {
         await this.seed(io, payload, log);
         this.seeded = true;
       }
-      if (writeDue) await this.keepRecordAlive(now);
+      if (writeDue) await this.keepRecordAlive(io, now);
       if (this.kept.length > 0) await this.refreshKept(payload);
 
       if (tidyDue()) {
         this.lastTidyAt = now.getTime();
+        // The found copies not read yet: one batch before each tidy, and a copy it keeps is asked about when nothing is.
+        if (this.foundSoFar === "partly") await this.discoverKept(io, payload, false);
+        if (this.askKept && this.holdFingerprint === null && this.holdNewerV === null) {
+          const queued = await this.nextKept(io, payload);
+          if (queued !== null) await this.commitNextHold(queued, log);
+        }
+        // A question already open moves on to the kept copies once it is answered.
+        this.askKept = false;
         const keep = this.retained();
+        const found = this.found();
         /* A RELEASED question's record — answered by an import or a replace, or asked no more — goes
            on this pass beside this install's own document, whatever its age. */
         const released = this.released;
@@ -1317,6 +1381,7 @@ export class OrganizerProfileSync {
           ...(keep === undefined ? {} : { retain: keep }),
           ...(released.length === 0 ? {} : { released }),
           ...(this.kept.length === 0 ? {} : { kept: this.kept }),
+          ...(found === undefined ? {} : { found }),
           // What this organizer has seen, as the write's `replaceable`: its own copies stay beside an unseen one.
           replaceable: [
             ...(this.lastWrittenFingerprint === null ? [] : [this.lastWrittenFingerprint]),
@@ -1325,6 +1390,7 @@ export class OrganizerProfileSync {
           log: (event, detail) => { log(event, { ...detail, mailboxId: deps.mailboxId, accountId: deps.accountId }); },
         });
         if (tidyMode === "count" || tidied.remaining === 0) this.tidyOwed = false;
+        if (this.foundSoFar === "partly") this.tidyOwed = true;
         if (tidyMode === "remove" && tidied.remaining === 0) this.released = [];
       }
       if (!writeDue) return;
@@ -1530,10 +1596,13 @@ export class OrganizerProfileSync {
           ...this.kept.filter((k) => !sameLocator(k, keep!)).map((k) => k.second))) return "done";
         // The record as it stands now: another attachment of this store may have written since this one read it.
         this.recordedSeconds = undefined;
+        // Every kept copy and the held one, an unanswered one under our id too: `kept` leaves that one out on purpose.
+        const found = this.found();
         const result = await writeOrganizerProfile({
           io, doc, installId: deps.self.installId, tidyMode, now, ownSince: await this.ownSince(), owns: await this.owns(),
           beforeAppend: (second) => this.vouch(second),
           ...(keep === undefined || sameIdOpen ? {} : { retain: keep }),
+          ...(found === undefined ? {} : { found }),
           kept: await this.keptElsewhere(),
           // What this writer may replace: its own last write, and any foreign document it has
           // already SURFACED. Anything else refuses as `foreign` below — the engine's guarantee
@@ -1877,7 +1946,7 @@ export class OrganizerProfileSync {
       case "found": {
         const docFingerprint = profileFingerprint(read.doc);
         // Every copy that is not this store's own is kept for the person's answer, whatever its age.
-        await this.discoverKept(io, local);
+        await this.discoverKept(io, local, true);
         // Our id on a copy older than this store's row is a gone store's: asked about, never ours to replace.
         const ours = await this.isOwn(read);
         const second = Math.floor(Date.parse(read.doc.updatedAt) / 1000);
@@ -2044,12 +2113,14 @@ export class OrganizerProfileSync {
       ...(applied === undefined ? {} : { applied }),
     });
     const keep = this.retained();
+    const found = this.found();
     // The record as it stands now, as before every write.
     this.recordedSeconds = undefined;
     const result = await writeOrganizerProfile({
       io, doc, installId: deps.self.installId, tidyMode: deps.tidyMode ?? "remove", now, ownSince: await this.ownSince(),
       owns: await this.owns(), beforeAppend: (second) => this.vouch(second),
       ...(keep === undefined ? {} : { retain: keep }),
+      ...(found === undefined ? {} : { found }),
       kept: await this.keptElsewhere(),
       replaceable: [
         profileFingerprint(read.doc),

@@ -16,8 +16,8 @@ import {
 import { ensureLocalWorld, type LocalWorld } from "./identity.js";
 import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
 import {
-  createCloudAuth, openSealedTokens, sealTokens, ACCOUNT_ERASED, REFUSAL_CODES,
-  REUSE_CAUSE, type CloudAuth, type CloudSessionReading, type CloudTokens, type SealOpen,
+  createCloudAuth, openSealedTokens, readSessionMarker, sealTokens, ACCOUNT_ERASED, REFUSAL_CODES,
+  REUSE_CAUSE, SESSION_MARKER_FILE, type CloudAuth, type CloudSessionReading, type CloudTokens, type SealOpen,
 } from "./cloud-auth.js";
 import { writeAtomic } from "./fs-atomic.js";
 import { readMachineBinding } from "./machine-binding.js";
@@ -603,7 +603,7 @@ export function enforceMirrorOwner(
        there belongs to the world being left and must go — which is what it has always done. */
     const stale = askedToStartOver && !addressChanged && !serverChanged
       ? ["pgdata", "cloud-cursor.json"]
-      : ["pgdata", "cloud-cursor.json", "cloud-tokens.seal", SESSION_REFUSED_FILE];
+      : ["pgdata", "cloud-cursor.json", "cloud-tokens.seal", SESSION_MARKER_FILE, SESSION_REFUSED_FILE];
     /* THE WINDOW'S QUEUED CHANGES ARE THEIR OWNER'S, not the directory's: a launch for another account
        or server opens and removes none, and they wait for their own sign-in. Only the person's own
        start-over, on the same account and server, takes the changes of the record that asked for it. */
@@ -1599,6 +1599,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         /* THE REQUEST THIS POLL ASKS ABOUT. A stop or a new request can land while the poll is on
            the wire; its answer is written only while this is still the request held. */
         const asked = namesApproval ? approval : null;
+        /* THE FAMILY THIS INSTALL HELD, from its own disk and never from `body`: a sign-out the server
+           never heard, or a seal this key cannot open, left it live, and the server ends what this names. */
+        const previousSession = readSessionMarker(config.dataDir, machine);
         let tokens: CloudTokens;
         try {
           if (namesApproval && approval) {
@@ -1609,6 +1612,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
                 ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
                 ...(log ? { log } : {}),
                 ...(declaredDeviceKind ? { deviceKind: declaredDeviceKind } : {}),
+                ...(previousSession ? { previousSession } : {}),
               },
               approval.id,
             );
@@ -1640,6 +1644,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               // FROM THE PROCESS, NEVER FROM `body`, for the verifier's reason: what platform
               // this install runs on is this process's own fact — see `declaredDeviceKind`.
               ...(declaredDeviceKind ? { deviceKind: declaredDeviceKind } : {}),
+              ...(previousSession ? { previousSession } : {}),
             },
             body,
           );
@@ -1860,6 +1865,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           return json({ error: { code: "pairing_undone", message: "the pairing was undone here before it finished" } }, 409);
         };
         let redeemed: Awaited<ReturnType<typeof redeemPairingToken>>;
+        // `/cloud/signin`'s previous family: this install's own fact, never the body's.
+        const previousSession = readSessionMarker(config.dataDir, machine);
         try {
           redeemed = await redeemPairingToken(
             {
@@ -1867,6 +1874,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               deviceKind: declaredDeviceKind,
               ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
               ...(log ? { log } : {}),
+              ...(previousSession ? { previousSession } : {}),
             },
             token,
           );

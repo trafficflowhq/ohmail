@@ -4,6 +4,7 @@ import { authThrottle, loginTokens, type AlertDigest } from "@trafficflow/db/clo
 import { bridgeTx, type Db } from "../context.js";
 import { generateToken, hashToken } from "../auth/crypto.js";
 import { isLoopbackHostname } from "../auth/origins.js";
+import type { ThrottleKeys } from "../auth/throttle-keys.js";
 import { normalizeRecipient, type MailerPort, type MailSendResult } from "./port.js";
 import { mailLocaleOf, providerClassOf, type MailLocale, type WaitlistTier } from "./templates.js";
 
@@ -126,9 +127,16 @@ const limiterOf = (ctx: MailContext | OperatorAlertContext): RecipientLimiter =>
  * limiter's state on a public endpoint reports what other mail we sent that address. Split by who
  * can SPEND: `unsolicited` — a send an anonymous caller can cause; `transactional` — what the
  * product owes someone. Verification is `unsolicited`, and `account_exists` MUST spend the same
- * budget, or the limiter becomes the oracle. The key is `mail:<quota>:<sha256(recipient)>`.
+ * budget, or the limiter becomes the oracle. The key is `mail:<quota>:<keyed hash of the recipient>`
+ * (`throttle-keys.ts`); the operator's alert mail claims {@link OPERATOR_SLOT}.
  */
 export type MailQuota = "unsolicited" | "transactional";
+
+/**
+ * The slot the operator's alert and digest mail claim: a fixed name, so it holds no address and
+ * needs no key material, and the pager mails on a host whose KEK is broken.
+ */
+const OPERATOR_SLOT = "mail:transactional:operator";
 
 export interface MailServiceConfig {
   /** `https://app.ohmail.app` — where invites are redeemed and links land. */
@@ -259,6 +267,8 @@ export const EMAIL_VERIFY_PURPOSE = "email_verify";
 export interface MailServiceDeps {
   mailer: MailerPort;
   config: MailServiceConfig;
+  /** The deployment's keyer: a recipient's slot is keyed by `address()`, never a plain digest. */
+  throttleKeys: ThrottleKeys;
 }
 
 /**
@@ -266,10 +276,12 @@ export interface MailServiceDeps {
  * WHETHER to send, builds every URL from deployment config, and owns the verification-token
  * lifecycle. Rate limiting is per RECIPIENT, before the send, atomically: one `INSERT … ON
  * CONFLICT DO UPDATE … RETURNING` (a read-modify-write lets concurrent attempts collapse into one
- * increment). The key is `mail:<sha256(recipient)>` — hashed, because recipients include people
- * with no account. The window does not slide on refusals. Failure mode: DROP — no queue, no
- * retry: nowhere to queue, every template is human-re-triggerable, and an automatic retry is the
- * mail-bomb vector the limiter prevents. `failed.retryable` is classification, not behaviour.
+ * increment). The key is `mail:<quota>:<keyed hash of the recipient>` — keyed, because recipients
+ * include people with no account and a plain digest of an address is reversed by a guess; a key
+ * provider that refuses fails the send closed. The window does not slide on refusals. Failure
+ * mode: DROP — no queue, no retry: nowhere to queue, every template is human-re-triggerable, and
+ * an automatic retry is the mail-bomb vector the limiter prevents. `failed.retryable` is
+ * classification, not behaviour.
  */
 export class MailService {
   private readonly cfg: Required<MailServiceConfig>;
@@ -321,7 +333,7 @@ export class MailService {
     if (!this.cfg.operatorEmail) return { status: "skipped", reason: "mailer_disabled" };
     if (input.alerts.length === 0) return { status: "skipped", reason: "mailer_disabled" };
     const bucket = Math.floor(ctx.now().getTime() / Math.max(1, input.idempotencyBucketMs));
-    return this.guarded(ctx, this.cfg.operatorEmail, "transactional", (to) =>
+    return this.guarded(ctx, this.cfg.operatorEmail, "operator", (to) =>
       this.deps.mailer.send(to, "operator_alert", {
         environment: input.environment,
         source: input.source,
@@ -348,7 +360,7 @@ export class MailService {
   ): Promise<MailSendResult> {
     if (!this.cfg.operatorEmail) return { status: "skipped", reason: "mailer_disabled" };
     if (input.digest.lines.length === 0) return { status: "skipped", reason: "mailer_disabled" };
-    return this.guarded(ctx, this.cfg.operatorEmail, "transactional", (to) =>
+    return this.guarded(ctx, this.cfg.operatorEmail, "operator", (to) =>
       this.deps.mailer.send(to, "operator_digest", {
         environment: input.environment,
         digest: input.digest,
@@ -619,7 +631,7 @@ export class MailService {
   // ── The guard every send goes through ────────────────────────────────────────
 
   private async guarded(
-    ctx: MailContext | OperatorAlertContext, rawTo: string, quota: MailQuota,
+    ctx: MailContext | OperatorAlertContext, rawTo: string, quota: MailQuota | "operator",
     send: (to: string) => Promise<MailSendResult>,
   ): Promise<MailSendResult> {
     const to = normalizeRecipient(rawTo);
@@ -630,8 +642,10 @@ export class MailService {
       // timeout, the postgres-js parameter fault that `auth-throttle.pg.test.ts` exists
       // for) escaped straight into the request handler. The worst shape of that is a
       // successful login whose best-effort security notice turns the 200 into a 500.
-      // Failing here is also fail-CLOSED: if we cannot claim a slot we do not send.
-      const allowed = await this.reserveRecipientSlot(ctx, to, quota);
+      // Failing here is also fail-CLOSED: if we cannot claim a slot we do not send. The key
+      // is computed in here too: a key provider that refuses sends nothing and counts nothing.
+      const slot = quota === "operator" ? OPERATOR_SLOT : `mail:${quota}:${this.deps.throttleKeys.address(to)}`;
+      const allowed = await this.reserveRecipientSlot(ctx, slot);
       if (!allowed) return { status: "skipped", reason: "rate_limited" };
       return await send(to);
     } catch (e) {
@@ -648,14 +662,10 @@ export class MailService {
    *
    * The SQL moved to {@link dbRecipientLimiter} so that a caller which needs only this
    * one write — the operator-alert sink — can be handed the write instead of the connection.
-   * What stays here is the POLICY: which key, and what the limit is.
+   * What stays here is the POLICY: which key ({@link guarded}), and what the limit is.
    */
-  private async reserveRecipientSlot(
-    ctx: MailContext | OperatorAlertContext, recipient: string, quota: MailQuota,
-  ): Promise<boolean> {
-    const used = await limiterOf(ctx).claim(
-      `mail:${quota}:${hashToken(recipient)}`, ctx.now(), this.cfg.rateWindowMs,
-    );
+  private async reserveRecipientSlot(ctx: MailContext | OperatorAlertContext, slot: string): Promise<boolean> {
+    const used = await limiterOf(ctx).claim(slot, ctx.now(), this.cfg.rateWindowMs);
     return used <= this.cfg.ratePerWindow;
   }
 }

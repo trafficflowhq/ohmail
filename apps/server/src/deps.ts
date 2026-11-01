@@ -30,7 +30,7 @@ import {
   FolderOpsService, scheduleService,
   workflowsService, proposalsService, redeemInviteGrant,
   makeAttachmentStagingPort, MailService, SmtpMailer, mailAlertSink, dbFreeMailAlertSink, dbRecipientLimiter,
-  OWED_COPY_SELF_HOST,
+  OWED_COPY_SELF_HOST, throttleKeysFor,
 } from "@trafficflow/services";
 // The policy TYPE lives on the mail entry (the sidecar imports it there too); the full barrel
 // above is still loaded by this app — which is exactly why the explicit allowance below exists.
@@ -175,6 +175,8 @@ function smtpMailServiceFor(cfg: ServerConfig, smtp: SmtpConfig, operatorEmail?:
       allowedOrigins: [cfg.origin],
       ...(operatorEmail ? { operatorEmail } : {}),
     },
+    // The recipient slots' keyer, on the KEK this server boots with; the pager's slot needs none.
+    throttleKeys: throttleKeysFor(cfg.keyProvider),
   });
 }
 

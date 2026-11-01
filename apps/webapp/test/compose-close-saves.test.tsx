@@ -119,7 +119,7 @@ function engineOver(store: MirrorStore): OhmailEngine {
 
 let container: HTMLElement;
 
-async function mountCompose(): Promise<void> {
+async function mountCompose(extra: Record<string, unknown> = {}): Promise<void> {
   const { AppShell } = await import("../app/shell/AppShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const store = new MemoryMirrorStore();
@@ -139,6 +139,7 @@ async function mountCompose(): Promise<void> {
             engine: engineOver(store),
             consentTransport,
             mailboxFacts: async () => ROSTER,
+            ...extra,
           } as never),
         }),
       }),
@@ -294,6 +295,57 @@ describe("the two-arm probe the review ran on the deployed build", () => {
 
     expect(drafts(), "leaving an untouched composer wrote a draft to the account").toHaveLength(0);
     expect(window.location.hash).toBe("#/ohbox");
+  });
+});
+
+describe("words typed in To alone are typed words", () => {
+  /** The To entries on screen: settled chips plus the input's tail (leaving the field makes a chip). */
+  const toEntries = (): string => {
+    const field = q<HTMLInputElement>("#compose-to")!;
+    const chips = [...field.closest(".rcp")!.querySelectorAll(".rcp-chip-addr")].map((n) => n.textContent ?? "");
+    return [...chips, field.value].filter(Boolean).join(", ");
+  };
+  const toSaved = (): string[][] => drafts()
+    .map((m) => (m as unknown as { to: { address: string }[] }).to.map((a) => a.address));
+
+  it("Escape keeps a draft for an address typed in To and nothing else", async () => {
+    await mountCompose();
+    await typeInto("#compose-to", "sam@example.invalid");
+    await escape();
+    expect(toSaved(), "Escape threw away the address typed in To").toEqual([["sam@example.invalid"]]);
+    expect(window.location.hash).toBe("#/ohbox");
+  });
+
+  it("the pause keeps it too", async () => {
+    await mountCompose();
+    await typeInto("#compose-to", "sam@example.invalid");
+    await waitFor(() => drafts().length === 1, "the pause's own save", AUTOSAVE_DELAY_MS + 2000);
+    expect(toSaved()).toEqual([["sam@example.invalid"]]);
+  });
+
+  it("opening the draft from Drafts keeps a half-typed recipient on screen", async () => {
+    await mountCompose();
+    await typeInto("#compose-subject", "Friday");
+    await typeInto("#compose-to", "sam@exa");
+    await escape();
+    expect(subjectsSaved()).toEqual(["Friday"]);
+    await goHash("#/drafts");
+    await waitFor(() => q(".draft-row .draft-open") !== null, "the draft in Drafts");
+    await act(async () => { q<HTMLElement>(".draft-row .draft-open")!.click(); });
+    await settle();
+    await waitFor(() => q("#compose-to") !== null, "the composer");
+    expect(toEntries(), "reopening the draft deleted the half-typed recipient").toBe("sam@exa");
+  });
+
+  it("CONTROL: a mail link's recipient alone is not a draft", async () => {
+    await mountCompose({
+      mailtoDraft: { to: ["sam@example.invalid"], cc: [], bcc: [], subject: "", body: "" },
+      onMailtoDraftSeeded: () => {},
+    });
+    await waitFor(() => q("#compose-to") !== null && toEntries() === "sam@example.invalid", "the link's recipient");
+    await escape();
+    await settle();
+    expect(drafts(), "a link's prefilled recipient became a Drafts row").toHaveLength(0);
   });
 });
 

@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import type { NativeLocator } from "@trafficflow/core";
 // The SAME module `sync.ts` imports these from — a second copy of the class would make every
 // `instanceof` answer false and this file would be testing nothing.
-import { FILING_BATCH_MAX, MessageGoneError, type MailboxAdapter, type MoveManyResult } from "@trafficflow/core/adapters/imap";
+import {
+  FILING_BATCH_MAX, MessageGoneError, type MailboxAdapter, type MoveManyResult, type UidsHeldAnswer,
+} from "@trafficflow/core/adapters/imap";
 import type { WorkerRepo, PendingFolderState, PendingFlagState } from "@trafficflow/core/adapters/drizzle-repo";
 import { reconcileMailbox, RECONCILE_MOVES_PER_CYCLE } from "../src/sync.js";
 import { FIXTURE_LEASE } from "./_door.js";
@@ -42,6 +44,8 @@ interface Recorded {
   audits: Array<{ action: string; messageId: string | null }>;
   /** Every conditional ADOPT — the writer that may move `desired_folder`. */
   adopted: Array<{ messageId: string; desired: string; observed: string; expectDesiredFolder: string }>;
+  /** Every Trash drop asked for. */
+  dropped: Array<{ messageId: string; locator: NativeLocator; expectDesired: string }>;
   /** The limit the reconciler asked the repo for — the per-cycle budget. */
   askedLimit: number | undefined;
 }
@@ -49,7 +53,7 @@ interface Recorded {
 function blank(): Recorded {
   return {
     batches: [], singles: [], locators: [], folderStates: [], flagStates: [], audits: [],
-    adopted: [], askedLimit: undefined,
+    adopted: [], dropped: [], askedLimit: undefined,
   };
 }
 
@@ -107,6 +111,10 @@ function repoOf(rec: Recorded, pending: PendingFolderState[], opts: {
     ) => {
       rec.adopted.push({ messageId, desired: st.desiredFolder, observed: st.observedFolder, expectDesiredFolder });
       return true;
+    },
+    dropGoneFromTrash: async (_a: string, _m: string, _trash: string, gone: Recorded["dropped"]) => {
+      rec.dropped.push(...gone);
+      return gone.map((g) => g.messageId);
     },
     recordAudit: async (_a: string, action: string, payload: unknown) => { pushAudit(action, payload); },
     deferFolderReconcile: async () => {},
@@ -418,9 +426,12 @@ describe("reconcileFolders — the per-cycle filing budget", () => {
  * adopted since. It is the same predicate ingest already treats as adoption evidence.
  */
 describe("reconcileFolders — a gone message with its disappearance on record is voided", () => {
-  /** An adapter whose batch reports `missing` gone and moves the rest. */
-  const goneFromBatch = (rec: Recorded, missing: NativeLocator) =>
-    batchingAdapter(rec, {
+  /** An adapter whose batch reports `missing` gone and moves the rest; Trash answers `trash` when asked. */
+  const goneFromBatch = (
+    rec: Recorded, missing: NativeLocator,
+    trash: UidsHeldAnswer = { k: "held", uidValidity: "1", present: new Set() },
+  ) => ({
+    ...batchingAdapter(rec, {
       answer: (locators, to) => {
         const moved = new Map<string, NativeLocator>();
         for (const l of locators) {
@@ -428,16 +439,17 @@ describe("reconcileFolders — a gone message with its disappearance on record i
         }
         return { outcome: "batched", moved, gone: [missing] };
       },
-    });
+    }),
+    uidsHeld: async () => trash,
+  }) as MailboxAdapter;
 
   /**
-   * A RESTORE OUT OF TRASH WHOSE COPY THE SERVER PURGED voids against the OBSERVATION, never
-   * `observed := desired`. A mail server empties its own Trash on its own schedule, so the copy
-   * this move would carry can be gone — and completing the restore records the message as back in
-   * INBOX while the server holds nothing anywhere. The row converges on what is true, the
-   * tombstone stands (only a landed move clears it), and the door refuses the next press.
+   * A RESTORE OUT OF TRASH WHOSE COPY THE SERVER PURGED never completes (`observed := desired` would
+   * record the message back in INBOX while the server holds nothing anywhere), and it does not go
+   * back to Trash either: the batch and a whole read of Trash found the copy absent under its epoch,
+   * so the letter leaves Trash.
    */
-  it("a purged RESTORE voids against the observation — the desire, never the observation, moves", async () => {
+  it("a purged RESTORE drops the letter from Trash: no adopt, no completion, no locator", async () => {
     const rec = blank();
     const pending = rows("r", "Trash", "INBOX", 1);
     await run(
@@ -445,16 +457,57 @@ describe("reconcileFolders — a gone message with its disappearance on record i
       goneFromBatch(rec, pending[0]!.nativeLocator!),
     );
 
-    expect(rec.adopted, "the conditional adopt is the only writer that may move a desire")
-      .toEqual([{ messageId: "r-0", desired: "Trash", observed: "Trash", expectDesiredFolder: "INBOX" }]);
+    expect(rec.dropped).toEqual([{ messageId: "r-0", locator: LOC("Trash", "1:1"), expectDesired: "INBOX" }]);
+    expect(rec.adopted, "a gone copy was put back into Trash").toEqual([]);
     expect(
       rec.folderStates,
       "a completion here would write observed := INBOX about mail no server holds",
     ).toEqual([]);
     expect(rec.locators, "nothing landed, so nothing is repointed").toEqual([]);
-    // `reconcile.move.voided` — `audit_log.action` is a closed set and a purged restore is a
-    // voided move; the restore-specific fact rides the reason. The DELETE twin below writes the
-    // same word from the other arm, so the action alone is not what this case turns on.
+    expect(rec.audits.map((a) => a.action)).toEqual(["reconcile.move.voided"]);
+  });
+
+  it("CONTROL — a stale UIDVALIDITY proves nothing: the restore goes back to Trash", async () => {
+    const rec = blank();
+    const pending = rows("r", "Trash", "INBOX", 1);
+    const adapter = {
+      move: async () => { throw new MessageGoneError(pending[0]!.nativeLocator!, false, "8"); },
+      setFlags: async () => {},
+    } as unknown as MailboxAdapter;
+    await run(repoOf(rec, pending, { vanished: new Set(["r-0"]), trashFolder: "Trash" }), adapter);
+
+    expect(rec.dropped, "a renumbered folder was read as the copy gone").toEqual([]);
+    expect(rec.adopted).toEqual([{ messageId: "r-0", desired: "Trash", observed: "Trash", expectDesiredFolder: "INBOX" }]);
+    expect(rec.audits.map((a) => a.action)).toEqual(["reconcile.move.voided"]);
+  });
+
+  it("CONTROL — the move's reading alone proves nothing: unless Trash answers whole without the copy, it goes back", async () => {
+    const answers: UidsHeldAnswer[] = [
+      { k: "unanswered" }, { k: "renumbered", uidValidity: "2" },
+      { k: "held", uidValidity: "1", present: new Set([1]) },
+    ];
+    for (const trash of answers) {
+      const rec = blank();
+      const pending = rows("r", "Trash", "INBOX", 1);
+      await run(
+        repoOf(rec, pending, { vanished: new Set(["r-0"]), trashFolder: "Trash" }),
+        goneFromBatch(rec, pending[0]!.nativeLocator!, trash),
+      );
+      expect(rec.dropped, `Trash answered ${trash.k} and the letter left Trash`).toEqual([]);
+      expect(rec.adopted).toEqual([{ messageId: "r-0", desired: "Trash", observed: "Trash", expectDesiredFolder: "INBOX" }]);
+    }
+  });
+
+  it("a RESTORE parked at a copy outside Trash goes back to Trash when that copy is gone: nothing is dropped", async () => {
+    const rec = blank();
+    const pending = [{ ...rows("r", "Trash", "INBOX", 1)[0]!, nativeLocator: LOC("ohmail/News", "1:5") }];
+    await run(
+      repoOf(rec, pending, { vanished: new Set(["r-0"]), trashFolder: "Trash" }),
+      goneFromBatch(rec, pending[0]!.nativeLocator!),
+    );
+
+    expect(rec.dropped, "the letter is in Trash under another UID").toEqual([]);
+    expect(rec.adopted).toEqual([{ messageId: "r-0", desired: "Trash", observed: "Trash", expectDesiredFolder: "INBOX" }]);
     expect(rec.audits.map((a) => a.action)).toEqual(["reconcile.move.voided"]);
   });
 
@@ -467,6 +520,7 @@ describe("reconcileFolders — a gone message with its disappearance on record i
     );
 
     expect(rec.adopted, "a delete's void is the completion, not an adopt").toEqual([]);
+    expect(rec.dropped).toEqual([]);
     expect(rec.folderStates).toEqual([{ messageId: "d-0", desired: "Trash", observed: "Trash" }]);
     expect(rec.audits.map((a) => a.action)).toEqual(["reconcile.move.voided"]);
   });

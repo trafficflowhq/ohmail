@@ -6,7 +6,7 @@ import { mailboxes as mailboxesTable } from "@trafficflow/db";
 import { invites, waitlist } from "@trafficflow/db/cloud";
 import {
   makeMailService, makeWaitlistService, MAX_JOINS_PER_IP_WINDOW,
-  SpyMailer,
+  SpyMailer, throttleKeysFor,
 } from "@trafficflow/services";
 import { SoftwareAuthenticator } from "../../services/test/webauthn-authenticator.js";
 import { makeDeps, req, setCookieMap } from "./helpers.js";
@@ -67,6 +67,7 @@ async function mintInvite(deps: ApiDeps, email: string, over: { ttlMs?: number }
       appUrl: "http://localhost:3001", siteUrl: "http://localhost:3000",
       supportEmail: "support@ohmail.app",
     },
+    throttleKeys: throttleKeysFor(deps.keyProvider),
   });
   const svc = makeWaitlistService({ mail });
   const out = await svc.mintInvite({ db: deps.db, now: deps.now }, {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatProfileMessage, makeProfileDoc, profileFingerprint, profileLocatorOf, readFoundCopies, readOrganizerProfile,
-  tidyOrganizerProfile, writeOrganizerProfile,
-  type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileIo, type ProfileListOptions, type RawProfileMessage,
+  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint, profileLocatorOf, readFoundCopies,
+  readOrganizerProfile, tidyOrganizerProfile, writeOrganizerProfile,
+  type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileIo, type ProfileListOptions, type ProfileLocator, type RawProfileMessage,
 } from "../../src/adapters/organizer-profile.js";
 
 /**
@@ -203,5 +203,84 @@ describe("kept found copies", () => {
     const read = await readFoundCopies(folder, { installId: "w-c", max: 2 });
     expect(read.state === "read" ? read.copies.map((c) => [c.installId, c.doc.tagNames]) : read)
       .toEqual([["w-0", ["f0"]], ["w-1", ["f1"]]]);
+  });
+
+  // A torn copy is read and examined all the same; nothing the caller skips is read again.
+  it("readFoundCopies reads the next batch past what the caller skips, and says what it read and whether more wait", async () => {
+    const folder = new HeadersFolder();
+    const docs = [0, 1, 2, 3, 4].map((i) => makeProfileDoc({ ...EMPTY, tagNames: [`f${i}`] }, { updatedAt: at(-10 * (i + 1)), producer: PRODUCER }));
+    for (const [i, d] of docs.entries()) await folder.appendProfile(formatProfileMessage(d, { installId: `w-${i}` }));
+    await folder.appendProfile([
+      "X-Ohmail-Profile: 1", "X-Ohmail-Install-Id: w-torn", "X-Ohmail-Profile-Version: 2",
+      "Subject: ohmail settings for this mailbox", `Date: ${at(-25).toUTCString()}`, "", "{ torn",
+    ].join("\r\n"));
+    await folder.appendProfile(formatProfileMessage(mine("own", NOW), { installId: "w-c" }));
+    const judged = new Set<string>();
+    const batches: unknown[] = [];
+    for (let n = 0; n < 4; n++) {
+      const read = await readFoundCopies(folder, { installId: "w-c", max: 2, skip: (id, second) => judged.has(`${id} ${second}`) });
+      if (read.state !== "read") throw new Error(read.state);
+      for (const [id, second] of read.examined) judged.add(`${id} ${second}`);
+      batches.push({ copies: read.copies.map((c) => c.installId), examined: read.examined.map(([id]) => id), more: read.more });
+    }
+    expect(batches).toEqual([
+      { copies: ["w-0", "w-1"], examined: ["w-0", "w-1"], more: true },
+      { copies: ["w-2"], examined: ["w-torn", "w-2"], more: true },
+      { copies: ["w-3", "w-4"], examined: ["w-3", "w-4"], more: false },
+      { copies: [], examined: [], more: false },
+    ]);
+  });
+});
+
+/* WHAT THE ORGANIZER HAS READ OF THE FOUND COPIES (`found`). Until it has read them all, no copy goes by age; once
+   it has, a copy under its id that is not its own and that it does not keep follows the ten-minute rule like
+   another install's. Absent, the plan is the one before. Beside C (ours, recorded): another install's copy an hour
+   older, and two under our id with no record, two and three hours older, the first of them kept. */
+describe("the found copies read", () => {
+  async function folderOf(): Promise<{ folder: Folder; named: ProfileLocator }> {
+    const folder = new HeadersFolder();
+    const named = makeProfileDoc({ ...EMPTY, tagNames: ["named"] }, { updatedAt: at(-120), producer: PRODUCER });
+    await folder.appendProfile(formatProfileMessage(makeProfileDoc({ ...EMPTY, tagNames: ["unnamed"] }, { updatedAt: at(-180), producer: PRODUCER }), { installId: "w-c" }));
+    await folder.appendProfile(formatProfileMessage(named, { installId: "w-c" }));
+    await folder.appendProfile(formatProfileMessage(makeProfileDoc({ ...EMPTY, tagNames: ["z"] }, { updatedAt: at(-60), producer: PRODUCER }), { installId: "w-z" }));
+    await folder.appendProfile(formatProfileMessage(mine("c", NOW), { installId: "w-c" }));
+    return { folder, named: profileLocatorOf("w-c", named)! };
+  }
+  const owns = (second: number): boolean => second === Math.floor(NOW.getTime() / 1000);
+  const tidy = (folder: Folder, mode: "count" | "remove", found?: { read: "all" | "partly"; kept: readonly ProfileLocator[] }) =>
+    tidyOrganizerProfile({ io: folder, installId: "w-c", mode, now: at(1), owns, ...(found === undefined ? {} : { found }) });
+  const counts = (r: Awaited<ReturnType<typeof tidy>>) => {
+    const { removable, foreignStale, keptFound, foundStale, keptUnread } = r.planned!;
+    return { removable, foreignStale, keptFound, foundStale, keptUnread };
+  };
+
+  it("partly keeps every copy that would go by age; all lets the copy under our id it does not keep go; absent is the plan before", async () => {
+    const { folder, named } = await folderOf();
+    expect({
+      absent: counts(await tidy(folder, "count")),
+      partly: counts(await tidy(folder, "count", { read: "partly", kept: [named] })),
+      all: counts(await tidy(folder, "count", { read: "all", kept: [named] })),
+    }).toEqual({
+      absent: { removable: 1, foreignStale: 1, keptFound: 2, foundStale: 0, keptUnread: 0 },
+      partly: { removable: 0, foreignStale: 0, keptFound: 0, foundStale: 0, keptUnread: 3 },
+      all: { removable: 2, foreignStale: 1, keptFound: 1, foundStale: 1, keptUnread: 0 },
+    });
+  });
+
+  // The write's own rule: another install's current copy this organizer has not seen may ask about one of them.
+  it("beside another install's newer copy it has not seen, a copy under its id it does not keep stays", async () => {
+    const { folder, named } = await folderOf();
+    await folder.appendProfile(formatProfileMessage(makeProfileDoc({ ...EMPTY, tagNames: ["theirs"] }, { updatedAt: at(1), producer: PRODUCER }), { installId: "w-y" }));
+    expect(counts(await tidy(folder, "count", { read: "all", kept: [named] })))
+      .toEqual({ removable: 1, foreignStale: 1, keptFound: 2, foundStale: 0, keptUnread: 0 });
+  });
+
+  it("all removes another install's copy and ours it does not keep, and keeps the one it names", async () => {
+    const { folder, named } = await folderOf();
+    await tidy(folder, "remove", { read: "all", kept: [named] });
+    expect(folder.messages.map((m) => {
+      const p = parseProfileMessage(m.raw, m.ref);
+      return p === null || isMalformedProfile(p) ? "?" : p.doc!.tagNames[0];
+    })).toEqual(["named", "c"]);
   });
 });
