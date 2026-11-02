@@ -268,6 +268,10 @@ const SANCTIONED_ESCAPE =
  */
 const ARTIFACT_SPEC = "../../generated/phone-engine.js";
 const ARTIFACT_LOADER = "src/engine/engine-bundle-native.ts";
+/** The same generator's second file: pdf.js as strings for the attachment preview's page. It holds
+ *  no import and reaches nothing; bounded the same way, to one namer. */
+const PDF_FRAME_SPEC = "../../generated/pdf-frame.js";
+const PDF_FRAME_LOADER = "src/mail/pdf-frame-native.ts";
 
 /** A resolved SOURCE FILE an organizer or a host is built from — the other half of the graph rule. */
 const FORBIDDEN_FILE = (file: string): boolean => {
@@ -288,7 +292,7 @@ function resolveSpec(
   fromFile: string,
   unresolved: Set<string>,
 ): string | "external" | null {
-  if (spec === ARTIFACT_SPEC) return "external";
+  if (spec === ARTIFACT_SPEC || spec === PDF_FRAME_SPEC) return "external";
   if (spec.startsWith(".")) {
     const base = dirname(fromFile);
     const candidates = spec.endsWith(".js")
@@ -376,6 +380,13 @@ describe("§1 the graph — no screen can reach a host or an organizer", () => {
       .map((f) => rel(f).replace("apps/mobile/", ""))
       .sort();
     expect(namers).toEqual([ARTIFACT_LOADER]);
+  });
+
+  it("exactly one file names the preview's pdf.js, and it is its loader", () => {
+    const namers = [...walk(join(APP, "src")), ...walk(join(APP, "app"))]
+      .filter((f) => readFileSync(f, "utf8").includes(PDF_FRAME_SPEC))
+      .map((f) => rel(f).replace("apps/mobile/", ""));
+    expect(namers).toEqual([PDF_FRAME_LOADER]);
   });
 
   it("actually walked the app — not a vacuous green", () => {

@@ -569,7 +569,7 @@ describe("the composer's affordance and the Scheduled screen — the shapes that
     // `sigText` is derived ABOVE the picker state and handed to `send` regardless of it, so a
     // signature hidden while a time is chosen is still sealed into the scheduled message.
     expect(actions).toMatch(/const sigText =\s*w\.signatures === null \|\| mailboxId === null \? null : effectiveSignature\(/);
-    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId\)/);
+    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\)\)/);
   });
 
   it("the Scheduled screen never claims emptiness over an unsettled mirror", () => {

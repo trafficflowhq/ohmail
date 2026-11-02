@@ -32,6 +32,7 @@ import { EventCards } from "./EventCard";
 import { MailBodyFrame } from "./MailBodyFrame";
 import { FadeOut } from "./FadeOut";
 import { MessageActions } from "./MessageActions";
+import { AttachmentPreview, type PreviewFile } from "./AttachmentPreview";
 import { usePosture } from "./posture";
 import { readerVerbMode } from "./reader-verbs";
 import { scaffoldPlan } from "./scaffold/plan";
@@ -488,24 +489,38 @@ export function MessageReader({
       {inOhbox ? (
         <ReadTint unread={!h.seen} style={{ top: 0, left: 0, right: 0, bottom: 0, borderRadius: t.radius.card }} />
       ) : null}
+      {/* Its sender line, drawn as the opened message's: who wrote it, then its title. */}
       <View
-        style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}
+        style={{ flexDirection: "row", alignItems: "baseline", gap: 9 }}
         onLayout={(e) => seen.panelHeader(h.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
       >
         {/* An unread member wears the list row's unread dot — where no tint says it. */}
         {h.seen || inOhbox ? null : (
           <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: t.c.accent, alignSelf: "center" }} />
         )}
-        <Txt variant="rowSubject" style={{ flexShrink: 1 }}>
-          {h.face ?? h.subject}
+        <Txt variant="button" style={{ flexShrink: 0, maxWidth: "60%" }} numberOfLines={1}>
+          {h.sender}
         </Txt>
+        {narrowFrom || !h.address ? null : (
+          <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ flexShrink: 1, minWidth: 0 }}>
+            {h.address}
+          </Txt>
+        )}
         <View style={{ flex: 1 }} />
         {inOhbox && markUnreadOffered({ read: h.seen, own: h.mine === true })
           ? <MoreDots onPress={() => setMenuFor(h.id)} /> : null}
-        <Txt variant="caption" tone="ink3" tabular>
+        <Txt variant="caption" tone="ink3" tabular style={{ flexShrink: 0 }}>
           {h.time}
         </Txt>
       </View>
+      {narrowFrom && h.address ? (
+        <Txt variant="caption" tone="ink3" numberOfLines={1}>
+          {h.address}
+        </Txt>
+      ) : null}
+      <Txt variant="rowSubject" style={{ marginTop: 4 }}>
+        {h.face ?? h.subject}
+      </Txt>
       <EventCards events={h.events} style={{ marginTop: 10, marginBottom: 0 }} />
       {/* Where its body starts and ends: its first lines, with the header, are the read rule's top. */}
       <View style={{ height: 0, marginTop: 10 }} onLayout={(e) => seen.panelBody(h.id, e.nativeEvent.layout.y)} />
@@ -791,8 +806,8 @@ export function MessageReader({
  * The attachment strip — the engine's own items, every name already through the
  * nameless-part fallback (`invite.ics`, never an empty label), real files first and the
  * body's own pictures after them wearing the "embedded" tag (the world sorts). A tile press
- * OPENS the bytes: one engine fetch under the server's ceiling, then the platform share
- * sheet — viewer, save and send are the platform's own routes. Each refusal renders a
+ * OPENS the bytes: one engine fetch under the server's ceiling, then the app's own preview for a
+ * picture or a PDF (Share in its bar), and the platform share sheet for every other file. Each refusal renders a
  * sentence on the tile it belongs to; a silent failure here is a person pressing a dead tile.
  * The phone's one strip: the reader, each conversation member and the Screener's held mail.
  */
@@ -806,6 +821,8 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
     | { id: string; kind: "too_large" } | { id: string; kind: "share" }
     | { id: string; kind: "failed"; fault: AttachmentFault } | null
   >(null);
+  /* A picture or a PDF opens in the app's own preview; Share stands in its bar. */
+  const [shown, setShown] = useState<PreviewFile | null>(null);
   // Only ever the world's list — a raw `m.attachment.filename` here would be the empty-label
   // bug this component exists to close (the world resolves every name through the fallback).
   const tiles = m.attachments ?? [];
@@ -817,6 +834,10 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
     setNote(null);
     const got = await w.actions.openAttachmentBytes(m.id, id);
     setBusy(null);
+    if (got.state === "ready" && got.preview !== null) {
+      setShown({ base64: got.base64, mime: got.mime, filename: got.filename, preview: got.preview });
+      return;
+    }
     if (got.state === "ready") {
       const shared = await shareAttachmentBytes(got.base64, got.mime, got.filename);
       if (!shared) setNote({ id, kind: "share" });
@@ -884,6 +905,7 @@ export function AttachmentTiles({ m }: { m: { id: string; attachments?: WorldAtt
           ) : null}
         </View>
       ))}
+      {shown !== null ? <AttachmentPreview file={shown} onClose={() => setShown(null)} /> : null}
     </View>
   );
 }

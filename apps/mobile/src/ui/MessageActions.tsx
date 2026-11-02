@@ -126,6 +126,7 @@ import { stayedRows } from "./sender-stayed-lines";
 import { useKeyboardLift } from "./keyboard-lift";
 import { conversationUnreadIds } from "./read-slot";
 import { useReaderCover } from "./reader-cover";
+import { replyOpen, type ReplyOpen } from "./compose-route";
 
 /**
  * One pick's verdicts, held as KINDS — the sentence is derived where it is shown, so a refusal
@@ -149,7 +150,8 @@ type Open =
   | "screening"
   | "delete"
   | "forward-ask"
-  | { compose: "reply" | "replyAll" | "forward"; confirmed?: boolean };
+  | { compose: "forward"; confirmed?: boolean }
+  | ReplyOpen;
 
 /** The ask's reason, read at render time so it follows the app's language. */
 export function forwardAskSentence(ask: ForwardAsk): string {
@@ -214,6 +216,9 @@ export function MessageActions({
   const shownId = useRef(m.id);
   shownId.current = m.id;
 
+  /** Every Reply and Reply all press: a kept reply is resumed, or said to be in Drafts (`replyOpen`). */
+  const openReply = (all: boolean) => setOpen(replyOpen(a.keptReply(m.id), all ? "replyAll" : "reply"));
+
   /**
    * Forward is always offered (`forwardOffered`). A row the mirror does not hold has its body read
    * through the reader's door first (`forwardFetch`), and a `no_forward` message asks once. A read
@@ -248,7 +253,6 @@ export function MessageActions({
   const facts: ReaderVerbFacts = {
     canReplyAll: m.canReplyAll === true,
     forwardOffered: forwardOffered(m),
-    foldersEnabled: w.folders.enabled,
     junkOffered: moveTargetsFor(m).includes("spam"),
     // No Screening press on the account's own mail: it would be a rule about our own address.
     screeningOffered: m.ownMail !== true,
@@ -329,9 +333,9 @@ export function MessageActions({
     const core = (id: ReaderVerbId): RailAction => {
       switch (id) {
         case "reply":
-          return { id, icon: "reply", label: Copy.actionReply, accent: true, fixed: true, onPress: () => setOpen({ compose: "reply" }) };
+          return { id, icon: "reply", label: Copy.actionReply, accent: true, fixed: true, onPress: () => openReply(false) };
         case "replyAll":
-          return { id, icon: "replyall", label: Copy.actionReplyAll, onPress: () => setOpen({ compose: "replyAll" }) };
+          return { id, icon: "replyall", label: Copy.actionReplyAll, onPress: () => openReply(true) };
         case "forward":
           return { id, icon: "fwd", label: Copy.actionForward, onPress: openForward };
         case "read":
@@ -354,7 +358,7 @@ export function MessageActions({
     publishReaderRail(railReaderGroups(facts).map((g) => g.map(entry)));
     return () => publishReaderRail(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, m.id, pile, unread, unreadKey, facts.canReplyAll, facts.forwardOffered, m.forwardAsk, facts.foldersEnabled, facts.junkOffered, locale, onBack]);
+  }, [mode, m.id, pile, unread, unreadKey, facts.canReplyAll, facts.forwardOffered, m.forwardAsk, facts.junkOffered, locale, onBack]);
 
   /**
    * THE HOUR THE CHOOSER IS ASKING ABOUT (mail 0110) — the account's stored time, or the
@@ -404,7 +408,7 @@ export function MessageActions({
    */
   const barSpec = (id: ReaderVerbId): BarVerbSpec => {
     switch (id) {
-      case "replyAll": return { id, label: Copy.actionReplyAll, onPress: () => setOpen({ compose: "replyAll" }) };
+      case "replyAll": return { id, label: Copy.actionReplyAll, onPress: () => openReply(true) };
       case "forward": return { id, label: Copy.actionForward, iconFace: "fwd", onPress: openForward };
       case "later": return { id, icon: "clock", label: Copy.actionLater, seg: "defer", onPress: () => a.pileToggle(m.id, "replyLater") };
       case "aside": return { id, icon: "pause", label: Copy.actionSetAside, seg: "defer", onPress: () => a.pileToggle(m.id, "setAside") };
@@ -414,7 +418,7 @@ export function MessageActions({
       case "move": return { id, icon: "ohbox", label: Copy.actionMove, seg: "file", onPress: () => setOpen("move") };
       case "delete": return { id, icon: "trash", label: Copy.actionDelete, onPress: () => setOpen("delete") };
       // reply and read ride their own slots on the bar; they never reach this map.
-      default: return { id, label: Copy.actionReply, onPress: () => setOpen({ compose: "reply" }) };
+      default: return { id, label: Copy.actionReply, onPress: () => openReply(false) };
     }
   };
   const barVerbs: BarVerbSpec[] =
@@ -442,7 +446,7 @@ export function MessageActions({
           }}
         >
           <GlassActionBar
-            reply={{ label: Copy.actionReply, onPress: () => setOpen({ compose: "reply" }) }}
+            reply={{ label: Copy.actionReply, onPress: () => openReply(false) }}
             verbs={barVerbs}
             readSwitch={{ label: readFace.label, icon: readFace.icon, onPress: readFace.press, a11yLabel: "a11y" in readFace ? readFace.a11y : undefined }}
             floor={["forward"]}
@@ -529,7 +533,7 @@ export function MessageActions({
             icon="pen"
             variant="solid"
             style={{ maxWidth: "100%" }}
-            onPress={() => setOpen({ compose: "reply" })}
+            onPress={() => openReply(false)}
           />
           {/* Forward, beside Reply, through the SAME door as the sheet's row (`openForward` → the
               composer over `m`, Reply's own target). Its word while it fits, else its icon. */}
@@ -561,7 +565,7 @@ export function MessageActions({
              carry the same verb twice, and no mode loses one ───────────────────────────── */}
       <Sheet open={open === "more"} onClose={close} label={Copy.actionMore}>
         {moreHas("replyAll") ? (
-          <SheetRow icon="pen" label={Copy.actionReplyAll} onPress={() => setOpen({ compose: "replyAll" })} />
+          <SheetRow icon="pen" label={Copy.actionReplyAll} onPress={() => openReply(true)} />
         ) : null}
         {moreHas("forward") ? (
           <SheetRow icon="open" label={Copy.actionForward} onPress={openForward} />
@@ -644,27 +648,25 @@ export function MessageActions({
       ) : null}
 
       {/* ── Delete: the one destructive verb, behind its own stated confirm ─────────────── */}
-      {w.folders.enabled ? (
-        <Sheet open={open === "delete"} onClose={close} label={Copy.deleteAsk}>
-          <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
-            {Copy.deleteAsk}
-          </Txt>
-          <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
-            {Copy.deleteNote}
-          </Txt>
-          <SheetRow
-            icon="trash"
-            label={Copy.actionDelete}
-            onPress={() => {
-              // Close the confirm sheet and open the window — but DO NOT navigate now: the reader
-              // stays over the pill for the whole window (the review's device fix), leaving only when the
-              // delete commits (`onCommitted`, guarded so a person who backed out is not over-popped).
-              close();
-              a.deleteMessage(m.id, { onCommitted: () => { if (mounted.current) onDeleted?.(); } });
-            }}
-          />
-        </Sheet>
-      ) : null}
+      <Sheet open={open === "delete"} onClose={close} label={Copy.deleteAsk}>
+        <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+          {Copy.deleteAsk}
+        </Txt>
+        <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
+          {Copy.deleteNote}
+        </Txt>
+        <SheetRow
+          icon="trash"
+          label={Copy.actionDelete}
+          onPress={() => {
+            // Close the confirm sheet and open the window — but DO NOT navigate now: the reader
+            // stays over the pill for the whole window (the review's device fix), leaving only when the
+            // delete commits (`onCommitted`, guarded so a person who backed out is not over-popped).
+            close();
+            a.deleteMessage(m.id, { onCommitted: () => { if (mounted.current) onDeleted?.(); } });
+          }}
+        />
+      </Sheet>
 
       {/* ── Resurface: the horizon chooser — Now / Tomorrow / Next week / Pick a date ────── */}
       <Sheet
@@ -771,7 +773,11 @@ export function MessageActions({
           leaves the reader behind it readable and offers Retry, never the process. */}
       {open !== null && typeof open === "object" ? (
         <SurfaceBoundary surface="composer" frame="sheet" onClose={close}>
-          <ComposeSheet m={m} mode={open.compose} forwardConfirmed={open.confirmed === true} onClose={close} />
+          <ComposeSheet
+            m={m} mode={open.compose} forwardConfirmed={"confirmed" in open && open.confirmed === true}
+            {...("draft" in open && open.draft ? { draft: open.draft } : {})} replyAside={"aside" in open && open.aside === true}
+            onClose={close}
+          />
         </SurfaceBoundary>
       ) : null}
     </>
@@ -1144,6 +1150,7 @@ export function ComposeSheet({
   draft,
   prefill,
   diag,
+  replyAside = false,
   onClose,
 }: {
   /** The message being answered — `null` for a mail with no parent (the `new` mode). */
@@ -1157,6 +1164,8 @@ export function ComposeSheet({
   prefill?: MailtoPrefill;
   /** The diagnostics block a mail to support carries in its body (`help-contact.ts`), offered for removal. */
   diag?: string;
+  /** A reply to this message is kept that this sheet cannot resume (`replyOpen`): said in its notes. */
+  replyAside?: boolean;
   onClose: () => void;
 }) {
   const t = useTheme();
@@ -1467,7 +1476,7 @@ export function ComposeSheet({
     /* Saved only once kept: a refused keep is the close's to keep again and to say (`autosaveKeep`).
        A forward draft is saved as a forward of its original, never as a new mail. */
     void autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
-      mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
+      mode: m !== null ? mode : "new", messageId: m?.id ?? null,
       mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true, ...keptOnRow,
       revision: baseFor(base.current, draftId), waited: waitedFor(base.current, draftId), forked: () => setForked(true),
       rebind: setDraftId, row: (r) => { if (r.draftId !== null) row = r.draftId; rebase(r); },
@@ -1811,7 +1820,8 @@ export function ComposeSheet({
       : forward
         ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId,
           forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {}, baseFor(base.current, draftId), waitedFor(base.current, draftId))
-        : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId);
+        : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,
+          baseFor(base.current, draftId), waitedFor(base.current, draftId));
     const press = () => toRow(asNew && draftId !== null && w.actions.draftLeft(draftId) !== null ? null : draftId);
     /* MARKED BEFORE THE DISPATCH: a hard stop from here on leaves the next launch a sent letter, which
        it never sends again (`compose/letter-restore.ts`). */
@@ -1845,6 +1855,11 @@ export function ComposeSheet({
      toast and the top bar render under this Modal, so a sentence said only there was a press with no
      answer. Pinned up to `pinnedNotesMax`; past it they scroll at the letter's end, scrolled to. */
   const noteItems = [
+    replyAside ? (
+      <Txt key="replyAside" variant="caption" tone="ink3">
+        {Copy.composeReplyAside}
+      </Txt>
+    ) : null,
     gone !== null ? (
       <Txt key="leftElsewhere" variant="caption" tone="ink2" accessibilityRole="alert">
         {gone.why === "sent" ? Copy.composeSentElsewhere : Copy.composeDeletedElsewhere}

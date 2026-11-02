@@ -23,6 +23,11 @@ export function screenerSegParam(raw: unknown): ScreenerSeg | null {
   return raw === "waiting" || raw === "screened" || raw === "spam" ? raw : null;
 }
 
+/** A `pile` route param as a pile, or `null` for anything else. */
+export function pileParam(raw: unknown): PileKind | null {
+  return raw === "replyLater" || raw === "setAside" || raw === "resurface" ? raw : null;
+}
+
 export interface Address {
   name: string;
   address: string;

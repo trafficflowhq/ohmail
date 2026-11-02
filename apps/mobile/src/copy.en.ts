@@ -3255,6 +3255,21 @@ const TABLE = {
   waitingOther: "A change",
   waitingTheOrganizer: "The organizer",
   waitingRefused: (holder: string) => `${holder} did not carry this out.`,
+  /* A delete refused for want of a Trash folder (worded as `folderErrNoTrash`). */
+  deleteNoTrash: "This mailbox has no Trash folder, and ohmail never erases mail — the message is where it was.",
+  /* Trash on the standalone phone lists this phone's own deletes. */
+  trashEmptyHintStandalone: "Mail you delete on this phone appears here.",
+  /* Reply over a kept reply this phone cannot write whole. */
+  composeReplyAside: "A reply to this message is already in Drafts.",
+  /* The attachment preview: a picture or a PDF shown in the app, Share beside it. */
+  previewClose: "Close",
+  previewShare: "Share",
+  previewPreparing: "Preparing the preview…",
+  previewCantShow: "This file can't be shown here.",
+  previewTooLarge: "This file is too large to show here.",
+  previewShareHint: "Share it to open it in another app.",
+  previewPdfMore: (n: number) => `The first ${n} pages are shown.`,
+  previewFrameLabel: "Attachment preview",
 };
 
 /**

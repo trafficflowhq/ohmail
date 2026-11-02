@@ -11,9 +11,10 @@ import { useWorld } from "../state/world";
 import { Button, Txt } from "./base";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { ComposeSheet, forwardAskSentence } from "./MessageActions";
+import { replyOpen, type ReplyOpen } from "./compose-route";
 import { Sheet, SheetRow } from "./Sheet";
 
-type Open = null | "forward-ask" | { compose: "reply" | "forward"; confirmed?: boolean };
+type Open = null | "forward-ask" | { compose: "forward"; confirmed?: boolean } | ReplyOpen;
 
 export function StreamCardVerbs({ id }: { id: string }) {
   const w = useWorld();
@@ -37,7 +38,7 @@ export function StreamCardVerbs({ id }: { id: string }) {
   return (
     <>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-        <Button icon="reply" label={Copy.actionReply} onPress={() => setOpen({ compose: "reply" })} />
+        <Button icon="reply" label={Copy.actionReply} onPress={() => setOpen(replyOpen(w.actions.keptReply(id), "reply"))} />
         <Button icon="fwd" label={Copy.actionForward} onPress={forward} />
       </View>
       {m?.forwardAsk ? (
@@ -53,7 +54,11 @@ export function StreamCardVerbs({ id }: { id: string }) {
       ) : null}
       {m !== undefined && open !== null && typeof open === "object" ? (
         <SurfaceBoundary surface="composer" frame="sheet" onClose={close}>
-          <ComposeSheet m={m} mode={open.compose} forwardConfirmed={open.confirmed === true} onClose={close} />
+          <ComposeSheet
+            m={m} mode={open.compose} forwardConfirmed={"confirmed" in open && open.confirmed === true}
+            {...("draft" in open && open.draft ? { draft: open.draft } : {})} replyAside={"aside" in open && open.aside === true}
+            onClose={close}
+          />
         </SurfaceBoundary>
       ) : null}
     </>

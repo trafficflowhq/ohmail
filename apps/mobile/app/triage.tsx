@@ -8,11 +8,12 @@
  * number it does not hold.
  */
 import { View } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Copy } from "../src/copy";
 import { usePullToSync } from "../src/state/pull";
 import { useTheme } from "../src/theme";
 import { useWorld } from "../src/state/world";
+import { pileParam, pileTitle } from "../src/state/model";
 import { Badge, Panel, Screen, Scroller, TapRow, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
@@ -49,6 +50,9 @@ function TriageBody() {
   // with no items shows the row silhouette, never "Nothing here" — and the derived counts
   // and meta stay silent for the same reason (a "0" over a skeleton is an invented count).
   const settled = w.boot.settled;
+  /* More's pile entries name their pile: that pile alone, under its own title. */
+  const only = pileParam(useLocalSearchParams<{ pile?: string }>().pile);
+  const piles = only === null ? w.piles : w.piles.filter((p) => p.kind === only);
 
   return (
     <Screen>
@@ -56,13 +60,15 @@ function TriageBody() {
       <DetailBar />
       <Scroller bounded refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
-          <Txt variant="h1">{Copy.triage}</Txt>
-          <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-            {settled ? w.pilesMeta : " "}
-          </Txt>
+          <Txt variant="h1">{only === null ? Copy.triage : pileTitle(only)}</Txt>
+          {only === null ? (
+            <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
+              {settled ? w.pilesMeta : " "}
+            </Txt>
+          ) : null}
         </View>
 
-        {w.piles.map((p, pi) => (
+        {piles.map((p, pi) => (
           <View key={p.kind} style={{ marginBottom: 16 }}>
             {/*
               `.pile-stack::before/::after` — two sheets of paper under the top

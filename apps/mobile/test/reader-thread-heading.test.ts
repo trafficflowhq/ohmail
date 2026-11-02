@@ -71,6 +71,10 @@ describe("the heading over the conversation's other members", () => {
     expect(threadHeading(EN, m.earlier)).toBe("The rest of this conversation — all 3 shown");
     expect(threadHeading(DE, m.earlier)).toBe("Der Rest dieses Verlaufs — alle 3 gezeigt");
   });
+  it("each member carries who wrote it, name and address", async () => {
+    const m = liveMessage(await thread(), "a2", view)!;
+    expect(m.earlier.map((h) => [h.id, h.sender, h.address])).toEqual([["a1", "Lena", LENA.address], ["a3", "Lena", LENA.address]]);
+  });
   it("the reader renders this heading, not the bare Earlier line", () => {
     const src = withoutComments(readFileSync(fileURLToPath(new URL("../src/ui/MessageReader.tsx", import.meta.url)), "utf8"));
     expect(src).toContain("{threadHeading(Copy, m.earlier)}");
