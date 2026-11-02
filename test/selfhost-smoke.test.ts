@@ -131,7 +131,9 @@ case "$a" in
   *" compose "*" pull "*) if [ "$last" = "\${STUB_PULL_FAIL:-}" ]; then echo "pull denied" >&2; exit 1; fi; exit 0 ;;
   *" compose "*" up "*) exit 0 ;;
   *" compose "*" ps "*) echo "cid-$last"; exit 0 ;;
+  *" compose "*" logs --no-color api "*) printf '%s\\n' "\${STUB_API_LOG:-api: listening}"; exit 0 ;;
   *" compose "*" logs "*) echo "STUB-SERVICE-LOGS"; exit 0 ;;
+  " inspect --format {{.RestartCount}} "*) echo "\${STUB_RESTARTS:-0}"; exit 0 ;;
   *" compose "*" down "*) exit 0 ;;
   " inspect --format {{.Image}} "*) s=\${last#cid-}; if [ "$s" = "\${STUB_MISMATCH:-}" ]; then echo "sha256:published"; else echo "sha256:id-$s"; fi; exit 0 ;;
   " image inspect --format {{.Id}} "*)
@@ -196,7 +198,8 @@ describe("selfhost-smoke.sh boots exactly the images of this run and the commit 
     const at = {
       config: idx(r.log, / config -q$/), build: idx(r.log, / build web api organizer$/), pull: idx(r.log, / pull /),
       up: idx(r.log, / up -d --no-build --pull never$/), identity: idx(r.log, /^docker inspect --format \{\{\.Image\}\} /),
-      smoke: idx(r.log, /boot-smoke\.mjs SMOKE_COMPOSE=/), health: idx(r.log, /^curl -fsS http:\/\/localhost:3080\/health$/), down: idx(r.log, / down -v$/),
+      smoke: idx(r.log, /boot-smoke\.mjs SMOKE_COMPOSE=/), restarts: idx(r.log, /^docker inspect --format \{\{\.RestartCount\}\} cid-api$/),
+      waits: idx(r.log, / logs --no-color api$/), health: idx(r.log, /^curl -fsS http:\/\/localhost:3080\/health$/), down: idx(r.log, / down -v$/),
     };
     for (const [k, v] of Object.entries(at)) expect(v, `${k} never ran:\n${r.log.join("\n")}`).toBeGreaterThanOrEqual(0);
     expect(Object.values(at), r.log.join("\n")).toEqual(Object.values(at).slice().sort((a, b) => a - b));
@@ -262,6 +265,19 @@ describe("selfhost-smoke.sh boots exactly the images of this run and the commit 
     expect(r.log.at(-1)).toMatch(/ down -v$/);
   });
 
+  it("refuses an api that restarted, or waited for the database, during the slowed first start", () => {
+    const restarted = smoke("--build", "smoke-7-1", { env: { STUB_RESTARTS: "3" } });
+    expect(restarted.status).not.toBe(0);
+    expect(restarted.out).toMatch(/the api restarted 3 time\(s\)/);
+    expect(restarted.log.at(-1)).toMatch(/ down -v$/);
+    const log = '{"event":"first_run_setup_token_minted"}\nSTUB-SETUP-TOKEN\n{"event":"boot_database_waiting"}\n{"event":"boot_database_waiting"}';
+    const waited = smoke("--build", "smoke-7-1", { env: { STUB_API_LOG: log } });
+    expect(waited.status).not.toBe(0);
+    expect(waited.out).toMatch(/the api waited for the database 2 time\(s\)/);
+    expect(waited.out, "the api's log is counted, never printed").not.toContain("STUB-SETUP-TOKEN");
+    expect(waited.log.at(-1)).toMatch(/ down -v$/);
+  });
+
   it("refuses an api whose /health names another commit, or a version that is not the build's file", () => {
     for (const health of [`${"d".repeat(40)} file`, `${COMMIT} variable`, ""]) {
       const r = smoke("--build", "smoke-7-1", { env: { STUB_HEALTH: health } });
@@ -304,7 +320,7 @@ describe("selfhost-smoke.sh boots exactly the images of this run and the commit 
 
 describe("the CI overlay builds what the stack runs, and names GreenMail by digest", () => {
   /* Compose's own `!override` tag is no YAML js-yaml reads; the value under it is a plain sequence. */
-  const overlay = yaml.load(readFileSync(join(DIR, "docker-compose.ci.yml"), "utf8").replace(/ !override$/gm, "")) as { services: Record<string, { image?: string; build?: { args?: Record<string, string> } }> };
+  const overlay = yaml.load(readFileSync(join(DIR, "docker-compose.ci.yml"), "utf8").replace(/ !override$/gm, "")) as { services: Record<string, { image?: string; build?: { args?: Record<string, string> }; volumes?: string[] }> };
   const root = yaml.load(readFileSync(publicPath("docker-compose.yml"), "utf8")) as { services: Record<string, { image?: string }> };
 
   it("GreenMail is the multi-arch index digest the root compose names", () => {
@@ -316,6 +332,21 @@ describe("the CI overlay builds what the stack runs, and names GreenMail by dige
     for (const svc of ["web", "api", "organizer"]) {
       expect(overlay.services[svc]?.build?.args, svc).toEqual({ TF_BUILD_VERSION: "${OHMAIL_BUILD_VERSION:-}" });
     }
+  });
+
+  it("the db reads healthy only on its final TCP listener, and the overlay's db first start runs 6 s or more", () => {
+    const base = yaml.load(readFileSync(join(DIR, "docker-compose.yml"), "utf8")) as { services: Record<string, { healthcheck?: Record<string, unknown> }> };
+    expect(base.services.db?.healthcheck).toEqual({
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ohmail -d ohmail"], interval: "2s", timeout: "3s", retries: 30, start_period: "120s",
+    });
+    const init = (overlay.services.db?.volumes ?? []).map((v) => v.split(":")).filter(([, target]) => target!.startsWith("/docker-entrypoint-initdb.d/"));
+    expect(init.map(([, , mode]) => mode)).toEqual(["ro"]);
+    // Run as Postgres runs it, with a sleep that only records how long it was asked for.
+    const bin = mkdtempSync(join(tmpdir(), "slow-db-init-"));
+    writeFileSync(join(bin, "sleep"), '#!/bin/sh\nprintf %s "$1" > "$(dirname "$0")/asked"\n', { mode: 0o755 });
+    const r = spawnSync("sh", [join(DIR, init[0]![0]!)], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(Number(readFileSync(join(bin, "asked"), "utf8"))).toBeGreaterThanOrEqual(6);
   });
 });
 

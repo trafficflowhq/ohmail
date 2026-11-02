@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { PROXY_PEER_HEADER, loadServerConfig } from "../src/config.js";
-import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
+import {
+  KEK_RETIRED_REFUSED, PROXY_PEER_HEADER, TLS_TERMINATOR_GATEWAY, TLS_TERMINATOR_UNSET_REFUSED, loadServerConfig,
+} from "../src/config.js";
+import { KEY_RING_RETIRED, KEY_RING_V1, keyRingVar } from "../../../test/support/key-ring-env.js";
 
 /**
  * `TF_TRUSTED_PROXIES` in the server's own config. Unset and empty both trust NO peer: there
@@ -50,8 +52,8 @@ describe("TF_TRUSTED_PROXIES", () => {
 
 /**
  * OHMAIL_EXTERNAL_TLS and OHMAIL_TLS_TERMINATOR, the external door's two inputs. The proxy decides
- * whose X-Forwarded-For it believes; this server only refuses to start on a terminator list the
- * proxy would read differently. Every refusal names the variable and the fix, never the value.
+ * whose X-Forwarded-For it believes; this server refuses to start on a terminator list the proxy
+ * would read differently, and on none at all. Every refusal names the variable and the fix, never the value.
  */
 describe("OHMAIL_TLS_TERMINATOR on the external door", () => {
   const refusal = (over: Record<string, string>): string => {
@@ -65,21 +67,30 @@ describe("OHMAIL_TLS_TERMINATOR on the external door", () => {
       .toEqual({ door: "tls" });
   });
 
-  it("empty is unset (the proxy takes its gateway); a list is kept as written; set is compose's non-empty", () => {
-    expect(loadServerConfig(env({ OHMAIL_EXTERNAL_TLS: "1" })).externalDoor).toEqual({ door: "external", raw: "", entries: [] });
+  it("unset refuses, absent or empty: nothing says whose X-Forwarded-For to believe", () => {
+    expect(refusal({})).toBe(TLS_TERMINATOR_UNSET_REFUSED);
+    expect(refusal({ OHMAIL_TLS_TERMINATOR: "" })).toBe(TLS_TERMINATOR_UNSET_REFUSED);
+    // Set is compose's non-empty, so a space still opens the external door.
+    expect(refusal({ OHMAIL_EXTERNAL_TLS: " " })).toBe(TLS_TERMINATOR_UNSET_REFUSED);
+    expect(TLS_TERMINATOR_UNSET_REFUSED).toMatch(/set it to gateway .*, to your terminator's addresses or CIDRs .*, or to 0\.0\.0\.0\/32/);
+  });
+
+  it("a value of nothing but whitespace is unset and refuses, as the entrypoint reads it", () => {
+    for (const v of [" ", "\n \n", "\u00a0"]) expect(refusal({ OHMAIL_TLS_TERMINATOR: v }), JSON.stringify(v)).toBe(TLS_TERMINATOR_UNSET_REFUSED);
+  });
+
+  it("gateway, the whole value as written, names the proxy's network gateway; a list is kept as written", () => {
+    expect(TLS_TERMINATOR_GATEWAY).toBe("gateway");
+    expect(loadServerConfig(env({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_TLS_TERMINATOR: "gateway" })).externalDoor)
+      .toEqual({ door: "external", raw: "gateway", entries: [] });
     expect(loadServerConfig(env({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_TLS_TERMINATOR: "10.0.0.0/8 192.168.1.5" })).externalDoor)
       .toEqual({ door: "external", raw: "10.0.0.0/8 192.168.1.5", entries: ["10.0.0.0/8", "192.168.1.5"] });
-    expect(loadServerConfig(env({ OHMAIL_EXTERNAL_TLS: " " })).externalDoor).toEqual({ door: "external", raw: "", entries: [] });
+    expect(refusal({ OHMAIL_TLS_TERMINATOR: " gateway" })).toMatch(/^OHMAIL_TLS_TERMINATOR uses whitespace other than single spaces/);
   });
 
-  it("a multi-line value of nothing but whitespace is unset, as the entrypoint reads it", () => {
-    expect(loadServerConfig(env({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_TLS_TERMINATOR: "\n \n" })).externalDoor)
-      .toEqual({ door: "external", raw: "", entries: [] });
-  });
-
-  it("a value of nothing but U+00A0 is unset, as the entrypoint reads it", () => {
-    expect(loadServerConfig(env({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_TLS_TERMINATOR: "\u00a0" })).externalDoor)
-      .toEqual({ door: "external", raw: "", entries: [] });
+  it("gateway inside a list refuses at its position: the list names the gateway's address instead", () => {
+    expect(refusal({ OHMAIL_TLS_TERMINATOR: "gateway 10.0.0.1" })).toMatch(/^OHMAIL_TLS_TERMINATOR entry 1 is gateway, .* write the gateway's address/);
+    expect(refusal({ OHMAIL_TLS_TERMINATOR: "10.0.0.1 gateway" })).toMatch(/^OHMAIL_TLS_TERMINATOR entry 2 is gateway, /);
   });
 
   it("the value is checked untrimmed, as the proxy reads it: a leading line break or space refuses", () => {
@@ -120,5 +131,38 @@ describe("OHMAIL_TLS_TERMINATOR on the external door", () => {
     const m = refusal({ OHMAIL_TLS_TERMINATOR: "10.0.0.1 300.1.1.1" });
     expect(m).toMatch(/^OHMAIL_TLS_TERMINATOR entry 2 is not an address or a CIDR/);
     expect(m).not.toContain("300.1.1.1");
+  });
+});
+
+/**
+ * The key-retirement variable. Cloud checks at boot and on /health that no stored secret still needs a
+ * retired key version; this server has neither check yet, so it refuses the variable before anything
+ * migrates or listens, with its own sentence: the shared loader's would advise removing a key still set.
+ */
+describe("the key-retirement variable on this server", () => {
+  const KEY = "cd".repeat(32);
+  const refused = (over: Record<string, string>): string => {
+    try { loadServerConfig(env(over)); } catch (e) { return (e as Error).message; }
+    return "";
+  };
+
+  it("refuses a ring whose oldest versions were retired, naming the variable and nothing it holds", () => {
+    const m = refused({ [KEY_RING_V1]: "", [keyRingVar(8)]: KEY, [KEY_RING_RETIRED]: "7" });
+    expect(m).toBe(KEK_RETIRED_REFUSED);
+    expect(m).toContain(KEY_RING_RETIRED);
+    for (const leak of ["7", KEY, "remove"]) expect(m).not.toContain(leak);
+  });
+
+  it("refuses before the shared loader reads the ring, so its advice to remove a key never shows", () => {
+    expect(refused({ [keyRingVar(2)]: KEY, [KEY_RING_RETIRED]: "1" })).toBe(KEK_RETIRED_REFUSED);
+    expect(refused({ [KEY_RING_RETIRED]: "abc" })).toBe(KEK_RETIRED_REFUSED);
+  });
+
+  it("empty or whitespace is unset: the ring loads", () => {
+    for (const v of ["", "  "]) {
+      const cfg = loadServerConfig(env({ [KEY_RING_RETIRED]: v }));
+      expect(cfg.kekError, JSON.stringify(v)).toBeNull();
+      expect(cfg.kek?.active).toBe(1);
+    }
   });
 });

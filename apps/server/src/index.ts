@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { setNoticeSink, noticeSinkFor, type Tx } from "@trafficflow/db";
 import { setupProdDatabase } from "@trafficflow/db/admin";
 import { makeOwnedDb, makeChangeWakeHub } from "@trafficflow/db/cloud";
@@ -8,6 +9,7 @@ import {
   runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, runOwedSentCopyPass, SEND_RECONCILE_NET_TIMEOUTS,
   OWED_COPY_SELF_HOST, type AuthService,
 } from "@trafficflow/services";
+import { awaitDatabase } from "./await-database.js";
 import { COLLAPSED_SENTENCE, PROXY_PEER_HEADER, loadServerConfig } from "./config.js";
 import {
   alertArmsFor, alertHeartbeatForServer, buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime,
@@ -18,12 +20,14 @@ import { makeHttpServer, makeTrustedProxies, systemLookup } from "./http.js";
 import { mintFirstRunSetupToken, printSetupToken } from "./setup-token.js";
 
 /**
- * BOOT, in the ruled order — config → migrate → mint → listen — and each step's placement is a
- * decision:
+ * BOOT, in the ruled order — config → database up → migrate → mint → listen — and each step's
+ * placement is a decision:
  *
  *  · **Config first, refusing loudly.** A long-running process may simply not start on a
  *    misshapen value; the message names the variable and never its value (config.ts). The KEK
  *    is the one capture-not-throw: `/health` must come up to NAME a broken ring.
+ *  · **A database still starting is waited for, bounded** (await-database.ts), so a slow first
+ *    start costs no restart; the migration itself still runs once.
  *  · **`setupProdDatabase` — the library half — before anything touches a table.** Both
  *    journals under the migration advisory lock, `pg_trgm` + the trigram indexes, then the
  *    five-property VERIFICATION (a half-provisioned database refuses the boot rather than
@@ -66,6 +70,12 @@ async function main(): Promise<void> {
   // Which model this server answers suggestions and drafts with, and whether its address is the
   // default or one set in .env — the organizer logs the same line. Never the address.
   logger.info("ai_provider_configured", aiBootFields(cfg.ai));
+
+  // A database still starting is waited for here, never by retrying the migration below.
+  await awaitDatabase(async () => {
+    const probe = makeOwnedDb(cfg.databaseUrl);
+    try { await probe.db.execute(sql`select 1`); } finally { await probe.close(); }
+  }, { onWait: ({ err, tries, elapsedMs }) => logger.warn("boot_database_waiting", { err, tries, elapsedMs }) });
 
   logger.info("boot_migrating");
   const report = await setupProdDatabase(cfg.databaseUrl, {
@@ -126,10 +136,10 @@ async function main(): Promise<void> {
   logger.info("trusted_proxies_configured", { configVar: "TF_TRUSTED_PROXIES", count: cfg.trustedProxies.length });
   // THE EXTERNAL DOOR: the proxy decides whose X-Forwarded-For it believes and writes its own peer
   // into PROXY_PEER_HEADER, so a client equal to that peer is one the proxy took nobody's word
-  // for. This process states only its own facts: the list it validated, never a gateway it did
+  // for. This process states only its own facts: the value it validated, never a gateway it did
   // not resolve (the proxy's log names that).
   const door = cfg.externalDoor;
-  const effective = door.door === "external" ? door.raw || "unset: the proxy takes its network gateway" : "";
+  const effective = door.door === "external" ? door.raw : "";
   if (door.door === "external") {
     logger.info("external_door_configured", { configVar: "OHMAIL_TLS_TERMINATOR", effective, proxyPeerFrom: PROXY_PEER_HEADER });
   }

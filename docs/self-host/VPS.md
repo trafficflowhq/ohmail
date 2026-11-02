@@ -392,6 +392,24 @@ with each update: it changes whenever `proxy/` does, and that is what makes
       - ./proxy:/etc/caddy:ro
 ```
 
+**One-time, updating an install behind your own terminator
+(`OHMAIL_EXTERNAL_TLS`):** set `OHMAIL_TLS_TERMINATOR` in `.env` before you
+update, because the proxy and the api no longer start without it.
+`OHMAIL_TLS_TERMINATOR=gateway` keeps what an empty value did, and is right
+only for a terminator on this box that sets `X-Forwarded-For`; "Behind a
+terminator you already run" below has the other two settings.
+
+`gateway` needs this checkout's `proxy/` and images of the same release
+together: an api from an earlier release refuses it as "a word, not an
+address" and does not start. So while `OHMAIL_IMAGE_TAG` pins an earlier
+release, to stay on it or while a new release's images are still
+publishing, write the gateway's own address instead: the `Gateway` that
+`docker network inspect ohmail_default` (your `OHMAIL_PROJECT` in place of
+`ohmail`) shows, followed by `/32`. Every version reads an address the same
+way. Change it to `gateway` once the images catch up: a network that
+`docker compose down` removes can come back on another address, and then
+every visitor would share one.
+
 **One-time, if you keep your own compose file or run another proxy in front
 of the api:** the api takes a visitor's address only from the proxies named
 in `TF_TRUSTED_PROXIES`. The bundled compose file sets it to its own proxy
@@ -592,22 +610,33 @@ terminator presents. Point the terminator at port 80 on `OHMAIL_BIND`
 
 The proxy believes `X-Forwarded-For` only from `OHMAIL_TLS_TERMINATOR` and
 hands the api the one address it settled on; the api believes the proxy and
-nobody else. Under Docker a terminator on the same box reaches the proxy from
-the stack's network gateway, never from loopback, so with
-`OHMAIL_TLS_TERMINATOR` left empty the proxy trusts that gateway: it reads it
-when it starts and says which address in `docker compose logs proxy`. Set the
-variable to your terminator's address when it is on another host or is itself
-a container on the stack's network; until you do, the api log names that
-terminator once as `forwarded_address_collapsed` and every visitor through it
-shares one address. A value replaces the gateway rather than adding to it: if
-you list a CDN's ranges in front of a terminator on this box, list the gateway
-too. The proxy's log names the gateway while the variable is empty, and
-`docker network inspect ohmail_default` (your `OHMAIL_PROJECT` in place of
-`ohmail`) shows it as `Gateway` at any time. Separate several addresses with
-single spaces. A comma, other whitespace, an IPv4 address written in IPv6 form
-or a word such as `private_ranges` could read differently to the proxy and the
-api, so the api refuses to start on one and says what to write instead. A value
-of nothing but whitespace counts as empty.
+nobody else. There is no default: on this door the proxy and the api both
+refuse to start until `OHMAIL_TLS_TERMINATOR` says whom to believe, in one of
+three ways.
+
+- **`gateway`**, for a terminator on this box that sets or appends
+  `X-Forwarded-For`, with `OHMAIL_BIND` left at `127.0.0.1`. Under Docker such
+  a terminator reaches the proxy from the stack's network gateway, never from
+  loopback; the proxy reads that gateway when it starts and names it in
+  `docker compose logs proxy`. Every connection through the published port
+  arrives from that same gateway, so on a public or LAN `OHMAIL_BIND` anyone
+  who reaches the port directly could write the header themselves.
+- **Your terminator's addresses or CIDRs**, separated by single spaces, when it
+  runs on another host or is itself a container on the stack's network. Until
+  the right one is named, the api log names that terminator once as
+  `forwarded_address_collapsed` and every visitor through it shares one
+  address. A list replaces the gateway rather than adding to it, and `gateway`
+  cannot stand in one: if you list a CDN's ranges in front of a terminator on
+  this box, add the gateway's address, which `docker network inspect
+  ohmail_default` (your `OHMAIL_PROJECT` in place of `ohmail`) shows as
+  `Gateway`.
+- **`0.0.0.0/32`**, for a relay that adds no `X-Forwarded-For` (below), or
+  when you are not sure what yours does.
+
+A comma, other whitespace, an IPv4 address written in IPv6 form or a word such
+as `private_ranges` could read differently to the proxy and the api, so the api
+refuses to start on one and says what to write instead. A value of nothing but
+whitespace counts as unset.
 
 **Your terminator must set or append `X-Forwarded-For` with the visitor's
 address**, because the stack believes what arrives from it. The proxy reads
@@ -621,9 +650,9 @@ adds the address: Caddy on its own, and nginx with
 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. A relay that
 only passes the connection through — socat, stunnel, a TCP (layer-4) load
 balancer — adds nothing, and on this box it arrives from the same gateway, so
-the proxy trusts it and a visitor could put any address in that header: lock
-that address out of an account, or have it written into the sign-in records.
-With such a relay, or if you are not sure what yours does, set
+with `gateway` the proxy would trust it and a visitor could put any address in
+that header: lock that address out of an account, or have it written into the
+sign-in records. With such a relay, or if you are not sure what yours does, set
 `OHMAIL_TLS_TERMINATOR=0.0.0.0/32`. No connection ever comes from that
 address, so no forwarded address is believed and every visitor shares one
 address. That is its cost: the password lock then counts every visitor as one,

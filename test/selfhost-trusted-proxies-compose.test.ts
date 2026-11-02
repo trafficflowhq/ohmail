@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseTlsTerminatorList } from "@trafficflow/core/adapters/http-host";
+import { TLS_TERMINATOR_UNSET_REFUSED, loadServerConfig } from "../apps/server/src/config.js";
+import { KEY_RING_V1 } from "./support/key-ring-env.js";
 
 /**
  * THE BUNDLED STACK NAMES ITS OWN PROXY, AND THE PROXY ALONE DECIDES THE TERMINATOR HOP. The api
@@ -94,23 +96,30 @@ describe("the proxy entrypoint", () => {
   };
   const route = (name: string): string => join(ROOT, FIXTURES, `proc-net-route.${name}.txt`);
 
-  it("in the pool: the gateway, as /32, said as this network's gateway", () => {
-    expect(resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_PROC_NET_ROUTE: route("in-pool") })).toEqual({
-      out: "proxy: external door honours X-Forwarded-For from 172.31.228.1/32 (OHMAIL_TLS_TERMINATOR unset: this network's gateway)",
-      err: "", rc: 0,
-    });
+  const gatewayLine = (gw: string): string =>
+    `proxy: external door honours X-Forwarded-For from ${gw}/32 (OHMAIL_TLS_TERMINATOR gateway: this network's gateway)`;
+
+  it("gateway: the gateway the route names, as /32, in the pool and outside it alike", () => {
+    expect(resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_TLS_TERMINATOR: "gateway", OHMAIL_PROC_NET_ROUTE: route("in-pool") }))
+      .toEqual({ out: gatewayLine("172.31.228.1"), err: "", rc: 0 });
+    expect(resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_TLS_TERMINATOR: "gateway", OHMAIL_PROC_NET_ROUTE: route("outside-pool") }))
+      .toEqual({ out: gatewayLine("10.89.228.1"), err: "", rc: 0 });
   });
 
-  it("outside 172.16/12 alike: the gateway is read, not assumed", () => {
-    expect(resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_PROC_NET_ROUTE: route("outside-pool"), OHMAIL_TLS_TERMINATOR: " " }).out)
-      .toBe("proxy: external door honours X-Forwarded-For from 10.89.228.1/32 (OHMAIL_TLS_TERMINATOR unset: this network's gateway)");
-  });
-
-  it("no default route and nothing set: exit 78, naming both remedies", () => {
-    const got = resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_PROC_NET_ROUTE: route("no-route") });
+  it("gateway with no default route: exit 78, naming the other remedies", () => {
+    const got = resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_TLS_TERMINATOR: "gateway", OHMAIL_PROC_NET_ROUTE: route("no-route") });
     expect(got.rc).toBe(78);
     expect(got.out).toBe("");
     expect(got.err).toMatch(/OHMAIL_TLS_TERMINATOR to your terminator's address, or to 0\.0\.0\.0\/32 for a relay that adds no X-Forwarded-For/);
+  });
+
+  it("unset, in every spelling the api reads as unset: exit 78 with the api's sentence, route or none", () => {
+    for (const v of [undefined, "", " ", "\n \n", "\u00a0"]) {
+      for (const r of ["in-pool", "no-route"]) {
+        const got = resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_PROC_NET_ROUTE: route(r), ...(v === undefined ? {} : { OHMAIL_TLS_TERMINATOR: v }) });
+        expect(got, `${JSON.stringify(v)} ${r}`).toEqual({ out: "", err: `proxy: ${TLS_TERMINATOR_UNSET_REFUSED}`, rc: 78 });
+      }
+    }
   });
 
   it("a value that is set is passed on as set, route or none; the TLS door says nothing", () => {
@@ -120,14 +129,31 @@ describe("the proxy entrypoint", () => {
     expect(resolve({ OHMAIL_PROC_NET_ROUTE: route("in-pool") })).toEqual({ out: "", err: "", rc: 0 });
   });
 
-  const GATEWAY_LINE = "proxy: external door honours X-Forwarded-For from 172.31.228.1/32 (OHMAIL_TLS_TERMINATOR unset: this network's gateway)";
-
-  it("a multi-line value of nothing but whitespace is unset, as the api reads it", () => {
-    expect(resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_PROC_NET_ROUTE: route("in-pool"), OHMAIL_TLS_TERMINATOR: "\n \n" }).out).toBe(GATEWAY_LINE);
-  });
-
-  it("a value of nothing but U+00A0 is unset, as the api reads it", () => {
-    expect(resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_PROC_NET_ROUTE: route("in-pool"), OHMAIL_TLS_TERMINATOR: "\u00a0" }).out).toBe(GATEWAY_LINE);
+  it("one table, read by the entrypoint and the api alike: refused, the gateway, or the list as written", () => {
+    /* The compose service's role, interpolated: a whole credentialed URL literal is a credential to the push gate. */
+    const role = "ohmail";
+    const server = { OHMAIL_ORIGIN: "https://mail.example.com", DATABASE_URL: `postgres://${role}:pw@db:5432/ohmail`, [KEY_RING_V1]: "ab".repeat(32) };
+    const api = (env: Record<string, string>): unknown => {
+      try { return loadServerConfig({ ...server, OHMAIL_EXTERNAL_TLS: "1", ...env } as NodeJS.ProcessEnv).externalDoor; } catch (e) { return (e as Error).message; }
+    };
+    const table: Array<[string | undefined, "refused" | "gateway" | "list"]> = [
+      [undefined, "refused"], ["", "refused"], [" ", "refused"], ["\n \n", "refused"], ["\u00a0", "refused"],
+      ["gateway", "gateway"], ["0.0.0.0/32", "list"], ["203.0.113.9 10.0.0.0/8", "list"],
+    ];
+    for (const [v, reading] of table) {
+      const env: Record<string, string> = v === undefined ? {} : { OHMAIL_TLS_TERMINATOR: v };
+      const proxy = resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_PROC_NET_ROUTE: route("in-pool"), ...env });
+      const what = JSON.stringify(v ?? null);
+      if (reading === "refused") {
+        expect([proxy.rc, proxy.err, api(env)], what).toEqual([78, `proxy: ${TLS_TERMINATOR_UNSET_REFUSED}`, TLS_TERMINATOR_UNSET_REFUSED]);
+      } else if (reading === "gateway") {
+        expect([proxy.rc, proxy.out, api(env)], what).toEqual([0, gatewayLine("172.31.228.1"), { door: "external", raw: "gateway", entries: [] }]);
+      } else {
+        expect([proxy.rc, proxy.out, api(env)], what).toEqual([
+          0, `proxy: external door honours X-Forwarded-For from ${v} (OHMAIL_TLS_TERMINATOR set)`, { door: "external", raw: v, entries: v!.split(" ") },
+        ]);
+      }
+    }
   });
 });
 

@@ -1,8 +1,13 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { KEY_RING_V1 } from "./support/key-ring-env.js";
 import { publicPath } from "./support/public-root.mjs";
+import { evalIf } from "./support/workflow-if.js";
 
 /**
  * EVERY ACTION A PUBLIC WORKFLOW RUNS IS PINNED TO A COMMIT, AND THE SET IS WRITTEN DOWN HERE.
@@ -613,8 +618,8 @@ describe("every container image a workflow runs is named by its digest, unless t
     const all = FILES.map(workflowImages);
     const imageOf = (entry: string) => entry.slice(entry.lastIndexOf(" — ") + 3);
     const pinned = [...new Set(all.flatMap((r) => r.pinned).map(imageOf))].sort();
-    expect(pinned.map((i) => i.replace(/@sha256:[0-9a-f]{64}$/, "")), "the positive control: Dovecot, GreenMail and Fedora").toEqual([
-      "dovecot/dovecot:2.3.21", "greenmail/standalone:2.1.3", "registry.fedoraproject.org/fedora:42",
+    expect(pinned.map((i) => i.replace(/@sha256:[0-9a-f]{64}$/, "")), "the positive control: Dovecot, gitleaks, GreenMail and Fedora").toEqual([
+      "dovecot/dovecot:2.3.21", "ghcr.io/gitleaks/gitleaks:v8.30.1", "greenmail/standalone:2.1.3", "registry.fedoraproject.org/fedora:42",
     ]);
     const own = all.flatMap((r) => r.own).map(imageOf);
     const mirrors = own.filter((i) => MIRROR.test(i));
@@ -746,5 +751,117 @@ describe("every action a workflow runs is classified by what it pulls, and pulls
       ["build-push with an SBOM scanner by digest", step("docker/build-push-action", { sbom: `generator=docker/buildkit-syft-scanner${d}` })],
       ["build-push with a frontend by digest", step("docker/build-push-action", { "build-args": `BUILDKIT_SYNTAX=docker/dockerfile:1.27.1${d}` })],
     ] as Array<[string, string]>) expect(actionFindings("x.yml", wf), what).toEqual([]);
+  });
+});
+
+/**
+ * NO SECRET IN WHAT A PULL REQUEST ADDS. ci.yml's plan job refuses a path the BASE's ignore rules match,
+ * then scans the added lines with gitleaks, by digest, once its control is found. The step runs here as
+ * the runner runs it, over a pull request's merge commit, against a docker that answers as gitleaks does.
+ */
+describe("ci.yml's secret scan", () => {
+  type Step = { uses?: string; if?: string; run?: string; env?: Record<string, string>; "continue-on-error"?: unknown };
+  const plan = (yaml.load(read("ci.yml")) as { jobs: Record<string, { steps: Step[] }> }).jobs.plan!.steps;
+  const scanAt = plan.findIndex((s) => /\bgitleaks\b/.test(s.run ?? ""));
+  const step = plan[scanAt]!;
+
+  it("runs on a pull request only, right after the checkout, never allowed to fail, its image named by digest", () => {
+    expect([scanAt, plan[0]!.uses?.split("@")[0]]).toEqual([1, "actions/checkout"]);
+    for (const event of ["pull_request", "schedule", "workflow_dispatch", "push"]) {
+      expect(evalIf(step.if ?? "true", { "github.event_name": event }), event).toBe(event === "pull_request");
+    }
+    expect(step["continue-on-error"]).toBeUndefined();
+    expect(step.env?.GITLEAKS).toMatch(/^ghcr\.io\/gitleaks\/gitleaks:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/);
+  });
+
+  /** A docker that records its arguments and each input, and answers the control and the change as told. */
+  const DOCKER = `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$STUB_DIR/args"
+n=$(ls "$STUB_DIR" | grep -c '^input-' || true)
+cat > "$STUB_DIR/input-$n"
+both='[{"RuleID":"github-pat","StartLine":2},{"RuleID":"ohmail-key-ring","StartLine":3}]'
+if grep -q secret-scan-control "$STUB_DIR/input-$n"; then printf '%s\\n' "\${STUB_CONTROL:-$both}"; exit 1; fi
+printf '%s\\n' "\${STUB_CHANGE-null}"
+exit "\${STUB_CHANGE_RC:-0}"
+`;
+  const rootFile = (p: string) => readFileSync(publicPath(p), "utf8");
+  /* The step runs on the Linux runners only, with their git, jq and tar. */
+  const onLinux = it.skipIf(process.platform !== "linux");
+
+  /** The step over a merge commit of a base and a change, as GitHub checks a pull request out. */
+  function runScan(change: (write: (p: string, text: string) => void) => void, stub: Record<string, string> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "secret-scan-"));
+    const repo = join(dir, "repo"), stubs = join(dir, "stub"), temp = join(dir, "temp");
+    for (const d of [repo, stubs, temp]) mkdirSync(d);
+    writeFileSync(join(stubs, "docker"), DOCKER, { mode: 0o755 });
+    const env = {
+      PATH: `${stubs}:${process.env.PATH ?? "/usr/bin:/bin"}`, HOME: dir, LC_ALL: "C", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid",
+    };
+    const git = (...a: string[]) => spawnSync("git", ["-c", "commit.gpgsign=false", ...a], { cwd: repo, env, encoding: "utf8" });
+    const write = (p: string, text: string) => { mkdirSync(join(repo, p, ".."), { recursive: true }); writeFileSync(join(repo, p), text); };
+    git("init", "-q", "-b", "main");
+    write(".gitignore", rootFile(".gitignore"));
+    write(".github/secret-scan.toml", rootFile("github/secret-scan.toml"));
+    write("notes.txt", "kept line\nremoved line\n");
+    git("add", "-A"); git("commit", "-q", "-m", "base");
+    git("checkout", "-q", "-b", "change");
+    change(write);
+    git("add", "-A", "-f"); git("commit", "-q", "-m", "change");
+    git("checkout", "-q", "main"); git("merge", "-q", "--no-ff", "-m", "merge", "change");
+    const r = spawnSync("bash", ["-c", step.run!], {
+      cwd: repo, encoding: "utf8", env: { ...env, RUNNER_TEMP: temp, STUB_DIR: stubs, GITLEAKS: step.env!.GITLEAKS!, ...stub },
+    });
+    const inputs = readdirSync(stubs).filter((f) => f.startsWith("input-")).sort().map((f) => readFileSync(join(stubs, f), "utf8"));
+    let args: string[] = [];
+    try { args = readFileSync(join(stubs, "args"), "utf8").split("\n").filter(Boolean); } catch { /* docker never ran */ }
+    return { status: r.status, out: `${r.stdout}${r.stderr}`, inputs, args, repo: realpathSync(repo) };
+  }
+  const clean = (write: (p: string, text: string) => void) => {
+    write("notes.txt", "kept line\nadded line\n");
+    write("src/new.ts", "export const x = 1;\n");
+  };
+
+  onLinux("scans the control, then the added lines under their files' headers, never a removed line, in a sealed container", () => {
+    const r = runScan(clean);
+    expect(r.status, r.out).toBe(0);
+    expect(r.inputs).toHaveLength(2);
+    expect(r.inputs[0]).toMatch(/^\+\+\+ b\/secret-scan-control\n/);
+    expect(r.inputs[0]).toMatch(/\bghp_[0-9a-zA-Z]{36}\b/);
+    expect(r.inputs[0]).toMatch(new RegExp(`\\b${KEY_RING_V1}=[0-9a-f]{64}\\b`));
+    expect(r.inputs[1]!.split("\n")).toEqual(["+++ b/notes.txt", "+added line", "+++ b/src/new.ts", "+export const x = 1;", ""]);
+    for (const a of r.args) {
+      expect(a).toBe(`run --rm -i --network none -v ${r.repo}/.github/secret-scan.toml:/secret-scan.toml:ro ${step.env!.GITLEAKS} `
+        + "stdin --config /secret-scan.toml --redact --no-banner --report-format json --report-path -");
+    }
+  });
+
+  onLinux("refuses a path the base ignores, though the change's own ignore file lets it through, before any scan", () => {
+    const r = runScan((write) => {
+      write("deploy/selfhost/.env", "POSTGRES_PASSWORD=x\n");
+      write(".gitignore", `${rootFile(".gitignore")}!.env\n`);
+    });
+    expect(r.status).toBe(1);
+    expect(r.out).toContain("deploy/selfhost/.env");
+    expect(r.inputs).toEqual([]);
+  });
+
+  onLinux("refuses when the control is not found by both rules, before the change is scanned", () => {
+    const r = runScan(clean, { STUB_CONTROL: '[{"RuleID":"github-pat","StartLine":2}]' });
+    expect(r.status).toBe(1);
+    expect(r.out).toMatch(/control.*ohmail-key-ring/);
+    expect(r.inputs).toHaveLength(1);
+  });
+
+  onLinux("refuses a finding by its rule and its file, and never prints what was found", () => {
+    const found = '[{"RuleID":"github-pat","StartLine":4,"Match":"STUB-FOUND-VALUE"}]';
+    const r = runScan(clean, { STUB_CHANGE: found, STUB_CHANGE_RC: "1" });
+    expect(r.status).toBe(1);
+    expect(r.out).toMatch(/src\/new\.ts: github-pat/);
+    expect(r.out).not.toContain("STUB-FOUND-VALUE");
+  });
+
+  onLinux("refuses a scan that wrote no report, whatever it exited", () => {
+    for (const rc of ["0", "1"]) expect(runScan(clean, { STUB_CHANGE: "", STUB_CHANGE_RC: rc }).status, rc).toBe(1);
   });
 });
