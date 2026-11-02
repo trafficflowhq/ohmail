@@ -141,3 +141,13 @@ fn the_platform_conventions_are_where_a_mac_user_expects_them() {
     assert_eq!(key("compose"), "CmdOrCtrl+N");
     assert_eq!(key("settings"), "CmdOrCtrl+,");
 }
+
+/// The app's own Quit goes through the saving quit, and no other item does.
+#[test]
+fn the_quit_item_goes_to_the_saving_quit() {
+    assert_eq!(menu_act(QUIT_ID), MenuAct::QuitSaving);
+    assert_eq!(menu_act("quit"), MenuAct::Other);
+    assert_eq!(menu_act(crate::updater::CHECK_FOR_UPDATES_ID), MenuAct::Other);
+    assert_eq!(menu_act("view:ohbox"), MenuAct::Navigate("ohbox"));
+    assert_eq!(menu_act("cmd:compose"), MenuAct::Command("compose"));
+}

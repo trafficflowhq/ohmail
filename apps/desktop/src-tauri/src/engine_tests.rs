@@ -1545,6 +1545,16 @@ fn a_close_during_a_restarts_stop_is_answered_at_once_and_the_restart_still_wait
     assert!(shell.leaving.lock().quitting, "the close was not recorded");
 }
 
+/// A CLOSE IS NOTED AT THE PRESS, before the window's save: a restart that fails during that save
+/// starts no engine behind a window that is going.
+#[test]
+fn a_close_noted_at_the_press_starts_no_engine_after_a_failed_restart() {
+    let shell = Arc::new(Shell::inert_for_tests());
+    assert!(shell.stop_for_restart());
+    shell.note_quitting();
+    assert_eq!(shell.resume_after_failed_restart(SHUTDOWN_BOUND), Resume::Quitting);
+}
+
 /// A RESTART THAT DOES NOT HAPPEN AFTER A CLOSE STARTS NO ENGINE. The Windows installer can fail to
 /// start after the engine left for it, and the engine came back behind a window the close had
 /// already taken away. The close is recorded under the shutdown lock, and the resume then starts
@@ -4380,10 +4390,10 @@ fn every_granted_permission_is_declared_by_the_build() {
     // `engine.rs` wrote.
     assert_eq!(grant, LOCAL_ENGINE_CAPABILITY);
     // Settings' install switch and the window's "a send waits" are granted and declared.
-    for permission in ["allow-update-set-auto", "allow-update-hold"] {
+    for permission in ["allow-update-set-auto", "allow-update-hold", "allow-leave-saved"] {
         assert!(grant.contains(&format!("\"{permission}\"")), "{permission} is not granted");
     }
-    for command in ["update_set_auto", "update_hold"] {
+    for command in ["update_set_auto", "update_hold", "leave_saved"] {
         assert!(DECLARED_WINDOW_COMMANDS.split(',').any(|c| c == command), "{command} is not declared");
     }
 }

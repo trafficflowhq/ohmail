@@ -1289,9 +1289,12 @@ fn stand_up_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, runtime: &Arc<Hos
             .tooltip("ohmail")
             .on_menu_event(|app, event| match event.id().as_ref() {
                 TRAY_OPEN_ID => show_main_window(app),
-                // The tray's Quit is the app's quit: the exit event stops the engine on the same
-                // path the menu bar's Quit has always taken, once an install still writing returns.
-                TRAY_QUIT_ID => crate::updater::quit(app, 0),
+                // The tray's Quit is the app's quit: the window saves first, then the exit event
+                // stops the engine, once an install still writing returns.
+                TRAY_QUIT_ID => {
+                    let leaving = app.clone();
+                    crate::updater::leave_saving(app, move || crate::updater::quit(&leaving, 0));
+                }
                 _ => {}
             });
         if let Some(icon) = app.default_window_icon() {

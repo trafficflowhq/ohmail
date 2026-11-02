@@ -27,12 +27,16 @@ export const UPDATE_STATE_EVENT = "updater://state";
 /** The menu's Restart, asking this window to save an open draft and press. Spelled again in `updater.rs`. */
 export const UPDATE_RESTART_ASKED_EVENT = "updater://restart-asked";
 
+/** A quit or a close, asking this window to write its open editors first. Spelled again in `updater.rs`. */
+export const LEAVE_ASKED_EVENT = "shell://leave-asked";
+
 /** The commands the shell registers for this file. */
 const STATE_COMMAND = "update_state";
 const PRESS_COMMAND = "update_press";
 const POLL_COMMAND = "update_poll";
 const SET_AUTO_COMMAND = "update_set_auto";
 const HOLD_COMMAND = "update_hold";
+const LEAVE_SAVED_COMMAND = "leave_saved";
 
 /**
  * Where the flow is. The same five the Rust `Stage` has, plus the honest sixth for a payload this
@@ -379,6 +383,25 @@ export async function onUpdateState(
  * shell restarts on its own when nobody answers.
  */
 export async function onRestartAsked(run: () => void): Promise<() => void> {
+  return onShellAsk(UPDATE_RESTART_ASKED_EVENT, run);
+}
+
+/**
+ * Run `run` whenever a quit or a close asks this window to write its open editors. Inert with no
+ * shell; a refused listen is swallowed, and the shell goes on its own when nobody answers.
+ */
+export async function onLeaveAsked(run: () => void): Promise<() => void> {
+  return onShellAsk(LEAVE_ASKED_EVENT, run);
+}
+
+/** The open editors are written: the quit or close standing goes now. Takes nothing. */
+export async function leaveSaved(): Promise<void> {
+  const shell = internals();
+  if (!shell) return;
+  await shell.invoke(LEAVE_SAVED_COMMAND);
+}
+
+async function onShellAsk(event: string, run: () => void): Promise<() => void> {
   const shell = internals();
   let live = true;
   if (shell) {
@@ -386,13 +409,9 @@ export async function onRestartAsked(run: () => void): Promise<() => void> {
       if (live) run();
     });
     try {
-      await shell.invoke("plugin:event|listen", {
-        event: UPDATE_RESTART_ASKED_EVENT,
-        target: { kind: "Any" },
-        handler,
-      });
+      await shell.invoke("plugin:event|listen", { event, target: { kind: "Any" }, handler });
     } catch {
-      /* An older shell or a dropped grant: the menu restarts after its own bound. */
+      /* An older shell or a dropped grant: the shell goes on after its own bound. */
     }
   }
   return () => {

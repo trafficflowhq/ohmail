@@ -133,6 +133,9 @@ const WINDOW_COMMANDS: &[&str] = &[
     // and the window's word that a send waits, which holds every install while it does.
     "update_set_auto",
     "update_hold",
+    // The window's word that its open editors are written after a quit or close asked: no
+    // argument, and it can only let a leave already under way go before its bound.
+    "leave_saved",
     "window_ready",
     // SETTINGS → TEXT SIZE (`src/text_scale.rs`): one of five percentages, which the shell turns
     // into the main window's page zoom and keeps for the next launch. Any other number is refused.

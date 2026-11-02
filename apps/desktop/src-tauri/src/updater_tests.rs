@@ -3191,3 +3191,67 @@ fn an_install_at_an_exit_that_restarts_starts_the_app_again() {
     assert_eq!(at_quit(&AtomicBool::new(false), &pending, restarting), AtQuit::Installed);
     assert_eq!(pending.lock().unwrap().as_ref().unwrap().payload.quit_restarts(), vec![true]);
 }
+
+use super::{leave_saving_with, LeaveAsk, LEAVE_ASKED_EVENT, LEAVE_ASK_BOUND};
+use std::sync::Mutex;
+
+#[test]
+fn a_leave_waits_for_the_windows_answer_or_its_bound_and_a_second_joins_the_first() {
+    let slot = LeaveAsk::new();
+    let (run, first) = slot.ask(Instant::now(), Duration::from_secs(5));
+    assert!(first);
+    assert_eq!(slot.ask(Instant::now(), Duration::from_secs(5)), (run, false), "a second leave asked again");
+    assert!(slot.answer());
+    let began = Instant::now();
+    assert!(slot.wait(run), "the answer was not seen");
+    assert!(began.elapsed() < Duration::from_secs(1), "an answered leave waited its bound");
+    assert!(!slot.answer(), "an answer with nothing standing answered something");
+
+    let (late, first) = slot.ask(Instant::now(), Duration::from_millis(60));
+    assert!(first && late > run, "an answered ask stood on");
+    let began = Instant::now();
+    assert!(!slot.wait(late), "a leave nobody answered read as saved");
+    assert!(began.elapsed() >= Duration::from_millis(60));
+    assert!(slot.ask(Instant::now(), Duration::from_millis(60)).1, "a lapsed ask held the next leave");
+}
+
+#[test]
+fn a_leave_hides_asks_the_window_and_goes_once_it_saved() {
+    use std::sync::mpsc;
+    for installing in [false, true] {
+        let slot: &'static LeaveAsk = Box::leak(Box::new(LeaveAsk::new()));
+        let order = Arc::new(Mutex::new(Vec::<&str>::new()));
+        let (went, gone) = mpsc::channel();
+        let (o1, o2, o3) = (Arc::clone(&order), Arc::clone(&order), Arc::clone(&order));
+        leave_saving_with(
+            slot,
+            true,
+            installing,
+            move || o1.lock().unwrap().push("hide"),
+            move || o2.lock().unwrap().push("ask"),
+            move || {
+                o3.lock().unwrap().push("then");
+                went.send(()).unwrap();
+            },
+        );
+        assert!(gone.recv_timeout(Duration::from_millis(300)).is_err(), "the leave went before the save");
+        assert!(slot.answer(), "no ask stood for the window to answer");
+        gone.recv_timeout(Duration::from_secs(2)).expect("the answered leave never went");
+        let want: &[&str] = if installing { &["ask", "then"] } else { &["hide", "ask", "then"] };
+        assert_eq!(*order.lock().unwrap(), want, "installing: {installing}");
+    }
+    // No window to save anything: the leave goes at once, asking nothing.
+    let slot: &'static LeaveAsk = Box::leak(Box::new(LeaveAsk::new()));
+    let order = Arc::new(Mutex::new(Vec::<&str>::new()));
+    let (o1, o2, o3) = (Arc::clone(&order), Arc::clone(&order), Arc::clone(&order));
+    leave_saving_with(slot, false, false, move || o1.lock().unwrap().push("hide"),
+        move || o2.lock().unwrap().push("ask"), move || o3.lock().unwrap().push("then"));
+    assert_eq!(*order.lock().unwrap(), ["then"]);
+    assert!(!slot.answer());
+}
+
+#[test]
+fn the_leave_outlasts_the_windows_save_and_names_its_event() {
+    assert!(LEAVE_ASK_BOUND > Duration::from_millis(3_000));
+    assert_eq!(LEAVE_ASKED_EVENT, "shell://leave-asked");
+}

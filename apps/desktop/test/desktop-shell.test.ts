@@ -1213,6 +1213,9 @@ describe("the Rust side", () => {
       // at most two minutes unless renewed. Neither names a feed, a version or a path.
       "update_set_auto",
       "update_hold",
+      // The window's word that its open editors are written after a quit or close asked: no
+      // argument, and it can only let a leave already under way go before its bound.
+      "leave_saved",
       // The page's report that its first frame is composed, carrying that frame's canvas as one
       // `#rrggbb` string the shell parses strictly. The window is created hidden; this paints it
       // that colour and shows it. `launch_window.rs` has the measurement.
@@ -2153,12 +2156,13 @@ describe("the auto-updater", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^[ \t]*\/\/.*$/gm, "");
     const named = [...engineCode.matchAll(/updater/g)];
-    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(11);
+    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(12);
     expect(engineCode).toMatch(/crate::updater::update_state/);
     expect(engineCode).toMatch(/crate::updater::update_press/);
     expect(engineCode).toMatch(/crate::updater::update_poll/);
     expect(engineCode).toMatch(/crate::updater::update_set_auto/);
     expect(engineCode).toMatch(/crate::updater::update_hold/);
+    expect(engineCode).toMatch(/crate::updater::leave_saved/);
     /* AND THE INSTALL FENCE, WHICH IS NOT THE FLOW. The close and every restart are engine.rs's,
        and none may end the process while an install writes the app, so this file reads the fence
        (its type, the app's one fence, a restart's wait) and asks for its exit through the
@@ -2166,7 +2170,7 @@ describe("the auto-updater", () => {
        checks, fetches, verifies or installs. A restart that did not happen after the person
        closed the app answers so (`Resume::Quitting`), and the updater ends the app itself. */
     const fence = engineCode.match(/crate::updater::\w+/g) ?? [];
-    expect(fence.filter((name) => !/update_(?:state|press|poll|set_auto|hold)$/.test(name)).sort()).toEqual([
+    expect(fence.filter((name) => !/(?:update_(?:state|press|poll|set_auto|hold)|leave_saved)$/.test(name)).sort()).toEqual([
       "crate::updater::FENCE",
       "crate::updater::InstallFence",
       "crate::updater::after_install",
@@ -2582,8 +2586,8 @@ describe("the auto-updater", () => {
     expect(rustCode(say), "the quit's sentence relabels the menu item on the thread that draws").not.toMatch(/relabel\(|set_text|lock\(&state\.item\)/);
     const quitWith = /pub\(crate\) fn quit_with\([\s\S]*?\n\}\n/.exec(updater)?.[0] ?? "";
     expect(quitWith, "quit_with was not found").toMatch(/if !fence\.must_wait\(\) \{\s*return exit\(\);\s*\}/);
-    // The doors: the tray and the close's last step.
-    expect(read("src-tauri/src/host.rs")).toMatch(/TRAY_QUIT_ID => crate::updater::quit\(app, 0\),/);
+    // The doors: the tray (once the window saved) and the close's last step.
+    expect(read("src-tauri/src/host.rs")).toMatch(/TRAY_QUIT_ID => \{\s*let leaving = app\.clone\(\);\s*crate::updater::leave_saving\(app, move \|\| crate::updater::quit\(&leaving, 0\)\);/);
     const engineSrc = read("src-tauri/src/engine.rs");
     expect(engineSrc).toMatch(/self\.leave_with\(\s*&crate::updater::FENCE,[\s\S]*?move \|\| crate::updater::quit\(&leaving, 0\),\s*\);/);
     // The close reads the fence before it hides the window.

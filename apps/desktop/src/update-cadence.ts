@@ -36,6 +36,8 @@ import {
   type UpdateOffer,
 } from "../../webapp/app/shell/app-update.js";
 import {
+  leaveSaved,
+  onLeaveAsked,
   onRestartAsked,
   onUpdateState,
   updateHold,
@@ -394,5 +396,50 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
     offWaits();
     release?.();
     releaseAsk?.();
+  };
+}
+
+export interface LeaveSaveOptions {
+  /** A quit or a close asking this window to write its open editors. */
+  asked?: (run: () => void) => Promise<() => void>;
+  /** Tells the shell they are written. */
+  saved?: () => Promise<void>;
+}
+
+/**
+ * A QUIT OR A CLOSE ASKS HERE, so the open editors' pending words are written before the window
+ * goes, as before a restart (at most `RESTART_FLUSH_MS`). One ask at a time; the shell goes by
+ * itself after its own bound if no answer lands.
+ */
+export function startLeaveSave(options: LeaveSaveOptions = {}): () => void {
+  const asked = options.asked ?? onLeaveAsked;
+  const saved = options.saved ?? leaveSaved;
+  let stopped = false;
+  let answering = false;
+  let release: (() => void) | null = null;
+  const answer = async (): Promise<void> => {
+    if (stopped || answering) return;
+    answering = true;
+    try {
+      await flushBeforeRestart();
+      await saved();
+    } catch {
+      /* A refused answer: the shell goes after its own bound. */
+    } finally {
+      answering = false;
+    }
+  };
+  void (async () => {
+    try {
+      const off = await asked(() => void answer());
+      if (stopped) off();
+      else release = off;
+    } catch {
+      /* No ask reaches this window; the shell goes by itself. */
+    }
+  })();
+  return () => {
+    stopped = true;
+    release?.();
   };
 }

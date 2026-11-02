@@ -214,6 +214,28 @@ describe("what counts as a draft at all", () => {
     await settle();
     expect(sent).toHaveLength(1);
   });
+
+  it("a recipient the person typed makes a row; the same recipient from a door does not", async () => {
+    const door: ComposeFields = { ...EMPTY_COMPOSE, to: "sam@example.com, " };
+    const engine = new OhmailEngine({ adapter: adapterWith() });
+    await mount(engine, door);
+    await settle();
+    expect(sent, "a door's prefilled recipient became a row").toHaveLength(0);
+    await rerender(engine, { ...door, to: "sam@exa", recipientsTyped: true });
+    await settle();
+    expect(sent, "a recipient that does not parse made a row it cannot hold").toHaveLength(0);
+    expect(seen.holdsOnScreen(), "a half-typed recipient read as held by a row").toBe(false);
+    await rerender(engine, { ...door, recipientsTyped: true });
+    await settle();
+    expect(sent.map((m) => (m as { to?: { address: string }[] }).to?.map((a) => a.address)))
+      .toEqual([["sam@example.com"]]);
+    expect(seen.holdsOnScreen()).toBe(true);
+    // Saved, but the row stores only what parses: the half-typed entry is on screen alone.
+    await rerender(engine, { ...door, to: "sam@example.com, bo@", recipientsTyped: true });
+    await settle();
+    expect(sent).toHaveLength(2);
+    expect(seen.holdsOnScreen(), "the row holds sam, not the half-typed bo").toBe(false);
+  });
 });
 
 describe("one row, however long somebody types", () => {

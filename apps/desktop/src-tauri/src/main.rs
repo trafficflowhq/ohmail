@@ -241,7 +241,10 @@ fn main() {
     #[cfg(target_os = "linux")]
     {
         let handle = app.handle().clone();
-        unclean_exit::quit_on_session_end(move || updater::quit(&handle, 0));
+        unclean_exit::quit_on_session_end(move || {
+            let leaving = handle.clone();
+            updater::leave_saving(&handle, move || updater::quit(&leaving, 0));
+        });
     }
     #[cfg(feature = "local-engine")]
     let shell = std::sync::Arc::new(engine::Shell::start(&app, host_boot.plan()));
@@ -355,10 +358,12 @@ fn main() {
                     //
                     // WINDOWS AND LINUX ONLY, and that cfg is policy rather than a workaround:
                     // there, destroying the last window ends the app. On macOS a closed window is
-                    // not a quit, so the close proceeds as before and `Destroyed` starts the same
+                    // not a quit: the window is destroyed and `Destroyed` starts the same
                     // off-thread stop.
+                    //
+                    // EITHER WAY THE WINDOW SAVES FIRST: the close is refused, the window hidden and
+                    // asked to write its open editors (`updater::leave_saving`), then it goes.
                     host::LifecycleAction::Nothing => {
-                        #[cfg(not(target_os = "macos"))]
                         if signal == host::WindowSignal::MainCloseRequested {
                             if let tauri::RunEvent::WindowEvent {
                                 event: tauri::WindowEvent::CloseRequested { api, .. },
@@ -367,9 +372,25 @@ fn main() {
                             {
                                 api.prevent_close();
                             }
-                            // The hide is `leave_then_exit`'s: an install still writing keeps the
-                            // window, saying so, until the install returns.
-                            shell.leave_then_exit(_app, engine::SHUTDOWN_BOUND);
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                shell.note_quitting();
+                                let leaving = std::sync::Arc::clone(&shell);
+                                let app = _app.clone();
+                                updater::leave_saving(_app, move || {
+                                    leaving.leave_then_exit(&app, engine::SHUTDOWN_BOUND)
+                                });
+                            }
+                            #[cfg(target_os = "macos")]
+                            {
+                                let app = _app.clone();
+                                updater::leave_saving(_app, move || {
+                                    use tauri::Manager;
+                                    if let Some(window) = app.get_webview_window("main") {
+                                        let _ = window.destroy();
+                                    }
+                                });
+                            }
                         }
                     }
                 }
