@@ -9,7 +9,7 @@
  */
 import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, useNavigation } from "expo-router";
 import { usePaneMove } from "../../src/ui/pane-move";
 import { useBodyStamp, useWorld } from "../../src/state/world";
 import { Gated } from "../../src/ui/Gated";
@@ -49,6 +49,7 @@ function MessageRoute() {
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
   const m = w.message(id ?? "");
+  const navigation = useNavigation();
 
   // TWO PANES: this full-screen route yields to the list-detail surface that owns the pair.
   // A pop back to the pane's route (`dismissTo`), not a push — the reader is the same reading,
@@ -61,7 +62,9 @@ function MessageRoute() {
   if (leaving !== null) return leaving;
   return (
     <>
-      <MessageReader id={id ?? ""} onClose={() => router.back()} />
+      {/* Only while in front: `router.back` pops the screen in front, so a delete committing behind an
+          open Trash letter closed that letter. Behind, the reader shows its gone state on return. */}
+      <MessageReader id={id ?? ""} onClose={() => { if (navigation.isFocused()) router.back(); }} />
       {/* Gate-held and folder mail keep the full-screen reader on the unfolded-landscape Duo
           (`paneRouteFor` answers null there) — the rail's claim still needs a renderer. */}
       <ReaderRailHost />

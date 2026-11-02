@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { BackHandler, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { router, useIsFocused, useLocalSearchParams, usePathname } from "expo-router";
+import { router, useIsFocused, useLocalSearchParams, useNavigation, usePathname } from "expo-router";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld } from "../state/world";
@@ -44,6 +44,7 @@ export function useListDetail(toRoute: (id: string) => string): {
   const plan = scaffoldPlan(posture, platformName);
   const params = useLocalSearchParams<{ open?: string }>();
   const open = typeof params.open === "string" && params.open !== "" ? params.open : null;
+  const navigation = useNavigation<{ setParams(p: { open: string }): void }>();
   return {
     open,
     openRow: (id: string) => {
@@ -52,7 +53,9 @@ export function useListDetail(toRoute: (id: string) => string): {
       if (plan.panes === 2) router.setParams({ open: id });
       else router.push(toRoute(id));
     },
-    close: () => router.setParams({ open: "" }),
+    /* This screen's own route: `router.setParams` writes the screen in front, so a delete committing in the
+       Ohbox reader behind an open Trash closed the letter open in Trash. */
+    close: () => navigation.setParams({ open: "" }),
     twoPane: plan.panes === 2,
   };
 }
