@@ -103,14 +103,20 @@ describe("the plane's ops watch on the worker", () => {
     });
     closers.push(() => worker.stop());
     const db = makeDb(DB);
+    const reads = (): number => plane.asked.filter((p) => p === "/v1/ops").length;
+    const said = () => lines().filter((l) => l.event === "plane_ops_state");
+    // Passes overlap under load: the row is written inside a pass and the state line only once that
+    // pass returns, so wait for the line itself, then for two more reads after it.
     const row = await waitFor(async () => {
       const [r] = await db.select().from(alertState).where(eq(alertState.alertKey, `plane_pass_stale:${JOB}`));
-      return r && plane.asked.filter((p) => p === "/v1/ops").length > 1 ? r : null;
+      return r && said().length > 0 ? r : null;
     });
     expect(row, "the stalled pass reached alert_state through the worker's own pass").not.toBeNull();
     expect(row!.resolvedAt).toBeNull();
+    const after = reads();
+    expect(await waitFor(async () => (reads() >= after + 2 ? true : null)), "later passes read the plane").toBe(true);
     expect(lines().filter((l) => l.event === "plane_ops_watch")).toEqual([expect.objectContaining({ state: "on" })]);
-    expect(lines().filter((l) => l.event === "plane_ops_state"), "written on change, not per pass").toEqual([
+    expect(said(), "written on change, not per pass").toEqual([
       expect.objectContaining({ level: "info", state: "read" }),
     ]);
     expect(lines().filter((l) => "droppedFields" in l), "the logger census refused a field").toEqual([]);

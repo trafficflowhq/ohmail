@@ -53,6 +53,12 @@ const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
   requestId: "refresh-race-pg", ip: RUN_IP, ...over,
 });
 
+/** A clock only the test moves: every window is measured on `ctx.now`, so load cannot cross one. */
+function movableClock(): { at: () => ServiceContext; pass: (ms: number) => void } {
+  let t = Date.now();
+  return { at: () => ctx({ now: () => new Date(t) }), pass: (ms) => { t += ms; } };
+}
+
 /** Register, enrol TOTP, complete a 2FA login, and return the user id + first refresh token. */
 async function establish(svc: AuthService, email: string): Promise<{ userId: string; r1: string }> {
   // TOTP is single-use per 30-second step, so the enrol/activate and the login/verify must sit in
@@ -228,19 +234,20 @@ describe.skipIf(!PG_UP)("refresh rotation race on real Postgres", () => {
     const svc = new AuthService(makeTestAuthDeps({ refreshReuseGraceMs: 50 }));
     const email = `refresh-late-${randomUUID()}@lichtgrat.example`;
     const { r1 } = await establish(svc, email);
+    const clock = movableClock();
 
-    const rot = await svc.refresh(ctx(), { refreshToken: r1 }, { concurrentGrace: true });
+    const rot = await svc.refresh(clock.at(), { refreshToken: r1 }, { concurrentGrace: true });
     const r2 = rot.tokens!.refreshToken;
     // The chain is USED past r1: whoever holds it rotated again and kept going.
-    await new Promise((r) => setTimeout(r, 60)); // distinct consumption stamps
-    const rot2 = await svc.refresh(ctx(), { refreshToken: r2 }, { concurrentGrace: true });
+    clock.pass(60); // distinct consumption stamps
+    const rot2 = await svc.refresh(clock.at(), { refreshToken: r2 }, { concurrentGrace: true });
     const r3 = rot2.tokens!.refreshToken;
 
-    await new Promise((r) => setTimeout(r, 120));   // > the 50 ms grace
+    clock.pass(120);   // > the 50 ms grace
     // Grace ENABLED, yet past the window the family still burns — the boundary is real.
-    await expect(svc.refresh(ctx(), { refreshToken: r1 }, { concurrentGrace: true }))
+    await expect(svc.refresh(clock.at(), { refreshToken: r1 }, { concurrentGrace: true }))
       .rejects.toMatchObject({ code: "refresh_revoked", httpStatus: 401 });
-    await expect(svc.refresh(ctx(), { refreshToken: r3 }, { concurrentGrace: true }))
+    await expect(svc.refresh(clock.at(), { refreshToken: r3 }, { concurrentGrace: true }))
       .rejects.toMatchObject({ code: "refresh_revoked", httpStatus: 401 });
   }, 60_000);
 
@@ -256,24 +263,23 @@ describe.skipIf(!PG_UP)("refresh rotation race on real Postgres", () => {
    */
   it("concurrent stale re-presentations after a LOST rotation all recover; one claim, no revocation", async () => {
     // 500 ms grace: the herd's LOSERS converge through the fresh-consumption grace of the
-    // winner's claim, and that comparison runs on real wall clocks here — a 50 ms window would
-    // make this test a scheduler lottery on a loaded box, which is flakiness, not rigour.
-    // 100 ms access window: recovery is idle-bound to a full access window (an awake client
-    // must have rotated by then), and this test's sleeps are real milliseconds, not clock.
+    // winner's claim. 100 ms access window: recovery is idle-bound to a full access window (an
+    // awake client must have rotated by then). Both are read on the test's clock.
     const deps = makeTestAuthDeps({ refreshReuseGraceMs: 500, accessTtlMs: 100 });
     const svc = new AuthService(deps);
     const email = `refresh-recover-${randomUUID()}@lichtgrat.example`;
     const { userId, r1 } = await establish(svc, email);
+    const clock = movableClock();
 
     // The lost rotation: r2 exists server-side; nobody ever received it.
-    await svc.refresh(ctx(), { refreshToken: r1 }, { concurrentGrace: true });
-    await new Promise((r) => setTimeout(r, 800));   // far past the 500 ms grace
+    await svc.refresh(clock.at(), { refreshToken: r1 }, { concurrentGrace: true });
+    clock.pass(800);   // far past the 500 ms grace
 
     // The wake herd: five tabs present the stale r1 at once.
     const N = 5;
     const results = await Promise.all(
       Array.from({ length: N }, () =>
-        svc.refresh(ctx(), { refreshToken: r1 }, { concurrentGrace: true })
+        svc.refresh(clock.at(), { refreshToken: r1 }, { concurrentGrace: true })
           .then((r) => r.tokens!.refreshToken).catch((e) => e as Error)),
     );
     const tokens = results.filter((r): r is string => typeof r === "string");
@@ -282,7 +288,7 @@ describe.skipIf(!PG_UP)("refresh rotation race on real Postgres", () => {
     // Nothing revoked; the family works.
     const rows = await db.select().from(refreshTokens).where(eq(refreshTokens.userId, userId));
     expect(rows.every((row) => row.revokedAt === null)).toBe(true);
-    await expect(svc.refresh(ctx(), { refreshToken: tokens[0]! }, { concurrentGrace: true }))
+    await expect(svc.refresh(clock.at(), { refreshToken: tokens[0]! }, { concurrentGrace: true }))
       .resolves.toBeTruthy();
 
     // EXACTLY ONE recovery was audited — the claim serialized the herd into one re-admission.
@@ -300,25 +306,26 @@ describe.skipIf(!PG_UP)("refresh rotation race on real Postgres", () => {
    */
   it("a stale presentation racing the live tail's own rotation revokes nothing", async () => {
     // The windows are chosen so the stale presentation is PAST BOTH the direct grace path
-    // (400 ms sleep > 200 ms grace — round 3 of the review caught the first version sitting
+    // (400 ms on the clock > 200 ms grace — round 3 of the review caught the first version sitting
     // inside it, never reaching recovery at all) and the idle bound (> 100 ms accessTtl), so
-    // every round genuinely enters `recoverLostRotation`; the 200 ms grace still lets the
-    // racing pair's own spends read as fresh to each other's classification.
+    // every round genuinely enters `recoverLostRotation`; the racing pair present at one instant,
+    // so their own spends read as fresh to each other's classification.
     const deps = makeTestAuthDeps({ refreshReuseGraceMs: 200, accessTtlMs: 100 });
     const svc = new AuthService(deps);
     const email = `refresh-crossrace-${randomUUID()}@lichtgrat.example`;
     const { userId, r1 } = await establish(svc, email);
+    const clock = movableClock();
 
     let stale = r1;
-    const rot = await svc.refresh(ctx(), { refreshToken: stale }, { concurrentGrace: true });
+    const rot = await svc.refresh(clock.at(), { refreshToken: stale }, { concurrentGrace: true });
     let tail = rot.tokens!.refreshToken;   // delivered — and about to sit idle past accessTtl
     for (let round = 0; round < 5; round++) {
-      await new Promise((r) => setTimeout(r, 400));   // idle: > grace(200) AND > accessTtl(100)
+      clock.pass(400);   // idle: > grace(200) AND > accessTtl(100)
       const [staleRes, tailRes] = await Promise.all([
-        svc.refresh(ctx(), { refreshToken: stale }, { concurrentGrace: true })
+        svc.refresh(clock.at(), { refreshToken: stale }, { concurrentGrace: true })
           .then((r) => ({ ok: true as const, tok: r.tokens!.refreshToken }))
           .catch((e) => ({ ok: false as const, err: e as Error })),
-        svc.refresh(ctx(), { refreshToken: tail }, { concurrentGrace: true })
+        svc.refresh(clock.at(), { refreshToken: tail }, { concurrentGrace: true })
           .then((r) => ({ ok: true as const, tok: r.tokens!.refreshToken }))
           .catch((e) => ({ ok: false as const, err: e as Error })),
       ]);
@@ -339,14 +346,15 @@ describe.skipIf(!PG_UP)("refresh rotation race on real Postgres", () => {
     const svc = new AuthService(makeTestAuthDeps({ refreshReuseGraceMs: 50, accessTtlMs: 100 }));
     const email = `refresh-recover2-${randomUUID()}@lichtgrat.example`;
     const { r1 } = await establish(svc, email);
+    const clock = movableClock();
 
-    await svc.refresh(ctx(), { refreshToken: r1 }, { concurrentGrace: true });
-    await new Promise((r) => setTimeout(r, 150));
-    await expect(svc.refresh(ctx(), { refreshToken: r1 }, { concurrentGrace: true }))
+    await svc.refresh(clock.at(), { refreshToken: r1 }, { concurrentGrace: true });
+    clock.pass(150);
+    await expect(svc.refresh(clock.at(), { refreshToken: r1 }, { concurrentGrace: true }))
       .resolves.toBeTruthy();      // the recovery
 
-    await new Promise((r) => setTimeout(r, 150));
-    await expect(svc.refresh(ctx(), { refreshToken: r1 }, { concurrentGrace: true }))
+    clock.pass(150);
+    await expect(svc.refresh(clock.at(), { refreshToken: r1 }, { concurrentGrace: true }))
       .rejects.toMatchObject({ code: "refresh_revoked", httpStatus: 401 });
     const [row] = await db.select().from(refreshTokens)
       .where(eq(refreshTokens.tokenHash, hashToken(r1))).limit(1);
@@ -419,17 +427,18 @@ describe.skipIf(!PG_UP)("refresh rotation race on real Postgres", () => {
     const email = `refresh-converged-late-${randomUUID()}@lichtgrat.example`;
     const { r1 } = await establish(svc, email);
     const familyId = await familyOf(r1);
+    const clock = movableClock();
 
-    const first = await svc.refresh(ctx(), { refreshToken: r1 }, COOKIE);
-    const second = await svc.refresh(ctx(), { refreshToken: r1 }, COOKIE);   // converges the first
-    await new Promise((r) => setTimeout(r, 120));                            // > the 50 ms window
+    const first = await svc.refresh(clock.at(), { refreshToken: r1 }, COOKIE);
+    const second = await svc.refresh(clock.at(), { refreshToken: r1 }, COOKIE);   // converges the first
+    clock.pass(120);                                                              // > the 50 ms window
 
-    await expect(svc.refresh(ctx(), { refreshToken: first.tokens!.refreshToken }, COOKIE))
+    await expect(svc.refresh(clock.at(), { refreshToken: first.tokens!.refreshToken }, COOKIE))
       .rejects.toMatchObject({ code: "refresh_expired", httpStatus: 401 });
     const fam = await db.select().from(refreshTokens).where(eq(refreshTokens.familyId, familyId));
     expect(fam.every((row) => row.revokedAt === null), "a kill is not a second holder").toBe(true);
     // The line the convergence established is untouched and still rotates.
-    await expect(svc.refresh(ctx(), { refreshToken: second.tokens!.refreshToken }, COOKIE))
+    await expect(svc.refresh(clock.at(), { refreshToken: second.tokens!.refreshToken }, COOKIE))
       .resolves.toBeTruthy();
   }, 60_000);
 
