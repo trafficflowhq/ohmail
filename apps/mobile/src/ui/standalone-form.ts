@@ -48,6 +48,8 @@ export interface StandaloneFields {
   readonly imapTls: boolean;
   readonly smtpHost: string;
   readonly smtpPort: string;
+  /** The name this mailbox's letters carry (optional; blank sends the bare address). */
+  readonly name?: string;
   /**
    * WHICH SERVER FIELDS THE PERSON TYPED THEMSELVES — the provenance rule, and it is the whole
    * reason this field exists.
@@ -69,8 +71,24 @@ export const EMPTY_STANDALONE: StandaloneFields = {
   imapTls: true,
   smtpHost: "",
   smtpPort: "",
+  name: "",
   typed: new Set(),
 };
+
+/** The longest sender name a letter carries — the server's own bound. */
+export const SENDER_NAME_MAX = 100;
+
+/**
+ * A typed sender name as it is stored: whitespace collapsed and trimmed, or `null` when blank. A
+ * control character or a name past {@link SENDER_NAME_MAX} is refused (`undefined`), never cut.
+ */
+export function senderNameOf(text: string): string | null | undefined {
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(text)) return undefined;
+  const name = text.replace(/\s+/g, " ").trim();
+  if (name === "") return null;
+  return Array.from(name).length > SENDER_NAME_MAX ? undefined : name;
+}
 
 /** The four server fields a guess may write. The address and the password are never guessed. */
 const GUESSED = ["imapHost", "imapPort", "smtpHost", "smtpPort"] as const;

@@ -91,7 +91,7 @@ describe("a bound draft whose mailbox cannot send leaves from one that can, and 
   });
 
   it("the sheet sends a new mail from that sender, keeps the row's own, and says the change", () => {
-    expect(SHEET).toContain("composeSenderOf({");
+    expect(SHEET).toContain("composeFromOf({");
     expect(SHEET).toMatch(/w\.actions\.sendNew\(sendFrom,/);
     expect(SHEET).toContain("sender.was !== null ? Copy.composeFromSubstituted(sender.was) : Copy.composeFromSubstitutedUnknown");
     // Keeps name the row's own mailbox (a save is no move), never the substitute.

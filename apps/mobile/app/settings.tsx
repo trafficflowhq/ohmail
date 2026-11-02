@@ -30,6 +30,8 @@ import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } fro
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { Nav } from "../src/ui/MoreNav";
 import { Field } from "../src/ui/Field";
+import { SenderNamePanel } from "../src/ui/SenderNamePanel";
+import { SignaturesPanel } from "../src/ui/SignaturesPanel";
 import { useConnection } from "../src/net/connection";
 import { changeServerSettings, checkMailbox, resupplyPassword, selfChecksThisSession } from "../src/net/mailboxes";
 import { backupExclusion, subscribeBackupExclusion } from "../src/engine/backup-exclusion";
@@ -200,6 +202,8 @@ function SettingsBody() {
 
         {/* this phone — first, because it is the only block that says what this phone IS */}
         <ThisPhonePanel />
+        <SenderNamePanel />
+        <SignaturesPanel />
         <WaitingStrip />
         <FilingStrip />
         <FilingsBlocks />

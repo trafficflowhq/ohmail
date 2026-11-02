@@ -1,14 +1,19 @@
 /**
- * WHICH MAILBOX A DRAFT OPENED FROM DRAFTS LEAVES FROM. A draft kept from a removed mailbox still
- * names it, and the server refuses to send from a `disabled` row, so Send would fail for ever.
- * The web compose's rule (`compose-from.ts`): a sendable row with the same address is the same
- * identity, taken silently; otherwise the fallback, or the first row that can send, and the sheet
- * says so. Only Send writes the new sender; keeps name the row's own mailbox, which is no move.
+ * WHICH MAILBOX A NEW MAIL LEAVES FROM. With nothing picked it is the web's default (`defaultFrom`:
+ * the oldest connected mailbox), else the engine's `sendingId`. A pick, or a draft opened from
+ * Drafts, names its own; a draft kept from a removed mailbox cannot send from it, since the server
+ * refuses a `disabled` row: a sendable row with the same address is the same identity, taken
+ * silently; otherwise the fallback, or the first row that can send, and the sheet says so. Keeps
+ * name the picked or bound mailbox, so a substitution is never a move.
  */
+import { defaultFrom, optionsFromFacts, type FromOption } from "../state/live";
+
 export interface SenderRow {
   id: string;
   address: string;
   status: string | null;
+  createdAt?: string;
+  smtpMaxSizeBytes?: number | null;
 }
 
 export interface ComposeSender {
@@ -17,6 +22,13 @@ export interface ComposeSender {
   substituted: boolean;
   /** The bound mailbox's address, where the roster still lists it. */
   was: string | null;
+}
+
+export interface ComposeFrom extends ComposeSender {
+  /** The mailbox a keep names: the pick, else the bound row's own, else the sender. */
+  keepFrom: string | null;
+  /** What the From list offers, oldest first; sendable only. */
+  choices: FromOption[];
 }
 
 export function composeSenderOf(o: {
@@ -36,4 +48,21 @@ export function composeSenderOf(o: {
   if (same) return { sendFrom: same.id, substituted: false, was: null };
   const pick = sendable.find((r) => r.id === o.fallback) ?? sendable[0]!;
   return { sendFrom: pick.id, substituted: true, was: row?.address ?? null };
+}
+
+/** A new mail's sender: the pick or the bound row, resolved as above, else the default. */
+export function composeFromOf(o: {
+  picked: string | null;
+  bound: string | null;
+  fallback: string | null;
+  known: boolean;
+  rows: readonly SenderRow[];
+}): ComposeFrom {
+  const options = o.known ? optionsFromFacts(o.rows) : [];
+  const choices = options.filter((c) => c.sendable);
+  const asked = o.picked ?? o.bound;
+  const sender = asked !== null
+    ? composeSenderOf({ bound: asked, fallback: o.fallback, known: o.known, rows: o.rows })
+    : { sendFrom: defaultFrom(options)?.id ?? o.fallback, substituted: false, was: null };
+  return { ...sender, keepFrom: asked ?? sender.sendFrom, choices };
 }

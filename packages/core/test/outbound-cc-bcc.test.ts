@@ -121,6 +121,39 @@ describe("cc is a header, bcc is envelope-only", () => {
  * that is a bare `text/plain` with the file dropped, which in production is a send that silently
  * loses its attachment.
  */
+describe("a display name rides as a name, never as part of the address list", () => {
+  const named: OutboundMessage = {
+    from: { name: "Ada Lovelace", address: "me@trafficflow.test" },
+    to: [{ name: "Doe, John <boss@evil.test>", address: "to@example.test" }],
+    cc: [{ name: "Cy", address: "cc@example.test" }],
+    subject: "names",
+    text: "hello",
+  };
+
+  it("a name with a comma or angle brackets is one recipient, quoted in the header", async () => {
+    const envelope = compiled(named).getEnvelope() as { from: string; to: string[] };
+    expect(envelope.to).toEqual(["to@example.test", "cc@example.test"]);
+    expect(envelope.from).toBe("me@trafficflow.test");
+    const headers = headersOf(await rawOf(named));
+    expect(headers).toMatch(/^To: "Doe, John <boss@evil\.test>" <to@example\.test>$/m);
+    expect(headers).toMatch(/^From: Ada Lovelace <me@trafficflow\.test>$/m);
+    expect(headers).toMatch(/^Cc: Cy <cc@example\.test>$/m);
+  });
+
+  it("a CR or LF in a name never starts a header of its own", async () => {
+    const evil: OutboundMessage = { ...named, to: [{ name: "Eve\r\nBcc: spy@evil.test", address: "to@example.test" }] };
+    const envelope = compiled(evil).getEnvelope() as { to: string[] };
+    expect(envelope.to).toEqual(["to@example.test", "cc@example.test"]);
+    const headers = headersOf(await rawOf(evil));
+    expect(headers).not.toMatch(/^Bcc:/im);
+    expect(headers.split("\r\n").filter((l) => /^To:/.test(l))).toHaveLength(1);
+  });
+
+  it("a bare address string builds the header exactly as before", async () => {
+    expect(headersOf(await rawOf(base))).toMatch(/^From: me@trafficflow\.test$/m);
+  });
+});
+
 describe("attachments ride the one compiled message", () => {
   const withFile: OutboundMessage = {
     from: base.from,

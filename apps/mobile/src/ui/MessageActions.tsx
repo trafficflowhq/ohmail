@@ -103,9 +103,9 @@ import { sayRefusal, type Refusal } from "../refusal";
 import { usePrefs } from "../state/store";
 import { cancelAct, cancelSendOffered, cancelSendPress, keptSay, waitingRowOf } from "./send-cancel";
 import { autosaveKeep, baseAfter, baseFor, keepAct, unmountKeep, waitedFor, worthKeeping, type DraftBase } from "./compose-keep";
-import { composeSenderOf } from "./compose-sender";
+import { composeFromOf } from "./compose-sender";
 import { editWhileIdle } from "./compose-edit";
-import { copiesShown, copiesToKeep, copiesToSend, type TypedCopies } from "./compose-copies";
+import { copiesOffered, copiesShown, copiesToKeep, copiesToSend, type TypedCopies } from "./compose-copies";
 import { ComposeCopies } from "./ComposeCopies";
 import { RecipientInput, stepBack, type BackStep } from "./RecipientInput";
 import type { MailtoPrefill } from "./mailto";
@@ -1231,9 +1231,15 @@ export function ComposeSheet({
   const [to, setTo] = useState(draft?.to ?? prefill?.to ?? "");
   /** A parent-less mail's own subject. Reply and forward derive theirs; this one is typed. */
   const [subject, setSubject] = useState(draft?.subject ?? prefill?.subject ?? "");
-  /* A new mail's Cc and Bcc, where the letter arrived with them (`compose-copies.ts`). */
+  /* A new mail's Cc and Bcc, shown where the letter arrived with them or once asked for (`compose-copies.ts`). */
   const [copies, setCopies] = useState<TypedCopies>({ cc: draft?.cc ?? prefill?.cc ?? "", bcc: draft?.bcc ?? prefill?.bcc ?? "" });
-  const [copiesOn] = useState(() => mode === "new" && copiesShown(draft ?? prefill));
+  const [copiesOn, setCopiesOn] = useState(() => mode === "new" && copiesShown(draft ?? prefill));
+  const ccField = useRef<TextInput | null>(null);
+  /* Focused once the fields have mounted, not in the press: the input does not exist yet then. */
+  const [copiesAsked, setCopiesAsked] = useState(false);
+  useEffect(() => {
+    if (copiesAsked && copiesOn) ccField.current?.focus();
+  }, [copiesAsked, copiesOn]);
   /**
    * The composer's send phase. `queued` is TERMINAL for this composer: the text stands on
    * the engine's retry queue under its Idempotency-Key (the reconnect flush retries it, the
@@ -1332,23 +1338,25 @@ export function ComposeSheet({
   const saved = useRef<string | null>(draft ? JSON.stringify([draft.to, draft.subject, draft.body, draft.cc, draft.bcc]) : null);
   /** The last press was refused, and which sentence it earned — said in the sheet, see `send-failed.ts`. */
   const [failNote, setFailNote] = useState<FailedSendCopy | null>(null);
-  /* The ONE shared bound (`composeAttachCap`) of the sending mailbox's announced `SIZE` —
-     the same pair the send will enforce. The phone declares no surface: its send rides one
-     JSON request, so the strict constant is the other arm. */
-  /* WHICH MAILBOX THIS LEAVES FROM — the parent's for a reply or forward (what `Engine.enrich`
-     would derive anyway, made explicit), the engine's `sendingMailboxId` for a parent-less
-     mail. `null` only where this phone has mirrored nothing, and the send refuses by name. */
-  const mailboxId = draft?.mailboxId ?? m?.mailboxId ?? w.mailboxes.sendingId;
-  /* A NEW MAIL OPENED FROM DRAFTS whose mailbox cannot send (kept from a removed one) leaves from
-     one that can, said under From (`compose-sender.ts`); its keeps still name its own. */
-  const sender = fresh && draft !== undefined
-    ? composeSenderOf({ bound: mailboxId, fallback: w.mailboxes.sendingId, known: w.mailboxes.known, rows: w.mailboxes.all })
+  /* A NEW MAIL'S FROM: the pick, else the draft's own, else the oldest connected mailbox; a draft
+     kept from a removed mailbox leaves from one that can send, said under From (`compose-sender.ts`). */
+  const [picked, setPicked] = useState<string | null>(draft?.mailboxId ?? null);
+  const [fromOpen, setFromOpen] = useState(false);
+  const sender = fresh
+    ? composeFromOf({ picked, bound: draft?.mailboxId ?? null, fallback: w.mailboxes.sendingId, known: w.mailboxes.known, rows: w.mailboxes.all })
     : null;
+  /* WHICH MAILBOX THIS IS KEPT UNDER — the parent's for a reply or forward (what `Engine.enrich`
+     would derive anyway, made explicit), the resolved From's for a new mail. `null` only where
+     this phone has mirrored nothing, and the send refuses by name. */
+  const mailboxId = sender !== null ? sender.keepFrom : draft?.mailboxId ?? m?.mailboxId ?? w.mailboxes.sendingId;
   const sendFrom = sender?.sendFrom ?? mailboxId;
   /* The sending address, only where the phone has read the mailbox list — `null` is "not
      asked yet", which states nothing rather than a guessed address. */
   const fromAddress = w.mailboxes.rows.find((r) => r.id === sendFrom)?.address ?? null;
-  const attachCap = phoneAttachCap(w.mailboxes.rows, sendFrom ?? "");
+  /* The ONE shared bound (`composeAttachCap`) of the sending mailbox's announced `SIZE` and the
+     door's surface — the pair the send will enforce (`compose/attach.ts#phoneSendSurface`). */
+  const sendSurface = w.actions.sendSurface();
+  const attachCap = phoneAttachCap(w.mailboxes.rows, sendFrom ?? "", sendSurface);
   /* THE LETTER ON THE PHONE'S DISK as it is written (`compose/letter-keeper.ts`): half a second after
      the last change, at once when the app leaves the foreground, and marked before a keep or a send. */
   const [keeper] = useState<LetterKeeper | null>(() => {
@@ -1384,7 +1392,7 @@ export function ComposeSheet({
   }, []);
   const forwardPlan = forward && m !== null ? forwardFilesPlan({
     list: w.actions.forwardFiles(m.id), supported: w.actions.forwardPartsSupported(), kept: forwardKept,
-    addedBytes: attachments.reduce((n, a) => n + a.sizeBytes, 0), caps: forwardCaps(w.mailboxes.rows, sendFrom ?? ""),
+    addedBytes: attachments.reduce((n, a) => n + a.sizeBytes, 0), caps: forwardCaps(w.mailboxes.rows, sendFrom ?? "", sendSurface),
   }) : null;
   const removePart = (id: string) => {
     if (phase !== "idle" || forwardPlan === null) return;
@@ -1397,13 +1405,15 @@ export function ComposeSheet({
     keeper?.edit({ ...letterWords, envelope: keeper.current().envelope });
     // The words are the change; the keeper reads the rest.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [to, subject, body, copies.cc, copies.bcc]);
+  }, [to, subject, body, copies.cc, copies.bcc, mailboxId]);
   const { pictureQuality } = usePrefs();
   const pick = async (which: "files" | "photos") => {
     if (phase !== "idle") return;
     const picker = nativeAttachPicker();
+    /* A file past the room left is never read into memory (`readWithin`). */
+    const room = attachCap - attachments.reduce((n, a) => n + a.sizeBytes, 0);
     const outcome: AttachPickOutcome =
-      which === "files" ? await picker.pickFiles() : await picker.pickPhotos(zone);
+      which === "files" ? await picker.pickFiles(room) : await picker.pickPhotos(zone);
     if (outcome.kind === "cancelled") return;
     if (outcome.kind === "unavailable") {
       // The platform refused the picker itself — said by name, never a press that does nothing.
@@ -1422,7 +1432,7 @@ export function ComposeSheet({
       }
     }
     const notes: AttachNote[] = [];
-    if (admit.overCap > 0) notes.push({ kind: "overCap" });
+    if (admit.overCap + (outcome.overCap ?? 0) > 0) notes.push({ kind: "overCap" });
     if (admit.duplicates.length > 0) notes.push({ kind: "duplicates", filenames: admit.duplicates.join(", ") });
     if (outcome.unreadable + admit.unreadable > 0) notes.push({ kind: "unreadable" });
     setAttachments(admit.next);
@@ -1494,6 +1504,18 @@ export function ComposeSheet({
     // `onScreen` is the fields' change; `quietSave` reads the rest when it runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bound, draftId, phase, onScreen, tooLong]);
+  /* A PICK ON A DRAFT OPENED HERE moves its row: the row no longer holds what is on screen, so it is
+     saved now and the close keeps it if that save did not land. */
+  const savedFrom = useRef<string | null>(draft?.mailboxId ?? null);
+  useEffect(() => {
+    if (!bound || mailboxId === savedFrom.current) return;
+    savedFrom.current = mailboxId;
+    saved.current = null;
+    savingFor.current = null;
+    quietSave.current();
+    // The pick is the change; `quietSave` reads the rest when it runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mailboxId]);
   /* LEAVING THE FOREGROUND writes the letter now, and a draft opened here saves now: the next thing
      may be a force-stop. */
   useEffect(() => {
@@ -1616,14 +1638,13 @@ export function ComposeSheet({
 
   /**
    * WHAT THE BLOCK SHOWS — and exactly what the send appends (`effectiveSignature`, one
-   * derivation, two consumers). The sending mailbox is the row's own `mailboxId`: the mailbox
-   * the message arrived in, which is what `Engine.enrich` puts on a reply's wire and what the
-   * forward arm passes explicitly — this sheet has no From selector, so the resolution is the
-   * mutation's, made visible. `w.signatures === null` (not yet server-confirmed) renders no
-   * block and appends nothing: a signature is never drawn or serialized from a guess.
+   * derivation, two consumers). The sending mailbox: the one the message arrived in for a reply
+   * or forward (what `Engine.enrich` puts on the wire), the resolved From for a new mail.
+   * `w.signatures === null` (not yet server-confirmed) renders no block and appends nothing: a
+   * signature is never drawn or serialized from a guess.
    */
   const sigText =
-    w.signatures === null || mailboxId === null ? null : effectiveSignature(sig, w.signatures, mailboxId);
+    w.signatures === null || sendFrom === null ? null : effectiveSignature(sig, w.signatures, sendFrom);
 
   /**
    * The three presets, computed off the frozen `openedAt`. The evening one is OFFERED ONLY
@@ -2004,10 +2025,46 @@ export function ComposeSheet({
           {/* WHICH ADDRESS IT LEAVES FROM — stated only where nothing else says it. A reply
               carries the conversation's own mailbox and the head already names the audience;
               a parent-less mail states its sender rather than letting a person guess. */}
-          {fresh && fromAddress !== null ? (
+          {fresh && fromAddress !== null && (sender?.choices.length ?? 0) > 1 ? (
+            /* MORE THAN ONE ADDRESS: the From line opens the list in place, never a Modal over this one. */
+            <Tap
+              accessibilityRole="button"
+              accessibilityState={{ expanded: fromOpen, disabled: phase !== "idle" }}
+              accessibilityLabel={Copy.composeFromChange(fromAddress)}
+              onPress={() => { if (phase === "idle") setFromOpen((o) => !o); }}
+              style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", paddingVertical: 4 }}
+            >
+              <Txt variant="caption" tone="ink2">
+                {Copy.composeFrom(fromAddress)}
+              </Txt>
+              <View style={{ transform: [{ rotate: fromOpen ? "-90deg" : "90deg" }] }}>
+                <Icon name="chev" size={12} color={t.c.ink3} />
+              </View>
+            </Tap>
+          ) : fresh && fromAddress !== null ? (
             <Txt variant="caption" tone="ink3">
               {Copy.composeFrom(fromAddress)}
             </Txt>
+          ) : null}
+          {fresh && fromOpen && phase === "idle" && sender !== null ? (
+            <View accessibilityRole="radiogroup" accessibilityLabel={Copy.composeFromList} style={{ gap: 2 }}>
+              {sender.choices.map((c) => (
+                <Tap
+                  key={c.id}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: c.id === sendFrom }}
+                  accessibilityLabel={c.address}
+                  onPress={() => { setPicked(c.id); setFromOpen(false); }}
+                  style={({ pressed }) => ({
+                    flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 2,
+                    backgroundColor: pressed ? t.c.tint : "transparent",
+                  })}
+                >
+                  <Txt variant="body" numberOfLines={1} style={{ flex: 1 }}>{c.address}</Txt>
+                  {c.id === sendFrom ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}
+                </Tap>
+              ))}
+            </View>
           ) : null}
           {sender?.substituted && fromAddress !== null ? (
             <Txt variant="caption" tone="ink3" accessibilityLiveRegion="polite">
@@ -2035,7 +2092,15 @@ export function ComposeSheet({
               placeholder={fresh ? Copy.composeToPlaceholder : Copy.forwardToPlaceholder}
             />
           ) : null}
-          {copiesOn ? <ComposeCopies value={copies} editable={phase === "idle"} onChange={editWhileIdle(phase, setCopies)} book={addressBook} back={suggestionsBack} /> : null}
+          {copiesOffered({ mode, shown: copiesOn, phase }) ? (
+            <Button
+              label={Copy.composeAddCopies}
+              variant="quiet"
+              style={{ alignSelf: "flex-start" }}
+              onPress={() => { setCopiesOn(true); setCopiesAsked(true); }}
+            />
+          ) : null}
+          {copiesOn ? <ComposeCopies value={copies} editable={phase === "idle"} onChange={editWhileIdle(phase, setCopies)} book={addressBook} back={suggestionsBack} ccField={ccField} /> : null}
           {fresh ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               <Txt variant="caption" tone="ink3">

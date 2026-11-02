@@ -1001,8 +1001,14 @@ export interface ChangeBatch {
   unchanged?: boolean;
 }
 
+/**
+ * An outbound sender or recipient: a bare address, or a name with its address. Never a
+ * `"Name <addr>"` string: nodemailer's parser splits a name holding a comma into two recipients.
+ */
+export type OutboundAddress = string | { name: string; address: string };
+
 export interface OutboundMessage {
-  from: string; to: string | string[]; subject: string;
+  from: OutboundAddress; to: OutboundAddress | OutboundAddress[]; subject: string;
   /**
    * Carbon and blind-carbon recipients, both DELIVERED (nodemailer flattens to+cc+bcc into the
    * SMTP RCPT list). The difference is in the HEADERS of the built message, not here: `cc` is
@@ -1010,7 +1016,7 @@ export interface OutboundMessage {
    * written into NEITHER (nodemailer's default `keepBcc: false`). That header asymmetry — not any
    * omission at this seam — is what makes a Bcc blind. See `imap.ts#send` / `outboundToMail`.
    */
-  cc?: string | string[]; bcc?: string | string[];
+  cc?: OutboundAddress | OutboundAddress[]; bcc?: OutboundAddress | OutboundAddress[];
   text: string; html?: string;
   messageId?: string; inReplyTo?: string; references?: string | string[];
   /**

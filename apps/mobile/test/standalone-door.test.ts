@@ -342,6 +342,28 @@ describe("the paired door, unchanged — the regression this file exists to catc
   }, 60_000);
 });
 
+/* ── The name the letters carry, asked at the door ────────────────────────────────────────────── */
+
+describe("the door's sender name", () => {
+  const form = { ...EMPTY_STANDALONE, address: "someone@example.test", password: "door-name-password", imapHost: "imap.example.test", imapPort: "993", imapTls: true };
+  const started = async (name: string): Promise<Record<string, unknown>> => {
+    let seen: Record<string, unknown> = {};
+    await openStandaloneMailbox({ ...form, name }, {
+      startEngine: (async (d: Record<string, unknown>) => { seen = d; return {} as never; }) as never,
+      platform: async () => ({ kind: "ready" as const, exec: {}, keks: {} }),
+      machineName: () => "ohmail on a phone",
+      installId: async () => "door-name-case",
+    });
+    return seen;
+  };
+
+  it("reaches the engine trimmed and collapsed, and a blank name is absent", async () => {
+    expect((await started("  Ada \t Lovelace ")).displayName).toBe("Ada Lovelace");
+    expect("displayName" in (await started("   "))).toBe(false);
+    expect("displayName" in (await started(""))).toBe(false);
+  });
+});
+
 /* ── A provider that says why it refused the sign-in ───────────────────────────────────────────── */
 
 describe("a refused sign-in the engine stamped with why", () => {

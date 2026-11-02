@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { phoneOrganizer, SCREENING_UNSUPPLIED, type WorldActions } from "../src/state/live";
-import { leaveFilings, readFilings, readMailboxes, retryFilings, type PhoneMailbox } from "../src/net/mailboxes";
+import { leaveFilings, readFilings, readMailboxes, retryFilings, writeMailboxName, type PhoneMailbox } from "../src/net/mailboxes";
 import { createProjector, type ProjectionInputs } from "../src/state/world-projection";
 
 /**
@@ -483,6 +483,18 @@ describe("the filings that wait — the facts and the block's three requests", (
     expect(await retryFilings(session(409, {}), "m1", "x")).toEqual({ k: "elsewhere" });
     expect(await leaveFilings(session(400, {}), "m1", "x", "y")).toEqual({ k: "failed" });
     expect(await retryFilings(session(0, {}), "m1", "x")).toEqual({ k: "failed" });
+  });
+  /* The standalone phone's sender name, written on its own engine's door. */
+  it("writes a sender name on the local door, and a refusal or no answer is not a write", async () => {
+    asked.length = 0;
+    expect(await writeMailboxName(session(200, { id: "m1", displayName: "Ada" }), "m1", "Ada")).toEqual({ k: "written", displayName: "Ada" });
+    expect(await writeMailboxName(session(200, { id: "m1", displayName: null }), "m1", null)).toEqual({ k: "written", displayName: null });
+    expect(asked).toEqual([
+      `PATCH https://srv.test/local/mailboxes/m1/name {"displayName":"Ada"}`,
+      `PATCH https://srv.test/local/mailboxes/m1/name {"displayName":null}`,
+    ]);
+    expect(await writeMailboxName(session(400, {}), "m1", "x")).toEqual({ k: "refused" });
+    expect(await writeMailboxName(session(0, {}), "m1", "x")).toEqual({ k: "failed" });
   });
 });
 

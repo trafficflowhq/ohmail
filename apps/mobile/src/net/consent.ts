@@ -66,6 +66,12 @@ export interface FoldersConsent {
    * actually serves — exactly `consent-state.ts`'s `wire.signatures ?? {}`.
    */
   signatures: Record<string, string>;
+  /** The signatures with formatting in them, `{ mailboxId: html }` (mail 0098); absent is none. */
+  signaturesHtml: Record<string, string>;
+  /** Whose signature each mailbox shows: `organizer` only where the organizing install published one. */
+  signatureSources: Record<string, "organizer" | "local">;
+  /** Where each mailbox's last signature change to its organizer went; absent where there is nothing to say. */
+  signatureChanges: Record<string, SignatureChange>;
   /**
    * The account's appearance face (OHMARCHY-PLAN.md §3a) — `paper`, `ohmarchy`, or `null` for
    * "no preference". Rides this read for the signatures' reason: one `GET /consent` per boot
@@ -111,6 +117,51 @@ const RESURFACE_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 /** The wire's time, kept only if it really is one — a malformed field reads as "never chosen". */
 function resurfaceTimeOf(raw: unknown): string | null {
   return typeof raw === "string" && RESURFACE_TIME_RE.test(raw) ? raw : null;
+}
+
+/** Where a signature change sent to the mailbox's organizer went — the server's `ProfileChangeWire`. */
+export interface SignatureChange {
+  state: "asked" | "applied" | "refused";
+  holder: string | null;
+  refusal: "unreadable" | "other" | null;
+}
+
+/** The four signature fields of a consent answer or a signature write's echo. */
+export type SignatureFacts = Pick<FoldersConsent, "signatures" | "signaturesHtml" | "signatureSources" | "signatureChanges">;
+
+function sourcesOf(raw: unknown): Record<string, "organizer" | "local"> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const out: Record<string, "organizer" | "local"> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (v === "organizer" || v === "local") out[k] = v;
+  }
+  return out;
+}
+
+function changesOf(raw: unknown): Record<string, SignatureChange> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const out: Record<string, SignatureChange> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const c = v as { state?: unknown; holder?: unknown; refusal?: unknown } | null;
+    if (c === null || typeof c !== "object") continue;
+    if (c.state !== "asked" && c.state !== "applied" && c.state !== "refused") continue;
+    out[k] = {
+      state: c.state,
+      holder: typeof c.holder === "string" && c.holder !== "" ? c.holder : null,
+      refusal: c.refusal === "unreadable" || c.refusal === "other" ? c.refusal : null,
+    };
+  }
+  return out;
+}
+
+/** The signature fields off a consent body. */
+export function signatureFactsOf(body: Record<string, unknown>): SignatureFacts {
+  return {
+    signatures: signaturesOf(body.signatures),
+    signaturesHtml: signaturesOf(body.signaturesHtml),
+    signatureSources: sourcesOf(body.signatureSources),
+    signatureChanges: changesOf(body.signatureChanges),
+  };
 }
 
 /** The wire map, kept only if it is really `{ string: string }` — a malformed field reads as absent. */
@@ -159,7 +210,7 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
       // the axis and reads identically to an absent field otherwise.
       storable: "foldersEnabledAt" in body,
       screening: screeningOf(body),
-      signatures: signaturesOf(body.signatures),
+      ...signatureFactsOf(body),
       // A value this build does not know (a future face, a malformed field) reads as "no
       // preference" rather than throwing the whole read away: the other two fields on this
       // answer are unaffected by a face nobody here can draw.
@@ -203,6 +254,27 @@ export async function writeFoldersEnabled(session: ConnectedSession, enabled: bo
     throw new Error("consent write stored nothing: this server carries no folders setting");
   }
   return { on: typeof body.foldersEnabledAt === "string" && body.foldersEnabledAt !== "" };
+}
+
+/**
+ * WRITE ONE MAILBOX'S SIGNATURE, as text — one `PATCH /consent/settings {signatures}`, the route web
+ * and desktop write through. Blank sends `null`, which clears it. Resolves to the echo (the whole
+ * maps after the write, and where a change to the organizer went); rejects on a refusal and on an
+ * echo without the map.
+ */
+export async function writeSignature(
+  session: ConnectedSession, mailboxId: string, text: string | null,
+): Promise<SignatureFacts> {
+  const value = text === null || text.trim() === "" ? null : text;
+  const res = await session.fetch(`${requestBase(session)}/consent/settings`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ signatures: { [mailboxId]: value } }),
+  });
+  if (res.status !== 200) throw new Error(`signature write refused (${res.status})`);
+  const body = (await res.json()) as Record<string, unknown>;
+  if (!("signatures" in body)) throw new Error("signature write stored nothing: no such setting here");
+  return signatureFactsOf(body);
 }
 
 /**

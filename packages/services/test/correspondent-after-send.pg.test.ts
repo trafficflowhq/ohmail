@@ -36,7 +36,7 @@ function appendingAdapter(): OpenSendAdapter {
     async send(msg: OutboundMessage) {
       const raw = Buffer.from([
         `Message-ID: ${msg.messageId!}`, "From: me@own.invalid",
-        `To: ${[msg.to ?? []].flat().join(", ")}`, "Subject: the north elevation", "", "Thursday?", "",
+        `To: ${[msg.to ?? []].flat().map((a) => (typeof a === "string" ? a : a.address)).join(", ")}`, "Subject: the north elevation", "", "Thursday?", "",
       ].join("\r\n"));
       return {
         providerMessageId: msg.messageId!,

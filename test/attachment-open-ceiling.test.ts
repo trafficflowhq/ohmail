@@ -35,6 +35,7 @@ const SEND_CEILINGS: ReadonlyArray<readonly [string, number]> = [
   ["sidecar HOST_SEND_MAX_TOTAL_BYTES", mibConstant("apps/sidecar/src/host-listener.ts", "HOST_SEND_MAX_TOTAL_BYTES")],
   ["phone host HOST_SEND_MAX_TOTAL_BYTES", mibConstant("apps/sidecar/src/phone/host-listener.ts", "HOST_SEND_MAX_TOTAL_BYTES")],
   ["self-host SELF_HOST_SEND_MAX_TOTAL_BYTES", mibConstant("apps/server/src/config.ts", "SELF_HOST_SEND_MAX_TOTAL_BYTES")],
+  ["phone PHONE_SEND_MAX_TOTAL_BYTES", mibConstant("apps/mobile/src/compose/attach.ts", "PHONE_SEND_MAX_TOTAL_BYTES")],
 ];
 
 describe("the open ceiling is pinned to the send ceilings", () => {

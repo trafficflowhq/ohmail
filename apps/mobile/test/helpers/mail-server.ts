@@ -103,6 +103,9 @@ export function mailServer() {
   const files = new Map<string, Array<{ id: string; filename: string; contentType: string; sizeBytes: number; inline: boolean }>>();
   /** What `GET /hello` announces under `features`; unset, the route is not served. */
   let helloFeatures: Record<string, unknown> | null = null;
+  /** Where `POST /attachments/staging` grants an upload (`n` is the ticket's number); unset, the route is not served. */
+  let stagingGrant: ((n: number) => string) | null = null;
+  let staged = 0;
   /** Routes armed to ACCEPT the request and never answer — the hung-server shape. */
   const hangs: Array<{ method: string; prefix: string }> = [];
   /**
@@ -386,6 +389,11 @@ export function mailServer() {
       if (method === "GET" && filesRoute && files.has(decodeURIComponent(filesRoute[1]!))) {
         const id = decodeURIComponent(filesRoute[1]!);
         json(200, { items: (files.get(id) ?? []).map((f) => ({ ...f, messageId: id })) });
+        return;
+      }
+      if (method === "POST" && url.pathname === "/attachments/staging" && stagingGrant !== null) {
+        staged += 1;
+        json(201, { id: `ticket-${staged}`, uploadUrl: stagingGrant(staged), uploadMethod: "PUT", uploadHeaders: { "content-type": "application/octet-stream" } });
         return;
       }
       if (method === "GET" && url.pathname === "/hello" && helloFeatures !== null) {
@@ -1029,6 +1037,8 @@ export function mailServer() {
     },
     /** Serve `GET /hello` with these `features`; `null` stops serving it (a 404). */
     setHello: (features: Record<string, unknown> | null) => { helloFeatures = features; },
+    /** Serve `POST /attachments/staging`, granting uploads at these URLs; `null` stops serving it. */
+    setStaging: (grant: ((n: number) => string) | null) => { stagingGrant = grant; },
     /** Give this message a stored body — what `GET /messages/:id/body` then answers. */
     setBody: (id: string, text: string, posture?: "one_click" | "no_header" | "mailto_only" | "not_one_click") => {
       bodies.set(id, text);

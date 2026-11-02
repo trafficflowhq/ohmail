@@ -9836,6 +9836,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const localSealMatch = req.method === "PATCH"
           ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})$/.exec(url.pathname)
           : null;
+        /* `PATCH /local/mailboxes/:id/name` — the name this mailbox's letters carry, on this door.
+         * The shared `PATCH /mailboxes/:id` is `stepUp: true`, which here refuses from five minutes
+         * after launch, and its re-point detaches every runtime; a name is neither a credential nor
+         * a server. `MailboxService.update` with `{ displayName }` alone: no probe, no re-point, no
+         * claim. The authority is the per-launch bearer, on `handle` ALONE. */
+        const localNameMatch = req.method === "PATCH"
+          ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})\/name$/.exec(url.pathname)
+          : null;
         /* `POST /local/mailboxes` — adding a mailbox, on this door. The shared `POST /mailboxes` is
          * not `stepUp: true`, but every other verb this flow needs is, and a door that could add a
          * mailbox but not seal, remove or organize it would be worse than one that could not add.
@@ -9886,6 +9894,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           || localRemoveMatch !== null
           || localOrganizeMatch !== null
           || localSealMatch !== null
+          || localNameMatch !== null
           || localProbeMatch
           || localCloudProbeMatch
           || localAddMatch;
@@ -9894,6 +9903,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            method, which is why both fields ride every line. */
         const localActionRoute = localOrganizeMatch !== null
           ? "/local/mailboxes/:id/organize"
+          : localNameMatch !== null
+          ? "/local/mailboxes/:id/name"
           : localRemoveMatch !== null || localSealMatch !== null
             ? "/local/mailboxes/:id"
             : localProbeMatch
@@ -9911,7 +9922,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     : "/local/organizer/takeover";
         /** The row id where the PATH carries one; "" where it does not. */
         const localActionMailboxId =
-          (localRemoveMatch ?? localOrganizeMatch ?? localSealMatch)?.[1] ?? "";
+          (localRemoveMatch ?? localOrganizeMatch ?? localSealMatch ?? localNameMatch)?.[1] ?? "";
         if (localAction) {
           /* The receipt, before any branch. With only a verdict logged, "the press never reached
            * the door" and "the door took it and dropped it" leave identical evidence, so this sits
@@ -10485,6 +10496,53 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               );
             } finally {
               addWrite.settle();
+            }
+          }
+          if (localNameMatch) {
+            const mailboxId = localNameMatch[1]!;
+            const refused = (status: number, code: string, message: string, reason: string): Response => {
+              log("local_action_refused", { method: req.method, route: localActionRoute, status, reason });
+              return new Response(JSON.stringify({ error: { code, message } }), {
+                status, headers: { "content-type": "application/json" },
+              });
+            };
+            let raw: unknown;
+            try {
+              raw = ((await req.json()) as { displayName?: unknown } | null)?.displayName;
+            } catch {
+              /* An unreadable body names no name: refused as one below. */
+              raw = undefined;
+            }
+            /* A control character (a CR or LF would end a header) or a name past the drafts' own
+               100 is refused, never cut; blank stores none. */
+            // eslint-disable-next-line no-control-regex
+            if ((raw !== null && typeof raw !== "string") || (typeof raw === "string" && /[\u0000-\u001f\u007f-\u009f]/.test(raw))) {
+              return refused(400, "validation_failed", "A name is one line of text.",
+                "the name was not one line of text, so nothing was written");
+            }
+            const name = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
+            if (Array.from(name).length > 100) {
+              return refused(400, "validation_failed", "A name can hold up to 100 characters.",
+                "the name was longer than a letter carries, so nothing was written");
+            }
+            try {
+              const dto = await depsFor().services!.mailbox.update(
+                {
+                  db, accountId: core.accountId, userId: core.userId,
+                  now, requestId: "", sessionId: core.sessionId ?? null,
+                },
+                mailboxId,
+                { displayName: name === "" ? null : name },
+              );
+              log("local_mailbox_name_written", {
+                mailboxId,
+                reason: "the name this mailbox's letters carry was changed on this install; the "
+                  + "connection and the claim are untouched",
+              });
+              return new Response(JSON.stringify(dto), { status: 200, headers: { "content-type": "application/json" } });
+            } catch (err) {
+              if (!(err instanceof ServiceError)) throw err;
+              return refused(err.httpStatus, err.code, err.message, "the mailbox service refused the name");
             }
           }
           if (localSealMatch) {

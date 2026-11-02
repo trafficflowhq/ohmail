@@ -111,7 +111,8 @@ describe("SendService — gated idempotent send (Phase 3c)", () => {
     expect(res.status).toBe("sent");
     expect(state.sent).toHaveLength(1);
     expect(state.sent[0]!.to).toEqual(["to@example.com"]);
-    expect(state.sent[0]!.cc).toEqual(["cc@example.com"]);
+    // A name rides with its address (the header shows it); the envelope is the address alone.
+    expect(state.sent[0]!.cc).toEqual([{ name: "Cee", address: "cc@example.com" }]);
     expect(state.sent[0]!.bcc).toEqual(["bcc@example.com"]);
   });
 
