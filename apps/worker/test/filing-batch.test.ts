@@ -46,6 +46,9 @@ interface Recorded {
   adopted: Array<{ messageId: string; desired: string; observed: string; expectDesiredFolder: string }>;
   /** Every Trash drop asked for. */
   dropped: Array<{ messageId: string; locator: NativeLocator; expectDesired: string }>;
+  /** Every body emptied, and every audit row's `refound`. */
+  husked: string[];
+  refound: string[];
   /** The limit the reconciler asked the repo for — the per-cycle budget. */
   askedLimit: number | undefined;
 }
@@ -53,7 +56,7 @@ interface Recorded {
 function blank(): Recorded {
   return {
     batches: [], singles: [], locators: [], folderStates: [], flagStates: [], audits: [],
-    adopted: [], dropped: [], askedLimit: undefined,
+    adopted: [], dropped: [], husked: [], refound: [], askedLimit: undefined,
   };
 }
 
@@ -71,6 +74,7 @@ function repoOf(rec: Recorded, pending: PendingFolderState[], opts: {
     const messageId = payload && typeof payload === "object" && "messageId" in payload
       ? String((payload as { messageId: unknown }).messageId) : null;
     rec.audits.push({ action, messageId });
+    if ((payload as { refound?: boolean } | null)?.refound === true) rec.refound.push(messageId!);
   };
   const stub: Record<string, unknown> = {
     listPendingFolderStates: async (_mailboxId: string, limit?: number) => {
@@ -116,6 +120,12 @@ function repoOf(rec: Recorded, pending: PendingFolderState[], opts: {
       rec.dropped.push(...gone);
       return gone.map((g) => g.messageId);
     },
+    huskBody: async (_a: string, messageId: string) => { rec.husked.push(messageId); return true; },
+    forgetInstanceAt: async () => null,
+    letterIdentities: async (_a: string, ids: readonly string[]) => new Map(ids.map((id) => [id, {
+      messageIdHeader: `${id}@x.example`, dedupKey: `fp1:${id}`,
+      legacy: { messageIdHeader: `${id}@x.example`, bodyHash: "h", subject: "s", fromAddress: "a@x.example" },
+    }])),
     recordAudit: async (_a: string, action: string, payload: unknown) => { pushAudit(action, payload); },
     deferFolderReconcile: async () => {},
     deferFlagReconcile: async () => {},
@@ -652,5 +662,158 @@ describe("reconcileFolders — a gone message whose only copy the move found abs
 
     expect(rec.folderStates).toEqual([]);
     expect(rec.audits).toEqual([]);
+  });
+});
+
+/**
+ * A DELETE'S MOVE THAT LANDED WITH ITS ANSWER LOST: the next pass finds the source gone. Before the
+ * delete of a gone letter empties it, the letter is looked for in Trash by its own bytes: found, it
+ * is parked there as the landed move it was; absent, the gone delete closes as before; undecided, it
+ * stays in Trash with its text; unanswered, nothing is written.
+ */
+describe("reconcileFolders — a delete whose source is gone looks for its letter in Trash first", () => {
+  const deletes = (n = 1) => rows("d", "INBOX", "Trash", n).map((p) => ({ ...p, trashedFrom: "INBOX", serverMissing: false }));
+  type Answer = Awaited<ReturnType<NonNullable<MailboxAdapter["findLetters"]>>>;
+  const read = (v: Record<string, { k: "absent" | "undecided" } | { k: "found"; locator: NativeLocator }>): Answer =>
+    ({ k: "read", uidValidity: "5", verdicts: new Map(Object.entries(v)) });
+  const ANSWERS: Record<string, Answer> = {
+    found: read({ "d-0": { k: "found", locator: LOC("Trash", "5:77") } }),
+    absent: read({ "d-0": { k: "absent" } }),
+    undecided: read({ "d-0": { k: "undecided" } }),
+    unanswered: { k: "unanswered" },
+  };
+  /** The batch reports every member gone, or the single move throws the absence. */
+  const adapters = (rec: Recorded, answer: Answer, asked: string[][]) => {
+    const findLetters = async (_f: string, asks: ReadonlyArray<{ key: string }>) => { asked.push(asks.map((a) => a.key)); return answer; };
+    return {
+      batch: { ...batchingAdapter(rec, { answer: (ls) => ({ outcome: "batched", moved: new Map(), gone: [...ls] }) }), findLetters } as MailboxAdapter,
+      single: {
+        move: async (l: NativeLocator) => { throw new MessageGoneError(l, true); }, setFlags: async () => {}, findLetters,
+      } as unknown as MailboxAdapter,
+    };
+  };
+  const opts = { vanished: new Set(["d-0"]), trashFolder: "Trash" };
+
+  for (const path of ["batch", "single"] as const) {
+    it(`${path}: found in Trash, the letter is parked there with its text and an audit that says so`, async () => {
+      const rec = blank();
+      const asked: string[][] = [];
+      await run(repoOf(rec, deletes(), opts), adapters(rec, ANSWERS.found!, asked)[path]);
+      expect(asked).toEqual([["d-0"]]);
+      expect(rec.locators).toEqual([{ messageId: "d-0", locator: LOC("Trash", "5:77") }]);
+      expect(rec.folderStates).toEqual([{ messageId: "d-0", desired: "Trash", observed: "Trash" }]);
+      expect(rec.refound).toEqual(["d-0"]);
+      expect(rec.husked, "a letter found in Trash was emptied").toEqual([]);
+      expect(rec.adopted).toEqual([]);
+    });
+
+    it(`${path}: absent from Trash, the delete of a gone letter closes as before`, async () => {
+      const rec = blank();
+      await run(repoOf(rec, deletes(), opts), adapters(rec, ANSWERS.absent!, [])[path]);
+      expect(rec.adopted).toEqual([{ messageId: "d-0", desired: "INBOX", observed: "INBOX", expectDesiredFolder: "Trash" }]);
+      expect(rec.husked).toEqual(["d-0"]);
+      expect(rec.locators).toEqual([]);
+    });
+
+    it(`${path}: undecided, the letter stays in Trash with its text`, async () => {
+      const rec = blank();
+      await run(repoOf(rec, deletes(), opts), adapters(rec, ANSWERS.undecided!, [])[path]);
+      expect(rec.husked, "an unproven letter was emptied").toEqual([]);
+      expect(rec.adopted).toEqual([]);
+      expect(rec.folderStates).toEqual([{ messageId: "d-0", desired: "Trash", observed: "Trash" }]);
+      expect(rec.locators, "an unproven copy was bound").toEqual([]);
+      expect(rec.audits.map((a) => a.action)).toEqual(["reconcile.move.voided"]);
+    });
+
+    it(`${path}: unanswered, nothing is written and the row stays due`, async () => {
+      const rec = blank();
+      await run(repoOf(rec, deletes(), opts), adapters(rec, ANSWERS.unanswered!, [])[path]);
+      expect([rec.locators, rec.folderStates, rec.adopted, rec.husked, rec.audits]).toEqual([[], [], [], [], []]);
+    });
+
+    // A move whose FETCH was throttled reads its letter as gone; only a SEARCH of the folder decides.
+    const HELD: Record<string, [UidsHeldAnswer, "kept" | "closed"]> = {
+      present: [{ k: "held", uidValidity: "1", present: new Set([1]) }, "kept"],
+      unanswered: [{ k: "unanswered" }, "kept"],
+      renumbered: [{ k: "renumbered", uidValidity: "2" }, "kept"],
+      missing: [{ k: "held", uidValidity: "1", present: new Set() }, "closed"],
+      "a folder gone": [{ k: "absent" }, "closed"],
+    };
+    for (const [read, [held, outcome]] of Object.entries(HELD)) {
+      it(`${path}: absent from Trash and ${read} in its folder, the delete is ${outcome}`, async () => {
+        const rec = blank();
+        const asked: number[][] = [];
+        const adapter = { ...adapters(rec, ANSWERS.absent!, [])[path], uidsHeld: async (_f: string, _v: string, uids: readonly number[]) => {
+          asked.push([...uids]); return held;
+        } } as MailboxAdapter;
+        await run(repoOf(rec, deletes(), opts), adapter);
+        expect(rec.husked, "a letter its folder may still hold was emptied").toEqual(outcome === "kept" ? [] : ["d-0"]);
+        if (outcome === "kept") expect([rec.locators, rec.folderStates, rec.adopted, rec.audits]).toEqual([[], [], [], []]);
+        expect(asked).toEqual([[1]]);
+      });
+    }
+
+    it(`${path}: undecided and still in its folder, nothing is written; the retried move lands in Trash`, async () => {
+      const rec = blank();
+      let throttled = true;
+      const twice = path === "batch"
+        ? batchingAdapter(rec, { answer: (ls) => (throttled ? ((throttled = false), { outcome: "batched", moved: new Map(), gone: [...ls] }) : undefined) as never })
+        : { move: async (l: NativeLocator, to: string) => {
+          if (throttled) { throttled = false; throw new MessageGoneError(l, true); }
+          return LOC(to, `9:${l.ref.split(":")[1]}`);
+        }, setFlags: async () => {} } as unknown as MailboxAdapter;
+      const adapter = {
+        ...twice, findLetters: async () => ANSWERS.undecided!,
+        uidsHeld: async (_f: string, uidValidity: string, uids: readonly number[]) => ({ k: "held", uidValidity, present: new Set(uids) }),
+      } as MailboxAdapter;
+      const repo = repoOf(rec, deletes(), opts);
+      await run(repo, adapter);
+      expect([rec.locators, rec.folderStates, rec.adopted, rec.husked, rec.audits]).toEqual([[], [], [], [], []]);
+      await run(repo, adapter);
+      expect(rec.locators).toEqual([{ messageId: "d-0", locator: LOC("Trash", "9:1") }]);
+      expect(rec.folderStates).toEqual([{ messageId: "d-0", desired: "Trash", observed: "Trash" }]);
+      expect(rec.husked).toEqual([]);
+    });
+  }
+
+  it("moved_unmapped into Trash: what is found is parked at once, the rest stays due", async () => {
+    const rec = blank();
+    const asked: string[][] = [];
+    const answer = read({
+      "d-0": { k: "found", locator: LOC("Trash", "5:70") }, "d-1": { k: "found", locator: LOC("Trash", "5:71") }, "d-2": { k: "undecided" },
+    });
+    const adapter = {
+      ...batchingAdapter(rec, { answer: () => ({ outcome: "moved_unmapped", moved: new Map(), gone: [] }) }),
+      findLetters: async (_f: string, asks: ReadonlyArray<{ key: string }>) => { asked.push(asks.map((a) => a.key)); return answer; },
+    } as MailboxAdapter;
+    await run(repoOf(rec, deletes(3), { trashFolder: "Trash" }), adapter);
+    expect(asked).toEqual([["d-0", "d-1", "d-2"]]);
+    expect(rec.locators.map((l) => [l.messageId, l.locator.ref])).toEqual([["d-0", "5:70"], ["d-1", "5:71"]]);
+    expect(rec.refound).toEqual(["d-0", "d-1"]);
+    expect(rec.folderStates.map((f) => f.messageId), "an undecided member was written").toEqual(["d-0", "d-1"]);
+    expect(rec.singles).toEqual([]);
+  });
+
+  it("a Restore of a letter left in Trash at its gone origin copy goes back to Trash, never settled in place", async () => {
+    const rec = blank();
+    // The undecided delete's completion: Trash/Trash with the origin's gone locator; then Restore.
+    const pending = [{ ...rows("r", "Trash", "INBOX", 1)[0]!, nativeLocator: LOC("INBOX", "1:1") }];
+    await run(repoOf(rec, pending, { vanished: new Set(["r-0"]), trashFolder: "Trash" }), batchingAdapter(rec));
+    expect(rec.folderStates, "the letter was settled in INBOX, where no copy is").toEqual([]);
+    expect(rec.adopted).toEqual([{ messageId: "r-0", desired: "Trash", observed: "Trash", expectDesiredFolder: "INBOX" }]);
+    expect(rec.audits.map((a) => a.action)).toEqual(["reconcile.move.voided"]);
+    expect([rec.batches, rec.singles]).toEqual([[], []]);
+  });
+
+  it("CONTROL — moved_unmapped into INBOX never asks Trash", async () => {
+    const rec = blank();
+    let asked = 0;
+    const adapter = {
+      ...batchingAdapter(rec, { answer: () => ({ outcome: "moved_unmapped", moved: new Map(), gone: [] }) }),
+      findLetters: async () => { asked++; return { k: "unanswered" as const }; },
+    } as MailboxAdapter;
+    await run(repoOf(rec, rows("u", "ohmail/Screener", "INBOX", 5), { trashFolder: "Trash" }), adapter);
+    expect(asked).toBe(0);
+    expect(rec.folderStates).toEqual([]);
   });
 });
