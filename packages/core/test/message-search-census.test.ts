@@ -8,8 +8,9 @@ import ts from "typescript";
  * THE SEARCH DOCUMENT'S TWO CENSUSES (mail 0125). WRITERS: every function that stores body TEXT
  * (an `insert(messageBodies)`, an `update(…).set({ text })` other than the empty husk, or the
  * `insertMessageBody` port) also writes the message's document — the port by its fourth argument
- * — or a restored body stays unfindable by its own words. A husk keeps its document: the cap
- * governs stored bytes, never findability. READERS: the table holds full body text, so the modules
+ * — or a restored body stays unfindable by its own words. A husk keeps its document (the cap
+ * governs stored bytes, never findability) unless the letter left the server: the expunge husk
+ * deletes it (`drizzle-repo.ts`, a reader below). READERS: the table holds full body text, so the modules
  * that may name it are a CLOSED set; a model prompt, the knowledge base or an embedding path
  * reaching it is red here by file.
  */

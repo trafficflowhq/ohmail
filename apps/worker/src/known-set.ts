@@ -301,13 +301,18 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // the mail-0065 wave's writes, none of which touch a projected field (the projection is
   // message_instances + messages.unread/message_id_header + flag_state.observed_seen):
   //  · setMailboxSpecialFolders — mailboxes.junk_folder/trash_folder/sent_folder, a discovery stamp
-  //  · huskBody / restoreWithheldBody — message_bodies + the storage counter
+  //  · huskBody / restoreWithheldBody — message_bodies + the storage counter (an expunge's husk
+  //    also messages.snippet and message_search, `scrubGone`); refillGone — those two, refilled
   //  · clearDeletedOnAdopt / tombstoneInstanceless — messages.deleted_at (+ husk + change_log);
   //    a tombstoned row is by definition INSTANCELESS, so no instance row can be moved by it
-  "setMailboxSpecialFolders", "huskBody", "restoreWithheldBody",
+  "setMailboxSpecialFolders", "huskBody", "scrubGone", "restoreWithheldBody", "refillGone",
   "clearDeletedOnAdopt", "tombstoneInstanceless",
   // The Junk check: a read of instanceless rows, and the reaper's write on them (`tombstoneGone`).
   "listJunkParked", "tombstoneJunkParkedGone", "tombstoneGone",
+  // The Trash check: a read of instanceless rows, and its drop (`folder_state` + the husk).
+  "listTrashParked", "dropGoneFromTrash",
+  // The re-find of a lost delete's letter in Trash: a read of identity columns.
+  "letterIdentities",
   // mail 0164: `messages.server_missing_at` alone (+ updated_at), not a projected column; and the
   // stale-epoch arm's read of one message's instances. `repairLegacyNews` is DELIBERATELY ABSENT:
   // it forgets instance rows and flips the primary, which is what this projection remembers.

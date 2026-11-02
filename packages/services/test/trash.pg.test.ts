@@ -302,8 +302,9 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
     const out = await svc().restore(ctxAt(t2), id);
     expect(out).toMatchObject({ restoreTo: "ohmail/News", pending: false });
     expect(await deletedAtOf(id), "nothing reached the server, so nothing waits for it").toBeNull();
+    // Pending, the origin kept as the Undo's mark: the organizer confirms the letter is still there.
     expect(await fsOf(id)).toMatchObject({
-      desiredFolder: "ohmail/News", observedFolder: "ohmail/News", reconcileStatus: "reconciled", trashedFrom: null,
+      desiredFolder: "ohmail/News", observedFolder: "ohmail/News", reconcileStatus: "pending", trashedFrom: "ohmail/News",
     });
     const [row] = await db.select().from(changeLog)
       .where(eq(changeLog.entityId, id)).orderBy(sql`${changeLog.seq} desc`).limit(1);

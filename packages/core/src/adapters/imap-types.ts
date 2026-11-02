@@ -1,7 +1,7 @@
 // `../mail.js`, not `../index.js`: this module needs the mail vocabulary, and the default barrel
 // re-exports the model half beside it — so naming it here would put the classifier and the drafter
 // into the import graph of every artifact that opens a mailbox.
-import type { Change, MimeStructure, NativeLocator } from "../mail.js";
+import type { Change, LegacyIdentityColumns, MimeStructure, NativeLocator } from "../mail.js";
 // The runtime imports of this module both come from `types.js`, a module with no imports of its
 // own — see the note on the TLS floor below for why that restriction exists and what it is about
 // (`imapflow` / `nodemailer` / `node:net`, none of which `types.js` touches).
@@ -1226,6 +1226,23 @@ export interface MailboxAdapter {
    * or a lost selection answers `unanswered`; a re-numbered folder `renumbered`. Optional.
    */
   uidsHeld?(folder: string, uidValidity: string, uids: readonly number[]): Promise<UidsHeldAnswer>;
+  /**
+   * Which of `messageIds` no letter in the folder carries under `uidValidity`: bounded `UID SEARCH`
+   * (an OR of `HEADER Message-ID`) per group, then the hits' envelopes, never a write. A letter
+   * counts as carrying an id as the server matches it, a substring in any case, so a near or forged
+   * id only keeps one; an id it cannot search for is never named. A refused or partial read, a
+   * changed epoch or a lost selection answers `unanswered`. Optional.
+   */
+  messageIdsGone?(folder: string, uidValidity: string, messageIds: readonly string[]): Promise<MessageIdsGoneAnswer>;
+  /**
+   * Where in `folder` each asked letter is, proved by its own bytes: a Message-ID only nominates
+   * (an OR of `HEADER Message-ID` per group, then the hits' envelopes), and a candidate is the letter
+   * when its bytes give the stored dedup key (a legacy key is verified as ingest verifies it). One
+   * proven copy is `found`; no letter carrying the id is `absent`; anything else (none or two proven,
+   * a nameless or unreadable hit, a bound reached, no Message-ID) is `undecided`. Read-only, one
+   * lock; a refused or partial read, or an epoch that moved under it, answers `unanswered`. Optional.
+   */
+  findLetters?(folder: string, asks: readonly LetterAsk[]): Promise<FindLettersAnswer>;
   watch(onSignal: () => void): Promise<() => Promise<void>>;
   /**
    * Re-establish what {@link watch} set up — INBOX selected, IDLE running — after other
@@ -1270,3 +1287,20 @@ export type FolderKeysAnswer = { k: "keys"; keys: FolderKeys } | { k: "absent" }
 /** {@link MailboxAdapter.uidsHeld}'s answer; `present` holds only UIDs that were asked. */
 export type UidsHeldAnswer = { k: "held"; uidValidity: string; present: ReadonlySet<number> }
   | { k: "renumbered"; uidValidity: string } | { k: "absent" } | { k: "unanswered" };
+/** {@link MailboxAdapter.messageIdsGone}'s answer: the asked Message-IDs, spelled as asked, that no letter there carries. */
+export type MessageIdsGoneAnswer = { k: "read"; uidValidity: string; gone: ReadonlySet<string> }
+  | { k: "renumbered"; uidValidity: string } | { k: "absent" } | { k: "unanswered" };
+/** One letter {@link MailboxAdapter.findLetters} looks for: the stored identity a copy must prove. */
+export interface LetterAsk {
+  /** The caller's key for its verdict. */
+  key: string;
+  messageIdHeader: string | null;
+  /** `messages.dedup_key` as stored. */
+  dedupKey: string;
+  /** The columns a legacy key is verified against. */
+  legacy: LegacyIdentityColumns;
+}
+export type LetterVerdict = { k: "found"; locator: NativeLocator } | { k: "absent" } | { k: "undecided" };
+/** {@link MailboxAdapter.findLetters}'s answer: a verdict per asked key, under the folder's epoch. */
+export type FindLettersAnswer = { k: "read"; uidValidity: string; verdicts: ReadonlyMap<string, LetterVerdict> }
+  | { k: "absent" } | { k: "unanswered" };

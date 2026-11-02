@@ -53,8 +53,9 @@ import XOAuth2 from "nodemailer/lib/xoauth2/index.js";
 // `../mail.js`, not `../index.js`: the IMAP adapter needs the mail half only, and the default
 // barrel would pull the classifier and drafter prompts into every artifact that opens a mailbox.
 import {
-  messageFingerprint, normalizeMessageId, normalizeMime,
-  type Change, type NativeLocator, type AdapterPort,
+  messageFingerprint, normalizeMessageId, normalizeMime, isStorableMessageId,
+  fingerprintDedupKey, isFingerprintDedupKey, legacyDedupKey, runtimeDedupKey, verifiesLegacyIdentity,
+  type Change, type NativeLocator, type AdapterPort, type NormalizedMessage,
   // The folder-scan port this class also satisfies. It arrives from the same mail-half entry as
   // the other two ports, which is the point of moving it there: the adapter states what it
   // offers without naming the migration that consumes it.
@@ -84,7 +85,8 @@ import {
   WriteDeclinedError, type WriteDoor, type MailboxWriteKind,
   type FolderSweepFence, type FolderSweepResult, type FolderDeleteOutcome,
   PASSIVE_EXCLUDED_SPECIAL_USE, type SpecialFolders,
-  type FolderKeysAnswer, type UidsHeldAnswer,
+  type FolderKeysAnswer, type UidsHeldAnswer, type MessageIdsGoneAnswer,
+  type LetterAsk, type LetterVerdict, type FindLettersAnswer,
 } from "./imap-types.js";
 // The News pile's resolver (0.22): the adapter is the one place canonical names meet the live
 // tree, so `toServerPath` routes both spellings onto the folder the mailbox actually has.
@@ -1493,6 +1495,19 @@ function eachUidOnce(uids: readonly number[]): number[] {
   return [...new Set(uids.filter((u) => u > 0))];
 }
 
+/** A candidate copy's identity, from its own bytes: what {@link provesLetter} compares. */
+interface LetterProof { n: NormalizedMessage; fp: string; runtime: string | null; legacy: string }
+
+/**
+ * Is this copy the asked letter? The keys ingest stores and looks up (`resolveExisting`): the
+ * fingerprint or its runtime-date twin for an `fp1:` row; a legacy key only with its four columns.
+ */
+function provesLetter(p: LetterProof | null, a: LetterAsk): boolean {
+  if (p === null) return false;
+  if (isFingerprintDedupKey(a.dedupKey)) return p.fp === a.dedupKey || p.runtime === a.dedupKey;
+  return p.legacy === a.dedupKey && verifiesLegacyIdentity(a.legacy, p.n);
+}
+
 export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private client!: ImapFlow;
   private transporter: Transporter | null = null;
@@ -2846,6 +2861,198 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       return { k: "held", uidValidity: live, present };
     } finally {
       lock.release();
+    }
+  }
+
+  private static readonly BY_MESSAGE_ID_CHUNK = 50;
+
+  /**
+   * See {@link MailboxAdapter.messageIdsGone}. One lock; per group of ids one bounded `UID SEARCH`,
+   * then the hits' envelopes to tell which of the group's ids they carry.
+   */
+  async messageIdsGone(folder: string, uidValidity: string, messageIds: readonly string[]): Promise<MessageIdsGoneAnswer> {
+    const path = this.toServerPath(folder);
+    let lock: { release(): void };
+    try {
+      lock = await this.bounded(this.client.getMailboxLock(path));
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) throw err;
+      if (!(this.client as unknown as { usable?: boolean }).usable) return { k: "unanswered" };
+      return (err as { serverResponseCode?: unknown } | null)?.serverResponseCode === "NONEXISTENT"
+        ? { k: "absent" } : { k: "unanswered" };
+    }
+    try {
+      const selected = (): MailboxObject | false => {
+        const mb = this.client.mailbox as MailboxObject | false;
+        return mb && mb.path === path ? mb : false;
+      };
+      const mb = selected();
+      if (!mb) return { k: "unanswered" };
+      const live = String(mb.uidValidity);
+      const verdict = epochVerdict(epochOf(uidValidity), epochOf(mb.uidValidity));
+      if (verdict === "stale") return { k: "renumbered", uidValidity: live };
+      if (verdict !== "usable") return { k: "unanswered" };
+      // The asked spellings of each id; an id with a space, a bracket or outside printable ASCII is not asked.
+      const spellings = new Map<string, string[]>();
+      for (const asked of messageIds) {
+        const id = normalizeMessageId(asked);
+        if (id === null || !/^[\x21-\x7e]+$/.test(id) || /[<>]/.test(id) || !isStorableMessageId(id)) continue;
+        spellings.set(id, [...(spellings.get(id) ?? []), asked]);
+      }
+      const ids = [...spellings.keys()];
+      const gone = new Set<string>();
+      const clock = this.readDeadline();
+      for (let i = 0; i < ids.length; i += ImapAdapter.BY_MESSAGE_ID_CHUNK) {
+        const chunk = ids.slice(i, i + ImapAdapter.BY_MESSAGE_ID_CHUNK);
+        const found = await this.searchBounded(
+          chunk.length === 1
+            ? { header: { "message-id": chunk[0]! } }
+            : { or: chunk.map((id) => ({ header: { "message-id": id } })) },
+          { uid: true }, folder, clock,
+        );
+        if (!Array.isArray(found)) return { k: "unanswered" };
+        const hits = new Set(found);
+        // Past two hits a Message-ID the envelopes are not read, and the group gets no verdict.
+        if (hits.size > 2 * chunk.length) continue;
+        const carried: string[] = [];
+        if (hits.size > 0) {
+          const read = new Set<number>();
+          const rows = await this.client.fetchAll([...hits].join(","), { uid: true, envelope: true }, { uid: true });
+          for (const r of rows) {
+            if (!askedRow(r, hits, "envelope")) continue;
+            read.add(r.uid);
+            carried.push((r.envelope?.messageId ?? "").toLowerCase());
+          }
+          // A hit whose envelope did not arrive, or names no Message-ID, could carry any of the ids.
+          if (read.size !== hits.size) return { k: "unanswered" };
+          if (carried.includes("")) continue;
+        }
+        for (const id of chunk) {
+          const low = id.toLowerCase();
+          if (!carried.some((m) => m.includes(low))) for (const asked of spellings.get(id)!) gone.add(asked);
+        }
+      }
+      const after = selected();
+      if (!after || !sameEpoch(epochOf(after.uidValidity), epochOf(uidValidity))) return { k: "unanswered" };
+      return { k: "read", uidValidity: live, gone };
+    } finally {
+      lock.release();
+    }
+  }
+
+  /**
+   * See {@link MailboxAdapter.findLetters}. One lock; per group of ids one bounded `UID SEARCH`, the
+   * hits' envelopes, then each candidate's bytes. The sender chooses a Message-ID, so a hit binds
+   * nothing until its own bytes give the stored key.
+   */
+  async findLetters(folder: string, asks: readonly LetterAsk[]): Promise<FindLettersAnswer> {
+    const path = this.toServerPath(folder);
+    let lock: { release(): void };
+    try {
+      lock = await this.bounded(this.client.getMailboxLock(path));
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) throw err;
+      if (!(this.client as unknown as { usable?: boolean }).usable) return { k: "unanswered" };
+      return (err as { serverResponseCode?: unknown } | null)?.serverResponseCode === "NONEXISTENT"
+        ? { k: "absent" } : { k: "unanswered" };
+    }
+    try {
+      const selected = (): MailboxObject | false => {
+        const mb = this.client.mailbox as MailboxObject | false;
+        return mb && mb.path === path ? mb : false;
+      };
+      const mb = selected();
+      if (!mb) return { k: "unanswered" };
+      const epoch = epochOf(mb.uidValidity);
+      if (!epoch.known) return { k: "unanswered" };
+      const undecided: LetterVerdict = { k: "undecided" };
+      const verdicts = new Map<string, LetterVerdict>();
+      // The asks under each id; a letter with no id it can search for cannot be found by one.
+      const byId = new Map<string, LetterAsk[]>();
+      for (const a of asks) {
+        const id = a.messageIdHeader === null ? null : normalizeMessageId(a.messageIdHeader);
+        if (id === null || !/^[\x21-\x7e]+$/.test(id) || /[<>]/.test(id) || !isStorableMessageId(id)) {
+          verdicts.set(a.key, undecided);
+          continue;
+        }
+        byId.set(id, [...(byId.get(id) ?? []), a]);
+      }
+      const ids = [...byId.keys()];
+      const clock = this.readDeadline();
+      const decide = (id: string, v: LetterVerdict): void => { for (const a of byId.get(id)!) verdicts.set(a.key, v); };
+      for (let i = 0; i < ids.length; i += ImapAdapter.BY_MESSAGE_ID_CHUNK) {
+        const chunk = ids.slice(i, i + ImapAdapter.BY_MESSAGE_ID_CHUNK);
+        const found = await this.searchBounded(
+          chunk.length === 1
+            ? { header: { "message-id": chunk[0]! } }
+            : { or: chunk.map((id) => ({ header: { "message-id": id } })) },
+          { uid: true }, folder, clock,
+        );
+        if (!Array.isArray(found)) return { k: "unanswered" };
+        const hits = new Set(found);
+        if (hits.size > 2 * chunk.length) { for (const id of chunk) decide(id, undecided); continue; }
+        const carried = new Map<number, string>();
+        if (hits.size > 0) {
+          const rows = await this.client.fetchAll([...hits].join(","), { uid: true, envelope: true }, { uid: true });
+          for (const r of rows) {
+            if (askedRow(r, hits, "envelope")) carried.set(r.uid, (r.envelope?.messageId ?? "").toLowerCase());
+          }
+          if (carried.size !== hits.size) return { k: "unanswered" };
+        }
+        // A hit naming no Message-ID could be any letter of the group.
+        if ([...carried.values()].includes("")) { for (const id of chunk) decide(id, undecided); continue; }
+        const proofs = new Map<number, LetterProof | null>();
+        for (const id of chunk) {
+          const low = id.toLowerCase();
+          const candidates = [...carried].filter(([, carries]) => carries.includes(low)).map(([uid]) => uid);
+          if (candidates.length === 0) { decide(id, { k: "absent" }); continue; }
+          if (candidates.length > IMAP_CANDIDATE_BODY_PROBES_MAX) { decide(id, undecided); continue; }
+          for (const uid of candidates) if (!proofs.has(uid)) proofs.set(uid, await this.letterProof(uid, folder));
+          for (const a of byId.get(id)!) {
+            const proven = candidates.filter((uid) => provesLetter(proofs.get(uid) ?? null, a));
+            verdicts.set(a.key, proven.length === 1
+              ? { k: "found", locator: { folder: canonicalDestination(folder), ref: makeRef(epoch.value, proven[0]!) } }
+              : undecided);
+          }
+        }
+      }
+      // One copy is one letter: a copy proven for two of them proves neither.
+      const byCopy = new Map<string, string[]>();
+      for (const [key, v] of verdicts) if (v.k === "found") byCopy.set(v.locator.ref, [...(byCopy.get(v.locator.ref) ?? []), key]);
+      for (const keys of byCopy.values()) if (keys.length > 1) for (const key of keys) verdicts.set(key, undecided);
+      const after = selected();
+      if (!after || !sameEpoch(epochOf(after.uidValidity), epoch)) return { k: "unanswered" };
+      return { k: "read", uidValidity: epoch.value, verdicts };
+    } finally {
+      lock.release();
+    }
+  }
+
+  /**
+   * One candidate's identity keys from its own bytes, under the message ceiling as `destinationLook`
+   * reads them; `null` for a body over the ceiling, short or unparseable: it proves nothing.
+   */
+  private async letterProof(uid: number, folder: string): Promise<LetterProof | null> {
+    const probe = await this.bounded(this.client.download(
+      String(uid), undefined, { uid: true, maxBytes: MAX_RAW_MESSAGE_BYTES + 1 },
+    ), folder);
+    if (!probe || !probe.content) return null;
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let over = false;
+    for await (const chunk of probe.content) {
+      const buf = chunk as Buffer;
+      total += buf.length;
+      if (total > MAX_RAW_MESSAGE_BYTES) { over = true; break; }
+      chunks.push(buf);
+    }
+    const declared = probe.meta?.expectedSize;
+    if (over || (typeof declared === "number" && (declared > MAX_RAW_MESSAGE_BYTES || total < declared))) return null;
+    try {
+      const n = await normalizeMime(Buffer.concat(chunks));
+      return { n, fp: fingerprintDedupKey(messageFingerprint(n)), runtime: runtimeDedupKey(n), legacy: legacyDedupKey(n.canonical) };
+    } catch {
+      return null;
     }
   }
 
