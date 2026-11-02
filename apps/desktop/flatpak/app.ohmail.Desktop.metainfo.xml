@@ -78,6 +78,18 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.27" date="2026-11-02">
+      <description>
+        <ul>
+          <li>A sign-out, and a sign-in after one, end the previous session on the server</li>
+          <li>Erasing a mailbox takes the fingerprint of its saved settings too</li>
+          <li>ohmail clears out its own old settings copies that a mail server kept</li>
+          <li>Letters removed from Trash in another mail app leave ohmail's Trash</li>
+          <li>The phone keeps the letter you opened in Trash when a delete commits</li>
+          <li>Words you typed are kept when you quit, close, press Escape or reload</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.26" date="2026-11-02">
       <description>
         <ul>
@@ -112,17 +124,6 @@
         <ul>
           <li>Search answers sooner on Cloud, and a broad word's count no longer takes seconds</li>
           <li>Import settings brings a reconnected mailbox's signature back where you can see it</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.22" date="2026-11-01">
-      <description>
-        <ul>
-          <li>The worker's conversation-join repair finishes its rounds again</li>
-          <li>The link label tests no longer fail on a busy machine</li>
-          <li>Setup offers each connected mailbox once after a remove and reconnect</li>
-          <li>Undo puts a parked, queued or resurfaced conversation back where it was in Earlier</li>
-          <li>Undo of Mark unread puts the conversation back where it was</li>
         </ul>
       </description>
     </release>
