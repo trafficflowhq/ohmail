@@ -21,6 +21,70 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.27] — 2026-11-02
+
+### A sign-out, and a sign-in after one, end the previous session on the server
+
+Signing out of the phone, or of a browser paired with your computer, now ends the session on the server
+also when the device never received the answer to its last session renewal; before, that sign-out ended the
+session on the device only, and it stayed valid on the server until it expired. Signing in again on the
+desktop after a sign-out the server never heard, or over a saved sign-in the app can no longer open, now
+ends the desktop's previous session there.
+
+While a sign-out in the browser has not finished, opening the account page goes to the sign-in page, which
+finishes the sign-out, instead of opening the account page of the person who signed out. And a session
+renewal that answers a token again, after a lost answer, never hands the session to a browser or device
+signed in to a different account. Desktop, web, phone, ohmail Cloud and your own server.
+
+### Erasing a mailbox takes the fingerprint of its saved settings too
+
+Remove and erase now also takes the fingerprint of the mailbox's saved settings (a hash of the whole
+settings copy, its signature included) off the account's history: the record of a settings copy ohmail
+found in the mailbox, your answer to it, and an Import settings press handed to the organizer. Before,
+those rows kept it for up to a year after the erasure; mailboxes erased before this update lose it on
+the server's next erasure pass, and removing a mailbox from a computer takes it off that computer's
+store. A settings card still open for an erased mailbox can no longer record an answer for it.
+
+The limits on sign-up, email verification, desktop sign-in and waitlist attempts per connection, and on
+how much mail ohmail sends one address, now store the connection's IP address and the recipient only as
+a hash keyed with the server's own encryption key, as the sign-in limits already did, never as a plain
+SHA-256 that a guess can reverse. Your own server needs no new setting; these counters start over once
+when the update is deployed. Cloud and your own server.
+
+### ohmail clears out its own old settings copies that a mail server kept
+
+Some mail servers kept every copy of your settings that ohmail builds before 0.30.21 failed to save, so a
+mailbox could hold hundreds of them in ohmail's settings folder, and ohmail kept them all as if another device
+had left them. On the desktop, the phone and your own server, ohmail now reads them as its own and clears them
+out. Settings another phone or computer left behind are still kept and asked about, never removed, also when
+they sit behind hundreds of such copies: before, they could be deleted without a question. On ohmail Cloud
+too, a mailbox holding many of ohmail's own copies no longer has ohmail ask you to import its own settings
+after a restart, or hold back a change you made since, also once those copies are more than a year old.
+
+### Letters removed from Trash in another mail app leave ohmail's Trash
+
+On Cloud, your own server, the desktop app and the phone, a letter you deleted in ohmail and then removed
+from the server's Trash in another mail app stayed in ohmail's Trash with its full text, and its Restore
+said it was filing the letter and then put it back in Trash. ohmail now checks the letters it parked in
+Trash and lets the ones the server no longer holds go, text included; a Trash folder it cannot read in full
+lets nothing go. A Restore of such a letter takes it out of Trash instead of bringing it back. On Gmail,
+a deleted letter that also carried a label is checked too, and its Restore no longer stays filing for good.
+
+### The phone keeps the letter you opened in Trash when a delete commits
+
+On a phone or tablet, opening Trash right after deleting a letter and choosing another letter there no
+longer closes or empties that letter a few seconds later, when the delete commits and the deleted letter
+lists at the top of Trash, with the list and the reader side by side or one at a time. Closing the reader after a delete now closes only
+the screen it was deleted from.
+
+### Words you typed are kept when you quit, close, press Escape or reload
+
+On the desktop app, quitting or closing the window first saves the message you are writing, so the last
+words typed before you quit are in your drafts. Pressing Escape in a new message whose only text is an
+address typed in To now keeps it as a draft like any other text. In the browser, Reload on the "A newer
+ohmail is available" line now waits while a message holds files that have not been sent yet, as Restart
+already did on the desktop app, and says why.
+
 ## [0.30.26] — 2026-11-02
 
 ### The desktop app keeps syncing after a mailbox is removed and connected again while it is closed
@@ -15956,7 +16020,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.26...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.27...HEAD
+[0.30.27]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.27
 [0.30.26]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.26
 [0.30.25]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.25
 [0.30.24]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.24
