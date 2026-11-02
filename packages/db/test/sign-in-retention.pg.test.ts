@@ -131,6 +131,37 @@ describe.skipIf(!PG_UP)("the sign-in retention pass under row locks (real Postgr
     expect(await db.select({ id: sessions.id }).from(sessions).where(inArray(sessions.id, ids))).toEqual([]);
   }, 30_000);
 
+  it("deletes a session's refresh tokens in bounded statements, keeps the session until the last, and goes on", async () => {
+    const { accountId, userId } = await plantUser();
+    const familyId = randomUUID();
+    const [s] = await db.insert(sessions).values({
+      accountId, userId, familyId, accessTokenHash: randomUUID(),
+      accessExpiresAt: ago(40), refreshExpiresAt: ago(40), revokedAt: ago(40), createdAt: ago(50), lastSeenAt: ago(41),
+    }).returning();
+    for (let i = 0; i < 5; i++) {
+      await db.insert(refreshTokens).values({
+        accountId, userId, sessionId: s!.id, familyId, tokenHash: randomUUID(), expiresAt: ago(40), revokedAt: ago(40),
+      });
+    }
+    const [d] = await db.insert(devices).values({
+      accountId, userId, kind: "macos", ip: "192.0.2.8", createdAt: ago(60), lastSeenAt: ago(45),
+    }).returning();
+    const left = async () => [
+      (await db.select().from(refreshTokens).where(eq(refreshTokens.sessionId, s!.id))).length,
+      (await db.select().from(sessions).where(eq(sessions.id, s!.id))).length,
+    ];
+
+    const capped = await pruneSignInRecords(db as unknown as Tx, NOW, { retentionMs: 30 * DAY, tokenBatch: 2, maxBatches: 1 });
+    expect(capped).toMatchObject({ sessions: 0, refreshTokens: 2, stoppedBy: "batches" });
+    expect(await left()).toEqual([3, 1]);
+    expect((await db.select({ ip: devices.ip }).from(devices).where(eq(devices.id, d!.id)))[0]!.ip, "the device step never ran").toBe("");
+
+    // The pass is global: this file reads its own rows.
+    const rest = await pruneSignInRecords(db as unknown as Tx, NOW, { retentionMs: 30 * DAY, tokenBatch: 2 });
+    expect(rest.stoppedBy).toBe("dry");
+    expect(await left()).toEqual([0, 0]);
+  }, 30_000);
+
   it("passes over a sign-in record another transaction holds instead of waiting for it", async () => {
     const { userId } = await plantUser();
     const ids: string[] = [];

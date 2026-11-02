@@ -25,6 +25,11 @@ function mintTabId(): string {
 /** This document's name for itself. One per page load, which is what a tab is. */
 let thisTab = mintTabId();
 
+/** This page's name, for a reader that must tell its own act from another tab's. */
+export function thisTabName(): string {
+  return thisTab;
+}
+
 const isWire = (m: unknown): m is Wire =>
   typeof m === "object" && m !== null && (m as Wire).t === "signed-out"
   && typeof (m as Wire).from === "string";
