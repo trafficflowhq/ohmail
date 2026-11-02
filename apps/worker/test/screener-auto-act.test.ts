@@ -42,6 +42,8 @@ import { repoWithFailingMethod } from "./_fault.js";
  *   (k) a deny that rests on other senders' mail writes no rule either: the crowd's cap (one subject
  *       from other first-time senders) is no fact about this address, so advice capped by it, or
  *       stored before the reason was, files the advised letter alone, as in (j).
+ *   (l) a sender with a sensitive held letter (a code, a reset) is left whole for the person: the
+ *       act files none of their mail and writes no rule.
  *
  * The held fixture carries the provider's `pass`, as a Gmail-held mailbox's letter would; the
  * cases about an unconfirmed letter say so, and one says NULL. A stored suggestion's reason is
@@ -1122,7 +1124,8 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(await desiredOf(putBack), "an automatic filing moved a letter the person put back").toBe(SCREENER);
     expect(await desiredOf(last), "a sender with nothing to file took the clock's one turn").toBe(SPAM);
     expect(await rulesFor(w, "codes@shop-a.test")).toHaveLength(0);
-    expect(r).toMatchObject({ examined: 3, filed: 1, capped: false, crowdDenies: 2 });
+    // The sender holding a code is not selected at all (l).
+    expect(r).toMatchObject({ examined: 2, filed: 1, capped: false, crowdDenies: 1 });
   });
 
   it("(k) the line says how many senders and letters, and the real logger keeps both numbers", async () => {
@@ -1136,6 +1139,66 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(line, "the pass said nothing about the senders it filed one letter of").toBeDefined();
     expect(line, "the logger's census refused a field the line passed").not.toContain("droppedFields");
     expect(JSON.parse(line!)).toMatchObject({ accountId: w.accountId, skipped: 1, moved: 1 });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //  (l) SENSITIVE HELD MAIL — a held code or reset stays where the person sees it
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+
+  /** A held letter of a sensitive class, as the detector stores it. */
+  async function heldSensitive(w: World, from: string, category: string, verdict: string | null = "pass"): Promise<string> {
+    const id = await held(w, from);
+    await db.update(messages).set({ sensitivityCategory: category, authVerdict: verdict }).where(eq(messages.id, id));
+    return id;
+  }
+  const later = async (id: string) => {
+    await db.update(messages).set({ date: new Date(Date.now() + 60_000) }).where(eq(messages.id, id));
+  };
+
+  it("MUTATION-WATCH (l): admit advice on a benign newest letter never files the one-time code held beside it", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "login@shop.test";
+    const code = await heldSensitive(w, sender, "otp");
+    const benign = await held(w, sender);
+    await later(benign);
+    await suggest(w, benign, "INBOX", 0.95);
+    const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+    expect(r).toMatchObject({ ran: true, filed: 0 });
+    expect(await desiredOf(code), "the act filed a held one-time code").toBe(SCREENER);
+    expect(await desiredOf(benign)).toBe(SCREENER);
+    expect(await rulesFor(w, sender)).toHaveLength(0);
+  });
+
+  it("MUTATION-WATCH (l): a standing deny leaves an unconfirmed password reset at the gate, pass after pass, and writes no rule", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "accounts@shop.test";
+    const reset = await heldSensitive(w, sender, "password_reset", "unavailable");
+    const advised = await held(w, sender);
+    await later(advised);
+    await suggest(w, advised, SPAM, 0.95);
+    for (const pass of [1, 2]) {
+      await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
+      expect(await desiredOf(reset), `pass ${pass} filed a held password reset`).toBe(SCREENER);
+      expect(await rulesFor(w, sender), `pass ${pass} wrote a rule`).toHaveLength(0);
+    }
+  });
+
+  it("CONTROL (l): a person's press over the same bag files the code", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "login@shop.test";
+    const code = await heldSensitive(w, sender, "otp");
+    type InTx = (f: (tx: Tx) => Promise<unknown>) => Promise<unknown>;
+    const inTx = (db as unknown as { transaction: InTx }).transaction.bind(db) as InTx;
+    const pressed = await inTx((tx) => applyScreenerDecision(tx, {
+      accountId: w.accountId, scope: "sender", address: sender, appliedFolder: "INBOX", decision: "yes",
+      triggeringActionId: `screener:press:${code}`, now: new Date(), stampBaseline: false, applyRetro: true,
+      overExisting: "converge", liftOverDomain: true, decidedBy: "person",
+    })) as Awaited<ReturnType<typeof applyScreenerDecision>>;
+    expect(pressed.skipped).toBeUndefined();
+    expect(await desiredOf(code)).toBe("INBOX");
   });
 });
 

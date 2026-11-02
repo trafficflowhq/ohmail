@@ -6,9 +6,10 @@ import { NO_TRUSTED_AUTHSERV_IDS } from "./rules.js";
  * message to `"unavailable"`, so without this the forged-`From` demotion can never fire. The IMAP
  * host is the key: a fact about the provider that HOLDS the mailbox, attested by TLS. Gmail
  * (`mx.google.com`) and Microsoft (`mx.microsoft.com`) are named; every other host resolves to
- * {@link NO_TRUSTED_AUTHSERV_IDS} — nothing demoted, the correct fail-open. Microsoft's LEGACY
- * no-authserv-id header is not matched: indistinguishable from one a sender typed. Both providers
- * displace inbound headers bearing their own id; the reader takes the topmost trusted one.
+ * {@link NO_TRUSTED_AUTHSERV_IDS} — nothing demoted, the correct fail-open. The reader takes the
+ * topmost field and nothing below it. Microsoft's own stamp there carries no authserv-id and is
+ * indistinguishable from one a sender typed, so a Microsoft mailbox reads `"unavailable"`; the id
+ * stays mapped for {@link providerBrand}, which names Microsoft's own reports.
  */
 
 /** Gmail's authserv-id — consumer Gmail and Google Workspace both sign with it. */

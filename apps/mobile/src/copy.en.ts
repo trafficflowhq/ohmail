@@ -2657,6 +2657,15 @@ const TABLE = {
   /** The company's own address, and the mail provider did not confirm the sender: the web's words. */
   senderCheckUnverified: (brand: string): string =>
     `This message says it is from ${brand}. Your mail provider did not confirm that.`,
+  /** The mail provider failed the letter's sender check: the web's words. */
+  senderCheckFailed: (address: string): string =>
+    `Your mail provider checked whether this message is from ${address}, and the check failed.`,
+  /** Such a letter held at the gate with no waiting row, decided alone: the two verbs and the block's name. */
+  failedAria: "Messages that failed the sender check",
+  failedNotFromYou: "Not from you",
+  failedFromYou: "It's from you",
+  failedNotFromThem: "Not from them",
+  failedFromThem: "It's from them",
   /** A shared provider's domain is never a scope: the sentence in the place of the choice. */
   screeningScopeShared: (domain: string): string =>
     `${domain} is a shared provider. Decisions here are per address.`,

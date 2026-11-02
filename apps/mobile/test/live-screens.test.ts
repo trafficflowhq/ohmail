@@ -959,6 +959,7 @@ describe("the actions facade is ONE object delegating per call", () => {
     stayedWhy: () => (calls.push(`${tag}:stayedWhy`), Promise.resolve(new Map())),
     moveStayed: () => calls.push(`${tag}:moveStayed`),
     screenUnscreened: () => (calls.push(`${tag}:screenUnscreened`), Promise.resolve(true)),
+    fileFailed: () => calls.push(`${tag}:fileFailed`),
     folderCreate: () => calls.push(`${tag}:folderCreate`),
     folderRename: () => calls.push(`${tag}:folderRename`),
     folderDelete: () => calls.push(`${tag}:folderDelete`),

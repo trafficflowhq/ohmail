@@ -737,8 +737,14 @@
       "impersonationShared": "Diese Nachricht gibt sich als {brand} aus, aber eine {domain}-Adresse kann sich jeder anlegen.",
       "chip": "Nicht {brand}",
       "list": "Über eine Mailingliste verschickt — alle auf der Liste können unter dieser Adresse schreiben.",
-      "unverified": "Diese Nachricht gibt an, von {brand} zu kommen. Dein Mailanbieter hat das nicht bestätigt."
+      "unverified": "Diese Nachricht gibt an, von {brand} zu kommen. Dein Mailanbieter hat das nicht bestätigt.",
+      "failed": "Dein Mailanbieter hat geprüft, ob diese Nachricht von {address} kommt, und die Prüfung ist fehlgeschlagen."
     },
+    "failedAria": "Nachrichten, die die Absenderprüfung nicht bestanden haben",
+    "failedNotFromYou": "Nicht von dir",
+    "failedFromYou": "Doch von dir",
+    "failedNotFromThem": "Nicht vom Absender",
+    "failedFromThem": "Doch vom Absender",
     "title": "Screener",
     "metaWaiting": "{count, plural, =0 {alles klar} one {1 neuer Absender wartet} other {# neue Absender warten}}",
     "metaNotYet": "noch nicht organisiert",

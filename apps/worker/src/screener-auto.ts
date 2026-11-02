@@ -1,6 +1,6 @@
 import { and, asc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import {
-  accountSettings, accountSyncState, approvals, auditLog, changeLog, drafts, folderState, mailboxes,
+  accountSettings, accountSyncState, approvals, auditLog, authScreensSql, changeLog, drafts, folderState, mailboxes,
   messageBodies, messageStates, messages, rules as rulesTbl, recordChange,
   ruleNamesSenderSql, weAnsweredThisSenderWhere, type Tx, auditAction,} from "@trafficflow/db";
 import {
@@ -514,8 +514,8 @@ async function heldPage(t: Tx, opts: { accountId: string; afterId: string | null
  * re-read on the locked row. Held (`desired_folder` the Screener, `last_set_by = 'us'`; `external` is
  * the user's own client, `peer` another install's), on a mailbox this install organizes, and none of
  * the user-intent exclusions: an enabled rule for the sender or domain, a triage state, a reply draft,
- * a decided approval, an own-address reply, a filing the person put back. Sensitivity is the pass's
- * KEEP guard, not a predicate.
+ * a decided approval, an own-address reply, a filing the person put back; nor a letter its provider
+ * failed. Sensitivity is the pass's KEEP guard, not a predicate.
  */
 async function selectCandidates(
   t: Tx,
@@ -582,6 +582,8 @@ async function selectCandidates(
   // gate through the move door, whose `last_set_by = 'us'` the two filters above admit, so without
   // this the next full walk files it again.
   filters.push(isNull(folderState.autoFilingUndoneAt));
+  // 7 — A LETTER ITS PROVIDER FAILED is the person's to decide, never filed as bulk.
+  filters.push(sql`not ${authScreensSql(sql`${messages.authVerdict}`)}`);
   // ONE array parameter, so the statement's text does not depend on how many ids it is asked about.
   filters.push(sql`${messages.id} = any(${sql.param([...opts.only])}::uuid[])`);
 

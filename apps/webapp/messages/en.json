@@ -737,8 +737,14 @@
       "impersonationShared": "This message claims to be from {brand}, but anyone can register a {domain} address.",
       "chip": "Not {brand}",
       "list": "Sent through a mailing list — anyone on it can write as this address.",
-      "unverified": "This message says it is from {brand}. Your mail provider did not confirm that."
+      "unverified": "This message says it is from {brand}. Your mail provider did not confirm that.",
+      "failed": "Your mail provider checked whether this message is from {address}, and the check failed."
     },
+    "failedAria": "Messages that failed the sender check",
+    "failedNotFromYou": "Not from you",
+    "failedFromYou": "It's from you",
+    "failedNotFromThem": "Not from them",
+    "failedFromThem": "It's from them",
     "title": "Screener",
     "metaWaiting": "{count, plural, =0 {all clear} one {1 first-time sender waiting} other {# first-time senders waiting}}",
     "metaNotYet": "not organizing yet",

@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import {
-  approvals, auditAction, auditLog, drafts, folderState, isRefileRun, mailboxes, messageBodies,
+  approvals, auditAction, auditLog, automaticAiAdmits, drafts, folderState, isRefileRun, mailboxes, messageBodies,
   messageStates, messages, OwnAddressesPerPass, PARKED_FENCE_PREFIX, pendingRefileFrom, recordChange, recordRuleDelta,
   rules as rulesTbl, rulesTheActWrote, weAnsweredThisSenderWhere,
   type LedgerTx, type RefileState, type Tx,
@@ -802,8 +802,11 @@ async function selectCandidates(
   }
   // 6 — THE ACT ON SUGGESTIONS' RULE LEAVES WHAT THE PERSON PUT BACK (mail 0138): it re-walks the
   // sender's backlog, and a filing the person undid is not an automatic decision's to make again.
+  // Nor a letter no automatic path may read (a code, a reset), held or filed; a person's release
+  // press still moves what it offered.
   if (opts.byTheAct) {
     filters.push(isNull(folderState.autoFilingUndoneAt));
+    if (!isReleaseRun(rule)) filters.push(automaticAiAdmits(messages));
   }
   if (opts.afterId) filters.push(gt(messages.id, d.castUuid(opts.afterId)));
 

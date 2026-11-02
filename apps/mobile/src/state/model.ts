@@ -76,6 +76,11 @@ export interface Mail {
    */
   senderUnverified?: { brand: string };
   /**
+   * The mail provider failed this letter's sender check (`MessageDTO.authVerdict`, a verdict the gate
+   * screens on): the reader's line, before any claim. No chip, nothing spoken on the row.
+   */
+  senderFailed?: true;
+  /**
    * A meeting invitation whose event ohmail cannot show, by its stored headers
    * (`MessageDTO.invitationWithoutEvent`). Absent on every other message.
    */

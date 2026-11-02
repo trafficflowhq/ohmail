@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type EngineMessage, type Folder, type SyncChange } from "@ohmail/client-engine";
-import { liveOhbox, liveScreener, presentedOf, screeningAnswered, type WorldView } from "../src/state/live";
+import {
+  MemoryMirrorStore, OhmailEngine, type EngineMessage, type EngineMutation, type Folder, type SyncChange,
+} from "@ohmail/client-engine";
+import { liveActions, liveOhbox, liveScreener, presentedOf, screeningAnswered, type WorldView } from "../src/state/live";
 
 /**
  * THE PHONE, THROUGH THE SHARED PARTITION (ruling 2026-09-25, row OWN-ADDRESS-GATE-ROW-IS-STILL-A-QUEUE-ROW).
@@ -29,10 +31,10 @@ function msg(id: string, from: string): EngineMessage {
   };
 }
 
-async function gateWithOwnMail(): Promise<MemoryMirrorStore> {
+async function gateWithOwnMail(own: EngineMessage = msg("own", OWN)): Promise<MemoryMirrorStore> {
   const store = new MemoryMirrorStore();
   await store.load();
-  await store.applyChanges([msg("own", OWN), msg("them", STRANGER)].map((m, i) => ({
+  await store.applyChanges([own, msg("them", STRANGER)].map((m, i) => ({
     type: "message", op: "create", id: m.id, seq: i + 1, updatedAt: m.updatedAt, entity: m,
   })) as SyncChange[]);
   return store;
@@ -59,4 +61,40 @@ describe("own mail held at the gate, on the phone", () => {
     expect(liveScreener(pres, { ...view, ownAddresses: [] }).waiting.map((r) => r.routeKey).sort())
       .toEqual([OWN, STRANGER].sort());
   });
+});
+
+/**
+ * A LETTER CLAIMING THE ACCOUNT'S ADDRESS THAT ITS PROVIDER FAILED is no own mail: it is not in the
+ * Ohbox and no Screener row, but listed apart at the gate, and each of its two verbs is one `move` out
+ * of the gate — never a rule, a decision or a contact.
+ */
+describe("a forged own letter at the gate, on the phone", () => {
+  const forged = (): EngineMessage => ({ ...msg("forged", OWN), authVerdict: "fail" });
+
+  it("is not in the Ohbox and is listed apart; the stranger is still the one row", async () => {
+    const pres = presentedOf(await gateWithOwnMail(forged()), NOW, false, SCREENING, [OWN]);
+    expect(liveOhbox(pres, view).fresh).toEqual([]);
+    const shelf = liveScreener(pres, view);
+    expect(shelf.waiting.map((r) => r.routeKey)).toEqual([STRANGER]);
+    expect(shelf.failedAtGate.map((f) => [f.id, f.own])).toEqual([["forged", true]]);
+  });
+
+  for (const [to, folder] of [["spam", "ohmail/Quarantine"], ["ohbox", "INBOX"]] as const) {
+    it(`deciding it ${to} is one move out of the gate and nothing else`, async () => {
+      const store = await gateWithOwnMail(forged());
+      const sent: EngineMutation[] = [];
+      const engine = new OhmailEngine({
+        store, now: () => NOW,
+        adapter: {
+          sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: store.getCursor(), hasMore: false, serverTime: RECENT }),
+          mutate: async (m: EngineMutation) => { sent.push(m); return { changes: [], seq: null }; },
+          withdrawSend: async () => ({ outcome: "unsupported" as const }),
+          fetchBody: async () => null,
+        },
+      });
+      const actions = liveActions({ engine, toast: () => undefined, now: () => NOW });
+      expect(await actions.fileFailed("forged", to)).toBe(true);
+      expect(sent).toEqual([{ kind: "move", messageId: "forged", folder, from: GATE }]);
+    });
+  }
 });
