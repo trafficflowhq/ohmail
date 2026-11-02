@@ -51,8 +51,8 @@ services:
   proxy:
     image: ghcr.io/trafficflowhq/mirror-caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
     restart: unless-stopped
-    # proxy/entrypoint.sh: on the external-TLS door with OHMAIL_TLS_TERMINATOR unset it trusts this
-    # network's gateway and says so in one line; on either door it then runs the image's own command.
+    # proxy/entrypoint.sh: on the external-TLS door it says in one line whom it trusts, refusing to start
+    # with OHMAIL_TLS_TERMINATOR unset; on either door it then runs the image's own command.
     entrypoint: ["/bin/sh", "/etc/caddy/entrypoint.sh"]
     depends_on:
       web:
@@ -75,10 +75,10 @@ services:
       # step .env.example asks for, and one people do late. Same `:+` containment as above.
       OHMAIL_HSTS_DIRECTIVE: ${OHMAIL_TLS_INTERNAL:+header -Strict-Transport-Security}
       # The external-TLS door's two inputs, handed to `api` by the identical expressions. The proxy
-      # alone decides whose X-Forwarded-For it believes; the api refuses to start on a terminator
-      # list the two would read differently. Unset, the entrypoint takes this network's gateway, where
-      # a same-box terminator arrives from. `0.0.0.0/32` trusts no terminator: the one setting for a
-      # relay that adds nothing. No code reads `X-Forwarded-Proto`; the cookies carry `Secure`.
+      # alone decides whose X-Forwarded-For it believes; it and the api refuse to start with no
+      # terminator named, or on a list the two would read differently. `gateway` is this network's
+      # gateway, where a same-box terminator arrives from. `0.0.0.0/32` trusts no terminator: the one
+      # setting for a relay that adds nothing. No code reads `X-Forwarded-Proto`; the cookies carry `Secure`.
       OHMAIL_EXTERNAL_TLS: ${OHMAIL_EXTERNAL_TLS:-}
       OHMAIL_TLS_TERMINATOR: ${OHMAIL_TLS_TERMINATOR:-}
       # The staging bucket's name, because the Caddyfile's browser-upload route matches the
@@ -106,7 +106,7 @@ services:
       # `docker compose up -d` recreates a service only when its definition changes, so this
       # digest of ./proxy is what makes an update that edits the directory restart the proxy.
       # test/selfhost-proxy-reload.test.ts fails on a stale value and prints the new one.
-      ohmail.proxy-config: sha256:b28b12d5343500a845ad7051583004d800b01d5e8df4c155887723d34505a3ba
+      ohmail.proxy-config: sha256:2f876e0a34831e5ba13638a2f357cf8e4cf181c2504d17c28b93cafa59217c5f
     volumes:
       # Both front doors, the route table they import and the entrypoint. The entrypoint picks the
       # door: proxy/Caddyfile, which owns TLS, or proxy/Caddyfile.external-tls when
@@ -232,8 +232,8 @@ services:
       # resolved inside the api when the proxy first calls, so start order does not matter. Without
       # it every visitor shares the proxy's address: one wrong-password lockout and one signup limit
       # for the whole server, and an audit trail that names nobody. Behind your own terminator the
-      # proxy settles the visitor's address itself; the api gets the door's two inputs only to refuse
-      # a terminator list the proxy would read differently, by the proxy's identical expressions.
+      # proxy settles the visitor's address itself; the api gets the door's two inputs, by the proxy's
+      # identical expressions, only to refuse a missing value or a list the proxy would read differently.
       OHMAIL_EXTERNAL_TLS: ${OHMAIL_EXTERNAL_TLS:-}
       OHMAIL_TLS_TERMINATOR: ${OHMAIL_TLS_TERMINATOR:-}
       TF_TRUSTED_PROXIES: ${TF_TRUSTED_PROXIES:-proxy}
@@ -411,10 +411,13 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ohmail -d ohmail"]
+      # TCP on loopback, not the socket: a first start's init runs a server that takes no TCP
+      # connection, and the api must not start until the final one listens.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ohmail -d ohmail"]
       interval: 2s
       timeout: 3s
       retries: 30
+      start_period: 120s
 
   rustfs:
     image: ghcr.io/trafficflowhq/mirror-rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c

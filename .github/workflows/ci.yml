@@ -73,6 +73,55 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
+      # NO SECRET IN WHAT A PULL REQUEST ADDS. A path the base's ignore rules match is refused (the base's,
+      # so a change cannot exempt itself). Then the added lines, under their files' headers, go through gitleaks
+      # by digest, offline, with .github/secret-scan.toml. It exits 1 on a fatal error too, so a control made
+      # here is scanned first and the report must name both of its rules.
+      - name: No secret in the change
+        if: github.event_name == 'pull_request'
+        env:
+          GITLEAKS: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+        run: |
+          set -euo pipefail
+          scan=$(mktemp -d "$RUNNER_TEMP/secret-scan-XXXXXX")
+          git init -q "$scan/base"
+          git archive HEAD^1 -- ':(glob)**/.gitignore' | tar -x -C "$scan/base"
+          rc=0
+          git diff -z --name-only --diff-filter=ACMR HEAD^1 HEAD | git -C "$scan/base" check-ignore --no-index --stdin -z > "$scan/ignored" || rc=$?
+          if [ "$rc" = 0 ]; then
+            echo "::error::the base branch's ignore rules match these paths, so they stay out of the repository:"
+            tr '\0' '\n' < "$scan/ignored"
+            exit 1
+          fi
+          [ "$rc" = 1 ] || { echo "::error::git check-ignore failed (exit $rc)"; exit 1; }
+          # A token of a default rule's shape and a key-ring key, made here; the key's name is built as the tests build it.
+          ring="$(printf '%s_%s' TF KEK)_V1"
+          printf '+++ b/secret-scan-control\n+GITHUB_TOKEN=ghp_%s\n+%s=%s%s\n' "$(echo control-1 | git hash-object --stdin | cut -c1-36)" "$ring" \
+            "$(echo control-2 | git hash-object --stdin | cut -c1-40)" "$(echo control-3 | git hash-object --stdin | cut -c1-24)" > "$scan/control"
+          git diff -U0 --no-color --no-ext-diff HEAD^1 HEAD | { grep '^+' || true; } > "$scan/change"
+          for input in control change; do
+            rc=0
+            docker run --rm -i --network none -v "$PWD/.github/secret-scan.toml:/secret-scan.toml:ro" "$GITLEAKS" \
+              stdin --config /secret-scan.toml --redact --no-banner --report-format json --report-path - \
+              < "$scan/$input" > "$scan/$input.json" || rc=$?
+            jq -e '. == null or type == "array"' "$scan/$input.json" > /dev/null \
+              || { echo "::error::gitleaks wrote no report on the $input (exit $rc)"; exit 1; }
+            if [ "$input" = control ]; then
+              for rule in github-pat ohmail-key-ring; do
+                jq -e --arg r "$rule" '(. // []) | any(.RuleID == $r)' "$scan/control.json" > /dev/null \
+                  || { echo "::error::the scan did not find its control by $rule, so its silence would prove nothing"; exit 1; }
+              done
+              continue
+            fi
+            jq -r '(. // [])[] | "\(.StartLine) \(.RuleID)"' "$scan/change.json" > "$scan/found"
+            if [ -s "$scan/found" ]; then
+              echo "::error::a secret in the added lines, by file and rule (the value is never printed):"
+              awk 'NR == FNR { rule[$1] = rule[$1] " " $2; next } /^\+\+\+ / { file = substr($0, 7) } FNR in rule { print file ":" rule[FNR] }' "$scan/found" "$scan/change"
+              exit 1
+            fi
+            [ "$rc" = 0 ] || { echo "::error::gitleaks exited $rc with no finding"; exit 1; }
+          done
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22.23.4
