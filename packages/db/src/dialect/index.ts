@@ -296,6 +296,25 @@ export function queryOperandsOf(q: string): QueryOperands {
   return { any, none };
 }
 
+/**
+ * The typed words of each side of a bare `or` (stopwords kept, excluded operands left out), or null
+ * without one: what the part, substring and file-name arms read side by side.
+ */
+export function orSidesOf(q: string): string[] | null {
+  const sides: string[][] = [[]];
+  let split = false;
+  for (const { text, quoted, negated } of queryTokens(q)) {
+    if (negated) continue;
+    if (!quoted && /^or$/i.test(text)) {
+      split = true;
+      if (sides[sides.length - 1]!.length > 0) sides.push([]);
+      continue;
+    }
+    sides[sides.length - 1]!.push(quoted ? `"${text}"` : text);
+  }
+  return split ? sides.filter((s) => s.length > 0).map((s) => s.join(" ")) : null;
+}
+
 /** Every typed token, `or` and stopwords included: a quoted span or a run of non-separators. */
 function queryTokens(q: string): Array<QueryOperand & { readonly negated: boolean }> {
   const out: Array<QueryOperand & { readonly negated: boolean }> = [];
@@ -359,6 +378,8 @@ export const SEARCH_NAMES_MARK = "\u001f";
 export const PART_PREFIX_MIN_CHARS = 4;
 /** More words than this and the part-word arm stays shut: each word costs one prefix read. */
 export const PART_MAX_WORDS = 8;
+/** The same over the sides of a bare `or`, in all ({@link partSidesOf}): every read of the arm plans each side's prefixes. */
+export const PART_OR_MAX_WORDS = 4;
 
 /**
  * The endings a stemmer strips past a part's fourth letter, for THIS part: `elevatio` + `n` is
@@ -380,6 +401,28 @@ export function partWordsOf(q: string): string[] | null {
   const words = q.match(/[\p{L}\p{N}]+/gu) ?? [];
   if (words.length === 0 || words.length > PART_MAX_WORDS) return null;
   return words.some((w) => [...w].length >= PART_PREFIX_MIN_CHARS) ? words : null;
+}
+
+/**
+ * The sides of a bare `or` the part-word arm reads as one (each with {@link partWordsOf}), or null
+ * when none has a part or, with several, their words are more than {@link PART_OR_MAX_WORDS} in all.
+ */
+export function partSidesOf(qs: readonly string[]): string[] | null {
+  const open = qs.filter((q) => partWordsOf(q) !== null);
+  const n = open.reduce((k, q) => k + partWordsOf(q)!.length, 0);
+  return open.length === 0 || (open.length > 1 && n > PART_OR_MAX_WORDS) ? null : open;
+}
+
+/** Part-word arms of several sides as one, any side matching: over the whole letter once a side straddles. */
+export function anyPartArms(arms: readonly MailWordArms[]): MailWordArms {
+  if (arms.length === 1) return arms[0]!;
+  const or = (ps: SQL[]): SQL => sql`(${sql.join(ps, sql` or `)})`;
+  const rank = arms[0]!.text.rank;
+  if (arms.some((a) => a.across === true)) {
+    const letter = or(arms.map((a) => (a.across === true ? a.text.pred : sql`(${a.head.pred} or ${a.text.pred})`)));
+    return { head: { pred: letter, rank }, text: { pred: letter, rank }, across: true };
+  }
+  return { head: { pred: or(arms.map((a) => a.head.pred)), rank: arms[0]!.head.rank }, text: { pred: or(arms.map((a) => a.text.pred)), rank } };
 }
 
 /** Does the part-word arm keep word `i`: not a stopword, unless the last and long (`over` starts `overview`)? */
@@ -796,14 +839,16 @@ export interface Dialect {
      * THE PART-WORD ARMS, over the same indexed text as {@link words}: each word of
      * {@link partWordsOf} matches as itself and, from {@link PART_PREFIX_MIN_CHARS} characters,
      * as the start of a longer word, ANDed across words. A part therefore finds at least what the
-     * whole word finds. `null` when the query has no such word.
+     * whole word finds. `null` when the query has no such word. Several queries (the sides of a bare
+     * `or`) are one arm, any side matching ({@link partSidesOf}).
      */
-    partWords(q: string): MailWordArms | null;
+    partWords(q: string | readonly string[]): MailWordArms | null;
     /**
      * The query's characters inside the mail corpus's header text (subject, people) — `axa` inside
      * `myAXA`; on the device the file names too. Ranked by word similarity where trigrams exist, else recency.
+     * Several queries (the sides of a bare `or`): any of them, as {@link names} reads them too.
      */
-    substring(q: string, opts: { trigram: boolean }): SearchArm;
+    substring(q: string | readonly string[], opts: { trigram: boolean }): SearchArm;
     /**
      * The query's characters inside the letter's file names, where the store reads them apart from
      * the header text (the server: `terms` after {@link SEARCH_NAMES_MARK}), by recency: a branch of
@@ -811,7 +856,7 @@ export interface Dialect {
      * a letter its file names find is one row there. `null` where the substring arm reads the names
      * itself (the device).
      */
-    names(q: string): SearchArm | null;
+    names(q: string | readonly string[]): SearchArm | null;
     /** See {@link UnindexedMailArms}. */
     unindexed(q: string, opts: { trigram: boolean; threshold: number }): UnindexedMailArms | null;
     /**

@@ -89,6 +89,16 @@ describe.each([
     const r = await found(ctx, typed);
     expect(r.ids.has(ids.decoy!)).toBe(false);
   });
+
+  it("(5) each side of an `or` keeps its part, up to four part words in all", async () => {
+    const { ctx, ids } = await corpus(built);
+    const sides = ["elevati", "meetin", "invoic", "nationa"];
+    const r = await found(ctx, sides.join(" or "));
+    expect(WORDS.slice(0, 4).filter((w) => !r.ids.has(ids[w]!))).toEqual([]);
+    // Past four the arm stays shut, as past eight for one side: each word is one more prefix read.
+    const past = await found(ctx, [...sides, "runnin"].join(" or "));
+    expect(past.ids.has(ids.nationalization!)).toBe(false);
+  });
 });
 
 /**

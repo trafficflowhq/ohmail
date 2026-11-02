@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, eszettForms, partOperandsOf, partWordTails, partWordsOf, typoTrigramsOf, queryOperandsOf, straddlesParts, type QueryOperands, type QueryOperand } from "./index.js";
+import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, anyPartArms, eszettForms, partOperandsOf, partSidesOf, partWordTails, partWordsOf, typoTrigramsOf, queryOperandsOf, straddlesParts, type QueryOperands, type QueryOperand } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -33,7 +33,17 @@ function partTsquery(q: string): SQL | null {
 
 /** Inlined groups ANDed into one tsquery, a null group dropped. */
 function andTsquery(groups: readonly string[]): string {
-  return `(nullif(substr(${groups.map((g) => `coalesce(' & ' || ${g}, '')`).join(" || ")}, 4), '')::tsquery)`;
+  return `(${andText(groups)}::tsquery)`;
+}
+
+/** {@link andTsquery}'s text, null when every group is. */
+function andText(groups: readonly string[]): string {
+  return `nullif(substr(${groups.map((g) => `coalesce(' & ' || ${g}, '')`).join(" || ")}, 4), '')`;
+}
+
+/** Each side's groups ANDed, the sides OR-ed into one tsquery: one read of an index, one constant at plan time. */
+function anyTsquery(sides: ReadonlyArray<readonly string[]>): string {
+  return `(nullif(substr(${sides.map((g) => `coalesce(' | (' || ${andText(g)} || ')', '')`).join(" || ")}, 4), '')::tsquery)`;
 }
 
 /** Each part-word's group as an inlined text expression (null for a dropped stopword). */
@@ -174,6 +184,27 @@ function likeAny(col: SQL, q: string): SQL {
   const forms = eszettForms(q);
   return forms.length === 1 ? sql`${col} ilike ${`%${q}%`}`
     : sql`(${sql.join(forms.map((f) => sql`${col} ilike ${`%${f}%`}`), sql` or `)})`;
+}
+
+/**
+ * {@link likeAny} of each query, several as ONE case-insensitive regex the same trigram index serves:
+ * the planner prices each ILIKE over the column's statistics, about a millisecond a clause.
+ */
+function likeAnyOf(col: SQL, q: string | readonly string[]): SQL {
+  if (typeof q === "string" || q.length === 1) return likeAny(col, typeof q === "string" ? q : q[0]!);
+  return sql`${col} ~* ${q.flatMap(eszettForms).map((f) => likeRegex(`%${f}%`)).join("|")}`;
+}
+
+/** A LIKE pattern as a regex: `%` any run, `_` any character, a backslash taking the next as typed. */
+function likeRegex(pattern: string): string {
+  const lit = (c: string): string => (/[\p{L}\p{N}\s]/u.test(c) ? c : `\\${c}`);
+  const cs = [...pattern];
+  let out = "";
+  for (let i = 0; i < cs.length; i++) {
+    if (cs[i] === "\\" && i + 1 < cs.length) out += lit(cs[++i]!);
+    else out += cs[i] === "%" ? ".*" : cs[i] === "_" ? "." : lit(cs[i]!);
+  }
+  return `(^${out}$)`.replace(/^\(\^\.\*/, "(").replace(/\.\*\$\)$/, ")");
 }
 
 export function pgDialect(): Dialect {
@@ -419,24 +450,32 @@ export function pgDialect(): Dialect {
         const excluded = noneOf(ops, sql`s.head_tsv`, sql`s.text_tsv`);
         return { head: { pred, rank: head.rank }, text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: recency }, ...(excluded ? { excluded } : {}) };
       },
-      partWords: (q: string): MailWordArms | null => {
-        const tsq = partTsquery(q);
-        if (tsq === null) return null;
+      partWords: (qs: string | readonly string[]): MailWordArms | null => {
+        const sides = partSidesOf(typeof qs === "string" ? [qs] : qs);
+        if (sides === null) return null;
         const recency = sql`coalesce(extract(epoch from m.date), 0)`;
-        const letter = partLetter(q, sql`s.head_tsv`, sql`s.text_tsv`);
-        if (letter !== null) return { head: { pred: letter, rank: recency }, text: { pred: letter, rank: recency }, across: true };
+        const letters = sides.map((q) => partLetter(q, sql`s.head_tsv`, sql`s.text_tsv`));
+        if (letters.some((l) => l !== null)) {
+          return anyPartArms(sides.map((q, i) => {
+            const t = partTsquery(q)!;
+            const l = letters[i];
+            return l ? { head: { pred: l, rank: recency }, text: { pred: l, rank: recency }, across: true }
+              : { head: { pred: sql`s.head_tsv @@ ${t}`, rank: recency }, text: { pred: sql`s.text_tsv @@ ${t}`, rank: recency } };
+          }));
+        }
+        const tsq = sides.length === 1 ? partTsquery(sides[0]!)! : sql.raw(anyTsquery(sides.map((q) => partGroups(q)!)));
         return {
           head: { pred: sql`s.head_tsv @@ ${tsq}`, rank: recency },
           text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: recency },
         };
       },
-      substring: (q: string, opts): SearchArm => ({
-        // The header text alone (subject, people): `message_search_head_terms_trgm_idx` serves the ILIKE.
-        pred: likeAny(HEAD_TERMS, q),
-        rank: opts.trigram ? sql`word_similarity(${q}, ${HEAD_TERMS})` : sql`coalesce(extract(epoch from m.date), 0)`,
+      substring: (q, opts): SearchArm => ({
+        // The header text alone (subject, people): `message_search_head_terms_trgm_idx` serves the ILIKE (or regex).
+        pred: likeAnyOf(HEAD_TERMS, q),
+        rank: opts.trigram ? sql`word_similarity(${typeof q === "string" ? q : q[0]!}, ${HEAD_TERMS})` : sql`coalesce(extract(epoch from m.date), 0)`,
       }),
-      // The file names: `message_search_names_trgm_idx` serves the ILIKE.
-      names: (q: string): SearchArm => ({ pred: likeAny(NAME_TERMS, q), rank: sql`coalesce(extract(epoch from m.date), 0)` }),
+      // The file names: `message_search_names_trgm_idx` serves the ILIKE (or regex).
+      names: (q): SearchArm => ({ pred: likeAnyOf(NAME_TERMS, q), rank: sql`coalesce(extract(epoch from m.date), 0)` }),
       unindexed: (q: string, opts): UnindexedMailArms => {
         // The pre-0125 columns, one index per branch (subject_tsv / body_tsv GINs, the two trgm
         // GINs) — never an OR, which is the shape that seq-scanned.

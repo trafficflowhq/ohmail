@@ -9,7 +9,7 @@
  * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partWordKept, partWordTails, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands } from "./index.js";
+import { anyPartArms, assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partSidesOf, partWordKept, partWordTails, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands } from "./index.js";
 import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -208,6 +208,23 @@ function inLetter(match: string): SQL {
   return sql`(m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${match})
     OR ${wordRows("message_people_fts", match)} OR ${wordRows("message_files_fts", match)}
     OR coalesce(b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${match}), 0))`;
+}
+
+/** One query's part-word arms ({@link Dialect.search.partWords}); it has {@link partWordsOf}'s words. */
+function partArmsOf(q: string): MailWordArms {
+  const words = partWordsOf(q)!;
+  const recency = sql`coalesce(m.date, 0)`;
+  const ops = partOperandsOf(q);
+  if (ops !== null) {
+    // Each typed operand's kept words together in one table, each word in every ß/ss form.
+    const forms = (w: string): string => { const g = eszettForms(w).map(partGroupOf); return g.length === 1 ? g[0]! : `(${g.join(" OR ")})`; };
+    const letter = sql`(${sql.join(ops.map((op) => inLetter(op.map((i) => forms(words[i]!)).join(" AND "))), sql` AND `)})`;
+    return { head: { pred: letter, rank: recency }, text: { pred: letter, rank: recency }, across: true };
+  }
+  return {
+    head: { pred: headRows(q, "parts"), rank: recency },
+    text: { pred: textRows(q, "parts"), rank: recency },
+  };
 }
 
 /**
@@ -579,29 +596,18 @@ export function sqliteDialect(): Dialect {
       // The same two FTS5 tables as `words`, each word as itself and, from four letters, as the
       // start of a longer one or as itself plus a tail (`ftsQueryOf`): the tables stem (porter,
       // mail 0138), so a prefix alone misses `elevation`, whose stem `elev` is shorter than `elevat`.
-      partWords: (q: string): MailWordArms | null => {
-        const words = partWordsOf(q);
-        if (words === null) return null;
-        const recency = sql`coalesce(m.date, 0)`;
-        const ops = partOperandsOf(q);
-        if (ops !== null) {
-          // Each typed operand's kept words together in one table, each word in every ß/ss form.
-          const forms = (w: string): string => { const g = eszettForms(w).map(partGroupOf); return g.length === 1 ? g[0]! : `(${g.join(" OR ")})`; };
-          const letter = sql`(${sql.join(ops.map((op) => inLetter(op.map((i) => forms(words[i]!)).join(" AND "))), sql` AND `)})`;
-          return { head: { pred: letter, rank: recency }, text: { pred: letter, rank: recency }, across: true };
-        }
-        return {
-          head: { pred: headRows(q, "parts"), rank: recency },
-          text: { pred: textRows(q, "parts"), rank: recency },
-        };
+      partWords: (qs: string | readonly string[]): MailWordArms | null => {
+        const sides = partSidesOf(typeof qs === "string" ? [qs] : qs);
+        return sides === null ? null : anyPartArms(sides.map(partArmsOf));
       },
-      substring: (q: string): SearchArm => {
+      substring: (qs: string | readonly string[]): SearchArm => {
         // Every row, whether or not it has a search document yet: this store has no index for a
         // substring either way, so the header columns and the recipients' `terms` are one scan. A
         // letter its file names' words find is the text arms', as a body word's is: not read here
         // again, unless its subject or people hold the query too.
+        const one = (q: string): SQL => sql`(${headLike(q)} and not (${filesHold(q)} and not ${peopleLike(q)}))`;
         return {
-          pred: sql`(${headLike(q)} and not (${filesHold(q)} and not ${peopleLike(q)}))`,
+          pred: typeof qs === "string" ? one(qs) : qs.length === 1 ? one(qs[0]!) : sql`(${sql.join(qs.map(one), sql` or `)})`,
           rank: sql`coalesce(m.date, 0)`,
         };
       },
