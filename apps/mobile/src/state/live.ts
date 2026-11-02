@@ -161,6 +161,7 @@ import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
 import { blobToBase64 } from "../mail/blob-base64";
 import { drawnText, htmlWords } from "../mail/html-words";
+import { previewKindOf, type PreviewKind } from "../mail/attachment-preview";
 import { logAttachmentRefusal, logLaunchReplay } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import type { LetterDoor } from "../compose/letter-store";
@@ -451,7 +452,8 @@ export function presentedOf(
 
 /** What a tile press gets back: the bytes as base64, or the engine's own refusal by name. */
 export type WorldAttachmentBytes =
-  | { state: "ready"; base64: string; mime: string; filename: string }
+  /** `preview`: a picture or PDF the app shows itself (`previewKindOf`); `null` is shared as before. */
+  | { state: "ready"; base64: string; mime: string; filename: string; preview: PreviewKind | null }
   /** The engine item's refusal facts: the tile's sentence names the side, `retryable` its tap. */
   | { state: "failed"; code: string | null; retryable: boolean; status: number | null; reasking?: boolean }
   | { state: "too_large" | "unavailable" };
@@ -523,6 +525,8 @@ export type WorldEarlier = Held & {
   mine?: true;
   /** Who wrote it, for its square's name in the reader's rail. */
   sender?: string;
+  /** Its sender's address, beside the name on its sender line. */
+  address?: string;
   /** The instant its stamp dates (`shownDateOf`), for a held square's sheet. */
   date?: string | null;
   /** Its html part: the text's fold follows that part's own reading of its history. */
@@ -1293,6 +1297,59 @@ export interface WorldDraftEdit {
   revision: string | null;
 }
 
+/** Recipients as the composer's field types them: `Name <address>` entries, comma-separated. */
+export function typedRecipients(list: readonly EmailAddress[]): string {
+  return list.map((a) => {
+    const name = a.name?.trim() ?? "";
+    if (name === "" || name.includes('"')) return a.address;
+    return /[,;<>@]/.test(name) ? `"${name}" <${a.address}>` : `${name} <${a.address}>`;
+  }).join(", ");
+}
+
+/**
+ * WHAT REPLY FINDS KEPT FOR A MESSAGE: `resume` names the reply row the composer can write whole,
+ * seeded as Drafts' Edit seeds it; `aside` is a kept reply it cannot (another audience, markup, a
+ * waiting or held send); `none` is nothing kept.
+ */
+export type KeptReply =
+  | { kind: "none" }
+  | { kind: "aside" }
+  | { kind: "resume"; draft: { id: string; body: string } & WorldDraftEdit };
+
+const addressSet = (list: readonly EmailAddress[]): string =>
+  [...new Set(list.map((a) => a.address.trim().toLowerCase()))].sort().join("\n");
+
+/**
+ * The kept reply to `parent`, newest first: Drafts' rows that answer it and this device's waiting
+ * sends. Resumed only where every save of the composer would write the row back whole.
+ */
+export function keptReplyOf(
+  reader: EntityReader, parent: EngineMessage, waiting: readonly WaitingSend[], envelopes: readonly KeptEnvelope[], now: Date,
+): KeptReply {
+  const named = new Set(waiting.flatMap((w) => [w.draftId, w.paintId]).filter((id): id is string => id !== null));
+  const rows = draftsList(reader, now).filter((d) => d.inReplyToMessageId === parent.id);
+  const sends = waiting.some((w) => w.mutation.inReplyTo === parent.id);
+  if (rows.length === 0 && !sends) return { kind: "none" };
+  const subject = replySubject(parent.subject).trim();
+  const audiences = envelopes.map((e) => [addressSet(e.to), addressSet(e.cc)].join("|"));
+  const row = rows.find((d) => {
+    const markup = (d as { html?: unknown }).html;
+    return d.status === "draft" && draftBodyKnown(d)
+      && !(typeof markup === "string" && markup !== "") && d.pendingCreate === undefined
+      && (d.forwardOfMessageId ?? null) === null && d.bcc.length === 0 && !named.has(d.id)
+      && d.mailboxId === parent.mailboxId && d.subject.trim() === subject
+      && audiences.includes([addressSet(d.to), addressSet(d.cc)].join("|"));
+  });
+  if (!row) return { kind: "aside" };
+  return {
+    kind: "resume",
+    draft: {
+      id: row.id, body: row.body ?? "", mailboxId: row.mailboxId, to: typedRecipients(row.to), cc: typedRecipients(row.cc), bcc: "",
+      subject: row.subject, forwardOf: null, forwardParts: null, revision: row.contentRevision ?? null,
+    },
+  };
+}
+
 /**
  * WHICH DRAFTS THE PHONE EDITS: a plain `draft` whose text this mirror holds, with no markup, and
  * copies only on a new mail (the composer shows Cc and Bcc there). A save or a send writes the row
@@ -1305,13 +1362,8 @@ export function draftEditOf(d: EngineDraft): WorldDraftEdit | null {
   if (copies && (d.inReplyToMessageId !== null || (d.forwardOfMessageId ?? null) !== null)) return null;
   if (typeof markup === "string" && markup !== "") return null;
   if (typeof d.mailboxId !== "string" || d.mailboxId === "") return null;
-  const typed = (list: readonly EmailAddress[]) => list.map((a) => {
-    const name = a.name?.trim() ?? "";
-    if (name === "" || name.includes('"')) return a.address;
-    return /[,;<>@]/.test(name) ? `"${name}" <${a.address}>` : `${name} <${a.address}>`;
-  }).join(", ");
   return {
-    mailboxId: d.mailboxId, to: typed(d.to), cc: typed(d.cc), bcc: typed(d.bcc), subject: d.subject,
+    mailboxId: d.mailboxId, to: typedRecipients(d.to), cc: typedRecipients(d.cc), bcc: typedRecipients(d.bcc), subject: d.subject,
     forwardOf: d.forwardOfMessageId ?? null,
     forwardParts: d.forwardOfMessageId ? d.forwardParts ?? null : null,
     revision: d.contentRevision ?? null,
@@ -2085,6 +2137,7 @@ export function liveMessage(
         ...(bodyReady(b.state, member) && !wordless ? { ready: true as const } : {}),
         ...(isOwnOutbound(member) ? { mine: true as const } : {}),
         sender: member.from.name || member.from.address,
+        address: member.from.address,
         date: shownDateOf(member),
         ...(forwardedTo ? { face: Copy.forwardedTo(forwardedTo) } : {}),
         ...files,
@@ -3735,6 +3788,10 @@ export interface LiveWorldActions {
     andDone?: boolean,
     /** The row a refused press left ({@link SendResult.draftId}) — this press sends that row. */
     draftId?: string | null,
+    /** The bound row's version the words are based on ({@link WorldDraftEdit.revision}). */
+    base?: string | null,
+    /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
+    waited?: readonly string[],
   ): Promise<SendResult>;
   /**
    * IS THE SECOND SEND ACTION OFFERED for a reply or forward of this message? The engine's one
@@ -3830,6 +3887,8 @@ export interface LiveWorldActions {
   draftKeep(keep: DraftKeep): Promise<DraftKeepOutcome>;
   /** A reply's or forward's derived envelope, for the letter kept on this phone. */
   keepEnvelope(mode: DraftKeep["mode"], messageId: string | null): KeptEnvelope | null;
+  /** What Reply finds kept for this message ({@link keptReplyOf}). */
+  keptReply(messageId: string): KeptReply;
   /** The mirror says this row was SENT — by another device while a composer here holds it. */
   draftSent(draftId: string): boolean;
   /**
@@ -4352,7 +4411,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       };
     }
     try {
-      return { state: "ready", base64: await blobToBase64(blob), mime: item.mimeType, filename: item.filename };
+      return {
+        state: "ready", base64: await blobToBase64(blob), mime: item.mimeType, filename: item.filename,
+        preview: previewKindOf(item.mimeType, blob.type),
+      };
     } catch {
       // The one non-engine failure: the byte read itself, ours and worth a second tap — the
       // tile's retry re-asks `openAttachment`, which short-circuits on the held Blob.
@@ -5290,7 +5352,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(holder ? refuse("toastDeleteQueued", holder) : refuse("toastDeleteQueuedUnknown"));
       return true;
     }
-    if (!res || res.status === "rolled_back") { toast(refuse("deleteFailed")); return false; }
+    if (!res || res.status === "rolled_back") {
+      toast(refuse(res?.error?.code === "no_trash_folder" ? "deleteNoTrash" : "deleteFailed"));
+      return false;
+    }
     // A newer press for this message replaced the delete: that press owns the sentence.
     if (res.status === "superseded") return true;
     noteTrashLanded();
@@ -5568,6 +5633,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     attachments: ComposeAttachment[] = [],
     andDone = false,
     draftId: string | null = null,
+    base: string | null = null,
+    waited: readonly string[] = [],
   ): Promise<SendResult> => {
     const elsewhere = sentElsewhere(draftId);
     if (elsewhere) return elsewhere;
@@ -5609,8 +5676,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(attachments.length > 0 ? { attachments } : {}),
         // The row a refused press left (`SendResult.draftId`): this press sends THAT row.
         ...(draftId ? { draftId } : {}),
+        // The version the words are based on: a row moved elsewhere refuses the send.
+        ...(draftId && base ? { ifContentRevision: base } : {}),
       }, sig);
     if (draftOverCeiling(signed.body)) return tooLongSend();
+    const sentSay = sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.replySent;
     return sent(
       dispatchSend(signed, plan),
       // THE CONFIRMED SENTENCE IS THE WHOLE DIFFERENCE, and it is honest rather than
@@ -5618,11 +5688,17 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // message still sitting on the account is exactly the false claim the four-outcome
       // classifier exists to prevent. The time is read back in the reader's own clock, so the
       // toast names the wall clock the preset fixed.
-      sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.replySent,
+      sentSay,
       // AHEAD OF THE APPOINTMENT SENTENCE, deliberately: what the server answered from is the
       // EARLIER press's reservation, so naming a time this press asked for would promise an
       // arrangement nobody made.
       Copy.replyEarlierWent,
+      true,
+      sentSay,
+      draftId === null ? undefined : keepChangedWords(draftId, {
+        mailboxId: m.mailboxId, inReplyToMessageId: messageId, threadId: m.threadId ?? null,
+        subject: replySubject(m.subject), body: text, to: env ? env.to : [m.from], cc: env ? env.cc : [], bcc: [],
+      }, waited),
     );
   };
 
@@ -5822,6 +5898,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (mode === "forward") return { to: [], cc: [], subject: forwardSubject(parent.subject) };
     const env = mode === "replyAll" ? replyAllRecipients(parent, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES) : null;
     return { to: env ? env.to : [parent.from], cc: env ? env.cc : [], subject: replySubject(parent.subject) };
+  };
+
+  const keptReply = (messageId: string): KeptReply => {
+    const parent = messageOf(messageId);
+    if (!parent) return { kind: "none" };
+    const envelopes = [keepEnvelope("reply", messageId), keepEnvelope("replyAll", messageId)].filter((e): e is KeptEnvelope => e !== null);
+    return keptReplyOf(engine.read(), parent, engine.waitingSends(), envelopes, now());
   };
 
   /** The newest row the engine kept a refused waiting edit of `from` in, as a new draft: one of this composer's own (`waited`). */
@@ -6461,7 +6544,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, leaveSend, cancelWaitingSend, cancelSchedule, tagToggle, tagCreate,
     screenSender,
     screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened,
-    draftDiscard, draftResolve, draftSendAgain, draftKeep, keepEnvelope, draftSent, draftLeft,
+    draftDiscard, draftResolve, draftSendAgain, draftKeep, keepEnvelope, keptReply, draftSent, draftLeft,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
@@ -6564,6 +6647,8 @@ export interface WorldActions {
     attachments?: ComposeAttachment[],
     andDone?: boolean,
     draftId?: string | null,
+    base?: string | null,
+    waited?: readonly string[],
   ): Promise<SendResult>;
   /** Is Send + Done offered for this source? See {@link LiveWorldActions.sendAndDoneOffered}. */
   sendAndDoneOffered(messageId: string): boolean;
@@ -6607,6 +6692,8 @@ export interface WorldActions {
   draftKeep(keep: DraftKeep): Promise<DraftKeepOutcome>;
   /** A reply's or forward's derived envelope, for the letter kept on this phone. */
   keepEnvelope(mode: DraftKeep["mode"], messageId: string | null): KeptEnvelope | null;
+  /** See {@link LiveWorldActions.keptReply}. */
+  keptReply(messageId: string): KeptReply;
   /** See {@link LiveWorldActions.draftSent}. */
   draftSent(draftId: string): boolean;
   /** See {@link LiveWorldActions.draftLeft}. */
@@ -6681,8 +6768,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     deleteMessage: (id, opts) => void current().deleteMessage(id, opts),
     trashList: (cursor) => current().trashList(cursor),
     trashRestore: (id) => current().trashRestore(id),
-    sendReply: (id, body, all, sig, sendAt, attachments, andDone, draftId) =>
-      current().sendReply(id, body, all, sig, sendAt, attachments, andDone, draftId),
+    sendReply: (id, body, all, sig, sendAt, attachments, andDone, draftId, base, waited) =>
+      current().sendReply(id, body, all, sig, sendAt, attachments, andDone, draftId, base, waited),
     sendForward: (id, to, body, sig, attachments, andDone, confirmed, draftId, opts, base, waited) =>
       current().sendForward(id, to, body, sig, attachments, andDone, confirmed, draftId, opts, base, waited),
     sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies, base, waited) =>
@@ -6697,6 +6784,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     draftSendAgain: (draftId) => current().draftSendAgain(draftId),
     draftKeep: (keep) => current().draftKeep(keep),
     keepEnvelope: (mode, messageId) => current().keepEnvelope(mode, messageId),
+    keptReply: (messageId) => current().keptReply(messageId),
     draftSent: (draftId) => current().draftSent(draftId),
     draftLeft: (draftId) => current().draftLeft(draftId),
     sendOutcome: (key) => current().sendOutcome(key),

@@ -654,6 +654,7 @@ const NO_ACTIONS: WorldActions = {
   // Nothing is connected, so nothing can be kept: the sheet says so and stays open.
   draftKeep: () => Promise.resolve("refused" as const),
   keepEnvelope: () => null,
+  keptReply: () => ({ kind: "none" as const }),
   forwardFiles: () => ({ state: "failed" as const, parts: [] }),
   forwardPartsSupported: () => false,
   draftSent: () => false,
@@ -1731,6 +1732,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           draftSendAgain: (draftId) => acts.draftSendAgain(draftId),
           draftKeep: (keep) => acts.draftKeep(keep),
           keepEnvelope: (mode, messageId) => acts.keepEnvelope(mode, messageId),
+          keptReply: (messageId) => acts.keptReply(messageId),
           draftSent: (draftId) => acts.draftSent(draftId),
           draftLeft: (draftId) => acts.draftLeft(draftId),
           sendOutcome: (key) => outcomeOf(key),

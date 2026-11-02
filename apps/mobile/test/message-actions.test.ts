@@ -463,6 +463,16 @@ describe("delete — DELETE /messages/:id, to the provider's Trash, never an exp
     fake.server.close();
   });
 
+  it("a mailbox with no Trash folder says that, not the generic failure, and the message stays", async () => {
+    const { fake, live } = await scene();
+    fake.answerNext("DELETE", "/messages/m1", 422, { error: { code: "no_trash_folder", message: "no trash" } });
+    expect(await live.actions.deleteMessage("m1")).toBe(false);
+    expect(live.engine.read().get<EngineMessage>("message", "m1")).toBeDefined();
+    expect(live.toasts).toEqual([Copy.deleteNoTrash]);
+    live.store.close();
+    fake.server.close();
+  });
+
   /** The same door for Delete — the fix is the adapter's, so one verb cannot hold it alone. */
   it("a delete the server queues for the organizer says so, and the message stays", async () => {
     const { fake, live } = await scene();

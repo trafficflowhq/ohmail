@@ -7,10 +7,11 @@
  * close itself before the push; the More screen passes nothing.
  */
 import { View } from "react-native";
-import { router } from "expo-router";
+import { router, type Href } from "expo-router";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld } from "../state/world";
+import type { PileKind } from "../state/model";
 import { tagHueOf } from "../theme/palette";
 import { Rule, Section, TagDot, TapRow, Txt } from "./base";
 import { FoldersGroup } from "./FoldersGroup";
@@ -20,7 +21,8 @@ export function MoreNav({ onNavigate }: { onNavigate?: () => void }) {
   const w = useWorld();
   const t = useTheme();
   const pileCountOf = (kind: string) => w.piles.find((p) => p.kind === kind)?.items.length ?? 0;
-  const go = (path: string) => {
+  const pile = (kind: PileKind): Href => ({ pathname: "/triage", params: { pile: kind } });
+  const go = (path: Href) => {
     onNavigate?.();
     router.push(path);
   };
@@ -28,9 +30,9 @@ export function MoreNav({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <>
       <Section style={{ paddingTop: 16 }}>{Copy.triage}</Section>
-      <Nav label={Copy.replyLater} count={pileCountOf("replyLater")} onPress={() => go("/triage")} />
-      <Nav label={Copy.setAside} count={pileCountOf("setAside")} onPress={() => go("/triage")} />
-      <Nav label={Copy.resurface} count={pileCountOf("resurface")} onPress={() => go("/triage")} />
+      <Nav label={Copy.replyLater} count={pileCountOf("replyLater")} onPress={() => go(pile("replyLater"))} />
+      <Nav label={Copy.setAside} count={pileCountOf("setAside")} onPress={() => go(pile("setAside"))} />
+      <Nav label={Copy.resurface} count={pileCountOf("resurface")} onPress={() => go(pile("resurface"))} />
 
       {/* TAGS — the web rail's group, above Folders as there: each tag with the count of its
           mail, opening the tag's list. Present while the account has a tag; tags are made

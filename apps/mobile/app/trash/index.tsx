@@ -175,7 +175,7 @@ function TrashBody() {
               <SkeletonList stalled={false} />
             </View>
           ) : (
-            <Empty title={Copy.trashEmptyTitle} hint={Copy.trashEmptyHint} />
+            <Empty title={Copy.trashEmptyTitle} hint={w.standalone ? Copy.trashEmptyHintStandalone : Copy.trashEmptyHint} />
           )
         }
         foot={

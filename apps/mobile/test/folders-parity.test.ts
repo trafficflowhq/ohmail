@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Copy } from "../src/copy";
 import { FOLDER_FILTER_AT } from "../src/state/folders";
+import { readerVerbPlacement } from "../src/ui/reader-verbs";
 
 const at = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const read = (p: string) => readFileSync(at(p), "utf8");
@@ -151,19 +152,14 @@ describe("the delete verb — the engine's, behind a confirm", () => {
     // Exactly ONE dispatch site — a second (an unconfirmed shortcut) is the defect this holds out.
     expect(actions.match(/deleteMessage\(/g)).toHaveLength(1);
   });
-  it("BOTH delete surfaces are gated on the foundation flag — flag-off is the pre-verb reader", () => {
-    // FOLDERS-SPEC.md §16.3/§16.7: the reader Delete verb ships behind "Use folders"; with the
-    // flag off the reader carries no Delete verb at all. The entry row AND the confirm sheet
-    // each stand inside their own flag conditional, so a stale open sheet cannot dispatch
-    // after the flag goes off — a review finding, held by both halves. RE-DERIVED, not
-    // relaxed: the entry row's gate moved into the posture placement (`reader-verbs.ts`), and
-    // the chain is pinned link by link — the row stands on `moreHas("delete")`, the placement
-    // admits "delete" only on `foldersEnabled`, and that fact IS `w.folders.enabled`.
-    expect(actions).toMatch(/moreHas\("delete"\) \? \(\s*<>\s*<Rule inset=\{14\} \/>\s*<SheetRow icon="trash"/);
-    expect(actions).toMatch(/foldersEnabled: w\.folders\.enabled/);
-    const verbs = read("../src/ui/reader-verbs.ts");
-    expect(verbs).toMatch(/id === "delete" \? f\.foldersEnabled/);
-    expect(actions).toMatch(/\{w\.folders\.enabled \? \(\s*<Sheet open=\{open === "delete"\}/);
+  it("Delete is offered on every message, whatever the folders flag or the door (the web's rule)", () => {
+    // The server's `message_delete` never reads "Use folders", and the standalone door serves
+    // it as the paired one does, so every posture admits Delete behind its confirm.
+    const facts = { canReplyAll: true, forwardOffered: true, junkOffered: true, screeningOffered: true };
+    for (const mode of ["compact", "bar", "rail"] as const) {
+      const p = readerVerbPlacement(mode, facts);
+      expect([...p.standing, ...p.behindMore], mode).toContain("delete");
+    }
   });
   it("the webapp's reading pane carries the verb, and the wording is ONE catalogue", () => {
     // The reconciliation the retired one-sided guard existed to force. The webapp's strings
@@ -332,7 +328,7 @@ describe("the signature block — the webapp composer's strings and rules", () =
     expect(actions.match(/effectiveSignature\(/g)).toHaveLength(1);
     expect(actions).toMatch(/sendForward\(m!\.id, recipients \?\? \[\], body, sigText, files, andDone, forwardConfirmed, draftId,\s*forwardPlan[^\n]*, baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\)\)/);
     // The Send-later arm rides the SAME call — one send machine, one signature (mail 0077).
-    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId\)/);
+    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\)\)/);
   });
   it("no block from a guess: the map must be server-confirmed, the sender the mutation's own", () => {
     /* The sending mailbox is the composer's: an opened draft keeps its own, a reply inherits the

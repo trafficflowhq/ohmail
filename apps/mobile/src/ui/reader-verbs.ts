@@ -33,8 +33,6 @@ export interface ReaderVerbFacts {
   canReplyAll: boolean;
   /** `forwardOffered` — always true for a message on screen; a `no_forward` press asks first. */
   forwardOffered: boolean;
-  /** The reader Delete verb ships behind "Use folders" (FOLDERS-SPEC.md §16.3/§16.7). */
-  foldersEnabled: boolean;
   /** Junk = the move panel's spam target — absent where the message already presents there. */
   junkOffered: boolean;
   /**
@@ -57,7 +55,7 @@ export function readerVerbMode(
 }
 
 const admits = (f: ReaderVerbFacts, id: ReaderVerbId): boolean =>
-  id === "replyAll" ? f.canReplyAll : id === "forward" ? f.forwardOffered : id === "delete" ? f.foldersEnabled
+  id === "replyAll" ? f.canReplyAll : id === "forward" ? f.forwardOffered
     : id === "screening" ? f.screeningOffered : true;
 
 const admit = (f: ReaderVerbFacts, ids: readonly ReaderVerbId[]): ReaderVerbId[] =>

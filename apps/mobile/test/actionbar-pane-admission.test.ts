@@ -86,7 +86,7 @@ const SPEC = [...read("src/ui/MessageActions.tsx").matchAll(
 const capsuleW = (label: string, iconed: boolean) => label.length * CHAR_DP + 24 + (iconed ? 18 : 0);
 const label = (key: string) => (en as unknown as Record<string, string>)[key]!;
 
-const FACTS: ReaderVerbFacts = { canReplyAll: true, forwardOffered: true, foldersEnabled: true, junkOffered: true, screeningOffered: true };
+const FACTS: ReaderVerbFacts = { canReplyAll: true, forwardOffered: true, junkOffered: true, screeningOffered: true };
 /** The bar's verb row — the placement's standing set minus the two fixed slots. */
 const barIds = readerVerbPlacement("bar", FACTS).standing.filter((v) => v !== "reply" && v !== "read");
 
