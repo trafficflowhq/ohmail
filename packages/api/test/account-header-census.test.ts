@@ -3,10 +3,12 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
+import { eq } from "drizzle-orm";
 import { refreshTokens } from "@trafficflow/db";
+import { authEvents } from "@trafficflow/db/cloud";
 import { generateToken, hashToken, totpNow } from "@trafficflow/services";
 import { ACCOUNT_HEADER, createApp, apiRoutes, csrfTokenFor, type ApiDeps, type Route } from "@trafficflow/api";
-import { makeDeps, seedSession, seedSessionFor, req, sweepPath, FIXED_NOW, type TestClock } from "./helpers.js";
+import { makeDeps, seedSession, seedSessionFor, req, setCookieMap, sweepPath, FIXED_NOW, type TestClock } from "./helpers.js";
 
 /**
  * ═══ THE OWNER-BOUND RESPONSE CENSUS ══════════════════════════════════════════════════════════
@@ -685,6 +687,65 @@ describe("a spent token still reaches the theft sweep", () => {
     const retried = await post(deps, "/auth/refresh", { body: JSON.stringify({ refreshToken: live }) });
     expect(retried.status, "the live token survived the refusal").toBe(200);
     expect(retried.headers.get(ACCOUNT_HEADER)).toBe(b.accountId);
+  });
+});
+
+/**
+ * THE ARMS THAT ANSWER A SPENT TOKEN AGAIN — replay, grace, recovery — mint too, so they ask the
+ * same question: A's session presenting B's spent token there was handed B's pair (the cookie arms
+ * wrote it into A's jar). Refused 409, and the refusal rolls the arm back: B's line is as it was.
+ */
+describe("no re-answer arm mints across accounts", () => {
+  const post = (base: ApiDeps, init: { bearer?: string; cookie?: string; body: string }): Promise<Response> =>
+    app.handle(req("POST", "/auth/refresh", init), { ...base, session: null, idempotency: null });
+  const refused = async (res: Response): Promise<void> => {
+    expect(res.status, "a session for A was answered with B's spent token").toBe(409);
+    expect((await res.json() as { error?: { code?: string } }).error?.code).toBe("session_conflict");
+    expect(res.headers.get(ACCOUNT_HEADER)).toBeNull();
+    expect(res.headers.getSetCookie()).toEqual([]);
+  };
+  async function twoAccounts(db: Awaited<ReturnType<typeof makeDeps>>["db"]) {
+    const a = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const b = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const token = generateToken();
+    await db.insert(refreshTokens).values({
+      accountId: b.accountId, userId: b.userId, sessionId: b.sessionId, familyId: randomUUID(),
+      tokenHash: hashToken(token), expiresAt: new Date(FIXED_NOW.getTime() + 3600_000), createdAt: FIXED_NOW,
+    });
+    return { a, b, token };
+  }
+
+  it("replay: A's presentation under B's attempt is refused; B's own retry still replays", async () => {
+    const { db, deps } = await makeDeps();
+    const { a, b, token } = await twoAccounts(db);
+    const body = JSON.stringify({ refreshToken: token, attemptId: "n1" });
+    expect((await post(deps, { body })).status).toBe(200);
+    await refused(await post(deps, { bearer: a.token, body }));
+    const retry = await post(deps, { body });
+    expect(retry.status, "the refusal moved B's line").toBe(200);
+    expect(retry.headers.get(ACCOUNT_HEADER)).toBe(b.accountId);
+  });
+
+  it("grace: refused inside the window, and B's successor still renews", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const { a, token } = await twoAccounts(db);
+    const first = await post(deps, { cookie: `tf_refresh=${token}`, body: "{}" });
+    expect(first.status).toBe(204);
+    clock.advance(5_000);
+    await refused(await post(deps, { bearer: a.token, cookie: `tf_refresh=${token}`, body: "{}" }));
+    const successor = await post(deps, { cookie: `tf_refresh=${setCookieMap(first).tf_refresh}`, body: "{}" });
+    expect(successor.status, "the refusal killed B's successor").toBe(204);
+  });
+
+  it("recovery: refused past the window; B's own late presentation is still recovered", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const { a, b, token } = await twoAccounts(db);
+    expect((await post(deps, { cookie: `tf_refresh=${token}`, body: "{}" })).status).toBe(204);
+    clock.advance(16 * 60_000);
+    await refused(await post(deps, { bearer: a.token, cookie: `tf_refresh=${token}`, body: "{}" }));
+    expect((await post(deps, { cookie: `tf_refresh=${token}`, body: "{}" })).status).toBe(204);
+    const trail = await db.select({ event: authEvents.event }).from(authEvents).where(eq(authEvents.userId, b.userId));
+    expect(trail.map((e) => e.event)).toContain("refresh_recovered");
   });
 });
 

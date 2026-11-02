@@ -1,9 +1,9 @@
-import { and, desc, eq, gte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { auditLog, mailboxes } from "./schema-mail.js";
 import { auditAction } from "./staff-channels.js";
 import { dialect } from "./dialect/index.js";
 import { fenceErased } from "./erasure-fence.js";
-import { PROFILE_FOUND_AUDIT_ACTION } from "./organizer-profile-import.js";
+import { PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION } from "./organizer-profile-import.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -122,33 +122,40 @@ export async function importAskSignature(
   return typeof said === "string" && said.length > 0 ? said : null;
 }
 
-/** The key under which each action's payload names a signature by its receipt. */
-const RECEIPT_KEY: Readonly<Record<string, string>> = {
-  [PROFILE_FOUND_AUDIT_ACTION]: "signatureReceipt",
-  [PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION]: "signatureReplaces",
+/**
+ * The payload keys under which each action names a mailbox's settings or signature by a hash: the
+ * copy's whole-settings `fingerprint` (the found-marker, the answer, a handed-over press), the copy's
+ * signature receipt (the marker) and the mailbox's own (the press).
+ */
+export const SETTINGS_HASH_KEYS: Readonly<Record<string, readonly string[]>> = {
+  [PROFILE_FOUND_AUDIT_ACTION]: ["fingerprint", "signatureReceipt"],
+  [PROFILE_IMPORT_RESOLVED_AUDIT_ACTION]: ["fingerprint"],
+  [PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION]: ["fingerprint", "signatureReplaces"],
 };
 
 /**
- * THE AUDIT ROWS THAT NAME ONE MAILBOX'S SIGNATURE BY A RECEIPT — the found-marker's (the copy's) and
- * a handed-over press's (the mailbox's own) — each with its payload as it reads with the receipt
- * taken off. They age out with the audit trail; a mailbox's erasure writes these payloads back
- * (`mailbox-erasure.ts`, and the device's removal walk), so no receipt outlives the mailbox's signature.
+ * THE AUDIT ROWS THAT STILL NAME ONE MAILBOX'S SETTINGS OR SIGNATURE BY A HASH
+ * ({@link SETTINGS_HASH_KEYS}), each with its payload as it reads with every such hash taken off; a
+ * row holding none is not returned. They age out with the audit trail; a mailbox's erasure writes
+ * these payloads back (`mailbox-erasure.ts`, and the device's removal walk), so no hash outlives it.
  */
-export async function signatureReceiptRows(
+export async function settingsHashRows(
   db: Tx, o: { accountId?: string; mailboxId: string },
 ): Promise<Array<{ id: string; payload: Record<string, unknown> }>> {
   const rows = await db.select({ id: auditLog.id, action: auditLog.action, payload: auditLog.payload }).from(auditLog)
     .where(and(
       o.accountId === undefined ? undefined : eq(auditLog.accountId, o.accountId),
-      or(eq(auditLog.action, PROFILE_FOUND_AUDIT_ACTION), eq(auditLog.action, PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION)),
+      inArray(auditLog.action, Object.keys(SETTINGS_HASH_KEYS)),
       sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
     ));
   const out: Array<{ id: string; payload: Record<string, unknown> }> = [];
   for (const r of rows) {
-    const key = RECEIPT_KEY[r.action];
-    if (key === undefined || r.payload === null || typeof r.payload !== "object" || !(key in r.payload)) continue;
+    const keys = SETTINGS_HASH_KEYS[r.action];
+    if (keys === undefined || r.payload === null || typeof r.payload !== "object") continue;
     const payload = { ...(r.payload as Record<string, unknown>) };
-    delete payload[key];
+    const held = keys.filter((k) => payload[k] != null);
+    if (held.length === 0) continue;
+    for (const k of held) delete payload[k];
     out.push({ id: r.id, payload });
   }
   return out;

@@ -9,7 +9,7 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createApp, apiRoutes, type AdminConfig, type ApiDeps } from "@trafficflow/api";
 import {
-  generateToken, hashToken, makeMailService, makeTestAuthDeps, SpyMailer, type Db,
+  generateToken, hashToken, makeMailService, makeTestAuthDeps, SpyMailer, throttleKeysFor, type Db,
 } from "@trafficflow/services";
 
 /**
@@ -64,6 +64,7 @@ describe.skipIf(!PG_UP)("the billing-link cap against real Postgres", () => {
     const mailer = new SpyMailer();
     const mail = makeMailService({
       mailer, config: { appUrl: "http://localhost:3001", siteUrl: "http://localhost:3000", supportEmail: "support@ohmail.app" },
+      throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
     });
     const authDeps = makeTestAuthDeps({});
     // Each press its own instant, as a real clock gives them: a shared one would collide on the

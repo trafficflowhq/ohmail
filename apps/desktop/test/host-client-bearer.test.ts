@@ -364,6 +364,37 @@ describe("logout", () => {
     await offline.logout();
     expect(offline.paired()).toBe(false);
   });
+
+  it("after a rotation whose answer was lost: the bearer's 401, then the refresh door ends the family — never a renewal", async () => {
+    const wire = scripted([
+      () => json(401, {}),
+      () => new TypeError("network error"),
+      () => refusal("unauthorized"),
+      () => new Response(null, { status: 204 }),
+    ]);
+    const bearer = new BearerManager({ storage: memoryStorage(), fetchImpl: wire.fetch, idb: null });
+    bearer.adopt(PAIR);
+    expect((await bearer.fetch("/sync")).status, "the rotation's answer never arrived").toBe(401);
+    expect(await bearer.logout(), "the door ended the family").toBe(true);
+    expect(wire.seen.map((s) => [s.url, s.headers.authorization ?? null])).toEqual([
+      ["/sync", "Bearer access-1"], ["/auth/refresh", null],
+      ["/auth/logout", "Bearer access-1"], ["/auth/refresh/logout", null],
+    ]);
+    expect(JSON.parse(wire.seen[3]!.body!)).toEqual({ refreshToken: "refresh-1" });
+    expect(bearer.paired()).toBe(false);
+  });
+
+  it("with no access token held it goes to the refresh door at once; an answer that is no verdict is not told", async () => {
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const cold = scripted([(s) => (s.url === "/auth/refresh/logout" ? refusal("unauthorized") : new Error(s.url))]);
+    expect(await new BearerManager({ storage, fetchImpl: cold.fetch, idb: null }).logout(), "nothing left to end is told").toBe(true);
+    for (const answer of [() => new Response(null, { status: 401 }), () => new Response(null, { status: 503 }), () => new TypeError("offline")]) {
+      const bearer = new BearerManager({ storage: memoryStorage(), fetchImpl: scripted([() => refusal("unauthorized"), answer]).fetch, idb: null });
+      bearer.adopt(PAIR);
+      expect(await bearer.logout()).toBe(false);
+      expect(bearer.paired(), "the local half runs whatever the server said").toBe(false);
+    }
+  });
 });
 
 /**

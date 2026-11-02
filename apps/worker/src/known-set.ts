@@ -308,6 +308,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "clearDeletedOnAdopt", "tombstoneInstanceless",
   // The Junk check: a read of instanceless rows, and the reaper's write on them (`tombstoneGone`).
   "listJunkParked", "tombstoneJunkParkedGone", "tombstoneGone",
+  // The Trash check: a read of instanceless rows, and its drop (`folder_state` + the husk).
+  "listTrashParked", "dropGoneFromTrash",
   // mail 0164: `messages.server_missing_at` alone (+ updated_at), not a projected column; and the
   // stale-epoch arm's read of one message's instances. `repairLegacyNews` is DELIBERATELY ABSENT:
   // it forgets instance rows and flips the primary, which is what this projection remembers.

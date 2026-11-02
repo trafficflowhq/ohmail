@@ -4338,6 +4338,8 @@
     "lineRetry": "Retry",
     "lineReload": "A newer ohmail is available",
     "lineReloadAction": "Reload",
+    "lineReloadAfterSendTitle": "Reload after your letter is sent",
+    "lineReloadAfterFilesTitle": "Reload after your draft's files are sent or removed",
     "lineLater": "Later",
     "lineVersion": "ohmail {version}"
   },

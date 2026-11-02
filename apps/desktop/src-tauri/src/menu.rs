@@ -126,6 +126,32 @@ pub fn command_target(id: &str) -> Option<&str> {
     id.strip_prefix(COMMAND_PREFIX).filter(|cmd| !cmd.is_empty())
 }
 
+/// The app's own Quit, in the engine build on macOS and Windows: the window saves before it goes.
+pub const QUIT_ID: &str = "app:quit";
+
+/// What choosing an item does, by its id.
+#[derive(Debug, PartialEq, Eq)]
+pub enum MenuAct<'a> {
+    Navigate(&'a str),
+    Command(&'a str),
+    /// Quit once the window has written its open editors (`updater::leave_saving`).
+    QuitSaving,
+    /// Another module's item, or the platform's.
+    Other,
+}
+
+pub fn menu_act(id: &str) -> MenuAct<'_> {
+    if let Some(view) = navigate_target(id) {
+        MenuAct::Navigate(view)
+    } else if let Some(command) = command_target(id) {
+        MenuAct::Command(command)
+    } else if id == QUIT_ID {
+        MenuAct::QuitSaving
+    } else {
+        MenuAct::Other
+    }
+}
+
 /// The commands the bar can ask the client to run — id, label, accelerator.
 ///
 /// Every one of them is something the client ALREADY does, reached by a key or by the palette.
@@ -169,13 +195,20 @@ fn command_item<R: Runtime>(app: &AppHandle<R>, id: &str) -> tauri::Result<tauri
 pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .on_menu_event(|app, event| {
-            let id = event.id().as_ref();
             // A failed emit is not worth taking the app down for: the window may be closing,
             // and the cost is one menu item that did nothing.
-            if let Some(view) = navigate_target(id) {
-                let _ = app.emit(MENU_NAVIGATE_EVENT, view);
-            } else if let Some(command) = command_target(id) {
-                let _ = app.emit(MENU_COMMAND_EVENT, command);
+            match menu_act(event.id().as_ref()) {
+                MenuAct::Navigate(view) => {
+                    let _ = app.emit(MENU_NAVIGATE_EVENT, view);
+                }
+                MenuAct::Command(command) => {
+                    let _ = app.emit(MENU_COMMAND_EVENT, command);
+                }
+                MenuAct::QuitSaving => {
+                    let leaving = app.clone();
+                    crate::updater::leave_saving(app, move || crate::updater::quit(&leaving, 0));
+                }
+                MenuAct::Other => {}
             }
         })
         .setup(|app| {
@@ -312,9 +345,15 @@ fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .hide()
         .hide_others()
         .show_all()
-        .separator()
-        .quit()
-        .build()?;
+        .separator();
+    /* THE PLATFORM'S QUIT ENDS THE APP WITH NO CHANCE TO SAVE (macOS `terminate:`, Windows
+       `PostQuitMessage`), so the engine build quits through its own item, which saves first.
+       Linux has no platform Quit item, and gets none. */
+    #[cfg(all(feature = "local-engine", not(target_os = "linux")))]
+    let app_menu = app_menu.item(&MenuItemBuilder::with_id(QUIT_ID, "Quit ohmail").accelerator("CmdOrCtrl+Q").build(app)?);
+    #[cfg(not(all(feature = "local-engine", not(target_os = "linux"))))]
+    let app_menu = app_menu.quit();
+    let app_menu = app_menu.build()?;
 
     // The system's own editing items. Nothing here is a command of ours and nothing reaches the
     // webview as one — the platform applies them to whatever has focus, which is the page.

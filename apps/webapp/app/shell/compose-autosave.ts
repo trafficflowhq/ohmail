@@ -103,13 +103,17 @@ export function reopenWouldOverwrite(buffer: ComposeFields, seeded: ComposeField
  * not a message: every door that opens a compose with somebody in the To line (a contact's Write, a
  * `mailto:`) seeds a form `worthSaving` accepts, so the first pause POSTed a row with no subject
  * and no body — measured on the release candidate, the Drafts list filled with "(no subject)" rows.
- * A CREATE additionally requires something the person typed: a subject or a body. The UPDATE arm
+ * A CREATE additionally requires something the person typed: a subject, a body, or a recipient they
+ * typed into the composer themselves (`recipientsTyped`) that parses. The UPDATE arm
  * keeps `worthSaving` unchanged — clearing the subject and body out of an existing row is an edit
  * to store — and that asymmetry is the whole rule (invariant S(1): a door-minted row is a second
  * row for an unstarted message). `html` is not counted: `<p></p>` would restore the write storm.
  */
 export function worthCreating(f: ComposeFields): boolean {
-  return f.subject.trim() !== "" || f.body.trim() !== "";
+  if (f.subject.trim() !== "" || f.body.trim() !== "") return true;
+  // Recipients the person typed are typed text; a row holds only those that parse.
+  return f.recipientsTyped === true
+    && [f.to, f.cc ?? "", f.bcc ?? ""].some((line) => parseRecipients(line).addresses.length > 0);
 }
 
 /**
@@ -1551,6 +1555,8 @@ export function useComposeAutosave(opts: {
   const holdsOnScreen = (): boolean => {
     const f = fieldsRef.current;
     if (!worthSaving(f)) return true;
+    // A recipient that does not parse is on no row: only the screen holds it.
+    if ([f.to, f.cc ?? "", f.bcc ?? ""].some((line) => parseRecipients(line).invalid.length > 0)) return false;
     const sig = signatureOf(f);
     // The row's or a create's, an update on the outbox, or the message let go of unchanged.
     if (keptNow(sig) || pendingLand.current?.signature === sig || abandonedAt.current === sig) return true;

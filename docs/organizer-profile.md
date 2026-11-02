@@ -174,12 +174,16 @@ import card said so before the press ("your signature, replacing the one on this
 press names that exact signature; otherwise the mailbox keeps its own and the confirmation says so. A
 mailbox with no signature takes the document's. Text and markup are compared and written as one value.
 
-What ohmail keeps of a signature for this: the organizer's record of a found document names the
-document's signature by a receipt (a sha256 of text and markup together, cut to 32 hex digits), and a
-press handed to the organizer keeps the receipt of the signature its card said would be replaced. Both
-are rows of the account's audit trail, which are deleted after 365 days or with the account. Erasing
-the mailbox takes the receipts off those rows when it is pressed, and again when the erasure finishes;
-removing a mailbox from a computer takes them off that computer's store. The rows themselves stay.
+What ohmail keeps of the settings and a signature for this: the organizer's record of a found document
+names the document by its fingerprint (a sha256 of its canonical settings, the signature among them)
+and the document's signature by a receipt (a sha256 of text and markup together, cut to 32 hex digits);
+the answer to it (Import, Not now, or saving this ohmail's settings over it) names the document by its
+fingerprint; and a press handed to the organizer keeps the fingerprint and the receipt of the signature
+its card said would be replaced. All are rows of the account's audit trail, which are deleted after 365
+days or with the account. Erasing the mailbox takes the fingerprints and the receipts off those rows
+when it is pressed, and again when the erasure finishes; an erasure an earlier ohmail finished loses
+them on the server's next erasure pass. Removing a mailbox from a computer takes them off that
+computer's store. The rows themselves stay.
 
 **`signatureHtml`** — the same sign-off's formatting, when it has any. Optional, and ABSENT rather
 than `null` when there is none: a document that never carried this key must keep the fingerprint it
@@ -399,11 +403,14 @@ Settings messages are found by reading every message's headers in
 SEARCH, which some servers answer with nothing. The organizer removes
 superseded copies: its own at once (while the current document is another
 install's, only once it has read that one), a found copy once the person
-imported it or saved this install's settings over it, and another install's
-copy it does not keep once the current document is ten minutes newer and that
-install holds no fresh claim. It never removes the current document, a found
-copy it keeps ("Not now" included), a claim, or a message that is not an ohmail
-settings message.
+imported it or saved this install's settings over it, and a copy it does not
+keep once the current document is ten minutes newer: another install's while
+that install holds no fresh claim, and one under its own install id that is not
+its own, as its own only once it has read the current document. It reads the
+copies that are not its own by body, newest first and at most 64 a pass, and
+until it has read them all no copy goes by age. It never
+removes the current document, a found copy it keeps ("Not now" included), a
+claim, or a message that is not an ohmail settings message.
 
 Only the active organizer writes — the organizer lease already serializes
 writers, so last-incumbent-wins and no merge algorithm exists.
@@ -455,25 +462,30 @@ server's database) has no record of the copies it wrote after the backup, so a
 copy under its id that it has no record of is found settings: kept, held and
 asked about, never rolled back to the restored settings, whatever the store
 decides before or after it first reads the folder. The store's settings and the
-times it changed them never decide whose a copy is. The store records its
-current copy again while it stays current, every 30 days and after a write the
-mailbox refused, so neither the audit log's one-year age-out nor a run of
-refused writes takes the record of a copy still in the mailbox.
+times it changed them never decide whose a copy is. The store records each of
+its copies again every 30 days while the copy is in the mailbox (its current
+copy, and any other the folder still lists), so the audit log's one-year age-out
+never takes the record of a copy still in the mailbox. It reads all its records,
+not only the newest, so a pile of its own copies that a mailbox would not let it
+remove stays its own, a year on too. It renews only a record it holds: a copy it
+has no record of stays found settings.
 
 The one exception is a copy written by a build that records nothing: one from a
 release before 0.30.21, the first that records (0.30.20 does not), after a
-rollback to it or a downgrade. It is the store's own, recorded as such and
-replaced by the store's later settings without a question; so is a copy a
-restored store's later life wrote while it ran such a build, which nothing tells
-from a rollback's. Each copy names the release that wrote it in
+rollback to it or a downgrade. It is the store's own wherever it lies in the
+folder, once the organizer has read it by body: replaced by the store's later
+settings and tidied without a question; so is a copy a restored store's later
+life wrote while it ran such a build, which nothing tells from a rollback's.
+Each copy names the release that wrote it in
 `producer.version`: a build that records writes the release with the build's own
 label after a `+` (a server, `0.30.21+<commit>`), a release from 0.30.21 on (an
 app, a server built from source), or `0.0.0` (an engine run unbundled); a server
 image before 0.30.21 wrote its commit alone. A copy under the store's id that
 names a recording build and that the store has no record of was written by a
 later life of the store. A copy under the store's id that is not its own is
-never removed by the organizer's tidy on account of its age; only once the
-person has answered it.
+found settings: one the organizer keeps is never removed on account of its age,
+only once the person has answered it; one beyond the eight it keeps follows the
+ten-minute rule once it has read every found copy, as another install's does.
 
 A restored store that was asking about another install's settings asks about
 those first; its later copy stays in the mailbox meanwhile. Once those are
@@ -523,7 +535,9 @@ that is removed leaves every found copy in the mailbox for the next install to
 ask about. A found copy that says exactly what the store says asks nothing, and
 the store's own copy replaces it. An older copy that lands beside an organizer
 already organizing is an overlap's loser, not a question, and a found copy
-older than the eight newest follows the ten-minute rule.
+older than the eight newest, whoever wrote it, follows the ten-minute rule once
+the organizer has read every found copy; until then none goes by age, so a copy
+behind many others is still found and asked about.
 
 An empty store writes no copy beside found settings, so a reader never takes
 an empty copy for the mailbox's newest settings. An answer reaches the mailbox

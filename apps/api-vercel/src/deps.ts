@@ -39,6 +39,7 @@ import {
   makeAttachmentStagingPort,
   workflowsService, proposalsService,
   MailService, ResendMailer, mailAlertSink, dbFreeMailAlertSink, dbRecipientLimiter, makeWaitlistService,
+  throttleKeysFor,
   type ServiceContext,
   makePlatformSignalPort, SSE_DISABLED_REFUSAL,
 } from "@trafficflow/services";
@@ -445,7 +446,9 @@ function buildServices(cfg: HostConfig): ApiServices {
   //
   // `customerMailerFor` cannot throw (see its doc), so an unusable `MAIL_APP_URL` costs the
   // waitlist its confirmation mail and costs the deployment nothing else.
-  lazily(bag, "waitlist", () => makeWaitlistService({ mail: customerMailerFor(cfg) ?? undefined }));
+  lazily(bag, "waitlist", () => makeWaitlistService({
+    mail: customerMailerFor(cfg) ?? undefined, throttleKeys: throttleKeysFor(cfg.keyProvider),
+  }));
 
   // The account-lifecycle pass's mail door (cloud 0040, the wall) — the SAME cached `MailService`
   // the waitlist and register use, never a bare `ResendMailer`. Absent with no mailer: the pass
@@ -482,6 +485,7 @@ function customerMailerFor(cfg: HostConfig): MailService | null {
           supportEmail: cfg.mail.supportEmail,
           // No `operatorEmail`: this instance must not be able to mail the pager.
         },
+        throttleKeys: throttleKeysFor(cfg.keyProvider),
       });
     } catch (err) {
       hostLogger(cfg).error("customer_mailer_unavailable", {
@@ -624,6 +628,8 @@ function pagerArmsFor(cfg: HostConfig): { sinks: AlertSink[]; lastResort: AlertS
             supportEmail: mail.supportEmail,
             operatorEmail,
           },
+          // The pager's sends claim a fixed slot and never ask it: a broken KEK still pages.
+          throttleKeys: throttleKeysFor(cfg.keyProvider),
         });
         // A limiter, not a database: `sendOperatorAlert` uses it for exactly one thing —
         // claiming an `auth_throttle` slot — so that is what it is handed; the unrestricted

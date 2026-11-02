@@ -1,19 +1,35 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accountSettings, accounts, contacts, fencedAccountWrite, latestProfileFoundMarker, lockAccountRuleKeys, mailboxes, recordImportAsk,
-  auditLog, recordProfileImportResolution, tags, type LedgerTx, type Tx,
+  auditLog, pruneAuditLog, recordProfileImportResolution, recordProfileWrite, tags, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
-  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
+  formatProfileMessage, isMalformedProfile, makeProfileDoc, makeProfileIo, parseProfileMessage, profileFingerprint,
   type OrganizerProfileDoc, type ParsedProfileMessage, type ProfileIo, type RawProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
+import { memoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
 import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { OrganizerProfileSync, serializeOrganizerProfile, writtenByABuildThatRecordsNothing } from "../src/profile.js";
 import type { OrganizerWriteAuthority } from "../src/lease.js";
+
+/* One failed read of the answer to one copy, as a dropped database connection fails it; every other read passes. */
+const answerReadFault = vi.hoisted(() => ({ fingerprint: null as string | null, fired: 0 }));
+vi.mock("@trafficflow/db", async (load) => {
+  const db = await load<typeof import("@trafficflow/db")>();
+  return {
+    ...db,
+    profileImportWriteReleased: async (...a: Parameters<typeof db.profileImportWriteReleased>): Promise<boolean> => {
+      if (a[1].fingerprint !== answerReadFault.fingerprint) return db.profileImportWriteReleased(...a);
+      answerReadFault.fingerprint = null;
+      answerReadFault.fired += 1;
+      throw new Error("the connection was reset");
+    },
+  };
+});
 
 /**
  * A NEW ORGANIZER PUBLISHES ITS OWN SETTINGS BESIDE THE ONE IT ASKS ABOUT. Taking over a mailbox
@@ -1450,5 +1466,235 @@ describe("every found copy is kept and asked about", () => {
     await w.plant("w-stray", stray);
     await E.ticks(3);
     expect({ stray: w.folder.holds(stray), asking: await E.asking() }).toEqual({ stray: false, asking: null });
+  });
+});
+
+/* THE STORE'S OWN OLD COPIES ARE TIDIED, AND ONLY THEM. A server whose removals never stuck kept every copy the
+   failed-append loop of builds before 0.30.21 (a bare commit for a label) wrote under the store's id, and the tidy
+   kept them as found settings for good. The organizer reads the found copies by body, 64 a pass: those are its own.
+   Another install's copy behind them is still kept and asked about, a gone store's beyond the eight it keeps follows
+   the ten-minute rule, and its recorded copies stay its own however many there are. On `makeProfileIo` over the
+   memory server, which lists older copies by header, as a server does. */
+const PILE_META = "INBOX.ohmail._meta";
+const BARE_COMMIT = "52a56a5";
+
+async function pile(o: { tidyMode: "remove" | "count"; rowAt?: Date }) {
+  const server = memoryImapServer({ prefix: "INBOX.", folders: ["INBOX.ohmail", PILE_META] });
+  const db = (await makeTestDb()) as unknown as Tx;
+  const rowAt = o.rowAt ?? new Date("2026-01-01T00:00:00.000Z");
+  const accountId = randomUUID();
+  await db.insert(accounts).values({ id: accountId, name: "pile", createdAt: rowAt });
+  const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${randomUUID()}@x.test`, createdAt: rowAt })
+    .returning({ id: mailboxes.id });
+  const mailboxId = mb!.id;
+  const clock = { at: new Date("2026-11-01T12:00:00.000Z") };
+  const plans: Array<Record<string, unknown>> = [];
+  const attach = (): OrganizerProfileSync => new OrganizerProfileSync({
+    db, accountId, mailboxId, tidyMode: o.tidyMode, flushIntervalMs: 0, now: () => clock.at,
+    adapter: { profileIo: (id: { installId: string; mailboxId: string }) => makeProfileIo(server, (c) => c.replace(/\//g, "."), id) } as unknown as MailboxAdapter,
+    self: { installId: "w-cloud", kind: "cloud" }, producerVersion: `0.30.25+${BARE_COMMIT}`,
+    log: (event, detail) => { if (event === "profile_tidy_planned") plans.push(detail); },
+  });
+  const s = { sync: attach() };
+  const plant = (by: string, tag: string, at: Date, version = BARE_COMMIT): OrganizerProfileDoc => {
+    const d = makeProfileDoc({ screener: [], rules: [], notifyRules: [], awayResponder: null, tagNames: [tag], signature: null },
+      { updatedAt: at, producer: { kind: "cloud", version } });
+    server.seed(PILE_META, formatProfileMessage(d, { installId: by }));
+    return d;
+  };
+  const parsed = (): ParsedProfileMessage[] => server.tree.get(PILE_META)!.messages.map((m) => parseProfileMessage(m.raw, m.uid))
+    .filter((p): p is ParsedProfileMessage => p !== null && !isMalformedProfile(p));
+  const holds = (d: OrganizerProfileDoc): boolean => parsed().some((p) => profileFingerprint(p.doc!) === profileFingerprint(d));
+  const ticks = async (n: number, sync = s.sync): Promise<void> => {
+    for (let i = 0; i < n; i++) { clock.at = new Date(clock.at.getTime() + 31_000); await sync.onOrganize(); }
+  };
+  const asking = async (): Promise<string | null> => {
+    const m = await latestProfileFoundMarker(db, accountId, mailboxId);
+    return m?.state === "found" && m.heldForImport ? m.fingerprint : null;
+  };
+  return {
+    db, accountId, mailboxId, clock, plant, parsed, holds, ticks, asking, server,
+    plan: (): Record<string, unknown> | undefined => plans.at(-1),
+    decide: (name: string) => db.insert(tags).values({ accountId, name, createdAt: clock.at, updatedAt: clock.at }),
+    answer: (d: OrganizerProfileDoc, decision: "declined" | "replaced") => recordProfileImportResolution(db, {
+      accountId, mailboxId, decision, fingerprint: profileFingerprint(d),
+    }),
+    copies: (): Array<[string | null, string[]]> => parsed().map((p) => [p.installId, [...p.doc!.tagNames].sort()]),
+    routing: async (): Promise<string> => (await s.sync.importHoldNow())?.kind ?? "closed",
+    sync: (): OrganizerProfileSync => s.sync,
+    restart: (): void => { s.sync = attach(); },
+    /** A second attachment of the same store (a rolling deploy). */
+    attach,
+  };
+}
+/** `n` copies under the store's id a minute apart, after its mailbox row, by a build that records nothing. */
+const plantPile = (r: Awaited<ReturnType<typeof pile>>, n = 300): void => {
+  for (let i = 0; i < n; i++) r.plant("w-cloud", `old-${i}`, new Date(Date.UTC(2026, 9, 1, 0, i)));
+};
+const pick = (o: Record<string, unknown> | undefined, keys: readonly string[]): Record<string, unknown> =>
+  Object.fromEntries(keys.map((k) => [k, o?.[k]]));
+
+describe("the store's own old copies on a server that kept them", () => {
+  it("count mode: 300 copies a build that records nothing wrote under the store's id are its own once read", async () => {
+    const r = await pile({ tidyMode: "count" });
+    await r.decide("now");
+    plantPile(r);
+    await r.ticks(8);
+    expect({ plan: pick(r.plan(), ["records", "own", "removable", "keptFound", "keptUnread", "foundStale"]), asking: await r.asking() })
+      .toEqual({ plan: { records: 300, own: 299, removable: 299, keptFound: 0, keptUnread: 0, foundStale: 0 }, asking: null });
+  });
+
+  it("remove mode: they leave the folder, nothing is asked, and the store's copy says its settings", async () => {
+    const r = await pile({ tidyMode: "remove" });
+    await r.decide("now");
+    plantPile(r);
+    await r.ticks(12);
+    expect({ copies: r.copies(), asking: await r.asking(), routing: await r.routing() })
+      .toEqual({ copies: [["w-cloud", ["now"]]], asking: null, routing: "closed" });
+  });
+
+  it("another install's older copy behind the pile is kept at every tick and asked about", async () => {
+    const r = await pile({ tidyMode: "remove" });
+    await r.decide("now");
+    const phone = r.plant("w-phone", "phone", new Date(Date.UTC(2026, 7, 1)), "0.30.10");
+    plantPile(r);
+    const kept: boolean[] = [];
+    for (let i = 0; i < 12; i++) { await r.ticks(1); kept.push(r.holds(phone)); }
+    expect({ kept: kept.every(Boolean), asking: (await r.asking()) === profileFingerprint(phone), copies: r.copies() })
+      .toEqual({ kept: true, asking: true, copies: [["w-phone", ["phone"]], ["w-cloud", ["now"]]] });
+  });
+
+  it("a gone store's twelve copies under the id: the eight newest are kept and asked about one at a time, the four oldest go", async () => {
+    const r = await pile({ tidyMode: "remove", rowAt: new Date("2026-10-15T00:00:00.000Z") });
+    await r.decide("now");
+    const gone = Array.from({ length: 12 }, (_, i) => r.plant("w-cloud", `gone-${i}`, new Date(Date.UTC(2026, 9, 1, i))));
+    await r.ticks(6);
+    const asked = async (): Promise<number> => { const fp = await r.asking(); return gone.findIndex((d) => profileFingerprint(d) === fp); };
+    const before = { kept: gone.map((d) => r.holds(d)), asking: await asked() };
+    await r.answer(gone[11]!, "declined");
+    await r.ticks(2);
+    expect({ before, next: await asked() }).toEqual({
+      before: { kept: [false, false, false, false, true, true, true, true, true, true, true, true], asking: 11 }, next: 10,
+    });
+  });
+
+  it("GUARD: a later life's copy under the store's id, from a build that records and with no record here, stays and is asked about, days later too", async () => {
+    const r = await pile({ tidyMode: "remove" });
+    await r.decide("now");
+    plantPile(r, 30);
+    const later = r.plant("w-cloud", "later", new Date(Date.UTC(2026, 9, 20)), "0.30.22+abc1234");
+    await r.ticks(6);
+    r.clock.at = new Date(r.clock.at.getTime() + 3 * 86_400_000);
+    await r.ticks(4);
+    expect({ kept: r.holds(later), asking: (await r.asking()) === profileFingerprint(later) }).toEqual({ kept: true, asking: true });
+  });
+
+  it("seventy recorded copies of the store's own a server kept: after a restart none is a question, all are its own", async () => {
+    const r = await pile({ tidyMode: "count" });
+    await r.decide("now");
+    const version = `0.30.24+${BARE_COMMIT}`;
+    for (let i = 0; i < 70; i++) {
+      const at = new Date(Date.UTC(2026, 9, 2, 0, i));
+      r.plant("w-cloud", `mine-${i}`, at, version);
+      await recordProfileWrite(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, installId: "w-cloud", second: Math.floor(at.getTime() / 1000), version, at });
+    }
+    await r.ticks(3);
+    expect({ asking: await r.asking(), routing: await r.routing(), own: r.plan()?.own }).toEqual({ asking: null, routing: "closed", own: 69 });
+  });
+
+  // The pile is read over several passes: each reads the store's record again, so a copy the other attachment wrote meanwhile is its own.
+  it("two attachments of the store while the pile is read: neither asks about the other's copy", async () => {
+    const r = await pile({ tidyMode: "count" });
+    await r.decide("a");
+    plantPile(r, 200);
+    await r.ticks(4);
+    const second = r.attach();
+    await r.ticks(1, second);
+    await r.decide("x");
+    await r.ticks(1);
+    await r.decide("y");
+    await r.ticks(3, second);
+    expect({ asking: await r.asking(), published: r.parsed().some((p) => p.doc!.tagNames.includes("y")) })
+      .toEqual({ asking: null, published: true });
+  });
+
+  it("the store's current copy stays its own after routing reads that judged older copies, and a decision then is published", async () => {
+    const r = await pile({ tidyMode: "count" });
+    await r.decide("now");
+    plantPile(r, 80);
+    await r.ticks(2);
+    for (let i = 0; i < 70; i++) { r.clock.at = new Date(r.clock.at.getTime() + 1_000); await r.sync().importHoldNow(); }
+    await r.decide("later");
+    r.restart();
+    await r.ticks(4);
+    expect({ asking: await r.asking(), routing: await r.routing(), published: r.parsed().some((p) => p.doc!.tagNames.includes("later")) })
+      .toEqual({ asking: null, routing: "closed", published: true });
+  });
+
+  // A pass that faults judges none of its batch: the next pass reads it again, and nothing goes by age meanwhile.
+  it("a database fault while a pass reads the found copies: another install's copy behind the pile is kept at every tick and asked about", async () => {
+    const r = await pile({ tidyMode: "remove" });
+    await r.decide("now");
+    const phone = r.plant("w-phone", "phone", new Date(Date.UTC(2026, 7, 1)), "0.30.10");
+    plantPile(r, 70);
+    Object.assign(answerReadFault, { fingerprint: profileFingerprint(phone), fired: 0 });
+    const kept: boolean[] = [];
+    for (let i = 0; i < 12; i++) { await r.ticks(1); kept.push(r.holds(phone)); }
+    expect({ faults: answerReadFault.fired, kept: kept.every(Boolean), asking: (await r.asking()) === profileFingerprint(phone) })
+      .toEqual({ faults: 1, kept: true, asking: true });
+  });
+
+  it("a database fault after a pass kept a copy: that copy is still asked about", async () => {
+    const r = await pile({ tidyMode: "remove" });
+    await r.decide("now");
+    const phone = r.plant("w-phone", "phone", new Date(Date.UTC(2026, 7, 1)), "0.30.10");
+    const tablet = r.plant("w-tablet", "tablet", new Date(Date.UTC(2026, 6, 1)), "0.30.10");
+    await r.answer(tablet, "replaced");
+    plantPile(r, 70);
+    Object.assign(answerReadFault, { fingerprint: profileFingerprint(tablet), fired: 0 });
+    await r.ticks(6);
+    expect({ faults: answerReadFault.fired, kept: r.holds(phone), asking: (await r.asking()) === profileFingerprint(phone) })
+      .toEqual({ faults: 1, kept: true, asking: true });
+  });
+
+  /* A SERVER THAT KEEPS WHAT A WRITE REPLACES, A YEAR ON: each copy of the store's own still in the folder has its
+     record renewed, so the audit log's age-out never makes one a later life's; one it has no record of stays found. */
+  const threeWrites = async (r: Awaited<ReturnType<typeof pile>>): Promise<void> => {
+    r.server.startLyingAboutDeletes();
+    for (const name of ["a", "b", "c"]) {
+      await r.decide(name);
+      await r.ticks(2);
+      r.clock.at = new Date(r.clock.at.getTime() + 3_600_000);
+    }
+  };
+  const aYearAndTheAgeOut = async (r: Awaited<ReturnType<typeof pile>>): Promise<void> => {
+    for (let i = 0; i < 14; i++) { r.clock.at = new Date(r.clock.at.getTime() + 29 * 86_400_000); await r.ticks(1); }
+    while (await pruneAuditLog(r.db, r.clock.at) > 0) { /* batch by batch */ }
+  };
+
+  it("a year on a server that kept the store's replaced copies: after the age-out and a restart they are still its own", async () => {
+    const r = await pile({ tidyMode: "count" });
+    await threeWrites(r);
+    const copies = r.copies().length;
+    await aYearAndTheAgeOut(r);
+    r.restart();
+    await r.ticks(4);
+    await r.decide("d");
+    await r.ticks(2);
+    expect({ copies, asking: await r.asking(), routing: await r.routing(), published: r.parsed().some((p) => p.doc!.tagNames.includes("d")) })
+      .toEqual({ copies: 3, asking: null, routing: "closed", published: true });
+  });
+
+  it("GUARD: a later life's copy beside them is never renewed: after the year, the age-out and a restart it is the one question", async () => {
+    const r = await pile({ tidyMode: "count" });
+    await threeWrites(r);
+    const later = r.plant("w-cloud", "later", new Date("2026-10-20T00:00:00.000Z"), "0.30.22+abc1234");
+    await aYearAndTheAgeOut(r);
+    r.restart();
+    await r.ticks(4);
+    const asked = (await r.asking()) === profileFingerprint(later);
+    await r.answer(later, "replaced");
+    await r.ticks(3);
+    expect({ asked, then: await r.asking(), routing: await r.routing() }).toEqual({ asked: true, then: null, routing: "closed" });
   });
 });

@@ -525,6 +525,19 @@ describe("signing another session out takes the code it left on screen", () => {
   }
 });
 
+describe("a claim ends the family its install names", () => {
+  it("a second claim carrying the first claim's digest: the first desktop's family is over", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    type Pair = { tokens: { refreshToken: string } };
+    const first = ((await (await claim(deps, (await mint(deps, s.token)).code)).json()) as Pair).tokens;
+    const again = await claimBody(deps, { code: (await mint(deps, s.token)).code, previousSession: hashToken(first.refreshToken) });
+    expect(again.status, await again.clone().text()).toBe(200);
+    const late = await H(req("POST", "/auth/refresh", { body: JSON.stringify({ refreshToken: first.refreshToken }) }), deps);
+    expect(late.status, "the install's previous family still renews").toBe(401);
+  });
+});
+
 describe("a claimed desktop keeps the browser's factor time", () => {
   /**
    * The claim used to stamp its session's factor time `now`, so a stepped-up session could link a

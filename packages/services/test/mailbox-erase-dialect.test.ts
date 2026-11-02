@@ -4,7 +4,8 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { dialect } from "@trafficflow/db/dialect";
 import * as store from "@trafficflow/db";
 import {
-  PROFILE_FOUND_AUDIT_ACTION, accounts, accountStorage, auditLog, clearErasedSignatures, drafts, eraseOwedMailbox, evictOldestBodies,
+  PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION,
+  accounts, accountStorage, auditLog, clearErasedSettingsHashes, clearErasedSignatures, drafts, eraseOwedMailbox, evictOldestBodies,
   mailboxCredentials, mailboxFolders, mailboxes, messageBodies, messages, reserveBodyBytes, storageUsageOf, threads, type Tx,
 } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
@@ -134,46 +135,50 @@ describe("removing one mailbox WITH erase, on either store", () => {
     expect(maps.signaturesHtml[mailboxId]).toBeUndefined();
   });
 
-  /* Nor a receipt of it: the organizer's found-marker names the copy's signature, a press handed to
-     the organizer the mailbox's own, both by `signatureReceipt`. Every row of every table is read. */
-  it("the finished erasure leaves no receipt of the signature in any row; another mailbox keeps its own", async () => {
+  /* Nor a hash of it or of the settings: the organizer's found-marker names the copy by `fingerprint`
+     and its signature by `signatureReceipt`, a "Not now" names the copy, and a press handed to the
+     organizer names the copy and the mailbox's own signature. Every row of every table is read. */
+  it("the finished erasure leaves no receipt of the signature and no settings fingerprint in any row; another mailbox keeps its own", async () => {
     const db = await makeTestDb();
     const { accountId, mailboxId, address } = await seed(db);
     const typed = { signature: "-- \nAnna", signatureHtml: "<p>-- <br>Anna</p>" };
     await db.update(mailboxes).set(typed).where(eq(mailboxes.id, mailboxId));
     const [other] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `o-${address}` }).returning();
-    const FP = `2:${"f".repeat(64)}`;
+    const body = "e1".repeat(32);
+    const FP = `2:${body}`;
+    const KEPT_FP = `2:${"c3".repeat(32)}`;
     const copy = signatureReceipt("-- \nAnna Rossi")!;
     const live = signatureReceipt(typed.signature, typed.signatureHtml)!;
     const kept = signatureReceipt("-- \nBea")!;
-    const marker = (id: string, receipt: string) => ({
+    const marker = (id: string, fingerprint: string, receipt: string) => ({
       accountId, action: PROFILE_FOUND_AUDIT_ACTION, inverse: null,
-      payload: { mailboxId: id, state: "found", fingerprint: FP, heldForImport: true, signatureReceipt: receipt },
+      payload: { mailboxId: id, state: "found", fingerprint, heldForImport: true, signatureReceipt: receipt },
     });
-    await db.insert(auditLog).values([marker(mailboxId, copy), marker(other!.id, kept)]);
+    await db.insert(auditLog).values([marker(mailboxId, FP, copy), marker(other!.id, KEPT_FP, kept)]);
     const slow = async (): Promise<ProfileReadResult> => {
       throw new ProfileUnavailableError("the mailbox did not answer in time", { op: "list_profiles", code: "mailbox_read_timeout" });
     };
-    // The press the request could not finish, handed over with the receipt its card named.
+    // "Not now", then the press the request could not finish, handed over with the receipt its card named.
+    await profileImportService.decline(ctxFor(db, accountId), mailboxId, { fingerprint: FP });
     await profileImportService.apply(ctxFor(db, accountId), mailboxId, { fingerprint: FP, signatureReplaces: live }, { read: slow });
     const before = await everyRow(db);
-    expect([copy, live, kept].filter((r) => !before.some((row) => row.includes(r))), "the probe sees no receipt").toEqual([]);
+    expect([copy, live, kept, body].filter((r) => !before.some((row) => row.includes(r))), "the probe sees every hash").toEqual([]);
 
     await svc.delete(ctxFor(db, accountId), mailboxId, { erase: { confirmAddress: address } });
     expect((await eraseOwedMailbox(db, dialect(db), { accountId, mailboxId, now: () => NOW, maxSteps: 10 })).done).toBe(true);
 
     const after = await everyRow(db);
     expect(after.filter((row) => row.includes(copy) || row.includes(live)), "a row still names the erased signature").toEqual([]);
-    const hex32 = /(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/;
-    expect(after.filter((row) => row.startsWith("audit_log ") && row.includes(mailboxId) && hex32.test(row)),
-      "an audit row of the erased mailbox carries a receipt").toEqual([]);
-    expect(after.filter((row) => row.startsWith("audit_log ") && row.includes(mailboxId)).length, "the audit rows themselves stay")
-      .toBe(2);
-    expect(after.some((row) => row.includes(kept)), "the other mailbox's marker lost its receipt").toBe(true);
+    expect(after.filter((row) => row.includes(body)), "a row still names the erased mailbox's settings").toEqual([]);
+    const hex = /(?<![0-9a-f])(?:[0-9a-f]{32}|[0-9a-f]{64})(?![0-9a-f])/;
+    const own = after.filter((row) => row.startsWith("audit_log ") && row.includes(mailboxId));
+    expect(own.filter((row) => hex.test(row)), "an audit row of the erased mailbox carries a hash").toEqual([]);
+    expect(own.length, "the audit rows themselves stay").toBe(3);
+    expect(after.some((row) => row.includes(kept) && row.includes(KEPT_FP)), "the other mailbox's marker lost a hash").toBe(true);
   });
 
-  /* A stamp by an older build left the receipts; the finish takes them off. */
-  it("an erasure stamped the old way still leaves no receipt of the signature once it finishes", async () => {
+  /* A stamp by an older build left the receipts and the fingerprint; the finish takes them off. */
+  it("an erasure stamped the old way still leaves no receipt of the signature and no fingerprint once it finishes", async () => {
     const db = await makeTestDb();
     const { accountId, mailboxId } = await seed(db);
     const [marker] = await db.insert(auditLog).values({
@@ -185,7 +190,42 @@ describe("removing one mailbox WITH erase, on either store", () => {
     expect((await eraseOwedMailbox(db, dialect(db), { accountId, mailboxId, now: () => NOW, maxSteps: 10 })).done).toBe(true);
     const [row] = await db.select({ p: auditLog.payload }).from(auditLog).where(eq(auditLog.id, marker!.id));
     expect(row?.p, "the finished erasure left the receipt").not.toHaveProperty("signatureReceipt");
+    expect(row?.p, "the finished erasure left the fingerprint").not.toHaveProperty("fingerprint");
     expect(row?.p).toMatchObject({ mailboxId, state: "found" });
+  });
+
+  /* Nor their settings hashes: an erasure finished before the steps took them off kept them on its
+     audit rows, and nothing re-runs a finished one. */
+  it("an erasure finished the old way loses its settings hashes on the next clear, and nothing else does", async () => {
+    const db = await makeTestDb();
+    const { accountId, mailboxId, address } = await seed(db);
+    await svc.delete(ctxFor(db, accountId), mailboxId, { erase: { confirmAddress: address } });
+    expect((await eraseOwedMailbox(db, dialect(db), { accountId, mailboxId, now: () => NOW, maxSteps: 10 })).done).toBe(true);
+    const [removed] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `r-${address}`, status: "disabled",
+    }).returning();
+    const [live] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `l-${address}` }).returning();
+    // The rows as they were written, which the old steps left as they were.
+    const FP = `2:${"d4".repeat(32)}`;
+    const hashes = { fingerprint: FP, signatureReceipt: "7".repeat(32), signatureReplaces: "8".repeat(32) };
+    const rowsOf = (id: string) => [
+      { action: PROFILE_FOUND_AUDIT_ACTION, payload: { mailboxId: id, state: "found", fingerprint: FP, heldForImport: true, signatureReceipt: hashes.signatureReceipt } },
+      { action: PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, payload: { mailboxId: id, decision: "declined", fingerprint: FP } },
+      { action: PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION, payload: { mailboxId: id, fingerprint: FP, signatureReplaces: hashes.signatureReplaces } },
+    ].map((r) => ({ ...r, accountId, inverse: null }));
+    await db.insert(auditLog).values([...rowsOf(mailboxId), ...rowsOf(removed!.id), ...rowsOf(live!.id)]);
+    const payloadsOf = async (id: string) => (await db.select({ p: auditLog.payload }).from(auditLog)
+      .where(sql`${auditLog.payload}->>'mailboxId' = ${id}`)).map((r) => r.p as Record<string, unknown>);
+    const held = (ps: Array<Record<string, unknown>>) => ps.flatMap((p) => Object.keys(hashes).filter((k) => k in p)).sort();
+
+    expect(await clearErasedSettingsHashes(db)).toBe(1);
+    const erased = await payloadsOf(mailboxId);
+    expect(erased.length, "the audit rows themselves stay").toBe(3);
+    expect(held(erased), "the erased mailbox's rows still hold a hash").toEqual([]);
+    const all = ["fingerprint", "fingerprint", "fingerprint", "signatureReceipt", "signatureReplaces"];
+    expect(held(await payloadsOf(removed!.id)), "a plain removal stays reversible with its rows").toEqual(all);
+    expect(held(await payloadsOf(live!.id))).toEqual(all);
+    expect(await clearErasedSettingsHashes(db), "a second run finds nothing").toBe(0);
   });
 
   /* Erasures finished before the sweep cleared the signature kept it; nothing re-runs a finished one. */

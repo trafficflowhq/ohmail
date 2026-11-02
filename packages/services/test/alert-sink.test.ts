@@ -3,11 +3,12 @@ import { FIXTURE_SHAPES, resendKey } from "../../../test/support/fixture-credent
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   ALERT_MAIL_SCHEDULE, DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS, DEFAULT_ALERT_REPEAT_MS,
-  mailCooldownMs, resendAlertSink,
+  authThrottle, mailCooldownMs, resendAlertSink,
   type Alert, type AlertNotifyContext,
 } from "@trafficflow/db/cloud";
+import type { KeyProvider } from "@trafficflow/core/mail";
 import {
-  MailService, ResendMailer, SpyMailer, mailAlertSink, renderTemplate, dbRecipientLimiter,
+  MailService, ResendMailer, SpyMailer, mailAlertSink, renderTemplate, dbRecipientLimiter, makeTestAuthDeps, throttleKeysFor,
   type RecipientLimiter,
 } from "../src/index.js";
 
@@ -40,6 +41,7 @@ const ALERTS: Alert[] = [
 ];
 
 const CTX: AlertNotifyContext = { source: "api", environment: "production", now: NOW };
+const KEYS = throttleKeysFor(makeTestAuthDeps().keyProvider);
 
 async function harness(over: { operatorEmail?: string } = {}) {
   const db = await makeTestDb();
@@ -53,6 +55,7 @@ async function harness(over: { operatorEmail?: string } = {}) {
       supportEmail: "support@ohmail.app",
       operatorEmail: "operatorEmail" in over ? over.operatorEmail : "ops@ohmail.example",
     },
+    throttleKeys: KEYS,
   });
   return {
     db, mailer,
@@ -102,7 +105,7 @@ describe("mailAlertSink", () => {
       const service = new MailService({ mailer, config: {
         appUrl: "https://app.ohmail.app", siteUrl: "https://ohmail.app", adminUrl: "https://admin.ohmail.app",
         supportEmail: "support@ohmail.app", operatorEmail: "ops@ohmail.example",
-      } });
+      }, throttleKeys: KEYS });
       for (const ms of offsets) {
         const at = new Date(Date.UTC(2026, 7, 21, 12, 0, 0) + ms);
         await mailAlertSink(service, { limiter: dbRecipientLimiter(db), now: () => at }).notify(alerts, CTX);
@@ -157,6 +160,7 @@ describe("mailAlertSink", () => {
         appUrl: "https://app.ohmail.app", siteUrl: "https://ohmail.app",
         supportEmail: "support@ohmail.app", operatorEmail: "ops@ohmail.example",
       },
+      throttleKeys: KEYS,
     });
     const sink = mailAlertSink(service, { limiter: dbRecipientLimiter(db), now: () => NOW });
     await expect(sink.notify(ALERTS, CTX)).resolves.toBe(false);
@@ -203,6 +207,7 @@ describe("the operator-alert path's only database capability", () => {
       adminUrl: "https://admin.ohmail.app", supportEmail: "support@ohmail.app",
       operatorEmail: "ops@ohmail.example",
     },
+    throttleKeys: KEYS,
   });
 
   it("delivers with NO database in scope — one limiter claim is the whole of its DB use", async () => {
@@ -217,10 +222,9 @@ describe("the operator-alert path's only database capability", () => {
     expect(limiter.calls).toHaveLength(1);
 
     const [key, at, windowMs] = limiter.calls[0]!;
-    // The transactional budget, keyed by a HASH of the recipient — never the address itself,
-    // which would put an operator's mail address in `auth_throttle` in the clear.
-    expect(key.startsWith("mail:transactional:")).toBe(true);
-    expect(key).not.toContain("ops@ohmail.example");
+    // The transactional budget under ONE fixed name: no address, not even hashed, and no key
+    // material, so the pager mails on a host whose KEK is broken.
+    expect(key).toBe("mail:transactional:operator");
     expect(at).toEqual(NOW);
     expect(windowMs).toBeGreaterThan(0);
   });
@@ -232,6 +236,26 @@ describe("the operator-alert path's only database capability", () => {
     const sink = mailAlertSink(serviceWith(mailer), { limiter: spyLimiter(false), now: () => NOW });
     expect(await sink.notify(ALERTS, CTX)).toBe(false);
     expect(mailer.sent).toHaveLength(0);
+  });
+
+  it("a host whose KEK is broken still pages the operator; a customer send there fails and counts nothing", async () => {
+    const fail = (): never => { throw new Error("KEK unavailable on this host"); };
+    const broken: KeyProvider = { encrypt: async () => fail(), decrypt: async () => fail(), currentKeyVersion: fail, deriveSubkey: fail };
+    const db = await makeTestDb();
+    const mailer = new SpyMailer();
+    const service = new MailService({
+      mailer,
+      config: {
+        appUrl: "https://app.ohmail.app", siteUrl: "https://ohmail.app", supportEmail: "support@ohmail.app",
+        operatorEmail: "ops@ohmail.example",
+      },
+      throttleKeys: throttleKeysFor(broken),
+    });
+    expect(await mailAlertSink(service, { limiter: dbRecipientLimiter(db), now: () => NOW }).notify(ALERTS, CTX)).toBe(true);
+    const customer = await service.sendInvite({ db, now: () => NOW }, { to: "someone@example.com", code: "C", expiresAt: NOW });
+    expect(customer, "a customer send counted without the key").toMatchObject({ status: "failed" });
+    expect(mailer.sent.map((m) => m.template)).toEqual(["operator_alert"]);
+    expect((await db.select().from(authThrottle)).map((r) => r.key)).toEqual(["mail:transactional:operator"]);
   });
 
   it("a limiter that throws is caught — the OTHER sink must still get to run", async () => {
@@ -317,6 +341,7 @@ describe("both mail arms send the same mail for one alert", () => {
         appUrl: "https://app.ohmail.app", siteUrl: "https://ohmail.app", adminUrl: CONSOLE,
         supportEmail: "support@ohmail.app", operatorEmail: "ops@ohmail.example",
       },
+      throttleKeys: KEYS,
     });
     const sink = mailAlertSink(service, { limiter: dbRecipientLimiter(await makeTestDb()), now: () => NOW });
     expect(await sink.notify(ALERTS, ctx)).toBe(true);

@@ -2932,7 +2932,8 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
     await sync.onOrganize();
 
     expect(events.some((e) => e.startsWith("organizer_profile_detected ") && e.includes("found_own"))).toBe(true);
-    expect(planned(events)[0]).toMatchObject({ records: 5, current: 1, removable: 4, duplicate: 4 });
+    // Written by a build that records nothing (`old`), under our id after our row: the store's own, read by body.
+    expect(planned(events)[0]).toMatchObject({ records: 5, current: 1, removable: 4, own: 4 });
     expect(events.some((e) => e.startsWith("profile_tidied ") && e.includes("\"removed\":4"))).toBe(true);
     expect(profileDocs(fleet, mb.mailboxId)).toHaveLength(1);
     expect(meta.profileAppends, "the heal appended a copy").toBe(appends);
