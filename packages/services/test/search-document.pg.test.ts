@@ -494,7 +494,8 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
         ["you -thanks", "you", "thanks"], ["the -thanks", "the", "thanks"], ["and -google", "and", "google"], ["is -orchard", "is", "orchard"],
         // A minus word's parentheses go with it; a bare `or` beside it is no word asked; many minus words.
         ["mail -(thanks)", "mail", "thanks"], ["mail (-thanks)", "mail", "thanks"], ["(mail -thanks)", "mail", "thanks"], ["mail -thanks)", "mail", "thanks"],
-        ["mail or -zzzqx", "mail or", "zzzqx"], ["-thanks or mail", "or mail", "thanks"], ["mail or -thanks", "mail or", "thanks"],
+        ["mail or -zzzqx", "mail", "zzzqx"], ["-thanks or mail", "mail", "thanks"], ["mail or -thanks", "mail", "thanks"],
+        ["mail or zzzqx -thanks", "mail", "thanks"],
         ["mail -a1 -a2 -a3 -a4 -a5 -a6 -a7 -a8", "mail", ""], ["mail -thanks -a2 -a3 -a4 -a5 -a6 -a7 -a8", "mail", "thanks"],
         ["the -a1 -a2 -a3 -a4 -a5 -a6 -a7 -a8 -a9", "the", ""], ["delivery waiting -a1 -a2 -a3 -a4 -a5 -a6 -a7", "delivery waiting", ""],
         [`${NINE} -harvest`, NINE, "harvest"]] as const) {
@@ -514,9 +515,12 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
       }
       // The words alone: `mail` inside each sender's address, a stopword inside a subject.
       const plain = [];
-      for (const p of ["mail", "you", "the", "and", NINE]) plain.push({ p, keys: ((await all(s, p))[0] as { keys?: string[] }).keys });
-      expect(plain, label).toEqual([{ p: "mail", keys: ["body", "domain", "inside", "prefix", "subject"] },
-        { p: "you", keys: ["you1", "you2"] }, { p: "the", keys: ["weather"] }, { p: "and", keys: ["sandbox"] }, { p: NINE, keys: ["long"] }]);
+      // Each side of an `or` keeps its in-word and part-word reach.
+      for (const p of ["mail", "you", "the", "and", NINE, "mail or zzzqx", "zzzqx or mail", "the or zzzqx"]) plain.push({ p, keys: ((await all(s, p))[0] as { keys?: string[] }).keys });
+      const mail = ["body", "domain", "inside", "prefix", "subject"];
+      expect(plain, label).toEqual([{ p: "mail", keys: mail },
+        { p: "you", keys: ["you1", "you2"] }, { p: "the", keys: ["weather"] }, { p: "and", keys: ["sandbox"] }, { p: NINE, keys: ["long"] },
+        { p: "mail or zzzqx", keys: mail }, { p: "zzzqx or mail", keys: mail }, { p: "the or zzzqx", keys: ["weather"] }]);
     }
     expect(got).toEqual(want);
   }, 120_000);

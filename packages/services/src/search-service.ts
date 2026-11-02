@@ -3,7 +3,7 @@ import { exactAsked, positiveText, showSimilar, substringOpen, type SearchTier }
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
 import { accountSettings, messageSearch, messages, readFlightOf } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
-import { boolLiteral, dialect, pgOnly, queryOperandsOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
+import { boolLiteral, dialect, orSidesOf, pgOnly, queryOperandsOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
@@ -671,53 +671,69 @@ export class SearchService {
     // arm that reads a body word's start (the part arm once it opens, else the text arm, or the substring
     // arm beside a typed text arm), so a letter its file names find is one row there, merged before the
     // arm's cut. Its set leads with the account.
-    const inside = substringOpen(q);
-    const named = inside ? d.search.names(pos) : null;
-    const names = named === null ? [] : [keyed(held(own(named)), sets([sql`(s.account_id = ${ctx.accountId} and ${named.pred})`]))];
-    const part = exactAsked(q) ? null : d.search.partWords(pos);
+    // Each side of a bare `or` is read by these arms on its own: ANDed, `mail or zzzqx` lost `webmail`.
+    const sides = orSidesOf(pos) ?? [pos];
+    const olds = sides.length === 1 && sides[0] === pos ? [legacy] : sides.map((w) => (legacy === null ? null : d.search.unindexed(w, { trigram, threshold: FUZZY_THRESHOLD })));
+    const inside = sides.flatMap((w, i) => (substringOpen(w) ? [{ w, old: olds[i] ?? null }] : []));
+    const names = inside.flatMap(({ w }) => {
+      const named = d.search.names(w);
+      return named === null ? [] : [keyed(held(own(named)), sets([sql`(s.account_id = ${ctx.accountId} and ${named.pred})`]))];
+    });
+    const parts = sides.flatMap((w, i) => {
+      const p = exactAsked(w) ? null : d.search.partWords(w);
+      return p === null ? [] : [{ p, old: olds[i]?.part ?? null }];
+    });
     const out: Arm[] = [
       { name: "head", ranked: true, branches: [held(ownWords(words.head)), ...(legacy ? [bare(legacy.words.head)] : [])] },
       {
         name: "text", ranked: false,
         ...(across && d.name === "pg" ? { bounded: true, ...on } : key !== null && !wq.includes('"') ? { bounded: true, keyedOnly: true, ...on } : {}),
-        branches: [...text, ...(part === null && !typedRead ? names : []), ...(legacy ? [bare(legacy.words.text)] : [])],
+        branches: [...text, ...(parts.length === 0 && !typedRead ? names : []), ...(legacy ? [bare(legacy.words.text)] : [])],
       },
     ];
     // A part of a word finds what the whole word finds: the same vectors as `head` and `text`,
     // each word also read as the start of a longer one (`elevat` reaches `elevation`). On Postgres
     // ONE bounded arm over both, so a common part's walk fills at once; the device store's FTS5
-    // reads have no such misplan and keep two plain arms (one branch each: no union there).
-    const old = legacy?.part ?? null;
+    // reads have no such misplan and keep two plain arms. Words that may straddle the letter's parts:
+    // one predicate over the whole letter, with no set (a common prefix over every account would be read).
     const beside = late ? { besideText: true as const } : {};
-    if (part !== null && part.across === true) {
-      // Words that may straddle the letter's parts: one predicate over the whole letter.
-      // No set: a common word's prefix over every account would be read.
-      out.push({
-        name: "part", ranked: false, ...(d.name === "pg" ? { bounded: true, ...on, ...beside } : {}),
-        branches: [held(ownWords(part.text)), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
-      });
-    } else if (part !== null && d.name === "pg") {
+    const whole = parts.filter(({ p }) => p.across === true);
+    const apart = parts.filter(({ p }) => p.across !== true);
+    const oldBoth = parts.flatMap(({ old }) => (old ? [bare(old.head), bare(old.text)] : []));
+    if (parts.length > 0 && d.name === "pg") {
       out.push({
         name: "part", ranked: false, bounded: true, ...on, ...beside,
-        branches: [keyed(held(ownWords(part.head)), sets([part.head.pred])), keyed(held(ownWords(part.text)), sets([part.text.pred])), ...names, ...(old ? [bare(old.head), bare(old.text)] : [])],
+        branches: [...parts.flatMap(({ p }) => (p.across === true ? [held(ownWords(p.text))]
+          : [keyed(held(ownWords(p.head)), sets([p.head.pred])), keyed(held(ownWords(p.text)), sets([p.text.pred]))])), ...names, ...oldBoth],
       });
-    } else if (part !== null) {
+    } else if (parts.length > 0) {
       out.push(
-        { name: "part-head", ranked: false, branches: [held(ownWords(part.head)), ...(old ? [bare(old.head)] : [])] },
-        { name: "part-text", ranked: false, branches: [held(ownWords(part.text)), ...(old ? [bare(old.text)] : [])] },
+        { name: "part", ranked: false, branches: [...whole.map(({ p }) => held(ownWords(p.text))), ...names, ...oldBoth] },
+        { name: "part-head", ranked: false, branches: apart.map(({ p }) => held(ownWords(p.head))) },
+        { name: "part-text", ranked: false, branches: apart.map(({ p }) => held(ownWords(p.text))) },
       );
     }
-    if (inside) {
+    if (inside.length > 0) {
       out.push({
         name: "substring",
         ranked: false,
-        branches: [held(own(d.search.substring(pos, { trigram }))), ...(part === null && typedRead ? names : []), ...(legacy?.substring ?? []).map(bare)],
+        branches: [...inside.map(({ w }) => held(own(d.search.substring(w, { trigram })))), ...(parts.length === 0 && typedRead ? names : []),
+          ...inside.flatMap(({ old }) => old?.substring ?? []).map(bare)],
       });
     }
     // Every branch is then the document's own (`own`), so the bounded read can ask it by itself. An
-    // arm with no branch matches nothing and is left out: an empty union is no statement.
+    // arm with no branch matches nothing and is left out: an empty union is no statement. The device
+    // store reads no union: an arm's branches (one per `or` side) are one predicate there.
     return (local ? out.map((a) => ({ ...a, local: { account: ctx.accountId }, bounded: false })) : read(out))
-      .filter((a) => a.branches.length > 0);
+      .filter((a) => a.branches.length > 0)
+      .map((a) => (d.name === "pg" || a.branches.length === 1 ? a : { ...a, branches: [SearchService.anyOf(a.branches)] }));
+  }
+
+  /** Branches as one: their predicates OR-ed, the first's rank. */
+  private static anyOf(bs: readonly Branch[]): Branch {
+    const { raw: _raw, ...first } = bs[0]!;
+    const or = (ps: SQL[]): SQL => sql`(${sql.join(ps, sql` or `)})`;
+    return { ...first, pred: or(bs.map((b) => b.pred)), ...(bs.every((b) => b.raw) ? { raw: or(bs.map((b) => b.raw!)) } : {}) };
   }
 
   /**
