@@ -161,6 +161,22 @@ export function activeSenderExpr(
 }
 
 /**
+ * A ROW OF A MAILBOX THAT STILL ASKS: its mailbox is none of `gone` (`readGoneMailboxIds`: erased,
+ * or removed with the copy kept). A removed mailbox's mail makes nobody waiting, active or claimed.
+ * `undefined` when nothing is gone, so a reader's SQL is what it was without one.
+ */
+export function notGoneSql(d: Dialect, mailboxExpr: SQL | AnyColumn, gone: readonly string[]): SQL | undefined {
+  if (gone.length === 0) return undefined;
+  return sql`${mailboxExpr} not in (${sql.join(gone.map((id) => d.castUuid(id)), sql`, `)})`;
+}
+
+/** {@link notGoneSql} as a trailing `and` conjunct of a probe's own WHERE, or nothing. */
+function andNotGone(d: Dialect, mailboxExpr: SQL, gone: readonly string[]): SQL {
+  const live = notGoneSql(d, mailboxExpr, gone);
+  return live === undefined ? sql`` : sql` and ${live}`;
+}
+
+/**
  * IS THIS ROW'S SENDER STILL WORTH A DECISION — the correlated form a row-level reader needs.
  *
  * `senderExpr` is the outer query's already-lowercased address. {@link activeSenderExpr} is asked
@@ -169,9 +185,10 @@ export function activeSenderExpr(
  * of that mailbox exactly as it did to its group. Asked per row, the probe stops at the first such
  * message and dates a row before it reads its folder; the grouped form read every message of the
  * sender and its folder (74k: 3.5k senders, about 55 ms per read). Same builder, same answer.
+ * A `gone` mailbox's mail is left out ({@link notGoneSql}).
  */
 export function senderIsActiveSql(
-  d: Dialect, accountId: string, senderExpr: SQL, set: CutlineSet,
+  d: Dialect, accountId: string, senderExpr: SQL, set: CutlineSet, gone: readonly string[],
 ): SQL {
   const folders = sql`(${sql.join(CUTLINE_PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
   const at = cutlineInstant({ date: sql`mc.date`, arrivedAt: sql`mc.created_at` });
@@ -190,7 +207,7 @@ export function senderIsActiveSql(
     select 1 from messages mc
       join folder_state fsc on fsc.message_id = mc.id
      where mc.account_id = ${d.castUuid(accountId)}
-       and lower(mc.from_address) = ${senderExpr}${window}
+       and lower(mc.from_address) = ${senderExpr}${window}${andNotGone(d, sql`mc.mailbox_id`, gone)}
        and ${active}
        and fsc.desired_folder in ${folders}
   )`;
@@ -325,14 +342,16 @@ export function heldArrivedInsideSql(
 /**
  * THIS SENDER HAS A LETTER AT THE GATE THAT ARRIVED INSIDE THE CUTLINE ({@link heldArrivedInsideSql}),
  * as a correlated probe: the readers carry it as a window mark instead; this is the reference shape.
- * Undecided senders only, by the caller.
+ * Undecided senders only, by the caller. A `gone` mailbox's mail is left out ({@link notGoneSql}).
  */
-export function senderHasHeldArrivalSql(d: Dialect, accountId: string, senderExpr: SQL, set: CutlineSet): SQL {
+export function senderHasHeldArrivalSql(
+  d: Dialect, accountId: string, senderExpr: SQL, set: CutlineSet, gone: readonly string[],
+): SQL {
   return sql`exists (
     select 1 from messages am
       join folder_state af on af.message_id = am.id
      where am.account_id = ${d.castUuid(accountId)}
-       and lower(am.from_address) = ${senderExpr}
+       and lower(am.from_address) = ${senderExpr}${andNotGone(d, sql`am.mailbox_id`, gone)}
        and ${heldArrivedInsideSql(d, {
          folder: sql`af.desired_folder`, deletedAt: sql`am.deleted_at`, date: sql`am.date`,
          arrivedAt: sql`am.arrived_at`, recordedAt: sql`am.created_at`, mailboxId: sql`am.mailbox_id`,
@@ -345,10 +364,11 @@ export function senderHasHeldArrivalSql(d: Dialect, accountId: string, senderExp
  * its address is not — whatever rule or contact decided the sender otherwise (the act's promotion, a
  * domain rule, an inferred contact). Such a sender is waiting again while the claim keeps them so
  * ({@link heldClaimWaitsSql}); no release takes the row whatever its age. `screening` is core's
- * `SCREENING_AUTH_VERDICTS` ({@link personSkipSql}).
+ * `SCREENING_AUTH_VERDICTS` ({@link personSkipSql}). A `gone` mailbox's claim keeps nobody waiting.
  */
 export function senderHasHeldClaimSql(
   d: Dialect, accountId: string, senderExpr: SQL, cutoff: Date | CutlineSet, screening: readonly string[],
+  gone: readonly string[],
 ): SQL {
   const waits = heldClaimWaitsSql(d, accountId, {
     folder: sql`hf.desired_folder`, deletedAt: sql`hm.deleted_at`, senderCheck: sql`hm.sender_check`,
@@ -360,7 +380,7 @@ export function senderHasHeldClaimSql(
     select 1 from messages hm
       join folder_state hf on hf.message_id = hm.id
      where hm.account_id = ${d.castUuid(accountId)}
-       and lower(hm.from_address) = ${senderExpr}
+       and lower(hm.from_address) = ${senderExpr}${andNotGone(d, sql`hm.mailbox_id`, gone)}
        and ${waits}
   )`;
 }

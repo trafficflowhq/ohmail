@@ -6,7 +6,7 @@ import {
   accountSettings, accounts, folderState, mailboxes, messages, routingDecisions, rules,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
 } from "@trafficflow/db";
-import { applyScreenerDecision, changeLog, contacts, learningSignals } from "@trafficflow/db";
+import { applyScreenerDecision, changeLog, contacts, learningSignals, listAddresses } from "@trafficflow/db";
 import { CAP_CONFIDENCE, createLogger } from "@trafficflow/core/mail";
 import type { ClassifierPort, ClassifierResult } from "@trafficflow/core";
 import { autoFiledSummary, undoAutoFiled, type ServiceContext } from "@trafficflow/services";
@@ -895,6 +895,23 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     });
   }
 
+  it("(k) a list address no person let in is an address like any: a confident deny on a confirmed letter writes its rule", async () => {
+    // `List-Post` is the sender's to write: a forger names its own From there and becomes a "list address".
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "list@lists.test";
+    await db.insert(listAddresses).values({ accountId: w.accountId, address: sender, consentedBrands: [] });
+    const older = await held(w, sender);
+    await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, older));
+    const advised = await held(w, sender);
+    await suggest(w, advised, SPAM, 0.95, "none");
+    const r = await act(w);
+    expect((await accountRules(w)).map((x) => [x.match, x.destination])).toEqual([[sender, SPAM]]);
+    expect(await desiredOf(advised)).toBe(SPAM);
+    expect(await desiredOf(older)).toBe(SPAM);
+    expect(r).toMatchObject({ filed: 1, crowdDenies: 0 });
+  });
+
   it("(k) on an unconfirmed letter the stored reason changes nothing: none, campaign and NULL each file that letter alone, as (j)", async () => {
     for (const reason of ["none", "campaign", null]) {
       const w = await newWorld();
@@ -1023,7 +1040,8 @@ describe("plannedDecision — advice becomes the decision a press would make, or
   const bars = { deny: SCREENER_ACT_DENY_BAR };
   const plan = (
     destination: string, confidence: number | null, authVerdict: string | null = "pass", senderReason: string | null = "none",
-  ) => plannedDecision("who@x.test", { id: "s1", messageId: "m1", destination, confidence, authVerdict, senderReason }, bars);
+    letInList = false,
+  ) => plannedDecision("who@x.test", { id: "s1", messageId: "m1", destination, confidence, authVerdict, senderReason }, bars, letInList);
 
   it("the advice is confirmed only when its letter's provider said pass", () => {
     expect(plan(SPAM, 0.95)).toMatchObject({ decision: "no", confirmed: true });
@@ -1040,6 +1058,15 @@ describe("plannedDecision — advice becomes the decision a press would make, or
     for (const reason of ["campaign", "auth_fail", "correspondent", null, "unknown"]) {
       expect(plan(SPAM, 0.95, "pass", reason), String(reason)).toMatchObject({ decision: "no", confirmed: true, standing: false });
     }
+  });
+
+  it("a deny at a list address the person let in never stands as a rule, however confirmed", () => {
+    for (const reason of ["none", "impersonation", "brand_mismatch"]) {
+      expect(plan(SPAM, 0.95, "pass", reason, true), reason).toMatchObject({ decision: "no", confirmed: true, standing: false });
+    }
+    expect(plan("ohmail/Screened", 0.95, "pass", "none", true)).toMatchObject({ decision: "no", standing: false });
+    // An admission there is no plan either: only a person admits.
+    expect(plan("INBOX", 0.95, "pass", "none", true)).toBeNull();
   });
 
   it("MUTATION-WATCH (n): advice to let a sender in is no plan, however sure and whatever its letter; a deny is", () => {
@@ -1061,7 +1088,7 @@ describe("plannedDecision — advice becomes the decision a press would make, or
     expect(plan("ohmail/Nowhere", 1)).toBeNull();
     expect(plan(SPAM, null)).toBeNull();
     expect(plan(SPAM, Number.NaN)).toBeNull();
-    expect(plannedDecision("who@x.test", undefined, bars)).toBeNull();
+    expect(plannedDecision("who@x.test", undefined, bars, false)).toBeNull();
   });
 
   it("the bar is a floor, not a ceiling — exactly at it acts, a hair under it does not", () => {

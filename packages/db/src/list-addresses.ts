@@ -2,6 +2,8 @@ import { eq, and, inArray, sql } from "drizzle-orm";
 import type { Tx } from "./change-log.js";
 import { listAddresses } from "./schema-mail.js";
 import { dialect } from "./dialect/index.js";
+import { ruleMatchKeySql } from "./rule-match-sql.js";
+import { admitsDestination, DECIDABLE_FOLDERS } from "./screener-apply.js";
 
 /** Addresses per statement: under every store's bound-parameter limit. */
 export const LIST_ADDRESS_CHUNK = 500;
@@ -35,6 +37,39 @@ export async function readListAddresses(
     keep(await tx.select(columns).from(listAddresses).where(and(
       eq(listAddresses.accountId, accountId), inArray(listAddresses.address, keys.slice(at, at + LIST_ADDRESS_CHUNK)),
     )));
+  }
+  return out;
+}
+
+/**
+ * THE LIST ADDRESSES AMONG `senders` (lower-cased) A PERSON LET IN THEMSELVES (mail 0150): an enabled
+ * allow `sender` rule naming it that a person wrote or decided (any provenance but the act's
+ * `promoted`, or one with a person's stamp), or a contact that is not inferred. Only such a list's
+ * screen-out files a claim alone: `List-Post` is the sender's to write, so at any other list address
+ * the screen-out is the address's deny.
+ */
+export async function readListAddressesLetIn(tx: Tx, accountId: string, senders: readonly string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  const d = dialect(tx);
+  // Read at the call, never at load: this module and the decision's import each other.
+  const allow = [...DECIDABLE_FOLDERS].filter(admitsDestination).map((f) => sql`${f}`);
+  const keys = [...new Set(senders)];
+  for (let at = 0; at < keys.length; at += LIST_ADDRESS_CHUNK) {
+    const rows = await d.exec(tx, sql`select la.address from list_addresses la
+      where la.account_id = ${d.castUuid(accountId)}
+        and la.address in (${sql.join(keys.slice(at, at + LIST_ADDRESS_CHUNK).map((a) => sql`${a}`), sql`, `)})
+        and (exists (
+              select 1 from rules rli
+               where rli.account_id = la.account_id and rli.enabled and rli.kind = 'sender'
+                 and rli.destination in (${sql.join(allow, sql`, `)})
+                 and (rli.provenance <> 'promoted' or rli.person_decided_at is not null)
+                 and ${ruleMatchKeySql(sql`rli.match`)} = la.address
+            ) or exists (
+              select 1 from contacts cli
+               where cli.account_id = la.account_id and lower(cli.address) = la.address
+                 and (cli.source is null or cli.source <> 'inferred')
+            ))`);
+    for (const [address] of rows) if (typeof address === "string") out.add(address);
   }
   return out;
 }

@@ -1,10 +1,10 @@
 import { sql, type SQL } from "drizzle-orm";
 import { DEFAULT_DORMANCY_DAYS, LEGACY_NEWS_FOLDER, SCREENING_AUTH_VERDICTS, type ScreeningScope } from "@trafficflow/core/mail";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
   activeSenderExpr, anyOf, cutlineArms, cutlineInstant, destinationIsDecisionSql, heldArrivedInsideSql, heldClaimWaitsSql, perMailboxSql,
-  resolveCutline, ruleMatchKeySql, senderHasHeldClaimSql, senderIsDecidedSql, senderIsOwnSql, type CutlineSet,
+  notGoneSql, readGoneMailboxIds, resolveCutline, ruleMatchKeySql, senderHasHeldClaimSql, senderIsDecidedSql, senderIsOwnSql, type CutlineSet,
   type ResolvedCutline,
 } from "@trafficflow/db";
 import { cutlinesOf, type EffectiveScreeningWindow } from "./screening-window.js";
@@ -167,6 +167,10 @@ export async function cutlineCounts(
     newest: sql`i.newest`,
   });
   const active = perMailbox === null ? activeOf(resolved) : perMailboxSql(d, perMailbox, sql`i.mbx`, activeOf);
+  // A removed mailbox's mail asks nothing (`ScreenerPage.gone`): the counts read the account without it.
+  const gone = await readGoneMailboxIds(bridgeTx(ctx.db), ctx.accountId);
+  const live = notGoneSql(d, sql`m.mailbox_id`, gone);
+  const liveRows = live === undefined ? sql`` : sql` and ${live}`;
   const rows = await d.exec(ctx.db, sql`
     with
     -- The destination test comes from destinationIsDecisionSql, never a local comparison: this
@@ -222,7 +226,7 @@ export async function cutlineCounts(
         from messages m
         join folder_state fs on fs.message_id = m.id
        where m.account_id = ${d.castUuid(ctx.accountId)}
-         and fs.desired_folder in ${folders}
+         and fs.desired_folder in ${folders}${liveRows}
          -- The account itself, by the one predicate the queue page and the suggest set ask too.
          and not ${senderIsOwnSql(d, ctx.accountId, sql`lower(m.from_address)`)}
        group by 1${perMailbox === null ? sql`` : sql`, 2`}
@@ -242,7 +246,7 @@ export async function cutlineCounts(
                   and exists (select 1 from decided_domain dd
                                where dd.m = ${d.substr(sql`i.addr`, sql`${d.strpos(sql`i.addr`, sql`'@'`)} + 1`)}))
               or ${senderIsDecidedSql(d, ctx.accountId, sql`i.addr`)})
-              and not ${senderHasHeldClaimSql(d, ctx.accountId, sql`i.addr`, set, SCREENING_AUTH_VERDICTS)}) as decided,
+              and not ${senderHasHeldClaimSql(d, ctx.accountId, sql`i.addr`, set, SCREENING_AUTH_VERDICTS, gone)}) as decided,
              (${active} or i.held_claim or i.held_arrival) as active
         from inbound i
     )${perMailbox === null ? sql`` : sql`,

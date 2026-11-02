@@ -278,7 +278,10 @@ export const screenerRoutes: Route[] = [
       const url = new URL(req.url);
       const cursor = url.searchParams.get("cursor") ?? undefined;
       const limit = pagingNumber(url.searchParams.get("limit"));
-      const page = await screener(deps).list(serviceContext(deps, req), { cursor, limit });
+      // `live=1` (exactly "1"): the caller presents a removed mailbox's mail itself, so the page
+      // leaves those senders out and names the mailboxes (`gone`). An older client asks without it.
+      const live = url.searchParams.get("live") === "1";
+      const page = await screener(deps).list(serviceContext(deps, req), { cursor, limit, live });
       // `suggestable` is the set a control may offer — `{ senders, maxPerRequest, … }`, and no
       // price: the figure a person consents to is the dry run's `quotedCredits` over that set.
       //
@@ -294,6 +297,7 @@ export const screenerRoutes: Route[] = [
         pendingDecisions: page.pendingDecisions,
         // The queue's exact size, on the first page only — see `ScreenerPage.total`.
         ...(page.total !== undefined ? { total: page.total } : {}),
+        ...(page.gone !== undefined ? { gone: page.gone } : {}),
       });
     },
   },

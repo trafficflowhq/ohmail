@@ -3,18 +3,20 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accounts, accountSettings, applyScreenerDecision, contacts, folderState, listAddresses, listBrandsOf, mailboxFolders,
-  mailboxes, messageBodies, messageInstances, messages, routingDecisions, SCREENER_SUGGESTION_PROVENANCE,
-  SCREENER_SUGGESTION_STATUS, type Tx,
+  accounts, accountSettings, applyMessageMove, applyScreenerDecision, contacts, folderState, idempotencyKeys, learningSignals,
+  listAddresses, listBrandsOf, mailboxFolders, mailboxes, messageBodies, messageInstances, messages, organizerRequests,
+  routingDecisions, rules, SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, validateMovePayload, type Tx,
 } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { claimedIdentity, evaluateRules, normalizeMime } from "@trafficflow/core/mail";
+import { claimedIdentity, evaluateRules, listPostAddresses, normalizeMime } from "@trafficflow/core/mail";
 import { ScreenerService } from "../src/screener-service.js";
 import { materializeMessages } from "../src/dto/materialize.js";
 import { resetScreeningState } from "../src/consent-reset.js";
 import { heldReleaseSenders, releaseHeld } from "../src/held-release-service.js";
 import type { ServiceContext } from "../src/context.js";
+import { ruleRetroPass } from "../../../apps/worker/src/rule-retro.js";
+import { readerDoorListClaim, readerDoorWorld } from "./helpers/list-claim-reader-door.js";
 
 /**
  * A LIST ADDRESS ON THE SCREENER (mail 0150). The person wrote to `list@` and to a friend, and both
@@ -115,7 +117,8 @@ describe("a list address on the Screener", () => {
     const id = await w.heldClaim(LIST);
     const { items } = await new ScreenerService({}).list(w.ctx, { limit: 50 });
     const item = items.find((i) => i.messageId === id)!;
-    expect(item.checked).toEqual({ reason: "impersonation", brand: "PostFinance", domainShared: false, list: true });
+    // The person wrote to the list (their contact), so its screen-out sets the claim aside alone.
+    expect(item.checked).toEqual({ reason: "impersonation", brand: "PostFinance", domainShared: false, list: true, claimsOnly: true });
     expect(item.aiSuggestion).toMatchObject({ reasonCode: "impersonation", reasonBrand: "PostFinance" });
     expect(item.aiSuggestion!.decision, "\"You wrote first\" at the Ohbox for a list address").not.toBe("yes");
   });
@@ -126,7 +129,7 @@ describe("a list address on the Screener", () => {
     const plain = await w.heldPlain(LIST);
     const { items } = await new ScreenerService({}).list(w.ctx, { limit: 50 });
     const item = items.find((i) => i.messageId === plain)!;
-    expect(item.checked).toEqual({ reason: "impersonation", brand: "PostFinance", domainShared: false, list: true });
+    expect(item.checked).toEqual({ reason: "impersonation", brand: "PostFinance", domainShared: false, list: true, claimsOnly: true });
     expect(item.aiSuggestion!.reasonCode, "\"You wrote first\" over a list address's claim").toBe("impersonation");
     expect(item.aiSuggestion!.decision).not.toBe("yes");
   });
@@ -176,7 +179,7 @@ describe("a consent reset and a list address", () => {
  * nor consents the claim the person was never shown; the next forgery still waits. A person's own NO
  * consents nothing, and a moved claim that failed authentication consents no brand.
  */
-async function pressWorld(contactSource: "person" | "inferred") {
+async function pressWorld(contactSource: "person" | "inferred" | null) {
   const db = await makeTestDb();
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `lpr-${accountId.slice(0, 8)}` });
@@ -184,11 +187,13 @@ async function pressWorld(contactSource: "person" | "inferred") {
     accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@own.invalid`, organizerRole: "organizer",
   }).returning();
   let n = 0;
-  const held = async (name: string, brand: string | null, placedBy: "us" | "peer", auth: string | null = null) => {
+  const held = async (
+    name: string, brand: string | null, placedBy: "us" | "peer", auth: string | null = null, mailboxId = mb!.id,
+  ) => {
     n += 1;
     const at = new Date(`2026-10-06T0${n}:00:00.000Z`);
     const [m] = await db.insert(messages).values({
-      accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `lpr:${randomUUID()}`, subject: `m${n}`, snippet: "",
+      accountId, mailboxId, bodyHash: "h", dedupKey: `lpr:${randomUUID()}`, subject: `m${n}`, snippet: "",
       fromAddress: LIST, fromName: name, authVerdict: auth, senderCheck: brand === null ? "none" : "impersonation",
       senderCheckBrand: brand, date: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: `1:${n}` },
     }).returning();
@@ -198,7 +203,7 @@ async function pressWorld(contactSource: "person" | "inferred") {
     });
     return m!.id;
   };
-  await db.insert(contacts).values({ accountId, address: LIST, source: contactSource });
+  if (contactSource !== null) await db.insert(contacts).values({ accountId, address: LIST, source: contactSource });
   await db.insert(listAddresses).values({ accountId, address: LIST, consentedBrands: [] });
   const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `lpr-${randomUUID().slice(0, 8)}` };
   const desired = async (id: string) =>
@@ -221,7 +226,8 @@ async function pressWorld(contactSource: "person" | "inferred") {
       accountId, scope: "sender", address: LIST, appliedFolder: decision === "yes" ? "INBOX" : "ohmail/Screened", decision,
       triggeringActionId: `screener:${randomUUID()}`, now: NOW, overExisting: "converge", decidedBy: "person",
     }));
-  return { db, accountId, ctx, held, desired, brands, nextClaimHeld, press };
+  const listRules = async () => db.select().from(rules).where(and(eq(rules.accountId, accountId), eq(rules.match, LIST)));
+  return { db, accountId, mailboxId: mb!.id, ctx, held, desired, brands, nextClaimHeld, press, listRules };
 }
 
 describe("a press over a list address consents only what it moves", () => {
@@ -255,5 +261,237 @@ describe("a press over a list address consents only what it moves", () => {
     await w.press("yes");
     expect(await w.desired(failed)).toBe("INBOX");
     expect(await w.brands()).toEqual([]);
+  });
+});
+
+/**
+ * A SCREEN-OUT OF A LIST ADDRESS'S CLAIM DENIES THAT LETTER ONLY. Anyone on the list can write as its
+ * address, so a person's no on a forgery there files the claims and nothing else: the list's rule
+ * keeps its destination, priority, switch, stamps and retro, the list's letter and the next one stay
+ * in News, no learning signal is written and no unsubscribe is asked. On whichever store runs.
+ */
+async function listWithItsRule() {
+  const w = await pressWorld("person");
+  const [mb] = await w.db.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, w.accountId));
+  const stamp = new Date("2026-09-30T08:00:00.000Z");
+  await w.db.insert(rules).values({
+    accountId: w.accountId, kind: "sender", match: LIST, destination: "ohmail/News", enabled: true, priority: 3,
+    provenance: "manual", personDecidedAt: stamp, retroRequestedAt: stamp, retroDoneAt: stamp,
+  });
+  const [post] = await w.db.insert(messages).values({
+    accountId: w.accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `lst:${randomUUID()}`, subject: "Agenda",
+    snippet: "", fromAddress: LIST, fromName: "The Lists", senderCheck: "none", date: stamp, createdAt: stamp,
+    nativeLocator: { folder: "ohmail/News", ref: "1:900" },
+  }).returning();
+  await w.db.insert(folderState).values({
+    messageId: post!.id, desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+  });
+  const unsubscribed: string[][] = [];
+  const svc = new ScreenerService({ unsubscribe: { onScreenOut: async (_ctx, ids) => { unsubscribed.push(ids); return { considered: ids.length }; } } });
+  const listRule = async () => (await w.db.select().from(rules).where(and(eq(rules.accountId, w.accountId), eq(rules.match, LIST))));
+  const signals = async () => w.db.select().from(learningSignals).where(eq(learningSignals.accountId, w.accountId));
+  /** Where the list's NEXT ordinary letter goes, by the rules and contacts as they stand. */
+  const nextListLetter = async () => {
+    const repo = makeDrizzleRepo(w.db as never);
+    const msg = await normalizeMime(Buffer.from([
+      "Message-ID: <next-post@lists.invalid>", `From: "The Lists" <${LIST}>`, "To: me@own.invalid",
+      "Subject: Next meeting", "Content-Type: text/plain; charset=utf-8", "", "x",
+    ].join("\r\n")));
+    return evaluateRules({
+      msg, rules: await repo.listRules(w.accountId), knownSenders: await repo.knownSenders(w.accountId), auth: "pass",
+      ohboxPolicy: "people_and_replied", ownAddresses: new Set(), identity: null,
+    }).destination;
+  };
+  return { ...w, post: post!.id, svc, unsubscribed, listRule, signals, nextListLetter };
+}
+
+describe("a person's screen-out of a claim through a list address", () => {
+  it("files the claim alone: the list's rule, its letters, its learning and its subscription are untouched", async () => {
+    const w = await listWithItsRule();
+    const claim = await w.held("PostFinance", "PostFinance", "us");
+    const before = await w.listRule();
+    // The row says so before the press: the surfaces key their sentences on it.
+    const page = await w.svc.list(w.ctx, { limit: 50, live: true });
+    expect(page.items.find((i) => i.messageId === claim)?.checked).toMatchObject({ list: true, claimsOnly: true });
+    const r = await w.svc.decide(w.ctx, claim, { decision: "no", scope: "sender" }, { idempotency: { key: "lst-no", requestHash: "h" } });
+    expect(r).toMatchObject({ createdRuleId: null, createdRule: null, appliedFolder: "ohmail/Screened" });
+    expect(await w.desired(claim)).toBe("ohmail/Screened");
+    expect(await w.listRule(), "the list's rule moved").toEqual(before);
+    await ruleRetroPass(w.db as never, { accountId: w.accountId, trustedAuthservIdsFor: async () => new Set<string>() }, NOW);
+    expect(await w.desired(w.post), "the list's own letter left News").toBe("ohmail/News");
+    expect(await w.nextListLetter(), "the list's next letter").toBe("ohmail/News");
+    expect(await w.signals(), "a forgery taught the list's address").toEqual([]);
+    expect(w.unsubscribed, "a forged letter unsubscribed the person from the list").toEqual([]);
+    // The replay a lost answer gets is the answer the press got.
+    const [stored] = await w.db.select().from(idempotencyKeys).where(eq(idempotencyKeys.accountId, w.accountId));
+    expect([stored!.responseStatus, JSON.parse(JSON.stringify(stored!.responseJson))]).toEqual([200, JSON.parse(JSON.stringify(r))]);
+  });
+
+  it("CONTROL: a list address whose held mail holds no claim is screened out as an address", async () => {
+    const w = await listWithItsRule();
+    const plain = await w.held("The List", null, "us");
+    const r = await w.svc.decide(w.ctx, plain, { decision: "no", scope: "sender" });
+    expect((await w.listRule()).map((x) => x.destination)).toEqual(["ohmail/Screened"]);
+    expect(r).toMatchObject({ createdRuleId: (await w.listRule())[0]!.id });
+    expect(await w.desired(plain)).toBe("ohmail/Screened");
+  });
+
+  it("CONTROL: an impersonator at an address no list posts as is screened out as an address", async () => {
+    const w = await pressWorld("person");
+    await w.db.delete(listAddresses).where(eq(listAddresses.accountId, w.accountId));
+    const claim = await w.held("PostFinance", "PostFinance", "us");
+    const r = await new ScreenerService({}).decide(w.ctx, claim, { decision: "no", scope: "sender" });
+    expect(r).toMatchObject({ createdRuleId: expect.any(String) });
+    const ruled = await w.db.select().from(rules).where(and(eq(rules.accountId, w.accountId), eq(rules.match, LIST)));
+    expect(ruled.map((x) => x.destination)).toEqual(["ohmail/Screened"]);
+  });
+
+  it("CONTROL: a yes on the claim is the press it was: a rule, and the claim let in", async () => {
+    const w = await listWithItsRule();
+    const claim = await w.held("PostFinance", "PostFinance", "us");
+    const r = await w.svc.decide(w.ctx, claim, { decision: "yes", scope: "sender" });
+    expect(r).toMatchObject({ createdRuleId: expect.any(String) });
+    expect(await w.desired(claim)).toBe("INBOX");
+  });
+});
+
+/**
+ * A LIST ADDRESS NO PERSON LET IN: `List-Post` is the sender's to write, so a forger names its own
+ * From there and the ingest records it as a list address. Its claims are its own mail: a screen-out
+ * is the address's deny, as at any address, and the next forgery from it is screened out.
+ */
+describe("a list address no person let in is screened out as an address", () => {
+  it("a sender naming its own From in List-Post: the press writes the deny rule and the next forgery is screened out", async () => {
+    const w = await pressWorld(null);
+    const forged = await normalizeMime(Buffer.from([
+      "Message-ID: <forged@lists.invalid>", `From: "PostFinance" <${LIST}>`, "To: me@own.invalid",
+      `List-Post: <mailto:${LIST}>`, "Subject: Konto gesperrt", "Content-Type: text/plain; charset=utf-8", "", "x",
+    ].join("\r\n")));
+    expect(listPostAddresses(forged.headers), "premise: the header names the sender's own address").toEqual([LIST]);
+    const repo = makeDrizzleRepo(w.db as never);
+    await repo.recordListAddresses(w.accountId, listPostAddresses(forged.headers));
+    await w.held("PostFinance", "PostFinance", "us", "pass");
+    const claim = await w.held("PostFinance", "PostFinance", "us", "pass");
+    const page = await new ScreenerService({}).list(w.ctx, { limit: 50, live: true });
+    expect(page.items.find((i) => i.messageId === claim)?.checked)
+      .toEqual({ reason: "impersonation", brand: "PostFinance", domainShared: false, list: true });
+    const r = await new ScreenerService({}).decide(w.ctx, claim, { decision: "no", scope: "sender" });
+    const ruled = await w.listRules();
+    expect(ruled.map((x) => x.destination)).toEqual(["ohmail/Screened"]);
+    expect(r).toMatchObject({ createdRuleId: ruled[0]!.id });
+    const next = evaluateRules({
+      msg: forged, rules: await repo.listRules(w.accountId), knownSenders: await repo.knownSenders(w.accountId), auth: "pass",
+      ohboxPolicy: "people_and_replied", ownAddresses: new Set(),
+      identity: claimedIdentity({ fromName: forged.from.name, fromAddress: forged.from.address, subject: forged.subject }) ?? null,
+    });
+    expect(next.destination, "the next forgery waits in the Screener again").toBe("ohmail/Screened");
+  });
+
+  it("CONTROL: an inferred contact is no person's word: the press is the address's deny", async () => {
+    const w = await pressWorld("inferred");
+    const claim = await w.held("PostFinance", "PostFinance", "us");
+    const r = await new ScreenerService({}).decide(w.ctx, claim, { decision: "no", scope: "sender" });
+    expect((await w.listRules()).map((x) => x.destination)).toEqual(["ohmail/Screened"]);
+    expect(r).toMatchObject({ createdRuleId: expect.any(String) });
+  });
+});
+
+/**
+ * A CLAIM NO PRESS CAN REACH: held only in a mailbox removed with ohmail's copy kept, or stood down
+ * for another install. The person's screen-out of the list's own letter in the live mailbox is the
+ * address's: it files that letter and writes the rule, and refuses nothing; the row promised no
+ * claims-only press.
+ */
+describe("a list address whose claim no press can reach", () => {
+  for (const shape of [
+    { name: "removed with the copy kept", disabledReason: null },
+    { name: "stood down for another install", disabledReason: "organized_elsewhere:local" },
+  ] as const) {
+    it(`a claim held only in a mailbox ${shape.name}: the screen-out of the list's own letter is the address's`, async () => {
+      const w = await pressWorld("person");
+      const [other] = await w.db.insert(mailboxes).values({
+        accountId: w.accountId, provider: "imap", address: `old-${w.accountId.slice(0, 8)}@own.invalid`,
+        organizerRole: "organizer", status: "disabled", disabledReason: shape.disabledReason,
+      }).returning();
+      const claim = await w.held("PostFinance", "PostFinance", "us", null, other!.id);
+      const post = await w.held("The List", null, "us");
+      const page = await new ScreenerService({}).list(w.ctx, { limit: 50, live: true });
+      expect(page.items.find((i) => i.messageId === post)?.checked?.claimsOnly).toBeUndefined();
+      const r = await new ScreenerService({}).decide(w.ctx, post, { decision: "no", scope: "sender" });
+      const ruled = await w.listRules();
+      expect(ruled.map((x) => x.destination)).toEqual(["ohmail/Screened"]);
+      expect(r).toMatchObject({ createdRuleId: ruled[0]!.id });
+      expect(await w.desired(post)).toBe("ohmail/Screened");
+      expect(await w.desired(claim), "a mailbox no press reaches was written").toBe(GATE);
+    });
+  }
+});
+
+/**
+ * A CLAIM HELD IN A MAILBOX ANOTHER INSTALL ORGANIZES: the press files this install's claims and asks
+ * the holder to move its own, letter by letter. No address decision travels: the holder's store
+ * holds no claim, so it would screen out the list's whole mail and license the unsubscribe there.
+ */
+describe("a list claim held where another install organizes", () => {
+  it("asks the holder to move that claim alone: no decision travels, and the holder's list rule and mail stand", async () => {
+    const w = await listWithItsRule();
+    const [laptop] = await w.db.insert(mailboxes).values({
+      accountId: w.accountId, provider: "imap", address: `work-${w.accountId.slice(0, 8)}@own.invalid`, organizerRole: "reader",
+      organizerState: "held", organizedByCapabilities: "requests,moves", organizedByKind: "local", organizedByName: "Laptop",
+    }).returning();
+    const here = await w.held("PostFinance", "PostFinance", "us");
+    const there = await w.held("PostFinance", "PostFinance", "us", null, laptop!.id);
+    const r = await w.svc.decide(w.ctx, here, { decision: "no", scope: "sender" });
+    expect(r).toMatchObject({ createdRuleId: null, mailboxes: { requested: [{ mailboxId: laptop!.id }] } });
+    expect(await w.desired(here)).toBe("ohmail/Screened");
+    const [{ dedupKey }] = await w.db.select({ dedupKey: messages.dedupKey }).from(messages).where(eq(messages.id, there));
+    const asked = await w.db.select().from(organizerRequests).where(eq(organizerRequests.accountId, w.accountId));
+    expect(asked.map((q) => [q.mailboxId, q.kind, q.payload])).toEqual([[laptop!.id, "message.move", { dedupKey, destination: "screened" }]]);
+    expect(w.unsubscribed).toEqual([]);
+
+    // The holder's own store, as its drain applies the request: the list's rule, its past letter and its retro stand.
+    const h = await listWithItsRule();
+    const claim = await h.held("PostFinance", "PostFinance", "us");
+    await h.db.update(messages).set({ dedupKey }).where(eq(messages.id, claim));
+    const before = await h.listRule();
+    const move = validateMovePayload(asked[0]!.payload)!;
+    await (h.db as unknown as { transaction: <T>(f: (tx: unknown) => Promise<T>) => Promise<T> }).transaction((tx) =>
+      applyMessageMove(carryDialect(h.db as never, tx as object) as Tx, { accountId: h.accountId, mailboxId: h.mailboxId, payload: move, now: NOW }));
+    await ruleRetroPass(h.db as never, { accountId: h.accountId, trustedAuthservIdsFor: async () => new Set<string>() }, NOW);
+    expect(await h.desired(claim)).toBe("ohmail/Screened");
+    expect(await h.listRule(), "the holder's list rule moved").toEqual(before);
+    expect(await h.desired(h.post), "the list's own letter left News on the holder").toBe("ohmail/News");
+  });
+});
+
+/**
+ * NOTHING ORGANIZED HERE: both mailboxes are held by one local install, so the press is a reader's.
+ * The same rule as the organizer's door (`helpers/list-claim-reader-door.ts`; the `.pg` twin runs it
+ * on the server's Postgres).
+ */
+describe("a list claim screened out where another install organizes every mailbox", () => {
+  it("asks the claim's holder to move it alone: the list's rule and letters stand, nothing is learned or unsubscribed", async () => {
+    await readerDoorListClaim(await makeTestDb());
+  });
+
+  it("a forgery the identity check never reached is checked first, as the organizer's press checks it, and travels as a move alone", async () => {
+    const w = await readerDoorWorld(await makeTestDb(), { unchecked: true });
+    await w.svc.decide(w.ctx, w.held, { decision: "no", scope: "sender" });
+    expect((await w.asked()).map((q) => [q.mailboxId, q.kind])).toEqual([[w.work.id, "message.move"]]);
+  });
+
+  it("CONTROL: the list's own letter screened out there is the address's decision, asked of every holder", async () => {
+    const w = await readerDoorWorld(await makeTestDb(), { claim: false });
+    await w.svc.decide(w.ctx, w.held, { decision: "no", scope: "sender" });
+    const asked = (await w.asked()).map((q) => [q.mailboxId, q.kind]);
+    expect(asked.sort()).toEqual([[w.work.id, "screener.decide"], [w.home.id, "screener.decide"]].sort());
+  });
+
+  it("a holder that takes no moves refuses the claim's screen-out, naming the claim's mailbox, and nothing is asked", async () => {
+    const w = await readerDoorWorld(await makeTestDb(), { capabilities: "requests" });
+    await expect(w.svc.decide(w.ctx, w.held, { decision: "no", scope: "sender" }))
+      .rejects.toMatchObject({ code: "organized_elsewhere", mailboxId: w.work.id, details: { by: { name: "Laptop" } } });
+    expect(await w.asked()).toEqual([]);
+    expect(await w.desired(w.held)).toBe(GATE);
   });
 });

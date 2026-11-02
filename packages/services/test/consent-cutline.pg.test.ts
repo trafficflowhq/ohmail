@@ -387,7 +387,7 @@ describe.skipIf(!AVAILABLE)("the cutline, and its two implementations", () => {
            and lower(m.from_address) = ${who}
            and ${senderIsActiveSql(d, ACCOUNT, sql`lower(m.from_address)`, resolveCutline({
              baselineAt: null, dormancyDays: null, scope: null, now: NOW,
-           }))}
+           }), [])}
          limit 1
       `);
       expect(rows.length > 0, `${who} on the server`).toBe(verdict === "active");

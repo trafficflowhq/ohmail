@@ -6,6 +6,7 @@ import {
   AccountErasedError, OrganizedElsewhereError, MailboxErasedError, MailboxNotFoundError,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
   screenerSuggestionsBySender, automaticAiAdmits, resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
+  notGoneSql, readGoneMailboxIds, readListAddressesLetIn,
   decisionCanBeApplied, readRequestEligibility,
   DECIDABLE_FOLDERS, SCREENER_FOLDER, SCREENER_ACT_TRIGGER_PREFIX,
   type ResolvedCutline, type Tx,
@@ -171,7 +172,7 @@ interface ActPlan {
   confirmed: boolean;
   /**
    * A deny that may stand as a rule on the address: advice on a confirmed letter whose stored reason
-   * is a fact about that letter (`denyMayRuleTheAddress`).
+   * is a fact about that letter (`denyMayRuleTheAddress`), at no list address a person let in.
    */
   standing: boolean;
 }
@@ -194,6 +195,8 @@ export function plannedDecision(
     senderReason: string | null;
   } | undefined,
   bars: { deny: number },
+  /** A list address the person let in (mail 0150): anyone on it writes as it, so one letter is all a deny may reach. */
+  letInList: boolean,
 ): ActPlan | null {
   if (!advice) return null;
   const folder = canonicalDestination(advice.destination);
@@ -212,7 +215,7 @@ export function plannedDecision(
     suggestionId: advice.id,
     refused: advice.actRefusal != null,
     confirmed,
-    standing: confirmed && denyMayRuleTheAddress(advice.senderReason),
+    standing: confirmed && denyMayRuleTheAddress(advice.senderReason) && !letInList,
   };
 }
 
@@ -274,7 +277,9 @@ export async function screenerAutoActPass(
   const answering = await sendersAnsweringOwnWriting(
     db, accountId, waiting.map((w) => w.address).filter((a) => !correspondents.has(a)),
   );
-  const plans = new Map(waiting.map((w) => [w.address, plannedDecision(w.address, advice.get(w.address), bars)]));
+  // `List-Post` is the sender's to write: only a list the person let in keeps a deny to one letter.
+  const lists = await readListAddressesLetIn(db, accountId, waiting.map((w) => w.address));
+  const plans = new Map(waiting.map((w) => [w.address, plannedDecision(w.address, advice.get(w.address), bars, lists.has(w.address))]));
   // A deny that may not stand as a rule files its advised letter alone, so whether that letter can
   // still be filed decides, before the clock, whether its sender takes a turn. One read, only when
   // such advice is here.
@@ -608,6 +613,8 @@ async function selectWaitingSenders(
   const sender = sql`lower(${messages.fromAddress})`;
   // The queue's own sort key (`heldSortKey`): the act walks the order the surface shows.
   const sortKey = heldSortKey(d, { date: sql`${messages.date}`, arrivedAt: sql`${messages.createdAt}` });
+  // A removed mailbox's mail is the queue's no more; the identity and provider probes below still read it.
+  const gone = await readGoneMailboxIds(db, opts.accountId);
 
   const reps = db.select({
     messageId: messages.id,
@@ -631,6 +638,7 @@ async function selectWaitingSenders(
       // tombstone is not decidable by a press and must not be decidable by the act either — the
       // rule would be promoted over an empty re-route.
       isNull(messages.deletedAt),
+      notGoneSql(d, messages.mailboxId, gone),
     ))
     .as("reps");
 
@@ -692,7 +700,7 @@ async function selectWaitingSenders(
            and ${messages.deletedAt} is null
            and not ${automaticAiAdmits(messages)}
       )`,
-      sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)})`,
+      sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone)})`,
       sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))

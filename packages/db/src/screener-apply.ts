@@ -2,10 +2,10 @@ import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { accountSettings, auditLog, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
 import { recordChanges, type ChangeInput, type LedgerTx, type Tx } from "./change-log.js";
 import { upgradeContactsToPerson } from "./contact-source.js";
-import { consentListBrands, lockListAddress } from "./list-addresses.js";
+import { consentListBrands, lockListAddress, readListAddresses, readListAddressesLetIn } from "./list-addresses.js";
 import { dialect } from "./dialect/index.js";
 import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
-import { readOrganizerRole } from "./organizer-role.js";
+import { readMailboxesTakingAPress, readOrganizerRole } from "./organizer-role.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { ruleMatchKey, ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
 import { endOwedWalk, findRulesByKey, keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
@@ -185,6 +185,8 @@ export interface AppliedScreenerRow {
   authVerdict: string | null;
   /** `messages.sender_check_brand`: the company a claim names; a person's press on a list address consents it. */
   senderCheckBrand: string | null;
+  /** `messages.dedup_key`: how a `message.move` request names the row to the install that organizes it. */
+  dedupKey: string;
 }
 
 const HELD_COLUMNS = {
@@ -192,14 +194,14 @@ const HELD_COLUMNS = {
   fromAddress: messages.fromAddress, subject: messages.subject, snippet: messages.snippet,
   date: messages.date, nativeLocator: messages.nativeLocator, observedFolder: folderState.observedFolder,
   updatedAt: messages.updatedAt, unread: messages.unread, senderCheck: messages.senderCheck,
-  authVerdict: messages.authVerdict, senderCheckBrand: messages.senderCheckBrand,
+  authVerdict: messages.authVerdict, senderCheckBrand: messages.senderCheckBrand, dedupKey: messages.dedupKey,
 } as const;
 
 function toAppliedScreenerRow(r: {
   messageId: string; mailboxId: string; threadId: string | null; fromAddress: string; subject: string;
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
   updatedAt: Date; unread: boolean; senderCheck: string | null; authVerdict: string | null;
-  senderCheckBrand: string | null;
+  senderCheckBrand: string | null; dedupKey: string;
 }): AppliedScreenerRow {
   return {
     messageId: r.messageId, mailboxId: r.mailboxId, threadId: r.threadId ?? null, fromAddress: r.fromAddress,
@@ -212,6 +214,7 @@ function toAppliedScreenerRow(r: {
     // has no business surviving this row's own construction. Same defensive shape as `threadId`.
     nativeLocator: r.nativeLocator ?? null, updatedAt: r.updatedAt, unread: r.unread,
     senderCheck: r.senderCheck ?? null, authVerdict: r.authVerdict ?? null, senderCheckBrand: r.senderCheckBrand ?? null,
+    dedupKey: r.dedupKey,
   };
 }
 
@@ -477,6 +480,45 @@ export function heldRowMovesOnPress(
   return marked === "pressed" && r.fromAddress.trim().toLowerCase() === pressed.trim().toLowerCase();
 }
 
+/** The bag `read` answers, its rows the check never reached checked first and the bag read again. */
+async function checkedBag(
+  tx: Tx, accountId: string, read: () => Promise<AppliedScreenerRow[]>, check: ApplyScreenerDecisionInput["checkUnchecked"],
+): Promise<AppliedScreenerRow[]> {
+  const bag = await read();
+  const unread = bag.filter((r) => r.senderCheck === null).map((r) => r.messageId);
+  if (unread.length === 0 || !check) return bag;
+  await check(tx, accountId, unread);
+  return read();
+}
+
+/**
+ * THE CLAIMS A PERSON'S SCREEN-OUT AT `address` FILES ALONE (mail 0150), from its checked held bag:
+ * at a list address a person let in, the claims the press moves in a mailbox a press reaches. Empty
+ * where the screen-out is the address's. Every door asks this, so such a subject never travels as a
+ * decision about the address, which a store holding no claim would apply to the whole list.
+ */
+async function listClaimsFiledAlone(
+  tx: Tx, accountId: string, address: string, bag: readonly AppliedScreenerRow[], marked: "pressed" | "none" = "pressed",
+): Promise<AppliedScreenerRow[]> {
+  const marks = bag.filter((r) => r.senderCheck === "impersonation" && heldRowMovesOnPress(r, address, marked));
+  const reach = await readMailboxesTakingAPress(tx, accountId, marks.map((r) => r.mailboxId));
+  const claims = marks.filter((r) => reach.has(r.mailboxId));
+  const pressed = address.toLowerCase();
+  return claims.length > 0 && (await readListAddressesLetIn(tx, accountId, [pressed])).has(pressed) ? claims : [];
+}
+
+/**
+ * {@link listClaimsFiledAlone} AT A DOOR THAT WRITES NO DECISION ITSELF (a reader's): the sender's
+ * held bag account-wide, checked first as a press checks it. Empty at an address no list posts as.
+ */
+export async function readListClaimsFiledAlone(
+  tx: Tx, accountId: string, address: string, check: ApplyScreenerDecisionInput["checkUnchecked"],
+): Promise<AppliedScreenerRow[]> {
+  if (!(await readListAddresses(tx, accountId, [address.toLowerCase()])).has(address.toLowerCase())) return [];
+  return listClaimsFiledAlone(tx, accountId, address,
+    await checkedBag(tx, accountId, () => heldRowsForSender(tx, accountId, address), check));
+}
+
 export interface ApplyScreenerDecisionInput {
   accountId: string;
   scope: "sender" | "domain";
@@ -576,7 +618,10 @@ export interface HeldElsewhereMailbox {
 }
 
 export interface ApplyScreenerDecisionResult {
-  /** The one rule under the subject's key afterwards — inserted, or the acting row converged onto; `null` when skipped. */
+  /**
+   * The one rule under the subject's key afterwards — inserted, or the acting row converged onto;
+   * `null` when skipped, and when the decision filed claims alone ({@link claimsOnly}).
+   */
   createdRuleId: string | null;
   /** Always empty since the decision converges the key: kept for the wire shape callers answer with. */
   retargetedRuleIds: string[];
@@ -599,6 +644,12 @@ export interface ApplyScreenerDecisionResult {
    * side already queued its own, and a drain that re-queued would ping-pong two installs.
    */
   heldElsewhere: HeldElsewhereMailbox[];
+  /**
+   * A PERSON'S NO ON A LIST ADDRESS THEY LET IN filed its claims alone (mail 0150): no rule, contact
+   * or learning signal was written, so no address decision may travel for it. `elsewhere`: the
+   * claims held in mailboxes this install does not organize; nothing was written there.
+   */
+  claimsOnly?: { elsewhere: AppliedScreenerRow[] };
 }
 
 /**
@@ -656,11 +707,12 @@ export async function applyScreenerDecision(
      follows it, as on "Not junk, always allow", so the two never wait on each other crosswise. */
   await lockAccountRuleKeys(tx, accountId);
 
-  /* A YES ON A LIST ADDRESS consents brands there (mail 0150): its row is LOCKED now, after the rule-key
-     lock and before the first delta, the order every writer of the table keeps. What it consents is
-     decided below from what the press MOVES, and only a person's press on the address moves a claim. */
+  /* A LIST ADDRESS'S ROW (mail 0150) is LOCKED now, after the rule-key lock and before the first delta,
+     the order every writer of the table keeps. A yes there consents brands, decided below from what the
+     press MOVES (only a person's press on the address moves a claim); a no files its claims alone. */
   const pressed = address.toLowerCase();
-  const consents = decision === "yes" && await lockListAddress(tx, accountId, pressed);
+  const listed = await lockListAddress(tx, accountId, pressed);
+  const consents = decision === "yes" && listed;
 
   /* THE ACT NEVER ADMITS A MARKED SENDER (mail 0148), asked of the bag before the first rules,
      contacts or move statement: a pass's yes over held mail whose name claims a brand its address
@@ -696,14 +748,25 @@ export async function applyScreenerDecision(
   /* A CALLER'S BAG IS READ BEFORE THIS DECISION WRITES ANYTHING (FIX-026): the rule and the contact
      written below change what it admits, and the press moves what its offer counted. Its unchecked
      rows are checked first and the bag is asked again over the facts just written. */
-  const readCallerBag = async (): Promise<AppliedScreenerRow[]> => {
-    const bag = await readBag();
-    const unread = bag.filter((r) => r.senderCheck === null).map((r) => r.messageId);
-    if (unread.length === 0 || !input.checkUnchecked) return bag;
-    await input.checkUnchecked(tx, accountId, unread);
-    return readBag();
-  };
+  const readCallerBag = (): Promise<AppliedScreenerRow[]> => checkedBag(tx, accountId, readBag, input.checkUnchecked);
   const callerBag = input.within === undefined ? null : await readCallerBag();
+
+  /* A PERSON'S SCREEN-OUT ON A LIST ADDRESS THEY LET IN, WHOSE HELD MAIL HOLDS CLAIMS a press can
+     reach, files those claims alone: anyone on the list can write as its address, so a forgery
+     decides nothing about the list's own mail. No rule, contact or learning signal. At a list
+     address nobody let in (`List-Post` is the sender's to write), or with every claim in a removed
+     or stood-down mailbox, the press is the address's, below. */
+  if (listed && decision === "no" && scope === "sender" && decidedBy === "person") {
+    const claims = await listClaimsFiledAlone(tx, accountId, address, callerBag ?? await readCallerBag(), marked);
+    if (claims.length > 0) {
+      const filed = await rerouteHeldBag(tx, accountId, claims, appliedFolder, now);
+      const away = new Set(filed.heldElsewhere.map((h) => h.mailboxId));
+      return {
+        createdRuleId: null, retargetedRuleIds: [], ...filed,
+        claimsOnly: { elsewhere: claims.filter((r) => away.has(r.mailboxId)) },
+      };
+    }
+  }
 
   // Read inside the decide's own transaction, so the priority answers the rules this write sees.
   const priority = scope === "sender" && liftOverDomain && domain !== ""

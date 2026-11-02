@@ -300,6 +300,8 @@ export function SenderMenu({
   const sharedDomain = sender.domain !== "" && isSharedProviderDomain(sender.domain);
   const canScope = sender.domain !== "" && !sharedDomain;
   const subject = sender.scopes[scope];
+  /** At the address: a screen-out the store says files the list's claims alone (mail 0150). */
+  const listClaims = scope === "sender" && sender.listClaims !== undefined;
   /* A rule press files the letter it was made on now (`seedMove`), so the footer says so; a contact
      chip's subject holds no such letter and keeps the sentence that nothing here moves. */
   const seedSays = subject.messages.some((m) => m.id === state.messageId) ? "" : "Chip";
@@ -673,7 +675,7 @@ export function SenderMenu({
               {piles[dest]}
               {/* The two destinations that can send mail on your behalf are marked before you
                   reach them, not only in the confirm that follows. */}
-              {DECISION_OF_DEST[dest] === "no" && subject.waiting ? (
+              {DECISION_OF_DEST[dest] === "no" && subject.waiting && !listClaims ? (
                 <span className="sm-warn" aria-hidden="true">↗</span>
               ) : null}
               {subject.ruled === dest ? <span className="ck">✓</span> : null}
@@ -754,6 +756,8 @@ export function SenderMenu({
                 ? t(`footWillRuleDomain${seedSays}`, { domain: whichDomain })
                 : t(`footWillRule${seedSays}`, { sender: who })
             : t("footNoRule")}
+        {/* A list's claims the store says a screen-out files alone: those two presses make no rule. */}
+        {subject.waiting && listClaims ? <> {t("footListClaim", { brand: sender.listClaims!.brand })}</> : null}
       </div>}
     </div>
   );

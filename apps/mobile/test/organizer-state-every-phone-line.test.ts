@@ -100,7 +100,7 @@ describe("the screens read these decisions", () => {
     expect(src("src/ui/MessageActions.tsx")).toMatch(/nobody \? Copy\.screeningNoteNobody : applyRetro \? Copy\.screeningNoteRetro/);
     const sheet = src("src/ui/SenderDetail.tsx");
     expect(sheet).toMatch(/nobody && relay === null \? Copy\.screeningNoteNobody : senderSheetLine\(relay, organizer\)/);
-    expect(sheet).toMatch(/hint=\{nobody \? Copy\.screeningNoteNobody : Copy\.decideRule\(target\)\}/);
+    expect(sheet).toMatch(/hint=\{nobody \? Copy\.screeningNoteNobody : ruleLine\}/);
     expect(sheet).toMatch(/shape\.explainer && !nobody \?/);
   });
 });
