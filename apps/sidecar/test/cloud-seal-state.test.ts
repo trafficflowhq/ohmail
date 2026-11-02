@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { loadSealedTokens } from "../src/cloud-auth.js";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
@@ -14,6 +14,36 @@ import { freshDataDir } from "./_datadir.js";
  * token under a new name (which the server answers by revoking the family), the refused write
  * withholds the rotation and the saved token stays the live one.
  */
+
+/** Every removal of a seal and every flush, by path, in order: a sign-out's removal must reach the disk. */
+const fsOps: string[] = [];
+const openedFds = new Map<number, string>();
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const removal = (path: import("node:fs").PathLike): void => {
+    if (String(path).endsWith("cloud-tokens.seal")) fsOps.push(`remove ${String(path)}`);
+  };
+  return {
+    ...actual,
+    openSync: (path: import("node:fs").PathLike, ...rest: unknown[]): number => {
+      const fd = (actual.openSync as (...args: unknown[]) => number)(path, ...rest);
+      openedFds.set(fd, String(path));
+      return fd;
+    },
+    fsyncSync: (fd: number): void => {
+      actual.fsyncSync(fd);
+      fsOps.push(`flush ${openedFds.get(fd) ?? `fd ${fd}`}`);
+    },
+    unlinkSync: (path: import("node:fs").PathLike): void => {
+      actual.unlinkSync(path);
+      removal(path);
+    },
+    rmSync: (path: import("node:fs").PathLike, options?: import("node:fs").RmOptions): void => {
+      actual.rmSync(path, options);
+      removal(path);
+    },
+  };
+});
 
 const CLOUD_MAILBOX = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const HOSTED_MAILBOX = hostedMailbox(CLOUD_MAILBOX, "me@ohmail.test");
@@ -129,5 +159,28 @@ describe("/health carries whether this install's sign-in reached the disk", () =
     }
     expect(await health(sidecar)).toMatchObject({ signedIn: true, sealed: true, sealFailure: null });
     expect(w.refreshes, "the positive control: a seal that lands sends exactly one renewal").toBe(1);
+  });
+
+  // Windows cannot flush a directory; there the unlink stands alone.
+  it.skipIf(process.platform === "win32")("a sign-out's seal removal is flushed to the disk before it answers", { timeout: 40_000 }, async () => {
+    const dataDir = await freshDataDir("ohmail-seal-state-sign-out-");
+    dirs.push(dataDir);
+    const sidecar = await boot(dataDir, { expired: false, rotated: false, refreshes: 0 });
+    const seal = join(dataDir, "cloud-tokens.seal");
+    expect(existsSync(seal)).toBe(true);
+    fsOps.length = 0;
+
+    const res = await sidecar.handle(new Request("http://sidecar/cloud/session", {
+      method: "DELETE", headers: { authorization: `Bearer ${sidecar.sessionToken}` },
+    }));
+    expect(res.status).toBe(200);
+    expect(existsSync(seal)).toBe(false);
+    const last = fsOps.lastIndexOf(`remove ${seal}`);
+    expect(last, "the seal was never removed").toBeGreaterThanOrEqual(0);
+    expect(fsOps.slice(last + 1), "a power cut after the answer brings an unflushed seal back")
+      .toContain(`flush ${dataDir}`);
+    expect(fsOps.indexOf(`flush ${seal}`), "the seal is emptied and flushed before its first removal")
+      .toBeGreaterThan(-1);
+    expect(fsOps.indexOf(`flush ${seal}`)).toBeLessThan(fsOps.indexOf(`remove ${seal}`));
   });
 });

@@ -4,7 +4,7 @@ import { HttpAdapter } from "@ohmail/client-engine";
 import {
   BRIDGE_DEADLINE_MS, bridgeFetch, bridgeTransportReading, createEngineAdapter, engineConfigure, engineLogout, engineRetry,
   engineStartOver, engineStatus, engineSwitchCommit, engineSwitchRestore, engineUnlockRetry, invokeShell,
-  LARGE_BODY_FROM_BYTES, WINDOW_SEARCH_PHASES_PATH,
+  LARGE_BODY_FROM_BYTES, STAGED_UPLOAD_DEADLINE_MS, WINDOW_SEARCH_PHASES_PATH,
 } from "../src/bridge-fetch.js";
 import { installOfflineGuard } from "../src/offline-guard.js";
 
@@ -220,6 +220,27 @@ describe("the bridge", () => {
       );
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("a send carries its attachments inline, so it gets the upload bound, not the minute", async () => {
+    // A self-hosted door sends up to 32 MiB in this one request, over the person's uplink.
+    const settle = async (path: string, method: string, ms: number): Promise<string> => {
+      vi.useFakeTimers();
+      try {
+        shellAnswering(() => new Promise(() => {}));
+        const verdict = bridgeFetch(path, { method, body: "{}" }).then(() => "answered", (err: Error) => err.name);
+        await vi.advanceTimersByTimeAsync(ms);
+        return await Promise.race([verdict, Promise.resolve("still pending")]);
+      } finally {
+        vi.useRealTimers();
+      }
+    };
+    expect(await settle("/drafts/d-1/send", "POST", 90_000), "cut while still uploading").toBe("still pending");
+    expect(await settle("/drafts/d-1/send", "POST", STAGED_UPLOAD_DEADLINE_MS)).toBe("BridgeDeadlineError");
+    // Control: the draft's other writes keep the minute.
+    for (const [method, path] of [["POST", "/drafts"], ["PATCH", "/drafts/d-1"]]) {
+      expect(await settle(path, method, BRIDGE_DEADLINE_MS), `${method} ${path}`).toBe("BridgeDeadlineError");
     }
   });
 

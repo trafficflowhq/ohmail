@@ -28,6 +28,8 @@ const SEND_CEILINGS: ReadonlyArray<readonly [string, number]> = [
   ["client-engine COMPOSE_ATTACH_MAX_TOTAL_BYTES", COMPOSE_ATTACH_MAX_TOTAL_BYTES],
   ["desktop DESKTOP_WINDOW_SEND_MAX_TOTAL_BYTES",
     mibConstant("apps/desktop/src/desktop-send-surface.ts", "DESKTOP_WINDOW_SEND_MAX_TOTAL_BYTES")],
+  ["desktop DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES",
+    mibConstant("apps/desktop/src/desktop-send-surface.ts", "DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES")],
   ["desktop HOST_CLIENT_SEND_MAX_TOTAL_BYTES",
     mibConstant("apps/desktop/src/host-client/HostGate.tsx", "HOST_CLIENT_SEND_MAX_TOTAL_BYTES")],
   ["sidecar HOST_SEND_MAX_TOTAL_BYTES", mibConstant("apps/sidecar/src/host-listener.ts", "HOST_SEND_MAX_TOTAL_BYTES")],
@@ -42,6 +44,11 @@ describe("the open ceiling is pinned to the send ceilings", () => {
 
   it("the open ceiling is the largest send ceiling, not an unrelated larger number", () => {
     expect(ATTACHMENT_MAX_FETCH_BYTES).toBe(Math.max(...SEND_CEILINGS.map(([, n]) => n)));
+  });
+
+  it("the desktop's self-hosted door states the self-hosted server's own ceiling", () => {
+    expect(mibConstant("apps/desktop/src/desktop-send-surface.ts", "DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES"))
+      .toBe(mibConstant("apps/server/src/config.ts", "SELF_HOST_SEND_MAX_TOTAL_BYTES"));
   });
 
   it("the desktop shell writes exactly what the service fetches", () => {

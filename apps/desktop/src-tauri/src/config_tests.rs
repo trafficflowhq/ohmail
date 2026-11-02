@@ -1352,3 +1352,32 @@ fn a_pending_local_door_tells_its_engine_and_a_saved_one_does_not() {
         }
     }
 }
+
+// ── A SIGN-OUT'S SEAL REMOVAL REACHES THE DISK ────────────────────────────────────────────────
+
+/// The cloud door's directory is flushed after the seal goes, and also when the engine's own
+/// removal already took it: an unflushed unlink comes back after a power cut, signed in.
+#[test]
+fn a_removed_seal_is_flushed_whether_this_call_or_the_engine_removed_it() {
+    let root = std::env::temp_dir().join(format!("ohmail-seal-flush-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = data_dir(&root, Mode::Cloud);
+    std::fs::create_dir_all(&dir).expect("scratch");
+    let seal = dir.join(CLOUD_SESSION_SEAL);
+    std::fs::write(&seal, b"sealed").expect("seal");
+    // A second name for the same file stands for the entry a power cut puts back (Windows flushes no directory).
+    let ghost = dir.join("returned.seal");
+    std::fs::hard_link(&seal, &ghost).expect("ghost");
+
+    let mut flushed: Vec<(std::path::PathBuf, bool)> = Vec::new();
+    remove_sealed_session_with(&root, Mode::Cloud, &mut |d| flushed.push((d.to_path_buf(), seal.exists())))
+        .expect("removed");
+    assert_eq!(flushed, vec![(dir.clone(), false)], "the flush must follow the unlink, on engine-cloud");
+    assert_eq!(std::fs::read(&ghost).expect("ghost"), b"", "the seal is emptied and flushed before the unlink");
+    remove_sealed_session_with(&root, Mode::Cloud, &mut |d| flushed.push((d.to_path_buf(), seal.exists())))
+        .expect("already gone is not an error");
+    assert_eq!(flushed.len(), 2, "an already-removed seal is flushed too");
+    assert_eq!(flushed[1].0, dir);
+    remove_sealed_session(&root, Mode::Cloud).expect("the real flush never refuses a sign-out");
+    let _ = std::fs::remove_dir_all(&root);
+}
