@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
-import { verdictFor, probeAdmissionKey } from "../src/imap-probe.js";
+import { StaticKeyProvider, throttleKeysFor } from "@trafficflow/services/mail";
+import { verdictFor, probeAdmissionKey, smtpProbeAdmissionKey } from "../src/imap-probe.js";
 
 /**
  * **THE SPECIMEN TABLE**, and the reason it is a table rather than a socket.
@@ -167,16 +169,25 @@ describe("the probe's classifier, specimen by specimen", () => {
     expect(verdictFor(undefined)).toEqual({ verdict: "refuse", code: "unknown" });
   });
 
-  /** The admission key is a digest of the identity — never the identity. */
-  it("the admission key carries no address", () => {
-    const key = probeAdmissionKey("acct-1", "Mila@Example.Test");
+  /** The admission key is a keyed hash of the address — never the address, never a plain digest. */
+  it("the admission key carries no address and no digest anyone can recompute", () => {
+    const keys = throttleKeysFor(StaticKeyProvider.fromSecret(Buffer.alloc(32, 7)));
+    const key = probeAdmissionKey(keys, "acct-1", " Mila@Example.Test ");
     expect(key).not.toContain("Example");
     expect(key).not.toContain("mila");
-    expect(key).toMatch(/^probe:[0-9a-f]{64}$/);
-    // Case-folded, so one mailbox typed two ways shares one budget — as mail 0021's index folds.
-    expect(probeAdmissionKey("acct-1", "mila@example.test")).toBe(key);
-    // …and scoped per account, so one account cannot spend another's budget for an address.
-    expect(probeAdmissionKey("acct-2", "mila@example.test")).not.toBe(key);
+    expect(key).toMatch(/^probe:[0-9a-f]{32}:acct-1$/);
+    const plain = (s: string) => createHash("sha256").update(s).digest("hex");
+    expect(key, "the slot is the plain SHA-256 an enumeration reverses").not.toContain(plain("acct-1:mila@example.test"));
+    expect(key).not.toContain(plain("mila@example.test").slice(0, 32));
+    // Trimmed and case-folded, so one mailbox typed two ways shares one budget — as mail 0021's index folds.
+    expect(probeAdmissionKey(keys, "acct-1", "mila@example.test")).toBe(key);
+    // …scoped per account, so one account cannot spend another's budget for an address…
+    expect(probeAdmissionKey(keys, "acct-2", "mila@example.test")).not.toBe(key);
+    // …and keyed: another deployment's key names the same address differently.
+    const other = throttleKeysFor(StaticKeyProvider.fromSecret(Buffer.alloc(32, 9)));
+    expect(probeAdmissionKey(other, "acct-1", "mila@example.test")).not.toBe(key);
+    // The submission probe's budget is its own namespace over the same keyed address.
+    expect(smtpProbeAdmissionKey(keys, "acct-1", "MILA@example.test")).toBe(`probe:smtp:${key.slice("probe:".length)}`);
   });
 });
 

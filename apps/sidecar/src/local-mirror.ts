@@ -17,7 +17,8 @@ import {
   drafts, flagState, folderOps, folderState, junkRescues, mailboxCredentials, mailboxFolders,
   mailboxProfileMirror, messageBodies, messageSearch, messageFailures, messageInstances, messageStates,
   messageTags, messages, organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends,
-  recordChanges, recordMailboxRemoved, routingDecisions, settingsHashRows, threadNotes, threads, trackerEvents,
+  orphanedSettingsHashRows, recordChanges, recordMailboxRemoved, routingDecisions, settingsHashRows, threadNotes, threads,
+  trackerEvents,
   unsubscribeExamined, unsubscribeRecords,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
@@ -249,14 +250,21 @@ export async function deleteMailboxRows(
      this is its second reader on the Cloud door, for rows left from a standalone era. */
   await db.delete(mailboxProfileMirror).where(eq(mailboxProfileMirror.mailboxId, mailboxId));
   await db.delete(organizerRequests).where(eq(organizerRequests.mailboxId, mailboxId));
-  /* The hashes naming its settings or its signature come off the audit rows, which stay — the
-     server's erasure does the same (`settingsHashRows`). */
-  for (const r of await settingsHashRows(db, { mailboxId })) {
-    await db.update(auditLog).set({ payload: r.payload }).where(eq(auditLog.id, r.id));
-  }
+  await stripSettingsHashes(db, mailboxId);
   await db.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, mailboxId));
   await deleteExclusiveThreads(db, mailboxId);
   await db.delete(messages).where(eq(messages.mailboxId, mailboxId));
+}
+
+/**
+ * The hashes naming a mailbox's settings or its signature come off its audit rows, which stay — the
+ * server's erasure does the same (`settingsHashRows`). With no mailbox named: every row naming a
+ * mailbox this store has no row for. Returns how many rows it wrote; a clean store writes nothing.
+ */
+export async function stripSettingsHashes(db: Tx, mailboxId: string | null): Promise<number> {
+  const rows = mailboxId === null ? await orphanedSettingsHashRows(db) : await settingsHashRows(db, { mailboxId });
+  for (const r of rows) await db.update(auditLog).set({ payload: r.payload }).where(eq(auditLog.id, r.id));
+  return rows.length;
 }
 
 /**

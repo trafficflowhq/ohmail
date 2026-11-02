@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { resolveCname as dnsResolveCname } from "node:dns/promises";
 import { type MailboxErrorCode } from "@trafficflow/db";
 import {
@@ -9,7 +8,7 @@ import { MAIL_DIAL_PORTS, MAX_PINNED_ADDRESSES, MailDialRefusal, clearMailDial }
 import {
   ServiceError, privateNetworkPin, ssrfRefusalAsServiceError, type HostResolver,
   type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
-  type SmtpProbe, type SmtpProbeInput,
+  type SmtpProbe, type SmtpProbeInput, throttleKeysFor, type ThrottleKeys,
 } from "@trafficflow/services/mail";
 import { probeHostRefusal } from "./probe-host-refusal.js";
 import type { ApiDeps } from "./deps.js";
@@ -544,13 +543,15 @@ const busy = (): ServiceError => new ServiceError(
  * The admission key for an address nothing has been stored for yet. The admission counter keys on
  * a mailbox id and does not hash it — an opaque internal UUID needs no protection. At probe time
  * there is no id and the only stable identity is the account plus the address, which is an
- * identity, so this one hashes (as the table's other identity-bearing namespaces do). Lower-cased
- * before hashing so the same mailbox typed with different capitalisation shares one budget —
- * matching mail 0021's `lower(address)` index; it is a connection budget, not a uniqueness rule.
- * The counter prepends its own namespace: the stored key is `imap:mailbox:probe:<hash>`.
+ * identity, so the address is stored only as the deployment's keyed hash (`throttle-keys.ts`, as
+ * the sign-in slots key it): a plain digest is reversed by enumeration. Trimmed and lower-cased
+ * first, so the same mailbox typed with different capitalisation shares one budget — matching mail
+ * 0021's `lower(address)` index; it is a connection budget, not a uniqueness rule. A key provider
+ * that cannot derive the subkey throws here, before admission, so nothing is counted or dialled.
+ * The counter prepends its own namespace: the stored key is `imap:mailbox:probe:<hash>:<account>`.
  */
-export function probeAdmissionKey(accountId: string, address: string): string {
-  return `probe:${createHash("sha256").update(`${accountId}:${address.toLowerCase()}`).digest("hex")}`;
+export function probeAdmissionKey(keys: ThrottleKeys, accountId: string, address: string): string {
+  return `probe:${keys.address(address.trim().toLowerCase())}:${accountId}`;
 }
 
 /**
@@ -695,7 +696,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
     const cleared = await checked(hostGuard, input.imap.host, input.imap.port, "imap");
     const pin = pinFrom(cleared);
 
-    const key = probeAdmissionKey(input.accountId, input.address);
+    const key = probeAdmissionKey(throttleKeysFor(deps.keyProvider), input.accountId, input.address);
 
     // ADMISSION FIRST, before a socket exists, and ONCE for the whole ladder: the rungs dial
     // strictly one at a time, so a ladder holds exactly one login against the provider — the
@@ -1033,9 +1034,9 @@ export function smtpVerdictFor(err: unknown): ImapProbeVerdict {
   return { verdict: "refuse", code: "unknown" };
 }
 
-/** Same keyspace prefix as the IMAP probe's, own namespace — the two budgets are independent. */
-export function smtpProbeAdmissionKey(accountId: string, address: string): string {
-  return `probe:smtp:${createHash("sha256").update(`${accountId}:${address.toLowerCase()}`).digest("hex")}`;
+/** Same keyspace prefix and keyed hash as the IMAP probe's, own namespace — the two budgets are independent. */
+export function smtpProbeAdmissionKey(keys: ThrottleKeys, accountId: string, address: string): string {
+  return `probe:smtp:${keys.address(address.trim().toLowerCase())}:${accountId}`;
 }
 
 export interface SmtpProbeOptions {
@@ -1083,7 +1084,7 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
     const cleared = await checked(hostGuard, input.smtp.host, input.smtp.port, "smtp");
     const pin = pinFrom(cleared);
 
-    const key = smtpProbeAdmissionKey(input.accountId, input.address);
+    const key = smtpProbeAdmissionKey(throttleKeysFor(deps.keyProvider), input.accountId, input.address);
     if (!await imapAdmission(deps).acquire(deps.db, { mailboxId: key, max, now: deps.now() })) throw busy();
 
     const startedAt = Date.now();

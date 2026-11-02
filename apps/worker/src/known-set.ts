@@ -302,7 +302,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // message_instances + messages.unread/message_id_header + flag_state.observed_seen):
   //  · setMailboxSpecialFolders — mailboxes.junk_folder/trash_folder/sent_folder, a discovery stamp
   //  · huskBody / restoreWithheldBody — message_bodies + the storage counter (an expunge's husk
-  //    also messages.snippet and message_search, `scrubGone`); refillGone — those two, refilled
+  //    also messages.snippet and message_search, `scrubGone`); refillGone — those two, refilled,
+  //    and the header block with `folder_state.screener_floor_version`, which is not projected
   //  · clearDeletedOnAdopt / tombstoneInstanceless — messages.deleted_at (+ husk + change_log);
   //    a tombstoned row is by definition INSTANCELESS, so no instance row can be moved by it
   "setMailboxSpecialFolders", "huskBody", "scrubGone", "restoreWithheldBody", "refillGone",

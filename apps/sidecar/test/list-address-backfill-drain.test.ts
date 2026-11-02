@@ -7,8 +7,9 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import {
-  accountSettings, folderState, listAddresses, mailboxFolders, messageBodies, messageInstances, messages,
+  accountSettings, folderState, listAddresses, mailboxFolders, messageBodies, messageInstances, messages, messageSearch,
 } from "@trafficflow/db";
+import { reindexMessageSearch } from "@trafficflow/core/mail";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -138,4 +139,61 @@ describe("a standalone drain reads the list addresses before its retro", () => {
     expect(await stamp(sidecar)).not.toBeNull();
     expect(await desiredOf(sidecar, claim)).toBe("ohmail/Screener");
   }, 60_000);
+});
+
+/**
+ * THE GONE-LETTER TIDY RUNS IN A STANDALONE DRAIN TOO, for every role: an update finds letters an
+ * older version emptied when they left the server, still holding their preview, search words and
+ * whole header block. The first drain takes them (`goneLetterTidyPass`); a letter still on the
+ * server keeps everything. Mutation: drop the drain's call and both reads go red.
+ */
+describe("a standalone drain tidies the letters that left the server before their words did", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
+  const WHOLE = { from: ["Anna <anna@example.test>"], to: ["owner@trafficflow.test"], subject: ["harbour"], received: ["by mx"] };
+
+  it("the first drain empties a gone letter of its words and header lines; a live one keeps them, on a reader too", async () => {
+    for (const organize of [true, false]) {
+      const dataDir = await freshDataDir("ohmail-gone-tidy-");
+      const sidecar = await createSidecar({
+        dataDir,
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+        address: "owner@trafficflow.test", machineName: "tidy host", pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
+        adapterFactory: quietMailbox(), log: () => {},
+      });
+      cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
+      if (organize) await grantOrganizeConsent(sidecar);
+      const w = sidecar.world;
+      const letter = async (key: string, gone: boolean): Promise<string> => {
+        const [m] = await sidecar.db.insert(messages).values({
+          accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `gt-${key}`, dedupKey: `gt:${key}@test`, subject: "harbour",
+          fromAddress: "anna@example.test", snippet: "the preview of the harbour letter", deletedAt: gone ? new Date() : null,
+          nativeLocator: { folder: "INBOX", ref: `9:${key.length}` },
+        }).returning();
+        if (!gone) {
+          await sidecar.db.insert(messageInstances).values({
+            accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: "INBOX", uidvalidity: 9n, uid: key.length, isPrimary: true,
+          });
+        }
+        await sidecar.db.insert(messageBodies).values({
+          messageId: m!.id, text: "", headers: WHOLE, withheldReason: gone ? "expunged" : "storage_cap",
+        });
+        await reindexMessageSearch(sidecar.db as never, w.accountId, m!.id);
+        return m!.id;
+      };
+      const gone = await letter("gone", true);
+      const live = await letter("live-one", false);
+      await sidecar.start();
+      await sidecar.syncUntilQuiet();
+      const words = async (id: string) => ({
+        snippet: (await sidecar.db.select({ s: messages.snippet }).from(messages).where(eq(messages.id, id)))[0]!.s,
+        documents: (await sidecar.db.select({ id: messageSearch.messageId }).from(messageSearch).where(eq(messageSearch.messageId, id))).length,
+        headers: (await sidecar.db.select({ h: messageBodies.headers }).from(messageBodies).where(eq(messageBodies.messageId, id)))[0]!.h,
+      });
+      expect(await words(gone), `the drain left a gone letter's words (organizing: ${organize})`)
+        .toEqual({ snippet: "", documents: 0, headers: { to: WHOLE.to } });
+      expect(await words(live), "a letter still on the server lost its words")
+        .toEqual({ snippet: "the preview of the harbour letter", documents: 1, headers: WHOLE });
+    }
+  }, 120_000);
 });

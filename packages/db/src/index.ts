@@ -33,6 +33,12 @@ export {
 // "Did the person answer this sender" — ONE spelling, read by ohbox-tidy, rule-retro and
 // screener-auto. See the module: three copies asked thread membership instead.
 export { weAnsweredThisSenderWhere } from "./we-answered.js";
+// What a letter gone from the server keeps of its header block, and the store's proof it is gone.
+export {
+  GONE_LETTER_HEADER_KEYS, WHOLE_BLOCK_HEADER_KEYS, goneLetterHeaders, reduceGoneHeaders, restoreLetterHeaders,
+  sameHeaderBlock,
+} from "./gone-letter-headers.js";
+export { goneEverywhereWhere } from "./gone-everywhere.js";
 // A rule's `match` as SQL keys it, and whether it names a sender: ONE spelling for every reader.
 export {
   ruleMatchKeySql, ruleNamesSenderSql, sharedProviderAllowRefusal, SHARED_PROVIDER_DOMAINS, SharedProviderDomainError,
@@ -467,8 +473,8 @@ export {
 /* A press the request could not finish, handed to the organizer — one interface, see the module. */
 export {
   IMPORT_ASK_REFUSALS, PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION, PROFILE_IMPORT_ASK_TTL_MS, askStands, importAskSignature,
-  isImportAskRefusal, readImportAsk, recordImportAsk, recordImportAskSignature, resolveImportAsk, settingsHashRows,
-  type ImportAskRefusal, type ImportAskRow,
+  isImportAskRefusal, orphanedSettingsHashRows, readImportAsk, recordImportAsk, recordImportAskSignature, resolveImportAsk,
+  settingsHashRows, type ImportAskRefusal, type ImportAskRow,
 } from "./profile-import-ask.js";
 
 /**

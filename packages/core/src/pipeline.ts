@@ -2108,7 +2108,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // A letter back from the server: what its expunge emptied besides the text, from these bytes.
     if (resurrected) {
       await repo.refillGone?.(e.messageId, {
-        snippet: snippetOfText(e.body.text), searchBody: searchBodyOf(e.body.text, e.body.html),
+        snippet: snippetOfText(e.body.text), searchBody: searchBodyOf(e.body.text, e.body.html), headers: e.body.headers,
       }, accountId);
     }
   }

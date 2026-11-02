@@ -6,11 +6,14 @@ import { authThrottle } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable, serviceUp } from "@trafficflow/db/testing";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { ServiceError } from "@trafficflow/services";
+import { ServiceError, StaticKeyProvider, throttleKeysFor } from "@trafficflow/services";
 import {
   makeImapProbe, probeAdmissionKey, MAX_PROBES_PER_ADDRESS,
 } from "../src/imap-probe.js";
 import type { ApiDeps } from "../src/deps.js";
+
+/** The probe keys its slot by the deployment's keyed hash of the address. */
+const KEYS = StaticKeyProvider.fromSecret(Buffer.alloc(32, 5));
 
 /**
  * **THE PROBE AGAINST A REAL IMAP SERVER AND A REAL POSTGRES.**
@@ -65,7 +68,7 @@ describe.skipIf(!HAVE_PG)("the add-time probe, live", () => {
       // so a stub would leave that assertion testing the stub. `runMigrations` replayed both
       // journals here, so `auth_throttle` exists.
       depsList.push({
-        db: owned.db, now: () => NOW,
+        db: owned.db, now: () => NOW, keyProvider: KEYS,
         services: { imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot } },
       } as unknown as ApiDeps);
     }
@@ -85,7 +88,7 @@ describe.skipIf(!HAVE_PG)("the add-time probe, live", () => {
   const freshAddress = (): string => `probe-${randomUUID().slice(0, 8)}@trafficflow.test`;
 
   const track = (accountId: string, address: string): string => {
-    const k = probeAdmissionKey(accountId, address);
+    const k = probeAdmissionKey(throttleKeysFor(KEYS), accountId, address);
     keys.push(k);
     return k;
   };

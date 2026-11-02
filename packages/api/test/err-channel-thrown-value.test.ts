@@ -15,7 +15,7 @@ import {
   staffUsers, staffSessions, oauthProviderConfig, mailboxOauthCeremonies,
   mailboxOauthDeviceCeremonies, staffRoleGrants,
 } from "@trafficflow/db/cloud";
-import { scryptHasher, generateToken, hashToken } from "@trafficflow/services";
+import { scryptHasher, generateToken, hashToken, StaticKeyProvider } from "@trafficflow/services";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
 /**
@@ -86,6 +86,8 @@ function probeDeps(logger: Logger, thrown: unknown): ApiDeps {
     db: {} as ApiDeps["db"],
     now: () => new Date("2026-09-01T00:00:00.000Z"),
     logger,
+    // The probe keys its slot by the deployment's keyed hash of the address.
+    keyProvider: StaticKeyProvider.fromSecret(Buffer.alloc(32, 5)),
     services: {
       imapAdmission: {
         acquire: async () => true,

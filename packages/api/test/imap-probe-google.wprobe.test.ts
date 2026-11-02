@@ -2,6 +2,7 @@ import net from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ApiDeps } from "@trafficflow/api";
 import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
+import { StaticKeyProvider } from "@trafficflow/services/mail";
 import { makeImapProbe } from "../src/imap-probe.js";
 import { loadRefusals } from "../../core/test/adapters/_providershape.js";
 import { startGoogleShapedImap, type GoogleShapedImap } from "../../core/test/adapters/_google-refusing.js";
@@ -55,6 +56,7 @@ afterAll(async () => {
 const deps = (): ApiDeps => ({
   db: {} as ApiDeps["db"],
   now: () => new Date("2026-10-23T08:00:00Z"),
+  keyProvider: StaticKeyProvider.fromSecret(Buffer.alloc(32, 5)),
   services: { imapAdmission: { acquire: async () => true, release: async () => {} } } as unknown as ApiDeps["services"],
 }) as ApiDeps;
 

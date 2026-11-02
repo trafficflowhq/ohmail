@@ -224,6 +224,7 @@ import { senderCheckBackfillPass } from "@trafficflow/worker/sender-check-backfi
 import { listAddressBackfillPass } from "@trafficflow/worker/list-address-backfill";
 import { retireActAdmissionsPass } from "@trafficflow/worker/act-admission-retire";
 import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
+import { GONE_LETTER_TIDY_BATCH, goneLetterTidyPass } from "@trafficflow/worker/gone-letter-tidy";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
 // argument. The values it writes have to be the ones ingest would have written from the same
 // headers; a second parse here would leave two populations of rows decided by different rules, and
@@ -269,7 +270,7 @@ import {
 } from "./roster.js";
 // Removing a mailbox takes this install's copy of its mail with it. See `local-mirror.ts` for why
 // this is the sidecar's job and not `MailboxService.delete`'s.
-import { mirroredFirstSyncFacts, mirroredMessageCount, mirrorRowsRemain, wipeLocalMirror } from "./local-mirror.js";
+import { mirroredFirstSyncFacts, mirroredMessageCount, mirrorRowsRemain, stripSettingsHashes, wipeLocalMirror } from "./local-mirror.js";
 // An earlier build's sign-out left the outgoing password behind; the boot removes it.
 import { removeSignedOutResidue } from "./signed-out-residue.js";
 import { settleFirstDoorAttempt } from "./first-door.js";
@@ -3207,6 +3208,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           err,
           reason: "the store is not stamped, so the next drain reads its stored mail again; what was " +
             "recorded stays, and new mail records its own list addresses as it arrives",
+        });
+      }
+    };
+    /** The gone-letter tidy found this store clean in THIS launch: later drains skip it at no cost. */
+    const goneLettersTidied = new Set<string>();
+    /**
+     * LETTERS THAT LEFT THE SERVER BEFORE THEIR WORDS WENT WITH THEM, a page per drain — the
+     * worker's own pass on this store, which is its own authority: the preview, the search
+     * document, the summary, a tracker's address and the header lines but seven of a gone letter.
+     * No change row: nothing the window shows reads them. Contained like the backfills above.
+     */
+    const tidyGoneLetters = async (): Promise<void> => {
+      if (stopping || goneLettersTidied.has(world.accountId)) return;
+      try {
+        const r = await goneLetterTidyPass(db as unknown as Tx, world.accountId, {
+          limit: GONE_LETTER_TIDY_BATCH, done: goneLettersTidied,
+        });
+        if (r.tidied > 0) log("gone_letter_tidy", { written: r.tidied, more: !r.done });
+      } catch (err) {
+        log("gone_letter_tidy_failed", {
+          err,
+          reason: "letters that left the server keep their preview and words on this computer a while longer; "
+            + "each page is its own transaction, so the next drain goes on with what is left",
         });
       }
     };
@@ -7198,6 +7222,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              stamp. See `sync-stamp.ts`. */
           /* ARRIVAL TIMES THIS STORE LOST, one bounded page, for every role: a read of INTERNALDATE on the
              gated connection, the store's reads and writes in this drain's upkeep. An open window's intake goes first. */
+          /* LETTERS THAT LEFT THE SERVER EARLIER lose the words they still hold, a page per drain and
+             for every role: a reader's store holds them too. */
+          tail.phase("gone-letter-tidy");
+          await upkeep(() => onceForTheAccount(tidyGoneLetters));
           tail.phase("arrival-backfill");
           const readArrivals = (conn as Partial<ArrivalReader>).readArrivals;
           if (arrivals !== null && typeof readArrivals === "function" && !drainDeclined && !handedBack) {
@@ -9260,12 +9288,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * again; the wipe writes its receipt, which takes the mailbox out of the window's own mirror. A
      * wipe that fails is said and tried at the next start; it never stops this one.
      */
+    /* AND THE HASHES OF A REMOVED MAILBOX'S SETTINGS, which a removal by an earlier version left on
+       its audit rows (`stripSettingsHashes`): asked of every removed row before its mail, and once
+       of rows naming a mailbox this store no longer has. A clean store only reads. */
+    const clearRemovedHashes = async (mailboxId: string | null): Promise<void> => {
+      try {
+        await stripSettingsHashes(db as unknown as Tx, mailboxId);
+      } catch (err) {
+        log("removed_mailbox_hashes_clear_failed", {
+          err, mailboxId,
+          reason: "a hash of a removed mailbox's settings is still on this computer's audit rows; "
+            + "the next start tries again",
+        });
+      }
+    };
     for (const row of unattached) {
       if (row.disabledReason !== null) continue;
       try {
         const credential = await db.select({ id: mailboxCredentials.mailboxId }).from(mailboxCredentials)
           .where(eq(mailboxCredentials.mailboxId, row.id)).limit(1);
         if (credential.length > 0) continue;
+        await clearRemovedHashes(row.id);
         if (!(await mirrorRowsRemain(db, row.id))) continue;
         await wipeLocalMirror(db, { accountId: world.accountId, mailboxId: row.id });
         log("local_mirror_wipe_finished", {
@@ -9283,6 +9326,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         });
       }
     }
+    await clearRemovedHashes(null);
 
     /* THE REPAIRS RUN AFTER THE ATTACH, and the order is the whole of whether they ever fire.
        On a FIRST launch the seed's incoming credential does not exist when this function starts —

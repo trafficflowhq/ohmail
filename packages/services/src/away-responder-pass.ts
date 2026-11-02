@@ -599,7 +599,8 @@ async function answerForAccount(
  * (`pipeline.ts` → `RepoPort.markAwayReplyUndeliverable`); this stays for reports that DO set the
  * threading headers, and both writers pass the same `IS NULL`. The address marked is the LEDGER
  * row's `sender`, never the mailer-daemon, and the message must also BE a report — a human reply
- * carries the minted id too. A fault means this run does not learn: 0 on a throw.
+ * carries the minted id too. A fault means this run does not learn: 0 on a throw. A report gone from
+ * the server keeps no `Content-Type` (`gone-letter-headers.ts`), so it is read only while it is there.
  */
 async function markUndeliverableFromBounces(
   db: Db, accountId: string, at: Date, log: Logger,
@@ -767,6 +768,9 @@ async function readCandidates(
     ))
     .where(and(
       eq(messages.accountId, responder.accountId),
+      // NOT DELETED: a gone letter's header block is cut (`gone-letter-headers.ts`), list and bounce lines
+      // included. Candidacy, not a decision: no ledger row, so a letter that comes back is judged whole.
+      isNull(messages.deletedAt),
       gt(messages.createdAt, responder.floor),
       gte(messages.date, responder.floor),
       // `ne 'external'`, so `'us'` AND `'peer'` are both candidates — deliberately. This asks
