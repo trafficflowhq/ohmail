@@ -78,6 +78,17 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.29" date="2026-11-02">
+      <description>
+        <ul>
+          <li>Connecting a mailbox says which server failed, and why</li>
+          <li>A letter deleted on the server leaves no preview behind, and a delete whose answer was lost stays in Trash</li>
+          <li>Desktop downloads always find a folder, Windows updates go in at the next start</li>
+          <li>The sender's address line keeps the name before the @ whole, and the proxy reads OHMAIL_TLS_TERMINATOR only as addresses</li>
+          <li>Sending says what happened, and Microsoft mailboxes keep one Sent copy</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.28" date="2026-11-02">
       <description>
         <ul>
@@ -118,18 +129,6 @@
       <description>
         <ul>
           <li>Trash lists what it holds</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.24" date="2026-11-01">
-      <description>
-        <ul>
-          <li>Close setup stays closed when the page loads again</li>
-          <li>Settings put aside with "Not now" stay in the mailbox until you answer them</li>
-          <li>Backspace and Delete move the open message to Trash on the desktop again</li>
-          <li>A letter that lists late no longer takes the cursor</li>
-          <li>The settings copy in the mailbox reads back when a stored value or the server's encoding changed it</li>
-          <li>Cloud Settings names a mailbox that cannot keep the settings copy</li>
         </ul>
       </description>
     </release>
