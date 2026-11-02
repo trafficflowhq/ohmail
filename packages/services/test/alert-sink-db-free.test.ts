@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { dbUnreadableAlert, type AlertNotifyContext } from "@trafficflow/db/cloud";
 import {
-  MailService, SpyMailer, dbFreeMailAlertSink, dbRecipientLimiter, memoryRecipientLimiter,
+  MailService, SpyMailer, dbFreeMailAlertSink, dbRecipientLimiter, makeTestAuthDeps, memoryRecipientLimiter, throttleKeysFor,
   type RecipientLimiter,
 } from "../src/index.js";
 
@@ -24,6 +24,7 @@ function service(mailer: SpyMailer): MailService {
       appUrl: "https://app.ohmail.app", siteUrl: "https://ohmail.app", adminUrl: "https://admin.ohmail.app",
       supportEmail: "support@ohmail.app", operatorEmail: "ops@ohmail.example",
     },
+    throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
   });
 }
 

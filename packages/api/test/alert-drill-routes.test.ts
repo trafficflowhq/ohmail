@@ -6,7 +6,9 @@ import {
   alertDrills, alertPassRuns, alertState, drillKinds, DRILL_ACK_PATH, DRILL_ACK_TTL_MS, DRILL_MIN_INTERVAL_MS,
   type Alert, type AlertSink,
 } from "@trafficflow/db/cloud";
-import { MailService, SpyMailer, mailAlertSink, type RecipientLimiter } from "@trafficflow/services";
+import {
+  MailService, SpyMailer, mailAlertSink, makeTestAuthDeps, throttleKeysFor, type RecipientLimiter,
+} from "@trafficflow/services";
 import { makeDeps, req } from "./helpers.js";
 
 /**
@@ -223,6 +225,7 @@ describe("the API mail arm", () => {
         appUrl: "https://app.ohmail.app", siteUrl: "https://ohmail.app", adminUrl: "https://admin.ohmail.app",
         supportEmail: "support@ohmail.app", operatorEmail: "operator@ohmail.example",
       },
+      throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
     });
     return { mailer, claims: () => claims, sink: mailAlertSink(service, { limiter, now: () => START }) };
   }

@@ -749,7 +749,7 @@ export class AuthService extends SessionLifecycle {
       const slot = openGate
         ? { namespace: "register:ip:open", max: this.cfg.maxPublicRegistrationsPerWindow }
         : { namespace: "register:ip:invite", max: this.cfg.maxRegistrationsPerWindow };
-      const claimed = await reserveIpSlot(db, {
+      const claimed = await reserveIpSlot(db, this.keys, {
         ...slot, ip, now: ctx.now(), windowMs: this.cfg.failureWindowMs,
       });
       if (!claimed) throw registrationRateLimited();
@@ -1018,7 +1018,7 @@ export class AuthService extends SessionLifecycle {
     const db = asTx(ctx);
     const ip = (ctx.ip ?? "").trim();
     if (ip.length > 0) {
-      const claimed = await reserveIpSlot(db, {
+      const claimed = await reserveIpSlot(db, this.keys, {
         namespace: "verify:ip",
         ip,
         now: ctx.now(),
@@ -1417,7 +1417,7 @@ export class AuthService extends SessionLifecycle {
 
     const ip = (ctx.ip ?? "").trim();
     if (ip.length > 0) {
-      const claimed = await reserveIpSlot(db, {
+      const claimed = await reserveIpSlot(db, this.keys, {
         namespace: "desktop_claim:ip",
         ip,
         now,
@@ -1482,7 +1482,7 @@ export class AuthService extends SessionLifecycle {
     const label = approvalLabel(b?.label);
     const ip = (ctx.ip ?? "").trim();
     if (ip.length > 0) {
-      const admitted = await reserveIpSlot(db, {
+      const admitted = await reserveIpSlot(db, this.keys, {
         namespace: "desktop_approval:ip", ip, now,
         max: this.cfg.maxDesktopApprovalsPerWindow, windowMs: this.cfg.failureWindowMs,
       });
@@ -1635,7 +1635,7 @@ export class AuthService extends SessionLifecycle {
     const chargeSlot = async (): Promise<void> => {
       const ip = (ctx.ip ?? "").trim();
       if (ip.length === 0) return;
-      const admitted = await reserveIpSlot(db, {
+      const admitted = await reserveIpSlot(db, this.keys, {
         namespace: "desktop_approval:ip", ip, now,
         max: this.cfg.maxDesktopApprovalsPerWindow, windowMs: this.cfg.failureWindowMs,
       });

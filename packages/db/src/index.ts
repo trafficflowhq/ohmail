@@ -262,7 +262,7 @@ export {
 // pass's step, one module so the table walk has one spelling. Mail schema and change log only.
 export {
   ERASE_BATCH, stampMailboxErasure, sweepMailboxStep, sweepMailboxData, eraseOwedMailbox,
-  erasureRemaining, clearErasedSignatures,
+  erasureRemaining, clearErasedSignatures, clearErasedSettingsHashes,
   type MailboxErasureStamp, type MailboxSweepStep, type MailboxSweepResult, type OwedErasureRun,
 } from "./mailbox-erasure.js";
 export { rowsAffected } from "./rows-affected.js";
@@ -466,7 +466,7 @@ export {
 /* A press the request could not finish, handed to the organizer — one interface, see the module. */
 export {
   IMPORT_ASK_REFUSALS, PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION, PROFILE_IMPORT_ASK_TTL_MS, askStands, importAskSignature,
-  isImportAskRefusal, readImportAsk, recordImportAsk, recordImportAskSignature, resolveImportAsk, signatureReceiptRows,
+  isImportAskRefusal, readImportAsk, recordImportAsk, recordImportAskSignature, resolveImportAsk, settingsHashRows,
   type ImportAskRefusal, type ImportAskRow,
 } from "./profile-import-ask.js";
 

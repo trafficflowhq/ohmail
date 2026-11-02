@@ -3,7 +3,7 @@ import { like } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { authThrottle } from "@trafficflow/db/cloud";
 import {
-  AuthService, MailService, SpyMailer, makeTestAuthDeps, THROTTLE_PREFIX, ServiceError, type ServiceContext,
+  AuthService, MailService, SpyMailer, makeTestAuthDeps, THROTTLE_PREFIX, ServiceError, throttleKeysFor, type ServiceContext,
 } from "../src/index.js";
 
 /**
@@ -59,6 +59,7 @@ describe("an unknown client", () => {
     const spy = new SpyMailer();
     const mail = new MailService({
       mailer: spy, config: { appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app", supportEmail: "support@ohmail.app" },
+      throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
     });
     const svc = new AuthService(makeTestAuthDeps({ publicSignup: true, maxAddressFailures: 3 }, mail));
     const ctx = (ip: string): ServiceContext => ({ db, accountId: "", userId: null, now: () => START, requestId: "r", ip });

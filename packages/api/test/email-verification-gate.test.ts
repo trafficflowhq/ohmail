@@ -351,6 +351,7 @@ describe("a failed verification send is OBSERVABLE, and still not a request fail
         appUrl: "http://localhost:3001", siteUrl: "http://localhost:3000",
         supportEmail: "support@ohmail.app",
       },
+      throttleKeys: throttleKeysFor(deps.keyProvider),
     });
     const withFailingMail: ApiDeps = {
       ...deps,

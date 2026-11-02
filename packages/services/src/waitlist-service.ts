@@ -4,6 +4,7 @@ import { waitlist } from "@trafficflow/db/cloud";
 import { bridgeTx, type Db } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { reserveIpSlot } from "./ip-throttle.js";
+import type { ThrottleKeys } from "./auth/throttle-keys.js";
 import { issueInvite, liveInvitesFor, markInviteDelivered, revokeInvitesFor } from "./invites.js";
 import { normalizeRecipient } from "./mail/port.js";
 import type { MailSendResult } from "./mail/port.js";
@@ -99,12 +100,13 @@ const JOIN_WINDOW_MS = 60 * 60_000;
  * **THE BODY MOVED; THE BEHAVIOUR DID NOT.** The single-statement `ON CONFLICT DO UPDATE`
  * that used to live here is now `reserveIpSlot` in `ip-throttle.ts`, because
  * `AuthService.register` needed the same primitive when open signup landed and the choice
- * was to reuse this one rather than write a second limiter beside it. The key shape
- * (`waitlist:ip:<sha256(ip)>`), the window and the cap are unchanged, so no existing
- * counter row changes meaning.
+ * was to reuse this one rather than write a second limiter beside it. The window and the cap
+ * are unchanged; the key is `waitlist:ip:<keyed hash of the ip>`. With no keyer the join is
+ * refused: it never counts in the clear and never skips the limit.
  */
-async function reserveJoinSlot(tx: Tx, ip: string, now: Date): Promise<boolean> {
-  return reserveIpSlot(tx, {
+async function reserveJoinSlot(tx: Tx, keys: ThrottleKeys | undefined, ip: string, now: Date): Promise<boolean> {
+  if (keys === undefined) throw new Error("the waitlist holds no throttle keyer, so it cannot count a connection");
+  return reserveIpSlot(tx, keys, {
     namespace: "waitlist:ip",
     ip,
     now,
@@ -121,6 +123,8 @@ const asTx = (db: Db): Tx => bridgeTx(db);
 export interface WaitlistServiceDeps {
   /** Absent ⇒ this deployment records signups and sends nothing. See the class doc. */
   mail?: MailService;
+  /** The per-IP slot's keyer (`throttle-keys.ts`). Absent ⇒ a join from a known IP is refused. */
+  throttleKeys?: ThrottleKeys;
 }
 
 export class WaitlistService {
@@ -148,7 +152,7 @@ export class WaitlistService {
     const now = ctx.now();
 
     const ip = (ctx.ip ?? "").trim();
-    if (ip.length > 0 && !await reserveJoinSlot(asTx(ctx.db), ip, now)) {
+    if (ip.length > 0 && !await reserveJoinSlot(asTx(ctx.db), this.deps.throttleKeys, ip, now)) {
       throw new ServiceError(
         "rate_limited", 429,
         "Too many signups from this connection. Try again in an hour.",

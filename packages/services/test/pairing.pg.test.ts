@@ -12,7 +12,7 @@ import {
   mintPairingToken, consumePairingToken, redeemInviteGrant, redeemDevicePair,
   revokePairingToken, listPairingTokens,
   PAIRING_LIVE_TOKENS_MAX, PAIRING_TTL_BOUNDS,
-  makeAuthService, makeTestAuthDeps, hashToken, MailService, SpyMailer,
+  makeAuthService, makeTestAuthDeps, hashToken, MailService, SpyMailer, throttleKeysFor,
   type ServiceContext, type PairedDeviceSessionMinter,
 } from "@trafficflow/services";
 
@@ -318,6 +318,7 @@ describe.skipIf(!PG_UP)("on real Postgres — a pairing token is spent exactly o
     const mail = new MailService({
       mailer: spy,
       config: { appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app", supportEmail: "support@ohmail.app" },
+      throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
     });
     const svc = makeAuthService(makeTestAuthDeps({}, mail));
 

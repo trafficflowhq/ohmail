@@ -26,7 +26,7 @@ import {
   makeScreenerService, makeApprovalService, triageService, searchService, makePrivacyService,
   contactsService, snippetsService, notifyRulesService, awayResponderService, attachmentsService,
   kbService, tagsService, draftsService, draftingService, scheduleService, sendService, workflowsService, proposalsService,
-  makeWaitlistService, makeMailService, SpyMailer, makeUnsubscribeService,
+  makeWaitlistService, makeMailService, SpyMailer, makeUnsubscribeService, throttleKeysFor,
   type AdminDb, type AuthConfig, type Db, type HostResolver, type RemoteFetch, type MailService,
   type OneClickPost, type StaffRole,
 } from "@trafficflow/services";
@@ -166,6 +166,7 @@ export async function makeDeps(
       siteUrl: "http://localhost:3000",
       supportEmail: "support@ohmail.app",
     },
+    throttleKeys: throttleKeysFor(authDeps.keyProvider),
   });
   const deps: ApiDeps = {
     db,
@@ -265,7 +266,7 @@ export async function makeDeps(
       // real MailService — the real per-recipient limiter, the real template render, the
       // real idempotency key — with no transport in the picture (the "Testing bar" invariant). A test reads
       // what was mailed off `mailer.sent`.
-      waitlist: makeWaitlistService({ mail }),
+      waitlist: makeWaitlistService({ mail, throttleKeys: throttleKeysFor(authDeps.keyProvider) }),
       ...(over.sendAdapter ? { sendAdapter: over.sendAdapter } : {}),
     },
   };

@@ -4,7 +4,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { authThrottle, loginTokens } from "@trafficflow/db/cloud";
 import {
   AuthService, makeTestAuthDeps, MailService, SpyMailer, disabledMailer,
-  EMAIL_VERIFY_PURPOSE, hashToken, formatUtc, safeUrl,
+  EMAIL_VERIFY_PURPOSE, hashToken, formatUtc, safeUrl, throttleKeysFor,
   type MailContext, type MailerPort, type MailSendResult, type ServiceContext,
 } from "../src/index.js";
 
@@ -16,6 +16,8 @@ const CONFIG = {
   siteUrl: "https://ohmail.app",
   supportEmail: "support@ohmail.app",
 };
+/** The deployment's throttle keyer: a recipient is counted under its keyed hash. */
+const KEYS = throttleKeysFor(makeTestAuthDeps().keyProvider);
 
 class Clock {
   constructor(public t: Date = new Date(START)) {}
@@ -35,7 +37,7 @@ async function harness(over: Partial<ConstructorParameters<typeof MailService>[0
   const db = await makeTestDb();
   const clock = new Clock();
   const spy = new SpyMailer();
-  const svc = new MailService({ mailer: spy, config: { ...CONFIG, ...over } });
+  const svc = new MailService({ mailer: spy, config: { ...CONFIG, ...over }, throttleKeys: KEYS });
   return { db, clock, spy, svc, ctx: { db, now: clock.now } };
 }
 
@@ -180,7 +182,7 @@ describe("MailService — the four beta sends", () => {
     expect(send.idempotencyKey).toBe(`billing:${hashToken(`owner@example.com|${START.toISOString()}`)}`);
     // The transactional budget: the per-recipient limiter is the same one the notices spend.
     const [slot] = await h.db.select().from(authThrottle)
-      .where(eq(authThrottle.key, `mail:transactional:${hashToken("owner@example.com")}`));
+      .where(eq(authThrottle.key, `mail:transactional:${KEYS.address("owner@example.com")}`));
     expect(slot?.failures).toBe(1);
   });
 });
@@ -222,7 +224,7 @@ describe("MailService — the connect reminder", () => {
     // Keyed on the recipient and the trial's start: a re-driven send is one mail.
     expect(sends[1]!.idempotencyKey).toBe(`connect:${hashToken(`${hotmail!.toLowerCase()}|${START.toISOString()}`)}`);
     const [slot] = await h.db.select().from(authThrottle)
-      .where(eq(authThrottle.key, `mail:transactional:${hashToken(gmail!)}`));
+      .where(eq(authThrottle.key, `mail:transactional:${KEYS.address(gmail!)}`));
     expect(slot?.failures).toBe(1);
   });
 });
@@ -312,9 +314,10 @@ describe("MailService — per-recipient rate limit", () => {
     await h.svc.sendInvite(h.ctx, { to, code: "C", expiresAt: START });
     const keys = (await h.db.select().from(authThrottle)).map((r) => r.key).sort();
     expect(keys).toEqual([
-      `mail:transactional:${hashToken(to)}`,
-      `mail:unsolicited:${hashToken(to)}`,
+      `mail:transactional:${KEYS.address(to)}`,
+      `mail:unsolicited:${KEYS.address(to)}`,
     ].sort());
+    expect(keys.join(" "), "a plain digest of an address is reversible by a guess").not.toContain(hashToken(to));
   });
 
   it("is per recipient — one hammered address does not silence anybody else", async () => {
@@ -349,13 +352,14 @@ describe("MailService — per-recipient rate limit", () => {
     expect(h.spy.sent).toHaveLength(2);
   });
 
-  it("stores the recipient HASHED — a waitlist address never lands in the throttle table", async () => {
+  it("stores the recipient under the deployment's KEYED hash — a waitlist address never lands in the throttle table", async () => {
     const h = await harness();
     await h.svc.sendWaitlistConfirmation(h.ctx, { to: "private.person@example.com", tier: "solo" });
     const rows = await h.db.select().from(authThrottle);
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.key).toBe(`mail:unsolicited:${hashToken("private.person@example.com")}`);
+    expect(rows[0]!.key).toBe(`mail:unsolicited:${KEYS.address("private.person@example.com")}`);
     expect(rows[0]!.key).not.toContain("private.person");
+    expect(rows[0]!.key).not.toContain(hashToken("private.person@example.com"));
   });
 
   it("the limit bites: removing it would let a retry loop through", async () => {
@@ -373,7 +377,7 @@ describe("MailService — per-recipient rate limit", () => {
 
 describe("MailService — the config it refuses to boot with", () => {
   const build = (over: Record<string, unknown>): MailService =>
-    new MailService({ mailer: new SpyMailer(), config: { ...CONFIG, ...over } as never });
+    new MailService({ mailer: new SpyMailer(), config: { ...CONFIG, ...over } as never, throttleKeys: KEYS });
 
   it("rejects a link base that is not first-party, at CONSTRUCTION", () => {
     // The hole this closes: `safeUrl` accepts every https host, and the "first-party
@@ -437,7 +441,7 @@ describe("MailService — failure mode is DROP, and it never throws into a reque
     const exploding: MailerPort = {
       async send(): Promise<MailSendResult> { throw new Error("boom"); },
     };
-    const svc = new MailService({ mailer: exploding, config: CONFIG });
+    const svc = new MailService({ mailer: exploding, config: CONFIG, throttleKeys: KEYS });
     const res = await svc.sendWaitlistConfirmation({ db, now: () => START }, {
       to: "gil@example.com", tier: "solo",
     });
@@ -455,7 +459,7 @@ describe("MailService — failure mode is DROP, and it never throws into a reque
       insert() { throw new Error("pool exhausted: could not claim a slot"); },
       select() { throw new Error("pool exhausted"); },
     } as unknown as Db;
-    const svc = new MailService({ mailer: spy, config: CONFIG });
+    const svc = new MailService({ mailer: spy, config: CONFIG, throttleKeys: KEYS });
 
     const res = await svc.sendNewDeviceSignIn({ db: brokenDb, now: () => START }, {
       to: "gil@example.com", device: "Web", ip: "1.1.1.1", at: START,
@@ -476,7 +480,7 @@ describe("MailService — failure mode is DROP, and it never throws into a reque
         );
       },
     } as unknown as Db;
-    const res = await new MailService({ mailer: spy, config: CONFIG })
+    const res = await new MailService({ mailer: spy, config: CONFIG, throttleKeys: KEYS })
       .sendWaitlistConfirmation({ db: leaky, now: () => START }, { to: "gil@example.com", tier: "solo" });
     const error = (res as { error: string }).error;
     expect(error).not.toContain(secret);
@@ -486,7 +490,7 @@ describe("MailService — failure mode is DROP, and it never throws into a reque
 
   it("a deployment with no mailer configured skips silently", async () => {
     const db = await makeTestDb();
-    const svc = new MailService({ mailer: disabledMailer, config: CONFIG });
+    const svc = new MailService({ mailer: disabledMailer, config: CONFIG, throttleKeys: KEYS });
     expect(await svc.sendWaitlistConfirmation({ db, now: () => START }, { to: "gil@example.com", tier: "solo" }))
       .toEqual({ status: "skipped", reason: "mailer_disabled" });
   });

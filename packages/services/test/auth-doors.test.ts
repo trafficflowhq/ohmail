@@ -31,7 +31,10 @@ async function harness(over: Parameters<typeof makeTestAuthDeps>[0] = {}, mailer
   const db: Db = await makeTestDb();
   const clock = new Clock();
   const mail = mailer
-    ? new MailService({ mailer, config: { appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app", supportEmail: "support@ohmail.app" } })
+    ? new MailService({
+      mailer, config: { appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app", supportEmail: "support@ohmail.app" },
+      throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
+    })
     : undefined;
   const deps: AuthDeps = makeTestAuthDeps(over, mail);
   const svc = new AuthService(deps);

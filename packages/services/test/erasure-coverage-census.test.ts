@@ -283,7 +283,7 @@ const SHARED_WRITES: Record<string, SharedWrite> = {
     hosted: HOSTED_CASE, device: DEVICE_CASE,
   },
   auditLog: {
-    keeps: "every row stays; only a receipt naming the removed mailbox's signature comes off its own rows, another mailbox's keep theirs",
+    keeps: "every row stays; only the hashes naming the removed mailbox's settings or signature come off its own rows, another mailbox's keep theirs",
     hosted: HOSTED_CASE, device: DEVICE_CASE,
   },
 };

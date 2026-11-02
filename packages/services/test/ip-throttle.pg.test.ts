@@ -8,7 +8,7 @@ import { schema, authThrottle } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { Tx } from "@trafficflow/db";
-import { reserveIpSlot } from "@trafficflow/services";
+import { makeTestAuthDeps, reserveIpSlot, throttleKeysFor } from "@trafficflow/services";
 
 /**
  * `reserveIpSlot` on real Postgres through postgres-js, the production driver: concurrent claims
@@ -31,7 +31,8 @@ describe.skipIf(!PG_UP)("reserveIpSlot against the postgres-js driver", () => {
   afterEach(async () => { await db.delete(authThrottle).where(like(authThrottle.key, `${NS}:%`)); });
   afterAll(async () => { await client?.end({ timeout: 5 }); });
 
-  const claim = (now: Date) => reserveIpSlot(db as unknown as Tx, {
+  const keys = throttleKeysFor(makeTestAuthDeps().keyProvider);
+  const claim = (now: Date) => reserveIpSlot(db as unknown as Tx, keys, {
     namespace: NS, ip: "192.0.2.45", now, max: 4, windowMs: 60_000,
   });
   const failures = async () => (await db.select().from(authThrottle)

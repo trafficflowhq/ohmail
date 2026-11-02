@@ -551,7 +551,8 @@ export async function deleteAccount(
     await drop("credentials", tx.delete(credentials).where(inArray(credentials.userId, ownUserIds)));
     // EVERY THROTTLE ROW THAT NAMES THIS ACCOUNT'S PEOPLE (`throttle-keys.ts`): by user id
     // (`user:`, `factor-day:`, `notice:factor:`), by the keyed hash of each address (`pw:<hA>:`,
-    // `known:<hA>:`, `pwa:<hA>`, `notice:ceiling:<hA>`, and the hashed `email:`), and the legacy
+    // `known:<hA>:`, `pwa:<hA>`, `notice:ceiling:<hA>`, the hashed `email:` and the mail quota's
+    // `mail:unsolicited:<hA>` and `mail:transactional:<hA>`), and the legacy
     // `email:<addr>` a row written before the keys were hashed still carries. The hash needs the
     // server's subkey, so the addresses are read here; hex keys, so a LIKE prefix has no wildcard.
     const people = await tx.select({ id: users.id, email: users.email })
@@ -563,7 +564,8 @@ export async function deleteAccount(
         `${THROTTLE_PREFIX.notice}factor:${p.id}`, `email:${p.email}`);
       if (opts.throttleKeys) {
         const hA = opts.throttleKeys.address(p.email.trim().toLowerCase());
-        exact.push(`${THROTTLE_PREFIX.addressCeiling}${hA}`, `${THROTTLE_PREFIX.notice}ceiling:${hA}`, `email:${hA}`);
+        exact.push(`${THROTTLE_PREFIX.addressCeiling}${hA}`, `${THROTTLE_PREFIX.notice}ceiling:${hA}`, `email:${hA}`,
+          `mail:unsolicited:${hA}`, `mail:transactional:${hA}`);
         prefixes.push(`${THROTTLE_PREFIX.password}${hA}:%`, `${THROTTLE_PREFIX.knownClient}${hA}:%`);
       }
     }

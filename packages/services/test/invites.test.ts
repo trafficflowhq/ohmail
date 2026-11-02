@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { type Tx } from "@trafficflow/db";
-import { invites, waitlist } from "@trafficflow/db/cloud";
+import { authThrottle, invites, waitlist } from "@trafficflow/db/cloud";
 import { eq } from "drizzle-orm";
 import {
   consumeInvite, generateInviteCode, issueInvite, liveInvitesFor, normalizeInviteCode,
   pruneExpiredInvites, inviteError, hashToken, revokeInvitesFor,
-  makeWaitlistService, SpyMailer, makeMailService,
+  makeWaitlistService, SpyMailer, makeMailService, makeTestAuthDeps, throttleKeysFor,
   type Db,
 } from "@trafficflow/services";
 
@@ -311,6 +311,7 @@ describe("liveInvitesFor / pruneExpiredInvites", () => {
 
 describe("WaitlistService", () => {
   const ctxOf = (db: Db) => ({ db, now: () => NOW });
+  const keys = throttleKeysFor(makeTestAuthDeps().keyProvider);
 
   function svcWithSpy(): { svc: ReturnType<typeof makeWaitlistService>; spy: SpyMailer } {
     const spy = new SpyMailer();
@@ -320,8 +321,9 @@ describe("WaitlistService", () => {
         appUrl: "http://localhost:3001", siteUrl: "http://localhost:3000",
         supportEmail: "support@ohmail.app",
       },
+      throttleKeys: keys,
     });
-    return { svc: makeWaitlistService({ mail }), spy };
+    return { svc: makeWaitlistService({ mail, throttleKeys: keys }), spy };
   }
 
   it("records a signup and mails the confirmation with the chosen tier", async () => {
@@ -332,6 +334,20 @@ describe("WaitlistService", () => {
     const send = spy.only("waitlist_confirmation");
     expect(send.to).toBe("gil@example.com");
     expect(send.data.tier).toBe("plus");
+  });
+
+  it("counts a connection under the deployment's keyed hash; with no keyer a join from one is refused and writes nothing", async () => {
+    const db = await makeTestDb();
+    const ip = "203.0.113.9";
+    await makeWaitlistService({ throttleKeys: keys }).join({ ...ctxOf(db), ip }, { email: "keyed@example.com" });
+    const rows = await db.select().from(authThrottle);
+    expect(rows.map((r) => r.key)).toEqual([`waitlist:ip:${keys.client(ip)}`]);
+    expect(rows[0]!.key, "a plain digest of an address is reversed by a guess").not.toContain(hashToken(ip));
+
+    const bare = await makeTestDb();
+    await expect(makeWaitlistService({}).join({ ...ctxOf(bare), ip }, { email: "unkeyed@example.com" })).rejects.toThrow();
+    expect(await bare.select().from(waitlist), "a refused join wrote its row").toEqual([]);
+    expect(await bare.select().from(authThrottle), "a refused join counted in the clear").toEqual([]);
   });
 
   it("records the signup even with NO mailer, and says so", async () => {

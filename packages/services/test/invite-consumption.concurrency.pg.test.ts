@@ -10,7 +10,7 @@ import { invites } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  consumeInvite, issueInvite, makeAuthService, makeTestAuthDeps, MailService, SpyMailer,
+  consumeInvite, issueInvite, makeAuthService, makeTestAuthDeps, MailService, SpyMailer, throttleKeysFor,
   type ServiceContext,
 } from "@trafficflow/services";
 
@@ -206,6 +206,7 @@ describe.skipIf(!PG_UP)("on real Postgres — one invite, one account", () => {
         appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app",
         supportEmail: "support@ohmail.app",
       },
+      throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
     });
     const svc = makeAuthService(makeTestAuthDeps({ publicSignup: true }, mail));
     const email = `open-race-${randomUUID()}@example.com`;

@@ -12,7 +12,7 @@ import {
 import { makeTestDb } from "@trafficflow/db/testing";
 import type { AdminDb } from "@trafficflow/services";
 import {
-  MailService, SpyMailer, dbFreeMailAlertSink, dbRecipientLimiter, mailAlertSink,
+  MailService, SpyMailer, dbFreeMailAlertSink, dbRecipientLimiter, mailAlertSink, makeTestAuthDeps, throttleKeysFor,
 } from "@trafficflow/services";
 import { createLogger } from "@trafficflow/core";
 import { makeDeps } from "./helpers.js";
@@ -78,6 +78,7 @@ function mailService(mailer: SpyMailer): MailService {
       appUrl: "https://app.ohmail.app", siteUrl: "https://ohmail.app", adminUrl: "https://admin.ohmail.app",
       supportEmail: "support@ohmail.app", operatorEmail: "ops@ohmail.example",
     },
+    throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
   });
 }
 
