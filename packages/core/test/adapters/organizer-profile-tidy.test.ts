@@ -93,7 +93,8 @@ describe("the selector census", () => {
     expect(lines[0]?.[0], "the plan is the first line").toBe("profile_tidy_planned");
     expect(r.planned).toEqual({
       records: 316, current: 1, removable: 310, own: 300, foreignStale: 8, duplicate: 1, released: 0, malformed: 1,
-      keptForeignFresh: 4, keptUnrecognised: 1, keptNewerDated: 0, keptHeld: 0, keptOwnBesideUnseen: 0, keptFound: 0, unseenCurrent: 0,
+      keptForeignFresh: 4, keptUnrecognised: 1, keptNewerDated: 0, keptHeld: 0, keptOwnBesideUnseen: 0, keptFound: 0,
+      foundStale: 0, keptUnread: 0, unseenCurrent: 0,
     });
     expect(r).toMatchObject({ removed: 0, remaining: 310 });
   });
@@ -230,9 +231,13 @@ describe("only the live organizer's pass calls the tidy", () => {
 
 describe("every field the tidy logs survives the real logger", () => {
   const FIELDS = ["records", "current", "removable", "own", "foreignStale", "duplicate", "malformed",
-    "keptForeignFresh", "keptUnrecognised", "keptNewerDated", "keptHeld", "keptOwnBesideUnseen", "released", "unseenCurrent", "remaining", "owed", "removed", "tidyMode"];
+    "keptForeignFresh", "keptUnrecognised", "keptNewerDated", "keptHeld", "keptOwnBesideUnseen", "keptFound", "foundStale", "keptUnread",
+    "released", "unseenCurrent", "remaining", "owed", "removed", "tidyMode"];
 
-  it("each field is admitted and reaches the emitted line", () => {
+  it("each field is admitted and reaches the emitted line", async () => {
+    const server = memoryImapServer({ prefix: "INBOX.", folders: ["INBOX.ohmail", META] });
+    census(server);
+    expect(FIELDS, "a count the plan logs is not checked here").toEqual(expect.arrayContaining(Object.keys((await tidy(server, "count")).planned!)));
     const lines: string[] = [];
     const log = createLogger({ service: "worker", sink: (l) => { lines.push(l); } });
     const detail = Object.fromEntries(FIELDS.map((f, i) => [f, f === "tidyMode" ? "count" : f === "owed" ? true : i]));
