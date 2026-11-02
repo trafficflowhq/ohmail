@@ -1700,3 +1700,55 @@ describe("the act's own walk never files a sensitive letter", () => {
     expect(await desiredOf(w, held)).toBe("ohmail/Quarantine");
   });
 });
+
+describe("the walk hands the engine's loop back by counted work", () => {
+  /** 67 letters the rule files and 33 a higher rule keeps, from one sender. */
+  async function mixed(): Promise<{ w: World; ruleId: string }> {
+    const w = await newWorld();
+    // Ids in seeding order under a per-world prefix, so two worlds walk their letters alike.
+    const prefix = randomUUID().slice(0, 8);
+    for (let i = 0; i < 100; i++) {
+      const id = `${prefix}-0000-4000-8000-${String(i).padStart(12, "0")}`;
+      await seedMessage(w, i % 3 === 2
+        ? { id, from: "bulk@shop.test", subject: `keep me ${i}`, folder: SCREENED }
+        : { id, from: "bulk@shop.test", subject: `hello ${i}` });
+    }
+    await w.db.insert(rules).values({
+      accountId: w.accountId, kind: "sender", match: "bulk@shop.test", subjectContains: "keep",
+      destination: SCREENED, priority: 10, provenance: "manual", enabled: true,
+    });
+    return { w, ruleId: await seedRule(w, { match: "bulk@shop.test", destination: READS }) };
+  }
+
+  /** What the walk left: its counts, the cursor's letter and every change row, by subject. */
+  async function outcome(w: World, ruleId: string, res: Awaited<ReturnType<typeof run>>) {
+    const subjectOf = async (id: string | null) => id === null ? null
+      : (await w.db.select({ s: messages.subject }).from(messages).where(eq(messages.id, id)))[0]?.s ?? id;
+    const r = await ruleRow(w, ruleId);
+    const changes = await w.db.select({ id: changeLog.entityId, meta: changeLog.meta }).from(changeLog)
+      .where(and(eq(changeLog.accountId, w.accountId), eq(changeLog.op, "move"))).orderBy(asc(changeLog.seq));
+    return {
+      res, cursor: await subjectOf(r.retroCursor), moved: r.retroMoved, done: r.retroDoneAt !== null,
+      changes: await Promise.all(changes.map(async (c) => [await subjectOf(c.id), c.meta])),
+    };
+  }
+
+  it("turns once per 25 letters checked, once per 8 moved, before each page, after its read and at the end", async () => {
+    const { w, ruleId } = await mixed();
+    let turns = 0;
+    const res = await run(w, { batch: 50, turn: async () => { turns++; } });
+    expect(res).toMatchObject({ examined: 100, moved: 67, kept: 33, completed: 1 });
+    // Three pages: 50 rows, 50 rows, then an empty one.
+    expect(turns).toBe(Math.floor(100 / 25) + Math.floor(67 / 8) + 3 + 3 + 1);
+  });
+
+  it("CONTROL — the moves, the cursor and the change rows are the same with and without a turn", async () => {
+    const a = await mixed();
+    const b = await mixed();
+    const turned = await outcome(a.w, a.ruleId, await run(a.w, { batch: 50, turn: async () => {} }));
+    const plain = await outcome(b.w, b.ruleId, await run(b.w, { batch: 50 }));
+    expect(turned.changes).toHaveLength(67);
+    expect(turned.res).toEqual(plain.res);
+    expect({ ...turned, changes: [...turned.changes].sort() }).toEqual({ ...plain, changes: [...plain.changes].sort() });
+  });
+});

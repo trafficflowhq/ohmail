@@ -11,6 +11,8 @@ export * from "./rules.js";
 // The drain's ceiling and run budget — here because the caller, the route and the pass are in
 // three packages and core is the only one all three import.
 export * from "./unsubscribe-drain-bounds.js";
+// Counted turns a long organize walk hands the host's event loop (the desktop engine passes one).
+export * from "./loop-turns.js";
 export * from "./authserv-ids.js";
 export * from "./ports.js";
 export * from "./dedup.js";

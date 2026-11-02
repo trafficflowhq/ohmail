@@ -808,6 +808,8 @@ export interface ApiDeps {
   press?: PressContext | null;
   /** The desktop engine's own door only: a search a newer one replaced stops (`ServiceContext.searchSupersede`). */
   searchSupersede?: SearchSupersede;
+  /** The desktop engine's own door only: a long organize walk hands its loop back (`ServiceContext.loopTurn`). */
+  loopTurn?: () => Promise<void>;
   /** Set by `withSession`: how long resolving the request's session took, in ms (`search_timing`'s `session`). */
   sessionMs?: number;
   /**

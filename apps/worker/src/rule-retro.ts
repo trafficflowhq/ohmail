@@ -7,8 +7,8 @@ import {
 } from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, ORGANIZED_FOLDERS, REFILE_HOLD_MS, authVerdictFromHeaders, canonicalDestination, evaluateRules,
-  identityOfRow, silentLogger, type Destination, type KnownSenders, type Logger, type NormalizedMessage,
-  type Rule,
+  identityOfRow, ROWS_PER_TURN, silentLogger, turnsEvery, WRITES_PER_TURN, type Destination, type KnownSenders,
+  type Logger, type LoopTurn, type NormalizedMessage, type Rule,
   /* The mail leaf, never the barrel: the local engines bundle this pass, and a value import from
      the barrel carries the model half into them (the engine census refuses the build). */
 } from "@trafficflow/core/mail";
@@ -122,6 +122,8 @@ export interface RuleRetroDeps {
    * decided to trust nothing types `async () => NO_TRUSTED_AUTHSERV_IDS`.
    */
   trustedAuthservIdsFor: (db: Tx, mailboxId: string) => Promise<ReadonlySet<string>>;
+  /** The desktop engine's loop turn: per rows checked and written, before each page, after its read, and at the end. */
+  turn?: LoopTurn;
 }
 
 export interface RuleRetroResult {
@@ -296,6 +298,8 @@ export async function ruleRetroPass(
 
   // The router's one set, read once per account for this pass (`OwnAddressesPerPass`).
   const ownPerPass = new OwnAddressesPerPass();
+  const checked = turnsEvery(ROWS_PER_TURN, deps.turn);
+  const written = turnsEvery(WRITES_PER_TURN, deps.turn);
   for (const row of owed) {
     if (result.moved >= budget) { result.capped = true; break; }
     result.rules++;
@@ -319,6 +323,8 @@ export async function ruleRetroPass(
     let stillParked = false;
     for (; pages < maxPages; pages++) {
       if (result.moved >= budget) { result.capped = true; break; }
+      // Each page transaction starts on a turn of its own, apart from the pass or page before it.
+      if (deps.turn) await deps.turn();
 
       const page = await db.transaction(async (txRaw) => {
         /* THE DEVICE STORE RUNS THIS PASS TOO (the phone's and the desktop's local door), so every
@@ -394,6 +400,7 @@ export async function ruleRetroPass(
         const candidates = await selectCandidates(tx, {
           rule, ownAddresses: own, limit: batch, afterId, byTheAct,
         });
+        if (deps.turn) await deps.turn();
 
         const releaseRun = isReleaseRun(rule);
         let moved = 0;
@@ -421,6 +428,7 @@ export async function ruleRetroPass(
             ohboxPolicy: DEFAULT_OHBOX_POLICY,
           });
           lastId = c.messageId;
+          await checked();
 
           // ONLY a rule answer moves already-filed mail. `screener` means the gate has not been
           // passed and re-screening old mail is not this pass's business; `header` and `unclear`
@@ -467,6 +475,7 @@ export async function ruleRetroPass(
             inverse: { messageId: c.messageId, from: to, to: c.desiredFolder },
           });
           moved++;
+          await written();
         }
 
         // Cursor and counter advance in the SAME transaction as the writes, so a crash can
@@ -593,6 +602,8 @@ export async function ruleRetroPass(
       moved: result.moved, kept: result.kept, completed: result.completed, capped: result.capped,
     });
   }
+  // The completion stamp ends on a turn of its own, apart from the pass after it.
+  if (deps.turn) await deps.turn();
   return result;
 }
 

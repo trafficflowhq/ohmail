@@ -65,6 +65,8 @@ export function serviceContext(
     ...(deps.press ? { pressFloor: deps.press.floor, pressAged: deps.press.aged } : {}),
     // Absent unless the desktop engine's door admitted this search under a lane (`search-lanes.ts`).
     ...(deps.searchSupersede ? { searchSupersede: deps.searchSupersede } : {}),
+    // Absent unless the desktop engine's door passes its loop turn.
+    ...(deps.loopTurn ? { loopTurn: deps.loopTurn } : {}),
     // The one wiring point for the response's account header on the credential routes. Every
     // service that mints or rotates a session reports through this, so a sign-in route added
     // later is covered without remembering to do anything — see `ACCOUNT_HEADER` in `app.ts`.

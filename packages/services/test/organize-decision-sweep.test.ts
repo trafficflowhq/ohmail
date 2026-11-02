@@ -102,15 +102,26 @@ const sweep = (
 });
 
 /** The run both hosts call once per organizing drain. */
-const sweepRun = (w: World, o: { now?: Date; cursor?: AgreeSweepCursor | null; slice?: number; maxSlices?: number } = {}) =>
+const sweepRun = (
+  w: World,
+  o: {
+    now?: Date; cursor?: AgreeSweepCursor | null; slice?: number; maxSlices?: number; pages?: number;
+    turn?: () => Promise<void>; knowledgeFor?: (tx: unknown) => ReturnType<typeof makeDrizzleRepo>;
+  } = {},
+) =>
   agreeSweepRun(w.db as never, {
     accountId: w.accountId, mailboxId: w.mailboxId, stamp: AT, held: false, now: o.now ?? AT, ...knowledge,
+    ...(o.knowledgeFor ? { knowledgeFor: o.knowledgeFor } : {}),
     cursor: o.cursor ?? null, ...(o.slice !== undefined ? { slice: o.slice } : {}),
     ...(o.maxSlices !== undefined ? { maxSlices: o.maxSlices } : {}),
+    ...(o.pages !== undefined ? { pages: o.pages } : {}), ...(o.turn ? { turn: o.turn } : {}),
   });
 
 /** Many letters in a few statements, each a day-fraction older than the last; returns ids in order. */
-async function bulk(w: World, rows: ReadonlyArray<{ from: string; daysOld: number }>, tag: string): Promise<string[]> {
+async function bulk(
+  w: World, rows: ReadonlyArray<{ from: string; daysOld: number }>, tag: string,
+  headers: Record<string, string[]> = {},
+): Promise<string[]> {
   const ids: string[] = [];
   for (let at = 0; at < rows.length; at += 250) {
     const part = rows.slice(at, at + 250);
@@ -123,7 +134,7 @@ async function bulk(w: World, rows: ReadonlyArray<{ from: string; daysOld: numbe
       };
     })).returning({ id: messages.id, subject: messages.subject });
     for (const m of made) ids[Number(m.subject.slice(tag.length + 1))] = m.id;
-    await w.db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, text: "", html: null, headers: {} })));
+    await w.db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, text: "", html: null, headers })));
     await w.db.insert(folderState).values(made.map((m) => ({
       messageId: m.id, desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "external" as const,
       reconcileStatus: "reconciled" as const, conflict: false,
@@ -549,4 +560,74 @@ describe("the sweep keeps to the window the person saw and agreed to", () => {
     expect(await sweepRun(w, { slice: 1, cursor: next })).toMatchObject({ total: 3, next: null });
     expect(await desired(w, ids.old)).toBe(GATE);
   });
+});
+
+describe("the walks hand the engine's loop back by counted work", () => {
+  /** Reply-shaped: each checked letter asks the gate's reply arm once, and no Sent copy answers it. */
+  const CITES = { "in-reply-to": ["<nobody-sent-this@rig.test>"] };
+
+  it("one page per slice: 450 strangers' letters move 200 at a time over three slices, each leaving a cursor", async () => {
+    const w = await world();
+    const ids = await bulk(w, Array.from({ length: 450 }, (_, k) => ({ from: `s${k % 90}@pg.test`, daysOld: 1 })), "s");
+    await agreed(w, { record: true });
+    await promote(w);
+    const one = await sweepRun(w, { pages: 1, maxSlices: 1 });
+    expect(one.slices).toBe(1);
+    expect(one.total).toBeLessThanOrEqual(200);
+    expect(one.next).not.toBeNull();
+    const two = await sweepRun(w, { pages: 1, maxSlices: 1, cursor: one.next });
+    const three = await sweepRun(w, { pages: 1, maxSlices: 1, cursor: two.next });
+    expect([one.total, two.total, three.total]).toEqual([200, 200, 50]);
+    expect(three.next).toBeNull();
+    expect(await inInbox(w, ids)).toBe(0);
+  }, 300_000);
+
+  it("CONTROL — without a page bound one slice moves all 450", async () => {
+    const w = await world();
+    const ids = await bulk(w, Array.from({ length: 450 }, (_, k) => ({ from: `c${k % 90}@pg.test`, daysOld: 1 })), "c");
+    await agreed(w, { record: true });
+    await promote(w);
+    expect(await sweepRun(w, { maxSlices: 1 })).toMatchObject({ total: 450, slices: 1, next: null });
+    expect(await inInbox(w, ids)).toBe(0);
+  }, 300_000);
+
+  it("the sweep's walk turns after every 25 letters it checks, never more between two turns", async () => {
+    const w = await world();
+    const ids = await bulk(w, Array.from({ length: 60 }, (_, k) => ({ from: `r${k}@pg.test`, daysOld: 1 })), "r", CITES);
+    await agreed(w, { record: true });
+    await promote(w);
+    const events: Array<"ask" | "turn"> = [];
+    const out = await sweepRun(w, {
+      turn: async () => { events.push("turn"); },
+      knowledgeFor: (tx) => {
+        const repo = makeDrizzleRepo(tx as never);
+        const ask = repo.isCorrespondent.bind(repo);
+        return Object.assign(Object.create(repo) as typeof repo, {
+          isCorrespondent: (...a: Parameters<typeof ask>) => { events.push("ask"); return ask(...a); },
+        });
+      },
+    });
+    expect(out).toMatchObject({ total: 60, next: null });
+    expect(await inInbox(w, ids)).toBe(0);
+    const asks = events.filter((e) => e === "ask").length;
+    expect(asks).toBe(60);
+    const runs = events.join("").split("turn").map((r) => r.length / 3);
+    expect(Math.max(...runs)).toBeLessThanOrEqual(25);
+    // The walk's start, its one page read, and the intents and their change rows written apart.
+    expect(events.filter((e) => e === "turn")).toHaveLength(Math.floor(asks / 25) + 1 + 1 + 2);
+  });
+
+  it("the count reads the same with the engine's turn as without it, and turns at its start, per page and per 25 letters", async () => {
+    const w = await world();
+    await bulk(w, Array.from({ length: 125 }, (_, k) => ({ from: `n${k % 40}@pg.test`, daysOld: 1 })), "n");
+    const answer = { dormancyDays: 365, scope: "window" } as const;
+    const plain = await organizeDecisionCount(ctxOf(w), w.mailboxId, answer);
+    let turns = 0;
+    const turned = await organizeDecisionCount(
+      { ...ctxOf(w), loopTurn: async () => { turns++; } }, w.mailboxId, answer,
+    );
+    expect(turned).toEqual(plain);
+    expect(plain).toMatchObject({ letters: 125, senders: 40, complete: true });
+    expect(turns).toBe(1 + 1 + Math.floor(125 / 25));
+  }, 300_000);
 });

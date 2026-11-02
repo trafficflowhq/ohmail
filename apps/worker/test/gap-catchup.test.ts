@@ -98,6 +98,7 @@ const CLEAR: SweepClearance = { kind: "clear" };
 const HELD: SweepClearance = { kind: "held" };
 const run = (w: World, o: {
   mailboxIds?: readonly string[]; batch?: number; maxPages?: number; clearance?: SweepClearance; log?: Logger;
+  turn?: () => Promise<void>;
 } = {}) => {
   const { clearance = CLEAR, ...rest } = o;
   return gapCatchupPass(w.db as unknown as Tx, {
@@ -692,5 +693,43 @@ describe("letters from new senders in a gap go to the Screener, and only on the 
     for (const m of made) if ((await placement(w, m.id)).d === INBOX) left.push(m.from);
     expect(left, "past the bound's last sender a letter stays for the Screener's own offer").toEqual([senders[GROUPS]]);
     expect(await sweeps(w)).toHaveLength(GROUPS);
+  });
+});
+
+describe("the walk hands the engine's loop back by counted work", () => {
+  /** 30 letters a rule files and 20 from strangers, all in the gap. */
+  async function gapOf50(): Promise<{ w: World; ids: string[] }> {
+    const w = await newWorld();
+    await seedRule(w, "deals@news.test");
+    const ids: string[] = [];
+    for (let i = 0; i < 30; i++) ids.push(await seedArrival(w, { from: "deals@news.test" }));
+    for (let i = 0; i < 20; i++) ids.push(await seedArrival(w, { from: `s${i}@stranger.test` }));
+    return { w, ids };
+  }
+
+  it("turns once per 25 letters checked and per page read and, on the press, once per 8 filed", async () => {
+    const { w } = await gapOf50();
+    let turns = 0;
+    const turn = async () => { turns++; };
+    expect(await run(w, { turn })).toEqual({ offered: 1, moved: 0, completed: 0 });
+    expect(turns).toBe(Math.floor(50 / 25) + 1);
+    await press(w);
+    turns = 0;
+    expect(await run(w, { turn })).toEqual({ offered: 0, moved: 50, completed: 1 });
+    // The strangers' intents and their change rows are written apart too.
+    expect(turns).toBe(Math.floor(50 / 25) + 1 + Math.floor(30 / 8) + 2);
+  });
+
+  it("CONTROL — the offer and the press file the same with and without a turn", async () => {
+    const a = await gapOf50();
+    const b = await gapOf50();
+    expect(await run(a.w, { turn: async () => {} })).toEqual(await run(b.w));
+    expect(await windowOf(a.w)).toEqual(await windowOf(b.w));
+    await press(a.w);
+    await press(b.w);
+    expect(await run(a.w, { turn: async () => {} })).toEqual(await run(b.w));
+    const where = async (x: { w: World; ids: string[] }) => Promise.all(x.ids.map(async (id) => (await placement(x.w, id)).d));
+    expect(await where(a)).toEqual(await where(b));
+    expect((await where(a)).filter((d) => d === NEWS)).toHaveLength(30);
   });
 });

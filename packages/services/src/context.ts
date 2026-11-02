@@ -157,6 +157,11 @@ export interface ServiceContext {
    * (`search-service.ts`). Set by the desktop engine's own door only; absent everywhere else.
    */
   searchSupersede?: SearchSupersede;
+  /**
+   * One turn of the host's event loop, which a long organize walk awaits after a counted amount of
+   * work (`@trafficflow/core/mail` `turnsEvery`). Set by the desktop engine's own door only.
+   */
+  loopTurn?: () => Promise<void>;
   /** Where a search answer spent its time, by phase (`search-timing.ts`). Absent: not recorded. */
   timing?: SearchTiming;
 }

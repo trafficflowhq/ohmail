@@ -611,7 +611,9 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
   it("AGREE OVER A BIG IMPORT — every in-window letter reaches the Screener, the sweep carried across drains; older ones stay", async () => {
     const meta = new MemoryMeta();
     const fresh = Array.from({ length: 12 }, (_, i) => 100 + i);
-    const { sidecar } = await boot([...fresh, 900, 901], meta, undefined, "clean", undefined, { agreeSweepSlice: 1 });
+    const { sidecar } = await boot([...fresh, 900, 901], meta, undefined, "clean", undefined, {
+      agreeSweepSlice: 1, agreeSweepSlices: 10,
+    });
     await agreeFromTheWindowStep(sidecar, true);
     await sidecar.syncUntilQuiet();
     const sweeps = () => events.filter((e) => e.event === "organizer_agree_sweep").map((e) => e.detail);
@@ -625,6 +627,30 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
     await sidecar.syncUntilQuiet();
     expect(sweeps(), "a finished sweep ran again").toHaveLength(2);
   });
+
+  it("AGREE OVER 450 LETTERS — the count and the sweep hand the engine's loop back, one page per transaction", async () => {
+    const meta = new MemoryMeta();
+    let turns = 0;
+    const { sidecar } = await boot(Array.from({ length: 450 }, (_, i) => 100 + i), meta, undefined, "clean", undefined, {
+      loopTurn: async () => { turns++; },
+    });
+    const counted = turns;
+    const res = await sidecar.handle(new Request(
+      `http://local/screener/unscreened/count?mailboxId=${sidecar.world.mailboxId}&dormancyDays=365&scope=window`,
+      { headers: auth(sidecar) },
+    ));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ letters: 450, senders: 1, complete: true });
+    expect(turns - counted, "the count walked 450 letters without a turn").toBeGreaterThanOrEqual(Math.floor(450 / 25));
+    await agreeFromTheWindowStep(sidecar, true);
+    const swept = turns;
+    await sidecar.syncUntilQuiet();
+    expect(events.filter((e) => e.event === "organizer_agree_sweep").map((e) => e.detail)).toEqual([
+      expect.objectContaining({ verdict: "swept", moved: 450, slices: 3, done: true }),
+    ]);
+    expect(turns, "the sweep never handed the loop back").toBeGreaterThan(swept);
+    expect(wire.filter((w) => w.verb === "move")).toHaveLength(450);
+  }, 120_000);
 
   it("CONTROL — the same agree with no count on its screen moves nothing old", async () => {
     const meta = new MemoryMeta();
