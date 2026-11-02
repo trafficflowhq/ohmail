@@ -183,10 +183,10 @@ describe("forward round trip (GreenMail SMTP+IMAP + Postgres)", () => {
     expect(byName.get("plan.pdf")!.sizeBytes).toBe(Buffer.byteLength("%PDF-1.4 plan"));
     expect(parsed.hasAttachments).toBe(true);
     expect(countRealFiles(parsed.attachments)).toBe(2);
-    // The outbound sanitizer admits no <img> (its policy: no inline data: payloads), so the quoted
-    // html carries no picture reference; the picture itself rides as the inline part above. Pinned
-    // as observed — a gap row asks for the cid placement to survive a forward.
-    expect(parsed.htmlBody).not.toContain("<img");
+    // The quoted html keeps the picture where the original drew it, by the cid of the inline part
+    // this send carries (above): one picture, between the two paragraphs it stood between.
+    expect(parsed.htmlBody.match(/<img/g)).toHaveLength(1);
+    expect(parsed.htmlBody).toContain('logo below.</p><img src="cid:logo@atelier" alt="logo" /><p>Regards,');
   }, 90000);
 
   /**

@@ -4023,6 +4023,20 @@ input.set-tag-input {
 .gate .btn {
   text-decoration: none;
 }
+/* The server's first frame says it is late only once it is (CloudShell `FirstFrame`); no script. */
+.gate-late {
+  visibility: hidden;
+  animation: gate-late 0s 10s forwards;
+  font-size: calc(13px + var(--type-up));
+  color: var(--ink2);
+  margin: 0;
+}
+.gate-late a {
+  color: var(--accent-ink);
+}
+@keyframes gate-late {
+  to { visibility: visible; }
+}
 /* ── THE WALL — the refused account's whole screen ────────────────────────────────────────────
    `.gate-card`'s wider sibling: the lock used to be one sentence and two buttons, and the wall
    carries a dated headline, three statements and three actions with a line under each. Wider by

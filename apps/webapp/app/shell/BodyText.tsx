@@ -30,7 +30,7 @@
  * folded tracking URL must not become an anchor until asked for.
  */
 import { Fragment, memo, useId, useMemo, useState, type ReactNode } from "react";
-import { BODY_PAGE_CHARS, pageEnd, pageEnds } from "@ohmail/ui";
+import { BODY_PAGE_CHARS, pageEnd, pageEnds, type TagHueName } from "@ohmail/ui";
 import { QUOTED_HISTORY_LIMITS, quotedHistoryOfText, type QuotedAt, type QuotedVerdict } from "@ohmail/client-engine";
 import { liveCopy } from "./locale";
 import { RenderedLinks } from "./rendered-links";
@@ -200,7 +200,13 @@ export interface LinkRun {
  * `javascript:` or `data:text/html` into the app document. `alt` renders only as a React text node.
  */
 export interface ImageRun { kind: "image"; src: string; alt: string }
-export type InlineNode = TextRun | LineBreak | StyledRun | LinkRun | ImageRun;
+/**
+ * The writer's coloured words — an answer typed in red under a question — in one of the palette's
+ * inks, picked from the sender's colour by the walker; `plain` is the reader's own ink again
+ * inside a coloured run. A name this code chose, never the sender's value.
+ */
+export interface InkRun { kind: "ink"; tone: TagHueName | "plain"; children: InlineNode[] }
+export type InlineNode = TextRun | LineBreak | StyledRun | LinkRun | ImageRun | InkRun;
 
 /**
  * The `data:` shape an embedded image's `src` may take — the sender's own pictures, and the ones
@@ -441,6 +447,7 @@ function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<str
       case "strong": return <strong key={key}>{renderInline(node.children, key, own, links)}</strong>;
       case "em": return <em key={key}>{renderInline(node.children, key, own, links)}</em>;
       case "underline": return <u key={key}>{renderInline(node.children, key, own, links)}</u>;
+      case "ink": return <span className="msg-ink" data-tone={node.tone} key={key}>{renderInline(node.children, key, own, links)}</span>;
       // Literal characters inside a sentence. Faint tint, no border, no highlighting — this is
       // received mail, and the app is not pretending to be an editor for somebody else's source.
       case "code": return <code className="msg-code" key={key}>{renderInline(node.children, key, own, links)}</code>;

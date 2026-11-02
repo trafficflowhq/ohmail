@@ -279,6 +279,23 @@ h4.msg-h, h5.msg-h, h6.msg-h { font-size: 1em; }
    with it. */
 .msg-link-host { color: var(--ink3); font-size: 0.88em; }
 
+/* The writer's coloured words (an answer in red under a question), in the tag palette's inks:
+   they hold their contrast on the reader in every face, light and dark. `plain` is the reader's
+   own ink inside a coloured run. */
+.msg-ink[data-tone="rosewood"] { color: var(--tg-privat-ink); }
+.msg-ink[data-tone="ochre"] { color: var(--tg-buch-ink); }
+.msg-ink[data-tone="olive"] { color: var(--tg-olive-ink); }
+.msg-ink[data-tone="moss"] { color: var(--tg-pottery-ink); }
+.msg-ink[data-tone="verdigris"] { color: var(--tg-verdigris-ink); }
+.msg-ink[data-tone="denim"] { color: var(--tg-denim-ink); }
+.msg-ink[data-tone="indigo"] { color: var(--tg-indigo-ink); }
+.msg-ink[data-tone="iris"] { color: var(--tg-iris-ink); }
+.msg-ink[data-tone="mulberry"] { color: var(--tg-mulberry-ink); }
+.msg-ink[data-tone="heather"] { color: var(--tg-heather-ink); }
+.msg-ink[data-tone="plain"] { color: var(--ink); }
+.msg-quote .msg-ink[data-tone="plain"] { color: var(--ink2); }
+.msg-quote .msg-quote .msg-ink[data-tone="plain"] { color: var(--ink3); }
+
 /* ── the states this surface owns ─────────────────────────────────────────────────────── */
 
 /* Said when the sanitizer is not available (no DOM — a server render that reached here) and

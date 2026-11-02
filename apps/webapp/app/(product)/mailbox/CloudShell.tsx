@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useTranslations } from "next-intl";
 import { Spinner } from "@ohmail/ui";
 import { AppShell } from "../../shell/AppShell";
 import type { MailboxFacts } from "../../shell/mail-state";
@@ -265,9 +266,9 @@ export function CloudShell({ demo }: { demo: boolean }) {
     );
   }
 
-  /* The server's frame and the client's first are the same empty gate the shell has always
-     opened with; the verdict is asked only after hydration, behind the wordmark. */
-  if (firstPaint === "hydrating") return <div className="gate" aria-busy="true" aria-live="polite" />;
+  /* The server's frame and the client's first are the gate the shell has always opened with,
+     empty but for the late Reload; the verdict is asked only after hydration, behind the wordmark. */
+  if (firstPaint === "hydrating") return <FirstFrame />;
   if (firstPaint === "asking") return <WaitGate />;
 
   return (
@@ -349,6 +350,25 @@ export function CloudShell({ demo }: { demo: boolean }) {
         {...(firstRun ? { firstRun } : {})}
       />
     </AccountLocale>
+  );
+}
+
+const noSubscription = () => () => {};
+
+/**
+ * The server's frame and the client's first. A page whose script never runs (a chunk a changing
+ * network dropped) stays on it, so the server's copy carries a Reload, which needs no script;
+ * `.gate-late` holds it back for the first seconds. Hydration reads the server's snapshot, so the
+ * line hydrates as drawn; a client render (and the next one) leaves it out.
+ */
+function FirstFrame() {
+  const t = useTranslations("session");
+  const ta = useTranslations("appError");
+  const served = useSyncExternalStore(noSubscription, () => false, () => true);
+  return (
+    <div className="gate" aria-busy="true" aria-live="polite">
+      {served ? <p className="gate-late">{t("opening")} <a href="/">{ta("reload")}</a></p> : null}
+    </div>
   );
 }
 

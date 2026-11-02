@@ -975,3 +975,122 @@ describe("the sink invariant, under fire", () => {
     expect(el.querySelector("iframe")).not.toBeNull();
   });
 });
+
+/**
+ * ── A WRITER'S COLOURED ANSWERS KEEP THEIR COLOUR ────────────────────────────────────────
+ *
+ * People answer a question inside the quoted letter in red, under the question, and the prose
+ * reader drew every word in its own ink: an answer read as the question above it. A colour now
+ * survives where it marks PART of the text: as one of the palette's ten inks (the tag hues, which
+ * hold their contrast in every face, light and dark), never the sender's value. A quote, or a reply,
+ * written all in one colour is the writer's ink and draws in the reader's. Corpus 136-139 are the
+ * Outlook, Yahoo and older-hop shapes the report came from.
+ */
+describe("a writer's coloured answers keep their colour", () => {
+  const QUESTION: Record<string, string> = {
+    "136": "Ist die Filterreinigung im Angebot enthalten?",
+    "137": "Kommt der Techniker morgen?",
+    "138": "1. Wann kommt der Techniker morgen genau?",
+    "139": "Kommt der Techniker morgen?",
+  };
+  const textNode = (el: Element, s: string): Text | null => {
+    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) if ((n.nodeValue ?? "").includes(s)) return n as Text;
+    return null;
+  };
+  const inkOf = (el: Element, s: string): string | null | undefined =>
+    textNode(el, s)?.parentElement?.closest(".msg-ink")?.getAttribute("data-tone");
+
+  it("corpus 136-139: the red answer is drawn red, the question it answers is not, and nothing else is inked", async () => {
+    const { qhFixtures } = await import("../../../packages/client-engine/test/quoted-history-fixtures.js");
+    const corpus = qhFixtures().filter((f) => f.id in QUESTION);
+    expect(corpus.map((f) => f.id)).toEqual(["136", "137", "138", "139"]);
+    for (const fx of corpus) {
+      expect(await proseOf(fx.html!), `${fx.id} is not prose`).toBe(true);
+      const el = await render({ text: fx.text, html: fx.html!, subject: fx.subject });
+      for (const a of fx.expect.inlineAnswers) expect(inkOf(el, a), `${fx.id}: ${a}`).toBe("rosewood");
+      expect(textNode(el, QUESTION[fx.id]!), `${fx.id}: the question is not drawn`).not.toBeNull();
+      expect(inkOf(el, QUESTION[fx.id]!), `${fx.id}: the question is inked`).toBeUndefined();
+      const tones = [...el.querySelectorAll(".msg-ink")].map((n) => n.getAttribute("data-tone"));
+      expect(new Set(tones), `${fx.id}: a quote's whole ink was kept`).toEqual(new Set(["rosewood"]));
+    }
+  });
+
+  it("a quote or a reply written all in one colour draws in the reader's ink", async () => {
+    const el = await render({
+      text: "x",
+      html: `<div style="color:#1F497D"><p>Thanks, Thursday works.</p><p>Ben</p></div>`
+        + `<blockquote><p><span style="color:#500050">Can we move it?</span></p><p><span style="color:#500050">Dana</span></p></blockquote>`,
+    });
+    expect(el.textContent).toContain("Thursday works");
+    expect(el.querySelector(".msg-ink")).toBeNull();
+  });
+
+  it("every spelling a client writes a colour in, on a word or a whole block; a reset inside reads plain", async () => {
+    const el = await render({
+      text: "x",
+      html: `<p>Question one?</p><p><font color="#00B050">Green answer.</font></p>`
+        + `<p>Question two?</p><div style="color: rgb(0, 112, 192)"><p>Blue answer.</p></div>`
+        + `<p>Question three?</p><p><span style="color:red">Red, <span style="color:#000">black</span>, red.</span></p>`,
+    });
+    expect(inkOf(el, "Green answer.")).toBe("moss");
+    expect(inkOf(el, "Blue answer.")).toBe("indigo");
+    expect(inkOf(el, "Red, ")).toBe("rosewood");
+    expect(inkOf(el, "black")).toBe("plain");
+    expect(inkOf(el, "Question two?")).toBeUndefined();
+    // Computed, never copied: no sender style reaches the app document.
+    expect(el.querySelector("[style]")).toBeNull();
+  });
+
+  it("a link keeps the link's own colour", async () => {
+    const el = await render({
+      text: "x",
+      html: `<p>See:</p><p><a href="https://example.com/x"><span style="color:#C00000">the plan</span></a> and <span style="color:#C00000">this</span>.</p>`,
+    });
+    expect(el.querySelector("a.msg-link .msg-ink")).toBeNull();
+    expect(inkOf(el, "this")).toBe("rosewood");
+  });
+
+  describe.runIf(process.platform === "linux")("in a browser, light and dark", () => {
+    it("every ink reads at 4.5:1 or better on the reader's panel and sheet", async () => {
+      const COLOURS = ["#ff0000", "#ED7D31", "#BF8F00", "#808000", "#00B050", "#008080", "#0070C0", "#3333CC", "#7030A0", "#C00080"];
+      const el = await render({
+        text: "x",
+        html: COLOURS.map((c, i) => `<p>Question ${i}?</p><p><span style="color:${c}">Answer ${i}.</span></p>`).join(""),
+      });
+      const tones = new Set([...el.querySelectorAll(".msg-ink")].map((n) => n.getAttribute("data-tone")));
+      expect(tones.size, "the ten colours fell into too few inks").toBeGreaterThanOrEqual(8);
+      const markup = el.innerHTML;
+      const sheets = ["packages/tokens/src/tokens.css", "packages/ui/src/composites/message.css", "apps/webapp/app/components/message-body.css"]
+        .map((p) => readFileSync(resolve(process.cwd(), p), "utf8")).join("\n");
+      const { createRequire } = await import("node:module");
+      const { chromium } = createRequire(resolve(process.cwd(), "package.json"))("@playwright/test") as typeof import("@playwright/test");
+      const browser = await chromium.launch();
+      try {
+        const page = await browser.newPage();
+        for (const theme of ["light", "dark"]) {
+          for (const ground of ["--panel", "--float"]) {
+            await page.setContent(`<!doctype html><html data-theme="${theme}"><head><style>${sheets}</style></head>`
+              + `<body style="margin:0;background:var(${ground})"><div class="msg-body">${markup}</div></body></html>`);
+            const worst = await page.evaluate(() => {
+              const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+              const rgb = (css: string): number[] => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = css; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3); };
+              const lum = (c: number[]): number => {
+                const [r, g, b] = c.map((v) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; });
+                return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+              };
+              const ground = lum(rgb(getComputedStyle(document.body).backgroundColor));
+              return Math.min(...[...document.querySelectorAll(".msg-ink")].map((n) => {
+                const ink = lum(rgb(getComputedStyle(n).color));
+                return (Math.max(ink, ground) + 0.05) / (Math.min(ink, ground) + 0.05);
+              }));
+            });
+            expect(worst, `${theme} on ${ground}`).toBeGreaterThanOrEqual(4.5);
+          }
+        }
+      } finally {
+        await browser.close();
+      }
+    }, 60_000);
+  });
+});

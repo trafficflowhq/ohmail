@@ -69,7 +69,18 @@ describe("the decision: every view a hit can land in", () => {
       kind: "screener",
       segment: "waiting",
       row: "sender-row-7",
+      letter: "m-1",
     });
+  });
+
+  it("an earlier letter of a waiting sender opens over the card; the card's own newest letter does not", () => {
+    // The card opens on the sender's newest held letter, whose id is a derived row's own. A hit on
+    // an older letter landed on the card's top with the matched letter far below, off screen.
+    const rowIsNewest = (): string => "m-9";
+    expect(openTargetFor(msg({ id: "m-2", folder: "INBOX" }), false, rowIsNewest, new Map([["m-2", "ohmail/Screener" as const]])))
+      .toEqual({ kind: "screener", segment: "waiting", row: "m-9", letter: "m-2" });
+    expect(openTargetFor(msg({ id: "m-9", folder: "ohmail/Screener" }), false, rowIsNewest))
+      .toEqual({ kind: "screener", segment: "waiting", row: "m-9", letter: null });
   });
 
   it("the Screener's other two segments route to themselves", () => {
@@ -117,7 +128,7 @@ describe("the decision: presentation overrides the physical folder", () => {
     // queue. Folder-based routing dropped this at the Ohbox where its row never appears.
     expect(
       openTargetFor(msg({ folder: "INBOX" }), false, someRow, place("ohmail/Screener")),
-    ).toEqual({ kind: "screener", segment: "waiting", row: "sender-row-7" });
+    ).toEqual({ kind: "screener", segment: "waiting", row: "sender-row-7", letter: "m-1" });
   });
 
   it("an INBOX message presented in History opens the reader — History is pile-less", () => {

@@ -1,4 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import createNextIntlPlugin from "next-intl/plugin";
 import { API_BASE, MARKETING_PATHS, ZONE_PATHS, rewritesFor } from "./routes.mjs";
@@ -770,7 +772,19 @@ const configured = withNextIntl(nextConfig);
  * now, so the button links it through `latest` like every other download and no build has
  * to know a version. `app/(marketing)/downloads.ts` carries the reasoning.
  */
+/**
+ * pdf.js's standard font data, served from `public/pdfjs/standard_fonts/` (the PDF preview's
+ * `STANDARD_FONTS`): copied from the installed pdfjs-dist, licences included, when the app builds or
+ * serves. Copied rather than committed: the fonts are binaries the public tree does not carry.
+ */
+export function copyStandardFonts(to = fileURLToPath(new URL("./public/pdfjs/standard_fonts/", import.meta.url))) {
+  const from = join(dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json")), "standard_fonts");
+  mkdirSync(to, { recursive: true });
+  for (const name of readdirSync(from)) copyFileSync(join(from, name), join(to, name));
+}
+
 export default async function config() {
+  copyStandardFonts();
   const provided = (process.env[GITHUB_STARS_VAR] ?? "").trim();
   const stars = provided !== "" ? provided : String(await githubStars());
   return {

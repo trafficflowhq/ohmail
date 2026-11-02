@@ -935,6 +935,45 @@ describe("a forward is refused only when neither its words nor its files can be 
  * named parts, selected only among the original's own rows; a name that is not one of them refuses
  * before anything is reserved, and never reaches the fetch.
  */
+describe("a forwarded letter's inline pictures stay in place in the quote", () => {
+  const PIC = "dddddddd-0000-4000-8000-000000000004";
+  async function pictured() {
+    const w = await world({
+      note: "See the photo.", noteHtml: "<p>See the photo.</p>",
+      origHtml: '<p>Before</p><img src="cid:photo@x" alt="Photo" width="320"><p>After</p>'
+        + '<img src="cid:gone@x" alt="Not sent"><img src="https://tracker.example/p.gif">',
+    });
+    await w.db.insert(attachments).values({
+      id: PIC, accountId: w.ctx.accountId, messageId: w.originalId, filename: "photo.png",
+      contentType: "image/png", sizeBytes: 3, partId: "2", inline: true, contentId: "<photo@x>",
+    });
+    return { w, send: sendSpy(), fetch: fetchSpy({ "2": new Uint8Array([1, 2, 3]) }) };
+  }
+  const go = (s: Awaited<ReturnType<typeof pictured>>, key: string, input: Record<string, unknown> = {}) =>
+    sendService.send(s.w.ctx, s.w.draftId, key,
+      { openSendAdapter: s.send.openSendAdapter, openFetchAdapter: s.fetch.openFetchAdapter },
+      { forwardOf: s.w.originalId, ...input });
+
+  it("the quote keeps the picture where it stood, naming the inline part that travels with it", async () => {
+    const s = await pictured();
+    expect((await go(s, "fwd-pic-1")).status).toBe("sent");
+    const msg = s.send.delivered[0]!;
+    const quote = msg.html!.slice(msg.html!.indexOf("<blockquote>"));
+    expect(quote).toMatch(/<p>Before<\/p><img src="cid:photo@x" alt="Photo" width="320" \/><p>After<\/p>/);
+    expect(msg.attachments?.map((a) => a.cid)).toEqual(["photo@x"]);
+    // A picture that does not travel, and a remote one, never enter the quote.
+    expect(msg.html).not.toContain("gone@x");
+    expect(msg.html).not.toContain("tracker.example");
+    expect(msg.text).not.toContain("cid:");
+  });
+
+  it("a picture the person took off the forward leaves the quote too", async () => {
+    const s = await pictured();
+    expect((await go(s, "fwd-pic-2", { forwardParts: [] })).status).toBe("sent");
+    expect(s.send.delivered[0]!.html).not.toContain("<img");
+  });
+});
+
 describe("forwardParts — only the files the person kept leave", () => {
   const A = "aaaaaaaa-0000-4000-8000-000000000001";
   const B = "bbbbbbbb-0000-4000-8000-000000000002";
