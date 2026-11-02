@@ -51,6 +51,12 @@ describe("decideFolderRole", () => {
     expect(decide("trash", [f("Papierkorb", "\\Junk"), f("Trash")], "Papierkorb").path).toBe("Trash");
   });
 
+  it("INBOX is never a role, flagged or stored", () => {
+    expect(decide("sent", [f("INBOX", "\\Sent"), f("Envoyés")], null).path).toBe("Envoyés");
+    expect(decide("sent", [f("INBOX"), f("Archiv")], "INBOX").path).toBeNull();
+    expect(decide("trash", [f("inbox", "\\Trash")], "inbox").path).toBeNull();
+  });
+
   it("a folder flagged for another role is never a name candidate", () => {
     expect(decide("trash", [f("Trash", "\\Junk"), f("Papierkorb")], null).path).toBe("Papierkorb");
   });

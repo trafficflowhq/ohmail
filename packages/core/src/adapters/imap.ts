@@ -67,6 +67,7 @@ import {
   type MimeStructure,
 } from "../mail.js";
 import { structureOf } from "./imap-structure.js";
+import { enumerateSections } from "../mime-sections.js";
 import { googleAppPassword } from "./google-auth.js";
 import {
   WATCHED_FOLDERS, OHMAIL_FOLDERS, DEFAULT_NET_TIMEOUTS, DEFAULT_SENT_SCAN_MESSAGES,
@@ -223,7 +224,8 @@ function serverRoleFlag(flags: ReadonlySet<string> | undefined): string | null {
  * says `X-GM-EXT-1` and saves each message its SMTP accepted under Sent Mail, so an APPEND after
  * the submission is a second copy in every client reading the folder. Read from the capability,
  * never the host name: a Google Workspace domain is Gmail under any name. Outlook.com and
- * Microsoft 365 file submissions too and announce nothing that says so (an open gap).
+ * Microsoft 365 file submissions too and announce nothing that says so: they accept third-party
+ * IMAP and SMTP only through Microsoft OAuth, so a Microsoft OAuth mailbox is read as one.
  */
 export const FILES_SUBMISSIONS_CAPABILITIES: readonly string[] = ["X-GM-EXT-1"];
 
@@ -818,6 +820,19 @@ export class MessageGoneError extends Error {
   ) {
     super(`message not at source locator ${locator.folder}#${locator.ref}`);
     this.name = "MessageGoneError";
+  }
+}
+
+/**
+ * A read came back empty and the server's UID SEARCH could not say the message is gone (refused, or
+ * the message is there): imapflow answers a FETCH throttled past its retries with nothing and no
+ * error. "Not now", under the code every caller already reads as a throttle; never a gone message.
+ */
+export class ReadNotAnsweredError extends Error {
+  readonly code = "ETHROTTLE";
+  constructor(public locator: NativeLocator) {
+    super(`the mail server gave no answer for ${locator.folder}#${locator.ref}`);
+    this.name = "ReadNotAnsweredError";
   }
 }
 
@@ -5889,6 +5904,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     return { locator, raw };
   }
 
+  /**
+   * THE SERVER'S WORD ON ONE UID, asked after a read came back empty: imapflow answers an absent
+   * UID, a throttled FETCH and one with no mailbox selected alike. `UID SEARCH UID n` does not:
+   * an array is an answer, anything else is none. No selection is a lost connection.
+   */
+  private async uidAnswer(uid: number, folder: string): Promise<"present" | "absent" | "unanswered"> {
+    if (this.connectionGone() || !this.client.mailbox) throw connectionGoneError();
+    const found = await this.searchBounded({ uid: String(uid) }, { uid: true }, folder);
+    return !Array.isArray(found) ? "unanswered" : found.includes(uid) ? "present" : "absent";
+  }
+
   /** The connection is known dead: closed, retired, or the driver's own `usable` cleared. */
   private connectionGone(): boolean {
     return !this.established || this.closing || this.retiredBecause !== null
@@ -5903,6 +5929,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   /** Does this server file every SMTP submission into Sent itself? See {@link FILES_SUBMISSIONS_CAPABILITIES}. */
   private serverFilesSubmissions(): boolean {
+    const auth = this.config.auth;
+    if ("fetchAccessToken" in auth && auth.provider === "microsoft") return true;
     const caps = this.client?.capabilities;
     return FILES_SUBMISSIONS_CAPABILITIES.some((c) => caps?.has?.(c) === true);
   }
@@ -5919,7 +5947,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (!inner) return null;
     const clock = ImapDeadline.in(SERVER_SENT_COPY_FIND_MS, "read_deadline", () => this.now());
     try {
-      const sentCanonical = await this.resolveSentFolder();
+      // Read-only: a look never creates a folder.
+      const sentCanonical = await this.findSentForScan();
+      if (sentCanonical === null) return null;
       for (let look = 0; look <= SERVER_SENT_COPY_LOOK_WAITS_MS.length; look++) {
         if (look > 0) {
           const wait = SERVER_SENT_COPY_LOOK_WAITS_MS[look - 1]!;
@@ -6058,7 +6088,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // one hands one person's file to another.
       this.assertLocatorEpoch(locator);
       const dl = await this.bounded(this.client.download(String(uid), part, { uid: true, chunkSize: PART_CHUNK_BYTES }));
-      if (!dl || !dl.content) throw new MessageGoneError(locator);
+      // Present and empty is a missing section (gone, the door's repair route) only when the
+      // server's tree lacks it; a section the tree declares with bytes is a throttled read.
+      if (!dl || !dl.content) {
+        const answer = await this.uidAnswer(uid, locator.folder);
+        if (answer === "unanswered" || (answer === "present" && await this.declaresSection(uid, part, locator))) {
+          throw new ReadNotAnsweredError(locator);
+        }
+        throw new MessageGoneError(locator);
+      }
       // COUNT AS WE GO, and stop the moment the ceiling is crossed.
       //
       // The check has to be INSIDE the loop. Buffering the whole part and measuring afterwards
@@ -6086,7 +6124,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // cut this read. Gone is the door's re-resolved retry, never a short part handed on as whole.
       if (total >= CUT_PART_READ_FLOOR) {
         const still = await this.bounded(this.client.fetchOne(String(uid), { uid: true }, { uid: true }));
-        if (!still) throw new MessageGoneError(locator, true);
+        const answer = still ? "present" : await this.uidAnswer(uid, locator.folder);
+        if (answer === "unanswered") throw new ReadNotAnsweredError(locator);
+        if (answer === "absent") throw new MessageGoneError(locator, true);
       }
       return {
         contentType: dl.meta?.contentType ?? "application/octet-stream",
@@ -6109,10 +6149,24 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     try {
       this.assertLocatorEpoch(locator);
       const m = await this.bounded(this.client.fetchOne(String(uid), { uid: true, bodyStructure: true }, { uid: true }));
-      return m ? structureOf(m.bodyStructure) ?? null : null;
+      if (m) return structureOf(m.bodyStructure) ?? null;
+      if (await this.uidAnswer(uid, locator.folder) === "absent") return null;
+      throw new ReadNotAnsweredError(locator);
     } finally {
       lock.release();
     }
+  }
+
+  /**
+   * Does the server's tree for a message still at its UID declare `section` with bytes? Asked under
+   * the caller's lock after an empty part read; an empty structure answer is itself not now.
+   */
+  private async declaresSection(uid: number, section: string, locator: NativeLocator): Promise<boolean> {
+    const m = await this.bounded(this.client.fetchOne(String(uid), { uid: true, bodyStructure: true }, { uid: true }));
+    if (!m) throw new ReadNotAnsweredError(locator);
+    const tree = structureOf(m.bodyStructure);
+    const node = tree && enumerateSections(tree)?.find((s) => s.section === section)?.node;
+    return (node?.size ?? 0) > 0;
   }
 
   /**
@@ -6145,7 +6199,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // falsy, which is a property of the driver rather than a thing it promises.
       const dl = await this.bounded(
         this.client.download(String(uid), undefined, { uid: true, maxBytes }));
-      if (!dl || !dl.content) throw new MessageGoneError(locator);
+      if (!dl || !dl.content) {
+        if (await this.uidAnswer(uid, locator.folder) === "absent") throw new MessageGoneError(locator);
+        throw new ReadNotAnsweredError(locator);
+      }
       const chunks: Buffer[] = [];
       let total = 0;
       for await (const chunk of dl.content) {

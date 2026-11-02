@@ -10,9 +10,8 @@ import type { Db } from "./context.js";
 /**
  * The user's own folders, as the server knows them (FOLDERS-SPEC.md §2/§4). `mailbox_folders` is
  * the worker's cursor table, already post-exclusion. Left to exclude HERE: the organized six, the
- * `ohmail` namespace, and THE SENT FOLDER — an open edge: the worker resolves Sent at connect and
- * does not persist the answer, so this module can only recognise Sent-SHAPED paths; the residual
- * appears as a user folder until the resolved path is persisted beside `mailboxes.junk_folder`.
+ * `ohmail` namespace, and THE SENT FOLDER — Sent-shaped, or the path the attach recorded
+ * (`mailboxes.sent_folder`), which every read here selects through its mailbox join.
  * A row whose folder the server states gone is retired by the worker's cycle, and a new row
  * announces itself, so the list follows the server. Nothing here writes to the mailbox.
  */
@@ -60,6 +59,12 @@ const OP_SELECTION = {
 
 type OpColumns = { opKind: string | null; opTo: string | null; opStatus: string | null; opError: string | null };
 
+/** A selected row → {@link UserFolderRow}, or null when the folder is not the user's own; the mailbox's recorded Sent decides with the name. */
+function userRowOf<R extends OpColumns & Omit<UserFolderRow, "op"> & { sentFolder: string | null }>(r: R): UserFolderRow | null {
+  const { sentFolder, ...row } = r;
+  return userFolderExclusion(row.folder, sentFolder) === null ? { ...row, op: opOf(row) } : null;
+}
+
 /** One row's op columns → {@link UserFolderOp} (or null when no op row joined). */
 function opOf(r: OpColumns): UserFolderOp | null {
   if (r.opKind !== "create" && r.opKind !== "rename" && r.opKind !== "delete") return null;
@@ -88,14 +93,14 @@ export async function listUserFolders(db: Db, accountId: string): Promise<UserFo
       address: mailboxes.address,
       updatedAt: mailboxFolders.updatedAt,
       ...OP_SELECTION,
+      sentFolder: mailboxes.sentFolder,
     })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
     .leftJoin(folderOps, eq(folderOps.folderId, mailboxFolders.id))
     .where(and(eq(mailboxes.accountId, accountId), isNull(mailboxes.foldersDisabledAt)));
   return rows
-    .filter((r) => userFolderExclusion(r.folder) === null)
-    .map((r) => ({ ...r, op: opOf(r) }))
+    .flatMap((r) => userRowOf(r) ?? [])
     .sort((a, b) => (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
 }
 
@@ -118,14 +123,14 @@ export async function listMailboxUserFolders(
       address: mailboxes.address,
       updatedAt: mailboxFolders.updatedAt,
       ...OP_SELECTION,
+      sentFolder: mailboxes.sentFolder,
     })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
     .leftJoin(folderOps, eq(folderOps.folderId, mailboxFolders.id))
     .where(and(eq(mailboxes.accountId, accountId), eq(mailboxFolders.mailboxId, mailboxId)));
   return rows
-    .filter((r) => userFolderExclusion(r.folder) === null)
-    .map((r) => ({ ...r, op: opOf(r) }))
+    .flatMap((r) => userRowOf(r) ?? [])
     .sort((a, b) => (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
 }
 
@@ -180,6 +185,7 @@ export async function userFolderById(
       address: mailboxes.address,
       updatedAt: mailboxFolders.updatedAt,
       ...OP_SELECTION,
+      sentFolder: mailboxes.sentFolder,
     })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
@@ -193,7 +199,7 @@ export async function userFolderById(
     ))
     .limit(1);
   if (!r) return null;
-  return userFolderExclusion(r.folder) === null ? { ...r, op: opOf(r) } : null;
+  return userRowOf(r);
 }
 
 /**
@@ -217,6 +223,7 @@ export async function userFoldersByIds(
       address: mailboxes.address,
       updatedAt: mailboxFolders.updatedAt,
       ...OP_SELECTION,
+      sentFolder: mailboxes.sentFolder,
     })
     .from(mailboxFolders)
     .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
@@ -228,7 +235,8 @@ export async function userFoldersByIds(
     ));
   const out = new Map<string, UserFolderRow>();
   for (const r of rows) {
-    if (userFolderExclusion(r.folder) === null) out.set(r.id, { ...r, op: opOf(r) });
+    const row = userRowOf(r);
+    if (row !== null) out.set(r.id, row);
   }
   return out;
 }

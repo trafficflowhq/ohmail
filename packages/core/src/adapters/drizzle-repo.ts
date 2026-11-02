@@ -12,7 +12,7 @@ import type {
   // default barrel re-exports the model half beside it — so naming it here would put the
   // classifier and the drafter into the import graph of every artifact that stores a message.
 } from "../mail.js";
-import { canonicalDestination, LEGACY_NEWS_FOLDER, NEWS_FOLDER, SENT_SHAPED_PATHS } from "../types.js";
+import { canonicalDestination, isSentFolderOf, LEGACY_NEWS_FOLDER, NEWS_FOLDER, SENT_SHAPED_PATHS } from "../types.js";
 import {
   messageSearchUpsert, reindexMessageSearch, storedSearchInputWith, upsertMessageSearch, type MessageSearchInput,
 } from "../message-search.js";
@@ -42,7 +42,7 @@ import { dialect, pgOnly, type Dialect } from "@trafficflow/db/dialect";
 import { effectForDestination } from "../rules.js";
 // The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
 // export in imap-types.ts carries the watermark argument).
-import { SENT_SHAPED_CANONICAL, userFolderExclusion } from "./imap-types.js";
+import { userFolderExclusion } from "./imap-types.js";
 /* The stop's two shapes, imported rather than respelt: `BudgetStop` is what a pass REPORTS (it
    names the folder), `FolderBudgetStop` what one folder's row HOLDS (the row names it). */
 import type { BudgetStop, FolderBudgetStop, ImapConfig, LetterAsk, MailboxAdapter } from "./imap-types.js";
@@ -3159,7 +3159,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         serverExists: sql`coalesce(${excluded("server_exists")}, ${mailboxFolders.serverExists})`,
       },
     });
-    await this.announceNewFolders(mailboxId, names.filter((n) => !had.has(n) && userFolderExclusion(n) === null));
+    await this.announceNewFolders(mailboxId, names.filter((n) => !had.has(n)));
   }
 
   /**
@@ -3167,11 +3167,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * one exclusion rule admits; the materializer still decides the rest (a mailbox with folders
    * off drains it as a tombstone of an id nobody holds).
    */
-  private async announceNewFolders(mailboxId: string, made: readonly string[]): Promise<void> {
-    if (made.length === 0) return;
-    const [mb] = await this.db.select({ accountId: mailboxes.accountId }).from(mailboxes)
+  private async announceNewFolders(mailboxId: string, candidates: readonly string[]): Promise<void> {
+    if (candidates.length === 0) return;
+    const [mb] = await this.db.select({ accountId: mailboxes.accountId, sentFolder: mailboxes.sentFolder }).from(mailboxes)
       .where(eq(mailboxes.id, mailboxId)).limit(1);
     if (!mb) return;
+    // Only the user's own folders announce: the recorded Sent is read once, here.
+    const made = candidates.filter((n) => userFolderExclusion(n, mb.sentFolder) === null);
+    if (made.length === 0) return;
     const rows = await this.db.select({ id: mailboxFolders.id }).from(mailboxFolders)
       .where(and(eq(mailboxFolders.mailboxId, mailboxId), inArray(mailboxFolders.folder, [...made])));
     const changes = rows.map((r) => ({
@@ -3211,7 +3214,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       target: [mailboxFolders.mailboxId, mailboxFolders.folder],
       set: { budgetStopUid: BigInt(stop.uid), budgetStopUidvalidity: BigInt(stop.uidValidity) },
     });
-    if (!had && userFolderExclusion(stop.folder) === null) await this.announceNewFolders(mailboxId, [stop.folder]);
+    if (!had) await this.announceNewFolders(mailboxId, [stop.folder]);
   }
 
   /**
@@ -3584,7 +3587,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
               sql`${mailboxFolders.uidvalidity} is not null and ${mailboxFolders.uidvalidity} not in (0, ${messageInstances.uidvalidity})`,
             ));
           const removable = staleRows
-            .filter((r) => r.folder !== (sentFolder ?? null) && !SENT_SHAPED_CANONICAL.test(r.folder))
+            .filter((r) => !isSentFolderOf(r.folder, sentFolder))
             .map((r) => r.id);
           if (removable.length > 0) {
             await this.db.delete(messageInstances).where(inArray(messageInstances.id, removable));

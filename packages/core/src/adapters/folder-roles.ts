@@ -75,9 +75,11 @@ function bySegments(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
+/** INBOX is never a role, whatever its flags or a stored record say. */
 function eligible(f: RoleFolder): boolean {
   const flags = lowerFlags(f);
-  return !flags.has("\\noselect") && !flags.has("\\nonexistent") && !OHMAIL_SEGMENT.test(f.path);
+  return f.path.toUpperCase() !== "INBOX"
+    && !flags.has("\\noselect") && !flags.has("\\nonexistent") && !OHMAIL_SEGMENT.test(f.path);
 }
 
 function atGuessDepth(path: string, parents: readonly string[] = []): boolean {

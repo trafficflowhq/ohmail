@@ -22,7 +22,7 @@ afterEach(async () => {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-async function world(opts: Omit<GmailLikeOptions, "upstream" | "auth"> = {}): Promise<{
+async function world(opts: Omit<GmailLikeOptions, "upstream" | "auth"> & { microsoft?: boolean } = {}): Promise<{
   gm: ImapConfig; pair: GmailLikePair; adapter: ImapAdapter; mid: string; uidValidity: string;
 }> {
   const gm = greenmailConfig();
@@ -34,10 +34,13 @@ async function world(opts: Omit<GmailLikeOptions, "upstream" | "auth"> = {}): Pr
   await c.mailboxCreate("Sent").catch(() => undefined);
   const st = await c.status("Sent", { uidValidity: true });
   await c.logout();
-  const pair = await startGmailLikePair({ upstream, auth, ...opts });
+  const { microsoft, ...pairOpts } = opts;
+  const pair = await startGmailLikePair({ upstream, auth, ...pairOpts, ...(microsoft === true ? { xoauth2: true } : {}) });
   opened.push(pair);
   const adapter = new ImapAdapter({
     ...gm, host: pair.imap.host, port: pair.imap.port,
+    // A Microsoft OAuth mailbox: the token is the fixture's password, which GreenMail takes over XOAUTH2.
+    ...(microsoft === true ? { auth: { user: auth.user, fetchAccessToken: async () => auth.pass, provider: "microsoft" as const } } : {}),
     smtp: { host: pair.smtp.host, port: pair.smtp.port, secure: false },
   });
   opened.push(adapter);
@@ -116,6 +119,16 @@ describe("a server that files its own submissions keeps ONE sent copy", () => {
     expect(uids).toHaveLength(1);
     expect(res.sentLocator).toEqual({ folder: "Sent", ref: `${uidValidity}:${uids[0]}` });
     expect(res.raw?.toString("latin1")).not.toContain("by gmail-like.test");
+  }, 30_000);
+
+  it("a Microsoft OAuth mailbox (files submissions, announces nothing): ONE copy, the server's", async () => {
+    const { gm, pair, adapter, mid, uidValidity } = await world({ announce: false, microsoft: true });
+    const res = await adapter.send(letter(gm, mid));
+    await pair.whenFiled(1);
+    const uids = await sentUidsFor({ host: gm.host, port: gm.port }, gm.auth as { user: string; pass: string }, mid);
+    expect({ submissions: pair.submissions, uids }).toEqual({ submissions: 1, uids: [pair.filedUids[0]] });
+    expect(res.sentLocator).toEqual({ folder: "Sent", ref: `${uidValidity}:${pair.filedUids[0]}` });
+    expect(res.providerMessageId).toBe(mid);
   }, 30_000);
 
   it("the next sync fills the locator in: the late copy arrives as the user's own Sent message", async () => {

@@ -126,6 +126,7 @@ async function until(cond: () => boolean, what: string): Promise<void> {
   if (!cond()) throw new Error(`never reached: ${what}`);
 }
 const replySent = sayArg(Copy.replySent);
+const alreadyWent = sayArg(Copy.unsavedSendAlreadyWent);
 /** The n-th send request since the network came back has reached the door (it may be held there). */
 const untilWire = (s: Scene, n: number, what: string) => until(() => s.wire.length >= n, what);
 
@@ -362,10 +363,10 @@ describe("a live press re-pressed while it is on the wire", () => {
     const again = s.actions.sendReply("m-1", "Reply to Ada.", false);
     release();
     const [r1, r2] = await Promise.all([first, again]);
-    // One key, one speaker: the confirmed send in the air yields to the newer press, which says it once.
+    // One key, one speaker: the newer press resumed a key the server had already sent, and says so.
     expect([r1.outcome, r2.outcome]).toEqual(["superseded", "sent"]);
     expect(deliveredFor(s, "m-1")).toHaveLength(1);
-    expect(s.toasts.map((t) => t.say)).toEqual([replySent]);
+    expect(s.toasts.map((t) => t.say)).toEqual([alreadyWent]);
     expect(sentCopies(s), "one delivery painted as two Sent copies").toHaveLength(1);
     s.store.close();
   }, 60_000);
@@ -386,6 +387,35 @@ describe("a live press re-pressed while it is on the wire", () => {
     expect(sentCopies(s), "one delivery painted as two Sent copies").toHaveLength(1);
     s.store.close();
   }, 60_000);
+});
+
+describe("the same words again after the send went", () => {
+  it("a new key inside the server's content claim says already sent, never 'try again'", async () => {
+    const s = await scene();
+    s.fake.setContentClaim(true);
+    expect((await s.actions.sendReply("m-1", "Reply to Ada.", false)).outcome).toBe("sent");
+    const said = s.toasts.length;
+    const again = await s.actions.sendReply("m-1", "Reply to Ada.", false);
+    expect(again.outcome).toBe("failed");
+    expect(s.fake.duplicates(), "the second press did not reach the content claim").toHaveLength(1);
+    expect(s.toasts.slice(said).map((t) => t.say)).toEqual([alreadyWent]);
+    expect(s.fake.deliveries()).toHaveLength(1);
+    s.store.close();
+  }, 60_000);
+
+  // A first send the server holds pending or could not confirm may still not go: claim no delivery.
+  for (const status of ["pending", "unverified"]) {
+    it(`the claim names a first send that is ${status}: check Sent first, never 'already sent'`, async () => {
+      const s = await scene();
+      s.fake.setContentClaim(true, status);
+      await s.actions.sendReply("m-1", "Reply to Ada.", false);
+      const said = s.toasts.length;
+      expect((await s.actions.sendReply("m-1", "Reply to Ada.", false)).outcome).toBe("failed");
+      expect(s.toasts.slice(said).map((t) => t.say)).toEqual([sayArg(Copy.replyUnverifiedAgain)]);
+      expect(s.fake.deliveries()).toHaveLength(1);
+      s.store.close();
+    }, 60_000);
+  }
 });
 
 describe("Cancel and a kill on the same seam", () => {

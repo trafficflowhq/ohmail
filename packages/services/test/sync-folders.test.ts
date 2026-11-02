@@ -82,7 +82,7 @@ describe("the exclusion, pinned row by row", () => {
       "INBOX/Sent", "Sent", "Sent Messages", "INBOX/Sent Messages", "Sent Items", "Sent Mail",
       "Gesendet", "Gesendete Objekte", "INBOX/Gesendete Elemente",
     ]) {
-      expect(userFolderExclusion(p), p).not.toBeNull();
+      expect(userFolderExclusion(p, null), p).not.toBeNull();
     }
     for (const p of [
       "Projects/Acme", "Invoices 2026", "Archiv/Steuern 2010", "_archive/Clients/Anna",
@@ -91,8 +91,37 @@ describe("the exclusion, pinned row by row", () => {
       // a user's own nested `…/Sent Messages`, holding mail they filed).
       "Alternativen/Sent Messages",
     ]) {
-      expect(userFolderExclusion(p), p).toBeNull();
+      expect(userFolderExclusion(p, null), p).toBeNull();
     }
+  });
+});
+
+describe("the Sent folder the attach recorded", () => {
+  for (const recorded of ["Envoyés", "INBOX/Verzonden", "INBOX.Verzonden"]) {
+    it(`a recorded '${recorded}' is never listed or announced as a user folder`, async () => {
+      const { db, ctx, mailboxId, accountId } = await setup();
+      await addFolder(db, mailboxId, recorded);
+      const acme = await addFolder(db, mailboxId, "Projects/Acme");
+      await db.update(mailboxes).set({ sentFolder: recorded }).where(eq(mailboxes.id, mailboxId));
+      await setFoldersEnabled(ctx, true);
+      const rows = await db.select().from(changeLog).where(eq(changeLog.accountId, accountId));
+      expect(rows.filter((r) => r.entityType === "folder").map((r) => r.entityId)).toEqual([acme]);
+      expect(folderChanges((await svc.getSnapshot(ctx)) as never).map((c) => c.entity?.name)).toEqual(["Projects/Acme"]);
+      expect(folderChanges((await svc.getChanges(ctx, { since: "0" })) as never).map((c) => [c.op, c.entity?.name]))
+        .toEqual([["create", "Projects/Acme"]]);
+    });
+  }
+
+  it("CONTROL: with nothing recorded, an 'Envoyés' the name rule does not know is the user's", async () => {
+    const { db, ctx, mailboxId } = await setup();
+    await addFolder(db, mailboxId, "Envoyés");
+    await setFoldersEnabled(ctx, true);
+    expect(folderChanges((await svc.getSnapshot(ctx)) as never).map((c) => c.entity?.name)).toEqual(["Envoyés"]);
+  });
+
+  it("a recorded INBOX is never read as Sent", () => {
+    expect(userFolderExclusion("Projects/Acme", "INBOX")).toBeNull();
+    expect(userFolderExclusion("Envoyés", "Envoyés")).toBe("it is the mailbox's Sent folder");
   });
 });
 
@@ -444,11 +473,11 @@ describe("the Sent shape is one value, shared by the server's inventory and the 
     ];
     for (const path of sent) {
       expect(isSentFolderPath(path), `client, ${path}`).toBe(true);
-      expect(userFolderExclusion(path), `server, ${path}`).toBe("it is the mailbox's Sent folder");
+      expect(userFolderExclusion(path, null), `server, ${path}`).toBe("it is the mailbox's Sent folder");
     }
     for (const path of notSent) {
       expect(isSentFolderPath(path), `client, ${path}`).toBe(false);
-      expect(userFolderExclusion(path), `server, ${path}`).not.toBe("it is the mailbox's Sent folder");
+      expect(userFolderExclusion(path, null), `server, ${path}`).not.toBe("it is the mailbox's Sent folder");
     }
   });
 });

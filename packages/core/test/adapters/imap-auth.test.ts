@@ -30,6 +30,8 @@ describe("buildImapAuth", () => {
     expect(auth.user).toBe("u@contoso-com.example");
     // The refresh token reached the token-source factory, not a `pass`.
     expect(factoryCalls).toEqual([{ refreshToken: "REFRESH-TOKEN", tenant: "common", provider: "microsoft" }]);
+    // The provider rides the auth: Microsoft files every submission into Sent Items itself.
+    expect((auth as { provider?: string }).provider).toBe("microsoft");
   });
 
   it("THROWS on an unhandled authType — fail-closed, not a silent password default", () => {

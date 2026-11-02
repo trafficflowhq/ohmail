@@ -1833,8 +1833,8 @@ export function useMailSend(
         return;
       }
       /* ANSWERED FROM THE RESERVATION: the server already held this key's send (`firstSend`), so the
-         press delivered nothing new. A resumed key alone says nothing: it is also the first delivery. */
-      if (answeredEarlier && key === COMPOSE_SEND_KEY && !m.sendAt) {
+         press delivered nothing new, on every lane. A resumed key alone says nothing: it is also the first delivery. */
+      if (answeredEarlier && !m.sendAt) {
         toast(t("compose.toastAlreadySent"));
         return;
       }
@@ -2107,11 +2107,14 @@ export function useMailSend(
     if (stillQueued) {
       const wait = BACKOFF_MS[Math.min(attempt.current, BACKOFF_MS.length - 1)]!;
       attempt.current += 1;
-      timer.current = setTimeout(() => void flush(), wait);
+      timer.current = setTimeout(() => void flushRef.current(), wait);
     } else {
       attempt.current = 0;
     }
   }, [engine, absorb]);
+  /* The timer runs the newest `flush`, so a callback that changes identity never strands a queued send. */
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
 
   /**
    * FLUSH'S OWN PER-RESULT WORK, reachable from the restore collector — see {@link absorbOwn}.
@@ -2434,14 +2437,15 @@ export function useMailSend(
     settledRef.current(lane, m, true);
   };
 
+  // `timer.current` is non-null exactly while a timer is live.
   const arm = useCallback(() => {
     if (timer.current !== null) return; // one timer for the whole queue
     const wait = BACKOFF_MS[Math.min(attempt.current, BACKOFF_MS.length - 1)]!;
     attempt.current += 1;
-    timer.current = setTimeout(() => void flush(), wait);
-  }, [flush]);
+    timer.current = setTimeout(() => void flushRef.current(), wait);
+  }, []);
 
-  // Coming back online is better news than any timer, so take it immediately.
+  // Coming back online is better news than any timer, so take it immediately. Set up once per mount.
   useEffect(() => {
     const onOnline = (): void => {
       if (timer.current !== null) {
@@ -2449,14 +2453,15 @@ export function useMailSend(
         timer.current = null;
       }
       attempt.current = 0;
-      void flush();
+      void flushRef.current();
     };
     window.addEventListener("online", onOnline);
     return () => {
       window.removeEventListener("online", onOnline);
       if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = null;
     };
-  }, [flush]);
+  }, []);
 
   /**
    * WHAT THIS LANE'S STATE IS, ONCE, FOR EVERY READER: `stateOf` and the refusal inside `send` are the same question,
