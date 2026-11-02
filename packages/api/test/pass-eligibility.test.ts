@@ -24,7 +24,7 @@ import { makeDeps, req } from "./helpers.js";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, deps: ApiDeps): Promise<Response> => app.handle(r, deps);
-const SECRET = "pass-eligibility-test-secret-abcdefghij-fixture-token";
+const SECRET = "pass-eligibility-internal-secret-fixture-token";
 
 /** A port refusing exactly the named accounts; everything else is allowed with open limits. */
 function portParking(parked: ReadonlySet<string>): EntitlementsPort {

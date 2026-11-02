@@ -19,14 +19,14 @@ import { makeDeps, seedStaffSession, req, FIXED_NOW } from "./helpers.js";
  */
 
 const app = createApp(apiRoutes);
-const SECRET = "admin-secret-for-tests-abcdefghij-fixture-token";
+const SECRET = "admin-console-internal-secret-fixture-token";
 const ADMIN: AdminConfig = { secret: SECRET, environment: "test" };
 
 const H = (r: Request, d: ApiDeps): Promise<Response> =>
   app.handle(r, { ...d, session: null, idempotency: null });
 // The reads demand a live staff session besides the secret (NEW-ADMIN-READ-NO-SESSION); each
 // test seeds this token before driving them.
-const STAFF_TOKEN = "staff-session-token-fixture-abcdefghij-fixture-token";
+const STAFF_TOKEN = "staff-session-cookie-fixture-token";
 const staffReq = (path: string): Request =>
   req("GET", path, { bearer: SECRET, headers: { [STAFF_SESSION_HEADER]: STAFF_TOKEN } });
 

@@ -275,6 +275,52 @@ export function isZonePath(/** @type {string} */ pathname) {
   return zonePathOf(pathname) !== null;
 }
 
+/** `p` with its ASCII capitals lowered: letter case as the header rules ignore it. */
+const lowerAscii = (/** @type {string} */ p) => p.replace(/[A-Z]+/g, (c) => c.toLowerCase());
+/** The exact zone paths a case variant can name: all but `/`, which has no letters. */
+const ZONE_CASED = ZONE_EXACT.filter((p) => p !== "/");
+
+/**
+ * The zone spelling `p` differs from only in letter case, or null: an exact path's declared spelling, or a
+ * prefix's with the rest of `p` as it stands. A `decoded` rest is encoded again segment by segment, so the
+ * next request cannot read a `\` or an escape in it as a step out of the prefix.
+ */
+function caseFolded(/** @type {string} */ p, decoded = false) {
+  const lower = lowerAscii(p);
+  const exact = ZONE_CASED.find((z) => lowerAscii(z) === lower);
+  if (exact !== undefined) return exact;
+  const prefix = ZONE_PREFIXES.find((x) => lower.startsWith(lowerAscii(x)));
+  if (prefix === undefined) return null;
+  const rest = p.slice(prefix.length);
+  return `${prefix}${decoded ? rest.split("/").map(encodeURIComponent).join("/") : rest}`;
+}
+
+/**
+ * The zone spelling a CASE VARIANT of a zone path names (`/PRIVACY`, `/Landing/x.webp`), or null for a zone
+ * spelling and every other path. The header rules match a path in any case and the router does not, so
+ * `middleware.ts` redirects a variant there rather than serve a page with no policy. Read as sent, then as
+ * the router would serve it; the result is always a zone spelling (`zonePathOf(result) === result`).
+ *
+ * @returns {string | null}
+ */
+export function zoneCaseVariantOf(/** @type {string} */ pathname) {
+  if (zonePathOf(pathname) !== null) return null;
+  const routed = routedPath(pathname);
+  return caseFolded(pathname) ?? (routed === null ? null : caseFolded(routed, true));
+}
+
+/** `p` as a regex alternative: metacharacters escaped, each ASCII letter a class of its two cases. */
+const anyCase = (/** @type {string} */ p) =>
+  p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[A-Za-z]/g, (c) => `[${c.toUpperCase()}${c.toLowerCase()}]`);
+
+/**
+ * The middleware matcher arm for a case variant of a zone path, spelled out in `middleware.ts` (the matcher
+ * is read statically). Its letters are classes of both cases, so `next start`'s case-sensitive matcher and a
+ * case-insensitive one read the same set: every exact zone path but `/`, and each prefix with any rest.
+ */
+export const ZONE_CASE_SOURCE = `/((?:${ZONE_CASED.map((p) => anyCase(p.slice(1))).join("|")})|(?:${
+  ZONE_PREFIXES.map((x) => anyCase(x.slice(1, -1))).join("|")})/.*)`;
+
 /** The subset the middleware matcher must carry, and nothing else. */
 export const EDGE_PATHS = Object.freeze([
   ...new Set([...OWN_ROUTES.filter((r) => r.edge).map((r) => r.path), ...ZONE_PATHS]),

@@ -29,7 +29,7 @@ const H = (r: Request, d: ApiDeps): Promise<Response> =>
 
 const PW = "pw-correct-horse-battery-password";
 const IP = "198.51.100.7";
-const IMAP = { host: "imap.example", port: 993, secure: true, user: "mila", pass: "s3cr3t-imap-password-password" };
+const IMAP = { host: "imap.example", port: 993, secure: true, user: "mila", pass: "mailbox-imap-password" };
 
 const envelope = async (res: Response): Promise<{ code: string; message: string }> => {
   const body = await res.json() as { error?: { code: string; message: string } };

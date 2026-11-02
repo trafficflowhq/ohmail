@@ -3,6 +3,7 @@ import { classifySensitivity, screenOutboundText, redactForModel } from "../src/
 import type { NormalizedMessage } from "../src/types.js";
 import { WITHHELD, normalized } from "./fixtures/sensitive-corpus.js";
 import { normalizeMime } from "../src/mime.js";
+import { opaqueRun } from "../../../test/support/fixture-credentials.js";
 
 /**
  * AUTHENTICATION VOCABULARY IS READ FROM WORDS, NOT FROM MACHINE TOKENS.
@@ -34,18 +35,16 @@ function trackingLink(token: string): string {
   return `[https://url8792.mail.example.com/ls/click?upn=u001.${token}]`;
 }
 
-/* The tokens are the subject, so their bytes stay exact: each is assembled at run time from two halves (the
- * push gate reads a whole token-shaped literal under a token name as a credential), and the first case below
- * asserts every one of them whole. */
-const assemble = (...parts: string[]): string => parts.join("");
+/* The tokens' SHAPE is the subject: each is an opaque run derived from its tag, with the escape the case
+ * needs written beside it, and the cases below assert every one of them whole. */
 
 /**
  * Three tokens from the same generator. The first two contain an escaped `/` immediately before
  * an `a`; the third does not. Nothing else about them differs, and nothing about them is content.
  */
-const TOKEN_TRAILING_ESCAPE = assemble("rFcAmKXLOmVjZ0Qb7HsN9pTkW3xY5bCF4fVHVZ", "kIdZFiW1D6I4wH9F2KDVC8ZVrrGx7mPban-2Fa");
-const TOKEN_INNER_ESCAPE = assemble("PAu3jQb7GgkUqMpfPcCaq25YiYIUoo4rZGhHLw-2", "BEQG-2FA-2FRgnNiYeAYVJtPPEuiLJj6pSC0SVIr");
-const TOKEN_CLEAN = assemble("Moic2Nt3KUqlQA8XNS0huHEeTQCkJoyfv75", "hxra6dtlPfi4RGb8vqEnJdWmYt1CsXpLTbQ");
+const TOKEN_TRAILING_ESCAPE = `${opaqueRun("machine-token-trailing", 72)}-2Fa`;
+const TOKEN_INNER_ESCAPE = `${opaqueRun("machine-token-inner", 38)}-2BEQG-2FA-2F${opaqueRun("machine-token-inner-tail", 29)}`;
+const TOKEN_CLEAN = opaqueRun("machine-token-clean", 70);
 
 /** A usage/billing notice: ordinary commercial mail with a tracking footer, and nothing else. */
 function billingNotice(token: string): NormalizedMessage {
@@ -88,14 +87,14 @@ describe("machine tokens are not words", () => {
     expect(/\b2fa\b/i.test(trackingLink(TOKEN_TRAILING_ESCAPE))).toBe(true);
     expect(/\b2fa\b/i.test(trackingLink(TOKEN_INNER_ESCAPE))).toBe(true);
     expect(/\b2fa\b/i.test(trackingLink(TOKEN_CLEAN))).toBe(false);
-    // Each is assembled whole: one generator's alphabet and length, so the false above is not an empty token's.
+    // Each is whole: one generator's alphabet and length, so the false above is not an empty token's.
     for (const t of [TOKEN_TRAILING_ESCAPE, TOKEN_INNER_ESCAPE, TOKEN_CLEAN]) expect(t).toMatch(/^[A-Za-z0-9-]{70,80}$/);
   });
 
   it("an uppercase PIN inside an opaque token is not a PIN", () => {
     // `PIN` is matched case-SENSITIVELY and unqualified, so it is the vocabulary entry most
     // exposed to base64: the escape separators put a word boundary on both sides of it.
-    const token = assemble("Kd8sQ2LmZ0rTvXb4Ac", "6WyE1nHjU7g-PIN-2Fx");
+    const token = `${opaqueRun("machine-token-pin", 29)}-PIN-2Fx`;
     expect(/\bPIN\b/.test(token), "the fixture must really contain a bounded PIN").toBe(true);
     const r = classifySensitivity(normalized({
       subject: "Weekly digest",
@@ -259,10 +258,10 @@ describe("an opportunistic base64 decode that produced garbage is not evidence",
    * A real-shaped click-tracker token: 40 characters of `[A-Za-z0-9+/]`, which is exactly what
    * `B64_RUN` matches.
    *
-   * It is PINNED rather than generated, because the property under test is a property of these
-   * bytes: decoded as base64 they are not valid UTF-8, so `toString("utf8")` substitutes
-   * U+FFFD — 11 replacement characters out of 30 code points. That is the whole mechanism, and a
-   * randomly generated token would make this test pass or fail by luck.
+   * It is PINNED by its tag rather than drawn at random, because the property under test is a property
+   * of these bytes: decoded as base64 they are not valid UTF-8, so `toString("utf8")` substitutes
+   * U+FFFD — 14 replacement characters out of 33 code points. That is the whole mechanism, and a
+   * randomly drawn token would make this test pass or fail by luck; the premise case asserts it.
    *
    * AND IT IS PINNED TOGETHER WITH ITS URL PREFIX, which is the part that is easy to get wrong.
    * `B64_RUN` is `[A-Za-z0-9+/]{16,}`, and `/` is IN that class, so the run it matches inside
@@ -272,7 +271,7 @@ describe("an opportunistic base64 decode that produced garbage is not evidence",
    * the old rule anyway, so the test passed with the fix REMOVED. The mutation is what found
    * that, not review.
    */
-  const GARBAGE_TOKEN = assemble("IAmwk6CHqRl06TIXzpnL", "Jm3ZWdzbJM9mPPYwtyqb");
+  const GARBAGE_TOKEN = opaqueRun("machine-token-confetti-4", 40);
 
   const PROSE = "Here are the stories we picked for you this week, we hope you enjoy reading them.";
   const withToken = (t: string) => ({

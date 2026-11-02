@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { OHMAIL_FOLDERS } from "@trafficflow/core/adapters/imap-types";
+import { META_FOLDER } from "@trafficflow/core/adapters/organizer-lease";
+import { canonicalizeProfilePayload } from "@trafficflow/core/adapters/organizer-profile";
 import { publicPath, ROOT } from "./support/public-root.mjs";
 
 /**
@@ -89,5 +92,56 @@ describe("the README's two faces", () => {
     expect(phone).toMatch(/unreadWash:\s*"#ece9de"/i);
     expect(css).not.toMatch(/#e7f1ff/i);
     expect(phone).not.toMatch(/#e7f1ff/i);
+  });
+});
+
+describe("what ohmail.app links to and quotes from the README", () => {
+  // The landing links #how-ohmail-organizes-inside-your-mailbox and quotes the folder tree, the
+  // self-host heading and the Microsoft footnote; a rewrite that drops one leaves it citing nothing.
+  const fence = /The folders ohmail creates are a small, frozen set:\s*```\n([\s\S]*?)```/.exec(paper)?.[1] ?? "";
+  const names = fence.split("\n").map((l) => l.replace(/^[├└│─\s]+/, "").split(/\s{2,}/)[0]!).filter(Boolean);
+
+  it("the organizing section draws exactly the folders ohmail creates, and none called Spam", () => {
+    expect(headings(paper)).toContain("## How ohmail organizes inside your mailbox");
+    expect(names.slice(0, 4)).toEqual(["Inbox", "Junk", "Sent", "ohmail/"]);
+    const own = [...OHMAIL_FOLDERS, META_FOLDER].map((f) => f.replace(/^ohmail\//, ""));
+    expect(names.slice(4).sort()).toEqual([...own].sort());
+    expect(names.some((n) => /^spam$/i.test(n))).toBe(false);
+  });
+
+  it("the self-host heading and the Microsoft footnote the landing quotes", () => {
+    expect(headings(paper)).toContain("### Run the server yourself");
+    const note = paper.split("\n").find((l) => l.startsWith("\\* Microsoft 365")) ?? "";
+    expect(note).toContain("Microsoft sign-in on ohmail Cloud and on self-hosted servers set up for it");
+  });
+});
+
+describe("what the docs say travels and what is not in this repository", () => {
+  const flat = (rel: string): string => readFileSync(at(rel), "utf8").replace(/\s+/g, " ");
+  // Each field the organizer profile carries, as the docs name it; a new field fails until named.
+  const PHRASE: Record<string, string> = {
+    screener: "screened in", rules: "rules", notifyRules: "notification choices",
+    awayResponder: "away reply", tagNames: "tag names", signature: "signature", signatureHtml: "signature",
+  };
+  const fields = Object.keys(canonicalizeProfilePayload({
+    screener: [], rules: [], notifyRules: [], awayResponder: null, tagNames: [],
+    signature: "Ada", signatureHtml: "<p>Ada</p>",
+  }));
+
+  it("the README and how-it-works name every setting the profile carries", () => {
+    expect(fields).toContain("signature");
+    const lists = [
+      /your settings \(([^)]*)\)/.exec(paper.replace(/\s+/g, " "))?.[1] ?? "",
+      /holds your ohmail settings for this mailbox — ([^—]*) —/.exec(flat("docs/how-it-works.md"))?.[1] ?? "",
+    ];
+    for (const list of lists) for (const f of fields) expect(list, f).toContain(PHRASE[f] ?? `<unnamed ${f}>`);
+  });
+
+  it("install.md does not call billing the only code outside this repository", () => {
+    const install = flat("docs/install.md");
+    expect(/only code that is not here is the machinery for billing/i.test(install)).toBe(false);
+    expect(install.includes(
+      "The code that is not here runs only our hosted service: its billing, the staff console and the Cloud deploy kit.",
+    )).toBe(true);
   });
 });

@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page, type Route } from "playwright";
 import { createApp, apiRoutes, csrfTokenFor, type ApiDeps } from "@trafficflow/api";
 import { refreshTokens, sessions } from "@trafficflow/db";
 import { generateToken, hashToken, type Db } from "@trafficflow/services";
@@ -54,6 +54,12 @@ let signOutDoor: "answer" | "hang" | "lost" = "answer";
 let doorFaultsLeft = Number.POSITIVE_INFINITY;
 /** The refresh door answers at once, or holds every request {@link SLOW_REFRESH_MS} and then answers. */
 let refreshDoor: "answer" | "slow" = "answer";
+/** A wake row's DELETE is answered at once, or held until {@link releaseWakeDelete} lets it through. */
+let wakeDeleteDoor: "answer" | "hold" = "answer";
+let releaseWakeDelete: () => void = () => {};
+/** `hold`: the browser's next session read (cookies, not the edge's bearer probe), held once answered. */
+let sessionDoor: "answer" | "hold" = "answer";
+let releaseSession: () => void = () => {};
 const SLOW_REFRESH_MS = 20_000;
 /** Every request the API saw: method, path, status ("held" / "dropped" for the faults), a refusal's code. */
 let heard: Array<{ method: string; path: string; status: number | "held" | "dropped"; code?: string }> = [];
@@ -106,7 +112,16 @@ async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
   if (url.pathname === "/auth/refresh" && refreshDoor === "slow") await new Promise((r) => setTimeout(r, SLOW_REFRESH_MS));
+  if (method === "DELETE" && url.pathname.startsWith("/push/subscriptions/") && wakeDeleteDoor === "hold") {
+    heard.push({ method, path: url.pathname, status: "held" });
+    await new Promise<void>((r) => { releaseWakeDelete = r; });
+  }
   const answer = await app.handle(new Request(url, { method, headers, body }), { ...world.deps, session: null, idempotency: null });
+  if (url.pathname === "/auth/session" && sessionDoor === "hold" && /(^|;\s*)tf_session=/.test(headers.get("cookie") ?? "")) {
+    sessionDoor = "answer";
+    heard.push({ method, path: url.pathname, status: "held" });
+    await new Promise<void>((r) => { releaseSession = r; });
+  }
   if (fault && signOutDoor === "lost") {
     heard.push({ method, path: url.pathname, status: "dropped" });
     req.socket.destroy();
@@ -241,8 +256,8 @@ const accountAsked = (): string[] =>
 const doorAnswers = (): Array<number | "held" | "dropped"> =>
   heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status);
 
-/** One reading of the page: where it is, whether it has parsed, what it says, and which card shows. */
-interface Sample { ms: number; path: string; ready: string; text: string; loginCard: boolean; gateMark: boolean }
+/** One reading of the page: where it is, whether it has parsed, what it says, which card shows, and the mailbox shell. */
+interface Sample { ms: number; path: string; ready: string; text: string; loginCard: boolean; gateMark: boolean; shell: boolean }
 
 /**
  * Read the page every 100 ms from `t0` until `done` holds or `maxMs` passes. A reading that falls
@@ -264,6 +279,7 @@ async function sampleUntil(
       return {
         path: location.pathname, ready: document.readyState, text: document.body?.innerText ?? "",
         loginCard: shown(".login-card"), gateMark: shown(".gate-card .wordmark"),
+        shell: document.querySelector(".app-root, .row[data-id]") !== null,
       };
     }).catch(() => null);
     if (s !== null) {
@@ -347,6 +363,8 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
   beforeEach(() => {
     doorFaultsLeft = Number.POSITIVE_INFINITY;
     refreshDoor = "answer";
+    wakeDeleteDoor = "answer";
+    sessionDoor = "answer";
   });
 
   it("THE STUCK JAR — pending marker, live family, lapsed access: one pass, the door, /login", async () => {
@@ -457,6 +475,130 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     const splash = await fetch(`http://localhost:${webPort}/`, { redirect: "manual", headers: { cookie: `tf_resume=1; tf_owner=${j.accountId}` } });
     expect(splash.status).toBe(200);
   }, 30_000);
+
+  /*
+   * A TAB OPENED DURING THE SIGN-OUT (measured on Cloud 0.30.30: a tab opened ~0.2 s after the press drew the
+   * Ohbox for the rest of the request). Two windows: the press's wake row DELETE, which used to run before the
+   * jar was marked, and a page the edge served before the press whose script runs after it.
+   */
+  it("A TAB OPENED WHILE THE PRESS'S WAKE ROW DELETE IS OUT: a 307 to /login, never the shell, no account read", async () => {
+    signOutDoor = "answer";
+    const j = await signedIn();
+    const ctx = await browser!.newContext();
+    await plant(ctx, j, { owner: j.accountId, access: true });
+    const a = await ctx.newPage();
+    await a.goto(`http://localhost:${webPort}/#/settings/account`, { waitUntil: "commit" });
+    const button = a.getByRole("button", { name: /^Sign out$/ });
+    await button.waitFor({ state: "visible", timeout: 60_000 });
+    // After the boot's own wake reconcile (it registers the worker, then turns any stored row off): a stored
+    // row id, as a browser that registered for wakes holds one.
+    const registered = (): Promise<boolean> => a.evaluate(async () => (await navigator.serviceWorker.getRegistration()) !== undefined);
+    for (let i = 0; i < 100 && !(await registered()); i += 1) await a.waitForTimeout(100);
+    await a.waitForTimeout(1_000);
+    await a.evaluate(() => { localStorage.setItem("ohmail.notifications.subscriptionId", "row-e2e"); });
+    heard = [];
+    wakeDeleteDoor = "hold";
+    await button.click();
+    const until = Date.now() + 10_000;
+    while (!heard.some((h) => h.method === "DELETE") && Date.now() < until) await a.waitForTimeout(50);
+    expect(heard.filter((h) => h.method === "DELETE").map((h) => h.status), `the press's wake row DELETE never left: ${await said(a)}`)
+      .toEqual(["held"]);
+    const before = heard.length;
+    const b = await ctx.newPage();
+    const docs = documents(b);
+    const errors = errorsOf(b);
+    const t0 = Date.now();
+    await b.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
+    const samples = await sampleUntil(b, t0, 10_000, (s) => s.path === "/login" && s.loginCard);
+    const read = heard.slice(before).filter((h) => ACCOUNT_PATHS.includes(h.path)).map((h) => `${h.method} ${h.path} ${h.status}`);
+    console.log(`e2e timing wake-delete-held docs=${JSON.stringify(docs)} shell_ms=${JSON.stringify(samples.filter((s) => s.shell).map((s) => s.ms))} `
+      + `read=${JSON.stringify(read)} errors=${JSON.stringify(errors)}`);
+    expect(docs[0], `the new tab was served the app while the sign-out was out: ${await said(b)}`)
+      .toEqual({ path: "/", status: 307, location: "/login" });
+    expect(samples.filter((s) => s.shell).map((s) => s.ms), "the new tab drew the mailbox").toEqual([]);
+    expect(read, "the new tab read the account").toEqual([]);
+    expect(samples.at(-1)?.path).toBe("/login");
+    releaseWakeDelete();
+    await ctx.close();
+  }, 120_000);
+
+  it("A TAB SERVED BEFORE THE PRESS, ITS SCRIPT RUN AFTER IT, the request held: never the shell, and /login", async () => {
+    signOutDoor = "hang";
+    doorFaultsLeft = 1;
+    const j = await signedIn();
+    const ctx = await browser!.newContext();
+    await plant(ctx, j, { owner: j.accountId, access: true });
+    const a = await ctx.newPage();
+    await a.goto(`http://localhost:${webPort}/#/settings/account`, { waitUntil: "commit" });
+    const button = a.getByRole("button", { name: /^Sign out$/ });
+    await button.waitFor({ state: "visible", timeout: 60_000 });
+    await a.waitForTimeout(2_000);
+    // B's document is served while the jar still names the account; its scripts wait for the press.
+    const b = await ctx.newPage();
+    const held: Route[] = [];
+    let scripts = false;
+    await b.route("**/_next/static/chunks/**", (route) => { if (scripts) void route.continue(); else held.push(route); });
+    const docs = documents(b);
+    const errors = errorsOf(b);
+    await b.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
+    expect(docs[0], "the new tab was not served the app before the press").toEqual({ path: "/", status: 200, location: null });
+    heard = [];
+    await button.click();
+    const until = Date.now() + 10_000;
+    while (!heard.some((h) => h.path === "/auth/refresh/logout") && Date.now() < until) await a.waitForTimeout(50);
+    expect(heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status), "the press never reached the door").toEqual(["held"]);
+    const before = heard.length;
+    const t0 = Date.now();
+    scripts = true;
+    for (const route of held.splice(0)) await route.continue();
+    const samples = await sampleUntil(b, t0, 15_000, (s) => s.path === "/login" && s.loginCard);
+    const asked = heard.slice(before).filter((h) => h.path === "/auth/session").map((h) => h.status);
+    console.log(`e2e timing served-before-press docs=${JSON.stringify(docs)} shell_ms=${JSON.stringify(samples.filter((s) => s.shell).map((s) => s.ms))} `
+      + `session=${JSON.stringify(asked)} last=${samples.at(-1)?.path} errors=${JSON.stringify(errors)}`);
+    expect(samples.filter((s) => s.shell).map((s) => s.ms), `the tab drew the mailbox under the pending sign-out: ${await said(b)}`).toEqual([]);
+    expect(asked, "the tab asked the session door under the pending sign-out").toEqual([]);
+    expect(samples.at(-1)?.path, `the tab did not end on the sign-in page: ${await said(b)}`).toBe("/login");
+    expect(errors, "console errors on the way out").toEqual([]);
+    await ctx.close();
+  }, 120_000);
+
+  it("A COLD TAB WHOSE SESSION CHECK CROSSES THE PRESS: never the shell, /login, and the jar never names the account", async () => {
+    signOutDoor = "hang";
+    doorFaultsLeft = 1;
+    const j = await signedIn();
+    const ctx = await browser!.newContext();
+    await plant(ctx, j, { owner: j.accountId, access: true });
+    const a = await ctx.newPage();
+    await a.goto(`http://localhost:${webPort}/#/settings/account`, { waitUntil: "commit" });
+    const button = a.getByRole("button", { name: /^Sign out$/ });
+    await button.waitFor({ state: "visible", timeout: 60_000 });
+    await a.waitForTimeout(2_000);
+    // The marker went (a browser restart): B boots cold, and only its own session check names the account.
+    await ctx.clearCookies({ name: "tf_owner" });
+    heard = [];
+    sessionDoor = "hold";
+    const b = await ctx.newPage();
+    const t0 = Date.now();
+    await b.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
+    const until = Date.now() + 20_000;
+    while (!heard.some((h) => h.status === "held") && Date.now() < until) await b.waitForTimeout(50);
+    expect(heard.filter((h) => h.status === "held").map((h) => h.path), `B's session check never left: ${await said(b)}`).toEqual(["/auth/session"]);
+    await button.click();
+    while (!heard.some((h) => h.path === "/auth/refresh/logout") && Date.now() < until + 10_000) await a.waitForTimeout(50);
+    releaseSession();
+    const named: string[] = [];
+    const samples = await sampleUntil(b, t0, 25_000, async (s) => {
+      const owner = (await ctx.cookies(`http://localhost:${webPort}/`)).find((c) => c.name === "tf_owner")?.value;
+      if (owner !== undefined) named.push(owner);
+      return s.path === "/login" && s.loginCard;
+    });
+    console.log(`e2e timing cold-tab-check shell_ms=${JSON.stringify(samples.filter((s) => s.shell).map((s) => s.ms))} `
+      + `owner=${JSON.stringify([...new Set(named.map((v) => (v === j.accountId ? "account" : v)))])} last=${samples.at(-1)?.path}`);
+    expect(samples.filter((s) => s.shell).map((s) => s.ms), `the cold tab drew the mailbox: ${await said(b)}`).toEqual([]);
+    expect(named.filter((v) => v === j.accountId), "the jar named the account after the press").toEqual([]);
+    expect(samples.at(-1)?.path, `the cold tab did not end on the sign-in page: ${await said(b)}`).toBe("/login");
+    await ctx.close();
+  }, 120_000);
 
   for (const [door, lapsed] of [["answer", true], ["hang", false], ["lost", false]] as const) {
     it(`A PENDING SIGN-OUT, the door ${door === "answer" ? "answering" : door === "hang" ? "holding its first ask" : "losing its first answer"}: the sign-in card at once, the sign-out finished behind it`, async () => {
@@ -666,7 +808,16 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(loginAt!).toBeGreaterThanOrEqual(SLOW_REFRESH_MS - 1_000);
     expect(text).toContain(R.revokedBody);
     expect(heard.filter((h) => h.path === "/auth/refresh").map((h) => `${h.status} ${h.code}`)).toEqual(["401 refresh_revoked"]);
-    expect(await jarNames(ctx)).toEqual([]);
+    // Nothing that names or resumes the session is left. The splash's refusal leaves the reason's word
+    // for a tab opened next (`shareSignedOutNote`): `tf_signed_out`, which lapses within 15 s.
+    const left = await ctx.cookies([`http://localhost:${webPort}/`, `http://localhost:${webPort}/auth/refresh`]);
+    expect(left.filter((c) => ["tf_session", "tf_refresh", "tf_csrf", "tf_resume", "tf_owner"].includes(c.name) && c.value !== "")
+      .map((c) => c.name)).toEqual([]);
+    for (const c of left.filter((c) => c.name === "tf_signed_out")) {
+      expect(c.value).toBe("revoked");
+      expect(c.expires, "the reason outlives its 15 s").toBeGreaterThan(0);
+      expect(c.expires - Date.now() / 1000, "the reason outlives its 15 s").toBeLessThanOrEqual(15);
+    }
     await ctx.close();
   }, 120_000);
 

@@ -6,7 +6,7 @@ import {
 } from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, canonicalDestination, dsnVerdict, evaluateRules,
-  identityOfRow, silentLogger, type Logger, type SweepClearance,
+  identityOfRow, ROWS_PER_TURN, silentLogger, turnsEvery, WRITES_PER_TURN, type Logger, type LoopTurn, type SweepClearance,
   /* The mail leaf, never the barrel: the local engines bundle this pass (rule-retro.ts says why). */
 } from "@trafficflow/core/mail";
 import {
@@ -61,6 +61,8 @@ export interface GapCatchupDeps {
    * import question open) or `unread` the window waits. REQUIRED, so no caller forgets the gate.
    */
   clearanceFor: (mailboxId: string) => SweepClearance;
+  /** The desktop engine's loop turn: per rows checked and filed, after each page read and each intent write. */
+  turn?: LoopTurn;
 }
 
 export interface GapCatchupResult {
@@ -168,7 +170,9 @@ export async function gapCatchupPass(
         result.offered++;
         return;
       }
+      const written = turnsEvery(WRITES_PER_TURN, deps.turn);
       for (const { c, to, ruleId } of set.file) {
+        await written();
         await upsertDesired(tx, c, to, now);
         await tx.insert(routingDecisions).values({
           accountId: deps.accountId, messageId: c.messageId, inputProvenance: "rule",
@@ -188,6 +192,7 @@ export async function gapCatchupPass(
       if (set.screen.length > 0) {
         const res = await writeScreenerIntents(tx, tx as unknown as LedgerTx, {
           accountId: deps.accountId, rows: set.screen.map(unscreenedRowOf), now, via: "gap", groups: "shown",
+          ...(deps.turn !== undefined ? { turn: deps.turn } : {}),
         });
         // The groups were bounded when counted, so all of them move; anything else rolls back.
         if (res.total !== set.screen.length) {
@@ -277,10 +282,13 @@ async function gapSet(
   const batch = deps.batch ?? GAP_CATCHUP_BATCH;
   const out: Array<{ c: GapRow; to: string; ruleId: string | null }> = [];
   let afterId: string | null = null;
+  const checked = turnsEvery(ROWS_PER_TURN, deps.turn);
   for (let pages = 0; ; pages++) {
     if (pages >= (deps.maxPages ?? GAP_CATCHUP_MAX_PAGES)) return null;
     const page = await selectGapCandidates(tx, { accountId: deps.accountId, mailboxId, ownAddresses: own, limit: batch, afterId });
+    if (deps.turn) await deps.turn();
     for (const c of page) {
+      await checked();
       const msg = ruleInputOf(c);
       if (dsnVerdict(msg) !== null) continue;
       // LENIENT, rule-retro's argument: a `rule` answer files, a stranger's `screener` answer screens, `policy` never acts.

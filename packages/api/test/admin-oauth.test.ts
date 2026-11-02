@@ -23,9 +23,9 @@ import { makeDeps, FIXED_NOW } from "./helpers.js";
  */
 
 const app = createApp(apiRoutes);
-const SECRET = "admin-secret-for-tests-abcdefghij-fixture-token";
+const SECRET = "admin-console-internal-secret-fixture-token";
 const ADMIN: AdminConfig = { secret: SECRET, environment: "test" };
-const CLIENT_SECRET_PLAINTEXT = "ziq-super-secret-entra-value-jxk-fixture-token";
+const CLIENT_SECRET_PLAINTEXT = "entra-client-secret-plaintext-fixture-token";
 const CLIENT_ID = "26dd5904-19d1-495d-bc3c-67aa2da6f5e3";
 const REDIRECT = "https://ohmail.app/api/mailboxes/oauth/microsoft/callback";
 const NOTE = "rotated the Entra secret";
@@ -42,7 +42,7 @@ function post(path: string, body: unknown, opts: { bearer?: string } = {}): Requ
 async function seedStaffSession(deps: ApiDeps): Promise<string> {
   const [staff] = await deps.db.insert(staffUsers).values({
     email: `ops-${Math.random().toString(36).slice(2, 8)}@ohmail.app`,
-    passwordHash: await scryptHasher.hash("correct-horse-battery-staple-4x-password"),
+    passwordHash: await scryptHasher.hash("staff-console-sign-in-password"),
   }).returning();
   // Cloud 0047: roles are read live; this fixture is an owner, as every existing staff member was.
   await deps.db.insert(staffRoleGrants).values({ staffUserId: (staff as { id: string }).id, role: "owner" });

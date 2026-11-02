@@ -142,7 +142,7 @@ describe.skipIf(!PG_UP)("mail 0063 — the `SIZE` probe's attempt stamp on real 
       await db.execute(sql`
         insert into mailboxes (id, account_id, provider, address, status, smtp_size_probe_code)
         values (${id}, gen_random_uuid(), 'imap', ${`${id}@probe.test`}, 'connected',
-                '535 5.7.8 Authentication failed for u@x with password hunter2')`);
+                '535 5.7.8 Authentication failed for u@x with password smtp-probe-password')`);
     } catch (err) {
       constraint = String((err as { constraint_name?: unknown; constraint?: unknown }).constraint_name
         ?? (err as { constraint?: unknown }).constraint ?? "");

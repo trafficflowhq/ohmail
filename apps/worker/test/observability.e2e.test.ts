@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq, isNull } from "drizzle-orm";
 import { mailboxes, mailboxCredentials } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
-import { workerHeartbeats, alertState, SYNC_LAG_PAGE_ACCOUNTS } from "@trafficflow/db/cloud";
+import { workerHeartbeats, alertState, platformSignals, SYNC_LAG_PAGE_ACCOUNTS } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
 import { imapCfg } from "./_workerenv.js";
@@ -306,6 +306,52 @@ describe("worker observability wiring", () => {
     expect(cleared, "the schedule was handed to the pass, which evaluated the retired key clear").toBe(true);
     expect(await open(), "a target with no 2xx since the schedule started is not cleared")
       .toContain("api_cron_stale:scheduled_send");
+  }, 30_000);
+
+  it("the shard-0 leader runs the 5xx poll on its own credential and hands it to the pass; no TF_SIGNAL_*, no poll", async () => {
+    const db = makeDb(DB);
+    await db.insert(alertState).values({
+      alertKey: "api_cron_stale:retired", kind: "api_cron_stale", severity: "critical",
+      openedAt: new Date(Date.now() - 60 * 60 * 1000), lastSeenAt: new Date(Date.now() - 60 * 1000),
+      notifiedAt: new Date(Date.now() - 60 * 60 * 1000), notifyCount: 1, detail: "seeded", cls: "incident",
+      title: "seeded", count: 1,
+    } as never);
+    const open = async () => (await db.select({ k: alertState.alertKey }).from(alertState)
+      .where(isNull(alertState.resolvedAt))).map((r) => r.k);
+    const at = (instanceId: string) => ({
+      databaseUrl: DB, pollIntervalMs: 60_000, sentDomain: "app.ohmail.app", keyProvider: KP,
+      logger: collectingLogger().logger, instanceId, environment: "test", alertIntervalMs: 150, mailboxRetryMs: 60_000,
+    });
+
+    const dialled: string[] = [];
+    vi.stubGlobal("fetch", async (url: unknown) => { dialled.push(String(url)); return new Response("{}"); });
+    try {
+      const bare = await startWorker(at("wkr-obs-12"));
+      await new Promise((r) => setTimeout(r, 900));
+      await bare.stop();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(dialled.filter((u) => u.includes("vercel.com")), "no credential, no platform call").toEqual([]);
+    expect(await open(), "no poll and no schedule: unread, the row stays").toContain("api_cron_stale:retired");
+
+    const token = ["worker", "signal", "fixture", "value"].join("-");
+    const bearers: string[] = [];
+    const platform = (async (url: unknown, init?: RequestInit) => {
+      bearers.push(new Headers(init?.headers).get("authorization") ?? "");
+      if (String(url).includes("/v9/projects/")) return new Response(JSON.stringify({ id: "prj_fixture" }));
+      return new Response(JSON.stringify({ rows: [], hasMoreRows: false }));
+    }) as typeof fetch;
+    const worker = await startWorker({
+      ...at("wkr-obs-13"),
+      signals: { env: { VERCEL_TOKEN: token, VERCEL_TEAM_ID: ["team", "fixture"].join("_") }, deliberate: [], fetchImpl: platform, firstDelayMs: 0 },
+    });
+    closers.push(() => worker.stop());
+    const row = await waitFor(async () => (await db.select().from(platformSignals))[0] ?? null);
+    expect(row, "the worker's poll wrote the window it read").not.toBeNull();
+    expect(new Set(bearers)).toEqual(new Set([`Bearer ${token}`]));
+    const cleared = await waitFor(async () => ((await open()).includes("api_cron_stale:retired") ? null : true), 8000);
+    expect(cleared, "the poll's reading reached the pass with no API-cron arm beside it").toBe(true);
   }, 30_000);
 
   it("ONE arm is announced as a single point of failure, not published as a healthy pager", async () => {

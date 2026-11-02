@@ -109,7 +109,9 @@ import { createSignOutFence, SIGN_OUT_FENCE_WAIT_MS, type SignOutFence } from ".
 import { liveForeignHolder, requestOrganizerTakeover } from "./organize-here.js";
 // WHICH OUTBOUND PASSES THIS COMPOSITION RUNS — one table read by the pass and by the door, so
 // "a phone keeps no appointments" cannot be true in one of the two places. See its header.
-import { AppointmentsRefused, COMPOSITION_WINDOW_OUTBOX, runsPass, runsStorePass, searchFor } from "./composition-passes.js";
+import {
+  AppointmentsRefused, COMPOSITION_WALKS, COMPOSITION_WINDOW_OUTBOX, runsPass, runsStorePass, searchFor,
+} from "./composition-passes.js";
 import { hostPairRoutes } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
@@ -503,6 +505,15 @@ export interface SidecarConfig {
   now?: () => Date;
   /** Letters one slice of the agree's sweep moves; absent is the core's bound. Tests set it smaller. */
   agreeSweepSlice?: number;
+  /** Pages one slice of the agree's sweep reads; absent is the composition's (`COMPOSITION_WALKS`). */
+  agreeSweepPages?: number;
+  /** Slices one drain's sweep runs; absent is the composition's (`COMPOSITION_WALKS`). */
+  agreeSweepSlices?: number;
+  /**
+   * The turn the organize walks hand the event loop after counted work. Absent is `loopTurn` where
+   * the composition turns (`COMPOSITION_WALKS`) and none elsewhere. Tests pass a counting one.
+   */
+  loopTurn?: () => Promise<void>;
   /**
    * The monotonic clock the organizer permit reads beside `now` (`performance.now()`'s unit).
    * Absent means `performance.now()`; the permit refuses a runtime that has neither.
@@ -2197,6 +2208,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      the install, and a per-mailbox read would invite a caller to hand one mailbox a phone's
      numbers and its neighbour a desktop's. */
   const reconnect = reconnectProfile(organizerKind);
+  /* HOW THIS COMPOSITION RUNS THE ORGANIZE WALKS: the turn they hand the loop, and the agree's sweep sizing. */
+  const walks = COMPOSITION_WALKS[organizerKind];
+  const walkTurn = config.loopTurn ?? (walks.turns ? loopTurn : undefined);
+  const agreePages = config.agreeSweepPages ?? walks.agreePages;
+  const agreeSlices = config.agreeSweepSlices ?? walks.agreeSlices;
   /* WHICH BUILD THIS ENGINE IS, as the sync loop's version label — see {@link engineBuildLabel}. */
   const engineBuild = engineBuildLabel(config.buildCommit);
   /* THE POLL CADENCE, resolved ONCE for the same reason — `?? DEFAULT` written twice is two
@@ -2616,6 +2632,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * no-logger install keeps the field ABSENT (`exactOptionalPropertyTypes`).
        */
       ...(config.logger === undefined ? {} : { logger: config.logger }),
+      // The organize walks a route runs (the decision count, the Screener's offer) hand the loop back.
+      ...(walkTurn === undefined ? {} : { loopTurn: walkTurn }),
       session: null,
       authConfig,
       keyProvider,
@@ -3000,6 +3018,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const { moved, completed, capped } = await ruleRetroPass(db as unknown as Tx, {
           accountId: world.accountId,
           trustedAuthservIdsFor: async (_tx, mailboxId) => trust.get(mailboxId) ?? new Set<string>(),
+          ...(walkTurn !== undefined ? { turn: walkTurn } : {}),
           ...(config.logger === undefined ? {} : { log: config.logger }),
         });
         if (moved > 0 || completed > 0) log("rule_retro_pass", { moved, applied: completed, capped });
@@ -3054,6 +3073,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             asked.set(mailboxId, c);
             return c;
           },
+          ...(walkTurn !== undefined ? { turn: walkTurn } : {}),
           ...(config.logger === undefined ? {} : { log: config.logger }),
         }, now());
         for (const id of ready) {
@@ -6764,6 +6784,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             ledgerOf: (tx) => tx as unknown as LedgerTx,
             cursor: sweep.cursor,
             ...(config.agreeSweepSlice !== undefined ? { slice: config.agreeSweepSlice } : {}),
+            ...(agreePages !== undefined ? { pages: agreePages } : {}),
+            ...(agreeSlices !== undefined ? { maxSlices: agreeSlices } : {}),
+            ...(walkTurn !== undefined ? { turn: walkTurn } : {}),
           });
           agreeSweep = out.next === null ? null : { stamp: sweep.stamp, cursor: out.next };
           log("organizer_agree_sweep", {

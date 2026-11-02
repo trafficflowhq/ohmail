@@ -91,7 +91,7 @@ const depsFor = (): ApiDeps => buildDeps(
     DATABASE_URL_POOLED: "postgres://ohmail_runtime:p@localhost:5432/x",
     [KEY_RING_V1]: "ab".repeat(32),
     ENTITLEMENTS_URL: "https://entitlements.example",
-    BILLING_PLANE_SECRET: "plane-secret-abcdefghijabcdef-fixture-token",
+    BILLING_PLANE_SECRET: "entitlements-billing-plane-fixture-token",
   } as NodeJS.ProcessEnv),
 );
 

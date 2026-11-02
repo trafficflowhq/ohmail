@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -91,7 +92,7 @@ async function seeded(): Promise<World> {
   }).returning();
   // The credential the removal deletes. Written directly rather than through `create` so this
   // file needs no IMAP probe: what matters is that a row exists to be gone afterwards.
-  const sealed = await KP.encrypt("s3cr3t");
+  const sealed = await KP.encrypt(fixturePassword("mailbox-removal-sends"));
   await dbA.insert(mailboxCredentials).values({
     mailboxId: mb!.id, transport: "imap",
     secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,

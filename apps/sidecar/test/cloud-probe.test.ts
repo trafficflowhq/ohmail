@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { describeProbeFailure, probeCloudDoor, probeCloudServer } from "../src/cloud-engine.js";
 import {
   apiBaseFor, baseIsForeign, normalizeBase, normalizeOrigin, OPERATOR_CA_FILE,
@@ -238,7 +239,7 @@ describe("probeCloudServer", () => {
     expect(normalizeBase("http://127.0.0.1:9000#/")).toBeNull();
     expect(normalizeBase("https://ohmail.example.com/api#/")).toBeNull();
     expect(normalizeBase("https://ohmail.example.com/api?x=1")).toBeNull();
-    expect(normalizeBase("https://someone:hunter2@ohmail.example.com/api")).toBeNull();
+    expect(normalizeBase(`https://someone:${fixturePassword("cloud-probe")}@ohmail.example.com/api`)).toBeNull();
     // So the two gateway spellings are NOT the same server, and neither is usable as a base.
     expect(baseIsForeign("https://gateway/api", "https://gateway/api?upstream=b")).toBe(false);
     expect(normalizeBase("https://gateway/api?upstream=b")).toBeNull();
@@ -313,7 +314,7 @@ describe("normalizeOrigin", () => {
   });
 
   it("REFUSES embedded credentials — a password must never reach a settings file this way", () => {
-    expect(normalizeOrigin("https://someone:hunter2@ohmail.example.com")).toBeNull();
+    expect(normalizeOrigin(`https://someone:${fixturePassword("cloud-probe")}@ohmail.example.com`)).toBeNull();
   });
 
   it("REFUSES a query, a fragment, a foreign scheme and an empty value", () => {

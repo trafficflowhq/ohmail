@@ -18,7 +18,7 @@ import {
  */
 const PG_UP = await realPgAvailable();
 
-const SECRET = "admin-secret-for-tests-abcdefghij-fixture-token";
+const SECRET = "admin-console-internal-secret-fixture-token";
 const ADMIN: AdminConfig = { secret: SECRET, environment: "test" };
 const app = createApp(apiRoutes);
 const NOW = new Date("2026-09-28T12:00:00.000Z");
@@ -53,7 +53,7 @@ describe.skipIf(!PG_UP)("two owners revoking each other", () => {
     const secret = newTotpSecret();
     const sealed = await authDeps.keyProvider.encrypt(secret);
     const [row] = await seedDb.insert(staffUsers).values({
-      email, passwordHash: await scryptHasher.hash("correct-horse-battery-staple-4x-password"),
+      email, passwordHash: await scryptHasher.hash("staff-console-sign-in-password"),
       totpSecretEnc: sealed.ciphertext, totpKeyVersion: sealed.keyVersion, totpActivated: true,
     }).returning();
     const id = (row as { id: string }).id;

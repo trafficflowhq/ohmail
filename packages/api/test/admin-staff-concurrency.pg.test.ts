@@ -41,9 +41,9 @@ import { scryptHasher, totpNow, newTotpSecret, makeTestAuthDeps, throttleKeysFor
  */
 const PG_UP = await realPgAvailable();
 
-const SECRET = "admin-secret-for-tests-abcdefghij-fixture-token";
+const SECRET = "admin-console-internal-secret-fixture-token";
 const ADMIN: AdminConfig = { secret: SECRET, environment: "test" };
-const PASSWORD = "correct-horse-battery-staple-4x-password";
+const PASSWORD = "staff-console-sign-in-password";
 const app = createApp(apiRoutes);
 
 /**

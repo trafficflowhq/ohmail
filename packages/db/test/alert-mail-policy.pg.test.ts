@@ -46,7 +46,7 @@ describe.skipIf(!AVAILABLE)("the mail window under two drivers, on real Postgres
   function arm(): { sink: NonNullable<ReturnType<typeof resendAlertSink>>; pages: () => number } {
     const bodies: string[] = [];
     const post: PostJson = async (_u, body) => { bodies.push(body); return { status: 200 }; };
-    const sink = resendAlertSink({ apiKey: "re-test-racekeyaaaaaab-fixture-token", from: "a@ohmail.example", to: "o@ohmail.example" }, post)!;
+    const sink = resendAlertSink({ apiKey: "alert-sink-race-key-fixture-token", from: "a@ohmail.example", to: "o@ohmail.example" }, post)!;
     // A page names the shard in its body; the digest (also posted once) is a different subject.
     const firing = (b: string): boolean => / alerts? firing"/.test(b) && /shard 6[12]\b/.test(b);
     return { sink, pages: () => bodies.filter(firing).length };

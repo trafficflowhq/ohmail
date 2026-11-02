@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import {
   classifySmtpSizeFailure, learnSmtpMaxSize,
   type SmtpSizeCreds, type SmtpSizeDial, type SmtpSizeDialAuth,
@@ -54,7 +55,7 @@ const PASSWORD_SMTP: SmtpSizeCreds = {
   host: "smtp.example.net",
   port: 587,
   secure: false,
-  auth: { user: "someone@example.net", pass: "hunter2" },
+  auth: { user: "someone@example.net", pass: fixturePassword("smtp-size") },
 };
 
 /** An oauth2 mailbox: the shared builder yields a token callback, never a password. */
@@ -262,7 +263,7 @@ describe("learnSmtpMaxSize — one dial, and only when it can answer a question 
     expect(res).toEqual({ outcome: "learned", maxMessageBytes: 52_428_800 });
     expect(passwordCalls(calls)).toEqual([{
       host: "smtp.example.net", port: 587, secure: false,
-      user: "someone@example.net", pass: "hunter2",
+      user: "someone@example.net", pass: fixturePassword("smtp-size"),
     }]);
   });
 
@@ -299,7 +300,7 @@ describe("learnSmtpMaxSize — one dial, and only when it can answer a question 
    */
   it("reports a CLOSED CODE and never the message, whatever the server said", async () => {
     const leaky = Object.assign(
-      new Error("535 5.7.8 Authentication failed for u@example.net with password hunter2"),
+      new Error(`535 5.7.8 Authentication failed for u@example.net with password ${fixturePassword("smtp-size")}`),
       { code: "EAUTH" },
     );
     const res = await learnSmtpMaxSize({
@@ -307,7 +308,7 @@ describe("learnSmtpMaxSize — one dial, and only when it can answer a question 
     });
     expect(res).toEqual({ outcome: "failed", code: "auth_refused" });
     // Nothing anywhere in the outcome repeats the server's sentence.
-    expect(JSON.stringify(res)).not.toContain("hunter2");
+    expect(JSON.stringify(res)).not.toContain(fixturePassword("smtp-size"));
     expect(JSON.stringify(res)).not.toContain("u@example.net");
     expect(JSON.stringify(res)).not.toContain("535");
   });

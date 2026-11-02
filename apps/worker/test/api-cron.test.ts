@@ -96,7 +96,7 @@ describe("startApiCron", () => {
   it("pokes GET {base}{route} with the bearer secret, and records the success", async () => {
     const timers = makeTimers();
     const calls: FetchCall[] = [];
-    const secret = "sdcret-sdcret-sdcret-sdcret-fixture-token";
+    const secret = "worker-api-cron-secret-fixture-token";
     const cron = startApiCron({
       baseUrl: "https://api.example.test/", // trailing slash must be absorbed, not doubled
       secret,
@@ -336,9 +336,12 @@ describe("startApiCron", () => {
     // The census's sentence a third time: the reminder mails and the erasure run only when this
     // clock pokes them, and a pass poked by nobody leaves closed accounts un-noticed for ever
     // and retention promises that never execute.
+    //
+    // `platform_signals` left: the 5xx poll runs in this worker on its own credential
+    // (`platform-signal-poll.ts`), so the API host holds no platform token.
     expect(API_CRON_TARGETS.map((t) => t.target))
       .toEqual([ "sessions_reap", "smtp_size", "scheduled_send",
-        "send_reconcile", "away_responder", "platform_signals", "unsubscribe_drain",
+        "send_reconcile", "away_responder", "unsubscribe_drain",
         "account_lifecycle", "security_notices", "sent_copies",
       ]);
     /* ADDRESSED BY NAME FROM HERE DOWN, and the change is the lesson: three targets left the
@@ -451,7 +454,7 @@ describe("the health row carries what a pass says is still owed", () => {
     let i = 0;
     const cron = startApiCron({
       baseUrl: "https://api.example.test",
-      secret: "sdcret-sdcret-sdcret-sdcret-fixture-token",
+      secret: "worker-api-cron-secret-fixture-token",
       targets: [target],
       random: () => 0,
       fetchImpl: (async () => okResponse(200, bodies[Math.min(i++, bodies.length - 1)]!)) as typeof fetch,
@@ -554,7 +557,7 @@ describe("the lifecycle sweep's continuation and its erasures", () => {
     const at = (level: string) => (event: string) => { lines.push({ level, event }); };
     const log = { level: "info", child: () => log, debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error") };
     const cron = startApiCron({
-      baseUrl: "https://api.example.test", secret: "sdcret-sdcret-sdcret-sdcret-fixture-token",
+      baseUrl: "https://api.example.test", secret: "worker-api-cron-secret-fixture-token",
       targets: [LIFECYCLE], random: () => 0, log: log as unknown as ApiCronDeps["log"],
       fetchImpl: (async (url: RequestInfo | URL) => { urls.push(String(url)); return answer(String(url)); }) as typeof fetch,
       ...timers.deps,

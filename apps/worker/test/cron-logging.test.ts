@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -255,7 +256,7 @@ describe("behavioural — the REAL logger emits what the crons pass", () => {
     const cause = Object.assign(new Error(`connect to postgres://u:MARKER_PW_a1@${DB_HOST}/x failed`), {
       code: "ETIMEDOUT",
     });
-    const err = Object.assign(new Error("* NO [MARKER_ATOM_b2] MARKER_MSG_c3 password=hunter2"), {
+    const err = Object.assign(new Error(`* NO [MARKER_ATOM_b2] MARKER_MSG_c3 password=${fixturePassword("cron-thrown")}`), {
       code: "EAUTH", cause,
     });
     const [line] = capture((log) => { log.error(cronEvent("proposals", "failed"), { err }); });
@@ -266,7 +267,7 @@ describe("behavioural — the REAL logger emits what the crons pass", () => {
     // The cause chain is the reason `{ err }` beats a hand-written `errorCode`.
     expect(line?.causeClass).toBe("Error");
     expect(line?.causeCode).toBe("ETIMEDOUT");
-    for (const marker of ["MARKER_PW_a1", "MARKER_ATOM_b2", "MARKER_MSG_c3", "hunter2", "postgres://"]) {
+    for (const marker of ["MARKER_PW_a1", "MARKER_ATOM_b2", "MARKER_MSG_c3", fixturePassword("cron-thrown"), "postgres://"]) {
       expect(bytes.includes(marker), `\`${marker}\` reached the log drain: ${bytes}`).toBe(false);
     }
     expect(bytes.includes("at Object"), `a stack frame reached the log drain: ${bytes}`).toBe(false);

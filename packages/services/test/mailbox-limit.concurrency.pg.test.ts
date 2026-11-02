@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -90,7 +91,7 @@ const accessOf = async (accountId: string): Promise<AccessVerdict> =>
 const fastSvc = makeMailboxService({ keyProvider: FAST_KP, accessOf });
 const slowSvc = makeMailboxService({ keyProvider: new SlowKeyProvider(FAST_KP, 400), accessOf });
 
-const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: "s3cr3t" };
+const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: fixturePassword("mailbox-limit") };
 
 describe.skipIf(!PG_UP)("plan limits under real-Postgres concurrency (the limit race)", () => {
   async function seedAccount(): Promise<string> {

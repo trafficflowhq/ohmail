@@ -226,7 +226,7 @@ describe("the page says when the computer asked from another network", () => {
     await waitFor(() => el.querySelector('[data-testid="approve-account"]') !== null, "the account line");
     const line = networkLine(el);
     expect(line, "no line for a request from another network").not.toBeNull();
-    // True of both arms of `different`: another network, or the other address family of one machine.
+    // True of every `different`: another address (over IPv6, another /64), or the other address family.
     expect(line!.textContent).toBe("This request came from a different network address than this browser.");
     expect(line!.getAttribute("role")).toBe("note");
     expect(line!.previousElementSibling?.tagName).toBe("UL");
@@ -440,7 +440,7 @@ describe("the page settles whose browser this is before it asks for the request"
   it("a live session whose marker went missing gets it back from the session read, and the page renders", async () => {
     realRead = true;
     wire((_m, url) => {
-      if (url === "/api/auth/session") return { status: 200, body: session(ACCT), cookie: `tf_owner=${ACCT}; path=/` };
+      if (url === "/api/auth/session") return { status: 200, body: session(ACCT) };
       if (url === READ) return { status: 200, body: facts() };
       return UNAUTHORIZED;
     });
@@ -579,7 +579,7 @@ describe("the page settles whose browser this is before it asks for the request"
   it("after the settle, an answer naming another account is refused", async () => {
     realRead = true;
     wire((_m, url) => {
-      if (url === "/api/auth/session") return { status: 200, body: session(ACCT), cookie: `tf_owner=${ACCT}; path=/` };
+      if (url === "/api/auth/session") return { status: 200, body: session(ACCT) };
       if (url === READ) return { status: 200, body: facts(), account: OTHER };
       return UNAUTHORIZED;
     });
@@ -663,7 +663,7 @@ describe("the page settles whose browser this is before it asks for the request"
         if (phase === 1) return { status: 200, body: sessionAs(ACCT, "first@example.test") };
         later += 1;
         return later === 1
-          ? { status: 200, body: sessionAs(OTHER, "second@example.test"), cookie: `tf_owner=${OTHER}; path=/` }
+          ? { status: 200, body: sessionAs(OTHER, "second@example.test") }
           : { status: 500, body: { error: { code: "internal", message: "fault" } } };
       }
       if (url === READ) return { status: 200, body: facts(), account: phase === 1 ? ACCT : OTHER };
@@ -691,7 +691,7 @@ describe("the page settles whose browser this is before it asks for the request"
       if (url === "/api/auth/session") {
         if (phase === 1) return { status: 200, body: sessionAs(ACCT, "first@example.test") };
         later += 1;
-        return { status: 200, body: sessionAs(OTHER, "second@example.test"), ...(later === 1 ? { cookie: `tf_owner=${OTHER}; path=/` } : {}) };
+        return { status: 200, body: sessionAs(OTHER, "second@example.test") };
       }
       if (url === READ) return { status: 200, body: facts() };
       return UNAUTHORIZED;
@@ -711,7 +711,7 @@ describe("the page settles whose browser this is before it asks for the request"
     let phase = 1;
     wire((_m, url) => {
       if (url === "/api/auth/session") {
-        return { status: 200, body: session(ACCT), ...(phase === 2 ? { cookie: `tf_owner=${ACCT}; path=/` } : {}) };
+        return { status: 200, body: session(ACCT) };
       }
       if (url === READ) {
         return phase === 1
@@ -748,7 +748,7 @@ describe("the page settles whose browser this is before it asks for the request"
     await waitFor(() => el.textContent!.includes(messages.approve.working), "the working line");
     expect(el.querySelectorAll("button")).toHaveLength(0);
     expect(el.textContent).not.toContain(messages.approve.expired);
-    answer.release({ status: 200, body: session(ACCT), cookie: `tf_owner=${ACCT}; path=/` });
+    answer.release({ status: 200, body: session(ACCT) });
     await waitFor(() => el.textContent!.includes("studio-mac"), "the request after the settle");
   });
 
@@ -777,7 +777,7 @@ describe("the page settles whose browser this is before it asks for the request"
     let stage: "page" | "prompt" | "after" = "page";
     wire((m, url) => {
       if (url === "/api/auth/session") {
-        if (stage !== "prompt") return { status: 200, body: session(ACCT), cookie: `tf_owner=${ACCT}; path=/` };
+        if (stage !== "prompt") return { status: 200, body: session(ACCT) };
         // The prompt's read: another tab's sign-out takes the marker under it, and nothing writes it back.
         stage = "after";
         document.cookie = "tf_owner=; path=/; max-age=0";
@@ -806,7 +806,7 @@ describe("the page settles whose browser this is before it asks for the request"
     document.cookie = `tf_owner=${ACCT}; path=/`;
     document.cookie = "tf_csrf=c1; path=/";
     wire((m, url) => {
-      if (url === "/api/auth/session") return { status: 200, body: session(ACCT), cookie: `tf_owner=${ACCT}; path=/` };
+      if (url === "/api/auth/session") return { status: 200, body: session(ACCT) };
       if (url === READ) return { status: 200, body: facts() };
       if (m === "POST" && url === `${READ}/confirm`) {
         return { status: 403, body: { error: { code: "step_up_required", message: "recent 2FA re-assertion required" } } };
@@ -832,18 +832,28 @@ describe("the page settles whose browser this is before it asks for the request"
 
   it("a marker that cannot be read back ends on 'could not be checked' after one more settle, never a loop", async () => {
     realRead = true;
-    // Not id-shaped, so it reads as absent; the server sees a marker and writes none back.
+    // Not id-shaped, so it reads as absent; each settle heals it from the session read, and this
+    // browser keeps none of those writes (a shadowing cookie, a blocked write).
     document.cookie = "tf_owner=acct%2F1; path=/";
-    wire((_m, url) => {
-      if (url === "/api/auth/session") return { status: 200, body: session(ACCT) };
-      if (url === READ) return { status: 200, body: facts() };
-      return UNAUTHORIZED;
+    const jar = Object.getOwnPropertyDescriptor(Document.prototype, "cookie")!;
+    const set = vi.spyOn(Document.prototype, "cookie", "set").mockImplementation(function (this: Document, v: string) {
+      if (!v.startsWith("tf_owner=")) jar.set!.call(this, v);
     });
-    const el = await mount();
-    await waitFor(() => el.textContent!.includes(messages.approve.signInUnchecked), "the could-not-be-checked sentence");
-    expect(el.textContent).not.toMatch(LOST);
-    expect(sent.filter((s) => s === "GET /api/auth/session")).toHaveLength(2);
-    expect(reads()).toEqual([]);
+    try {
+      wire((_m, url) => {
+        if (url === "/api/auth/session") return { status: 200, body: session(ACCT) };
+        if (url === READ) return { status: 200, body: facts() };
+        return UNAUTHORIZED;
+      });
+      const el = await mount();
+      await waitFor(() => el.textContent!.includes(messages.approve.signInUnchecked), "the could-not-be-checked sentence");
+      expect(el.textContent).not.toMatch(LOST);
+      expect(sent.filter((s) => s === "GET /api/auth/session")).toHaveLength(2);
+      expect(set.mock.calls.filter(([v]) => String(v).startsWith(`tf_owner=${ACCT};`)), "no settle healed the jar").toHaveLength(2);
+      expect(reads()).toEqual([]);
+    } finally {
+      set.mockRestore();
+    }
   });
 });
 
@@ -893,7 +903,7 @@ async function inflight(opts: { resettleAs: string; factorHeader: string | null 
         jar = opts.resettleAs;
         return { status: 200, body: session(ACCT), account: ACCT };
       }
-      return { status: 200, body: sessionAs(jar, `${jar}@example.test`), cookie: `tf_owner=${jar}; path=/`, account: jar };
+      return { status: 200, body: sessionAs(jar, `${jar}@example.test`), account: jar };
     }
     if (url === READ) return { status: 200, body: facts(), account: jar };
     if (m === "POST" && url === `${READ}/confirm`) {
@@ -956,7 +966,7 @@ describe("a factor in flight when the page settles again runs no parked confirm"
     document.cookie = `tf_owner=${OTHER}; path=/`;
     document.cookie = "tf_csrf=c2; path=/";
     wire((m, url) => {
-      if (url === "/api/auth/session") return { status: 200, body: sessionAs(OTHER, "b@example.test"), cookie: `tf_owner=${OTHER}; path=/`, account: OTHER };
+      if (url === "/api/auth/session") return { status: 200, body: sessionAs(OTHER, "b@example.test"), account: OTHER };
       if (url === READ) return { status: 200, body: facts(), account: OTHER };
       return UNAUTHORIZED;
     });

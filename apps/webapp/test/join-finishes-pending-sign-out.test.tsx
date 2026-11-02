@@ -9,6 +9,7 @@
  * session beside it. The waits are the shipped schedule's: timers advance past `CONFIRM_CAP_MS`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -176,13 +177,13 @@ async function submit(el: HTMLElement): Promise<void> {
 async function createAccount(el: HTMLElement): Promise<void> {
   await fill(el, "#join-email", "new-person@example.invalid");
   await fill(el, "#join-name", "New Person");
-  await fill(el, "#join-pw", "hunter2hunter2");
+  await fill(el, "#join-pw", fixturePassword("join-finishes-pending-sign-out"));
   await submit(el);
 }
 
 /** The confirmation form, its password typed and sent. */
 async function confirmAddress(el: HTMLElement): Promise<void> {
-  await fill(el, "#verify-pw", "hunter2hunter2");
+  await fill(el, "#verify-pw", fixturePassword("join-finishes-pending-sign-out"));
   await submit(el);
 }
 

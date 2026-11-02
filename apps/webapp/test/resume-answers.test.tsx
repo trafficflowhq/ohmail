@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+/** @vitest-environment-options {"url": "https://mail.example/"} */
 /**
  * THE SPLASH READS THE REFRESH DOOR'S ANSWER. The report — "Please
  * sign in again", then a full 2FA sign-in over a live 90-day cookie — was two defects here: a refresh
@@ -479,7 +480,7 @@ describe("(f) every tab on an ended sign-in says the same reason", () => {
     return res.status === 307 ? new URL(res.headers.get("location")!).pathname : null;
   }
 
-  /** jsdom's document is plain http, where a `Secure` write is dropped: the page says the same. */
+  /** The page on a plain-http origin: its cookie writes carry no `Secure`. */
   const plainHttp = (): void => { (window.location as unknown as { protocol: string }).protocol = "http:"; };
 
   it("a tab opened 3 s later on ohmail Cloud: the edge sends the emptied jar to /login, which says why", async () => {

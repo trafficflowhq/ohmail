@@ -42,7 +42,7 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const TOKEN = "udfcxjjqlambhcvfnzikwbasgdteghcyrfepaoqiiue-fixture-token";
+const TOKEN = "invite-and-pair-link-fixture-token";
 
 type Answer = { status: number; body?: unknown };
 /** Scripted answers by `"METHOD path"`, plus a record of every request — the wire is what the suite reads. */

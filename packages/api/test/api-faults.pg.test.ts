@@ -30,7 +30,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 const PG_UP = await realPgAvailable();
 const NOW = new Date("2026-09-10T12:00:00.000Z");
-const SECRET = "probe-secret-at-least-ce-characters-long-fixture-token";
+const SECRET = "api-faults-probe-secret-fixture-token";
 const T = DEFAULT_ALERT_THRESHOLDS;
 
 const app = createApp(apiRoutes);

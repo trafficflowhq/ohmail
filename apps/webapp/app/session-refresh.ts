@@ -15,7 +15,7 @@ import {
 import { csrfMark, csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./shell/durable";
-import { readOwner, readOwnerCookie, readOwnerMarker } from "./shell/owner-cookie";
+import { readOwner, readOwnerCookie, readOwnerMarker, restampOwner } from "./shell/owner-cookie";
 import { webLane } from "./shell/resume-lane";
 import { isDemoOwned, storageOwner } from "./shell/storage-owner";
 import {
@@ -791,6 +791,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // latch additionally requires the door's own refusal code: a 401 without one is a platform
       // interposing itself.
       if (res.status === 204) {
+        // The jar's own name as it is now: an answer landing after a Sign out press keeps the reserved word.
+        restampOwner();
         // The name stays owed: a browser killed before it saves this answer's cookies presents it again.
         recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null, retryAfterMs: null });
         noteSessionMinted();

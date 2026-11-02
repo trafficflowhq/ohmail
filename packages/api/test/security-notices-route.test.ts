@@ -10,7 +10,7 @@ import { makeDeps, req } from "./helpers.js";
  * shape: a shared secret, 404 when the internal surface is unarmed.
  */
 const app = createApp(apiRoutes);
-const SECRET = "internal-secret-for-tests-abcdefghij-fixture-token";
+const SECRET = "security-notices-internal-secret-fixture-token";
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 
 function login(email: string, ip: string): Request {

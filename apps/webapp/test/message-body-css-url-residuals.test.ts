@@ -206,6 +206,11 @@ describe("1. a function name written in CSS escapes is still that function", () 
     expect(await counted(css)).toEqual(["https://tracker.example/e.png"]);
     expect(await neutralise(css)).not.toContain("tracker.example");
   });
+
+  it("an escaped newline inside a url string is a removed continuation, so the url is the one CSS means", async () => {
+    expect(await counted('.a{background:url("https://t.example/css3\\\r\n.png")}')).toEqual(["https://t.example/css3.png"]);
+    expect(await counted(".a{background:url('https://t.example/a\\\nb.png')}")).toEqual(["https://t.example/ab.png"]);
+  });
 });
 
 describe("the inline STYLE attribute goes through the same scanner as a stylesheet", () => {

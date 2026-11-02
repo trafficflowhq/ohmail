@@ -190,6 +190,14 @@ describe("remote content: blocked, counted, classified", () => {
     expect(out.html).not.toContain("s.example");
     expect(out.html).toContain("none");
   });
+
+  // CSS Syntax 4.3.5: an escaped newline inside a string continues it and is removed.
+  it("a url string with an escaped CRLF is counted and resolved under the name CSS reads", () => {
+    const meant = "https://c.example/assets/css3.png";
+    const html = '<style>.a{background:url("https://c.example/assets/css3\\\r\n.png")}</style><p>x</p>';
+    expect(sanitizeMailHtmlPhone(html).blocked).toEqual([{ url: meant, host: "c.example", via: "css", pixel: false }]);
+    expect(sanitizeMailHtmlPhone(html, { resolvedRemote: new Map([[meant, PNG]]) }).html).toContain(PNG);
+  });
 });
 
 describe("what the document may say", () => {

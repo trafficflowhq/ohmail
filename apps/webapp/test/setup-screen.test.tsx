@@ -130,7 +130,7 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
 }
 
 async function fillAndSubmit(container: HTMLElement): Promise<void> {
-  await type(container.querySelector<HTMLInputElement>("#setup-token")!, "boot-token-abcdefbcdefghija-fixture-token");
+  await type(container.querySelector<HTMLInputElement>("#setup-token")!, "first-run-setup-boot-fixture-token");
   await type(container.querySelector<HTMLInputElement>("#setup-email")!, "operator@family.example");
   await type(container.querySelector<HTMLInputElement>("#setup-name")!, "Pat Operator");
   await type(container.querySelector<HTMLInputElement>("#setup-pw")!, "correct horse battery staple");
@@ -210,7 +210,7 @@ describe("the ceremony — one submit drives redeem, then register with the mint
     const redeem = calls.find((r) => r.url.includes("/api/pair/redeem"));
     expect(redeem, "the redeem never left").toBeTruthy();
     expect(redeem!.body).toMatchObject({
-      grant: "invite", token: "boot-token-abcdefbcdefghija-fixture-token", email: "operator@family.example",
+      grant: "invite", token: "first-run-setup-boot-fixture-token", email: "operator@family.example",
     });
 
     const register = calls.find((r) => r.url.includes("/api/auth/register"));

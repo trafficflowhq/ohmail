@@ -172,17 +172,6 @@ const UNAUTHENTICATED = [
    * choose. An unauthenticated route whose cost a caller could pick would not belong in this list.
    */
   "GET /internal/mailboxes/smtp-size",
-  // The PLATFORM COST clock (cloud 0029), on the three reconciliation doors' exact terms — a
-  // scheduler's door authorised by a shared secret, resolving no session. What one call may
-  // cause is three bounded GETs to vendors WE pay, with a per-request deadline inside the port
-  // and nothing a caller can choose; on the hosted service today every one of them answers `unconfigured`
-  // and the pass writes nothing at all.
-  // The PLATFORM SIGNAL clock (cloud 0030), on the cost clock's exact terms one line up — a
-  // scheduler's door authorised by a shared secret, resolving no session. What one call may cause
-  // is a bounded walk of one vendor's log endpoint (`SIGNAL_PAGE_BUDGET` pages per project, a
-  // per-request deadline in the port) with nothing a caller can choose; on the hosted service today the
-  // port answers `unconfigured` and the pass writes nothing at all.
-  "GET /internal/platform-signals/run",
   /**
    * THE SIGN-IN THROTTLE'S SECURITY NOTICES — `unauthenticated` on the lifecycle pass's exact
    * terms: the worker's api-cron with a shared secret, no session, no verified address for the
@@ -975,7 +964,9 @@ describe("the route table declares what every handler causes", () => {
     // together and the gated remainder is unchanged.
     // 260 -> 261: `POST /auth/step-up/recovery-code`, a `ceremony` like its step-up siblings, so it
     // joins `CEREMONY` and this total together and the gated remainder is unchanged.
-    expect(apiRoutes).toHaveLength(261);
+    // 261 -> 260: `GET /internal/platform-signals/run` left with the 5xx poll, now the worker's. It
+    // was `unauthenticated`, so it leaves the exempt list above and this total together.
+    expect(apiRoutes).toHaveLength(260);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1212,7 +1203,8 @@ describe("the route table declares what every handler causes", () => {
     // 258 -> 259 with the late Sent-copy pass, `unauthenticated`: the remainder does not move.
     // 259 -> 260 with the reuse sweeps' acknowledgement, a `ceremony`: the remainder does not move.
     // 260 -> 261 with the recovery code's step-up, a `ceremony`: the remainder does not move.
-    expect(gated.length).toBe(261 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 261 -> 260 with the 5xx poll's route gone, `unauthenticated`: the remainder does not move.
+    expect(gated.length).toBe(260 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });
@@ -1446,7 +1438,7 @@ describe("the requirement is a COMPOSITION POLICY, and its absence is the strict
    */
   const MAILBOX_BODY = JSON.stringify({
     provider: "imap", address: "mila@lichtgrat.example",
-    imap: { host: "imap.example", port: 993, secure: true, user: "mila", pass: "s3cr3t-imap-password-password" },
+    imap: { host: "imap.example", port: 993, secure: true, user: "mila", pass: "mailbox-imap-password" },
   });
   const addMailbox = (deps: ApiDeps, token: string): Promise<Response> =>
     H(req("POST", "/mailboxes", { bearer: token, body: MAILBOX_BODY }), deps);

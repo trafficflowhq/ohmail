@@ -19,6 +19,7 @@
  *   · the ceremony wins: once a password is submitted, a late confirm may not navigate.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -271,7 +272,7 @@ describe("the already-signed-in check", () => {
     };
     await act(async () => {
       setValue(el.querySelector<HTMLInputElement>('input[type="email"]')!, "l@example.invalid");
-      setValue(el.querySelector<HTMLInputElement>('input[type="password"]')!, "hunter2hunter2");
+      setValue(el.querySelector<HTMLInputElement>('input[type="password"]')!, fixturePassword("login-bootstrap"));
     });
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -312,7 +313,7 @@ describe("the already-signed-in check", () => {
     };
     await act(async () => {
       setValue(el.querySelector<HTMLInputElement>('input[type="email"]')!, "l@example.invalid");
-      setValue(el.querySelector<HTMLInputElement>('input[type="password"]')!, "hunter2hunter2");
+      setValue(el.querySelector<HTMLInputElement>('input[type="password"]')!, fixturePassword("login-bootstrap"));
     });
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -365,7 +366,7 @@ describe("the already-signed-in check", () => {
     };
     await act(async () => {
       setValue(el.querySelector<HTMLInputElement>('input[type="email"]')!, "l@example.invalid");
-      setValue(el.querySelector<HTMLInputElement>('input[type="password"]')!, "hunter2hunter2");
+      setValue(el.querySelector<HTMLInputElement>('input[type="password"]')!, fixturePassword("login-bootstrap"));
     });
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));

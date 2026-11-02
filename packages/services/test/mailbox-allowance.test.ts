@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
@@ -51,7 +52,7 @@ const meteredSvc = (_db: Db) => makeMailboxService({
   accessOf: async () => verdict,
 });
 const svc = makeMailboxService({ keyProvider: KP });
-const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: "s3cr3t" };
+const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: fixturePassword("mailbox-allowance") };
 
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 

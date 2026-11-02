@@ -84,6 +84,7 @@ afterEach(async () => {
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 const address = (id: string): string => `p${id}@example.invalid`;
@@ -320,6 +321,9 @@ describe("after a verb, on the shipped shell", () => {
      in the three groups, so a bar verb that leaves it standing must not move the cursor. */
   for (const which of ["reply", "forward"] as const) {
     it(`bar ${which} on a row carried by a Load-older letter keeps the cursor on the letter`, async () => {
+      // The shell dates the 60-day dormancy cutline by the wall clock: pinned to NOW (and still
+      // moving, so waitFor's deadline runs), our reply of 2026-09-04 keeps this sender active.
+      vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true, now: NOW });
       const mirror: Spec[] = [
         { id: "s", thread: "t-c", folder: "Sent", from: "me@example.com", date: "2026-09-04T08:00:00.000Z" },
         ...[2, 3, 4].map((n) => ({ id: `b${n}`, from: `p${n}@example.com`, date: yesterday(22 - n) })),

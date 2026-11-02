@@ -170,7 +170,7 @@ describe("3 — the 09-28 entitlements timeline mails once", () => {
       subjects.push((JSON.parse(body) as { subject: string }).subject);
       return { status: 200 };
     };
-    const sink = resendAlertSink({ apiKey: "re-test-replaykeyajcix-fixture-token", from: "a@ohmail.example", to: "o@ohmail.example" }, post)!;
+    const sink = resendAlertSink({ apiKey: "alert-sink-replay-key-fixture-token", from: "a@ohmail.example", to: "o@ohmail.example" }, post)!;
     const writes: Record<number, () => Promise<unknown>> = {
       [-1]: () => apiFaults(db, -1, 13),
       9: () => apiFaults(db, 9, 25),
@@ -227,7 +227,7 @@ describe("5 — a cleared alert mails nobody; the push arm is still told", () =>
     await stuck(db, seed, 1);
     const mailBodies: string[] = [];
     const chat: string[] = [];
-    const mail = resendAlertSink({ apiKey: "re-test-resolvedkeyaaab-fixture-token", from: "a@ohmail.example", to: "o@ohmail.example" },
+    const mail = resendAlertSink({ apiKey: "alert-sink-resolved-key-fixture-token", from: "a@ohmail.example", to: "o@ohmail.example" },
       async (_u, b) => { mailBodies.push(b); return { status: 200 }; })!;
     const telegram = telegramAlertSink({ botToken: "8123456789:AAF-fakefakefakefakefakefakefake0123", chatId: "-100123" },
       async (_u: string, b: string) => { chat.push(b); return { status: 200 }; })!;
@@ -253,7 +253,7 @@ describe("6 — a lone schema_behind keeps one mail key for the page window", ()
 
   it("twice inside 6 h — across a clock bucket's edge too — is two POSTs under ONE key", async () => {
     const keys: string[] = [];
-    const sink = resendAlertSink({ apiKey: "re-test-behindkeyaaaab-fixture-token", from: "a@ohmail.example", to: "o@ohmail.example" },
+    const sink = resendAlertSink({ apiKey: "alert-sink-behind-key-fixture-token", from: "a@ohmail.example", to: "o@ohmail.example" },
       async (_u, _b, h) => { keys.push(h?.["Idempotency-Key"] ?? ""); return { status: 200 }; })!;
     const edge = new Date("2026-12-01T05:59:00.000Z");
     const ctx = (d: Date): AlertNotifyContext => ({ source: "worker", environment: "production", now: d });
@@ -266,7 +266,7 @@ describe("6 — a lone schema_behind keeps one mail key for the page window", ()
 
   it("control: an ordinary page ten minutes later is another key", async () => {
     const keys: string[] = [];
-    const sink = resendAlertSink({ apiKey: "re-test-behindkeyaaaab-fixture-token", from: "a@ohmail.example", to: "o@ohmail.example" },
+    const sink = resendAlertSink({ apiKey: "alert-sink-behind-key-fixture-token", from: "a@ohmail.example", to: "o@ohmail.example" },
       async (_u, _b, h) => { keys.push(h?.["Idempotency-Key"] ?? ""); return { status: 200 }; })!;
     const page: Alert[] = [{ ...BEHIND[0]!, key: "worker_down:0", kind: "worker_down", title: "No worker" }];
     await sink.notify(page, { source: "worker", environment: "production", now: NOW });

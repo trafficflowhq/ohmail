@@ -962,9 +962,10 @@ describe("the identity fact holds what only inference admitted", () => {
   });
 
   it("3: an inferred contact alone (no rule) is held as well; a person's contact admits", () => {
-    const m = named("UBS Sicherheit", "alerts@gmail.com");
-    expect(gate(m, { inferred: ["alerts@gmail.com"] }).destination).toBe("ohmail/Screener");
-    expect(gate(m, { person: ["alerts@gmail.com"] }).source).toBe("unclear");
+    const at = personalAt("fixture.alerts", GMAIL);
+    const m = named("UBS Sicherheit", at);
+    expect(gate(m, { inferred: [at] }).destination).toBe("ohmail/Screener");
+    expect(gate(m, { person: [at] }).source).toBe("unclear");
   });
 
   it("4: your own mail claiming a brand keeps its place with the fact; a forged own From that fails is held", () => {

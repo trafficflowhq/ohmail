@@ -116,15 +116,85 @@ export function sanitizeOutboundHtml(html: string): string {
  * and a remote or `data:` one is the payload the grammar keeps out.
  */
 export function sanitizeQuotedHtml(html: string, cids: ReadonlySet<string>): string {
-  if (cids.size === 0) return sanitizeOutboundHtml(html);
-  return sanitizeHtml(html, {
+  const quote: sanitizeHtml.IOptions = {
     ...POLICY,
-    allowedTags: [...ALLOWED_TAGS, "img"],
+    allowedTags: [...ALLOWED_TAGS, QUOTE_LINE, QUOTE_CELL],
+    nonTextTags: [...POLICY.nonTextTags!, "head", "title", "noscript", "template"],
+    transformTags: {
+      ...Object.fromEntries(LINE_TAGS.map((t) => [t, QUOTE_LINE])),
+      td: QUOTE_CELL, th: QUOTE_CELL,
+    },
+  };
+  return keepLines(sanitizeHtml(html, cids.size === 0 ? quote : {
+    ...quote,
+    allowedTags: [...quote.allowedTags as string[], "img"],
     allowedAttributes: { ...POLICY.allowedAttributes, img: ["src", "alt", "width", "height"] },
     allowedSchemesByTag: { img: ["cid"] },
     allowedSchemesAppliedToAttributes: ["href", "src"],
     exclusiveFilter: (frame) => frame.tag === "img" && !cids.has((frame.attribs.src ?? "").replace(/^cid:/i, "")),
-  });
+  }));
+}
+
+/**
+ * A letter's own block tags outside the grammar (a Gmail line is a `div`, a receipt a table).
+ * Dropped bare, their lines ran together in the quote; each becomes a line break instead.
+ */
+const LINE_TAGS = [
+  "div", "section", "article", "header", "footer", "main", "aside", "nav", "center", "address",
+  "h1", "h2", "h3", "h4", "h5", "h6", "table", "thead", "tbody", "tfoot", "tr", "caption",
+  "dl", "dt", "dd", "figure", "figcaption", "hr",
+];
+const QUOTE_LINE = "x-ohmail-line";
+const QUOTE_CELL = "x-ohmail-cell";
+/** Tags whose edges are already line edges in the grammar. */
+const GRAMMAR_BLOCKS = new Set(["p", "ul", "ol", "li", "blockquote", "pre"]);
+
+/**
+ * Turn the quote's line and cell markers into what a reader of the letter saw: a `<br />` where a
+ * block ended after words (only one, and none at a grammar block or at the end), ` | ` between
+ * two filled cells of a row; `\n` inside a `<pre>`. Runs over sanitize-html's own output, whose
+ * text and attribute values carry no raw `<` or `>`.
+ */
+function keepLines(html: string): string {
+  let out = "";
+  let filled = false;
+  let pending = false;
+  let pre = 0;
+  for (const tok of html.split(/(<[^>]*>)/)) {
+    if (tok === "") continue;
+    if (!tok.startsWith("<")) {
+      if (tok.trim() !== "") {
+        if (pending) out += pre > 0 ? "\n" : "<br />";
+        pending = false;
+        filled = true;
+      }
+      out += tok;
+      continue;
+    }
+    const closing = tok.startsWith("</");
+    const name = (/^<\/?([a-z0-9-]+)/i.exec(tok)?.[1] ?? "").toLowerCase();
+    if (name === QUOTE_LINE) {
+      if (filled) pending = true;
+      filled = false;
+      continue;
+    }
+    if (name === QUOTE_CELL) {
+      if (!closing && filled && !pending) { out += " | "; filled = false; }
+      continue;
+    }
+    if (GRAMMAR_BLOCKS.has(name)) {
+      if (name === "pre") pre = Math.max(0, pre + (closing ? -1 : 1));
+      pending = false;
+      filled = false;
+    } else if (!closing) {
+      if (pending) out += pre > 0 ? "\n" : "<br />";
+      pending = false;
+      if (name === "br") filled = false;
+      else if (name === "img") filled = true;
+    }
+    out += tok;
+  }
+  return out;
 }
 
 /**

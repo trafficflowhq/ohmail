@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -240,7 +241,7 @@ describe("the requests that leave this window", () => {
     const made = (await makeHost())!;
     await act(async () => {
       await made.organize(id, {
-        imap: { pass: "hunter2" },
+        imap: { pass: fixturePassword("first-run-organize") },
         screening: { dormancyDays: 180, scope: "window" },
       });
     });
@@ -250,7 +251,7 @@ describe("the requests that leave this window", () => {
     // which on this door refuses for the life of the process from five minutes after launch.
     expect(call.url).toBe(`/local/mailboxes/${id}/organize`);
     expect(JSON.parse(call.body)).toEqual({ screening: { dormancyDays: 180, scope: "window" } });
-    expect(call.body).not.toContain("hunter2");
+    expect(call.body).not.toContain(fixturePassword("first-run-organize"));
     expect(call.body).not.toContain("imap");
   });
 
