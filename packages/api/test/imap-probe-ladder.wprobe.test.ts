@@ -689,6 +689,88 @@ describe("makeImapProbe — localServerDial: the local-gateway wait", () => {
   });
 });
 
+/* ── a server on this computer with its own certificate (Proton Mail Bridge) ──────────────── */
+
+describe("a server on this computer with its own certificate", () => {
+  const SHA = Array.from({ length: 32 }, (_, i) => (i * 7 % 256).toString(16).toUpperCase().padStart(2, "0")).join(":");
+  const OWN = { sha256: SHA, pem: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n" };
+  const BRIDGE = { host: "127.0.0.1", port: 1143, secure: false, user: "u@proton.example", pass: "bridge-password" };
+  const selfSigned = (): Error => Object.assign(new Error("self-signed certificate"), { code: "DEPTH_ZERO_SELF_SIGNED_CERT" });
+  /** A server that refuses every dial not pinned to its own certificate, and signs in the pinned one. */
+  const bridgeFactory = () => scriptedFactory(async (c) => {
+    if (c.tlsPin?.sha256 !== SHA) throw selfSigned();
+  });
+  /** The reader, counting what it was asked to read. */
+  const reader = (seen: typeof OWN | null = OWN) => {
+    const asked: Array<{ host: string; port: number; secure: boolean; protocol: string }> = [];
+    return { asked, read: async (d: { host: string; port: number; secure: boolean; protocol: "imap" | "smtp" }) => { asked.push(d); return seen; } };
+  };
+  const input = (over: Record<string, unknown> = {}) => ({ accountId: "a", address: "u@proton.example", imap: { ...BRIDGE, ...over } });
+
+  it("offers its certificate by fingerprint, read on the rung that presented it, and dials nothing pinned unasked", async () => {
+    const { factory, dialled } = bridgeFactory();
+    const r = reader();
+    const probe = makeImapProbe(fakeDeps(), { adapterFactory: factory, loopbackCertificate: r.read });
+    expect(await probe(input())).toEqual({ verdict: "refuse", code: "tls", tls: { kind: "self_signed", certificate: { sha256: SHA } } });
+    expect(r.asked).toEqual([{ host: "127.0.0.1", port: 1143, secure: false, protocol: "imap" }]);
+    expect(dialled.every((d) => d.config.tlsPin === undefined), "a dial was pinned without the person's claim").toBe(true);
+  });
+
+  it("a press that claims exactly that certificate is dialled pinned to it, and the proof carries it", async () => {
+    const { factory, dialled } = bridgeFactory();
+    const probe = makeImapProbe(fakeDeps(), { adapterFactory: factory, loopbackCertificate: reader().read });
+    const verdict = await probe(input({ trustCertificate: SHA.toLowerCase() }));
+    expect(verdict).toEqual({ verdict: "ok", proven: { host: "127.0.0.1", port: 1143, secure: false, tlsPin: OWN } });
+    expect(dialled.at(-1)!.config.tlsPin).toEqual(OWN);
+  });
+
+  it("a claim for another certificate is refused and offered the one there now; nothing is dialled pinned", async () => {
+    const { factory, dialled } = bridgeFactory();
+    const probe = makeImapProbe(fakeDeps(), { adapterFactory: factory, loopbackCertificate: reader().read });
+    const other = SHA.replace(/^../, "FF");
+    expect(other).not.toBe(SHA);
+    expect(await probe(input({ trustCertificate: other })))
+      .toEqual({ verdict: "refuse", code: "tls", tls: { kind: "self_signed", certificate: { sha256: SHA } } });
+    expect(dialled.every((d) => d.config.tlsPin === undefined)).toBe(true);
+  });
+
+  it("is offered nothing without the option, off this computer, or when the reader refuses the certificate", async () => {
+    const ordinary = { verdict: "refuse", code: "tls", tls: { kind: "self_signed" } };
+    const noOption = makeImapProbe(fakeDeps(), { adapterFactory: bridgeFactory().factory });
+    expect(await noOption(input({ trustCertificate: SHA }))).toEqual(ordinary);
+    for (const host of ["mail.home.example", "192.168.1.20", "localhost.example.com"]) {
+      const r = reader();
+      const probe = makeImapProbe(fakeDeps(LAN), { adapterFactory: bridgeFactory().factory, loopbackCertificate: r.read });
+      expect(await probe(input({ host, trustCertificate: SHA })), host).toEqual(ordinary);
+      expect(r.asked, `${host} was read as this computer`).toEqual([]);
+    }
+    const chainOrExpired = makeImapProbe(fakeDeps(), { adapterFactory: bridgeFactory().factory, loopbackCertificate: reader(null).read });
+    expect(await chainOrExpired(input({ trustCertificate: SHA }))).toEqual(ordinary);
+  });
+
+  it("SMTP: the same offer, and the claimed certificate pinned on the submission dial", async () => {
+    const dials: Array<{ tlsPin?: unknown }> = [];
+    const r = reader();
+    const probe = makeSmtpProbe(fakeDeps(), {
+      loopbackCertificate: r.read,
+      dial: async (smtp) => {
+        dials.push({ tlsPin: smtp.tlsPin });
+        if ((smtp.tlsPin as { sha256?: string } | undefined)?.sha256 !== SHA) throw new Error("self-signed certificate");
+      },
+    });
+    const smtpIn = (over: Record<string, unknown> = {}) => ({
+      accountId: "a", address: "u@proton.example",
+      smtp: { host: "127.0.0.1", port: 1025, secure: false, user: "u@proton.example", pass: "bridge-password", ...over },
+    });
+    expect(await probe(smtpIn())).toEqual({ verdict: "refuse", code: "tls", tls: { kind: "self_signed", certificate: { sha256: SHA } } });
+    expect(r.asked).toEqual([{ host: "127.0.0.1", port: 1025, secure: false, protocol: "smtp" }]);
+    expect(await probe(smtpIn({ trustCertificate: SHA }))).toEqual({
+      verdict: "ok", proven: { host: "127.0.0.1", port: 1025, secure: false, tlsPin: OWN, maxMessageBytes: null },
+    });
+    expect(dials.at(-1)!.tlsPin).toEqual(OWN);
+  });
+});
+
 /* ── the whole flow through the route: what gets STORED, and the consent round-trip ──────── */
 
 const app = createApp(apiRoutes);

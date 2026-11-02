@@ -6,12 +6,16 @@
  * floor does not exempt (`ip6-localhost`, answered 127.0.0.1), so the floor is production's.
  */
 import { rmSync } from "node:fs";
-import { randomBytes, randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomBytes, randomUUID, X509Certificate } from "node:crypto";
+import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
+import { TLSSocket } from "node:tls";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImapFlow } from "imapflow";
 import { eq } from "drizzle-orm";
+import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
 import { mailboxCredentials, messages } from "@trafficflow/db";
-import { createSidecar, type Sidecar } from "../src/engine.js";
+import { createSidecar, type AdapterDialContext, type Sidecar } from "../src/engine.js";
+import { buildSelfSignedCert } from "../src/host-lan-tls.js";
 import { freshDataDir } from "./_datadir.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { HOME_NAME, osAnswers } from "../../../test/support/plaintext-wire.js";
@@ -159,26 +163,187 @@ describe.skipIf(!SERVER_UP)("the first-run seed on a server that offers no encry
     await allStored(s);
   });
 
-  it("receive-only: the seal and Add admit the same server the same way", async () => {
+  /* THE OUTGOING SERVER IS ASKED ABOUT, at the seal and at Add alike: without its line the press is
+     refused with the offer and stores nothing; with it, both admit the mailbox and sending is settled. */
+  it("the seal and Add ask about the same outgoing server the same way, and admit it the same way once ticked", async () => {
     const { address, pass, dataDir } = await fixture("receive");
     const other = `fd-${randomUUID()}@trafficflow.test`;
     await seedServer(other, pass);
     const s = await bootSeed(dataDir, address, { 1: randomBytes(32) }, []);
     await s.start();
-    const sealed = await sealOf(s, doorSeal(address, pass, { imap: true }));
-    const sealedDto = await sealed.json() as { sendingUnsettledReason?: unknown };
-    const added = await local(s, "/local/mailboxes", {
-      method: "POST",
-      body: {
-        provider: "other", address: other,
-        imap: { host: HOME_NAME, port: IMAP_PORT, secure: false, user: other, pass, allowInsecure: true, smtpUnsettled: "" },
-        smtp: { host: HOME_NAME, port: SMTP_PORT, secure: false, user: other, pass },
-      },
+    const addBody = (smtpConsent: boolean): unknown => ({
+      provider: "other", address: other,
+      imap: { host: HOME_NAME, port: IMAP_PORT, secure: false, user: other, pass, allowInsecure: true, smtpUnsettled: "" },
+      smtp: { host: HOME_NAME, port: SMTP_PORT, secure: false, user: other, pass, ...(smtpConsent ? { allowInsecure: true } : {}) },
     });
-    const addedDto = await added.json() as { sendingUnsettledReason?: unknown };
-    expect(sealed.status).toBe(200);
-    expect(added.status).toBe(201);
-    expect(sealedDto.sendingUnsettledReason).toBe("tls");
-    expect(addedDto.sendingUnsettledReason).toBe("tls");
+    const sealed = await sealOf(s, doorSeal(address, pass, { imap: true }));
+    const added = await local(s, "/local/mailboxes", { method: "POST", body: addBody(false) });
+    for (const res of [sealed, added]) {
+      const body = await res.json() as { error?: { code?: string; details?: unknown } };
+      expect(res.status).toBe(400);
+      expect(body.error?.code).toBe("mailbox_probe_failed");
+      expect(body.error?.details).toMatchObject({ transport: "smtp", tls: { kind: "tls_unavailable", plaintext: "offered" } });
+    }
+    expect(await s.credentialState()).toBe("absent");
+
+    const sealedAgain = await sealOf(s, doorSeal(address, pass, { imap: true, smtp: true }));
+    const addedAgain = await local(s, "/local/mailboxes", { method: "POST", body: addBody(true) });
+    expect([sealedAgain.status, addedAgain.status]).toEqual([200, 201]);
+    for (const res of [sealedAgain, addedAgain]) {
+      expect(((await res.json()) as { sendingUnsettledReason?: unknown }).sendingUnsettledReason ?? null).toBeNull();
+    }
+  });
+});
+
+/**
+ * …AND A SERVER ON THIS COMPUTER WITH THE CERTIFICATE ITS ROW TRUSTS (a gateway such as Proton
+ * Mail Bridge). "Sign in again" stored the trusted pin while the running seed dialled without it:
+ * a bare seed's launch was refused and its password purged, and after a certificate change the
+ * re-dial kept the old pin. A real STARTTLS server with its own certificate and the real reader;
+ * a dial pinned to the certificate served is let in, any other is a real `ImapAdapter` against it.
+ */
+describe("the first-run seed on a server on this computer with its own certificate", () => {
+  const USER = "pat@bridge.example";
+  const KEKS = { 1: Buffer.alloc(32, 7) };
+  type Served = { key: string; cert: string; sha256: string };
+
+  function certificate(): Served {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const cert = new X509Certificate(buildSelfSignedCert(publicKey, privateKey, "127.0.0.1"));
+    return { key: privateKey.export({ type: "pkcs8", format: "pem" }).toString(), cert: cert.toString(), sha256: cert.fingerprint256 };
+  }
+
+  /** IMAP on loopback offering STARTTLS with the certificate served now, and nothing past it. */
+  async function bridge(served: { current: Served }): Promise<number> {
+    const live = new Set<Socket>();
+    const server = createNetServer((raw) => {
+      live.add(raw);
+      raw.on("error", () => { /* a client that refused the certificate hangs up */ });
+      raw.on("close", () => live.delete(raw));
+      let buf = "";
+      const onData = (chunk: Buffer): void => {
+        buf += chunk.toString("latin1");
+        for (let end = buf.indexOf("\r\n"); end >= 0; end = buf.indexOf("\r\n")) {
+          const [tag, command = ""] = buf.slice(0, end).split(" ");
+          buf = buf.slice(end + 2);
+          if (/^CAPABILITY$/i.test(command)) raw.write(`* CAPABILITY IMAP4rev1 STARTTLS\r\n${tag} OK done\r\n`);
+          else if (!/^STARTTLS$/i.test(command)) raw.write(`${tag} BAD not before STARTTLS\r\n`);
+          else {
+            raw.write(`${tag} OK begin TLS\r\n`);
+            raw.removeListener("data", onData);
+            new TLSSocket(raw, { isServer: true, key: served.current.key, cert: served.current.cert }).on("error", () => {});
+            return;
+          }
+        }
+      };
+      raw.on("data", onData);
+      raw.write("* OK [CAPABILITY IMAP4rev1 STARTTLS] bridge ready\r\n");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanups.push(() => new Promise<void>((resolve) => { for (const s of live) s.destroy(); server.close(() => resolve()); }));
+    return (server.address() as AddressInfo).port;
+  }
+
+  /** Every dial the engine builds, and the pin its config held when it connected. */
+  function dialer(served: { current: Served }) {
+    const dials: Array<{ cfg: ImapConfig; ctx?: AdapterDialContext; pin?: string | null }> = [];
+    const factory = (cfg: ImapConfig, ctx?: AdapterDialContext) => {
+      const dial: (typeof dials)[number] = { cfg, ctx };
+      dials.push(dial);
+      const real = new ImapAdapter(cfg);
+      const none = async (): Promise<never[]> => [];
+      return {
+        // Read at the connect, as `ImapAdapter` reads its config: the engine may re-point it after the build.
+        async connect(): Promise<void> {
+          dial.pin = cfg.tlsPin?.sha256 ?? null;
+          if (dial.pin !== served.current.sha256) await real.connect();
+        },
+        close: () => real.close().catch(() => undefined),
+        listFolders: async () => ["INBOX"],
+        leaseIo: () => ({
+          ensureMetaFolder: async () => {}, listClaims: none, appendClaim: async () => {}, removeClaims: async () => {},
+          uidValidity: () => 4_100,
+        }),
+        leasePeekIo: () => ({ listClaims: none }),
+        capabilities: async () => ({ move: true, uidplus: true, condstore: true, qresync: false, idle: true, specialUse: true, sentFolder: null }),
+        ensureFolders: async () => {},
+        changesSince: async () => ({ creates: [], moves: [], flagChanges: [], deletes: [], newCursor: { folders: {} } }),
+        move: async () => ({ folder: "INBOX", ref: "1:1" }),
+        setFlags: async () => {},
+        scanSentRecipients: none,
+        watch: async () => async () => {},
+      };
+    };
+    return { dials, factory };
+  }
+
+  /** The seed on the bridge, started; `engine` lists the pins of this runtime's own dials, the probe's left out. */
+  async function bootBridge(dataDir: string, port: number, d: ReturnType<typeof dialer>) {
+    const from = d.dials.length;
+    const s = await createSidecar({
+      dataDir, address: USER, keks: KEKS, machineName: "this computer",
+      imap: { host: "127.0.0.1", port, secure: false, auth: { user: USER } },
+      pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, adapterFactory: d.factory, log: () => {},
+    } as never);
+    cleanups.push(async () => { await s.stop().catch(() => undefined); });
+    await s.start();
+    const own = d.dials[from]!.cfg;
+    const engine = () => d.dials.filter((x) => x.cfg === own && x.pin !== undefined);
+    return { s, engine };
+  }
+
+  async function fixture(tag: string): Promise<{ served: { current: Served }; port: number; d: ReturnType<typeof dialer>; dataDir: string }> {
+    const dataDir = await freshDataDir(`ohmail-seed-pin-${tag}-`);
+    cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
+    const served = { current: certificate() };
+    const d = dialer(served);
+    return { served, port: await bridge(served), d, dataDir };
+  }
+  const pinOf = async (s: Sidecar): Promise<unknown> => {
+    const rows = await s.db.select({ transport: mailboxCredentials.transport, meta: mailboxCredentials.meta })
+      .from(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, s.world.mailboxId));
+    return (rows.find((r) => r.transport === "imap")?.meta as { tlsPin?: { sha256?: unknown } } | undefined)?.tlsPin?.sha256;
+  };
+  const reachable = async (s: Sidecar): Promise<void> => {
+    await vi.waitFor(async () => {
+      const { items } = await (await local(s, "/local/mailboxes/connections")).json() as { items: Array<{ mailboxId: string; reachable?: boolean }> };
+      expect(items.find((i) => i.mailboxId === s.world.mailboxId)?.reachable).toBe(true);
+    }, { timeout: 10_000, interval: 50 });
+  };
+
+  it("Sign in again on the seed with no password, its certificate trusted, stores the pin and dials with it", async () => {
+    const { served, port, d, dataDir } = await fixture("bare");
+    const { s, engine } = await bootBridge(dataDir, port, d);
+    expect(await s.credentialState()).toBe("absent");
+    const res = await sealOf(s, { imap: { pass: "bridge-password", trustCertificate: served.current.sha256 } });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await s.credentialState(), "the trusted press purged the password it stored").toBe("ready");
+    expect(await pinOf(s)).toBe(served.current.sha256);
+    expect(engine().map((x) => x.pin), "the launch dialled without the certificate just trusted").toEqual([served.current.sha256]);
+    await reachable(s);
+  });
+
+  it("after its certificate changed, the re-dial behind the trusted press is pinned to the new one", async () => {
+    const { served, port, d, dataDir } = await fixture("changed");
+    const first = await bootBridge(dataDir, port, d);
+    // The door's seal names the server; the engine the door starts next dials pinned.
+    const sealed = await sealOf(first.s, {
+      imap: { host: "127.0.0.1", port, secure: false, user: USER, pass: "bridge-password", trustCertificate: served.current.sha256, smtpHost: "" },
+    });
+    expect(sealed.status, await sealed.clone().text()).toBe(200);
+    await first.s.stop();
+    const { s, engine } = await bootBridge(dataDir, port, d);
+    await reachable(s);
+    expect(engine().map((x) => x.pin), "the relaunch dialled pinned").toEqual([served.current.sha256]);
+
+    // Reinstalled with another certificate: the connection drops, and the person trusts the new one.
+    served.current = certificate();
+    engine().at(-1)!.ctx!.onConnectionError(new Error("the bridge restarted"));
+    const before = engine().length;
+    const res = await sealOf(s, { imap: { pass: "bridge-password", trustCertificate: served.current.sha256 } });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await pinOf(s)).toBe(served.current.sha256);
+    expect(engine().slice(before).map((x) => x.pin), "the re-dial kept the old certificate").toEqual([served.current.sha256]);
+    await reachable(s);
   });
 });

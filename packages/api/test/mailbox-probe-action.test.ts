@@ -213,6 +213,62 @@ describe("the create path is untouched — the count is this route's alone", () 
   });
 });
 
+/**
+ * THE OUTGOING SERVER IS TESTED TOO, when the form names one — the create dials it and refuses the
+ * whole mailbox when it says no, so a green over the incoming server alone promised a connect that
+ * was about to fail. Its verdict is part of a 200: the incoming server answered. A body with no
+ * `smtp` key says nothing about sending (a tab built before this asks nothing).
+ */
+describe("the outgoing server, on Test connection", () => {
+  const SMTP = { host: "smtp.example.invalid", port: 465, secure: true, user: "u@example.invalid" };
+  type Dial = { host: string; port: number; secure: boolean; auth: { user: string; pass: string } };
+  async function sessionDialling(smtpVerify: (smtp: Dial) => Promise<void>) {
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { smtpVerify });
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    return { db, deps: { ...deps, connectAttempts: connectAttemptRecorder(db as unknown as Tx, deps.now) }, token: s.token };
+  }
+
+  it("an accepted outgoing server is said by the host that answered, with the incoming password", async () => {
+    const dialled: Dial[] = [];
+    const { deps, token } = await sessionDialling(async (smtp) => { dialled.push(smtp); });
+    spyDial(ok);
+    // The password is never read from the outgoing block: the incoming one is what is tried.
+    const res = await H(post(token, { smtp: { ...SMTP, pass: "a-second-secret-password" } }), deps);
+    expect(res.status).toBe(200);
+    expect((await res.json()).sending).toEqual({ state: "ok", host: "smtp.example.invalid" });
+    expect(dialled.map((d) => d.auth.pass)).toEqual([IMAP.pass]);
+  });
+
+  it("a password only the outgoing server refused is a 200 with that leg refused, and recorded", async () => {
+    const { db, deps, token } = await sessionDialling(async () => {
+      throw Object.assign(new Error("Invalid login: 535 5.7.8 rejected"), { code: "EAUTH", responseCode: 535 });
+    });
+    spyDial(ok);
+    const res = await H(post(token, { smtp: SMTP }), deps);
+    expect(res.status).toBe(200);
+    expect((await res.json()).sending).toEqual({ state: "refused", host: "smtp.example.invalid", reason: "auth" });
+    expect(await db.select().from(connectAttempts)).toMatchObject([{ door: "test", outcome: "refused", reason: "auth", transport: "smtp" }]);
+  });
+
+  it("a blank outgoing host is not set up, and nothing is dialled for it", async () => {
+    const dialled: Dial[] = [];
+    const { deps, token } = await sessionDialling(async (smtp) => { dialled.push(smtp); });
+    spyDial(ok);
+    const wire = await (await H(post(token, { smtp: { host: "" } }), deps)).json();
+    expect(wire.sending).toEqual({ state: "not_configured" });
+    expect(dialled).toEqual([]);
+  });
+
+  it("control: no outgoing block, no sending verdict and no dial", async () => {
+    const dialled: Dial[] = [];
+    const { deps, token } = await sessionDialling(async (smtp) => { dialled.push(smtp); });
+    spyDial(ok);
+    const wire = await (await H(post(token), deps)).json();
+    expect(wire).not.toHaveProperty("sending");
+    expect(dialled).toEqual([]);
+  });
+});
+
 describe("the route is gated", () => {
   it("is mounted as `connection`, with step-up", async () => {
     // Read off the table rather than exercised: `connection` is what keeps a mail-server dial out

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { mailboxCredentials } from "@trafficflow/db";
-import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, buildImapAuth, storedTlsPin, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import { ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
 import { isMessageGone } from "@trafficflow/core/mail";
 import type { ApiDeps } from "./deps.js";
@@ -265,6 +265,7 @@ async function openImapUnderCap(
      * that never had a socket. */
     const dial = await dialFieldsFor(deps, {
       host: meta.host ?? "", port: imapPort, secure: meta.secure ?? true, consent: meta.insecureConsent === true,
+      tlsPin: storedTlsPin(meta),
     }, "imap");
 
     // ADMISSION, before the credential is decrypted and long before a socket exists. Local first:

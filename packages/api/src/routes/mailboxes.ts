@@ -82,7 +82,10 @@ function organizeInputOf(body: Record<string, unknown>): {
  */
 function probeInputOf(body: Record<string, unknown>): {
   address: string;
-  imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean };
+  imap: {
+    host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean; trustCertificate?: string;
+  };
+  smtp?: { host: string; port?: number; secure?: boolean; user?: string; allowInsecure?: boolean; trustCertificate?: string };
 } {
   const address = typeof body.address === "string" ? body.address : "";
   const imap = (body.imap && typeof body.imap === "object" ? body.imap : {}) as Record<string, unknown>;
@@ -101,6 +104,19 @@ function probeInputOf(body: Record<string, unknown>): {
   if (typeof imap.user === "string") out.imap.user = imap.user;
   // The plaintext consent, as a claim the probe re-proves for a server on a private network only.
   if (imap.allowInsecure === true) out.imap.allowInsecure = true;
+  // A trusted certificate's fingerprint: a claim a door that may pin re-reads; this one never pins.
+  if (typeof imap.trustCertificate === "string") out.imap.trustCertificate = imap.trustCertificate;
+  /* THE OUTGOING SERVER, by the same rule, and its password is never read: one form, one identity,
+     and the service tries the incoming password, as the create does. A blank host is an answer. */
+  if (body.smtp && typeof body.smtp === "object") {
+    const smtp = body.smtp as Record<string, unknown>;
+    out.smtp = { host: typeof smtp.host === "string" ? smtp.host : "" };
+    if (typeof smtp.port === "number") out.smtp.port = smtp.port;
+    if (typeof smtp.secure === "boolean") out.smtp.secure = smtp.secure;
+    if (typeof smtp.user === "string") out.smtp.user = smtp.user;
+    if (smtp.allowInsecure === true) out.smtp.allowInsecure = true;
+    if (typeof smtp.trustCertificate === "string") out.smtp.trustCertificate = smtp.trustCertificate;
+  }
   return out;
 }
 
@@ -498,11 +514,16 @@ export const mailboxRoutes: Route[] = [
     handler: async (req, deps) => {
       const body = await readBody<Record<string, unknown>>(req);
       try {
+        const input = probeInputOf(body);
         const dto = await mailbox(deps).probeConnection(
-          serviceContext(deps, req), probeInputOf(body),
+          serviceContext(deps, req), input,
           // THE ONE CALL SITE THAT ASKS FOR A FOLDER COUNT. Every other probe in this file is built
-          // without it, so no create and no claim pays a LIST for a number it does not read.
-          { probe: makeImapProbe(deps, { countFolders: true }) },
+          // without it, so no create and no claim pays a LIST for a number it does not read. The
+          // outgoing prober only where the form named an outgoing server: no `sending` otherwise.
+          {
+            probe: makeImapProbe(deps, { countFolders: true }),
+            ...(input.smtp ? { smtpProbe: makeSmtpProbe(deps) } : {}),
+          },
         );
         await noteConnectAttempt(deps, {
           door: "test", imapHost: imapHostOf(body),

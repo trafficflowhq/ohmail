@@ -238,6 +238,26 @@ function standInShell(dataDir: string) {
       if (door) launch(door);
     },
     credentialState: async (): Promise<string | null> => (engine ? engine.credentialState() : null),
+    /** The serving engine's own door, under its launch bearer — what the window's requests reach. */
+    request: async (path: string, init: { method: string; body?: unknown; key?: string }): Promise<Response> => {
+      if (!engine) throw new Error("the engine is not serving");
+      return engine.handle(new Request(`http://sidecar${path}`, {
+        method: init.method,
+        headers: {
+          authorization: `Bearer ${engine.sessionToken}`, "content-type": "application/json",
+          ...(init.key ? { "idempotency-key": init.key } : {}),
+        },
+        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+      }));
+    },
+    mailboxId: async (): Promise<string | null> => engine?.world.mailboxId ?? null,
+    /** Each transport's stored plaintext consent for the serving mailbox. */
+    consents: async (): Promise<Record<string, boolean>> => {
+      if (!engine) return {};
+      const rows = await engine.db.select({ transport: mailboxCredentials.transport, meta: mailboxCredentials.meta })
+        .from(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, engine.world.mailboxId));
+      return Object.fromEntries(rows.map((r) => [r.transport, (r.meta as { insecureConsent?: unknown } | null)?.insecureConsent === true]));
+    },
     stored: async (): Promise<number> => (engine
       ? (await engine.db.select({ id: messageRows.id }).from(messageRows).where(eq(messageRows.mailboxId, engine.world.mailboxId))).length
       : 0),
@@ -318,7 +338,8 @@ const text = (el: HTMLElement): string => el.textContent ?? "";
 const onCard = (el: HTMLElement): boolean => text(el).includes(DOOR_COPY.localTitle) && [...el.querySelectorAll("button")]
   .some((b) => [DOOR_COPY.localOpen, DOOR_COPY.localOpening].includes((b.textContent ?? "").trim()));
 const mailMounted = (el: HTMLElement): boolean => text(el).includes("Ohbox") && el.querySelector(".gate-boot") === null;
-const CONSENT = (messages as unknown as { mailboxes: { insecureConsentLabel: string } }).mailboxes.insecureConsentLabel;
+/* Both legs are one server here, so the line is the one for both. */
+const CONSENT = (messages as unknown as { mailboxes: { insecureConsentLabelBoth: string } }).mailboxes.insecureConsentLabelBoth;
 const consentShown = (el: HTMLElement): boolean => [...el.querySelectorAll("label")]
   .some((l) => (l.textContent ?? "").includes(CONSENT) && l.querySelector("input[type=checkbox]") !== null);
 const STRIP_CONNECTED = "Connected. The first sync";
@@ -443,7 +464,7 @@ describe.skipIf(!SERVER_UP)("the first launch's local door over a server that of
     expect(await shell.credentialState()).toBe("absent");
   }, 180_000);
 
-  it("with the line ticked it seals, writes the door, enters and syncs", async () => {
+  it("with the line ticked it seals both servers, writes the door, enters, syncs and sends", async () => {
     restoreDns = osAnswers("127.0.0.1");
     const address = `fd-${randomUUID()}@trafficflow.test`;
     const pass = randomUUID();
@@ -462,6 +483,7 @@ describe.skipIf(!SERVER_UP)("the first launch's local door over a server that of
     await vi.waitFor(async () => { expect(await shell!.stored()).toBe(1); }, { timeout: 20_000, interval: 200 });
     window.stop();
     expect(shell.seals.map((s) => s.imap), "only the ticked press carried the consent").toEqual([false, true]);
+    expect(shell.seals.map((s) => s.smtp), "the one line did not cover the outgoing server").toEqual([false, true]);
     expect(shell.door(), "the door was not written by its commit").not.toBeNull();
     expect(shell.configured.map((c) => c.pending === true)).toEqual([true, true, false]);
     expect(await shell.credentialState()).toBe("ready");
@@ -469,6 +491,19 @@ describe.skipIf(!SERVER_UP)("the first launch's local door over a server that of
     expect(sealedAt, "no seal was answered").not.toBeNull();
     expect(window.seen.connectedAt === null || window.seen.connectedAt >= sealedAt!,
       "the rail said Connected before the password was sealed").toBe(true);
+
+    /* AND IT SENDS, after the start the door's commit made: the outgoing row carries its own
+       consent, and nothing the start wrote replaced it. */
+    expect(await shell.consents()).toEqual({ imap: true, smtp: true });
+    const draft = await shell.request("/drafts", {
+      method: "POST",
+      body: { mailboxId: (await shell.mailboxId()), subject: "first door", body: "sent over the consent", to: [{ name: null, address }] },
+    });
+    expect(draft.status, await draft.clone().text()).toBe(201);
+    const { id } = await draft.json() as { id: string };
+    const sent = await shell.request(`/drafts/${id}/send`, { method: "POST", body: {}, key: `first-door-${randomUUID()}` });
+    expect(sent.status, await sent.clone().text()).toBe(200);
+    expect((await sent.json() as { status?: string }).status).toBe("sent");
   }, 180_000);
 
   it("a change to the server retires the line and its tick", async () => {

@@ -474,6 +474,9 @@ export const TRANSACTION_WAIT_MS = 30_000;
 /** The code on a turn-wait refusal's cause, so its log line names it. */
 export const STORE_TURN_WAIT = "store_turn_wait";
 
+/** The code on a statement refused because the store was already closed — the phone's own word for it. */
+export const STORE_CLOSED = "engine_store_closed";
+
 /** Which handle a transaction came through. */
 export type TransactionKind = "engine" | "ingest" | "route";
 
@@ -612,11 +615,19 @@ export function pagedExecutor(exec: PhoneSqlExecutor): PagedExecutor {
     endLetter();
   };
   let tail: Promise<unknown> = Promise.resolve();
-  const serial = <T>(job: () => Promise<T>): Promise<T> => {
+  const queue = <T>(job: () => Promise<T>): Promise<T> => {
     const next = tail.then(job, job);
     tail = next.catch(() => undefined);
     return next;
   };
+  /* AFTER THE CLOSE, NOTHING REACHES THE HANDLE — an app statement that waited out a letter
+     included: on a phone a statement on a closed store ends the app. */
+  let closed = false;
+  let closing: Promise<void> | null = null;
+  const serial = <T>(job: () => Promise<T>): Promise<T> => queue(async () => {
+    if (closed) throw Object.assign(new Error("this store is closed, so the statement was not run"), { code: STORE_CLOSED });
+    return job();
+  });
   /* A COPY of the parameters: the caller's array is reused after the statement returns (measured:
      a replayed insert read another statement's values). */
   const note = (entry: Logged): void => {
@@ -705,10 +716,16 @@ export function pagedExecutor(exec: PhoneSqlExecutor): PagedExecutor {
       return asMain(() => exec.run(sql, params));
     },
     batch: (statements) => asMain(() => exec.batch(statements)),
-    close: () => serial(async () => {
-      if (!letterOpen) await commitPage().catch(() => undefined);
-      await exec.close();
-    }),
+    close: () => {
+      closing ??= queue(async () => {
+        if (!letterOpen) await commitPage().catch(() => undefined);
+        closed = true;
+        // The app's statements waiting out a letter come back to be refused.
+        endLetter();
+        await exec.close();
+      });
+      return closing;
+    },
   };
   /** The engine's statement: part of the letter in flight, or after the page's commit. */
   const asEngine = <T>(sql: string, params: readonly unknown[], work: () => Promise<T>, rowsOf?: (t: T) => unknown): Promise<T> =>

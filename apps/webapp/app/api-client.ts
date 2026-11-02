@@ -29,6 +29,8 @@ import {
   ACCOUNT_ERASED, ERASED_DECLARATION, accountErasedOwner, clearAccountErased, erasedCapture, hearAccountErased,
 } from "./shell/account-erased";
 import { activeTranslator } from "./shell/locale";
+import type { ProbeSending } from "./shell/onboarding";
+import { SERVER_REFUSAL_CODES, refusalCopy } from "./shell/server-refusal";
 import { webLane, type LaneTicket } from "./shell/resume-lane";
 
 /**
@@ -1994,12 +1996,15 @@ export const mailboxes = {
 
   /**
    * `folders` is `null` where no count was taken; a renderer shows a verdict with no number rather than "0 folders".
+   * `smtp` asks about the outgoing server as well (its password is the incoming one), and only then is
+   * `sending` answered; a blank host is `not_configured`.
    */
   probe: (b: {
     address: string;
     imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean };
+    smtp?: { host: string; port?: number; secure?: boolean; user?: string; allowInsecure?: boolean };
   }) =>
-    api<{ ok: true; host: string; user: string; folders: number | null }>(
+    api<{ ok: true; host: string; user: string; folders: number | null; sending?: ProbeSending }>(
       "/mailboxes/probe", { method: "POST", body: b },
     ),
 
@@ -3848,7 +3853,8 @@ function isSessionBusy(err: unknown): boolean {
 }
 
 export function messageOf(err: unknown): string {
-  if (err instanceof ApiError) return err.message;
+  // A refusal the server words in English, said in the reader's language where the catalogue has it.
+  if (err instanceof ApiError) return SERVER_REFUSAL_CODES.has(err.code) ? refusalCopy(err) ?? err.message : err.message;
   /**
    * THE ONE REFUSAL THIS CLIENT RAISES THAT IS NOT AN `ApiError`: `SessionBusyError` is thrown when another tab has
    * held the origin-wide session lock past the deadline. Its own message says what happened and what to do — "another

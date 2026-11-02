@@ -42,6 +42,8 @@ import {
 } from "../src/engine/local-engine";
 import { KEK_KEY } from "../src/engine/kek";
 import type { SecureKV } from "../src/state/servers";
+import { DE } from "../src/copy.de";
+import { EN } from "../src/copy.en";
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
   DatabaseSync: new (path: string) => {
@@ -249,6 +251,45 @@ describe("the engine store's platform binding", () => {
     expect(rec.finalized).toBe(rec.prepared);
     expect(rec.prepared).toBeGreaterThan(3);
     await exec.close();
+  });
+
+  /* A REFUSED CONNECT STOPS THE ENGINE WHILE A STATEMENT IS OUT: the close waits its turn, so the
+     native handle is never closed under a statement, and nothing reaches it afterwards. */
+  it("closes only after the statement in flight is finalized", async () => {
+    const rec = recorder();
+    const db = fakeExpoDatabase(rec);
+    const atClose: string[] = [];
+    const close = db.closeAsync.bind(db);
+    db.closeAsync = async () => { atClose.push(`${rec.prepared - rec.finalized} open of ${rec.prepared}`); await close(); };
+    const exec = expoEngineExecutor(db);
+    const read = exec.all("select 1 as one", []);
+    await exec.close();
+    expect((await read).rows).toEqual([[1]]);
+    expect(atClose).toEqual(["0 open of 1"]);
+  });
+
+  it("refuses a statement after the close without touching the closed handle", async () => {
+    const rec = recorder();
+    const exec = expoEngineExecutor(fakeExpoDatabase(rec));
+    await exec.run("create table t (v integer)", []);
+    const closing = exec.close();
+    const late = exec.all("select v from t", []);
+    await closing;
+    const prepared = rec.prepared;
+    await expect(late).rejects.toMatchObject({ code: "engine_store_closed" });
+    await expect(exec.run("insert into t (v) values (1)", [])).rejects.toMatchObject({ code: "engine_store_closed" });
+    await expect(exec.batch([{ sql: "insert into t (v) values (2)" }])).rejects.toMatchObject({ code: "engine_store_closed" });
+    expect(rec.prepared, "a statement reached the closed handle").toBe(prepared);
+    expect(EN.storeFault("engine_store_closed")).not.toBe("engine_store_closed");
+    expect(DE.storeFault("engine_store_closed")).not.toBe("engine_store_closed");
+  });
+
+  it("closes the handle once, however often it is asked", async () => {
+    const rec = recorder();
+    const exec = expoEngineExecutor(fakeExpoDatabase(rec));
+    await Promise.all([exec.close(), exec.close()]);
+    await exec.close();
+    expect(rec.closed).toBe(1);
   });
 });
 

@@ -10,7 +10,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { authHintPreset } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
-import { EMPTY_STANDALONE, appPasswordNote, connectionLineHere, signInAgainSaid, withAddress } from "../src/ui/standalone-form";
+import {
+  EMPTY_STANDALONE, appPasswordNote, connectionLineHere, signInAgainSaid, standaloneAutofill, withAddress,
+} from "../src/ui/standalone-form";
 
 const preset = authHintPreset();
 /** An address on the preset's own domain, spelled from its incoming host. */
@@ -50,6 +52,13 @@ describe("the note under the password field", () => {
   it("control: nothing for another mailbox", () => {
     expect(appPasswordNote({ address: "someone@example.test", imapHost: "imap.example.test" })).toBeNull();
     expect(appPasswordNote(EMPTY_STANDALONE)).toBeNull();
+  });
+
+  /* THE FIELD IS THE MAILBOX'S PASSWORD, often an App Password: the platform's autofill must not
+     offer the saved ohmail account password there, on either platform. The address is offered as one. */
+  it("asks autofill for nothing in the password field, and for an email address above it", () => {
+    expect(standaloneAutofill("password")).toEqual({ autoComplete: "off", importantForAutofill: "no", textContentType: "none" });
+    expect(standaloneAutofill("address")).toEqual({ autoComplete: "email", textContentType: "emailAddress" });
   });
 });
 

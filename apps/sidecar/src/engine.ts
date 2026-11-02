@@ -9,7 +9,7 @@ import {
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
   ImapDeadline, IMAP_META_DEADLINE_MS,
-  isImapBoundExceeded, loopbackHarnessReason, googleAuthHint, type ImapConfig, type MailboxAdapter, type CredMetaAuth,
+  isImapBoundExceeded, loopbackHarnessReason, googleAuthHint, storedTlsPin, type ImapConfig, type MailboxAdapter, type CredMetaAuth,
   type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
 import { agreeSweepRun, makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type AgreeSweepCursor, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -100,7 +100,7 @@ import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
 // install model has to apply the identical rule and `apps/desktop` declares no `@trafficflow`
 // dependency at all — see the header of `credential-host.ts` for why one definition, not two.
 import {
-  credentialIsForeign, credentialIsForeignSmtp, sealedHost, sealedSmtpHost, seedConsentFor,
+  credentialIsForeign, credentialIsForeignSmtp, sealedHost, sealedSmtpHost, seedConsentFor, seedPinFor,
 } from "./credential-host.js";
 import { createSignOutFence, SIGN_OUT_FENCE_WAIT_MS, type SignOutFence } from "./signout-fence.js";
 // The exit from a stand-down, as a ceremony rather than a flag — the SAME function the
@@ -116,7 +116,7 @@ import { hostPairRoutes } from "./host-pair-routes.js";
 // See `host-static.ts` for the traversal defense, the caching rule and the credential-page CSP.
 import { createHostStatic } from "./host-static.js";
 // What the seal door does after it keeps a change, per composition (a phone has no engine swap).
-import { COMPOSITION_SEAL } from "./composition-passes.js";
+import { COMPOSITION_SEAL, hostChangeRefusal, sameLoginRefusal } from "./composition-passes.js";
 // The host door's knobs, resolved ONCE (`resolveHostConfig` — pure, never throws, degrades with
 // a surfaced reason), and the door's own send-surface ceiling. See `host-listener.ts`'s header
 // for the whole arrangement; the listener itself is `main.ts`'s to start.
@@ -129,6 +129,8 @@ import { localLanRoutes } from "./lan-routes.js";
 import { attachmentFileRoutes } from "./attachment-file-route.js";
 /* The pairing check both engines serve; the phone's artifact takes `phone/cloud-probe.ts`. */
 import { answerCloudProbe, CLOUD_PROBE_ROUTE } from "./cloud-probe.js";
+/* A mail server on this computer read for its own certificate; the phone's artifact takes `phone/host-pin-probe.ts`. */
+import { readLoopbackMailCertificate } from "./host-pin-probe.js";
 // ── THE ONE PIPELINE ────────────────────────────────────────────────────────────────────────
 // `runSyncCycle` is imported, never reimplemented. There is ONE pipeline implementation and both
 // the desktop engine and the hosted service run it: two engines diverge, and divergence here means
@@ -1622,8 +1624,11 @@ export function credentialsRefused(err: unknown): boolean {
  * dialler of a mailbox reads the row's flag the same way, the phone's seed included.
  */
 export function seedDial(configured: SidecarImapConfig, meta: unknown): SidecarImapConfig {
-  if (configured.allowInsecure === true || !seedConsentFor(meta, configured)) return configured;
-  return { ...configured, allowInsecure: true };
+  // The certificate its row trusts for exactly this endpoint, on the consent's rule ({@link seedPinFor}).
+  const pin = configured.tlsPin ?? seedPinFor(meta, configured);
+  const pinned = pin ? { ...configured, tlsPin: pin } : configured;
+  if (configured.allowInsecure === true || !seedConsentFor(meta, configured)) return pinned;
+  return { ...pinned, allowInsecure: true };
 }
 
 /**
@@ -2513,10 +2518,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * unaffected: `config.adapterFactory` is absent there and both probe factories fall through
      * to a real `ImapAdapter`.
      */
+    /* A server on this computer may be trusted by its own certificate (a gateway such as Proton
+       Mail Bridge) on the desktop's local door alone: never the phone, never a hosted door. */
+    const loopbackTrust = organizerKind === "local" ? { loopbackCertificate: readLoopbackMailCertificate } : {};
     const probeOpts = {
       /* A server on this computer gets the sync dial's own wait (`ImapProbeOptions.localServerDial`):
          ONE key outside the seam's ternary, so the tested branch and production cannot differ. */
       localServerDial: SIDECAR_NET_TIMEOUTS,
+      ...loopbackTrust,
       ...(config.adapterFactory
         ? { adapterFactory: (cfg: ImapConfig) => config.adapterFactory!(cfg, ONE_SHOT_DIAL) as unknown as ProbeDialer }
         : {}),
@@ -2530,17 +2539,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * server made. Production is unaffected: with no factory this is `{}` and the probe dials
      * for real.
      */
-    const smtpProbeOpts: SmtpProbeOptions = config.smtpDial
+    const smtpProbeOpts: SmtpProbeOptions = {
+      ...loopbackTrust,
+      ...(config.smtpDial
       /* THE SUBMISSION DIAL, INJECTED — the same argument `adapterFactory` carries, and it exists
          because the default double CANNOT REFUSE. `{ dial: async () => undefined }` resolves an
          empty proof for every host, which is the right stand-in for a composition that must not
          open sockets and useless for the one behaviour that matters here: what this door does when
          a submission server says no. A test that cannot produce a refusal cannot hold the line
          that an incoming credential survives one. Production passes neither and dials for real. */
-      ? { dial: config.smtpDial }
-      : config.adapterFactory
-        ? { dial: async (): Promise<void> => undefined }
-        : {};
+        ? { dial: config.smtpDial }
+        : config.adapterFactory
+          ? { dial: async (): Promise<void> => undefined }
+          : {}),
+    };
     const openLocalSend: OpenSendAdapter = async (mailboxId: string): Promise<SendAdapter> => {
       /* The boot contract reaches the send path, and it has to. The incoming comparison gates
        * the launch: a credential proved against one server is not offered to another. A send
@@ -3303,11 +3315,44 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const SMTP_ONLY_RETRY = "the submission server was refused; the mailbox keeps its incoming "
       + "credential and sending is recorded as unsettled";
 
-    /** The refusal's own reason when it is an SMTP probe refusal, else `null`. */
+    /** A server with no encryption on this network refused: the person's consent line answers it. */
+    const consentableRefusal = (err: unknown): boolean => {
+      const e = err as { code?: string; details?: { tls?: { kind?: unknown; plaintext?: unknown } } } | null;
+      return e?.code === "mailbox_probe_failed" && e.details?.tls?.kind === "tls_unavailable"
+        && e.details.tls.plaintext === "offered";
+    };
+
+    /** A server on this computer offered its own certificate: the person's trust line answers it. */
+    const trustableRefusal = (err: unknown): boolean => {
+      const e = err as { code?: string; details?: { tls?: { kind?: unknown; certificate?: unknown } } } | null;
+      return e?.code === "mailbox_probe_failed" && e.details?.tls?.kind === "self_signed"
+        && typeof e.details.tls.certificate === "object" && e.details.tls.certificate !== null;
+    };
+
+    /** Whether the incoming and outgoing servers this install keeps for a mailbox are one host. */
+    const pairSharesHost = async (mailboxId: string): Promise<boolean> => {
+      const rows = await db.select({ transport: mailboxCredentials.transport, meta: mailboxCredentials.meta })
+        .from(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, mailboxId));
+      const [kept] = await db.select({ meta: mailboxes.signedOutMeta }).from(mailboxes)
+        .where(eq(mailboxes.id, mailboxId)).limit(1);
+      const hostOf = (transport: "imap" | "smtp"): string => {
+        const meta = (rows.find((r) => r.transport === transport)?.meta ?? signedOutTransportMeta(kept?.meta, transport)) as
+          { host?: unknown } | null | undefined;
+        return typeof meta?.host === "string" ? meta.host.trim().toLowerCase() : "";
+      };
+      return hostOf("imap") !== "" && hostOf("imap") === hostOf("smtp");
+    };
+
+    /**
+     * The refusal's own reason when it is an SMTP probe refusal, else `null`. A server with no
+     * encryption on this network, or one on this computer with its own certificate, is not one: its
+     * own line answers it, so the press asks the person, as an incoming refusal of that kind does.
+     */
     const smtpRefusalReason = (err: unknown): string | null => {
       const e = err as { code?: string; details?: { reason?: unknown; transport?: unknown } };
       if (e?.code !== "mailbox_probe_failed") return null;
       if (e.details?.transport !== "smtp") return null;
+      if (consentableRefusal(err) || trustableRefusal(err)) return null;
       return typeof e.details.reason === "string" && e.details.reason !== ""
         ? e.details.reason
         : "unknown";
@@ -3436,6 +3481,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             port: dialMeta?.port ?? 993,
             secure: dialMeta?.secure ?? true,
             ...(dialMeta?.insecureConsent === true ? { allowInsecure: true } : {}),
+            // The certificate its row trusts for a server on this computer (honoured on loopback only).
+            ...(storedTlsPin(dialMeta) ? { tlsPin: storedTlsPin(dialMeta) } : {}),
             auth: { user: dialMeta?.user ?? mb.address },
             /* NO `smtp` BLOCK. Submission coordinates are the send path's to resolve from this
                mailbox's own `smtp` credential row (`makeSendAdapter`), and a copy here would be a
@@ -4092,19 +4139,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const hostMoved = !at(mbImap.host, mbImap.auth.user);
         if (hostMoved && (claimed === null || !at(claimed.host, claimed.user))) return false;
         const allowInsecure = meta.insecureConsent === true;
+        const tlsPin = storedTlsPin(meta);
         if (!hostMoved && meta.port === mbImap.port && meta.secure === mbImap.secure
-          && allowInsecure === (mbImap.allowInsecure === true)) return false;
-        const { allowInsecure: _was, ...rest } = mbImap;
+          && allowInsecure === (mbImap.allowInsecure === true)
+          && tlsPin?.sha256 === mbImap.tlsPin?.sha256) return false;
+        const { allowInsecure: _was, tlsPin: _pinned, ...rest } = mbImap;
         const user = typeof meta.user === "string" ? meta.user : mbImap.auth.user;
         mbImap = {
           ...rest, host: meta.host, port: meta.port, secure: meta.secure, auth: { ...mbImap.auth, user },
           ...(allowInsecure ? { allowInsecure: true } : {}),
+          ...(tlsPin ? { tlsPin } : {}),
         };
         imapConfig.host = meta.host;
         imapConfig.port = meta.port;
         imapConfig.secure = meta.secure;
         imapConfig.auth = { ...imapConfig.auth, user };
         if (allowInsecure) imapConfig.allowInsecure = true; else delete imapConfig.allowInsecure;
+        if (tlsPin) imapConfig.tlsPin = tlsPin; else delete imapConfig.tlsPin;
         log("mailbox_dial_moved", {
           mailboxId: mb.id,
           reason: hostMoved
@@ -4343,16 +4394,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
-       * THE SEED'S PLAINTEXT CONSENT, re-read from its credential row onto both dial configs — the
-       * one other writer of `allowInsecure` beside {@link adoptRowDial}, for the mailbox that one
-       * never follows. A row that proves TLS (or names another endpoint) takes the consent away.
+       * THE SEED'S PLAINTEXT CONSENT AND TRUSTED CERTIFICATE, re-read from its credential row onto
+       * both dial configs — the one other writer of `allowInsecure` and `tlsPin` beside
+       * {@link adoptRowDial}, for the mailbox that one never follows. A row that proves TLS (or names
+       * another endpoint) takes the consent away; the pin is the row's, or none.
        */
       const adoptSeedConsent = async (): Promise<void> => {
-        const allowInsecure = seedDial(config.imap, (await storedLogin())?.meta ?? null).allowInsecure === true;
-        if (allowInsecure === (mbImap.allowInsecure === true)) return;
-        const { allowInsecure: _was, ...rest } = mbImap;
-        mbImap = { ...rest, ...(allowInsecure ? { allowInsecure: true } : {}) };
+        const dial = seedDial(config.imap, (await storedLogin())?.meta ?? null);
+        const allowInsecure = dial.allowInsecure === true;
+        const tlsPin = dial.tlsPin;
+        if (allowInsecure === (mbImap.allowInsecure === true) && tlsPin?.sha256 === mbImap.tlsPin?.sha256) return;
+        const { allowInsecure: _was, tlsPin: _pinned, ...rest } = mbImap;
+        mbImap = { ...rest, ...(allowInsecure ? { allowInsecure: true } : {}), ...(tlsPin ? { tlsPin } : {}) };
         if (allowInsecure) imapConfig.allowInsecure = true; else delete imapConfig.allowInsecure;
+        // The adapter built at attach reads this config at its connect, and every re-dial is built from it.
+        if (tlsPin) imapConfig.tlsPin = tlsPin; else delete imapConfig.tlsPin;
       };
 
       /**
@@ -8669,9 +8725,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (stopped) return null;
           const moved = opts?.followRow === true && await adoptRowDial();
           await rereadCredential();
-          /* THE SEED'S CONSENT FOLLOWS ITS ROW ({@link seedDial}): the press just proved it. Only
-             where the dial is the configuration (the desktop): a composition that follows the row
-             took the row's consent with its endpoint in `adoptRowDial` above. */
+          /* THE SEED'S CONSENT AND PIN FOLLOW ITS ROW ({@link seedDial}): the press just proved them.
+             Only where the dial is the configuration (the desktop): a composition that follows the
+             row took the row's consent and pin with its endpoint in `adoptRowDial` above. */
           if (isSeed && opts?.followRow !== true) await adoptSeedConsent();
           clearSignInRefusal("the stored password was replaced");
           /* THE SAME MAILBOX ON ANOTHER PORT OR TLS MODE: the socket is replaced and the claim is
@@ -9296,7 +9352,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          */
         const witnessAgrees = witness !== null && witness !== ""
           && witness === (configured?.host ?? "").trim().toLowerCase();
-        const smtp = witness === null || witnessAgrees ? configured : undefined;
+        /* A SEAL THAT RECORDED THE OUTGOING SERVER AS REFUSED is a decision, not a gap: copying a row
+           nobody proved, with no consent on it, over that record is what made every send fail. */
+        const unsettled = (imapRow?.meta as { smtpUnsettled?: unknown } | null | undefined)?.smtpUnsettled;
+        const refusedHere = typeof unsettled === "string" && unsettled !== "";
+        const smtp = !refusedHere && (witness === null || witnessAgrees) ? configured : undefined;
         if (witness !== null && witness !== "" && !witnessAgrees) {
           log("seed_submission_login_unsettled", {
             mailboxId: seedRow.id,
@@ -10107,6 +10167,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     ...(typeof imap.user === "string" ? { user: imap.user } : {}),
                     pass: typeof imap.pass === "string" ? imap.pass : "",
                     ...(imap.allowInsecure === true ? { allowInsecure: true } : {}),
+                    // A certificate the person trusted for a server on this computer: a claim the probe re-reads.
+                    ...(typeof imap.trustCertificate === "string" ? { trustCertificate: imap.trustCertificate } : {}),
                   },
                   /* The outgoing block by the same rule, and the password is deliberately not
                      read from it: one form, one identity, and the service falls back to the
@@ -10118,6 +10180,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     ...(typeof smtp.secure === "boolean" ? { secure: smtp.secure } : {}),
                     ...(typeof smtp.user === "string" ? { user: smtp.user } : {}),
                     ...(smtp.allowInsecure === true ? { allowInsecure: true } : {}),
+                    ...(typeof smtp.trustCertificate === "string" ? { trustCertificate: smtp.trustCertificate } : {}),
                   },
                 },
                 {
@@ -10260,16 +10323,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     + "one mailbox would write two claims into it under one install identity and "
                     + "stand each other down in turn",
                 });
+                const sameLogin = sameLoginRefusal();
                 return new Response(
-                  JSON.stringify({
-                    error: {
-                      code: "same_login",
-                      message: "this machine already has that mailbox. The server and username "
-                        + "you entered open a mailbox that is already connected here. Use "
-                        + "\"Sign in again\" on that mailbox to change its password.",
-                    },
-                  }),
-                  { status: 409, headers: { "content-type": "application/json" } },
+                  JSON.stringify({ error: { code: sameLogin.code, message: sameLogin.message } }),
+                  { status: sameLogin.httpStatus, headers: { "content-type": "application/json" } },
                 );
               }
 
@@ -10331,7 +10388,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 status: 201, headers: { "content-type": "application/json" },
               });
             } catch (err) {
-              const e = err as { code?: string; httpStatus?: number; message?: string };
+              const e = err as { code?: string; httpStatus?: number; message?: string; details?: unknown };
               const status = typeof e.httpStatus === "number" ? e.httpStatus : 500;
               log("local_mailbox_add_failed", { err });
               return new Response(
@@ -10339,6 +10396,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   error: {
                     code: e.code ?? "internal",
                     message: status === 500 ? "internal error" : (e.message ?? ""),
+                    // As on the probe and seal routes: the form words the refusal and opens its consent from these.
+                    ...(status === 500 || e.details === undefined ? {} : { details: e.details }),
                   },
                 }),
                 { status, headers: { "content-type": "application/json" } },
@@ -10473,10 +10532,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   reason: "the incoming server was changed on a mailbox this install organizes and could "
                     + "not be claimed there, so nothing was stored and the running claim stands",
                 });
-                return new ServiceError("organizer_host_change_refused", 409,
-                  "While this phone organizes this mailbox, its incoming server stays as it is. Stop "
-                    + "organizing here, change the server, then start organizing here again.",
-                  holder === null ? undefined : { holder });
+                return hostChangeRefusal(holder);
               };
               const claimsFirst = hostMoves && running.organizer.claimed;
               if (claimsFirst && passed !== true) throw hostChangeRefused(null);
@@ -10623,6 +10679,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               const e = err as { code?: string; httpStatus?: number; message?: string; details?: unknown };
               const status = typeof e.httpStatus === "number" ? e.httpStatus : 500;
               log("local_mailbox_seal_failed", { err });
+              /* A consent the person may give for one server on both legs: "Sign in again" names no
+                 host, so the engine says whether the two it keeps for this mailbox are one. */
+              const shared = (consentableRefusal(e) || trustableRefusal(e)) && await pairSharesHost(mailboxId).catch(() => false);
+              const details = shared ? { ...(e.details as object), sameHost: true } : e.details;
               return new Response(
                 JSON.stringify({
                   error: {
@@ -10630,7 +10690,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     message: status === 500 ? "internal error" : (e.message ?? ""),
                     /* THE PROBE'S TRANSPORT AND REASON TRAVEL, as on the probe route: a phone
                        words the refusal from them and puts it on the field it is about. */
-                    ...(status === 500 || e.details === undefined ? {} : { details: e.details }),
+                    ...(status === 500 || details === undefined ? {} : { details }),
                   },
                 }),
                 { status, headers: { "content-type": "application/json" } },

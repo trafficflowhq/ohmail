@@ -172,6 +172,21 @@ export function appPasswordNote(
   return { text: Copy.standaloneProviderNote(preset.label, preset.account ?? preset.label), links: linksOf(preset) };
 }
 
+/**
+ * WHAT THE TWO FIELDS ASK OF THE PLATFORM'S AUTOFILL. The password is the MAILBOX's, often an App
+ * Password, so autofill offers nothing there — never the saved ohmail account password, which is
+ * what `current-password` invited. The address is an email address, offered as one.
+ */
+export function standaloneAutofill(field: "address" | "password"): {
+  readonly autoComplete: "email" | "off";
+  readonly textContentType: "emailAddress" | "none";
+  readonly importantForAutofill?: "no";
+} {
+  return field === "password"
+    ? { autoComplete: "off", importantForAutofill: "no", textContentType: "none" }
+    : { autoComplete: "email", textContentType: "emailAddress" };
+}
+
 /** The App Password provider this phone's mailbox is on, by its address, or `null`. */
 function appPasswordProvider(address: string): { provider: string; account: string } | null {
   const preset = appPasswordPresetFor(address);

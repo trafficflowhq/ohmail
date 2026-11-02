@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
-import type { FirstRunHost, FirstRunMailboxInput } from "../app/shell/first-run-host";
+import type { FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk } from "../app/shell/first-run-host";
 import type { OnboardingFacts } from "../app/shell/onboarding";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
 
@@ -30,6 +30,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 const copy = messages.mailboxes;
 const IMAP_LINE = copy.insecureConsentLabel;
 const SMTP_LINE = copy.insecureConsentLabelSmtp;
+const BOTH_LINE = copy.insecureConsentLabelBoth;
 
 const facts: OnboardingFacts = {
   door: "cloud", mailbox: null, account: { onboardingCompletedAt: "2026-03-01T11:30:00.000Z" }, ai: "on", queuedSenders: 0,
@@ -38,7 +39,14 @@ const facts: OnboardingFacts = {
 /** A refusal the host reads: `offer` names the protocol the server offered plaintext for. */
 class NoTls extends Error { constructor(readonly offer: "imap" | "smtp" | null) { super("no encryption"); } }
 
-async function mount(refusals: Array<"imap" | "smtp" | null>, connectRefusals: Array<"imap" | "smtp"> = []) {
+async function mount(
+  /** A protocol is a `NoTls` refusal offering it; an Error is thrown as it is. */
+  refusals: Array<"imap" | "smtp" | null | Error>, connectRefusals: Array<"imap" | "smtp"> = [],
+  /** The outgoing host typed; the incoming one is `mail.home.arpa`. */
+  outgoing = "smtp.home.arpa",
+  /** What a passing test says about the outgoing server, test by test. */
+  sending: Array<FirstRunProbeOk["sending"]> = [],
+) {
   const probed: FirstRunMailboxInput[] = [];
   const connected: FirstRunMailboxInput[] = [];
   const el = document.createElement("div");
@@ -51,8 +59,10 @@ async function mount(refusals: Array<"imap" | "smtp" | null>, connectRefusals: A
     probe: async (input) => {
       probed.push(input);
       const next = refusals.shift();
+      if (next instanceof Error) throw next;
       if (next !== undefined) throw new NoTls(next);
-      return { host: input.imap.host, user: input.address, folders: 1 };
+      const said = sending.shift();
+      return { host: input.imap.host, user: input.address, folders: 1, ...(said ? { sending: said } : {}) };
     },
     connect: async (input) => {
       connected.push(input);
@@ -107,10 +117,12 @@ async function mount(refusals: Array<"imap" | "smtp" | null>, connectRefusals: A
   await type("pass", "app-password-fixture");
   await type("imap", "mail.home.arpa");
   await type("imap-port", "143");
-  await type("smtp", "mail.home.arpa");
+  await type("smtp", outgoing);
   await type("smtp-port", "587");
   return { el, press, type, consent, tick, probed, connected };
 }
+
+const insecure = (block: unknown): boolean | undefined => (block as { allowInsecure?: boolean } | undefined)?.allowInsecure;
 
 describe("the add-a-mailbox run and a home mail server without TLS", () => {
   it("offers each protocol its own consent line after that protocol is refused, and sends each only in its block", async () => {
@@ -158,18 +170,97 @@ describe("the add-a-mailbox run and a home mail server without TLS", () => {
     expect(ui.consent(IMAP_LINE)).toBeNull();
     expect(ui.consent(SMTP_LINE)).toBeNull();
   });
+
+  /* ONE SERVER ON BOTH LEGS, ONE CONSENT. A home server offers neither leg encryption; the line
+     the incoming refusal opens names both, and ticking it sends the claim on both blocks — each
+     re-proved by its own probe — so the outgoing server is not refused a second time. */
+  it("one host on both legs: one line for both, and its tick claims both", async () => {
+    const ui = await mount(["imap"], [], "mail.home.arpa");
+    await ui.press("Test connection");
+    expect(ui.consent(BOTH_LINE), "no line for the one server").not.toBeNull();
+    expect(ui.consent(IMAP_LINE), "a line per protocol over one server").toBeNull();
+    expect(ui.consent(SMTP_LINE)).toBeNull();
+
+    await ui.tick(BOTH_LINE);
+    await ui.press("Test connection");
+    expect([insecure(ui.probed[1]!.imap), insecure(ui.probed[1]!.smtp)]).toEqual([true, true]);
+    await ui.press(messages.onboarding.connect);
+    expect([insecure(ui.connected[0]!.imap), insecure(ui.connected[0]!.smtp)]).toEqual([true, true]);
+  });
+
+  it("two hosts: the outgoing line opens from the test that found no encryption there", async () => {
+    const ui = await mount([], [], "smtp.home.arpa", [
+      { state: "refused", host: "smtp.home.arpa", reason: "tls", tls: { kind: "tls_unavailable", plaintext: "offered" } },
+    ]);
+    await ui.press("Test connection");
+    expect(ui.consent(SMTP_LINE), "the test's outgoing verdict opened no line").not.toBeNull();
+    expect(ui.consent(IMAP_LINE)).toBeNull();
+    expect(ui.el.textContent).toContain(messages.onboarding.sendingRefusedNoTls.replace("{host}", "smtp.home.arpa"));
+
+    await ui.tick(SMTP_LINE);
+    await ui.press("Test connection");
+    expect([insecure(ui.probed[1]!.imap), insecure(ui.probed[1]!.smtp)]).toEqual([undefined, true]);
+  });
+});
+
+/* A SERVER ON THIS COMPUTER WITH ITS OWN CERTIFICATE (Proton Mail Bridge). The engine's refusal
+   offers that certificate; the line names its fingerprint, unticked, and only a tick for the
+   fingerprint now shown claims it: a certificate that changed is asked about again. */
+describe("the add run and a mail server on this computer with its own certificate", () => {
+  const print = (first: string) => [first, ...Array.from({ length: 31 }, (_, i) => (i + 16).toString(16).toUpperCase())].join(":");
+  const BRIDGE = print("4A");
+  const OTHER = print("FF");
+  const ownCertificate = (sha256: string) => Object.assign(new Error("self-signed certificate"), {
+    code: "mailbox_probe_failed",
+    details: { reason: "tls", transport: "imap", localServer: true, tls: { kind: "self_signed", certificate: { sha256 } } },
+  });
+  const trusts = (block: unknown) => (block as { trustCertificate?: string } | undefined)?.trustCertificate;
+  const line = (sha256: string) => copy.trustCertificateLabelBoth.replace("{fingerprint}", sha256);
+
+  it("names the fingerprint unticked, and its tick claims it for both legs of the one host", async () => {
+    const ui = await mount([ownCertificate(BRIDGE)], [], "127.0.0.1");
+    await ui.type("imap", "127.0.0.1");
+    await ui.press("Test connection");
+    expect(ui.el.textContent).toContain(copy.probe_tls_self_signed_local);
+    expect(ui.consent(line(BRIDGE)), "no trust line naming the fingerprint").not.toBeNull();
+    expect(ui.consent(line(BRIDGE))!.checked, "trust offered ticked").toBe(false);
+    expect(trusts(ui.probed[0]!.imap)).toBeUndefined();
+
+    await ui.tick(line(BRIDGE));
+    await ui.press("Test connection");
+    expect([trusts(ui.probed[1]!.imap), trusts(ui.probed[1]!.smtp)]).toEqual([BRIDGE, BRIDGE]);
+    await ui.press(messages.onboarding.connect);
+    expect([trusts(ui.connected[0]!.imap), trusts(ui.connected[0]!.smtp)]).toEqual([BRIDGE, BRIDGE]);
+  });
+
+  it("a certificate that changed is asked about again, and the old tick claims nothing", async () => {
+    const ui = await mount([ownCertificate(BRIDGE), ownCertificate(OTHER)], [], "127.0.0.1");
+    await ui.type("imap", "127.0.0.1");
+    await ui.press("Test connection");
+    await ui.tick(line(BRIDGE));
+    await ui.press("Test connection");
+    expect(ui.consent(line(OTHER))!.checked).toBe(false);
+    await ui.press(messages.onboarding.testAgain);
+    expect([trusts(ui.probed[2]!.imap), trusts(ui.probed[2]!.smtp)]).toEqual([undefined, undefined]);
+  });
+
+  it("control: a refusal with no certificate opens no trust line", async () => {
+    const ui = await mount(["imap"], [], "127.0.0.1");
+    await ui.press("Test connection");
+    expect(ui.el.textContent).not.toContain(copy.trustCertificateNote);
+  });
 });
 
 describe("the add run asks for the address first", () => {
   /** The add run's form, nothing typed; `discover` answers the lookup the way the hosted route does. */
-  async function form(discover?: (domain: string) => unknown) {
+  async function form(discover?: (domain: string) => unknown, door: "cloud" | "local" = "cloud") {
     const lookups: unknown[] = [];
     const el = document.createElement("div");
     document.body.appendChild(el);
     const root = createRoot(el);
     roots.push(root);
     const host = {
-      door: "cloud", ai: "on",
+      door, ai: "on",
       probe: async () => { throw new Error("unreachable"); },
       connect: async () => ({ id: "mb-2" }),
       organize: async () => "stored",
@@ -226,6 +317,14 @@ describe("the add run asks for the address first", () => {
     expect(ui.chosen()).toBe("infomaniak");
     await ui.address(personalAt("fixture.pat", "proton.me"));
     expect(ui.el.textContent).toContain(messages.providerPicker.protonNote.replace("{other}", messages.providerPicker.otherLabel));
+  });
+
+  it("on this computer's own engine, a Proton address says how to reach Bridge here", async () => {
+    const ui = await form(undefined, "local");
+    await ui.address(personalAt("fixture.pat", "proton.me"));
+    const other = messages.providerPicker.otherLabel;
+    expect(ui.el.textContent).toContain(messages.providerPicker.protonNoteDesktop.replace("{other}", other));
+    expect(ui.el.textContent).not.toContain(messages.providerPicker.protonNote.replace("{other}", other));
   });
 
   it("an unreachable host on the generic entry offers the hosts the lookup found, and the press fills them", async () => {

@@ -157,3 +157,48 @@ describe("the plaintext consent is asked for the password that travels", () => {
     expect(consented.id, "CONTROL: the press that carries the consent is admitted").toBe(dto.id);
   });
 });
+
+/**
+ * A CERTIFICATE TRUSTED FOR A SERVER ON THIS COMPUTER IS STORED FROM THE PROOF ALONE. The claim is
+ * forwarded to the probe, which dials pinned; a pin a request names itself is no pin, and a later
+ * proof without one rewrites it to null (the `||` merge keeps a deleted key's old value).
+ */
+describe("the trusted certificate a probe proved", () => {
+  const SHA = Array.from({ length: 32 }, (_, i) => (i + 16).toString(16).toUpperCase().padStart(2, "0")).join(":");
+  const PIN = { sha256: SHA, pem: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n" };
+  const BRIDGE = { host: "127.0.0.1", port: 1143, secure: false, user: "u", pass: "bridge-password" };
+  const pinOf = async (db: Db, id: string): Promise<unknown> =>
+    ((await db.select().from(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, id)))[0]!.meta as { tlsPin?: unknown }).tlsPin;
+
+  it("is written from the proof, never from the body, and a later proof without it clears it", async () => {
+    const db = await makeTestDb();
+    const ctx = await seed(db);
+    const claims: Array<string | undefined> = [];
+    const dto = await svc.create(ctx, {
+      provider: "imap", address: "bridge@trafficflow.test",
+      imap: { ...BRIDGE, trustCertificate: SHA, tlsPin: { sha256: "AA", pem: "planted" } } as never,
+    }, {
+      probe: async (input: { imap: { trustCertificate?: string } }) => {
+        claims.push(input.imap.trustCertificate);
+        return { verdict: "ok" as const, proven: { host: BRIDGE.host, port: 1143, secure: false, tlsPin: PIN } };
+      },
+    });
+    expect(claims, "the claim never reached the probe").toEqual([SHA]);
+    expect(await pinOf(db, dto.id)).toEqual(PIN);
+
+    // A pin the request names itself is not stored, and the proof without one clears the old.
+    await svc.update(ctx, dto.id, { imap: { pass: "rotated", tlsPin: { sha256: SHA, pem: "planted" } } as never }, {
+      probe: async () => ({ verdict: "ok" as const, proven: { host: BRIDGE.host, port: 1143, secure: true } }),
+    });
+    expect(await pinOf(db, dto.id), "a stale pin outlived the proof that dropped it").toBeNull();
+  });
+
+  it("control: a body-only pin on create is not stored", async () => {
+    const db = await makeTestDb();
+    const ctx = await seed(db);
+    const dto = await svc.create(ctx, {
+      provider: "imap", address: "bridge-two@trafficflow.test", imap: { ...BRIDGE, tlsPin: PIN } as never,
+    }, { probe: async () => ({ verdict: "ok" as const, proven: { host: BRIDGE.host, port: 1143, secure: false } }) });
+    expect(await pinOf(db, dto.id)).toBeUndefined();
+  });
+});

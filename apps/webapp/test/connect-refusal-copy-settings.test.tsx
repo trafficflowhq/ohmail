@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import deMessages from "../messages/de.json";
 import { ApiError, type MailboxDTO, type SubscriptionStatus } from "../app/api-client";
 import type { MailState } from "../app/shell/mail-state";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
@@ -45,6 +46,9 @@ const healthy = {
 /** `mock`-prefixed: `vi.mock`'s factory is hoisted above the imports. */
 let mockProbeThrows: unknown = null;
 let mockCreateThrows: unknown = null;
+/** What a passing Test answers, and every body the Test sent. */
+let mockProbeAnswer: Record<string, unknown> = {};
+let mockProbeBodies: Array<Record<string, unknown>> = [];
 /** What `POST /mailboxes/discover` answers, by domain; anything else is refused. */
 let mockDiscover: Record<string, unknown> = {};
 let mockLookups: unknown[] = [];
@@ -64,7 +68,11 @@ vi.mock("../app/api-client", async () => {
     billing: { subscription: async () => healthy },
     mailboxes: {
       list: async () => ({ items: [] as MailboxDTO[] }),
-      probe: async () => { if (mockProbeThrows) throw mockProbeThrows; return { verdict: "ok" }; },
+      probe: async (b: Record<string, unknown>) => {
+        mockProbeBodies.push(b);
+        if (mockProbeThrows) throw mockProbeThrows;
+        return mockProbeAnswer;
+      },
       create: async () => { throw mockCreateThrows; },
       discover: async (b: { domain: string }) => {
         mockLookups.push(b);
@@ -114,17 +122,20 @@ function press(el: HTMLElement, prefix: string): HTMLElement {
 }
 
 /** The connect form on the generic entry, with every field it asks for typed. */
-async function typedForm(): Promise<HTMLDivElement> {
+async function typedForm(locale: "en" | "de" = "en"): Promise<HTMLDivElement> {
   const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale: "en", messages, children: h(MailboxSection) }));
+    root!.render(h(NextIntlClientProvider, {
+      locale, messages: locale === "de" ? deMessages : messages, children: h(MailboxSection),
+    }));
   });
   await settle();
-  await click(press(host, copy.connect!));
-  await click(press(host, picker.otherLabel!));
+  const said = locale === "de" ? deMessages : messages;
+  await click(press(host, said.mailboxes.connect));
+  await click(press(host, said.providerPicker.otherLabel));
   await typeInto(host.querySelector("#mb-address"), "person@example.test");
   await typeInto(host.querySelector("#mb-imap"), "mail.example.test");
   await typeInto(host.querySelector("#mb-smtp"), "smtp.example.test");
@@ -137,7 +148,11 @@ async function ceremony(el: HTMLElement): Promise<void> {
   await submit(el.querySelector("#mb-address")!.closest("form"));
 }
 
-beforeEach(() => { mockProbeThrows = null; mockCreateThrows = null; mockDiscover = {}; mockLookups = []; });
+beforeEach(() => {
+  mockProbeThrows = null; mockCreateThrows = null; mockDiscover = {}; mockLookups = [];
+  mockProbeAnswer = { host: "mail.example.test", user: "person@example.test", folders: 3 };
+  mockProbeBodies = [];
+});
 afterEach(async () => {
   if (root) { const r = root; await act(async () => { r.unmount(); }); root = null; }
   host?.remove();
@@ -176,6 +191,50 @@ describe("Settings > Connect names no port field", () => {
   });
 });
 
+/**
+ * THE OUTGOING SERVER IS TESTED AND NAMED. The Test sends the outgoing block the connect sends (less
+ * the password, which the server takes from the incoming one) and says the outgoing verdict on its
+ * own line; a password only the outgoing server refused is said as that server's refusal, where it
+ * read "That mail server refused the password" after a green incoming test.
+ */
+describe("Settings > Connect and the outgoing server", () => {
+  const unmount = async (): Promise<void> => {
+    if (root) { const r = root; await act(async () => { r.unmount(); }); root = null; }
+    host?.remove();
+    host = null;
+  };
+
+  it("the Test sends the outgoing server and says what it answered", async () => {
+    mockProbeAnswer = {
+      host: "mail.example.test", user: "person@example.test", folders: 3,
+      sending: { state: "refused", host: "smtp.example.test", reason: "auth" },
+    };
+    const el = await typedForm();
+    await click(press(el, onb.test!));
+    expect(mockProbeBodies[0]?.smtp).toEqual({ host: "smtp.example.test", user: "person@example.test" });
+    expect(el.textContent).toContain(onb.sendingRefusedAuth!.replace("{host}", "smtp.example.test"));
+    expect(el.querySelector(".set-verdict.ok"), "the incoming verdict went with the outgoing one").toBeTruthy();
+  });
+
+  it("a password only the outgoing server refused names it, in English and in German", async () => {
+    for (const [locale, said] of [["en", messages], ["de", deMessages]] as const) {
+      mockCreateThrows = refused("auth", { transport: "smtp" });
+      const el = await typedForm(locale);
+      await ceremony(el);
+      expect(el.querySelector('[role="alert"]')?.textContent).toBe(said.mailboxes.probe_auth_smtp);
+      await unmount();
+    }
+    expect(deMessages.mailboxes.probe_auth_smtp).not.toBe(messages.mailboxes.probe_auth_smtp);
+  });
+
+  it("control: a password the incoming server refused keeps the incoming sentence", async () => {
+    mockCreateThrows = refused("auth");
+    const el = await typedForm();
+    await ceremony(el);
+    expect(el.querySelector('[role="alert"]')?.textContent).toBe(copy.probe_auth);
+  });
+});
+
 describe("Settings > Connect asks for the address first", () => {
   async function openForm(): Promise<HTMLDivElement> {
     const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
@@ -207,6 +266,17 @@ describe("Settings > Connect asks for the address first", () => {
     await address(el, "person@acme-workspace.example");
     expect(checked(el)).toEqual(["Gmail"]);
     expect(mockLookups).toEqual([{ domain: "acme-workspace.example" }]);
+  });
+
+  it("behind a preset, an outgoing server nothing answered on is named as the outgoing one", async () => {
+    mockCreateThrows = refused("connect", { transport: "smtp" });
+    const el = await openForm();
+    await address(el, personalAt("fixture.person", "t-online.de"));
+    await typeInto(el.querySelector("#mb-pass"), "app-password-fixture");
+    await ceremony(el);
+    const said = el.querySelector('[role="alert"]')?.textContent ?? "";
+    expect(said).toContain("outgoing (SMTP)");
+    expect(said, "a field the preset form does not show was named").not.toMatch(/host|port|server name/i);
   });
 
   it("a refused password behind a preset says that provider's own sentence", async () => {

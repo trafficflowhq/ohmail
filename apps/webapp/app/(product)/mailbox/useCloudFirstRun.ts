@@ -135,9 +135,22 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
     /* SENT AS TYPED, including an ABSENT username — the service defaults that to the address
        itself, with the note saying why it is defaulted there rather than at a route: so the test
        and the create that follows it dial the same identity. `createBody` applies the identical
-       default because the create's wire requires the field; both land on the same string. */
-    const r = await mailboxApi.probe({ address: input.address, imap: input.imap });
-    return { host: r.host, user: r.user, folders: r.folders };
+       default because the create's wire requires the field; both land on the same string.
+       THE OUTGOING SERVER TOO, as the create dials it, without its password (the service tries
+       the incoming one); a blank host when none is typed, so the answer says sending is not set up. */
+    const smtp = input.smtp;
+    const r = await mailboxApi.probe({
+      address: input.address,
+      imap: input.imap,
+      smtp: {
+        host: smtp?.host ?? "",
+        ...(smtp?.port === undefined ? {} : { port: smtp.port }),
+        ...(smtp?.secure === undefined ? {} : { secure: smtp.secure }),
+        ...(smtp?.user === undefined ? {} : { user: smtp.user }),
+        ...(smtp?.allowInsecure === true ? { allowInsecure: true } : {}),
+      },
+    });
+    return { host: r.host, user: r.user, folders: r.folders, ...(r.sending ? { sending: r.sending } : {}) };
   }, []);
 
   const connect = useCallback(async (input: FirstRunMailboxInput, _mode: "seed" | "add") => {

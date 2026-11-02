@@ -162,7 +162,7 @@ describe("the phone engine bundle contains no door and no desktop store", () => 
     expect(count((p) => p.includes("drizzle-orm/sqlite-proxy/"))).toBeGreaterThan(0);
   });
 
-  it("holds the phone's substitutes instead — all seventeen of them", () => {
+  it("holds the phone's substitutes instead — all eighteen of them", () => {
     const substitutes = list((p) => p.includes("apps/sidecar/src/phone/"))
       .map((p) => p.split("/").pop());
     // `store-lanes.ts` joined the table with the desktop's store scheduler: it names its two lanes
@@ -171,11 +171,12 @@ describe("the phone engine bundle contains no door and no desktop store", () => 
     // `cloud-probe.ts` joined it with the pairing check both desktop engines serve (`node:tls`), the
     // three workspace twins with the Postgres schema markers, dialect and event stream, and
     // `attachment-file-route.ts` with the desktop's streamed save (a file the shell names; a phone names none),
-    // `blank-repair.ts` and `blank-rows.ts` with the blank repair the phone composes off.
+    // `blank-repair.ts` and `blank-rows.ts` with the blank repair the phone composes off, and
+    // `host-pin-probe.ts` with the local door's reader of a loopback server's certificate (`node:tls`).
     expect(substitutes.sort()).toEqual([
       "ai-provider.ts", "attachment-file-route.ts", "blank-repair.ts", "blank-rows.ts", "cloud-probe.ts", "db.ts", "desktop-host.ts", "dialect-pg.ts",
       "events.ts", "health-markers.ts", "host-lan-tls.ts", "host-lan.ts", "host-listener.ts", "host-pair-routes.ts",
-      "host-static.ts", "lan-routes.ts", "store-lanes.ts",
+      "host-pin-probe.ts", "host-static.ts", "lan-routes.ts", "store-lanes.ts",
     ]);
   });
 

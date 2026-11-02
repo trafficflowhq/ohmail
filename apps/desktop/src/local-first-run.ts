@@ -74,6 +74,7 @@ export function addMailboxBody(input: FirstRunMailboxInput): Record<string, unkn
       user,
       pass: input.imap.pass,
       ...(input.imap.allowInsecure === true ? { allowInsecure: true } : {}),
+      ...(input.imap.trustCertificate ? { trustCertificate: input.imap.trustCertificate } : {}),
       /* SENDING IS SETTLED BY A SUCCESSFUL CREATE. The engine's add route retries without the
          submission block when that dial is refused, writing the probe's reason into this key —
          so the create that DOES prove it has to say so positively, or a mailbox re-added after a
@@ -90,6 +91,7 @@ export function addMailboxBody(input: FirstRunMailboxInput): Record<string, unkn
             user: (input.smtp.user ?? "").trim() || user,
             pass: input.smtp.pass ?? input.imap.pass,
             ...(input.smtp.allowInsecure === true ? { allowInsecure: true } : {}),
+            ...(input.smtp.trustCertificate ? { trustCertificate: input.smtp.trustCertificate } : {}),
           },
         }
       : {}),
@@ -325,6 +327,7 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
                   ...(input.smtp.secure === undefined ? {} : { secure: input.smtp.secure }),
                   ...(input.smtp.user === undefined ? {} : { user: input.smtp.user }),
                   ...(input.smtp.allowInsecure === true ? { allowInsecure: true } : {}),
+                  ...(input.smtp.trustCertificate ? { trustCertificate: input.smtp.trustCertificate } : {}),
                 },
               }
             : {}),
@@ -381,7 +384,13 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
        code and details, so the stage's own reader opens the Add form's line here too. */
     const result = await enterLocalDoor(
       doorFields(input), doorPreset(input), await standingEngine(),
-      { imap: input.imap.allowInsecure === true, smtp: input.smtp?.allowInsecure === true },
+      {
+        imap: input.imap.allowInsecure === true, smtp: input.smtp?.allowInsecure === true,
+        trust: {
+          ...(input.imap.trustCertificate ? { imap: input.imap.trustCertificate } : {}),
+          ...(input.smtp?.trustCertificate ? { smtp: input.smtp.trustCertificate } : {}),
+        },
+      },
     );
     if (result.problem !== null) {
       throw new LocalWireError(result.problem, result.engineRefusal?.code ?? null, result.engineRefusal?.details ?? null);

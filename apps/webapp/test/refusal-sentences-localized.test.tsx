@@ -257,6 +257,123 @@ describe("the renderer says the client's own refusals in the reader's language",
   });
 });
 
+/**
+ * A CONNECT REFUSAL THE SERVER WORDS IS SAID IN THE READER'S LANGUAGE. The server writes English in
+ * every language; each refusal here is built by the code that raises it (the mailbox service, the
+ * allowance check, the step-up gate, the dial guard, the local doors) and read as a client reads it
+ * off the wire. English says exactly the server's sentence, German the catalogue's.
+ */
+describe("a connect refusal the server words, in the reader's language", () => {
+  type Wire = { code: string; message: string; details?: unknown };
+  interface Raised { name: string; wire: Wire; key: string; values?: Record<string, string | number> }
+  const wireOf = (e: unknown): Wire => {
+    const r = e as { code: string; message: string; details?: unknown };
+    return { code: r.code, message: r.message, ...(r.details === undefined ? {} : { details: JSON.parse(JSON.stringify(r.details)) }) };
+  };
+  const caught = async (p: Promise<unknown>): Promise<Wire> => {
+    try { await p; } catch (e) { return wireOf(e); }
+    throw new Error("nothing was refused");
+  };
+
+  async function raised(): Promise<Raised[]> {
+    const { MailboxAllowanceError } = await import("../../../packages/services/src/mailbox-allowance.js");
+    const { MailboxService, MAILBOX_REFUSALS, ServiceError } = await import("@trafficflow/services/mail");
+    const { clearedFor, plaintextDialPin } = await import("../../../packages/api/src/dial-host-guard.js");
+    const { withStepUp } = await import("../../../packages/api/src/middleware.js");
+    const { hostChangeRefusal, sameLoginRefusal } = await import("../../sidecar/src/composition-passes.js");
+    const allowance = (over: Record<string, unknown>) => ({
+      mailboxLimit: 2, canAddMailbox: true, accessRefusal: null, enabledCount: 2, ...over,
+    }) as never;
+    const svc = new MailboxService({ keyProvider: {} } as never);
+    const ctx = { accountId: A, now: () => new Date() } as never;
+    const probe = async () => ({ verdict: "ok" as const });
+    const IMAP = { host: "imap.example.test", user: "pat", pass: "fixture-password" };
+    const ADDRESS = "pat@example.test";
+    const create = (body: Record<string, unknown>) => caught(svc.create(ctx, { provider: "imap", address: ADDRESS, imap: IMAP, ...body } as never, { probe }));
+    const refusingGuard = {
+      services: { probeHostGuard: { check: async () => { throw new ServiceError("validation_failed", 400, "u is not a permitted url: host is not public"); } } },
+    } as never;
+    const stepUp = await withStepUp(async () => new Response(null), { options: { stepUp: true } } as never)(
+      new Request("http://api.test/mailboxes"),
+      { session: { lastTwofaAt: null }, now: () => new Date(), authConfig: { stepUpWindowMs: 300_000 } } as never, {},
+    );
+    return [
+      { name: "a full plan", wire: wireOf(new MailboxAllowanceError("at_limit", allowance({}))), key: "refused_mailbox_limit_reached", values: { limit: 2, count: 2 } },
+      { name: "a plan of one", wire: wireOf(new MailboxAllowanceError("at_limit", allowance({ mailboxLimit: 1, enabledCount: 1 }))), key: "refused_mailbox_limit_reached", values: { limit: 1, count: 1 } },
+      { name: "an unpaid account", wire: wireOf(new MailboxAllowanceError("payment_required", allowance({ canAddMailbox: false, accessRefusal: "payment_required" }))), key: "refused_payment_required" },
+      { name: "a suspended account", wire: wireOf(new MailboxAllowanceError("suspended", allowance({ canAddMailbox: false, accessRefusal: "suspended" }))), key: "refused_account_suspended" },
+      { name: "no further mailbox", wire: wireOf(new MailboxAllowanceError("not_permitted", allowance({ canAddMailbox: false }))), key: "refused_mailbox_not_permitted" },
+      { name: "already connected", wire: wireOf(MAILBOX_REFUSALS.addressTaken()), key: "refused_mailbox_exists" },
+      { name: "disconnected", wire: wireOf(MAILBOX_REFUSALS.mailboxDisabled()), key: "refused_mailbox_disabled" },
+      { name: "signs in with Microsoft", wire: wireOf(MAILBOX_REFUSALS.signsInWithOAuth("microsoft")), key: "refused_signs_in_with_oauth", values: { provider: "microsoft" } },
+      { name: "signs in through its provider", wire: wireOf(MAILBOX_REFUSALS.signsInWithOAuth("google")), key: "refused_signs_in_with_oauth", values: { provider: "other" } },
+      { name: "no stored password", wire: wireOf(MAILBOX_REFUSALS.credentialNeeded()), key: "refused_credential_needed" },
+      { name: "settings moved", wire: wireOf(MAILBOX_REFUSALS.configMoved("imap")), key: "refused_mailbox_config_changed", values: { transport: "imap" } },
+      { name: "outgoing settings moved", wire: wireOf(MAILBOX_REFUSALS.configMoved("smtp")), key: "refused_mailbox_config_changed", values: { transport: "smtp" } },
+      { name: "the same login twice", wire: wireOf(sameLoginRefusal()), key: "refused_same_login" },
+      { name: "the phone's own incoming server", wire: wireOf(hostChangeRefusal(null)), key: "refused_organizer_host_change" },
+      { name: "a host this service does not dial", wire: await caught(clearedFor(refusingGuard, "mail.example.test", 587, "smtp")), key: "refused_mailbox_host_refused", values: { transport: "smtp" } },
+      { name: "plaintext off this network", wire: await caught(plaintextDialPin(undefined, "mail.example.test", "imap")), key: "refused_mailbox_host_plaintext", values: { transport: "imap" } },
+      { name: "a second factor to renew", wire: ((await stepUp.json()) as { error: Wire }).error, key: "refused_step_up_required" },
+      { name: "no address", wire: await caught(svc.probeConnection(ctx, { address: "", imap: IMAP }, { probe })), key: "refused_field_address" },
+      { name: "no incoming server to test", wire: await caught(svc.probeConnection(ctx, { address: ADDRESS, imap: { ...IMAP, host: " " } }, { probe })), key: "refused_field_imap_host" },
+      { name: "no password to test", wire: await caught(svc.probeConnection(ctx, { address: ADDRESS, imap: { ...IMAP, pass: "" } }, { probe })), key: "refused_field_imap_pass" },
+      { name: "no provider", wire: await create({ provider: "" }), key: "refused_field_provider" },
+      { name: "no password to connect", wire: await create({ imap: { ...IMAP, pass: "" } }), key: "refused_field_imap" },
+      { name: "no incoming server to connect", wire: await create({ imap: { ...IMAP, host: "" } }), key: "refused_field_imap_server" },
+      { name: "an incoming port nothing listens on", wire: await create({ imap: { ...IMAP, port: 0 } }), key: "refused_field_imap_port" },
+      { name: "an outgoing port nothing listens on", wire: await create({ smtp: { host: "smtp.example.test", port: 70_000 } }), key: "refused_field_smtp_port" },
+    ];
+  }
+
+  afterEach(async () => {
+    const { DEFAULT_LOCALE, setActiveCatalog } = await import("../app/shell/locale.js");
+    setActiveCatalog(DEFAULT_LOCALE, null);
+  });
+
+  it("English is exactly the server's sentence and German the catalogue's, code by code", async () => {
+    const { refusalCopy, SERVER_REFUSAL_CODES } = await import("../app/shell/server-refusal.js");
+    const { fillFrom, setActiveCatalog } = await import("../app/shell/locale.js");
+    const { createTranslator } = await import("next-intl");
+    const cases = await raised();
+    // Every code the table words is driven here; the probe's refusals have their own forms' tests.
+    expect(new Set(cases.map((c) => c.wire.code)))
+      .toEqual(new Set([...SERVER_REFUSAL_CODES].filter((c) => c !== "mailbox_probe_failed")));
+    const german = createTranslator({ locale: "de", messages: de as never, namespace: "mailboxes" as never }) as unknown as
+      (key: string, values?: Record<string, unknown>) => string;
+    /* Two server sentences end on an unscoped "nothing is deleted", which no catalogue entry may say
+       (`deleted-claims.test.ts`): there the catalogue keeps the first sentence and says what is kept. */
+    const SCOPED = new Set(["refused_payment_required", "refused_mailbox_not_permitted"]);
+    const M = en.mailboxes as Record<string, string>;
+    for (const c of cases) {
+      setActiveCatalog("en", en as never);
+      if (SCOPED.has(c.key)) {
+        expect(refusalCopy(c.wire), `${c.name}, in English`).toBe(M[c.key]);
+        expect(c.wire.message.startsWith(M[c.key]!.slice(0, M[c.key]!.indexOf(". ") + 2)), c.name).toBe(true);
+      } else {
+        expect(refusalCopy(c.wire), `${c.name}, in English`).toBe(c.wire.message);
+      }
+      setActiveCatalog("de", fillFrom(en as never, de as never));
+      const said = refusalCopy(c.wire);
+      expect(said, `${c.name}, in German`).toBe(german(c.key, c.values));
+      expect(said, `${c.name} stayed English under German`).not.toBe(c.wire.message);
+    }
+  });
+
+  it("messageOf says a worded code in German and passes any other through", async () => {
+    const { ApiError, messageOf } = await import("../app/api-client.js");
+    const { fillFrom, setActiveCatalog } = await import("../app/shell/locale.js");
+    const [full] = await raised();
+    setActiveCatalog("de", fillFrom(en as never, de as never));
+    const atLimit = new ApiError(409, full!.wire.code, full!.wire.message, full!.wire.details);
+    expect(messageOf(atLimit)).toContain("Postfächer");
+    expect(messageOf(new ApiError(409, "conflict", "the server's own sentence"))).toBe("the server's own sentence");
+    // A worded code in a shape the table does not read keeps the server's sentence.
+    expect(messageOf(new ApiError(409, "mailbox_disabled", "This mailbox is disconnected and cannot send."))).toBe("This mailbox is disconnected and cannot send.");
+  });
+
+});
+
 describe("a server answer, as the prompt reads one", () => {
   it("the renderer's spelling of the client-raised codes is api-client's own", async () => {
     const { SESSION_ENDED_REFUSAL_CODE, SESSION_UNCHECKED } = await import("../app/api-client.js");

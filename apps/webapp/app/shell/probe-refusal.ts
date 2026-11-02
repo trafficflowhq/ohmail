@@ -88,12 +88,13 @@ export function plaintextOfferOf(err: unknown): "imap" | "smtp" | null {
 
 /**
  * {@link noPortProbeKey} read off the server's refusal, with the field the sentence may name: the
- * refused transport's host field where the form shows one, else `none`. `tlsKinds` says whether a
- * named TLS kind keeps its own sentence (`own`) or the form renders no kinds (`generic`).
+ * refused transport's host field where the form shows one; with none, `outgoing` for the outgoing
+ * server and `none` for the incoming one. `tlsKinds` says whether a named TLS kind keeps its own
+ * sentence (`own`) or the form renders no kinds (`generic`).
  */
 export function noPortProbeSentence(
   err: unknown, hostFields: boolean, tlsKinds: "own" | "generic" = "own",
-): { key: NoPortProbeKey; field: "imap" | "smtp" | "none" } | null {
+): { key: NoPortProbeKey; field: "imap" | "smtp" | "none" | "outgoing" } | null {
   const details = err instanceof ApiError
     ? err.details as { transport?: unknown; tls?: unknown } | null | undefined
     : undefined;
@@ -101,5 +102,6 @@ export function noPortProbeSentence(
   const kind = tls && typeof tls === "object" ? (tls as { kind?: unknown }).kind : undefined;
   const key = noPortProbeKey(probeReasonOf(err), tlsKinds === "own" && kind !== undefined && kind !== "generic");
   if (key === null) return null;
-  return { key, field: !hostFields ? "none" : details?.transport === "smtp" ? "smtp" : "imap" };
+  const smtp = details?.transport === "smtp";
+  return { key, field: !hostFields ? (smtp ? "outgoing" : "none") : smtp ? "smtp" : "imap" };
 }

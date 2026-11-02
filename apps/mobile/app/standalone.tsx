@@ -42,6 +42,7 @@ import {
   setImapTls,
   setImapPort,
   setTyped,
+  standaloneAutofill,
   withAddress,
   type ProviderLink,
   type StandaloneFields,
@@ -282,8 +283,7 @@ function Credentials() {
           inputRef={address}
           input={{
             keyboardType: "email-address",
-            autoComplete: "username",
-            textContentType: "username",
+            ...standaloneAutofill("address"),
             returnKeyType: "next",
             onSubmitEditing: () => password.current?.focus(),
           }}
@@ -301,8 +301,7 @@ function Credentials() {
             hide: Copy.phoneStandaloneHidePassword,
           }}
           input={{
-            autoComplete: "current-password",
-            textContentType: "password",
+            ...standaloneAutofill("password"),
             returnKeyType: "done",
             onSubmitEditing: () => {
               if (ready) void connect();

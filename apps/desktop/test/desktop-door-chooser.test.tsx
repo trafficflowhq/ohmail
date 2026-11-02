@@ -419,12 +419,29 @@ describe("the door chooser", () => {
     expect(checked()).toEqual(["GMX"]);
     await type(el, "door-address", personalAt("fixture.mila", "proton.me"));
     expect(checked(), "a guess it no longer backs is withdrawn").toEqual([]);
-    expect(el.textContent).toContain(en.providerPicker.protonNote.replace("{other}", en.providerPicker.otherLabel));
+    expect(el.textContent, "this computer can reach Bridge, so the note says how").toContain(en.providerPicker.protonNoteDesktop.replace("{other}", en.providerPicker.otherLabel));
+    expect(el.textContent).not.toContain(en.providerPicker.protonNote.replace("{other}", en.providerPicker.otherLabel));
     await type(el, "door-address", ADDRESS);
     await press(el, "Infomaniak");
     await type(el, "door-address", personalAt("fixture.mila", "gmx.ch"));
     expect(checked(), "a tile chosen by hand stays").toEqual(["Infomaniak"]);
     expect(requestedUrls(it), "this door asks no server about the address").toEqual([]);
+  });
+
+  /* THE MAILBOX'S PASSWORD IS NOT THE OHMAIL ACCOUNT'S: autofill must not offer the saved account
+     password where an app password belongs. The account door keeps its own field's hint. */
+  it("the mailbox password field asks autofill for nothing; the account's keeps current-password", async () => {
+    install();
+    const local = await render("local");
+    await press(local, "Gmail");
+    expect(local.querySelector("#door-password")?.getAttribute("autocomplete")).toBe("off");
+    expect(local.querySelector("#door-address")?.getAttribute("autocomplete")).toBe("username");
+    await act(async () => root!.unmount());
+    mount!.remove();
+    root = null;
+    const cloud = await render("cloud", null, "signIn");
+    const account = [...cloud.querySelectorAll<HTMLInputElement>('input[type="password"]')].map((i) => i.getAttribute("autocomplete"));
+    expect(account, "the ohmail account's own password field").toContain("current-password");
   });
 
   it("CLAIM: the travel sentence sits beneath all three, and says the mailbox is the master", async () => {

@@ -30,9 +30,11 @@ import { isLocalServerHost, probeCopyKey, refusalAuthHint, refusalTransport } fr
 import { ProviderHelpLinks, ProviderNote } from "./ProviderPicker";
 import { DiscoveredHostsOffer, useAddressFirst } from "./address-first";
 import { noPortProbeKey } from "./no-port-sentence";
-import { PlaintextConsent } from "./PlaintextConsent";
+import { PlaintextConsent, plaintextClaims, sameServerHost } from "./PlaintextConsent";
+import { CertificateTrust, certificateOfferOf, trustClaims, type TrustOffer } from "./CertificateTrust";
+import { refusalCopy, type RefusalCopyOptions } from "./server-refusal";
 import {
-  deriveOnboardingStep, importOverOf, onboardingPath, sendingLine,
+  deriveOnboardingStep, importOverOf, onboardingPath, sendingLine, sendingPlaintextOffered,
   type OnboardingFacts, type OnboardingStep,
 } from "./onboarding";
 import { AGREE_REREAD_MS, AGREE_SWEEP_MS, firstRunImportOver } from "./first-run-queue-settle";
@@ -763,7 +765,7 @@ export function FirstRun({
   const run = useCallback(async (
     write: () => Promise<void>, keepCursor?: OnboardingStep,
     /** A refusal stays on this screen with its sentence, never a silent step back. */
-    opts: { stayOnFailure?: boolean } = {},
+    opts: { stayOnFailure?: boolean; form?: RefusalCopyOptions } = {},
   ): Promise<boolean> => {
     /* THE FORM'S GENERATION AT THE MOMENT THIS STARTED. `retireTest` advances it on every edit, so
        this is exactly "has the form moved since I was sent". A WRITE needs it for the same reason
@@ -804,7 +806,8 @@ export function FirstRun({
       // The CURSOR still moves on a first run — the derivation is entitled to answer over the
       // newest facts whatever happened here — but the SENTENCE belongs to a form that is gone.
       if (testSeq.current === mine) {
-        setProblem(host.probeMessage(err) ?? String((err as { message?: string })?.message ?? err));
+        // The server's refusal in the reader's language; the connect names the form it was pressed on.
+        setProblem(refusalCopy(err, opts.form) ?? host.probeMessage(err) ?? String((err as { message?: string })?.message ?? err));
       }
       await settle();
       setAt(rerun === true || opts.stayOnFailure === true ? here : null);
@@ -1023,6 +1026,8 @@ export function FirstRun({
       reason: string | null; message: string | null; localServer: boolean; transport: "imap" | "smtp";
       /** Why Google refused the sign-in (`details.authHint`), or `null`. */
       authHint: AuthHint | null;
+      /** A server on this computer offered its own certificate to trust (the line below). */
+      certificate?: boolean;
     }
   >(null);
   const [testing, setTesting] = useState(false);
@@ -1068,13 +1073,20 @@ export function FirstRun({
    */
   const [offer, setOffer] = useState<{ imap: boolean; smtp: boolean }>({ imap: false, smtp: false });
   const [plain, setPlain] = useState<{ imap: boolean; smtp: boolean }>({ imap: false, smtp: false });
+  /* The certificate of a server on this computer, offered to trust, and the one each line was ticked for. */
+  const [trustOffer, setTrustOffer] = useState<TrustOffer>({});
+  const [trusted, setTrusted] = useState<TrustOffer>({});
   const retireConsent = useCallback(() => {
     setOffer({ imap: false, smtp: false });
     setPlain({ imap: false, smtp: false });
+    setTrustOffer({});
+    setTrusted({});
   }, []);
   const openOffer = useCallback((err: unknown) => {
     const opens = host.plaintextOffer?.(err) ?? null;
     if (opens) setOffer((o) => ({ ...o, [opens]: true }));
+    const certificate = certificateOfferOf(err);
+    if (certificate) setTrustOffer((o) => ({ ...o, [certificate.transport]: certificate.sha256 }));
   }, [host]);
   /** The same, for a refused connect, which then leaves as it came. */
   const offerAndRethrow = useCallback((err: unknown): never => { openOffer(err); throw err; }, [openOffer]);
@@ -1119,6 +1131,10 @@ export function FirstRun({
   const mailboxInput = useCallback((): FirstRunMailboxInput => {
     const port = Number(imapPort);
     const sPort = Number(smtpPort);
+    // One host on both legs: the one line the person ticked covers both.
+    const both = sameServerHost(imapHost, smtpHost);
+    const claims = plaintextClaims(offer, plain, both);
+    const trust = trustClaims(trustOffer, trusted, both);
     return {
       address: address.trim(),
       provider: preset.id,
@@ -1127,7 +1143,8 @@ export function FirstRun({
         ...(Number.isInteger(port) && port > 0 ? { port } : {}),
         secure: preset.manual ? port === 993 : preset.imap.secure,
         pass,
-        ...(offer.imap && plain.imap ? { allowInsecure: true } : {}),
+        ...(claims.imap ? { allowInsecure: true } : {}),
+        ...(trust.imap ? { trustCertificate: trust.imap } : {}),
       },
       ...(smtpHost.trim() ? {
         smtp: {
@@ -1135,11 +1152,12 @@ export function FirstRun({
           ...(Number.isInteger(sPort) && sPort > 0 ? { port: sPort } : {}),
           secure: preset.manual ? sPort === 465 : preset.smtp.secure,
           pass,
-          ...(offer.smtp && plain.smtp ? { allowInsecure: true } : {}),
+          ...(claims.smtp ? { allowInsecure: true } : {}),
+          ...(trust.smtp ? { trustCertificate: trust.smtp } : {}),
         },
       } : {}),
     };
-  }, [address, imapHost, imapPort, offer, pass, plain, preset, smtpHost, smtpPort]);
+  }, [address, imapHost, imapPort, offer, pass, plain, preset, smtpHost, smtpPort, trustOffer, trusted]);
 
   const test = useCallback(async (retried = false) => {
     const mine = ++testSeq.current;
@@ -1151,6 +1169,11 @@ export function FirstRun({
     try {
       const ok = await host.probe(input);
       if (testSeq.current !== mine) return;
+      // An outgoing server with no encryption on this network: its line opens from the test too.
+      if (sendingPlaintextOffered(ok.sending)) setOffer((o) => ({ ...o, smtp: true }));
+      // …and one on this computer with its own certificate, its trust line.
+      const own = ok.sending?.state === "refused" ? ok.sending.tls?.certificate?.sha256 : undefined;
+      if (own) setTrustOffer((o) => ({ ...o, smtp: own }));
       setVerdict({ ok });
     } catch (err) {
       if (testSeq.current !== mine) return;
@@ -1162,6 +1185,7 @@ export function FirstRun({
         message: stepUpAsked ? t("mailboxStepUp") : host.probeMessage(err),
         localServer: host.probeLocalServer?.(err) === true, transport: refusalTransport(err),
         authHint: refusalAuthHint(err),
+        certificate: certificateOfferOf(err) !== null,
       });
     } finally {
       if (testSeq.current === mine) setTesting(false);
@@ -1204,7 +1228,7 @@ export function FirstRun({
        * right answer.
        */
       if (add === true) onConnected?.(id);
-    }, undefined, { stayOnFailure: true });
+    }, undefined, { stayOnFailure: true, form: { presetId: preset.id, manual: preset.manual === true } });
   };
 
   /**
@@ -1620,7 +1644,8 @@ export function FirstRun({
               {/* THE PRESET'S NOTE, before the password: Gmail is pre-selected here, and a person
                   who reads only "imap.gmail.com" types their Google password. The picker's own. */}
               {addressFirst.guess?.proton ? (
-                <div className="pvp-note"><p>{tp("protonNote", { other: tp("otherLabel") })}</p></div>
+                /* The desktop's own door reaches Bridge on this computer, and says how. */
+                <div className="pvp-note"><p>{tp(host.door === "local" ? "protonNoteDesktop" : "protonNote", { other: tp("otherLabel") })}</p></div>
               ) : <ProviderNote key={preset.id} preset={preset} />}
               <div className="set-fields">
                 <SettingsField htmlFor={`${ids}-pass`} label={t("password")}
@@ -1653,8 +1678,13 @@ export function FirstRun({
               ) : null}
               <PlaintextConsent
                 id={`${ids}-plaintext`}
-                offer={offer} checked={plain}
+                offer={offer} checked={plain} sameHost={sameServerHost(imapHost, smtpHost)}
                 onChange={(k, on) => { setPlain((v) => ({ ...v, [k]: on })); retireTest(); }}
+              />
+              <CertificateTrust
+                id={`${ids}-trust`}
+                offer={trustOffer} ticked={trusted} sameHost={sameServerHost(imapHost, smtpHost)}
+                onChange={(k, sha256) => { setTrusted((v) => ({ ...v, [k]: sha256 })); retireTest(); }}
               />
               <SettingsActions>
                 {/* NOT a submit: this button asks the mail server a question and the form's ↵
@@ -1704,9 +1734,11 @@ export function FirstRun({
                 <SettingsVerdict
                   state="bad"
                   headline={(() => {
+                    // A server on this computer with its own certificate: the trust line below says what to do.
+                    if (verdict.certificate) return tm("probe_tls_self_signed_local");
                     /* Behind a named provider the form shows no host and no port, so neither is named. */
                     const noPort = preset.manual ? null : noPortProbeKey(verdict.reason, false);
-                    if (noPort) return tm(noPort, { field: "none" });
+                    if (noPort) return tm(noPort, { field: verdict.transport === "smtp" ? "outgoing" : "none" });
                     return verdict.reason
                       ? tm(probeCopyKey(verdict.reason, verdict.localServer, verdict.transport, verdict.authHint, preset.id) as "probe_auth")
                       : verdict.message ?? tm("probe_unknown");
