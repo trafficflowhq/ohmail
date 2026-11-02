@@ -9,7 +9,7 @@
  * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { anyPartArms, assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partSidesOf, partWordKept, partWordTails, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands } from "./index.js";
+import { anyPartArms, assertComparable, containsPattern, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partSidesOf, partWordKept, partWordTails, partReadingOf, type PartReading, type PartUnit, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands } from "./index.js";
 import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -173,9 +173,9 @@ function phraseOf(text: string): string | null {
  */
 export function ftsQueryOf(q: string, mode: "words" | "parts" = "words"): { match: string | null; exclude: string | null } {
   if (mode === "parts") {
-    const words = partWordsOf(q) ?? [];
+    const r = partReadingOf(q);
     // AND spelled out: FTS5 takes no implicit AND beside a parenthesised group.
-    const match = words.filter((_, i) => partWordKept(words, i)).map(partGroupOf).join(" AND ");
+    const match = r === null ? "" : r.units.map((u) => unitGroupOf(r, u)).filter((g): g is string => g !== null).join(" AND ");
     return { match: match === "" ? null : match, exclude: null };
   }
   const ops = queryOperandsOf(q);
@@ -189,6 +189,33 @@ export function ftsQueryOf(q: string, mode: "words" | "parts" = "words"): { matc
 /** One part-word as FTS5: from four letters a group of its prefix and the word plus each tail, else the word. */
 function partGroupOf(w: string): string {
   return [...w].length >= PART_PREFIX_MIN_CHARS ? `(${[`"${w}"*`, ...partWordTails(w).map((t) => `"${w}${t}"`)].join(" OR ")})` : `"${w}"`;
+}
+
+/**
+ * One unit ({@link partReadingOf}) as FTS5, null when it keeps no word: a run as {@link partGroupOf}
+ * (whole when it is not read as a start); a piece also as the phrase of its runs, the last a prefix
+ * when it is a start (`"desk site exa"*`), plus one phrase per tail. Its runs ANDed stay only when
+ * one has four letters, as the server's. A phrase needs positions: the 0138 and 0173 tables keep them.
+ */
+function unitGroupOf(r: PartReading, u: PartUnit, fold = false): string | null {
+  const one = (i: number): string => {
+    const w = r.words[i]!;
+    const g = (x: string): string => (r.part[i] ? partGroupOf(x) : `"${x}"`);
+    const forms = fold ? eszettForms(w).map(g) : [g(w)];
+    return forms.length === 1 ? forms[0]! : `(${forms.join(" OR ")})`;
+  };
+  const kept = u.at.filter((i) => partWordKept(r.words, i)).map(one);
+  const runs = kept.length === 0 ? null : kept.length === 1 ? kept[0]! : `(${kept.join(" AND ")})`;
+  if (u.joined === null) return runs;
+  const phrases = (fold ? eszettForms(u.joined) : [u.joined]).flatMap((f) => {
+    const ws = f.match(/[\p{L}\p{N}]+/gu)!;
+    const last = ws[ws.length - 1]!;
+    const head = ws.slice(0, -1).join(" ");
+    const tails = u.start && [...last].length >= PART_PREFIX_MIN_CHARS ? partWordTails(last).map((t) => `"${head} ${last}${t}"`) : [];
+    return [`"${ws.join(" ")}"${u.start ? "*" : ""}`, ...tails];
+  });
+  const withRuns = runs !== null && u.at.some((i) => [...r.words[i]!].length >= PART_PREFIX_MIN_CHARS);
+  return `(${[...(withRuns ? [runs] : []), ...phrases].join(" OR ")})`;
 }
 
 /** One operand as an FTS5 expression over every ß/ss form of it; an excluded one as typed. */
@@ -210,15 +237,15 @@ function inLetter(match: string): SQL {
     OR coalesce(b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${match}), 0))`;
 }
 
-/** One query's part-word arms ({@link Dialect.search.partWords}); it has {@link partWordsOf}'s words. */
+/** One query's part-word arms ({@link Dialect.search.partWords}); it has {@link partReadingOf}'s units. */
 function partArmsOf(q: string): MailWordArms {
-  const words = partWordsOf(q)!;
+  const r = partReadingOf(q)!;
   const recency = sql`coalesce(m.date, 0)`;
   const ops = partOperandsOf(q);
   if (ops !== null) {
-    // Each typed operand's kept words together in one table, each word in every ß/ss form.
-    const forms = (w: string): string => { const g = eszettForms(w).map(partGroupOf); return g.length === 1 ? g[0]! : `(${g.join(" OR ")})`; };
-    const letter = sql`(${sql.join(ops.map((op) => inLetter(op.map((i) => forms(words[i]!)).join(" AND "))), sql` AND `)})`;
+    // Each typed operand's kept units together in one table, each word in every ß/ss form.
+    const unit = (k: number): string | null => unitGroupOf(r, r.units[k]!, true);
+    const letter = sql`(${sql.join(ops.map((op) => inLetter(op.map(unit).filter((g): g is string => g !== null).join(" AND "))), sql` AND `)})`;
     return { head: { pred: letter, rank: recency }, text: { pred: letter, rank: recency }, across: true };
   }
   return {
@@ -303,9 +330,9 @@ export function ftsFoldedQueryOf(q: string, mode: "words" | "parts" = "words"): 
 /** The header columns and the recipients' `terms` LIKE every ß/ss form of `q` (`eszettForms`). */
 function headLike(q: string): SQL {
   const one = (f: string): SQL => {
-    const like = `%${f}%`;
-    return sql`lower(m.subject) like lower(${like}) or lower(m.from_address) like lower(${like})
-                  or lower(coalesce(s.terms, '')) like lower(${like})`;
+    const like = containsPattern(f);
+    return sql`lower(m.subject) like lower(${like}) escape '\\' or lower(m.from_address) like lower(${like}) escape '\\'
+                  or lower(coalesce(s.terms, '')) like lower(${like}) escape '\\'`;
   };
   return sql`(${sql.join(eszettForms(q).map(one), sql` or `)})`;
 }
@@ -317,13 +344,13 @@ function headLike(q: string): SQL {
  */
 function peopleLike(q: string): SQL {
   const one = (f: string): SQL => {
-    const like = `%${f}%`;
-    const listed = (col: SQL): SQL => sql`(lower(coalesce(${col}, '')) like lower(${like})
+    const like = containsPattern(f);
+    const listed = (col: SQL): SQL => sql`(lower(coalesce(${col}, '')) like lower(${like}) escape '\\'
       and exists (select 1 from json_each(case when json_valid(${col}) then ${col} else '[]' end) e
-        where e.type = 'object' and (lower(coalesce(json_extract(e.value, '$.name'), '')) like lower(${like})
-          or lower(coalesce(json_extract(e.value, '$.address'), '')) like lower(${like}))))`;
-    return sql`lower(coalesce(m.subject, '')) like lower(${like}) or lower(coalesce(m.from_name, '')) like lower(${like})
-      or lower(coalesce(m.from_address, '')) like lower(${like}) or ${listed(sql`m.to_addresses`)} or ${listed(sql`m.cc_addresses`)}`;
+        where e.type = 'object' and (lower(coalesce(json_extract(e.value, '$.name'), '')) like lower(${like}) escape '\\'
+          or lower(coalesce(json_extract(e.value, '$.address'), '')) like lower(${like}) escape '\\')))`;
+    return sql`lower(coalesce(m.subject, '')) like lower(${like}) escape '\\' or lower(coalesce(m.from_name, '')) like lower(${like}) escape '\\'
+      or lower(coalesce(m.from_address, '')) like lower(${like}) escape '\\' or ${listed(sql`m.to_addresses`)} or ${listed(sql`m.cc_addresses`)}`;
   };
   return sql`(${sql.join(eszettForms(q).map(one), sql` or `)})`;
 }
@@ -565,16 +592,16 @@ export function sqliteDialect(): Dialect {
       fuzzy: (q: string, corpus: SearchCorpus, _opts): SearchArm => {
         // There is no trigram index to have, so this is the degrade the server also falls back to
         // — one shape on both dialects rather than a device-only third behaviour.
-        const like = `%${q}%`;
+        const like = containsPattern(q);
         if (corpus === "kb") {
           return {
-            pred: sql`(lower(title) like lower(${like}) or lower(content) like lower(${like}))`,
+            pred: sql`(lower(title) like lower(${like}) escape '\\' or lower(content) like lower(${like}) escape '\\')`,
             rank: sql`0`,
           };
         }
         return {
-          pred: sql`(lower(m.subject) like lower(${like}) or lower(m.from_address) like lower(${like})
-                  or lower(coalesce(s.terms, '')) like lower(${like}))`,
+          pred: sql`(lower(m.subject) like lower(${like}) escape '\\' or lower(m.from_address) like lower(${like}) escape '\\'
+                  or lower(coalesce(s.terms, '')) like lower(${like}) escape '\\')`,
           // RECENCY, as the server's degrade ranks. The instant is already a count of
           // milliseconds in this store, so there is no epoch to extract — the column IS the
           // number, and `extract(epoch …)` would not parse here at all.

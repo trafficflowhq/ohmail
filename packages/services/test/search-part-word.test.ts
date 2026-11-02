@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { messageBodies } from "@trafficflow/db";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
-import { partWordsOf } from "@trafficflow/db/dialect";
+import { partReadingOf, partWordsOf } from "@trafficflow/db/dialect";
 import { SearchService } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 
@@ -98,6 +98,140 @@ describe.each([
     // Past four the arm stays shut, as past eight for one side: each word is one more prefix read.
     const past = await found(ctx, [...sides, "runnin"].join(" or "));
     expect(past.ids.has(ids.nationalization!)).toBe(false);
+  });
+});
+
+/**
+ * THE START OF A PUNCTUATED TOKEN FINDS WHAT THE WHOLE TOKEN FINDS, on both stores and the desktop's
+ * own: the server's parser keeps an address, a host, a path, a decimal, a version or a URL as one
+ * word, while the arm asked each run apart, a short last run as a whole word. Watched red at the
+ * base: every start below found nothing, and a query of more than eight words opened no part.
+ */
+const TOKENS: ReadonlyArray<readonly [key: string, body: string, whole: string, starts: readonly string[]]> = [
+  ["addr", "Write to desk@site.example today.", "desk@site.example", ["desk@site.exa", "desk@site.e", "desk@si"]],
+  ["dec", "The ratio is 3.14159 here.", "3.14159", ["3.141", "3.14"]],
+  ["path", "See docs/setup for details.", "docs/setup", ["docs/set"]],
+  ["host", "The server mail.example.org is down.", "mail.example.org", ["mail.exa"]],
+  ["ip", "Ping 10.0.0.1 again.", "10.0.0.1", ["10.0.0"]],
+  ["ver", "Running v1.2.3 now.", "v1.2.3", ["v1.2"]],
+  ["under", "Reply to first_last@site.example soon.", "first_last@site.example", ["first_last@si"]],
+  ["url", "Read example.com/path/to/page first.", "example.com/path/to/page", ["example.com/pa", "example.com/path"]],
+  ["file", "Saved as report.final.pdf yesterday.", "report.final.pdf", ["report.fin"]],
+  ["js", "Upgrade node.js first.", "node.js", ["node.j"]],
+  ["ledger", "The harbour_ledger is attached.", "harbour_ledger", ["harbour_ledg"]],
+];
+/**
+ * A whole hyphenated or underscore word with no run of four letters, beside a start: Postgres keeps
+ * `add-ons` as `add-on` and splits `api_ids` into `api` and `id`, which the piece's own runs never asked.
+ */
+const BESIDE: ReadonlyArray<readonly [key: string, body: string, typed: readonly string[]]> = [
+  ["addons", "Your plan includes three add-ons for the quarterly invoice.", ["add-ons invoi", "invoi add-ons", "add-ons quarte"]],
+  ["popups", "Block the pop-ups in Chrome.", ["pop-ups chro", "chro pop-ups"]],
+  ["todos", "Your to-dos for tomorrow are listed.", ["to-dos tomor"]],
+  ["apiids", "The api_ids column is indexed.", ["api_ids colu"]],
+];
+const LONG_BODY = "Minutes: harbour board meeting, ledger review, every captain present, desk@site.example, elevation notes.";
+
+async function punctuated(built: boolean) {
+  const { db, ctx, accountId, mailboxId } = await makeCtx();
+  const keyOf = new Map<string, string>();
+  const put = async (key: string, body: string, i: number) => {
+    const id = await seedMessage(db, accountId, mailboxId, {
+      subject: `Weekly note ${i}`, from: `sender${i}@mail.test`, snippet: "See below.", folder: "INBOX",
+      date: new Date(Date.parse("2026-07-20T09:00:00Z") - i * 86_400_000),
+    });
+    await db.insert(messageBodies).values({ messageId: id, text: body });
+    keyOf.set(id, key);
+  };
+  const rows: Array<readonly [string, string]> = [
+    ...TOKENS.map(([key, body]) => [key, body] as const), ...BESIDE.map(([key, body]) => [key, body] as const),
+    ["apart", "The desk at the site, for example, is free."], ["digits", "Seats 3 and 14 are free; rows 10 and 0, gates v1 and 2."],
+    ["long", LONG_BODY], ["decoy", "See you soon."],
+  ];
+  for (const [i, [key, body]] of rows.entries()) await put(key, body, i + 1);
+  if (built) expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
+  return { ctx, keyOf };
+}
+
+describe.each([
+  ["the store, documents built", true, false],
+  ["the store, before the documents are built", false, false],
+  ["the desktop's own store", true, true],
+])("the start of a punctuated token — %s", (_label, built, localStore) => {
+  const svc = localStore ? new SearchService({ indexFills: true, localStore: true }) : new SearchService();
+  let answer: (q: string) => Promise<{ tier: string; keys: Set<string> }>;
+  beforeAll(async () => {
+    const { ctx, keyOf } = await punctuated(built);
+    answer = async (q) => {
+      const r = await svc.search(ctx, { q, limit: 50 });
+      return { tier: r.tier, keys: new Set(r.items.map((m) => keyOf.get(m.id)!)) };
+    };
+  }, 60_000);
+
+  it("(6) every start of four characters or more finds every letter the whole token finds by holding it", async () => {
+    const wrong: unknown[] = [];
+    for (const [key, , whole, starts] of TOKENS) {
+      const w = await answer(whole);
+      // The control: the whole token finds its letter. Letters holding its words apart are the runs' reach, not the token's.
+      expect({ whole, tier: w.tier, found: w.keys.has(key) }).toEqual({ whole, tier: "exact", found: true });
+      const holders = [...w.keys].filter((k) => (k === "long" ? LONG_BODY : TOKENS.find((t) => t[0] === k)?.[1] ?? "").includes(whole));
+      for (const s of starts) {
+        const p = await answer(s);
+        const missing = holders.filter((k) => !p.keys.has(k));
+        if (p.tier !== "exact" || missing.length > 0) wrong.push({ s, tier: p.tier, missing });
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("(7) no start answers a decoy: digits apart, an unrelated letter", async () => {
+    for (const s of ["3.14", "3.141", "10.0.0", "v1.2", "desk@site.e", "docs/set", "node.j"]) {
+      const p = await answer(s);
+      expect({ s, extra: [...p.keys].filter((k) => k === "digits" || k === "decoy") }).toEqual({ s, extra: [] });
+    }
+  });
+
+  it("(8) a piece under four characters is not read as a start: `3.1`; on Postgres nor `harbour_l`", async () => {
+    expect(partWordsOf("3.1")).toBeNull();
+    const p = await answer("3.1");
+    expect(p.tier === "exact" && p.keys.has("dec")).toBe(false);
+    // On Postgres neither is a last run under four after `_`: `l:*` would read every account's index. The phone's own store may.
+    if (process.env.OHMAIL_TEST_DIALECT === "sqlite") return;
+    const u = await answer("harbour_l");
+    expect(u.tier === "exact" && u.keys.has("ledger")).toBe(false);
+  });
+
+  it("(9) past eight words the last one is still read as a start; a fragment before it is read whole", async () => {
+    for (const q of ["harbour board meeting ledger review every captain present elevat",
+      "harbour board desk@site.example meeting ledger review every captain present elevat"]) {
+      const p = await answer(q);
+      expect({ q, tier: p.tier, found: p.keys.has("long") }).toEqual({ q, tier: "exact", found: true });
+    }
+    const early = await answer("harbou board meeting ledger review every captain present elevation");
+    expect(early.tier === "exact" && early.keys.has("long")).toBe(false);
+  });
+
+  it("(10) a whole hyphenated or underscore word beside a start finds its letter", async () => {
+    const wrong: unknown[] = [];
+    for (const [key, , typed] of BESIDE) {
+      for (const q of typed) {
+        const p = await answer(q);
+        if (p.tier !== "exact" || !p.keys.has(key)) wrong.push({ q, tier: p.tier });
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+});
+
+describe("the part arm's reading of a punctuated query", () => {
+  it("(4) inlines a piece of letters, digits and single joining marks only, whatever was typed", () => {
+    const PIECE = /^[\p{L}\p{N}]+(?:[-./@_][\p{L}\p{N}]+)+$/u;
+    const typed = ["desk@site.exa", "a'b.c@d", "x..y/z", "'; drop table--x.y", "o'brien.co\\uk", "3.14+5_6", "über.straße/weg", "a@@b._c"];
+    const pieces = typed.flatMap((q) => partReadingOf(q)?.units.flatMap((u) => (u.joined === null ? [] : [u.joined])) ?? []);
+    expect(pieces.length).toBeGreaterThan(4);
+    expect(pieces.filter((p) => !PIECE.test(p))).toEqual([]);
+    expect(partReadingOf("desk@site.exa")!.units).toEqual([{ at: [0, 1, 2], joined: "desk@site.exa", start: true }]);
+    expect(partReadingOf("3.14")!.units[0]!.start).toBe(true);
   });
 });
 

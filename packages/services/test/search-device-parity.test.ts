@@ -210,6 +210,8 @@ async function lettersStore(
       const r = await svc.search(ctx, { q, limit: 50 });
       return { tier: r.tier, keys: r.items.map((m) => keyOf.get(m.id)!).sort() };
     },
+    /** The relevance page's letters in the order given. */
+    ranked: async (svc: SearchService, q: string) => (await svc.search(ctx, { q, limit: 50, parts: "page" })).items.map((m) => keyOf.get(m.id)!),
     mirror: (q: string) => index.search(q, { limit: 50 }).items.map((h) => keyOf.get(h.message.id)!).sort(),
     /** One answer as a client reads it: its tier, its total and its letters. */
     said: async (svc: SearchService, q: string, parts: SearchParts, sort: SearchSort) => {
@@ -519,6 +521,29 @@ describe("each part of a file name beside another word", () => {
     expect(got).toEqual(SERVICES.map(([svc]) => ({ svc, tier: "exact", keys: ["q3"] })));
   });
 
+  it("an underscore in a file name's fragment is that character, never any one", async () => {
+    const { ctx, keyOf } = await seedRows([
+      ["us", "Desk", "po@desk.example", "Papers", "See attached.", "rep_2025.pdf", 1],
+      ["ux", "Desk", "po@desk.example", "Papers", "See attached.", "repx2025.pdf", 2],
+    ]);
+    const got = [];
+    for (const [svc, s] of SERVICES) got.push({ svc, keys: (await s.search(ctx, { q: "rep_2025", limit: 50 })).items.map((m) => keyOf.get(m.id)!) });
+    expect(got).toEqual(SERVICES.map(([svc]) => ({ svc, keys: ["us"] })));
+  });
+
+  it("a letter to 60 people is found by a fragment of its file name", async () => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    const id = await seedMessage(db, accountId, mailboxId, { subject: "Papers", from: "iv@post.example", fromName: "Ines Varga", snippet: "See attached.", folder: "INBOX" });
+    const to = Array.from({ length: 60 }, (_, i) => ({ name: `Recipient Number ${i}`, address: `recipient.number.${i}@distribution.example` }));
+    await db.update(messages).set({ toAddresses: to }).where(eq(messages.id, id));
+    await db.insert(messageBodies).values({ messageId: id, text: "See attached." });
+    await db.insert(attachments).values({ accountId, messageId: id, filename: "harbour-ledger-7731.pdf", contentType: "application/pdf" });
+    expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
+    const got = [];
+    for (const [svc, s] of SERVICES) got.push({ svc, ids: (await s.search(ctx, { q: "bour-ledg", limit: 50 })).items.map((m) => m.id) });
+    expect(got).toEqual(SERVICES.map(([svc]) => ({ svc, ids: [id] })));
+  });
+
   // Past eight operands the query is read per part: an excluded word the stemmer cuts (invoices -> invoic)
   // still leaves out the letter whose subject holds it.
   it("an excluded word in a query of more than eight words leaves out a letter whose subject has it", async () => {
@@ -784,6 +809,8 @@ describe("a minus word only leaves letters out", () => {
     ["mail -a1 -a2 -a3 -a4 -a5 -a6 -a7 -a8", "mail", ""], ["mail -thanks -a2 -a3 -a4 -a5 -a6 -a7 -a8", "mail", "thanks"],
     ["the -a1 -a2 -a3 -a4 -a5 -a6 -a7 -a8 -a9", "the", ""], ["delivery waiting -a1 -a2 -a3 -a4 -a5 -a6 -a7", "delivery waiting", ""],
     [`${NINE} -harvest`, NINE, "harvest"], [`-a1 ${NINE} -a2 -harvest`, NINE, "harvest"],
+    // Past eight words a bare `or` beside a minus word is still no "or not".
+    [`${NINE} or -zzzqx`, NINE, "zzzqx"],
   ];
   const ANSWERS: ReadonlyArray<readonly [SearchParts, SearchSort]> = [["page", "relevance"], ["page", "date_desc"],
     ["page", "date_asc"], ["page", "sender"], ["page", "mailbox"], ["estimate", "relevance"], ["summary", "relevance"]];
@@ -860,5 +887,68 @@ describe("a minus word only leaves letters out", () => {
     expect(["mail -(thanks)", "mail (-thanks)", "(mail -thanks)", "mail ( -thanks )", "-(thanks)", "mail -thanks!", "mail <-thanks",
       "mail -thanks|x", "(mail) -thanks", "(a (b -c) d)"].map(positiveText))
       .toEqual(["mail", "mail", "mail", "mail", "", "mail", "mail", "mail x", "(mail)", "(a b d)"]);
+    // A bare `or` the exclusion leaves at an end goes; one stays between two words asked.
+    expect(["mail or -x", "a or -b or c", "-b or c", "a -b or c", "a or b"].map(positiveText)).toEqual(["mail", "a or c", "c", "a or c", "a or b"]);
   });
+
+  it("an `or` beside a minus word ranks as the minus word alone, on every relevance page", async () => {
+    for (const [svc, s] of SERVICES) {
+      for (const [q, minus] of [["mail or -thanks", "mail -thanks"], ["mail or -zzzqx", "mail -zzzqx"]]) {
+        expect({ svc, q, keys: await built.ranked(s, q!) }).toEqual({ svc, q, keys: await built.ranked(s, minus!) });
+      }
+    }
+  });
+
+  it("the closest words and the first paint read `x or -y` as `x -y`", async () => {
+    for (const [svc, s] of SERVICES) {
+      expect({ svc, ...(await built.read(s, "mial or -zzzqx")) }).toEqual({ svc, ...(await built.read(s, "mial -zzzqx")) });
+    }
+    expect(["mail or -thanks", "-thanks or mail"].map(built.mirror)).toEqual([built.mirror("mail -thanks"), built.mirror("mail -thanks")]);
+  });
+});
+
+/**
+ * PAST THE SUMMARY'S CAP (a tester's counts): 2,100 letters to the same address, each found by `mail`
+ * inside it. A minus word no letter holds, with or without an `or`, counts what the words alone count,
+ * and the date pages reach every letter.
+ */
+describe("past the summary's cap, a minus word nobody holds leaves the count alone", () => {
+  const N = 2_100;
+  it("bare, or, minus and or-minus say one count; the date pages reach every letter", async () => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    for (let at = 0; at < N; at += 300) {
+      const rows = Array.from({ length: Math.min(300, N - at) }, (_, k) => {
+        const g = at + k;
+        return {
+          accountId, mailboxId, messageIdHeader: `<n${g}@site.example>`, bodyHash: `h${g}`, dedupKey: `cap:${g}`,
+          subject: `Weekly note ${g}`, fromAddress: `sender${g % 7}@site.example`, fromName: `Sender ${g % 7}`,
+          date: new Date(Date.parse("2026-07-20T00:00:00Z") - g * 60_000), nativeLocator: { folder: "INBOX", ref: `1:${g}` },
+          snippet: "The notes follow.", unread: false, toAddresses: [{ name: "Tester", address: "tester@ohmail.example" }],
+        };
+      });
+      const ids = await db.insert(messages).values(rows).returning({ id: messages.id });
+      await db.insert(messageBodies).values(ids.map(({ id }) => ({ messageId: id, text: "The notes follow." })));
+    }
+    let marked = false;
+    for (let r = 0; r < 10 && !marked; r++) marked = (await searchIndexBackfillPass({ db: db as never, accountId })).marked;
+    expect(marked).toBe(true);
+    const svc = new SearchService();
+    const counts = [];
+    for (const q of ["mail", "mail or zzzqx", "mail -zzzqx", "mail or -zzzqx"]) {
+      const s = await svc.search(ctx, { q, parts: "summary" });
+      counts.push({ q, total: s.total, exact: s.totalExact });
+    }
+    const first = counts[0]!;
+    expect(first.total).toBeGreaterThanOrEqual(2_000);
+    expect(counts).toEqual(counts.map(({ q }) => ({ q, total: first.total, exact: first.exact })));
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    for (let page = 0; page < 60; page++) {
+      const r = await svc.search(ctx, { q: "mail -zzzqx", parts: "page", sort: "date_desc", limit: 50, ...(cursor ? { cursor } : {}) });
+      for (const m of r.items) seen.add(m.id);
+      cursor = r.nextCursor;
+      if (!cursor) break;
+    }
+    expect(seen.size).toBe(N);
+  }, 240_000);
 });
