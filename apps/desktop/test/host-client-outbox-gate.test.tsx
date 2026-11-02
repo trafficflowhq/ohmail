@@ -6,7 +6,8 @@ import { NextIntlClientProvider } from "next-intl";
 import type { OhmailEngine } from "@ohmail/client-engine";
 
 import messages from "../../webapp/messages/en.json";
-import { BearerManager } from "../src/host-client/bearer.js";
+import { COMPOSE_DRAFT_PREFIX } from "../../webapp/app/shell/compose";
+import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY } from "../src/host-client/bearer.js";
 import { HostGate } from "../src/host-client/HostGate.js";
 
 /**
@@ -29,7 +30,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
   })) as never;
 
 let shellProps: Record<string, unknown> | null = null;
-let pairProps: { onPaired: () => void } | null = null;
+let pairProps: ({ onPaired: () => void } & Record<string, unknown>) | null = null;
 /** Every discard the gate asked for, in order: `undefined` is every pairing's. */
 let discards: Array<{ except?: string | null } | undefined> = [];
 
@@ -43,7 +44,10 @@ vi.mock("../src/host-client/PairScreen.js", async () => {
   const real = await vi.importActual<typeof import("../src/host-client/PairScreen.js")>(
     "../src/host-client/PairScreen.js",
   );
-  return { ...real, PairScreen: (props: { onPaired: () => void }) => { pairProps = props; return null; } };
+  return {
+    ...real,
+    PairScreen: (props: { onPaired: () => void } & Record<string, unknown>) => { pairProps = props; return null; },
+  };
 });
 vi.mock("../src/host-client/outbox-store.js", async () => {
   const real = await vi.importActual<typeof import("../src/host-client/outbox-store.js")>(
@@ -55,8 +59,10 @@ vi.mock("../src/host-client/outbox-store.js", async () => {
   };
 });
 
-type Mode = "away" | "revoked";
+type Mode = "away" | "revoked" | "home";
 let mode: Mode;
+/** What reached the computer in the `home` mode: the path and the bearer it carried. */
+let reached: Array<[string, string | null]> = [];
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -64,8 +70,12 @@ const json = (status: number, body: unknown): Response =>
 function pairedBearer(): BearerManager {
   const bearer = new BearerManager({
     storage: window.localStorage,
-    fetchImpl: (async (url: string) => {
+    fetchImpl: (async (url: string, init?: { headers?: Record<string, string> }) => {
       if (mode === "away") throw new TypeError("Failed to fetch");
+      if (mode === "home") {
+        reached.push([url, init?.headers?.authorization ?? null]);
+        return new Response(null, { status: 204 });
+      }
       // Ended from the computer: every request and the rotation are refused by name.
       if (url === "/auth/refresh") return json(401, { error: { code: "refresh_revoked", message: "revoked" } });
       return json(401, { error: { code: "unauthorized", message: "revoked" } });
@@ -142,6 +152,7 @@ async function textOf(node: unknown): Promise<string> {
 
 beforeEach(() => {
   mode = "away";
+  reached = [];
   shellProps = null;
   pairProps = null;
   discards = [];
@@ -240,5 +251,81 @@ describe("a browser that will not keep them says so, once", () => {
     await ticks(4);
     expect(answering.rows.size).toBe(1);
     expect(shellProps!.accountNotice).toBeUndefined();
+  });
+});
+
+/**
+ * THE PAIRED BROWSER'S OWN SIGN OUT. Settings → Account here is the gate's pane: one press with a
+ * confirm, the computer told with this browser's bearer, what this browser kept for the pairing
+ * gone with it, and the landing saying what happened at the computer rather than "the pairing ended".
+ */
+describe("Sign out on the paired browser", () => {
+  let paneRoot: Root | null = null;
+  let paneEl: HTMLDivElement | null = null;
+  afterEach(async () => {
+    if (paneRoot) await act(async () => paneRoot!.unmount());
+    paneEl?.remove();
+    paneRoot = null;
+    paneEl = null;
+  });
+
+  /** Render the pane the gate hands the shell, press Sign out, then confirm. */
+  async function pressSignOut(): Promise<void> {
+    const pane = shellProps!.accountSection;
+    expect(pane, "the paired browser has no Sign out").toBeDefined();
+    paneEl = document.createElement("div");
+    document.body.append(paneEl);
+    paneRoot = createRoot(paneEl);
+    await act(async () => {
+      paneRoot!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: pane as React.ReactNode }));
+    });
+    const press = (): HTMLButtonElement | undefined =>
+      [...paneEl!.querySelectorAll("button")].find((b) => b.textContent?.includes(messages.pairLanding.signOut));
+    await act(async () => { press()!.click(); });
+    expect(paneEl.textContent, "no confirm step").toContain(messages.pairLanding.signOutConfirm);
+    await act(async () => { press()!.click(); });
+    await ticks();
+  }
+
+  async function landing(): Promise<string> {
+    const real = await vi.importActual<typeof import("../src/host-client/PairScreen.js")>("../src/host-client/PairScreen.js");
+    return textOf(h(real.PairScreen, pairProps as unknown as Parameters<typeof real.PairScreen>[0]));
+  }
+
+  it("tells the computer with this browser's bearer, and what it kept goes with the pairing", async () => {
+    mode = "home";
+    const bearer = pairedBearer();
+    await mount(bearer);
+    const draft = `${COMPOSE_DRAFT_PREFIX}${bearer.pairScope()}.c1`;
+    window.localStorage.setItem(draft, "half a letter");
+    await pressSignOut();
+    expect(reached).toEqual([["/auth/logout", "Bearer a1"]]);
+    expect(bearer.paired()).toBe(false);
+    expect(window.localStorage.getItem(draft), "the scratch outlived the sign-out").toBeNull();
+    expect(discards).toEqual([undefined]);
+    expect(pairProps).toMatchObject({ ended: "signed-out", signedOut: "told" });
+    const said = await landing();
+    expect(said).toContain(messages.pairLanding.signedOutBody);
+    expect(said).not.toContain(messages.pairLanding.revokedBody);
+  });
+
+  it("with the computer out of reach the sign-out is owed, and the landing says it will be told", async () => {
+    const bearer = pairedBearer();
+    await mount(bearer);
+    await pressSignOut();
+    expect(bearer.paired()).toBe(false);
+    expect(JSON.parse(window.localStorage.getItem(OWED_SIGN_OUTS_STORAGE_KEY)!)).toMatchObject([{ token: "r1" }]);
+    expect(pairProps).toMatchObject({ ended: "signed-out", signedOut: "owed" });
+    expect(await landing()).toContain(messages.pairLanding.signedOutOwedBody);
+  });
+
+  it("control: a pairing ended from the computer still lands on the pairing-ended sentence", async () => {
+    const bearer = pairedBearer();
+    await mount(bearer);
+    mode = "revoked";
+    await act(async () => { await (shellProps!.engine as OhmailEngine).syncOnce().catch(() => undefined); });
+    await ticks();
+    expect(pairProps).toMatchObject({ ended: "revoked" });
+    expect(await landing()).toContain(messages.pairLanding.revokedBody);
   });
 });

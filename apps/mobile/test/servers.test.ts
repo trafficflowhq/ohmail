@@ -163,6 +163,36 @@ describe("the profile store over the keystore seam", () => {
     }
   });
 
+  it("an owed sign-out is a value of its own, read back, eight at most, and gone when cleared or purged", async () => {
+    const { kv, map } = memoryKV();
+    const store = new ServerProfileStore(kv);
+    await store.add(seed);
+    const index = map.get("ohmail.servers.v1");
+    const owe = (i: number) => store.markPendingSignOut({ origin: "http://a.example", pin: null, refreshToken: `owed-${i}` });
+    const first = await owe(0);
+    expect(map.get("ohmail.servers.v1"), "an owed token rode the profile index").toBe(index);
+    for (let i = 1; i < 8; i += 1) await owe(i);
+    await expect(owe(8)).rejects.toMatchObject({ code: "sign_out_queue_full" });
+    expect((await store.pendingSignOuts()).map((e) => e.refreshToken)).toEqual([0, 1, 2, 3, 4, 5, 6, 7].map((i) => `owed-${i}`));
+    for (const [key, value] of map) {
+      expect(key).toMatch(/^[A-Za-z0-9._-]+$/);
+      expect(Buffer.byteLength(value, "utf8")).toBeLessThan(2048);
+    }
+    await store.clearPendingSignOut(first.id);
+    expect([...map.values()].some((v) => v.includes("owed-0")), "a cleared sign-out kept its token").toBe(false);
+    await store.purgeAll();
+    expect([...map.values()].some((v) => v.includes("owed-")), "the purge left an owed token").toBe(false);
+  });
+
+  it("an owed sign-out whose write resolves without storing is refused, not reported kept", async () => {
+    const { kv } = memoryKV();
+    const dropping: SecureKV = { ...kv, set: async (k, v) => { if (!k.includes(".signout.")) await kv.set(k, v); } };
+    const store = new ServerProfileStore(dropping);
+    await expect(store.markPendingSignOut({ origin: "http://a.example", pin: null, refreshToken: "owed" }))
+      .rejects.toMatchObject({ code: "sign_out_not_recorded" });
+    expect(await store.pendingSignOuts()).toEqual([]);
+  });
+
   it("an unreadable index loses the list, never throws — profiles re-pair with one scan", async () => {
     const { kv } = memoryKV();
     await kv.set("ohmail.servers.v1", "{not json");

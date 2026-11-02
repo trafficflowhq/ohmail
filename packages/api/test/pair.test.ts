@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
-import { pairingTokens, users } from "@trafficflow/db";
+import { pairingTokens, refreshTokens, sessions, users } from "@trafficflow/db";
 import { ACCOUNT_HEADER, createApp, type ApiDeps, type Route } from "@trafficflow/api";
-import { PAIRING_TTL_BOUNDS } from "@trafficflow/services";
+import { PAIRING_TTL_BOUNDS, generateToken, hashToken } from "@trafficflow/services";
 import { apiRoutes } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
 import { selfHostRoutes } from "@trafficflow/api/self-host";
@@ -552,6 +552,87 @@ describe("POST /pair/redeem — device-pair, and whose account the answer is abo
     expect(named, "a successful pair named no account").toBeTruthy();
     const [row] = await db.select().from(users).where(eq(users.id, s.userId));
     expect(named).toBe(row!.accountId);
+  });
+
+  it("a desktop's redeem carrying its install's previous digest ends that family", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const redeem = async (extra: Record<string, unknown> = {}): Promise<Response> => {
+      const minted = await (await H(mintReq(s.token, { grant: "device-pair", label: "Spare laptop" }), deps)).json();
+      return H(req("POST", "/pair/redeem", {
+        body: JSON.stringify({ grant: "device-pair", token: minted.token, kind: "desktop-linux", ...extra }),
+      }), deps);
+    };
+    const first = (await (await redeem()).json()).tokens.refreshToken as string;
+    expect((await redeem({ previousSession: hashToken(first) })).status).toBe(200);
+    const late = await H(req("POST", "/auth/refresh", { body: JSON.stringify({ refreshToken: first }) }), deps);
+    expect(late.status, "the install's previous family still renews").toBe(401);
+  });
+
+  /** One person's pairing redeems, each of a kind, and a renewal of what one of them minted. */
+  async function installs(deps: ApiDeps, owner: { token: string }) {
+    const redeem = async (kind: string, extra: Record<string, unknown> = {}): Promise<Response> => {
+      const minted = await (await H(mintReq(owner.token, { grant: "device-pair", label: "An install" }), deps)).json();
+      return H(req("POST", "/pair/redeem", {
+        body: JSON.stringify({ grant: "device-pair", token: minted.token, kind, ...extra }),
+      }), deps);
+    };
+    const refreshOf = async (kind: string): Promise<string> => {
+      const res = await redeem(kind);
+      expect(res.status, await res.clone().text()).toBe(200);
+      return (await res.json()).tokens.refreshToken as string;
+    };
+    const renews = async (refreshToken: string): Promise<{ status: number; code: unknown }> => {
+      const res = await H(req("POST", "/auth/refresh", { body: JSON.stringify({ refreshToken }) }), deps);
+      return { status: res.status, code: res.ok ? null : (await res.json()).error?.code };
+    };
+    return { redeem, refreshOf, renews };
+  }
+
+  it.each([["a phone", "mobile-android"], ["a paired browser", "web"]] as const)(
+    "%s re-pairing with its previous family named ends that family", async (_name, kind) => {
+      const { db, deps } = await makeDeps();
+      const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+      const o = await installs(deps, s);
+      const previous = await o.refreshOf(kind);
+      expect((await o.redeem(kind, { previousSession: hashToken(previous) })).status).toBe(200);
+      expect(await o.renews(previous), "the install's previous family still renews")
+        .toEqual({ status: 401, code: "refresh_revoked" });
+    },
+  );
+
+  it("control: a phone's re-pair names a desktop's, a browser's or another person's family and ends none", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const o = await installs(deps, s);
+    const desktop = await o.refreshOf("desktop-linux");
+    const pairedWeb = await o.refreshOf("web");
+    // A plain browser sign-in's family: no device row, so no install's.
+    const [own] = await db.select().from(sessions).where(eq(sessions.id, s.sessionId));
+    const plainWeb = generateToken();
+    await db.insert(refreshTokens).values({
+      accountId: own!.accountId, userId: own!.userId, sessionId: own!.id, familyId: own!.familyId,
+      tokenHash: hashToken(plainWeb), expiresAt: new Date(FIXED_NOW.getTime() + 60 * 60_000), createdAt: FIXED_NOW,
+    });
+    const stranger = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const theirs = await (await installs(deps, stranger)).refreshOf("mobile-android");
+    for (const named of [desktop, pairedWeb, plainWeb, theirs]) {
+      expect((await o.redeem("mobile-android", { previousSession: hashToken(named) })).status).toBe(200);
+    }
+    for (const named of [desktop, pairedWeb, plainWeb, theirs]) {
+      expect((await o.renews(named)).status, "a family that was not this install's was ended").toBe(200);
+    }
+  });
+
+  it("control: a malformed previousSession ends nothing and refuses nothing", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const o = await installs(deps, s);
+    const previous = await o.refreshOf("mobile-ios");
+    for (const previousSession of [previous, "not a digest", 42, { digest: hashToken(previous) }]) {
+      expect((await o.redeem("mobile-ios", { previousSession })).status).toBe(200);
+    }
+    expect((await o.renews(previous)).status).toBe(200);
   });
 
   it("ADMITS a redeem made while signed in to the SAME account", async () => {

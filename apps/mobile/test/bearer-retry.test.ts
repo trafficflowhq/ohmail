@@ -113,6 +113,7 @@ function vaultOver(profiles: ServerProfileStore, id: string): RefreshVault {
     save: (t, held) => profiles.saveRefreshToken(id, t, held),
     clear: (held) => profiles.clearRefreshToken(id, held),
     armAttempt: (a, head, held) => profiles.armRefreshAttempt(id, a, head, held),
+    oweSignOut: async () => false,
   };
 }
 

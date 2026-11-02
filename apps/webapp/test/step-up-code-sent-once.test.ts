@@ -68,6 +68,14 @@ describe("a refused second factor is an answer, not a lapsed session", () => {
     expect(refreshes()).toBe(0);
   });
 
+  it("a refused recovery code is posted once and starts no refresh", async () => {
+    const { auth, ApiError } = await import("../app/api-client.js");
+    const err = await auth.stepUpRecoveryCode({ code: "abcd-efgh-ijkl" }).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(posts("/api/auth/step-up/recovery-code"), "the code was sent again after a refresh").toBe(1);
+    expect(refreshes()).toBe(0);
+  });
+
   it("the engine's door, which reads the same rule, sends a factor once too", async () => {
     await import("../app/api-client.js");
     const { sessionFetch } = await import("../app/shell/session-truth.js");

@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  ATTEMPT_STORE_BUDGET_MS, BearerManager, OWED_ATTEMPT_STORAGE_KEY, PAIR_SCOPE_STORAGE_KEY, REFRESH_ATTEMPT_DB,
-  REFRESH_ATTEMPT_STORAGE_KEY, REFRESH_STORAGE_KEY, type BearerTokens,
+  ATTEMPT_STORE_BUDGET_MS, BearerManager, OWED_ATTEMPT_STORAGE_KEY, OWED_DIAL_MS, OWED_SIGN_OUTS_STORAGE_KEY,
+  PAIR_SCOPE_STORAGE_KEY, REFRESH_ATTEMPT_DB, REFRESH_ATTEMPT_STORAGE_KEY, REFRESH_STORAGE_KEY, type BearerTokens,
 } from "../src/host-client/bearer.js";
 
 /* The engine's own devDependency, reached through its package: the desktop does not carry one. */
@@ -346,7 +347,7 @@ describe("what a refresh refusal means", () => {
 });
 
 describe("logout", () => {
-  it("tells the door, then clears — and clears even when the door is unreachable", async () => {
+  it("clears, then tells the door with the bearer it held — and clears even when the door is unreachable", async () => {
     const storage = memoryStorage();
     const wire = scripted([(s) => {
       expect(s.url).toBe("/auth/logout");
@@ -363,6 +364,194 @@ describe("logout", () => {
     offline.adopt(PAIR);
     await offline.logout();
     expect(offline.paired()).toBe(false);
+  });
+
+  it("after a rotation whose answer was lost: the bearer's 401, then the refresh door ends the family — never a renewal", async () => {
+    const wire = scripted([
+      () => json(401, {}),
+      () => new TypeError("network error"),
+      () => refusal("unauthorized"),
+      () => new Response(null, { status: 204 }),
+    ]);
+    const bearer = new BearerManager({ storage: memoryStorage(), fetchImpl: wire.fetch, idb: null });
+    bearer.adopt(PAIR);
+    expect((await bearer.fetch("/sync")).status, "the rotation's answer never arrived").toBe(401);
+    expect(await bearer.logout(), "the door ended the family").toBe(true);
+    expect(wire.seen.map((s) => [s.url, s.headers.authorization ?? null])).toEqual([
+      ["/sync", "Bearer access-1"], ["/auth/refresh", null],
+      ["/auth/logout", "Bearer access-1"], ["/auth/refresh/logout", null],
+    ]);
+    expect(JSON.parse(wire.seen[3]!.body!)).toEqual({ refreshToken: "refresh-1" });
+    expect(bearer.paired()).toBe(false);
+  });
+
+  it("with no access token held it goes to the refresh door at once; an answer that is no verdict is not told", async () => {
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const cold = scripted([(s) => (s.url === "/auth/refresh/logout" ? refusal("unauthorized") : new Error(s.url))]);
+    expect(await new BearerManager({ storage, fetchImpl: cold.fetch, idb: null }).logout(), "nothing left to end is told").toBe(true);
+    for (const answer of [() => new Response(null, { status: 401 }), () => new Response(null, { status: 503 }), () => new TypeError("offline")]) {
+      const bearer = new BearerManager({ storage: memoryStorage(), fetchImpl: scripted([() => refusal("unauthorized"), answer]).fetch, idb: null });
+      bearer.adopt(PAIR);
+      expect(await bearer.logout()).toBe(false);
+      expect(bearer.paired(), "the local half runs whatever the server said").toBe(false);
+    }
+  });
+});
+
+/**
+ * ═══ A SIGN-OUT THE COMPUTER WAS NOT TOLD IS OWED, AND SENT WHEN IT CAN BE ══════════════════════
+ *
+ * Signing out while the computer is out of reach used to clear this browser and leave the session
+ * live there until it idled out. The refresh token is kept as owed (it is the only thing the refresh
+ * door's sign-out accepts), never presented for a renewal, and sent to that door at the next chance:
+ * a construction, `online`, a visible page, a capped retry, a redeem.
+ */
+describe("an owed sign-out", () => {
+  const owedOf = (storage: Storage): Array<{ token: string; at: number }> =>
+    JSON.parse(storage.getItem(OWED_SIGN_OUTS_STORAGE_KEY) ?? "[]") as Array<{ token: string; at: number }>;
+  const offline = async (): Promise<Response> => { throw new TypeError("offline"); };
+  const offlineSignOut = async (storage: Storage, refreshToken: string): Promise<string> => {
+    const bearer = new BearerManager({ storage, fetchImpl: offline, idb: null });
+    bearer.adopt({ accessToken: "a", refreshToken }, { fresh: true });
+    return bearer.signOut();
+  };
+
+  it("an offline sign-out is kept as owed, and the page is signed out all the same", async () => {
+    const storage = memoryStorage();
+    expect(await offlineSignOut(storage, "refresh-1")).toBe("owed");
+    expect(owedOf(storage).map((e) => e.token)).toEqual(["refresh-1"]);
+    expect(storage.getItem(REFRESH_STORAGE_KEY)).toBeNull();
+    expect(new BearerManager({ storage, fetchImpl: offline, idb: null }).paired(),
+      "an owed sign-out reads as a pairing").toBe(false);
+  });
+
+  it("a computer that never answers: the press signs this browser out at once, owed, and settles within the dial's bound", async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = memoryStorage();
+      // Answers nothing; fails only when the caller gives up, as a browser's fetch does.
+      const silent = (_url: string, init?: unknown): Promise<Response> => new Promise((_ok, fail) => {
+        (init as { signal?: AbortSignal } | undefined)?.signal?.addEventListener("abort", () => fail(new TypeError("aborted")));
+      });
+      const bearer = new BearerManager({ storage, fetchImpl: silent, idb: null });
+      bearer.adopt({ accessToken: "a1", refreshToken: "r1" }, { fresh: true });
+      let outcome: string | null = null;
+      void bearer.signOut().then((o) => { outcome = o; });
+      // A page closed now, before the computer says anything, must leave nothing paired and the debt kept.
+      expect(bearer.paired(), "still paired while the computer is silent").toBe(false);
+      expect(storage.getItem(REFRESH_STORAGE_KEY)).toBeNull();
+      expect(owedOf(storage).map((e) => e.token)).toEqual(["r1"]);
+      await vi.advanceTimersByTimeAsync(OWED_DIAL_MS);
+      expect(outcome).toBe("owed");
+      const wire = scripted([() => new Response(null, { status: 204 })]);
+      const next = new BearerManager({ storage, fetchImpl: wire.fetch, idb: null });
+      expect(next.paired()).toBe(false);
+      await next.drainOwedSignOuts();
+      expect(wire.seen.map((s) => [s.url, JSON.parse(s.body!)])).toEqual([["/auth/refresh/logout", { refreshToken: "r1" }]]);
+      expect(owedOf(storage)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("told by a drain while the press still waits on the computer: the press says told", async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = memoryStorage();
+      const bearer = new BearerManager({
+        storage,
+        idb: null,
+        // The refresh door answers; the bearer door never does.
+        fetchImpl: (url, init) => (url === "/auth/refresh/logout"
+          ? Promise.resolve(new Response(null, { status: 204 }))
+          : new Promise<Response>((_ok, fail) => {
+            (init as { signal?: AbortSignal } | undefined)?.signal?.addEventListener("abort", () => fail(new TypeError("aborted")));
+          })),
+      });
+      await bearer.drainOwedSignOuts(); // the construction's own, with nothing owed yet
+      bearer.adopt({ accessToken: "a1", refreshToken: "r1" }, { fresh: true });
+      const outcome = bearer.signOut();
+      await bearer.drainOwedSignOuts();
+      expect(owedOf(storage)).toEqual([]);
+      await vi.advanceTimersByTimeAsync(OWED_DIAL_MS);
+      expect(await outcome).toBe("told");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the next page sends it to the refresh door, never for a renewal, and forgets it on the answer", async () => {
+    const storage = memoryStorage();
+    await offlineSignOut(storage, "refresh-1");
+    const wire = scripted([() => new Response(null, { status: 204 })]);
+    const next = new BearerManager({ storage, fetchImpl: wire.fetch, idb: null });
+    await next.drainOwedSignOuts();
+    expect(wire.seen.map((s) => [s.url, s.headers.authorization ?? null])).toEqual([["/auth/refresh/logout", null]]);
+    expect(JSON.parse(wire.seen[0]!.body!)).toEqual({ refreshToken: "refresh-1" });
+    expect(owedOf(storage)).toEqual([]);
+    expect(next.paired()).toBe(false);
+  });
+
+  it.each([
+    ["a 503", () => new Response(null, { status: 503 }), ["refresh-1"]],
+    ["a page in front of the door", () => portalPage(401), ["refresh-1"]],
+    ["the network", () => new TypeError("offline"), ["refresh-1"]],
+    ["the door's own refusal", () => refusal("refresh_revoked"), []],
+    ["a computer without the door (404)", () => new Response("not found", { status: 404 }), []],
+  ] as const)("%s: kept or forgotten as the answer says", async (_name, answer, left) => {
+    const storage = memoryStorage();
+    await offlineSignOut(storage, "refresh-1");
+    await new BearerManager({ storage, fetchImpl: scripted([answer]).fetch, idb: null }).drainOwedSignOuts();
+    expect(owedOf(storage).map((e) => e.token)).toEqual(left);
+  });
+
+  it("four are kept at most: a fifth is not recorded, and says so", async () => {
+    const storage = memoryStorage();
+    for (const t of ["r1", "r2", "r3", "r4"]) expect(await offlineSignOut(storage, t)).toBe("owed");
+    expect(await offlineSignOut(storage, "r5")).toBe("untold");
+    expect(owedOf(storage).map((e) => e.token)).toEqual(["r1", "r2", "r3", "r4"]);
+  });
+
+  it("one older than thirty days is dropped unsent", async () => {
+    const storage = memoryStorage({
+      [OWED_SIGN_OUTS_STORAGE_KEY]: JSON.stringify([{ token: "old", at: Date.now() - 31 * 24 * 60 * 60_000 }]),
+    });
+    const wire = scripted([]);
+    await new BearerManager({ storage, fetchImpl: wire.fetch, idb: null }).drainOwedSignOuts();
+    expect(wire.seen).toEqual([]);
+    expect(owedOf(storage)).toEqual([]);
+  });
+
+  it("a told sign-out owes nothing", async () => {
+    const storage = memoryStorage();
+    const bearer = new BearerManager({ storage, fetchImpl: scripted([() => new Response(null, { status: 204 })]).fetch, idb: null });
+    bearer.adopt(PAIR, { fresh: true });
+    expect(await bearer.signOut()).toBe("told");
+    expect(storage.getItem(OWED_SIGN_OUTS_STORAGE_KEY)).toBeNull();
+  });
+
+  it("a page built over an owed sign-out sends it of its own accord", async () => {
+    const storage = memoryStorage();
+    await offlineSignOut(storage, "refresh-1");
+    const wire = scripted([() => new Response(null, { status: 204 })]);
+    new BearerManager({ storage, fetchImpl: wire.fetch, idb: null });
+    await vi.waitFor(() => expect(owedOf(storage)).toEqual([]));
+    expect(wire.seen.map((s) => s.url)).toEqual(["/auth/refresh/logout"]);
+  });
+});
+
+describe("the family a re-pair names", () => {
+  const digest = (t: string): string => createHash("sha256").update(t, "utf8").digest("base64url");
+
+  it("the held refresh token's digest, else the newest owed sign-out's, else none", async () => {
+    const storage = memoryStorage();
+    const bearer = new BearerManager({ storage, fetchImpl: async () => { throw new TypeError("offline"); }, idb: null });
+    expect(await bearer.previousSession()).toBeNull();
+    bearer.adopt(PAIR, { fresh: true });
+    expect(await bearer.previousSession()).toBe(digest("refresh-1"));
+    await bearer.signOut();
+    expect(await new BearerManager({ storage, fetchImpl: async () => { throw new TypeError("offline"); }, idb: null }).previousSession())
+      .toBe(digest("refresh-1"));
   });
 });
 

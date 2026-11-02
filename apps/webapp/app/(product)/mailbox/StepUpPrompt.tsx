@@ -52,7 +52,7 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
    * for anything else. Client-raised refusals go through the one renderer.
    */
   const refusalText = useCallback(
-    (err: unknown, tried?: "code" | "passkey"): string => {
+    (err: unknown, tried?: "code" | "passkey" | "recovery"): string => {
       if (!serverAnswered(err)) return refusalSentence(err);
       if (err.code === "account_locked") {
         const retryAfter = (err.details as { retryAfter?: unknown } | undefined)?.retryAfter;
@@ -60,14 +60,18 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
         return t("stepUpLocked", { minutes: Math.max(1, Math.ceil(seconds / 60)) });
       }
       if (err.code === "sign_in_slowed") return t("stepUpSlowed");
-      if (err.status === 401 && tried) return t(tried === "code" ? "stepUpBadCode" : "stepUpBadPasskey");
+      if (err.status === 401 && tried) {
+        return t(tried === "code" ? "stepUpBadCode" : tried === "passkey" ? "stepUpBadPasskey" : "stepUpBadRecoveryCode");
+      }
       return t("stepUpRefused");
     },
     [t, refusalSentence],
   );
-  const [enrolled, setEnrolled] = useState<{ webauthn: boolean; totp: boolean } | null>(null);
-  const [method, setMethod] = useState<"webauthn" | "totp">("totp");
+  const [enrolled, setEnrolled] = useState<{ webauthn: boolean; totp: boolean; recoveryCodes: boolean } | null>(null);
+  const [method, setMethod] = useState<"webauthn" | "totp" | "recovery">("totp");
   const [code, setCode] = useState("");
+  /** A recovery code, for somebody whose authenticator is gone. Kept apart from the six digits. */
+  const [recovery, setRecovery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,7 +90,10 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
     void (async () => {
       try {
         const { user } = await auth.session();
-        const e = { webauthn: user.twofaEnrolled.webauthn, totp: user.twofaEnrolled.totp };
+        const e = {
+          webauthn: user.twofaEnrolled.webauthn, totp: user.twofaEnrolled.totp,
+          recoveryCodes: user.twofaEnrolled.recoveryCodes === true,
+        };
         setEnrolled(e);
         // The sign-in screen's preference verbatim: a passkey when one exists AND this
         // browser can run the ceremony; the code otherwise.
@@ -101,7 +108,7 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
   }, []);
 
   const finish = useCallback(
-    (tried: "code" | "passkey", fn: () => Promise<void>) => {
+    (tried: "code" | "passkey" | "recovery", fn: () => Promise<void>) => {
       setBusy(true);
       setError(null);
       // BEFORE the first await: this closure's identity is the ceremony it started in, never
@@ -145,6 +152,26 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
     });
   };
 
+  const withRecovery = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy || recovery.trim().length === 0) return;
+    finish("recovery", async () => {
+      await auth.stepUpRecoveryCode({ code: recovery.trim() });
+      setRecovery("");
+    });
+  };
+
+  const choose = (next: "webauthn" | "totp" | "recovery") => {
+    setMethod(next);
+    setError(null);
+  };
+  /** The way to a recovery code, offered beside either factor when the account has a sheet. */
+  const recoveryToggle = enrolled?.recoveryCodes ? (
+    <button type="button" className="join-alt" onClick={() => choose("recovery")}>
+      {t("stepUpRecoveryToggle")}
+    </button>
+  ) : null;
+
   return (
     <div className="acct-confirm" data-testid="step-up-prompt">
       <p className="acct-lead">{t("stepUpLead")}</p>
@@ -167,15 +194,47 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
             </Button>
           </div>
           {enrolled?.totp ? (
-            <button
-              type="button"
-              className="join-alt"
-              onClick={() => {
-                setMethod("totp");
-                setError(null);
-              }}
-            >
+            <button type="button" className="join-alt" onClick={() => choose("totp")}>
               {t("stepUpTotpToggle")}
+            </button>
+          ) : null}
+          {recoveryToggle}
+        </>
+      ) : method === "recovery" ? (
+        <>
+          <form onSubmit={withRecovery} className="login-totp">
+            <label className="set-note-inline" htmlFor="stepup-recovery">
+              {t("stepUpRecoveryLabel")}
+            </label>
+            <div className="set-row set-tag-edit">
+              <input
+                id="stepup-recovery"
+                className="join-input set-tag-input"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                maxLength={64}
+                value={recovery}
+                onChange={(e) => setRecovery(e.target.value)}
+              />
+              <span className="set-tag-acts">
+                <Button variant="primary" type="submit" disabled={busy || recovery.trim().length === 0}>
+                  {busy ? t("working") : t("stepUpVerify")}
+                </Button>
+                <Button variant="ghost" onClick={() => { ceremony.end(); onCancel(); }}>
+                  {t("cancel")}
+                </Button>
+              </span>
+            </div>
+          </form>
+          {enrolled?.totp ? (
+            <button type="button" className="join-alt" onClick={() => choose("totp")}>
+              {t("stepUpTotpToggle")}
+            </button>
+          ) : null}
+          {enrolled?.webauthn && webauthnAvailable() ? (
+            <button type="button" className="join-alt" onClick={() => choose("webauthn")}>
+              {t("stepUpPasskeyToggle")}
             </button>
           ) : null}
         </>
@@ -211,17 +270,11 @@ export function StepUpPrompt({ onVerified, onCancel, onDiscarded, onOwnerAbsent 
             <p className="set-note-inline">{t("stepUpCodeHint")}</p>
           </form>
           {enrolled?.webauthn && webauthnAvailable() ? (
-            <button
-              type="button"
-              className="join-alt"
-              onClick={() => {
-                setMethod("webauthn");
-                setError(null);
-              }}
-            >
+            <button type="button" className="join-alt" onClick={() => choose("webauthn")}>
               {t("stepUpPasskeyToggle")}
             </button>
           ) : null}
+          {recoveryToggle}
         </>
       )}
     </div>

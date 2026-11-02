@@ -128,6 +128,13 @@ export interface ServiceContext {
    */
   supersedesMarker?: string | null;
   /**
+   * The same digest from an install's body (`previousSession`): a refresh token of the family the
+   * install held before this sign-in. Set by the four desktop sign-in doors and the pairing redeem;
+   * the mint ends that family when it is the signer's own and the same kind of install as the new
+   * session's (a desktop's, a phone's, a paired browser's).
+   */
+  supersedesInstall?: string | null;
+  /**
    * WHICH RUN OF A LOSSY STORE THIS REQUEST IS BEING ANSWERED FROM — the desktop's local PGlite
    * mints one at every launch that could have lost committed rows (`apps/sidecar/src/db.ts`), and
    * `/sync` stamps it into every cursor and checks it on every read.

@@ -14,6 +14,7 @@
  * assertions below go red, because the flow would then die mid-ceremony on a route the
  * descriptor said is absent.
  */
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { Copy } from "../src/copy";
 import { refuse, sayRefusal } from "../src/refusal";
@@ -655,6 +656,99 @@ describe("pairing the desktop-host LAN door — plain http, no secure context ne
       expect(sayRefusal(outcome.reason)).toMatch(/could not name the account/);
       expect(sayRefusal(outcome.reason)).toMatch(/mint a fresh code/); // the token above is burned — say so
       expect(await env.profiles.list()).toEqual([]);
+      // …and the session the redeem minted is ended there, not left live under nobody's control.
+      expect(fake.seen.filter((r) => r.url === "/auth/logout").map((r) => r.auth)).toEqual(["Bearer acc-1"]);
+      const late = await fetch(`${origin}/auth/refresh`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ refreshToken: "ref-1" }),
+      });
+      expect(late.status, "the refused pairing's session still renews").toBe(401);
+    } finally {
+      fake.server.close();
+    }
+  });
+});
+
+/* ── a re-pair names the family it replaces ─────────────────────────────────────────────────── */
+
+describe("a re-pair names the family this phone held there (previousSession)", () => {
+  const digest = async (t: string): Promise<string> => createHash("sha256").update(t, "utf8").digest("base64url");
+  const redeemsOf = (fake: ReturnType<typeof pairServer>) =>
+    fake.seen.filter((r) => r.url === "/pair/redeem").map((r) => JSON.parse(r.body) as Record<string, unknown>);
+
+  it("the redeem carries the digest of the pairing it replaces, on both of an older server's arms", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "desktop-host", sessionRoute: true, kindWhitelist: ["web", "macos"] });
+    const origin = await listen(fake.server);
+    try {
+      const { env } = testEnv("mobile-ios");
+      env.familyDigest = digest;
+      fake.mintPairToken("tok-1");
+      const first = await pairThroughConfirm(env, { origin, token: "tok-1" });
+      expect(first.kind).toBe("paired");
+      if (first.kind === "paired") first.session.store.close();
+      const held = (await env.profiles.active())!.refreshToken!;
+      fake.mintPairToken("tok-2");
+      const again = await pairThroughConfirm(env, { origin, token: "tok-2" });
+      if (again.kind === "paired") again.session.store.close();
+      const redeems = redeemsOf(fake);
+      expect(redeems.slice(0, 2).some((r) => "previousSession" in r), "a first pairing named a family").toBe(false);
+      expect(redeems.slice(2)).toEqual([
+        { grant: "device-pair", token: "tok-2", kind: "mobile-ios", previousSession: await digest(held) },
+        { grant: "device-pair", token: "tok-2", previousSession: await digest(held) },
+      ]);
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("names the only pairing at the origin when another is active, and none when two could be meant", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "desktop-host", sessionRoute: true });
+    const origin = await listen(fake.server);
+    try {
+      const pairOnce = async (here: string[]): Promise<Record<string, unknown>> => {
+        const { env } = testEnv();
+        env.familyDigest = digest;
+        for (const [i, refreshToken] of here.entries()) {
+          await env.profiles.add({ origin, flavor: "desktop-host", accountId: `acct-${i + 5}`, refreshToken });
+        }
+        await env.profiles.add({ origin: "http://other.example", flavor: "selfhost", accountId: "acct-9", refreshToken: "ref-other" });
+        const token = `tok-${here.length}`;
+        fake.mintPairToken(token);
+        const outcome = await pairThroughConfirm(env, { origin, token });
+        if (outcome.kind === "paired") outcome.session.store.close();
+        return redeemsOf(fake).at(-1)!;
+      };
+      expect((await pairOnce(["ref-only"])).previousSession).toBe(await digest("ref-only"));
+      expect(await pairOnce(["ref-a", "ref-b"]), "an ambiguous family was named").not.toHaveProperty("previousSession");
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("a sign-out still owed to the origin goes before the redeem; one that cannot go is named in it", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "desktop-host", sessionRoute: true });
+    const origin = await listen(fake.server);
+    try {
+      let doorDown = true;
+      const { env } = testEnv();
+      env.familyDigest = digest;
+      env.fetchImpl = (url, init) => (doorDown && url.endsWith("/auth/refresh/logout")
+        ? Promise.reject(new TypeError("Network request failed")) : fetch(url, init as RequestInit));
+      await env.profiles.markPendingSignOut({ origin, pin: null, refreshToken: "ref-owed" });
+      fake.mintPairToken("tok-1");
+      const first = await pairThroughConfirm(env, { origin, token: "tok-1" });
+      if (first.kind === "paired") first.session.store.close();
+      expect(redeemsOf(fake).at(-1)!.previousSession).toBe(await digest("ref-owed"));
+
+      doorDown = false;
+      await env.profiles.remove((await env.profiles.list())[0]!.id);
+      fake.mintPairToken("tok-2");
+      const from = fake.seen.length;
+      const again = await pairThroughConfirm(env, { origin, token: "tok-2" });
+      if (again.kind === "paired") again.session.store.close();
+      const order = fake.seen.slice(from).map((r) => r.url).filter((u) => u === "/auth/refresh/logout" || u === "/pair/redeem");
+      expect(order).toEqual(["/auth/refresh/logout", "/pair/redeem"]);
+      expect(await env.profiles.pendingSignOuts()).toEqual([]);
+      expect(redeemsOf(fake).at(-1)).not.toHaveProperty("previousSession");
     } finally {
       fake.server.close();
     }

@@ -229,6 +229,83 @@ describe("the dead end, repaired — TOTP", () => {
   });
 });
 
+describe("the dead end, repaired — a recovery code, for an authenticator that is gone", () => {
+  /** A TOTP sign-in, ten codes minted while its window is fresh, then the window goes stale. */
+  async function staleWithCodes(): Promise<{
+    deps: ApiDeps; db: Db; clock: TestClock; s: { cookie: string; csrf: string }; codes: string[]; secret: string; userId: string;
+  }> {
+    const { db, deps, clock } = await makeDeps();
+    const id = await register(deps, "gil@x.example");
+    const secret = await enrollTotp(deps, db, clock, id);
+    clock.advance(30_000);
+    const s = await loginWithTotp(deps, clock, "gil@x.example", secret);
+    const minted = await H(req("POST", "/auth/2fa/recovery-codes", { cookie: s.cookie, headers: { "x-csrf-token": s.csrf } }), deps);
+    expect(minted.status).toBe(200);
+    const { codes } = await minted.json();
+    clock.advance(SIX_MIN);
+    return { deps, db, clock, s, codes, secret, userId: id.userId };
+  }
+  const withCode = (deps: ApiDeps, s: { cookie: string; csrf: string }, code: string): Promise<Response> =>
+    H(req("POST", "/auth/step-up/recovery-code", {
+      cookie: s.cookie, headers: { "x-csrf-token": s.csrf }, body: JSON.stringify({ code }),
+    }), deps);
+  const stamps = async (db: Db, userId: string): Promise<Array<string | undefined>> =>
+    (await db.select().from(sessions).where(eq(sessions.userId, userId)))
+      .filter((r) => r.revokedAt === null && r.scope === "full")
+      .map((r) => r.lastTwofaAt?.toISOString());
+
+  it("stale window → 403 → one code → the SAME session mints; the answer counts what is left, and sets no cookie", async () => {
+    const { deps, s, codes } = await staleWithCodes();
+    expect((await mint(deps, s)).status).toBe(403);
+    const stepUp = await withCode(deps, s, `  ${codes[0]}  `);
+    expect(stepUp.status, await stepUp.clone().text()).toBe(200);
+    expect(await stepUp.json()).toEqual({ ok: true, remainingCodes: 9 });
+    expect(stepUp.headers.getSetCookie()).toHaveLength(0);
+    expect((await mint(deps, s)).status).toBe(200);
+  });
+
+  it("a spent code and a code of an earlier sheet are refused with the wrong-code sentence", async () => {
+    const { deps, s, codes, clock } = await staleWithCodes();
+    expect((await withCode(deps, s, codes[0]!)).status).toBe(200);
+    const again = await withCode(deps, s, codes[0]!);
+    expect(again.status).toBe(401);
+    expect((await again.json()).error).toMatchObject({ code: "credential_refused", message: "two-factor verification failed" });
+    // A new sheet, minted inside the window the first code earned: the old sheet is dead.
+    expect((await H(req("POST", "/auth/2fa/recovery-codes", { cookie: s.cookie, headers: { "x-csrf-token": s.csrf } }), deps)).status).toBe(200);
+    clock.advance(SIX_MIN);
+    const old = await withCode(deps, s, codes[1]!);
+    expect(old.status).toBe(401);
+    expect((await old.json()).error.message).toBe("two-factor verification failed");
+  });
+
+  it("a wrong code moves nothing: the stamp is byte-identical and every code is still there", async () => {
+    const { deps, db, s, codes, userId } = await staleWithCodes();
+    const before = await stamps(db, userId);
+    expect((await withCode(deps, s, "AAAA-BBBB-CCCC")).status).toBe(401);
+    expect(await stamps(db, userId)).toEqual(before);
+    expect(await (await withCode(deps, s, codes[0]!)).json()).toEqual({ ok: true, remainingCodes: 9 });
+  });
+
+  it("five wrong codes lock the SAME counter the TOTP step-up uses (423 on both)", async () => {
+    const { deps, s, secret, clock } = await staleWithCodes();
+    let last = 0;
+    for (let i = 0; i < 5; i++) last = (await withCode(deps, s, `WRNG-${i}000-0000`)).status;
+    expect(last).toBe(423);
+    const totp = await H(req("POST", "/auth/step-up/totp", {
+      cookie: s.cookie, headers: { "x-csrf-token": s.csrf }, body: JSON.stringify({ code: totpNow(secret, clock.now()) }),
+    }), deps);
+    expect(totp.status).toBe(423);
+  });
+
+  it("an enrollment session is refused at the door (403 enrollment_incomplete)", async () => {
+    const { deps } = await makeDeps();
+    const e = await register(deps, "gil@x.example");
+    const res = await withCode(deps, e, "AAAA-BBBB-CCCC");
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe("enrollment_incomplete");
+  });
+});
+
 describe("the dead end, repaired — WebAuthn", () => {
   /** Enroll a passkey as the FIRST factor (exchanges the enrollment session for a full one). */
   async function enrollPasskey(deps: ApiDeps, e: { cookie: string; csrf: string }): Promise<{

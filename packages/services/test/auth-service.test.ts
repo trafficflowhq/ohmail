@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, desc, isNull, like } from "drizzle-orm";
+import { and, eq, desc, isNull, like, sql } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { devices, pairingTokens, refreshTokens, sessions } from "@trafficflow/db";
@@ -727,6 +727,73 @@ describe("AuthService — TOTP (fallback 2FA)", () => {
     const next = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     const est3 = await h.svc.totpVerify(h.ctxFor(), { loginToken: ch3.loginToken, code: next });
     expect(est3.status).toBe("authenticated");
+  });
+});
+
+/**
+ * A SIGN-IN THAT FAILS AFTER ITS SESSION IS WRITTEN LEAVES NONE. The bookkeeping after the mint
+ * (the day counter's refund) is refused the way a database refuses a write: the session, the login
+ * token's burn and the recovery code's burn go back with it, and the person can try again.
+ */
+describe("AuthService — a sign-in refused after its session was written", () => {
+  const PW = "pw-correct-horse-password-password";
+  /** The day counter's refund is refused; the reservation before the verify still lands. */
+  async function refuseRefund(h: Harness, userId: string): Promise<() => Promise<void>> {
+    await h.db.execute(sql.raw(
+      `ALTER TABLE auth_throttle ADD CONSTRAINT no_refund CHECK (key <> 'factor-day:${userId}' OR failures > 0) NOT VALID`,
+    ));
+    return async () => { await h.db.execute(sql.raw("ALTER TABLE auth_throttle DROP CONSTRAINT no_refund")); };
+  }
+  const sessionsOf = async (h: Harness, userId: string): Promise<number> =>
+    (await h.db.select().from(sessions).where(eq(sessions.userId, userId))).length;
+  const codeAt = (h: Harness, secret: string): string =>
+    generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
+
+  it("TOTP: no session is left, and the login token still signs in", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const secret = await enrollTotp(h, user);
+    h.clock.advance(30_000);
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: PW });
+    const before = await sessionsOf(h, user.userId);
+    const allow = await refuseRefund(h, user.userId);
+    await expect(h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code: codeAt(h, secret) })).rejects.toThrow();
+    expect(await sessionsOf(h, user.userId), "the refused sign-in left its session").toBe(before);
+    await allow();
+    h.clock.advance(30_000);
+    const est = await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code: codeAt(h, secret) });
+    expect(est.status, "the login token was spent by a sign-in that failed").toBe("authenticated");
+  });
+
+  it("a recovery code: no session is left, and the code and the login token are unspent", async () => {
+    const h = await harness();
+    const user = await register(h);
+    await enrollTotp(h, user);
+    const { codes } = await h.svc.generateRecoveryCodes(await stepUppedCtx(h, user));
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: PW });
+    const before = await sessionsOf(h, user.userId);
+    const allow = await refuseRefund(h, user.userId);
+    await expect(h.svc.recoveryVerify(h.ctxFor(), { loginToken: ch.loginToken, code: codes[0]! })).rejects.toThrow();
+    expect(await sessionsOf(h, user.userId)).toBe(before);
+    const unused = await h.db.select().from(recoveryCodes)
+      .where(and(eq(recoveryCodes.userId, user.userId), isNull(recoveryCodes.usedAt)));
+    expect(unused, "the refused sign-in spent the recovery code").toHaveLength(10);
+    await allow();
+    const est = await h.svc.recoveryVerify(h.ctxFor(), { loginToken: ch.loginToken, code: codes[0]! });
+    expect(est.remainingCodes).toBe(9);
+  });
+
+  it("a passkey: no session is left", async () => {
+    const h = await harness();
+    const user = await register(h);
+    const auth = await enrollWebauthn(h, user);
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: PW });
+    const { options } = await h.svc.webauthnAssertOptions(h.ctxFor(), { loginToken: ch.loginToken });
+    const before = await sessionsOf(h, user.userId);
+    await refuseRefund(h, user.userId);
+    const assertion = auth.assert({ rpID: RPID, challenge: (options as any).challenge, origin: ORIGIN });
+    await expect(h.svc.webauthnAssertVerify(h.ctxFor(), { loginToken: ch.loginToken, credential: assertion })).rejects.toThrow();
+    expect(await sessionsOf(h, user.userId)).toBe(before);
   });
 });
 
@@ -1659,6 +1726,23 @@ describe("AuthService — step-up & last-factor guard", () => {
     h.clock.advance(6 * 60_000);                                        // > 5 min later
     await expect(h.svc.requireStepUp(sctx)).rejects.toMatchObject({ code: "step_up_required", httpStatus: 403 });
   });
+
+  it.each(["revoked", "enrollment"] as const)(
+    "a recovery code at step-up, for a %s session the stamp refuses, is left unspent", async (shape) => {
+      const h = await harness();
+      const user = await register(h);
+      await enrollTotp(h, user);
+      const ctx = await stepUppedCtx(h, user);
+      const { codes } = await h.svc.generateRecoveryCodes(ctx);
+      await h.db.update(sessions)
+        .set(shape === "revoked" ? { revokedAt: h.clock.now() } : { scope: "enrollment" })
+        .where(eq(sessions.id, ctx.sessionId!));
+      await expect(h.svc.stepUpRecoveryCode(ctx, { code: codes[0]! })).rejects.toMatchObject({ httpStatus: 401 });
+      const unused = await h.db.select().from(recoveryCodes)
+        .where(and(eq(recoveryCodes.userId, user.userId), isNull(recoveryCodes.usedAt)));
+      expect(unused, "the refused stamp spent the code").toHaveLength(10);
+    },
+  );
 
   it("cannot remove the last factor; can once another factor exists", async () => {
     const h = await harness();

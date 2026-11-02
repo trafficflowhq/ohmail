@@ -1837,14 +1837,15 @@ export class AuthService extends SessionLifecycle {
     await db.update(webauthnCredentials)
       .set({ counter: result.newCounter, lastUsedAt: ctx.now() })
       .where(eq(webauthnCredentials.credentialId, stored.credentialId));
-    // The first step's burn and the session, one transaction ({@link firstStepFence}). A WebAuthn
+    // The first step's burn, the session and the day counter's refund, one transaction
+    // ({@link firstStepFence}): a refund that fails takes the session back with it. A WebAuthn
     // assertion just succeeded, here. `now` is the factor's real time.
-    const est = await this.inTransaction(ctx, async (txCtx) => {
+    return this.inTransaction(ctx, async (txCtx) => {
       await this.consumeLoginToken(asTx(txCtx), lt.id, txCtx.now());
-      return this.establish(txCtx, user, { method: "webauthn", kind: "web", twofaAt: ctx.now() });
+      const est = await this.establish(txCtx, user, { method: "webauthn", kind: "web", twofaAt: ctx.now() });
+      await this.throttleRefund(asTx(txCtx), `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
+      return est;
     }, { fence: firstStepFence(user.accountId) });
-    await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
-    return est;
   }
 
   // ── TOTP (fallback 2FA) ─────────────────────────────────────────────────────
@@ -2024,16 +2025,16 @@ export class AuthService extends SessionLifecycle {
       await this.twofaRefused(db, user, ctx, true, true);
       throw credentialRefused("two-factor verification failed");
     }
-    // The first step's burn and the session, one transaction ({@link firstStepFence}). A TOTP code
-    // was just verified, here. `now` is the factor's real time. `kind` is the caller's declaration
-    // or `"web"` — either way it derives the cookie window (see the header), so the declaration
-    // reaches the device row and nothing else.
-    const est = await this.inTransaction(ctx, async (txCtx) => {
+    // The first step's burn, the session and the day counter's refund, one transaction
+    // ({@link firstStepFence}). A TOTP code was just verified, here. `now` is the factor's real
+    // time. `kind` is the caller's declaration or `"web"` — either way it derives the cookie window
+    // (see the header), so the declaration reaches the device row and nothing else.
+    return this.inTransaction(ctx, async (txCtx) => {
       await this.consumeLoginToken(asTx(txCtx), lt.id, txCtx.now());
-      return this.establish(txCtx, user, { method: "totp", kind, twofaAt: ctx.now() });
+      const est = await this.establish(txCtx, user, { method: "totp", kind, twofaAt: ctx.now() });
+      await this.throttleRefund(asTx(txCtx), `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
+      return est;
     }, { fence: firstStepFence(user.accountId) });
-    await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
-    return est;
   }
 
   // ONE TRANSACTION: factor removal is a compromise ceremony, so it takes the credential-change
@@ -2261,13 +2262,45 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
+   * Spend one recovery code against the caller's own session and re-stamp its step-up clock — the
+   * way back for somebody whose authenticator is gone. The sign-in recovery door's match and burn,
+   * the step-up doors' throttle (`user:` only) and stamp. The burn and the stamp are one
+   * transaction: a stamp refused (a revoked or enrollment session) leaves the code unspent.
+   */
+  async stepUpRecoveryCode(ctx: ServiceContext, b: { code: string }): Promise<{ ok: true; remainingCodes: number }> {
+    const userId = this.requireUser(ctx);
+    requireField(b.code, "code");
+    if (!ctx.sessionId) throw new ServiceError("unauthorized", 401, "no active session");
+    const db = asTx(ctx);
+    const user = await this.loadUser(db, userId);
+    await this.throttleReserve(db, `user:${user.id}`);
+    const match = await this.matchRecoveryCode(db, user.id, b.code);
+    if (match === null) {
+      await this.twofaFail(db, user, ctx);
+      throw credentialRefused("two-factor verification failed");
+    }
+    try {
+      const remainingCodes = await this.inTransaction(ctx, async (txCtx) => {
+        const remaining = await this.burnRecoveryCode(txCtx, user, match);
+        await this.stampStepUp(txCtx, asTx(txCtx), user, "recovery_code");
+        return remaining;
+      }, { fence: { accountId: user.accountId } });
+      return { ok: true, remainingCodes };
+    } catch (e) {
+      if (!(e instanceof RecoveryCodeAlreadySpent)) throw e;
+      await this.twofaFail(db, user, ctx);
+      throw credentialRefused("two-factor verification failed");
+    }
+  }
+
+  /**
    * The one writer of a step-up RE-stamp (the mint-time writer is `establish`'s `twofaAt`).
    * Guarded in the statement itself — `revoked_at IS NULL AND scope = 'full'` — and judged by
    * `RETURNING`: zero rows is a refusal, never a success over an unstamped session. Reached
    * only from a factor verify that has already succeeded in this same call.
    */
   private async stampStepUp(
-    ctx: ServiceContext, db: Tx, user: typeof users.$inferSelect, method: "totp" | "webauthn",
+    ctx: ServiceContext, db: Tx, user: typeof users.$inferSelect, method: "totp" | "webauthn" | "recovery_code",
   ): Promise<{ ok: true }> {
     const now = ctx.now();
     const stamped = await db.update(sessions)
@@ -2340,6 +2373,53 @@ export class AuthService extends SessionLifecycle {
     return row?.batchId ?? null;
   }
 
+  /**
+   * The unused code `code` names in the user's LIVE batch, or `null` — refused alike whether no
+   * codes were ever generated or this one is wrong or spent, so the caller cannot tell which. Scoped
+   * to the live batch: matching on user + hash + unused alone honoured every batch the table held,
+   * which is what made a raced regeneration leave the superseded sheet working.
+   */
+  private async matchRecoveryCode(
+    db: Tx, userId: string, code: string,
+  ): Promise<{ codeId: string; batchId: string } | null> {
+    const batchId = await this.liveRecoveryBatch(db, userId);
+    if (batchId === null) return null;
+    const [row] = await db.select({ id: recoveryCodes.id }).from(recoveryCodes)
+      .where(and(
+        eq(recoveryCodes.userId, userId),
+        eq(recoveryCodes.batchId, batchId),
+        eq(recoveryCodes.codeHash, hashToken(code.trim())),
+        isNull(recoveryCodes.usedAt),
+      ))
+      .limit(1);
+    return row ? { codeId: row.id, batchId } : null;
+  }
+
+  /**
+   * Burn a matched code, write it down, and count what its batch has left — for the caller's
+   * transaction, which decides what the code buys. Single-use, and the `used_at IS NULL` predicate
+   * is what makes it so: without it two presentations of one code race to the same row and both
+   * are honoured. These are the break-glass credentials a user keeps on paper.
+   */
+  private async burnRecoveryCode(
+    ctx: ServiceContext, user: typeof users.$inferSelect, o: { codeId: string; batchId: string },
+  ): Promise<number> {
+    const db = asTx(ctx);
+    const burned = await db.update(recoveryCodes)
+      .set({ usedAt: ctx.now() })
+      .where(and(eq(recoveryCodes.id, o.codeId), isNull(recoveryCodes.usedAt)))
+      .returning({ id: recoveryCodes.id });
+    if (burned.length === 0) throw new RecoveryCodeAlreadySpent();
+    await this.audit(db, user, "recovery_used", "recovery_code", ctx);
+    // The SAME batch scope the match used: the number shown counts codes that would be accepted.
+    return (await db.select({ id: recoveryCodes.id }).from(recoveryCodes)
+      .where(and(
+        eq(recoveryCodes.userId, user.id),
+        eq(recoveryCodes.batchId, o.batchId),
+        isNull(recoveryCodes.usedAt),
+      ))).length;
+  }
+
   async recoveryVerify(
     ctx: ServiceContext, b: { loginToken: string; code: string },
   ): Promise<SessionEstablished & { remainingCodes: number }> {
@@ -2360,26 +2440,8 @@ export class AuthService extends SessionLifecycle {
     await this.throttleReserve(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     await this.throttleReserve(db, `user:${user.id}`);
 
-    const hash = hashToken(b.code.trim());
-    // SCOPED TO THE LIVE BATCH. Matching on user + hash + unused alone honoured every batch the
-    // table happened to hold, which is what made a raced regeneration leave the superseded sheet
-    // working. See {@link liveRecoveryBatch}.
-    const batchId = await this.liveRecoveryBatch(db, user.id);
-    if (batchId === null) {
-      // No codes have ever been generated for this user. Refused exactly like a wrong code —
-      // the caller must not learn which of the two it was.
-      await this.twofaFail(db, user, ctx, true);
-      throw credentialRefused("two-factor verification failed");
-    }
-    const row = (await db.select().from(recoveryCodes)
-      .where(and(
-        eq(recoveryCodes.userId, user.id),
-        eq(recoveryCodes.batchId, batchId),
-        eq(recoveryCodes.codeHash, hash),
-        isNull(recoveryCodes.usedAt),
-      ))
-      .limit(1))[0];
-    if (!row) {
+    const match = await this.matchRecoveryCode(db, user.id, b.code);
+    if (match === null) {
       await this.twofaFail(db, user, ctx, true);
       throw credentialRefused("two-factor verification failed");
     }
@@ -2391,7 +2453,7 @@ export class AuthService extends SessionLifecycle {
     let spent: { est: SessionEstablished; remaining: number };
     try {
       spent = await this.inTransaction(ctx, (txCtx) =>
-        this.spendRecoveryCode(txCtx, user, { codeId: row.id, loginTokenId: lt.id, batchId }),
+        this.spendRecoveryCode(txCtx, user, { ...match, loginTokenId: lt.id }),
       { fence: { accountId: user.accountId } });
     } catch (e) {
       // The counted failure has to SURVIVE, so it is written out here rather than inside a
@@ -2400,7 +2462,6 @@ export class AuthService extends SessionLifecycle {
       await this.twofaFail(db, user, ctx, true);
       throw credentialRefused("two-factor verification failed");
     }
-    await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     return { ...spent.est, remainingCodes: spent.remaining };
   }
 
@@ -2416,28 +2477,12 @@ export class AuthService extends SessionLifecycle {
     o: { codeId: string; loginTokenId: string; batchId: string },
   ): Promise<{ est: SessionEstablished; remaining: number }> {
     const db = asTx(ctx);
-    // Single-use — and the predicate is what makes it so. {@link recoveryVerify}'s SELECT
-    // already filtered on `used_at IS NULL`; without repeating it here, two presentations of
-    // one recovery code race to the same row and both are honoured. These are the break-glass
-    // credentials a user keeps on paper, so "used once" has to mean once.
-    const burned = await db.update(recoveryCodes)
-      .set({ usedAt: ctx.now() })
-      .where(and(eq(recoveryCodes.id, o.codeId), isNull(recoveryCodes.usedAt)))
-      .returning({ id: recoveryCodes.id });
-    if (burned.length === 0) throw new RecoveryCodeAlreadySpent();
+    const remaining = await this.burnRecoveryCode(ctx, user, o);
     await this.consumeLoginToken(db, o.loginTokenId, ctx.now());
-    await this.audit(db, user, "recovery_used", "recovery_code", ctx);
-
-    // The SAME batch scope the match used, so the number the user is shown counts codes that
-    // would actually be accepted rather than every unused row the table holds.
-    const remaining = (await db.select({ id: recoveryCodes.id }).from(recoveryCodes)
-      .where(and(
-        eq(recoveryCodes.userId, user.id),
-        eq(recoveryCodes.batchId, o.batchId),
-        isNull(recoveryCodes.usedAt),
-      ))).length;
     // A recovery code was just burned, here — a real second factor. `now` is its real time.
     const est = await this.establish(ctx, user, { method: "recovery_code", kind: "web", twofaAt: ctx.now() });
+    // Inside the spend: a refund that fails takes the session and the burn back with it.
+    await this.throttleRefund(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     return { est, remaining };
   }
 
