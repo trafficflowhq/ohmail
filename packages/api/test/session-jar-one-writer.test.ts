@@ -149,7 +149,8 @@ describe("a sign-in retires the family its jar's resume marker names", () => {
         const late = await renew(deps, refresh);
         expect(`${late.status} ${await codeOf(late)}`, "the browser's earlier family still renews").toBe("401 refresh_revoked");
         expect(((await late.json()) as { error: { details?: unknown } }).error.details).toBeUndefined();
-        expect(cleared(late)).toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+        const five = ["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"];
+        expect(cleared(late)).toEqual([...five.map((n) => `__Host-${n}`), ...five]);
       }
       expect(await trail(db, await userOf(first), "refresh_reuse_revoked"), "a retired family was swept").toEqual([]);
       expect((await renew(deps, setCookieMap(again).tf_refresh!)).status, "the new sign-in does not renew").toBe(204);
@@ -188,9 +189,9 @@ describe("a sign-in retires the family its jar's resume marker names", () => {
     expect(new Set(jars.map((j) => j.tf_resume)).size).toBe(3);
     expect(two.tf_resume).toMatch(/^[A-Za-z0-9_-]{43}$/);
     for (const res of [one, renewed]) {
-      const line = res.headers.getSetCookie().find((c) => c.startsWith("tf_resume="))!;
-      expect(line.replace(/^tf_resume=[^;]*/, "tf_resume=")).toBe(
-        `tf_resume=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=${Math.floor(deps.authConfig.refreshTtlMs / 1000)}`);
+      const line = res.headers.getSetCookie().find((c) => c.startsWith("__Host-tf_resume="))!;
+      expect(line.replace(/^__Host-tf_resume=[^;]*/, "__Host-tf_resume=")).toBe(
+        `__Host-tf_resume=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=${Math.floor(deps.authConfig.refreshTtlMs / 1000)}`);
     }
   });
 
@@ -265,7 +266,7 @@ describe("the resume marker goes with an answer that finds nothing to rotate", (
     const res = await H(req("POST", "/auth/refresh", { cookie: "tf_resume=1", body: "{}" }), deps);
     expect(`${res.status} ${await codeOf(res)}`).toBe("401 refresh_missing");
     expect(res.headers.getSetCookie(), "the marker outlived the answer, so every visit loops through the splash")
-      .toEqual(["tf_resume=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0"]);
+      .toEqual(["__Host-tf_resume=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0", "tf_resume=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0"]);
   });
 
   it("control: no marker, or a bearer-only host, sets no cookie at all", async () => {
@@ -327,7 +328,7 @@ describe("a staff credential is refused at the attachment bytes door", () => {
   });
 });
 
-describe("every server reader takes both cookie spellings, and the server still writes the bare names", () => {
+describe("every server reader takes both cookie spellings, and the server writes the __Host- ones", () => {
   it("__Host-tf_session authenticates, and wins over a bare tf_session naming somebody else", async () => {
     const { db, deps } = await makeDeps();
     const mine = await seedSession(db, { now: FIXED_NOW });
@@ -345,7 +346,7 @@ describe("every server reader takes both cookie spellings, and the server still 
     expect(res.status, await res.clone().text()).toBe(204);
   });
 
-  it("__Host-tf_refresh rotates at the refresh door, and the answer writes the bare names", async () => {
+  it("__Host-tf_refresh rotates at the refresh door, and the answer writes the __Host- names", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
     const refresh = await seedRefresh(db, s);
@@ -354,6 +355,36 @@ describe("every server reader takes both cookie spellings, and the server still 
     const names = Object.keys(setCookieMap(res)).sort();
     expect(names).toEqual(["tf_csrf", "tf_refresh", "tf_resume", "tf_session"]);
     expect(res.headers.getSetCookie().some((c) => /domain=/i.test(c)), "a cookie grew a Domain=").toBe(false);
+    for (const line of res.headers.getSetCookie()) {
+      if (line.startsWith("__Host-")) expect(line, "a __Host- cookie off Path=/ or not Secure").toMatch(/; Secure; Path=\/;/);
+      else expect(line, "a bare cookie was written, not expired").toMatch(/^tf_[a-z]+=; .*Max-Age=0$/);
+    }
+  });
+
+  /**
+   * THE RELEASE BEFORE THIS ONE WROTE THE BARE NAMES, and a browser holding them must keep its
+   * session: its refresh renews, and the answer leaves it holding the `__Host-` spelling only.
+   */
+  it("a jar from the previous release renews with no sign-out and comes back prefixed only", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const secret = await person(deps, db, clock, "old-jar@x.example");
+    const minted = setCookieMap(await signIn(deps, clock, "old-jar@x.example", secret));
+    // The jar as the previous release left it: every name bare, the refresh one at its own path.
+    const old = `tf_refresh=${minted.tf_refresh}; tf_resume=${minted.tf_resume}; tf_owner=${minted.tf_owner}`;
+    clock.advance(ACCESS_LAPSED_MS);
+    const res = await H(req("POST", "/auth/refresh", { cookie: old, body: "{}" }), deps);
+    expect(res.status, await res.clone().text()).toBe(204);
+    const jar = new Map<string, string>();
+    for (const line of res.headers.getSetCookie()) {
+      const [name, value] = line.split(";")[0]!.split("=") as [string, string];
+      if (/Max-Age=0/.test(line)) jar.delete(name);
+      else jar.set(name, value);
+    }
+    expect([...jar.keys()].sort()).toEqual(["__Host-tf_csrf", "__Host-tf_owner", "__Host-tf_refresh", "__Host-tf_resume", "__Host-tf_session"]);
+    const bareCleared = res.headers.getSetCookie().filter((c) => /^tf_/.test(c)).map((c) => c.split("=")[0]).sort();
+    expect(bareCleared, "a bare name the answer leaves behind").toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+    const next = await H(req("POST", "/auth/refresh", { cookie: `__Host-tf_refresh=${jar.get("__Host-tf_refresh")}`, body: "{}" }), deps);
+    expect(next.status, "the renewed jar does not renew again").toBe(204);
   });
 });
 

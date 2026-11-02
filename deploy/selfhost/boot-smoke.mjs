@@ -130,11 +130,12 @@ function jarOf(res) {
   for (const line of res.headers.getSetCookie()) {
     const first = line.split(";")[0];
     const eq = first.indexOf("=");
-    if (eq > 0) values[first.slice(0, eq).trim()] = first.slice(eq + 1).trim();
+    // A clear (the bare spelling's, beside the `__Host-` one it is replaced by) is no value to send.
+    if (eq > 0 && !/Max-Age=0(;|$)/.test(line)) values[first.slice(0, eq).trim()] = first.slice(eq + 1).trim();
   }
   return {
     cookie: Object.entries(values).map(([k, v]) => `${k}=${v}`).join("; "),
-    csrf: values["tf_csrf"] ?? "",
+    csrf: values["__Host-tf_csrf"] ?? values["tf_csrf"] ?? "",
   };
 }
 
@@ -334,10 +335,12 @@ async function main() {
   ok("full session established through the proxy origin");
 
   // [7] The cookie contract, attribute by attribute, from the real Set-Cookie lines.
-  step("session cookie attributes: HttpOnly, SameSite=Strict, Secure, and NO Domain=");
-  const byName = new Map(setCookies.map((line) => [line.split("=")[0], line]));
+  step("session cookie attributes: __Host-, HttpOnly, SameSite=Strict, Secure, and NO Domain=");
+  const minted = setCookies.filter((line) => !/Max-Age=0(;|$)/.test(line));
+  const byName = new Map(minted.map((line) => [line.split("=")[0].replace(/^__Host-/, ""), line]));
   for (const name of ["tf_session", "tf_refresh", "tf_csrf", "tf_resume"]) {
     assert(byName.has(name), `${name} must be minted on sign-in`, [...byName.keys()]);
+    assert(byName.get(name).startsWith(`__Host-${name}=`), `${name} must be minted in its __Host- spelling`);
   }
   for (const [name, line] of byName) {
     const redacted = line.replace(/^([^=]+)=[^;]*/, "$1=<redacted>");
@@ -356,16 +359,19 @@ async function main() {
     // BROWSER SEMANTICS the hand-held jar cannot feel, asserted from the attributes instead:
     // this script resends every value regardless of Path or lifetime, so a cookie scoped off
     // `/` or emitted expired would still authenticate HERE while a real browser withheld or
-    // deleted it. The refresh cookie is the ONE deliberate narrow path; everything else must
-    // be Path=/ and carry a positive Max-Age.
-    if (name !== "tf_refresh") {
-      assert(/Path=\/(;|\s|$)/.test(line), `${name} must be scoped Path=/ — narrower and a browser stops sending it where the app needs it`, redacted);
-    }
+    // deleted it. Every one must be Path=/ (the `__Host-` prefix requires it, the refresh
+    // cookie included) and carry a positive Max-Age.
+    assert(/Path=\/(;|\s|$)/.test(line), `${name} must be scoped Path=/ — narrower and a browser refuses a __Host- cookie`, redacted);
     const maxAge = /Max-Age=(-?\d+)/.exec(line);
     assert(maxAge !== null && Number(maxAge[1]) > 0, `${name} must carry a positive Max-Age — 0 or negative is a deletion, not a session`, redacted);
     ok(redacted);
   }
-  assert(/Path=\/auth\/refresh/.test(byName.get("tf_refresh")), "tf_refresh must stay scoped to Path=/auth/refresh through the proxy");
+  // …and the bare spellings an earlier release wrote are expired beside them, the refresh one at its own path.
+  const bareCleared = setCookies.filter((line) => /Max-Age=0(;|$)/.test(line));
+  assert(bareCleared.map((line) => line.split("=")[0]).sort().join(",") === [...byName.keys()].sort().join(","),
+    "the sign-in must expire the bare spelling of every cookie it mints", bareCleared.map((line) => line.split("=")[0]));
+  assert(/Path=\/auth\/refresh(;|$)/.test(bareCleared.find((line) => line.startsWith("tf_refresh=")) ?? ""),
+    "the bare refresh cookie's clear must name its own path, or a browser keeps the cookie");
 
   // [8] CSRF double-submit is live on a mutation.
   // Product routes are called under /api from here on — the spelling the browser client
@@ -643,13 +649,14 @@ async function main() {
   // [16] SIGNING OUT THROUGH THE FRONT DOOR. The web client signs out at the door below the
   // refresh cookie's path, the one path a browser sends `tf_refresh` to, so the proxy has to carry
   // it to the API. Last, because it ends the session every step above used.
-  step("sign out at the refresh path's door: 204, the five session cookies expired, the refresh refused after");
+  step("sign out at the refresh path's door: 204, the five session cookies expired in both spellings, the refresh refused after");
   const signedOut = await post("/auth/refresh/logout", {}, jar);
   await expectStatus(signedOut, 204, "the sign-out door with the signed-in jar");
   const cleared = signedOut.headers.getSetCookie();
   const clearedNames = cleared.map((line) => line.split("=")[0]).sort();
-  assert(clearedNames.join(",") === "tf_csrf,tf_owner,tf_refresh,tf_resume,tf_session",
-    "the sign-out must expire the five session cookies by name", clearedNames);
+  const five = ["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"];
+  assert(clearedNames.join(",") === [...five.map((n) => `__Host-${n}`), ...five].join(","),
+    "the sign-out must expire the five session cookies by name, in both spellings", clearedNames);
   for (const line of cleared) {
     const redacted = line.replace(/^([^=]+)=[^;]*/, "$1=<redacted>");
     assert(/Max-Age=0(;|$)/.test(line), "every cleared cookie must carry Max-Age=0", redacted);

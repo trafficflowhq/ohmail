@@ -93,6 +93,27 @@ describe("the pending marker lives until the next visit finishes the sign-out", 
     expect(written, "the marker dies with the browser session").toMatch(/; Max-Age=7776000;/);
     expect(written).toMatch(/; Path=\//);
   });
+
+  it("on a secure page every write is the __Host- spelling beside the bare one's clear, and a forget clears both", async () => {
+    const { forgetOwner, markSignedOutPending, rememberOwner } = await import("../app/shell/owner-cookie.js");
+    const real = Object.getOwnPropertyDescriptor(window, "location")!;
+    Object.defineProperty(window, "location", { configurable: true, value: { protocol: "https:" } });
+    try {
+      const lines: string[] = [];
+      markSignedOutPending((c) => { lines.push(c); });
+      rememberOwner("acct_A", (c) => { lines.push(c); });
+      forgetOwner((c) => { lines.push(c); });
+      expect(lines.map((l) => l.split(";")[0])).toEqual([
+        "__Host-tf_owner=signed_out_pending", "tf_owner=",
+        "__Host-tf_owner=acct_A", "tf_owner=",
+        "__Host-tf_owner=", "tf_owner=",
+      ]);
+      for (const l of lines) expect(l, "a __Host- write off Path=/ or not Secure").toMatch(/; Path=\/;.*; Secure$/);
+      expect(lines.filter((l) => l.startsWith("tf_owner=")).every((l) => /; Max-Age=0;/.test(l)), "a bare spelling was written").toBe(true);
+    } finally {
+      Object.defineProperty(window, "location", real);
+    }
+  });
 });
 
 describe("sign out ends, and asks the server even behind a renewal", () => {

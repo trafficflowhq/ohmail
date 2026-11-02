@@ -19,7 +19,8 @@ const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 const PW = "pw-correct-horse";
 const DECLARED = { [ERASED_ANSWER_HEADER]: "account_erased" };
-const FIVE = ["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"];
+/** The five names a refused refresh expires, in both spellings. */
+const FIVE = ["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"].flatMap((n) => [`__Host-${n}`, n]).sort();
 
 /** A real browser session: register, enrol TOTP, sign in — the jar the web client holds. */
 async function browser(deps: ApiDeps, db: Db, clock: TestClock, email: string) {
