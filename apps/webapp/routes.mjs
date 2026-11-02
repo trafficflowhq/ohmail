@@ -19,13 +19,16 @@
 export const API_BASE = "/api";
 
 /**
- * The path `tf_refresh` is scoped to, and therefore the one URL the browser will send it to.
+ * The path the bare `tf_refresh` is scoped to, and therefore the one URL a browser holding one
+ * will send it to; both refresh-token doors live here.
  *
- * `packages/api/src/cookies.ts` sets `Path=/auth/refresh` and that file is frozen (a `Path=/`
- * refresh cookie rides along on every request to the app, which is the exposure the narrow path
- * exists to prevent), so the topology absorbs it: the rewrite below makes `ohmail.app/auth/refresh`
- * a real URL that lands on `api.ohmail.app/auth/refresh`. The rewrite suite derives this constant
- * FROM the `Path=` attribute in `cookies.ts` and fails if the two ever drift.
+ * `packages/api/src/cookies.ts` writes the `__Host-` spelling now, which the prefix requires at
+ * `Path=/`: it rides along on every request to this origin, the exposure the narrow path existed
+ * to prevent, accepted so that no sibling host can plant or shadow it. A jar an earlier release
+ * wrote still holds the bare cookie at `Path=/auth/refresh` until the next renewal replaces it, so
+ * the rewrite below keeps `ohmail.app/auth/refresh` a real URL that lands on
+ * `api.ohmail.app/auth/refresh`. The rewrite suite derives this constant FROM the bare cookie's
+ * clear in `cookies.ts` and fails if the two ever drift.
  *
  * Under one origin this is also the single reserved segment the MARKETING side may never claim:
  * `/auth/*` belongs to the API, and a marketing page called `/auth-something` is fine while

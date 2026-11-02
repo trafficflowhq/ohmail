@@ -19,8 +19,9 @@ import { makeDeps, seedSession, req, setCookieMap, FIXED_NOW } from "./helpers.j
 const real = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => real.handle(r, { ...d, session: null, idempotency: null });
 
-/** Every name a cleared jar is told to drop. */
-const CLEARED = ["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"];
+/** Every name a cleared jar is told to drop, in both spellings: the `__Host-` one and the bare one. */
+const FIVE = ["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"];
+const CLEARED = [...FIVE.map((n) => `__Host-${n}`), ...FIVE];
 
 interface Jar { access: string; refresh: string }
 
@@ -62,8 +63,10 @@ function expectCleared(res: Response, what: string): void {
     expect(l, what).toMatch(/Max-Age=0/);
     expect(l, what).not.toMatch(/Domain=/i);
   }
-  expect(lines.find((l) => l.startsWith("tf_refresh=")), `${what}: the refresh clear keeps its path`)
+  expect(lines.find((l) => l.startsWith("tf_refresh=")), `${what}: the bare refresh clear keeps its path`)
     .toMatch(/Path=\/auth\/refresh(;|$)/);
+  expect(lines.find((l) => l.startsWith("__Host-tf_refresh=")), `${what}: the __Host- refresh clear is Path=/`)
+    .toMatch(/Path=\/;/);
   // Chrome holds an answer carrying the cache clear, its cookie clears too, for a walk of its whole
   // disk cache: the press gave up at its deadline and named a confirmed sign-out unconfirmed.
   expect(res.headers.get("clear-site-data"), `${what}: held for a cache walk`).toBeNull();

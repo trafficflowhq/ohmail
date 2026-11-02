@@ -36,14 +36,15 @@ const TOKENS = {
 
 const ACCOUNT = "11111111-1111-4111-8111-111111111111";
 
+/** The marker's line as written: the `__Host-` spelling (the bare one is only ever cleared). */
 const ownerLine = (cookies: string[]): string | undefined =>
-  cookies.find((c) => c.startsWith(`${OWNER_COOKIE}=`));
+  cookies.find((c) => c.startsWith(`__Host-${OWNER_COOKIE}=`));
 
 describe("the marker is set beside the session, with the session's own narrowness", () => {
   it("carries the account id, host-only, Secure, Strict — and READABLE", () => {
     const line = ownerLine(sessionCookies(TOKENS, "csrf-1", CFG, ACCOUNT));
     expect(line, "no owner cookie was set for a signed-in account").toBeDefined();
-    expect(line).toContain(`${OWNER_COOKIE}=${ACCOUNT}`);
+    expect(line).toContain(`__Host-${OWNER_COOKIE}=${ACCOUNT}`);
     expect(line).toContain("SameSite=Strict");
     expect(line).toContain("Secure");
     expect(line).toContain("Path=/");
@@ -64,17 +65,21 @@ describe("the marker is set beside the session, with the session's own narrownes
   });
 
   it("the other four cookies are untouched — this adds a cookie, it does not change one", () => {
-    // The session cookies' posture is load-bearing and frozen. A change here would be the kind
-    // that arrives as a side effect of an unrelated feature.
+    // The session cookies' posture is load-bearing. Each is written in its `__Host-` spelling,
+    // which is `Path=/` for all of them, and each bare spelling an earlier release wrote is expired.
     const cookies = sessionCookies(TOKENS, "csrf-1", CFG, ACCOUNT);
-    expect(cookies).toHaveLength(5);
+    expect(cookies).toHaveLength(10);
     expect(cookies[0]).toBe(
-      `tf_session=${TOKENS.accessToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${15 * 60}`,
+      `__Host-tf_session=${TOKENS.accessToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${15 * 60}`,
     );
     expect(cookies[1]).toBe(
-      `tf_refresh=${TOKENS.refreshToken}; HttpOnly; SameSite=Strict; Secure; Path=/auth/refresh; Max-Age=${30 * 86_400}`,
+      `__Host-tf_refresh=${TOKENS.refreshToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${30 * 86_400}`,
     );
-    expect(cookies[2]).toBe(`tf_csrf=csrf-1; SameSite=Strict; Secure; Path=/; Max-Age=${15 * 60}`);
+    expect(cookies[2]).toBe(`__Host-tf_csrf=csrf-1; SameSite=Strict; Secure; Path=/; Max-Age=${15 * 60}`);
+    expect(cookies.filter((c) => /^tf_/.test(c)).map((c) => c.split("=")[0]).sort())
+      .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+    expect(cookies.find((c) => c.startsWith("tf_refresh="))).toBe(
+      "tf_refresh=; HttpOnly; SameSite=Strict; Secure; Path=/auth/refresh; Max-Age=0");
   });
 
   it("`null` sets NOTHING — an omission is not a clear", () => {
@@ -82,8 +87,9 @@ describe("the marker is set beside the session, with the session's own narrownes
     // alone: emitting an expiring line there would sign a resuming browser out of its own warm
     // open every time its access token rotated.
     const cookies = sessionCookies(TOKENS, "csrf-1", CFG, null);
-    expect(cookies).toHaveLength(4);
+    expect(cookies).toHaveLength(8);
     expect(ownerLine(cookies)).toBeUndefined();
+    expect(cookies.some((c) => c.startsWith(`${OWNER_COOKIE}=`)), "an omission cleared the bare marker").toBe(false);
   });
 
   it("an ENROLLMENT session gets no marker — it owns no mailbox to open", () => {
@@ -149,10 +155,13 @@ describe("signing out takes it with the rest", () => {
     // attribute leaves the original in the jar and the deletion silently does nothing — which
     // here would leave a signed-out browser still naming a mailbox.
     const cleared = clearSessionCookies();
-    const line = cleared.find((c) => c.startsWith(`${OWNER_COOKIE}=`));
+    const line = cleared.find((c) => c.startsWith(`__Host-${OWNER_COOKIE}=`));
     expect(line, "logout does not clear the account marker").toBeDefined();
-    expect(line).toBe(`${OWNER_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`);
-    expect(cleared).toHaveLength(5);
+    expect(line).toBe(`__Host-${OWNER_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`);
+    // …and the bare spelling an earlier release wrote, with the attributes it was written with.
+    expect(cleared.find((c) => c.startsWith(`${OWNER_COOKIE}=`)))
+      .toBe(`${OWNER_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`);
+    expect(cleared).toHaveLength(10);
   });
 });
 

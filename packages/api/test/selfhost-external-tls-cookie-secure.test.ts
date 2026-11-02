@@ -35,17 +35,18 @@ const ACCOUNT = "11111111-1111-4111-8111-111111111111";
 
 /** Every mint in the module, with the argument shapes production calls them with. */
 const MINTS: ReadonlyArray<{ name: string; lines: string[]; expect: number }> = [
-  { name: "sessionCookies, owner named", lines: sessionCookies(TOKENS, "csrf-1", CFG, ACCOUNT), expect: 5 },
+  { name: "sessionCookies, owner named", lines: sessionCookies(TOKENS, "csrf-1", CFG, ACCOUNT), expect: 10 },
   /* `owner: null` is a real production path (an enrollment-less sign-in that cannot name an
      owner), and it returns a SHORTER set — so it is measured separately rather than assumed to
      be the same lines. */
-  { name: "sessionCookies, owner absent", lines: sessionCookies(TOKENS, "csrf-1", CFG, null), expect: 4 },
-  /* Two set and two expired: the jar's earlier refresh cookie and resume marker go with it. */
-  { name: "enrollmentCookies", lines: enrollmentCookies("enroll-ghi", "csrf-2", CFG), expect: 4 },
+  { name: "sessionCookies, owner absent", lines: sessionCookies(TOKENS, "csrf-1", CFG, null), expect: 8 },
+  /* Two set, their bare spellings expired, and the jar's earlier refresh cookie and resume marker
+     expired in both spellings. Every set line is matched by its bare spelling's clear. */
+  { name: "enrollmentCookies", lines: enrollmentCookies("enroll-ghi", "csrf-2", CFG), expect: 8 },
   /* The CLEAR is in scope and it is not pedantry: a browser only replaces a cookie when the
      replacement matches on the attributes that scope it, so a clear that dropped `Secure` would
      leave the live cookie in the jar on the one door where it matters. */
-  { name: "clearSessionCookies", lines: clearSessionCookies(), expect: 5 },
+  { name: "clearSessionCookies", lines: clearSessionCookies(), expect: 10 },
 ];
 
 describe("condition 1 — every cookie the API mints is Secure, on every path", () => {
@@ -103,7 +104,7 @@ describe("condition 2 — the mint cannot see the request, so no door can talk i
     /* The templates are the `name=...; attrs` string literals. Each one that names a cookie must
        spell Secure inline — not compose it, not interpolate it. Counted, so a template deleted
        from the module cannot make this pass by leaving nothing to check. */
-    const templates = code.match(/`(?:tf_|\$\{(?:RESUME_COOKIE|OWNER_COOKIE)\})[^`]*`/g) ?? [];
+    const templates = code.match(/[`"](?:\$\{HOST_PREFIX\})?(?:tf_[a-z]+|\$\{(?:RESUME_COOKIE|OWNER_COOKIE)\})=[^`"]*[`"]/g) ?? [];
     expect(templates.length, "no cookie templates found — the census has lost its subject")
       .toBeGreaterThanOrEqual(9);
     for (const t of templates) {

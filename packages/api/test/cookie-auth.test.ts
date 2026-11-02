@@ -298,8 +298,11 @@ describe("allowCookieAuth: false — cookie INGRESS and EGRESS are both refused"
     // reason: it is the name the web client opens a local mail mirror from BEFORE asking who is
     // signed in. Left behind on a shared machine it would have the app paint a signed-out
     // person's chrome from a database the sign-out was meant to end.
-    expect(onCookieHost.headers.getSetCookie()).toHaveLength(5);
+    //
+    // TEN since the writes took the `__Host-` spelling: each of the five is expired in both.
+    const five = ["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"];
+    expect(onCookieHost.headers.getSetCookie()).toHaveLength(10);
     expect(onCookieHost.headers.getSetCookie().map((c) => c.split("=")[0]).sort())
-      .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+      .toEqual([...five.map((n) => `__Host-${n}`), ...five]);
   });
 });

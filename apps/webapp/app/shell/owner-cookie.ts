@@ -19,7 +19,7 @@
  * reading the cookie is all this file does.
  */
 
-import { cookieFromJar } from "./cookie-jar";
+import { HOST_PREFIX, cookieFromJar } from "./cookie-jar";
 
 /** The cookie the API sets beside the session. Kept identical to the API's own constant. */
 export const OWNER_COOKIE = "tf_owner";
@@ -127,14 +127,27 @@ function rawOwnerCookie(jar?: string): string | null {
  * nothing reporting a failure. `write` is injectable for the same reason `readOwner`'s jar is.
  */
 export function forgetOwner(write?: (cookie: string) => void): void {
-  const secure = typeof location !== "undefined" && location.protocol === "https:" ? "; Secure" : "";
-  const expired = `${OWNER_COOKIE}=; Path=/; Max-Age=0; SameSite=Strict${secure}`;
-  if (write) {
-    write(expired);
-    return;
+  writeOwner("", 0, write);
+}
+
+/**
+ * THE MARKER'S LINES, for every client-side write of it. On a secure page the `__Host-` spelling,
+ * which no sibling host can plant or shadow, and the bare spelling's clear, so an earlier release's
+ * value cannot be read once this one is gone. On plain-http development the bare name, which is all
+ * the browser keeps there: it DISCARDS a `Secure` write silently.
+ */
+function writeOwner(value: string, maxAge: number | null, write?: (cookie: string) => void): void {
+  const age = maxAge === null ? "" : `; Max-Age=${maxAge}`;
+  const lines = typeof location !== "undefined" && location.protocol === "https:"
+    ? [
+      `${HOST_PREFIX}${OWNER_COOKIE}=${value}; Path=/${age}; SameSite=Strict; Secure`,
+      `${OWNER_COOKIE}=; Path=/; Max-Age=0; SameSite=Strict; Secure`,
+    ]
+    : [`${OWNER_COOKIE}=${value}; Path=/${age}; SameSite=Strict`];
+  for (const line of lines) {
+    if (write) write(line);
+    else if (typeof document !== "undefined") document.cookie = line;
   }
-  if (typeof document === "undefined") return;
-  document.cookie = expired;
 }
 
 /**
@@ -149,14 +162,7 @@ export function forgetOwner(write?: (cookie: string) => void): void {
 export const SIGNED_OUT_PENDING_MAX_AGE_S = 7_776_000;
 
 export function markSignedOutPending(write?: (cookie: string) => void): void {
-  const secure = typeof location !== "undefined" && location.protocol === "https:" ? "; Secure" : "";
-  const cookie = `${OWNER_COOKIE}=${OWNER_SIGNED_OUT}; Path=/; Max-Age=${SIGNED_OUT_PENDING_MAX_AGE_S}; SameSite=Strict${secure}`;
-  if (write) {
-    write(cookie);
-    return;
-  }
-  if (typeof document === "undefined") return;
-  document.cookie = cookie;
+  writeOwner(OWNER_SIGNED_OUT, SIGNED_OUT_PENDING_MAX_AGE_S, write);
 }
 
 /**
@@ -176,12 +182,5 @@ export function markSignedOutPending(write?: (cookie: string) => void): void {
  */
 export function rememberOwner(accountId: string, write?: (cookie: string) => void): void {
   if (!isOwnerShaped(accountId)) return;
-  const secure = typeof location !== "undefined" && location.protocol === "https:" ? "; Secure" : "";
-  const cookie = `${OWNER_COOKIE}=${accountId}; Path=/; SameSite=Strict${secure}`;
-  if (write) {
-    write(cookie);
-    return;
-  }
-  if (typeof document === "undefined") return;
-  document.cookie = cookie;
+  writeOwner(accountId, null, write);
 }

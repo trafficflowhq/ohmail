@@ -626,22 +626,37 @@ export function sweepPath(route: { method: string; pattern: string }, id: string
   return path + (SWEEP_QUERY[`${route.method} ${route.pattern}`] ?? "");
 }
 
-/** Parse a response's `Set-Cookie` list into a `{ name: value }` map (first token only). */
+/**
+ * Parse a response's `Set-Cookie` list into a `{ name: value }` map (first token only), by the BARE
+ * name: the `__Host-` spelling wins over the bare one, as every reader takes it, and a bare clear
+ * beside a value does not overwrite it. A name that is only cleared reads `""`.
+ */
 export function setCookieMap(res: Response): Record<string, string> {
   const out: Record<string, string> = {};
+  const prefixed = new Set<string>();
   for (const raw of res.headers.getSetCookie()) {
     const first = raw.split(";")[0]!;
     const eq = first.indexOf("=");
     if (eq < 0) continue;
-    out[first.slice(0, eq).trim()] = first.slice(eq + 1).trim();
+    const spelled = first.slice(0, eq).trim();
+    const value = first.slice(eq + 1).trim();
+    const name = spelled.startsWith("__Host-") ? spelled.slice("__Host-".length) : spelled;
+    if (spelled !== name) {
+      if (value !== "" || !(name in out)) out[name] = value;
+      prefixed.add(name);
+    } else if (!prefixed.has(name) && (value !== "" || !(name in out))) {
+      out[name] = value;
+    }
   }
   return out;
 }
 
-/** Parse the `Max-Age` attribute of a named Set-Cookie, or null. */
+/** Parse the `Max-Age` attribute of a named Set-Cookie, or null; the `__Host-` spelling first. */
 export function cookieMaxAge(res: Response, name: string): number | null {
-  for (const raw of res.headers.getSetCookie()) {
-    if (!raw.startsWith(`${name}=`)) continue;
+  const lines = res.headers.getSetCookie();
+  for (const spelled of [`__Host-${name}`, name]) {
+    const raw = lines.find((l) => l.startsWith(`${spelled}=`));
+    if (raw === undefined) continue;
     const m = /max-age=(\d+)/i.exec(raw);
     return m ? Number(m[1]) : null;
   }

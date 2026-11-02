@@ -21,8 +21,11 @@ import type { OAuthTokens } from "@trafficflow/services";
  * `POST /auth/refresh`. The native surface's longer window never reaches this file — a bearer
  * client gets a JSON token pair and no Set-Cookie. Every cookie minted here is host-only (no
  * `Domain=`) and must stay so; the rewrite suite asserts that beside `HttpOnly`, `SameSite`,
- * `Secure` and the refresh path. Readers also take each name's `__Host-` spelling ({@link
- * jarCookie}); these writes keep the bare names until installed desktops read both. */
+ * `Secure` and the refresh path. Every write uses the `__Host-` spelling, which the browser keeps
+ * only from this host, `Secure`, `Path=/` and without `Domain=`, so a sibling host can neither
+ * plant nor shadow it; and every write expires the bare spelling earlier releases wrote, with the
+ * attributes it was written with. Readers take both spellings ({@link jarCookie}) until the bare
+ * ones have expired everywhere: a refresh token's lifetime after this change. */
 const seconds = (ms: number): number => Math.floor(ms / 1000);
 
 /**
@@ -80,13 +83,25 @@ export function ownerCookieValue(raw: string | null | undefined): string | null 
 }
 
 /**
- * The web session cookies: `tf_session` (access, HttpOnly), `tf_refresh` (HttpOnly, scoped to
- * `/auth/refresh` and read by that one route alone, a census holds it), `tf_csrf` (readable, the
- * SPA's double-submit header), all `SameSite=Strict; Secure`; `tf_resume`, deliberately `Lax` and
- * not a credential (the refresh token's digest, {@link resumeMarkerFor}), living as long as the
- * refresh token so the edge can send a lapsed session to the resume splash; and `tf_owner`, the
- * account id (an identifier, never a credential) so the client opens the account-named mirror at
- * once: not HttpOnly, host-only, `Secure`, `Strict`, never set for an enrollment session.
+ * THE BARE SPELLINGS' CLEARS, each with the attributes earlier releases wrote it with: `Max-Age=0`
+ * deletes only a cookie whose `Path` matches (the refresh token's narrow path), and a `SameSite`
+ * that disagrees leaves the original in the jar (the resume marker's `Lax`).
+ */
+const BARE_SESSION_CLEAR = "tf_session=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0";
+const BARE_REFRESH_CLEAR = "tf_refresh=; HttpOnly; SameSite=Strict; Secure; Path=/auth/refresh; Max-Age=0";
+const BARE_CSRF_CLEAR = "tf_csrf=; SameSite=Strict; Secure; Path=/; Max-Age=0";
+const BARE_RESUME_CLEAR = "tf_resume=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0";
+const BARE_OWNER_CLEAR = "tf_owner=; SameSite=Strict; Secure; Path=/; Max-Age=0";
+
+/**
+ * The web session cookies: `tf_session` (access, HttpOnly), `tf_refresh` (HttpOnly, read by the
+ * refresh door and the sign-out door alone, a census holds it), `tf_csrf` (readable, the SPA's
+ * double-submit header), all `SameSite=Strict; Secure`; `tf_resume`, deliberately `Lax` and not a
+ * credential (the refresh token's digest, {@link resumeMarkerFor}), living as long as the refresh
+ * token so the edge can send a lapsed session to the resume splash; and `tf_owner`, the account id
+ * (an identifier, never a credential) so the client opens the account-named mirror at once: not
+ * HttpOnly, host-only, `Secure`, `Strict`, never set for an enrollment session. All `__Host-`, so
+ * all `Path=/`: the refresh token is no longer scoped to `/auth/refresh`, which the prefix forbids.
  */
 export function sessionCookies(
   tokens: OAuthTokens,
@@ -97,13 +112,14 @@ export function sessionCookies(
   const accessMax = seconds(cfg.accessTtlMs);
   const refreshMax = seconds(cfg.refreshTtlMs);
   return [
-    `tf_session=${tokens.accessToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${accessMax}`,
-    `tf_refresh=${tokens.refreshToken}; HttpOnly; SameSite=Strict; Secure; Path=/auth/refresh; Max-Age=${refreshMax}`,
-    `tf_csrf=${csrfToken}; SameSite=Strict; Secure; Path=/; Max-Age=${accessMax}`,
+    `${HOST_PREFIX}tf_session=${tokens.accessToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${accessMax}`,
+    `${HOST_PREFIX}tf_refresh=${tokens.refreshToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${refreshMax}`,
+    `${HOST_PREFIX}tf_csrf=${csrfToken}; SameSite=Strict; Secure; Path=/; Max-Age=${accessMax}`,
     // The edge reads it by presence only; the value names the family ({@link resumeMarkerFor}).
     // HttpOnly — nothing in the client needs to see it, and a marker JS cannot touch is a marker
     // XSS cannot plant.
-    `${RESUME_COOKIE}=${resumeMarkerFor(tokens.refreshToken)}; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=${refreshMax}`,
+    `${HOST_PREFIX}${RESUME_COOKIE}=${resumeMarkerFor(tokens.refreshToken)}; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=${refreshMax}`,
+    BARE_SESSION_CLEAR, BARE_REFRESH_CLEAR, BARE_CSRF_CLEAR, BARE_RESUME_CLEAR,
     ...ownerCookie(owner, cfg),
   ];
 }
@@ -120,11 +136,17 @@ export function sessionCookies(
 export function ownerCookie(owner: string | null, cfg: AuthConfig): string[] {
   const ownerId = ownerCookieValue(owner);
   if (!ownerId) return [];
-  return [`${OWNER_COOKIE}=${ownerId}; SameSite=Strict; Secure; Path=/; Max-Age=${seconds(cfg.refreshTtlMs)}`];
+  return [
+    `${HOST_PREFIX}${OWNER_COOKIE}=${ownerId}; SameSite=Strict; Secure; Path=/; Max-Age=${seconds(cfg.refreshTtlMs)}`,
+    BARE_OWNER_CLEAR,
+  ];
 }
 
-/** The refresh cookie's clear, at the path it is set on: one spelling for both answers that expire it. */
-const REFRESH_CLEAR = "tf_refresh=; HttpOnly; SameSite=Strict; Secure; Path=/auth/refresh; Max-Age=0";
+/** The refresh cookie's clears, both spellings, each at the path it is set on. */
+const REFRESH_CLEARS = [
+  `${HOST_PREFIX}tf_refresh=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0`,
+  BARE_REFRESH_CLEAR,
+];
 
 /**
  * The web cookies for an ENROLLMENT-scoped session. Two set, not three, and
@@ -143,17 +165,18 @@ const REFRESH_CLEAR = "tf_refresh=; HttpOnly; SameSite=Strict; Secure; Path=/aut
 export function enrollmentCookies(enrollmentToken: string, csrfToken: string, cfg: AuthConfig): string[] {
   const max = seconds(cfg.loginTokenTtlMs);
   return [
-    `tf_session=${enrollmentToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${max}`,
-    `tf_csrf=${csrfToken}; SameSite=Strict; Secure; Path=/; Max-Age=${max}`,
-    REFRESH_CLEAR,
+    `${HOST_PREFIX}tf_session=${enrollmentToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${max}`,
+    `${HOST_PREFIX}tf_csrf=${csrfToken}; SameSite=Strict; Secure; Path=/; Max-Age=${max}`,
+    BARE_SESSION_CLEAR, BARE_CSRF_CLEAR,
+    ...REFRESH_CLEARS,
     ...clearResumeCookie(),
   ];
 }
 
 /**
- * The same five cookies with `Max-Age=0` (expire on logout / session death). The marker must
- * be cleared: a logout that left it behind sends the next visit to the resume splash, which
- * fails and bounces to the landing. The attributes must match the set exactly,
+ * The same five cookies with `Max-Age=0` (expire on logout / session death), in both spellings.
+ * The marker must be cleared: a logout that left it behind sends the next visit to the resume
+ * splash, which fails and bounces to the landing. The attributes must match the set exactly,
  * `SameSite=Lax` included, or the browser treats it as a different cookie and the deletion
  * silently does nothing. The `tf_owner` marker must be cleared for a sharper reason: it tells the
  * next visit to open a mirror before asking who is there, and on a shared machine that paints
@@ -162,15 +185,18 @@ export function enrollmentCookies(enrollmentToken: string, csrfToken: string, cf
  */
 export function clearSessionCookies(): string[] {
   return [
-    "tf_session=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0",
-    REFRESH_CLEAR,
-    "tf_csrf=; SameSite=Strict; Secure; Path=/; Max-Age=0",
+    `${HOST_PREFIX}tf_session=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0`,
+    BARE_SESSION_CLEAR,
+    ...REFRESH_CLEARS,
+    `${HOST_PREFIX}tf_csrf=; SameSite=Strict; Secure; Path=/; Max-Age=0`,
+    BARE_CSRF_CLEAR,
     ...clearResumeCookie(),
-    `${OWNER_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`,
+    `${HOST_PREFIX}${OWNER_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`,
+    BARE_OWNER_CLEAR,
   ];
 }
 
-/** The resume marker's clear alone, with the attributes it was set with (`Lax` included). */
+/** The resume marker's clears alone, both spellings, with the attributes it was set with (`Lax` included). */
 export function clearResumeCookie(): string[] {
-  return [`${RESUME_COOKIE}=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0`];
+  return [`${HOST_PREFIX}${RESUME_COOKIE}=; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=0`, BARE_RESUME_CLEAR];
 }

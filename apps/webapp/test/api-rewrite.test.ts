@@ -211,19 +211,25 @@ describe("the rewrite is DORMANT until TF_API_ORIGIN is set", () => {
   /**
    * THE REFRESH COOKIE HAS TO BE REACHABLE, or web sessions die at the access TTL.
    *
-   * `cookies.ts` scopes `tf_refresh` to `Path=/auth/refresh` — the API's own path. Set-Cookie
-   * attributes pass through a rewrite unmodified, so the browser stores it on `ohmail.app`
-   * at `/auth/refresh` and sends it to exactly one URL. `/api/auth/refresh` is not that URL:
-   * routing refresh only through the `/api` prefix leaves the token in the jar forever,
-   * unreachable, and every renewal fails silently.
+   * A jar an earlier release wrote holds the BARE `tf_refresh` at `Path=/auth/refresh` — the
+   * API's own path — until its next renewal writes the `__Host-` spelling (`Path=/`, which the
+   * prefix requires). Set-Cookie attributes pass through a rewrite unmodified, so the browser
+   * stores the bare one on `ohmail.app` at `/auth/refresh` and sends it to exactly one URL.
+   * `/api/auth/refresh` is not that URL: routing refresh only through the `/api` prefix leaves
+   * that token in the jar forever, unreachable, and the renewal that would replace it never runs.
    */
   it("the refresh rewrite covers the PATH the refresh cookie is scoped to", async () => {
     const { REFRESH_PATH } = await import("../next.config.mjs");
     const src = read("../../../packages/api/src/cookies.ts");
-    // Derived FROM cookies.ts, which the ruling freezes — so the two cannot drift apart silently.
-    const paths = [...src.matchAll(/tf_refresh=[^`"]*?Path=([^;`"]+)/g)].map((m) => m[1]!.trim());
-    expect(paths.length).toBeGreaterThanOrEqual(2);            // sessionCookies + clearSessionCookies
+    // Derived FROM cookies.ts — so the two cannot drift apart silently. The bare spelling is
+    // written only as its clear now, at the path it was written on.
+    const paths = [...src.matchAll(/["`]tf_refresh=[^`"]*?Path=([^;`"]+)/g)].map((m) => m[1]!.trim());
+    expect(paths.length).toBeGreaterThanOrEqual(1);
     expect(new Set(paths)).toEqual(new Set([REFRESH_PATH]));
+    // …and the `__Host-` spelling is `Path=/`, everywhere it is written.
+    const prefixed = [...src.matchAll(/\$\{HOST_PREFIX\}tf_refresh=[^`"]*?Path=([^;`"]+)/g)].map((m) => m[1]!.trim());
+    expect(prefixed.length).toBeGreaterThanOrEqual(2);         // sessionCookies + the clears
+    expect(new Set(prefixed)).toEqual(new Set(["/"]));
 
     const cfg = await loadConfig("https://api.ohmail.app");
     const rewrites = (await cfg.rewrites?.()) ?? [];
@@ -278,7 +284,7 @@ describe("the two cookie files the one-origin rewrite must not loosen", () => {
     // was done to avoid. `SameSite=None` is the rejected third-party-cookie design. Both
     // are the "obvious fix" for a cross-origin 401, and both are wrong here.
     const src = read("../../../packages/api/src/cookies.ts");
-    const setCookies = src.match(/`tf_(?:session|refresh|csrf)=[^`]*`/g) ?? [];
+    const setCookies = src.match(/[`"](?:\$\{HOST_PREFIX\})?tf_(?:session|refresh|csrf)=[^`"]*[`"]/g) ?? [];
     expect(setCookies.length).toBeGreaterThanOrEqual(3);
     for (const c of setCookies) {
       expect(c, c).toContain("SameSite=Strict");
@@ -308,9 +314,13 @@ describe("the two cookie files the one-origin rewrite must not loosen", () => {
    */
   it("the storage-owner marker is host-only, Secure, Strict — and readable, which is why it is scoped", () => {
     const src = read("../../../packages/api/src/cookies.ts");
-    const lines = [...src.matchAll(/`\$\{OWNER_COOKIE\}=[^`]*`/g)].map((m) => m[0]);
-    // Two: the one `sessionCookies` sets and the one `clearSessionCookies` expires.
-    expect(lines.length, "the account marker is no longer set through OWNER_COOKIE").toBe(2);
+    const lines = [
+      ...[...src.matchAll(/`\$\{HOST_PREFIX\}\$\{OWNER_COOKIE\}=[^`]*`/g)].map((m) => m[0]),
+      ...[...src.matchAll(/"tf_owner=[^"]*"/g)].map((m) => m[0]),
+    ];
+    // Three: the `__Host-` one `ownerCookie` sets, its clear in `clearSessionCookies`, and the
+    // bare spelling's clear beside both.
+    expect(lines.length, "the account marker is no longer set through OWNER_COOKIE").toBe(3);
     for (const c of lines) {
       expect(c, c).toContain("SameSite=Strict");
       expect(c, c).toContain("Secure");
