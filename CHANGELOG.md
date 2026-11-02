@@ -21,6 +21,100 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.29] — 2026-11-02
+
+### Connecting a mailbox says which server failed, and why
+
+Test connection on ohmail Cloud now checks the outgoing (SMTP) server as well and says what it found there. A
+refusal from the outgoing server (a wrong password, no answer, a refused certificate or no encryption) is named
+as the outgoing server's. When the incoming and outgoing servers are one machine on your own network, one
+consent line covers both, and Test connection offers it too. The desktop app now asks for the outgoing server's consent instead of connecting a
+mailbox that cannot send, and the phone app no longer quits when the outgoing server is refused.
+
+On the desktop, Proton Mail Bridge can be connected: choose "Any other IMAP mailbox" and type 127.0.0.1 with
+ports 1143 and 1025 and the password Bridge shows. ohmail shows the fingerprint of Bridge's own certificate and
+connects only once you trust exactly that certificate; if it changes, ohmail stops and asks again. On the web,
+the Proton note points to the desktop app.
+
+The mailbox password fields on the phone and in the desktop app's first window no longer offer the saved ohmail
+account password. Screens in German now say the server's refusals in German too, such as a refused sign-in, a
+reached mailbox limit or a mailbox that is already connected.
+
+### A letter deleted on the server leaves no preview behind, and a delete whose answer was lost stays in Trash
+
+On Cloud, your own server, the desktop app and the phone, a letter deleted on the mail server or in another
+mail app kept its preview, the words search found it by, the line saying why it was filed and the addresses
+of the trackers found in it until you removed the mailbox or deleted your account. Nothing showed them. From
+this release, a letter that leaves takes them with its text; ohmail keeps its headers, the names of its files,
+how it was filed and which trackers were found in it. Letters that left before this release keep their preview
+and search words for now. A letter that comes back gets its preview and search words back.
+
+With automatic suggestions for new senders on, ohmail no longer asks the AI about a held letter that was
+deleted on the server, or spends on one; a sender whose newest held letter was deleted is asked about the one
+still waiting.
+
+A delete whose move reached the server's Trash while ohmail lost the answer (a crash, a dropped connection,
+a slow server) emptied the letter and left it out of ohmail's Trash, where Restore could not reach it.
+ohmail now finds the letter in Trash by its own bytes and keeps it there with its text, restorable; a letter
+it cannot prove stays in Trash with its text. An Undo pressed in that moment brings the letter back instead
+of losing it. A delete whose move read the letter as gone while the server still held it (a server throttling
+ohmail's reads) no longer empties it: the move is tried again.
+
+### Desktop downloads always find a folder, Windows updates go in at the next start
+
+On the desktop app, saving an attachment on a computer whose profile names no Downloads folder (a minimal
+Linux install without xdg-user-dirs, for example) now saves into `Downloads` in your home folder, creating
+it if needed, instead of refusing. The folder is looked up at each save, so a Downloads folder you set while
+ohmail is open is used at once. A Downloads folder your profile names still comes first; the Flatpak keeps
+refusing, since its home folder is not yours.
+
+A desktop app signed in to your own server now lets one message carry up to 32 MiB of attachments, the
+limit your server takes, instead of 3 MB. Such a send now has five minutes to upload, as a single file
+does on the hosted service, and a send that runs out of time no longer pauses your other changes.
+
+On Windows, an update downloaded while ohmail stays open, and not installed because Windows shut down with
+ohmail running, now installs the next time you start ohmail, before its window opens. A start from a
+`mailto:` or `ohmail://` link waits for the next plain start or quit. An installer that does not finish is
+not tried again by itself.
+
+Signing out on the desktop app now empties the saved sign-in and flushes its removal to disk before it says
+you are signed out, so a power cut right after cannot bring the session back.
+
+### The sender's address line keeps the name before the @ whole, and the proxy reads OHMAIL_TLS_TERMINATOR only as addresses
+
+On the web, in a narrow open message the line under the sender that states their address no longer breaks the
+part before the @ over two lines: "from" stays beside the address, a long name before the @ is shortened at its
+end, and the domain stays whole, as it already did in the Screener and the wider header.
+
+On your own server, the proxy now refuses to start when `OHMAIL_TLS_TERMINATOR` is anything but `gateway` or
+addresses and CIDRs separated by single spaces, and says what to write. Before, such a value already stopped the
+server, but the proxy still handed it to Caddy, where a brace or a line break would have been read as
+configuration.
+
+### Sending says what happened, and Microsoft mailboxes keep one Sent copy
+
+Sending the same reply or forward again, when the first one already went, now says the message had
+already been sent and was not sent again, instead of "Reply sent." or "Forwarded.". On the phone the
+same words sent again within the hour now say so too, or ask you to check Sent first while the first
+send's outcome is still open, instead of "Sending didn't work. Try again.", which invited a real
+second copy. Web, desktop and phone.
+
+A message waiting to be sent keeps retrying until it goes or is refused. Before, switching the
+language or another change on screen could stop the retries until the network dropped and came back
+or the page was reloaded. Web and desktop.
+
+When a mail server is busy and answers a read with nothing (Outlook and Gmail do when they slow a
+client down), a forward now waits and tries again instead of saying the original was moved or
+deleted. Cloud and your own server.
+
+A Microsoft 365 or Outlook.com mailbox connected with a Microsoft sign-in no longer gets a second copy
+of every sent message in Sent Items: Microsoft files the one copy itself, and ohmail now uses it. A
+mailbox connected with a password keeps the copy ohmail files.
+
+A mailbox whose Sent folder has a localized name, such as Envoyés or Verzonden, no longer shows that
+folder among your own folders, and your own letters there count as written by you when ohmail joins
+split conversations.
+
 ## [0.30.28] — 2026-11-02
 
 ### An unfinished first mailbox setup's password is no longer used
@@ -16136,7 +16230,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.28...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.29...HEAD
+[0.30.29]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.29
 [0.30.28]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.28
 [0.30.27]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.27
 [0.30.26]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.26
