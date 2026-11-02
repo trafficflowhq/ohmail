@@ -71,6 +71,11 @@ licence:
                   byte for byte from the pdfjs-dist build the web app's
                   manifest pins. Its licence notice heads the file; the
                   licence text ships in that package (pdfjs-dist/LICENSE).
+                  The phone app carries the same pdfjs-dist build's
+                  legacy/build/pdf.min.mjs and pdf.worker.min.mjs byte
+                  for byte, licence notices included, in the module
+                  apps/mobile/scripts/bundle-engine.mjs generates
+                  (apps/mobile/generated/pdf-frame.js).
 
   Omarchy themes  packages/tokens/omarchy/fixtures/raw/*.colors.toml and
                   packages/tokens/omarchy/fixtures/shell.example.toml are

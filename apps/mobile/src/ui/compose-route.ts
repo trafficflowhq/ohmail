@@ -5,7 +5,7 @@
  * left to type into. Once the sheet has opened on a row it stays; what happened to the row is the
  * sheet's to say (`MessageActions.tsx`, `draftLeft`). No React Native renderer here: driven directly.
  */
-import type { WorldDraft, WorldDraftEdit, WorldMail } from "../state/live";
+import type { KeptReply, WorldDraft, WorldDraftEdit, WorldMail } from "../state/live";
 
 /** What the sheet was opened with: the row's seed and, for a forward, its original. */
 export interface ComposeDraftOpen {
@@ -33,4 +33,20 @@ export function composeDraftPlan(
   const original = row.edit.forwardOf !== null ? originalOf(row.edit.forwardOf) : undefined;
   if (row.edit.forwardOf !== null && !original) return { kind: "forwardOriginalAbsent" };
   return { kind: "sheet", open: { draft: { id: row.id, body: row.body, ...row.edit }, original: original ?? null } };
+}
+
+/** What a Reply or Reply all press opens: the verb pressed is the mode (the audience the head names). */
+export interface ReplyOpen {
+  compose: "reply" | "replyAll";
+  /** The kept reply the sheet resumes, bound to its row. */
+  draft?: ComposeDraftOpen["draft"];
+  /** A reply is kept that this phone cannot write whole: the sheet says it is in Drafts. */
+  aside?: true;
+}
+
+/** Decided once, at the press: resume the kept reply, or open fresh and say one is kept. */
+export function replyOpen(kept: KeptReply, pressed: "reply" | "replyAll"): ReplyOpen {
+  if (kept.kind === "resume") return { compose: pressed, draft: kept.draft };
+  if (kept.kind === "aside") return { compose: pressed, aside: true };
+  return { compose: pressed };
 }
