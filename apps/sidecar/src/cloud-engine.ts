@@ -441,8 +441,9 @@ async function decorateStoreStuck(
 }
 
 /**
- * The file recording which hosted account this cloud mirror was bootstrapped for: the ADDRESS on
- * the first line and the SERVER's base URL on the second.
+ * The file recording which hosted account this cloud mirror was bootstrapped for: one JSON object
+ * naming the ADDRESS, the SERVER's base URL and, once a server named it, the account
+ * (`encodeMirrorRecord` in `cloud-origin.ts`; a legacy one-line record is still read).
  *
  * It held the address alone until there was a third door. See `cloud-origin.ts` for why the server
  * had to join it — in one sentence: the mirror directory is keyed by MODE, so `me@example.com` on

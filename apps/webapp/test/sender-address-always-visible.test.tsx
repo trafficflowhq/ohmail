@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { renderedUiFont, skipUnlessMeasuredFont } from "./_measured-font.js";
 import { AddressText, MessageRow } from "@ohmail/ui";
+import { NextIntlClientProvider } from "next-intl";
+import en from "../messages/en.json";
+import { MessageFromLine } from "../app/shell/MessageCard.js";
 
 /**
  * ═══ A SENDER'S ADDRESS IS ON SCREEN WHERE A STRANGER IS JUDGED, AT EVERY WIDTH ═══════════════
@@ -243,11 +246,11 @@ describe("a Screener row draws the address whatever the name says", () => {
   }, 60_000);
 });
 
-const header = (width: number, name: string, address: string): string => `<article class="msg" style="width:${width + 68}px;max-width:none">
+const header = (width: number, name: string, address: string, fromLine?: string): string => `<article class="msg" style="width:${width + 68}px;max-width:none">
     <div class="msg-from">
       <button type="button" class="msg-sender"><span class="av s">G</span><b>${name}</b><small>${renderToStaticMarkup(<AddressText address={address} />)}</small></button>
       <span class="t num"><span class="msg-menu"><button type="button" class="msg-more">⋯</button></span><button type="button" class="stamp-toggle"><time>21 Sep</time></button></span>
-      <p class="msg-from-line">from ${address}</p>
+      ${fromLine ?? renderToStaticMarkup(<NextIntlClientProvider locale="en" messages={en} timeZone="UTC"><MessageFromLine address={address} /></NextIntlClientProvider>)}
     </div></article>`;
 /** The 0.25.17 candidate's header rules: the address shrinks first, cut by an ellipsis at its end. */
 const PRE_HEADER = ".msg-from b{flex:0 1 auto}.msg-from small{flex:0 100 auto;min-width:14ch;max-width:none}.msg-from small > span{display:block;overflow:hidden;text-overflow:ellipsis}.msg-from .addr-dom{white-space:nowrap}";
@@ -279,6 +282,52 @@ describe("the open message's header draws the address whatever the name says", (
 
   it("under 420px the address stands on its own line, whole", async () => {
     whole(await onPage(doc(header(360, NAME, LONG)), readAddress, ".msg-from-line"), "360px header");
+  }, 60_000);
+
+  /** The from line's local part: how many lines it is drawn on, and whether the word before it shares its first. */
+  const localPart = (sel: string) => {
+    const host = document.querySelector(sel) as HTMLElement;
+    const text = host.textContent ?? "";
+    const start = text.indexOf(" ") + 1;
+    const at = text.lastIndexOf("@");
+    const tops = (from: number, to: number): number[] => {
+      const out: number[] = [];
+      const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+      let off = 0;
+      for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+        for (let i = Math.max(from, off); i < Math.min(to, off + n.data.length); i++) {
+          const rg = document.createRange();
+          rg.setStart(n, i - off);
+          rg.setEnd(n, i - off + 1);
+          const r = rg.getBoundingClientRect();
+          if (r.width > 0) out.push(Math.round(r.top));
+        }
+        off += n.data.length;
+      }
+      return out;
+    };
+    const local = tops(start, at);
+    return { lines: new Set(local).size, sharesWord: tops(0, start - 1)[0] === local[0] };
+  };
+
+  for (const width of [240, 300, 360]) {
+    it(`a ${width}px header's own address line never breaks the local part, and "from" stays beside it`, async () => {
+      const html = doc(header(width, NAME, LONG));
+      whole(await onPage(html, readAddress, ".msg-from-line"), `${width}px from line`);
+      expect(await onPage(html, localPart, ".msg-from-line"), `${width}px from line`).toEqual({ lines: 1, sharesWord: true });
+    }, 60_000);
+  }
+
+  it("an ordinary address on the 360px header's own line is not cut at all", async () => {
+    const html = doc(header(360, NAME, ADDR));
+    whole(await onPage(html, readAddress, ".msg-from-line"), "360px from line");
+    const cut = await onPage(html, () => [...document.querySelectorAll(".msg-from-line *")].some((e) => e.scrollWidth > e.clientWidth + 0.5), "");
+    expect(cut, "the address is cut where its own line holds it").toBe(false);
+  }, 60_000);
+
+  it("RED CONTROL: the plain-text line that wraps anywhere breaks a long local part", async () => {
+    const html = doc(header(240, NAME, LONG, `<p class="msg-from-line">from ${LONG}</p>`), "@container who-line (max-width:419.98px){.msg-from-line{display:block;overflow-wrap:anywhere}}");
+    expect((await onPage(html, localPart, ".msg-from-line")).lines, "the old line no longer breaks the local part — this arm measures nothing").toBeGreaterThan(1);
   }, 60_000);
 
   it("RED CONTROL: the candidate's header cuts the domain away at 572px", async (ctx) => {

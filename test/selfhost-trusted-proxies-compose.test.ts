@@ -129,6 +129,36 @@ describe("the proxy entrypoint", () => {
     expect(resolve({ OHMAIL_PROC_NET_ROUTE: route("in-pool") })).toEqual({ out: "", err: "", rc: 0 });
   });
 
+  const NOT_ADDRESSES =
+    "proxy: OHMAIL_TLS_TERMINATOR is neither gateway nor addresses or CIDRs separated by single spaces, so it is not handed to Caddy: " +
+    "write the addresses or CIDRs on one line, separated by single spaces, or 0.0.0.0/32 to trust no terminator.";
+
+  it("a value that is not addresses or CIDRs never reaches Caddy: exit 78, the value not echoed", () => {
+    const configText = [
+      "10.0.0.1 }\n}\nhttp://:81 {\n\trespond 200", "{$HOME}", "10.0.0.1 {", "10.0.0.1}", "private_ranges", "terminator.example",
+      "face", "10.0.0.0/8,192.168.1.5", "10.0.0.0/8\t192.168.1.5", " 203.0.113.9", "203.0.113.9 ", "203.0.113.9\n",
+      "10.0.0.1  192.168.1.5", "10.0.0.1 192.168.1.5", "fe80::1%eth0", "[2001:db8::9]", "gateway 10.0.0.1",
+    ];
+    for (const v of configText) {
+      const got = resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_TLS_TERMINATOR: v, OHMAIL_PROC_NET_ROUTE: route("in-pool") });
+      expect(got, JSON.stringify(v)).toEqual({ out: "", err: NOT_ADDRESSES, rc: 78 });
+    }
+  });
+
+  it("every recorded value the api admits passes the entrypoint as written; a value it refuses the api refuses too", () => {
+    const recorded = JSON.parse(r(`${FIXTURES}/caddy-2.10.2-terminator-verdicts.json`)) as { verdicts: Array<{ form: string; value: string }> };
+    let refused = 0;
+    for (const { form, value } of recorded.verdicts) {
+      const p = parseTlsTerminatorList(value);
+      if (p.ok && p.entries.length === 0) continue;
+      const got = resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_TLS_TERMINATOR: value, OHMAIL_PROC_NET_ROUTE: route("in-pool") });
+      if (p.ok) expect(got, form).toEqual({ out: `proxy: external door honours X-Forwarded-For from ${value} (OHMAIL_TLS_TERMINATOR set)`, err: "", rc: 0 });
+      else if (got.rc !== 0) { refused++; expect(got.err, form).toBe(NOT_ADDRESSES); }
+    }
+    // The recording's comma, line, whitespace, word, zone and bracket forms.
+    expect(refused).toBeGreaterThanOrEqual(12);
+  });
+
   it("one table, read by the entrypoint and the api alike: refused, the gateway, or the list as written", () => {
     /* The compose service's role, interpolated: a whole credentialed URL literal is a credential to the push gate. */
     const role = "ohmail";

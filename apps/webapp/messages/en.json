@@ -652,7 +652,7 @@
     "doorbellNotOrganizingSomeAria": "{count, plural, one {Nothing organizes {address}: its first-time senders go straight to the Ohbox} other {Nothing organizes # of your mailboxes: their first-time senders go straight to the Ohbox}}",
     "threadMeta": "thread ({count})",
     "onServer": "on your server: {folder}",
-    "fromAddress": "from {address}",
+    "fromAddress": "from <addr>{address}</addr>",
     "loading": "Loading your mail.",
     "emptyPlain": "Nothing in your Ohbox.",
     "connectTitle": "Connect your mailbox",

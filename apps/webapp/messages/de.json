@@ -652,7 +652,7 @@
     "doorbellNotOrganizingSomeAria": "{count, plural, one {Niemand organisiert {address}: Neue Absender dort landen direkt in der Ohbox} other {Niemand organisiert # deiner Postfächer: Neue Absender dort landen direkt in der Ohbox}}",
     "threadMeta": "Verlauf ({count})",
     "onServer": "auf deinem Server: {folder}",
-    "fromAddress": "von {address}",
+    "fromAddress": "von <addr>{address}</addr>",
     "loading": "Deine Mails werden geladen.",
     "emptyPlain": "Nichts in deiner Ohbox.",
     "connectTitle": "Verbinde dein Postfach",

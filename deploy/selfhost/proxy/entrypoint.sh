@@ -2,7 +2,8 @@
 # The proxy's entrypoint. On the external-TLS door OHMAIL_TLS_TERMINATOR must say whose X-Forwarded-For to
 # believe: unset, it exits 78 with the sentence the api refuses with. Exactly `gateway` trusts this
 # container's network gateway, read from the IPv4 default route, because a terminator on the same box reaches
-# the proxy from there; with no default route that exits 78 too. One line says what is trusted, then the
+# the proxy from there; with no default route that exits 78 too. Any other value must be addresses or
+# CIDRs separated by single spaces, or it exits 78 before Caddy reads it. One line says what is trusted, then the
 # image's own command runs: compose's `entrypoint:` clears it, so it is repeated below and pinned against the
 # image by a test, with `--config` naming the door. `:+` as compose spells it, so OHMAIL_EXTERNAL_TLS chooses
 # a file and never names one. `--resolve` prints and exits; OHMAIL_PROC_NET_ROUTE names a route file for tests.
@@ -23,6 +24,12 @@ if [ -n "${OHMAIL_EXTERNAL_TLS:-}" ]; then
   # UNSET_TLS_TERMINATOR, so the two never disagree on unset. LC_ALL=C: bytes in every awk.
   if ! LC_ALL=C awk 'BEGIN { v = ENVIRON["OHMAIL_TLS_TERMINATOR"]; gsub(/\302\240/, "", v); exit !(v ~ /[^ \t\n\r\v\f]/) }'; then
     printf '%s\n' "proxy: OHMAIL_TLS_TERMINATOR is unset on the external door, so nothing says whose X-Forwarded-For to believe: set it to gateway for a terminator on this box that sets that header (OHMAIL_BIND left at 127.0.0.1), to your terminator's addresses or CIDRs separated by single spaces, or to 0.0.0.0/32 for a relay that adds none." >&2
+    exit 78
+  fi
+  # Caddy substitutes {$VAR} before it parses, so only addresses or CIDRs reach it: hex digits with
+  # a dot or a colon, an optional /prefix, single spaces between. A brace, a line break or a word never does.
+  if [ "$OHMAIL_TLS_TERMINATOR" != gateway ] && ! LC_ALL=C awk 'BEGIN { exit !(ENVIRON["OHMAIL_TLS_TERMINATOR"] ~ /^[0-9A-Fa-f]*[.:][0-9A-Fa-f.:]*(\/[0-9]+)?( [0-9A-Fa-f]*[.:][0-9A-Fa-f.:]*(\/[0-9]+)?)*$/) }'; then
+    printf '%s\n' "proxy: OHMAIL_TLS_TERMINATOR is neither gateway nor addresses or CIDRs separated by single spaces, so it is not handed to Caddy: write the addresses or CIDRs on one line, separated by single spaces, or 0.0.0.0/32 to trust no terminator." >&2
     exit 78
   fi
   how="set"
