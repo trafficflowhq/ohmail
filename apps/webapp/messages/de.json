@@ -946,6 +946,8 @@
     "unscreenedMovedNone": "Nichts mehr zu screenen.",
     "unscreenedFailed": "Screenen nicht m\u00f6glich. Versuch es noch einmal.",
     "unscreenedWaiting": "Dein Postfach l\u00e4dt noch. Das Screenen folgt, sobald es geladen ist.",
+    "pileUnscreenedLead": "{count, plural, one {1 Nachricht hier stammt von einem Absender, den du nie hereingelassen hast.} other {# Nachrichten hier stammen von Absendern, die du nie hereingelassen hast.}}",
+    "pileUnscreenedLeadAtLeast": "Mindestens {count, number} Nachrichten hier stammen von Absendern, die du nie hereingelassen hast.",
     "noSuggestion": "Für diesen Absender gibt es noch keinen Vorschlag. Wähl, wohin seine Mails gehen.",
     "noSuggestionUnavailable": "KI-Vorschläge sind für diesen Account nicht verfügbar: KI ist ausgeschaltet oder nicht erreichbar. Wähl, wohin seine Mails gehen.",
     "noSuggestionNoBudget": "Auf diesem Account sind keine KI-Credits mehr übrig. Wähl, wohin seine Mails gehen.",

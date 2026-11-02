@@ -317,10 +317,6 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // What the Screener filed on its own: the caller writes nothing at all, and the answer is
   // bounded by `AUTO_FILED_PAGE_MAX` on the server's side of the wire.
   "GET /screener/auto-filed",
-  // The undecided-sender summary, for the same reason one line up: the caller writes nothing at
-  // all, and the answer's own row count is bounded by `OHBOX_UNSCREENED_GROUPS_MAX` on the
-  // server's side of the wire.
-  "GET /screener/unscreened",
   // What waits on the organizer: the caller writes nothing at all, and the answer is bounded by
   // `WAITING_REQUESTS_READ_MAX` on the server's side of the wire.
   "GET /organizer-requests",
@@ -711,6 +707,9 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // "Not now" carries ONE caller-chosen string, the offer's fingerprint, and the service refuses
   // anything over 128 characters before it writes (the migration's CHECK is the belt).
   "POST /screener/held-releases/dismiss": { scalarsOnly: true },
+  // The undecided-sender summary: its one input is `?pile=`, News or Receipts or a 400, and the
+  // answer's own row count is bounded by `OHBOX_UNSCREENED_GROUPS_MAX` on the server's side.
+  "GET /screener/unscreened": { scalarsOnly: true },
   // The press names the sender groups it screens. The count of addresses is the only
   // caller-chosen size on the route, and the service refuses more than this many — and any
   // address over 320 characters — before it reads a row.
@@ -1277,6 +1276,8 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // The organize decision's window: an integer refused outside 1-365, and one of two scope words.
   "routes/screener.ts#dormancyDays": "clamped",
   "routes/screener.ts#scope": "closed-set",
+  // A pile's note: `news` or `receipts`, anything else a 400 before a row is read.
+  "routes/screener.ts#pile": "closed-set",
   "routes/screener.ts#q": "length-capped",
   "routes/screener.ts#uid": "identifier",
   "routes/screener.ts#uidValidity": "identifier",

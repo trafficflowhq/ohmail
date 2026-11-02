@@ -119,6 +119,7 @@ import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import { OhboxWhereLine } from "./OhboxWhereLine";
 import { useOhboxVisitMark } from "./ohbox-visit";
+import { usePileNote, type PileNoteSaid } from "./pile-note";
 import { useFaceFollowsAccount, type ApplyFaceAllDevices } from "./FaceRow";
 import {
   ProfileImportCard, SavedProfileSection, settingsDoorbell, useProfileImport, type ProfileImportTransport,
@@ -1997,6 +1998,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     replyTo, setReplyTo,
   });
   useOhboxVisitMark(demo ? null : engine, !demo && effectiveView === "ohbox"); // ohbox-visit.ts
+  /* LETTERS IN NEWS AND RECEIPTS FROM SENDERS NOBODY LET IN — each pile's note, asked while it is
+     shown (`pile-note.ts`); the press says what the server screened, in the Ohbox offer's words. */
+  const sayPileNote = useStableCallback((said: PileNoteSaid) => {
+    toast(said.kind === "moved" ? t("screener.unscreenedMoved", { count: said.count })
+      : said.kind === "none" ? t("screener.unscreenedMovedNone") : t("screener.unscreenedFailed"));
+  });
+  const readsStrangers = usePileNote(engine, "news", !demo && effectiveView === "reads", sayPileNote);
+  const receiptsStrangers = usePileNote(engine, "receipts", !demo && effectiveView === "receipts", sayPileNote);
 
   const frFinished = fr != null && fr.step >= fr.items.length;
   const frItem = fr && !frFinished ? fr.items[fr.step] : undefined;
@@ -2729,6 +2738,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onAction={onMessageAction}
                 onMarkAllRead={markAllReadsRead}
                 onPick={reportPick}
+                strangers={readsStrangers}
               />
                   ),
                   receipts: (
@@ -2777,6 +2787,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onAction={onMessageAction}
                 onMarkAllRead={markAllReceiptsRead}
                 onPick={reportPick}
+                strangers={receiptsStrangers}
               />
                   ),
                 }}

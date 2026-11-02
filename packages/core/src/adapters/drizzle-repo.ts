@@ -59,8 +59,8 @@ export { checkUncheckedById, writeSenderChecks, type UncheckedRow } from "../sen
 export {
   AGREE_SCREENS_BACKLOG_ACTION, AGREE_SWEEP_SLICES_PER_DRAIN, OHBOX_UNSCREENED_AUDIT_ACTION, OHBOX_UNSCREENED_GROUPS_MAX,
   OHBOX_UNSCREENED_MESSAGES_MAX, agreeRecordAt, agreeRecordPayload, agreeRecordedAt, agreeSweepSlice, agreeSweepRun, agreeWindowCutoff, gateHoldsSender, placementUndecided,
-  unscreenedGroups, unscreenedWalk, writeScreenerIntents, type AgreeSweepCursor, type AgreeSweepInput, type AgreeSweepOutcome,
-  type AgreeSweepRun, type ScreeningAnswer, type UnscreenedKnowledge, type UnscreenedRow,
+  isUnscreenedPile, unscreenedGroups, unscreenedSourceFolder, unscreenedWalk, writeScreenerIntents, type AgreeSweepCursor, type AgreeSweepInput, type AgreeSweepOutcome,
+  type AgreeSweepRun, type ScreeningAnswer, type UnscreenedKnowledge, type UnscreenedPile, type UnscreenedRow,
   type UnscreenedScope, type UnscreenedSenderGroup, type UnscreenedWalk,
 } from "../unscreened-set.js";
 

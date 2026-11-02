@@ -27,6 +27,7 @@ import { MarkAllRead, VIEW_HEAD_ROW } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
+import { PileNote } from "../../src/ui/PileNote";
 
 /**
  * A group's ledger identity is its FIRST ROW's id, never the display label: day labels
@@ -165,6 +166,10 @@ function ReceiptsBody() {
             <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
               {metaWhen(surface, meta) ?? " "}
             </Txt>
+            {/* Letters here from senders nobody let in, and the press — the web's note. */}
+            <View style={{ marginTop: 12 }}>
+              <PileNote pile="receipts" />
+            </View>
           </View>
         }
         empty={

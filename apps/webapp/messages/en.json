@@ -946,6 +946,8 @@
     "unscreenedMovedNone": "Nothing left to screen.",
     "unscreenedFailed": "Could not screen that mail. Try again.",
     "unscreenedWaiting": "Your mailbox is still loading. The screening goes ahead once it has.",
+    "pileUnscreenedLead": "{count, plural, one {1 letter here is from a sender you never let in.} other {# letters here are from senders you never let in.}}",
+    "pileUnscreenedLeadAtLeast": "At least {count, number} letters here are from senders you never let in.",
     "noSuggestion": "No suggestion yet for this sender. Choose where their mail goes.",
     "noSuggestionUnavailable": "AI suggestions are not available for this account: AI is switched off or unavailable. Choose where their mail goes.",
     "noSuggestionNoBudget": "This account has no AI credits left. Choose where their mail goes.",

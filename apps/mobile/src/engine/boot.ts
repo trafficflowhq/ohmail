@@ -528,8 +528,8 @@ function accountGuarded(
     screenerWaiting: (page) => adapter.screenerWaiting(page),
     /* The Ohbox's undecided-sender offer and its press — the web's pair, on `screenerWaiting`'s and
        `mutate`'s rules. Left out of this literal, the engine reads "this door has no offer". */
-    unscreened: () => adapter.unscreened(),
-    screenUnscreened: (addresses) => adapter.screenUnscreened(addresses),
+    unscreened: (pile) => adapter.unscreened(pile),
+    screenUnscreened: (addresses, pile) => adapter.screenUnscreened(addresses, pile),
     /* Why a sender's rows stayed — a read of this account's own messages, on `screenerWaiting`'s
        rule. Left out, the engine reads "this door names no reason" and the sheet lists none. */
     whyStayed: (ids) => adapter.whyStayed(ids),

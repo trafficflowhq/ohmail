@@ -11,6 +11,7 @@
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
 import { authScreens, failedAtGateOf, type FailedAtGateDTO } from "@ohmail/client-engine";
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
+import type { UnscreenedPileWire } from "@ohmail/client-engine";
 import { calendarEventsOf, withoutCalendarBodies, type DistinctCalendarEvent } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES, SENT_FORWARD_MAX_PARTS, draftOverCeiling } from "@ohmail/client-engine";
 import { addressBook, formatRecipient, matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
@@ -3952,6 +3953,13 @@ export interface LiveWorldActions {
    */
   screenUnscreened(): Promise<boolean>;
   /**
+   * THE NOTE ON NEWS AND RECEIPTS — the web's (`pile-note.ts`): how many letters in the pile came from
+   * senders nobody let in, asked of the door; `null` when it has no such read.
+   */
+  pileUnscreened(pile: UnscreenedPileWire): Promise<{ total: number; atLeast: boolean } | null>;
+  /** …and its press: the pile's letters from senders nobody let in go to the Screener. `false` on a refusal. */
+  screenPileUnscreened(pile: UnscreenedPileWire): Promise<boolean>;
+  /**
    * A HELD LETTER ITS PROVIDER FAILED, decided alone (the web's `fileFailed`): one `move` out of the
    * gate — `spam` for "Not from …", `ohbox` for "It's from …", the person's own placement — never a
    * rule, a decision or a contact. `false` on a refusal.
@@ -6300,6 +6308,20 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
   };
 
+  /* The note on News and Receipts, on the Ohbox offer's press and in its words. */
+  const pileUnscreened = (pile: UnscreenedPileWire): Promise<{ total: number; atLeast: boolean } | null> =>
+    engine.pileUnscreened(pile);
+  const screenPileUnscreened = async (pile: UnscreenedPileWire): Promise<boolean> => {
+    try {
+      const count = await engine.screenPileUnscreened(pile);
+      toast(count > 0 ? refuse("unscreenedMoved", count) : refuse("unscreenedMovedNone"));
+      return true;
+    } catch {
+      toast(refuse("unscreenedFailed"));
+      return false;
+    }
+  };
+
   /**
    * THE WINDOW PRESS (the web's `holdScreenPress`): the press says what it does, with Undo; the
    * commit re-plans through `planScreenCommit` and the list is read back once the rules are answered
@@ -6608,6 +6630,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, leaveSend, cancelWaitingSend, cancelSchedule, tagToggle, tagCreate,
     screenSender,
     screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened, fileFailed,
+    pileUnscreened, screenPileUnscreened,
     draftDiscard, draftResolve, draftSendAgain, draftKeep, keepEnvelope, keptReply, draftSent, draftLeft,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
@@ -6774,6 +6797,9 @@ export interface WorldActions {
   moveStayed(ids: readonly string[], dest: Destination): void;
   /** The Ohbox's undecided-sender offer, pressed — awaited by its card. See {@link LiveWorldActions.screenUnscreened}. */
   screenUnscreened(): Promise<boolean>;
+  /** The note on News and Receipts, asked and pressed. See {@link LiveWorldActions.pileUnscreened}. */
+  pileUnscreened(pile: UnscreenedPileWire): Promise<{ total: number; atLeast: boolean } | null>;
+  screenPileUnscreened(pile: UnscreenedPileWire): Promise<boolean>;
   /** A held letter its provider failed, decided alone. See {@link LiveWorldActions.fileFailed}. */
   fileFailed(messageId: string, to: "spam" | "ohbox"): void;
   /* The folder verbs — see {@link LiveWorldActions} for each arm's contract. */
@@ -6863,6 +6889,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     stayedWhy: (ids) => current().stayedWhy(ids),
     moveStayed: (ids, dest) => void current().moveStayed(ids, dest),
     screenUnscreened: () => current().screenUnscreened(),
+    pileUnscreened: (pile) => current().pileUnscreened(pile),
+    screenPileUnscreened: (pile) => current().screenPileUnscreened(pile),
     fileFailed: (id, to) => void current().fileFailed(id, to),
     folderCreate: (mailboxId, name) => void current().folderCreate(mailboxId, name),
     folderRename: (id, name) => void current().folderRename(id, name),

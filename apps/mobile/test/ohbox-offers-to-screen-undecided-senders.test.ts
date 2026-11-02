@@ -282,3 +282,49 @@ describe("the sent-mail seed on the phone", () => {
     } finally { s.close(); }
   });
 });
+
+/* ── THE NOTE ON NEWS AND RECEIPTS ───────────────────────────────────────────────────────────────
+ * Owner report 2026-11-02: letters in News from senders the person never chose. The phone asks the
+ * store for the pile as the web does (`?pile=`), says its number in the web's words, and its press
+ * sends the pile and holds the sender at the gate. A server from before piles answers the Ohbox's
+ * offer and does not say the pile back: the phone draws no note from it. */
+describe("the note on News and Receipts on the phone", () => {
+  const COLD = { name: "Deals Desk", address: "deals@cold-brand.test" };
+
+  it("states the pile's number, and its press holds the sender in the Screener", async () => {
+    const s = await scene();
+    try {
+      s.fake.addMessage(dto("cold-1", { subject: "Limited offer", folder: "ohmail/News", from: COLD, date: "2026-08-19T07:20:00Z" }));
+      s.fake.addMessage(dto("cold-2", { subject: "Last chance", folder: "ohmail/News", from: COLD, date: "2026-08-19T07:25:00Z" }));
+      await s.cadence();
+      expect(await s.actions.pileUnscreened("news")).toEqual({ total: 2, atLeast: false });
+      expect(await s.actions.pileUnscreened("receipts")).toEqual({ total: 0, atLeast: false });
+      expect(Copy.pileUnscreenedLead(2)).toBe("2 letters here are from senders you never let in.");
+      expect(s.fake.seen.filter((r) => r.method === "POST"), "asking moved mail").toEqual([]);
+
+      expect(await s.actions.screenPileUnscreened("news")).toBe(true);
+      expect(s.fake.seen.filter((r) => r.method === "POST").map((r) => [r.url, JSON.parse(r.body)])).toEqual([
+        ["/screener/unscreened", { pile: "news" }],
+      ]);
+      expect(s.said).toEqual(["Screened 2. Your organizer moves them on the next pass."]);
+      await s.cadence();
+      expect(s.waiting(), "the press held nobody").toEqual([COLD.address]);
+      expect(await s.actions.pileUnscreened("news")).toEqual({ total: 0, atLeast: false });
+      expect(liveUnscreened(s.engine.read())?.total, "the Ohbox's offer changed").toBe(2);
+    } finally { s.close(); }
+  });
+
+  it("a server from before piles has no note, and a refused read is no number", async () => {
+    const s = await scene();
+    try {
+      s.fake.addMessage(dto("cold-1", { subject: "Limited offer", folder: "ohmail/News", from: COLD, date: "2026-08-19T07:20:00Z" }));
+      await s.cadence();
+      s.fake.pilesUnknown(true);
+      expect(await s.actions.pileUnscreened("news")).toBeNull();
+      s.fake.pilesUnknown(false);
+      s.fake.failNext("GET", "/screener/unscreened");
+      await expect(s.actions.pileUnscreened("news")).rejects.toThrow();
+      expect(s.fake.seen.filter((r) => r.method === "POST")).toEqual([]);
+    } finally { s.close(); }
+  });
+});

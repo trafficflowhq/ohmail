@@ -3,7 +3,7 @@ import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { makeScreenerService } from "@trafficflow/services";
 import { rules, folderState, idempotencyKeys, mailboxes, messages, organizerRequests } from "@trafficflow/db";
 import { and, eq } from "drizzle-orm";
-import { makeDeps, seedSession, seedScreenerHeld, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedScreenerHeld, seedMailbox, seedMessage, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
@@ -430,5 +430,50 @@ describe("GET /screener — pendingDecisions reaches the wire", () => {
     expect(after.pendingDecisions).toHaveLength(1);
     expect(after.pendingDecisions[0]).toMatchObject({ subject: "alice@ex.example", scope: "sender", sent: false });
     expect(typeof after.pendingDecisions[0].decidedAt).toBe("string");
+  });
+});
+
+/* THE NOTE ON NEWS AND RECEIPTS on the wire (owner report 2026-11-02): `?pile=` asks a pile instead
+   of the Ohbox and says the pile back, so a client tells it from an older server's Ohbox answer;
+   the press names the pile in its body; anything else is a 400 before a row is read. */
+describe("GET/POST /screener/unscreened — a pile's note", () => {
+  it("answers the pile and says it back; the Ohbox's answer says none; the press moves the pile's letters", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    const cold = await seedMessage(db, { accountId: s.accountId, mailboxId, folder: "ohmail/News", fromAddress: "deals@cold.example", date: new Date("2024-03-01T08:00:00Z") });
+    await seedMessage(db, { accountId: s.accountId, mailboxId, folder: "ohmail/Receipts", fromAddress: "shop@cold.example", date: new Date("2024-03-01T08:00:00Z") });
+
+    const news = await H(req("GET", "/screener/unscreened?pile=news", { bearer: s.token }), deps);
+    expect(news.status).toBe(200);
+    expect(await news.json()).toMatchObject({
+      groups: [{ address: "deals@cold.example", count: 1 }], total: 1, complete: true, pile: "news",
+    });
+    const ohbox = await (await H(req("GET", "/screener/unscreened", { bearer: s.token }), deps)).json();
+    expect(ohbox).toMatchObject({ groups: [], total: 0 });
+    expect(ohbox, "the Ohbox's answer named a pile").not.toHaveProperty("pile");
+
+    const pressed = await H(req("POST", "/screener/unscreened", {
+      bearer: s.token, headers: { "idempotency-key": "pile-1" }, body: JSON.stringify({ pile: "news" }),
+    }), deps);
+    expect(pressed.status).toBe(200);
+    expect(await pressed.json()).toMatchObject({ screened: [{ address: "deals@cold.example", count: 1 }], total: 1 });
+    const [fs] = await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, cold.id));
+    expect(fs!.d).toBe("ohmail/Screener");
+  });
+
+  it("a pile that is neither News nor Receipts is a 400, on the read and on the press", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    for (const pile of ["spam", "News", ""]) {
+      const read = await H(req("GET", `/screener/unscreened?pile=${pile}`, { bearer: s.token }), deps);
+      expect(read.status, `?pile=${pile}`).toBe(400);
+    }
+    for (const pile of ["spam", 7, null]) {
+      const press = await H(req("POST", "/screener/unscreened", {
+        bearer: s.token, headers: { "idempotency-key": `pile-${String(pile)}` }, body: JSON.stringify({ pile }),
+      }), deps);
+      expect(press.status, JSON.stringify(pile)).toBe(400);
+    }
   });
 });

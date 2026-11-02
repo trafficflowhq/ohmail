@@ -670,6 +670,9 @@ const NO_ACTIONS: WorldActions = {
   stayedWhy: async () => new Map(),
   moveStayed: () => undefined,
   screenUnscreened: async () => false,
+  // Nothing connected has a pile to ask about: the note is absent.
+  pileUnscreened: async () => null,
+  screenPileUnscreened: async () => false,
   fileFailed: () => undefined,
   folderCreate: () => undefined,
   folderRename: () => undefined,
@@ -1752,6 +1755,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
             if (held) void machine?.refresh();
             return held;
           },
+          pileUnscreened: (pile) => acts.pileUnscreened(pile),
+          screenPileUnscreened: (pile) => acts.screenPileUnscreened(pile),
           fileFailed: (id, to) => void acts.fileFailed(id, to),
           folderCreate: (mailboxId, name) => void acts.folderCreate(mailboxId, name),
           folderRename: (id, name) => void acts.folderRename(id, name),

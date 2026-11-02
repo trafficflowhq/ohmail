@@ -5,6 +5,9 @@ import {
   accounts, auditLog, changeLog, contacts, folderState, mailboxes, messageBodies, messages, rules, threads,
 } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
+import { commitChange, planChange, UNMETERED_STORAGE_CAP, type Change } from "@trafficflow/core";
+import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeProfileDoc, profileGateView } from "@trafficflow/core/adapters/organizer-profile";
 import {
   screenUnscreened, unscreenedSummary, type ServiceContext,
 } from "../src/mail.js";
@@ -246,11 +249,158 @@ describe("the undecided-sender walk speaks both dialects", () => {
     expect(offered).toEqual(["stranger@x.test"]);
   });
 
-  it("a reader install offers nothing on either store", async () => {
+  it("a reader install offers nothing, from the Ohbox or a pile, on either store", async () => {
     const w = await world();
     await w.db.update(mailboxes).set({ organizerRole: "reader" })
       .where(eq(mailboxes.id, w.mailboxId));
     await seed(w, "stranger@x.test");
+    await seedIn(w, "stranger@x.test", NEWS);
     expect(await unscreenedSummary(w.db as never, w.accountId, NOW)).toEqual({ groups: [], total: 0, complete: true });
+    expect(await unscreenedSummary(w.db as never, w.accountId, NOW, "news")).toEqual({ groups: [], total: 0, complete: true });
+  });
+});
+
+/* ── THE NOTE ON NEWS AND RECEIPTS ───────────────────────────────────────────────────────────────
+ * Owner report 2026-11-02: letters in News from senders the person never chose. The same gate,
+ * asked of a pile with no window: a letter there from a sender with no contact and no rule is
+ * offered at any age, and the press holds the sender at the gate. Nothing moves without it. */
+const NEWS = "ohmail/News";
+const LEGACY_NEWS = "ohmail/Reads";
+const RECEIPTS = "ohmail/Receipts";
+/** The headers a mailing service writes, cold outreach's too. */
+const BULK = { "list-unsubscribe": ["<https://x.test/u>"], "list-unsubscribe-post": ["List-Unsubscribe=One-Click"] };
+
+/** A letter a pass, an old release or the person placed in `folder`; years old unless stated. */
+async function seedIn(
+  w: Awaited<ReturnType<typeof world>>, from: string, folder: string,
+  o: { arrivedAt?: Date | null; decidedAt?: Date } = {},
+): Promise<string> {
+  const i = n++;
+  const arrivedAt = o.arrivedAt === undefined ? OLD : o.arrivedAt;
+  const [m] = await w.db.insert(messages).values({
+    accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `p${i}`,
+    dedupKey: `oud:${randomUUID()}`, subject: `Letter ${i}`, fromAddress: from,
+    date: arrivedAt ?? OLD, createdAt: arrivedAt ?? OLD, arrivedAt, unread: true,
+    nativeLocator: { folder, ref: `2:${i}` },
+  }).returning();
+  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: BULK });
+  await w.db.insert(folderState).values({
+    messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+    lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    ...(o.decidedAt ? { decidedAt: o.decidedAt } : {}),
+  });
+  return m!.id;
+}
+
+const offered = async (w: Awaited<ReturnType<typeof world>>, pile?: "news" | "receipts") =>
+  (await unscreenedSummary(w.db as never, w.accountId, NOW, pile)).groups.map((g) => g.address);
+
+describe("the note on News and Receipts asks who nobody let in, on both stores", () => {
+  it("offers a pile's letters from senders nobody let in at any age, News in both spellings", async () => {
+    const w = await world();
+    await seedIn(w, "bulk@x.test", NEWS);
+    await seedIn(w, "bulk@x.test", NEWS, { arrivedAt: null });
+    await seedIn(w, "legacy@x.test", LEGACY_NEWS);
+    await seedIn(w, "shop@x.test", RECEIPTS, { arrivedAt: ARRIVED });
+    await seed(w, "door@x.test");
+
+    expect(await unscreenedSummary(w.db as never, w.accountId, NOW, "news")).toEqual({
+      groups: [
+        { address: "bulk@x.test", count: 2, newestAt: OLD.toISOString() },
+        { address: "legacy@x.test", count: 1, newestAt: OLD.toISOString() },
+      ],
+      total: 3, complete: true,
+    });
+    expect(await offered(w, "receipts")).toEqual(["shop@x.test"]);
+    expect(await offered(w), "the Ohbox's offer took a pile's letters").toEqual(["door@x.test"]);
+  });
+
+  it("CONTROL — a contact's letters, a ruled sender's, a placed letter and the account's own are not offered", async () => {
+    const w = await world();
+    const own = (await w.db.select({ a: mailboxes.address }).from(mailboxes)
+      .where(eq(mailboxes.id, w.mailboxId)))[0]!.a;
+    await w.db.insert(contacts).values([
+      { accountId: w.accountId, address: "pal@x.test", source: "person" },
+      { accountId: w.accountId, address: "written@x.test", source: "inferred" },
+    ]);
+    await w.db.insert(rules).values([
+      { accountId: w.accountId, kind: "sender", match: "ruled@x.test", destination: NEWS, provenance: "manual", enabled: true, priority: 0, retroRequestedAt: null },
+      { accountId: w.accountId, kind: "domain", match: "brand.test", destination: NEWS, provenance: "manual", enabled: true, priority: 0, retroRequestedAt: null },
+    ]);
+    for (const from of ["pal@x.test", "written@x.test", "ruled@x.test", "deals@brand.test", own]) await seedIn(w, from, NEWS);
+    await seedIn(w, "filed@x.test", NEWS, { decidedAt: OLD });
+    await seedIn(w, "stranger@x.test", NEWS);
+    expect(await offered(w, "news")).toEqual(["stranger@x.test"]);
+  });
+
+  it("the press holds the pile's strangers: intents out of the pile, one audit per sender, and a second press finds nothing", async () => {
+    const w = await world();
+    const a = await seedIn(w, "bulk@x.test", NEWS);
+    const b = await seedIn(w, "bulk@x.test", LEGACY_NEWS);
+    const receipt = await seedIn(w, "shop@x.test", RECEIPTS);
+    const door = await seed(w, "door@x.test");
+
+    expect(await screenUnscreened(ctxOf(w), { pile: "news" })).toEqual({
+      screened: [{ address: "bulk@x.test", count: 2, newestAt: OLD.toISOString() }], total: 2,
+    });
+    expect([await desiredOf(w, a), await desiredOf(w, b)]).toEqual([GATE, GATE]);
+    expect(await desiredOf(w, receipt), "a News press moved a receipt").toBe(RECEIPTS);
+    expect(await desiredOf(w, door), "a News press moved the Ohbox").toBe(OHBOX);
+    const changes = await w.db.select({ id: changeLog.entityId, op: changeLog.op, meta: changeLog.meta })
+      .from(changeLog).where(eq(changeLog.accountId, w.accountId)).orderBy(asc(changeLog.seq));
+    expect(changes).toEqual([a, b].sort().map((id) => ({ id, op: "move", meta: { from: NEWS, to: GATE } })));
+    const audits = await w.db.select({ payload: auditLog.payload, inverse: auditLog.inverse })
+      .from(auditLog).where(eq(auditLog.accountId, w.accountId));
+    expect(audits).toEqual([{
+      payload: { address: "bulk@x.test", count: 2, from: NEWS, to: GATE, via: "pile" },
+      inverse: { address: "bulk@x.test", from: GATE, to: NEWS },
+    }]);
+
+    expect(await offered(w, "news")).toEqual([]);
+    expect(await screenUnscreened(ctxOf(w), { pile: "news" })).toEqual({ screened: [], total: 0 });
+    expect(await screenUnscreened(ctxOf(w), { pile: "receipts" })).toMatchObject({ total: 1 });
+    expect(await desiredOf(w, receipt)).toBe(GATE);
+  });
+
+  /* A TAKEOVER'S OPEN IMPORT QUESTION keeps the News letters the travelling document lets in where
+     they arrived ('external', nothing decided): the person let that sender in on the previous
+     organizer, so the note neither counts nor presses them. The control is a letter ohmail placed. */
+  it("a letter an open import question kept in News for the travelling document is neither offered nor pressed", async () => {
+    const w = await world();
+    const repo = makeDrizzleRepo(w.db);
+    const chosen = "weekly@chosen.test";
+    const doc = makeProfileDoc(
+      { screener: [{ address: chosen }], rules: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null },
+      { updatedAt: OLD, producer: { kind: "local", version: "0.30.28" } },
+    );
+    const raw = Buffer.from([
+      "Message-ID: <w1@chosen.test>", `From: ${chosen}`, "To: me@x.test", "Subject: This week",
+      "List-Unsubscribe: <https://chosen.test/u>", "Content-Type: text/plain; charset=utf-8", "", "The week.",
+    ].join("\r\n"));
+    const change: Change = { type: "create", locator: { folder: NEWS, ref: "5:1" }, raw, seen: false, internalDate: ARRIVED };
+    const plan = await planChange(change, {
+      repo, accountId: w.accountId, mailboxId: w.mailboxId, routing: repo, readerMode: false,
+      importHold: { kind: "document", ...profileGateView(doc) },
+    });
+    const { messageId: kept } = await repo.transaction((tx) => commitChange(plan, {
+      repo: tx, routing: tx, accountId: w.accountId, mailboxId: w.mailboxId, storageCap: UNMETERED_STORAGE_CAP,
+    }));
+    const [row] = await w.db.select({ d: folderState.desiredFolder, by: folderState.lastSetBy, at: folderState.decidedAt })
+      .from(folderState).where(eq(folderState.messageId, kept));
+    expect(row, "the hold did not keep the letter where it arrived").toEqual({ d: NEWS, by: "external", at: null });
+    const placed = await seedIn(w, "bulk@x.test", NEWS);
+
+    expect(await offered(w, "news"), "the note named a sender the travelling document lets in").toEqual(["bulk@x.test"]);
+    expect(await screenUnscreened(ctxOf(w), { pile: "news" })).toMatchObject({ total: 1 });
+    expect([await desiredOf(w, kept), await desiredOf(w, placed)]).toEqual([NEWS, GATE]);
+  });
+
+  it("a pile that is neither News nor Receipts is refused, and nothing moves", async () => {
+    const w = await world();
+    const id = await seedIn(w, "bulk@x.test", NEWS);
+    for (const pile of ["spam", "News", 1]) {
+      await expect(screenUnscreened(ctxOf(w), { pile }), String(pile)).rejects.toMatchObject({ httpStatus: 400 });
+    }
+    expect(await desiredOf(w, id)).toBe(NEWS);
   });
 });

@@ -32,7 +32,7 @@ import type {
 } from "../engine.js";
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire, StayedWire,
-  UnscreenedGroupWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
+  UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
   MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams, WithdrawSendAnswer,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
@@ -1322,10 +1322,10 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
-  async unscreened(): Promise<UnscreenedWire> {
-    const res = await this.request("GET", "/screener/unscreened");
+  async unscreened(pile?: UnscreenedPileWire): Promise<UnscreenedWire> {
+    const res = await this.request("GET", pile === undefined ? "/screener/unscreened" : `/screener/unscreened?pile=${pile}`);
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { groups?: unknown; total?: unknown; complete?: unknown; max?: unknown };
+    const wire = (await res.json()) as { groups?: unknown; total?: unknown; complete?: unknown; max?: unknown; pile?: unknown };
     const groups = Array.isArray(wire.groups)
       ? wire.groups.map((g) => HttpAdapter.unscreenedGroupOf(g)).filter((g): g is UnscreenedGroupWire => g !== null)
       : [];
@@ -1336,6 +1336,7 @@ export class HttpAdapter implements EngineAdapter {
       total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
       complete: wire.complete !== false,
       max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
+      ...(wire.pile === "news" || wire.pile === "receipts" ? { pile: wire.pile } : {}),
     };
   }
 
@@ -1391,10 +1392,10 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
-  async screenUnscreened(addresses?: readonly string[]): Promise<UnscreenedResultWire> {
+  async screenUnscreened(addresses?: readonly string[], pile?: UnscreenedPileWire): Promise<UnscreenedResultWire> {
     const res = await this.request("POST", "/screener/unscreened", {
       // Omitted rather than `null`, for `releaseHeld`'s reason: absent means EVERY group shown.
-      body: addresses === undefined ? {} : { addresses: [...addresses] },
+      body: { ...(addresses === undefined ? {} : { addresses: [...addresses] }), ...(pile === undefined ? {} : { pile }) },
     });
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as { screened?: unknown; total?: unknown };

@@ -626,7 +626,7 @@ export {
 // Adapters.
 export type {
   CreatedDraftRow, EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams,
-  ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire,
+  ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedPileWire,
   WithdrawSendAnswer, WithdrawSendOutcome,
 } from "./adapters/adapter.js";
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";

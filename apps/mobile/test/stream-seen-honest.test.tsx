@@ -88,6 +88,8 @@ const st = vi.hoisted(() => {
     markAll: null as any, pressed: [] as unknown[][], composer: null as any, asks: {} as Record<string, string>, fetched: [] as string[],
     reading: null as null | Promise<void>,
     kept: {} as Record<string, unknown>,
+    /* The note on News and Receipts: the store's answer per pile (an Error is a refused read), each ask and each press. */
+    piles: {} as Record<string, unknown>, pileAsks: [] as string[], pilePresses: [] as string[],
   };
   // One object for the app's life, as the world's actions are: a new one per render re-runs the focus effect.
   s.actions = {
@@ -95,6 +97,13 @@ const st = vi.hoisted(() => {
     leaveFeed: () => undefined, markAllSeen: (...a: unknown[]) => { s.pressed.push(a); }, hydrateMessage: (id: string) => { s.opened.push(id); }, holdFiles: () => undefined, releaseFiles: () => undefined,
     forwardFetch: (id: string) => { s.fetched.push(id); return s.reading; },
     keptReply: (id: string) => s.kept[id] ?? { kind: "none" },
+    pileUnscreened: async (pile: string) => {
+      s.pileAsks.push(pile);
+      const answer = s.piles[pile];
+      if (answer instanceof Error) throw answer;
+      return answer ?? null;
+    },
+    screenPileUnscreened: async (pile: string) => { s.pilePresses.push(pile); s.piles[pile] = { total: 0, atLeast: false }; return true; },
   };
   return s;
 });
@@ -226,7 +235,10 @@ const open = (rows: any[], shown: () => ReturnType<typeof h> = () => h(ReadsScre
 const arrive = (rows: any[]) => { st.items = [...rows, ...st.items]; };
 
 beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }); });
-afterEach(() => { screen?.unmount(); screen = null; win.ids = null; vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => {
+  screen?.unmount(); screen = null; win.ids = null; vi.restoreAllMocks(); vi.useRealTimers();
+  st.piles = {}; st.pileAsks = []; st.pilePresses = [];
+});
 
 describe("phone News marks only the letters a person scrolled through", () => {
   it("letters arriving above a deep place stay unread while the list holds the place", () => {
@@ -717,5 +729,53 @@ describe("phone News and Receipts carry the web stream's verbs", () => {
     expect(st.markAll?.unreadCount).toBe(2);
     act(() => st.markAll.onPress());
     expect(st.pressed).toEqual([[["RW2", "RW0"], { place: "receipts", upToId: "RW2" }]]);
+  });
+});
+
+/* ── THE NOTE ON NEWS AND RECEIPTS (owner report 2026-11-02) ─────────────────────────────────────
+ * Letters in the pile from senders nobody let in: the store's number with its press at the top of
+ * each stream, asked when the stream is shown. Nothing moves until the press; nothing is drawn at
+ * zero, on a refused read, or from a door with no such read. */
+describe("phone News and Receipts say how many letters came from senders nobody let in", () => {
+  const button = (label: string) => screen!.el.querySelector<HTMLElement>(`[data-button="${label}"]`);
+  const screens = () => [...screen!.el.querySelectorAll("[data-button]")].filter((b) => /^Screen \d/.test(b.getAttribute("data-button") ?? ""));
+  const settle = () => act(async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); });
+
+  it("News draws the store's number with its press, moves nothing until it, and asks again after", async () => {
+    st.piles = { news: { total: 2, atLeast: false } };
+    open(letters("NW", 3));
+    await settle();
+    expect(st.pileAsks).toEqual(["news"]);
+    expect(button(Copy.unscreenedAll(2)), "the note is not drawn").not.toBeNull();
+    expect(st.pilePresses, "a read moved somebody's mail").toEqual([]);
+
+    await act(async () => { button(Copy.unscreenedAll(2))!.click(); });
+    await settle();
+    expect(st.pilePresses).toEqual(["news"]);
+    expect(st.pileAsks).toEqual(["news", "news"]);
+    expect(screens(), "the note outlived the press it answered").toEqual([]);
+    expect(Copy.pileUnscreenedLead(2)).toBe("2 letters here are from senders you never let in.");
+    expect(Copy.pileUnscreenedLead(40, true)).toBe("At least 40 letters here are from senders you never let in.");
+  });
+
+  it("Receipts asks its own pile", async () => {
+    st.piles = { news: { total: 5, atLeast: false }, receipts: { total: 1, atLeast: false } };
+    open(letters("RW", 3), () => h(ReceiptsScreen));
+    await settle();
+    expect(st.pileAsks).toEqual(["receipts"]);
+    expect(screens().map((b) => b.getAttribute("data-button"))).toEqual([Copy.unscreenedAll(1)]);
+    expect(Copy.pileUnscreenedLead(1)).toBe("1 letter here is from a sender you never let in.");
+  });
+
+  it("draws nothing at zero, on a refused read, or from a door with no such read", async () => {
+    for (const answer of [{ total: 0, atLeast: false }, new Error("refused"), null]) {
+      st.piles = { news: answer };
+      open(letters("NW", 3));
+      await settle();
+      expect(screens(), String(answer)).toEqual([]);
+      screen!.unmount();
+      screen = null;
+    }
+    expect(st.pilePresses).toEqual([]);
   });
 });
