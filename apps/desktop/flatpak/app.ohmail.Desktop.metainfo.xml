@@ -78,6 +78,19 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.30" date="2026-11-03">
+      <description>
+        <ul>
+          <li>A file dragged from the file manager into a message is attached, not pasted as its path</li>
+          <li>Signing out closes the mail at once, and sign-in records stay bounded</li>
+          <li>Forged letters, disguised tracking pixels and mailing lists are caught in more places</li>
+          <li>A worker set to count old settings copies reads all of them while the mailbox stays connected</li>
+          <li>Coloured answers keep their colour, and five reading and sending fixes</li>
+          <li>Found settings keep their answers and stay out of the way</li>
+          <li>Six small fixes on the web and the desktop</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.29" date="2026-11-02">
       <description>
         <ul>
@@ -122,13 +135,6 @@
           <li>Shift+J, Shift+K and Shift-click select only the messages you step over, even after a read message</li>
           <li>A minus word only leaves letters out of a search</li>
           <li>A new search order starts at the top result again</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.25" date="2026-11-01">
-      <description>
-        <ul>
-          <li>Trash lists what it holds</li>
         </ul>
       </description>
     </release>
