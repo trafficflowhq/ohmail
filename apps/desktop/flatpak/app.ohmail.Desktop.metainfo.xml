@@ -78,6 +78,20 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.28" date="2026-11-02">
+      <description>
+        <ul>
+          <li>An unfinished first mailbox setup's password is no longer used</li>
+          <li>Look-alike link text gets its note, and a web PDF preview only ever opens in its worker</li>
+          <li>The phone previews pictures and PDFs, resumes a kept reply and deletes on its own</li>
+          <li>A search with "or" keeps the letters each word finds inside a longer word</li>
+          <li>A self-hosted server behind your own terminator needs OHMAIL_TLS_TERMINATOR set before you update</li>
+          <li>A letter your mail provider failed waits in the Screener for you to decide</li>
+          <li>Signing out reaches the server later when it cannot at once, and a recovery code confirms it is you</li>
+          <li>Three timing tests wait for events, not milliseconds</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.27" date="2026-11-02">
       <description>
         <ul>
@@ -116,14 +130,6 @@
           <li>A letter that lists late no longer takes the cursor</li>
           <li>The settings copy in the mailbox reads back when a stored value or the server's encoding changed it</li>
           <li>Cloud Settings names a mailbox that cannot keep the settings copy</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.23" date="2026-11-01">
-      <description>
-        <ul>
-          <li>Search answers sooner on Cloud, and a broad word's count no longer takes seconds</li>
-          <li>Import settings brings a reconnected mailbox's signature back where you can see it</li>
         </ul>
       </description>
     </release>

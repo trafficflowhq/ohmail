@@ -21,6 +21,122 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.28] — 2026-11-02
+
+### An unfinished first mailbox setup's password is no longer used
+
+In the desktop app, a first setup of a mailbox "On this computer" that stopped after its password was
+checked and before the setup was saved (the app was quit or reloaded, or saving failed) kept that
+password on this computer, and a later setup could connect that mailbox with it. The password is now
+never used: it is removed the next time a mailbox is opened "On this computer", before anything
+connects.
+
+### Look-alike link text gets its note, and a web PDF preview only ever opens in its worker
+
+On the web app, ohmail Cloud and the desktop, a link whose text names a site in look-alike letters now gets
+the note that it goes elsewhere, as one naming another site in plain letters already did: math-bold or
+full-width letters, letters of another script (Cyrillic `раураl.com`), full-width or ideographic full stops,
+and a site name glued to text of another script without a space. The text is read the way a browser reads an
+address, so an honest address in another script that leads where it says (`bücher.example`) stays quiet.
+Words of another script joined by a dot (`1.查看详情`, `ул.Тверская`) name no site unless they end in a real
+top-level domain such as `.рф` or in letters drawn as Latin ones. Dots of other shapes, such as a middle dot or a one dot leader, can still hide an address.
+
+Hovering a link in a letter always shows where it goes: a title the sender put on anything inside the link no
+longer replaces it. A picture inside a link keeps that text as its description.
+
+Spam, Junk and Screened-out previews no longer say that a mail is a meeting invitation sent as an Outlook
+link. Mail set aside there is the place a look-alike would come from, and ohmail no longer vouches for it.
+
+The web app's PDF preview reads the file only in its own worker. A browser that cannot start the worker
+shows "Can't show this PDF here" with a Download, instead of reading the file on the page that holds your
+session.
+
+### The phone previews pictures and PDFs, resumes a kept reply and deletes on its own
+
+On the phone (Android and iOS), a tap on a picture or a PDF attachment shows it in the app, the way
+the web and the desktop do; Share sits in the preview's bar, and every other file is shared at the
+tap as before. The preview runs in its own sandboxed page and fetches nothing. Each message under
+"Earlier in this conversation" now names who wrote it, with the address beside the name. Reply on
+a message whose reply is already in Drafts opens that draft again instead of starting a second
+one, and says so when the kept reply cannot be opened here. The phone without a paired server
+offers Delete, which moves the message to the mail server's Trash, where it can be restored.
+More's Answer Later, Parked and Resurface each open their own pile.
+
+### A search with "or" keeps the letters each word finds inside a longer word
+
+A search with `or` now finds, for each of its words, every letter that word finds alone: inside a sender's
+address, in a file name and, for up to four words in all, at the start of a longer word. Before, `mail or zzzqx` missed the letters
+`mail` finds only inside a word such as `webmail`, and `mail or -thanks` listed fewer letters than
+`mail -thanks`. On ohmail Cloud, your own server, the desktop and the phone.
+
+### A self-hosted server behind your own terminator needs OHMAIL_TLS_TERMINATOR set before you update
+
+If your server sits behind a TLS terminator of your own (`OHMAIL_EXTERNAL_TLS=1`), set
+`OHMAIL_TLS_TERMINATOR` in `.env` before you update: the proxy and the server no longer start without
+it, and each says why. `OHMAIL_TLS_TERMINATOR=gateway` keeps what an empty value did, for a terminator on
+the same box that sets `X-Forwarded-For` while `OHMAIL_BIND` stays on `127.0.0.1`. Name your terminator's
+addresses when it runs anywhere else, or set `0.0.0.0/32` for a relay that adds no forwarded address
+([the VPS guide](docs/self-host/VPS.md) has all three). An empty value used to trust the stack's network
+gateway, which every connection through a published port arrives from, so a visitor could choose the
+address the server recorded for them: lock that address out of an account, or get past the per-address
+sign-in limit.
+
+`gateway` needs this release's `proxy/` directory and its images together: a server from an earlier
+release refuses it as a word, not an address, and does not start. While `OHMAIL_IMAGE_TAG` pins an
+earlier release, to stay on it or while this release's images are still publishing, write the gateway's
+own address followed by `/32` instead, the `Gateway` that `docker network inspect ohmail_default` shows
+(your `OHMAIL_PROJECT` in place of `ohmail`). Every version reads an address the same way; switch to
+`gateway` once the images catch up.
+
+A first start on a slow machine no longer fails and restarts while Postgres is still setting itself up:
+the database reads healthy only once it takes connections on its final listener, and the server waits for
+it, up to two minutes, before it migrates.
+
+The self-hosted server now refuses to start while the key-retirement setting is set, and says how to undo
+it: it cannot yet check that no stored secret still needs a retired key, and setting the retired keys back
+keeps every stored secret readable.
+
+A `.env` beside the compose file, which holds the encryption key and the database password, is now ignored
+by git, so a `git add -A` in your clone no longer picks it up.
+
+### A letter your mail provider failed waits in the Screener for you to decide
+
+A letter that claims to come from one of your own addresses, or from someone you already write to, and
+that your mail provider's sender check failed, no longer shows in the Ohbox as theirs. It waits at the
+top of the Screener, saying which address the check failed for, with two answers: "Not from you" (or
+"Not from them") moves it to Spam, and "It's from you" (or "It's from them") moves it to the Ohbox.
+Neither makes a rule. An open letter whose check failed says so under its sender. Desktop, web and phone.
+
+Acting on the Screener's suggestions for you, and filing obvious bulk mail, no longer move a one-time
+code or a password-reset email waiting in the Screener: a sender with one waits for you. At a mailbox
+Microsoft hosts, a line the sender wrote into a letter's headers no longer counts as the provider
+confirming the sender.
+
+### Signing out reaches the server later when it cannot at once, and a recovery code confirms it is you
+
+A browser paired with your computer now has its own Sign out, under Settings → Account: it ends that
+browser's session on your computer, and what the browser kept for the pairing goes with it. When the phone
+or the paired browser signs out, or forgets a server, while the server cannot be reached, the sign-out is
+kept and sent the next time the server can be reached, for up to thirty days; before, the session stayed
+valid there until it expired. Pairing a phone or a browser again with the same server now ends the session
+it had before.
+
+A sign-in the server turns away after it had already started a session no longer leaves that session
+behind, and neither does a desktop sign-in that the app turns away (another account's mail on the computer,
+a sign-in it cannot save).
+
+When ohmail asks you to confirm it is you before a change, you can now use one of your recovery codes if
+your authenticator is not at hand. Desktop, web, phone, ohmail Cloud and your own server.
+
+### Three timing tests wait for events, not milliseconds
+
+For contributors: three tests that went red on busy test machines with nothing wrong in the code now wait
+for what they check instead of a fixed delay. The sign-in refresh race tests measure the reuse window on a
+clock the test moves; the live-updates test sends its change once both listeners are subscribed and ends
+each stream after it has carried the change, and the server reads its stream bound from a clock the test
+holds still, so a stalled machine cannot end a stream early; the worker's billing-plane watch test waits for its state line
+before reading it. What each test asserts is unchanged.
+
 ## [0.30.27] — 2026-11-02
 
 ### A sign-out, and a sign-in after one, end the previous session on the server
@@ -16020,7 +16136,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.27...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.28...HEAD
+[0.30.28]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.28
 [0.30.27]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.27
 [0.30.26]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.26
 [0.30.25]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.25
