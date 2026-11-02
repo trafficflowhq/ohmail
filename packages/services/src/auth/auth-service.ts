@@ -613,6 +613,12 @@ function isUniqueViolation(e: unknown, constraint: string): boolean {
   return name === constraint;
 }
 
+/** SQLSTATE `23503`, on the driver's error or the one the query builder wraps (`cause`). */
+function isForeignKeyViolation(e: unknown): boolean {
+  const err = e as { code?: unknown; cause?: { code?: unknown } } | null;
+  return (err?.code ?? err?.cause?.code) === "23503";
+}
+
 /**
  * The decoy password hash of the constant-time unknown-email path, memoized PER HASHER rather
  * than per instance. It was a lazy per-instance field, and `apps/web` builds a fresh AuthService
@@ -1065,8 +1071,7 @@ export class AuthService extends SessionLifecycle {
     // RESERVED, not read — see {@link throttleReserve}.
     const { pwKey, ceilingKey, hA, hC } = this.passwordKeys(email, ctx);
     const known = hC !== null && await this.isKnownClient(db, hA, hC);
-    if (pwKey) await this.throttleReserve(db, pwKey);
-    if (!known) await this.reserveCeiling(db, ceilingKey, hA);
+    await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
 
     // scoped-by: pre-auth sign-in — the row is located by the presented email, throttled and timing-hardened above
     const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
@@ -1136,14 +1141,9 @@ export class AuthService extends SessionLifecycle {
     if (!minted) {
       // What this sign-in checked is a wrong password now, and it is answered as one: counted (the
       // refund above is taken back), locked at the threshold, audited, refused in the same words.
-      if (pwKey) {
-        await this.throttleReserve(db, pwKey);
-        await this.throttleLock(db, pwKey);
-      }
-      if (!known) {
-        await this.reserveCeiling(db, ceilingKey, hA);
-        await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
-      }
+      await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
+      if (pwKey) await this.throttleLock(db, pwKey);
+      if (!known) await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
       await this.audit(db, user, "login_failed", "password", ctx);
       throw credentialRefused("invalid email or password");
     }
@@ -2089,8 +2089,7 @@ export class AuthService extends SessionLifecycle {
     // ceiling for a client that never signed in here. Never `user:<id>`, the second factor's.
     const { pwKey, ceilingKey, hA, hC } = this.passwordKeys(user.email, ctx);
     const known = hC !== null && await this.isKnownClient(db, hA, hC);
-    if (pwKey) await this.throttleReserve(db, pwKey);
-    if (!known) await this.reserveCeiling(db, ceilingKey, hA);
+    await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
     const cred = (await db.select().from(credentials).where(eq(credentials.userId, user.id)).limit(1))[0];
     const verified = await this.deps.passwordHasher.verify(
       current, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher));
@@ -3238,6 +3237,25 @@ export class AuthService extends SessionLifecycle {
     return row !== undefined && row.at.getTime() > Date.now() - KNOWN_CLIENT_RETENTION_MS;
   }
 
+  /**
+   * A password attempt's two reservations ({@link login}): this client's bucket, then the address
+   * ceiling unless the client is known. A ceiling refusal (429) gives the client's attempt back: no
+   * password was tried, and five such refusals would otherwise lock the client (423). Best effort,
+   * and the ceiling's own error is what the caller hears.
+   */
+  private async reservePasswordKeys(
+    db: Tx, keys: { pwKey: string | null; ceilingKey: string; hA: string }, known: boolean,
+  ): Promise<void> {
+    if (keys.pwKey) await this.throttleReserve(db, keys.pwKey);
+    if (known) return;
+    try {
+      await this.reserveCeiling(db, keys.ceilingKey, keys.hA);
+    } catch (err) {
+      if (keys.pwKey) await this.throttleRefund(db, keys.pwKey).catch(() => undefined);
+      throw err;
+    }
+  }
+
   /** Reserve the address ceiling; the refusal that trips it owes the account a notice ({@link noteNotice}). */
   private async reserveCeiling(db: Tx, key: string, hA: string): Promise<void> {
     try {
@@ -3437,12 +3455,19 @@ export class AuthService extends SessionLifecycle {
       const erasedAt = await readAccountErasedAt(db, dialect(db), user.accountId);
       if (erasedAt != null) return;
     }
-    await db.insert(authEvents).values({
-      accountId: user?.accountId ?? null, userId: user?.id ?? null,
-      // `detail` displaces the user agent when the writer has something sharper for this slot
-      // (the reuse row's `family=… session=…`) — see the base hook's doc.
-      event, method: method ?? null, ip: ctx.ip ?? null, device: detail ?? ctx.userAgent ?? null,
-    });
+    try {
+      await db.insert(authEvents).values({
+        accountId: user?.accountId ?? null, userId: user?.id ?? null,
+        // `detail` displaces the user agent when the writer has something sharper for this slot
+        // (the reuse row's `family=… session=…`) — see the base hook's doc.
+        event, method: method ?? null, ip: ctx.ip ?? null, device: detail ?? ctx.userAgent ?? null,
+      });
+    } catch (err) {
+      /* An erasure committed between the stamp read and this insert: only an erasure deletes a user, the
+         key refused a row about nobody, and a stranger's failed sign-in still answers what it answers. */
+      if (user != null && fenced === undefined && isForeignKeyViolation(err)) return;
+      throw err;
+    }
   }
 
   /**

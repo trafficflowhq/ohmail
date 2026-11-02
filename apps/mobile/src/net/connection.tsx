@@ -16,9 +16,10 @@ import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import {
-  discardStandaloneLaunch, endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
+  discardStandaloneLaunch, endStandaloneForRemoval, endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
   sayReadingAtConnect,
   pressConsentHere, takeConsentPress, sayOrganizerRestricted, standaloneHere, standaloneLaunchGeneration,
+  type SettingsKeptHere,
 } from "../engine/organizer-session";
 import { engineLogSink, logNetwork } from "../engine/engine-log";
 import { accessLock, clearAccessLock, onAccessLock } from "./access-lock";
@@ -76,6 +77,9 @@ export type ConnectionState =
 
 export type Attempt = { ok: true } | { ok: false; reason: Refusal };
 
+/** A forget's answer: also the removal that kept the store, nothing removed, with what it would drop. */
+export type ForgetAttempt = Attempt | { ok: false; reason: Refusal; settingsKept: SettingsKeptHere };
+
 export interface Connection {
   state: ConnectionState;
   syncing: boolean;
@@ -129,9 +133,11 @@ export interface Connection {
    *
    * Answers an {@link Attempt} rather than `void` because a take-back that could not complete
    * must not be reported as one: `{ok: false}` carries the sentence naming what is still on the
-   * device and why, and the deletion stays owed so the next launch retries it.
+   * device and why, and the deletion stays owed so the next launch retries it. On this phone's own
+   * mailbox it stops before deleting the store while the store says what the mailbox does not
+   * (`settingsKept`); `anyway` is the person's answer to that, and removes it all the same.
    */
-  forget(profileId: string): Promise<Attempt>;
+  forget(profileId: string, opts?: { anyway?: boolean }): Promise<ForgetAttempt>;
   /**
    * How many unsent drafts the live session on this profile holds, or `null` when no live session
    * is on it. Forgetting this phone's own mailbox deletes its store, and those drafts are on no
@@ -767,8 +773,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           await refreshProfiles();
           return runConnect(profileId, stillCurrent);
         }),
-      forget: (profileId) =>
-        gate.run(async () => {
+      forget: (profileId, opts) =>
+        gate.run(async (): Promise<ForgetAttempt> => {
           // THE CEREMONY LIVES AT THE SEAM (`pairing.ts#forgetProfile`) — this provider owns
           // only what is React: leaving the live state, and closing the store handle whose
           // database the seam is about to delete. Everything a test would want to assert about
@@ -786,7 +792,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
              a release the mail server never confirmed left the mailbox blocked to the person's
              other machine for the staleness window — by an install that no longer lists it and
              has no verb left to release it. The row still goes: what changes is the sentence. */
-          const claimWentBack = row?.origin === LOCAL_ENGINE_ORIGIN ? await endStandaloneHere() : true;
+          const ended = row?.origin === LOCAL_ENGINE_ORIGIN ? await endStandaloneForRemoval() : null;
+          const claimWentBack = ended?.released ?? true;
           const atForget = live.now();
           if (atForget.k === "live" && atForget.session.profile.id === profileId) {
             const bearer = atForget.session.bearer;
@@ -806,8 +813,20 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             // the reason the Servers screen exists.
             enter({ k: "idle" });
           }
-          const outcome = await forgetProfile(env, profileId, { closed, revoke: revokeLive });
+          /* What the hand-back left only in the store keeps it, until the person answers (`anyway`). */
+          const outcome = await forgetProfile(env, profileId, {
+            closed, revoke: revokeLive, settingsKept: ended?.settingsKept ?? null, anyway: opts?.anyway === true,
+          });
           await refreshProfiles();
+          if (outcome.kind === "kept") {
+            /* The Servers screen's confirm says the same. A claim this hand-back could not give back is said by the
+               Remove anyway that follows: its end holds no door and answers for it. */
+            const reason = outcome.settings === "answer" ? refuse("serversStopHereSettingsAnswer")
+              : outcome.settings === "newer" ? refuse("serversStopHereSettingsNewer")
+              : outcome.settings === "unsaved" ? refuse("serversStopHereSettingsUnsaved")
+              : refuse("serversStopHereSettingsUnknown");
+            return { ok: false, reason, settingsKept: outcome.settings };
+          }
           if (outcome.kind !== "forgotten") return { ok: false, reason: outcome.reason };
           /* EVERYTHING LOCAL IS GONE AND SOMETHING IS NOT — `ForgetOutcome.partial`'s own shape,
              which the mail-remains and server-not-told arms already use. The claim is the third. */

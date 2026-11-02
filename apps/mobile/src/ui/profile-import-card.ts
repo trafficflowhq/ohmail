@@ -60,9 +60,13 @@ export function askTickets(): {
   return { begin: next, supersede: (id) => { next(id); }, current: (id, ticket) => n.get(id) === ticket };
 }
 
-/** The question on the card: the first open one, in the order the mailboxes came. */
-export function cardQuestion(rows: readonly MailboxQuestion[]): MailboxQuestion | null {
-  return rows.find((r) => r.question.state === "found" || r.question.state === "newer") ?? null;
+/**
+ * The question on the card: the one already shown (`pinned`) while it is still open, so another
+ * mailbox's question never takes the card by itself; else the first open one, in the order the mailboxes came.
+ */
+export function cardQuestion(rows: readonly MailboxQuestion[], pinned: string | null = null): MailboxQuestion | null {
+  const open = (r: MailboxQuestion): boolean => r.question.state === "found" || r.question.state === "newer";
+  return rows.find((r) => r.mailboxId === pinned && open(r)) ?? rows.find(open) ?? null;
 }
 
 /** The rows Settings lists: every "Not now" whose document still stands in its mailbox. */

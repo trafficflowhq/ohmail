@@ -49,7 +49,7 @@ export const ACCOUNT = "acct_confirm_1";
  * a `TypeError` that surfaces as a *different* failure than the one under test. A factory
  * mints a fresh body every time and has no such state.
  */
-export type Scripted = (() => Response) | "reject";
+export type Scripted = (() => Response | Promise<Response>) | "reject";
 
 const json = (body: unknown, status: number, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(body), {

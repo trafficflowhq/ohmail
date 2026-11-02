@@ -7,7 +7,7 @@ import { AuthService, makeTestAuthDeps, type ServiceContext } from "../src/index
  * The approval read says whether the computer asked from the network of the browser reading it.
  * The server compares the class stored with the request against the reader's own class and
  * answers one word, `same`, `different` or `unknown`; nothing of the reader's address or class
- * goes back. A class missing on either side is `unknown`, never `different`.
+ * goes back. A class missing on either side is `unknown`, never `different`; two families differ.
  */
 
 const NOW = new Date("2026-07-27T00:00:00.000Z");
@@ -57,6 +57,18 @@ describe("the approval read compares the two networks on the server", () => {
     expect(await readFrom(h, id, "::FFFF:198.51.100.9")).toHaveProperty("network", "different");
   });
 
+  it("every spelling of an IPv4-mapped address is the IPv4 it carries, on either side", async () => {
+    const h = await harness();
+    // 171.205 is abcd in hex, 239.190 is efbe.
+    const id = await asked(h, "171.205.9.9");
+    for (const same of ["0:0:0:0:0:ffff:171.205.200.4", "0000:0000:0000:0000:0000:FFFF:171.205.200.4", "::ffff:abcd:efbe", "::FFFF:ABCD:EFBE"]) {
+      expect(await readFrom(h, id, same), same).toHaveProperty("network", "same");
+    }
+    expect(await readFrom(h, id, "::ffff:efbe:abcd")).toHaveProperty("network", "different");
+    const mapped = await asked(h, "0:0:0:0:0:ffff:abcd:efbe");
+    expect(await readFrom(h, mapped, "171.205.7.1")).toHaveProperty("network", "same");
+  });
+
   it("IPv6 compares by the /48", async () => {
     const h = await harness();
     const id = await asked(h, "2001:db8:aa:1::5");
@@ -78,12 +90,12 @@ describe("the approval read compares the two networks on the server", () => {
     expect(await readFrom(h, id, "")).toHaveProperty("network", "unknown");
   });
 
-  it("an IPv4 request read from IPv6, or the reverse, is unknown, never different", async () => {
+  it("an IPv4 request read from IPv6, or the reverse, is different: the family is not the crafter's to pick", async () => {
     const h = await harness();
     const v4 = await asked(h, DESKTOP);
-    expect(await readFrom(h, v4, "2001:db8:aa::1")).toHaveProperty("network", "unknown");
+    expect(await readFrom(h, v4, "2001:db8:aa::1")).toHaveProperty("network", "different");
     const v6 = await asked(h, "2001:db8:aa:1::5");
-    expect(await readFrom(h, v6, "198.51.100.9")).toHaveProperty("network", "unknown");
+    expect(await readFrom(h, v6, "198.51.100.9")).toHaveProperty("network", "different");
   });
 
   it("nothing of the reader's address or class goes back", async () => {

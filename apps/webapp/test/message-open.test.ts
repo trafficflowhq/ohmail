@@ -214,17 +214,17 @@ describe("openTargetFor — the routing decision, every arm", () => {
     const rowFor = (m: EngineMessage, segment: string) =>
       segment === "waiting" && m.folder === "ohmail/Screener" ? "row-for-that-sender" : null;
     expect(openTargetFor(msg("d", "ohmail/Screener"), false, rowFor)).toEqual({
-      kind: "screener", segment: "waiting", row: "row-for-that-sender",
+      kind: "screener", segment: "waiting", row: "row-for-that-sender", letter: "d",
     });
   });
 
   it("screened and quarantined mail lands on ITS segment, with the sender selected", () => {
     const rowFor = () => "row";
     expect(openTargetFor(msg("e", "ohmail/Screened"), false, rowFor)).toEqual({
-      kind: "screener", segment: "screened", row: "row",
+      kind: "screener", segment: "screened", row: "row", letter: "e",
     });
     expect(openTargetFor(msg("f", "ohmail/Quarantine"), false, rowFor)).toEqual({
-      kind: "screener", segment: "spam", row: "row",
+      kind: "screener", segment: "spam", row: "row", letter: "f",
     });
   });
 

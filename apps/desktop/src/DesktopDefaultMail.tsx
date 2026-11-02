@@ -170,7 +170,8 @@ export function DefaultMailRow() {
 }
 
 /**
- * The one-time ask, over the mail surface once a mailbox is connected.
+ * The one-time ask, in the stage's card slot above the mail once a mailbox is connected (`AppShell`'s
+ * `stageCard`): in the flow, so it covers no control.
  *
  * Renders NOTHING until the state is read, and only when another app holds mail links — a card
  * about a setting that is already right is noise. Every exit persists: Make default, Not now,
@@ -211,20 +212,7 @@ export function DefaultMailAsk() {
       aria-label={DOOR_COPY.mailtoLabel}
       /* Beside the mail, not over it: ⌫ and ⌦ on the open message still move it to Trash. */
       data-key-beside=""
-      style={{
-        position: "fixed",
-        insetInline: 0,
-        bottom: 24,
-        margin: "0 auto",
-        width: "min(440px, calc(100vw - 32px))",
-        zIndex: 80,
-        background: "var(--float)",
-        color: "var(--ink)",
-        border: "1px solid var(--hair)",
-        borderRadius: 12,
-        padding: "16px 18px",
-        boxShadow: "0 12px 32px var(--scrim)",
-      }}
+      className="stage-card"
     >
       {phase === "ask" ? (
         <>

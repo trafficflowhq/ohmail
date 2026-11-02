@@ -885,7 +885,11 @@ export function OhboxView({
       // `read` has nothing to return and `move`/the horizons take the rows out of this list.
       if (action === "unread") returnToNew(pickedIds);
       /* A set holding the open row takes it from under the cursor like a single verb does. */
-      if (selectedId != null && pickedIds.includes(selectedId)) verbTook.current = { id: selectedId, at: Date.now() };
+      if (selectedId != null && pickedIds.includes(selectedId)) {
+        verbTook.current = { id: selectedId, at: Date.now() };
+        // …and the cursor moves on as it does after a single verb, never left on a row the set took.
+        if (lastActed) lastActed.current = { id: selectedId, at: Date.now() };
+      }
       /* A REFUSAL KEEPS THE SELECTION. Clearing afterwards is right for a verb that HAPPENED —
          the rows have been dealt with, and a set that survived would invite a second
          application of it. A reader's Move, Screening or Delete does not happen: `run` answers
@@ -894,7 +898,7 @@ export function OhboxView({
       if (bulk.run(action, pickedIds)) clearPicked();
       else setPickPanel(null);
     },
-    [bulk, pickedIds, clearPicked, returnToNew, selectedId],
+    [bulk, pickedIds, clearPicked, returnToNew, selectedId, lastActed],
   );
 
   /**
@@ -2407,7 +2411,8 @@ export function OhboxView({
            longer than "12 new", and `.vhead .meta` yields before the action does — measured,
            not argued: `scripts/fit-render.mjs` reads this header at 360 and 390 on both faces
            in both languages for self-overflow AND for title, count and action on ONE line. */
-        meta={countWhen(listInput, t("meta", { count: unreadIds.length }))}
+        /* Rows on screen while the count may not be stated yet: it says it is counting, never 0 and never nothing. */
+        meta={countWhen(listInput, t("meta", { count: unreadIds.length })) ?? (all.length > 0 ? t("metaCounting") : undefined)}
         action={
           onMarkAllRead ? (
             <MarkAllRead

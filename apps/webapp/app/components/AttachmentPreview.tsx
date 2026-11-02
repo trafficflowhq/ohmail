@@ -43,7 +43,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
  * package makes that same mistake a build failure instead. */
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { fileFaultSentence, fileRetryIsOffered, type AttachmentItem } from "./AttachmentStrip";
-import { openOverPort, type Pdfjs, type PdfSource, type PdfTask } from "./pdf-port";
+import { openOverPort, STANDARD_FONTS, type Pdfjs, type PdfSource, type PdfTask } from "./pdf-port";
 import { useKeyBindings } from "../shell/keymap";
 import "./attachment-preview.css";
 import { formatFileSize, Spinner } from "@ohmail/ui";
@@ -169,7 +169,7 @@ async function loadPdfjs(): Promise<OpenPdf> {
     pdfjsPromise = (async () => {
       const mod: Pdfjs & { seam?: true } = await import("pdfjs-dist");
       if ("seam" in mod) return mod.getDocument;
-      return (src: PdfSource) => openOverPort(async () => mod, () => PDF_WORKER_SRC, src);
+      return (src: PdfSource) => openOverPort(async () => mod, () => PDF_WORKER_SRC, { ...src, ...STANDARD_FONTS });
     })();
   }
   return pdfjsPromise;
@@ -287,9 +287,8 @@ export function AttachmentPreview({
         const open = await loadPdfjs();
         const buf = await blob.arrayBuffer();
         // Core api only — no scripting layer, so no PDF JavaScript runs. `disableAutoFetch` +
-        // `disableStream` keep it from issuing range requests; there is nothing to fetch here
-        // anyway (the source is a Blob, and no cMap/font CDN is configured), so opening the
-        // document reaches no network.
+        // `disableStream` keep it from issuing range requests; the source is a Blob, and the one
+        // fetch is this origin's standard font data (`STANDARD_FONTS`), never a CDN.
         task = open({ data: buf, disableAutoFetch: true, disableStream: true });
         const doc = await task.promise;
         if (cancelled) {

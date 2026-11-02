@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accounts, accountSettings, contacts, listAddresses, listBrandsOf, mailboxes, messageBodies, messages, type Tx,
+  accounts, accountSettings, contacts, LIST_ADDRESSES_PER_ACCOUNT_MAX, listAddresses, listBrandsOf, mailboxes, messageBodies,
+  messages, type Tx,
 } from "@trafficflow/db";
 import { createLogger } from "@trafficflow/core/mail";
+import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { listAddressBackfillPass } from "../src/list-address-backfill.js";
 
 /**
@@ -103,5 +105,40 @@ describe("the list-address backfill", () => {
     await w.stored({ "list-post": ["<mailto:list@lists.invalid>"] });
     await listAddressBackfillPass(w.db, { accountId: w.accountId });
     expect(await w.rows()).toEqual([{ address: "list@lists.invalid", brands: ["PostFinance"] }]);
+  });
+});
+
+describe("an account's list addresses stop growing at the ceiling (the store's own door)", () => {
+  /** `count` rows the account already holds, last seen at the epoch. */
+  async function holding(w: Awaited<ReturnType<typeof world>>, count: number): Promise<void> {
+    const rows = Array.from({ length: count }, (_, i) => ({
+      accountId: w.accountId, address: `held${String(i).padStart(4, "0")}@lists.invalid`, lastSeenAt: new Date(0),
+    }));
+    for (let at = 0; at < rows.length; at += 250) await w.db.insert(listAddresses).values(rows.slice(at, at + 250));
+  }
+  const record = (w: Awaited<ReturnType<typeof world>>, addresses: string[]) =>
+    makeDrizzleRepo(w.db as never).recordListAddresses(w.accountId, addresses);
+  const seenAt = async (w: Awaited<ReturnType<typeof world>>, address: string) => (await w.db.select({ at: listAddresses.lastSeenAt })
+    .from(listAddresses).where(and(eq(listAddresses.accountId, w.accountId), eq(listAddresses.address, address))))[0]?.at ?? null;
+
+  it("past it a fresh address nobody consented to is not recorded; one the person wrote to is, and a known one is seen again", async () => {
+    const w = await world();
+    await holding(w, LIST_ADDRESSES_PER_ACCOUNT_MAX);
+    // The person's Sent copy taught the address it went to as a person's contact.
+    await w.db.insert(contacts).values({ accountId: w.accountId, address: "wrote@lists.invalid", source: "person" });
+    await record(w, ["forged@lists.invalid", "wrote@lists.invalid", "held0000@lists.invalid"]);
+    const held = new Set((await w.rows()).map((r) => r.address));
+    expect(held.has("forged@lists.invalid"), "a forged header grew the account past its ceiling").toBe(false);
+    expect(held.has("wrote@lists.invalid"), "an address the person wrote to is a list fact past the ceiling").toBe(true);
+    expect(held.size).toBe(LIST_ADDRESSES_PER_ACCOUNT_MAX + 1);
+    expect((await seenAt(w, "held0000@lists.invalid"))!.getTime(), "a known address was not seen again").toBeGreaterThan(0);
+  });
+
+  it("CONTROL: under it fresh addresses are recorded up to the ceiling, in order", async () => {
+    const w = await world();
+    await holding(w, LIST_ADDRESSES_PER_ACCOUNT_MAX - 1);
+    await record(w, ["a-new@lists.invalid", "b-new@lists.invalid"]);
+    const held = new Set((await w.rows()).map((r) => r.address));
+    expect([held.has("a-new@lists.invalid"), held.has("b-new@lists.invalid")]).toEqual([true, false]);
   });
 });

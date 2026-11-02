@@ -403,6 +403,14 @@ describe("the PDF is parsed in a worker the page builds and hands pdf.js as a po
     expect(src.worker?.port, "pdf.js was left to start a worker of its own").toBe(FakeWorker.built[0]);
   });
 
+  it("pdf.js reads the standard fonts from this origin on the page, never the machine's own fonts", async () => {
+    await mountClosing(pdfEngine());
+    await until(pdfDrawn);
+    expect(pdfLoads.mock.calls[0]![0]).toMatchObject({
+      standardFontDataUrl: "/pdfjs/standard_fonts/", useSystemFonts: false, useWorkerFetch: false,
+    });
+  });
+
   it("a worker the page refuses says it cannot show the PDF, and pdf.js is never asked", async () => {
     FakeWorker.refuse = new Error("refused by worker-src");
     await mountClosing(pdfEngine());

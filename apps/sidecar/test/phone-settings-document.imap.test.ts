@@ -630,10 +630,13 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone organizing a mailbox with 
     expect(await untilIngested(phone, named), `never ingested — events ${events(phone)}`).not.toBeNull();
     expect(await afterOnePass(phone, user, named)).toBe("INBOX");
 
+    // What Stop and remove would drop, read off the store: nothing, then the decision waiting for the answer.
+    const before = await phone.engine.settingsLeftOnlyHere();
     await decide(phone, "carol@elsewhere.test", "INBOX");
     await twoPasses(phone);
+    const risk = [before, await phone.engine.settingsLeftOnlyHere()];
     await phone.engine.stopOrganizing();
-    const second = { docs: (await documentsOnServer(user)).map((d) => d.rules.sort()), left: phone.engine.runtimes().organizer[mailboxId]?.settingsLeft };
+    const second = { docs: (await documentsOnServer(user)).map((d) => d.rules.sort()), left: phone.engine.runtimes().organizer[mailboxId]?.settingsLeft, risk };
     await phone.engine.stop();
     open.splice(open.indexOf(phone.engine), 1);
     const third = await bootPhone({ user, file: join(storeDir(), "engine.db"), flushMs: 0, installId });
@@ -647,7 +650,7 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone organizing a mailbox with 
     const asked = await readProfileImport(phoneSession(third), thirdId);
     expect({
       second, asked: asked?.state === "found" ? asked.counts.rules : asked?.state, anna: await afterOnePass(third, user, again),
-    }, `events ${events(third)}`).toEqual({ second: { docs: [left], left: "not_saved" }, asked: 2, anna: "INBOX" });
+    }, `events ${events(third)}`).toEqual({ second: { docs: [left], left: "not_saved", risk: ["none", "answer"] }, asked: 2, anna: "INBOX" });
   }, 600_000);
 
   /* NOT NOW ON THE REMOVED STORE'S COPY: the decisions made after it reach the mailbox beside that copy, so

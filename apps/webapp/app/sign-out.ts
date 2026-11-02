@@ -23,7 +23,7 @@ import {
 } from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
 import { SHARED_NOTE_KEY } from "./(product)/resume/signed-out-note";
-import { postSignedOut } from "./signed-out-signal";
+import { postSignedOut, thisTabName } from "./signed-out-signal";
 import { forgetMailDocs } from "./components/mail-doc-cache";
 
 /**
@@ -227,16 +227,6 @@ export async function forgetThisBrowser(
   // gone and keeps the ones it did not), so it is deliberately NOT in the prefix sweep above —
   // dropping it there would throw away the only record of a mirror this browser could not delete.
   /*
-   * The first `sessionStorage` entry this sweep covers: the in-flight Microsoft device-code
-   * ceremony keeps its HANDLE there — per tab, matching a fifteen-minute grant far better than a
-   * store that outlives the browser — so no prefix sweep reaches it, and a tab reused by another
-   * account within the window still held the previous account's record. The record carries no
-   * credential (the `device_code` never leaves the server) and the reader refuses a record whose
-   * account id is not the signed-in one — that check, not this line, makes another account's code
-   * unrenderable; this is the tidy-up. Wrapped like every accessor here: a private window can make
-   * the accessor itself throw, and a sign-out must not fail on a storage read.
-   */
-  /*
    * AND THE HALF OF `COMPOSE_ROW_PREFIX` THAT IS NOT IN A JAR. A browser refusing this app its
    * storage remembers the row the composer opened in memory for the life of the tab
    * (`forgetComposeRows`), and every reason the key above is swept applies to it: left behind, the
@@ -244,6 +234,38 @@ export async function forgetThisBrowser(
    * unwrapped — it touches no storage, so nothing here can throw.
    */
   forgetComposeRows();
+  const { survivors: tabLeft, deviceCeremonySwept } = forgetThisTab();
+  survivors.push(...tabLeft);
+  // The renewal name's durable copy, its own IndexedDB database (`session-refresh.ts`): it goes whole.
+  survivors.push(...await forgetRenewalName());
+  const wipe = only ? await clearAllMirrors(owner, undefined, { only: true }) : await clearAllMirrors(owner);
+  return {
+    remaining: [...survivors, ...wipe.remaining].sort(),
+    // EVERY store has to be answerable, not just the mirrors. A jar that could not be walked
+    // names no survivors and proves nothing by it — see `dropLocalStorageKeys`'s catch.
+    inventoryComplete: wipe.inventory === "complete" && boot.enumerated && durable.enumerated
+      && deviceCeremonySwept,
+  };
+}
+
+/**
+ * THIS TAB'S OWN NOTES, which no other tab's sweep can reach (`sessionStorage` is per tab): the
+ * device-code handle, the wall's hand-off note, the late-answer watch and the splash's presentation
+ * note. The sign-out's local half takes them, and so does a tab that leaves because another tab
+ * signed out (`useSignedOutElsewhere`). Answers what could not be removed.
+ */
+export function forgetThisTab(): { survivors: string[]; deviceCeremonySwept: boolean } {
+  const survivors: string[] = [];
+  /*
+   * The in-flight Microsoft device-code ceremony keeps its HANDLE in `sessionStorage` — per tab,
+   * matching a fifteen-minute grant far better than a store that outlives the browser — so no
+   * prefix sweep reaches it, and a tab reused by another account within the window still held the
+   * previous account's record. The record carries no credential (the `device_code` never leaves
+   * the server) and the reader refuses a record whose account id is not the signed-in one — that
+   * check, not this line, makes another account's code unrenderable; this is the tidy-up. Wrapped
+   * like every accessor here: a private window can make the accessor itself throw, and a sign-out
+   * must not fail on a storage read.
+   */
   let deviceCeremonySwept = true;
   try {
     sessionStorage.removeItem("ohmail.deviceCeremony");
@@ -265,16 +287,7 @@ export async function forgetThisBrowser(
     deviceCeremonySwept = false;
     survivors.push(...watchLeft);
   }
-  // The renewal name's durable copy, its own IndexedDB database (`session-refresh.ts`): it goes whole.
-  survivors.push(...await forgetRenewalName());
-  const wipe = only ? await clearAllMirrors(owner, undefined, { only: true }) : await clearAllMirrors(owner);
-  return {
-    remaining: [...survivors, ...wipe.remaining].sort(),
-    // EVERY store has to be answerable, not just the mirrors. A jar that could not be walked
-    // names no survivors and proves nothing by it — see `dropLocalStorageKeys`'s catch.
-    inventoryComplete: wipe.inventory === "complete" && boot.enumerated && durable.enumerated
-      && deviceCeremonySwept,
-  };
+  return { survivors, deviceCeremonySwept };
 }
 
 /**
@@ -299,6 +312,18 @@ function sweepFor(owner: string | null, list: readonly string[]) {
         : key.startsWith(p)));
 }
 
+/** Sign-out presses per page, by tab name (a test runs two tabs in one document). */
+const presses = new Map<string, number>();
+
+/**
+ * This page's Sign out presses. A mailbox that sees the count move after it mounted has its own press
+ * to report (a wipe another tab blocked), so `useSignedOutElsewhere`'s return check stands down there.
+ * The pending sign-out's finisher is no press, and a mailbox mounted after either still leaves on return.
+ */
+export function signOutPresses(tab: string = thisTabName()): number {
+  return presses.get(tab) ?? 0;
+}
+
 /**
  * `mayProceed` is the pending sign-out's finisher's (`login/finish-sign-out.ts`) and nobody else's: may
  * this call still end the jar it started on? Asked inside the cookie lock before the door is asked,
@@ -311,6 +336,7 @@ export async function signOut(
   owner?: string,
   opts: { mayProceed?: () => boolean } = {},
 ): Promise<SignOutResult | null> {
+  if (opts.mayProceed === undefined) presses.set(thisTabName(), signOutPresses() + 1);
   // NEVER THROWS, and the refusal rides the result instead. A `return` inside a `finally`
   // would have silently swallowed this exception, which is the same shape of quiet loss the
   // rest of this file exists to stop; and throwing would throw away `remaining`, which is the
@@ -327,6 +353,16 @@ export async function signOut(
    * went — a browser asking to be signed out is asking either way.
    */
   await revokeWakeRegistration();
+  /*
+   * PENDING FROM THE MOMENT THE PRESS LEAVES, not from the door's answer: while the door is out every
+   * gate already reads a sign-out (the edge, the manage hand-off, the sync gate, this client's verdict)
+   * and the account's other tabs leave. A 204 or our coded 401 clears it, a refusal leaves it. After the
+   * wake revoke, whose DELETE still needs this tab's owner check to pass. The finisher's jar is pending.
+   */
+  if (opts.mayProceed === undefined) {
+    markSignedOutPending();
+    postSignedOut(owner ?? null);
+  }
   try {
     await auth.logout({ mayProceed: opts.mayProceed });
   } catch (err) {

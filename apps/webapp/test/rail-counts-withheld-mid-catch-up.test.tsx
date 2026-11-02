@@ -56,7 +56,9 @@ describe("the rail's stream counts mid-catch-up", () => {
 
     // MUTATION: `mayCount` forced true — the badge reads 3 and the tooltip counts mid-catch-up.
     expect(countOf(el, "ohbox"), "the Ohbox badge counted a mirror still catching up").toBe("");
-    expect(railItem(el, "ohbox").getAttribute("title"), "the Ohbox tooltip counted mid-catch-up").toBeNull();
+    // Rows on screen, no number yet: the rail and the header say it is counting, never 0 and never nothing.
+    expect(railItem(el, "ohbox").getAttribute("title"), "the Ohbox tooltip counted mid-catch-up").toBe("Counting unread…");
+    expect(el.querySelector(".view-ohbox .vhead .meta")?.textContent, "the Ohbox header said nothing over its rows").toBe("Counting unread…");
     expect(railItem(el, "reads").getAttribute("title"), "the News tooltip counted mid-catch-up").toBeNull();
 
     // The control: the same rail states its numbers once the catch-up has landed.
@@ -65,5 +67,6 @@ describe("the rail's stream counts mid-catch-up", () => {
     await tick(LOADING_GRACE_MS * 4);
     expect(countOf(el, "ohbox")).toBe("3");
     expect(railItem(el, "ohbox").getAttribute("title")).toContain("3 unread");
+    expect(el.querySelector(".view-ohbox .vhead .meta")?.textContent).toBe("3 unread");
   }, 30_000);
 });

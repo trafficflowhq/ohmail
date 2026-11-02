@@ -172,6 +172,40 @@ describe("1. a function name written in CSS escapes is still that function", () 
     const out = await neutralise(".a{content:\"x\n}\n.b{background:" + String.raw`\75 rl(/api/target)` + "}");
     expect(out, "an unterminated string covered the rest of the sheet").not.toContain("/api/target");
   });
+
+  // CSS turns CRLF into one newline before it tokenizes (Syntax §3.3), so CRLF ends a hex escape once.
+  it("a hex escape ended by CRLF still names `url`, and is counted and cut", async () => {
+    const css = ".a{background:\\75\r\nrl(https://tracker.example/a.png)}";
+    expect(await counted(css)).toEqual(["https://tracker.example/a.png"]);
+    expect(await neutralise(css)).not.toContain("tracker.example");
+    expect(await neutralise(".a{background:\\75\r\nrl(/api/x)}")).not.toContain("/api/x");
+  });
+
+  it("a hex escape ended by CRLF still names `image-set`, and is counted and cut", async () => {
+    const css = '.a{background:\\69\r\nmage-set("https://tracker.example/b.png" 1x)}';
+    expect(await counted(css)).toEqual(["https://tracker.example/b.png"]);
+    expect(await neutralise(css)).not.toContain("tracker.example");
+  });
+
+  it("a hex escape ended by CRLF still names `@import`, which is cut and reported", async () => {
+    const { neutraliseCss } = await mod();
+    const sheets: string[] = [];
+    const out = neutraliseCss('@\\69\r\nmport"https://evil.example/x.css";.a{color:red}', DROP, (u) => sheets.push(u));
+    expect(out).not.toContain("evil.example");
+    expect(sheets).toEqual(["https://evil.example/x.css"]);
+  });
+
+  it("an escaped CRLF inside a string continues it, so the string cannot reopen over a real token", async () => {
+    const css = '.a{content:"x\\\r\ny";background:\\75 rl(https://tracker.example/d.png)}';
+    expect(await counted(css)).toEqual(["https://tracker.example/d.png"]);
+    expect(await neutralise(css)).not.toContain("tracker.example");
+  });
+
+  it("an escaped quote inside an image-set string does not close it, so the next candidate is read", async () => {
+    const css = '.a{background:image-set("data:image/png;base64,AA\\")" 1x, "https://tracker.example/e.png" 2x)}';
+    expect(await counted(css)).toEqual(["https://tracker.example/e.png"]);
+    expect(await neutralise(css)).not.toContain("tracker.example");
+  });
 });
 
 describe("the inline STYLE attribute goes through the same scanner as a stylesheet", () => {
@@ -424,6 +458,8 @@ describe("the properties the whole scanner is held to still hold", () => {
       String.raw`@\69 mport"https://evil.example/x.css";`,
       `:root{--x:"/api/x"}.a{background:image-set(var(--x) 1x)}`,
       `.a{background:image-set("data:image/png;base64,AA" type("image/png"))}`,
+      ".a{background:\\75\r\nrl(/api/x)}",
+      '.a{content:"x\\\r\ny";background:\\75 rl(https://tracker.example/d.png)}',
     ]) {
       const once = neutraliseCss(css, DROP);
       expect(neutraliseCss(once, DROP), `not a fixed point: ${css}`).toBe(once);

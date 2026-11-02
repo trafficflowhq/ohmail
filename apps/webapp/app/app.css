@@ -168,10 +168,39 @@ body.reading .shell {
   min-width: 0;
   min-height: 0;
   display: flex;
-  /* The anchor for the settings-restore card (`.pfi-card`), which floats over whichever view
-     is up rather than reflowing it. Harmless to everything else: no child uses `absolute`
-     against the nearest positioned ancestor except that card. */
+  /* The anchor for the Screener's primer laid out in the stage (`ScreenerPrimer`). */
   position: relative;
+}
+/* THE STAGE'S ONE CARD (`AppShell`'s `.stage-notice`): in the flow above the view, so it covers no
+   control — not the reader's head, not a Settings field or Save. Empty, the slot is nothing and the
+   stage is unchanged. The views that reclaim the deck frame (the reading streams, a thread column)
+   pull up by `--gap-edge`, which the slot leaves below the card. */
+.stage:has(> .stage-notice:not(:empty)) {
+  flex-direction: column;
+}
+.stage-notice {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  margin-bottom: var(--gap-edge);
+}
+.stage-notice:empty {
+  display: none;
+}
+/* The card's look, shared by the found-settings card and the desktop's default-mail ask. */
+.stage-card {
+  box-sizing: border-box;
+  width: min(520px, 100%);
+  padding: 18px 20px 16px;
+  color: var(--ink);
+  background: var(--float);
+  border-radius: var(--r-card);
+  box-shadow: var(--lift-3);
+}
+@media (max-width: 699.98px) {
+  .stage-card {
+    padding: 14px 16px 12px;
+  }
 }
 .view {
   display: flex;
@@ -1747,24 +1776,9 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 }
 
 /* ============ settings found on a mailbox: the restore card ============================
-   The portable profile's confirm moment (shell/ProfileImportCard.tsx). A floating card over
-   the stage rather than a strip inside one view: the offer must be visible whichever pile is
-   open, must not reflow the mail under it, and must never block it — the piles stay
-   interactive behind the card, and every layered surface (reader, palette, toast) stacks
-   above. Quiet furniture, warm words: the counts carry the moment, not the chrome. */
-.pfi-card {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  /* Above the unlayered view content; below --z-dock (30) and everything stacked over it. */
-  z-index: 10;
-  width: min(520px, calc(100% - 28px));
-  padding: 18px 20px 16px;
-  background: var(--float);
-  border-radius:var(--r-card);
-  box-shadow: var(--lift-3);
-}
+   The portable profile's confirm moment (shell/ProfileImportCard.tsx), a `.stage-card` in the
+   stage's notice slot: visible whichever pile is open, in the flow, so it covers no control of
+   the view under it. Quiet furniture, warm words: the counts carry the moment, not the chrome. */
 .pfi-card h2 {
   margin: 0 0 6px;
   font-size:calc(15.5px + var(--type-up));
@@ -1809,13 +1823,6 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   align-items: center;
   gap: 8px;
   margin-top: 12px;
-}
-@media (max-width: 699.98px) {
-  .pfi-card {
-    top: 8px;
-    width: min(520px, calc(100% - 16px));
-    padding: 14px 16px 12px;
-  }
 }
 
 /* ============ ohbox doorbell: ONE compact line, never clipped ==========================
@@ -4022,6 +4029,20 @@ input.set-tag-input {
 }
 .gate .btn {
   text-decoration: none;
+}
+/* The server's first frame says it is late only once it is (CloudShell `FirstFrame`); no script. */
+.gate-late {
+  visibility: hidden;
+  animation: gate-late 0s 10s forwards;
+  font-size: calc(13px + var(--type-up));
+  color: var(--ink2);
+  margin: 0;
+}
+.gate-late a {
+  color: var(--accent-ink);
+}
+@keyframes gate-late {
+  to { visibility: visible; }
 }
 /* ── THE WALL — the refused account's whole screen ────────────────────────────────────────────
    `.gate-card`'s wider sibling: the lock used to be one sentence and two buttons, and the wall

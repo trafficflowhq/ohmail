@@ -110,6 +110,24 @@ export function sanitizeOutboundHtml(html: string): string {
 }
 
 /**
+ * A FORWARD'S QUOTED ORIGINAL: the same grammar, plus the original's inline pictures where they
+ * stood — an `<img>` whose src is `cid:` of a part this send carries (`cids`, bare Content-IDs),
+ * with its alt and size. Any other picture is dropped: a cid nothing carries draws a broken box,
+ * and a remote or `data:` one is the payload the grammar keeps out.
+ */
+export function sanitizeQuotedHtml(html: string, cids: ReadonlySet<string>): string {
+  if (cids.size === 0) return sanitizeOutboundHtml(html);
+  return sanitizeHtml(html, {
+    ...POLICY,
+    allowedTags: [...ALLOWED_TAGS, "img"],
+    allowedAttributes: { ...POLICY.allowedAttributes, img: ["src", "alt", "width", "height"] },
+    allowedSchemesByTag: { img: ["cid"] },
+    allowedSchemesAppliedToAttributes: ["href", "src"],
+    exclusiveFilter: (frame) => frame.tag === "img" && !cids.has((frame.attribs.src ?? "").replace(/^cid:/i, "")),
+  });
+}
+
+/**
  * The text rendering of html moved to `@trafficflow/core/html-text` so ingest can derive the
  * words of an HTML-only message for its search document from the same function; re-exported
  * here so every outbound caller keeps its import.

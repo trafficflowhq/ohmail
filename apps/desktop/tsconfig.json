@@ -66,7 +66,7 @@
          mirror has no node_modules beside `apps/webapp/app/shell/durable.ts`, which re-exports
          this specifier, so this map and `vite.config.ts`'s alias table are its only resolvers.
          Three earlier slices each paid a release CI that died at `tsc --noEmit` on all three
-         platforms for exactly this omission; `test/durable-write-census.test.ts` holds both
+         platforms for exactly this omission; `test/desktop-shell.test.ts` holds both
          entries to each other so there is no fourth. */
       "@ohmail/client-engine/durable": ["../../packages/client-engine/src/durable.ts"],
       "@ohmail/client-engine/send-fingerprint": ["../../packages/client-engine/src/send-fingerprint.ts"],
@@ -81,6 +81,7 @@
          lone file with no package.json beside it. */
       "@trafficflow/core/ics": ["../../packages/core/src/ics.ts"],
       "@trafficflow/core/url-escapes": ["../../packages/core/src/url-escapes.ts"],
+      "@trafficflow/core/image-dimensions": ["../../packages/core/src/image-dimensions.ts"],
       "@trafficflow/core/away-scope": ["../../packages/core/src/away-scope.ts"],
       /* The organized six and the retro-move question, reached through `@ohmail/client-engine`'s
          re-export — the bundler's twin, and the pair must agree. */
@@ -98,7 +99,7 @@
          page is. Same story as `/ics` and `/folder-name`, and this is the THIRD slice to owe
          this line: the two comments above each record a release CI that died at `tsc --noEmit`
          on all three platforms because the subpath was added to core's exports and not here.
-         `test/desktop-mirror-excludes-the-engine.test.ts` now holds the two maps to each other
+         `test/desktop-shell.test.ts` now holds the two maps to each other
          so there is no fourth. */
       "@trafficflow/core/drain-policy": ["../../packages/core/src/drain-policy.ts"],
       /* `Re: ` exactly once — the FOURTH admitted leaf, and it arrived WITH this line rather than

@@ -517,13 +517,18 @@ export async function deleteAccount(
     // step deadlocked it (40P01) or committed behind the token delete (23503). Every transaction
     // that writes a row this erasure deletes opens on the account row (the fence), so it commits
     // before this transaction's first statement or waits behind it; the hot-path renewal needs no
-    // fence, it meets the session lock. Not ordered: a write made OUTSIDE any transaction (a sign-in
-    // that supersedes nothing, a pairing token, an authorization code, a verification link, a hosted
-    // audit row such as a failed sign-in, read and inserted as two statements) can still land a row
-    // between its table's delete below and `DELETE users`, which then refuses.
+    // fence, it meets the session lock.
     await dialect(ctx.db).forUpdate(tx.select({ id: sessions.id }).from(sessions)
       .where(eq(sessions.accountId, accountId))
       .orderBy(asc(sessions.id)));
+    // THEN THE USER ROWS, FOR UPDATE and never FOR NO KEY UPDATE: it has to conflict with the KEY SHARE
+    // every foreign-key check takes. A write made outside any transaction (a pairing token, a
+    // verification link, a hosted audit row such as a failed sign-in) that lands a row keyed to a user
+    // either committed before this, and every such table is deleted below, or waits here and is refused
+    // by its key once the users are gone. Sessions then users: the order a renewal and the reaper take.
+    await dialect(ctx.db).forUpdate(tx.select({ id: users.id }).from(users)
+      .where(eq(users.accountId, accountId))
+      .orderBy(asc(users.id)));
     // The live tokens' HASHES are kept first (cloud 0043), so an installed app still holding one
     // is told the account was deleted instead of being answered as a stranger and renewing for
     // ever. A hash of a random secret and the account id — nothing about a person.

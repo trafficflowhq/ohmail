@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 /* The namespace lists themselves, so the marker contract below reads the build config
    rather than a copy of it — the drift this file exists to catch. */
 import viteConfig, { WINDOW_ONLY_NAMESPACES } from "../vite.config";
@@ -164,7 +165,7 @@ describe("tauri.conf.json", () => {
       /#\[cfg\(all\(feature = "local-engine", target_os = "macos"\)\)\]\s*let builder = \{\s*let builder = builder\.on_new_window\(crate::engine::on_new_window\(app\.handle\(\)\.clone\(\)\)\);/,
     );
     expect(build).toMatch(
-      /builder\.build\(\)\?;\s*#\[cfg\(feature = "local-engine"\)\]\s*crate::link_gate::arm\(app\.handle\(\)\);\s*Ok\(\(\)\)/,
+      /builder\.build\(\)\?;\s*#\[cfg\(feature = "local-engine"\)\]\s*crate::link_gate::arm\(app\.handle\(\)\);\s*#\[cfg\(all\(feature = "local-engine", target_os = "linux"\)\)\]\s*crate::dropped_files::arm\(app\.handle\(\)\);\s*Ok\(\(\)\)/,
     );
   });
 
@@ -651,7 +652,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these fifty-four files and no others", () => {
+  it("is these fifty-six files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -688,6 +689,15 @@ describe("the Rust side", () => {
       // the argv tables and the closed vocabulary. Compiled only under `local-engine`.
       "default_mail.rs",
       "default_mail_tests.rs",
+      // FILES DROPPED ON THE WINDOW FROM ANOTHER PROGRAM: the webview's own `drag-data-received` and
+      // `drag-drop`, read and paired and never handled, hold a drop only from another program (a
+      // page's own drag has this webview as its source); the window takes it once within ten
+      // seconds with no argument and reads each file in 1 MiB chunks by the take's token. Each file
+      // is opened once, read-only and non-blocking, and only a regular file up to the send ceiling
+      // is read; no command names a path and its one log line carries counts. Compiled only under
+      // `local-engine`; only Linux arms it.
+      "dropped_files.rs",
+      "dropped_files_tests.rs",
       "engine.rs",
       "engine_tests.rs",
       // WHO DRAWS THE FRAME — the app, or the compositor. On a tiling Wayland compositor the
@@ -946,6 +956,8 @@ describe("the Rust side", () => {
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod rendered_links;/);
     // …and `link_gate.rs`, each engine's hook into that door: the preview arms nothing.
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod link_gate;/);
+    // …and `dropped_files.rs`: the preview has no compose to take a dropped file into.
+    expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod dropped_files;/);
     // `default` exists and is empty. A missing `[features]` block would also match "not
     // enabled", and would be a different fact.
     expect(cargo).toMatch(/^default = \[\]$/m);
@@ -1086,6 +1098,8 @@ describe("the Rust side", () => {
     const previewModule = read("src-tauri/src/attachment_preview.rs");
     // …and the links on screen beside the predicate that reads them.
     const renderedLinksModule = read("src-tauri/src/rendered_links.rs");
+    // …and the dropped files' two beside the drop watch that holds them.
+    const droppedFilesModule = read("src-tauri/src/dropped_files.rs");
     const COMMANDS = [
       "engine_status",
       "engine_request",
@@ -1155,6 +1169,11 @@ describe("the Rust side", () => {
       // an image's bytes — and the release removes the staged file (`attachment_preview.rs`).
       "stage_attachment_preview",
       "release_attachment_preview",
+      // A file manager's drop, which WebKitGTK gives the page no files for: the take takes no
+      // argument (the shell saw the drop itself, only from another program, and holds it ten
+      // seconds), and the chunk takes the take's token and the file's place — never a path.
+      "dropped_files_take",
+      "dropped_file_chunk",
       // HOST MODE — all of it through the shell's own commands, none of it through a plugin's
       // permissions. The window reads a typed state, probes the tailnet, arms and disarms (the
       // serve invocation is composed from constants in host.rs and pinned by its tests to
@@ -1259,7 +1278,7 @@ describe("the Rust side", () => {
       // has to name the runtime it belongs to, or the handler cannot be built for one.
       expect(
         engine + hostModule + defaultMailModule + omarchyModule + updaterModule + launchModule + textScaleModule + previewModule +
-          renderedLinksModule,
+          renderedLinksModule + droppedFilesModule,
         `${command} is not defined`,
       ).toMatch(new RegExp(`fn ${command}[<(]`));
       expect(engine, `${command} is not registered`).toMatch(
@@ -3063,6 +3082,58 @@ describe("the UI bundle's build config", () => {
     expect(buildUi).toMatch(/if \(!engine && !hostClient\) \{/);
     expect(buildUi).toMatch(/retired/);
   });
+
+  /**
+   * CI typechecks and bundles the window on this directory's install alone, where no workspace
+   * link resolves `@trafficflow/*` or `@ohmail/*`: `paths` and the alias table are then the only
+   * resolvers. So the window's program is walked here with those links hidden.
+   */
+  it("resolves every workspace module the window imports through paths and the alias table, to one file", () => {
+    const linked = (p: string) => /[\\/]node_modules[\\/]@(?:trafficflow|ohmail)(?:[\\/]|$)/.test(p);
+    const workspace = (spec: string) => /^@(?:trafficflow|ohmail)\//.test(spec);
+    const parsed = ts.getParsedCommandLineOfConfigFile(path.join(APP, "tsconfig.json"), {}, {
+      ...ts.sys, onUnRecoverableConfigFileDiagnostic: (d) => { throw new Error(String(d.messageText)); },
+    })!;
+    const host = ts.createCompilerHost(parsed.options);
+    host.fileExists = (p) => !linked(p) && ts.sys.fileExists(p);
+    host.directoryExists = (p) => !linked(p) && ts.sys.directoryExists!(p);
+    // Every import tsc resolves, by importing file: the specifier and the file it reached.
+    const imports = new Map<string, Array<[string, string | undefined]>>();
+    host.resolveModuleNameLiterals = (literals, containing, redirected, options) => literals.map(({ text }) => {
+      const resolved = ts.resolveModuleName(text, containing, options, host, undefined, redirected);
+      const file = resolved.resolvedModule?.resolvedFileName;
+      const from = path.resolve(containing);
+      imports.set(from, [...(imports.get(from) ?? []), [text, file && path.resolve(file)]]);
+      return resolved;
+    });
+    ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options, host });
+    // tsc compiles every file it reaches; a style sheet is the bundler's alone.
+    for (const [from, list] of imports) for (const [spec, file] of list) {
+      if (workspace(spec) && !spec.endsWith(".css")) {
+        expect(file, `${spec} in ${path.relative(APP, from)}: no entry in tsconfig.json paths`).toBeTruthy();
+      }
+    }
+    // The bundler loads what the two entries reach, taking the first alias whose `find` is the
+    // specifier or a path prefix of it (@rollup/plugin-alias); an aliased-away module is not walked.
+    const aliases = viteConfig.resolve!.alias as Array<{ find: string | RegExp; replacement: string }>;
+    const aliased = (spec: string) => {
+      const hit = aliases.find(({ find }) =>
+        typeof find === "string" ? spec === find || spec.startsWith(`${find}/`) : find.test(spec));
+      return hit && path.resolve(spec.replace(hit.find, hit.replacement));
+    };
+    const reached = new Set(["src/main.tsx", "src/host-client/main.tsx"].map((f) => path.join(APP, f)));
+    for (const from of reached) for (const [spec, file] of imports.get(from) ?? []) {
+      const target = aliased(spec);
+      if (workspace(spec)) {
+        expect(target && (target === file || spec.endsWith(".css")) && fs.existsSync(target),
+          `${spec} in ${path.relative(APP, from)}: no alias in vite.config.ts`).toBe(true);
+      }
+      const next = target ?? file;
+      if (next && !next.includes(`${path.sep}node_modules${path.sep}`)) reached.add(next);
+    }
+    expect([...reached], "the walk did not reach the engine")
+      .toContain(path.resolve(APP, "../../packages/client-engine/src/index.ts"));
+  }, 60_000);
 
   /**
    * THE BRIDGE REACHES THE SHELL AND NOTHING ELSE.

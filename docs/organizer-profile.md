@@ -393,10 +393,12 @@ so Settings names that mailbox wherever it is open.
 Exactly one current profile message is the steady state. Settings another
 install left in the folder (or a removed store under the same install id) stay
 beside the organizer's own until the person imports them or saves this
-install's settings over them, so the folder holds at most the organizer's
-current copy, the found copies it keeps (at most eight) and one older copy of
-the organizer's own that a server would not let it remove yet: while such an
-older copy is still there, the next write removes it instead of appending.
+install's settings over them, and an answered copy stays until the organizer's
+copy carrying the answer is in the folder. So the folder holds at most the
+organizer's current copy, the found copies it keeps (at most eight), the
+answered copies whose answer is not published yet, and one older copy of the
+organizer's own that a server would not let it remove yet: while such an older
+copy is still there, the next write removes it instead of appending.
 
 Settings messages are found by reading every message's headers in
 `ohmail/_meta`, checked against the folder's message count — never by a header
@@ -407,8 +409,9 @@ imported it or saved this install's settings over it, and a copy it does not
 keep once the current document is ten minutes newer: another install's while
 that install holds no fresh claim, and one under its own install id that is not
 its own, as its own only once it has read the current document. It reads the
-copies that are not its own by body, newest first and at most 64 a pass, and
-until it has read them all no copy goes by age. It never
+copies that are not its own by body, newest first and at most 64 a pass, a pass
+every 30 seconds until it has read them all, and until then no copy goes by
+age. It never
 removes the current document, a found copy it keeps ("Not now" included), a
 claim, or a message that is not an ohmail settings message.
 
@@ -543,12 +546,15 @@ An empty store writes no copy beside found settings, so a reader never takes
 an empty copy for the mailbox's newest settings. An answer reaches the mailbox
 within two profile passes, whatever the flush interval: the pass that reads the
 answer releases the question, and the next one writes the store as the answer
-left it. The copy the answer released leaves no earlier than the pass that
-tries that write, so what was imported is in the mailbox after every pass whose
-write lands; when the mailbox refuses the append (a full mailbox) or the write
-waits for the person's answer about a copy under this install's id that is not
-its own, what was imported can be in the store alone until the next write the
-mailbox accepts. When an import makes the store say exactly what the found
+left it. The copy the answer released stays in the mailbox until a copy of the
+store read after the answer lands, or the mailbox's newest copy already says
+what the store says; it leaves on the pass after that. So what was imported is
+never in the store alone: when the mailbox refuses the append (a full mailbox,
+a copy the server does not keep as written, a refused write record) or the
+write waits for the person's answer about a copy under this install's id that
+is not its own, the answered copy stays, with no time limit, until the next
+write the mailbox accepts. A restart before then does not ask about it again.
+When an import makes the store say exactly what the found
 document says and a copy of this install's is newer beside it, that copy is
 replaced, so readers read the imported settings.
 

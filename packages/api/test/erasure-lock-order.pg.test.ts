@@ -7,12 +7,14 @@ import {
   refreshTokens, sessions, threads, users, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, UNMETERED_ACCESS,
   type EntitlementsPort,
 } from "@trafficflow/db";
-import { credentials, makeOwnedDb, recoveryCodes, totpSecrets, webauthnCredentials, type OwnedDb } from "@trafficflow/db/cloud";
+import {
+  credentials, invites, makeOwnedDb, recoveryCodes, totpSecrets, webauthnCredentials, type OwnedDb,
+} from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import {
   generateToken, hashToken, makeAuthService, makeTestAuthDeps, mintPairingToken, redeemDevicePair,
-  FolderOpsService, ThreadService, type Db, type ServiceContext,
+  FolderOpsService, MailService, SpyMailer, ThreadService, throttleKeysFor, type Db, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -87,6 +89,9 @@ function lockOf(q: string | null): string {
   if (/^\s*delete from "users"/i.test(q)) return "DELETE users";
   if (/^\s*delete from "auth_events"/i.test(q)) return "DELETE auth_events";
   if (/^\s*delete from "login_tokens"/i.test(q)) return "DELETE login_tokens";
+  if (/^\s*update "invites"/i.test(q)) return "UPDATE invites";
+  // A row keyed to a user, whose key check asks for the user row the erasure holds.
+  if (/^\s*insert into "(login_tokens|pairing_tokens|auth_events)"/i.test(q)) return "users FOR KEY SHARE";
   return q.replace(/\s+/g, " ").slice(0, 80);
 }
 
@@ -462,10 +467,19 @@ type ParkPrior = (p: Person) => Promise<Record<string, string>>;
 const PASSWORD = "pw-correct-horse-battery-password-password";
 const none: ParkPrior = async () => ({});
 
-async function parked(label: string, prior: ParkPrior, writer: ParkWriter): Promise<Parked> {
+/**
+ * `at` is the row the third connection holds: one of the account's `auth_events` (the erasure waits
+ * at `DELETE auth_events`, its last statement before `DELETE users`), or an invitation bound to the
+ * user's address (it waits at the redaction, inside step 7 past every credential delete).
+ */
+async function parked(label: string, prior: ParkPrior, writer: ParkWriter, at: "auth_events" | "invites" = "auth_events"): Promise<Parked> {
   scenarioIp = `10.${26 + Math.floor(Math.random() * 200)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
   const p = await person();
   await db().execute(sql`insert into auth_events (account_id, user_id, event, ip) values (${p.accountId}, ${p.userId}, 'login', '10.25.0.1')`);
+  const invite = at === "invites"
+    ? (await db().insert(invites).values({ codeHash: hashToken(generateToken()), email: await emailOf(p), expiresAt: new Date(Date.now() + 86_400_000) })
+      .returning({ id: invites.id }))[0]!.id
+    : null;
   const before = await prior(p);
   const tag = randomUUID().slice(0, 8);
   const [H, E, W] = [`fix026-park-${tag}`, `fix026-erase-${tag}`, `fix026-write-${tag}`];
@@ -477,14 +491,15 @@ async function parked(label: string, prior: ParkPrior, writer: ParkWriter): Prom
     const released = new Promise<void>((r) => { release = r; });
     const isLocked = new Promise<void>((r) => { locked = r; });
     const holding = hold.db.transaction(async (tx) => {
-      await tx.execute(sql`select id from auth_events where account_id = ${p.accountId} limit 1 for update`);
+      if (invite !== null) await tx.execute(sql`select id from invites where id = ${invite} for update`);
+      else await tx.execute(sql`select id from auth_events where account_id = ${p.accountId} limit 1 for update`);
       locked();
       await released;
     });
     await isLocked;
     const route = settle(erase(p.eraser, routeDeps(er.db, releases)));
-    expect(lockOf(await blockedOn(E, H, 15_000)), "the erasure is parked at its last statement before DELETE users")
-      .toBe("DELETE auth_events");
+    expect(lockOf(await blockedOn(E, H, 15_000)), "the erasure is parked where the held row stops it")
+      .toBe(invite !== null ? "UPDATE invites" : "DELETE auth_events");
     const write = settle(writer(wr.db, p, before));
     const early = await Promise.race([write.then(() => true), sleep(3_000).then(() => false)]);
     const writerWaitedOn = early ? "never" : lockOf(await blockedOn(W, E, 5_000));
@@ -494,12 +509,14 @@ async function parked(label: string, prior: ParkPrior, writer: ParkWriter): Prom
     const [r, w] = await Promise.all([route, write]);
     const reading: Parked = {
       label, route: r.ok ? await said(r.v) : `threw ${codeOf(r.e)}`, erasureEnded: erEnded,
-      writer: w.ok ? "ok" : codeOf(w.e), writerWaitedOn, erased: (await state(p)).erased,
+      // A writer whose answer says nothing (the resend's `ok`) states what it did instead.
+      writer: w.ok ? (typeof w.v === "string" ? w.v : "ok") : codeOf(w.e), writerWaitedOn, erased: (await state(p)).erased,
     };
-    if (READINGS) appendFileSync(READINGS, `${JSON.stringify({ ...reading, case: "parked before DELETE users" })}\n`);
+    if (READINGS) appendFileSync(READINGS, `${JSON.stringify({ ...reading, case: `parked at ${at}` })}\n`);
     return reading;
   } finally {
     await Promise.all([hold.close(), er.close(), wr.close()]);
+    if (invite !== null) await db().delete(invites).where(eq(invites.id, invite));
   }
 }
 
@@ -560,6 +577,65 @@ describe.skipIf(!PG_UP)("DELETE /account parked before DELETE users, against a w
         .toEqual({ route: "200 erased cancelled", erased: true, erasureEnded: [], writer: refused });
     }, 60_000);
   }
+});
+
+/**
+ * WRITERS OUTSIDE THE FENCE, against the erasure parked inside step 7 past every credential delete
+ * (a third connection holds an invitation bound to the user's address, which the redaction updates).
+ * Each lands a row keyed to the user with no transaction of its own, so no account row stops it. Its
+ * row used to land there and `DELETE users` refused (23503) after the subscription release, a 500.
+ * Step 7 now holds the user rows FOR UPDATE: the writer's key check waits on them, and is refused
+ * once the users are gone.
+ */
+const mailing = (spy: SpyMailer) => makeAuthService(makeTestAuthDeps({}, new MailService({
+  mailer: spy, config: { appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app", supportEmail: "support@ohmail.app" },
+  throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
+})));
+
+const OUTSIDE: Array<[string, ParkWriter, string]> = [
+  // Its answer is `{ ok: true }` either way, by design: what it did is whether a link was mailed.
+  ["the verification resend (a link keyed to the user)", async (h, p) => {
+    const spy = new SpyMailer();
+    await mailing(spy).resendVerification(asUser(h, p));
+    return spy.sent.length === 0 ? "mailed nothing" : "mailed a link";
+  }, "mailed nothing"],
+  ["a pairing token minted without a session (keyed to its creator)", (h, p) =>
+    mintPairingToken(ctxOn(h, { userId: p.userId, accountId: p.accountId }), { grant: "device-pair", label: "fix026 phone" }), "23503"],
+];
+
+describe.skipIf(!PG_UP)("DELETE /account parked inside step 7, against a writer outside the fence", () => {
+  for (const [label, writer, refused] of OUTSIDE) {
+    it(label, async () => {
+      const r = await parked(label, none, writer, "invites");
+      expect({ route: r.route, erased: r.erased, erasureEnded: r.erasureEnded, writer: r.writer, waited: r.writerWaitedOn },
+        `reading: ${JSON.stringify(r)}`).toEqual({
+        route: "200 erased cancelled", erased: true, erasureEnded: [], writer: refused, waited: "users FOR KEY SHARE",
+      });
+    }, 60_000);
+  }
+
+  /**
+   * THE HOSTED AUDIT reads the erasure stamp and inserts its row as two statements, so an erasure can
+   * commit between them. Its row then names nobody and the key refuses it: the row is dropped, and a
+   * stranger's failed sign-in is still answered as one. The user row goes inside the sign-in's verify.
+   */
+  it("a failed sign-in whose user went between the stamp read and its trail row is still refused, and leaves no row", async () => {
+    scenarioIp = `10.${26 + Math.floor(Math.random() * 200)}.${Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
+    const [a] = await db().insert(accounts).values({ name: "fix026" }).returning();
+    made.push(a!.id);
+    const email = `fix026-${randomUUID().slice(0, 8)}@erase.test`;
+    const [u] = await db().insert(users).values({ accountId: a!.id, email }).returning();
+    const deps = makeTestAuthDeps();
+    const verify = deps.passwordHasher.verify.bind(deps.passwordHasher);
+    deps.passwordHasher.verify = async (pw, hash) => {
+      await db().delete(users).where(eq(users.id, u!.id));
+      return verify(pw, hash);
+    };
+    const answer = await makeAuthService(deps).login(ctxOn(db()), { email, password: "WRONG" })
+      .then(() => "ok", (e: unknown) => codeOf(e));
+    expect(answer).toBe("credential_refused");
+    expect(await count(sql`select count(*)::int as n from auth_events where ip = ${scenarioIp}`)).toBe(0);
+  }, 60_000);
 });
 
 /**

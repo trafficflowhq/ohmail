@@ -554,8 +554,9 @@ export interface RepoPort {
   citesOwnWriting(accountId: string, ids: readonly string[]): Promise<string | null>;
   /**
    * Record the addresses a stored inbound message's `List-Post` names (mail 0150): a new address
-   * becomes a list address, a known one is seen again. Never a contact, never a consent. Returns
-   * how many addresses the statement carried.
+   * becomes a list address, a known one is seen again. Never a contact, never a consent. Past the
+   * account's ceiling a new address is recorded only when a person consented to it. Returns how
+   * many addresses the statement carried.
    */
   recordListAddresses(accountId: string, addresses: readonly string[]): Promise<number>;
   /**

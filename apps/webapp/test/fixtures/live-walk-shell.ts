@@ -343,6 +343,8 @@ export async function mountShell(
     wrap?: (shell: React.ReactElement) => React.ReactElement;
     /** The first-run door, as `CloudShell` hands it over. Absent: the desktop window's shape. */
     firstRun?: FirstRunHost;
+    /** A host's card for the stage's slot, as the desktop hands its default-mail ask over. Absent: none. */
+    stageCard?: React.ReactNode;
   } = {},
 ): Promise<HTMLElement> {
   const { AppShell } = await import("../../app/shell/AppShell.js");
@@ -362,6 +364,7 @@ export async function mountShell(
     ...(opts.engine ? { engine: opts.engine } : {}),
     ...(opts.consentTransport ? { consentTransport: opts.consentTransport } : {}),
     ...(opts.firstRun ? { firstRun: opts.firstRun } : {}),
+    ...(opts.stageCard ? { stageCard: opts.stageCard } : {}),
   };
 
   await act(async () => {

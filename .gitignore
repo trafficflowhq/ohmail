@@ -27,6 +27,9 @@ apps/desktop/dist/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 
+# pdf.js's standard font data, copied from pdfjs-dist when the web app builds (next.config.mjs).
+apps/webapp/public/pdfjs/
+
 # A checkout's own test database and mail server (scripts/lane-db.sh, scripts/lane-greenmail.sh).
 # The first holds a database role's password; lane-db.sh refuses to write it unless it is ignored.
 .lane-db.env

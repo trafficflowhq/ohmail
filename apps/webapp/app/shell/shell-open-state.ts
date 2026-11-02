@@ -91,8 +91,9 @@ export type OpenTarget =
   // `row` is NON-NULL by construction: a Screener surface can only show a message THROUGH its
   // sender row, so when no row is held the target is the reader instead — never a rowless
   // screener arm. The type is the invariant `openTargetFor` keeps: it never names a surface
-  // that cannot show the message.
-  | { kind: "screener"; segment: ScreenerSegmentId; row: string }
+  // that cannot show the message. `letter`: the hit, opened in the reader over the card, when it is
+  // not the card's own newest letter (a derived row's id); null when the card shows it.
+  | { kind: "screener"; segment: ScreenerSegmentId; row: string; letter: string | null }
   /** One of the mailbox's own folders — navigate to its view, message tail on the URL. */
   | { kind: "folder"; folderId: string; id: string }
   | { kind: "reader"; id: string };
@@ -161,7 +162,7 @@ export function openTargetFor(
     // naming the segment would drop the user at a list the message is not in and flash nothing.
     // So fall to the reader, in place: the same answer History gives a pile-less hit, and the
     // invariant that `openTargetFor` never names a surface that cannot show the message.
-    return row ? { kind: "screener", segment, row } : { kind: "reader", id: m.id };
+    return row ? { kind: "screener", segment, row, letter: row === m.id ? null : m.id } : { kind: "reader", id: m.id };
   }
   // ONE OF THE USER'S OWN FOLDERS — reachable since the folders foundation: a message whose
   // presented place is not one of the six may live in a folder the account browses as a view.
@@ -1018,7 +1019,15 @@ export function useShellOpenState({
         // The SENDER row's id, not the message's: that is what this view puts in
         // `data-id`, and the flash has to name the thing on screen.
         setLocated(target.row);
-        replyAfter(route.view !== "screener" || route.screenerSegment !== target.segment);
+        {
+          const moves = route.view !== "screener" || route.screenerSegment !== target.segment;
+          // The card opens on the sender's newest letter; an earlier one that matched opens over it.
+          if (target.letter !== null) {
+            if (moves) setReaderPending(target.letter);
+            else setReaderFor(target.letter);
+          }
+          replyAfter(moves);
+        }
         goScreener(target.segment);
         return;
       case "folder":

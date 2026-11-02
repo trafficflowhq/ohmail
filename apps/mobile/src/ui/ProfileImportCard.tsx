@@ -106,7 +106,7 @@ export function ProfileImportCard() {
   const { session, rows, set, bell } = useProfileQuestions();
   const [phase, setPhase] = useState<CardPhase>({ kind: "asking" });
   const [shownFor, setShownFor] = useState<string | null>(null);
-  const current = cardQuestion(rows);
+  const current = cardQuestion(rows, shownFor);
   const q = current?.question;
   /* The sent-mail seed waits while this card asks or finishes an import. */
   const asking = current !== null || phase.kind === "busy" || phase.kind === "importing";

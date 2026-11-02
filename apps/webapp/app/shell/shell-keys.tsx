@@ -1046,6 +1046,8 @@ export function useShellKeys({
   /* UNREAD, not a group's length: the count follows the read, not the place — and it is the list
      header's own set (`ohboxUnreadIds`), resurfaced letters included. */
   const ohboxUnread = useMemo(() => ohboxUnreadIds(resurfacedRows, ohbox).length, [resurfacedRows, ohbox]);
+  /** Rows the Ohbox lists: while its count is withheld the rail says it is counting them. */
+  const ohboxRows = resurfacedRows.length + ohbox.newForYou.length + ohbox.previouslySeen.length;
   useEffect(() => {
     onUnread?.(ohboxUnread);
   }, [onUnread, ohboxUnread]);
@@ -1068,7 +1070,7 @@ export function useShellKeys({
             ...(mayCount ? {
               count: ohboxUnread,
               title: t("rail.ohboxTitle", { unread: ohboxUnread }),
-            } : {}),
+            } : ohboxRows > 0 ? { title: t("ohbox.metaCounting") } : {}),
           },
           /* The streams count "new since last visit" — the fresh side of each view's own
              waterline — never unread. See the `readsNew` derivation for the whole argument. */
@@ -1273,7 +1275,7 @@ export function useShellKeys({
       },
     ],
     [
-      t, ohboxUnread, readsNew, receiptsNew, mayCount, screener.waitingCount, railDegrade, piles,
+      t, ohboxUnread, ohboxRows, readsNew, receiptsNew, mayCount, screener.waitingCount, railDegrade, piles,
       tagGroups, tags, createTagAlone, consent.foldersEnabled, consent.known, folders,
       folderUnread, folderVerbs, folderMailboxes, demo, syncStatus.bootstrapping, route.view,
       route.folderId, facts,

@@ -1,13 +1,15 @@
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mailboxes, tags } from "@trafficflow/db";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
   OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
+import type { ProfileIo, RawProfileMessage } from "@trafficflow/core/adapters/organizer-profile";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
-import { createSidecar, type Sidecar } from "../src/engine.js";
+import { createSidecar, type AdapterDialContext, type Sidecar } from "../src/engine.js";
 import { INGEST_LOG_FLUSH_MS } from "../src/db.js";
 
 /**
@@ -29,23 +31,41 @@ class MemoryMetaFolder {
   }
 }
 
+/** A real, empty settings folder, for a case whose settings travel. */
+class MemoryProfileFolder implements ProfileIo {
+  private nextUid = 1;
+  readonly messages: RawProfileMessage[] = [];
+  async ensureMetaFolder(): Promise<void> {}
+  async listProfileMessages(): Promise<RawProfileMessage[]> { return this.messages.map((m) => ({ ...m })); }
+  async appendProfile(raw: string): Promise<void> { this.messages.push({ ref: this.nextUid++, raw, generation: 4_100 }); }
+  async removeProfiles(refs: readonly unknown[]): Promise<void> {
+    const gone = new Set(refs);
+    for (let i = this.messages.length - 1; i >= 0; i--) if (gone.has(this.messages[i]!.ref)) this.messages.splice(i, 1);
+  }
+}
+
 /**
  * Every dial is one adapter; the ones in `dropped` answer every `ohmail/_meta` read with a reset.
  * With `backlog.on`, `changesSince` is SOCKET-SHAPED: it answers "more to come" and settles only
- * when the case releases it (or at once under `backlog.auto`), one cycle at a time.
+ * when the case releases it (or at once under `backlog.auto`), one cycle at a time. `settings`: the
+ * settings folder is a real one, so the store's settings reach it.
  */
-function mailbox() {
+function mailbox(opts: { settings?: true } = {}) {
   const meta = new MemoryMetaFolder();
+  const settings = opts.settings === true ? new MemoryProfileFolder() : null;
   const backlog = { on: false, auto: false, calls: 0, pending: [] as (() => void)[] };
   const state = {
     dials: 0, dropped: new Set<number>(), refuseEveryDial: false, backlog,
     moves: 0, destroyed: 0, requestChannel: 0, profile: 0,
     /** The doorbell the engine registered on the latest dial — ringing it is an INBOX arrival. */
     ring: null as (() => void) | null,
+    /** What the engine handed each dial: the runtime's own reports its socket's death through it. */
+    dialled: new Map<number, AdapterDialContext>(),
   };
   const empty: ChangeBatch = { creates: [], moves: [], flagChanges: [], deletes: [], newCursor: { folders: {} } };
-  const factory = (_cfg: ImapConfig): MailboxAdapter & { leaseIo(): LeaseIo } => {
+  const factory = (_cfg: ImapConfig, ctx?: AdapterDialContext): MailboxAdapter & { leaseIo(): LeaseIo } => {
     const id = ++state.dials;
+    if (ctx !== undefined) state.dialled.set(id, ctx);
     const live = (): void => {
       if (state.dropped.has(id)) throw Object.assign(new Error("socket reset by peer"), { code: "ECONNRESET" });
     };
@@ -78,7 +98,11 @@ function mailbox() {
       /* The request channel's door, counted and refused as a retired adapter refuses it. */
       requestOrganizerIo(): never { state.requestChannel += 1; throw new Error("retired"); },
       /* And the profile publish's, the same way: unseeded, every organizer pass asks for it. */
-      profileIo(): never { state.profile += 1; throw new Error("retired"); },
+      profileIo(): ProfileIo {
+        if (settings !== null) return settings;
+        state.profile += 1;
+        throw new Error("retired");
+      },
       async setFlags(): Promise<void> {},
       async scanSentRecipients(): Promise<string[]> { return []; },
       async watch(onSignal: () => void): Promise<() => Promise<void>> { state.ring = onSignal; return async () => {}; },
@@ -86,14 +110,21 @@ function mailbox() {
       async fetchPart(): Promise<FetchedPart> { throw new Error("this mailbox cannot fetchPart"); },
     } as MailboxAdapter & { leaseIo(): LeaseIo };
   };
-  return { meta, state, factory };
+  /** The runtime's socket dies and says so, and no later dial reaches the server. */
+  const cut = (): void => {
+    state.refuseEveryDial = true;
+    state.dropped.add(state.dials);
+    state.dialled.get(state.dials)?.onConnectionError(Object.assign(new Error("socket reset by peer"), { code: "ECONNRESET" }));
+  };
+  return { meta, settings, state, factory, cut };
 }
 
 describe("a hand-back that runs on a dropped socket releases over a fresh one", () => {
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
-  async function boot(box: ReturnType<typeof mailbox>): Promise<Sidecar> {
+  /** `decided`: a tag in the store before the first pass, so that pass writes a settings copy. */
+  async function boot(box: ReturnType<typeof mailbox>, opts: { decided?: string } = {}): Promise<Sidecar> {
     const dataDir = await freshDataDir("ohmail-hand-back-");
     const sidecar = await createSidecar({
       dataDir,
@@ -104,8 +135,15 @@ describe("a hand-back that runs on a dropped socket releases over a fresh one", 
     });
     cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
     await grantOrganizeConsent(sidecar);
+    if (opts.decided !== undefined) await decide(sidecar, opts.decided);
     await sidecar.start();
     return sidecar;
+  }
+  /** A tag made on this install: a decision its settings carry. */
+  async function decide(sidecar: Sidecar, name: string): Promise<void> {
+    const [row] = await sidecar.db.select({ accountId: mailboxes.accountId }).from(mailboxes).limit(1);
+    const at = new Date();
+    await sidecar.db.insert(tags).values({ accountId: row!.accountId, name, createdAt: at, updatedAt: at });
   }
 
   it("the runtime's socket was dropped at the freeze: the claim goes over a dial of its own", async () => {
@@ -139,6 +177,32 @@ describe("a hand-back that runs on a dropped socket releases over a fresh one", 
     const answer = await sidecar.handBack();
     expect(answer[0]!.released).toBeNull();
     expect(box.meta.claims.length, "the claim still stands, and the app says so").toBe(1);
+  }, 30_000);
+
+  /* NO CONNECTION RAN THE SETTINGS WRITE THIS HAND-BACK OWED: the runtime's socket died and the fresh dial was refused,
+     so a decision since the last write is on this install only. The hand-back says not saved, as a flush that failed
+     does, and the store's read says so until a write lands; one that owed nothing (already handed back) says nothing.
+     On the way out (`leaving`) the read is the store against the last copy, never the press's shortcut. */
+  it("the socket died and no dial reaches the server: the hand-back that owed the settings write says not saved", async () => {
+    const box = mailbox({ settings: true });
+    const sidecar = await boot(box, { decided: "mine" });
+    // An ordinary drain, rung as an arrival rings it, publishes the settings: the launch's import pass does not.
+    for (let i = 0; i < 100 && box.settings!.messages.length === 0; i++) { box.state.ring?.(); await settle(50); }
+    const [id, organizing] = Object.entries(sidecar.organizerStates())[0]!;
+    expect({ organizing: organizing.organizing, claimed: organizing.claimed, copies: box.settings!.messages.length }, "the premise")
+      .toEqual({ organizing: true, claimed: true, copies: 1 });
+    await decide(sidecar, "offline");
+    const read = async () => ({ pressed: await sidecar.settingsLeftOnlyHere(id), leaving: await sidecar.settingsLeftOnlyHere(id, { leaving: true }) });
+    const decided = await read();
+    box.cut();
+    const answer = await sidecar.handBack();
+    const handedBack = { released: answer[0]!.released, left: sidecar.organizerStates()[id]!.settingsLeft, read: await read() };
+    await sidecar.handBack();
+    expect({ decided, handedBack, again: sidecar.organizerStates()[id]!.settingsLeft, copies: box.settings!.messages.length }).toEqual({
+      decided: { pressed: "none", leaving: null },
+      handedBack: { released: null, left: "not_saved", read: { pressed: null, leaving: null } },
+      again: undefined, copies: 1,
+    });
   }, 30_000);
 });
 

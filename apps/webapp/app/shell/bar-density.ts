@@ -269,7 +269,11 @@ export function useBarDensity(): {
     let fromPane = false;
     if (pane) {
       const ps = getComputedStyle(pane);
-      const inner = cssRect(pane).width
+      const borders = (parseFloat(ps.borderLeftWidth) || 0) + (parseFloat(ps.borderRightWidth) || 0);
+      // The pane's border box includes a classic vertical scrollbar, which is no room for the row.
+      const gutter = pane instanceof HTMLElement
+        ? Math.max(0, pane.offsetWidth - pane.clientWidth - borders) : 0;
+      const inner = cssRect(pane).width - gutter
         - (parseFloat(ps.paddingLeft) || 0) - (parseFloat(ps.paddingRight) || 0);
       if (inner > 0) { room = inner; fromPane = true; }
     }

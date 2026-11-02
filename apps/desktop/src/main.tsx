@@ -14,6 +14,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { localStorageDoor } from "@ohmail/client-engine/durable";
 
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
+import { enableDesktopDroppedFiles, installFileDropGuard } from "../../webapp/app/shell/dropped-files";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 import { setRenderedLinksBatchSink } from "../../webapp/app/shell/rendered-links";
 import { stampColumns } from "../../webapp/app/shell/column-store";
@@ -123,6 +124,11 @@ interceptLinkClicks(document, { trustSameOrigin: true });
    press one; in batches, one bridge call per frame's worth of reports. */
 setRenderedLinksBatchSink(reportRenderedLinksToShell);
 enableDesktopAttachments();
+/* …AND A FILE MANAGER'S DROP. WebKitGTK withholds its files from the page and the shell holds them
+   for the compose they landed on (`dropped-files.ts`); anywhere else the guard keeps WebKit from
+   inserting the path. */
+enableDesktopDroppedFiles();
+installFileDropGuard(window);
 
 /* THE OMARCHY THEME FEED, armed here for the same reason the two arms above are: it is a
    capability of the WINDOW, not of any one view. On an Omarchy desktop the shell answers the

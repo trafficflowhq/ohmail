@@ -81,6 +81,11 @@ const WINDOW_COMMANDS: &[&str] = &[
     // scheme (an image) or the text under a cap; the release removes the staged file.
     "stage_attachment_preview",
     "release_attachment_preview",
+    // FILES DROPPED ON THE WINDOW FROM ANOTHER PROGRAM (`src/dropped_files.rs`): the take, which
+    // takes nothing and answers the latest drop's names, sizes and types once, and the chunk read by
+    // the take's token. The shell saw the drop itself; no command names a path.
+    "dropped_files_take",
+    "dropped_file_chunk",
     // HOST MODE — publishing the engine's loopback door to the user's OWN tailnet, driven
     // entirely through this shell's commands (`src/host.rs` carries the reasoning). The window
     // reads a typed state, probes the tailnet, arms and disarms (the serve invocation is

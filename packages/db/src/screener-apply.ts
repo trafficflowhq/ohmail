@@ -534,7 +534,7 @@ export interface ApplyScreenerDecisionInput {
    * WHICH MARKED ROWS THE DECISION MOVES (mail 0148). `pressed`, the default: a person's press moves
    * a claim only from the address they pressed on, the row that told them; a domain press leaves
    * another address's claim to its own press. `none`: moves no claim and no row that FAILED
-   * authentication. A pass's yes moves only rows the check cleared.
+   * authentication. A pass's yes moves only rows the check cleared and the provider did not fail.
    */
   marked?: "pressed" | "none";
   /**
@@ -774,9 +774,10 @@ export async function applyScreenerDecision(
     }
   }
 
-  // A claim, or a row nobody checked, moves only on a press made on its own address.
+  // A claim, or a row nobody checked, moves only on a press made on its own address; a row its
+  // provider failed never moves on a pass's yes.
   const movable = (r: AppliedScreenerRow): boolean =>
-    passAdmits ? r.senderCheck === "none" : heldRowMovesOnPress(r, address, marked);
+    passAdmits ? r.senderCheck === "none" && !storedAuthScreens(r.authVerdict) : heldRowMovesOnPress(r, address, marked);
   const moved = await rerouteHeldBag(tx, accountId, heldMail.filter(movable), appliedFolder, now);
   if (moved.lastSeq !== null) lastSeq = moved.lastSeq;
   const { rerouted, heldElsewhere } = moved;

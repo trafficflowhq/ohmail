@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ADDRESS_SHAPE, LIST_POST_ADDRESSES_MAX, listPostAddresses } from "../src/list-address.js";
+import { normalizeMime } from "../src/mime.js";
 
 /** The stored shape: lower-cased header names, raw values (`mime.ts`). */
 const post = (...values: string[]) => ({ "list-post": values });
@@ -77,5 +78,35 @@ describe("listPostAddresses — the address a list posts as (RFC 2369 List-Post)
     expect(listPostAddresses({ "list-post": [42, "<mailto:team@lists.example.org>"] }))
       .toEqual(["team@lists.example.org"]);
     expect(listPostAddresses(post(""))).toEqual([]);
+  });
+});
+
+describe("an internationalised list address reads as the parser reads its From", () => {
+  /** The From the gate is handed and the List-Post addresses, for one address written in both. */
+  async function both(address: string): Promise<{ from: string; list: string[] }> {
+    const msg = await normalizeMime(Buffer.from([
+      `From: The List <${address}>`, "To: me@own.invalid", "Subject: hello",
+      `List-Post: <mailto:${address}>`, "Content-Type: text/plain; charset=utf-8", "", "hi",
+    ].join("\r\n")));
+    return { from: msg.from.address, list: listPostAddresses(msg.headers) };
+  }
+
+  it("an `@xn--` domain is read in Unicode, every punycode label of it, as the From is", async () => {
+    for (const [address, unicode] of [
+      ["list@xn--bcher-kva.invalid", "list@bücher.invalid"],
+      ["List@xn--bcher-kva.xn--p1ai", "list@bücher.рф"],
+    ]) {
+      const r = await both(address!);
+      expect(r.from, address).toBe(unicode);
+      expect(r.list, `List-Post kept ${address} in punycode`).toEqual([r.from]);
+    }
+  });
+
+  it("CONTROL: an uppercase `XN--`, a punycode label that is not the first, and one that does not decode stay ASCII, as the From does", async () => {
+    for (const address of ["list@XN--BCHER-KVA.invalid", "list@lists.xn--bcher-kva.invalid", "list@xn--zz.invalid"]) {
+      const r = await both(address);
+      expect(r.from, address).toBe(address.toLowerCase());
+      expect(r.list, address).toEqual([r.from]);
+    }
   });
 });

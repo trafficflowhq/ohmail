@@ -456,6 +456,52 @@ describe("the door's answer is the verdict", () => {
     expect(await signOutAnswered(new ApiError(403, "csrf_failed", "csrf validation failed", undefined, { coded: true })))
       .toEqual(REFUSED);
   });
+
+  /**
+   * WHILE THE DOOR IS OUT the jar already says a sign-out is pending, so every gate reads it (the edge,
+   * the manage hand-off, the sync gate, this client's verdict), and the account's other tabs were told.
+   * The door's answer then settles it as ever.
+   */
+  async function whileTheDoorIsOut(answer: "ok" | unknown) {
+    let open!: () => void;
+    mockLogout.mockImplementationOnce(() => new Promise<void>((resolve, reject) => {
+      open = () => (answer === "ok" ? resolve() : reject(answer));
+    }));
+    document.cookie = `tf_owner=${ACCOUNT}; Path=/`;
+    const client = await import("../app/api-client");
+    client.bindApiOwner(ACCOUNT);
+    const { signedOutChannel } = await import("../app/signed-out-signal");
+    const { readOwnerMarker } = await import("../app/shell/owner-cookie");
+    const heard: unknown[] = [];
+    const tab = new BroadcastChannel(signedOutChannel(ACCOUNT));
+    tab.onmessage = (e: MessageEvent) => { heard.push(e.data); };
+    try {
+      const { signOut } = await import("../app/sign-out");
+      const out = signOut(ACCOUNT);
+      await vi.waitFor(() => expect(mockLogout).toHaveBeenCalledTimes(1));
+      const marker = readOwnerMarker().kind;
+      const verdict = client.apiOwnerVerdict("/mailboxes");
+      await vi.waitFor(() => expect(heard, "the other tabs were not told while the door was out").toHaveLength(1));
+      open();
+      const result = await out;
+      return { whileOut: { marker, verdict }, after: readOwnerMarker().kind, serverRefused: result.serverRefused };
+    } finally {
+      tab.close();
+    }
+  }
+
+  it("the marker reads signed out and the other tabs are told before the door answers; a 204 then clears it", async () => {
+    expect(await whileTheDoorIsOut("ok")).toEqual({
+      whileOut: { marker: "signed-out", verdict: "signed-out" }, after: "absent", serverRefused: null,
+    });
+  });
+
+  it("…and a refusal leaves it pending", async () => {
+    const { ApiError, OFFLINE_CODE } = await import("../app/api-client");
+    expect(await whileTheDoorIsOut(new ApiError(0, OFFLINE_CODE, "We could not reach ohmail."))).toEqual({
+      whileOut: { marker: "signed-out", verdict: "signed-out" }, after: "signed-out", serverRefused: expect.any(String),
+    });
+  });
 });
 
 /**

@@ -1200,6 +1200,55 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(pressed.skipped).toBeUndefined();
     expect(await desiredOf(code)).toBe("INBOX");
   });
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //  (m) A LETTER ITS PROVIDER FAILED — the act never admits it. Only `fail` screens, so (h)'s
+  //      unconfirmed sender at no brand's domain is filed as before; a person's press still moves it.
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+
+  it("MUTATION-WATCH (m): advice on a genuine letter files it under the rule; a failed letter of the same address waits", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "orders@supplier.test";
+    const { genuine, forged } = await genuineAndForged(w, sender, "fail");
+    await suggest(w, genuine, "INBOX", 0.95);
+    const r = await act(w);
+    expect(r).toMatchObject({ ran: true, filed: 1, identity: 0, unverified: 0 });
+    expect(await desiredOf(genuine)).toBe("INBOX");
+    expect(await desiredOf(forged), "the act admitted a letter its provider failed").toBe(SCREENER);
+    expect(await rulesFor(w, sender)).toHaveLength(1);
+  });
+
+  it("MUTATION-WATCH (m): admitting advice bought on a failed letter files nothing and writes no rule", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "orders@supplier.test";
+    const { genuine, forged } = await genuineAndForged(w, sender, "fail");
+    await suggest(w, forged, "INBOX", 0.95);
+    const r = await act(w);
+    expect(r).toMatchObject({ ran: true, filed: 0, kept: 1 });
+    expect(await desiredOf(forged)).toBe(SCREENER);
+    expect(await desiredOf(genuine)).toBe(SCREENER);
+    expect(await accountRules(w)).toEqual([]);
+    expect(await accountContacts(w)).toEqual([]);
+  });
+
+  it("CONTROL (m): a person's press moves the failed letter", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "orders@supplier.test";
+    const { genuine, forged } = await genuineAndForged(w, sender, "fail");
+    type InTx = (f: (tx: Tx) => Promise<unknown>) => Promise<unknown>;
+    const inTx = (db as unknown as { transaction: InTx }).transaction.bind(db) as InTx;
+    const pressed = await inTx((tx) => applyScreenerDecision(tx, {
+      accountId: w.accountId, scope: "sender", address: sender, appliedFolder: "INBOX", decision: "yes",
+      triggeringActionId: `screener:press:${forged}`, now: new Date(), stampBaseline: false, applyRetro: true,
+      overExisting: "converge", liftOverDomain: true, decidedBy: "person",
+    })) as Awaited<ReturnType<typeof applyScreenerDecision>>;
+    expect(pressed.skipped).toBeUndefined();
+    expect(await desiredOf(forged)).toBe("INBOX");
+    expect(await desiredOf(genuine)).toBe("INBOX");
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -1229,6 +1278,13 @@ describe("plannedDecision — advice becomes the decision a press would make, or
     }
     // The reason bounds a deny only: an admission is decided by its own gates.
     expect(plan("INBOX", 0.95, "pass", "campaign")).toMatchObject({ decision: "yes" });
+  });
+
+  it("an admission bought on a letter its provider failed is no plan; a deny on it still is", () => {
+    expect(plan("INBOX", 0.95, "fail")).toBeNull();
+    expect(plan("ohmail/News", 0.95, "fail")).toBeNull();
+    expect(plan(SPAM, 0.95, "fail")).toMatchObject({ decision: "no", confirmed: false, standing: false });
+    expect(plan("INBOX", 0.95, "unavailable")).toMatchObject({ decision: "yes" });
   });
 
   it("a denying pile becomes decision 'no', an admitting pile becomes 'yes'", () => {

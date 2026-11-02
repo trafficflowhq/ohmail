@@ -613,6 +613,7 @@ export function AppShell({
   desktopSection,
   devicesSection,
   defaultMailSection,
+  stageCard,
   notificationHost,
   screeningSection,
   actRulesUnmarked,
@@ -797,6 +798,11 @@ export function AppShell({
    * "mail links open the wrong app" would look — beside language and appearance.
    */
   defaultMailSection?: ReactNode;
+  /**
+   * A HOST'S ONE CARD ABOVE THE MAIL (the desktop's one-time default-mail ask), in the stage's notice
+   * slot: in the flow, so it covers no control. It waits behind a found-settings question.
+   */
+  stageCard?: ReactNode;
   /**
    * Where the operating system's notification answer comes from, when it
    * is not this page's. Absent means the browser's own reader
@@ -1029,6 +1035,7 @@ export function AppShell({
             desktopSection={desktopSection}
             devicesSection={devicesSection}
             defaultMailSection={defaultMailSection}
+            stageCard={stageCard}
             {...(notificationHost ? { notificationHost } : {})}
             screeningSection={screeningSection}
             actRulesUnmarked={actRulesUnmarked === true}
@@ -1098,7 +1105,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, stageCard, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1124,6 +1131,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   desktopSection?: { label: string; node: ReactNode };
   devicesSection?: ReactNode;
   defaultMailSection?: ReactNode;
+  stageCard?: ReactNode;
   /** See the outer prop of the same name. */
   notificationHost?: NotificationHost;
   screeningSection?: ReactNode;
@@ -2485,20 +2493,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
           <ColumnHandles />
 
           <main className="stage" onClickCapture={onStageClickCapture}>
-            {/* SETTINGS FOUND ON A MAILBOX — floated over whichever view (or the seed review)
-                is up, never replacing it: an offer somebody may answer in a week must not gate
-                today's mail. Above the seed deliberately, because the two overlap in subject —
-                imported rules ARE screening decisions, and someone restoring a configured
-                mailbox should meet the restore before the from-scratch consent walk. */}
-            {profileImportOffer.offer ? (
-              <ProfileImportCard
-                offer={profileImportOffer.offer}
-                phase={profileImportOffer.phase}
-                onImport={profileImportOffer.importNow}
-                onNotNow={profileImportOffer.notNow}
-                onAcknowledge={profileImportOffer.acknowledge}
-              />
-            ) : null}
+            {/* THE STAGE'S ONE CARD, in the flow above whichever view (or the seed review) is up, so
+                it covers no control and never replaces the mail: an offer somebody may answer in a
+                week must not gate today's mail. The found-settings question first — above the seed
+                deliberately, because imported rules ARE screening decisions — and a host's card
+                (the desktop's default-mail ask) only while no question stands. */}
+            <div className="stage-notice">
+              {profileImportOffer.offer ? (
+                <ProfileImportCard
+                  offer={profileImportOffer.offer}
+                  phase={profileImportOffer.phase}
+                  onImport={profileImportOffer.importNow}
+                  onNotNow={profileImportOffer.notNow}
+                  onAcknowledge={profileImportOffer.acknowledge}
+                />
+              ) : stageCard ?? null}
+            </div>
             {/* THE SEED REVIEW TAKES THE STAGE while it is owed. It decides what the Ohbox
                 contains, so answering it before reading the piles is the order that makes the
                 piles mean something — and "Later" leaves immediately, because it is an offer

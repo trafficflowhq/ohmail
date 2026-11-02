@@ -15,6 +15,18 @@ export type PdfSource = NonNullable<Parameters<Pdfjs["getDocument"]>[0]>;
 export type PdfTask = Pick<PDFDocumentLoadingTask, "promise" | "destroy">;
 
 /**
+ * The web's standard font data: pdf.js's own, which the build copies to `public/pdfjs/standard_fonts/`
+ * (`copyStandardFonts`, next.config.mjs), on this origin. A PDF set in an unembedded Helvetica, Times or Courier draws with it on any machine, not
+ * with whatever fonts the machine has (none: no words). Fetched on the page under `connect-src
+ * 'self'`; the worker stays without network.
+ */
+export const STANDARD_FONTS = {
+  standardFontDataUrl: "/pdfjs/standard_fonts/",
+  useSystemFonts: false,
+  useWorkerFetch: false,
+} as const;
+
+/**
  * Load `src` with the library `load` resolves to, over a module worker from `workerUrl`. The
  * PDFWorker comes from that same library: pdf.js starts a worker of its own beside any other.
  */

@@ -9,6 +9,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import type { Editor } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
+import { Slice } from "@tiptap/pm/model";
 import { RichEditor } from "../app/shell/RichEditor";
 import { EMPTY_RICH, escapeAsParagraphs, type RichValue } from "../app/shell/rich-text";
 
@@ -1234,6 +1235,45 @@ describe("what leaves the editor", () => {
     act(() => { selectAllAndDelete(ed); });
     expect(ed.value.html).toBe("");
     expect(ed.value.text.trim()).toBe("");
+  });
+});
+
+describe("a file dropped on the editor never becomes text", () => {
+  /**
+   * WebKitGTK hands a file manager's drop over as `text/uri-list` + `text/html` with no File
+   * objects (measured on 2.52), and ProseMirror's drop parses that html and inserts the file's URL,
+   * which is the reported bug. jsdom has no layout for ProseMirror's own drop path, so the editor's
+   * `handleDrop` is asked the way ProseMirror asks it; `true` is ProseMirror's cue to prevent the
+   * drop and insert nothing. Mutation: delete the editor's `handleDrop` → the first case goes red.
+   */
+  function transfer(types: string[], data: Record<string, string>, files: File[] = []): DataTransfer {
+    return { types, files, getData: (t: string) => data[t] ?? "" } as unknown as DataTransfer;
+  }
+  function claimed(ed: Mounted, dt: DataTransfer, moved = false): boolean {
+    const view = ed.editor().view;
+    const event = new Event("drop", { bubbles: true, cancelable: true }) as DragEvent;
+    Object.defineProperty(event, "dataTransfer", { value: dt });
+    return view.someProp("handleDrop", (f) => f(view, event, Slice.empty, moved)) === true;
+  }
+  const withheld = transfer(["text/uri-list", "text/html"], { "text/html": "<a>file:///tmp/drop/notes.txt</a>" });
+
+  it("claims a withheld file drop and a drop of File objects, and the document is unchanged", () => {
+    const ed = mount({ text: "hello", html: "" });
+    const before = ed.editor().state.doc;
+    expect(claimed(ed, withheld), "the editor would insert the file's URL").toBe(true);
+    expect(claimed(ed, transfer(["Files"], {}, [new File(["x"], "x.txt")]))).toBe(true);
+    expect(ed.editor().state.doc.eq(before)).toBe(true);
+    expect(ed.value.text).toBe("hello");
+  });
+
+  it("leaves a link drop and the editor's own moves to ProseMirror", () => {
+    const ed = mount({ text: "hello", html: "" });
+    const link = transfer(["text/plain", "text/html", "text/uri-list"], {
+      "text/plain": "https://example.org/a",
+      "text/uri-list": "https://example.org/a\r\n",
+    });
+    expect(claimed(ed, link)).toBe(false);
+    expect(claimed(ed, withheld, true)).toBe(false);
   });
 });
 

@@ -118,8 +118,9 @@ const HOSTED_SUGGEST_MARKER = "SuggestRefused";
  * a shell command would be a page claiming a channel it does not have. `rendered_links_batch` is how
  * the window's renderers report the links they draw — the only addresses the shell's new-window
  * door opens besides its own — so a window bundle without it has links that will not open.
+ * `dropped_files_take` is how a compose takes a file manager's drop the page was given no files for.
  */
-const SHELL_COMMAND_MARKERS = ["rendered_links_batch", "save_attachment", "stage_attachment_preview"];
+const SHELL_COMMAND_MARKERS = ["rendered_links_batch", "save_attachment", "stage_attachment_preview", "dropped_files_take"];
 
 /**
  * THE COMMANDS THE SHELL NO LONGER CARRIES, which no bundle may name. `open_external` handed the

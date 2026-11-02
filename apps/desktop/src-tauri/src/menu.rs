@@ -279,6 +279,10 @@ fn build_main_window<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std:
     builder.build()?;
     #[cfg(feature = "local-engine")]
     crate::link_gate::arm(app.handle());
+    // A file manager's drop reaches the page with its files withheld; the shell holds them by the
+    // drop's own signals (`dropped_files.rs`).
+    #[cfg(all(feature = "local-engine", target_os = "linux"))]
+    crate::dropped_files::arm(app.handle());
     Ok(())
 }
 

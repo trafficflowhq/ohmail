@@ -22,7 +22,7 @@ import {
   type MobileEngineDeps,
 } from "../engine/boot";
 import {
-  holdStandaloneDoor, releaseStandaloneLaunch, takeStandaloneLaunch,
+  holdStandaloneDoor, releaseStandaloneLaunch, takeStandaloneLaunch, type SettingsKeptHere,
 } from "../engine/organizer-session";
 import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door";
 import { ServerProfileStore, type PendingSignOut, type ServerProfile } from "../state/servers";
@@ -1025,7 +1025,9 @@ export type ForgetOutcome =
    * Something the user was told would go is still here. `reason` is a showable sentence naming
    * WHAT remains and what happens next; the deletion stays owed in the profile index either way.
    */
-  | { kind: "partial"; reason: Refusal };
+  | { kind: "partial"; reason: Refusal }
+  /** NOTHING WAS TOUCHED: the store says what the mailbox does not (`settings`), and nobody said remove anyway. */
+  | { kind: "kept"; settings: SettingsKeptHere };
 
 /**
  * Forget a pairing — the whole ceremony at the seam, not in the React
@@ -1040,9 +1042,24 @@ export type ForgetOutcome =
 export async function forgetProfile(
   env: PairingEnv,
   profileId: string,
-  /** `revoke` answers `true` (told), `false` (not told), or what became of the sign-out. */
-  opts: { closed?: Promise<void>; revoke?: (() => Promise<boolean | SignOutOutcome>) | null } = {},
+  /**
+   * `revoke` answers `true` (told), `false` (not told), or what became of the sign-out. `settingsKept`: what
+   * the removal's hand-back left only in this phone's store (`endStandaloneForRemoval`); `anyway` is the
+   * person's answer to it.
+   */
+  opts: {
+    closed?: Promise<void>; revoke?: (() => Promise<boolean | SignOutOutcome>) | null;
+    settingsKept?: SettingsKeptHere | null; anyway?: boolean;
+  } = {},
 ): Promise<ForgetOutcome> {
+  /* ── THE STORE STAYS WHILE IT SAYS WHAT THE MAILBOX DOES NOT ─────────────────────────────────
+     The hand-back's own write is the one that finds a full mailbox, so this is read after it and
+     before anything here: the credential, the mirror and the engine's store all stay. */
+  const kept = opts.settingsKept ?? null;
+  if (kept !== null && opts.anyway !== true) {
+    await (opts.closed ?? Promise.resolve()).catch(() => undefined);
+    return { kind: "kept", settings: kept };
+  }
   const row = (await env.profiles.list()).find((p) => p.id === profileId) ?? null;
   // What the account door answered this pairing goes first: nothing of it may paint again.
   forgetAccessFeed(profileId);

@@ -672,11 +672,11 @@ describe("Settings → Mailboxes: a mailbox that cannot keep its settings copy s
 describe("the doorbell: a find is asked for on the drain that carries it", () => {
   /** A transport whose candidate answers are HELD until the test releases them, in order. */
   function heldWire() {
-    const pending: Array<(v: unknown) => void> = [];
+    const pending: Array<{ id: string; release: (v: unknown) => void }> = [];
     const asked: string[] = [];
     let declineRelease: (() => void) | null = null;
     const wire: import("../app/shell/ProfileImportCard.js").ProfileImportTransport = {
-      candidate: (id) => { asked.push(id); return new Promise((r) => { pending.push(r as (v: unknown) => void); }) as never; },
+      candidate: (id) => { asked.push(id); return new Promise((r) => { pending.push({ id, release: r as (v: unknown) => void }); }) as never; },
       apply: async () => applied as never,
       status: async () => { throw new Error("not asked"); },
       decline: () => new Promise((r) => { declineRelease = () => r({ dismissed: true }); }),
@@ -685,21 +685,31 @@ describe("the doorbell: a find is asked for on the drain that carries it", () =>
     const flush = async (): Promise<void> => { await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
     return {
       wire, asked,
-      answer: async (v: unknown) => { const r = pending.shift(); if (!r) throw new Error("no ask is waiting"); await act(async () => { r(v); }); await flush(); },
+      answer: async (v: unknown) => { const r = pending.shift(); if (!r) throw new Error("no ask is waiting"); await act(async () => { r.release(v); }); await flush(); },
+      /** The oldest ask still out for one mailbox, released on its own. */
+      answerFor: async (id: string, v: unknown) => {
+        const at = pending.findIndex((p) => p.id === id);
+        if (at === -1) throw new Error(`no ask is waiting for ${id}`);
+        const [r] = pending.splice(at, 1);
+        await act(async () => { r!.release(v); }); await flush();
+      },
       declined: async () => { if (!declineRelease) throw new Error("no decline is waiting"); const r = declineRelease; declineRelease = null; await act(async () => { r(); }); await flush(); },
     };
   }
 
   /** The real hook + card with the doorbell as a prop; the beat is an hour, so only a ring can ask. */
-  async function mountBell(wire: import("../app/shell/ProfileImportCard.js").ProfileImportTransport): Promise<(bell: number | null) => Promise<void>> {
+  async function mountBell(
+    wire: import("../app/shell/ProfileImportCard.js").ProfileImportTransport, boxes: ReadonlyArray<{ id: string; address: string }> = [MB],
+  ): Promise<(bell: number | null) => Promise<void>> {
     const { ProfileImportCard, useProfileImport } = await import("../app/shell/ProfileImportCard.js");
     function BellProbe({ bell }: { bell: number | null }) {
-      const state = useProfileImport(true, [MB], wire, 60 * 60 * 1000, bell);
-      if (!state.offer) return h("div", { className: "no-card" });
-      return h(ProfileImportCard as never, {
+      const state = useProfileImport(true, boxes, wire, 60 * 60 * 1000, bell);
+      const rows = h("i", { className: "declined-rows" }, state.declined.map((r) => r.address).join(","));
+      if (!state.offer) return h("div", { className: "no-card" }, rows);
+      return h("div", null, rows, h(ProfileImportCard as never, {
         offer: state.offer, phase: state.phase,
         onImport: state.importNow, onNotNow: state.notNow, onAcknowledge: state.acknowledge,
-      } as never);
+      } as never));
     }
     const render = async (bell: number | null): Promise<void> => {
       const el = h(NextIntlClientProvider, {
@@ -750,6 +760,54 @@ describe("the doorbell: a find is asked for on the drain that carries it", () =>
     await w.answer(candidate); // the stale ask comes back carrying the question already answered
     expect(card(), "an ask older than the answer brought the dismissed card back").toBeNull();
   });
+
+  /* ONE QUESTION AT A TIME, IN A STABLE ORDER: the card keeps the mailbox it shows until that question is
+     answered or dismissed; another mailbox's answer queues behind it, the waiting ones in the listed order. */
+  const MB3 = { id: "6e0a4c1e-0000-4000-8000-000000000003", address: "third@example.com" };
+  const offerOf = (fp: string, screener = 142): Record<string, unknown> => ({ ...candidate, fingerprint: fp.repeat(64), counts: { ...(candidate.counts as object), screener } });
+  const shows = (): string | null => ["mila", "second", "third"].find((n) => card()?.textContent?.includes(`${n}@example.com`)) ?? null;
+
+  it("two mailboxes, a ring, the second answering first: the card stays on the first; Not now moves it on", async () => {
+    const w = heldWire();
+    const ring = await mountBell(w.wire, [MB, MB2]);
+    await w.answerFor(MB.id, offerOf("a"));
+    await w.answerFor(MB2.id, offerOf("c"));
+    const first = shows();
+    await ring(8);
+    await w.answerFor(MB2.id, offerOf("c"));
+    await w.answerFor(MB.id, offerOf("a"));
+    const afterRing = shows();
+    await click(button("Not now"));
+    await w.declined();
+    expect({ first, afterRing, next: shows() }).toEqual({ first: "mila", afterRing: "mila", next: "second" });
+  });
+
+  it("answers arriving third, second, first: the first to arrive is shown, then the rest in the listed order", async () => {
+    const w = heldWire();
+    await mountBell(w.wire, [MB, MB2, MB3]);
+    await w.answerFor(MB3.id, offerOf("e"));
+    await w.answerFor(MB2.id, offerOf("c"));
+    await w.answerFor(MB.id, offerOf("a"));
+    const seen = [shows()];
+    for (let i = 0; i < 2; i++) { await click(button("Not now")); await w.declined(); seen.push(shows()); }
+    expect(seen).toEqual(["third", "mila", "second"]);
+  });
+
+  it("the shown mailbox's new answer updates the card in place; Not now rows keep their order", async () => {
+    const w = heldWire();
+    const ring = await mountBell(w.wire, [MB, MB2, MB3]);
+    await w.answerFor(MB.id, offerOf("a"));
+    await w.answerFor(MB2.id, { ...offerOf("c"), state: "declined" });
+    await w.answerFor(MB3.id, { ...offerOf("e"), state: "declined" });
+    const rows = (): string => host!.querySelector(".declined-rows")!.textContent ?? "";
+    const before = rows();
+    await ring(8);
+    await w.answerFor(MB3.id, { ...offerOf("e"), state: "declined" });
+    await w.answerFor(MB2.id, { ...offerOf("c"), state: "declined" });
+    await w.answerFor(MB.id, offerOf("b", 7));
+    expect({ before, after: rows(), shows: shows(), counts: card()!.textContent!.includes("7 screener decisions") })
+      .toEqual({ before: "second@example.com,third@example.com", after: "second@example.com,third@example.com", shows: "mila", counts: true });
+  });
 });
 
 describe("the shell wiring, pinned by source", () => {
@@ -778,12 +836,6 @@ describe("the shell wiring, pinned by source", () => {
     expect(decl).toContain("[engine, derived],");
   });
 
-  it("the card floats over the stage, above the seed review, and renders only on a real offer", () => {
-    const stage = /<main className="stage"[\s\S]*?\{profileImportOffer\.offer \? \(\s*<ProfileImportCard/.exec(shell);
-    expect(stage, "the card must be mounted inside the stage, gated on the offer").not.toBeNull();
-    expect(shell.indexOf("profileImportOffer.offer ? ("))
-      .toBeLessThan(shell.indexOf("{seedOwed ? ("));
-  });
 });
 
 describe("a press the organizer finishes — the card says importing, then the result, each once", () => {
