@@ -11,6 +11,7 @@ import { NodeSelection, TextSelection, type EditorState, type Transaction } from
 import { AutolinkPunctuation, CodeMark, LinkMark, MarkBoundaries, nextMarks } from "./rich-editor-marks";
 import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
+import { dropCarriesFiles } from "./dropped-files";
 import { LinkPopover } from "./LinkPopover";
 import { linkHref, useRenderedLinks } from "./rendered-links";
 import {
@@ -265,6 +266,10 @@ export function RichEditor({
       handleDOMEvents: {
         keydown: (view, e) => (e.key === "Enter" && (e.metaKey || e.ctrlKey)) || escapeUnlessTaken(view, e),
       },
+      /* A FILE DROP IS NEVER TEXT. ProseMirror would parse the drop's html and insert the file's
+         URL (WebKitGTK's file-manager drop); `true` prevents it, and the compose around the editor
+         attaches the files. The editor's own moves stay ProseMirror's. */
+      handleDrop: (_view, event, _slice, moved) => !moved && dropCarriesFiles(event.dataTransfer),
       attributes: {
         /**
          * The body is a multi-line text box, and it has to say so. ProseMirror's surface is a

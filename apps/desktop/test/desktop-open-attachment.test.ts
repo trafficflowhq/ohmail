@@ -440,3 +440,96 @@ describe("the reading pane offers the in-app viewer on the types the web preview
     expect(named, "a shared source still hands a type the web previews to the system viewer").toEqual([]);
   });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────────────────────
+   A FILE MANAGER'S DROP ON THE LINUX WINDOW. WebKitGTK gives the page no File objects for it and
+   withholds its data; the shell saw the drop and holds exactly those files. The window takes them
+   with no argument and reads each in chunks by the take's token and the file's place: no payload
+   names a path. Mutations: let a chunk payload carry the name → the payload case goes red; skip
+   the size check → the short and long cases go red; guard every uri-list drop → the link case
+   goes red.
+   ───────────────────────────────────────────────────────────────────────────────────────── */
+
+describe("files dropped from another program reach the window by token, in chunks", () => {
+  const TOKEN = "a".repeat(32);
+  const body = Uint8Array.from({ length: 5000 }, (_, i) => (i * 7) % 251);
+  const b64 = (bytes: Uint8Array): string => btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
+  async function freshDrops() {
+    return import("../../webapp/app/shell/dropped-files.js");
+  }
+  /** A shell that answers one held file in `size`-byte chunks of `body`, or the given take. */
+  function shellServing(chunkSize: number, take: unknown = { drop: TOKEN, files: [{ name: "photo.jpg", size: body.length, type: "image/jpeg", state: "ok" }] }): void {
+    let at = 0;
+    host.__TAURI_INTERNALS__ = {
+      invoke: (command, payload) => {
+        invoked.push(payload === undefined ? { command } : { command, payload });
+        if (command === "dropped_files_take") return Promise.resolve(take);
+        const part = body.slice(at, at + chunkSize);
+        at += part.length;
+        return Promise.resolve({ bytes64: b64(part), end: at >= body.length });
+      },
+    };
+  }
+  function dropOn(target: EventTarget, types: string[], data: Record<string, string>): Event {
+    const e = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: { files: [], types, getData: (t: string) => data[t] ?? "" } });
+    target.dispatchEvent(e);
+    return e;
+  }
+
+  it("assembles each file from the shell's chunks, and every chunk payload is only the token and the place", async () => {
+    const mod = await freshDrops();
+    mod.enableDesktopDroppedFiles();
+    shellServing(2048);
+    const sources = await mod.takeDroppedFiles();
+    expect(sources?.map((s) => [s.name, s.size, s.type, s.state])).toEqual([["photo.jpg", 5000, "image/jpeg", "ok"]]);
+    const file = await sources![0]!.read();
+    expect([file.name, file.type, file.size]).toEqual(["photo.jpg", "image/jpeg", 5000]);
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(body);
+    expect(invoked[0]).toEqual({ command: "dropped_files_take" });
+    const chunks = invoked.slice(1);
+    expect(chunks).toHaveLength(3);
+    for (const call of chunks) expect(call).toEqual({ command: "dropped_file_chunk", payload: { drop: TOKEN, index: 0 } });
+    // Read once: a second ask is the same file, not a second walk of the shell's cursor.
+    expect(await sources![0]!.read()).toBe(file);
+    expect(invoked).toHaveLength(4);
+  });
+
+  it("refuses a file whose chunks end short of its size or run past it", async () => {
+    const mod = await freshDrops();
+    mod.enableDesktopDroppedFiles();
+    shellServing(2048, { drop: TOKEN, files: [{ name: "short.bin", size: body.length + 1, type: "", state: "ok" }] });
+    await expect((await mod.takeDroppedFiles())![0]!.read()).rejects.toThrow(/short of its size/);
+    shellServing(2048, { drop: TOKEN, files: [{ name: "long.bin", size: body.length - 1, type: "", state: "ok" }] });
+    await expect((await mod.takeDroppedFiles())![0]!.read()).rejects.toThrow(/past its size/);
+  });
+
+  it("asks nothing for a file the shell refused, and nothing at all unarmed", async () => {
+    const mod = await freshDrops();
+    shellServing(2048);
+    expect(await mod.takeDroppedFiles()).toBeNull();
+    expect(invoked).toEqual([]);
+    mod.enableDesktopDroppedFiles();
+    shellServing(2048, { drop: TOKEN, files: [{ name: "film.mov", size: 9e7, type: "video/quicktime", state: "too_large" }] });
+    await expect((await mod.takeDroppedFiles())![0]!.read()).rejects.toThrow();
+    expect(invoked.map((c) => c.command)).toEqual(["dropped_files_take"]);
+  });
+
+  it("the guard prevents a withheld drop on a field outside any compose, and leaves a link drop and a file input alone", async () => {
+    const mod = await freshDrops();
+    const remove = mod.installFileDropGuard(window);
+    const field = document.createElement("input");
+    const picker = document.createElement("input");
+    picker.type = "file";
+    document.body.append(field, picker);
+    try {
+      expect(dropOn(field, ["text/uri-list", "text/html"], { "text/html": "<a>file:///tmp/drop/notes.txt</a>" }).defaultPrevented).toBe(true);
+      expect(dropOn(field, ["text/plain", "text/html", "text/uri-list"], { "text/plain": "https://example.org/a", "text/uri-list": "https://example.org/a" }).defaultPrevented).toBe(false);
+      expect(dropOn(picker, ["text/uri-list", "text/html"], {}).defaultPrevented).toBe(false);
+    } finally {
+      remove();
+    }
+    expect(dropOn(field, ["text/uri-list", "text/html"], {}).defaultPrevented, "the guard outlived its removal").toBe(false);
+    expect(invoked).toEqual([]);
+  });
+});

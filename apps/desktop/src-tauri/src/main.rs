@@ -118,6 +118,10 @@ mod rendered_links;
 // click or key press. Gated with the engine, like the door it feeds.
 #[cfg(feature = "local-engine")]
 mod link_gate;
+// Files dropped on the window from another program, held by the drop's own signals and read by
+// token for the compose they landed on. Gated with the engine: the plain build has no compose.
+#[cfg(feature = "local-engine")]
+mod dropped_files;
 
 // What WebKitGTK keeps for a window that shows one document. Always compiled: the published
 // preview opens the same window and asks for the same budget.
