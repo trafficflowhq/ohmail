@@ -202,6 +202,10 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Omit<Sideca
         : {}),
     },
     ...(env.OHMAIL_MAILBOX_ADDRESS ? { address: env.OHMAIL_MAILBOX_ADDRESS } : {}),
+    // The shell's first door before it is saved, and the launch that saves it (`first-door.ts`):
+    // each exactly `1`, as host mode's knob.
+    ...(env.OHMAIL_DOOR_PENDING === "1" ? { doorPending: true } : {}),
+    ...(env.OHMAIL_DOOR_SAVE === "1" ? { doorSave: true } : {}),
     ...(env.OHMAIL_POLL_MS ? { pollIntervalMs: Number(env.OHMAIL_POLL_MS) } : {}),
     // The operator's authority path, for the link and server check this engine answers too.
     ...(env.OHMAIL_OPERATOR_CA_FILE?.trim()
