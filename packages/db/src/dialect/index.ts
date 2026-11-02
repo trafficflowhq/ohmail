@@ -296,6 +296,25 @@ export function queryOperandsOf(q: string): QueryOperands {
   return { any, none };
 }
 
+/**
+ * The typed words of each side of a bare `or` (stopwords kept, excluded operands left out), or null
+ * without one: what the part, substring and file-name arms read side by side.
+ */
+export function orSidesOf(q: string): string[] | null {
+  const sides: string[][] = [[]];
+  let split = false;
+  for (const { text, quoted, negated } of queryTokens(q)) {
+    if (negated) continue;
+    if (!quoted && /^or$/i.test(text)) {
+      split = true;
+      if (sides[sides.length - 1]!.length > 0) sides.push([]);
+      continue;
+    }
+    sides[sides.length - 1]!.push(quoted ? `"${text}"` : text);
+  }
+  return split ? sides.filter((s) => s.length > 0).map((s) => s.join(" ")) : null;
+}
+
 /** Every typed token, `or` and stopwords included: a quoted span or a run of non-separators. */
 function queryTokens(q: string): Array<QueryOperand & { readonly negated: boolean }> {
   const out: Array<QueryOperand & { readonly negated: boolean }> = [];
