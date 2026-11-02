@@ -158,6 +158,8 @@ interface DoorLog {
   organizeOutcome: string;
   /** The holder the door's 409 names, so the app's parse is an observation. */
   organizeHolder: { name: string; kind: string };
+  /** Whether the door's 409 says the refused press waits to be carried out. */
+  organizeJoinWaits: boolean;
   /**
    * The CODE inside the door's 503 body. The app reads it — `organizer_unreadable` is the look
    * that did not land and has its own sentence; anything else keeps its number — so a double that
@@ -204,7 +206,7 @@ interface DoorLog {
 const doorLog = (): DoorLog => ({
   urls: [], bearers: [], stopped: 0, handedBack: 0, handBackReleases: 1, sealsDiscarded: 0,
   organizeBodies: [], organizeStatus: 200, organizeOutcome: "authorized",
-  organizeHolder: { name: "a laptop", kind: "local" },
+  organizeHolder: { name: "a laptop", kind: "local" }, organizeJoinWaits: false,
   organizeErrorCode: "organizer_unreadable",
   stoppedOrganizing: 0, stopOrganizingAnswers: "released", resumed: 0,
   organizer: { organizing: true, heldBy: null, reason: null, releaseRequestedAt: null },
@@ -252,6 +254,7 @@ function fakeDoor(log: DoorLog, opts: { account?: string; token?: { value: strin
             ? json(409, {
               error: { code: "organized_elsewhere", message: "another install is organizing this mailbox" },
               holder: log.organizeHolder,
+              joinWaits: log.organizeJoinWaits,
             })
             /* 503 IS THE DOOR'S OWN THIRD ANSWER and carries its own code. A double that
                answered a bare `refused` here would let `claimHere` below map it the way it
@@ -2254,6 +2257,10 @@ describe("the consent the door already took", () => {
     if (out.kind !== "held") return;
     expect(out.name).toBe("a laptop");
     expect(out.holderKind).toBe("local");
+    expect(out.joinWaits, "a refusal that keeps no press read as one that waits").toBe(false);
+    log.organizeJoinWaits = true;
+    const waits = await organizeHere(session, "m1");
+    expect(waits.kind === "held" && waits.joinWaits, "the door's waiting press was not read").toBe(true);
     session.store.close();
   });
 

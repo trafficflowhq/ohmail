@@ -410,7 +410,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
        `organizer-session.ts#organizeRefused` for where it goes and why. */
     sayOrganizeRefused(outcome.kind === "refused" ? outcome.reason : null);
     /* AND A LIVE HOLDER IS SAID AT CONNECT, not only under More and Settings: this phone reads. */
-    sayReadingAtConnect(outcome.kind === "held" ? { name: outcome.name, consentRecorded: outcome.consentRecorded } : null);
+    sayReadingAtConnect(outcome.kind === "held" ? { name: outcome.name, consentRecorded: outcome.consentRecorded, joinWaits: outcome.joinWaits } : null);
   }, []);
 
   /**

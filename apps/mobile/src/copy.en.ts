@@ -1784,6 +1784,11 @@ const TABLE = {
     `This phone reads this mailbox. ${name} organizes it. Your agreement is kept: once ${name} lets go, this phone offers the mailbox and one press takes it.`,
   readingAtConnectKeptUnknown:
     "This phone reads this mailbox. Another install organizes it. Your agreement is kept: once it lets go, this phone offers the mailbox and one press takes it.",
+  /* …and where the door also waits to take the mailbox once the claim it was refused over lapses with nothing renewing it. */
+  readingAtConnectJoinWaits: (name: string) =>
+    `This phone reads this mailbox. ${name} organizes it. Your agreement is kept: if ${name} had already stopped when you connected, this phone takes the mailbox over within minutes while ohmail stays open on it. Otherwise, once ${name} lets go, this phone offers the mailbox and one press takes it.`,
+  readingAtConnectJoinWaitsUnknown:
+    "This phone reads this mailbox. Another install organizes it. Your agreement is kept: if it had already stopped when you connected, this phone takes the mailbox over within minutes while ohmail stays open on it. Otherwise, once it lets go, this phone offers the mailbox and one press takes it.",
   /* A screening press read back from the list: how many are at the place, and what stays where. */
   liveVerdictKept: (count: number, place: string, kept: number, keptPlace: string, term: string) =>
     `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} in ${keptPlace} by your rule »${term}«.`,

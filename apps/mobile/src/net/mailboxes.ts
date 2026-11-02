@@ -405,6 +405,8 @@ export type OrganizeOutcome =
     kind: "held"; name: string; holderKind: string;
     /** The door recorded this person's agreement without a claim (`consentRecorded`); absent reads false. */
     consentRecorded: boolean;
+    /** The press waits to be carried out once the claims it was refused over lapse (`joinWaits`); absent reads false. */
+    joinWaits: boolean;
   }
   /** Nothing was recorded, and the sentence says what the route answered. */
   | { kind: "refused"; reason: Refusal };
@@ -463,7 +465,7 @@ export async function organizeHere(
    * source), and a malformed body is still a `held` — the STATUS is the fact, the name the detail. */
   if (res.status === 409) {
     const body = await res.json().then(
-      (b) => b as { holder?: { name?: unknown; kind?: unknown }; consentRecorded?: unknown },
+      (b) => b as { holder?: { name?: unknown; kind?: unknown }; consentRecorded?: unknown; joinWaits?: unknown },
       () => undefined,
     );
     const held = body?.holder;
@@ -472,6 +474,7 @@ export async function organizeHere(
       name: typeof held?.name === "string" ? held.name : "",
       holderKind: typeof held?.kind === "string" ? held.kind : "",
       consentRecorded: body?.consentRecorded === true,
+      joinWaits: body?.joinWaits === true,
     };
   }
   /* ── A LOOK THAT DID NOT LAND IS NOT A NUMBER ─────────────────────────────────────────────
