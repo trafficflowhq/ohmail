@@ -41,8 +41,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
  * `doc.destroy is not a function` out of an effect cleanup, which React hands to the nearest
  * error boundary, which replaces the whole app with its error page. Typing this against the
  * package makes that same mistake a build failure instead. */
-import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
+import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { fileFaultSentence, fileRetryIsOffered, type AttachmentItem } from "./AttachmentStrip";
+import { openOverPort, type Pdfjs, type PdfSource, type PdfTask } from "./pdf-port";
 import { useKeyBindings } from "../shell/keymap";
 import "./attachment-preview.css";
 import { formatFileSize, Spinner } from "@ohmail/ui";
@@ -138,8 +139,8 @@ function formatSize(bytes: number): string {
 
 /* ── pdf.js, loaded on demand and configured once ─────────────────────────────────────── */
 
-type PdfjsModule = typeof import("pdfjs-dist");
-let pdfjsPromise: Promise<PdfjsModule> | null = null;
+type OpenPdf = (src: PdfSource) => PdfTask;
+let pdfjsPromise: Promise<OpenPdf> | null = null;
 
 /**
  * The worker, served from `public/` at a SAME-ORIGIN path — admitted by `worker-src 'self'`.
@@ -153,20 +154,22 @@ let pdfjsPromise: Promise<PdfjsModule> | null = null;
 const PDF_WORKER_SRC = "/pdf.worker.min.mjs";
 
 /**
- * Import pdf.js (≈1 MB) only when a PDF is actually looked at, and point its worker at the
- * same-origin asset.
+ * Import pdf.js (≈1 MB) only when a PDF is actually looked at, and open each document over a
+ * worker built from the same-origin asset.
  *
- * The worker is NOT optional. If pdf.js cannot load it, it silently falls back to a "fake
- * worker" that parses the hostile bytes on the app-origin MAIN thread — the one place they
- * should never run. So `workerSrc` is set here and verified non-empty before any `getDocument`;
- * a missing worker is treated as a render failure, not a quiet fallback.
+ * The worker is NOT optional. Left to start one itself, pdf.js answers a worker it cannot start by
+ * parsing the hostile bytes on the app-origin MAIN thread — the one place they should never run. So
+ * the worker is built here and handed over as a port (`openOverPort`): a refused or dead worker
+ * fails the load, which shows as a render failure. The library's own `workerSrc` stays empty, so
+ * any path that is not the port throws instead of loading the worker on this thread. A seam (the
+ * desktop window's module, the host client's stub) builds its own worker and gets the load as is.
  */
-async function loadPdfjs(): Promise<PdfjsModule> {
+async function loadPdfjs(): Promise<OpenPdf> {
   if (!pdfjsPromise) {
     pdfjsPromise = (async () => {
-      const mod = await import("pdfjs-dist");
-      mod.GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
-      return mod;
+      const mod: Pdfjs & { seam?: true } = await import("pdfjs-dist");
+      if ("seam" in mod) return mod.getDocument;
+      return (src: PdfSource) => openOverPort(async () => mod, () => PDF_WORKER_SRC, src);
     })();
   }
   return pdfjsPromise;
@@ -179,7 +182,7 @@ async function loadPdfjs(): Promise<PdfjsModule> {
  * such method, so reaching for one there throws — and this is called from an effect cleanup,
  * where a throw is not a logged mistake but React unmounting the application.
  */
-function discard(task: PDFDocumentLoadingTask | null): void {
+function discard(task: PdfTask | null): void {
   if (!task) return;
   void task.destroy().catch(() => {
     /* the worker is already gone; that is the state this was asking for */
@@ -257,7 +260,7 @@ export function AttachmentPreview({
    * `task.destroy()` is the only call that aborts the load and terminates the worker. */
   const [pdf, setPdf] = useState<{
     id: string;
-    task: PDFDocumentLoadingTask;
+    task: PdfTask;
     doc: PDFDocumentProxy;
     numPages: number;
   } | null>(null);
@@ -279,16 +282,15 @@ export function AttachmentPreview({
       // Declared out here so every exit — cancelled, thrown, or resolved — can reach the
       // task it started. A load abandoned without this leaves a worker parsing bytes nobody
       // will look at.
-      let task: PDFDocumentLoadingTask | null = null;
+      let task: PdfTask | null = null;
       try {
-        const pdfjs = await loadPdfjs();
-        if (!pdfjs.GlobalWorkerOptions.workerSrc) throw new Error("pdf worker unavailable");
+        const open = await loadPdfjs();
         const buf = await blob.arrayBuffer();
         // Core api only — no scripting layer, so no PDF JavaScript runs. `disableAutoFetch` +
         // `disableStream` keep it from issuing range requests; there is nothing to fetch here
         // anyway (the source is a Blob, and no cMap/font CDN is configured), so opening the
         // document reaches no network.
-        task = pdfjs.getDocument({ data: buf, disableAutoFetch: true, disableStream: true });
+        task = open({ data: buf, disableAutoFetch: true, disableStream: true });
         const doc = await task.promise;
         if (cancelled) {
           discard(task);

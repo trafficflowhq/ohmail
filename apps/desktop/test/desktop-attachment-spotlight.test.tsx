@@ -40,7 +40,8 @@ vi.mock("pdfjs-dist", async () => {
   };
   return {
     ...real,
-    GlobalWorkerOptions: { workerSrc: "" },
+    // A seam, as the window's own module is: the overlay hands it the load.
+    seam: true,
     getDocument: () => {
       pdfLoads();
       return { promise: Promise.resolve({ numPages: pdfPages, getPage: async () => page }), destroy: async () => {} };
