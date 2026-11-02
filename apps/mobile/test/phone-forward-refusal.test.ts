@@ -14,7 +14,7 @@ import { forwardCaps } from "../src/compose/attach";
 import { forwardFilesPlan } from "../src/compose/forward-files";
 import { openLetterKeeper } from "../src/compose/letter-keeper";
 import { letterDoor } from "../src/compose/letter-store";
-import { forwardPartsAnnounced, forwardPartsReader } from "../src/net/pairing";
+import { forwardPartsAnnounced, helloReader } from "../src/net/pairing";
 import { helloForwardParts } from "../src/engine/boot";
 import { sendAgainSentence } from "../src/ui/draft-card";
 import type { PhoneMailbox } from "../src/net/mailboxes";
@@ -58,10 +58,10 @@ async function scene(o: { supported?: boolean | null; hello?: Record<string, unk
   open.push({ close: () => { boot.store.close(); fake.server.close(); } });
   const toasts: string[] = [];
   const letters = letterDoor(boot.store);
-  let reader: ReturnType<typeof forwardPartsReader> | null = null;
+  let reader: ReturnType<typeof helloReader> | null = null;
   if (o.launch === "unanswered") {
     fake.answerNext("GET", "/hello", 503, {});
-    reader = forwardPartsReader({ standalone: false, fetch: globalThis.fetch.bind(globalThis), profile: { origin } } as never);
+    reader = helloReader({ standalone: false, fetch: globalThis.fetch.bind(globalThis), profile: { origin } } as never);
     await reader.settled();
   }
   const actions: LiveWorldActions = liveActions({

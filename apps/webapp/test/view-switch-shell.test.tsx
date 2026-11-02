@@ -16,7 +16,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { OhmailEngine } from "@ohmail/client-engine";
+import { OhmailEngine, type UnscreenedPileWire } from "@ohmail/client-engine";
 import { FixturesAdapter } from "../../../packages/client-engine/src/adapters/fixtures-adapter";
 import { getFixtures } from "@ohmail/fixtures";
 
@@ -216,5 +216,54 @@ describe("the Screener's first open", () => {
     await settle(60);
     watch.disconnect();
     expect(drawn.length - before, "the stage primed a Screener already on screen").toBe(0);
+  });
+});
+
+/* THE NOTE ON NEWS AND RECEIPTS through the real shell (owner report 2026-11-02): each pile asks for
+   its own letters from senders nobody let in when it is shown, draws the note at its top, and its
+   press sends that pile; the Ohbox draws none. */
+describe("each pile's note on senders nobody let in", () => {
+  class PileDoor extends FixturesAdapter {
+    asks: string[] = [];
+    presses: string[] = [];
+    left: Record<UnscreenedPileWire, number> = { news: 2, receipts: 1 };
+    async unscreened(pile?: UnscreenedPileWire) {
+      if (pile !== undefined) this.asks.push(pile);
+      const total = pile === undefined ? 0 : this.left[pile];
+      return {
+        groups: total > 0 ? [{ address: "deals@cold.example", count: total, newestAt: "2026-08-01T08:00:00.000Z" }] : [],
+        total, complete: true, max: 200, ...(pile === undefined ? {} : { pile }),
+      };
+    }
+    async screenUnscreened(_addresses?: readonly string[], pile?: UnscreenedPileWire) {
+      if (pile === undefined) return { screened: [], total: 0 };
+      this.presses.push(pile);
+      const total = this.left[pile];
+      this.left[pile] = 0;
+      return { screened: [], total };
+    }
+  }
+  const lead = (p: "reads" | "receipts"): string | null =>
+    pile(p)?.querySelector(".pile-note .scn-held-lead")?.textContent ?? null;
+
+  it("News and Receipts each ask their own pile when shown, and the press sends it", async () => {
+    const door = new PileDoor({ fixtures: getFixtures() });
+    await mountShell(new OhmailEngine({ adapter: door }));
+    expect(door.asks, "a pile was asked while the Ohbox was shown").toEqual([]);
+    expect(host!.querySelector(".pile-note")).toBeNull();
+
+    await go("#/reads");
+    expect(door.asks).toEqual(["news"]);
+    expect(lead("reads")).toBe("2 letters here are from senders you never let in.");
+    await go("#/receipts");
+    expect(door.asks).toEqual(["news", "receipts"]);
+    expect(lead("receipts")).toBe("1 letter here is from a sender you never let in.");
+    expect(door.presses, "a read moved somebody's mail").toEqual([]);
+
+    await act(async () => { pile("receipts")!.querySelector<HTMLElement>(".pile-note button")!.click(); });
+    await settle();
+    expect(door.presses).toEqual(["receipts"]);
+    expect(lead("receipts"), "the note outlived the press it answered").toBeNull();
+    expect(lead("reads"), "the press in Receipts answered for News").toBe("2 letters here are from senders you never let in.");
   });
 });

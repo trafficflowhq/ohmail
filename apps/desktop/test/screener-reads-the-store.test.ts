@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
+  consentPartition,
+  presentationReader,
   screenerSegments,
   type EngineMessage,
   type MutationOutcome,
@@ -11,6 +13,9 @@ import {
   type SyncResponse,
 } from "@ohmail/client-engine";
 import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
+import {
+  NOW as WORLD_NOW, SENDERS, removedMailboxWorld,
+} from "../../../packages/services/test/helpers/removed-mailbox-world.js";
 
 /**
  * THE SCREENER COUNTS THE STORE'S QUEUE, NOT THE WINDOW.
@@ -134,5 +139,28 @@ describe("the Screener's queue is the store's, whatever the window holds", () =>
     expect(seen.size).toBe(HELD);
     // The pages onward never became mirror state.
     expect(engine.read().list("screener_waiting")).toHaveLength(PAGE + 1);
+  });
+});
+
+describe("a mailbox removed with its copy kept asks nothing (helpers/removed-mailbox-world.ts)", () => {
+  it("the desktop's window lists and counts the live strangers, and walks no page past them", async () => {
+    const w = await removedMailboxWorld("removed");
+    const engine = await w.engine({ storePolicy: DESKTOP_WINDOW });
+    const pres = presentationReader(engine.read(), consentPartition(engine.read(), { now: WORLD_NOW, ownAddresses: [w.own] }));
+    const segments = screenerSegments(pres, WORLD_NOW);
+    expect(segments.waiting.map((s) => s.from.address).sort()).toEqual([SENDERS.B, SENDERS.I].sort());
+    expect(waitingCountOf(segments)).toBe(2);
+    // B waits on the live letter: the removed mailbox's newer one is History, not the row's mail.
+    expect(segments.waiting.find((s) => s.from.address === SENDERS.B)!.held.map((h) => h.id)).toEqual([w.idOf("B.live")]);
+    const page = await engine.screenerWaitingPage(null);
+    expect(page!.senders.map((s) => w.nameOf(s.messageId))).toEqual(["I.held", "B.live"]);
+  });
+
+  it("a removal between the stored page and a walk past it: the window lets none of the removed mailbox's strangers in", async () => {
+    const w = await removedMailboxWorld("stood-down");
+    const engine = await w.engine({ storePolicy: DESKTOP_WINDOW, pageLimit: 2 });
+    await w.walkPastARemoval(engine);
+    const part = consentPartition(engine.read(), { now: WORLD_NOW, ownAddresses: [w.own] });
+    for (const name of ["A.held", "C.held", "C.inbox"]) expect(part.placeOf.get(w.idOf(name)) ?? "History", name).toBe("History");
   });
 });

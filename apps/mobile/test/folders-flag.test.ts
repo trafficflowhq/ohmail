@@ -15,7 +15,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { describe, expect, it } from "vitest";
-import { foldersFlag, freshestRead, type FoldersFlagDeps } from "../src/state/folders-flag";
+import { foldersFlag, freshestRead, signatureSequence, type FoldersFlagDeps } from "../src/state/folders-flag";
+import { readFoldersEnabled, writeSignature } from "../src/net/consent";
+import { signatureRows } from "../src/ui/signature-rows";
 
 function harness() {
   const applied: boolean[] = [];
@@ -367,5 +369,102 @@ describe("a local write makes the next answer count", () => {
     // A decide drops the sender from the queue here; the queue read is told, so a server that lists
     // them again with the answer it gave before is shown.
     told(/forgetWaiting: \(decided\) =>/, "queueReadNow");
+  });
+});
+
+/* The phone writes a mailbox's signature where web and desktop read it. */
+describe("a signature written on the phone", () => {
+  const asked: string[] = [];
+  const session = (status: number, body: unknown) => ({
+    profile: { origin: "https://srv.test", accountId: "a" },
+    fetch: async (url: string, init?: RequestInit) => {
+      asked.push(`${init?.method ?? "GET"} ${url} ${typeof init?.body === "string" ? init.body : ""}`.trim());
+      if (status === 0) throw new Error("offline");
+      return { status, json: async () => body } as unknown as Response;
+    },
+  }) as unknown as Parameters<typeof readFoldersEnabled>[0];
+
+  it("a read issued before a write never lands over the write's echo", async () => {
+    const applied: string[] = [];
+    const sigs = freshestRead<{ sig: string }>((a) => applied.push(a.sig));
+    let answerRead!: (v: { sig: string }) => void;
+    const read = sigs(() => new Promise((r) => { answerRead = r; }));
+    await sigs(async () => ({ sig: "the echo" }));
+    answerRead({ sig: "what the server held before" });
+    await read;
+    expect(applied).toEqual(["the echo"]);
+  });
+
+  it("the pane's sequence: a write's echo outranks a read issued before it; a refusal applies nothing", async () => {
+    const applied: Array<Record<string, unknown>> = [];
+    const track = signatureSequence((f) => applied.push(f));
+    const facts = (sig: string) => ({ signatures: { m1: sig }, signaturesHtml: {}, signatureSources: {}, signatureChanges: {} });
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+    let answerRead!: (v: ReturnType<typeof facts> & { themeFace: string }) => void;
+    track.read(new Promise((r) => { answerRead = r; }));
+    expect(await track.write(async () => facts("the echo"))).toBe(true);
+    answerRead({ ...facts("what the server held before"), themeFace: "paper" });
+    await settle();
+    expect(applied).toEqual([facts("the echo")]);
+    expect(await track.write(async () => { throw new Error("refused (403)"); })).toBe(false);
+    track.read(Promise.resolve(null));
+    await settle();
+    expect(applied, "a refusal and a read that could not ask apply nothing").toHaveLength(1);
+    // A read issued after the write lands, and carries only the signature fields.
+    track.read(Promise.resolve({ ...facts("later"), themeFace: "paper" }));
+    await settle();
+    expect(applied.at(-1)).toEqual(facts("later"));
+  });
+
+  it("the read carries the markup, whose signature each is, and where a change went", async () => {
+    const ans = await readFoldersEnabled(session(200, {
+      foldersEnabledAt: null,
+      signatures: { m1: "Ada", m2: "Bold Ada" },
+      signaturesHtml: { m2: "<p><b>Bold</b> Ada</p>", m3: 7 },
+      signatureSources: { m1: "local", m2: "organizer", m3: "elsewhere" },
+      signatureChanges: { m1: { state: "refused", holder: "Laptop", refusal: "unreadable" }, m2: { state: "nonsense" } },
+    }));
+    expect(ans!.signaturesHtml).toEqual({ m2: "<p><b>Bold</b> Ada</p>" });
+    expect(ans!.signatureSources).toEqual({ m1: "local", m2: "organizer" });
+    expect(ans!.signatureChanges).toEqual({ m1: { state: "refused", holder: "Laptop", refusal: "unreadable" } });
+  });
+
+  it("writes text alone for one mailbox, blank as none, and answers the echo", async () => {
+    asked.length = 0;
+    const echo = { signatures: { m1: "Ada" }, signaturesHtml: {}, signatureSources: { m1: "local" }, signatureChanges: { m1: { state: "asked", holder: null, refusal: null } } };
+    expect(await writeSignature(session(200, echo), "m1", "Ada")).toEqual({
+      signatures: { m1: "Ada" }, signaturesHtml: {}, signatureSources: { m1: "local" },
+      signatureChanges: { m1: { state: "asked", holder: null, refusal: null } },
+    });
+    await writeSignature(session(200, { ...echo, signatures: {} }), "m1", "   ");
+    expect(asked).toEqual([
+      `PATCH https://srv.test/consent/settings {"signatures":{"m1":"Ada"}}`,
+      `PATCH https://srv.test/consent/settings {"signatures":{"m1":null}}`,
+    ]);
+    await expect(writeSignature(session(403, {}), "m1", "x")).rejects.toThrow();
+    // An echo without the map stored nothing this phone can show.
+    await expect(writeSignature(session(200, {}), "m1", "x")).rejects.toThrow();
+  });
+
+  it("a row is read only where the organizer's signature is in force or the stored one has formatting", () => {
+    const rows = signatureRows({
+      mailboxes: [
+        { id: "own", address: "own@x.test", status: "connected", organizerRole: "organizer" },
+        { id: "read", address: "read@x.test", status: "connected", organizerRole: "reader" },
+        { id: "readLocal", address: "rl@x.test", status: "connected", organizerRole: "reader" },
+        { id: "rich", address: "rich@x.test", status: null, organizerRole: null },
+        { id: "gone", address: "gone@x.test", status: "disabled", organizerRole: null },
+      ],
+      signatures: { own: "Own", read: "Theirs", rich: "Rich" },
+      signaturesHtml: { rich: "<p><i>Rich</i></p>" },
+      sources: { own: "organizer", read: "organizer", readLocal: "local" },
+      changes: { readLocal: { state: "applied", holder: null, refusal: null }, read: { state: "asked", holder: null, refusal: null } },
+    });
+    expect(rows.map((r) => [r.id, r.text, r.readOnly, r.why, r.change?.state ?? null])).toEqual([
+      ["own", "Own", false, null, null],
+      ["read", "Theirs", true, "organizer", "asked"],
+      ["readLocal", "", false, null, null],
+      ["rich", "Rich", true, "markup", null],
+    ]);
   });
 });

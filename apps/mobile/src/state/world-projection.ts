@@ -151,7 +151,7 @@ export interface ProjectionInputs {
   onPresented(pres: EntityReader, options: ConsentOptions, unrouted?: EntityReader): void;
 }
 
-export type Projected = Omit<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement">;
+export type Projected = Omit<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement" | "signing">;
 
 /** The arms of the card's claim this projection reads (`PhoneClaim`, `ui/standalone-form.ts`). */
 export type StandaloneClaim = { readonly k: "theirs"; readonly name: string; readonly kind: string } | { readonly k: string };
@@ -372,6 +372,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
         mirrorRows: () => mirrorNewestFirst(engine),
         rowOf: (m, inHistory) => storeRowOf(engine, m, v, inHistory),
         searchAvailable: engine.serverSearchAvailable(),
+        addressSearch: (address, direction) => engine.searchAddressServer(address, { direction }),
         open: inp.openOffMirror,
       },
       actions: inp.actions,

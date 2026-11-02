@@ -35,16 +35,16 @@ describe.each(STORES)("the cutline set on %s", (_name, d, render) => {
   };
 
   it("a map of one cutline is the single form, byte for byte", () => {
-    const single = render(senderIsActiveSql(d, ACCOUNT, sender, THIRTY));
-    const mapped = render(senderIsActiveSql(d, ACCOUNT, sender, new Map([[A, THIRTY], [B, { ...THIRTY }]])));
+    const single = render(senderIsActiveSql(d, ACCOUNT, sender, THIRTY, []));
+    const mapped = render(senderIsActiveSql(d, ACCOUNT, sender, new Map([[A, THIRTY], [B, { ...THIRTY }]]), []));
     expect(mapped).toEqual(single);
     expect(single.sql).not.toContain("mc.mailbox_id");
-    expect(render(senderHasHeldClaimSql(d, ACCOUNT, sender, new Map([[A, THIRTY]]), [])))
-      .toEqual(render(senderHasHeldClaimSql(d, ACCOUNT, sender, THIRTY.cutoff, [])));
+    expect(render(senderHasHeldClaimSql(d, ACCOUNT, sender, new Map([[A, THIRTY]]), [], [])))
+      .toEqual(render(senderHasHeldClaimSql(d, ACCOUNT, sender, THIRTY.cutoff, [], [])));
   });
 
   it("two cutlines weigh each message by its own mailbox's window", () => {
-    const q = render(senderIsActiveSql(d, ACCOUNT, sender, new Map([[A, THIRTY], [B, WHOLE]])));
+    const q = render(senderIsActiveSql(d, ACCOUNT, sender, new Map([[A, THIRTY], [B, WHOLE]]), []));
     expect(q.sql).not.toContain("group by");
     expect(q.sql).toMatch(/and \(case mc\.mailbox_id when .+ else \(true\) end\)/s);
     expect(q.params).toContain(A);

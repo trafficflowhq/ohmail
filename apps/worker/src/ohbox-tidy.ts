@@ -4,9 +4,8 @@ import {
   messageBodies, messageStates, messages, OwnAddressesPerPass, recordChange, weAnsweredThisSenderWhere,
   type Tx, auditAction,} from "@trafficflow/db";
 import {
-  authVerdictFromHeaders, evaluateRules,
-  migrationBulkPlacement, resolveOhboxPolicy, silentLogger,
-  type Destination, type KnownSenders, type Logger, type NormalizedMessage, type OhboxPolicy, type Rule,
+  authVerdictFromHeaders, evaluateRules, resolveOhboxPolicy, silentLogger,
+  type Destination, type KnownSenders, type Logger, type OhboxPolicy, type Rule,
   type RuleDecision,
 } from "@trafficflow/core";
 import { identityOfRow } from "@trafficflow/core/mail";
@@ -18,8 +17,7 @@ import { perMailboxAuthservTrust, ruleInputOf, upsertDesired } from "./rule-pass
  * The engine (`rules.ts#evaluateRules`) demotes NEW mail under the posture, but a rule is consulted at
  * ARRIVAL only, so mail already filed stays. Each candidate goes back through the SAME `evaluateRules`,
  * acted on by `source`: `policy` (seeded-from-sent/promoted allow rule) and `header` (a contact) move to
- * Reads/Receipts; `screener` strangers are decided by the stronger `migrationBulkPlacement` floor
- * (`List-Unsubscribe` required), never the header heuristic; `rule`/`unclear` are kept. SENSITIVITY
+ * Reads/Receipts; a `screener` stranger stays (only a person lets a sender in); `rule`/`unclear` are kept. SENSITIVITY
  * (`sensitivity_category`/`no_ai`) is KEPT across every class, one guard, matching `pipeline.ts:563-567`.
  * User always wins via a `change_log` `op='move', meta->>'to'='INBOX'` row (`change_log_move_to_inbox_idx`,
  * mail 0043), re-asked under `FOR UPDATE OF folder_state` (`stillCandidates`). It writes an intent +
@@ -108,17 +106,16 @@ export interface OhboxTidyResult {
   /** Destination → how many movers went there. Always a subset of {Reads, Receipts}. */
   destinations: Record<string, number>;
   /**
-   * Basis → how many movers carried it (`policy` / `header` / `migration_bulk`). The per-class
-   * breakdown the operator plan reports: how much of the Ohbox each of the three misfiled populations
-   * accounts for.
+   * Basis → how many movers carried it (`policy` / `header`). The per-class breakdown the operator
+   * plan reports: how much of the Ohbox each misfiled population accounts for.
    */
   basis: Record<string, number>;
   /**
    * Rows that met a demotion but were KEPT because they are sensitivity-flagged — the safety margin,
    * reported so the mailbox's owner can see how much was deliberately left in the Ohbox for
    * `sensitive-rescreen.ts` rather than filed to Reads/Receipts. Counts a flagged mover of ANY class
-   * (`policy`/`header`/`migration_bulk`); before the cross-class KEEP guard it counted only the
-   * `screener` strong-bulk class, which was the whole of the divergence from the live router.
+   * (`policy`/`header`); before the cross-class KEEP guard it counted only the stranger class
+   * (since retired), which was the whole of the divergence from the live router.
    */
   sensitivityExcluded: number;
   /** True ⇒ the per-cycle write budget ran out; the rest resumes next cycle from the cursor. */
@@ -153,7 +150,7 @@ interface TidyRow {
   /**
    * The sensitivity verdict, read so the caller's single sensitivity KEEP guard can hold a flagged
    * row in the Ohbox: a category or `no_ai` makes the message `sensitive-rescreen.ts`'s jurisdiction,
-   * never this pass's. The guard spans EVERY class (`policy`/`header`/`screener`/`migration_bulk`),
+   * never this pass's. The guard spans EVERY class (`policy`/`header`),
    * matching the live router's carve-out at `pipeline.ts:563-567` — see {@link ohboxTidyPass}.
    */
   sensitivityCategory: string | null;
@@ -161,7 +158,7 @@ interface TidyRow {
 }
 
 /** The reason a demotion happened, recorded on the `audit_log` payload — a property of the MOVE. */
-type MoveBasis = "policy" | "header" | "migration_bulk";
+type MoveBasis = "policy" | "header";
 
 /** A resolved demotion: where to file it, why, and (policy only) which allow rule it refined. */
 interface TidyMove {
@@ -184,7 +181,7 @@ function isSensitivityFlagged(row: TidyRow): boolean {
  * drift branch by branch — the shape the review found broken, where only `screener` honored it and
  * flagged `policy`/`header` mail was demoted out from under a login code the live router keeps.
  */
-function tidyPlacement(msg: NormalizedMessage, decision: RuleDecision): TidyMove | null {
+function tidyPlacement(decision: RuleDecision): TidyMove | null {
   switch (decision.source) {
     case "policy":
       // AS SHIPPED. The inferred-admission demotion; destination is the engine's (Reads/Receipts).
@@ -198,16 +195,10 @@ function tidyPlacement(msg: NormalizedMessage, decision: RuleDecision): TidyMove
       return decision.destination === null
         ? null
         : { to: decision.destination, basis: "header", overriddenRuleId: null };
-    case "screener": {
-      // The THIRD population: no rule, NOT a contact. The engine would SCREEN this on arrival today,
-      // but the mail is already in the Ohbox by the legacy blanket default and re-screening it is not
-      // this pass's business. We only DEMOTE the obvious strong-bulk to Reads/Receipts, via the
-      // stronger `migrationBulkPlacement` floor — NOT the header heuristic, which must never run for a
-      // non-contact (the pre-gate consent bypass). A sensitivity-flagged row is held back by the
-      // caller's cross-class KEEP guard before this move is ever acted on.
-      const to = migrationBulkPlacement(msg);
-      return to === null ? null : { to, basis: "migration_bulk", overriddenRuleId: null };
-    }
+    case "screener":
+      // No rule, NOT a contact: the mail stays where it is. Its headers are the sender's to write, and
+      // only a person lets a sender into News or Receipts (owner ruling 2026-11-02).
+      return null;
     default:
       // `rule` (the user's own decision) and `unclear` (the ambiguous middle) — keep, unconditionally.
       return null;
@@ -393,11 +384,10 @@ export async function ohboxTidyPass(
           lastId = c.messageId;
 
           // The per-class engine→pile mapping ({@link tidyPlacement}): `policy`/`header` take the
-          // engine's own Reads/Receipts destination, `screener` goes through the stronger
-          // `migration_bulk` floor (never the header heuristic), and `rule`/`unclear` are kept. The
+          // engine's own Reads/Receipts destination; `screener`, `rule` and `unclear` are kept. The
           // `to === desiredFolder` guard is belt-and-braces: no basis answers INBOX, but a narrowing
           // that leaned on that is one refactor from filing mail onto itself.
-          const placement = tidyPlacement(msg, decision);
+          const placement = tidyPlacement(decision);
           if (placement === null || placement.to === c.desiredFolder) {
             kept++;
             continue;
@@ -406,8 +396,8 @@ export async function ohboxTidyPass(
           // SENSITIVITY KEEP — ONE GUARD, EVERY CLASS. This is `pipeline.ts:563-567`. The live router
           // force-keeps a flagged message in the Ohbox (`sensitivity.sensitive && !deniedByConsent ?
           // "INBOX"`) so a login code / password reset / security alert is never buried, and this pass
-          // must match it for EVERY movable class (`policy`, `header`, `screener`, `migration_bulk`), not
-          // the `screener` branch alone (the whole divergence the review found). The `!deniedByConsent`
+          // must match it for EVERY movable class (`policy`, `header`), not one branch alone (the whole
+          // divergence the review found). The `!deniedByConsent`
           // half holds by construction: a denied row (`source: "rule"`) maps to `null` and was kept above,
           // so by here `placement` is always an ALLOW-side demotion — keeping every flagged row that would
           // move is exactly `sensitive && !deniedByConsent ⇒ keep`. `sensitivityExcluded` is the margin.
@@ -426,9 +416,9 @@ export async function ohboxTidyPass(
             meta: { from: c.desiredFolder, to },
           });
           // The undo the mailbox's owner is owed: this pass moved mail they did not individually ask it to
-          // touch, so "put it back" has to be expressible. `basis` records WHY (`policy`/`header`/
-          // `migration_bulk`) and `overriddenRuleId` records WHICH seeded allow rule's placement a
-          // `policy` demotion refined (null for the two new bases — there is no rule). Durable
+          // touch, so "put it back" has to be expressible. `basis` records WHY (`policy`/`header`) and
+          // `overriddenRuleId` records WHICH seeded allow rule's placement a `policy` demotion refined
+          // (null for `header` — there is no rule). Durable
           // provenance with no schema change and no learning-path read: the engine carries
           // `matchedRuleId: null` on every basis, so the move teaches no consent and the next message
           // from this sender still screens.

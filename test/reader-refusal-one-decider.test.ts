@@ -178,7 +178,7 @@ const SITES: Site[] = [
     calls: [{ file: APP_SHELL, call: /nobody=\{otherOrganizerOf\(/ }] },
   // The connect notice was exempt as "the connect's outcome at that moment" and outlived a hand-back
   // it is chosen over the live claim the strip reads now.
-  { file: PHONE_FORM, fn: "readingAtConnectLine", keys: ["Copy.readingAtConnect", "Copy.readingAtConnectKept"],
+  { file: PHONE_FORM, fn: "readingAtConnectLine", keys: ["Copy.readingAtConnect", "Copy.readingAtConnectKept", "Copy.readingAtConnectJoinWaits"],
     calls: [{ file: "apps/mobile/app/(tabs)/index.tsx", call: /readingAtConnectNow\([^;]*\bclaim\)/ },
       { file: "apps/mobile/src/ui/OrganizerStrip.tsx", fn: "useStandaloneClaim", call: /\bclaimHere\(/ }] },
   { file: "apps/webapp/app/shell/FirstRun.tsx", keys: ['"doorReaderWhy"', '"doorReaderWhyLegacy"'],
@@ -344,7 +344,7 @@ describe("every sentence that names who organizes a mailbox asks the same decide
       if (/Organized by \$\{name\}|\$\{name\} (?:organizes|is organizing|keeps organizing)\b/.test(m[2]!)) found.push(`Copy.${m[1]}`);
     }
     // The reach first: a scan that found nothing classifies nothing.
-    expect(found.length).toBe(27);
+    expect(found.length).toBe(28);
     const registered = new Set(SITES.flatMap((s) => s.keys));
     const unclassified = found.filter((path) => {
       const leaf = path.slice(path.lastIndexOf(".") + 1);

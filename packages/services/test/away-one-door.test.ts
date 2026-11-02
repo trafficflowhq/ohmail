@@ -6,6 +6,7 @@ import {
   awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages,
 } from "@trafficflow/db";
 import type { OutboundMessage, SendAdapter } from "@trafficflow/core";
+import { DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { runAwayResponderPass } from "../src/away-responder-pass.js";
 
 /**
@@ -214,5 +215,49 @@ describe("a lease refusal at the dial releases the reservation", () => {
     expect((await rows(w)).map((r) => r.outcome)).toEqual(["unverified"]);
     expect(await state(w), "an ambiguous send released the person's throttle").toHaveLength(1);
     expect(later.delivered, "a possibly-delivered reply was offered a second time").toHaveLength(0);
+  });
+});
+
+/** A letter in `folder` the server no longer holds: located, with no instance, for the reaper. */
+let goneUid = 0;
+async function goneLetter(w: World, from: string, folder: string, subject: string, headers: Record<string, string[]>) {
+  const at = new Date(NOW.getTime() - 2 * 60_000);
+  const [m] = await w.db.insert(messages).values({
+    accountId: w.accountId, mailboxId: w.mailboxId, messageIdHeader: `<g-${randomUUID()}@them.test>`,
+    bodyHash: randomUUID(), dedupKey: randomUUID(), subject, fromAddress: from, date: at, createdAt: at,
+    nativeLocator: { folder, ref: `1:${++goneUid}` },
+  }).returning();
+  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "gone", headers: { to: ["me@away.test"], ...headers } });
+  await w.db.insert(folderState).values({ messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us" });
+  return m!.id;
+}
+
+describe("a letter gone from the server before the pass decided it is never answered", () => {
+  // The reaper cuts a gone letter's header block (`gone-letter-headers.ts`), list and bounce lines included.
+  it("a newsletter and a bounce the reaper took get no reply and no ledger row; a letter still there does", async () => {
+    const w = await world();
+    await w.db.update(awayResponders).set({ piles: ["INBOX", "ohmail/Screener"] })
+      .where(eq(awayResponders.accountId, w.accountId));
+    const gone = [
+      await goneLetter(w, "hello@brand.test", "INBOX", "Our autumn picks", {
+        "list-id": ["<news.brand.test>"], "list-unsubscribe": ["<https://brand.test/u?t=abc>"], "feedback-id": ["c1:brand"],
+      }),
+      await goneLetter(w, "MicrosoftExchange@contoso.test", "ohmail/Screener", "Undeliverable: the roof", {
+        "return-path": ["<>"], "content-type": ['multipart/report; report-type=delivery-status; boundary="b"'],
+      }),
+    ];
+    const live = await arrive(w, "the roof");
+    expect(await new DrizzleRepo(w.db as never).transaction((r) => r.tombstoneInstanceless!(w.accountId, w.mailboxId, 50))).toBe(2);
+    for (const id of gone) {
+      const [b] = await w.db.select({ h: messageBodies.headers }).from(messageBodies).where(eq(messageBodies.messageId, id));
+      expect(Object.keys(b!.h as object), "the precondition: the reaper cut the block").toEqual(["to"]);
+    }
+    const t = transport();
+
+    const out = await runAwayResponderPass(w.db, { openSendAdapter: t.factory as never, now: () => NOW, mailboxIds: [w.mailboxId] });
+
+    expect(t.delivered.map((m) => m.subject), "a letter gone from the server was answered").toEqual(["Re: the roof"]);
+    expect(out).toMatchObject({ sent: 1, examined: 1, suppressed: 0 });
+    expect((await rows(w)).map((r) => r.messageId), "a gone letter was decided").toEqual([live]);
   });
 });

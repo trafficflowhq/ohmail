@@ -32,7 +32,7 @@ import type {
 } from "../engine.js";
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire, StayedWire,
-  UnscreenedGroupWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
+  UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
   MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams, WithdrawSendAnswer,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
@@ -122,6 +122,12 @@ export interface HttpAdapterOptions {
    * its page policy's answer (`engine-config.ts`); absent, every grant is admitted.
    */
   uploadAdmits?: (url: string) => boolean;
+  /**
+   * THE TRANSPORT A STAGED UPLOAD RIDES — a plain fetch that adds nothing. Absent, the adapter's own
+   * `fetch` carries it, as it always has. A host whose `fetch` stamps a credential on every URL (the
+   * phone's bearer manager) passes one here, so the storage host never sees that credential.
+   */
+  uploadFetch?: FetchLike;
   /**
    * Where a window's failed pull is reported ({@link EngineAdapter.reportSyncFailure}). Set by the
    * desktop's bridge adapter, which posts the record to the local engine; absent on the hosted
@@ -403,6 +409,8 @@ export class HttpAdapter implements EngineAdapter {
   private readonly sendEchoLater: boolean;
   /** See {@link HttpAdapterOptions.uploadAdmits}. Admits every grant unless a host supplied one. */
   private readonly uploadAdmits: (url: string) => boolean;
+  /** See {@link HttpAdapterOptions.uploadFetch}. */
+  private readonly uploadFetch: FetchLike;
   /** See {@link HttpAdapterOptions.mayAsk}. `() => true` unless a host supplied one. */
   private readonly mayAsk: () => boolean;
   /** See {@link HttpAdapterOptions.syncDeadlines}. `null` unless a host asked for them. */
@@ -528,6 +536,7 @@ export class HttpAdapter implements EngineAdapter {
     this.stageAttachments = opts.stageAttachments === true;
     this.sendEchoLater = opts.sendEchoLater === true;
     this.uploadAdmits = opts.uploadAdmits ?? (() => true);
+    this.uploadFetch = opts.uploadFetch ?? this.fetchImpl;
     // The capability EXISTS only where a sink was given, so `typeof adapter.reportSyncFailure`
     // answers the engine's question the way `requestPull` does: absent means "no door for this".
     if (opts.syncFailureSink) {
@@ -1322,10 +1331,10 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
-  async unscreened(): Promise<UnscreenedWire> {
-    const res = await this.request("GET", "/screener/unscreened");
+  async unscreened(pile?: UnscreenedPileWire): Promise<UnscreenedWire> {
+    const res = await this.request("GET", pile === undefined ? "/screener/unscreened" : `/screener/unscreened?pile=${pile}`);
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { groups?: unknown; total?: unknown; complete?: unknown; max?: unknown };
+    const wire = (await res.json()) as { groups?: unknown; total?: unknown; complete?: unknown; max?: unknown; pile?: unknown };
     const groups = Array.isArray(wire.groups)
       ? wire.groups.map((g) => HttpAdapter.unscreenedGroupOf(g)).filter((g): g is UnscreenedGroupWire => g !== null)
       : [];
@@ -1336,6 +1345,7 @@ export class HttpAdapter implements EngineAdapter {
       total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
       complete: wire.complete !== false,
       max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
+      ...(wire.pile === "news" || wire.pile === "receipts" ? { pile: wire.pile } : {}),
     };
   }
 
@@ -1355,6 +1365,8 @@ export class HttpAdapter implements EngineAdapter {
       mailboxId: typeof r.mailboxId === "string" && r.mailboxId !== "" ? r.mailboxId : null,
       ...(typeof r.checked === "object" && r.checked !== null
         && (r.checked as { reason?: unknown }).reason === "impersonation" ? { marked: true as const } : {}),
+      ...(typeof r.checked === "object" && r.checked !== null && (r.checked as { reason?: unknown }).reason === "impersonation"
+        && (r.checked as { claimsOnly?: unknown }).claimsOnly === true ? { claimsOnly: true as const } : {}),
     };
   }
 
@@ -1362,10 +1374,12 @@ export class HttpAdapter implements EngineAdapter {
     const q = new URLSearchParams();
     if (page.limit !== undefined) q.set("limit", String(page.limit));
     if (page.cursor) q.set("cursor", page.cursor);
+    // This engine presents a removed mailbox's mail itself (`consentPartition`), so the page may leave it out.
+    q.set("live", "1");
     const res = await this.request("GET", `/screener?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as {
-      items?: unknown; nextCursor?: unknown; total?: unknown; pendingDecisions?: unknown; copyBehind?: unknown;
+      items?: unknown; nextCursor?: unknown; total?: unknown; pendingDecisions?: unknown; copyBehind?: unknown; gone?: unknown;
     } | null;
     // A body that is not a queue page is no answer. Read as an empty page it would say nobody is
     // waiting, and the partition would present held mail in the Ohbox on the strength of it.
@@ -1388,13 +1402,16 @@ export class HttpAdapter implements EngineAdapter {
         ? Math.trunc(wire.total) : null,
       inFlight,
       ...(wire.copyBehind === true ? { copyBehind: true as const } : {}),
+      // A list this build cannot read is no answer about any mailbox: read as absent, today's page.
+      ...(Array.isArray(wire.gone) && wire.gone.every((id) => typeof id === "string" && id !== "")
+        ? { gone: [...new Set(wire.gone as string[])].sort() } : {}),
     };
   }
 
-  async screenUnscreened(addresses?: readonly string[]): Promise<UnscreenedResultWire> {
+  async screenUnscreened(addresses?: readonly string[], pile?: UnscreenedPileWire): Promise<UnscreenedResultWire> {
     const res = await this.request("POST", "/screener/unscreened", {
       // Omitted rather than `null`, for `releaseHeld`'s reason: absent means EVERY group shown.
-      body: addresses === undefined ? {} : { addresses: [...addresses] },
+      body: { ...(addresses === undefined ? {} : { addresses: [...addresses] }), ...(pile === undefined ? {} : { pile }) },
     });
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as { screened?: unknown; total?: unknown };
@@ -3201,7 +3218,9 @@ export class HttpAdapter implements EngineAdapter {
       // client that reconstructed them would be a second implementation of a one-sided contract.
       let put: Response | null = null;
       try {
-        put = await this.fetchImpl(grant.uploadUrl, {
+        // Called unbound: a native fetch refuses the adapter as its receiver.
+        const upload = this.uploadFetch;
+        put = await upload(grant.uploadUrl, {
           method: grant.uploadMethod ?? "PUT",
           headers: grant.uploadHeaders ?? {},
           body: bytes as unknown as BodyInit,

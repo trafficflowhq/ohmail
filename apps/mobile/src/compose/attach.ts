@@ -88,31 +88,66 @@ export async function shrinkPicked(
  * not be read; the picked ones beside them still arrive.
  */
 export type AttachPickOutcome =
-  | { kind: "picked"; files: PhoneComposeAttachment[]; unreadable: number }
+  | { kind: "picked"; files: PhoneComposeAttachment[]; unreadable: number; overCap?: number }
   | { kind: "cancelled" }
   | { kind: "unavailable" };
 
 /** The two pickers, behind a seam so the node suite drives every decision without expo. */
 export interface AttachPicker {
-  /** The document picker — any file type, multiple selection. */
-  pickFiles(): Promise<AttachPickOutcome>;
+  /**
+   * The document picker — any file type, multiple selection. A file whose declared size is past
+   * `room` is not read ({@link readWithin}) and is counted in `overCap`.
+   */
+  pickFiles(room?: number): Promise<AttachPickOutcome>;
   /** The photo library — images, multiple selection, bytes in hand; `zone` dates a nameless photo. */
   pickPhotos(zone: string): Promise<AttachPickOutcome>;
 }
 
 /**
+ * WHAT A PHONE'S SEND CARRIES AT MOST where its door can take more than the hosted request body:
+ * the largest common provider's announced `SIZE` budgets just under it, so there the mailbox binds,
+ * as on the web.
+ */
+export const PHONE_SEND_MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+
+/**
+ * THE SURFACE THIS PHONE'S SEND RIDES. Its own engine sends by the mailbox's SMTP; a desktop host
+ * and a self-host server take a large request inline; Cloud takes one only by staging, and only
+ * where its `/hello` armed it. Anything else is `undefined`: the strict inline constant.
+ */
+export function phoneSendSurface(o: { standalone: boolean; flavor: string | null; staging: boolean | null }): number | undefined {
+  if (o.standalone || o.flavor === "desktop-host" || o.flavor === "selfhost") return PHONE_SEND_MAX_TOTAL_BYTES;
+  return o.flavor === "managed" && o.staging === true ? PHONE_SEND_MAX_TOTAL_BYTES : undefined;
+}
+
+/** {@link phoneSendSurface} of a live session: its door, and what its `/hello` said of staging. */
+export function sessionSendSurface(
+  session: { standalone: boolean; profile: { flavor: string | null } } | null,
+  hello: { staging: () => boolean | null } | null,
+): number | undefined {
+  return phoneSendSurface({
+    standalone: session?.standalone === true, flavor: session?.profile.flavor ?? null, staging: hello?.staging() ?? null,
+  });
+}
+
+/** Whether a picked file is read at all: a declared size past the room left is refused unread. */
+export function readWithin(declaredSize: number | null | undefined, room: number): boolean {
+  return typeof declaredSize !== "number" || !Number.isFinite(declaredSize) || declaredSize <= room;
+}
+
+/**
  * THE CAP THIS COMPOSER STATES AND REFUSES AGAINST — `composeAttachCap` of the sending
- * mailbox's announced `SIZE`, surface ABSENT: the phone's send rides one JSON request (the
- * hosted API's serverless body limit is real there), so it earns no allowance beyond the strict
- * constant until it stages — filed. The mailbox is the message's own `mailboxId`, the same
- * resolution the send makes; an unknown mailbox reads as unprobed, never as unbounded.
+ * mailbox's announced `SIZE` and the door's surface ({@link phoneSendSurface}; absent is the
+ * strict constant). The mailbox is the message's resolved sender, the same resolution the send
+ * makes; an unknown mailbox reads as unprobed, never as unbounded.
  */
 export function phoneAttachCap(
   mailboxes: readonly PhoneMailbox[],
   mailboxId: string | null | undefined,
+  surface?: number,
 ): number {
   const row = mailboxId ? mailboxes.find((b) => b.id === mailboxId) : undefined;
-  return composeAttachCap(row?.smtpMaxSizeBytes ?? null);
+  return composeAttachCap(row?.smtpMaxSizeBytes ?? null, surface);
 }
 
 /**
@@ -123,10 +158,11 @@ export function phoneAttachCap(
 export function forwardCaps(
   mailboxes: readonly PhoneMailbox[],
   mailboxId: string | null | undefined,
+  surface?: number,
 ): { phone: number; forwarded: number; message: number } {
   const row = mailboxId ? mailboxes.find((b) => b.id === mailboxId) : undefined;
   return {
-    phone: phoneAttachCap(mailboxes, mailboxId),
+    phone: phoneAttachCap(mailboxes, mailboxId, surface),
     forwarded: COMPOSE_FORWARD_MAX_TOTAL_BYTES,
     message: composeAttachCap(row?.smtpMaxSizeBytes ?? null, null),
   };

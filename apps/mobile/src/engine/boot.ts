@@ -131,6 +131,30 @@ export interface ConnectConfig {
   network?: () => NetworkState;
   /** Override the forward check's deadline (tests). Absent, {@link FORWARD_PARTS_HELLO_MS}. */
   forwardPartsDeadlineMs?: number;
+  /**
+   * May a send past the inline body stage its files — Cloud only (`flavor === "managed"`); every
+   * other door takes them inline and the phone's own engine never stages. The PUT rides the plain
+   * transport, never the bearer's, and only to a grant {@link phoneUploadAdmits} admits.
+   */
+  stageAttachments?: boolean;
+}
+
+/**
+ * MAY THIS PHONE PUT A STAGED FILE AT THIS URL — https, a named host (no address literal, no
+ * `localhost`), and no credentials in the URL. Anything else ends the send (`staging_refused`).
+ */
+export function phoneUploadAdmits(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:" || u.username !== "" || u.password !== "") return false;
+  const host = u.hostname.toLowerCase();
+  if (host.startsWith("[") || /^\d+(\.\d+){3}$/.test(host)) return false;
+  if (host === "localhost" || host.endsWith(".localhost")) return false;
+  return host.includes(".") && !host.endsWith(".");
 }
 
 /**
@@ -217,20 +241,25 @@ export const IDENTITY_PROBE_DEADLINE_MS = 8000;
 /** How long a forward that names its parts waits for `GET /hello`: the engine puts no limit on a send. */
 export const FORWARD_PARTS_HELLO_MS = 8000;
 
+/** What this phone reads off `GET /hello`'s `features`: named forward parts, and armed staging. */
+export interface HelloFeatures {
+  forwardParts: boolean;
+  staging: boolean;
+}
+
 /**
- * DOES THE SERVER SEND ONLY THE FORWARDED PARTS A SEND NAMES — `features.forwardParts` on `GET /hello`
- * at the origin. `false` only from ohmail's own `/hello` without it; anything else (the network, the
- * deadline, a non-2xx, a body that is not ohmail's) is `null`, no answer.
+ * THE SERVER'S FEATURES, from one `GET /hello` at the origin. `null` is no answer: the network, the
+ * deadline, a non-2xx, a body that is not ohmail's. A feature ohmail's `/hello` leaves out is `false`.
  */
-export async function helloForwardParts(
+export async function helloFeatures(
   fetchImpl: (url: string, init?: RequestInit) => Promise<Response>, origin: string, deadlineMs: number,
-): Promise<boolean | null> {
+): Promise<HelloFeatures | null> {
   const stop = typeof AbortController === "function" ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<null>((resolve) => {
     timer = setTimeout(() => { stop?.abort(); resolve(null); }, deadlineMs);
   });
-  const read = async (): Promise<boolean | null> => {
+  const read = async (): Promise<HelloFeatures | null> => {
     let res: Response;
     try {
       res = await fetchImpl(`${origin}/hello`, { method: "GET", ...(stop ? { signal: stop.signal } : {}) });
@@ -239,8 +268,10 @@ export async function helloForwardParts(
     }
     if (!res.ok) return null;
     try {
-      const body = (await res.json()) as { product?: unknown; features?: { forwardParts?: unknown } } | null;
-      return body?.product === "ohmail" ? body.features?.forwardParts === true : null;
+      const body = (await res.json()) as { product?: unknown; features?: { forwardParts?: unknown; staging?: unknown } } | null;
+      return body?.product === "ohmail"
+        ? { forwardParts: body.features?.forwardParts === true, staging: body.features?.staging === true }
+        : null;
     } catch {
       return null;
     }
@@ -250,6 +281,16 @@ export async function helloForwardParts(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * DOES THE SERVER SEND ONLY THE FORWARDED PARTS A SEND NAMES — `features.forwardParts`, off
+ * {@link helloFeatures}. `null` is no answer.
+ */
+export async function helloForwardParts(
+  fetchImpl: (url: string, init?: RequestInit) => Promise<Response>, origin: string, deadlineMs: number,
+): Promise<boolean | null> {
+  return (await helloFeatures(fetchImpl, origin, deadlineMs))?.forwardParts ?? null;
 }
 
 /**
@@ -528,8 +569,8 @@ function accountGuarded(
     screenerWaiting: (page) => adapter.screenerWaiting(page),
     /* The Ohbox's undecided-sender offer and its press — the web's pair, on `screenerWaiting`'s and
        `mutate`'s rules. Left out of this literal, the engine reads "this door has no offer". */
-    unscreened: () => adapter.unscreened(),
-    screenUnscreened: (addresses) => adapter.screenUnscreened(addresses),
+    unscreened: (pile) => adapter.unscreened(pile),
+    screenUnscreened: (addresses, pile) => adapter.screenUnscreened(addresses, pile),
     /* Why a sender's rows stayed — a read of this account's own messages, on `screenerWaiting`'s
        rule. Left out, the engine reads "this door names no reason" and the sheet lists none. */
     whyStayed: (ids) => adapter.whyStayed(ids),
@@ -684,6 +725,15 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
         headers: authHeaders,
         getCookie: () => null,
         fetch: fetchImpl,
+        /* STAGING, Cloud only and never on the phone's own engine. The PUT rides the plain transport:
+           the bearer's would stamp the live token on the storage host's URL. */
+        ...(config.stageAttachments === true && local === undefined
+          ? {
+            stageAttachments: true,
+            uploadFetch: deps.fetch ?? (globalThis.fetch.bind(globalThis) as NonNullable<MobileEngineDeps["fetch"]>),
+            uploadAdmits: phoneUploadAdmits,
+          }
+          : {}),
       }),
       accountId,
       () => identityCleared,

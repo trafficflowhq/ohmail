@@ -305,6 +305,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock; the account erasure fence per chunk and for the stamp; writes list_addresses and the stamp, never a contact or a move",
   },
   {
+    name: "act_admission_retire",
+    module: `${W}/act-admission-retire.ts`, entry: "retireActAdmissionsPass",
+    triggers: ["cycle-tail", "sidecar-drain"],
+    cadence: "once per worker process per account, a page per cycle tail until the walk ends; on a standalone install once per launch behind the organizer gate, paged to the end",
+    budget: "ACT_ADMISSION_RETIRE_SENDERS senders per page; one candidate read, the correspondent read and one transaction each",
+    owns: "a sender only the act on suggestions let in (its allow rule, a contact only it wrote) waits at the Screener again; a sender the person chose keeps everything",
+    fence: "leader lock; the account erasure fence, the organizer assertion and the rule-key lock per page; rule deltas, one audit row per sender, never a move",
+  },
+  {
     name: "ohbox_tidy",
     module: `${W}/ohbox-tidy.ts`, entry: "ohboxTidyPass",
     triggers: ["cycle-tail"],
@@ -364,27 +373,13 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock; DB-only (bodies are re-fetchable from the mailbox)",
   },
   {
-    name: "screener_auto_apply",
-    module: `${W}/screener-auto.ts`, entry: "screenerAutoApplyPass",
-    triggers: ["cycle-tail"],
-    cadence: "every cycle tail, per account with auto-apply on",
-    budget: "SCREENER_AUTO_BATCH / SCREENER_AUTO_WRITES_PER_CYCLE / SCREENER_AUTO_MAX_PAGES; a TAIL_SLICE_BUDGET_MS `until` clock in the tail, the walk resuming at its cursor",
-    // THIS ROW SAID "accepted screener suggestions become decisions without a press, exactly as
-    // the press would" and the pass has never read a suggestion: it judges each held message
-    // itself with the strong-bulk floor and files to News/Receipts only. What the row described
-    // is `screener_auto_act` below, which is why a Spam verdict at 0.95 waited for ever.
-    owns: "obvious strong-bulk mail leaves the Screener by the deterministic floor — no model, no spend, no rule",
-    fence: "leader lock; folder_state + change_log + an audit inverse, never IMAP",
-  },
-  {
     name: "screener_auto_act",
     module: `${W}/screener-auto-act.ts`, entry: "screenerAutoActPass",
     triggers: ["cycle-tail", "sidecar-drain"],
-    // Never armed by `screener_auto_apply_at`, the switch that promises "no AI": its own consent is
-    // `screener_auto_act_at`, read with `accounts.ai_enabled` by `screenerActConsentFrom`.
+    // Its own consent is `screener_auto_act_at`, read with `accounts.ai_enabled` by `screenerActConsentFrom`.
     cadence: "every cycle tail and every local drain tail, per account that turned on acting on confident suggestions",
     budget: "SCREENER_ACT_SENDERS_PER_CYCLE senders per account per cycle; one transaction each; a TAIL_SLICE_BUDGET_MS `until` clock in the tail",
-    owns: "a waiting sender whose stored suggestion is at or above the bar is filed exactly as the press files them",
+    owns: "a waiting sender whose stored Spam or screen-out suggestion is at or above the bar is filed exactly as the press files them; it never lets a sender in",
     fence: "leader lock; the decision path is `applyScreenerDecision` — the manual Apply's and the drain's one implementation",
   },
   {
@@ -395,6 +390,18 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     budget: "CORRESPONDENT_RETRO_SENDERS held senders and auto-act rules per run; CORRESPONDENT_SCAN_ROWS Sent copies; one transaction per sender",
     owns: "nobody this account wrote to after its consent point waits at the gate or stays under a spam rule the auto-act promoted",
     fence: "leader lock; folder_state + change_log + an audit inverse per message, one rule delta per retired rule, never IMAP",
+  },
+  {
+    name: "gone_letter_tidy",
+    module: `${W}/gone-letter-tidy.ts`, entry: "goneLetterTidyPass",
+    triggers: ["cycle-tail", "sidecar-drain"],
+    cadence: "every cycle tail per served account, and at every local drain tail, until a run ends on a short page; then not again in this "
+      + "process (a restart asks once more)",
+    budget: "GONE_LETTER_TIDY_LIMIT letters per tail run, GONE_LETTER_TIDY_BATCH per transaction, under a TAIL_SLICE_BUDGET_MS `until` "
+      + "clock; one page of GONE_LETTER_TIDY_BATCH per local drain",
+    owns: "a letter that left the server before its preview, search document, summary, tracker address and header lines went with its text "
+      + "loses them as a newly gone letter does",
+    fence: "leader lock; the repo's scrubGone on tombstoned rows of one account only — no change row, no updated_at, no storage counter, never IMAP",
   },
   {
     name: "screener_auto_suggest",

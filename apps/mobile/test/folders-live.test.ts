@@ -145,12 +145,14 @@ describe("the consent seam — GET /consent and PATCH /consent/settings on the p
     // is what that switch needs, off here.
 
     expect(await readFoldersEnabled(session))
-      .toEqual({ on: false, storable: true, screening: WINDOW, signatures: {}, themeFace: null,
+      .toEqual({ on: false, storable: true, screening: WINDOW, signatures: {}, signaturesHtml: {}, signatureSources: {},
+        signatureChanges: {}, themeFace: null,
         resurfaceTime: null, autoUnsubscribe: true, autoAct: null, autoSuggestOn: false, seed: null });
     expect(await writeFoldersEnabled(session, true)).toEqual({ on: true });
     expect(fake.foldersOn()).toBe(true);
     expect(await readFoldersEnabled(session))
-      .toEqual({ on: true, storable: true, screening: WINDOW, signatures: {}, themeFace: null,
+      .toEqual({ on: true, storable: true, screening: WINDOW, signatures: {}, signaturesHtml: {}, signatureSources: {},
+        signatureChanges: {}, themeFace: null,
         resurfaceTime: null, autoUnsubscribe: true, autoAct: null, autoSuggestOn: false, seed: null });
     expect(await writeFoldersEnabled(session, false)).toEqual({ on: false });
     expect(fake.foldersOn()).toBe(false);

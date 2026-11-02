@@ -50,8 +50,8 @@ function seed(db: Db, account: string): void {
 }
 
 /** The plan of the probe asked of each of the account's messages, as SQLite states it. */
-function probePlan(db: Db, account: string, set: CutlineSet): string[] {
-  const probe = senderIsActiveSql(sqliteDialect(), account, sql`lower(m.from_address)`, set);
+function probePlan(db: Db, account: string, set: CutlineSet, gone: readonly string[] = []): string[] {
+  const probe = senderIsActiveSql(sqliteDialect(), account, sql`lower(m.from_address)`, set, gone);
   const q = new SQLiteSyncDialect().sqlToQuery(sql`select m.id from messages m where m.account_id = ${account} and ${probe}`);
   return (db.prepare(`EXPLAIN QUERY PLAN ${q.sql}`).all(...q.params) as Array<{ detail: string }>).map((r) => r.detail);
 }
@@ -73,6 +73,13 @@ describe("mail 0157 on the device store", () => {
     seed(db, a);
     expect(db.prepare("select name from sqlite_master where name = 'sqlite_stat1'").all()).toEqual([]);
     expect(probePlan(db, a, { cutoff, baselined: true, allTime: false })).toContain(RANGE);
+  });
+
+  it("a removed mailbox left out of the probe keeps the range", async () => {
+    const db = await open();
+    const a = randomUUID();
+    seed(db, a);
+    expect(probePlan(db, a, { cutoff, baselined: true, allTime: false }, [randomUUID(), randomUUID()])).toContain(RANGE);
   });
 
   it("CONTROL: without a baseline there is no range", async () => {

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { drafts, mailboxes } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { DraftsService, SendService } from "../src/index.js";
+import { DraftsService, SendService, sendContentFingerprint } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -129,5 +129,46 @@ describe("a send carries the row it was composed against", () => {
 
     expect(res.status).toBe("sent");
     expect(fake.state.delivered).toHaveLength(1);
+  });
+});
+
+describe("the names on screen travel with the addresses", () => {
+  it("To and Cc keep their names, and From carries the mailbox's name", async () => {
+    const { ctx, draft, mailboxId } = await setup();
+    await ctx.db.update(mailboxes).set({ displayName: " Ada \r\n Lovelace " }).where(eq(mailboxes.id, mailboxId));
+    await draftsSvc.update(ctx, draft.id, {
+      to: [{ name: "Doe, John", address: "chosen@example.com" }, { name: null, address: "bare@example.com" }],
+      cc: [{ name: "Cy", address: "cc@example.com" }],
+    });
+    const fake = fakeAdapter();
+    expect((await sendSvc.send(ctx, draft.id, randomUUID(), { openSendAdapter: fake.factory })).status).toBe("sent");
+    const msg = fake.state.delivered[0]!;
+    expect(msg.from).toEqual({ name: "Ada Lovelace", address: "author@lichtgrat.example" });
+    expect(msg.to).toEqual([{ name: "Doe, John", address: "chosen@example.com" }, "bare@example.com"]);
+    expect(msg.cc).toEqual([{ name: "Cy", address: "cc@example.com" }]);
+  });
+
+  it("a mailbox with no name sends a bare From, as before", async () => {
+    const { ctx, draft } = await setup();
+    const fake = fakeAdapter();
+    await sendSvc.send(ctx, draft.id, randomUUID(), { openSendAdapter: fake.factory });
+    expect(fake.state.delivered[0]!.from).toBe("author@lichtgrat.example");
+    expect(fake.state.delivered[0]!.to).toEqual(["chosen@example.com"]);
+  });
+
+  it("a name is capped and loses its control characters", async () => {
+    const { ctx, draft, mailboxId } = await setup();
+    await ctx.db.update(mailboxes).set({ displayName: "\u0007" + "x".repeat(150) }).where(eq(mailboxes.id, mailboxId));
+    const fake = fakeAdapter();
+    await sendSvc.send(ctx, draft.id, randomUUID(), { openSendAdapter: fake.factory });
+    expect(fake.state.delivered[0]!.from).toEqual({ name: "x".repeat(100), address: "author@lichtgrat.example" });
+  });
+
+  it("two letters differing only in names are the same message to the duplicate guard", () => {
+    const of = (name: string | null) => sendContentFingerprint({
+      to: [{ name, address: "a@example.com" }], cc: [], bcc: [], subject: "s", html: null, body: "b",
+      inReplyToMessageId: null, forwardOf: null, sendAt: null, attachments: [],
+    });
+    expect(of("Ada")).toBe(of(null));
   });
 });

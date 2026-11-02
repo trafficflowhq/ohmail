@@ -385,8 +385,9 @@ export const PART_OR_MAX_WORDS = 4;
  * The endings a stemmer strips past a part's fourth letter, for THIS part: `elevatio` + `n` is
  * `elevation`, whose stem `elev` a prefix read of `elevatio` cannot reach. Keyed by the part's
  * last two letters (`part-tails.ts`, derived under both stores' stemmers), so a part carries about
- * 11 tails where the flat list carried 290; a part whose ending no word has carries none. Each
- * dialect reads the part plus each tail as whole words its stemmer reduces.
+ * 11 tails where the flat list carried 290; a part whose ending no word has carries none. The
+ * server's arm reads the part plus each tail as whole words its stemmer reduces; the device reads
+ * a part's start in tables that do not stem (mail 0175) and needs none.
  */
 export function partWordTails(part: string): readonly string[] {
   return PART_WORD_TAILS_BY_ENDING[part.toLowerCase().slice(-2)] ?? [];

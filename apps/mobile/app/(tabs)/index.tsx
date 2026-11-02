@@ -19,7 +19,9 @@ import { heldWhileHidden } from "../../src/state/held-while-hidden";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useEngineQueuesAsk, useWorld, type World, type WorldMail, type WorldUnscreened } from "../../src/state/world";
-import { ohboxVisitStep, type FiledSince, type OhboxVisitEvent, type OhboxVisitState } from "../../src/state/live";
+import {
+  firstSyncReadingSaid, ohboxVisitStep, type FiledSince, type OhboxVisitEvent, type OhboxVisitState,
+} from "../../src/state/live";
 import { OhboxWhere } from "../../src/ui/OhboxWhere";
 import { Button, Empty, Panel, Screen, Tail, Txt } from "../../src/ui/base";
 import { Doorbell, StateKnock, TopBar } from "../../src/ui/chrome";
@@ -143,6 +145,12 @@ function OhboxBody() {
                   style={{ marginTop: 8, alignSelf: "flex-start" }}
                 />
               </Panel>
+            ) : null}
+            {/* The mailbox opened at its first page; the first sync runs on behind it. */}
+            {firstSyncReadingSaid(w.boot.firstSync) !== null ? (
+              <Txt variant="note" tone="ink3" accessibilityLiveRegion="polite" style={{ paddingHorizontal: 14, paddingBottom: 8 }}>
+                {firstSyncReadingSaid(w.boot.firstSync)}
+              </Txt>
             ) : null}
             {/* Only once the sent-mail seed is settled: pressed first it holds whom the seed lets through. */}
             <UnscreenedOffer offer={unscreenedOffered(seed.offer, shown.ohbox.unscreened)} screen={w.actions.screenUnscreened} />

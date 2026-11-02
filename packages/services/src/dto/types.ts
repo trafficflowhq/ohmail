@@ -263,6 +263,12 @@ export interface SenderCheckDTO {
    */
   list?: true;
   /**
+   * On the queue page's row only: a screen-out of this sender files the letters that claim `brand`
+   * alone and writes no rule — a list address the person let in, with a claim a press can reach.
+   * Absent: the screen-out is the address's, as from an older server.
+   */
+  claimsOnly?: true;
+  /**
    * On `unverified` only: the row's identity column was never written (NULL), so a press reads the
    * letter as never checked, exactly as the server's press does (`heldRowMovesOnPress`).
    */

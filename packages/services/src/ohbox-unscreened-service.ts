@@ -2,19 +2,21 @@ import { and, eq } from "drizzle-orm";
 import { mailboxes, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   makeDrizzleRepo, OHBOX_UNSCREENED_AUDIT_ACTION, OHBOX_UNSCREENED_GROUPS_MAX,
-  OHBOX_UNSCREENED_MESSAGES_MAX, agreeWindowCutoff, unscreenedGroups, unscreenedWalk,
-  writeScreenerIntents, type ScreeningAnswer, type UnscreenedKnowledge, type UnscreenedSenderGroup,
+  OHBOX_UNSCREENED_MESSAGES_MAX, agreeWindowCutoff, isUnscreenedPile, unscreenedGroups, unscreenedSourceFolder,
+  unscreenedWalk, writeScreenerIntents, type ScreeningAnswer, type UnscreenedKnowledge, type UnscreenedPile,
+  type UnscreenedScope, type UnscreenedSenderGroup,
 } from "@trafficflow/core/adapters/drizzle-repo";
 import { ServiceError } from "./errors.js";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 
-/* OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — the two doors a person presses. The set is
+/* OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — the doors a person presses. The set is
    named once in core (`unscreened-set.ts`): the Screener's offer counts and moves it here, and the
    organize decision counts the one mailbox and window here before the press, which the organizer
-   then moves after it. The number shown and the number moved come from the same walk. */
+   then moves after it. Asked of a pile (News, Receipts) with no window, it is that pile's note.
+   The number shown and the number moved come from the same walk. */
 
-export { OHBOX_UNSCREENED_AUDIT_ACTION, OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_MESSAGES_MAX };
-export type { UnscreenedSenderGroup };
+export { OHBOX_UNSCREENED_AUDIT_ACTION, OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_MESSAGES_MAX, isUnscreenedPile };
+export type { UnscreenedPile, UnscreenedSenderGroup };
 
 /** The screen: the groups and how many messages they hold. */
 export interface UnscreenedSummary {
@@ -34,17 +36,23 @@ export interface UnscreenedResult {
 const knowledgeOf = (t: Tx): UnscreenedKnowledge =>
   makeDrizzleRepo(t as unknown as Parameters<typeof makeDrizzleRepo>[0]);
 
+/** The offer's scope inside the account's window, or a pile's with none. */
+async function scopeFor(db: Tx, accountId: string, now: Date, pile: UnscreenedPile | undefined): Promise<UnscreenedScope> {
+  if (pile !== undefined) return { kind: "pile", pile };
+  return { kind: "offer", cutoff: await agreeWindowCutoff(db, accountId, now) };
+}
+
 /**
- * The whole offer in one read, inside the account's window. `total` is the SHOWN groups' messages
- * and nothing else — every message has one sender, so a list cut at the bound must not report mail
+ * The whole offer in one read, inside the account's window — or, given a pile, the letters in News
+ * or Receipts from senders nobody let in, at any age. `total` is the SHOWN groups' messages and
+ * nothing else — every message has one sender, so a list cut at the bound must not report mail
  * behind the cut.
  */
 export async function unscreenedSummary(
-  db: Tx, accountId: string, now: Date,
+  db: Tx, accountId: string, now: Date, pile?: UnscreenedPile,
 ): Promise<UnscreenedSummary> {
-  const cutoff = await agreeWindowCutoff(db, accountId, now);
   const walk = await unscreenedWalk(db, knowledgeOf(db), accountId, {
-    lock: false, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope: { kind: "offer", cutoff },
+    lock: false, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope: await scopeFor(db, accountId, now, pile),
   });
   const groups = unscreenedGroups(walk.rows);
   // Either bound makes `total` a floor: the walk's message bound or the shown groups' sender bound.
@@ -54,11 +62,16 @@ export async function unscreenedSummary(
 
 /**
  * THE OFFER'S PRESS. Moves the named sender groups — or every group shown — to the Screener as
- * intents; the organizer's reconciler performs the move. Idempotent by the predicate.
+ * intents; the organizer's reconciler performs the move. Idempotent by the predicate. Given a
+ * pile, it screens that pile's letters from senders nobody let in.
  */
 export async function screenUnscreened(
-  ctx: ServiceContext, opts: { addresses?: readonly string[] } = {},
+  ctx: ServiceContext, opts: { addresses?: readonly string[]; pile?: unknown } = {},
 ): Promise<UnscreenedResult> {
+  if (opts.pile !== undefined && !isUnscreenedPile(opts.pile)) {
+    throw new ServiceError("validation_failed", 400, "pile must be news or receipts");
+  }
+  const pile = opts.pile;
   const wanted = opts.addresses;
   if (wanted !== undefined) {
     if (!Array.isArray(wanted)) {
@@ -77,14 +90,15 @@ export async function screenUnscreened(
   return withAccountTx(ctx, async (t) => {
     const tx = bridgeTx(t);
     const now = ctx.now();
-    const cutoff = await agreeWindowCutoff(tx, ctx.accountId, now);
+    const scope = await scopeFor(tx, ctx.accountId, now, pile);
     const walk = await unscreenedWalk(tx, knowledgeOf(tx), ctx.accountId, {
-      lock: true, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope: { kind: "offer", cutoff },
+      lock: true, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope,
     });
     const rows = walk.rows.filter((r) => named === null || named.has(r.fromAddress.toLowerCase()));
     if (rows.length === 0) return { screened: [], total: 0 };
     return writeScreenerIntents(tx, t as unknown as LedgerTx, {
-      accountId: ctx.accountId, rows, now, via: "offer", groups: "shown",
+      accountId: ctx.accountId, rows, now, via: pile === undefined ? "offer" : "pile", groups: "shown",
+      from: unscreenedSourceFolder(scope),
     });
   });
 }

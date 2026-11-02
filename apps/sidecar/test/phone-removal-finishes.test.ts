@@ -230,6 +230,39 @@ describe.runIf(ON_DEVICE_STORE)("a removal, on the device store", () => {
     expect(held(next.exec, off).messages, "a switched-off mailbox lost its mail").toBe(2);
   });
 
+  it("a removal an earlier build finished keeps no hash of its settings past the next start; a live mailbox keeps its own", async () => {
+    const file = storeFile();
+    const first = await phone(file);
+    const accountId = first.engine.accountId;
+    const live = first.id;
+    await first.engine.stop();
+    open.splice(open.indexOf(first.engine), 1);
+
+    const planting = nodeExecutor(file);
+    const removed = randomUUID();
+    planting.direct(
+      "insert into mailboxes (id, account_id, provider, address, status, disabled_reason) values (?, ?, 'imap', ?, 'disabled', NULL)",
+      [removed, accountId, "gone-hashes@b.test"],
+    );
+    const nowhere = randomUUID();
+    const audit = (action: string, payload: Record<string, unknown>): string => {
+      const id = randomUUID();
+      planting.direct("insert into audit_log (id, account_id, action, payload) values (?, ?, ?, ?)", [id, accountId, action, JSON.stringify(payload)]);
+      return id;
+    };
+    const marker = audit("organizer_profile_found", { mailboxId: removed, state: "found", fingerprint: "a".repeat(64), signatureReceipt: "r".repeat(32) });
+    const press = audit("organizer_profile_import_ask_signature", { mailboxId: nowhere, fingerprint: "b".repeat(64), signatureReplaces: "s".repeat(32) });
+    const own = audit("organizer_profile_found", { mailboxId: live, state: "found", fingerprint: "c".repeat(64) });
+    await planting.close();
+
+    const next = await phone(file);
+    const payloadOf = (id: string): unknown =>
+      JSON.parse((next.exec.direct("select payload from audit_log where id = ?", [id]) as { payload: string }[])[0]!.payload);
+    expect(payloadOf(marker), "the removed mailbox's marker kept a hash").toEqual({ mailboxId: removed, state: "found" });
+    expect(payloadOf(press), "a row naming no mailbox here kept its hashes").toEqual({ mailboxId: nowhere });
+    expect(payloadOf(own), "a live mailbox lost its own fingerprint").toEqual({ mailboxId: live, state: "found", fingerprint: "c".repeat(64) });
+  });
+
   it("Remove on a removed mailbox with no runtime still clears what it left", async () => {
     const p = await phone(storeFile());
     const gone = plantTombstone(p.exec, p.engine.accountId, 3);

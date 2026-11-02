@@ -2365,6 +2365,9 @@ export type ProfileImportStatusWire =
   | { state: "imported"; imported: ProfileImportCountsWire | null; skippedRules: number }
   | { state: "refused"; reason: string; message: string };
 
+/** The header the import status read carries its fingerprint in (`packages/api`'s route reads it first). */
+const PROFILE_FINGERPRINT_HEADER = "x-ohmail-profile-fingerprint";
+
 export const profileImport = {
   candidate: (mailboxId: string) =>
     api<ProfileImportCandidateWire>(`/mailboxes/${mailboxId}/profile-import`),
@@ -2378,11 +2381,21 @@ export const profileImport = {
     api<ProfileImportAppliedWire | ProfileImportPendingWire>(`/mailboxes/${mailboxId}/profile-import`, {
       method: "POST", body: signatureReplaces === undefined ? { fingerprint } : { fingerprint, signatureReplaces },
     }),
-  /** Where a press answered 202 stands; asked on the settings doorbell until it is terminal. */
-  status: (mailboxId: string, fingerprint: string) =>
-    api<ProfileImportStatusWire>(
-      `/mailboxes/${mailboxId}/profile-import/status?fingerprint=${encodeURIComponent(fingerprint)}`,
-    ),
+  /**
+   * Where a press answered 202 stands; asked on the settings doorbell until it is terminal. The
+   * fingerprint is a hash of the settings, so it travels in a header and never in the URL; an older
+   * server reads only the query and refuses the bare path `validation_failed`, so it is asked once
+   * more that way.
+   */
+  status: async (mailboxId: string, fingerprint: string): Promise<ProfileImportStatusWire> => {
+    const path = `/mailboxes/${mailboxId}/profile-import/status`;
+    try {
+      return await api<ProfileImportStatusWire>(path, { headers: { [PROFILE_FINGERPRINT_HEADER]: fingerprint } });
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 400 && err.code === "validation_failed")) throw err;
+      return api<ProfileImportStatusWire>(`${path}?fingerprint=${encodeURIComponent(fingerprint)}`);
+    }
+  },
   /**
    * Keep local. Durable — the same content never asks again, on this or any later visit —
    * and inert: nothing is applied and nothing in the mailbox is touched. A `newer` notice is

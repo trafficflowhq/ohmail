@@ -28,10 +28,17 @@ export { contactOnlyHeldWhere } from "./contact-only-held.js";
 export { upgradeContactsToPerson } from "./contact-source.js";
 export {
   consentListBrands, forgetListConsents, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses,
+  readListAddressesLetIn,
 } from "./list-addresses.js";
 // "Did the person answer this sender" — ONE spelling, read by ohbox-tidy, rule-retro and
 // screener-auto. See the module: three copies asked thread membership instead.
 export { weAnsweredThisSenderWhere } from "./we-answered.js";
+// What a letter gone from the server keeps of its header block, and the store's proof it is gone.
+export {
+  GONE_LETTER_HEADER_KEYS, WHOLE_BLOCK_HEADER_KEYS, goneLetterHeaders, reduceGoneHeaders, restoreLetterHeaders,
+  sameHeaderBlock,
+} from "./gone-letter-headers.js";
+export { goneEverywhereWhere } from "./gone-everywhere.js";
 // A rule's `match` as SQL keys it, and whether it names a sender: ONE spelling for every reader.
 export {
   ruleMatchKeySql, ruleNamesSenderSql, sharedProviderAllowRefusal, SHARED_PROVIDER_DOMAINS, SharedProviderDomainError,
@@ -103,7 +110,7 @@ export { readFlightOf } from "./read-flight.js";
 export {
   SCREENER_FOLDER, DECIDABLE_FOLDERS, DECISION_BATCH_MAX, admitsDestination, domainOf,
   heldRowById, heldRowsForSender, heldRowsForDomain, rerouteOwnHeldBag, rerouteUnconfirmedHeld, rerouteAdvisedLetter, heldRowMovesOnPress,
-  applyScreenerDecision, validateRequestPayload,
+  applyScreenerDecision, validateRequestPayload, PassMayNotAdmitError, readListClaimsFiledAlone,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
   type HeldElsewhereMailbox, type UnconfirmedRerouteResult, type ValidatedRequestPayload,
 } from "./screener-apply.js";
@@ -183,7 +190,7 @@ export {
   // than queueing a record the holder will never take.
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
   capabilitiesColumn, hasCapability, readRequestEligibility, decisionCanBeApplied,
-  fanOutPlace, writesHere, accountWritesHere,
+  fanOutPlace, writesHere, accountWritesHere, mailboxTakesPressSql, readMailboxesTakingAPress,
   type OrganizerRole, type OrganizerKind, type OrganizerState, type OrganizerIntent,
   type OrganizedBy, type OrganizerRoleRow, type RequestEligibility, type RequestRefusalReason,
 } from "./organizer-role.js";
@@ -225,7 +232,7 @@ export {
   RESTORABLE_PROVENANCE, restoredProvenanceSql,
 } from "./request-apply.js";
 export {
-  convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, keptProvenance, endOwedWalk,
+  convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, deleteRulesById, keptProvenance, endOwedWalk,
   isRefileRun, owesWholeWalk, pendingRefileFrom, refileOwed, isParkedFence, PARKED_FENCE_PREFIX,
   type ConvergedKey, type FoundRule, type KeyWriteResult, type RefileState, type RuleRowWrite,
 } from "./rule-key.js";
@@ -431,7 +438,7 @@ export {
   resolveCutline, cutlineArms, perMailboxSql, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
   senderHasHeldClaimSql, heldClaimInsideSql, heldArrivedInsideSql, senderHasHeldArrivalSql, heldClaimWaitsSql, personSkipSql, senderHasPersonConsentSql,
   CUTLINE_PERSON_WRITTEN_PROVENANCE,
-  mailboxCountsAsOwn, mailboxCountsAsOwnSql,
+  mailboxCountsAsOwn, mailboxCountsAsOwnSql, notGoneSql,
   heldSortKey,
   cutlineInstant,
   CUTLINE_PRESENTED_FOLDERS, CUTLINE_DEFAULT_DORMANCY_DAYS, CUTLINE_ALLOW_DESTINATIONS,
@@ -441,7 +448,7 @@ export {
 
 /** The account's own addresses, read whole for the router's gate, and the one-time release of own mail it filed there. */
 export {
-  readOwnAddresses, ruleKeyIsOwnAddress, releaseOwnMailAtGate, OWN_MAIL_RELEASE_BATCH, notFailedAuthSql,
+  readOwnAddresses, readGoneMailboxIds, ruleKeyIsOwnAddress, releaseOwnMailAtGate, OWN_MAIL_RELEASE_BATCH, notFailedAuthSql,
   OwnAddressesPerPass, type OwnMailboxRow,
 } from "./own-mail.js";
 
@@ -466,8 +473,8 @@ export {
 /* A press the request could not finish, handed to the organizer — one interface, see the module. */
 export {
   IMPORT_ASK_REFUSALS, PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION, PROFILE_IMPORT_ASK_TTL_MS, askStands, importAskSignature,
-  isImportAskRefusal, readImportAsk, recordImportAsk, recordImportAskSignature, resolveImportAsk, settingsHashRows,
-  type ImportAskRefusal, type ImportAskRow,
+  isImportAskRefusal, orphanedSettingsHashRows, readImportAsk, recordImportAsk, recordImportAskSignature, resolveImportAsk,
+  settingsHashRows, type ImportAskRefusal, type ImportAskRow,
 } from "./profile-import-ask.js";
 
 /**

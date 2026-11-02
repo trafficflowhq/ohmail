@@ -6,7 +6,7 @@ import {
   AccountErasedError, OrganizedElsewhereError, MailboxErasedError, MailboxNotFoundError,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
   screenerSuggestionsBySender, automaticAiAdmits, resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
-  storedAuthScreens,
+  notGoneSql, readGoneMailboxIds, readListAddressesLetIn,
   decisionCanBeApplied, readRequestEligibility,
   DECIDABLE_FOLDERS, SCREENER_FOLDER, SCREENER_ACT_TRIGGER_PREFIX,
   type ResolvedCutline, type Tx,
@@ -15,21 +15,21 @@ import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { correspondentsAmong, sendersAnsweringOwnWriting } from "@trafficflow/core/adapters/drizzle-repo";
 import { SENDER_CHECK_BACKFILL_BATCH, writeSenderChecks } from "./sender-check-backfill.js";
 import {
-  canonicalDestination, denyMayRuleTheAddress, effectForDestination, ownedBrand, silentLogger,
+  canonicalDestination, denyMayRuleTheAddress, effectForDestination, silentLogger,
   type Destination, type Logger,
 } from "@trafficflow/core/mail";
 
 /* SCREENER AUTO-ACT — for an account that gave THIS pass its own consent, file the waiting senders
- * whose stored advice is confident, through the door a PRESS uses. It reads advice and never buys
- * it (no model, no spend, no claim), and files through `applyScreenerDecision` — the manual Apply's
- * and the reader drain's one implementation — so the promoted rule the person undoes, the held-bag
- * re-route that empties the Waiting count and the learning signal cannot drift from
- * the press. One exception: a deny that may not stand as a rule writes none. Advice on a letter its
- * provider did not confirm files that letter alone (`rerouteUnconfirmedHeld`), as does advice on a
- * confirmed letter whose reason is no fact about the address — the crowd's cap, or a row stored
- * before the reason was (`rerouteAdvisedLetter`) — each filing listed under Filed automatically to
- * put back. Its sibling `screener-auto.ts` decides for ITSELF (the strong-bulk floor, News and
- * Receipts only) and reads no suggestion at all, which is why a Spam verdict waited for ever. */
+ * whose stored advice is a confident Spam or screen-out, through the door a PRESS uses. It never lets
+ * a sender in: advice for the Ohbox, News or Receipts waits for the person's press (owner ruling
+ * 2026-11-02). It reads advice and never buys it (no model, no spend, no claim), and files through
+ * `applyScreenerDecision` — the manual Apply's and the reader drain's one implementation — so the
+ * promoted rule the person undoes, the held-bag re-route that empties the Waiting count and the
+ * learning signal cannot drift from the press. One exception: a deny that may not stand as a rule
+ * writes none. Advice on a letter its provider did not confirm files that letter alone
+ * (`rerouteUnconfirmedHeld`), as does advice on a confirmed letter whose reason is no fact about the
+ * address — the crowd's cap, or a row stored before the reason was (`rerouteAdvisedLetter`) — each
+ * filing listed under Filed automatically to put back. */
 
 /**
  * The bar a DENYING suggestion (Spam, Screened) must meet. RULED 2026-09-22: a spam verdict is
@@ -37,14 +37,6 @@ import {
  * states for a verdict the sender's own facts force.
  */
 export const SCREENER_ACT_DENY_BAR = 0.9;
-
-/**
- * The bar an ADMITTING suggestion (Imbox, News, Receipts) must meet. The same number under a
- * different argument — an admission grants a stranger passage — and stated apart so either may
- * move alone. `capSuggestion` already holds a soft-signalled admit at `SOFT_CEILING` (0.5), far
- * below this, so a sender the facts doubt cannot reach the act however sure the model sounded.
- */
-export const SCREENER_ACT_ADMIT_BAR = 0.9;
 
 /** Senders one account may be filed for in one cycle — the reconciler's per-cycle move budget. */
 export const SCREENER_ACT_SENDERS_PER_CYCLE = 50;
@@ -56,9 +48,8 @@ export interface ScreenerAutoActDeps {
   now?: () => Date;
   /** Test seam. Default {@link SCREENER_ACT_SENDERS_PER_CYCLE}. */
   sendersPerCycle?: number;
-  /** Test seams. Default {@link SCREENER_ACT_DENY_BAR} / {@link SCREENER_ACT_ADMIT_BAR}. */
+  /** Test seam. Default {@link SCREENER_ACT_DENY_BAR}. */
   denyBar?: number;
-  admitBar?: number;
   /** The account_settings row the caller already read this cycle; absent ⇒ the pass reads it. */
   settings?: ScreenerAutoActSettings;
   /** The cycle tail's clock, asked before each sender this pass would file after the first. A kept
@@ -124,7 +115,7 @@ export interface ScreenerAutoActResult {
   examined: number;
   /** Senders filed by this pass. */
   filed: number;
-  /** Senders left waiting — no advice, below the bar, or a destination a decision may not file to. */
+  /** Senders left waiting — no advice, below the bar, advice to let them in, or a place a decision may not file to. */
   kept: number;
   /**
    * Senders whose apply REFUSED. They stay in the Screener with their suggestion and their Apply
@@ -140,20 +131,6 @@ export interface ScreenerAutoActResult {
   revoked: boolean;
   /** Senders left waiting because this account wrote to them — counted inside {@link kept}. */
   correspondents: number;
-  /**
-   * Senders left waiting because a held message of theirs claims a brand its address does not own
-   * (`messages.sender_check`, mail 0148) while the advice would let them through — counted inside
-   * {@link kept}. A denying plan is not held here: it files, and one that meets a letter its
-   * provider did not confirm writes no rule ({@link unconfirmedDenies}).
-   */
-  identity: number;
-  /**
-   * Senders left waiting because their address is at a brand's own domain and a held message of
-   * theirs is one their provider did not confirm (`auth_verdict` not `pass`) while the advice would
-   * let them through — counted inside {@link kept}. A denying plan is not held here
-   * ({@link unconfirmedDenies}).
-   */
-  unverified: number;
   /**
    * Senders whose denying advice met a letter their provider did not confirm, filed with no rule —
    * counted inside {@link kept}. Advice bought on such a letter files that letter alone while it is
@@ -176,14 +153,15 @@ export interface ScreenerAutoActResult {
 
 const EMPTY = (): ScreenerAutoActResult => ({
   ran: false, examined: 0, filed: 0, kept: 0, failed: 0, destinations: {}, capped: false,
-  revoked: false, correspondents: 0, identity: 0, unverified: 0, unconfirmedDenies: 0, crowdDenies: 0,
+  revoked: false, correspondents: 0, unconfirmedDenies: 0, crowdDenies: 0,
 });
 
 /** A waiting sender and the decision their stored advice amounts to. */
 interface ActPlan {
   address: string;
   appliedFolder: Destination;
-  decision: "yes" | "no";
+  /** Always a deny: the act never lets a sender in. */
+  decision: "no";
   /** The message the advice was bought about — the learning signal's dedup key. */
   messageId: string;
   /** The stored suggestion row — where a refusal is recorded, and cleared. */
@@ -194,7 +172,7 @@ interface ActPlan {
   confirmed: boolean;
   /**
    * A deny that may stand as a rule on the address: advice on a confirmed letter whose stored reason
-   * is a fact about that letter (`denyMayRuleTheAddress`). False for every admission.
+   * is a fact about that letter (`denyMayRuleTheAddress`), at no list address a person let in.
    */
   standing: boolean;
 }
@@ -203,7 +181,8 @@ interface ActPlan {
  * THE ONE PREDICATE, read off the SAME functions the manual door validates with. A destination
  * outside `DECIDABLE_FOLDERS` (an invention, or `ohmail/Screener` itself) is refused rather than
  * coerced, and the yes/no side is `effectForDestination`, never a second table — so the act cannot
- * file where a press could not. `null` ⇒ leave this sender waiting.
+ * file where a press could not. Advice to let the sender in is no plan: only a person admits.
+ * `null` ⇒ leave this sender waiting.
  */
 export function plannedDecision(
   address: string,
@@ -215,27 +194,28 @@ export function plannedDecision(
     /** Required: an advice shape without the reason must not read as one that may rule. */
     senderReason: string | null;
   } | undefined,
-  bars: { deny: number; admit: number },
+  bars: { deny: number },
+  /** A list address the person let in (mail 0150): anyone on it writes as it, so one letter is all a deny may reach. */
+  letInList: boolean,
 ): ActPlan | null {
   if (!advice) return null;
   const folder = canonicalDestination(advice.destination);
   if (!DECIDABLE_FOLDERS.has(folder)) return null;
   const admits = effectForDestination(folder as Destination) === "allow";
-  // Advice bought on a letter its provider failed admits nothing: only a person's press does.
-  if (admits && storedAuthScreens(advice.authVerdict)) return null;
+  if (admits) return null;
   const confidence = advice.confidence;
   if (confidence == null || !Number.isFinite(confidence)) return null;
-  if (confidence < (admits ? bars.admit : bars.deny)) return null;
+  if (confidence < bars.deny) return null;
   const confirmed = advice.authVerdict === "pass";
   return {
     address,
     appliedFolder: folder as Destination,
-    decision: admits ? "yes" : "no",
+    decision: "no",
     messageId: advice.messageId,
     suggestionId: advice.id,
     refused: advice.actRefusal != null,
     confirmed,
-    standing: !admits && confirmed && denyMayRuleTheAddress(advice.senderReason),
+    standing: confirmed && denyMayRuleTheAddress(advice.senderReason) && !letInList,
   };
 }
 
@@ -253,10 +233,7 @@ export async function screenerAutoActPass(
   const log = deps.log ?? silentLogger;
   const now = (): Date => nowArg ?? deps.now?.() ?? new Date();
   const limit = deps.sendersPerCycle ?? SCREENER_ACT_SENDERS_PER_CYCLE;
-  const bars = {
-    deny: deps.denyBar ?? SCREENER_ACT_DENY_BAR,
-    admit: deps.admitBar ?? SCREENER_ACT_ADMIT_BAR,
-  };
+  const bars = { deny: deps.denyBar ?? SCREENER_ACT_DENY_BAR };
   const accountId = deps.accountId;
 
   // THE CONSENT, before any other read, so no column set for another reason stands in for it.
@@ -289,7 +266,7 @@ export async function screenerAutoActPass(
   // newest-per-sender, decided in the database rather than in a loop here.
   const advice = await screenerSuggestionsBySender(db, accountId, waiting.map((w) => w.address));
   // Checked FIRST, so the correspondent reads below see a claim the backfill had not reached yet.
-  const unchecked = await checkUncheckedHeld(db, accountId, waiting.map((w) => w.address));
+  await checkUncheckedHeld(db, accountId, waiting.map((w) => w.address));
   /* THE CORRESPONDENT GATE, ABOVE THE BARS: the model's 1.0 does not outrank the person having
      written to them. A sender this account wrote to is never filed by this pass, whatever the
      advice says or how sure it is; the Screener's retro admits them instead. One read per page. */
@@ -300,13 +277,15 @@ export async function screenerAutoActPass(
   const answering = await sendersAnsweringOwnWriting(
     db, accountId, waiting.map((w) => w.address).filter((a) => !correspondents.has(a)),
   );
-  const plans = new Map(waiting.map((w) => [w.address, plannedDecision(w.address, advice.get(w.address), bars)]));
+  // `List-Post` is the sender's to write: only a list the person let in keeps a deny to one letter.
+  const lists = await readListAddressesLetIn(db, accountId, waiting.map((w) => w.address));
+  const plans = new Map(waiting.map((w) => [w.address, plannedDecision(w.address, advice.get(w.address), bars, lists.has(w.address))]));
   // A deny that may not stand as a rule files its advised letter alone, so whether that letter can
   // still be filed decides, before the clock, whether its sender takes a turn. One read, only when
   // such advice is here.
   const advisedHeld = await advisedLettersFileable(db, accountId, waiting.flatMap((w) => {
     const p = plans.get(w.address);
-    return p && p.decision === "no" && !p.standing && !correspondents.has(w.address) && !answering.has(w.address)
+    return p && !p.standing && !correspondents.has(w.address) && !answering.has(w.address)
       ? [{ id: p.messageId, confirmed: p.confirmed }] : [];
   }));
 
@@ -323,23 +302,6 @@ export async function screenerAutoActPass(
     }
     const plan = plans.get(sender.address) ?? null;
     if (!plan) { result.kept++; continue; }
-    /* THE IDENTITY FACT, ABOVE THE BARS: advice bought on a benign message never lets through a
-       sender whose other held mail claims a brand from an address the brand does not own. The
-       act gains a refusal here and never a filing; the person's own press still decides. */
-    if ((sender.identityHeld || unchecked.has(sender.address)) && plan.decision === "yes") {
-      result.kept++;
-      result.identity++;
-      continue;
-    }
-    /* THE PROVIDER'S WORD, ABOVE THE BARS: an address at a brand's own domain is let through only
-       when its provider confirmed every held message of it — the door moves them all, and a
-       sender-written Date picks the representative. Where no authserv-id is known for the provider
-       every verdict is `unavailable`, and a forgery of that exact domain reads like the brand's own. */
-    if (plan.decision === "yes" && sender.unconfirmedHeld && ownedBrand(sender.address) !== undefined) {
-      result.kept++;
-      result.unverified++;
-      continue;
-    }
     /* A DENY THAT MAY NOT STAND AS A RULE WRITES NOTHING STANDING. A promoted deny rule wins before
        authentication is read, so one written on a forgery's advice, or on the crowd's cap (other
        first-time senders' mail with the same subject), would file the real address's mail from then
@@ -347,9 +309,8 @@ export async function screenerAutoActPass(
        or put back, never the address's other or later mail. Advice that may stand files the
        unconfirmed letters held beside it first, a put-back one being no automatic filing's; the rule
        follows, the sender's own. */
-    const deny = plan.decision === "no";
-    const oneLetter = deny && !plan.standing;
-    const unconfirmedBeside = deny && plan.standing && sender.unconfirmedFileable;
+    const oneLetter = !plan.standing;
+    const unconfirmedBeside = plan.standing && sender.unconfirmedFileable;
     if (oneLetter && !advisedHeld.has(plan.messageId)) {
       result.kept++;
       if (plan.confirmed) result.crowdDenies++; else result.unconfirmedDenies++;
@@ -373,9 +334,9 @@ export async function screenerAutoActPass(
       // `account_settings`, so a pass holding the settings row while it waits on the fence inside
       // the decision is a deadlock the erasure can lose (AUTO-ACT-TAKES-SETTINGS-BEFORE-THE-FENCE).
       const outcome = await fencedAccountWrite(db, { accountId }, async (tx) => {
-        // THE REVOKE CHECK, PER SENDER UNDER THE ACCOUNT'S SETTINGS ROW LOCK, `screener-auto.ts`'s
-        // shape: a consent withdrawn mid-page leaves the rest waiting. The lock also serializes a
-        // cycle tail against a failover driver.
+        // THE REVOKE CHECK, PER SENDER UNDER THE ACCOUNT'S SETTINGS ROW LOCK: a consent withdrawn
+        // mid-page leaves the rest waiting. The lock also serializes a cycle tail against a failover
+        // driver.
         await dialect(tx).forUpdate(
           tx.select({ accountId: accountSettings.accountId }).from(accountSettings)
             .where(eq(accountSettings.accountId, accountId)).limit(1),
@@ -442,11 +403,8 @@ export async function screenerAutoActPass(
       }
       const applied = outcome.applied;
       // A sender who has a rule under their key is not this pass's: nothing was written or filed.
-      if (applied.skipped === "ruled") { result.kept++; continue; }
-      // The door's own refusal of a marked sender — the belt under the selection's flag above.
-      if (applied.skipped === "identity") { result.kept++; result.identity++; continue; }
-      // …and of a sender holding a code or a reset, under the selection's exclusion.
-      if (applied.skipped === "sensitive") { result.kept++; continue; }
+      // Nor is one holding a code or a reset, under the selection's exclusion.
+      if (applied.skipped !== undefined) { result.kept++; continue; }
       result.filed++;
       result.destinations[plan.appliedFolder] = (result.destinations[plan.appliedFolder] ?? 0) + 1;
     } catch (err) {
@@ -480,21 +438,6 @@ export async function screenerAutoActPass(
       accountId, skipped: result.correspondents,
       reason: "these senders were not filed: this account wrote to them, and no suggestion "
         + "outranks that however confident it is",
-    });
-  }
-  if (result.identity > 0) {
-    log.info("screener_auto_act_identity_kept", {
-      accountId, skipped: result.identity,
-      reason: "these senders were not let through: a held message names a company their address "
-        + "does not belong to, and only a person's press admits that",
-    });
-  }
-  if (result.unverified > 0) {
-    log.info("screener_auto_act_unverified_kept", {
-      accountId, skipped: result.unverified,
-      reason: "these senders were not let through: their address is a company's own and neither their "
-        + "mail provider nor the domain's own signature confirmed the mail came from it, and only a "
-        + "person's press admits that",
     });
   }
   // `skipped` and `moved` are names the hardened logger keeps; any other count would be dropped.
@@ -670,6 +613,8 @@ async function selectWaitingSenders(
   const sender = sql`lower(${messages.fromAddress})`;
   // The queue's own sort key (`heldSortKey`): the act walks the order the surface shows.
   const sortKey = heldSortKey(d, { date: sql`${messages.date}`, arrivedAt: sql`${messages.createdAt}` });
+  // A removed mailbox's mail is the queue's no more; the identity and provider probes below still read it.
+  const gone = await readGoneMailboxIds(db, opts.accountId);
 
   const reps = db.select({
     messageId: messages.id,
@@ -693,6 +638,7 @@ async function selectWaitingSenders(
       // tombstone is not decidable by a press and must not be decidable by the act either — the
       // rule would be promoted over an empty re-route.
       isNull(messages.deletedAt),
+      notGoneSql(d, messages.mailboxId, gone),
     ))
     .as("reps");
 
@@ -754,7 +700,7 @@ async function selectWaitingSenders(
            and ${messages.deletedAt} is null
            and not ${automaticAiAdmits(messages)}
       )`,
-      sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)})`,
+      sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone)})`,
       sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))

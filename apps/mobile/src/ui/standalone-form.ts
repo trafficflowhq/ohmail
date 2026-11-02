@@ -48,6 +48,8 @@ export interface StandaloneFields {
   readonly imapTls: boolean;
   readonly smtpHost: string;
   readonly smtpPort: string;
+  /** The name this mailbox's letters carry (optional; blank sends the bare address). */
+  readonly name?: string;
   /**
    * WHICH SERVER FIELDS THE PERSON TYPED THEMSELVES — the provenance rule, and it is the whole
    * reason this field exists.
@@ -69,8 +71,24 @@ export const EMPTY_STANDALONE: StandaloneFields = {
   imapTls: true,
   smtpHost: "",
   smtpPort: "",
+  name: "",
   typed: new Set(),
 };
+
+/** The longest sender name a letter carries — the server's own bound. */
+export const SENDER_NAME_MAX = 100;
+
+/**
+ * A typed sender name as it is stored: whitespace collapsed and trimmed, or `null` when blank. A
+ * control character or a name past {@link SENDER_NAME_MAX} is refused (`undefined`), never cut.
+ */
+export function senderNameOf(text: string): string | null | undefined {
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(text)) return undefined;
+  const name = text.replace(/\s+/g, " ").trim();
+  if (name === "") return null;
+  return Array.from(name).length > SENDER_NAME_MAX ? undefined : name;
+}
 
 /** The four server fields a guess may write. The address and the password are never guessed. */
 const GUESSED = ["imapHost", "imapPort", "smtpHost", "smtpPort"] as const;
@@ -485,11 +503,21 @@ export function scheduledNotHereSentence(holder: { name: string; stopped?: boole
 }
 
 /**
- * The connect notice's sentence: the holder named, or the claim that named nobody — and where the
- * Connect's agreement was recorded without a claim, what the person's next press does.
+ * What the connect's refused press said: the holder's name (`""` where the claim named nobody),
+ * whether the door kept the agreement without a claim, and whether it waits to carry the press out
+ * once the claims it was refused over lapse.
  */
-export function readingAtConnectLine(holder: { name: string; consentRecorded?: boolean }): string {
+export interface ReadingAtConnect { name: string; consentRecorded?: boolean; joinWaits?: boolean }
+
+/**
+ * The connect notice's sentence: the holder named, or the claim that named nobody — and where the
+ * Connect's agreement was recorded without a claim, what happens to the mailbox next.
+ */
+export function readingAtConnectLine(holder: ReadingAtConnect): string {
   const name = holder.name.trim();
+  if (holder.consentRecorded === true && holder.joinWaits === true) {
+    return name === "" ? Copy.readingAtConnectJoinWaitsUnknown : Copy.readingAtConnectJoinWaits(name);
+  }
   if (holder.consentRecorded === true) {
     return name === "" ? Copy.readingAtConnectKeptUnknown : Copy.readingAtConnectKept(name);
   }
@@ -502,11 +530,10 @@ export function readingAtConnectLine(holder: { name: string; consentRecorded?: b
  * organizes the mailbox, until a restart. It names the holder the claim names now;
  * a claim not read yet keeps what the connect said.
  */
-export function readingAtConnectNow(
-  said: { name: string; consentRecorded?: boolean } | null, claim: PhoneClaim | null,
-): { name: string; consentRecorded?: boolean } | null {
+export function readingAtConnectNow(said: ReadingAtConnect | null, claim: PhoneClaim | null): ReadingAtConnect | null {
   if (said === null || claim === null) return null;
-  const kept = said.consentRecorded === true ? { consentRecorded: true } : {};
+  const kept = said.consentRecorded === true
+    ? { consentRecorded: true, ...(said.joinWaits === true ? { joinWaits: true } : {}) } : {};
   if (claim.k === "theirs") return { name: claim.name, ...kept };
   if (claim.k === "theirsUnnamed") return { name: "", ...kept };
   return claim.k === "unknown" ? said : null;

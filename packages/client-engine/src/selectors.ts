@@ -1778,7 +1778,8 @@ function joinStore(
     const key = senderKey(s.address);
     if (own.has(key)) continue;
     const dto = derived.get(key);
-    if (dto) { out.push(dto); continue; }
+    // The store's word on what a screen-out of this sender files (`checked.claimsOnly`); the mirror has none.
+    if (dto) { out.push(s.claimsOnly && dto.checked?.reason === "impersonation" ? { ...dto, checked: { ...dto.checked, claimsOnly: true } } : dto); continue; }
     if (reader.get<EngineMessage>("message", s.messageId) !== undefined) continue;
     out.push(storeRow(s, now, locale, zone, suggestionAi(advice.get(key))));
   }

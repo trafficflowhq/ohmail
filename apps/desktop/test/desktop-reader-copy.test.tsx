@@ -258,26 +258,15 @@ describe("Settings → Screener on a reader install", () => {
   });
 });
 
-describe("Settings → Screener on the hosted door: the auto-apply switch", () => {
-  /* One switch, one sentence. This switch and the web's Settings → Screening switch write the
-     same setting, and that setting arms the deterministic filing only, never a filing on a
-     model's suggestion. So the desktop renders the web switch's own words, and the words it used
-     to carry ("Act on suggestions for me") are gone from both catalogues. */
-  it.each(["en", "de"] as const)("renders the web switch's words and says no AI (%s)", async (locale) => {
+describe("Settings → Screener: no switch files a first-time sender", () => {
+  /* Owner report 2026-11-02: "File obvious bulk out of my Screener for me" let a stranger's letter
+     into News on headers the sender writes. Neither door draws it now, in either language. */
+  it.each([["en", "cloud"], ["de", "cloud"], ["en", "local"]] as const)("draws no bulk-filing switch (%s, %s door)", async (locale, door) => {
     const cat = locale === "de" ? de : en;
-    const el = await mountScreener([ORGANIZER], locale, "cloud");
+    const el = await mountScreener([ORGANIZER], locale, door);
     const text = el.textContent ?? "";
-    expect(text).toContain(cat.settings.screening.autoApplyTitle);
-    expect(text).toContain(cat.settings.screening.autoApplyDescription);
-    expect(cat.settings.screening.autoApplyDescription).toMatch(locale === "de" ? /keine KI/ : /no AI/);
-    expect(el.querySelector(`[aria-label="${cat.settings.screening.autoApplyTitle}"]`)).not.toBeNull();
-    expect(text).not.toMatch(locale === "de" ? /Vorschläge für mich ausführen/ : /Act on suggestions/);
-    expect((cat.desktopScreener as Record<string, string>).autoApplyLabel).toBeUndefined();
-  });
-
-  it("CONTROL: the standalone door draws no auto-apply switch", async () => {
-    const el = await mountScreener([ORGANIZER], "en", "local");
-    expect(el.textContent ?? "").toContain(en.desktopScreener.postureLabel);
-    expect(el.textContent ?? "").not.toContain(en.settings.screening.autoApplyTitle);
+    expect(text).toContain(cat.desktopScreener.postureLabel);
+    expect(text).not.toMatch(locale === "de" ? /Massenmails für mich aus dem Screener/ : /File obvious bulk out of my Screener/);
+    expect((cat.settings.screening as Record<string, string>).autoApplyTitle).toBeUndefined();
   });
 });

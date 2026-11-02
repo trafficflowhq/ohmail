@@ -345,7 +345,7 @@ function DrawerContent({ onNavigate }: { onNavigate: () => void }) {
     <Nav label={label} count={count} onPress={() => (pathname === path ? onNavigate() : go(path))} />
   );
   return (
-    <ScrollView contentContainerStyle={{ paddingTop: insets.top + 14, paddingBottom: insets.bottom + 14 }}>
+    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingTop: insets.top + 14, paddingBottom: insets.bottom + 14 }}>
       <View style={{ paddingHorizontal: 20, paddingBottom: 10 }}>
         <Txt variant="cardTitle" numberOfLines={1}>
           {w.account.name}

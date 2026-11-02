@@ -36,9 +36,9 @@ describe("the filing intent has one writer", () => {
 
   it("every pass that files an intent calls the one writer", () => {
     const callers = FILES.filter((f) => /\bupsertDesired\s*\(/.test(f.code)).map((f) => f.name);
-    // Measured at the base: ohbox-tidy, rule-retro and screener-auto each carried their own copy.
+    // Measured at the base: ohbox-tidy, rule-retro and the retired auto-apply each carried their own copy.
     expect(callers).toEqual(
-      expect.arrayContaining(["ohbox-tidy.ts", "rule-retro.ts", "screener-auto.ts"]),
+      expect.arrayContaining(["ohbox-tidy.ts", "rule-retro.ts"]),
     );
   });
 
@@ -53,11 +53,9 @@ describe("the filing intent has one writer", () => {
 /**
  * ═══ AND ONE PROJECTION INTO THE SHAPE THE RULES LAYER READS ═══════════════════════════════
  *
- * The same three passes each built `NormalizedMessage` from their own row type. Two copies were
- * byte-identical; the third differed in exactly one field — the Screener auto-apply passes an
- * empty `textBody` because it feeds `migrationBulkPlacement`, which never runs `evaluateRules`.
- * As a third copy that difference was invisible; the shared projection takes the body as an
- * argument, so it is stated at the call site that chooses it.
+ * The passes each built `NormalizedMessage` from their own row type, copies that could drift
+ * field by field; the shared projection takes the body as an argument, so it is stated at the call
+ * site that chooses it.
  *
  * `packages/services/src/sensitive-rescreen.ts` has a fourth, MEASURED and deliberately left:
  * it is another package, and importing a worker module there would pull the worker's closure
@@ -74,15 +72,6 @@ describe("the rules projection has one home in the worker", () => {
   it("every pass that projects a row calls it, and names the body it passes", () => {
     const callers = FILES.filter((f) => /\bruleInputOf\s*\(/.test(f.code) && f.name !== "rule-pass.ts");
     expect(callers.map((f) => f.name).sort())
-      .toEqual(["gap-catchup.ts", "ohbox-tidy.ts", "rule-retro.ts", "screener-auto.ts"]);
-    /* THE BODY IS STILL STATED AT THE CALL SITE — it just travels on the row now. The shared
-       projection takes one argument whose `bodyText` field carries it, so the pass that feeds
-       `migrationBulkPlacement` and evaluates no rules says `bodyText: ""` where it calls, and the
-       others hand over the row they read. A call that quietly dropped the body would have to
-       spell that field to do it, which is the same difference, visible in the same place. */
-    const stater = callers.find((f) => f.name === "screener-auto.ts");
-    expect(stater, "the pass that passes no body is not among the callers").toBeDefined();
-    expect(/\bruleInputOf\s*\(\s*\{[^}]*bodyText\s*:/.test(stater!.code),
-      "screener-auto.ts no longer states the empty body where it calls").toBe(true);
+      .toEqual(["gap-catchup.ts", "ohbox-tidy.ts", "rule-retro.ts"]);
   });
 });

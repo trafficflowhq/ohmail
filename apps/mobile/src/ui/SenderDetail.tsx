@@ -24,7 +24,7 @@ import {
 } from "../state/model";
 import { relayMarkFor, senderSheetLine } from "../state/relay";
 import { noneOrganizedWhy } from "./not-organizing";
-import { domainScopeOffered } from "../state/live";
+import { decideLinesOf, domainScopeOffered } from "../state/live";
 import { useBodies, useFilesStamp, useWorld } from "../state/world";
 import { Badge, Button, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { BodyPages } from "./BodyPages";
@@ -107,6 +107,9 @@ export function SenderDetail({
      screen hydrates carry each letter's one-click posture, so the line firms up as they land. */
   const claim = seg === "waiting" ? w.actions.unsubClaimOf(row, w.screener.waiting) : "none";
   const unsub = claim === "none" ? null : Copy.decideUnsub(claim, target, row.scope === "domain");
+  /* What a press writes, said before it; on a list's claims the store says a screen-out files alone
+     (mail 0150), what it files, and no rule for Screen out and Spam. */
+  const { ruleLine, listClaim } = decideLinesOf(row, row.scope, target, seg === "waiting");
   /* On a mailbox another install organizes: where a decision goes, and what became of it. */
   const organizer = w.mailboxes.organizer;
   const relay = relayMarkFor(row.address, w.screener.relayed, organizer?.name ?? null);
@@ -288,10 +291,11 @@ export function SenderDetail({
         <DecisionBar
           scope={row.scope}
           domainOffered={domainScopeOffered(row.address)}
-          target={target}
           nobody={nobody}
           also={also}
           unsub={unsub}
+          listClaim={listClaim}
+          ruleLine={ruleLine}
           suggested={row.ai?.dest ?? null}
           onScope={(scope) => w.actions.setScope(row, scope)}
           onDecide={(dest, read) => {
@@ -320,10 +324,11 @@ export function SenderDetail({
 function DecisionBar({
   scope,
   domainOffered,
-  target,
   nobody,
   also,
   unsub,
+  listClaim,
+  ruleLine,
   suggested,
   onScope,
   onDecide,
@@ -331,13 +336,16 @@ function DecisionBar({
   scope: "sender" | "domain";
   /** False for a shared provider: the bar offers no whole-domain scope there, as on the web. */
   domainOffered: boolean;
-  target: string;
   /** Nothing organizes any mailbox: no hint or explainer promises what a rule would file. */
   nobody: boolean;
   /** What a whole-domain press files beyond this sender, said before the press; `null` for nothing. */
   also: string | null;
   /** What Screen out and Spam send on the person's behalf, said before the press; `null` for nothing. */
   unsub: string | null;
+  /** On a list address's claims, what a screen-out files: those letters alone; `null` elsewhere. */
+  listClaim: string | null;
+  /** What a press writes (`decideRule`, or the list-claim line where Screen out and Spam write none). */
+  ruleLine: string;
   suggested: Destination | null;
   onScope: (s: "sender" | "domain") => void;
   onDecide: (dest: Destination, read: boolean) => void;
@@ -359,7 +367,7 @@ function DecisionBar({
       dest={dest}
       ai={dest === suggested}
       quiet={dest === "screened" || dest === "spam"}
-      hint={nobody ? Copy.screeningNoteNobody : Copy.decideRule(target)}
+      hint={nobody ? Copy.screeningNoteNobody : ruleLine}
       onFile={() => onDecide(dest, false)}
       onFileRead={() => onDecide(dest, true)}
     />
@@ -427,7 +435,7 @@ function DecisionBar({
       {/* With nothing organizing, the sheet line above already says what stands in its place. */}
       {shape.explainer && !nobody ? (
         <Txt variant="hint" tone="ink3" style={{ marginTop: 10 }}>
-          {Copy.decideRule(target)}
+          {ruleLine}
         </Txt>
       ) : null}
       {also !== null ? (
@@ -438,6 +446,11 @@ function DecisionBar({
       {unsub !== null ? (
         <Txt variant="hint" tone="ink2" style={{ marginTop: 8 }} testID="decide-unsub">
           {unsub}
+        </Txt>
+      ) : null}
+      {listClaim !== null ? (
+        <Txt variant="hint" tone="ink2" style={{ marginTop: 8 }} testID="decide-list-claim">
+          {listClaim}
         </Txt>
       ) : null}
     </View>

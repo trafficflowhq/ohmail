@@ -210,7 +210,6 @@ const BLIND_CENSUS: ReadonlyArray<readonly [string, string, Kind]> = [
   ["apps/worker/src/gap-catchup.ts", "upsertDesired", "intent-commit"],
   ["apps/worker/src/ohbox-tidy.ts", "upsertDesired", "intent-commit"],
   ["apps/worker/src/rule-retro.ts", "upsertDesired", "intent-commit"],
-  ["apps/worker/src/screener-auto.ts", "upsertDesired", "intent-commit"],
   // The correspondent retro's release: a new desire, committed under the held rows' own lock.
   ["apps/worker/src/screener-correspondent-retro.ts", "upsertDesired", "intent-commit"],
   [WORKFLOW_RUNTIME, "upsertFolderState", "intent-commit"],

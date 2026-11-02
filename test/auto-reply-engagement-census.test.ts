@@ -88,7 +88,6 @@ const CONSULTS = [
 const ENGAGEMENT_READERS = [
   "apps/worker/src/ohbox-tidy.ts",
   "apps/worker/src/rule-retro.ts",
-  "apps/worker/src/screener-auto.ts",
   // the undecided-sender screen asked thread membership in the class it copied from
   // `ohbox-tidy.ts` until FIX-025 put it on the one question its three siblings ask.
   "packages/core/src/unscreened-set.ts",
@@ -116,16 +115,6 @@ const INTENTIONAL = [
   "packages/services/src/away-responder-pass.ts",
 ];
 /**
- * A TRIGGER, NOT A DECISION: the auto-apply walk's readmit (`ownWritingChanged`) asks whether one
- * of the account's OWN messages changed since the mark, and answers only "walk in full now". The
- * walk then decides by exclusion 5, which consults the one engagement question — so an automatic
- * reply changing costs at most a full walk and never keeps or files a row. Asserted to decide
- * nothing here: it applies no predicate and it is an engagement reader above.
- */
-const TRIGGERS = [
-  "apps/worker/src/screener-auto.ts",
-];
-/**
  * The shape all five share — alias-agnostic so a new site with a new alias still matches, and
  * CASE-INSENSITIVE because SQL is. The missing `i` was the GUARD finding: `away-responder-pass.ts`
  * writes `IN` and was invisible to this census.
@@ -138,16 +127,7 @@ describe("the engagement census: an auto-reply is not the person's engagement", 
     // A NEW site reds here. That is the whole point of the file: the failure message names the
     // new path, and whoever wrote it has to decide which of the classes it is in. The arm below
     // plants one and drives it through this same matcher, so the pin is evidence.
-    expect(found).toEqual([...CONSULTS, ...INTENTIONAL, ...TRIGGERS].sort());
-  });
-
-  it("a TRIGGER decides nothing itself: its walk reaches the one engagement question", () => {
-    for (const path of TRIGGERS) {
-      const f = FILES.find((x) => x.path === path);
-      expect(f, `${path} is on TRIGGERS but is not a source file`).toBeDefined();
-      expect(ENGAGEMENT_READERS, `${path} is a trigger with no engagement read behind it`).toContain(path);
-      expect(f!.text).toMatch(/function ownWritingChanged\(/);
-    }
+    expect(found).toEqual([...CONSULTS, ...INTENTIONAL].sort());
   });
 
   /**

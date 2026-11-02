@@ -210,6 +210,28 @@ describe("STAGING ON — the threshold, not `always`", () => {
     expect(mint.headers.authorization).toBe("Bearer session-token");
   });
 
+  it("the PUT rides `uploadFetch` where one is given, and the API transport never sees the grant URL", async () => {
+    const { calls, fetchImpl } = harness();
+    const api: string[] = [];
+    const viaApi: FetchLike = (url, init) => { api.push(url); return fetchImpl(url, init); };
+    const uploads: string[] = [];
+    const uploadFetch: FetchLike = (url, init) => { uploads.push(url); return fetchImpl(url, init); };
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: viaApi, uploadFetch, stageAttachments: true });
+    await a.mutate(send([file(4 * MIB)]), { idempotencyKey: "k-upload-fetch" });
+    expect(uploads).toEqual(["https://storage.example/o/1?token=abc"]);
+    expect(api.filter((u) => u.startsWith("https://storage.example/"))).toEqual([]);
+    expect(calls.filter((c) => c.url.endsWith("/send"))).toHaveLength(1);
+  });
+
+  it("without `uploadFetch` the PUT rides the adapter's own transport, as it always did", async () => {
+    const { fetchImpl } = harness();
+    const api: string[] = [];
+    const viaApi: FetchLike = (url, init) => { api.push(url); return fetchImpl(url, init); };
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: viaApi, stageAttachments: true });
+    await a.mutate(send([file(4 * MIB)]), { idempotencyKey: "k-no-upload-fetch" });
+    expect(api.filter((u) => u.startsWith("https://storage.example/"))).toEqual(["https://storage.example/o/1?token=abc"]);
+  });
+
   it("a send with no attachments stays a bodyless request", async () => {
     const { calls, fetchImpl } = harness();
     const a = new HttpAdapter({

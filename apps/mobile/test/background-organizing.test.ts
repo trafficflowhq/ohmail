@@ -42,6 +42,7 @@ import {
   type ServiceNotice,
 } from "../src/engine/background";
 import type { StopOrganizingOutcome } from "../src/engine/standalone-door";
+import { watchedStates } from "../src/engine/organizer-session";
 import { EN } from "../src/copy.en";
 import { DE } from "../src/copy.de";
 
@@ -1586,6 +1587,32 @@ describe("the holder left, and the phone in front of the person takes its mailbo
       expect(lines[0]!.detail?.["why"]).toBe("holder_left");
       expect(lines[0]!.detail?.["verdict"]).toBe("claimed");
       expect(w.moved.length, "the screen was not told the mailbox came back").toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /* A PERSON'S REFUSED PRESS THE ENGINE KEEPS WAITING arms the watch over a reader nothing stood
+     down, through the engine's own answer (`watchedStates`); without one that reader is not pressed. */
+  it.each([
+    [true, ["watch"]],
+    [false, []],
+  ] as const)("a waiting join (%s) arms the watch over a reader nothing stood down", async (joinWaits, pressed) => {
+    vi.useFakeTimers();
+    try {
+      const w = wire("android", {
+        checkEveryMs: 1000,
+        engine: {
+          organizing: [...watchedStates({
+            mb1: { organizing: false, heldBy: null, reason: null, releaseRequestedAt: null, claimed: false, joinWaits },
+          })],
+          heldElsewhere: [false],
+          claimHere: ["claimed"],
+        },
+      });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(w.engine.claimBy.slice(0, 1)).toEqual(pressed);
+      w.live.dispose();
     } finally {
       vi.useRealTimers();
     }

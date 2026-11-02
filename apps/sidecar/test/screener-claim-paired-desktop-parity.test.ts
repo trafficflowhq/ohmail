@@ -4,12 +4,18 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, contacts, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
 import { ScreenerService, type ServiceContext } from "@trafficflow/services";
 import { materializeMessages, type MailboxDTO, type MessageDTO } from "@trafficflow/services/mail";
-import { MemoryMirrorStore, consentPartition, type SyncChange } from "@ohmail/client-engine";
+import {
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, consentPartition, presentationReader, screenerSegments,
+  type FetchLike, type SyncChange,
+} from "@ohmail/client-engine";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { firstImportsOf } from "../../webapp/app/shell/consent-options.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
 import { tearDown } from "./_teardown.js";
+import {
+  NOW as WORLD_NOW, SENDERS, removedMailboxWorld, type RemovedMailboxWorld,
+} from "../../../packages/services/test/helpers/removed-mailbox-world.js";
 
 /**
  * A PAIRED DESKTOP LISTS WHAT THE SERVER LISTS FOR THE SAME MAILBOX (REVIEW-026 LOW 4). The server
@@ -122,5 +128,73 @@ describe("a Cloud claim on a paired desktop and on the server", () => {
     const activity = consentPartition(store, { now, firstImportDoneAt: firstImportsOf(facts) }).activity;
     const desktopList = [...activity].filter(([, v]) => v === "active").map(([k]) => k).sort();
     expect(desktopList).toEqual(serverList);
+  });
+});
+
+/**
+ * A REMOVED MAILBOX, ON A PAIRED DESKTOP (`helpers/removed-mailbox-world.ts`). The window asks its
+ * own door, which forwards `GET /screener` with its query to the account and hands the answer back
+ * whole, `gone` included, read beside the door's own copy of the account's mail and rules.
+ */
+function hostedWorld(w: RemovedMailboxWorld, changes: readonly SyncChange[]): typeof fetch {
+  const sent = { rules: false, mail: false };
+  return (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    const none = { creates: [], updates: [], moves: [], deletes: [] };
+    if (url.pathname === "/mailboxes") {
+      return send(mailboxList([hostedMailbox(w.liveMailbox, w.own), hostedMailbox(w.secondMailbox, "old@ohmail.test", { status: "disabled" })]));
+    }
+    if (url.pathname === "/sync/snapshot") return send({ asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 5000 } });
+    if (url.pathname === "/sync") {
+      const rules = url.searchParams.get("types") === "rule";
+      const due = rules ? !sent.rules : !sent.mail;
+      if (rules) sent.rules = true; else sent.mail = true;
+      const creates = due ? changes.filter((c) => (c.type === "rule") === rules) : [];
+      return send({ changes: { ...none, creates }, cursor: due ? "c1" : "end", hasMore: false, serverTime: iso() });
+    }
+    if (url.pathname === "/messages/bodies") return send({ items: [], nextCursor: null });
+    if (url.pathname === "/screener") return w.serve()(url.href, init as never);
+    return new Response("not found", { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+describe("a mailbox removed with its copy kept, on a paired desktop", () => {
+  it("the door forwards the window's ask and the answer's `gone`; the window lists the live strangers only", { timeout: 30_000 }, async () => {
+    const w = await removedMailboxWorld("removed");
+    const changes = await w.changes();
+    const dir = await freshDataDir("ohmail-paired-removed-");
+    dirs.push(dir);
+    const sidecar = await createCloudSidecar({
+      dataDir: dir, cloudUrl: "https://cloud.test", address: w.own, tokens: { accessToken: "a", refreshToken: "r" },
+      fetchImpl: hostedWorld(w, changes), pollIntervalMs: 3_600_000,
+    });
+    sidecars.push(sidecar);
+    await sidecar.start();
+    const door: FetchLike = (url, init) => {
+      const headers = new Headers(init?.headers as HeadersInit | undefined);
+      headers.set("authorization", `Bearer ${sidecar.sessionToken}`);
+      return sidecar.handle(new Request(String(url), { ...(init as RequestInit), headers }));
+    };
+    for (const c of changes.filter((x) => x.type === "message")) {
+      let res = await door(`http://sidecar/messages/${c.id}`, { method: "GET" });
+      for (let i = 0; i < 100 && res.status !== 200; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        res = await door(`http://sidecar/messages/${c.id}`, { method: "GET" });
+      }
+      expect(res.status, "the door never mirrored the letter").toBe(200);
+    }
+    const http = new HttpAdapter({ baseUrl: "http://sidecar", fetch: door });
+    const page = await http.screenerWaiting({ limit: 50 });
+    expect(page.gone).toEqual([w.secondMailbox]);
+    expect(page.items.map((i) => w.nameOf(i.messageId))).toEqual(["I.held", "B.live"]);
+
+    const engine = new OhmailEngine({ adapter: http, store: new MemoryMirrorStore(), now: () => WORLD_NOW, storePolicy: { mode: "full" } });
+    await engine.start();
+    await engine.syncOnce();
+    await engine.refreshScreenerWaiting();
+    const part = consentPartition(engine.read(), { now: WORLD_NOW, ownAddresses: [w.own] });
+    expect(part.placeOf.get(w.idOf("A.held")) ?? "History", "a removed mailbox's stranger waits").toBe("History");
+    const waiting = screenerSegments(presentationReader(engine.read(), part), WORLD_NOW).waiting;
+    expect(waiting.map((s) => s.from.address).sort()).toEqual([SENDERS.B, SENDERS.I].sort());
   });
 });

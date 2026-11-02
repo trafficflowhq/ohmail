@@ -7,7 +7,10 @@ import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, LeasePeekIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
-import { changeLog, drafts, mailboxCredentials, mailboxFolders, mailboxes, messages } from "@trafficflow/db";
+import {
+  auditLog, changeLog, drafts, mailboxCredentials, mailboxFolders, mailboxes, messages,
+  PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION,
+} from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { STORE_GENERATION_FILE, openLocalDb, type LocalDb } from "../src/db.js";
 import type { StdioHost } from "../src/host.js";
@@ -412,6 +415,48 @@ describe("a mailbox removal and the app's own close", () => {
     const again = await boot(first.dataDir);
     expect((await heldFor(again.sidecar.db, gone)).receipts).toBe(1);
     expect(again.lines.some((l) => l.event === "local_mirror_wipe_finished")).toBe(false);
+  });
+
+  it("a removal an earlier version finished keeps no hash of its settings past the next start; a live mailbox keeps its own", async () => {
+    const first = await boot();
+    const accountId = first.sidecar.world.accountId;
+    const live = first.mailboxId;
+    await first.sidecar.stop();
+    first.stopped.value = true;
+    const FP = (c: string) => c.repeat(64);
+    const markers = new Map<string, Record<string, unknown>>();
+    let removed = "";
+    const nowhere = randomUUID();
+    {
+      const o = await openLocalDb(first.dataDir);
+      // An earlier build's finished removal: the tombstone, no credential, nothing under it.
+      const [row] = await o.db.insert(mailboxes).values({
+        accountId, provider: "imap", address: "gone@trafficflow.test", status: "disabled", disabledReason: null,
+      }).returning({ id: mailboxes.id });
+      removed = row!.id;
+      const audit = async (name: string, action: string, payload: Record<string, unknown>) => {
+        const [a] = await o.db.insert(auditLog).values({ accountId, action, payload, inverse: null }).returning({ id: auditLog.id });
+        markers.set(name, { id: a!.id, ...payload });
+      };
+      await audit("removed-found", PROFILE_FOUND_AUDIT_ACTION, { mailboxId: removed, state: "found", fingerprint: FP("a"), signatureReceipt: "r".repeat(32) });
+      await audit("removed-answer", PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, { mailboxId: removed, fingerprint: FP("a"), decision: "declined" });
+      // A mailbox this store has no row for at all.
+      await audit("nowhere-press", PROFILE_IMPORT_ASK_SIGNATURE_AUDIT_ACTION, { mailboxId: nowhere, fingerprint: FP("b"), signatureReplaces: "s".repeat(32) });
+      await audit("live-found", PROFILE_FOUND_AUDIT_ACTION, { mailboxId: live, state: "found", fingerprint: FP("c"), signatureReceipt: "t".repeat(32) });
+      await o.close();
+    }
+
+    const next = await boot(first.dataDir);
+    const payloads = new Map((await next.sidecar.db.select({ id: auditLog.id, payload: auditLog.payload }).from(auditLog))
+      .map((r) => [r.id, r.payload as Record<string, unknown>]));
+    const after = (name: string) => payloads.get(markers.get(name)!.id as string);
+    expect(after("removed-found"), "the removed mailbox's marker kept a hash").toEqual({ mailboxId: removed, state: "found" });
+    expect(after("removed-answer")).toEqual({ mailboxId: removed, decision: "declined" });
+    expect(after("nowhere-press"), "a row naming no mailbox here kept its hashes").toEqual({ mailboxId: nowhere });
+    expect(after("live-found"), "a live mailbox lost its own fingerprint").toEqual({
+      mailboxId: live, state: "found", fingerprint: FP("c"), signatureReceipt: "t".repeat(32),
+    });
+    expect(next.lines.some((l) => l.event === "local_mirror_wipe_finished"), "a finished removal was wiped again").toBe(false);
   });
 
   it("Remove on a removed mailbox with no runtime still clears what it left", async () => {

@@ -14,7 +14,7 @@ import { Copy } from "../copy";
 import { nativeBackgroundService } from "./background-native";
 import { organizerNoticeBody } from "./organizer-notice";
 import { registerOrganizerTask } from "./organizer-task";
-import { startOrganizerSession } from "./organizer-session";
+import { startOrganizerSession, watchedStates } from "./organizer-session";
 import type { StandaloneEngine } from "./standalone-door";
 
 /**
@@ -53,18 +53,10 @@ export function startOrganizerSessionNative(
          background half treats an unreadable state as "cannot say" and leaves the notification
          standing rather than ending somebody's organizing over a momentary failure.
 
-         `standDown` is the engine's stand-down REASON and not the negation of `organizing`: this
-         install organizes nothing both before anybody consented and after another machine took the
-         mailbox, and only the second is a state the claim watch may come back from. */
-      organizing: () => Object.entries(engine.runtimes().organizer)
-        .map(([mailboxId, state]) => ({
-          mailboxId,
-          organizing: state.organizing,
-          standDown: state.reason !== null,
-          /* THE ENGINE'S OWN, straight through. The background half decides on this and not on
-             `organizing`, which is still false for a round trip after the claim has landed. */
-          claimed: state.claimed,
-        })),
+         `standDown` is the engine's stand-down REASON or a waiting join, never the negation of
+         `organizing`: this install organizes nothing both before anybody consented and after another
+         machine took the mailbox, and only the second is a state the claim watch may come back from. */
+      organizing: () => watchedStates(engine.runtimes().organizer),
     },
     /* `null` on iOS, and that is the platform rather than a gap — see `background-native.ts`. */
     service: nativeBackgroundService(),

@@ -37,7 +37,6 @@ const REPLY_ONLY: ReadonlyArray<readonly [string, string, string]> = [
   ["apps/worker/src/ohbox-tidy.ts", "d.in_reply_to_message_id = ${messages.id}", "engagement"],
   ["apps/worker/src/rule-retro.ts", "d.in_reply_to_message_id = ${messages.id}", "engagement"],
   ["apps/worker/src/gap-catchup.ts", "dr.in_reply_to_message_id = ${messages.id}", "engagement"],
-  ["apps/worker/src/screener-auto.ts", "d.in_reply_to_message_id = ${messages.id}", "engagement"],
   ["packages/db/src/own-mail.ts", "dr.in_reply_to_message_id = ${messages.id}", "engagement"],
   ["packages/services/src/held-release-service.ts", "d.in_reply_to_message_id = ${messages.id}", "engagement"],
   ["packages/core/src/unscreened-set.ts", "dr.in_reply_to_message_id = ${messages.id}", "engagement"],

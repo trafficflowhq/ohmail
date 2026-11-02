@@ -64,9 +64,10 @@ export {
   type AutoFiledItem, type AutoFiledPage, type AutoFiledUndoResult,
 } from "./auto-filed-service.js";
 export {
-  unscreenedSummary, screenUnscreened, organizeDecisionCount,
+  unscreenedSummary, screenUnscreened, organizeDecisionCount, isUnscreenedPile,
   OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_AUDIT_ACTION,
   type UnscreenedSenderGroup, type UnscreenedSummary, type UnscreenedResult, type OrganizeDecisionCount,
+  type UnscreenedPile,
 } from "./ohbox-unscreened-service.js";
 export {
   TriageService, triageService,
@@ -339,6 +340,8 @@ export {
   type PasswordHasher, type KeyProvider,
 } from "./auth/crypto.js";
 export { DEFAULT_AUTH_CONFIG, makeAuthConfig } from "./auth/config.js";
+// The keyed hash a throttle slot names an address by: the add-time probe keys its slots with it.
+export { throttleKeysFor, type ThrottleKeys } from "./auth/throttle-keys.js";
 export { resolveSession, type ResolvedSessionCore, type SessionScope } from "./auth/resolve-session.js";
 export {
   allowedOrigins, assertOriginConfig, defaultOrigin, isAllowedOrigin,

@@ -2222,7 +2222,8 @@ export const accountSettings = sqliteTable("account_settings", {
    * delete, and it writes NO `rules` row — the sender still screens next time. A
    * sensitivity-flagged message is NEVER auto-moved, so a stranger's login code stays at the gate
    * for a human. NULL, no row, and a FAILED read all read as OFF — the other default would move
-   * mail on a fetch error.
+   * mail on a fetch error. Retired (2026-11-02): only a person lets a stranger in, so nothing acts
+   * on the column; the setting's route still reads and writes it until a later migration drops it.
    */
   screenerAutoApplyAt: integer("screener_auto_apply_at", { mode: "timestamp_ms" }),
   /**

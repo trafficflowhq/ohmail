@@ -12,6 +12,7 @@ import type { ScreenerState } from "../app/shell/screener-state.js";
 import { autoUnsubscribeDoor } from "../app/shell/sender-screening.js";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
+import { queueDoor } from "./fixtures/queue-door.js";
 
 /**
  * the real Screener over the real state hook, at 1280 and 390: the card's bar, the row's
@@ -68,14 +69,23 @@ function msg(id: string, from: string, folder: Folder = "ohmail/Screener"): Engi
 interface Held {
   id: string; from: string; posture: UnsubscribeHeaderState | "unread"; folder?: Folder;
   verdict?: EngineMessage["authVerdict"];
+  /** The identity fact on the letter, as the mirror carries it (a claim, through a list or not). */
+  check?: EngineMessage["senderCheck"];
 }
 
-async function engineWith(held: Held[]): Promise<OhmailEngine> {
+/**
+ * `claimsOnly`: the store's queue answers over the held letters, and names these senders' screen-out
+ * as filing their claims alone (`checked.claimsOnly`, the server's word: a list the person let in).
+ */
+async function engineWith(held: Held[], claimsOnly?: readonly string[]): Promise<OhmailEngine> {
   const store = new MemoryMirrorStore();
   await store.load();
   await store.applyChanges([
     ...held.map((x): SyncChange => {
-      const m = { ...msg(x.id, x.from, x.folder), ...(x.verdict === undefined ? {} : { authVerdict: x.verdict }) };
+      const m = {
+        ...msg(x.id, x.from, x.folder), ...(x.verdict === undefined ? {} : { authVerdict: x.verdict }),
+        ...(x.check === undefined ? {} : { senderCheck: x.check }),
+      };
       return { type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m };
     }),
     ...held.filter((x) => x.posture !== "unread").map((x): SyncChange => ({
@@ -106,6 +116,12 @@ async function engineWith(held: Held[]): Promise<OhmailEngine> {
       },
       withdrawSend: async () => ({ outcome: "unsupported" as const }),
       fetchBody: async () => null,
+      ...(claimsOnly === undefined ? {} : {
+        screenerWaiting: queueDoor(held.filter((x) => (x.folder ?? "ohmail/Screener") === "ohmail/Screener").map((x) => ({
+          messageId: x.id, address: x.from, receivedAt: "2026-08-02T09:00:00.000Z",
+          ...(x.check ? { checked: { ...x.check, ...(claimsOnly.includes(x.from) ? { claimsOnly: true } : {}) } } : {}),
+        }))),
+      }),
     },
   });
 }
@@ -119,12 +135,14 @@ async function mount(opts: {
   held: Held[]; width: 1280 | 390; autoUnsubscribe?: boolean; suggestions?: Record<string, string>;
   /** Compose the queue as the shell does, so an INBOX sender is presented at the gate (`gatePhysical:false`). */
   pastTheGate?: boolean;
+  /** The store's queue answers, naming these senders' screen-out as filing their claims alone. */
+  claimsOnly?: readonly string[];
 }): Promise<{ latest: () => ScreenerState }> {
   setWidth(opts.width);
   const { useScreenerState } = await import("../app/shell/screener-state.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("../app/shell/keymap.js");
-  const engine = await engineWith(opts.held);
+  const engine = await engineWith(opts.held, opts.claimsOnly);
   const overlay = new Map(Object.entries(opts.suggestions ?? {}).map(([a, dest]) => [
     senderKey(a), { dest, confidence: 0.9, rationale: "because" },
   ]));
@@ -232,6 +250,38 @@ describe.each([1280, 390] as const)("the Screener card at %i says the unsubscrib
     expect(cardLine()).toBeNull();
     await click(capsule("Screen out"));
     expect(toasts.at(-1)!.message).not.toContain("unsubscrib");
+  });
+});
+
+describe("a claim through a list's address: Screen out files those letters alone and asks nothing", () => {
+  const CLAIM = { reason: "impersonation", brand: "PostFinance", domainShared: false, list: true } as const;
+  /** The bar's rule line, the consequence a press has before it is made. */
+  const ruleLine = (): string => host!.querySelector(".decide .d-note")?.textContent ?? "";
+
+  it("a list the person let in: the card says what Screen out files, promises no rule and names no unsubscribe, nor does the press", async () => {
+    await mount({ held: [{ id: "l1", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: CLAIM }], width: 1280, claimsOnly: [ONE_CLICK] });
+    expect(cardLine()).toBeNull();
+    expect(host!.querySelector("[data-list-claim]")?.textContent)
+      .toBe("Screening out sets aside only the messages that claim to be PostFinance. The list's other mail stays where it is.");
+    expect(ruleLine()).toContain(`Ohbox, News and Receipts become a rule — future mail from ${ONE_CLICK} files automatically. Screen out and Spam write no rule here.`);
+    await click(capsule("Screen out"));
+    expect(toasts.at(-1)!.message)
+      .toBe(`Screened out — only the messages from ${ONE_CLICK} that claim to be PostFinance. No rule was made, so the list's other mail stays where it is.`);
+  });
+
+  it("CONTROL: a list the person never let in is screened out as an address: the rule, the unsubscribe, and no list-claim line", async () => {
+    await mount({ held: [{ id: "l3", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: CLAIM }], width: 1280, claimsOnly: [] });
+    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request, and ask again for their later mail that offers one.`);
+    expect(host!.querySelector("[data-list-claim]")).toBeNull();
+    expect(ruleLine()).toContain(`Becomes a rule — future mail from ${ONE_CLICK} files automatically.`);
+    await click(capsule("Screen out"));
+    expect(toasts.at(-1)!.message).toContain(`Screened out — ${ONE_CLICK}.`);
+  });
+
+  it("CONTROL: the same claim at an address no list posts as says the unsubscribe, and no list line", async () => {
+    await mount({ held: [{ id: "l2", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: { ...CLAIM, list: false } }], width: 1280 });
+    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request, and ask again for their later mail that offers one.`);
+    expect(host!.querySelector("[data-list-claim]")).toBeNull();
   });
 });
 

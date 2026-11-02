@@ -5,11 +5,11 @@ import { makeTestDb } from "../src/testing.js";
 // caller that opens one hands the child its parent's dialect — the same carry the
 // production caller makes. Without it the first statement composed inside refuses.
 import { carryDialect } from "../src/dialect/index.js";
-import { mailboxes, messages, folderState, rules, contacts, flagState } from "../src/schema.js";
+import { mailboxes, messages, folderState, rules, contacts, flagState, learningSignals, accountSettings } from "../src/schema.js";
 import {
   applyScreenerDecision, heldRowById, heldRowsForSender, heldRowsForDomain, rerouteUnconfirmedHeld,
   SCREENER_FOLDER, DECIDABLE_FOLDERS, LEGACY_NEWS_FOLDER, admitsDestination, domainOf,
-  validateRequestPayload,
+  validateRequestPayload, PassMayNotAdmitError,
 } from "../src/screener-apply.js";
 import { AccountErasedError } from "../src/erasure-fence.js";
 
@@ -433,7 +433,7 @@ describe("applyScreenerDecision", () => {
 
   /* A SENSITIVE HELD LETTER IS NEVER FILED AUTOMATICALLY: a pass's decision over a bag holding one
      writes nothing and says why; a person's press files it. */
-  for (const [decision, appliedFolder] of [["no", "ohmail/Quarantine"], ["yes", "INBOX"]] as const) {
+  for (const [decision, appliedFolder] of [["no", "ohmail/Quarantine"]] as const) {
     it(`a pass's ${decision} over a held one-time code writes nothing (\`sensitive\`); a press files it`, async () => {
       const db = await makeTestDb();
       const code = await seedHeldMessage(db, { fromAddress: "login@shop.example", senderCheck: "none", sensitivityCategory: "otp" });
@@ -457,25 +457,37 @@ describe("applyScreenerDecision", () => {
     });
   }
 
-  it("a pass's yes leaves a held letter its provider failed and moves the rest; a press moves it", async () => {
+  /* ONLY A PERSON LETS A SENDER IN (owner report 2026-11-02): a pass's yes is refused before the
+     door reads or writes anything, wherever it would file and whatever the letter. A press admits. */
+  it("MUTATION-WATCH: a pass's yes is refused before anything is written; a person's yes still admits", async () => {
     const db = await makeTestDb();
-    const from = "orders@supplier.example";
-    const failed = await seedHeldMessage(db, { fromAddress: from, senderCheck: "none", authVerdict: "fail" });
-    const genuine = await seedHeldMessage(db, { fromAddress: from, senderCheck: "none", authVerdict: "pass", mailboxId: failed.mailboxId });
-    const decide = (decidedBy: "pass" | "person") => db.transaction((tx) => applyScreenerDecision(carryDialect(db, tx), {
-      accountId: ACCT, scope: "sender", address: from, appliedFolder: "INBOX", decision: "yes",
-      triggeringActionId: `screener:${decidedBy}:${genuine.messageId}`, now: NOW, stampBaseline: false,
-      decidedBy, overExisting: decidedBy === "pass" ? "skip" : "converge", liftOverDomain: false,
+    const from = "talent@hire-outreach.example";
+    const held = await seedHeldMessage(db, { fromAddress: from, senderCheck: "none", authVerdict: "pass" });
+    const desired = async () =>
+      (await db.select().from(folderState).where(eq(folderState.messageId, held.messageId)))[0]?.desiredFolder;
+    for (const appliedFolder of ["ohmail/News", "ohmail/Receipts", "INBOX", LEGACY_NEWS_FOLDER]) {
+      const refused = await db.transaction((tx) => applyScreenerDecision(carryDialect(db, tx), {
+        accountId: ACCT, scope: "sender", address: from, appliedFolder, decision: "yes",
+        triggeringActionId: `screener:auto:${held.messageId}`, now: NOW, stampBaseline: true,
+        decidedBy: "pass", overExisting: "skip", liftOverDomain: false,
+      })).then(() => null, (e: unknown) => e);
+      expect(refused, `a pass's yes into ${appliedFolder} was let through`).not.toBeNull();
+      expect(refused).toBeInstanceOf(PassMayNotAdmitError);
+    }
+    expect(await desired()).toBe(SCREENER_FOLDER);
+    expect(await db.select().from(rules)).toEqual([]);
+    expect(await db.select().from(contacts)).toEqual([]);
+    expect(await db.select().from(learningSignals)).toEqual([]);
+    const [settings] = await db.select().from(accountSettings).where(eq(accountSettings.accountId, ACCT));
+    expect(settings?.screeningBaselineAt ?? null, "a refused pass stamped the baseline").toBeNull();
+
+    const pressed = await db.transaction((tx) => applyScreenerDecision(carryDialect(db, tx), {
+      accountId: ACCT, scope: "sender", address: from, appliedFolder: "ohmail/News", decision: "yes",
+      triggeringActionId: `screener:${held.messageId}`, now: NOW, stampBaseline: false,
+      decidedBy: "person", overExisting: "converge",
     }));
-    const desired = async (id: string) =>
-      (await db.select().from(folderState).where(eq(folderState.messageId, id)))[0]?.desiredFolder;
-    const r = await decide("pass");
-    expect(r.rerouted.map((m) => m.messageId)).toEqual([genuine.messageId]);
-    expect(await desired(failed.messageId)).toBe(SCREENER_FOLDER);
-    expect(await desired(genuine.messageId)).toBe("INBOX");
-    const pressed = await decide("person");
-    expect(pressed.rerouted.map((m) => m.messageId)).toEqual([failed.messageId]);
-    expect(await desired(failed.messageId)).toBe("INBOX");
+    expect(pressed.rerouted.map((m) => m.messageId)).toEqual([held.messageId]);
+    expect(await desired()).toBe("ohmail/News");
   });
 
   it("rerouteUnconfirmedHeld leaves a sensitive letter where it is and files the rest", async () => {

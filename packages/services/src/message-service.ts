@@ -6,7 +6,8 @@ import {
   recordChange, recordChanges, recordRouteOverride, demoteRoute, routeOverrideActionId,
   senderPatternFromAddress,
   upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell,
-  decisionInstant, placementDecidedAfter, readDecidedAfter, type ChangeInput, type LedgerTx, type OrganizedBy, type Tx,
+  decisionInstant, placementDecidedAfter, readDecidedAfter, goneEverywhereWhere,
+  type ChangeInput, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
@@ -1674,19 +1675,13 @@ export class MessageService {
   /** No copy on record, not filed to Trash and no filing owed: the store's own proof the letter is gone. */
   private async goneEverywhere(tx: Tx, id: string, mailboxId: string): Promise<boolean> {
     // scoped-by: delete(), the one caller, loaded id by (id, ctx.accountId); 0118 keys its instances to that account
-    const [copy] = await tx.select({ id: messageInstances.messageId }).from(messageInstances)
-      .where(eq(messageInstances.messageId, id)).limit(1);
-    if (copy) return false;
-    // A filing still owed is our own tombstone, never a lost letter: a landed delete parks its
-    // copy in Trash with none on record, and a restore or move out of there waits on the organizer.
-    const [held] = await tx.select({ id: folderState.messageId }).from(folderState)
-      .innerJoin(mailboxes, eq(mailboxes.id, mailboxId))
-      .where(and(eq(folderState.messageId, id), or(
-        sql`${folderState.desiredFolder} = ${mailboxes.trashFolder}`,
-        eq(folderState.reconcileStatus, "pending"),
-      )))
+    const [gone] = await tx.select({ id: messages.id }).from(messages)
+      .where(and(
+        eq(messages.id, id), eq(messages.mailboxId, mailboxId),
+        goneEverywhereWhere({ messageId: messages.id, mailboxId: messages.mailboxId }),
+      ))
       .limit(1);
-    return !held;
+    return gone !== undefined;
   }
 
   /**

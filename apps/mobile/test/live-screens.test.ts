@@ -893,6 +893,7 @@ describe("the actions facade is ONE object delegating per call", () => {
     forwardFetch: () => (calls.push(`${tag}:forwardFetch`), null),
     forwardFiles: () => (calls.push(`${tag}:forwardFiles`), { state: "failed" as const, parts: [] }),
     forwardPartsSupported: () => (calls.push(`${tag}:forwardPartsSupported`), false),
+    sendSurface: () => (calls.push(`${tag}:sendSurface`), undefined),
     // The two abandoned-change verbs are async, so the recorder returns a resolved promise; the
     // facade test is about WHICH object a call lands on, not what it answers.
     retryAbandoned: async (id: string) => {
@@ -960,6 +961,8 @@ describe("the actions facade is ONE object delegating per call", () => {
     stayedWhy: () => (calls.push(`${tag}:stayedWhy`), Promise.resolve(new Map())),
     moveStayed: () => calls.push(`${tag}:moveStayed`),
     screenUnscreened: () => (calls.push(`${tag}:screenUnscreened`), Promise.resolve(true)),
+    pileUnscreened: () => (calls.push(`${tag}:pileUnscreened`), Promise.resolve(null)),
+    screenPileUnscreened: () => (calls.push(`${tag}:screenPileUnscreened`), Promise.resolve(true)),
     fileFailed: () => calls.push(`${tag}:fileFailed`),
     folderCreate: () => calls.push(`${tag}:folderCreate`),
     folderRename: () => calls.push(`${tag}:folderRename`),
@@ -1259,7 +1262,7 @@ describe("the Piles screen is translatable — it reads the deck, not a copy of 
    */
   const ENGLISH = [
     "Answer Later", "Parked", "Resurface",
-    "Answers you owe. A Reply Run walks them one screen at a time.",
+    "Answers you owe. Open one to write your reply.",
     "Kept in view without keeping the Ohbox busy.",
     "Comes back on its own, at the time you chose.",
   ];
@@ -1289,6 +1292,26 @@ describe("the Piles screen is translatable — it reads the deck, not a copy of 
       // …and it is the DECK's wording, not merely something else.
       expect(piles.map((p) => p.title)).toEqual([DE.replyLater, DE.setAside, DE.resurface]);
       expect(piles.map((p) => p.note)).toEqual([DE.replyLaterNote, DE.setAsideNote, DE.resurfaceNote]);
+      live.store.close();
+    } finally {
+      resetLocaleRegisterForTests();
+      fake.server.close();
+    }
+  });
+
+  /* The phone has no Reply Run: its Answer Later note says what the phone does, in both decks. */
+  it("the Answer Later note promises no Reply Run", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    try {
+      fake.addMessage(dto("m1", {}));
+      const live = await liveWorldOn(fake, origin);
+      for (const locale of ["en", "de"] as const) {
+        setActiveLocale(locale);
+        const note = livePiles(presentedOf(live.engine.read(), view.now), view).find((p) => p.kind === "replyLater")?.note ?? "";
+        expect(note).not.toMatch(/reply run|antwortrunde/i);
+        expect(note).toMatch(locale === "en" ? /reply/i : /antworte/i);
+      }
       live.store.close();
     } finally {
       resetLocaleRegisterForTests();

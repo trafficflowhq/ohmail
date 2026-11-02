@@ -59,7 +59,7 @@ let actAt: string | null;
 let carriesAxis: boolean;
 let asked: Array<{ method: string; url: string; body?: string }>;
 /** The account's auto-apply and AI switches, as another device may have left them. */
-let autoApply: boolean;
+let peopleOnly: boolean;
 let aiOn: boolean;
 const AT = "2026-09-27T08:00:00.000Z";
 
@@ -105,7 +105,7 @@ function engine(): void {
       }
       if (url === "/account/ai") return encode(200, JSON.stringify({ aiEnabled: aiOn }));
       return encode(200, JSON.stringify({
-        ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "x", screenerAutoApply: autoApply,
+        ohboxPolicy: peopleOnly ? "people_only" : "people_and_replied", ohboxBar: null, defaultBar: "x", screenerAutoApply: false,
       }));
     },
   };
@@ -139,7 +139,7 @@ const ACT = en.screener.suggest.actTitle;
 const SUGGEST = en.desktopScreener.autoSuggestLabel;
 
 beforeEach(() => {
-  suggestOn = true; actAt = null; carriesAxis = true; asked = []; autoApply = false; aiOn = true;
+  suggestOn = true; actAt = null; carriesAxis = true; asked = []; peopleOnly = false; aiOn = true;
   engine();
 });
 afterEach(async () => {
@@ -251,18 +251,18 @@ describe("the hosted door: the shared shell's row over the bridge", () => {
 });
 
 describe("an open pane follows a change made on another device", () => {
-  const AUTO_APPLY = en.settings.screening.autoApplyTitle;
+  const POSTURE = en.desktopScreener.postureLabel;
   const AI = en.settings.aiLabel;
   const checked = (label: string): string | null | undefined => switchNamed(label)?.getAttribute("aria-checked");
 
   it("the Screener and AI switches take the account's new values when the window comes back", async () => {
     await mountPane([ORGANIZER], "cloud");
-    expect(checked(AUTO_APPLY)).toBe("false");
+    expect(checked(POSTURE)).toBe("false");
     expect(checked(AI)).toBe("true");
-    autoApply = true; aiOn = false;
+    peopleOnly = true; aiOn = false;
     await act(async () => { window.dispatchEvent(new Event("focus")); });
     await settle();
-    expect(checked(AUTO_APPLY), "the open Screener pane kept the old auto-apply").toBe("true");
+    expect(checked(POSTURE), "the open Screener pane kept the old posture").toBe("true");
     expect(checked(AI), "the open AI pane kept the old switch").toBe("false");
   });
 
@@ -270,10 +270,10 @@ describe("an open pane follows a change made on another device", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
       await mountPane([ORGANIZER], "cloud");
-      autoApply = true; aiOn = false;
+      peopleOnly = true; aiOn = false;
       await act(async () => { vi.advanceTimersByTime(30_000); });
       await settle();
-      expect(checked(AUTO_APPLY)).toBe("true");
+      expect(checked(POSTURE)).toBe("true");
       expect(checked(AI)).toBe("false");
     } finally {
       vi.useRealTimers();

@@ -100,6 +100,18 @@ export function questionOf(dto: unknown): ProfileImportQuestion {
 
 const pathOf = (mailboxId: string): string => `/mailboxes/${encodeURIComponent(mailboxId)}/profile-import`;
 
+/** The status read's fingerprint header (`packages/api`'s route reads it first). */
+const PROFILE_FINGERPRINT_HEADER = "x-ohmail-profile-fingerprint";
+
+/** Whether a refusal carries this code — read from a clone, so the answer itself stays unread. */
+async function refusedAs(res: Response, code: string): Promise<boolean> {
+  try {
+    return ((await res.clone().json()) as { error?: { code?: unknown } }).error?.code === code;
+  } catch {
+    return false;
+  }
+}
+
 /** Ask the door about one mailbox. `null` is "could not ask". */
 export async function readProfileImport(session: ProfileImportSession, mailboxId: string): Promise<ProfileImportQuestion | null> {
   try {
@@ -181,10 +193,13 @@ export async function readImportStatus(
   session: ProfileImportSession, mailboxId: string, fingerprint: string,
 ): Promise<ProfileImportAnswer | null> {
   try {
-    const res = await session.fetch(
-      `${requestBase(session)}${pathOf(mailboxId)}/status?fingerprint=${encodeURIComponent(fingerprint)}`,
-      { method: "GET" },
-    );
+    /* The fingerprint is a hash of the settings: a header, never the URL. An older door reads only
+       the query and refuses the bare path `validation_failed`, so it is asked once more that way. */
+    const path = `${requestBase(session)}${pathOf(mailboxId)}/status`;
+    let res = await session.fetch(path, { method: "GET", headers: { [PROFILE_FINGERPRINT_HEADER]: fingerprint } });
+    if (res.status === 400 && await refusedAs(res, "validation_failed")) {
+      res = await session.fetch(`${path}?fingerprint=${encodeURIComponent(fingerprint)}`, { method: "GET" });
+    }
     if (res.status !== 200) return null;
     const body = (await res.json()) as Record<string, unknown>;
     if (body.state === "imported") {

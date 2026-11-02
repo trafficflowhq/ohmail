@@ -286,3 +286,114 @@ describe("the undecided-sender row in the Screener header", () => {
     expect(row()).toBeNull();
   });
 });
+
+/* ── THE NOTE ON NEWS AND RECEIPTS ───────────────────────────────────────────────────────────────
+ * Owner report 2026-11-02: letters in News from senders the person never chose. The note states
+ * the server's number for the pile it sits on, moves nothing until its press, sends the pile with
+ * the press, and draws nothing at zero, on a failed read, or from a door that does not say the
+ * pile back (a server from before piles answers the Ohbox's offer). Through `createEngine`. */
+describe("the note on News and Receipts", () => {
+  const ARMED = { NEXT_PUBLIC_API_BASE: "/api" } as const;
+  const originalFetch = globalThis.fetch;
+  let calls: Array<{ method: string; url: string; body: string | null }> = [];
+  /** What the door says to a pile's read; a press empties it. */
+  let pileDoor: { status: number; body: Record<string, unknown> } | null = null;
+
+  const json = (status: number, body: unknown): Response =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+  beforeEach(() => {
+    calls = [];
+    pileDoor = null;
+    globalThis.fetch = ((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      calls.push({ method, url, body: typeof init?.body === "string" ? init.body : null });
+      if (url.includes("/api/screener/unscreened") && pileDoor !== null) {
+        if (method === "POST") {
+          const total = Number(pileDoor.body.total ?? 0);
+          pileDoor = { status: 200, body: { ...pileDoor.body, groups: [], total: 0 } };
+          return Promise.resolve(json(200, { screened: [], total }));
+        }
+        return Promise.resolve(json(pileDoor.status, pileDoor.body));
+      }
+      return Promise.resolve(json(404, { error: { code: "not_found", message: "no stub for this route" } }));
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  const answer = (pile: string | undefined, total: number, complete = true) => ({
+    status: 200,
+    body: {
+      groups: total > 0 ? [{ address: "paper@paper.test", count: total, newestAt: "2024-03-01T08:00:00.000Z" }] : [],
+      total, complete, max: 200, ...(pile === undefined ? {} : { pile }),
+    },
+  });
+
+  async function mountNote(pile: "news" | "receipts", engine: OhmailEngine): Promise<string[]> {
+    const { usePileNote } = await import("../app/shell/pile-note.js");
+    const { PileNote } = await import("../app/shell/PileNote.js");
+    const said: string[] = [];
+    function Probe(): React.ReactElement {
+      const offer = usePileNote(engine, pile, true, (s) => { said.push(s.kind === "moved" ? `moved ${s.count}` : s.kind); });
+      return h(PileNote, { offer });
+    }
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, {
+        locale: "en", messages, timeZone: "UTC", now: NOW,
+        children: h(ThemeProvider, { storageKey: null, children: h(Probe) }),
+      }));
+    });
+    await flush();
+    return said;
+  }
+  const note = (): HTMLElement | null => host!.querySelector(".pile-note");
+  const posts = () => calls.filter((c) => c.method === "POST");
+
+  it("News asks its pile, states the server's number, and moves nothing until the press", async () => {
+    pileDoor = answer("news", 3);
+    const said = await mountNote("news", createEngine(false, ARMED));
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toContain("GET /api/screener/unscreened?pile=news");
+    expect(note()?.textContent).toBe("3 letters here are from senders you never let in.Screen 3");
+    expect(posts(), "a READ moved somebody's mail").toEqual([]);
+
+    await act(async () => { note()!.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flush();
+    expect(posts().map((c) => [c.url, JSON.parse(c.body ?? "null")])).toEqual([["/api/screener/unscreened", { pile: "news" }]]);
+    expect(said).toEqual(["moved 3"]);
+    expect(note(), "the note outlived the press it answered").toBeNull();
+  });
+
+  it("Receipts asks its own pile, one letter in the singular, and a floor says 'at least'", async () => {
+    pileDoor = answer("receipts", 1);
+    await mountNote("receipts", createEngine(false, ARMED));
+    expect(calls.map((c) => c.url)).toContain("/api/screener/unscreened?pile=receipts");
+    expect(note()?.querySelector(".scn-held-lead")?.textContent).toBe("1 letter here is from a sender you never let in.");
+    await act(async () => { root!.unmount(); });
+    root = null;
+    host?.remove();
+    pileDoor = answer("news", 40, false);
+    await mountNote("news", createEngine(false, ARMED));
+    expect(note()?.querySelector(".scn-held-lead")?.textContent).toBe("At least 40 letters here are from senders you never let in.");
+  });
+
+  it("draws nothing at zero, on a failed read, or from a server that does not say the pile back", async () => {
+    for (const door of [answer("news", 0), { status: 500, body: { error: { code: "internal", message: "down" } } }, answer(undefined, 12)]) {
+      pileDoor = door;
+      await mountNote("news", createEngine(false, ARMED));
+      expect(note(), JSON.stringify(door.body)).toBeNull();
+      await act(async () => { root!.unmount(); });
+      root = null;
+      host?.remove();
+    }
+    expect(posts()).toEqual([]);
+  });
+
+  it("draws nothing on a door with no such read", async () => {
+    await mountNote("news", await engineWith(null));
+    expect(note()).toBeNull();
+  });
+});

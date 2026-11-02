@@ -3,6 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
   resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
+  notGoneSql, readGoneMailboxIds,
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, automaticAiAdmits,
   decisionCanBeApplied, readRequestEligibility, reverseCharge,
@@ -597,6 +598,8 @@ async function selectCandidates(
   // The queue's own sort key (`heldSortKey`), so the pass buys advice about the row on screen.
   const sortKey = heldSortKey(d, { date: sql`${messages.date}`, arrivedAt: sql`${messages.createdAt}` });
   const sender = sql`lower(${messages.fromAddress})`;
+  // A removed mailbox's mail is the queue's no more: never a representative, never activity.
+  const gone = await readGoneMailboxIds(db, opts.accountId);
 
   /* ONE HELD MESSAGE PER SENDER, AS A WINDOW — the same row `distinct on (k) … order by k, o`
      picks, chosen by `row_number() over (partition by k order by o) = 1`, which both stores have
@@ -640,6 +643,7 @@ async function selectCandidates(
       // A letter gone from the server (mail 0065) is in no list and its words are scrubbed: left out
       // where the representative is chosen, as the queue's window does (`heldSenderReps`).
       isNull(messages.deletedAt),
+      notGoneSql(d, messages.mailboxId, gone),
     ))
     .as("reps");
 
@@ -676,7 +680,7 @@ async function selectCandidates(
       // that reads no settings gets the query it always had.
       // A letter at the gate that arrived inside the cutline counts whatever its Date, as on the page.
       opts.cutline
-        ? sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)})`
+        ? sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline, gone)})`
         : undefined,
       // (5) THE DECIDED PREDICATE — the same expression the queue's page excludes through, and
       // UNCONDITIONAL for that page's reason. This pass builds its own candidate set, so arm (4)'s

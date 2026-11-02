@@ -946,7 +946,9 @@ export const folderState = pgTable("folder_state", {
    * unjudged, or withdrawn; N = the pass read the floor empty under `STRONG_BULK_FLOOR_VERSION` N
    * with a body row present, and its hourly walk skips the row. Written by that pass alone, one
    * column and nothing else: no `updated_at`, no change row. A mark under another version is
-   * withdrawn by the pass's next full walk.
+   * withdrawn by the pass's next full walk, and a returned letter's by its header restore. That pass
+   * is retired (2026-11-02): nothing reads the column, only that restore still clears it, and a later
+   * migration drops it.
    */
   screenerFloorVersion: integer("screener_floor_version"),
   /**
@@ -1273,7 +1275,8 @@ export const messageBodies = pgTable("message_bodies", {
    * indistinguishable from "not yet mirrored"; the DTO must say WHY the text is empty; a future
    * restore is an UPDATE with this as its predicate. Repair passes SKIP non-null rows. Mail 0065
    * adds `'junk_filed'` and `'expunged'`, mail 0134 `'too_large'` (ingested from its header
-   * block); an already-withheld row keeps its first reason.
+   * block); an already-withheld row keeps its first reason. A letter gone from the server keeps
+   * seven of its header lines (`gone-letter-headers.ts`).
    */
   withheldReason: text("withheld_reason"),
   // ── Migration 0008: the body-text lexical index lives HERE (on `message_bodies`, not
@@ -2608,7 +2611,8 @@ export const accountSettings = pgTable("account_settings", {
    * delete, and it writes NO `rules` row — the sender still screens next time. A
    * sensitivity-flagged message is NEVER auto-moved, so a stranger's login code stays at the gate
    * for a human. NULL, no row, and a FAILED read all read as OFF — the other default would move
-   * mail on a fetch error.
+   * mail on a fetch error. Retired (2026-11-02): only a person lets a stranger in, so nothing acts
+   * on the column; the setting's route still reads and writes it until a later migration drops it.
    */
   screenerAutoApplyAt: timestamp("screener_auto_apply_at", { withTimezone: true }),
   /**

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { mailboxes, mailboxCredentials } from "@trafficflow/db";
@@ -13,6 +13,7 @@ import {
 import { JUNK_READ_TIMEOUT_MS } from "../src/junk-window.js";
 import { MAX_PROBES_PER_ADDRESS, makeImapProbe, probeAdmissionKey } from "../src/imap-probe.js";
 import type { ApiDeps } from "../src/deps.js";
+import { ServiceError, StaticKeyProvider, throttleKeysFor } from "@trafficflow/services/mail";
 
 /**
  * ═══ AN API-SIDE IMAP DOOR ENDS ITS SOCKET BEFORE IT GIVES THE SLOT BACK ════════════════════
@@ -42,14 +43,19 @@ async function seed(): Promise<{ deps: ApiDeps; db: Awaited<ReturnType<typeof ma
     mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
   });
+  const kek = StaticKeyProvider.fromSecret(Buffer.alloc(32, 3));
   const deps = {
     db,
-    keyProvider: { decrypt: async () => "not-printed" },
+    keyProvider: { decrypt: async () => "not-printed", deriveSubkey: (info: string) => kek.deriveSubkey(info) },
     services: { imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot } },
     now: () => NOW,
   } as unknown as ApiDeps;
   return { deps, db, mailboxId: mb!.id, accountId };
 }
+
+/** The probe's slot key, keyed as the probe keys it. */
+const slotOf = (deps: ApiDeps, accountId: string, address: string): string =>
+  probeAdmissionKey(throttleKeysFor(deps.keyProvider), accountId, address);
 
 /** The shared counter's own reading for one key — 0 when the row was never written. */
 async function slotsHeld(db: Awaited<ReturnType<typeof makeTestDb>>, key: string): Promise<number> {
@@ -166,7 +172,7 @@ describe("the probe's admission slot", () => {
   it("destroys the abandoned socket BEFORE the slot goes back, and the slot returns to baseline", async () => {
     const { deps, db, accountId } = await seed();
     const address = `probe-${randomUUID().slice(0, 8)}@example.invalid`;
-    const key = probeAdmissionKey(accountId, address);
+    const key = slotOf(deps, accountId, address);
     const namespaced = imapAdmissionKey(key);
     const order: string[] = [];
 
@@ -198,7 +204,7 @@ describe("the probe's admission slot", () => {
   it("an ordinary probe still admits, answers ok and gives its slot back", async () => {
     const { deps, db, accountId } = await seed();
     const address = `probe-${randomUUID().slice(0, 8)}@example.invalid`;
-    const namespaced = imapAdmissionKey(probeAdmissionKey(accountId, address));
+    const namespaced = imapAdmissionKey(slotOf(deps, accountId, address));
 
     const probe = makeImapProbe(deps, {
       maxPerAddress: MAX_PROBES_PER_ADDRESS,
@@ -214,5 +220,48 @@ describe("the probe's admission slot", () => {
 
     expect(verdict).toMatchObject({ verdict: "ok" });
     expect(await slotsHeld(db, namespaced)).toBe(0);
+  });
+
+  it("holds its slot under a keyed name while it dials: no row names the address or its plain digest", async () => {
+    const { deps, db, accountId } = await seed();
+    const address = `Probe-${randomUUID().slice(0, 8)}@Example.invalid`;
+    let held: Array<{ key: string; failures: number }> = [];
+    const probe = makeImapProbe(deps, {
+      adapterFactory: () => ({
+        connect: async (): Promise<void> => {
+          held = await db.select({ key: authThrottle.key, failures: authThrottle.failures }).from(authThrottle);
+        },
+        close: async (): Promise<void> => { /* polite */ },
+      }),
+    });
+    await probe({ accountId, address, imap: { host: "imap.example.invalid", port: 993, secure: true, user: "u", pass: "p" } });
+
+    const plain = createHash("sha256").update(`${accountId}:${address.toLowerCase()}`).digest("hex");
+    expect(held).toEqual([{ key: imapAdmissionKey(slotOf(deps, accountId, address.toLowerCase())), failures: 1 }]);
+    expect(held[0]!.key, "the slot is the plain SHA-256 an enumeration reverses").not.toContain(plain);
+    expect(held[0]!.key.toLowerCase()).not.toContain(address.toLowerCase());
+  });
+
+  it("with no key to key it by, the probe answers 503, dials nothing and counts nothing", async () => {
+    const { deps, db, accountId } = await seed();
+    (deps as unknown as { keyProvider: unknown }).keyProvider = {
+      decrypt: async () => "not-printed",
+      deriveSubkey: () => { throw new ServiceError("install_key_absent", 503, "this install has no durable key"); },
+    };
+    let dialled = 0;
+    const probe = makeImapProbe(deps, {
+      adapterFactory: () => ({
+        connect: async (): Promise<void> => { dialled++; },
+        close: async (): Promise<void> => { /* polite */ },
+      }),
+    });
+    const err = await probe({
+      accountId, address: `probe-${randomUUID().slice(0, 8)}@example.invalid`,
+      imap: { host: "imap.example.invalid", port: 993, secure: true, user: "u", pass: "p" },
+    }).then(() => null, (e: unknown) => e);
+
+    expect((err as ServiceError | null)?.httpStatus).toBe(503);
+    expect(dialled, "a probe dialled with no slot").toBe(0);
+    expect(await db.select({ key: authThrottle.key }).from(authThrottle), "a refused probe counted").toEqual([]);
   });
 });

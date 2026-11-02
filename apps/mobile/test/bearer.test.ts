@@ -134,6 +134,25 @@ describe("adoption and the stamp", () => {
   });
 });
 
+describe("the bearer never leaves its origin", () => {
+  it("an off-origin URL is neither stamped nor renewed, and passes through as it was", async () => {
+    const wire = scripted([
+      () => json(401, { error: { code: "unauthorized" } }),
+      () => json(200, { ok: true }),
+    ]);
+    const bearer = manager({ access: "access-1", fetch: wire.fetch });
+    const storage = "https://storage.example/o/1?token=abc";
+    const res = await bearer.fetch(storage, { method: "PUT", headers: { "x-upsert": "false" } });
+    // The storage host's 401 is its own answer: no rotation, no replay, no credential.
+    expect(res.status).toBe(401);
+    expect(wire.seen).toHaveLength(1);
+    expect(wire.seen[0]!.headers).toEqual({ "x-upsert": "false" });
+    // Its own origin is still stamped.
+    await bearer.fetch(`${ORIGIN}/sync`);
+    expect(wire.seen[1]!.headers.authorization).toBe("Bearer access-1");
+  });
+});
+
 describe("the 401 recovery", () => {
   it("rotates once against the ORIGIN's refresh route, replays once, and persists the new refresh token", async () => {
     const { vault, saves } = memoryVault();

@@ -25,6 +25,7 @@ import {
   retroWalkWouldMove,
   ruleTwins,
   rulesList,
+  screenerWaitingOf,
   senderKey,
   threadOf,
   twinWinner,
@@ -161,6 +162,11 @@ export interface SenderScreening {
    * a paused rule sorts nothing, so it is not a reason to withhold a working one.
    */
   rules: RuleDTO[];
+  /**
+   * THE STORE'S QUEUE SAYS A SCREEN-OUT OF THIS ADDRESS FILES THE LETTERS CLAIMING `brand` ALONE and
+   * writes no rule (a list the person let in, mail 0150). Absent: the screen-out is the address's.
+   */
+  listClaims?: { brand: string };
 }
 
 /**
@@ -270,6 +276,8 @@ export function senderScreening(
     senderKey(seed.from.address) === key
       ? seed.from.name
       : [...seed.to, ...seed.cc].find((r) => senderKey(r.address) === key)?.name ?? null;
+  const alone = screenerWaitingOf(reader)?.senders.some((r) => r.claimsOnly === true && senderKey(r.address) === key) === true;
+  const brand = alone ? mine.find((m) => m.senderCheck?.reason === "impersonation")?.senderCheck?.brand ?? "" : "";
   return {
     key,
     address: subjectAddress,
@@ -286,6 +294,7 @@ export function senderScreening(
       domain: domain === "" ? sender : subjectOf(theirs, placeOf, twinWinner(ruleTwins(rules, "domain", domain))?.destination ?? null),
     },
     rules,
+    ...(brand !== "" ? { listClaims: { brand } } : {}),
   };
 }
 
@@ -594,7 +603,8 @@ export function planScreeningChange(
     matched: walked.length + movedByDecide.size,
     senders: subject.senders,
     retro,
-    unsubscribes: promoted && DECISION_OF_DEST[dest] === "no",
+    // A screen-out that files a list's claims alone sends nothing (`screener-apply.ts`).
+    unsubscribes: promoted && DECISION_OF_DEST[dest] === "no" && !(scope === "sender" && s.listClaims !== undefined),
   };
 }
 

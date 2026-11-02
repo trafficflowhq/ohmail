@@ -95,6 +95,21 @@ export async function lockAccountRuleKeys(tx: Tx, accountId: string): Promise<vo
   await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
 }
 
+/**
+ * RULES REMOVED BY ID, for a writer that already chose the rows (the retirement of what the act on
+ * suggestions let in): the rule-key lock, then the rows still there, one `delete` delta each.
+ * Returns the ids actually removed.
+ */
+export async function deleteRulesById(tx: Tx, accountId: string, ids: readonly string[]): Promise<string[]> {
+  if (ids.length === 0) return [];
+  await lockAccountRuleKeys(tx, accountId);
+  const gone = await tx.delete(rulesTbl)
+    .where(and(eq(rulesTbl.accountId, accountId), inArray(rulesTbl.id, [...ids])))
+    .returning({ id: rulesTbl.id });
+  if (gone.length > 0) await recordRuleDelta(ledger(tx), accountId, gone.map((r) => r.id), "delete");
+  return gone.map((r) => r.id);
+}
+
 /** What {@link convergeRuleKey} left under a key: the one row, the rows it deleted, their deltas. */
 export interface ConvergedKey {
   /** The row that stays: the one asked for, else the acting row; `null` when the key has none or the asked-for id is not under it. */

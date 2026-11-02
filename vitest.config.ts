@@ -215,6 +215,8 @@ export default defineConfig({
       { find: "@trafficflow/worker/inbound-quiet", replacement: r("./apps/worker/src/inbound-quiet.ts") },
       { find: "@trafficflow/worker/sender-check-backfill", replacement: r("./apps/worker/src/sender-check-backfill.ts") },
       { find: "@trafficflow/worker/list-address-backfill", replacement: r("./apps/worker/src/list-address-backfill.ts") },
+      { find: "@trafficflow/worker/act-admission-retire", replacement: r("./apps/worker/src/act-admission-retire.ts") },
+      { find: "@trafficflow/worker/gone-letter-tidy", replacement: r("./apps/worker/src/gone-letter-tidy.ts") },
       { find: "@ohmail/sidecar", replacement: r("./apps/sidecar/src/index.ts") },
       // The shared mail-domain half. Above `@trafficflow/db` for the same reason core's
       // subpaths are above core: the table is scanned in order.

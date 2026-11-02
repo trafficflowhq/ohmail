@@ -36,9 +36,11 @@ interface Sent { url: string; method: string; body: unknown }
 
 /** A session whose transport records what it was asked and answers from a script. */
 function sessionAnswering(answer: (url: string) => Response | Promise<Response>, apiBase: string | null = null): {
-  session: ProfileImportSession; sent: Sent[];
+  session: ProfileImportSession; sent: Sent[]; fingerprints: Array<string | null>;
 } {
   const sent: Sent[] = [];
+  /** The fingerprint header each request carried, in order (absent: null). */
+  const fingerprints: Array<string | null> = [];
   const session = {
     profile: { origin: "http://sidecar", apiBase },
     fetch: async (url: string, raw?: unknown) => {
@@ -47,10 +49,11 @@ function sessionAnswering(answer: (url: string) => Response | Promise<Response>,
         url, method: init?.method ?? "GET",
         body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
       });
+      fingerprints.push(new Headers(init?.headers).get("x-ohmail-profile-fingerprint"));
       return answer(url);
     },
   };
-  return { session, sent };
+  return { session, sent, fingerprints };
 }
 
 const json = (status: number, body: unknown): Response =>
@@ -278,11 +281,28 @@ describe("a press the organizer finishes (202), on the phone's own door", () => 
     const counts = { screener: 1, rules: 2, notifyRules: 0, tags: 1, awayResponder: false };
     const done = sessionAnswering(() => json(200, { state: "imported", imported: counts, skippedRules: 1 }));
     expect(await readImportStatus(done.session, "m", "f")).toEqual({ kind: "done", imported: { ...counts, signature: false }, skippedRules: 1 });
-    expect(done.sent[0]!.url).toBe("http://sidecar/mailboxes/m/profile-import/status?fingerprint=f");
+    // The fingerprint is a hash of the settings: a header, never the URL.
+    expect(done.sent[0]!.url).toBe("http://sidecar/mailboxes/m/profile-import/status");
+    expect(done.fingerprints).toEqual(["f"]);
     const refused = sessionAnswering(() => json(200, { state: "refused", reason: "changed", message: "The settings changed." }));
     expect(await readImportStatus(refused.session, "m", "f")).toEqual({ kind: "refused", status: 200, message: "The settings changed." });
     const waiting = sessionAnswering(() => json(200, { state: "importing", fingerprint: "f" }));
     expect(await readImportStatus(waiting.session, "m", "f")).toBeNull();
+  });
+
+  it("an older door that reads only the query (400 validation_failed) is asked once more by query", async () => {
+    const older = sessionAnswering((url) => (url.includes("?")
+      ? json(200, { state: "refused", reason: "changed", message: "The settings changed." })
+      : json(400, { error: { code: "validation_failed", message: "fingerprint is required" } })));
+    expect(await readImportStatus(older.session, "m", "f")).toEqual({ kind: "refused", status: 200, message: "The settings changed." });
+    expect(older.sent.map((r) => r.url)).toEqual([
+      "http://sidecar/mailboxes/m/profile-import/status", "http://sidecar/mailboxes/m/profile-import/status?fingerprint=f",
+    ]);
+    expect(older.fingerprints).toEqual(["f", null]);
+    // Any other refusal is no answer yet, and is not asked again.
+    const gone = sessionAnswering(() => json(404, { error: { code: "not_found", message: "mailbox not found" } }));
+    expect(await readImportStatus(gone.session, "m", "f")).toBeNull();
+    expect(gone.sent).toHaveLength(1);
   });
 
   it("the door's sentence is said ONCE; the generic line alone carries the retry", () => {

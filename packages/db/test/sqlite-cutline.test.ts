@@ -125,7 +125,7 @@ async function activeSenders(db: Awaited<ReturnType<typeof makeTestDb>>, c: Retu
       join folder_state fs on fs.message_id = m.id
      where m.account_id = ${d.castUuid(ACCOUNT)}
        and fs.desired_folder = 'ohmail/Screener'
-       and ${senderIsActiveSql(d, ACCOUNT, sql`lower(m.from_address)`, c)}
+       and ${senderIsActiveSql(d, ACCOUNT, sql`lower(m.from_address)`, c, [])}
      order by 1
   `);
   return rows.map((r) => String(r[0]));

@@ -245,6 +245,34 @@ describe("the real service, over HTTP, on the paths that need no mailbox fixture
     expect(await get()).toEqual({ state: "none" });
   });
 
+  it("the status read takes its fingerprint from a header, so no URL carries it; an older client's query still answers", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    const { mailboxes, recordImportAsk } = await import("@trafficflow/db");
+    const { eq } = await import("drizzle-orm");
+    await db.update(mailboxes).set({ organizerRole: "organizer" }).where(eq(mailboxes.id, mailboxId));
+    const fingerprint = "c".repeat(64);
+    await recordImportAsk(db as never, { accountId: s.accountId, mailboxId, fingerprint, now: FIXED_NOW });
+    const status = (o: { header?: string; query?: string }) => H(req("GET", `/mailboxes/${mailboxId}/profile-import/status${o.query ?? ""}`, {
+      bearer: s.token, ...(o.header === undefined ? {} : { headers: { "x-ohmail-profile-fingerprint": o.header } }),
+    }), deps);
+    const importing = { state: "importing", fingerprint };
+
+    const byHeader = await status({ header: fingerprint });
+    expect(byHeader.status, "the header alone was not read").toBe(200);
+    expect(await byHeader.json()).toEqual(importing);
+    const byQuery = await status({ query: `?fingerprint=${fingerprint}` });
+    expect(byQuery.status, "an older client's query stopped working").toBe(200);
+    expect(await byQuery.json()).toEqual(importing);
+    // The header is read first, and under the query's cap: a longer value is no ticket.
+    expect(await (await status({ header: fingerprint, query: `?fingerprint=${"d".repeat(64)}` })).json()).toEqual(importing);
+    expect(await (await status({ header: `${fingerprint}${"x".repeat(300)}` })).json()).toMatchObject({ state: "refused" });
+    const neither = await status({});
+    expect(neither.status).toBe(400);
+    expect((await neither.json()).error.code).toBe("validation_failed");
+  });
+
   it("a replace that names no document is a 400 naming the field", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });

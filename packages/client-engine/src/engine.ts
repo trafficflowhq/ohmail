@@ -14,7 +14,7 @@
 import { CALENDAR_FALLBACK_FILENAME, calendarPartRank, isCalendarBodyPart, isCalendarMime } from "@trafficflow/core/ics";
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ReadIntent, ScreenerWaitingItemWire, ScreenerWaitingWire,
-  StayedWhy, WithdrawSendAnswer, WithdrawSendOutcome,
+  StayedWhy, UnscreenedPileWire, WithdrawSendAnswer, WithdrawSendOutcome,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -2612,11 +2612,18 @@ const WIRE_KIND: Partial<Record<EngineMutation["kind"], string>> = {
 };
 
 /** A queue row off the wire as the mirror stores it. */
+/** Do two pages name the same left-out mailboxes (`gone`, sorted; absent from an older server)? */
+function sameGone(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
 function waitingRow(item: ScreenerWaitingItemWire, order: number, total: number): ScreenerWaitingSenderDTO {
   return {
     id: `sender:${senderKey(item.address)}`, kind: "sender", order, messageId: item.messageId,
     address: item.address, name: item.name, receivedAt: item.receivedAt, subject: item.subject,
     snippet: item.snippet, mailboxId: item.mailboxId, total, ...(item.marked ? { marked: true } : {}),
+    ...(item.claimsOnly ? { claimsOnly: true } : {}),
   };
 }
 
@@ -6941,6 +6948,33 @@ export class OhmailEngine {
     return out.total;
   }
 
+  /**
+   * LETTERS IN NEWS OR RECEIPTS FROM SENDERS NOBODY LET IN — the pile's note, asked of the door each
+   * time the pile is shown and never kept in the mirror, for the Ohbox offer's reason: the deciding
+   * fact is the arrival gate's answer. `null` when this door has no such read, a server from before
+   * piles included: its answer is the Ohbox's offer and does not say the pile back.
+   */
+  async pileUnscreened(pile: UnscreenedPileWire): Promise<{ total: number; atLeast: boolean } | null> {
+    const ask = this.adapter.unscreened;
+    if (!ask) return null;
+    const wire = await ask.call(this.adapter, pile);
+    if (wire.pile !== pile) return null;
+    return { total: wire.total, atLeast: wire.complete === false };
+  }
+
+  /**
+   * THE NOTE'S PRESS: screens the pile's letters from senders nobody let in, as the note counted
+   * them. The server writes the intents and the organizer moves the mail, so the answer is what was
+   * screened; one drain after it shows the moved letters, never awaited.
+   */
+  async screenPileUnscreened(pile: UnscreenedPileWire): Promise<number> {
+    const press = this.adapter.screenUnscreened;
+    if (!press) return 0;
+    const out = await press.call(this.adapter, undefined, pile);
+    void this.syncFresh().catch(() => { /* the press landed; the next poll catches up */ });
+    return out.total;
+  }
+
   /** Can this door read the waiting queue from the store at all? */
   screenerWaitingAvailable(): boolean {
     return typeof this.adapter.screenerWaiting === "function";
@@ -6992,6 +7026,7 @@ export class OhmailEngine {
         id: SCREENER_WAITING_PAGE_ID, kind: "page", total, nextCursor: wire.nextCursor,
         inFlight: wire.inFlight, ask: seq, rows: puts.length,
         ...(this.queueStaysBehind(wire) ? { copyBehind: true as const } : {}),
+        ...(wire.gone !== undefined ? { gone: wire.gone } : {}),
       };
       puts.push({ type: SCREENER_WAITING_TYPE, id: SCREENER_WAITING_PAGE_ID, entity: page });
     }
@@ -7033,7 +7068,12 @@ export class OhmailEngine {
       if (this.screenerPageReps.size <= SCREENER_PAGE_REPS_MAX) break;
       this.screenerPageReps.delete(id);
     }
-    if (cursor !== null) await this.noteQueueWalk(cursor, wire);
+    /* A PAGE LEAVING OUT OTHER MAILBOXES THAN THE STORED ONE (a removal since it was asked): the stored
+       page's silence about them reads as "let in", so it is asked again and this page records no walk. */
+    const stored = page?.entity?.kind === "page" ? page.entity : undefined;
+    if (stored !== undefined && !sameGone(stored.gone, wire.gone)) {
+      await this.refreshScreenerWaiting().catch(() => { /* marked dirty: the next settle asks again */ });
+    } else if (cursor !== null) await this.noteQueueWalk(cursor, wire);
     return { senders: wire.items.map((item, i) => waitingRow(item, i, total)), nextCursor: wire.nextCursor };
   }
 

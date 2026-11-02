@@ -30,7 +30,8 @@ import {
 import { migrateSqlite, SQLITE_MIGRATIONS_TABLE } from "@trafficflow/db/sqlite-migrate";
 import { markStoreStatement, StoreStatementFaultError } from "@trafficflow/core/mail";
 import { statementKind, storeWriteGauge } from "./store-writes.js";
-import type { LeasePeekAnswer, OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
+import type { LeasePeek, LeasePeekAnswer, OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
+import { DEFAULT_STALE_AFTER_MS, MAX_FUTURE_SKEW_MS } from "@trafficflow/core/adapters/organizer-lease";
 /* THE WORKER'S SOCKET PROFILE, not a third one. See {@link startPhoneEngine}. */
 import { DEFAULT_NET_TIMEOUTS, WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
 /* The ceiling the consent door's look runs under, from the bound class the lease read itself uses
@@ -110,6 +111,8 @@ export interface PhoneEngineDeps {
   imap: SidecarImapConfig;
   /** The mailbox address. Defaults to the IMAP username, as it does on every other door. */
   address?: string;
+  /** The name this mailbox's letters carry, asked at the door; seeds the mailbox row on first open. */
+  displayName?: string;
   /**
    * HOW THIS PHONE NAMES ITSELF in the claim it writes — required, and required for a reason a
    * default would hide. The holder line on somebody's desktop reads this string. A composition with
@@ -250,6 +253,22 @@ interface OrganizePress {
   readonly person: boolean;
 }
 
+/**
+ * A PERSON'S PRESS REFUSED OVER A LIVE CLAIM, KEPT TO BE CARRIED OUT — in memory, per mailbox. Once
+ * the claims it was refused over lapse unrenewed, the claim watch's next press forwards it as a
+ * `join`; a renewal, a release, a claim nobody had then, its window's end or a later person's press
+ * voids it.
+ */
+interface WaitingJoin {
+  readonly at: Date;
+  /** Every holder the refusal's look saw but this install, as `installId \0 heartbeat ms`. */
+  readonly seen: ReadonlySet<string>;
+  /** Claims that look could not read, counted: one more or one fewer is a change it did not see. */
+  readonly unreadable: number;
+  /** The person's request body, without the consent marker. */
+  readonly fields: Record<string, unknown>;
+}
+
 /** Who is asking for this phone: a person's press (Start, Connect) or the claim watch. */
 export type ClaimHereBy = "press" | "watch";
 
@@ -302,6 +321,19 @@ const TAKEOVER_ROUTE = "/local/organizer/takeover";
 
 /** `POST /mailboxes/:id/release` — the person's stop, as the row records it. */
 const RELEASE_PATH = (id: string): string => `/mailboxes/${encodeURIComponent(id)}/release`;
+
+/** A person's stop, and a mailbox's removal, in both spellings: each voids the mailbox's waiting join. */
+const RELEASE_ROUTE = /^(?:\/local)?\/mailboxes\/([^/]+)\/release$/;
+const MAILBOX_ROUTE = /^(?:\/local)?\/mailboxes\/([^/]+)$/;
+/** The mailbox id a route matched, or `null`: a malformed one names no mailbox, and the route answers for it. */
+const mailboxIdIn = (m: RegExpExecArray | null): string | null => {
+  if (m === null) return null;
+  try {
+    return decodeURIComponent(m[1]!);
+  } catch {
+    return null;
+  }
+};
 
 /**
  * THE ORIGIN THE ENGINE COMPOSES ITS OWN REQUESTS AGAINST — a name that resolves nowhere.
@@ -410,8 +442,14 @@ export interface PhoneEngine {
   forgetStoredLogin(): Promise<boolean>;
   /** Where the mailbox's servers are, as its stored credentials record them. See {@link PhoneServerSettings}. */
   serverSettings(): Promise<PhoneServerSettings | null>;
-  /** What each mailbox reports — the row's answer, not the gate's optimism. */
-  runtimes(): { organizer: Record<string, OrganizerState>; connection: Record<string, MailboxConnectionState> };
+  /**
+   * What each mailbox reports — the row's answer, not the gate's optimism. `joinWaits`: a person's
+   * refused press waits to be carried out once its claims lapse ({@link WaitingJoin}).
+   */
+  runtimes(): {
+    organizer: Record<string, OrganizerState & { joinWaits?: boolean }>;
+    connection: Record<string, MailboxConnectionState>;
+  };
   /**
    * THE ENGINE'S OWN HARDENED LOGGER, HANDED BACK OUT — the sink's return trip.
    *
@@ -583,6 +621,8 @@ export interface PagedExecutor {
   readonly ingest: PhoneSqlExecutor;
   /** Commit the page now. A page that could not be committed is the drain's failure, thrown here. */
   endPage(): Promise<void>;
+  /** Settles once a page has been committed. */
+  readonly firstPage: Promise<void>;
 }
 
 type Logged = { kind: "run" | "all"; sql: string; params: readonly unknown[]; rows?: string };
@@ -609,6 +649,8 @@ export function pagedExecutor(exec: PhoneSqlExecutor): PagedExecutor {
   let log: Logged[] = [];
   let logBytes = 0;
   let pageLost: unknown = null;
+  let pageCommitted: () => void = () => undefined;
+  const firstPage = new Promise<void>((r) => { pageCommitted = r; });
   /** Settles when the letter in flight ends — what the app's statement waits on, outside the chain. */
   let letterEnded: Promise<void> = Promise.resolve();
   let endLetter: () => void = () => undefined;
@@ -670,6 +712,7 @@ export function pagedExecutor(exec: PhoneSqlExecutor): PagedExecutor {
     logBytes = 0;
     try {
       await exec.run("COMMIT", []);
+      pageCommitted();
       return;
     } catch (first) {
       await exec.run("ROLLBACK", []).catch(() => undefined);
@@ -680,6 +723,7 @@ export function pagedExecutor(exec: PhoneSqlExecutor): PagedExecutor {
         pageOpen = false;
         log = [];
         await exec.run("COMMIT", []);
+        pageCommitted();
       } catch {
         pageOpen = false;
         log = [];
@@ -798,7 +842,7 @@ export function pagedExecutor(exec: PhoneSqlExecutor): PagedExecutor {
     close: () => main.close(),
   };
   return {
-    main, engine, ingest,
+    main, engine, ingest, firstPage,
     endPage: () => serial(async () => {
       drainHears();
       if (letterOpen) return;
@@ -972,6 +1016,7 @@ export async function openPhoneStore(
     ingestDb,
     routeDb,
     endIngestPage: () => paged.endPage(),
+    firstIngestPage: paged.firstPage,
     close: async () => { await paged.main.close(); },
   };
 }
@@ -1223,6 +1268,7 @@ async function composePhoneEngine(
       dateReadCommandSize: dial.dateReadCommandSize ?? PHONE_DATE_READ_COMMAND_SIZE,
     },
     ...(deps.address !== undefined ? { address: deps.address } : {}),
+    ...(deps.displayName ? { displayName: deps.displayName } : {}),
     machineName: deps.machineName,
     installId: deps.installId,
     organizerKind: deps.organizerKind ?? "mobile",
@@ -1287,14 +1333,20 @@ async function composePhoneEngine(
   /* The seed's dial as it stands, for the moment the bounded wait ends; `undefined` is no answer yet. */
   let seedDialNow: DialAnswer | null | undefined;
   void seedDial.then((a) => { seedDialNow = a; });
+  /* SIGNED IN AND THE FIRST PAGE DURABLE ends the wait too: a first sync of a large mailbox runs on
+     behind the open, and the next screen says so. A refusal arrives at the dial, so it never wins here. */
+  const firstPage = seedDial.then((a) => (a?.outcome === "dialled" && store.firstIngestPage
+    ? store.firstIngestPage.then(() => [] as Awaited<typeof launched>)
+    : new Promise<never>(() => undefined)));
   const bounded = opensAtOnce ? null : await Promise.race([
     launched,
+    firstPage,
     new Promise<null>((resolve) => {
       const t = setTimeout(() => resolve(null), timeouts.connectionMs + timeouts.greetingMs);
       (t as unknown as { unref?: () => void }).unref?.();
     }),
   ]);
-  /* A report in hand means every start settled, so the seed's dial has answered too. */
+  /* A report in hand (or the first page) means the seed's dial has answered too. */
   const seedAnswer = bounded === null ? seedDialNow : await seedDial;
   /**
    * A refused launch does not leave the credential it sealed on the way in. `attachLocal` seals the
@@ -1507,6 +1559,23 @@ async function composePhoneEngine(
     readonly lookWas: OrganizerState["holderState"];
   }>();
 
+  /** See {@link WaitingJoin}. Its window is the stale window and the skew bound: a claim live at the press has lapsed or been renewed by then. */
+  const waitingJoins = new Map<string, WaitingJoin>();
+  const joinExpired = (join: WaitingJoin, now: Date): boolean =>
+    now.getTime() >= join.at.getTime() + DEFAULT_STALE_AFTER_MS + MAX_FUTURE_SKEW_MS;
+  /** The claim records a look saw, by install and heartbeat, this install's own left out. */
+  const foreignRecords = (peek: LeasePeek): string[] => peek.holders
+    .filter((h) => h.installId !== deps.installId)
+    .map((h) => `${h.installId}\0${h.heartbeat.getTime()}`);
+  /** The engine's own look, under the peek read's ceiling; a look that did not land is `unreadable`. */
+  const boundedLook = async (mailboxId: string): Promise<LeasePeekAnswer> => {
+    try {
+      return await ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline").race(sidecar.peekOrganizer(mailboxId));
+    } catch (err) {
+      return { answer: "unreadable", op: "list_claims", cause: err };
+    }
+  };
+
   /**
    * The holder's KIND as the stand-down spells it — the closed set, and every member on its own
    * arm. `unknown` is the honest answer for a claim written by a build this one cannot rank, which
@@ -1533,8 +1602,13 @@ async function composePhoneEngine(
    * leaving it standing would put "Organizing" and a hand-back on screen over a mailbox the door
    * had just refused this install a claim on. The door's read is the newer of the two.
    */
-  const organizerStatesWithRefusals = (): Record<string, OrganizerState> => {
-    const states = sidecar.organizerStates();
+  const organizerStatesWithRefusals = (): Record<string, OrganizerState & { joinWaits?: boolean }> => {
+    const states: Record<string, OrganizerState & { joinWaits?: boolean }> = sidecar.organizerStates();
+    const now = deps.now?.() ?? new Date();
+    for (const [mailboxId, join] of waitingJoins) {
+      const state = states[mailboxId];
+      if (state !== undefined && !joinExpired(join, now)) states[mailboxId] = { ...state, joinWaits: true };
+    }
     for (const [mailboxId, refused] of refusedHolders) {
       const state = states[mailboxId];
       if (state === undefined) continue;
@@ -1560,6 +1634,8 @@ async function composePhoneEngine(
     const matched = ORGANIZE_ROUTE.exec(new URL(req.url).pathname);
     if (matched === null) return null;
     const mailboxId = decodeURIComponent(matched[1]!);
+    /* A PERSON'S PRESS REPLACES THE JOIN AN EARLIER ONE LEFT: refused below, it waits on its own look. */
+    if (press?.person === true) dropWaitingJoin(mailboxId, "pressed");
     /* A GATE THIS ENGINE SAW REFUSED FOR A NAMED REASON refuses the press under that reason: a
        consent written now would organize nothing, and the press would be a silent no-op. */
     const gated = sidecar.organizerStates()[mailboxId];
@@ -1590,6 +1666,8 @@ async function composePhoneEngine(
       return null;
     }
     let holder: { readonly name: string; readonly kind: string };
+    /* The look this press already paid for, when the row could not say: a foreign `held`. */
+    let lookedHere: LeasePeekAnswer | null = null;
     if (fromRow.answer === "held") {
       holder = fromRow.holder;
     } else {
@@ -1660,6 +1738,7 @@ async function composePhoneEngine(
         refusedHolders.delete(mailboxId);
         return null;
       }
+      lookedHere = looked;
       /* A HOLDER THE ROW HAD NOT CAUGHT UP WITH. The claim's own display name, through the same
          normaliser the row's column is written with, so the app is handed one spelling. */
       holder = {
@@ -1687,6 +1766,24 @@ async function composePhoneEngine(
           err, mailboxId,
           reason: "a person agreed while another install organizes this mailbox and the consent could "
             + "not be written; nothing was recorded, the press is refused as before and the next asks again",
+        });
+      }
+    }
+    /* AND THE PRESS WAITS, against the claims a look that landed saw live — none of them this install's. */
+    let joinWaits = false;
+    if (consentRecorded && press !== null && press.fields !== null) {
+      const look = lookedHere ?? await boundedLook(mailboxId);
+      if (look.answer === "held" && look.holder.installId !== deps.installId) {
+        const fields: Record<string, unknown> = { ...press.fields };
+        delete fields.consent;
+        waitingJoins.set(mailboxId, {
+          at: deps.now?.() ?? new Date(), seen: new Set(foreignRecords(look.peek)), unreadable: look.peek.unreadable, fields,
+        });
+        joinWaits = true;
+        log("organizer_join_armed", {
+          mailboxId,
+          reason: "a person's press was refused over another install's live claim; if that claim lapses "
+            + "unrenewed, the claim watch carries the press out as a join, and a renewal or a new claim voids it",
         });
       }
     }
@@ -1719,23 +1816,78 @@ async function composePhoneEngine(
       logged: signature,
       lookWas: sidecar.organizerStates()[mailboxId]?.holderState ?? null,
     });
-    return new Response(
-      JSON.stringify({
-        error: {
-          code: "organized_elsewhere",
-          message: "another install is organizing this mailbox",
-        },
-        /* THE HOLDER RIDES THE REFUSAL, because the sentence a person needs names the machine and
-           the app holds no other source for it on this door. Empty strings rather than absent
-           members: the app's reader distinguishes "named nothing" from "no holder" by the STATUS,
-           and an optional member here would collapse them. */
-        holder: { name: holder.name, kind: holder.kind },
-        /* AND WHETHER THIS PRESS'S CONSENT WAS KEPT, so the app's refusal can say both facts:
-           who holds it, and that the person's next Start takes it once they let go. */
-        consentRecorded,
-      }),
-      { status: 409, headers: { "content-type": "application/json" } },
-    );
+    return heldResponse(holder, consentRecorded, joinWaits);
+  };
+
+  /** The 409 a live foreign claim answers, whoever pressed. */
+  const heldResponse = (
+    holder: { readonly name: string; readonly kind: string }, consentRecorded: boolean, joinWaits: boolean,
+  ): Response => new Response(
+    JSON.stringify({
+      error: {
+        code: "organized_elsewhere",
+        message: "another install is organizing this mailbox",
+      },
+      /* THE HOLDER RIDES THE REFUSAL, because the sentence a person needs names the machine and
+         the app holds no other source for it on this door. Empty strings rather than absent
+         members: the app's reader distinguishes "named nothing" from "no holder" by the STATUS,
+         and an optional member here would collapse them. */
+      holder: { name: holder.name, kind: holder.kind },
+      /* AND WHETHER THIS PRESS'S CONSENT WAS KEPT, so the app's refusal can say both facts:
+         who holds it, and that the person's next Start takes it once they let go. */
+      consentRecorded,
+      /* …and whether the press waits to be carried out once the claims it was refused over lapse. */
+      joinWaits,
+    }),
+    { status: 409, headers: { "content-type": "application/json" } },
+  );
+
+  /** Void a mailbox's waiting join, saying why; nothing when none waits. */
+  const dropWaitingJoin = (mailboxId: string, verdict: "pressed" | "stopped" | "removed" | "expired" | "changed"): void => {
+    if (!waitingJoins.delete(mailboxId)) return;
+    log("organizer_join_void", {
+      mailboxId, verdict,
+      reason: "a person's refused press was waiting to be carried out as a join and no longer is: a "
+        + "later press, a stop or a removal replaced it, its window passed, or the claims it was "
+        + "refused over changed (renewed, released, or joined by another); the person's next press decides",
+    });
+  };
+
+  /**
+   * THE WATCH'S PRESS CARRIES A WAITING JOIN OUT — or answers for it. `null`: there is none now, and
+   * the press is answered as before. A look that did not land keeps it (503); a claim folder that no
+   * longer holds exactly the records the refusal saw (one renewed, released or new, or a change in
+   * the ones it could not read) voids it; a live claim keeps it (409); only those same claims, lapsed
+   * unrenewed, spend it, as the person's own press stamped `join` — so the gate removes nothing live.
+   */
+  const spendWaitingJoin = async (req: Request, mailboxId: string): Promise<Response | null> => {
+    const join = waitingJoins.get(mailboxId);
+    if (join === undefined) return null;
+    if (joinExpired(join, deps.now?.() ?? new Date())) {
+      dropWaitingJoin(mailboxId, "expired");
+      return null;
+    }
+    const look = await boundedLook(mailboxId);
+    if (look.answer === "unreadable") return unreadableResponse(look.op);
+    /* A release takes the records away, so a record gone counts as much as one new: one key per install. */
+    const records = foreignRecords(look.peek);
+    if (records.length !== join.seen.size || records.some((r) => !join.seen.has(r))
+      || look.peek.unreadable !== join.unreadable) {
+      dropWaitingJoin(mailboxId, "changed");
+      return null;
+    }
+    if (look.answer === "held" && look.holder.installId !== deps.installId) {
+      return heldResponse(
+        { name: organizerDisplayName(look.holder.displayName) ?? "", kind: look.holder.kind }, false, true,
+      );
+    }
+    waitingJoins.delete(mailboxId);
+    log("organizer_join_carried_out", {
+      mailboxId,
+      reason: "the claims a person's press was refused over lapsed with no renewal and no new claim, so "
+        + "the press is carried out now as a join, which the gate refuses over any live claim",
+    });
+    return sidecar.handle(forwardWithJoinIntent(req, { raw: JSON.stringify(join.fields), fields: join.fields, person: true }));
   };
 
   /**
@@ -1828,6 +1980,11 @@ async function composePhoneEngine(
          door is not served": answering 404 there would lose the holder the panel renders. The
          one write it makes is a PERSON's consent on a refused press: no stamp, no intent. */
       const isConsent = req.method === "POST" && ORGANIZE_ROUTE.test(new URL(req.url).pathname);
+      /* A STOP OR A REMOVAL ENDS A WAITING JOIN, whatever the route behind answers. */
+      const stopped = mailboxIdIn(req.method === "POST" ? RELEASE_ROUTE.exec(new URL(req.url).pathname) : null);
+      const removed = mailboxIdIn(req.method === "DELETE" ? MAILBOX_ROUTE.exec(new URL(req.url).pathname) : null);
+      if (stopped !== null) dropWaitingJoin(stopped, "stopped");
+      if (removed !== null) dropWaitingJoin(removed, "removed");
       const press = isConsent ? await readOrganizePress(req) : null;
       const held = await refuseIfOrganizedElsewhere(req, press);
       if (held !== null) return held;
@@ -1861,6 +2018,9 @@ async function composePhoneEngine(
          watch only RETURNS a mailbox; a freed one waits for the person's press. */
       if (!press.person) {
         const mailboxId = decodeURIComponent(ORGANIZE_ROUTE.exec(new URL(req.url).pathname)![1]!);
+        /* …UNLESS A PERSON'S REFUSED PRESS WAITS: the watch carries it out once its claims lapsed. */
+        const spent = await spendWaitingJoin(req, mailboxId);
+        if (spent !== null) return spent;
         let consented: boolean | null;
         try {
           consented = await consentOnRow(mailboxId);
@@ -2184,7 +2344,10 @@ async function composePhoneEngine(
     runtimes: () => ({ organizer: organizerStatesWithRefusals(), connection: sidecar.connectionStates() }),
     /* THE SAME `log` EVERY LINE ABOVE GOES THROUGH — not a second one built for the app. */
     log,
-    stop: () => sidecar.stop(),
+    stop: () => {
+      waitingJoins.clear();
+      return sidecar.stop();
+    },
   } };
 }
 

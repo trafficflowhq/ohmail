@@ -16,7 +16,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   HttpAdapter, OhmailEngine, type EngineMutation, type MutationResult, type SqlExecutor, type SqlRow, type SqlValue,
 } from "@ohmail/client-engine";
-import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
+import { outboundToMail, type MailboxAdapter, type OutboundMessage } from "@trafficflow/core/adapters/imap";
 import type { RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
 import { bootEngine, LOCAL_ENGINE_ORIGIN } from "../../mobile/src/engine/boot.js";
@@ -109,7 +110,7 @@ const refused = (): Error =>
   Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:993"), { code: "ECONNREFUSED", syscall: "connect" });
 
 /** A quiet mailbox whose every dial refuses once `net.cut` is set; `sent` counts deliveries. */
-function mailbox(net: { cut: boolean; sent: number }): () => MailboxAdapter {
+function mailbox(net: { cut: boolean; sent: number; delivered?: OutboundMessage[] }): () => MailboxAdapter {
   const meta = new MemoryMeta();
   return () => ({
     leaseIo: () => meta,
@@ -128,9 +129,10 @@ function mailbox(net: { cut: boolean; sent: number }): () => MailboxAdapter {
     async setFlags(): Promise<void> {},
     async scanSentRecipients(): Promise<string[]> { return []; },
     async watch(): Promise<() => Promise<void>> { return async () => {}; },
-    async send(): Promise<{ providerMessageId: string }> {
+    async send(msg: OutboundMessage): Promise<{ providerMessageId: string }> {
       if (net.cut) throw refused();
       net.sent += 1;
+      net.delivered?.push(msg);
       return { providerMessageId: `<sent-${net.sent}@phone.test>` };
     },
     async messageInSent(): Promise<boolean> { return false; },
@@ -150,7 +152,7 @@ afterEach(async () => {
 });
 
 interface Scene {
-  engine: PhoneEngine; client: OhmailEngine; mailboxId: string; net: { cut: boolean; sent: number };
+  engine: PhoneEngine; client: OhmailEngine; mailboxId: string; net: { cut: boolean; sent: number; delivered: OutboundMessage[] };
   drafts: () => { id: string; status: string }[];
   /** The client's clock: the waits the engine names are waited out on it, never in real time. */
   advance: (ms: number) => void;
@@ -159,7 +161,7 @@ interface Scene {
 async function scene(): Promise<Scene> {
   let t = Date.now();
   const exec = nodeExecutor();
-  const net = { cut: false, sent: 0 };
+  const net = { cut: false, sent: 0, delivered: [] as OutboundMessage[] };
   live = await startPhoneEngine({
     exec,
     imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
@@ -427,5 +429,47 @@ describe.runIf(ON_DEVICE_STORE)("a Send cancelled with no network, on the phone'
     const res = await s.actions.sendNew(s.mailboxId, to, "Second thoughts", words, null, null, [], row, undefined, mirrored().contentRevision ?? null);
     expect(await s.actions.withdrawSend(res.key!)).toBe("withdrawn");
     expect(mirrored().body, "Drafts listed the words before the send").toBe(words);
+  }, 60_000);
+});
+
+/** The raw message the mail server would get, headers only. */
+function headersOf(msg: OutboundMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    new MailComposer(outboundToMail(msg, "<mid@phone.test>", new Date())).compile().build((err: Error | null, buf: Buffer) => {
+      if (err) reject(err);
+      else resolve(buf.toString("utf8").split("\r\n\r\n")[0]!);
+    });
+  });
+}
+
+describe.runIf(ON_DEVICE_STORE)("the phone's own engine sends what the phone composed", () => {
+  it("a 5 MiB file from the standalone door is delivered once, intact", async () => {
+    const s = await scene();
+    const bytes = Buffer.alloc(5 * 1024 * 1024);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31) & 0xff;
+    const res = await press(s.client, {
+      ...letter(s.mailboxId),
+      attachments: [{ filename: "talk.pdf", contentType: "application/pdf", contentBase64: bytes.toString("base64") }],
+    } as EngineMutation);
+    expect(res.status).toBe("confirmed");
+    expect(s.net.sent).toBe(1);
+    const sent = s.net.delivered[0]!.attachments ?? [];
+    expect(sent.map((a) => a.filename)).toEqual(["talk.pdf"]);
+    expect(Buffer.from(sent[0]!.content).equals(bytes), "the file arrived changed").toBe(true);
+  }, 60_000);
+
+  it("a letter carries the recipient's name in To and the mailbox's name in From", async () => {
+    const s = await scene();
+    const named = await s.engine.handle(new Request(`http://engine.invalid/local/mailboxes/${s.mailboxId}/name`, {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${s.engine.sessionToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ displayName: "Ada Lovelace" }),
+    }));
+    expect(named.status, await named.clone().text()).toBe(200);
+    const res = await press(s.client, { ...letter(s.mailboxId), to: [{ name: "Dana Peer, Esq.", address: "peer@example.test" }] } as EngineMutation);
+    expect(res.status).toBe("confirmed");
+    const headers = await headersOf(s.net.delivered[0]!);
+    expect(headers).toMatch(/^From: Ada Lovelace <a@b\.test>$/m);
+    expect(headers).toMatch(/^To: "Dana Peer, Esq\." <peer@example\.test>$/m);
   }, 60_000);
 });

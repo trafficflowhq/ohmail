@@ -8,7 +8,7 @@ import {
 import {
   createLogger, htmlWords, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime, prepareHtmlForStorage, recordSentMessage,
   SendNotSubmitted, SentCopyAppendFailed,
-  type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundMessage,
+  type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundAddress, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -784,6 +784,21 @@ export function duplicateSendSentence(firstSendStatus: string, at: Date): string
   // for. The caller retries rather than settling on this.
   return "This exact message is already being sent from this mailbox. Nothing was sent again; "
     + "ohmail is still waiting to hear how the first attempt ended.";
+}
+
+/** The longest display name a header carries — the drafts' own bound. */
+const OUTBOUND_NAME_MAX = 100;
+
+/**
+ * A sender or recipient as the outbound message carries it: the name with its address, or the bare
+ * address when there is no name. Control characters go (a CR or LF must never reach a header),
+ * whitespace collapses, and the name is capped. Never a `"Name <addr>"` string (`OutboundAddress`).
+ */
+export function outboundAddress(a: { name?: string | null; address: string }): OutboundAddress {
+  // eslint-disable-next-line no-control-regex
+  const name = Array.from((a.name ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim())
+    .slice(0, OUTBOUND_NAME_MAX).join("").trim();
+  return name === "" ? a.address : { name, address: a.address };
 }
 
 /**
@@ -2620,7 +2635,7 @@ export class SendService {
       if (!d) throw new ServiceError("not_found", 404, "draft not found");
 
       const [mb] = await tx.select({
-        address: mailboxes.address, status: mailboxes.status,
+        address: mailboxes.address, status: mailboxes.status, displayName: mailboxes.displayName,
         smtpMaxSizeBytes: mailboxes.smtpMaxSizeBytes,
       }).from(mailboxes)
         .where(eq(mailboxes.id, d.mailboxId)).limit(1);
@@ -2928,10 +2943,10 @@ export class SendService {
       // them is visible. Empty arrays are omitted so a plain send builds the exact same options it
       // always did. The Cc/Bcc round-trip test mutation-watches the invariant.
       const msg: OutboundMessage = {
-        from: mb?.address ?? "",
-        to: to.map((a) => a.address),
-        ...(cc.length ? { cc: cc.map((a) => a.address) } : {}),
-        ...(bcc.length ? { bcc: bcc.map((a) => a.address) } : {}),
+        from: outboundAddress({ name: mb?.displayName ?? null, address: mb?.address ?? "" }),
+        to: to.map(outboundAddress),
+        ...(cc.length ? { cc: cc.map(outboundAddress) } : {}),
+        ...(bcc.length ? { bcc: bcc.map(outboundAddress) } : {}),
         subject: d.subject,
         // The user's text, then the quoted original on a forward whose words the store holds
         // (`composeForward`); otherwise the note alone — a normal send, or a forward whose words

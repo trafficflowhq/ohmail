@@ -46,9 +46,14 @@ import {
   composeAttachCap,
 } from "@ohmail/client-engine";
 import {
+  PHONE_SEND_MAX_TOTAL_BYTES,
   admitPicked,
   base64SizeBytes,
+  forwardCaps,
   phoneAttachCap,
+  phoneSendSurface,
+  readWithin,
+  sessionSendSurface,
   phoneSendNeedsContent,
   photoName,
   pickerGaveNoName,
@@ -61,6 +66,12 @@ import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, stableActions, type LiveWorldActions } from "../src/state/live";
 import { Copy } from "../src/copy";
+import { DE } from "../src/copy.de";
+import { phoneUploadAdmits } from "../src/engine/boot";
+import { connectProfile, helloReader, type PairingEnv } from "../src/net/pairing";
+import { BearerRegistry } from "../src/net/bearer-registry";
+import { ServerProfileStore } from "../src/state/servers";
+import { failedSendLine } from "../src/ui/send-failed";
 import { dto, listen, mailServer, ruleDto } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 
@@ -108,6 +119,44 @@ describe("the cap is the ONE shared bound — composeAttachCap of the mailbox's 
     const announced = 2 * MIB;
     expect(phoneAttachCap([box("mb-1", announced)], "mb-1")).toBe(composeAttachBudgetFor(announced));
     expect(phoneAttachCap([box("mb-1", announced)], "mb-1")).toBeLessThan(COMPOSE_ATTACH_MAX_TOTAL_BYTES);
+  });
+});
+
+describe("a phone carries more than the hosted request body where its send can", () => {
+  it("names a surface per door: its own engine, a desktop host, a self-host server, Cloud with staging", () => {
+    expect(phoneSendSurface({ standalone: true, flavor: null, staging: null })).toBe(PHONE_SEND_MAX_TOTAL_BYTES);
+    expect(phoneSendSurface({ standalone: false, flavor: "desktop-host", staging: null })).toBe(PHONE_SEND_MAX_TOTAL_BYTES);
+    expect(phoneSendSurface({ standalone: false, flavor: "selfhost", staging: false })).toBe(PHONE_SEND_MAX_TOTAL_BYTES);
+    expect(phoneSendSurface({ standalone: false, flavor: "managed", staging: true })).toBe(PHONE_SEND_MAX_TOTAL_BYTES);
+    // Cloud without staging armed, or not answered yet, and a door this build does not know: the strict bound.
+    expect(phoneSendSurface({ standalone: false, flavor: "managed", staging: false })).toBeUndefined();
+    expect(phoneSendSurface({ standalone: false, flavor: "managed", staging: null })).toBeUndefined();
+    expect(phoneSendSurface({ standalone: false, flavor: "elsewhere", staging: true })).toBeUndefined();
+  });
+
+  it("a 4 MiB file attaches on the phone's own engine and is refused on Cloud without staging", () => {
+    const mailboxes = [box("mb-1", null)];
+    const four = [picked("talk.pdf", 4 * MIB)];
+    const own = phoneAttachCap(mailboxes, "mb-1", phoneSendSurface({ standalone: true, flavor: null, staging: null }));
+    expect(admitPicked([], four, own).overCap).toBe(0);
+    const cloud = phoneAttachCap(mailboxes, "mb-1", phoneSendSurface({ standalone: false, flavor: "managed", staging: false }));
+    expect(cloud).toBe(COMPOSE_ATTACH_MAX_TOTAL_BYTES);
+    expect(admitPicked([], four, cloud).overCap).toBe(1);
+    // A forward's own files follow the same surface.
+    expect(forwardCaps(mailboxes, "mb-1", PHONE_SEND_MAX_TOTAL_BYTES).phone).toBe(own);
+  });
+
+  it("a mailbox's small SIZE still binds under the larger surface", () => {
+    const cap = phoneAttachCap([box("mb-1", 2 * MIB)], "mb-1", PHONE_SEND_MAX_TOTAL_BYTES);
+    expect(cap).toBe(composeAttachBudgetFor(2 * MIB));
+  });
+
+  it("a file past the room left is not read at all", () => {
+    expect(readWithin(5 * MIB, 4 * MIB)).toBe(false);
+    expect(readWithin(4 * MIB, 4 * MIB)).toBe(true);
+    // A picker that says no size is read, and the cap judges the bytes.
+    expect(readWithin(null, 4 * MIB)).toBe(true);
+    expect(readWithin(undefined, 1)).toBe(true);
   });
 });
 
@@ -256,11 +305,11 @@ describe("the sheet's wiring (source, not render — this workspace has no RN re
 
   it("the cap on screen is the cap the admit rule refuses against, from the shared bound", () => {
     // The cap is read from the mailbox this composer SENDS FROM — an opened draft's own, the
-    // parent's for a reply or forward, the engine's compose-from fallback for a mail with no parent,
-    // or the sender standing in for a draft's mailbox that cannot send (`compose-sender.ts`).
-    expect(COMPOSER).toContain("const mailboxId = draft?.mailboxId ?? m?.mailboxId ?? w.mailboxes.sendingId;");
+    // parent's for a reply or forward, the resolved From for a mail with no parent, or the sender
+    // standing in for a draft's mailbox that cannot send (`compose-sender.ts`).
+    expect(COMPOSER).toContain("const mailboxId = sender !== null ? sender.keepFrom : draft?.mailboxId ?? m?.mailboxId ?? w.mailboxes.sendingId;");
     expect(COMPOSER).toContain("const sendFrom = sender?.sendFrom ?? mailboxId;");
-    expect(COMPOSER).toContain('const attachCap = phoneAttachCap(w.mailboxes.rows, sendFrom ?? "")');
+    expect(COMPOSER).toContain('const attachCap = phoneAttachCap(w.mailboxes.rows, sendFrom ?? "", sendSurface)');
     expect(COMPOSER).toContain("{Copy.attachCap(sizeLabel(attachCap))}");
     // Admitted AFTER the shrink (`compose-attach-shrinks-photos.test.ts`), against the same cap.
     expect(COMPOSER).toContain("admitPicked(attachments, picked, attachCap)");
@@ -366,5 +415,174 @@ describe("attachments on the real wire — they ride the SEND, and an empty mess
     expect(body.attachments?.map((a) => a.filename)).toEqual(["notes.txt"]);
     boot.store.close();
     fake.server.close();
+  });
+});
+
+/* A Cloud phone stages a file past the inline body; the bearer never leaves its origin. */
+describe("a Cloud phone stages a large file, sent once, with no credential on the upload", () => {
+  const peerTo = [{ name: null, address: "peer@fake.test" }];
+  async function cloudScene(grant: (n: number) => string) {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    fake.addRule(ruleDto("r-allow", "sender", "sender@fake.test", "INBOX"));
+    fake.addMessage(dto("m1", { subject: "Welcome" }));
+    fake.setStaging(grant);
+    const bearerSaw: string[] = [];
+    const puts: Array<{ url: string; headers: Record<string, string> }> = [];
+    /* The plain transport: storage answers here, everything else goes to the loopback. */
+    const plain = async (url: string, init?: RequestInit): Promise<Response> => {
+      if (!url.startsWith(origin)) {
+        puts.push({ url, headers: Object.fromEntries(new Headers(init?.headers).entries()) });
+        return new Response("", { status: 200 });
+      }
+      return globalThis.fetch(url, init);
+    };
+    /* The bearer manager's shape: it stamps the live token on whatever it is handed. */
+    const bearer = async (url: string, init?: RequestInit): Promise<Response> => {
+      bearerSaw.push(url);
+      const headers = { ...Object.fromEntries(new Headers(init?.headers).entries()), authorization: "Bearer live-token" };
+      return plain(url, { ...init, headers });
+    };
+    const boot = await bootEngine({ ...deps, fetch: plain }, {
+      origin, accountId: "acct-1", stageAttachments: true,
+      auth: { headers: () => ({ authorization: "Bearer live-token" }), fetch: bearer },
+    });
+    if (boot.kind !== "ready") throw new Error("boot refused");
+    await boot.verifyIdentity();
+    await boot.engine.start();
+    const toasts: string[] = [];
+    const actions = liveActions({ engine: boot.engine, toast: (m) => toasts.push(sayArg(m)), uuid: deps.uuid, zone: "UTC" });
+    return { fake, boot, actions, toasts, puts, bearerSaw };
+  }
+
+  it("a 4 MiB file is minted, PUT without the bearer, and sent by reference once", async () => {
+    const c = await cloudScene((n) => `https://storage.fake.test/o/${n}?token=t`);
+    const res = await c.actions.sendNew("mb-1", peerTo, "Big", "", null, null, [picked("talk.pdf", 4 * MIB)]);
+    expect(res.outcome).toBe("sent");
+    expect(c.puts.map((p) => p.url)).toEqual(["https://storage.fake.test/o/1?token=t"]);
+    expect(c.puts[0]!.headers.authorization).toBeUndefined();
+    expect(c.bearerSaw.filter((u) => u.startsWith("https://storage.fake.test/"))).toEqual([]);
+    const sends = c.fake.seen.filter((r) => r.method === "POST" && /\/drafts\/[^/]+\/send$/.test(r.url));
+    expect(sends).toHaveLength(1);
+    const body = JSON.parse(sends[0]!.body) as { stagedAttachmentIds?: string[]; attachments?: unknown };
+    expect(body.stagedAttachmentIds).toEqual(["ticket-1"]);
+    expect(body.attachments).toBeUndefined();
+    c.boot.store.close();
+    c.fake.server.close();
+  });
+
+  it("an http or address-literal grant is refused with nothing PUT and nothing sent", async () => {
+    for (const grant of ["http://storage.fake.test/o/1", "https://10.0.0.5/o/1", "https://[::1]/o/1", "https://u:p@storage.fake.test/o/1"]) {
+      const c = await cloudScene(() => grant);
+      const res = await c.actions.sendNew("mb-1", peerTo, "Big", "", null, null, [picked("talk.pdf", 4 * MIB)]);
+      expect(res.outcome, grant).toBe("failed");
+      expect(res.failure, grant).toBe("replyStagingRefused");
+      expect(c.puts, grant).toEqual([]);
+      expect(c.fake.seen.some((r) => /\/send$/.test(r.url)), grant).toBe(false);
+      c.boot.store.close();
+      c.fake.server.close();
+    }
+  });
+
+  it("3 MiB or less stays inline: no mint, the bytes on the send", async () => {
+    const c = await cloudScene((n) => `https://storage.fake.test/o/${n}`);
+    expect((await c.actions.sendNew("mb-1", peerTo, "Small", "", null, null, [picked("a.bin", 3 * MIB)])).outcome).toBe("sent");
+    expect(c.fake.seen.filter((r) => r.url === "/attachments/staging")).toEqual([]);
+    expect(c.puts).toEqual([]);
+    c.boot.store.close();
+    c.fake.server.close();
+  });
+
+  it("admits only an https grant on a named host with no credentials in it", () => {
+    expect(phoneUploadAdmits("https://storage.example.org/o/1?token=t")).toBe(true);
+    for (const url of ["http://storage.example.org/o/1", "https://127.0.0.1/o", "https://localhost/o", "https://storage/o",
+      "https://a:b@storage.example.org/o", "not a url"]) expect(phoneUploadAdmits(url), url).toBe(false);
+  });
+
+  it("each staging refusal has its own sentence in both languages", () => {
+    for (const kind of ["replyStagingRefused", "replyStagingUnreachable", "replyStagingFailed"] as const) {
+      expect(failedSendLine(kind, null, true)).toBe(Copy[kind]);
+      expect(DE[kind].length).toBeGreaterThan(0);
+      expect(DE[kind]).not.toBe(Copy[kind]);
+    }
+    expect(Copy.replyTooLarge).toMatch(/file/);
+  });
+});
+
+/* The session the app builds from a stored profile: its door decides staging, its /hello arms it. */
+describe("a session built from its profile stages only on Cloud, and only where /hello armed it", () => {
+  const peerTo = [{ name: null, address: "peer@fake.test" }];
+  async function profileScene(flavor: "managed" | "selfhost", hello: Record<string, unknown> | null) {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    fake.addRule(ruleDto("r-allow", "sender", "sender@fake.test", "INBOX"));
+    fake.addMessage(dto("m1", { subject: "Welcome" }));
+    fake.setHello(hello);
+    fake.setStaging((n) => `https://storage.fake.test/o/${n}`);
+    const puts: Array<{ url: string; headers: Record<string, string> }> = [];
+    const bearerSaw: string[] = [];
+    const plain = async (url: string, init?: RequestInit): Promise<Response> => {
+      if (!url.startsWith(origin)) {
+        puts.push({ url, headers: Object.fromEntries(new Headers(init?.headers).entries()) });
+        return new Response("", { status: 200 });
+      }
+      return globalThis.fetch(url, init);
+    };
+    const kv = new Map<string, string>();
+    const profiles = new ServerProfileStore({
+      get: async (k) => kv.get(k) ?? null, set: async (k, v) => void kv.set(k, v), remove: async (k) => void kv.delete(k),
+    });
+    const env: PairingEnv = {
+      profiles, engineDeps: { ...deps, fetch: plain }, bearers: new BearerRegistry(),
+      fetchImpl: async (url, init) => { bearerSaw.push(url); return plain(url, init as RequestInit | undefined); },
+    };
+    const row = await profiles.add({ origin, flavor, accountId: "acct-1", refreshToken: "ref-1", apiBase: origin });
+    const out = await connectProfile(env, row);
+    if (out.kind !== "connected") throw new Error("connect refused");
+    await out.session.verifyIdentity();
+    await out.session.engine.start();
+    const said = helloReader(out.session);
+    await said.settled();
+    const cap = phoneAttachCap([box("mb-1", null)], "mb-1", sessionSendSurface(out.session, said));
+    const actions = liveActions({ engine: out.session.engine, toast: () => undefined, uuid: deps.uuid, zone: "UTC" });
+    const done = () => { out.session.store.close(); fake.server.close(); };
+    return { fake, cap, actions, puts, bearerSaw, done };
+  }
+  const minted = (fake: ReturnType<typeof mailServer>) => fake.seen.filter((r) => r.url === "/attachments/staging");
+  const sends = (fake: ReturnType<typeof mailServer>) => fake.seen.filter((r) => r.method === "POST" && /\/drafts\/[^/]+\/send$/.test(r.url));
+
+  it("Cloud with staging armed: a 4 MiB file is admitted, minted, PUT with no credential, and sent once", async () => {
+    const c = await profileScene("managed", { staging: true });
+    const four = [picked("talk.pdf", 4 * MIB)];
+    expect(admitPicked([], four, c.cap).overCap).toBe(0);
+    expect((await c.actions.sendNew("mb-1", peerTo, "Big", "", null, null, four)).outcome).toBe("sent");
+    expect(minted(c.fake)).toHaveLength(1);
+    expect(c.puts.map((p) => p.url)).toEqual(["https://storage.fake.test/o/1"]);
+    expect(c.puts[0]!.headers.authorization).toBeUndefined();
+    expect(c.bearerSaw.filter((u) => u.startsWith("https://storage.fake.test/"))).toEqual([]);
+    expect(sends(c.fake)).toHaveLength(1);
+    c.done();
+  });
+
+  it("Cloud with staging off, or no /hello at all: the 3 MiB bound", async () => {
+    for (const hello of [{ staging: false }, null]) {
+      const c = await profileScene("managed", hello);
+      expect(c.cap, JSON.stringify(hello)).toBe(COMPOSE_ATTACH_MAX_TOTAL_BYTES);
+      expect(admitPicked([], [picked("talk.pdf", 4 * MIB)], c.cap).overCap).toBe(1);
+      c.done();
+    }
+  });
+
+  it("a self-host server takes the 4 MiB file inline: no mint, no PUT", async () => {
+    const c = await profileScene("selfhost", { staging: true });
+    const four = [picked("talk.pdf", 4 * MIB)];
+    expect(admitPicked([], four, c.cap).overCap).toBe(0);
+    expect((await c.actions.sendNew("mb-1", peerTo, "Big", "", null, null, four)).outcome).toBe("sent");
+    expect(minted(c.fake)).toEqual([]);
+    expect(c.puts).toEqual([]);
+    const body = JSON.parse(sends(c.fake)[0]!.body) as { attachments?: unknown[]; stagedAttachmentIds?: unknown };
+    expect(body.attachments).toHaveLength(1);
+    expect(body.stagedAttachmentIds).toBeUndefined();
+    c.done();
   });
 });

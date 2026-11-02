@@ -788,6 +788,9 @@ describe("a stood-down install keeps reading its mailbox", () => {
    *  - `suggestNew` buys a Screener suggestion for senders that just arrived. It writes no triage
    *    state and surfaces nothing in the mailbox; a suggestion is this device's own answer to its
    *    own queue.
+   *  - `tidyGoneLetters` empties this install's own copies of letters already gone from the server
+   *    (a preview, search words, a summary, a tracker's address, header lines): it decides nothing
+   *    and moves nothing, and a reader's store holds such letters as an organizer's does.
    * `resurfaceDue` is neither: it writes the triage state the mailbox's organizer owns.
    */
   it("every pass the drain schedules through `onceForTheAccount` is gated, or named here", () => {
@@ -801,7 +804,7 @@ describe("a stood-down install keeps reading its mailbox", () => {
      * and a reader records the same fact for every message it ingests.
      */
     const UNGATED_BY_DECISION = new Set([
-      "suggestNew", "backfillStoredNames", "backfillSenderChecks", "backfillListAddresses",
+      "suggestNew", "backfillStoredNames", "backfillSenderChecks", "backfillListAddresses", "tidyGoneLetters",
     ]);
 
     const found: Array<{ pass: string; line: number; gated: boolean }> = [];

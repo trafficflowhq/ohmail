@@ -7,7 +7,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, changeLog, folderState, mailboxes, messageBodies, messages, routingDecisions, rules,
+  accountSettings, accounts, changeLog, folderState, mailboxes, messages, routingDecisions, rules,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
@@ -17,7 +17,6 @@ import {
 import {
   screenerActConsentFrom, screenerAutoActPass, type ScreenerActConsent,
 } from "../src/screener-auto-act.js";
-import { newScreenerAutoWalk, screenerAutoApplyPass } from "../src/screener-auto.js";
 import { repoWithFailingMethod } from "./_fault.js";
 
 /**
@@ -31,8 +30,9 @@ import { repoWithFailingMethod } from "./_fault.js";
  * Filed automatically to put back, where the press, a person deciding about the address, files every
  * held letter under their rule. The seeded letters carry the provider's `pass`, as a Gmail-held
  * mailbox's would. The last
- * two arms hold the consent: the no-AI switch (`screener_auto_apply_at`) arms only the
- * deterministic pass, driven on the lane's real Postgres as the worker's cycle tail drives both.
+ * two arms hold the consent: the old no-AI switch (`screener_auto_apply_at`) arms nothing, driven on
+ * the lane's real Postgres as the worker's cycle tail drives the act. Advice to let a sender in files
+ * nothing on this store either: only a person's press admits.
  *
  * MUTATIONS WATCHED (each restored, `cmp`-proven): `stampBaseline: false` → `true` ⇒ the divergence
  * arm; the consent re-ask + `return null` deleted ⇒ the revoke arm; the consent probe deleted ⇒
@@ -44,7 +44,6 @@ const AVAILABLE = await realPgAvailable();
 const SCREENER = "ohmail/Screener";
 const SPAM = "ohmail/Quarantine";
 const NOW = new Date("2026-09-22T10:00:00.000Z");
-const READS = "ohmail/News";
 /** A consent that is always given — the pass's own mechanics, apart from the column. */
 const GIVEN: ScreenerActConsent = { stillGiven: async () => true };
 /**
@@ -196,49 +195,21 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     for (const id of ids) expect((await intentOf(id)).desired).toBe(SCREENER);
   }, 60_000);
 
-  /** Plain strong bulk held at the gate: List-Unsubscribe plus a list marker, the floor's shape. */
-  async function bulkHeld(accountId: string, mailboxId: string): Promise<string> {
-    const [m] = await db.insert(messages).values({
-      accountId, mailboxId, bodyHash: `bulk-${randomUUID()}`, dedupKey: `bulk:${randomUUID()}`,
-      subject: "The weekly roundup", fromAddress: `news-${accountId.slice(0, 8)}@shop.test`,
-      nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
-    }).returning();
-    await db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null,
-      headers: { "list-unsubscribe": ["<https://shop.test/u>"], "list-id": ["<news.shop.test>"] },
-    });
-    await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
-      lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
-    });
-    return m!.id;
-  }
-
-  /* THE NO-AI SWITCH ARMS NO AI. Settings → Screening's "File obvious bulk out of my Screener for
-     me" says "Deterministic rules only — no AI" and writes `screener_auto_apply_at`. Driven as the
-     worker's cycle tail drives both passes: the deterministic one, then the act with the consent
-     every production caller passes (`consent: null`, pinned by the callers census). Red at the
-     base, where the act took that switch as its opt-in and filed the stranger into Spam. */
-  it("with only the no-AI switch on, the act files nothing and the deterministic pass still files bulk", async () => {
+  /* THE OLD NO-AI SWITCH ARMS NO AI. It wrote `screener_auto_apply_at`, which nothing reads now.
+     Driven as the worker's cycle tail drives the act, with the consent every production caller
+     passes (pinned by the callers census). Red at an earlier base, where the act took that switch
+     as its opt-in and filed the stranger into Spam. */
+  it("with only the old no-AI switch on, the act files nothing", async () => {
     const w = await seed(1);
     // Buying suggestions is not consent to act on them either.
     await db.update(accountSettings).set({ autoSuggestAt: NOW })
       .where(eq(accountSettings.accountId, w.accountId));
-    const bulk = await bulkHeld(w.accountId, w.mailboxId);
-
-    const applied = await screenerAutoApplyPass(
-      db as unknown as Tx, { accountId: w.accountId, walk: newScreenerAutoWalk() }, NOW,
-    );
     const acted = await screenerAutoActPass(
       db as unknown as Tx, { accountId: w.accountId, consent: cycleTailConsent(w.accountId) }, NOW,
     );
-
     expect(acted, "the no-AI switch armed the act").toMatchObject({ ran: false, filed: 0 });
     expect((await intentOf(w.ids[0]!)).desired, "a suggestion was acted on").toBe(SCREENER);
     expect(await ruleOf(w.accountId, w.senders[0]!), "the act promoted a rule").toBeNull();
-    // CONTROL: the switch still files what it says it files.
-    expect(applied).toMatchObject({ ran: true, moved: 1 });
-    expect((await intentOf(bulk)).desired).toBe(READS);
   }, 60_000);
 
   /* CONTROL: the act's own consent, given, still files — with the no-AI switch OFF, so nothing but
@@ -369,35 +340,14 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     return { accountId: w.accountId, mailboxId: w.mailboxId, id: m!.id, sender };
   }
 
-  it("a brand's own domain its provider did not confirm waits; the same sender confirmed is filed", async () => {
-    const unconfirmed = await brandHeld("unavailable");
-    const r = await screenerAutoActPass(db as unknown as Tx, { accountId: unconfirmed.accountId, consent: GIVEN }, NOW);
-    expect(r).toMatchObject({ ran: true, filed: 0, unverified: 1 });
-    expect((await intentOf(unconfirmed.id)).desired).toBe(SCREENER);
-    expect(await ruleOf(unconfirmed.accountId, unconfirmed.sender)).toBeNull();
-
-    const confirmed = await brandHeld("pass");
-    const ok = await screenerAutoActPass(db as unknown as Tx, { accountId: confirmed.accountId, consent: GIVEN }, NOW);
-    expect(ok).toMatchObject({ filed: 1, unverified: 0 });
-    expect((await intentOf(confirmed.id)).desired).toBe("INBOX");
-  }, 60_000);
-
-  it("a confirmed representative does not carry an unconfirmed letter of the same address held beside it", async () => {
-    const w = await brandHeld("pass");
-    const [m] = await db.insert(messages).values({
-      accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `forged-${w.accountId}`,
-      dedupKey: `forged:${w.accountId}`, subject: "Your receipt", fromAddress: w.sender, authVerdict: "unavailable",
-      // Backdated by its own Date header, so the confirmed letter stays the representative.
-      date: new Date("2020-01-01T00:00:00Z"), nativeLocator: { folder: SCREENER, ref: "1:901" },
-    }).returning();
-    await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
-      lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
-    });
-    const r = await screenerAutoActPass(db as unknown as Tx, { accountId: w.accountId, consent: GIVEN }, NOW);
-    expect(r).toMatchObject({ filed: 0, unverified: 1 });
-    expect((await intentOf(m!.id)).desired).toBe(SCREENER);
-    expect(await ruleOf(w.accountId, w.sender)).toBeNull();
+  it("advice to let a sender in files nothing and writes nothing, confirmed by its provider or not", async () => {
+    for (const verdict of ["unavailable", "pass"]) {
+      const w = await brandHeld(verdict);
+      const r = await screenerAutoActPass(db as unknown as Tx, { accountId: w.accountId, consent: GIVEN }, NOW);
+      expect(r, verdict).toMatchObject({ ran: true, filed: 0, kept: 1 });
+      expect((await intentOf(w.id)).desired, verdict).toBe(SCREENER);
+      expect(await ruleOf(w.accountId, w.sender), verdict).toBeNull();
+    }
   }, 60_000);
 
   /** Another sender's held letter in the same account, with no advice of its own. */
@@ -416,26 +366,6 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     });
     return m!.id;
   }
-
-  it("each sender's own letters: another sender's unconfirmed letter does not hold a confirmed brand sender", async () => {
-    const w = await brandHeld("pass");
-    const stranger = await heldBeside(w, "anna@studio-nord.example", 902, { authVerdict: "unavailable" });
-    const r = await screenerAutoActPass(db as unknown as Tx, { accountId: w.accountId, consent: GIVEN }, NOW);
-    expect(r, "a confirmed sender was held for another sender's letter").toMatchObject({ filed: 1, unverified: 0 });
-    expect((await intentOf(w.id)).desired).toBe("INBOX");
-    expect((await intentOf(stranger)).desired).toBe(SCREENER);
-  }, 60_000);
-
-  it("each sender's own letters: another sender's marked letter does not hold a confirmed brand sender", async () => {
-    const w = await brandHeld("pass");
-    const phish = await heldBeside(w, "kartenservice@gmail.test", 903, {
-      authVerdict: "pass", senderCheck: "impersonation", senderCheckBrand: "PostFinance",
-    });
-    const r = await screenerAutoActPass(db as unknown as Tx, { accountId: w.accountId, consent: GIVEN }, NOW);
-    expect(r, "a sender was held for another sender's claim").toMatchObject({ filed: 1, identity: 0 });
-    expect((await intentOf(w.id)).desired).toBe("INBOX");
-    expect((await intentOf(phish)).desired).toBe(SCREENER);
-  }, 60_000);
 
   /** A genuine letter (`pass`, backdated by its Date) and a newer one its provider did not confirm, advised to Spam. */
   async function genuineAndForged(): Promise<{

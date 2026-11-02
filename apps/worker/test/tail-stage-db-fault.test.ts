@@ -63,6 +63,7 @@ vi.mock("../src/sender-check-backfill.js", async (load) => {
   };
 });
 vi.mock("../src/list-address-backfill.js", (load) => fault.mocked({ listAddressBackfillPass: "list_address_backfill" })(load));
+vi.mock("../src/act-admission-retire.js", (load) => fault.mocked({ retireActAdmissionsPass: "act_admission_retire" })(load));
 vi.mock("../src/rule-retro.js", (load) => fault.mocked({ ruleRetroPass: "rule_retro" })(load));
 vi.mock("../src/gap-catchup.js", (load) => fault.mocked({ gapCatchupPass: "gap_catchup" })(load));
 vi.mock("../src/ohbox-tidy.js", (load) => fault.mocked({ ohboxTidyPass: "ohbox_tidy" })(load));
@@ -74,7 +75,6 @@ vi.mock("../src/away-reply-flag-redeliver.js", (load) => fault.mocked({ awayRepl
 vi.mock("../src/storage-evict.js", (load) => fault.mocked({ storageEvictPass: "storage_evict" },
   { storageEvictPass: (a, db) => [db, { ...(a[1] as object), storageCap: async () => 1_000_000 }, a[2]] })(load));
 vi.mock("../src/screener-correspondent-retro.js", (load) => fault.mocked({ screenerCorrespondentRetroPass: "screener_correspondent_retro" })(load));
-vi.mock("../src/screener-auto.js", (load) => fault.mocked({ screenerAutoApplyPass: "screener_auto_apply" })(load));
 vi.mock("../src/screener-auto-act.js", (load) => fault.mocked({ screenerAutoActPass: "screener_auto_act" })(load));
 vi.mock("../src/mailbox-erasure-pass.js", (load) => fault.mocked({ mailboxErasurePass: "mailbox_erasure" })(load));
 
@@ -92,6 +92,7 @@ const STAGES = [
   ["gate_release", "gate_release_failed"],
   ["sender_check_backfill", "sender_check_backfill_failed"],
   ["list_address_backfill", "list_address_backfill_failed"],
+  ["act_admission_retire", "act_admission_retire_failed"],
   ["rule_retro", "rule_retro_failed"],
   ["gap_catchup", "gap_catchup_failed"],
   ["ohbox_tidy", "ohbox_tidy_failed"],
@@ -100,7 +101,6 @@ const STAGES = [
   ["away_reply_flag_redeliver", "away_reply_flag_redeliver_failed"],
   ["storage_evict", "storage_evict_failed"],
   ["screener_correspondent_retro", "screener_correspondent_retro_failed"],
-  ["screener_auto_apply", "screener_auto_apply_failed"],
   ["screener_auto_act", "screener_auto_act_failed"],
   ["search_index_backfill", "search_index_owed_read_failed"],
   ["mailbox_erasure", "mailbox_erasure_failed"],

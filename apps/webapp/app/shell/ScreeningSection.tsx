@@ -1,11 +1,12 @@
 "use client";
 
 /**
- * "What deserves my Ohbox" — the editable screening preference, injected into the general pane. Three controls over
+ * "What deserves my Ohbox" — the editable screening preference, injected into the general pane. Two controls over
  * one account setting (`GET/PATCH /account/screening`): a POSTURE switch (ON = keep the Ohbox for what is relevant
  * and file obvious bulk to Reads/Receipts; OFF = today's default — framed around RELEVANCE, never "only real people",
- * because the mechanism keeps relevant service mail); an AUTO-APPLY opt-in, default off; and the free-text BAR, which
- * is {@link OhboxWords} — one editor over one column, the transport handed in.
+ * because the mechanism keeps relevant service mail); and the free-text BAR, which is {@link OhboxWords} — one
+ * editor over one column, the transport handed in. No switch files a first-time sender out of the Screener: only a
+ * person lets a sender in.
  */
 
 /**
@@ -55,11 +56,8 @@ export function ScreeningSection() {
   if (!pref) return null;
   const relevanceOn = pref.ohboxPolicy === "people_only";
 
-  /** The two SWITCHES' write. The bar has its own — see {@link OhboxWords}. */
-  const apply = (next: Partial<{
-    ohboxPolicy: ScreeningPreferenceWire["ohboxPolicy"];
-    screenerAutoApply: boolean;
-  }>) => {
+  /** The SWITCH's write. The bar has its own — see {@link OhboxWords}. */
+  const apply = (next: Partial<{ ohboxPolicy: ScreeningPreferenceWire["ohboxPolicy"] }>) => {
     if (pending) return;
     setPending(true);
     setFailed(false);
@@ -95,22 +93,7 @@ export function ScreeningSection() {
         }
       />
 
-      {/* Auto-apply: an opt-in, default OFF. It moves obvious bulk out of the Screener for you using
-          the deterministic rules — never the AI, never a purchase, never sensitive mail — and every
-          move is reversible. The description states the spend model (none) and what stays untouched. */}
-      <SettingsRow
-        label={t("screening.autoApplyTitle")}
-        description={t("screening.autoApplyDescription")}
-        control={
-          <Switch
-            checked={pref.screenerAutoApply}
-            disabled={pending}
-            ariaLabel={t("screening.autoApplyTitle")}
-            onChange={(next) => apply({ screenerAutoApply: next })}
-          />
-        }
-      />
-      {/* What the switch filed, still in place, with Put back — under the switch that did it. */}
+      {/* What was filed out of the Screener automatically, still in place, with Put back. */}
       <AutoFiledReview />
 
       {saved ? <span className="scn-sg-note">{t("screening.saved")}</span> : null}

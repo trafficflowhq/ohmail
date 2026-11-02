@@ -70,6 +70,8 @@ export function ruleDto(id: string, kind: "sender" | "domain", match: string, de
 export function mailServer() {
   const log: SyncChange[] = [];
   let unscreenedBound: number | null = null;
+  /** A server from before the piles' note: it reads `?pile=` and `{ pile }` as the Ohbox's offer. */
+  let pilesUnknown = false;
   const messages = new Map<string, Dto>();
   /**
    * WHAT THE SERVER'S TRASH HOLDS — every DELETEd message, with when and where it came from.
@@ -101,6 +103,9 @@ export function mailServer() {
   const files = new Map<string, Array<{ id: string; filename: string; contentType: string; sizeBytes: number; inline: boolean }>>();
   /** What `GET /hello` announces under `features`; unset, the route is not served. */
   let helloFeatures: Record<string, unknown> | null = null;
+  /** Where `POST /attachments/staging` grants an upload (`n` is the ticket's number); unset, the route is not served. */
+  let stagingGrant: ((n: number) => string) | null = null;
+  let staged = 0;
   /** Routes armed to ACCEPT the request and never answer — the hung-server shape. */
   const hangs: Array<{ method: string; prefix: string }> = [];
   /**
@@ -130,6 +135,8 @@ export function mailServer() {
   let waitingRequests: unknown[] = [];
   /** What `GET /screener` names under `pendingDecisions` — this install's decisions still with the organizer. */
   let pendingDecisions: unknown[] = [];
+  /** List addresses the person let in, whose screen-out files their claims alone (`checked.claimsOnly`). */
+  const claimsAlone = new Set<string>();
   const addMessage = (m: Dto) => { messages.set(m.id, m); push("message", "create", m.id, m); };
   /** Mail the store holds and no drain carries — what a windowed mirror never received. */
   const holdOnServer = (m: Dto) => { messages.set(m.id, m); };
@@ -384,6 +391,11 @@ export function mailServer() {
         json(200, { items: (files.get(id) ?? []).map((f) => ({ ...f, messageId: id })) });
         return;
       }
+      if (method === "POST" && url.pathname === "/attachments/staging" && stagingGrant !== null) {
+        staged += 1;
+        json(201, { id: `ticket-${staged}`, uploadUrl: stagingGrant(staged), uploadMethod: "PUT", uploadHeaders: { "content-type": "application/octet-stream" } });
+        return;
+      }
       if (method === "GET" && url.pathname === "/hello" && helloFeatures !== null) {
         json(200, { product: "ohmail", flavor: "selfhost", apiVersion: "1", needsSetup: false, features: helloFeatures });
         return;
@@ -595,12 +607,17 @@ export function mailServer() {
         const page = rows.slice(from, from + screenerPageSize);
         const nextCursor = from + screenerPageSize < rows.length ? String(from + screenerPageSize) : null;
         json(200, {
-          items: page.map((m) => ({
-            id: m.id, messageId: m.id, threadId: m.threadId ?? null,
-            sender: { name: m.from.name ?? null, address: m.from.address },
-            subject: m.subject, snippet: m.snippet ?? "",
-            receivedAt: m.date ?? "", aiSuggestion: null, updatedAt: m.updatedAt ?? m.date ?? "",
-          })),
+          items: page.map((m) => {
+            const check = (m as { senderCheck?: { reason?: string; brand?: string } | null }).senderCheck;
+            const alone = claimsAlone.has(m.from.address.toLowerCase()) && check?.reason === "impersonation";
+            return {
+              id: m.id, messageId: m.id, threadId: m.threadId ?? null,
+              sender: { name: m.from.name ?? null, address: m.from.address },
+              subject: m.subject, snippet: m.snippet ?? "",
+              receivedAt: m.date ?? "", aiSuggestion: null, updatedAt: m.updatedAt ?? m.date ?? "",
+              ...(alone ? { checked: { reason: "impersonation", brand: check!.brand, domainShared: false, list: true, claimsOnly: true } } : {}),
+            };
+          }),
           nextCursor,
           // The store's own count, stated on the first page only — the route's shape since it
           // began answering the whole queue's size.
@@ -614,14 +631,23 @@ export function mailServer() {
        * `GET` / `POST /screener/unscreened` — INBOX mail from senders nobody ever decided about, as
        * `ohbox-unscreened-service.ts` answers it: one group per sender no enabled term-free rule
        * names, largest first; the press moves the named groups (all shown when none are named) to
-       * the Screener and answers what it moved, and a second press finds nothing.
+       * the Screener and answers what it moved, and a second press finds nothing. `?pile=` (the
+       * press's `{ pile }`) asks News, in both spellings, or Receipts instead, and the read says
+       * the pile back.
        */
       if (url.pathname === "/screener/unscreened" && (method === "GET" || method === "POST")) {
         const decided = (address: string): boolean => [...rules.values()].some((r) => r.enabled
           && !r.subjectContains && !r.bodyContains
           && (r.kind === "sender" ? r.match.toLowerCase() === address : r.kind === "domain" && r.match.toLowerCase() === address.split("@")[1]));
+        const asked = method === "GET" ? url.searchParams.get("pile") : (JSON.parse(body || "{}") as { pile?: string }).pile ?? null;
+        const pile = pilesUnknown ? null : asked;
+        if (pile !== null && pile !== "news" && pile !== "receipts") {
+          json(400, { error: { code: "validation_failed", message: "pile must be news or receipts" } });
+          return;
+        }
+        const folders = pile === "news" ? ["ohmail/News", "ohmail/Reads"] : pile === "receipts" ? ["ohmail/Receipts"] : ["INBOX"];
         const bySender = new Map<string, Dto[]>();
-        const undecided = [...messages.values()].filter((m) => m.folder === "INBOX" && !decided(m.from.address.toLowerCase()));
+        const undecided = [...messages.values()].filter((m) => folders.includes(m.folder) && !decided(m.from.address.toLowerCase()));
         // The service's walk stops at its bound and says so (`complete: false`).
         const walked = unscreenedBound === null ? undecided : undecided.slice(0, unscreenedBound);
         for (const m of walked) {
@@ -632,7 +658,10 @@ export function mailServer() {
           .map(([address, list]) => ({ address, count: list.length, newestAt: list.map((m) => String(m.date ?? "")).sort().at(-1) ?? "" }))
           .sort((a, b) => b.count - a.count || a.address.localeCompare(b.address));
         if (method === "GET") {
-          json(200, { groups, total: groups.reduce((n, g) => n + g.count, 0), complete: walked.length === undecided.length, max: 200 }, seq);
+          json(200, {
+            groups, total: groups.reduce((n, g) => n + g.count, 0), complete: walked.length === undecided.length, max: 200,
+            ...(pile === null ? {} : { pile }),
+          }, seq);
           return;
         }
         const named = (JSON.parse(body || "{}") as { addresses?: string[] }).addresses;
@@ -667,6 +696,17 @@ export function mailServer() {
         const parsed = JSON.parse(body) as { decision: "yes" | "no"; dest?: string; scope?: "sender" | "domain" };
         const dest = parsed.dest ?? (parsed.decision === "yes" ? "INBOX" : "ohmail/Screened");
         const key = rep.from.address.toLowerCase();
+        // A list address the person let in: its screen-out files the claims alone and writes no rule.
+        if (parsed.decision === "no" && (parsed.scope ?? "sender") === "sender" && claimsAlone.has(key)) {
+          for (const m of [...messages.values()]) {
+            const check = (m as { senderCheck?: { reason?: string } | null }).senderCheck;
+            if (m.folder === "ohmail/Screener" && m.from.address.toLowerCase() === key && check?.reason === "impersonation") {
+              updateMessage(m.id, { folder: dest });
+            }
+          }
+          json(200, { messageId: rep.id, appliedFolder: dest, createdRuleId: null }, seq);
+          return;
+        }
         for (const m of [...messages.values()]) {
           if (m.folder === "ohmail/Screener" && m.from.address.toLowerCase() === key) updateMessage(m.id, { folder: dest });
         }
@@ -997,6 +1037,8 @@ export function mailServer() {
     },
     /** Serve `GET /hello` with these `features`; `null` stops serving it (a 404). */
     setHello: (features: Record<string, unknown> | null) => { helloFeatures = features; },
+    /** Serve `POST /attachments/staging`, granting uploads at these URLs; `null` stops serving it. */
+    setStaging: (grant: ((n: number) => string) | null) => { stagingGrant = grant; },
     /** Give this message a stored body — what `GET /messages/:id/body` then answers. */
     setBody: (id: string, text: string, posture?: "one_click" | "no_header" | "mailto_only" | "not_one_click") => {
       bodies.set(id, text);
@@ -1053,6 +1095,8 @@ export function mailServer() {
     failNext: (method: string, prefix: string) => failures.push({ method, prefix }),
     /** Stops `GET /screener/unscreened`'s walk after `n` letters, as the service's bound does. */
     boundUnscreened: (n: number | null) => { unscreenedBound = n; },
+    /** Answers as a server from before the piles' note: every pile read is the Ohbox's offer. */
+    pilesUnknown: (on: boolean) => { pilesUnknown = on; },
     /**
      * The next matching request answers 202 with the organizer's request record — the reader
      * mailbox's door. `holder` is the install's name, or `null` for a real holder without one.
@@ -1127,6 +1171,8 @@ export function mailServer() {
     /** Cut `GET /screener` into pages of this size, so the client's cursor loop is measured. */
     setScreenerPageSize: (n: number) => { screenerPageSize = n; },
     setPendingDecisions: (list: unknown[]) => { pendingDecisions = list; },
+    /** These list addresses' screen-out files their claims alone, as the server's page and press say. */
+    setClaimsAlone: (...addresses: string[]) => { for (const a of addresses) claimsAlone.add(a.toLowerCase()); },
     holdOnServer,
     currentSeq: () => seq,
     message: (id: string) => messages.get(id),

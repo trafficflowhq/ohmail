@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  compareRules, effectForDestination, evaluateRules, migrationBulkPlacement,
+  compareRules, effectForDestination, evaluateRules,
   type AuthVerdict, type OhboxPolicy, type Rule,
 } from "../src/rules.js";
 import type { NormalizedMessage } from "../src/types.js";
@@ -834,48 +834,27 @@ describe("people_only demotes an inferred-admission INBOX rule for automated mai
 });
 
 /**
- * The migration backfill's STRONG-BULK floor — the helper `ohbox-tidy.ts` uses to demote the THIRD
- * population (a sender with neither a rule nor a contact). Stricter than `isBulkSend` on purpose: a
- * single marker admits a genuinely-relevant service alert, so the floor is a conjunction of
- * `List-Unsubscribe` AND a corroborating marker. It is NOT reachable from `evaluateRules`.
+ * A COLD LETTER THAT LOOKS LIKE A NEWSLETTER (owner report 2026-11-02): every header below is the
+ * sender's to write, and a mailing service puts the one-click pair on cold outreach too. Nothing in
+ * them lets a stranger in: an author nobody chose waits at the Screener; the same letter from a
+ * person's contact is filed to News, as before.
  */
-describe("migrationBulkPlacement — the strong-bulk floor for the non-contact backfill", () => {
-  const unsub = { "list-unsubscribe": ["<https://x.test/u>"] };
+describe("a cold letter with every bulk header the sender can write", () => {
+  const COLD = {
+    "list-unsubscribe": ["<https://hire-outreach.example/u/1>, <mailto:unsub@hire-outreach.example>"],
+    "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+    "feedback-id": ["1:campaign:hire-outreach"],
+    "list-id": ["<talent.hire-outreach.example>"],
+  };
+  const cold = msg("talent@hire-outreach.example", { headers: COLD, subject: "Quick question about your next role" });
 
-  it("List-Unsubscribe ALONE is below the floor — a corroborating marker is required", () => {
-    expect(migrationBulkPlacement(msg("news@nobody.test", { headers: unsub }))).toBeNull();
+  it("waits at the Screener when nobody chose its author", () => {
+    expect(decide(cold)).toMatchObject({ destination: "ohmail/Screener", source: "screener" });
   });
 
-  it("REJECTS Feedback-ID alone — the account/security-notice shape a user keeps", () => {
-    expect(migrationBulkPlacement(msg("noreply@google.test", { headers: { "feedback-id": ["1:2:3"] } }))).toBeNull();
-  });
-
-  it("a marker-free message is below the floor (fails toward KEPT)", () => {
-    expect(migrationBulkPlacement(msg("human@nobody.test", { subject: "hi there" }))).toBeNull();
-  });
-
-  it("List-Unsubscribe + a corroborating marker clears the floor → Reads", () => {
-    for (const corroborator of [
-      { "list-id": ["<news.shop.test>"] },
-      { "list-unsubscribe-post": ["List-Unsubscribe=One-Click"] },
-      { "feedback-id": ["1:2:3:campaign"] },
-      { precedence: ["bulk"] },
-    ]) {
-      expect(migrationBulkPlacement(msg("news@nobody.test", { headers: { ...unsub, ...corroborator } })))
-        .toBe("ohmail/News");
-    }
-  });
-
-  it("clears the floor AND a money subject → Receipts (Receipts-before-Reads, one router)", () => {
-    const headers = { ...unsub, "list-id": ["<billing.shop.test>"] };
-    expect(migrationBulkPlacement(msg("billing@nobody.test", { headers, subject: "Your invoice" })))
-      .toBe("ohmail/Receipts");
-  });
-
-  it("never answers the Screener or Quarantine — a backfill demotes within the allow side only", () => {
-    const headers = { ...unsub, "list-id": ["<news.shop.test>"] };
-    const to = migrationBulkPlacement(msg("news@nobody.test", { headers }));
-    expect(to === "ohmail/News" || to === "ohmail/Receipts").toBe(true);
+  it("is filed to News from a person's contact (the control)", () => {
+    expect(decide(cold, [], new Set(["talent@hire-outreach.example"])))
+      .toMatchObject({ destination: "ohmail/News", source: "header" });
   });
 });
 

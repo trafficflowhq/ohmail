@@ -331,6 +331,29 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
 }
 
 /**
+ * THE NAME A STANDALONE MAILBOX'S LETTERS CARRY — `PATCH /local/mailboxes/:id/name`, this phone's own
+ * engine's door (the shared route asks a second factor this phone never has). `null` clears it. The
+ * caller re-reads the roster after a write; a refusal or no answer wrote nothing.
+ */
+export async function writeMailboxName(
+  session: ConnectedSession,
+  mailboxId: string,
+  displayName: string | null,
+): Promise<{ k: "written"; displayName: string | null } | { k: "refused" } | { k: "failed" }> {
+  try {
+    const res = await session.fetch(
+      `${requestBase(session)}/local/mailboxes/${encodeURIComponent(mailboxId)}/name`,
+      { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ displayName }) },
+    );
+    if (res.status !== 200) return { k: "refused" };
+    const body = (await res.json()) as { displayName?: unknown } | null;
+    return { k: "written", displayName: typeof body?.displayName === "string" && body.displayName !== "" ? body.displayName : null };
+  } catch {
+    return { k: "failed" };
+  }
+}
+
+/**
  * HAND A MAILBOX BACK — `POST /mailboxes/:id/release`, the hosted route's local twin.
  *
  * 202 is the honest success: the claim lives in the customer's IMAP folder and the organizer's own
@@ -405,6 +428,8 @@ export type OrganizeOutcome =
     kind: "held"; name: string; holderKind: string;
     /** The door recorded this person's agreement without a claim (`consentRecorded`); absent reads false. */
     consentRecorded: boolean;
+    /** The press waits to be carried out once the claims it was refused over lapse (`joinWaits`); absent reads false. */
+    joinWaits: boolean;
   }
   /** Nothing was recorded, and the sentence says what the route answered. */
   | { kind: "refused"; reason: Refusal };
@@ -463,7 +488,7 @@ export async function organizeHere(
    * source), and a malformed body is still a `held` — the STATUS is the fact, the name the detail. */
   if (res.status === 409) {
     const body = await res.json().then(
-      (b) => b as { holder?: { name?: unknown; kind?: unknown }; consentRecorded?: unknown },
+      (b) => b as { holder?: { name?: unknown; kind?: unknown }; consentRecorded?: unknown; joinWaits?: unknown },
       () => undefined,
     );
     const held = body?.holder;
@@ -472,6 +497,7 @@ export async function organizeHere(
       name: typeof held?.name === "string" ? held.name : "",
       holderKind: typeof held?.kind === "string" ? held.kind : "",
       consentRecorded: body?.consentRecorded === true,
+      joinWaits: body?.joinWaits === true,
     };
   }
   /* ── A LOOK THAT DID NOT LAND IS NOT A NUMBER ─────────────────────────────────────────────

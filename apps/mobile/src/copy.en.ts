@@ -185,6 +185,35 @@ const TABLE = {
     "This phone connects to your mail server directly. Your password is stored on this phone, encrypted under a key held in its keystore, and is never sent to us.",
   phoneStandaloneAddress: "Mailbox address",
   phoneStandalonePassword: "Mailbox password",
+  /** The sender name, asked at the door: optional, and what recipients see beside the address. */
+  phoneStandaloneName: "Your name (optional)",
+  phoneStandaloneNameHint: "Shown to the people you write to, beside your address.",
+  /** Settings on a standalone phone: the name each mailbox's letters carry. */
+  senderNameTitle: "Your name",
+  senderNameNote: "Shown beside your address on the mail you send from this phone. Leave it empty to send with the address alone.",
+  senderNameSave: "Save",
+  senderNameSaved: "Saved.",
+  senderNameFailed: "That didn't save. Try again.",
+  /** Settings → Signatures: one text signature per mailbox, the web's `settings.signatures` words. */
+  sigSettingsTitle: "Signatures",
+  sigSettingsNote: "One signature per mailbox, added under the mail you write from that address. Leave it empty to sign with nothing.",
+  sigSettingsOn: "Added to messages you write from this address.",
+  sigSettingsOff: "No signature — messages go out as written.",
+  sigSettingsRead: "Set on the install that organizes this mailbox.",
+  sigSettingsMarkup: "This signature has formatting. Change it on the web or in the desktop app.",
+  sigSettingsPlaceholder: "Write a signature…",
+  sigSettingsField: (address: string) => `Signature: ${address}`,
+  sigSettingsSave: "Save",
+  sigSettingsSaving: "Saving…",
+  sigSettingsRevert: "Discard changes",
+  sigSettingsFailed: "That didn't save — your text is still here, try again.",
+  sigSettingsLeaveAsk: "Leave without saving the signature?",
+  sigSettingsLeaveKeep: "Keep editing",
+  sigSettingsAsked: "Not saved here — the machine that organizes this mailbox applies it on its next pass.",
+  sigSettingsRefusedUnreadable: (name: string) => `Not applied — ${name} could not read this change. Update ohmail there, then save it again.`,
+  sigSettingsRefusedUnreadableUnknown: "Not applied — the install that organizes this mailbox could not read this change. Update ohmail there, then save it again.",
+  sigSettingsRefusedOther: (name: string) => `Not applied — ${name} did not take this change. Save it again.`,
+  sigSettingsRefusedOtherUnknown: "Not applied — the install that organizes this mailbox did not take this change. Save it again.",
   phoneStandaloneShowPassword: "Show password",
   phoneStandaloneHidePassword: "Hide password",
   phoneStandaloneAdvanced: "Server settings",
@@ -345,6 +374,8 @@ const TABLE = {
   standaloneNoEngine:
     "This build cannot organize a mailbox on this phone. Connect it to a computer, a server or ohmail Cloud instead.",
   standaloneNoHost: "ohmail needs your incoming server (IMAP). Give its address.",
+  /** A sender name the door or Settings cannot store: too long, or a line break inside it. */
+  standaloneNameRefused: "Your name can hold up to 100 characters, on one line.",
   standaloneNoSmtpHost: "ohmail needs your outgoing server (SMTP). Give its address.",
   standaloneNoPort: "The IMAP port is a whole number from 1 to 65535.",
   standaloneNoSmtpPort: "The SMTP port is a whole number from 1 to 65535.",
@@ -659,6 +690,8 @@ const TABLE = {
      those would be false in the other direction. `yet` is the whole of the promise: the engine
      keeps asking, and a mailbox that later reads stops saying this. */
   firstSyncNothingReadable: "Nothing could be read from this mailbox yet.",
+  /* A FIRST SYNC STILL RUNNING, said where Connect lands: the mailbox opens at its first page. */
+  firstSyncReading: "Reading your mailbox for the first time — the rest of your mail arrives here as it is read.",
   /* MESSAGES THIS PHONE SET ASIDE: it could not read them and moved on, so they are not in the
      list. A count only, never an address or a subject; said until a re-read takes them in. No
      claim about the server: the message or its folder may since have gone from it. */
@@ -855,6 +888,11 @@ const TABLE = {
     "The pairing and the mail this phone had copied are gone. The server could not be reached to "
     + "end the session, so it may still count this phone as connected — revoke this device from its "
     + "Devices list to finish.",
+  /** The server had already ended the pairing (a Devices revoke, or a token it refused). */
+  forgetServerEnded:
+    "The pairing and the mail this phone had copied are gone. The server had already ended this "
+    + "phone's session, so there was nothing left to sign out. If its Devices list still shows "
+    + "this phone, remove it there.",
   /** The server was out of reach, and the sign-out is kept for the next time it is not. */
   forgetServerOwed:
     "The pairing and the mail this phone had copied are gone. The server could not be reached to "
@@ -1037,6 +1075,9 @@ const TABLE = {
   scopeDomain: "whole domain",
   decideRule: (target: string) =>
     `Becomes a rule — future mail from ${target} files automatically. The ✓ half also marks this mail read.`,
+  /** The same line where a screen-out files a list's claims alone (mail 0150): it writes no rule. */
+  decideRuleListClaim: (target: string) =>
+    `Ohbox, News and Receipts become a rule — future mail from ${target} files automatically. Screen out and Spam write no rule here. The ✓ half also marks this mail read.`,
   /**
    * WHAT SCREEN OUT AND SPAM SEND, BEFORE EITHER IS PRESSED (`unsubscribeClaim`): the sender-level
    * condition, now and for later mail, a fact where a held letter offers one-click. `domain`: `@domain`.
@@ -1113,7 +1154,7 @@ const TABLE = {
    * and the Piles screen did not. A screen that reads a private copy of the wording cannot be
    * translated, and the defect is invisible until somebody translates.
    */
-  replyLaterNote: "Answers you owe. A Reply Run walks them one screen at a time.",
+  replyLaterNote: "Answers you owe. Open one to write your reply.",
   setAsideNote: "Kept in view without keeping the Ohbox busy.",
   resurfaceNote: "Comes back on its own, at the time you chose.",
 
@@ -1309,7 +1350,7 @@ const TABLE = {
   /** Settings → the act on suggestions — the webapp catalogue's `screener.suggest.act*`. */
   autoActTitle: "Act on confident suggestions for me",
   autoActDescription:
-    "When a suggestion about a waiting sender is at least 90% sure, ohmail files that sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you have written to, and sensitive mail, are never filed this way. If a Screened or Spam suggestion is about a message whose sender was not confirmed — by your mail provider, or by the signature the sender's own domain put on the message — or rests only on the same subject from other first-time senders, ohmail files only that message, writes no rule, and lists it under Filed automatically, where you can put it back. Off by default.",
+    "When a suggestion about a waiting sender is at least 90% sure that it is spam or one to screen out, ohmail files that sender to Spam or Screened and writes the rule for you. It never lets a sender in: a suggestion for the Ohbox, News or Receipts waits for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you have written to, and sensitive mail, are never filed this way. If that suggestion is about a message whose sender was not confirmed — by your mail provider, or by the signature the sender's own domain put on the message — or rests only on the same subject from other first-time senders, ohmail files only that message, writes no rule, and lists it under Filed automatically, where you can put it back. Off by default.",
   autoActNeedsSuggest: "Needs automatic suggestions",
   autoActReader: "Set this on the install that organizes your mail.",
   /* What the Screener filed on its own, and Put back — the web Settings row's words (row 140). */
@@ -1378,6 +1419,11 @@ const TABLE = {
   searchAddressEmptyAny: (address: string) => `Nothing from or to ${address}.`,
   searchAddressEmptyFrom: (address: string) => `Nothing from ${address}.`,
   searchAddressEmptyTo: (address: string) => `Nothing sent to ${address}.`,
+  /* THE ARCHIVE'S HALF of an address view — the webapp's `search.addressArchive*`. */
+  searchAddressArchive: (n: number, synced: boolean, atLeast: boolean, bySender: boolean) =>
+    `${atLeast ? `At least ${n}` : String(n)} in ${synced ? "the mail synced so far" : "your whole mailbox"}`
+    + (bySender ? " (by sender)" : ""),
+  searchAddressArchiveNoRecipients: "Your whole mailbox cannot be searched by recipient yet.",
 
   /* ------------------------------------------------- two panes (big screens) */
 
@@ -1736,6 +1782,9 @@ const TABLE = {
   readerPressRefusedNobody: "Nothing changed — this phone only reads this mailbox. Nothing organizes it now.",
   liveDecided: (dest: string, target: string) =>
     `${dest} — future mail from ${target} files there automatically.`,
+  /** A screen-out that filed a list's claims alone (mail 0150): what it set aside, and that no rule was made. */
+  liveDecidedClaims: (dest: string, brand: string) =>
+    `${dest} — only the messages that claim to be ${brand}. No rule was made, so the list's other mail stays where it is.`,
   /**
    * A SCREEN-OUT OR SPAM DECIDE THAT SENDS THE ONE-CLICK UNSUBSCRIBE — the webapp's `toastScreened`
    * `unsub` arms, after whatever the press said: with Undo still to come (`sends`, `may`) it says
@@ -1795,6 +1844,11 @@ const TABLE = {
     `This phone reads this mailbox. ${name} organizes it. Your agreement is kept: once ${name} lets go, this phone offers the mailbox and one press takes it.`,
   readingAtConnectKeptUnknown:
     "This phone reads this mailbox. Another install organizes it. Your agreement is kept: once it lets go, this phone offers the mailbox and one press takes it.",
+  /* …and where the door also waits to take the mailbox once the claim it was refused over lapses with nothing renewing it. */
+  readingAtConnectJoinWaits: (name: string) =>
+    `This phone reads this mailbox. ${name} organizes it. Your agreement is kept: if ${name} had already stopped when you connected, this phone takes the mailbox over within minutes while ohmail stays open on it. Otherwise, once ${name} lets go, this phone offers the mailbox and one press takes it.`,
+  readingAtConnectJoinWaitsUnknown:
+    "This phone reads this mailbox. Another install organizes it. Your agreement is kept: if it had already stopped when you connected, this phone takes the mailbox over within minutes while ohmail stays open on it. Otherwise, once it lets go, this phone offers the mailbox and one press takes it.",
   /* A screening press read back from the list: how many are at the place, and what stays where. */
   liveVerdictKept: (count: number, place: string, kept: number, keptPlace: string, term: string) =>
     `${count === 1 ? "1 is" : `${count} are`} in ${place} · ${kept === 1 ? "1 stays" : `${kept} stay`} in ${keptPlace} by your rule »${term}«.`,
@@ -1863,7 +1917,7 @@ const TABLE = {
   liveBodyWithheldJunk:
     "Not stored here — your spam verdict filed this message to the Junk folder on your own mail server. It lives on there; this is the preview.",
   liveBodyWithheldExpunged:
-    "No stored copy left — every copy of this message is gone from the folders ohmail reads on your mail server: deleted there, or moved elsewhere by another mail app. From this version on, a letter that leaves takes its text, its preview and every word ohmail kept from it; until you remove the mailbox or delete your account, ohmail keeps its headers, the names of its files, how it was filed and the trackers found in it.",
+    "No stored copy left — every copy of this message is gone from the folders ohmail reads on your mail server: deleted there, or moved elsewhere by another mail app. Its preview and the other words ohmail kept from it went with its text; until you remove the mailbox or delete your account, ohmail keeps who sent it and to whom, its subject and date, the letters it answered, the names of its files, how it was filed and the trackers found in it.",
   /** Over the download ceiling: only its headers were read. The web reader's sentence, word for word. */
   liveBodyWithheldTooLarge:
     "Not downloaded — this message is larger than 64 MB, the most ohmail downloads, so its text and files are not shown here. Open it in your mail provider.",
@@ -2061,6 +2115,10 @@ const TABLE = {
   unscreenedMoved: (n: number) => `Screened ${n}. Your organizer moves them on the next pass.`,
   unscreenedMovedNone: "Nothing left to screen.",
   unscreenedFailed: "Could not screen that mail. Try again.",
+  /** THE NOTE ON NEWS AND RECEIPTS — the web's `screener.pileUnscreened*` sentences, word for word. */
+  pileUnscreenedLead: (n: number, atLeast?: boolean) =>
+    atLeast ? `At least ${n} letters here are from senders you never let in.`
+      : n === 1 ? "1 letter here is from a sender you never let in." : `${n} letters here are from senders you never let in.`,
   /** The deliberate read/unread, spoken so the pill has a sentence to ride (silent before the undo work). */
   toastRead: "Marked as read.",
   toastReadPartial: (done: number, of: number) => `Marked ${done} of ${of} as read.`,
@@ -2215,7 +2273,11 @@ const TABLE = {
   replyUnreachable: "Not sent. Your mail server couldn't be reached.",
   /* Past the draft limit (413): nothing left, and no retry helps until the text is shorter. */
   replyTooLong: (size: string) => `Not sent. It's too long to send — the limit is ${size}. Shorten it and send again.`,
-  replyTooLarge: "Not sent. It's too large to send. Shorten it and send again.",
+  replyTooLarge: "Not sent. It's too large to send. Remove a file or shorten it, then send again.",
+  /** A staged file's upload, refused: the grant, the storage or the upload itself. */
+  replyStagingRefused: "Not sent. Files this large can't be uploaded from this phone. Your draft is kept; remove the largest files and send again.",
+  replyStagingUnreachable: "Not sent. A file could not be uploaded. Check your connection and send again.",
+  replyStagingFailed: "Not sent. A file could not be uploaded. Send again.",
   /* It took the dial and would not serve it now, past the send's own retries. */
   replyBusy: "Not sent. Your mail server is busy and wouldn't take it right now. Try again in a moment.",
   replyNotSignedIn: "Not sent — your draft is kept. This mailbox isn't signed in here. Sign in again in Settings.",
@@ -2282,9 +2344,10 @@ const TABLE = {
   forwardAskSensitive: "ohmail flagged this message as sensitive.",
   forwardAskQuestion: "Forward it anyway?",
   forwardTo: "To",
-  /** A new mail's copies, shown where the letter carries them (a mailto link) — the web composer's words. */
+  /** A new mail's copies, and the press that adds them — the web composer's words. */
   composeCc: "Cc",
   composeBcc: "Bcc",
+  composeAddCopies: "Cc, Bcc",
   forwardToPlaceholder: "name@example.org, …",
   forwardNotePlaceholder: "Add a note (optional)",
   forwarded: "Forwarded.",
@@ -2303,6 +2366,9 @@ const TABLE = {
   /** A suggested recipient, read out: what the press adds. */
   composeSuggestion: (name: string, address: string) => (name === "" ? `Add ${address}` : `Add ${name}, ${address}`),
   composeFrom: (address: string) => `From ${address}`,
+  /** A new mail on an account with several addresses: the From line opens the list of them. */
+  composeFromChange: (address: string) => `From ${address}. Choose another address`,
+  composeFromList: "Addresses this mail can leave from",
   /** A draft kept from a removed mailbox leaves from another one (`compose-sender.ts`). */
   composeFromSubstituted: (was: string) => `${was} is disconnected, so this message sends from the address above.`,
   composeFromSubstitutedUnknown: "The address this draft was written from is disconnected, so it sends from the address above.",
@@ -2656,6 +2722,9 @@ const TABLE = {
   /** A whole-domain decision names, before the press, the other waiting senders whose letters it files. */
   domainAlsoFiles: (count: number, senders: string): string =>
     `Also files ${count === 1 ? "1 letter" : `${count} letters`} from others at this domain: ${senders}.`,
+  /** A list address's claims: a screen-out there files them alone (the web's `screener.listClaimScreenOut`). */
+  listClaimScreenOut: (brand: string): string =>
+    `Screening out sets aside only the messages that claim to be ${brand}. The list's other mail stays where it is.`,
   /** The same note when some of this sender's mail is already past the gate: no longer first contact. */
   senderPastTheGate: (n: number): string =>
     n === 1

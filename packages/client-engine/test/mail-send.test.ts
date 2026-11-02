@@ -178,7 +178,8 @@ describe("mail_send — the client half of the gated send", () => {
 
     // ONE delivery, addressed and threaded from the parent.
     expect(w.spy.delivered).toHaveLength(1);
-    expect(w.spy.delivered[0]!.to).toEqual(["lena@atelier.example"]);
+    // The reply keeps the name the parent's sender wrote with (the header shows it).
+    expect(w.spy.delivered[0]!.to).toEqual([{ name: "Lena", address: "lena@atelier.example" }]);
     expect(w.spy.delivered[0]!.subject).toBe("Re: Werkstatt-Besuch?");
     expect(w.spy.delivered[0]!.text).toBe("Gerne — Donnerstag?");
     expect(w.spy.delivered[0]!.inReplyTo).toBe("<parent@atelier.example>");
@@ -226,7 +227,7 @@ describe("mail_send — the client half of the gated send", () => {
     expect(w.spy.delivered).toHaveLength(1);
     const msg = w.spy.delivered[0]!;
     expect(msg.to).toEqual(["to@example.test"]);
-    expect(msg.cc).toEqual(["cc@example.test"]);
+    expect(msg.cc).toEqual([{ name: "Cee", address: "cc@example.test" }]);
     expect(msg.bcc).toEqual(["blind@example.test"]);
 
     // Stored on the row, because the send is a second request that reads it back.

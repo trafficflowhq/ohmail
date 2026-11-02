@@ -2317,6 +2317,10 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   color: var(--ink);
   font-weight: 600;
 }
+/* The same note at the top of News and Receipts: letters there from senders nobody let in. */
+.pile-note {
+  margin: 0 0 16px;
+}
 .scn-held-groups {
   margin: 0;
   padding: 0;

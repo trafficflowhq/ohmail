@@ -33,6 +33,7 @@ import { SkeletonList } from "../../src/ui/Skeleton";
 import { StreamCardVerbs } from "../../src/ui/StreamCardVerbs";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
+import { PileNote } from "../../src/ui/PileNote";
 
 export default function ReadsScreen() {
   return (
@@ -155,6 +156,10 @@ function ReadsBody() {
             <Txt variant="caption" tone="ink3" style={{ marginTop: 4 }}>
               {Copy.streamSeenHint}
             </Txt>
+            {/* Letters here from senders nobody let in, and the press — the web's note. */}
+            <View style={{ marginTop: 12 }}>
+              <PileNote pile="news" />
+            </View>
           </View>
         }
         empty={

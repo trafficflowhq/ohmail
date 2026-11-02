@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ServiceError } from "@trafficflow/services/mail";
+import { ServiceError, StaticKeyProvider } from "@trafficflow/services/mail";
 import type { ApiDeps } from "@trafficflow/api";
 import {
   makeImapProbe, makeSmtpProbe, makeProbeHostGuard, type ProbeDialer,
@@ -110,6 +110,8 @@ function deps(g: ReturnType<typeof makeProbeHostGuard>): ApiDeps {
   return {
     db: {} as ApiDeps["db"],
     now: () => new Date("2026-01-01T00:00:00.000Z"),
+    // The probe keys its slot by the deployment's keyed hash of the address.
+    keyProvider: StaticKeyProvider.fromSecret(Buffer.alloc(32, 5)),
     services: {
       imapAdmission: { acquire: async () => true, release: async () => { /* counted elsewhere */ } },
       probeHostGuard: g,

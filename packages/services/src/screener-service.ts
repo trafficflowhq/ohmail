@@ -16,10 +16,10 @@ import {
   reverseCharge, type ReverseChargeFact,
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
-  senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type CutlineSet,
+  senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type CutlineSet, notGoneSql, readGoneMailboxIds,
   senderHasHeldClaimSql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
-  readRequestEligibility, decisionCanBeApplied, readListAddresses,
-  listOutstandingForAccount,
+  readRequestEligibility, decisionCanBeApplied, readListAddresses, readListAddressesLetIn, mailboxTakesPressSql,
+  readListClaimsFiledAlone, listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
   type AppliedScreenerRow, type RequestEligibility, type OrganizedBy,
   type Tx,
@@ -52,7 +52,9 @@ import { checkUncheckedById, correspondentsAmong, makeDrizzleRepo } from "@traff
    the record it writes cannot disagree about what `screener.decide` requires. */
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { requestRefusalReason } from "@trafficflow/core/reader-refusal";
-import { planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutTarget } from "./reader-request.js";
+import {
+  moveDestinationWord, planAccountFanOut, writeReaderRequest, writeReaderRequestSet, type AccountFanOut, type FanOutTarget,
+} from "./reader-request.js";
 import { bridgeDb, bridgeTx, type ServiceContext } from "./context.js";
 import { materializeRules } from "./dto/materialize.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -308,6 +310,7 @@ export interface ScreenRequestResult {
    * The account-wide picture (0.20): `filed` is always empty on this shape (nothing was written
    * here), and `requested` names EVERY queued mailbox — the primary `requestId`/`holder` above
    * stay what they always were, the TARGET mailbox's, so an older client reads them unchanged.
+   * Where a screen-out filed a list's claims alone they are the target's move, else the first.
    */
   mailboxes?: ScreenDecisionMailboxes;
 }
@@ -757,6 +760,13 @@ export interface ScreenerPage extends Page<ScreenerItem> {
    * a walk of every page yields exactly this many rows.
    */
   total?: number;
+  /**
+   * THE MAILBOXES THIS PAGE LEAVES OUT (`readGoneMailboxIds`: removed with the copy kept, or erased),
+   * present only on a page asked with `live`: their mail makes nobody waiting, so the page's silence
+   * says nothing about it. A client that reads it presents that mail itself; one that asks without
+   * `live` gets a page that lists their senders as before.
+   */
+  gone?: string[];
 }
 
 /** One entry of {@link ScreenerPage.pendingDecisions}. */
@@ -929,7 +939,7 @@ export class ScreenerReadService {
    * method or in {@link toItem} below it. It does not typecheck: the only bag either of them
    * can see is {@link ScreenerDeps}.
    */
-  async list(ctx: ServiceContext, opts: { cursor?: string; limit?: number } = {}): Promise<ScreenerPage> {
+  async list(ctx: ServiceContext, opts: { cursor?: string; limit?: number; live?: boolean } = {}): Promise<ScreenerPage> {
     const limit = clampLimit(opts.limit);
     const after = opts.cursor ? decodeScreenerCursor(opts.cursor) : null;
     // ONE bounded query: the representative per sender, the order, the keyset and the LIMIT are
@@ -945,8 +955,10 @@ export class ScreenerReadService {
     const preference = await getScreeningPreference(ctx);
     // EACH MAILBOX BY ITS ORGANIZER'S WINDOW (RULING-026): the one resolver `GET /consent` reads too.
     const cutline = cutlinesOf(await effectiveScreeningWindows(ctx), ctx.now());
+    // A removed mailbox's mail asks nothing, but only a client that says so presents it itself.
+    const gone = opts.live === true ? await readGoneMailboxIds(asTx(ctx), ctx.accountId) : [];
     // The whole queue's size, stated where the keyset starts, from the same statement; an onward page states none.
-    const { rows: windowed, total } = await this.heldSenderPage(ctx, { after, limit: limit + 1, cutline, withTotal: after === null });
+    const { rows: windowed, total } = await this.heldSenderPage(ctx, { after, limit: limit + 1, cutline, withTotal: after === null, gone });
     const unfiltered = windowed.slice(0, limit);
 
     // ── A SENDER THIS INSTALL HAS ALREADY DECIDED ON LEAVES THE QUEUE (0.14.1) ────
@@ -1026,10 +1038,12 @@ export class ScreenerReadService {
     // on record, so a suggestion bought before this shipped says why it was wrong here too.
     const checked = senderSignalsByMessage(pageRows);
     const lists = await markCorrespondents(ctx, pageRows, checked);
+    const alone = await claimsAloneAmong(ctx, pageRows, checked, lists);
     const items = pageRows.map((r) => {
       const signals = checked.get(r.messageId);
+      const sender = r.fromAddress.trim().toLowerCase();
       // The sender's fact FIRST: it marks the signals the displayed advice is capped by below.
-      const fact = checkedOfSender(r, signals, lists.has(r.fromAddress.trim().toLowerCase()));
+      const fact = checkedOfSender(r, signals, lists.has(sender), alone.has(sender));
       return toItem(r, withSenderCheck(stored.get(r.fromAddress.toLowerCase()) ?? null, signals, posture), fact);
     });
 
@@ -1062,6 +1076,7 @@ export class ScreenerReadService {
       },
       pendingDecisions,
       ...(total !== undefined ? { total } : {}),
+      ...(opts.live === true ? { gone } : {}),
     };
   }
 
@@ -1076,7 +1091,8 @@ export class ScreenerReadService {
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId))).limit(1);
     if (!mb || mb.status === "disabled") throw new ServiceError("not_found", 404, "mailbox not found");
     const cutline = cutlinesOf(await effectiveScreeningWindows(ctx), ctx.now());
-    const { total } = await this.heldSenderPage(ctx, { after: null, limit: 1, cutline, withTotal: true, mailboxId });
+    const gone = await readGoneMailboxIds(asTx(ctx), ctx.accountId);
+    const { total } = await this.heldSenderPage(ctx, { after: null, limit: 1, cutline, withTotal: true, mailboxId, gone });
     return { senders: total ?? 0 };
   }
 
@@ -1282,6 +1298,8 @@ export class ScreenerReadService {
     let filed: string[] = [];
     // `null` when the decision wrote no change: the key already held it and nothing moved.
     let lastSeq: bigint | null = null;
+    // A screen-out of a list's claims filed them alone: no rule, so no address decision (`applyScreenerDecision`).
+    let claimsOnly = false;
 
     const result = await asTx(ctx).transaction(async (tx) => {
       // THE ERASURE FENCE FIRST — `applyScreenerDecision` takes `accounts FOR SHARE` first and
@@ -1320,6 +1338,7 @@ export class ScreenerReadService {
       rerouted = applied.rerouted;
       filed = [...new Set(applied.rerouted.map((m) => m.mailboxId))];
       lastSeq = applied.lastSeq;
+      claimsOnly = applied.claimsOnly !== undefined;
 
       /**
        * THE REQUEST HALF, IN THE SAME TRANSACTION (0.20): the decision travels to every capable
@@ -1334,26 +1353,32 @@ export class ScreenerReadService {
         scope, address, appliedFolder, decision,
         match: scope === "domain" ? domain : address, applyRetro,
       };
-      const holders = new Map<string, OrganizedBy>(
-        fanOut.requestTo.map((t: FanOutTarget) => [t.mailboxId, t.holder]),
-      );
       const awaiting: string[] = [];
-      for (const h of applied.heldElsewhere) {
-        if (holders.has(h.mailboxId)) continue;
-        const e = await readRequestEligibility(
-          tx, ctx.accountId, h.mailboxId, capabilityForKind("screener.decide"),
-        );
-        /* Read under the role lock `applyScreenerDecision` took on this row, so the gate cannot
-           spend the stamp before this commits: the bag waits here for the pass after the claim. */
-        if (e?.takeoverPending) { awaiting.push(h.mailboxId); continue; }
-        if (decisionCanBeApplied(e) && e!.role !== "organizer") holders.set(h.mailboxId, e!.by);
-      }
       const requested: ScreenRequestedMailbox[] = [];
-      for (const [mailboxId, holder] of holders) {
-        const r = await writeReaderRequest(tx, ctx, {
-          mailboxId, kind: "screener.decide", payload, holder, decidedAt: ctx.now(),
-        });
-        requested.push({ mailboxId, requestId: r.requestId, holder });
+      if (applied.claimsOnly) {
+        /* CLAIMS FILED ALONE TRAVEL LETTER BY LETTER: an address decision would reach a holder whose
+           own store holds no claim, and screen out the list's whole mail there. */
+        requested.push(...await this.requestClaimMoves(tx, ctx, id, applied.claimsOnly.elsewhere, appliedFolder));
+      } else {
+        const holders = new Map<string, OrganizedBy>(
+          fanOut.requestTo.map((t: FanOutTarget) => [t.mailboxId, t.holder]),
+        );
+        for (const h of applied.heldElsewhere) {
+          if (holders.has(h.mailboxId)) continue;
+          const e = await readRequestEligibility(
+            tx, ctx.accountId, h.mailboxId, capabilityForKind("screener.decide"),
+          );
+          /* Read under the role lock `applyScreenerDecision` took on this row, so the gate cannot
+             spend the stamp before this commits: the bag waits here for the pass after the claim. */
+          if (e?.takeoverPending) { awaiting.push(h.mailboxId); continue; }
+          if (decisionCanBeApplied(e) && e!.role !== "organizer") holders.set(h.mailboxId, e!.by);
+        }
+        for (const [mailboxId, holder] of holders) {
+          const r = await writeReaderRequest(tx, ctx, {
+            mailboxId, kind: "screener.decide", payload, holder, decidedAt: ctx.now(),
+          });
+          requested.push({ mailboxId, requestId: r.requestId, holder });
+        }
       }
 
       // NOTHING FILED AND NOTHING QUEUED while the sender's mail is held elsewhere: every
@@ -1362,25 +1387,19 @@ export class ScreenerReadService {
       // so a 409 never leaves dead configuration behind.
       if (filed.length === 0 && requested.length === 0 && awaiting.length === 0
         && applied.heldElsewhere.length > 0) {
-        const h = applied.heldElsewhere[0]!;
-        const e = await readRequestEligibility(
-          tx, ctx.accountId, h.mailboxId, capabilityForKind("screener.decide"),
-        );
-        throw new OrganizedElsewhereError(
-          h.mailboxId, e?.by ?? { kind: null, name: null, since: null }, requestRefusalReason(e),
-        );
+        throw await refusalAt(tx, ctx.accountId, applied.heldElsewhere[0]!.mailboxId, "screener.decide");
       }
 
       // Read INSIDE the tx, so the stored replay and the live answer carry the rows as written.
-      // A press converges, never skips: the id is the one rule under the sender's key afterwards.
+      // A press converges, never skips: the id is the one rule under the sender's key afterwards,
+      // or none where a screen-out on a list address filed its claims alone.
       const ruleId = applied.createdRuleId;
-      if (ruleId === null) throw new ServiceError("internal", 500, "the decision wrote no rule");
       const written = await materializeRules(
-        bridgeDb(tx), ctx.accountId, [ruleId, ...applied.retargetedRuleIds],
+        bridgeDb(tx), ctx.accountId, [...(ruleId === null ? [] : [ruleId]), ...applied.retargetedRuleIds],
       );
       const dto: ScreenDecisionResult = {
         messageId: id, appliedFolder, createdRuleId: ruleId,
-        createdRule: written.get(ruleId) ?? null,
+        createdRule: ruleId === null ? null : written.get(ruleId) ?? null,
         retargetedRules: applied.retargetedRuleIds.flatMap((r) => written.get(r) ?? []),
         mailboxes: { filed, requested, ...(awaiting.length > 0 ? { awaiting } : {}) },
       };
@@ -1475,7 +1494,8 @@ export class ScreenerReadService {
     // `rerouted`, not `heldMail`: a row this decision did not claim may not be unsubscribed for.
     // NOT performed on the drain's apply of a reader's request — see `applyScreenerDecision`'s
     // header.
-    if (this.deps.unsubscribe && decision === "no") {
+    // No rule, no screen-out of the sender: a forged letter through a list's address never unsubscribes.
+    if (this.deps.unsubscribe && decision === "no" && !claimsOnly) {
       const targets = rerouted.map((m) => m.messageId);
       // The sweep is REPORTED now rather than discarded. It used to be awaited and thrown away,
       // which was honest only while the fan-out ran every target: under a per-request ceiling the
@@ -1492,6 +1512,32 @@ export class ScreenerReadService {
   }
 
   /**
+   * THE CLAIMS A LIST'S SCREEN-OUT FILED ALONE, HELD WHERE ANOTHER INSTALL ORGANIZES: one
+   * `message.move` per letter to each holder that takes moves, in the press's transaction. A holder
+   * that takes none is left; the press's refusal says so when nothing was filed or asked anywhere.
+   */
+  private async requestClaimMoves(
+    tx: Tx, ctx: ServiceContext, pressId: string, claims: readonly AppliedScreenerRow[], appliedFolder: Destination,
+  ): Promise<ScreenRequestedMailbox[]> {
+    if (claims.length === 0) return [];
+    const destination = moveDestinationWord(appliedFolder);
+    const requested: ScreenRequestedMailbox[] = [];
+    for (const mailboxId of [...new Set(claims.map((r) => r.mailboxId))].sort()) {
+      const e = await readRequestEligibility(tx, ctx.accountId, mailboxId, capabilityForKind("message.move"));
+      if (!decisionCanBeApplied(e) || e!.role === "organizer") continue;
+      const sent = await writeReaderRequestSet(tx, ctx, {
+        mailboxId, kind: "message.move", holder: e!.by, batchKey: `screener:${pressId}`, decidedAt: ctx.now(),
+        members: claims.filter((r) => r.mailboxId === mailboxId).map((r) => ({
+          key: r.messageId,
+          payload: { dedupKey: r.dedupKey, destination, ...(ctx.pressFloor ? { pressedAt: ctx.pressFloor.toISOString() } : {}) },
+        })),
+      });
+      requested.push({ mailboxId, requestId: sent.requestIds[0]!, holder: e!.by });
+    }
+    return requested;
+  }
+
+  /**
    * THE READER'S DECISION — a REQUEST, waiting for the organizer to apply it. Offered only while
    * `eligibility.capable` — the holder's claim advertises `CAPABILITY_REQUESTS` AND
    * `organizer_state = 'held'`; otherwise `409 organized_elsewhere`, naming which of the two is
@@ -1499,7 +1545,9 @@ export class ScreenerReadService {
    * nobody drains. `match` — `address` for a sender-scope decision, `domain` for domain — is what
    * `listOutstandingForAccount` keys the list's exclusion on and what the drain's validator
    * re-checks before applying: the payload is untrusted the instant it leaves this process,
-   * travelling through an RFC822 header another install wrote.
+   * travelling through an RFC822 header another install wrote. A screen-out that files a list's
+   * claims alone asks each claim's holder to move it and nothing else, refused only when no holder
+   * of one takes moves.
    */
   private async requestAsReader(
     ctx: ServiceContext, id: string,
@@ -1511,12 +1559,6 @@ export class ScreenerReadService {
     fanOut: AccountFanOut,
     opts: { idempotency?: ScreenIdempotency | null },
   ): Promise<ScreenRequestResult> {
-    if (!eligibility.capable) {
-      throw new OrganizedElsewhereError(
-        v.target.mailboxId, eligibility.by, requestRefusalReason(eligibility),
-      );
-    }
-
     const { scope, decision, address, domain, appliedFolder, applyRetro } = v;
     const requestId = randomUUID();
     const match = scope === "domain" ? domain : address;
@@ -1530,46 +1572,68 @@ export class ScreenerReadService {
 
     try {
       await asTx(ctx).transaction(async (tx) => {
-        /* THE ERASURE FENCE AND THE INSERT NOW BELONG TO `reader-request.ts` (mail 0094).
-         *
-         * They were written here first, for the one kind that existed in 0.14.1. The three new
-         * families need the identical sequence, and four copies of "fence the account, then write
-         * the row" is how one of them ends up without the fence — so the sequence moved to the one
-         * helper every door calls and this door became its first caller rather than its only
-         * implementation. What is still HERE is what is genuinely the Screener's: the payload's
-         * shape, and the idempotency claim below.
-         */
-        await writeReaderRequest(tx, ctx, {
-          mailboxId: v.target.mailboxId,
-          kind: "screener.decide",
-          // Exactly what the drain needs to call `applyScreenerDecision` again, unchanged — see
-          // that function's `ApplyScreenerDecisionInput`. `match` rides along for
-          // `listOutstandingForAccount`'s own read; the drain does not use it.
-          payload: { scope, address, appliedFolder, decision, match, applyRetro },
-          holder: eligibility.by,
-          requestId,
-          decidedAt,
-        });
-
-        // EVERY OTHER CAPABLE HOLDER GETS THE SAME REQUEST (0.20): the decision is about the
-        // sender, account-wide, and each holder's drain files its own mailbox's bag and learns
-        // the promoted rule. The primary `requestId`/`holder` above stay the target's, so a
-        // client written against the 0.14.1 shape reads exactly what it always did.
-        const requested: ScreenRequestedMailbox[] = [
-          { mailboxId: v.target.mailboxId, requestId, holder: eligibility.by },
-        ];
-        for (const t of fanOut.requestTo) {
-          if (t.mailboxId === v.target.mailboxId) continue;
-          const r = await writeReaderRequest(tx, ctx, {
-            mailboxId: t.mailboxId, kind: "screener.decide",
-            payload: { scope, address, appliedFolder, decision, match, applyRetro },
-            holder: t.holder, decidedAt,
-          });
-          requested.push({ mailboxId: t.mailboxId, requestId: r.requestId, holder: t.holder });
+        /* A LIST'S CLAIMS A SCREEN-OUT FILES ALONE (mail 0150) never travel as a decision about the
+           address, which the holder's store would apply to the whole list (its rule, its News, the
+           unsubscribe): one `message.move` per claim goes to the install holding it, as from the
+           organizer's door, and nothing else is asked. Fenced first, as their check writes. */
+        let claims: AppliedScreenerRow[] = [];
+        if (decision === "no" && scope === "sender") {
+          if (await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId) != null) throw new AccountErasedError(ctx.accountId);
+          claims = await readListClaimsFiledAlone(tx, ctx.accountId, address, checkUncheckedById);
         }
-        // Set BEFORE the idempotency claim below stores `dto` verbatim — a replay must carry the
-        // same per-mailbox answer the live call did.
-        dto.mailboxes = { filed: [], requested };
+        if (claims.length > 0) {
+          const requested = await this.requestClaimMoves(tx, ctx, id, claims, appliedFolder);
+          const primary = requested.find((r) => r.mailboxId === v.target.mailboxId) ?? requested[0];
+          // No holder of a claim takes moves: refused as the organizer's door refuses, naming one.
+          if (primary === undefined) throw await refusalAt(tx, ctx.accountId, claims[0]!.mailboxId, "message.move");
+          Object.assign(dto, { requestId: primary.requestId, holder: primary.holder, mailboxes: { filed: [], requested } });
+        } else {
+          if (!eligibility.capable) {
+            throw new OrganizedElsewhereError(
+              v.target.mailboxId, eligibility.by, requestRefusalReason(eligibility),
+            );
+          }
+          /* THE ERASURE FENCE AND THE INSERT NOW BELONG TO `reader-request.ts` (mail 0094).
+           *
+           * They were written here first, for the one kind that existed in 0.14.1. The three new
+           * families need the identical sequence, and four copies of "fence the account, then write
+           * the row" is how one of them ends up without the fence — so the sequence moved to the one
+           * helper every door calls and this door became its first caller rather than its only
+           * implementation. What is still HERE is what is genuinely the Screener's: the payload's
+           * shape, and the idempotency claim below.
+           */
+          await writeReaderRequest(tx, ctx, {
+            mailboxId: v.target.mailboxId,
+            kind: "screener.decide",
+            // Exactly what the drain needs to call `applyScreenerDecision` again, unchanged — see
+            // that function's `ApplyScreenerDecisionInput`. `match` rides along for
+            // `listOutstandingForAccount`'s own read; the drain does not use it.
+            payload: { scope, address, appliedFolder, decision, match, applyRetro },
+            holder: eligibility.by,
+            requestId,
+            decidedAt,
+          });
+
+          // EVERY OTHER CAPABLE HOLDER GETS THE SAME REQUEST (0.20): the decision is about the
+          // sender, account-wide, and each holder's drain files its own mailbox's bag and learns
+          // the promoted rule. The primary `requestId`/`holder` above stay the target's, so a
+          // client written against the 0.14.1 shape reads exactly what it always did.
+          const requested: ScreenRequestedMailbox[] = [
+            { mailboxId: v.target.mailboxId, requestId, holder: eligibility.by },
+          ];
+          for (const t of fanOut.requestTo) {
+            if (t.mailboxId === v.target.mailboxId) continue;
+            const r = await writeReaderRequest(tx, ctx, {
+              mailboxId: t.mailboxId, kind: "screener.decide",
+              payload: { scope, address, appliedFolder, decision, match, applyRetro },
+              holder: t.holder, decidedAt,
+            });
+            requested.push({ mailboxId: t.mailboxId, requestId: r.requestId, holder: t.holder });
+          }
+          // Set BEFORE the idempotency claim below stores `dto` verbatim — a replay must carry the
+          // same per-mailbox answer the live call did.
+          dto.mailboxes = { filed: [], requested };
+        }
 
         // Same replay contract as the organizer's own door — a lost response must not queue a
         // second request for the same press.
@@ -1613,8 +1677,8 @@ export class ScreenerReadService {
   // The return type is INFERRED: the subquery's row type is what makes `reps.fromAddress` and
   // `reps.rank` typed at the two call sites, and any annotation wide enough to write by hand
   // erases it to `{ [x: string]: any }`.
-  protected heldSenderReps(ctx: ServiceContext, extra?: SQL) {
-    const { d, sortKey, filters, window } = this.heldWindow(ctx, extra);
+  protected heldSenderReps(ctx: ServiceContext, extra: SQL | undefined, gone: readonly string[]) {
+    const { d, sortKey, filters, window } = this.heldWindow(ctx, extra, undefined, gone);
     // scoped-by: `filters` leads with eq(messages.accountId, ctx.accountId)
     const reps = ctx.db.select({ ...HELD_COLUMNS, ...window }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
@@ -1628,9 +1692,9 @@ export class ScreenerReadService {
    * rows back by id. The window sorts every held message of the account; carried whole (subject,
    * snippet, locator) that sort left memory for disk on a large mailbox (74k: 12k held rows, 6 MB).
    */
-  private heldSenderKeys(ctx: ServiceContext, mailboxId?: string, cutline?: CutlineSet) {
+  private heldSenderKeys(ctx: ServiceContext, mailboxId: string | undefined, cutline: CutlineSet | undefined, gone: readonly string[]) {
     // A mailbox narrows the held rows only; activity, decided and own stay account-wide.
-    const { d, filters, window } = this.heldWindow(ctx, mailboxId === undefined ? undefined : eq(messages.mailboxId, mailboxId), cutline);
+    const { d, filters, window } = this.heldWindow(ctx, mailboxId === undefined ? undefined : eq(messages.mailboxId, mailboxId), cutline, gone);
     // scoped-by: `filters` leads with eq(messages.accountId, ctx.accountId)
     const reps = ctx.db.select({ messageId: messages.id, fromAddress: messages.fromAddress, ...window }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
@@ -1639,8 +1703,11 @@ export class ScreenerReadService {
     return { reps, d };
   }
 
-  /** The window's predicate and its four columns, ONE definition for both projections above. */
-  private heldWindow(ctx: ServiceContext, extra?: SQL, cutline?: CutlineSet) {
+  /**
+   * The window's predicate and its four columns, ONE definition for both projections above. A
+   * `gone` mailbox's held rows are not in it: no representative, mark, arrival or total of theirs.
+   */
+  private heldWindow(ctx: ServiceContext, extra: SQL | undefined, cutline: CutlineSet | undefined, gone: readonly string[]) {
     const d = dialect(ctx.db);
     // The one sort key (`@trafficflow/db#heldSortKey`): the header, else the mailbox's arrival —
     // the two worker passes choose the same representative by it.
@@ -1654,6 +1721,8 @@ export class ScreenerReadService {
       // stand in for a sender whose older mail is live.
       isNull(messages.deletedAt),
     ];
+    const live = notGoneSql(d, messages.mailboxId, gone);
+    if (live) filters.push(live);
     if (extra) filters.push(extra);
     const window = {
       // Decoded by the column's own reader, so the cursor carries the key the page sorted by.
@@ -1708,9 +1777,11 @@ export class ScreenerReadService {
       withTotal?: boolean;
       /** Only senders with held mail in this mailbox ({@link waitingCount}). */
       mailboxId?: string;
+      /** Mailboxes whose mail asks nothing ({@link ScreenerPage.gone}); `[]` reads every mailbox. */
+      gone: readonly string[];
     },
   ): Promise<{ rows: ScreenerRow[]; total: number | undefined }> {
-    const held = this.heldSenderKeys(ctx, opts.mailboxId, opts.cutline);
+    const held = this.heldSenderKeys(ctx, opts.mailboxId, opts.cutline, opts.gone);
     const { reps, d } = held;
 
     /* ── THE CUTLINE, WITH THE RANK AND BEFORE THE LIMIT ────────────────────────────────────
@@ -1741,7 +1812,7 @@ export class ScreenerReadService {
       senderMarkedBrand: reps.senderMarkedBrand, waitingTotal,
     }).from(reps)
       .where(and(
-        ...this.waitingFilters(ctx, held, opts.cutline),
+        ...this.waitingFilters(ctx, held, opts.cutline, opts.gone),
         opts.after
           // Row comparison, which is the `date desc, id desc` keyset written as one expression:
           // strictly "older" than the cursor tuple, with the id breaking a shared date. Bound
@@ -1772,7 +1843,8 @@ export class ScreenerReadService {
    * counts through as well, so `total` and a walk of every page are one predicate.
    */
   private waitingFilters(
-    ctx: ServiceContext, held: ReturnType<ScreenerReadService["heldSenderKeys"]>, cutline?: CutlineSet,
+    ctx: ServiceContext, held: ReturnType<ScreenerReadService["heldSenderKeys"]>, cutline: CutlineSet | undefined,
+    gone: readonly string[],
   ): Array<SQL | undefined> {
     const { reps, d } = held;
     const sender = sql`lower(${reps.fromAddress})`;
@@ -1781,13 +1853,13 @@ export class ScreenerReadService {
     // Such a claim is a live held message marked 'impersonation', a row of the window's partition,
     // so `sender_marked` is 1 wherever one can exist: asked first, the probe skips every other sender.
     const claim = cutline
-      ? sql`(${reps.senderMarked} = 1 and ${senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS)})`
+      ? sql`(${reps.senderMarked} = 1 and ${senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS, gone)})`
       : undefined;
     // A held letter that arrived inside the cutline whatever its Date, as the gate dated it.
     const arrival = cutline ? sql`${reps.heldArrival} = 1` : undefined;
     return [
       eq(reps.rank, 1),
-      cutline ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline)} or ${claim} or ${arrival})` : undefined,
+      cutline ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline, gone)} or ${claim} or ${arrival})` : undefined,
       // A decided sender is waiting again while the gate holds such a claim of theirs.
       claim
         ? sql`(not ${senderIsDecidedSql(d, ctx.accountId, sender)} or ${claim})`
@@ -2013,8 +2085,9 @@ export class ScreenerService extends ScreenerReadService {
      * pick one per sender in JavaScript. At most one row per named sender comes back now — a
      * bound by construction, not a limit somebody has to remember to raise.
      */
+    // A removed mailbox's held mail is no representative: its decision could never be applied.
     const { reps } = this.heldSenderReps(
-      ctx, inArray(sql`lower(${messages.fromAddress})`, senders),
+      ctx, inArray(sql`lower(${messages.fromAddress})`, senders), await readGoneMailboxIds(asTx(ctx), ctx.accountId),
     );
     // scoped-by: `heldSenderReps` leads its predicate with eq(messages.accountId, ctx.accountId)
     const rows = (await ctx.db.select().from(reps).where(eq(reps.rank, 1))).map(toScreenerRow);
@@ -2778,7 +2851,9 @@ function parseAutomatic(body: ScreenerSuggestBody): boolean {
  * `unverified`, named as the message's own line names it (`ownedSenderName`): said on the row, and
  * the signals and the advice are left exactly as they were.
  */
-function checkedOfSender(r: ScreenerRow, signals: SenderSignals | undefined, isList: boolean): ScreenerItem["checked"] {
+function checkedOfSender(
+  r: ScreenerRow, signals: SenderSignals | undefined, isList: boolean, claimsOnly: boolean,
+): ScreenerItem["checked"] {
   const brand = r.markedBrand ?? signals?.impersonation?.brand ?? null;
   if (brand === null) {
     const owned = asAuthVerdict(r.authVerdict) === "pass" ? undefined : ownedSenderName(r.fromAddress);
@@ -2795,7 +2870,50 @@ function checkedOfSender(r: ScreenerRow, signals: SenderSignals | undefined, isL
     reason: "impersonation", brand,
     domainShared: isSharedProviderDomain(senderDomainOf(r.fromAddress)),
     ...(isList ? { list: true as const } : {}),
+    ...(claimsOnly ? { claimsOnly: true as const } : {}),
   };
+}
+
+/**
+ * THE PAGE'S SENDERS WHOSE SCREEN-OUT FILES THEIR CLAIMS ALONE (`SenderCheckDTO.claimsOnly`, mail
+ * 0150), as `applyScreenerDecision` chooses: a list address a person let in, with a claim held at the
+ * gate in a mailbox a press reaches. A representative the check never reached counts by the claim
+ * the page computed for it: the press checks it first.
+ */
+async function claimsAloneAmong(
+  ctx: ServiceContext, rows: readonly ScreenerRow[], checked: Map<string, SenderSignals>, lists: ReadonlySet<string>,
+): Promise<ReadonlySet<string>> {
+  const marked = rows.filter((r) => lists.has(r.fromAddress.trim().toLowerCase())
+    && (r.markedBrand != null || checked.get(r.messageId)?.impersonation));
+  if (marked.length === 0) return new Set();
+  const letIn = await readListAddressesLetIn(asTx(ctx), ctx.accountId, marked.map((r) => r.fromAddress.trim().toLowerCase()));
+  if (letIn.size === 0) return new Set();
+  const computed = marked.filter((r) => checked.get(r.messageId)?.impersonation).map((r) => r.messageId);
+  const claim = computed.length === 0 ? sql`${messages.senderCheck} = 'impersonation'`
+    : sql`(${messages.senderCheck} = 'impersonation' or (${messages.senderCheck} is null and ${inArray(messages.id, computed)}))`;
+  const found = await ctx.db.select({ sender: messages.fromAddress }).from(messages)
+    .innerJoin(folderState, eq(folderState.messageId, messages.id))
+    .innerJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
+    .where(and(
+      eq(messages.accountId, ctx.accountId),
+      inArray(sql`lower(${messages.fromAddress})`, [...letIn]),
+      eq(folderState.desiredFolder, SCREENER_FOLDER),
+      isNull(messages.deletedAt),
+      claim,
+      mailboxTakesPressSql({ status: mailboxes.status, erasureDoneAt: mailboxes.erasureDoneAt }),
+    ));
+  return new Set(found.map((f) => f.sender.trim().toLowerCase()));
+}
+
+/**
+ * NO HOLDER COULD TAKE THE PRESS AT `mailboxId`, as the request `kind` it would travel as: the
+ * refusal names whoever holds the mailbox, with the one decider's reason. Both doors' refusal.
+ */
+async function refusalAt(
+  tx: Tx, accountId: string, mailboxId: string, kind: "screener.decide" | "message.move",
+): Promise<OrganizedElsewhereError> {
+  const e = await readRequestEligibility(tx, accountId, mailboxId, capabilityForKind(kind));
+  return new OrganizedElsewhereError(mailboxId, e?.by ?? { kind: null, name: null, since: null }, requestRefusalReason(e));
 }
 
 /**

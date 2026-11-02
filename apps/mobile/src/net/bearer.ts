@@ -48,8 +48,11 @@ export interface RefreshVault {
   oweSignOut(refreshToken: string): Promise<boolean>;
 }
 
-/** What became of a sign-out's half at the server: said, owed for the next connection, or neither. */
-export type SignOutOutcome = "told" | "owed" | "untold";
+/**
+ * What became of a sign-out's half at the server: said, owed for the next connection, or neither.
+ * `ended`: the server had already ended this session (a Devices revoke), so there was nothing to say.
+ */
+export type SignOutOutcome = "told" | "owed" | "untold" | "ended";
 
 /**
  * WHY A SESSION ENDED, for the surface that has to say it. `revoked` is the server withdrawing
@@ -399,6 +402,9 @@ export class BearerManagerRN implements SessionRenewalDoor {
    * travels as it was. An arrow property so it can be handed to `HttpAdapterOptions.fetch` bare.
    */
   fetch: FetchLike = async (url, init) => {
+    /* ITS OWN ORIGIN ONLY: a URL elsewhere (a staged upload's grant) is passed through unstamped and
+       never renewed, so the bearer cannot leave the server that minted it. */
+    if (!this.ownOrigin(url)) return this.fetchImpl(url, init);
     const options = (init ?? {}) as LooseInit;
     const stamped = (): LooseInit => ({
       ...options,
@@ -421,6 +427,15 @@ export class BearerManagerRN implements SessionRenewalDoor {
     // was stamped — both mean the same thing: replay once under the current generation.
     return this.heard(await this.fetchImpl(url, stamped()));
   };
+
+  /** Is this request for the origin this pair was minted by. An unreadable URL is not. */
+  private ownOrigin(url: string): boolean {
+    try {
+      return new URL(url).origin === new URL(this.origin).origin;
+    } catch {
+      return false;
+    }
+  }
 
   /** No access token to send, or its stated window has run out ({@link WINDOW_LEAD_MS} early). */
   private windowLapsed(): boolean {

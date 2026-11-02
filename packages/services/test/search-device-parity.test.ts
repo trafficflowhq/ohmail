@@ -15,8 +15,8 @@ import { FRAGMENT_FILES, FRAGMENTS } from "./helpers/file-name-fragments.js";
  * TABLE is what Postgres answers in the exact tier: (1) every store answers the table, and (2) the
  * mirror index, the first paint on every client, answers a SUBSET of it, so no row appears and then
  * vanishes when the store answers. Bounded, named differences: STEMMER (Porter on the device,
- * Snowball on the server), PREFIX (FTS5 stems a part's prefix too), SHORT (the mirror's type-ahead
- * under four letters).
+ * Snowball on the server), PREFIX (a part's start the device reads otherwise; none left), SHORT (the
+ * mirror's type-ahead under four letters).
  */
 const CORPUS: ReadonlyArray<readonly [key: string, subject: string, body: string]> = [
   ["duns", "Your D-U-N-S Number is enclosed", "Keep it safe."], ["email", "Your e-mail address", "Confirm it."],
@@ -63,11 +63,11 @@ const STEMMER: Readonly<Record<string, { device: readonly string[] }>> = {
   awe: { device: ["awe", "awful"] },     // the device alone reaches `awful`
 };
 /**
- * PREFIX: FTS5's porter stems a part-word's prefix as well, so the device's `"delivered"*` reads
- * as `deliv*` and reaches `delivery` where the server's `'delivered':*` reaches nothing
- * (DEVICE-PART-PREFIX-IS-STEMMED). There the device answers MORE than the table, never less.
+ * PREFIX: where the device reads a part-word's start otherwise than the server, it answers MORE than
+ * the table, never less. Empty since the device reads a start in its unstemmed tables (mail 0175):
+ * its porter tables stemmed the prefix, so `"delivered"*` read `deliv*` and reached `delivery`.
  */
-const PREFIX: Readonly<Record<string, readonly string[]>> = { delivered: ["delivered", "deliveries", "delivery"] };
+const PREFIX: Readonly<Record<string, readonly string[]>> = {};
 /** SHORT: under four letters the mirror is a type-ahead, so it answers at least the table. */
 const SHORT = new Set(["inv", "del", "co", "qua", "ele"]);
 
@@ -427,6 +427,10 @@ describe("each part of a file name beside another word", () => {
   const FILES: ReadonlyArray<readonly [key: string, name: string, from: string, subject: string, body: string, file: string]> = [
     ["sr2", "Ines Varga", "iv@post.example", "Papers for SR2", "SR2: the scan is attached.", "harbour-ledger-7731.pdf"],
     ["d2", "Port Office", "office@port.example", "Ledger copy", "The harbour scan.", "notes.txt"],
+    // Words a stemmed start reaches from a name: `ines`* read as `in`* (invoice, information, INV), `amazing`* as `amaz`*.
+    ["inv", "Accounts Desk", "billing@desk.example", "Your invoice 0042", "The invoice and the information you asked for.", "inv_0042.pdf"],
+    ["amz", "Shop Orders", "orders@shop.example", "Your amazon order", "It ships today.", "order-5531.txt"],
+    ["amg", "Lea Moser", "lea@post.example", "Amazing news", "The kiln worked.", "kiln.jpg"],
   ];
   const FOUND: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
     ["ledger", ["d2", "sr2"]], ["ines harbour", ["sr2"]], ["ines ledger", ["sr2"]], ["ines pdf", ["sr2"]], ["ines 7731", ["sr2"]],
@@ -435,6 +439,8 @@ describe("each part of a file name beside another word", () => {
     ["Ines LEDGER", ["sr2"]], ["SCAN Pdf 7731", ["sr2"]], ["scan -pdf", ["d2"]],
     // A first name the english stemmer cuts (ines -> ine) beside an exclusion or in a phrase, and excluded.
     ["ines -zzzqx", ["sr2"]], ["ines ledger -docx", ["sr2"]], ['"ines varga"', ["sr2"]], ["ledger -ines", ["d2"]],
+    // A name or a word never reaches another word by its stem as a start.
+    ["ines", ["sr2"]], ["amazing", ["amg"]],
     // Inside a word of a file name, and across its marks: no word of the letter, found as before.
     ["arbou", ["sr2"]], ["led", ["d2", "sr2"]], ["ger-77", ["sr2"]], ["31.pd", ["sr2"]],
   ];
@@ -661,7 +667,10 @@ describe("each part of a file name beside another word", () => {
     if (dialect(db).name === "sqlite") {
       // The device's word tables keep nothing of the erased letter, though no letter shows it now.
       const left = await dialect(db).exec(db, sql`select (select count(*) from message_people_fts where message_people_fts match 'varga')
-        + (select count(*) from message_files_fts where message_files_fts match 'ledger')`);
+        + (select count(*) from message_files_fts where message_files_fts match 'ledger')
+        + (select count(*) from messages_part_fts where messages_part_fts match 'papers')
+        + (select count(*) from message_bodies_part_fts where message_bodies_part_fts match 'attached')
+        + (select count(*) from message_files_part_fts where message_files_part_fts match 'ledger')`);
       expect(Number(left[0]?.[0])).toBe(0);
     }
     const later = await seedMessage(db, accountId, mailboxId, { subject: "Lunch", from: "kai@site.example", snippet: "Noon?", folder: "INBOX" });
@@ -671,7 +680,9 @@ describe("each part of a file name beside another word", () => {
     expect(await found("ines ledger")).toEqual([]);
     expect(await found("harbour")).toEqual([]);
     if (dialect(db).name === "sqlite") {
-      for (const t of ["message_people_fts", "message_files_fts"]) await dialect(db).exec(db, sql`insert into ${sql.raw(t)}(${sql.raw(t)}) values ('integrity-check')`);
+      for (const t of ["message_people_fts", "message_files_fts", "messages_part_fts", "message_bodies_part_fts", "message_files_part_fts"]) {
+        await dialect(db).exec(db, sql`insert into ${sql.raw(t)}(${sql.raw(t)}) values ('integrity-check')`);
+      }
     }
   });
 });

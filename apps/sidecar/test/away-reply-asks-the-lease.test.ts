@@ -9,7 +9,7 @@ import type {
 import type { LeaseIo, MetaFolderStamp, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import {
-  awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages, threads,
+  awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messageInstances, messages, threads,
 } from "@trafficflow/db";
 import { runAwayResponderPass } from "@trafficflow/services";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -214,6 +214,11 @@ describe("an away reply asks the lease at the send boundary", () => {
       messageId: m!.id, observedFolder: "INBOX", desiredFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "reconciled",
     });
+    // The copy the server holds: without one the sync's reaper takes the letter as gone.
+    await s.db.insert(messageInstances).values({
+      accountId: s.world.accountId, mailboxId: s.world.mailboxId, messageId: m!.id,
+      folder: "INBOX", uidvalidity: 1n, uid: key.length, isPrimary: true,
+    });
   }
 
   /**
@@ -341,6 +346,9 @@ describe("an away reply asks the lease at the send boundary", () => {
 
     // Nothing was spent on the message it withheld — one row, for the one reply it sent.
     expect((await a.db.select().from(awayReplies)).map((r) => r.outcome)).toEqual(["sent"]);
+    const [withheld] = await a.db.select({ deletedAt: messages.deletedAt }).from(messages)
+      .where(eq(messages.subject, "about second"));
+    expect(withheld?.deletedAt ?? null, "the precondition: the withheld letter is still on the server").toBeNull();
 
     /* AND THE REPLY IS STILL OWED. The state above was produced by the REAL lease adapter over a
        real handover; this runs the same shared pass over the store it left behind. The mailbox is

@@ -841,6 +841,8 @@ export function useScreenerState(
 
   /** The held letters a demoting press moves, by the server's posture and verdict of each (`unsubscribe-claim.ts`). */
   const unsubClaimOf = (sender: ScreenerSenderDTO, scope: DecisionScope): UnsubscribeClaim => {
+    // A screen-out of a list's claims the store says it files alone sends nothing (`screener-apply.ts`).
+    if (scope === "sender" && sender.checked?.claimsOnly === true) return "none";
     const own = senderKey(sender.from.address);
     const domain = domainOfAddress(own);
     const rows = scope === "domain"
@@ -1489,8 +1491,12 @@ export function useScreenerState(
     const claim = DECISION_QUIET.has(dest) ? unsubClaimOf(sender, opts.scope) : "none";
     // HELD, Undo stops the request with the decision; SENT AT ONCE, nothing can take it back.
     const unsub = claim === "none" ? "none" : holds ? (claim === "sends" ? "sends" : "may") : (claim === "sends" ? "sent" : "maysent");
+    // A screen-out of a list's claims filed them alone: what it set aside, and no rule promised.
+    const claimsAlone = DECISION_QUIET.has(dest) && opts.scope === "sender" && sender.checked?.claimsOnly === true;
     const message =
-      dest === "screened"
+      claimsAlone
+        ? t("toastListClaims", { dest, target, brand: sender.checked!.brand })
+        : dest === "screened"
         ? t("toastScreened", { target, read: read ? "true" : "false", unsub })
         : dest === "spam"
           ? t("toastSpam", { target: displayAddress(sender.from.address), unsub })

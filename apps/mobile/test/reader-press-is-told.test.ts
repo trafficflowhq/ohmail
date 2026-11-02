@@ -184,7 +184,7 @@ describe("at connect, a mailbox another install organizes is said to be read her
   it("the connect's consent press records it from a held answer, and the Ohbox renders it — read", () => {
     const conn = read("src/net/connection.tsx");
     expect(conn).toContain(
-      'sayReadingAtConnect(outcome.kind === "held" ? { name: outcome.name, consentRecorded: outcome.consentRecorded } : null);',
+      'sayReadingAtConnect(outcome.kind === "held" ? { name: outcome.name, consentRecorded: outcome.consentRecorded, joinWaits: outcome.joinWaits } : null);',
     );
     const ohbox = read("app/(tabs)/index.tsx");
     // The recorded answer passes through the live claim, so the card drops once the mailbox is handed back.

@@ -108,6 +108,32 @@ export const DE: Deck = {
     "Dieses Handy verbindet sich direkt mit deinem Mailserver. Dein Passwort liegt auf diesem Handy, verschlüsselt mit einem Schlüssel aus seinem Schlüsselspeicher, und geht nie an uns.",
   phoneStandaloneAddress: "Postfachadresse",
   phoneStandalonePassword: "Postfachpasswort",
+  phoneStandaloneName: "Dein Name (optional)",
+  phoneStandaloneNameHint: "Wird den Empfängern neben deiner Adresse angezeigt.",
+  senderNameTitle: "Dein Name",
+  senderNameNote: "Steht neben deiner Adresse in den Nachrichten, die du von diesem Telefon sendest. Leer lassen, um nur mit der Adresse zu senden.",
+  senderNameSave: "Speichern",
+  senderNameSaved: "Gespeichert.",
+  senderNameFailed: "Das wurde nicht gespeichert. Versuch es nochmal.",
+  sigSettingsTitle: "Signaturen",
+  sigSettingsNote: "Eine Signatur pro Postfach, unter die Nachrichten gesetzt, die du von dieser Adresse schreibst. Lass das Feld leer, um ohne Signatur zu senden.",
+  sigSettingsOn: "Wird unter Nachrichten von dieser Adresse gesetzt.",
+  sigSettingsOff: "Keine Signatur — Nachrichten gehen wie geschrieben raus.",
+  sigSettingsRead: "Auf der Installation gesetzt, die dieses Postfach organisiert.",
+  sigSettingsMarkup: "Diese Signatur ist formatiert. Ändere sie im Web oder in der Desktop-App.",
+  sigSettingsPlaceholder: "Signatur schreiben…",
+  sigSettingsField: (address: string) => `Signatur: ${address}`,
+  sigSettingsSave: "Speichern",
+  sigSettingsSaving: "Speichert…",
+  sigSettingsRevert: "Änderungen verwerfen",
+  sigSettingsFailed: "Das wurde nicht gespeichert — dein Text ist noch da, versuch es nochmal.",
+  sigSettingsLeaveAsk: "Verlassen, ohne die Signatur zu speichern?",
+  sigSettingsLeaveKeep: "Weiter bearbeiten",
+  sigSettingsAsked: "Hier nicht gespeichert — der Rechner, der dieses Postfach organisiert, übernimmt es beim nächsten Durchlauf.",
+  sigSettingsRefusedUnreadable: (name: string) => `Nicht übernommen — ${name} konnte diese Änderung nicht lesen. Aktualisiere ohmail dort und speichere sie dann noch einmal.`,
+  sigSettingsRefusedUnreadableUnknown: "Nicht übernommen — die Installation, die dieses Postfach organisiert, konnte diese Änderung nicht lesen. Aktualisiere ohmail dort und speichere sie dann noch einmal.",
+  sigSettingsRefusedOther: (name: string) => `Nicht übernommen — ${name} hat diese Änderung nicht angenommen. Speichere sie noch einmal.`,
+  sigSettingsRefusedOtherUnknown: "Nicht übernommen — die Installation, die dieses Postfach organisiert, hat diese Änderung nicht angenommen. Speichere sie noch einmal.",
   phoneStandaloneShowPassword: "Passwort zeigen",
   phoneStandaloneHidePassword: "Passwort verbergen",
   phoneStandaloneAdvanced: "Servereinstellungen",
@@ -202,6 +228,7 @@ export const DE: Deck = {
   standaloneNoEngine:
     "Dieser Build kann auf diesem Handy kein Postfach organisieren. Verbinde es stattdessen mit einem Computer, einem Server oder ohmail Cloud.",
   standaloneNoHost: "ohmail braucht deinen Eingangsserver (IMAP). Gib seine Adresse an.",
+  standaloneNameRefused: "Dein Name darf bis zu 100 Zeichen haben, in einer Zeile.",
   standaloneNoSmtpHost: "ohmail braucht deinen Ausgangsserver (SMTP). Gib seine Adresse an.",
   standaloneNoPort: "Der IMAP-Port ist eine ganze Zahl von 1 bis 65535.",
   standaloneNoSmtpPort: "Der SMTP-Port ist eine ganze Zahl von 1 bis 65535.",
@@ -422,6 +449,7 @@ export const DE: Deck = {
   networkOfflineHeld: "Dieses Handy hat kein Netz. Angezeigt werden die neueren Mails, die es hat.",
 
   firstSyncNothingReadable: "Aus diesem Postfach konnte noch nichts gelesen werden.",
+  firstSyncReading: "Dein Postfach wird zum ersten Mal gelesen — der Rest deiner Mails kommt hier an, sobald er gelesen ist.",
   connectionSetAside: (n: number) => n === 1
     ? "Eine Nachricht konnte nicht gelesen werden und wurde zurückgelegt."
     : `${n} Nachrichten konnten nicht gelesen werden und wurden zurückgelegt.`,
@@ -541,6 +569,10 @@ export const DE: Deck = {
     "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server war nicht "
     + "erreichbar, um die Sitzung zu beenden, und zählt dieses Handy womöglich noch als "
     + "verbunden — widerrufe dieses Gerät in seiner Geräteliste, um das abzuschließen.",
+  forgetServerEnded:
+    "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server hatte die "
+    + "Sitzung dieses Handys schon beendet, es gab also nichts mehr abzumelden. Steht dieses Handy "
+    + "noch in seiner Geräteliste, entferne es dort.",
   forgetServerOwed:
     "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server war nicht "
     + "erreichbar, um die Sitzung zu beenden; dieses Handy sagt es ihm, sobald es ihn wieder erreicht.",
@@ -690,6 +722,8 @@ export const DE: Deck = {
   scopeDomain: "ganze Domain",
   decideRule: (target: string) =>
     `Wird zur Regel: Künftige Mails von ${target} werden automatisch einsortiert. Die ✓-Hälfte markiert diese Mails außerdem als gelesen.`,
+  decideRuleListClaim: (target: string) =>
+    `Ohbox, News und Belege werden zur Regel: Künftige Mails von ${target} werden automatisch einsortiert. Aussortieren und Spam schreiben hier keine Regel. Die ✓-Hälfte markiert diese Mails außerdem als gelesen.`,
   decideUnsub: (claim: UnsubSaid, target: string, domain: boolean) =>
     domain
       ? claim === "sends"
@@ -739,7 +773,7 @@ export const DE: Deck = {
   pileEmpty: "Hier ist noch nichts.",
 
   /* Die drei Stapel-Beschreibungen — siehe `copy.en.ts` für die zweite Deck-Geschichte. */
-  replyLaterNote: "Antworten, die du schuldest. Eine Antwortrunde geht sie einzeln durch, eine pro Bildschirm.",
+  replyLaterNote: "Antworten, die du schuldest. Öffne eine, um zu antworten.",
   setAsideNote: "Bleibt in Sicht, ohne die Ohbox zu beschäftigen.",
   resurfaceNote: "Kommt von selbst zurück, zu der Zeit, die du gewählt hast.",
 
@@ -876,7 +910,7 @@ export const DE: Deck = {
   foldersFailed: "Das ließ sich nicht speichern — versuch es nochmal.",
   autoActTitle: "Sichere Vorschläge für mich umsetzen",
   autoActDescription:
-    "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, legt ohmail den Absender dort ab, wo der Vorschlag es sagt (Ohbox, News, Belege, Aussortiert oder Spam), und schreibt die Regel für dich. Jede solche Regel ist als Regel von ohmail markiert, und du kannst sie unter Einstellungen → Regeln rückgängig machen. Absender, denen du geschrieben hast, und sensible Mails werden so nie abgelegt. Gilt ein Vorschlag für Aussortiert oder Spam einer Nachricht, deren Absender nicht bestätigt wurde — weder von deinem Mailanbieter noch durch die Signatur, die die eigene Domain des Absenders auf die Nachricht gesetzt hat —, oder stützt er sich nur auf denselben Betreff von anderen neuen Absendern, legt ohmail nur diese Nachricht ab, schreibt keine Regel und führt sie unter „Automatisch einsortiert“ auf, wo du sie zurücklegen kannst. Standardmäßig aus.",
+    "Ist ein Vorschlag zu einem wartenden Absender zu mindestens 90 % sicher, dass es Spam ist oder aussortiert gehört, legt ohmail den Absender unter Spam oder Aussortiert ab und schreibt die Regel für dich. Hereingelassen wird so nie jemand: Ein Vorschlag für die Ohbox, News oder Belege wartet auf dich. Jede solche Regel ist als Regel von ohmail markiert, und du kannst sie unter Einstellungen → Regeln rückgängig machen. Absender, denen du geschrieben hast, und sensible Mails werden so nie abgelegt. Gilt der Vorschlag einer Nachricht, deren Absender nicht bestätigt wurde — weder von deinem Mailanbieter noch durch die Signatur, die die eigene Domain des Absenders auf die Nachricht gesetzt hat —, oder stützt er sich nur auf denselben Betreff von anderen neuen Absendern, legt ohmail nur diese Nachricht ab, schreibt keine Regel und führt sie unter „Automatisch einsortiert“ auf, wo du sie zurücklegen kannst. Standardmäßig aus.",
   autoActNeedsSuggest: "Braucht automatische Vorschläge",
   autoActReader: "Stell das auf der Installation ein, die deine Mails organisiert.",
   autoFiledTitle: "Automatisch einsortiert",
@@ -938,6 +972,10 @@ export const DE: Deck = {
   searchAddressEmptyAny: (address: string) => `Nichts von oder an ${address}.`,
   searchAddressEmptyFrom: (address: string) => `Nichts von ${address}.`,
   searchAddressEmptyTo: (address: string) => `Nichts an ${address} geschickt.`,
+  searchAddressArchive: (n: number, synced: boolean, atLeast: boolean, bySender: boolean) =>
+    `${atLeast ? `Mindestens ${n}` : String(n)} in ${synced ? "den bisher synchronisierten Mails" : "deinem ganzen Postfach"}`
+    + (bySender ? " (nach Absender)" : ""),
+  searchAddressArchiveNoRecipients: "Dein ganzes Postfach lässt sich noch nicht nach Empfänger durchsuchen.",
 
   /* ------------------------------------------------ zwei Bereiche (große Displays) */
 
@@ -1147,6 +1185,8 @@ export const DE: Deck = {
     "Nichts hat sich geändert — dieses Handy liest dieses Postfach nur. Im Moment organisiert es nichts.",
   liveDecided: (dest: string, target: string) =>
     `${dest} — künftige Mails von ${target} werden automatisch dorthin einsortiert.`,
+  liveDecidedClaims: (dest: string, brand: string) =>
+    `${dest} — nur die Nachrichten, die sich als ${brand} ausgeben. Es wurde keine Regel erstellt, die übrigen Mails der Liste bleiben, wo sie sind.`,
   liveAlsoUnsubscribing: (said: string, how: UnsubToast) =>
     how === "sends"
       ? `${said} Rückgängig stoppt auch die Ein-Klick-Abmeldung. Sobald Rückgängig weg ist, wird sie gesendet und lässt sich nicht zurücknehmen, und spätere Mails des Absenders mit Ein-Klick-Abmeldung werden ebenfalls abgemeldet.`
@@ -1184,6 +1224,10 @@ export const DE: Deck = {
     `Dieses Handy liest dieses Postfach. ${name} organisiert es. Deine Zustimmung bleibt gespeichert: Sobald ${name} es freigibt, bietet dieses Handy das Postfach an, und ein Tippen übernimmt es.`,
   readingAtConnectKeptUnknown:
     "Dieses Handy liest dieses Postfach. Eine andere Installation organisiert es. Deine Zustimmung bleibt gespeichert: Sobald sie es freigibt, bietet dieses Handy das Postfach an, und ein Tippen übernimmt es.",
+  readingAtConnectJoinWaits: (name: string) =>
+    `Dieses Handy liest dieses Postfach. ${name} organisiert es. Deine Zustimmung bleibt gespeichert: Lief ${name} beim Verbinden schon nicht mehr, übernimmt dieses Handy das Postfach innerhalb weniger Minuten, solange ohmail darauf offen bleibt. Sonst bietet dieses Handy das Postfach an, sobald ${name} es freigibt, und ein Tippen übernimmt es.`,
+  readingAtConnectJoinWaitsUnknown:
+    "Dieses Handy liest dieses Postfach. Eine andere Installation organisiert es. Deine Zustimmung bleibt gespeichert: Lief sie beim Verbinden schon nicht mehr, übernimmt dieses Handy das Postfach innerhalb weniger Minuten, solange ohmail darauf offen bleibt. Sonst bietet dieses Handy das Postfach an, sobald sie es freigibt, und ein Tippen übernimmt es.",
   liveVerdictKept: (count: number, place: string, kept: number, keptPlace: string, term: string) =>
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${kept === 1 ? "1 bleibt" : `${kept} bleiben`} nach deiner Regel »${term}« in ${keptPlace}.`,
   liveVerdictKeptDomain: (count: number, place: string, kept: number, keptPlace: string, domain: string, term: string) =>
@@ -1241,7 +1285,7 @@ export const DE: Deck = {
   liveBodyWithheldJunk:
     "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Spam-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
   liveBodyWithheldExpunged:
-    "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Ab dieser Version verschwinden mit dem Text einer solchen Nachricht auch Vorschau und Suchwörter; bis du das Postfach entfernst oder deinen Account löschst, behält ohmail ihre Header, die Namen ihrer Dateien, wie sie einsortiert wurde, und die Tracker, die darin gefunden wurden.",
+    "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Mit dem Text sind auch die Vorschau und die anderen Wörter verschwunden, die ohmail daraus behalten hatte; bis du das Postfach entfernst oder deinen Account löschst, behält ohmail, wer sie an wen geschickt hat, ihren Betreff und ihr Datum, die Nachrichten, auf die sie antwortete, die Namen ihrer Dateien, wie sie einsortiert wurde, und die Tracker, die darin gefunden wurden.",
   liveBodyWithheldTooLarge:
     "Nicht heruntergeladen — diese Nachricht ist größer als 64 MB, mehr lädt ohmail nicht herunter. Text und Dateien werden hier deshalb nicht gezeigt. Öffne sie bei deinem Mailanbieter.",
   liveBodyJunkLoading: "Diese Nachricht wird von deinem Mailserver geladen…",
@@ -1452,6 +1496,10 @@ export const DE: Deck = {
   unscreenedMoved: (n: number) => `${n} in den Screener gelegt. Dein Organizer verschiebt sie beim nächsten Durchlauf.`,
   unscreenedMovedNone: "Nichts mehr zu screenen.",
   unscreenedFailed: "Screenen nicht möglich. Versuch es noch einmal.",
+  pileUnscreenedLead: (n: number, atLeast?: boolean) =>
+    atLeast ? `Mindestens ${n} Nachrichten hier stammen von Absendern, die du nie hereingelassen hast.`
+      : n === 1 ? "1 Nachricht hier stammt von einem Absender, den du nie hereingelassen hast."
+        : `${n} Nachrichten hier stammen von Absendern, die du nie hereingelassen hast.`,
   toastRead: "Als gelesen markiert.",
   toastReadPartial: (done: number, of: number) => `${done} von ${of} als gelesen markiert.`,
   toastUnread: "Als ungelesen markiert.",
@@ -1526,7 +1574,10 @@ export const DE: Deck = {
   replyLoginRefused: "Nicht gesendet. Dein Mailserver hat die Anmeldung abgelehnt.",
   replyUnreachable: "Nicht gesendet. Dein Mailserver war nicht erreichbar.",
   replyTooLong: (size: string) => `Nicht gesendet. Zu lang zum Senden — höchstens ${size}. Kürze die Nachricht und sende sie nochmal.`,
-  replyTooLarge: "Nicht gesendet. Zu groß zum Senden. Kürze die Nachricht und sende sie nochmal.",
+  replyTooLarge: "Nicht gesendet. Zu groß zum Senden. Entferne eine Datei oder kürze die Nachricht und sende sie nochmal.",
+  replyStagingRefused: "Nicht gesendet. So große Dateien können von diesem Telefon nicht hochgeladen werden. Dein Entwurf ist gesichert; entferne die größten Dateien und sende nochmal.",
+  replyStagingUnreachable: "Nicht gesendet. Eine Datei konnte nicht hochgeladen werden. Prüfe deine Verbindung und sende nochmal.",
+  replyStagingFailed: "Nicht gesendet. Eine Datei konnte nicht hochgeladen werden. Sende nochmal.",
   replyBusy: "Nicht gesendet. Dein Mailserver ist gerade ausgelastet und nimmt nichts an. Versuch es gleich nochmal.",
   replyNotSignedIn: "Nicht gesendet — dein Entwurf ist gesichert. Dieses Postfach ist hier nicht angemeldet. Melde es in den Einstellungen neu an.",
   forwardFilesHead: "Wird mitgesendet",
@@ -1582,6 +1633,7 @@ export const DE: Deck = {
   forwardTo: "An",
   composeCc: "Kopie",
   composeBcc: "Blindkopie",
+  composeAddCopies: "Kopie, Blindkopie",
   forwardToPlaceholder: "name@beispiel.de, …",
   forwardNotePlaceholder: "Notiz hinzufügen (optional)",
   forwarded: "Weitergeleitet.",
@@ -1598,6 +1650,8 @@ export const DE: Deck = {
   composeToPlaceholder: "name@beispiel.de, …",
   composeSuggestion: (name: string, address: string) => (name === "" ? `${address} hinzufügen` : `${name}, ${address} hinzufügen`),
   composeFrom: (address: string) => `Von ${address}`,
+  composeFromChange: (address: string) => `Von ${address}. Andere Adresse wählen`,
+  composeFromList: "Adressen, von denen diese Nachricht rausgehen kann",
   composeFromSubstituted: (was: string) => `${was} ist getrennt, daher geht diese Nachricht von der Adresse oben raus.`,
   composeFromSubstitutedUnknown: "Die Adresse dieses Entwurfs ist getrennt, daher geht er von der Adresse oben raus.",
   composeSent: "Gesendet.",
@@ -1810,6 +1864,8 @@ export const DE: Deck = {
     "Erster Kontakt. Von diesem Absender hat es noch nichts in die Ohbox geschafft — es hat hier gewartet.",
   domainAlsoFiles: (count: number, senders: string): string =>
     `Sortiert außerdem ${count === 1 ? "1 Mail" : `${count} Mails`} von anderen bei dieser Domain ein: ${senders}.`,
+  listClaimScreenOut: (brand: string): string =>
+    `Aussortieren legt nur die Nachrichten ab, die sich als ${brand} ausgeben. Die übrigen Mails der Liste bleiben, wo sie sind.`,
   senderPastTheGate: (n: number): string =>
     n === 1
       ? "Eine Mail dieses Absenders ist schon in deinen Mails. Die Mails unten haben hier gewartet."

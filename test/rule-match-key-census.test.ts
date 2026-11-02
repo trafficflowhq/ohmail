@@ -120,7 +120,7 @@ export function sqlCensus(files: ReadonlyMap<string, string>): string[] {
 
 /** The SQL readers the builder replaced a spelling in — each in the walk, each asking it. */
 const SQL_READERS = [
-  "apps/worker/src/screener-auto.ts", "apps/worker/src/gate-release.ts",
+  "apps/worker/src/gate-release.ts",
   "apps/worker/src/screener-correspondent-retro.ts", "packages/db/src/screener-apply.ts",
   "packages/db/src/screener-cutline.ts", "packages/db/src/own-mail.ts",
   "packages/services/src/sensitive-rescreen.ts", "packages/services/src/consent-seed.ts",

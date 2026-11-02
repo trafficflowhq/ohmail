@@ -626,7 +626,7 @@ export {
 // Adapters.
 export type {
   CreatedDraftRow, EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams,
-  ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire,
+  ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedPileWire,
   WithdrawSendAnswer, WithdrawSendOutcome,
 } from "./adapters/adapter.js";
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
@@ -874,6 +874,9 @@ export {
   type StoreTimelineState,
 } from "./store-timeline.js";
 export { VERB_TARGETS, verbTargetsOf } from "./shadow.js";
+
+/* Which address a new mail leaves from — the web's compose-from re-exports it; the phone reads it. */
+export { defaultFrom, optionsFromFacts, type FromFacts, type FromOption } from "./compose-from.js";
 
 /* The one attach bound every compose surface states — the client mirror of the send service's
    cap rule, here because the webapp AND the phone composer read it. See its header. */

@@ -85,7 +85,7 @@ function ServersBody() {
           <Txt variant="button" tone="ink2">{Copy.back}</Txt>
         </Tap>
       ) : null}
-      <Scroller bounded>
+      <Scroller bounded avoidKeyboard>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
           <Txt variant="h1">{Copy.serversTitle}</Txt>
           <Txt variant="hint" tone="ink3" style={{ marginTop: 6 }}>

@@ -17,6 +17,9 @@ import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, sendingMailboxId, type LiveWorldActions } from "../src/state/live";
 import { dto, listen, mailServer, ruleDto } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
+import { copiesOffered } from "../src/ui/compose-copies";
+import { composeFromOf } from "../src/ui/compose-sender";
+import { SIG_FOLLOWING, effectiveSignature } from "@ohmail/client-engine";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const read = (rel: string): string => fs.readFileSync(path.join(HERE, "..", rel), "utf8");
@@ -157,6 +160,75 @@ describe("the phone can start a mail, not only answer one", () => {
     expect(sent.attachments?.map((a) => a.filename)).toEqual(["note.txt"]);
     const draft = JSON.parse(wire(live.fake, "POST", "/drafts")[0]!.body) as { subject: string };
     expect(draft.subject).toBe("Here");
+    live.store.close();
+    live.fake.server.close();
+  });
+});
+
+describe("a new mail offers Cc and Bcc of its own", () => {
+  it("only a new mail, with the fields hidden and nothing sending, offers them", () => {
+    expect(copiesOffered({ mode: "new", shown: false, phase: "idle" })).toBe(true);
+    expect(copiesOffered({ mode: "new", shown: true, phase: "idle" })).toBe(false);
+    for (const phase of ["sending", "queued", "unverified"] as const) expect(copiesOffered({ mode: "new", shown: false, phase })).toBe(false);
+    for (const mode of ["reply", "replyAll", "forward"] as const) expect(copiesOffered({ mode, shown: false, phase: "idle" })).toBe(false);
+  });
+});
+
+describe("a new mail chooses the address it leaves from", () => {
+  const row = (id: string, createdAt: string | undefined, status: string | null = "connected") =>
+    ({ id, address: `${id}@fake.test`, status, ...(createdAt ? { createdAt } : {}) });
+
+  it("defaults to the oldest connected mailbox, not the mirror's order", () => {
+    const rows = [row("mb-1", "2026-03-01T00:00:00Z"), row("mb-2", "2026-01-01T00:00:00Z"), row("mb-0", "2025-01-01T00:00:00Z", "disabled")];
+    const from = composeFromOf({ picked: null, bound: null, fallback: "mb-1", known: true, rows });
+    expect(from.sendFrom).toBe("mb-2");
+    expect(from.keepFrom).toBe("mb-2");
+    expect(from.choices.map((c) => c.id)).toEqual(["mb-2", "mb-1"]);
+    // A mailbox in error yields to a connected one; an undated row sorts after the dated ones.
+    const erring = [row("mb-1", "2026-03-01T00:00:00Z"), row("mb-2", "2026-01-01T00:00:00Z", "error"), row("mb-3", undefined)];
+    expect(composeFromOf({ picked: null, bound: null, fallback: null, known: true, rows: erring }).sendFrom).toBe("mb-1");
+    expect(composeFromOf({ picked: null, bound: null, fallback: null, known: true, rows: erring }).choices.map((c) => c.id)).toEqual(["mb-2", "mb-1", "mb-3"]);
+    // An unread roster leaves the engine's own fallback.
+    expect(composeFromOf({ picked: null, bound: null, fallback: "mb-1", known: false, rows: [] }))
+      .toEqual({ sendFrom: "mb-1", keepFrom: "mb-1", substituted: false, was: null, choices: [] });
+  });
+
+  it("a pick sends from the picked mailbox, with that mailbox's signature", async () => {
+    const live = await scene((f) => {
+      f.addMessage(dto("m1"));
+      f.addMessage({ ...dto("m2"), mailboxId: "mb-2" });
+    });
+    const rows = [row("mb-1", "2026-01-01T00:00:00Z"), row("mb-2", "2026-02-01T00:00:00Z")];
+    const from = composeFromOf({ picked: "mb-2", bound: null, fallback: "mb-1", known: true, rows });
+    expect(from).toMatchObject({ sendFrom: "mb-2", keepFrom: "mb-2", substituted: false });
+    const sig = effectiveSignature(SIG_FOLLOWING, { "mb-1": "First desk", "mb-2": "Second desk" }, from.sendFrom!);
+    expect((await live.actions.sendNew(from.sendFrom, peer, "Hi", "Body", sig)).outcome).toBe("sent");
+    const body = JSON.parse(wire(live.fake, "POST", "/drafts")[0]!.body) as { mailboxId: string; body: string };
+    expect(body.mailboxId).toBe("mb-2");
+    expect(body.body).toContain("Second desk");
+    expect(body.body).not.toContain("First desk");
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("a close keeps the pick, and the reopened draft opens on it", async () => {
+    const live = await scene((f) => {
+      f.addMessage(dto("m1"));
+      f.addMessage({ ...dto("m2"), mailboxId: "mb-2" });
+    });
+    const rows = [row("mb-1", "2026-01-01T00:00:00Z"), row("mb-2", "2026-02-01T00:00:00Z")];
+    const from = composeFromOf({ picked: "mb-2", bound: null, fallback: "mb-1", known: true, rows });
+    let kept: string | null = null;
+    expect(await live.actions.draftKeep({
+      mode: "new", messageId: null, mailboxId: from.keepFrom, to: peer, subject: "Later", body: "Words", files: 0,
+      row: (r) => { kept = r.draftId; },
+    })).toBe("kept");
+    expect((JSON.parse(wire(live.fake, "POST", "/drafts")[0]!.body) as { mailboxId: string }).mailboxId).toBe("mb-2");
+    await live.engine.syncOnce();
+    const draft = live.engine.read().get("draft", kept!) as { mailboxId: string } | undefined;
+    expect(draft?.mailboxId).toBe("mb-2");
+    const reopened = composeFromOf({ picked: draft!.mailboxId, bound: draft!.mailboxId, fallback: "mb-1", known: true, rows });
+    expect(reopened).toMatchObject({ sendFrom: "mb-2", keepFrom: "mb-2", substituted: false });
     live.store.close();
     live.fake.server.close();
   });

@@ -82,7 +82,7 @@ function Limitations({ onGo }: { onGo: () => void }) {
   const t = useTheme();
   const lines = limitationLines(Platform.OS);
   return (
-    <Scroller bounded>
+    <Scroller bounded avoidKeyboard>
       <View style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 14 }}>
         {/* THE HEADING IS THE FOCUS TARGET (`focusTargetFor("limits")`), because this step is a
             read: a reader who lands mid-list has skipped the sentence that decides. */}
@@ -302,6 +302,22 @@ function Credentials() {
           }}
           input={{
             ...standaloneAutofill("password"),
+            returnKeyType: "done",
+            onSubmitEditing: () => {
+              if (ready) void connect();
+            },
+          }}
+        />
+        {/* The name the letters carry; blank sends the bare address, as before. */}
+        <Field
+          value={fields.name ?? ""}
+          onChange={(v) => setFields((cur) => ({ ...cur, name: v }))}
+          label={Copy.phoneStandaloneName}
+          hint={Copy.phoneStandaloneNameHint}
+          input={{
+            autoComplete: "name",
+            textContentType: "name",
+            autoCapitalize: "words",
             returnKeyType: "done",
             onSubmitEditing: () => {
               if (ready) void connect();

@@ -240,6 +240,9 @@ export interface UnscreenedGroupWire {
   newestAt: string;
 }
 
+/** A pile whose letters can come from senders nobody let in, asked by its note. */
+export type UnscreenedPileWire = "news" | "receipts";
+
 /** The read's answer: the groups, the messages they hold, and the server's own group ceiling. */
 export interface UnscreenedWire {
   groups: UnscreenedGroupWire[];
@@ -249,6 +252,8 @@ export interface UnscreenedWire {
   complete?: boolean;
   /** How many groups one press may name. Read rather than hardcoded, so the client cannot drift. */
   max: number;
+  /** The pile the answer is about, said back; absent from the Ohbox's offer and from a server before piles. */
+  pile?: UnscreenedPileWire;
 }
 
 /** One waiting sender as `GET /screener` lists it: the representative held message and its author. */
@@ -262,6 +267,8 @@ export interface ScreenerWaitingItemWire {
   mailboxId: string | null;
   /** The page's `checked`: a held letter of this sender claims a company its address is not. */
   marked?: true;
+  /** The page's `checked.claimsOnly`: a screen-out of this sender files its claims alone and writes no rule (mail 0150). */
+  claimsOnly?: true;
 }
 
 /** One page of the queue. `total` is stated on the first page only; `null` where none was. */
@@ -276,6 +283,12 @@ export interface ScreenerWaitingWire {
    * ahead of the mail and rules it is read beside. Absent everywhere else.
    */
   copyBehind?: true;
+  /**
+   * The mailboxes the queue leaves out (removed with the copy kept, or erased), sorted: their mail
+   * makes nobody waiting, so the page's silence says nothing about it. Absent from an older server,
+   * whose page lists their senders as before.
+   */
+  gone?: string[];
 }
 
 /** The press's answer: the groups it screened and how many messages they held. */
@@ -513,9 +526,10 @@ export interface EngineAdapter {
    *
    * A derivation the server does over the caller's own Ohbox against their own rules and
    * contacts, asked rather than mirrored for `heldReleases`' reason: the deciding fact is the
-   * ARRIVAL GATE's answer, which `/sync` carries no vocabulary for.
+   * ARRIVAL GATE's answer, which `/sync` carries no vocabulary for. Given a `pile`, the same
+   * question of News or Receipts, at any age: that pile's note.
    */
-  unscreened?(): Promise<UnscreenedWire>;
+  unscreened?(pile?: UnscreenedPileWire): Promise<UnscreenedWire>;
 
   /**
    * `GET /screener` — one page of the waiting queue, read from the store rather than the mirror,
@@ -536,9 +550,10 @@ export interface EngineAdapter {
    *
    * It moves no mail itself: the server writes the intent a fresh arrival writes and the
    * organizer's reconciler carries it to the mail host. So the answer is what was SCREENED, not
-   * what has already moved, and a second press over the same groups screens nothing.
+   * what has already moved, and a second press over the same groups screens nothing. Given a
+   * `pile`, it screens that pile's letters from senders nobody let in.
    */
-  screenUnscreened?(addresses?: readonly string[]): Promise<UnscreenedResultWire>;
+  screenUnscreened?(addresses?: readonly string[], pile?: UnscreenedPileWire): Promise<UnscreenedResultWire>;
 
   /**
    * `POST /screener/held-releases/dismiss` — "not now", persisted per ACCOUNT so the offer stays

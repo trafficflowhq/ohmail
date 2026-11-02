@@ -99,13 +99,15 @@ describe("the probe states one baselined window as a range the index serves", ()
   const ACC = "00000000-0000-4000-8000-000000000001";
   const cutoff = new Date("2026-08-01T00:00:00.000Z");
   const c = (o: Partial<ResolvedCutline>): ResolvedCutline => ({ cutoff, baselined: true, allTime: false, ...o });
-  const probe = (set: Parameters<typeof senderIsActiveSql>[3]) =>
-    renderPg(senderIsActiveSql(pgDialect(), ACC, sql`lower(r.from_address)`, set)).sql.replace(/\s+/g, " ");
+  const probe = (set: Parameters<typeof senderIsActiveSql>[3], gone: readonly string[] = []) =>
+    renderPg(senderIsActiveSql(pgDialect(), ACC, sql`lower(r.from_address)`, set, gone)).sql.replace(/\s+/g, " ");
   const conjunct = /lower\(mc\.from_address\) = lower\(r\.from_address\) and coalesce\(mc\.date, mc\.created_at\) >= \$\d+::timestamptz and /;
 
   it("one baselined window: the window is a top-level conjunct", () => {
     expect(probe(c({}))).toMatch(conjunct);
     expect(probe(new Map([["m1", c({})], ["m2", c({})]]))).toMatch(conjunct);
+    // A removed mailbox left out of the probe keeps it.
+    expect(probe(c({}), ["00000000-0000-4000-8000-0000000000aa"])).toMatch(conjunct);
   });
 
   it("no baseline, all time, or windows per mailbox: no conjunct", () => {
@@ -115,7 +117,7 @@ describe("the probe states one baselined window as a range the index serves", ()
   });
 
   it("the device store renders the same conjunct", () => {
-    const lite = renderLite(senderIsActiveSql(sqliteDialect(), ACC, sql`lower(r.from_address)`, c({}))).sql.replace(/\s+/g, " ");
+    const lite = renderLite(senderIsActiveSql(sqliteDialect(), ACC, sql`lower(r.from_address)`, c({}), [])).sql.replace(/\s+/g, " ");
     expect(lite).toMatch(/lower\(mc\.from_address\) = lower\(r\.from_address\) and coalesce\(mc\.date, mc\.created_at\) >= \? and /);
   });
 });

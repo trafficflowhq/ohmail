@@ -11,6 +11,7 @@
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
 import { authScreens, failedAtGateOf, type FailedAtGateDTO } from "@ohmail/client-engine";
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
+import type { UnscreenedPileWire } from "@ohmail/client-engine";
 import { calendarEventsOf, withoutCalendarBodies, type DistinctCalendarEvent } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES, SENT_FORWARD_MAX_PARTS, draftOverCeiling } from "@ohmail/client-engine";
 import { addressBook, formatRecipient, matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
@@ -58,6 +59,7 @@ import {
   HELD_SEND_RECHECK_MS,
   screenerRowsOfStore,
   screenerSegments,
+  screenerWaitingOf,
   senderKey,
   threadOf,
   isForwardedByUs,
@@ -95,6 +97,7 @@ import {
   StoreTimelineWalker,
   type ServerSearchOutcome,
   type ServerSearchOpts,
+  type ServerAddressOutcome,
   type PressVerdict,
   type RuleDTO,
   type ScreenDest,
@@ -501,6 +504,8 @@ export { attachmentFaultClass, type AttachmentFaultClass } from "@ohmail/client-
 export { ruleMatchKey } from "@ohmail/client-engine";
 /** The draft limit's one predicate — the composer says it before the wire (the web's rule). */
 export { draftOverCeiling } from "@ohmail/client-engine";
+/* A new mail's From: the web's options and default, for the composer (`ui/compose-sender.ts`). */
+export { defaultFrom, optionsFromFacts, type FromOption } from "@ohmail/client-engine";
 // The shared-provider list, for the Screening sheet: a domain there is never offered as a scope.
 export { isSharedProviderDomain } from "@ohmail/client-engine";
 export type { WaitingOnOrganizerView } from "@ohmail/client-engine";
@@ -1717,9 +1722,10 @@ export interface ScreenerRow {
    * THE IDENTITY FACT, the mirror selector's aggregate over the very bag this row lists
    * (`ScreenerSenderDTO.checked`): a held message names `brand` from an address `brand` does not
    * send from. Rendered as its own line, before and apart from the AI advice. `list`: a mailing
-   * list posts as this address (mail 0150), said on its own line beneath.
+   * list posts as this address (mail 0150), said on its own line beneath. `claimsOnly`: the store
+   * says a screen-out of this sender files those claims alone and writes no rule.
    */
-  checked?: { brand: string; domainShared: boolean; domain: string; list?: true };
+  checked?: { brand: string; domainShared: boolean; domain: string; list?: true; claimsOnly?: true };
   /**
    * No held message claims anything, and the address is `brand`'s own while its provider did not
    * confirm the sender (`ScreenerSenderDTO.checked`, `unverified`): the sender screen's line, and
@@ -1790,6 +1796,29 @@ export function domainScopeOffered(address: string): boolean {
   return !isSharedProviderDomain(domainOf(address).toLowerCase());
 }
 
+/**
+ * A SCREEN-OUT OF THIS ROW FILES ITS CLAIMS ALONE (mail 0150): the store says so of a list the person
+ * let in, at the address. `null` where the screen-out is the address's, with its rule and request.
+ */
+export function listClaimOf(row: Pick<ScreenerRow, "address" | "checked">, scope: Scope): { brand: string } | null {
+  return row.checked?.claimsOnly === true && (scope === "sender" || !domainScopeOffered(row.address))
+    ? { brand: row.checked.brand } : null;
+}
+
+/**
+ * WHAT THE SENDER SCREEN'S BAR SAYS OF A PRESS, before it: `ruleLine`, the rule a press writes, and on
+ * a waiting row's list claims ({@link listClaimOf}) `listClaim`, what a screen-out files. There Screen
+ * out and Spam write no rule, and `ruleLine` promises none for them.
+ */
+export function decideLinesOf(
+  row: Pick<ScreenerRow, "address" | "checked">, scope: Scope, target: string, waiting: boolean,
+): { ruleLine: string; listClaim: string | null } {
+  const claims = waiting ? listClaimOf(row, scope) : null;
+  return claims === null
+    ? { ruleLine: Copy.decideRule(target), listClaim: null }
+    : { ruleLine: Copy.decideRuleListClaim(target), listClaim: Copy.listClaimScreenOut(claims.brand) };
+}
+
 function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
   const held: ScreenerHeld[] = dto.held.map((h) => ({
     id: h.id,
@@ -1820,6 +1849,7 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
       checked: {
         brand: dto.checked.brand, domainShared: dto.checked.domainShared, domain: dto.checked.domain,
         ...(dto.checked.list === true ? { list: true as const } : {}),
+        ...(dto.checked.claimsOnly === true ? { claimsOnly: true as const } : {}),
       },
     } : {}),
     ...(dto.checked?.reason === "unverified" ? {
@@ -1932,7 +1962,7 @@ export function liveScreener(
     queueReader, server.map((s, order) => ({
       id: `sender:${senderKey(s.address)}`, kind: "sender" as const, order, messageId: s.messageId,
       address: s.address, name: s.name, receivedAt: s.receivedAt, subject: s.subject,
-      snippet: s.snippet, mailboxId: null, total: server.length,
+      snippet: s.snippet, mailboxId: null, total: server.length, ...(s.claimsOnly ? { claimsOnly: true as const } : {}),
     })), v.now, v.locale ?? "en", v.zone, v.ownAddresses,
   ).map((dto) => rowOf(dto, scopes[senderKey(dto.from.address)]));
   return {
@@ -2248,7 +2278,7 @@ export function storeRowOf(engine: OhmailEngine, m: EngineMessage, v: WorldView,
   return row;
 }
 
-export type { EngineMessage as StoreMessage, ServerSearchOpts, ServerSearchOutcome, StoreSearchWalker, StoreTimelineWalker };
+export type { EngineMessage as StoreMessage, ServerAddressOutcome, ServerSearchOpts, ServerSearchOutcome, StoreSearchWalker, StoreTimelineWalker };
 /** The one re-ask rule the store reads bind (`store-views.ts`); the web binds the same one. */
 export { createSessionReask, type SessionRenewalDoor, type StoreReadSource } from "@ohmail/client-engine";
 
@@ -2936,7 +2966,8 @@ export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnr
   | "replyForwardOriginalUnavailable" | "replyForwardPartsChanged" | "replyForwardPartsUnsupported" | "replyFailed" | "replySentElsewhere"
   | "replyDeletedElsewhere"
   | "replyChangedElsewhere" | "replyChangedElsewhereUnsaved"
-  | "replyTooLong" | "replyTooLarge" | "unsavedSendAlreadyWent" | "replyUnverifiedAgain";
+  | "replyTooLong" | "replyTooLarge" | "unsavedSendAlreadyWent" | "replyUnverifiedAgain"
+  | "replyStagingRefused" | "replyStagingUnreachable" | "replyStagingFailed";
 
 /** The draft limit as the phone names it — `replyTooLong`, `composeTooLong` and the keep notes. */
 export const draftLimitLabel = (): string => sizeLabel(DRAFT_BODY_MAX_BYTES);
@@ -2961,6 +2992,9 @@ export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
             : code === "draft_changed" ? "replyChangedElsewhereUnsaved"
               : code === "draft_too_large" ? "replyTooLong"
                 : code === "payload_too_large" ? "replyTooLarge"
+                  : code === "staging_refused" ? "replyStagingRefused"
+                    : code === "staging_unreachable" ? "replyStagingUnreachable"
+                      : code === "staging_failed" ? "replyStagingFailed"
                   : "replyFailed";
 }
 
@@ -2980,7 +3014,10 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
                 : kind === "replyTooLarge" ? refuse("replyTooLarge")
                   : kind === "unsavedSendAlreadyWent" ? refuse("unsavedSendAlreadyWent")
                     : kind === "replyUnverifiedAgain" ? refuse("replyUnverifiedAgain")
-                      : refuse("replyFailed");
+                      : kind === "replyStagingRefused" ? refuse("replyStagingRefused")
+                        : kind === "replyStagingUnreachable" ? refuse("replyStagingUnreachable")
+                          : kind === "replyStagingFailed" ? refuse("replyStagingFailed")
+                            : refuse("replyFailed");
 }
 
 /** `details.firstSend.status` of a refusal, when it names one. */
@@ -3543,6 +3580,8 @@ export interface LiveDeps {
   letters?: LetterDoor;
   /** The session's server sends only the forwarded parts a send names; `null` is not known yet. A getter. */
   forwardParts?: () => boolean | null;
+  /** The session's send surface (`compose/attach.ts#phoneSendSurface`). A getter. */
+  sendSurface?: () => number | undefined;
   /**
    * THE ACCOUNT'S RESURFACE TIME — `'HH:MM'`, or `null` for "never chosen" (mail 0110), as a
    * GETTER for `ownAddresses`' reason exactly: this facade is identity-stable by design while
@@ -3673,6 +3712,8 @@ export interface LiveWorldActions {
   forwardFiles(messageId: string): ForwardFilesRead;
   /** The server sends only the parts a forward names; `null` until it answers, `false` once it said it cannot. */
   forwardPartsSupported(): boolean | null;
+  /** What this session's send carries at most (`compose/attach.ts#phoneSendSurface`); absent is the strict bound. */
+  sendSurface(): number | undefined;
   /**
    * PUT A GIVEN-UP CHANGE BACK IN THE QUEUE — under its ORIGINAL Idempotency-Key, so an attempt
    * that committed and only lost its answer replays that answer instead of sending a second copy.
@@ -3951,6 +3992,13 @@ export interface LiveWorldActions {
    * goes to the Screener, and the sentence names what the server moved. `false` on a refusal.
    */
   screenUnscreened(): Promise<boolean>;
+  /**
+   * THE NOTE ON NEWS AND RECEIPTS — the web's (`pile-note.ts`): how many letters in the pile came from
+   * senders nobody let in, asked of the door; `null` when it has no such read.
+   */
+  pileUnscreened(pile: UnscreenedPileWire): Promise<{ total: number; atLeast: boolean } | null>;
+  /** …and its press: the pile's letters from senders nobody let in go to the Screener. `false` on a refusal. */
+  screenPileUnscreened(pile: UnscreenedPileWire): Promise<boolean>;
   /**
    * A HELD LETTER ITS PROVIDER FAILED, decided alone (the web's `fileFailed`): one `move` out of the
    * gate — `spam` for "Not from …", `ohbox` for "It's from …", the person's own placement — never a
@@ -4266,6 +4314,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /** Does the server send only the parts a forward names (`GET /hello` `features.forwardParts`)? */
   let forwardPartsRefused = false;
   const forwardPartsSupported = (): boolean | null => (forwardPartsRefused || deps.forwardParts === undefined ? false : deps.forwardParts());
+  const sendSurface = (): number | undefined => deps.sendSurface?.();
 
   /*
    * THE LISTS A SCREEN SHOWS: the opened message's, each conversation member's, each held
@@ -4559,8 +4608,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       .filter((r, i) => i === 0 || (scope === "domain" && domainOf(senderKey(r.address)).toLowerCase() === domain))
       .flatMap((r) => r.heldIds);
   };
+  /** A screen-out of a list's claims the store says it files alone sends nothing (`screener-apply.ts`). */
+  const claimsOnly = (row: ScreenerRow, scope: Scope): boolean => listClaimOf(row, scope) !== null;
+  /** The press's sentence: what a screen-out of a list's claims set aside, else the rule it made. */
+  const decidedSaidOf = (row: ScreenerRow, dest: Destination, scope: Scope, target: string): Refusal => {
+    const claims = decisionOf(dest as ScreenDest) === "no" ? listClaimOf(row, scope) : null;
+    return claims !== null ? refuse("liveDecidedClaims", destDone(dest), claims.brand) : refuse("liveDecided", destDone(dest), target);
+  };
   /** Armed by the press's own path, as `decide` reads it: only a representative at the gate is decided. */
   const unsubClaimOf = (row: ScreenerRow, peers: readonly ScreenerRow[], scope: Scope): UnsubscribeClaim => {
+    if (claimsOnly(row, scope)) return "none";
     const rep = engine.read().get<EngineMessage>("message", row.id);
     const atGate = rep === undefined || physicalFolderOf(rep) === FOLDER_OF_VIEW.screener;
     return pressClaim(atGate, "no", heldInScope(row, peers, scope));
@@ -4581,9 +4638,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       address: row.address, scope, dest: dest as ScreenDest, read,
       messageIds: row.held.map((h) => h.id), ...(also.length > 0 ? { alsoIds: also } : {}), at: now().getTime(),
     };
-    const decidedSaid = refuse("liveDecided", destDone(dest), target);
+    const decidedSaid = decidedSaidOf(row, dest, scope, target);
     const atGate = rep === undefined || physicalFolderOf(rep) === FOLDER_OF_VIEW.screener;
-    const claim = pressClaim(atGate, decision, heldInScope(row, peers, scope));
+    const claim = claimsOnly(row, scope) ? "none" : pressClaim(atGate, decision, heldInScope(row, peers, scope));
     const pressSaid = withUnsub(decidedSaid, claim, true);
     let spoke = false;
     const hold = deps.leaveWaiting?.({ address: row.address, scope });
@@ -4726,11 +4783,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(queued.name ? refuse("liveDecidedElsewhere", queued.name, target) : refuse("liveDecidedElsewhereUnknown", target));
       return true;
     }
-    const decidedSaid = refuse("liveDecided", destDone(dest), target);
+    const decidedSaid = decidedSaidOf(row, dest, scope, target);
     return said(
       v,
       // Sent at once: no Undo is on offer, so the request is said as gone.
-      withUnsub(decidedSaid, pressClaim(decideRoute, decision, heldIds), false),
+      withUnsub(decidedSaid, claimsOnly(row, scope) ? "none" : pressClaim(decideRoute, decision, heldIds), false),
       refuse("liveDecideFailed", row.address),
     );
   };
@@ -6300,6 +6357,20 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
   };
 
+  /* The note on News and Receipts, on the Ohbox offer's press and in its words. */
+  const pileUnscreened = (pile: UnscreenedPileWire): Promise<{ total: number; atLeast: boolean } | null> =>
+    engine.pileUnscreened(pile);
+  const screenPileUnscreened = async (pile: UnscreenedPileWire): Promise<boolean> => {
+    try {
+      const count = await engine.screenPileUnscreened(pile);
+      toast(count > 0 ? refuse("unscreenedMoved", count) : refuse("unscreenedMovedNone"));
+      return true;
+    } catch {
+      toast(refuse("unscreenedFailed"));
+      return false;
+    }
+  };
+
   /**
    * THE WINDOW PRESS (the web's `holdScreenPress`): the press says what it does, with Undo; the
    * commit re-plans through `planScreenCommit` and the list is read back once the rules are answered
@@ -6448,6 +6519,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /** The held letters of a screening subject: what a decide on it moves, and so what it may unsubscribe. */
   const heldOfSubject = (subject: readonly EngineMessage[]): string[] =>
     subject.filter((x) => physicalFolderOf(x) === FOLDER_OF_VIEW.screener).map((x) => x.id);
+  /** {@link listClaimOf} for the open message's sheet, off the store's queue page and the subject's mail. */
+  const listClaimAt = (address: string, scope: Scope, subject: readonly EngineMessage[]): { brand: string } | null => {
+    if (scope !== "sender" && domainScopeOffered(address)) return null;
+    const key = senderKey(address);
+    const alone = screenerWaitingOf(engine.read())?.senders.some((r) => r.claimsOnly === true && senderKey(r.address) === key) === true;
+    const brand = alone ? [...subject].sort(newestFirst).find((x) => x.senderCheck?.reason === "impersonation")?.senderCheck?.brand : undefined;
+    return brand ? { brand } : null;
+  };
   /** The open message's sheet, before a press: what Screen out or Spam would say about the unsubscribe. */
   const screeningUnsubClaim = (messageId: string, scope: Scope): UnsubscribeClaim => {
     const m = messageOf(messageId);
@@ -6458,6 +6537,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const subject = engine.read().list<EngineMessage>("message").filter((x) => (scope === "domain"
       ? domainOf(x.from.address.trim().toLowerCase()).toLowerCase() === match
       : x.from.address.trim().toLowerCase() === match));
+    if (listClaimAt(address, scope, subject) !== null) return "none";
     const held = heldOfSubject(subject);
     return pressClaim(held.length > 0, "no", held);
   };
@@ -6491,6 +6571,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       .filter((x) => physicalFolderOf(x) === FOLDER_OF_VIEW.screener)
       .sort(newestFirst)[0];
     const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
+    // Read before the press: its overlay takes the sender's row off the store's page.
+    const claims = waiting && decision === "no" ? listClaimAt(address, scope, subject) : null;
 
     /* AN ADDRESS PRESS PAST THE GATE IS HELD, like a Move (`held-routing.ts`): the mail the list
        will show at the place moves now, the rules are a v2 intent committed when the window
@@ -6548,10 +6630,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const lists = deps.unrouted?.() ?? deps.presented?.() ?? presentedOf(engine.read(), deps.now?.() ?? new Date(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
     const stay = back.refused === 0 && back.queued === 0
       ? pressReadBack(engine.read(), lists, ofSubject, wanted, destDone(dest), applyRetro) : null;
-    const pressSaid = stay ?? refuse("liveDecided", destDone(dest), target);
+    // A screen-out of a list's claims the store says it files alone: what it set aside, no rule, no request.
+    const pressSaid = claims !== null ? refuse("liveDecidedClaims", destDone(dest), claims.brand)
+      : stay ?? refuse("liveDecided", destDone(dest), target);
     return saidAll(
       verdicts,
-      withUnsub(pressSaid, pressClaim(waiting !== undefined, decision, heldOfSubject(subject)), false),
+      withUnsub(pressSaid, claims !== null ? "none" : pressClaim(waiting !== undefined, decision, heldOfSubject(subject)), false),
       ownAddressOr(verdicts, refuse("liveDecideFailed", m.from.address)),
     );
   };
@@ -6599,7 +6683,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     retryQueued: (id) => engine.retryQueued(id),
     discardQueued: (key) => engine.withdrawQueued(key),
     releaseConfirmed,
-    openMessage, leaveMessage, hydrateMessage, forwardFetch, forwardFiles, forwardPartsSupported, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
+    openMessage, leaveMessage, hydrateMessage, forwardFetch, forwardFiles, forwardPartsSupported, sendSurface, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
     watchLists, openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, screeningUnsubClaim, release, setPile,
@@ -6608,6 +6692,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, leaveSend, cancelWaitingSend, cancelSchedule, tagToggle, tagCreate,
     screenSender,
     screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened, fileFailed,
+    pileUnscreened, screenPileUnscreened,
     draftDiscard, draftResolve, draftSendAgain, draftKeep, keepEnvelope, keptReply, draftSent, draftLeft,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
@@ -6639,6 +6724,8 @@ export interface WorldActions {
   forwardFiles(messageId: string): ForwardFilesRead;
   /** See {@link LiveWorldActions.forwardPartsSupported}. */
   forwardPartsSupported(): boolean | null;
+  /** See {@link LiveWorldActions.sendSurface}. */
+  sendSurface(): number | undefined;
   /**
    * The two verbs on a change the engine gave up on — see {@link LiveWorldActions.retryAbandoned}.
    * Awaited by the caller (the chrome disables the row while one is in flight), so unlike most of
@@ -6774,6 +6861,9 @@ export interface WorldActions {
   moveStayed(ids: readonly string[], dest: Destination): void;
   /** The Ohbox's undecided-sender offer, pressed — awaited by its card. See {@link LiveWorldActions.screenUnscreened}. */
   screenUnscreened(): Promise<boolean>;
+  /** The note on News and Receipts, asked and pressed. See {@link LiveWorldActions.pileUnscreened}. */
+  pileUnscreened(pile: UnscreenedPileWire): Promise<{ total: number; atLeast: boolean } | null>;
+  screenPileUnscreened(pile: UnscreenedPileWire): Promise<boolean>;
   /** A held letter its provider failed, decided alone. See {@link LiveWorldActions.fileFailed}. */
   fileFailed(messageId: string, to: "spam" | "ohbox"): void;
   /* The folder verbs — see {@link LiveWorldActions} for each arm's contract. */
@@ -6805,6 +6895,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     forwardFetch: (id) => current().forwardFetch(id),
     forwardFiles: (id) => current().forwardFiles(id),
     forwardPartsSupported: () => current().forwardPartsSupported(),
+    sendSurface: () => current().sendSurface(),
     retryAbandoned: (id) => current().retryAbandoned(id),
     discardAbandoned: (id) => current().discardAbandoned(id),
     retryQueued: (id) => current().retryQueued(id),
@@ -6863,6 +6954,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     stayedWhy: (ids) => current().stayedWhy(ids),
     moveStayed: (ids, dest) => void current().moveStayed(ids, dest),
     screenUnscreened: () => current().screenUnscreened(),
+    pileUnscreened: (pile) => current().pileUnscreened(pile),
+    screenPileUnscreened: (pile) => current().screenPileUnscreened(pile),
     fileFailed: (id, to) => void current().fileFailed(id, to),
     folderCreate: (mailboxId, name) => void current().folderCreate(mailboxId, name),
     folderRename: (id, name) => void current().folderRename(id, name),
@@ -7424,6 +7517,11 @@ export function firstSyncSay(here: { firstSync: string | null } | null): FirstSy
  */
 export function firstSyncSaid(verdict: FirstSyncSay | null): string | null {
   return verdict === "nothingReadable" ? Copy.firstSyncNothingReadable : null;
+}
+
+/** The Ohbox's line while a first sync runs on behind an opened mailbox; `null` otherwise. */
+export function firstSyncReadingSaid(verdict: FirstSyncSay | null): string | null {
+  return verdict === "pending" ? Copy.firstSyncReading : null;
 }
 
 /**

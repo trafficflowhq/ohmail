@@ -222,7 +222,9 @@ import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/work
    the authority nothing else will ever check, and one fact function decides every row. */
 import { senderCheckBackfillPass } from "@trafficflow/worker/sender-check-backfill";
 import { listAddressBackfillPass } from "@trafficflow/worker/list-address-backfill";
+import { retireActAdmissionsPass } from "@trafficflow/worker/act-admission-retire";
 import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
+import { GONE_LETTER_TIDY_BATCH, goneLetterTidyPass } from "@trafficflow/worker/gone-letter-tidy";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
 // argument. The values it writes have to be the ones ingest would have written from the same
 // headers; a second parse here would leave two populations of rows decided by different rules, and
@@ -268,7 +270,7 @@ import {
 } from "./roster.js";
 // Removing a mailbox takes this install's copy of its mail with it. See `local-mirror.ts` for why
 // this is the sidecar's job and not `MailboxService.delete`'s.
-import { mirroredFirstSyncFacts, mirroredMessageCount, mirrorRowsRemain, wipeLocalMirror } from "./local-mirror.js";
+import { mirroredFirstSyncFacts, mirroredMessageCount, mirrorRowsRemain, stripSettingsHashes, wipeLocalMirror } from "./local-mirror.js";
 // An earlier build's sign-out left the outgoing password behind; the boot removes it.
 import { removeSignedOutResidue } from "./signed-out-residue.js";
 import { settleFirstDoorAttempt } from "./first-door.js";
@@ -1948,6 +1950,9 @@ export async function discloseProviderConfirms(
 export const LOCAL_NAME_BACKFILL_BATCH = 100;
 export const LOCAL_NAME_BACKFILL_PAGES = 2;
 
+/** Pages of senders the launch's act-admission retirement may walk: a bound, never reached in practice. */
+const LOCAL_ACT_RETIRE_PAGES = 1000;
+
 /**
  * How often a launch runs the THREAD-JOIN HEAL (`@trafficflow/worker/thread-join-heal`) at the
  * tail of a drain. Six hours — the hosted worker's own gate — because it repairs presentation
@@ -3206,6 +3211,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         });
       }
     };
+    /** The gone-letter tidy found this store clean in THIS launch: later drains skip it at no cost. */
+    const goneLettersTidied = new Set<string>();
+    /**
+     * LETTERS THAT LEFT THE SERVER BEFORE THEIR WORDS WENT WITH THEM, a page per drain — the
+     * worker's own pass on this store, which is its own authority: the preview, the search
+     * document, the summary, a tracker's address and the header lines but seven of a gone letter.
+     * No change row: nothing the window shows reads them. Contained like the backfills above.
+     */
+    const tidyGoneLetters = async (): Promise<void> => {
+      if (stopping || goneLettersTidied.has(world.accountId)) return;
+      try {
+        const r = await goneLetterTidyPass(db as unknown as Tx, world.accountId, {
+          limit: GONE_LETTER_TIDY_BATCH, done: goneLettersTidied,
+        });
+        if (r.tidied > 0) log("gone_letter_tidy", { written: r.tidied, more: !r.done });
+      } catch (err) {
+        log("gone_letter_tidy_failed", {
+          err,
+          reason: "letters that left the server keep their preview and words on this computer a while longer; "
+            + "each page is its own transaction, so the next drain goes on with what is left",
+        });
+      }
+    };
     const backfillStoredNames = async (): Promise<void> => {
       // Both guards before any query. A quitting engine must not open a transaction it may not
       // finish, and a finished repair must cost nothing at all.
@@ -3254,6 +3282,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       });
     });
     const repairInferredPresses = async (): Promise<void> => { if (!stopping) await repairOnce(); };
+    /**
+     * THE ACT'S PAST ADMISSIONS, RETIRED ONCE PER LAUNCH (the worker's own pass): a sender only the act
+     * on suggestions let in loses its rule and the contact only it wrote, and waits at the Screener
+     * again. Paged to the end; it moves no mail. A failure is said once and the next launch asks again.
+     */
+    const retireOnce = oncePerLaunch(async () => {
+      let after: string | undefined;
+      for (let pages = 0; pages < LOCAL_ACT_RETIRE_PAGES && !stopping; pages++) {
+        const r = await retireActAdmissionsPass(db as unknown as Tx, { accountId: world.accountId, ...(after ? { after } : {}) });
+        if (r.rules + r.contacts > 0) log("act_admission_retired", { examined: r.examined, resolved: r.rules, cleared: r.contacts });
+        if (r.done || r.next === null) return;
+        after = r.next;
+      }
+    }, (err) => {
+      log("act_admission_retire_failed", {
+        err,
+        reason: "a sender the act let in before this release keeps its rule or contact for now; no letter " +
+          "moved, and the next launch asks again",
+      });
+    });
+    const retireActAdmissions = async (): Promise<void> => { if (!stopping) await retireOnce(); };
 
 
     /**
@@ -7087,6 +7136,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (organizing) await onceForTheAccount(correspondentRetroDue);
           // The 0.25.9 press repair, behind the organizer gate: it writes the rules this store owns.
           if (organizing) await onceForTheAccount(repairInferredPresses);
+          // The act's past admissions retired, behind the same gate and for the same reason.
+          if (organizing) await onceForTheAccount(retireActAdmissions);
           /* AND THE HISTORICAL-NAME REPAIR LAST OF ALL THE WORK, which is the ordering claim the
              suite pins rather than a preference. It is about rows that have been on this disk for as
              long as the install has existed, so nothing it does is urgent, and a cold launch's first
@@ -7171,6 +7222,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              stamp. See `sync-stamp.ts`. */
           /* ARRIVAL TIMES THIS STORE LOST, one bounded page, for every role: a read of INTERNALDATE on the
              gated connection, the store's reads and writes in this drain's upkeep. An open window's intake goes first. */
+          /* LETTERS THAT LEFT THE SERVER EARLIER lose the words they still hold, a page per drain and
+             for every role: a reader's store holds them too. */
+          tail.phase("gone-letter-tidy");
+          await upkeep(() => onceForTheAccount(tidyGoneLetters));
           tail.phase("arrival-backfill");
           const readArrivals = (conn as Partial<ArrivalReader>).readArrivals;
           if (arrivals !== null && typeof readArrivals === "function" && !drainDeclined && !handedBack) {
@@ -9233,12 +9288,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * again; the wipe writes its receipt, which takes the mailbox out of the window's own mirror. A
      * wipe that fails is said and tried at the next start; it never stops this one.
      */
+    /* AND THE HASHES OF A REMOVED MAILBOX'S SETTINGS, which a removal by an earlier version left on
+       its audit rows (`stripSettingsHashes`): asked of every removed row before its mail, and once
+       of rows naming a mailbox this store no longer has. A clean store only reads. */
+    const clearRemovedHashes = async (mailboxId: string | null): Promise<void> => {
+      try {
+        await stripSettingsHashes(db as unknown as Tx, mailboxId);
+      } catch (err) {
+        log("removed_mailbox_hashes_clear_failed", {
+          err, mailboxId,
+          reason: "a hash of a removed mailbox's settings is still on this computer's audit rows; "
+            + "the next start tries again",
+        });
+      }
+    };
     for (const row of unattached) {
       if (row.disabledReason !== null) continue;
       try {
         const credential = await db.select({ id: mailboxCredentials.mailboxId }).from(mailboxCredentials)
           .where(eq(mailboxCredentials.mailboxId, row.id)).limit(1);
         if (credential.length > 0) continue;
+        await clearRemovedHashes(row.id);
         if (!(await mirrorRowsRemain(db, row.id))) continue;
         await wipeLocalMirror(db, { accountId: world.accountId, mailboxId: row.id });
         log("local_mirror_wipe_finished", {
@@ -9256,6 +9326,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         });
       }
     }
+    await clearRemovedHashes(null);
 
     /* THE REPAIRS RUN AFTER THE ATTACH, and the order is the whole of whether they ever fire.
        On a FIRST launch the seed's incoming credential does not exist when this function starts —
@@ -9765,6 +9836,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const localSealMatch = req.method === "PATCH"
           ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})$/.exec(url.pathname)
           : null;
+        /* `PATCH /local/mailboxes/:id/name` — the name this mailbox's letters carry, on this door.
+         * The shared `PATCH /mailboxes/:id` is `stepUp: true`, which here refuses from five minutes
+         * after launch, and its re-point detaches every runtime; a name is neither a credential nor
+         * a server. `MailboxService.update` with `{ displayName }` alone: no probe, no re-point, no
+         * claim. The authority is the per-launch bearer, on `handle` ALONE. */
+        const localNameMatch = req.method === "PATCH"
+          ? /^\/local\/mailboxes\/([0-9a-fA-F-]{36})\/name$/.exec(url.pathname)
+          : null;
         /* `POST /local/mailboxes` — adding a mailbox, on this door. The shared `POST /mailboxes` is
          * not `stepUp: true`, but every other verb this flow needs is, and a door that could add a
          * mailbox but not seal, remove or organize it would be worse than one that could not add.
@@ -9815,6 +9894,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           || localRemoveMatch !== null
           || localOrganizeMatch !== null
           || localSealMatch !== null
+          || localNameMatch !== null
           || localProbeMatch
           || localCloudProbeMatch
           || localAddMatch;
@@ -9823,6 +9903,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            method, which is why both fields ride every line. */
         const localActionRoute = localOrganizeMatch !== null
           ? "/local/mailboxes/:id/organize"
+          : localNameMatch !== null
+          ? "/local/mailboxes/:id/name"
           : localRemoveMatch !== null || localSealMatch !== null
             ? "/local/mailboxes/:id"
             : localProbeMatch
@@ -9840,7 +9922,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     : "/local/organizer/takeover";
         /** The row id where the PATH carries one; "" where it does not. */
         const localActionMailboxId =
-          (localRemoveMatch ?? localOrganizeMatch ?? localSealMatch)?.[1] ?? "";
+          (localRemoveMatch ?? localOrganizeMatch ?? localSealMatch ?? localNameMatch)?.[1] ?? "";
         if (localAction) {
           /* The receipt, before any branch. With only a verdict logged, "the press never reached
            * the door" and "the door took it and dropped it" leave identical evidence, so this sits
@@ -10414,6 +10496,53 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               );
             } finally {
               addWrite.settle();
+            }
+          }
+          if (localNameMatch) {
+            const mailboxId = localNameMatch[1]!;
+            const refused = (status: number, code: string, message: string, reason: string): Response => {
+              log("local_action_refused", { method: req.method, route: localActionRoute, status, reason });
+              return new Response(JSON.stringify({ error: { code, message } }), {
+                status, headers: { "content-type": "application/json" },
+              });
+            };
+            let raw: unknown;
+            try {
+              raw = ((await req.json()) as { displayName?: unknown } | null)?.displayName;
+            } catch {
+              /* An unreadable body names no name: refused as one below. */
+              raw = undefined;
+            }
+            /* A control character (a CR or LF would end a header) or a name past the drafts' own
+               100 is refused, never cut; blank stores none. */
+            // eslint-disable-next-line no-control-regex
+            if ((raw !== null && typeof raw !== "string") || (typeof raw === "string" && /[\u0000-\u001f\u007f-\u009f]/.test(raw))) {
+              return refused(400, "validation_failed", "A name is one line of text.",
+                "the name was not one line of text, so nothing was written");
+            }
+            const name = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
+            if (Array.from(name).length > 100) {
+              return refused(400, "validation_failed", "A name can hold up to 100 characters.",
+                "the name was longer than a letter carries, so nothing was written");
+            }
+            try {
+              const dto = await depsFor().services!.mailbox.update(
+                {
+                  db, accountId: core.accountId, userId: core.userId,
+                  now, requestId: "", sessionId: core.sessionId ?? null,
+                },
+                mailboxId,
+                { displayName: name === "" ? null : name },
+              );
+              log("local_mailbox_name_written", {
+                mailboxId,
+                reason: "the name this mailbox's letters carry was changed on this install; the "
+                  + "connection and the claim are untouched",
+              });
+              return new Response(JSON.stringify(dto), { status: 200, headers: { "content-type": "application/json" } });
+            } catch (err) {
+              if (!(err instanceof ServiceError)) throw err;
+              return refused(err.httpStatus, err.code, err.message, "the mailbox service refused the name");
             }
           }
           if (localSealMatch) {

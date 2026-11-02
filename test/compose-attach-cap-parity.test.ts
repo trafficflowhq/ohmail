@@ -11,6 +11,9 @@ import {
   COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
   COMPOSE_ATTACH_UNMEASURED_MESSAGE_BYTES,
 } from "../apps/webapp/app/components/ComposeAttach";
+import { PHONE_SEND_MAX_TOTAL_BYTES } from "../apps/mobile/src/compose/attach";
+import { HOST_SEND_MAX_TOTAL_BYTES } from "../apps/sidecar/src/host-listener";
+import { SELF_HOST_SEND_MAX_TOTAL_BYTES } from "../apps/server/src/config";
 
 /**
  * ═══ THE FORM'S PROMISE AND THE SEND'S REFUSAL ARE ONE RULE ════════════════════════════════
@@ -137,6 +140,20 @@ describe("the staged surface states the storage object ceiling", () => {
       .toBe(SEND_STAGED_OBJECT_MAX_BYTES);
     expect(composeAttachCap(20 * MIB, COMPOSE_ATTACH_STAGED_SURFACE_BYTES))
       .toBe(attachmentBudgetFor(20 * MIB));
+  });
+});
+
+describe("the phone's surface fits every door it rides", () => {
+  it("is at most what a desktop host, a self-host server and Cloud's staging carry", () => {
+    expect(PHONE_SEND_MAX_TOTAL_BYTES).toBeLessThanOrEqual(HOST_SEND_MAX_TOTAL_BYTES);
+    expect(PHONE_SEND_MAX_TOTAL_BYTES).toBeLessThanOrEqual(SELF_HOST_SEND_MAX_TOTAL_BYTES);
+    expect(PHONE_SEND_MAX_TOTAL_BYTES).toBeLessThanOrEqual(SEND_STAGED_OBJECT_MAX_BYTES);
+  });
+
+  it("under a large provider's announced SIZE the mailbox binds, as on the web", () => {
+    const announced = 35_882_577;
+    expect(attachmentBudgetFor(announced)).toBeLessThanOrEqual(PHONE_SEND_MAX_TOTAL_BYTES);
+    expect(composeAttachCap(announced, PHONE_SEND_MAX_TOTAL_BYTES)).toBe(attachmentBudgetFor(announced));
   });
 });
 

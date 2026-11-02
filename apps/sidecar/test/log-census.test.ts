@@ -560,6 +560,7 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // a member of a fixed taxonomy and never a server's own words; `reason` says what was kept.
   local_mailbox_smtp_unsettled: "info",
   local_mailbox_seal_failed: "error",
+  local_mailbox_name_written: "info",
   // `local_mailbox_seal_discarded` — a credential this door wrote was removed again because a
   // sign-out overtook it (`signout-fence.ts`). `info` and not `error`: nothing is wrong, the
   // person asked for exactly this; it is the receipt that the write which raced the sign-out did
@@ -602,6 +603,9 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // removal promised. `mailboxId` + `reason`, the same pair as its `_failed` twin above, which the
   // start writes when it cannot.
   local_mirror_wipe_finished: "info",
+  // The start's strip of a removed mailbox's settings hashes off its audit rows could not run.
+  // `err` + `mailboxId` (null: the rows naming no mailbox here) + `reason`; the next start tries again.
+  removed_mailbox_hashes_clear_failed: "error",
   // `inherited_sends_read_failed` — the open's read of the send reservations the last run left
   // pending. `err` + `reason`: nothing is decided early and the rows keep the ten-minute window.
   inherited_sends_read_failed: "error",
@@ -1099,6 +1103,12 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // the only thing that tells a slow door apart from a door that never asked, which is device run
   // 4's defect through a different await. No line on the fast path: a `held` row costs no look.
   organizer_consent_look: "info",
+  // A PERSON'S REFUSED PRESS KEPT TO BE CARRIED OUT, and its two ends: carried out as a join once
+  // the claims it was refused over lapsed unrenewed, or void (`verdict` says why: a later press, a
+  // stop, a removal, its window, its claims renewed, released or joined). `info`: never a fault.
+  organizer_join_armed: "info",
+  organizer_join_carried_out: "info",
+  organizer_join_void: "info",
   // THE WAY BACK, and it is the only one of the six that is a becoming. `info`: the consent was
   // recorded and the gate still decides, so this is a decision by a human (or, for the claim
   // watch, by the app being open over a mailbox nothing holds) and never an outcome about mail.
@@ -1492,6 +1502,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // The identity backfill (mail 0148): a count of rows checked and marked, and its contained failure.
   sender_check_backfill: "info",
   sender_check_backfill_failed: "error",
+  // The gone-letter tidy: `written` letters cleaned and `more` when a page was left, never which
+  // letter; its contained failure is `error` on the identity backfill's reading.
+  gone_letter_tidy: "info",
+  gone_letter_tidy_failed: "error",
   // The list-address backfill (mail 0150), once per store: two counts (`scanned` List-Post values,
   // `written` addresses), never an address; its failure is `error` on the identity backfill's reading.
   list_address_backfill: "info",
@@ -1500,6 +1514,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // The failure is `error` on the name repair's reading: the next drain asks again.
   inferred_presses_repaired: "info",
   inferred_presses_repair_failed: "error",
+  // engine.ts — the act's past admissions retired, once per launch: counts only, and only when it
+  // retired one; the failure is `error` on the press repair's reading, and the next launch asks again.
+  act_admission_retired: "info",
+  act_admission_retire_failed: "error",
   // db.ts and search-backfill.ts — the local store's search. A setup that failed is `error`: the
   // store searches through the unindexed arms until a later launch builds the indexes. The
   // backfill writes one `info` line when it finishes; a failed round is `error` by the suffix rule,

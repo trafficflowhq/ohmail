@@ -19,7 +19,8 @@ import { Copy } from "../src/copy";
 import { DE } from "../src/copy.de";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { closeRoutingSession, noteScreenChanged, openRoutingSession } from "../src/state/held-routing";
-import { liveActions, liveScreener, planHeldRouting, presentedOf, type WorldView } from "../src/state/live";
+import { decideLinesOf, listClaimOf, liveActions, liveScreener, planHeldRouting, presentedOf, type WorldView } from "../src/state/live";
+import { readScreenerWaiting } from "../src/net/screener";
 import { dto, listen, mailServer } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 
@@ -32,6 +33,8 @@ const PLAIN = "person@plain.test";
 const UNCONFIRMED = "news@unconfirmed.test";
 /** A stranger whose mail sits in the INBOX: presented at the gate, decided by the rule path. */
 const PAST = "early@past.test";
+/** A mailing list's address a company claim came through: a screen-out there files the claims alone. */
+const CLAIMED = "post@lists.test";
 
 const world = sqlWorld();
 const deps: MobileEngineDeps = {
@@ -50,8 +53,11 @@ async function until(ok: () => boolean, ms = 2000): Promise<void> {
   while (!ok() && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
 }
 
-/** One held letter from a list offering one-click, two from a person offering none (`unread`: one never read). */
-async function scene(opts: { unread?: boolean; autoUnsubscribe?: boolean } = {}) {
+/**
+ * One held letter from a list offering one-click, two from a person offering none (`unread`: one never read).
+ * `claimsAlone`: the store's queue is read, and says the person let `CLAIMED` in, so its screen-out files the claims alone.
+ */
+async function scene(opts: { unread?: boolean; autoUnsubscribe?: boolean; claimsAlone?: boolean } = {}) {
   const fake = mailServer();
   const origin = await listen(fake.server);
   // The list's provider confirmed its sender (the pass sends for it); the other list's did not.
@@ -62,22 +68,31 @@ async function scene(opts: { unread?: boolean; autoUnsubscribe?: boolean } = {})
   fake.addMessage(dto("p2", { from: { name: "Person", address: PLAIN }, folder: "ohmail/Screener" }));
   fake.addMessage(dto("e1", { from: { name: "Early", address: PAST }, folder: "INBOX" }));
   fake.addMessage(unconfirmed);
+  // A company claim through a list's address (mail 0150), its provider's word `pass`.
+  const claimed = {
+    ...dto("c1", { from: { name: "PostFinance", address: CLAIMED }, folder: "ohmail/Screener" }), authVerdict: "pass",
+    senderCheck: { reason: "impersonation", brand: "PostFinance", domainShared: false, list: true },
+  };
+  fake.addMessage(claimed);
   fake.setBody("l1", "news", "one_click");
   fake.setBody("u1", "news", "one_click");
+  fake.setBody("c1", "konto", "one_click");
   fake.setBody("p1", "hello", "no_header");
   fake.setBody("p2", "again", "not_one_click");
   fake.setBody("e1", "before", "one_click");
+  if (opts.claimsAlone) fake.setClaimsAlone(CLAIMED);
   const boot = await bootEngine(deps, { origin, token: "tok-1", accountId: "acct-1" });
   if (boot.kind !== "ready") throw new Error("boot refused");
   await boot.verifyIdentity();
   await boot.engine.start();
+  if (opts.claimsAlone) await boot.engine.refreshScreenerWaiting();
   const said: Array<{ text: string; undo?: () => void }> = [];
   const actions = liveActions({
     engine: boot.engine, uuid: deps.uuid, zone: "UTC", autoUnsubscribe: () => opts.autoUnsubscribe ?? true,
     toast: (m, o?: { undo?: () => void }) => { said.push({ text: String(sayArg(m)), ...(o?.undo ? { undo: o.undo } : {}) }); },
   });
   // The sender screen hydrates every held body it shows; this one leaves `p2` unread on request.
-  const read = opts.unread ? ["l1", "p1", "e1", "u1"] : ["l1", "p1", "p2", "e1", "u1"];
+  const read = opts.unread ? ["l1", "p1", "e1", "u1", "c1"] : ["l1", "p1", "p2", "e1", "u1", "c1"];
   actions.hydrateHeld(read);
   await until(() => read.every((id) => boot.engine.read().get<{ state?: string }>("message_body", id)?.state === "ready"));
   const waiting = liveScreener(presentedOf(boot.engine.read(), view.now), view).waiting;
@@ -114,6 +129,63 @@ describe("the phone says the unsubscribe before Screen out or Spam is pressed", 
       expect(s.waiting.some((w) => w.address === PAST), "premise: the INBOX stranger is on the shelf").toBe(true);
       expect(s.actions.unsubClaimOf(s.row(PAST), s.waiting, "sender")).toBe("none");
       expect(s.actions.screeningUnsubClaim("e1", "sender")).toBe("none");
+    } finally { s.close(); }
+  });
+
+  it("a claim through a list's address the person let in: the screen-out files the claims alone and says no request, before or after", async () => {
+    const s = await scene({ claimsAlone: true });
+    try {
+      expect(s.row(CLAIMED).checked).toMatchObject({ list: true, claimsOnly: true });
+      expect(listClaimOf(s.row(CLAIMED), "sender")).toEqual({ brand: "PostFinance" });
+      expect(s.actions.unsubClaimOf(s.row(CLAIMED), s.waiting, "sender")).toBe("none");
+      // The whole domain is the person's own wider answer, which the server screens out as one.
+      expect(s.actions.unsubClaimOf(s.row(CLAIMED), s.waiting, "domain")).toBe("sends");
+      expect(await s.actions.decide(s.row(CLAIMED), "screened", false, "sender", s.waiting)).toBe(true);
+      // What the press did, and no rule promised: the list's later mail keeps coming.
+      expect(s.said.at(-1)!.text).toBe(Copy.liveDecidedClaims(Copy.segScreened, "PostFinance"));
+    } finally { s.close(); }
+  });
+
+  it("the paired shelf, read page by page, carries the store's word on the row too", async () => {
+    const s = await scene({ claimsAlone: true });
+    try {
+      const server = await readScreenerWaiting({ engine: s.engine } as never);
+      const row = liveScreener(presentedOf(s.engine.read(), view.now), view, {}, server).waiting.find((w) => w.address === CLAIMED)!;
+      expect(listClaimOf(row, "sender")).toEqual({ brand: "PostFinance" });
+      expect(s.actions.unsubClaimOf(row, s.waiting, "sender")).toBe("none");
+    } finally { s.close(); }
+  });
+
+  it("the sender screen's bar says what a press writes: on a list's claims no rule for Screen out, else the rule", async () => {
+    const s = await scene({ claimsAlone: true });
+    try {
+      const listed = decideLinesOf(s.row(CLAIMED), "sender", CLAIMED, true);
+      expect(listed).toEqual({ ruleLine: Copy.decideRuleListClaim(CLAIMED), listClaim: Copy.listClaimScreenOut("PostFinance") });
+      expect(listed.ruleLine, "Screen out promised a rule on a list's claims").not.toBe(Copy.decideRule(CLAIMED));
+      // A person's address, the list's whole domain (the person's own wider answer), and a row not waiting: the rule.
+      expect(decideLinesOf(s.row(PLAIN), "sender", PLAIN, true)).toEqual({ ruleLine: Copy.decideRule(PLAIN), listClaim: null });
+      expect(decideLinesOf(s.row(CLAIMED), "domain", "@lists.test", true)).toEqual({ ruleLine: Copy.decideRule("@lists.test"), listClaim: null });
+      expect(decideLinesOf(s.row(CLAIMED), "sender", CLAIMED, false)).toEqual({ ruleLine: Copy.decideRule(CLAIMED), listClaim: null });
+    } finally { s.close(); }
+  });
+
+  it("CONTROL: a claim through a list's address the store says no claims-only press for: the address's screen-out, said as one", async () => {
+    const s = await scene();
+    try {
+      expect(listClaimOf(s.row(CLAIMED), "sender")).toBeNull();
+      expect(decideLinesOf(s.row(CLAIMED), "sender", CLAIMED, true)).toEqual({ ruleLine: Copy.decideRule(CLAIMED), listClaim: null });
+      expect(s.actions.unsubClaimOf(s.row(CLAIMED), s.waiting, "sender")).toBe("sends");
+      expect(await s.actions.decide(s.row(CLAIMED), "screened", false, "sender", s.waiting)).toBe(true);
+      expect(s.said.at(-1)!.text).toContain(`future mail from ${CLAIMED} files there automatically`);
+    } finally { s.close(); }
+  });
+
+  it("the open message's press on a list claim the person let in: no request, before or after, and the claims sentence", async () => {
+    const s = await scene({ claimsAlone: true });
+    try {
+      expect(s.actions.screeningUnsubClaim("c1", "sender")).toBe("none");
+      expect(await s.actions.screenSender("c1", "screened", "sender")).toBe(true);
+      expect(s.said.at(-1)!.text).toBe(Copy.liveDecidedClaims(Copy.segScreened, "PostFinance"));
     } finally { s.close(); }
   });
 
@@ -178,6 +250,17 @@ describe("the press, and how far its Undo reaches", () => {
       t.undo!();
       await new Promise((r) => setTimeout(r, 200));
       expect(s.decides()).toHaveLength(0);
+    } finally { s.close(); }
+  });
+
+  it("held on a list claim the person let in: the toast says the claims alone, with Undo, and no request", async () => {
+    const s = await scene({ claimsAlone: true });
+    try {
+      hold(s, 60_000);
+      expect(await s.actions.decide(s.row(CLAIMED), "screened", false, "sender", s.waiting)).toBe(true);
+      const t = s.said.at(-1)!;
+      expect(t.text).toBe(Copy.liveDecidedClaims(Copy.segScreened, "PostFinance"));
+      expect(t.undo, "the press was held with Undo").toBeDefined();
     } finally { s.close(); }
   });
 
