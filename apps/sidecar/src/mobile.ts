@@ -585,6 +585,8 @@ export interface PagedExecutor {
   readonly ingest: PhoneSqlExecutor;
   /** Commit the page now. A page that could not be committed is the drain's failure, thrown here. */
   endPage(): Promise<void>;
+  /** Settles once a page has been committed. */
+  readonly firstPage: Promise<void>;
 }
 
 type Logged = { kind: "run" | "all"; sql: string; params: readonly unknown[]; rows?: string };
@@ -611,6 +613,8 @@ export function pagedExecutor(exec: PhoneSqlExecutor): PagedExecutor {
   let log: Logged[] = [];
   let logBytes = 0;
   let pageLost: unknown = null;
+  let pageCommitted: () => void = () => undefined;
+  const firstPage = new Promise<void>((r) => { pageCommitted = r; });
   /** Settles when the letter in flight ends — what the app's statement waits on, outside the chain. */
   let letterEnded: Promise<void> = Promise.resolve();
   let endLetter: () => void = () => undefined;
@@ -672,6 +676,7 @@ export function pagedExecutor(exec: PhoneSqlExecutor): PagedExecutor {
     logBytes = 0;
     try {
       await exec.run("COMMIT", []);
+      pageCommitted();
       return;
     } catch (first) {
       await exec.run("ROLLBACK", []).catch(() => undefined);
@@ -682,6 +687,7 @@ export function pagedExecutor(exec: PhoneSqlExecutor): PagedExecutor {
         pageOpen = false;
         log = [];
         await exec.run("COMMIT", []);
+        pageCommitted();
       } catch {
         pageOpen = false;
         log = [];
@@ -800,7 +806,7 @@ export function pagedExecutor(exec: PhoneSqlExecutor): PagedExecutor {
     close: () => main.close(),
   };
   return {
-    main, engine, ingest,
+    main, engine, ingest, firstPage,
     endPage: () => serial(async () => {
       drainHears();
       if (letterOpen) return;
@@ -974,6 +980,7 @@ export async function openPhoneStore(
     ingestDb,
     routeDb,
     endIngestPage: () => paged.endPage(),
+    firstIngestPage: paged.firstPage,
     close: async () => { await paged.main.close(); },
   };
 }
@@ -1290,14 +1297,20 @@ async function composePhoneEngine(
   /* The seed's dial as it stands, for the moment the bounded wait ends; `undefined` is no answer yet. */
   let seedDialNow: DialAnswer | null | undefined;
   void seedDial.then((a) => { seedDialNow = a; });
+  /* SIGNED IN AND THE FIRST PAGE DURABLE ends the wait too: a first sync of a large mailbox runs on
+     behind the open, and the next screen says so. A refusal arrives at the dial, so it never wins here. */
+  const firstPage = seedDial.then((a) => (a?.outcome === "dialled" && store.firstIngestPage
+    ? store.firstIngestPage.then(() => [] as Awaited<typeof launched>)
+    : new Promise<never>(() => undefined)));
   const bounded = opensAtOnce ? null : await Promise.race([
     launched,
+    firstPage,
     new Promise<null>((resolve) => {
       const t = setTimeout(() => resolve(null), timeouts.connectionMs + timeouts.greetingMs);
       (t as unknown as { unref?: () => void }).unref?.();
     }),
   ]);
-  /* A report in hand means every start settled, so the seed's dial has answered too. */
+  /* A report in hand (or the first page) means the seed's dial has answered too. */
   const seedAnswer = bounded === null ? seedDialNow : await seedDial;
   /**
    * A refused launch does not leave the credential it sealed on the way in. `attachLocal` seals the

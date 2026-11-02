@@ -84,6 +84,7 @@ vi.mock("../src/state/world", () => ({
 vi.mock("../src/state/live", () => ({
   readerZone: () => "UTC",
   ohboxVisitStep: (v: unknown) => ({ next: v, leave: false }),
+  firstSyncReadingSaid: () => null,
   moveTargetsFor: () => [],
   moveTargetLabel: () => "",
 }));

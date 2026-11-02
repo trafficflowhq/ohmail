@@ -992,9 +992,9 @@ export async function signOutProfile(env: PairingEnv, profile: ServerProfile): P
    * `AuthService.logout` or a Devices-pane revoke, neither of which ran, so
    * the registration stays live on a distributor endpoint the phone still
    * answers. Answering `true` here reported a complete forget over exactly
-   * that; `false` shows the Devices-list remedy, the only one left.
+   * that; `ended` says the server ended it and keeps the Devices-list remedy.
    */
-  if (profile.refreshToken === null) return "untold";
+  if (profile.refreshToken === null) return "ended";
   const slots = env.bearers ?? processBearers;
   const bearer = slots.managerFor(profile.id, () => ({
     origin: profile.origin,
@@ -1014,7 +1014,7 @@ export async function signOutProfile(env: PairingEnv, profile: ServerProfile): P
   }));
   try {
     // A manager that already died holds nothing to revoke with — the same answer as a cleared row.
-    if (bearer.ended()) return "untold";
+    if (bearer.ended()) return "ended";
     // What counts as told is `BearerManagerRN.logout`'s rule.
     return await bearer.signOut();
   } catch {
@@ -1125,7 +1125,8 @@ export async function forgetProfile(
     : row !== null ? await signOutProfile(env, row)
     : "told";
   const told = said === "told";
-  const notTold = (): Refusal => (said === "owed" ? refuse("forgetServerOwed") : NOT_TOLD());
+  const notTold = (): Refusal =>
+    said === "owed" ? refuse("forgetServerOwed") : said === "ended" ? refuse("forgetServerEnded") : NOT_TOLD();
   // The slot's manager has presented its logout (or never existed): nobody holds this slot now.
   (env.bearers ?? processBearers).evict(profileId);
 

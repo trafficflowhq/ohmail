@@ -34,6 +34,7 @@ import {
   type SectionListRenderItemInfo,
 } from "react-native";
 import { useTheme } from "../theme";
+import { KeyboardRoom } from "./keyboard-room";
 import { Section, Txt, panelSurface, pullRefreshControl, useListInsets, type PullRefresh } from "./base";
 import {
   FIRST_GROUP_TOP,
@@ -111,6 +112,8 @@ export interface MailListProps<T> {
    * the keeper the screen tells when it goes behind another and comes back.
    */
   place?: { current: ListPlace | null };
+  /** A list under a text field (Search): `Scroller`'s `avoidKeyboard`, so a press lands with the keyboard up. */
+  avoidKeyboard?: boolean;
 }
 
 type ScrollEv = NativeSyntheticEvent<NativeScrollEvent>;
@@ -267,6 +270,7 @@ export function MailList<T>({
   rowLayout,
   topFor,
   place,
+  avoidKeyboard = false,
 }: MailListProps<T>) {
   const t = useTheme();
   const listRef = useRef<SectionList<T, PlannedSection<T>>>(null);
@@ -384,7 +388,7 @@ export function MailList<T>({
     </View>
   );
 
-  return (
+  const list = (
     <CellRulesContext.Provider value={rules}>
       <SectionList<T, PlannedSection<T>>
         ref={listRef}
@@ -429,7 +433,10 @@ export function MailList<T>({
         {...LIST_WINDOW}
         style={{ flex: 1 }}
         contentContainerStyle={insets}
+        keyboardShouldPersistTaps={avoidKeyboard ? "handled" : undefined}
+        automaticallyAdjustKeyboardInsets={avoidKeyboard}
       />
     </CellRulesContext.Provider>
   );
+  return avoidKeyboard && Platform.OS === "android" ? <KeyboardRoom>{list}</KeyboardRoom> : list;
 }

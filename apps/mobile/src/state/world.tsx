@@ -157,6 +157,8 @@ import {
   storeWalkerFor,
   subscribeOffMirror,
   type SessionRenewalDoor,
+  type AddressDirection,
+  type ServerAddressOutcome,
   type StoreMessage,
   type StoreSearchWalker,
   type StoreTimelineWalker,
@@ -546,6 +548,8 @@ export interface World {
     mirrorRows(): StoreMessage[];
     rowOf(m: StoreMessage, inHistory: boolean): WorldMail;
     searchAvailable: boolean;
+    /** The archive's half of an address view, one direction per ask (`GET /search?address=`). Never rejects. */
+    addressSearch(address: string, direction: AddressDirection): Promise<ServerAddressOutcome>;
     /** The row the reader is about to open, when the mirror holds none for it. */
     open(m: StoreMessage): void;
   };
@@ -779,6 +783,7 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
       mirrorRows: () => [],
       rowOf: () => { throw new Error("no live engine"); },
       searchAvailable: false,
+      addressSearch: async () => ({ state: "unavailable" }),
       open: () => undefined,
     },
     // Nothing is connected, so there is nothing to search and no index owed: `indexing: false`

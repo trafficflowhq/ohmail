@@ -82,7 +82,7 @@ function Limitations({ onGo }: { onGo: () => void }) {
   const t = useTheme();
   const lines = limitationLines(Platform.OS);
   return (
-    <Scroller bounded>
+    <Scroller bounded avoidKeyboard>
       <View style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 14 }}>
         {/* THE HEADING IS THE FOCUS TARGET (`focusTargetFor("limits")`), because this step is a
             read: a reader who lands mid-list has skipped the sentence that decides. */}

@@ -61,6 +61,7 @@ import net from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { ImapFlow } from "imapflow";
 import { startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
+import { DEFAULT_SYNC_BATCH_MAX_MESSAGES, WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
 import { serviceUp } from "@trafficflow/db/testing";
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
@@ -267,7 +268,9 @@ async function seedInbox(user: string, n: number): Promise<void> {
   }
 }
 
-async function bootPhone(o: { user: string; port: number; lines: Line[] }): Promise<PhoneEngine> {
+async function bootPhone(o: {
+  user: string; port: number; lines: Line[]; timeouts?: typeof WORKER_NET_TIMEOUTS;
+}): Promise<PhoneEngine> {
   const dir = mkdtempSync(join(tmpdir(), "ohmail-first-sync-"));
   dirs.push(dir);
   const engine = await startPhoneEngine({
@@ -277,6 +280,7 @@ async function bootPhone(o: { user: string; port: number; lines: Line[] }): Prom
       auth: { user: o.user, pass: "test" },
       smtp: { host: HOST, port: SMTP_PORT, secure: false },
       sentDomain: "trafficflow.test",
+      ...(o.timeouts ? { timeouts: o.timeouts } : {}),
     },
     machineName: "a phone",
     installId: randomUUID(),
@@ -424,6 +428,32 @@ describe.skipIf(!ON_DEVICE_STORE)("the phone's first sync, measured through the 
       expect(announced(lines)).toEqual(["produced_nothing_readable", "finished"]);
     },
     120_000,
+  );
+});
+
+describe.skipIf(!ON_DEVICE_STORE)("Connect answers at the first page, not at the end of the first sync", () => {
+  it.skipIf(!SERVER_UP)(
+    "a mailbox of several pages opens signed in with its first page held, while the first sync goes on",
+    async () => {
+      const lines: Line[] = [];
+      const user = freshUser();
+      await seedInbox(user, DEFAULT_SYNC_BATCH_MAX_MESSAGES * 3);
+      /* A bound no first sync here reaches: the open is answered by the first page or by nothing. */
+      const engine = await bootPhone({
+        user, port: PORT, lines, timeouts: { ...WORKER_NET_TIMEOUTS, connectionMs: 100_000, greetingMs: 100_000 },
+      });
+      expect(connectionOf(engine).reachable, "signed in").toBe(true);
+      expect(connectionOf(engine).firstSync, "the first sync is still running behind the open").toBe("pending");
+      /* Through the app's own door, which reads committed rows only. */
+      const res = await engine.handle(new Request("http://sidecar/sync?since=0", { headers: { authorization: `Bearer ${engine.sessionToken}` } }));
+      const held = ((await res.text()).match(/"type":"message"/g) ?? []).length;
+      expect(held, "the first page is durable").toBeGreaterThan(0);
+      expect(held, "and it is not the whole mailbox").toBeLessThan(DEFAULT_SYNC_BATCH_MAX_MESSAGES * 3);
+      /* The control: the same launch runs to the end of the first sync on its own. */
+      for (let i = 0; i < 20 && connectionOf(engine).firstSync !== "finished"; i++) await engine.resume();
+      expect(connectionOf(engine).firstSync).toBe("finished");
+    },
+    240_000,
   );
 });
 

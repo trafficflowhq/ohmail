@@ -449,6 +449,7 @@ export const DE: Deck = {
   networkOfflineHeld: "Dieses Handy hat kein Netz. Angezeigt werden die neueren Mails, die es hat.",
 
   firstSyncNothingReadable: "Aus diesem Postfach konnte noch nichts gelesen werden.",
+  firstSyncReading: "Dein Postfach wird zum ersten Mal gelesen — der Rest deiner Mails kommt hier an, sobald er gelesen ist.",
   connectionSetAside: (n: number) => n === 1
     ? "Eine Nachricht konnte nicht gelesen werden und wurde zurückgelegt."
     : `${n} Nachrichten konnten nicht gelesen werden und wurden zurückgelegt.`,
@@ -568,6 +569,10 @@ export const DE: Deck = {
     "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server war nicht "
     + "erreichbar, um die Sitzung zu beenden, und zählt dieses Handy womöglich noch als "
     + "verbunden — widerrufe dieses Gerät in seiner Geräteliste, um das abzuschließen.",
+  forgetServerEnded:
+    "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server hatte die "
+    + "Sitzung dieses Handys schon beendet, es gab also nichts mehr abzumelden. Steht dieses Handy "
+    + "noch in seiner Geräteliste, entferne es dort.",
   forgetServerOwed:
     "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server war nicht "
     + "erreichbar, um die Sitzung zu beenden; dieses Handy sagt es ihm, sobald es ihn wieder erreicht.",
@@ -967,6 +972,10 @@ export const DE: Deck = {
   searchAddressEmptyAny: (address: string) => `Nichts von oder an ${address}.`,
   searchAddressEmptyFrom: (address: string) => `Nichts von ${address}.`,
   searchAddressEmptyTo: (address: string) => `Nichts an ${address} geschickt.`,
+  searchAddressArchive: (n: number, synced: boolean, atLeast: boolean, bySender: boolean) =>
+    `${atLeast ? `Mindestens ${n}` : String(n)} in ${synced ? "den bisher synchronisierten Mails" : "deinem ganzen Postfach"}`
+    + (bySender ? " (nach Absender)" : ""),
+  searchAddressArchiveNoRecipients: "Dein ganzes Postfach lässt sich noch nicht nach Empfänger durchsuchen.",
 
   /* ------------------------------------------------ zwei Bereiche (große Displays) */
 

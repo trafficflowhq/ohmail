@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { firstSyncSay, firstSyncSaid } from "../src/state/live";
+import { firstSyncReadingSaid, firstSyncSay, firstSyncSaid } from "../src/state/live";
 import { EN } from "../src/copy.en";
 import { DE } from "../src/copy.de";
 
@@ -71,6 +71,16 @@ describe("the sentence", () => {
     expect(DE.firstSyncNothingReadable.length).toBeGreaterThan(0);
     expect(DE.firstSyncNothingReadable).not.toBe(EN.firstSyncNothingReadable);
     expect(DE.ohboxEmptyNothingReadable).not.toBe(EN.ohboxEmptyNothingReadable);
+  });
+});
+
+describe("a first sync still running is said where Connect lands", () => {
+  it("the Ohbox's line while the engine says pending, and nothing once it has finished or said nothing", () => {
+    expect(firstSyncReadingSaid("pending")).toBe(EN.firstSyncReading);
+    expect(firstSyncReadingSaid("finished")).toBeNull();
+    expect(firstSyncReadingSaid("nothingReadable")).toBeNull();
+    expect(firstSyncReadingSaid(null)).toBeNull();
+    expect(DE.firstSyncReading).not.toBe(EN.firstSyncReading);
   });
 });
 

@@ -372,6 +372,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
         mirrorRows: () => mirrorNewestFirst(engine),
         rowOf: (m, inHistory) => storeRowOf(engine, m, v, inHistory),
         searchAvailable: engine.serverSearchAvailable(),
+        addressSearch: (address, direction) => engine.searchAddressServer(address, { direction }),
         open: inp.openOffMirror,
       },
       actions: inp.actions,

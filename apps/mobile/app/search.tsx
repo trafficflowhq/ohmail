@@ -5,7 +5,7 @@
  * the store's cursor as they scroll into view, at most three held. The SIMILAR tier stands under
  * its own heading and only when nothing matched exactly; the verdict says what was searched and
  * how fast. An address-shaped query that settles empty offers the address door: All · From them ·
- * To them.
+ * To them — the device's rows, then the archive's (`useAddressArchive`), as the web address view.
  */
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactElement } from "react";
 import { TextInput, View } from "react-native";
@@ -16,7 +16,7 @@ import { Copy } from "../src/copy";
 import { useNetworkNow } from "../src/net/network-door";
 import { addressShaped, unansweredSaid, type AddressDirection } from "../src/state/live";
 import { partReachSaid, searchCountLine } from "../src/state/search-count";
-import { useStoreSearch } from "../src/state/store-views";
+import { useAddressArchive, useStoreSearch } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
 import { useTheme } from "../src/theme";
 import { Empty, Screen, Tap, Txt } from "../src/ui/base";
@@ -30,9 +30,10 @@ import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import { holdWhileOpen } from "../src/ui/reader-held";
 import type { WorldMail } from "../src/state/world";
+import type { StoreMessage } from "../src/state/live";
 
-/** A row of the one list: the device's own, or a store slot read at render. */
-type Row = { key: string; device: WorldMail } | { key: string; slot: number };
+/** A row of the one list: the device's own, a store slot read at render, or one only the archive holds. */
+type Row = { key: string; device: WorldMail } | { key: string; slot: number } | { key: string; archive: StoreMessage; mail: WorldMail };
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function SearchScreen() {
@@ -77,6 +78,22 @@ function SearchBody() {
   const trimmed = q.trim();
   const answer = addr === null ? w.search.query(q) : null;
   const around = addr !== null ? w.search.address(addr, dir) : null;
+  const archive = useAddressArchive(addr, dir);
+  /* The archive's rows only under All or the direction it answered (`address-view.ts`'s rule). */
+  const extras = useMemo((): Row[] => {
+    if (around === null || archive.state !== "ready" || !(dir === "any" || dir === archive.direction)) return [];
+    const held = new Set(around.items.map((m) => m.id));
+    return archive.items.filter((m) => !held.has(m.id))
+      .map((m) => ({ key: `archive:${m.id}`, archive: m, mail: w.store.rowOf(m, false) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [archive, dir, around?.items]);
+  const archiveSaid = archive.state === "searching" ? Copy.searchWholeSearching
+    : archive.state === "failed" ? unansweredSaid(network, "search", archive.cause)
+      : archive.state !== "ready" ? null
+        : archive.direction === dir
+          ? Copy.searchAddressArchive(archive.total, archive.importing, archive.atLeast, false)
+          : dir === "to" ? Copy.searchAddressArchiveNoRecipients
+            : Copy.searchAddressArchive(archive.total, archive.importing, archive.atLeast, true);
   const deviceIds = useMemo(() => (answer?.items ?? []).map((m) => m.id), [answer]);
   /* THE WHOLE-MAILBOX PASS — its page replaces the device's paint, rows on screen first. */
   const store = useStoreSearch(addr === null ? q : "", deviceIds);
@@ -108,7 +125,7 @@ function SearchBody() {
      One list per screen: the branch below decides its groups, its head and its empty state. */
   const groups: ListGroup<Row>[] =
     around !== null && addr !== null
-      ? [{ key: "around", rows: deviceRows(around.items) }]
+      ? [{ key: "around", rows: [...deviceRows(around.items), ...extras] }]
       : answer !== null && trimmed !== "" && (shownItems.length > 0 || shownSimilar.length > 0)
         ? [
             {
@@ -162,6 +179,9 @@ function SearchBody() {
           if ("device" in r) {
             return <MailRow m={r.device} onPress={() => router.push(`/message/${r.device.id}`)} />;
           }
+          if ("archive" in r) {
+            return <MailRow m={r.mail} onPress={() => { w.store.open(r.archive); router.push(`/message/${r.archive.id}`); }} />;
+          }
           const m = store.rowAt(r.slot);
           return (
             <View style={{ height: m === "gone" ? 0 : heights.heightOf(r.slot), overflow: "hidden" }}>
@@ -196,6 +216,7 @@ function SearchBody() {
         }}
         scrollEventThrottle={100}
         rowInset={6}
+        avoidKeyboard
         surface={around !== null || (answer !== null && trimmed !== "")}
         head={
           around !== null && addr !== null ? (
@@ -218,6 +239,15 @@ function SearchBody() {
               <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 8 }}>
                 {Copy.searchAddressCounts(around.counts.any, around.counts.from, around.counts.to)}
               </Txt>
+              {/* The archive's half, its own line: what it holds, or why it said nothing. */}
+              {archiveSaid !== null ? (
+                <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>{archiveSaid}</Txt>
+              ) : null}
+              {archive.state === "failed" ? (
+                <Tap onPress={archive.retry} accessibilityRole="button" accessibilityLabel={Copy.searchWholeRetry}>
+                  <Txt variant="note" tone="accent">{Copy.searchWholeRetry}</Txt>
+                </Tap>
+              ) : null}
             </View>
           ) : verdict !== null ? (
             /* ── THE VERDICT — what was searched, and how fast ──────────────────────────── */
@@ -242,7 +272,7 @@ function SearchBody() {
           ) : null
         }
         empty={
-          around !== null && addr !== null ? (
+          around !== null && addr !== null ? archive.state === "searching" ? null : (
             <Empty
               title={
                 dir === "from"
