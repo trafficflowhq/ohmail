@@ -38,6 +38,7 @@ import { externalLinksEnabled } from "../shell/open-external";
 import "./message-body.css";
 import { activeFormatLocale, liveCopy } from "../shell/locale";
 import { ASK_ATTR, armAsks, askPage, type AskCopy } from "./link-ask";
+import { IDN_TLDS } from "./idn-tlds";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
 import { DEFERRED_SHEET_ATTR, DEFERRED_SRC_ATTR, DEFERRED_STYLE_ATTR, DEFERRED_URLS_ATTR, PARK_FLAT_ATTR, proxiedImages } from "./proxied-images";
@@ -915,12 +916,14 @@ function neutraliseStyleAttr(
  * the url" would flag every ordinary link — a warning that means nothing by
  * the second one. A label a bidi control reorders is judged by whether it
  * could spell a host at all: it may draw an order its text does not hold.
+ * A host in another script or width is read as the URL parser reads it.
  */
 export function textDisagreesWithHref(text: string, host: string): boolean {
   if (REORDERS_LABEL.test(text) && maySpellHost(text)) return true;
   // Read twice: without what draws nothing, and with the hair-thin spaces closed up too.
-  const read = withoutFiller(text).replace(DRAWS_NOTHING, "").normalize("NFC");
-  const joined = read.replace(NARROW_SPACE, "");
+  const drawn = withoutFiller(text).replace(DRAWS_NOTHING, "").normalize("NFC");
+  const read = foldFullStops(drawn);
+  const joined = foldFullStops(drawn.replace(NARROW_SPACE, ""));
   return namesAnotherHost(read, host) || (joined !== read && namesAnotherHost(joined, host));
 }
 
@@ -933,71 +936,160 @@ const REORDERS_LABEL = /[\u{061c}\u{200f}\u{202a}-\u{202e}\u{2066}-\u{2069}]/u;
 const DRAWS_NOTHING = /[\p{Default_Ignorable_Code_Point}\u007f-\u009f]/gu;
 /** Spaces thin enough to pass for none: six-per-em to hair, narrow no-break, medium mathematical. */
 const NARROW_SPACE = /[\u{2006}-\u{200a}\u{202f}\u{205f}]/gu;
+/** The ideographic, full-width and halfwidth ideographic full stops: dots in a host (UTS 46). */
+const FULL_STOPS = /[\u{3002}\u{ff0e}\u{ff61}]/gu;
 
-/** Whether a label could spell an ASCII host in some order: a full stop and two ASCII letters. */
+/** Whether a label could spell an ASCII host in some order: a full stop and two ASCII letters, folded. */
 function maySpellHost(text: string): boolean {
-  return text.includes(".") && /[a-z][^a-z]*[a-z]/i.test(text);
+  const folded = text.replace(FULL_STOPS, ".").normalize("NFKC");
+  return folded.includes(".") && /[a-z][^a-z]*[a-z]/i.test(folded);
+}
+
+/**
+ * A full stop of another width is a dot between characters that fold to ASCII letters or digits,
+ * and a space anywhere else, where it ends a sentence: "テキスト。次の文" names no host.
+ */
+function foldFullStops(text: string): string {
+  return text.replace(FULL_STOPS, (_stop: string, at: number) =>
+    foldsToAsciiAlnum([...text.slice(Math.max(0, at - 2), at)].pop()) &&
+    foldsToAsciiAlnum([...text.slice(at + 1, at + 3)][0]) ? "." : " ");
+}
+
+function foldsToAsciiAlnum(char: string | undefined): boolean {
+  const folded = char?.normalize("NFKC") ?? "";
+  return /^[a-z0-9]$/i.test(folded);
 }
 
 /** Every host the text names, in one linear pass with no window: a decoy can stand anywhere. */
 function namesAnotherHost(text: string, host: string): boolean {
   for (const word of text.split(/\s+/)) {
     const named = hostNamedBy(word);
-    if (named !== "" && (!host || (named !== host && !host.endsWith(`.${named}`)))) return true;
+    if (named && (!host || (named !== host && !host.endsWith(`.${named}`)))) return true;
   }
   return false;
 }
 
 /** Runs of the characters an ASCII host is spelled with. No `u` flag: `iu` folds U+017F and U+212A into it. */
 const HOST_RUN = /[a-z0-9.-]+/gi;
-const LETTER_OR_DIGIT_LAST = /[\p{L}\p{N}]$/u;
-const LETTER_OR_DIGIT_FIRST = /^[\p{L}\p{N}]/u;
+/** A letter, mark or digit outside ASCII. */
+const OTHER_SCRIPT = /(?![\0-\x7f])[\p{L}\p{M}\p{N}]/u;
+/** Runs of the characters a host in any script is spelled with. */
+const IDN_RUN = /[\p{L}\p{M}\p{N}.-]+/gu;
+const ASCII_LAST_LABEL = /^[a-z]{2,}$/;
+const IDN_LAST_LABEL = /^\p{L}[\p{L}\p{M}]+$/u;
+/**
+ * Cyrillic and Greek letters drawn as ASCII ones (а с е о р х у і ј ӏ ѕ ԁ һ, ο α ν, and the capitals
+ * drawn as Latin ones), and marks over them.
+ */
+const ASCII_LOOK_ALIKES = new RegExp("^[\\u0430\\u0441\\u0435\\u043e\\u0440\\u0445\\u0443\\u0456\\u0458\\u04cf" +
+  "\\u0455\\u0501\\u04bb\\u03bf\\u03b1\\u03bd\\u0405\\u0406\\u0408\\u04c0\\u0410\\u0412\\u0415\\u041a" +
+  "\\u041c-\\u041e\\u0420-\\u0423\\u0425\\u0391\\u0392\\u0395-\\u0397\\u0399\\u039a\\u039c\\u039d\\u039f" +
+  "\\u03a1\\u03a4\\u03a5\\u03a7\\p{M}]+$", "u");
 
 /**
  * The host one word of a label names, lower-cased, or "": its first run of host characters that
- * spells one decides. A letter or digit of another script touching that run makes the word an
- * IDN label's (`bücher.example`), whose ASCII tail is no host the reader sees.
+ * spells one decides. A word with a letter, mark or digit outside ASCII is folded (NFKC) first, and
+ * one still in another script is read through the URL parser (UTS 46), whole: a letter of another
+ * script glued to an ASCII host (`рank.example`) makes another host, never that host minus a letter.
+ * A last label with no ASCII letter ends a host only as a delegated top-level domain or in letters
+ * drawn as ASCII ones, so prose glued by a dot ("1.查看详情", "ул.Ленина") names none. Null once a
+ * reading would pass `budget`.
  */
-function hostNamedBy(word: string): string {
+function hostNamedBy(word: string, budget?: { left: number }): string | null {
+  if (!OTHER_SCRIPT.test(word)) return asciiHostNamedBy(word);
+  const folded = word.normalize("NFKC");
+  if (!/[^\0-\x7f]/.test(folded)) return asciiHostNamedBy(folded);
+  for (const [run] of folded.matchAll(IDN_RUN)) {
+    const shaped = hostOfRun(run, IDN_LAST_LABEL);
+    if (shaped === "") continue;
+    const last = lastLabelOf(run);
+    if (!/[A-Za-z]/.test(last) && !ASCII_LOOK_ALIKES.test(last)) {
+      if (budget !== undefined && budget.left-- <= 0) return null;
+      if (!IDN_TLDS.has(idnHostOfRun(shaped.slice(shaped.lastIndexOf(".") + 1)))) continue;
+    }
+    if (budget !== undefined && budget.left-- <= 0) return null;
+    return idnHostOfRun(shaped);
+  }
+  return "";
+}
+
+/** A host-shaped run's last label as written, before its trailing dots. */
+function lastLabelOf(run: string): string {
+  let end = run.length;
+  while (end > 0 && run[end - 1] === ".") end--;
+  return run.slice(run.lastIndexOf(".", end - 1) + 1, end);
+}
+
+function asciiHostNamedBy(word: string): string {
   HOST_RUN.lastIndex = 0;
   for (let m = HOST_RUN.exec(word); m !== null; m = HOST_RUN.exec(word)) {
     const named = hostOfRun(m[0]);
-    if (named === "") continue;
-    const end = m.index + m[0].length;
-    const idn = LETTER_OR_DIGIT_LAST.test(word.slice(Math.max(0, m.index - 2), m.index)) ||
-      LETTER_OR_DIGIT_FIRST.test(word.slice(end, end + 2));
-    return idn ? "" : named;
+    if (named !== "") return named;
   }
   return "";
 }
 
 /**
- * The host a run of `[a-z0-9.-]` spells, lower-cased, or "": with its edge dots dropped, two or
- * more non-empty labels, the last two or more letters. Split, never a nested quantifier.
+ * The host a run spells, lower-cased, or "": with its edge dots dropped, two or more non-empty
+ * labels, the last two or more letters (in another script, a letter, then letters or marks).
+ * Split, never a nested quantifier.
  */
-function hostOfRun(run: string): string {
+function hostOfRun(run: string, lastLabel = ASCII_LAST_LABEL): string {
   const parts = run.toLowerCase().split(".");
   let from = 0;
   let to = parts.length;
   while (from < to && parts[from] === "") from++;
   while (to > from && parts[to - 1] === "") to--;
-  if (to - from < 2 || !/^[a-z]{2,}$/.test(parts[to - 1]!)) return "";
+  if (to - from < 2 || !lastLabel.test(parts[to - 1]!)) return "";
   for (let i = from; i < to; i++) if (parts[i] === "") return "";
   return parts.slice(from, to).join(".");
 }
 
+/** The URL parser's readings of label runs, cleared whole when full: a label names one host often. */
+const IDN_HOSTS = new Map<string, string>();
+const IDN_HOSTS_MAX = 1_024;
+/** A run longer than a domain name is read again each time, never kept: the memo stays small. */
+const IDN_HOST_KEPT_CHARS = 253;
+
+/**
+ * A lower-cased run's host as the URL parser reads it (A-labels), or the run itself when the parser
+ * refuses it: that never equals or ends a host it accepted, so it names another. The parser reads
+ * the lower-cased run, so a remembered reading is the one a fresh one would give.
+ */
+function idnHostOfRun(run: string): string {
+  let host = IDN_HOSTS.get(run);
+  if (host === undefined) {
+    try {
+      host = new URL(`http://${run}/`).hostname;
+    } catch {
+      host = run;
+    }
+    if (run.length <= IDN_HOST_KEPT_CHARS) {
+      if (IDN_HOSTS.size >= IDN_HOSTS_MAX) IDN_HOSTS.clear();
+      IDN_HOSTS.set(run, host);
+    }
+  }
+  return host;
+}
+
+/** URL readings a letter's styles may take: past them, what they draw may name any host. */
+const STYLE_URL_READINGS = 32;
+
 /**
  * Every host a text names read alone, as {@link textDisagreesWithHref} reads it, for a reading
- * made once per letter; null when it may be drawn in an order that spells one.
+ * made once per letter; null when it may be drawn in an order that spells one, or once the
+ * letter's `budget` of URL readings is spent.
  */
-function hostsNamedBy(text: string): string[] | null {
+function hostsNamedBy(text: string, budget: { left: number }): string[] | null {
   if (REORDERS_LABEL.test(text) && maySpellHost(text)) return null;
-  const read = withoutFiller(text).replace(DRAWS_NOTHING, "").normalize("NFC");
-  const joined = read.replace(NARROW_SPACE, "");
+  const drawn = withoutFiller(text).replace(DRAWS_NOTHING, "").normalize("NFC");
+  const read = foldFullStops(drawn);
+  const joined = foldFullStops(drawn.replace(NARROW_SPACE, ""));
   const out: string[] = [];
   for (const reading of joined === read ? [read] : [read, joined]) {
     for (const word of reading.split(/\s+/)) {
-      const named = hostNamedBy(word);
+      const named = hostNamedBy(word, budget);
+      if (named === null) return null;
       if (named !== "") out.push(named);
     }
   }
@@ -1027,8 +1119,9 @@ function markElsewhere(root: Element, links: readonly Element[]): void {
   const around = hints.reordersAll ? null : reorderedAround(root, new Set(links), hints);
   // A string the styles draw stands wherever a rule puts it: read once, held against every link.
   let generated: Set<string> | null = new Set();
+  const budget = { left: STYLE_URL_READINGS };
   for (const text of hints.drawn) {
-    const named = hostsNamedBy(text);
+    const named = hostsNamedBy(text, budget);
     if (named === null) {
       generated = null;
       break;
@@ -3016,6 +3109,13 @@ function cutAttrText(node: Element): void {
   }
 }
 
+/** The last element inside `el` in document order, or `el` when it holds none. */
+function lastElementIn(el: Element): Element {
+  let last = el;
+  while (last.lastElementChild !== null) last = last.lastElementChild;
+  return last;
+}
+
 /** True when this environment has a DOM the sanitizer can parse with. */
 export function sanitizerAvailable(): boolean {
   return typeof window !== "undefined" && DOMPurify.isSupported === true;
@@ -3157,6 +3257,9 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   };
   // The http(s) links the post-pass names a host for; {@link markElsewhere} judges their labels.
   const hosted: Element[] = [];
+  // The last element of each of those links the walk is inside, and the titled elements in them.
+  const linkEnds: Element[] = [];
+  const titledInLinks: Element[] = [];
 
   /**
    * THE POST-PASS, ONE ELEMENT AT A TIME. Attributes only — see the header of this function
@@ -3167,6 +3270,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     metAt = node;
     const tag = node.tagName.toLowerCase();
     cutAttrText(node);
+    if (linkEnds.length > 0 && node.hasAttribute("title")) titledInLinks.push(node);
 
     // Decided FIRST, and used by both the style-attribute rewrite below and the img branch, so
     // the answer cannot depend on which of them happens to run first.
@@ -3336,6 +3440,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
         node.setAttribute("title", `Goes to ${host}`);
         // Judged after the pass, when the sheets match the document the frame gets.
         hosted.push(node);
+        linkEnds.push(lastElementIn(node));
       }
     }
   };
@@ -3474,9 +3579,20 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   }
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
-  for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
+  for (const node of sanitized.querySelectorAll("*")) {
+    onAttributes(node);
+    while (linkEnds[linkEnds.length - 1] === node) linkEnds.pop();
+  }
   metAt = null;
   markElsewhere(sanitized, hosted);
+  // A sender's title inside an http(s) link would stand in for "Goes to" on hover. Dropped after
+  // the labels are read (attr() may draw it); a picture keeps the words as its alt, no tooltip.
+  for (const el of titledInLinks) {
+    if (el.hasAttribute("data-ohmail-host")) continue; // a link inside, naming its own host
+    const title = el.getAttribute("title") ?? "";
+    if (el.localName === "img" && !el.hasAttribute("alt") && title.trim() !== "") el.setAttribute("alt", title);
+    el.removeAttribute("title");
+  }
   // A marked link asks before it opens (`link-ask.ts`): its address rides beside it, and a page
   // that asks in a tab of its own takes the `href` away until the frame is armed.
   for (const a of hosted) {

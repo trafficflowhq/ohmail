@@ -23,28 +23,64 @@ import { KeymapProvider } from "../app/shell/keymap.js";
  *
  * Getting that backwards is what put "Application error: a client-side exception has occurred"
  * on screen every time somebody closed a PDF preview.
+ *
+ * Like the library, `getDocument` takes the `PDFWorker` built on a port in `src.worker`, and the
+ * worker under it is a module Worker the page builds (`FakeWorker` below, which jsdom lacks).
  */
-const pdfDestroy = vi.fn(async () => {});
+/** What the teardown did, in order: the task, the PDFWorker, the worker. */
+const pdfEvents: string[] = [];
+const pdfDestroy = vi.fn(async () => {
+  pdfEvents.push("task.destroy");
+});
 const pdfLoads = vi.fn();
+/** The library's own option bag: the overlay never points it at a worker. */
+const pdfWorkerOptions = { workerSrc: "" };
+/** A document a case holds back; by default every load resolves. */
+let pdfHeld: Promise<unknown> | null = null;
 
 vi.mock("pdfjs-dist", () => {
   const page = {
     getViewport: () => ({ width: 600, height: 800 }),
     render: () => ({ promise: Promise.resolve(), cancel: () => {} }),
   };
+  class PDFWorker {
+    static create(params: { port: unknown }) {
+      return new PDFWorker(params.port);
+    }
+    constructor(readonly port: unknown) {}
+    destroy() {
+      pdfEvents.push("pdfWorker.destroy");
+    }
+  }
   return {
-    GlobalWorkerOptions: { workerSrc: "" },
-    getDocument: () => {
-      pdfLoads();
+    GlobalWorkerOptions: pdfWorkerOptions,
+    PDFWorker,
+    getDocument: (src: { worker?: unknown }) => {
+      pdfLoads(src);
       return {
         // No `destroy` on the document — pdfjs-dist has none, and a mock that grew one would
         // make the regression below unable to fail.
-        promise: Promise.resolve({ numPages: 2, getPage: async () => page }),
+        promise: pdfHeld ?? Promise.resolve({ numPages: 2, getPage: async () => page }),
         destroy: pdfDestroy,
       };
     },
   };
 });
+
+/** The page's module Worker: built, refused, or dead on a case's say. */
+class FakeWorker extends EventTarget {
+  static built: FakeWorker[] = [];
+  static refuse: Error | null = null;
+  constructor(readonly url: string | URL, readonly options?: WorkerOptions) {
+    super();
+    if (FakeWorker.refuse) throw FakeWorker.refuse;
+    FakeWorker.built.push(this);
+  }
+  postMessage(): void {}
+  terminate(): void {
+    pdfEvents.push("worker.terminate");
+  }
+}
 
 /**
  * ═══ QUICK LOOK — THE OVERLAY, IN A REAL DOM ══════════════════════════════════════════════
@@ -217,6 +253,11 @@ beforeEach(() => {
   boundaryCaught = [];
   pdfDestroy.mockClear();
   pdfLoads.mockClear();
+  pdfEvents.length = 0;
+  pdfHeld = null;
+  FakeWorker.built = [];
+  FakeWorker.refuse = null;
+  (globalThis as unknown as { Worker?: unknown }).Worker = FakeWorker;
   (globalThis.URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () =>
     `blob:http://localhost/obj`;
   (globalThis.URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
@@ -228,7 +269,13 @@ afterEach(async () => {
   root = null;
   host = null;
   vi.restoreAllMocks();
+  delete (globalThis as unknown as { Worker?: unknown }).Worker;
 });
+
+/** Flush until `ready` holds, within a bound: a PDF loads a few steps deep. */
+async function until(ready: () => boolean): Promise<void> {
+  for (let i = 0; i < 40 && !ready(); i += 1) await act(async () => {});
+}
 
 describe("previewKind / isPreviewable — the dispatch that keeps a document from rendering", () => {
   it("renders the four raster images, PDF and text; refuses everything else", () => {
@@ -319,27 +366,82 @@ describe("the type dispatch inside the overlay", () => {
   });
 });
 
-describe("closing a PDF preview tears the document down without taking the app with it", () => {
-  const pdfEngine = () =>
-    new OhmailEngine({
-      adapter: adapterWith({
-        listAttachments: async () => [wire("p1", { contentType: "application/pdf", filename: "report.pdf" })],
-        fetchAttachment: async () => new Blob(["%PDF-1.4"], { type: "application/pdf" }),
-      }),
+const pdfEngine = () =>
+  new OhmailEngine({
+    adapter: adapterWith({
+      listAttachments: async () => [wire("p1", { contentType: "application/pdf", filename: "report.pdf" })],
+      fetchAttachment: async () => new Blob(["%PDF-1.4"], { type: "application/pdf" }),
+    }),
+  });
+
+async function mountClosing(engine: OhmailEngine): Promise<void> {
+  await engine.loadAttachments("m1");
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () =>
+    root!.render(h(KeymapProvider, null, h(Boundary, null, h(ClosingHarness, { engine, initialId: "p1" })))),
+  );
+  await act(async () => {}); // the fetch the overlay starts
+  await act(async () => {}); // `getDocument().promise`, which is what makes a document to tear down
+}
+
+const pdfCard = (): string => host!.querySelector(".ap-card")?.textContent ?? "";
+const pdfDrawn = (): boolean => host!.querySelector("canvas.ap-canvas") !== null;
+
+describe("the PDF is parsed in a worker the page builds and hands pdf.js as a port", () => {
+  /* Left to start one itself, pdf.js answers a refused worker by parsing the bytes on the page's
+     own thread, the one holding the session. Mutations: the library's getDocument called directly
+     → the first four; the race on the worker's error dropped → the dead worker; terminate dropped
+     → the teardown; the library's workerSrc set → the last. */
+  it("one module worker from /pdf.worker.min.mjs, and pdf.js is handed the PDFWorker on it", async () => {
+    await mountClosing(pdfEngine());
+    await until(pdfDrawn);
+    expect(pdfDrawn(), "the PDF never reached the canvas").toBe(true);
+    expect(FakeWorker.built.map((w) => [String(w.url), w.options])).toEqual([["/pdf.worker.min.mjs", { type: "module" }]]);
+    const src = pdfLoads.mock.calls[0]![0] as { worker?: { port?: unknown } };
+    expect(src.worker?.port, "pdf.js was left to start a worker of its own").toBe(FakeWorker.built[0]);
+  });
+
+  it("a worker the page refuses says it cannot show the PDF, and pdf.js is never asked", async () => {
+    FakeWorker.refuse = new Error("refused by worker-src");
+    await mountClosing(pdfEngine());
+    await until(() => pdfCard() !== "");
+    expect(pdfCard()).toContain("Can't show this PDF here");
+    expect(pdfLoads, "the bytes reached pdf.js with no worker under it").not.toHaveBeenCalled();
+  });
+
+  it("a worker that dies fails the load instead of leaving it pending", async () => {
+    pdfHeld = new Promise(() => {});
+    await mountClosing(pdfEngine());
+    await until(() => pdfLoads.mock.calls.length > 0);
+    expect(FakeWorker.built, "no worker was built for the PDF").toHaveLength(1);
+    expect(pdfCard()).toBe("");
+    await act(async () => {
+      FakeWorker.built[0]!.dispatchEvent(new Event("error"));
     });
+    await until(() => pdfCard() !== "");
+    expect(pdfCard(), "a dead worker left the load hanging").toContain("Can't show this PDF here");
+  });
 
-  async function mountClosing(engine: OhmailEngine): Promise<void> {
-    await engine.loadAttachments("m1");
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () =>
-      root!.render(h(KeymapProvider, null, h(Boundary, null, h(ClosingHarness, { engine, initialId: "p1" })))),
-    );
-    await act(async () => {}); // the fetch the overlay starts
-    await act(async () => {}); // `getDocument().promise`, which is what makes a document to tear down
-  }
+  it("closing tears down the task, then the PDFWorker, then the worker", async () => {
+    await mountClosing(pdfEngine());
+    await until(pdfDrawn);
+    await act(async () => host!.querySelector<HTMLButtonElement>("button.ap-close")!.click());
+    await until(() => pdfEvents.length >= 3);
+    expect(pdfEvents).toEqual(["task.destroy", "pdfWorker.destroy", "worker.terminate"]);
+  });
 
+  it("never points the library at a worker of its own, nor sets the main-thread worker global", async () => {
+    await mountClosing(pdfEngine());
+    await until(pdfDrawn);
+    expect(pdfDrawn()).toBe(true);
+    expect(pdfWorkerOptions.workerSrc).toBe("");
+    expect("pdfjsWorker" in globalThis).toBe(false);
+  });
+});
+
+describe("closing a PDF preview tears the document down without taking the app with it", () => {
   it("THE REGRESSION: the close button does not throw out of the teardown", async () => {
     await mountClosing(pdfEngine());
 

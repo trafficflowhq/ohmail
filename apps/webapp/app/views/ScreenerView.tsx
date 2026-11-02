@@ -2671,13 +2671,15 @@ export function HeldMail({
           read it. Body withholding was withdrawn (`isProtectedMessage` is a constant false) and
           the branch that stood here rendered for nobody. */}
       {/* Above and outside `.hm-body`: a held row carries no header fact, so only the body
-          text's Outlook Web App stub speaks here (`InvitationNote`); a dull preview offers no link. */}
-      <InvitationNote
-        text={body}
-        full={bodyState === undefined || bodyState === "full"}
-        className="hm-state"
-        offerLink={!dull}
-      />
+          text's Outlook Web App stub speaks here (`InvitationNote`). Never on a dull preview (spam,
+          junk, screened out): there a look-alike stub is a lure, and the note would vouch for it. */}
+      {dull ? null : (
+        <InvitationNote
+          text={body}
+          full={bodyState === undefined || bodyState === "full"}
+          className="hm-state"
+        />
+      )}
       {message && drawBody ? <MessageEvents messageId={message.id} /> : null}
       <div className="hm-body">
         {drawBody ? <MessageBody

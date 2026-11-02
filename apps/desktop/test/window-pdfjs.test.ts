@@ -8,9 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * THE WINDOW'S pdf.js (`src/window-pdfjs.ts`), against a fake Worker and a fake loaded library.
  *
  * The window aliases `pdfjs-dist` to this module, which imports the real library from the dist's
- * own `pdf.min.mjs` and builds pdf.js's worker itself, handing it over as a PORT. Left to start
- * a worker of its own, pdf.js answers a refused one by parsing the document on the page's thread;
- * with the port, a refused or dead worker fails the load instead. These cases hold that shape:
+ * own `pdf.min.mjs` and builds pdf.js's worker itself, handing it over as a PORT (the web's
+ * `openOverPort`, shared). Left to start a worker of its own, pdf.js answers a refused one by
+ * parsing the document on the page's thread; with the port, a refused or dead worker fails the
+ * load instead. These cases hold that shape:
  * the one module worker, the port on every load, a refusal and a dead worker that reject rather
  * than hang, a teardown of all three parts, and nothing built for a preview closed early.
  *
@@ -218,7 +219,9 @@ describe("the teardown", () => {
     await task.promise;
     await task.destroy();
     expect("pdfjsWorker" in globalThis).toBe(false);
-    expect(pdfjs.GlobalWorkerOptions).toEqual({ workerSrc: "" });
+    // A seam: the overlay hands it the load, and there is no worker option to set.
+    expect(pdfjs.seam).toBe(true);
+    expect("GlobalWorkerOptions" in pdfjs).toBe(false);
   });
 });
 
@@ -233,17 +236,22 @@ function source(rel: string): string {
 describe("what the shared overlay asks of pdf.js, and the one version both apps carry", () => {
   /* The alias answers only what `AttachmentPreview` reads; a new read would meet `undefined` in
      the window, so it fails here first. The document it gets back is the real one. */
-  it("AttachmentPreview reads getDocument, GlobalWorkerOptions.workerSrc, task.promise and task.destroy, and no layer", () => {
+  it("AttachmentPreview asks for seam and reads getDocument, task.promise and task.destroy, and no layer", async () => {
     const code = source("apps/webapp/app/components/AttachmentPreview.tsx")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/.*$/gm, "");
     const of = (re: RegExp) => [...new Set([...code.matchAll(re)].map((m) => m[1]))].sort();
-    expect(of(/\bpdfjs\.(\w+)/g)).toEqual(["GlobalWorkerOptions", "getDocument"]);
-    expect(of(/\bmod\.(\w+)/g)).toEqual(["GlobalWorkerOptions"]);
-    expect(of(/GlobalWorkerOptions\.(\w+)/g)).toEqual(["workerSrc"]);
+    expect(of(/\b(?:pdfjs|mod)\.(\w+)/g)).toEqual(["getDocument"]);
+    expect(code, "the overlay no longer tells a seam from the library").toMatch(/"seam" in mod\b/);
+    expect(code, "the overlay sets a worker option pdf.js would start a worker from").not.toMatch(/GlobalWorkerOptions|workerSrc/);
     expect(of(/\btask\??\.(\w+)/g)).toEqual(["destroy", "promise"]);
     expect(code).not.toMatch(/AnnotationLayer|TextLayer|XfaLayer|pdf_viewer|sandbox|pdfjs-dist\//);
     expect(code.match(/await import\(\s*"pdfjs-dist"\s*\)/g) ?? [], "pdf.js is loaded in a second place").toHaveLength(1);
+    // Both builds' modules answer both reads.
+    for (const alias of [await load(), await import("../src/no-pdfjs.js")]) {
+      expect(alias.seam).toBe(true);
+      expect(alias.getDocument).toBeTypeOf("function");
+    }
   });
 
   it("apps/desktop and apps/webapp pin the same pdfjs-dist, exactly", () => {

@@ -7,20 +7,15 @@
  */
 
 /*
- * WHICH LINE REFUSES: the shared surface sets `GlobalWorkerOptions.workerSrc` on this file's
- * own object, so its non-empty check PASSES — `getDocument` below is what throws, surfacing
- * the failure where it is called instead of drawing a blank page. Keep this module small and
- * side-effect free: the build emits a single chunk (`inlineDynamicImports`), so the dynamic
- * import is inlined and this stub is what makes that cost nothing. Runtime substitution only —
+ * WHICH LINE REFUSES: the shared surface hands a seam the load as it is, so `getDocument` below
+ * throws where it is called instead of drawing a blank page. Keep this module small and side-effect
+ * free: the build emits a single chunk (`inlineDynamicImports`), so the dynamic import is inlined
+ * and this stub is what makes that cost nothing. Runtime substitution only —
  * `apps/desktop/tsconfig.json` still maps `pdfjs-dist` at the real package for types.
  */
 
-/**
- * Stand-in for `GlobalWorkerOptions`. The reader assigns `workerSrc` and then reads it back as
- * its own guard, so this has to be a real mutable object rather than a frozen blank — see the
- * header for why that guard passes here and `getDocument` is what refuses.
- */
-export const GlobalWorkerOptions: { workerSrc: string } = { workerSrc: "" };
+/** A seam, as the window's module is: the reader calls `getDocument` below and nothing else. */
+export const seam = true;
 
 /**
  * The one entry point the reader calls, and the line that actually refuses, every time somebody
