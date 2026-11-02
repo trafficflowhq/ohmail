@@ -220,9 +220,9 @@ describe("the first-sync pill reserves its height", () => {
 });
 
 describe("the details disclosure says the sender's address", () => {
-  it("both catalogues carry the sentence, with the address as its one value", () => {
-    expect(en.ohbox.fromAddress).toBe("from {address}");
-    expect(de.ohbox.fromAddress).toBe("von {address}");
+  it("both catalogues carry the sentence, the address its one value, drawn by AddressText", () => {
+    expect(en.ohbox.fromAddress).toBe("from <addr>{address}</addr>");
+    expect(de.ohbox.fromAddress).toBe("von <addr>{address}</addr>");
   });
 });
 
@@ -266,5 +266,6 @@ describe("the open message's sender address is on screen whatever the recipients
     const line = host.querySelector(".msg-from > .msg-from-line");
     expect(line, "no from line in the header").not.toBeNull();
     expect(line!.textContent).toBe("from orders@harbour-supply.invalid");
+    expect(line!.querySelector(".addr-local")?.textContent, "the address is not drawn in two halves").toBe("orders");
   });
 });

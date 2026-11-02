@@ -1,12 +1,16 @@
 /**
- * THE TWO DOORS, as decisions rather than as screens. A fresh install is asked whose mail this
- * is — the mailbox on your own server, or a hosted ohmail account, mirrored. `DoorChooser.tsx`
- * is what that looks like; this file is what it MEANS, separate so the rules are driven by a
- * test. A door's SETTINGS go to the shell over `engine_configure` (it remembers them across a
- * quit and composes the engine's environment). A door's SECRET does NOT: it travels over the
- * bridge to the ENGINE, which seals it under this install's key — the shell REFUSES a
- * configuration carrying a secret-shaped field, and a command argument is process state in the
- * shell. So each door is configure, then `PATCH /mailboxes/:id` / `POST /cloud/signin`.
+ * THE DOORS, as decisions rather than as screens. A fresh install is asked whose mail this is:
+ * the mailbox on your own mail server, read here (`local`); a hosted ohmail account, mirrored
+ * (`managed`); an ohmail server you run (`selfhost`, `self-host.ts`: the hosted door with the
+ * address made a variable, so the address is probed first and a credential belongs to one
+ * server); or another computer of yours, paired (`desktop-host`). {@link flavorOf} tells them
+ * apart. `DoorChooser.tsx` is what that looks like; this file is what it MEANS, separate so the
+ * rules are driven by a test. A door's SETTINGS go to the shell over `engine_configure` (it
+ * remembers them across a quit and composes the engine's environment). A door's SECRET does NOT:
+ * it travels over the bridge to the ENGINE, which seals it under this install's key — the shell
+ * REFUSES a configuration carrying a secret-shaped field, and a command argument is process state
+ * in the shell. So the local door is configure, then `PATCH /mailboxes/:id`; the hosted and
+ * self-hosted doors configure, then `POST /cloud/signin`; the paired door proves its link first.
  */
 
 /*

@@ -158,7 +158,7 @@
 .msg-from{display:flex;align-items:center;gap:9px;font-size:calc(12.5px + var(--type-up));container:who-line / inline-size}
 .msg-from:has(> .msg-from-line){display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:9px}
 .msg-from:has(> .msg-from-line) > .msg-sender{justify-self:start;max-width:100%}
-.msg-from-line{display:none;grid-column:1 / -1;margin:2px 0 0 38px;font-size:calc(12px + var(--type-up));color:var(--ink3);overflow-wrap:anywhere}
+.msg-from-line{display:none;grid-column:1 / -1;margin:2px 0 0 38px;font-size:calc(12px + var(--type-up));color:var(--ink3);align-items:baseline;column-gap:.3em}
 /* The identity fact under the sender (`MessageCard`): always drawn, on its own line, in body ink behind the shield. */
 .msg-from:has(> .msg-from-check){display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:9px}
 .msg-from:has(> .msg-from-check) > .msg-sender{justify-self:start;max-width:100%}
@@ -189,7 +189,7 @@
 .msg-from small{white-space:nowrap;flex:0 1 auto;min-width:0;max-width:100%}
 @container who-line (max-width:419.98px){
   .msg-from:has(> .msg-from-line) small{display:none}
-  .msg-from-line{display:block}
+  .msg-from-line{display:flex}
 }
 .msg-from .t{margin-left:auto;font-size:calc(11.5px + var(--type-up));color:var(--ink3);font-variant-numeric:tabular-nums;flex:none;display:flex;gap:10px;align-items:center}
 .msg h2{font-size:24px;font-weight:600;letter-spacing:-.025em;margin:14px 0 14px;line-height:1.25}

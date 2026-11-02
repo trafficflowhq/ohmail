@@ -106,7 +106,7 @@ services:
       # `docker compose up -d` recreates a service only when its definition changes, so this
       # digest of ./proxy is what makes an update that edits the directory restart the proxy.
       # test/selfhost-proxy-reload.test.ts fails on a stale value and prints the new one.
-      ohmail.proxy-config: sha256:2f876e0a34831e5ba13638a2f357cf8e4cf181c2504d17c28b93cafa59217c5f
+      ohmail.proxy-config: sha256:ad1de451b629eeb3cb291c1e0968a74f8df7f29acdcecc6351c16945a68eb2ef
     volumes:
       # Both front doors, the route table they import and the entrypoint. The entrypoint picks the
       # door: proxy/Caddyfile, which owns TLS, or proxy/Caddyfile.external-tls when
