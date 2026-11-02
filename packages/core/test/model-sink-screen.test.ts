@@ -53,11 +53,11 @@ describe("the split a per-field screen cannot see", () => {
   });
 });
 
-describe("the field order is load-bearing, not a style", () => {
+describe("a field between the two halves does not hide the split", () => {
   /**
-   * The screen's cue-to-code window is 40 characters. A `From:` set BETWEEN the subject and the
-   * snippet pushes the two halves out of each other's window, and the join answers safe — so the
-   * sinks put prose halves next to each other and the address last.
+   * The screen's cue-to-code window is 40 characters. A field set BETWEEN the subject and the
+   * snippet pushed the two halves out of each other's window and the join answered safe; the door
+   * now also reads every pair of a document's fields in their order.
    */
   const from = "no-reply@notifications.vendor.example";
 
@@ -66,9 +66,42 @@ describe("the field order is load-bearing, not a style", () => {
     expect(v.admitted).toBe(false);
   });
 
-  it("misses it when an address is wedged between them — why the order is what it is", () => {
+  it("catches it when an address is wedged between them", () => {
     const v = screenModelInput([{ label: "incoming", fields: [SPLIT.subject, from, SPLIT.snippet] }]);
-    expect(v.admitted, "the detector's proximity limit, named rather than hidden").toBe(true);
+    expect(v.admitted, "an address between the halves pushed them out of the window").toBe(false);
+    expect(v.reason).toBe("credential_shape");
+  });
+
+  it("catches it when a long prose field sits between them", () => {
+    const prose = "Thanks for your patience while we moved your account to its new home.";
+    expect(screenOutboundText(prose).safe).toBe(true);
+    const v = screenModelInput([{ label: "incoming", fields: [SPLIT.subject, prose, SPLIT.snippet] }]);
+    expect(v.admitted, "a long field between the halves pushed them out of the window").toBe(false);
+  });
+
+  it("reads a pair in the document's order, never reversed: a notice ending in a reference number passes", () => {
+    const v = screenModelInput([{ label: "incoming", fields: [
+      "Password changed",
+      "Hi, this confirms the change on your account. If this was not you, call us. Reference 552211",
+      "no-reply@service.example",
+    ] }]);
+    expect(v.admitted, "a reversed pair set the body's number beside the subject's cue").toBe(true);
+  });
+
+  it("pairs prose only: the sender's address never meets the subject unless the letter sets them side by side", () => {
+    const note = "Thanks again for your time on Monday. Let me know which afternoon suits you, and I will send the rest.";
+    for (const [subject, sender] of [
+      ["Angebot 2024117 für das Projekt", "lea.meier@codefabrik.example"],
+      ["Re: PO 4815162", "max@kodiak.example"],
+      ["Meeting in room 4410 tomorrow", "jana@codeworks.example"],
+      ["Re: code review for the parser", "84719265@mail.example"],
+      ["Question about the codebase", "5813472@mail.example"],
+    ] as const) {
+      expect(screenOutboundText(subject, note).safe, subject).toBe(true);
+      expect(screenOutboundText(subject, sender).safe, `${subject}: a pair the letter never had`).toBe(false);
+      const v = screenModelInput([{ label: "incoming", fields: [subject, note, sender] }]);
+      expect(v.admitted, `${subject} from ${sender}`).toBe(true);
+    }
   });
 });
 

@@ -457,6 +457,27 @@ describe("applyScreenerDecision", () => {
     });
   }
 
+  it("a pass's yes leaves a held letter its provider failed and moves the rest; a press moves it", async () => {
+    const db = await makeTestDb();
+    const from = "orders@supplier.example";
+    const failed = await seedHeldMessage(db, { fromAddress: from, senderCheck: "none", authVerdict: "fail" });
+    const genuine = await seedHeldMessage(db, { fromAddress: from, senderCheck: "none", authVerdict: "pass", mailboxId: failed.mailboxId });
+    const decide = (decidedBy: "pass" | "person") => db.transaction((tx) => applyScreenerDecision(carryDialect(db, tx), {
+      accountId: ACCT, scope: "sender", address: from, appliedFolder: "INBOX", decision: "yes",
+      triggeringActionId: `screener:${decidedBy}:${genuine.messageId}`, now: NOW, stampBaseline: false,
+      decidedBy, overExisting: decidedBy === "pass" ? "skip" : "converge", liftOverDomain: false,
+    }));
+    const desired = async (id: string) =>
+      (await db.select().from(folderState).where(eq(folderState.messageId, id)))[0]?.desiredFolder;
+    const r = await decide("pass");
+    expect(r.rerouted.map((m) => m.messageId)).toEqual([genuine.messageId]);
+    expect(await desired(failed.messageId)).toBe(SCREENER_FOLDER);
+    expect(await desired(genuine.messageId)).toBe("INBOX");
+    const pressed = await decide("person");
+    expect(pressed.rerouted.map((m) => m.messageId)).toEqual([failed.messageId]);
+    expect(await desired(failed.messageId)).toBe("INBOX");
+  });
+
   it("rerouteUnconfirmedHeld leaves a sensitive letter where it is and files the rest", async () => {
     const db = await makeTestDb();
     const reset = await seedHeldMessage(db, {

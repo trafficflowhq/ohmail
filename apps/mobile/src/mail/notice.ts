@@ -13,6 +13,8 @@ export function blockedNotice(
   imagesShown: boolean,
   /** Whose address the image hosts would see (`imagesSeenBy`); said before the press, never after. */
   seenBy: "phone" | "computer" | null,
+  /** Pictures this phone fetched whose own bytes are a pixel (`fetchRemoteImages`'s `pixels`). */
+  fetchedPixels = 0,
 ): string | null {
   const imgs = blocked.filter((b) => b.via === "img" || b.via === "css" || b.via === "attr");
   const pixels = imgs.filter((b) => b.pixel);
@@ -24,12 +26,13 @@ export function blockedNotice(
         : Copy.mailSheetBlockedMany(sheets.length);
   if (imagesShown) {
     // The pictures are on screen and the beacons alone were refused — said whole.
+    const refused = pixels.length + fetchedPixels;
     const pixelSaid =
-      pixels.length === 0
+      refused === 0
         ? null
-        : pixels.length === 1
+        : refused === 1
           ? Copy.mailPixelOnly
-          : Copy.mailPixelsRefused(pixels.length);
+          : Copy.mailPixelsRefused(refused);
     return [pixelSaid, sheetSaid].filter((s) => s !== null).join(" ") || null;
   }
   if (imgs.length === 0) return sheetSaid;

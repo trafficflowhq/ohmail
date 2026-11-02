@@ -8,6 +8,10 @@
 import { Buffer } from "buffer";
 
 export async function blobToBase64(blob: Blob): Promise<string> {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
+  return bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
+}
+
+/** Bytes already read, as base64. */
+export function bytesToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
 }

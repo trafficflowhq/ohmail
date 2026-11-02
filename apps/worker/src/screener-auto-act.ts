@@ -6,6 +6,7 @@ import {
   AccountErasedError, OrganizedElsewhereError, MailboxErasedError, MailboxNotFoundError,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
   screenerSuggestionsBySender, automaticAiAdmits, resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
+  storedAuthScreens,
   decisionCanBeApplied, readRequestEligibility,
   DECIDABLE_FOLDERS, SCREENER_FOLDER, SCREENER_ACT_TRIGGER_PREFIX,
   type ResolvedCutline, type Tx,
@@ -220,6 +221,8 @@ export function plannedDecision(
   const folder = canonicalDestination(advice.destination);
   if (!DECIDABLE_FOLDERS.has(folder)) return null;
   const admits = effectForDestination(folder as Destination) === "allow";
+  // Advice bought on a letter its provider failed admits nothing: only a person's press does.
+  if (admits && storedAuthScreens(advice.authVerdict)) return null;
   const confidence = advice.confidence;
   if (confidence == null || !Number.isFinite(confidence)) return null;
   if (confidence < (admits ? bars.admit : bars.deny)) return null;

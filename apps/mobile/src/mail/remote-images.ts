@@ -8,6 +8,7 @@
  */
 
 import {
+  imageDimensions,
   INLINE_IMAGE_MAX_BYTES,
   INLINE_IMAGE_MAX_PARTS,
   INLINE_IMAGE_MAX_TOTAL_BYTES,
@@ -17,7 +18,7 @@ import {
 import type { FetchLike } from "../net/bearer";
 import type { ConnectedSession } from "../net/pairing";
 import { requestBase } from "../net/request-base";
-import { blobToBase64 } from "./blob-base64";
+import { bytesToBase64 } from "./blob-base64";
 
 /** The four raster types a fetched image may carry into the document — the mint's own set. */
 const RASTER = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
@@ -54,6 +55,8 @@ export function imagesSeenBy(route: ImageRoute): "phone" | "computer" | null {
 export interface RemoteImagesResult {
   minted: Map<string, string>;
   consentRefused: boolean;
+  /** Urls this phone fetched whose own bytes are 1×1 or smaller: not drawn, said as pixels. */
+  pixels: string[];
 }
 
 /** What is left of one message's picture ceilings, spent across every fetch pass for it. */
@@ -73,7 +76,9 @@ export function pictureBudget(): PictureBudget {
  * cannot be fetched, is not a raster, or is over a ceiling is absent from the map — a blank
  * box. On a proxy door the press is recorded first (`POST /messages/:id/load-remote`, the
  * server's own gate for `/img`), unless the stored body already carries it. `budget`: the message's
- * own, spent here and carried to its next pass (a fresh whole one by default).
+ * own, spent here and carried to its next pass (a fresh whole one by default). On the standalone
+ * door this phone is the sizer the server's `/img` is: bytes it cannot size are not drawn, and a
+ * picture of 1×1 or smaller is a pixel, not drawn and returned in `pixels`.
  */
 export async function fetchRemoteImages(
   route: ImageRoute,
@@ -82,9 +87,10 @@ export async function fetchRemoteImages(
   opts: { consented: boolean; budget?: PictureBudget },
 ): Promise<RemoteImagesResult> {
   const minted = new Map<string, string>();
-  if (route.via === "none") return { minted, consentRefused: false };
+  const pixels: string[] = [];
+  if (route.via === "none") return { minted, consentRefused: false, pixels };
   if (route.via === "proxy" && !opts.consented && !(await recordConsent(route, messageId))) {
-    return { minted, consentRefused: true };
+    return { minted, consentRefused: true, pixels };
   }
   const left = opts.budget ?? pictureBudget();
   for (const url of urls) {
@@ -102,7 +108,16 @@ export async function fetchRemoteImages(
       const type = (blob.type || "").toLowerCase().split(";")[0]!.trim();
       if (!RASTER.has(type)) continue;
       if (blob.size === 0 || blob.size > INLINE_IMAGE_MAX_BYTES || blob.size > left.bytes) continue;
-      const uri = `data:${type};base64,${await blobToBase64(blob)}`;
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (route.via === "phone") {
+        const size = imageDimensions(bytes);
+        if (size === null) continue;
+        if (size.w <= 1 && size.h <= 1) {
+          pixels.push(url);
+          continue;
+        }
+      }
+      const uri = `data:${type};base64,${bytesToBase64(bytes)}`;
       // The same gate the write into the document applies — minted here, asserted there.
       if (!INLINE_IMAGE_SRC.test(uri)) continue;
       left.bytes -= blob.size;
@@ -112,7 +127,7 @@ export async function fetchRemoteImages(
       // An unreachable host is a blank box, never an error screen.
     }
   }
-  return { minted, consentRefused: false };
+  return { minted, consentRefused: false, pixels };
 }
 
 /** The press, on the server that fetches: `true` once it answered 2xx. */

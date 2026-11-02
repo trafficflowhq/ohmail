@@ -7,6 +7,13 @@ import { dialect } from "./dialect/index.js";
 export const LIST_ADDRESS_CHUNK = 500;
 
 /**
+ * The list addresses one account records from List-Post before a new one needs a person's consent
+ * to it (a person-written allow rule, or a contact that is not inferred): the header is the
+ * sender's to write, so a forged one must not grow the table without bound.
+ */
+export const LIST_ADDRESSES_PER_ACCOUNT_MAX = 1000;
+
+/**
  * THE ACCOUNT'S LIST ADDRESSES (mail 0150), each with the brands a person's press consented under
  * it: every row, or only those `among` names (lower-cased by the caller). The device store hands
  * the JSON column back as text, so both shapes are read.
