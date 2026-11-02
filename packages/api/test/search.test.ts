@@ -72,6 +72,8 @@ describe("GET /search — hybrid search endpoint", () => {
       expect(line, lines.join("\n")).toBeDefined();
       expect(JSON.parse(line!)).toMatchObject({ searchPart: part, searchItems: part === "summary" ? 0 : 1 });
       expect(JSON.parse(line!).totalMs).toEqual(expect.any(Number));
+      // The mailbox's size in one closed word on the text parts; never a count.
+      expect(JSON.parse(line!).searchSize, part).toEqual(part === "address" ? undefined : expect.stringMatching(/^(small|large)$/));
       for (const told of [header, line!]) {
         for (const secret of ["invoice", "anna", "acme", inv.id, s.accountId]) expect(told.toLowerCase()).not.toContain(secret.toLowerCase());
       }

@@ -93,9 +93,10 @@ export const ALLOWED_FIELDS: readonly string[] = [
   "sentAtMs", "answeredAtMs", "receivedAtMs",
   // The server's own answer to a search, by phase (`search_timing`): the session lookup, the wait
   // for a connection, the reads, the rows made DTOs; and which part, tier and cut it answered, how
-  // many rows and statements. Counts, closed words and milliseconds; never the query.
+  // many rows and statements, and the mailbox's size as small or large. Counts, closed words and
+  // milliseconds; never the query.
   "sessionMs", "acquireMs", "flightMs", "dtoMs",
-  "searchPart", "searchTier", "searchCut", "searchItems", "searchStatements",
+  "searchPart", "searchTier", "searchCut", "searchItems", "searchStatements", "searchSize",
   "reason", "detail", "kind", "severity", "phase", "state", "verdict", "configVar",
   // ── WHICH CONSTRAINT REFUSED A ROW, added WITH the lines that emit them ───────────────────
   //
