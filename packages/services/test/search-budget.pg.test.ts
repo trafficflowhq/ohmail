@@ -308,6 +308,12 @@ const HARNESS: Array<{ cls: Cls; q?: string; k?: number; of?: string }> = [
   ...["{100}", "{300}", "{1000}", "{1500}", "{0} {100}", "{0} {1000}"].map((of) => ({ cls: "mid" as const, of })),
   ...["kestrel", "osprey", "plover", "heron", "egret", "avocet", "dunlin", "unlin"].map((q) => ({ cls: "rare" as const, q })),
   ...["heron {0}", "dunlin {1}", "heron -{3000}", "heron {0} -{3000}", "heron or dunlin -{3000}"].map((of) => ({ cls: "rare" as const, of })),
+  // A list of words joined by `or`: one arm reads every side, not one branch a side.
+  { cls: "common", of: "{0} or {2} or {5} or {40} or {100} or {300} or {1000} or {1500}" },
+  ...["heron or dunlin or egret or avocet or plover or osprey or kestrel or unlin", "heron or dunlin or egret or avocet or plover or osprey or kestrel or unlin -{3000}"]
+    .map((of) => ({ cls: "mid" as const, of })),
+  ...["kestrel or osprey or plover or dunlin or unlin or zqxjv or quokka or xylograph", "kestrel or osprey or plover or dunlin or unlin or zqxjv or quokka or xylograph -{3000}"]
+    .map((of) => ({ cls: "rare" as const, of })),
   // Parts of file names: alone and beside other words (a sender's in the last), and fragments typed with
   // their marks, which only the file names' own index reads.
   { cls: "common", q: "image001" },

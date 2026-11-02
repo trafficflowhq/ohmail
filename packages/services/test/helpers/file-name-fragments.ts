@@ -18,4 +18,6 @@ export const FRAGMENTS: ReadonlyArray<readonly [q: string, first: string, letter
   ["tax-q3", "tq", 1], ["eu-vat", "eu", 1], ["bour-ledg", "hl", 1], ["arbou", "hl", 1], ["led", "hl", 1],
   ["ger-77", "hl", 1], ["31.pd", "hl", 2], ["ledger-7731", "hl", 1], ["harbour-ledger", "hl", 1],
   ["harbour-ledger-7731.pdf", "hl", 1], ["can004", "sc", 1], ["inv-145", "n145", 1],
+  // Each side of an `or` with its marks, as alone.
+  ["31.pd or zzzqx", "hl", 2], ["zzzqx or ger-77", "hl", 1],
 ];

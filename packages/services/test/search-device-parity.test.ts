@@ -764,6 +764,9 @@ describe("a minus word only leaves letters out", () => {
   const PLAIN: Readonly<Record<string, readonly string[]>> = {
     mail: ["body", "domain", "inside", "prefix", "subject"], you: ["you1", "you2"], the: ["weather"], and: ["sandbox"],
     invoice: ["invoice"], orchard: ["orchard"], [NINE]: ["long"],
+    // Each side of an `or` keeps its in-word and part-word reach.
+    "mail or zzzqx": ["body", "domain", "inside", "prefix", "subject"], "zzzqx or mail": ["body", "domain", "inside", "prefix", "subject"],
+    "mail or invoice": ["body", "domain", "inside", "invoice", "prefix", "subject"], "the or zzzqx": ["weather"],
   };
   /** The letters holding each excluded word, anywhere. */
   const HOLDERS: Readonly<Record<string, readonly string[]>> = { zzzqx: [], google: [], thanks: ["subject", "you2"], orchard: ["orchard"], harvest: ["long"] };
@@ -772,10 +775,11 @@ describe("a minus word only leaves letters out", () => {
     ["mail -zzzqx", "mail", "zzzqx"], ["mail -thanks", "mail", "thanks"], ["mail -google", "mail", "google"],
     ["you -thanks", "you", "thanks"], ["the -thanks", "the", "thanks"], ["and -google", "and", "google"],
     ["is -orchard", "is", "orchard"], ["invoice -zzzqx", "invoice", "zzzqx"], ["orchard -zzzqx", "orchard", "zzzqx"],
-    // A minus word's parentheses go with it; a bare `or` beside it is no word asked.
+    // A minus word's parentheses go with it; a bare `or` beside it is no word asked, and each side keeps its reach.
     ["mail -(thanks)", "mail", "thanks"], ["mail (-thanks)", "mail", "thanks"], ["(mail -thanks)", "mail", "thanks"],
     ["mail -thanks)", "mail", "thanks"], ["mail ( -thanks )", "mail", "thanks"],
-    ["mail or -zzzqx", "mail or", "zzzqx"], ["-thanks or invoice", "or invoice", "thanks"], ["invoice or -thanks", "invoice or", "thanks"],
+    ["mail or -zzzqx", "mail", "zzzqx"], ["-thanks or invoice", "invoice", "thanks"], ["invoice or -thanks", "invoice", "thanks"],
+    ["mail or -thanks", "mail", "thanks"], ["mail or zzzqx -thanks", "mail", "thanks"],
     // Many minus words: only the words asked count toward the eight, and nine of them are held to it too.
     ["mail -a1 -a2 -a3 -a4 -a5 -a6 -a7 -a8", "mail", ""], ["mail -thanks -a2 -a3 -a4 -a5 -a6 -a7 -a8", "mail", "thanks"],
     ["the -a1 -a2 -a3 -a4 -a5 -a6 -a7 -a8 -a9", "the", ""], ["delivery waiting -a1 -a2 -a3 -a4 -a5 -a6 -a7", "delivery waiting", ""],

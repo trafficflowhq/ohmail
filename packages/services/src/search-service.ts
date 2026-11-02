@@ -3,7 +3,7 @@ import { exactAsked, positiveText, showSimilar, substringOpen, type SearchTier }
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
 import { accountSettings, messageSearch, messages, readFlightOf } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
-import { boolLiteral, dialect, pgOnly, queryOperandsOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
+import { boolLiteral, dialect, orSidesOf, pgOnly, queryOperandsOf, partSidesOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
 import { ServiceError } from "./errors.js";
@@ -671,10 +671,21 @@ export class SearchService {
     // arm that reads a body word's start (the part arm once it opens, else the text arm, or the substring
     // arm beside a typed text arm), so a letter its file names find is one row there, merged before the
     // arm's cut. Its set leads with the account.
-    const inside = substringOpen(q);
-    const named = inside ? d.search.names(pos) : null;
+    // Each side of a bare `or` is read by these arms on its own (ANDed, `mail or zzzqx` lost `webmail`),
+    // every side in one predicate: a branch a side was a union branch, a CTE and a planned clause each.
+    const sides = orSidesOf(pos) ?? [pos];
+    const olds = sides.length === 1 && sides[0] === pos ? [legacy] : sides.map((w) => (legacy === null ? null : d.search.unindexed(w, { trigram, threshold: FUZZY_THRESHOLD })));
+    const anySide = (bs: readonly SearchArm[]): SearchArm => (bs.length === 1 ? bs[0]! : { pred: sql`(${sql.join(bs.map((b) => b.pred), sql` or `)})`, rank: bs[0]!.rank });
+    const inside = sides.flatMap((w, i) => (substringOpen(w) ? [{ w, old: olds[i] ?? null }] : []));
+    const asked = inside.length === 1 ? inside[0]!.w : inside.map(({ w }) => w);
+    const named = inside.length > 0 ? d.search.names(asked) : null;
     const names = named === null ? [] : [keyed(held(own(named)), sets([sql`(s.account_id = ${ctx.accountId} and ${named.pred})`]))];
-    const part = exactAsked(q) ? null : d.search.partWords(pos);
+    // The part arm reads every side as one (one tsquery on the server), within its words in all.
+    const partOf = sides.filter((w) => !exactAsked(w));
+    const part = partOf.length === 0 ? null : d.search.partWords(partOf.length === 1 ? partOf[0]! : partOf);
+    const opened = part === null ? [] : partSidesOf(partOf) ?? [];
+    const oldParts = sides.flatMap((w, i) => (opened.includes(w) && olds[i]?.part ? [olds[i]!.part!] : []));
+    const old = oldParts.length === 0 ? null : { head: anySide(oldParts.map((o) => o.head)), text: anySide(oldParts.map((o) => o.text)) };
     const out: Arm[] = [
       { name: "head", ranked: true, branches: [held(ownWords(words.head)), ...(legacy ? [bare(legacy.words.head)] : [])] },
       {
@@ -687,7 +698,6 @@ export class SearchService {
     // each word also read as the start of a longer one (`elevat` reaches `elevation`). On Postgres
     // ONE bounded arm over both, so a common part's walk fills at once; the device store's FTS5
     // reads have no such misplan and keep two plain arms (one branch each: no union there).
-    const old = legacy?.part ?? null;
     const beside = late ? { besideText: true as const } : {};
     if (part !== null && part.across === true) {
       // Words that may straddle the letter's parts: one predicate over the whole letter.
@@ -707,11 +717,14 @@ export class SearchService {
         { name: "part-text", ranked: false, branches: [held(ownWords(part.text)), ...(old ? [bare(old.text)] : [])] },
       );
     }
-    if (inside) {
+    if (inside.length > 0) {
+      // The older columns' substring branches, one per index, each over every side.
+      const oldSubs = inside.flatMap(({ old }) => (old && old.substring.length > 0 ? [old.substring] : []));
       out.push({
         name: "substring",
         ranked: false,
-        branches: [held(own(d.search.substring(pos, { trigram }))), ...(part === null && typedRead ? names : []), ...(legacy?.substring ?? []).map(bare)],
+        branches: [held(own(d.search.substring(asked, { trigram }))), ...(part === null && typedRead ? names : []),
+          ...(oldSubs[0] ?? []).map((_, j) => bare(anySide(oldSubs.map((o) => o[j]!))))],
       });
     }
     // Every branch is then the document's own (`own`), so the bounded read can ask it by itself. An
