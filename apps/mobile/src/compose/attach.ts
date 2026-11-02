@@ -120,6 +120,16 @@ export function phoneSendSurface(o: { standalone: boolean; flavor: string | null
   return o.flavor === "managed" && o.staging === true ? PHONE_SEND_MAX_TOTAL_BYTES : undefined;
 }
 
+/** {@link phoneSendSurface} of a live session: its door, and what its `/hello` said of staging. */
+export function sessionSendSurface(
+  session: { standalone: boolean; profile: { flavor: string | null } } | null,
+  hello: { staging: () => boolean | null } | null,
+): number | undefined {
+  return phoneSendSurface({
+    standalone: session?.standalone === true, flavor: session?.profile.flavor ?? null, staging: hello?.staging() ?? null,
+  });
+}
+
 /** Whether a picked file is read at all: a declared size past the room left is refused unread. */
 export function readWithin(declaredSize: number | null | undefined, room: number): boolean {
   return typeof declaredSize !== "number" || !Number.isFinite(declaredSize) || declaredSize <= room;

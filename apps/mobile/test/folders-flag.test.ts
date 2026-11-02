@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { describe, expect, it } from "vitest";
-import { foldersFlag, freshestRead, type FoldersFlagDeps } from "../src/state/folders-flag";
+import { foldersFlag, freshestRead, signatureSequence, type FoldersFlagDeps } from "../src/state/folders-flag";
 import { readFoldersEnabled, writeSignature } from "../src/net/consent";
 import { signatureRows } from "../src/ui/signature-rows";
 
@@ -393,6 +393,27 @@ describe("a signature written on the phone", () => {
     answerRead({ sig: "what the server held before" });
     await read;
     expect(applied).toEqual(["the echo"]);
+  });
+
+  it("the pane's sequence: a write's echo outranks a read issued before it; a refusal applies nothing", async () => {
+    const applied: Array<Record<string, unknown>> = [];
+    const track = signatureSequence((f) => applied.push(f));
+    const facts = (sig: string) => ({ signatures: { m1: sig }, signaturesHtml: {}, signatureSources: {}, signatureChanges: {} });
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+    let answerRead!: (v: ReturnType<typeof facts> & { themeFace: string }) => void;
+    track.read(new Promise((r) => { answerRead = r; }));
+    expect(await track.write(async () => facts("the echo"))).toBe(true);
+    answerRead({ ...facts("what the server held before"), themeFace: "paper" });
+    await settle();
+    expect(applied).toEqual([facts("the echo")]);
+    expect(await track.write(async () => { throw new Error("refused (403)"); })).toBe(false);
+    track.read(Promise.resolve(null));
+    await settle();
+    expect(applied, "a refusal and a read that could not ask apply nothing").toHaveLength(1);
+    // A read issued after the write lands, and carries only the signature fields.
+    track.read(Promise.resolve({ ...facts("later"), themeFace: "paper" }));
+    await settle();
+    expect(applied.at(-1)).toEqual(facts("later"));
   });
 
   it("the read carries the markup, whose signature each is, and where a change went", async () => {

@@ -38,7 +38,6 @@ import {
   writeThemeFace,
   type FoldersConsent,
   type SignatureChange,
-  type SignatureFacts,
 } from "../net/consent";
 import { ownAddressesOf, readMailboxes, type PhoneMailbox } from "../net/mailboxes";
 import { junkFolderSaid } from "./folders";
@@ -58,13 +57,13 @@ import { claimHere } from "../ui/standalone-form";
 import { readFolderSummary } from "../net/folder-ops";
 import { imageRouteOf, type ImageRoute } from "../mail/remote-images";
 import * as Crypto from "expo-crypto";
-import { phoneSendSurface } from "../compose/attach";
+import { sessionSendSurface } from "../compose/attach";
 import { openLetterSession, ownedLetters } from "../compose/letter-keeper";
 import { restoreLetters, sayLetterRestore, settleLetters, sweepLetters } from "../compose/letter-restore";
 import { letterDoor } from "../compose/letter-store";
 import type { FaceName } from "../theme/face";
 import { accountFaceShown, faceMirrorStands, faceScope } from "./face-scope";
-import { foldersFlag, freshestRead, type FreshestRead } from "./folders-flag";
+import { foldersFlag, freshestRead, signatureSequence, type FreshestRead, type SignatureSequence } from "./folders-flag";
 import { askEngineQueues, drainReads } from "./drain-reads";
 import { startUiVitals } from "../engine/engine-log";
 import { createProjector, listStamp, type Projected } from "./world-projection";
@@ -814,14 +813,6 @@ export function useEngineQueuesAsk(): () => void {
 /** No signature facts: nothing read yet, or nothing connected. */
 const NO_SIGNING: Omit<World["signing"], "write"> = { html: {}, sources: {}, changes: {} };
 
-/** The signature fields of a consent answer, alone, so the sequence compares only those. */
-function signatureFactsOnly(a: SignatureFacts): SignatureFacts {
-  return {
-    signatures: a.signatures, signaturesHtml: a.signaturesHtml,
-    signatureSources: a.signatureSources, signatureChanges: a.signatureChanges,
-  };
-}
-
 /** The projection plus the per-render facts, the projection's getters carried over by descriptor. */
 function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement" | "signing">): World {
   const out = Object.defineProperties({}, Object.getOwnPropertyDescriptors(projected)) as World;
@@ -1115,7 +1106,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The consent, relay and queue reads of the live session, so a local writer can tell them (`localWrite`). */
   const consentReadNow = useRef<FreshestRead<FoldersConsent> | null>(null);
   /** The signatures' own sequence: every consent read and every signature write's echo. */
-  const signaturesNow = useRef<FreshestRead<SignatureFacts> | null>(null);
+  const signaturesNow = useRef<SignatureSequence | null>(null);
   const relayReadNow = useRef<FreshestRead<readonly RelayedDecision[]> | null>(null);
   const queueReadNow = useRef<FreshestRead<readonly ServerWaitingSender[]> | null>(null);
   /**
@@ -1163,7 +1154,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // Signatures write's echo takes a place in one sequence when it is issued, and the freshest
     // successful answer wins (`freshestRead`). Identity-gated like `apply` — a superseded
     // session's late answer applies nothing.
-    const sigFacts = signaturesNow.current = freshestRead<SignatureFacts>((f) => {
+    const sigFacts = signaturesNow.current = signatureSequence((f) => {
       if (current.current !== m) return;
       setSignatures(f.signatures);
       setSigMore({ html: f.signaturesHtml, sources: f.signatureSources, changes: f.signatureChanges });
@@ -1225,7 +1216,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           return sigRead(async () => {
             const asked = readFoldersEnabled(session);
             /* Its place in the signatures' sequence is taken now, before the answer. */
-            void sigFacts(() => asked.then((a) => (a === null ? null : signatureFactsOnly(a))));
+            sigFacts.read(asked);
             const ans = await asked;
             // `null` from the read is "could not ask", which the applier must not read as "the
             // account has no face" — the two are different answers (face-scope.ts's contract).
@@ -1295,11 +1286,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     async (mailboxId: string, text: string | null): Promise<boolean> => {
       const track = signaturesNow.current;
       if (!session || track === null) return false;
-      try {
-        return (await track(() => writeSignature(session, mailboxId, text))) !== null;
-      } catch {
-        return false;
-      }
+      return track.write(() => writeSignature(session, mailboxId, text));
     },
     [session],
   );
@@ -1499,10 +1486,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         ...(letters ? { letters } : {}),
         forwardParts: () => forwardPartsNow.current?.said() ?? null,
         /* What this session's send carries: the door, and on Cloud whether its `/hello` armed staging. */
-        sendSurface: () => phoneSendSurface({
-          standalone: session?.standalone === true, flavor: session?.profile.flavor ?? null,
-          staging: forwardPartsNow.current?.staging() ?? null,
-        }),
+        sendSurface: () => sessionSendSurface(session, forwardPartsNow.current),
         // The register, not the hook's value: this facade is built once per session, and a
         // captured `locale` would stamp Trash rows in the mount-time language for ever.
         locale: () => activeLocale(),
