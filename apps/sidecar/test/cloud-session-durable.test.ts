@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StaticKeyProvider } from "@trafficflow/core";
 import {
-  createCloudAuth, loadSealedTokens, openSealedTokens, sealTokens,
+  createCloudAuth, loadSealedTokens, openSealedTokens, readSessionMarker, sealTokens,
   RETRY_CAP_MS, type CloudAuth, type CloudAuthConfig, type CloudSessionReading,
 } from "../src/cloud-auth.js";
 import { readMachineBinding } from "../src/machine-binding.js";
@@ -460,6 +461,39 @@ describe("a seal stays on the computer that wrote it", () => {
     expect(await older()).toBeNull();
     await sealTokens(sealPath, keyProvider, { accessToken: "a", refreshToken: "r1" });
     expect(await older()).toEqual({ accessToken: "a", refreshToken: "r1" });
+  });
+});
+
+describe("the install's previous family is named beside the seal", () => {
+  /** The server's `hashToken`, spelled with node's crypto so the wire encoding is under test. */
+  const digest = (token: string): string => createHash("sha256").update(token, "utf8").digest("base64url");
+
+  it("every seal names its family for the computer it was written on, and a renewal moves the name", async () => {
+    const keyProvider = new StaticKeyProvider({ 1: aKek() });
+    const dir = tmp();
+    const sealPath = join(dir, "cloud-tokens.seal");
+    expect(readSessionMarker(dir, "machine-a"), "nothing sealed, nothing named").toBeNull();
+    await sealTokens(sealPath, keyProvider, { accessToken: "stale", refreshToken: "r1" }, new Date(), () => true, "machine-a");
+    expect(readSessionMarker(dir, "machine-a")).toBe(digest("r1"));
+    const a = auth(door([minted("fresh", "r2", 900)]), { keyProvider, sealPath, machine: "machine-a" });
+    expect((await a.renewNow()).state).toBe("live");
+    expect(readSessionMarker(dir, "machine-a"), "the name follows the renewal").toBe(digest("r2"));
+    rmSync(sealPath);
+    expect(readSessionMarker(dir, "machine-a"), "the name outlives the seal a sign-out removes").toBe(digest("r2"));
+  });
+
+  it("a name written on another computer is not this one's to send; an unnamed computer reads only its own", async () => {
+    const keyProvider = new StaticKeyProvider({ 1: aKek() });
+    const dir = tmp();
+    const sealPath = join(dir, "cloud-tokens.seal");
+    await sealTokens(sealPath, keyProvider, { accessToken: "a", refreshToken: "r1" }, new Date(), () => true, "machine-a");
+    expect(readSessionMarker(dir, "machine-b")).toBeNull();
+    expect(readSessionMarker(dir, null)).toBeNull();
+    await sealTokens(sealPath, keyProvider, { accessToken: "a", refreshToken: "r1" });
+    expect(readSessionMarker(dir, null)).toBe(digest("r1"));
+    expect(readSessionMarker(dir, "machine-a")).toBeNull();
+    writeFileSync(join(dir, "cloud-session.marker"), "{not json");
+    expect(readSessionMarker(dir, null), "a damaged name names nothing").toBeNull();
   });
 });
 

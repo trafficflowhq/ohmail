@@ -12,6 +12,7 @@ import {
 import { ServiceError } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
 import { serviceContext } from "../context.js";
+import { presentedResumeMarker } from "../cookies.js";
 import type { ApiDeps } from "../deps.js";
 import { errorResponse } from "../responses.js";
 import type { Route } from "../router.js";
@@ -140,7 +141,9 @@ export const pairRedeemRoutes: Route[] = [
     options: { public: true, raw: true, credentialSubject: true },
     handler: async (req, deps) => {
       try {
-        const b = await readObjectBody<{ grant?: unknown; token?: unknown; email?: unknown; kind?: unknown }>(req);
+        const b = await readObjectBody<{
+          grant?: unknown; token?: unknown; email?: unknown; kind?: unknown; previousSession?: unknown;
+        }>(req);
         const token = typeof b.token === "string" ? b.token : "";
         const ctx = serviceContext(deps, req);
         if (b.grant === "invite") {
@@ -167,7 +170,9 @@ export const pairRedeemRoutes: Route[] = [
         if (b.grant === "device-pair") {
           // `kind` is the redeemer's own declaration — "web" when absent, whitelist-gated in
           // the service BEFORE the burn (the same wire-input division as the mint's `grant`).
-          const { tokens } = await redeemDevicePair(ctx, sessionMinter(deps), {
+          // `previousSession`: a desktop's previous family on this host, honoured for a desktop kind only.
+          const minting = { ...ctx, supersedesInstall: presentedResumeMarker(b.previousSession) };
+          const { tokens } = await redeemDevicePair(minting, sessionMinter(deps), {
             token,
             ...(b.kind !== undefined ? { kind: b.kind as PairedDeviceKind } : {}),
           });

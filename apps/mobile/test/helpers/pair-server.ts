@@ -1,7 +1,7 @@
 /**
  * A loopback server speaking the connection contract — `/hello`, the pair redeem, the
  * refresh rotation with STRICT REUSE (the native branch: presenting a consumed refresh token
- * revokes the family), and the /sync surface behind a real bearer check. Every request is
+ * revokes the family), both sign-out doors, and the /sync surface behind a real bearer check. Every request is
  * recorded whole (`seen`), which is what lets the suites assert the token DISCIPLINE — the
  * pairing token appearing in exactly one place, the redeem body — rather than trusting it.
  *
@@ -163,6 +163,9 @@ export function pairServer(opts: PairServerOptions = {}) {
   /** The family's one live refresh token — rotation moves it; reuse of an old one revokes. */
   let refreshHead: string | null = null;
   let revoked = false;
+  /** Every refresh token minted, and the redeem's family it belongs to: the refresh door's reach. */
+  const familyOf = new Map<string, number>();
+  let family = 0;
   const liveAccess = new Set<string>();
   let mintCounter = 0;
   const seen: SeenRequest[] = [];
@@ -186,6 +189,7 @@ export function pairServer(opts: PairServerOptions = {}) {
     mintCounter += 1;
     const tokens = { accessToken: `acc-${mintCounter}`, refreshToken: `ref-${mintCounter}` };
     refreshHead = tokens.refreshToken;
+    familyOf.set(tokens.refreshToken, family);
     liveAccess.add(tokens.accessToken);
     return tokens;
   };
@@ -248,6 +252,7 @@ export function pairServer(opts: PairServerOptions = {}) {
         }
         mintable.delete(parsed.token); // single-use: the burn
         revoked = false;
+        family += 1;
         json(200, { grant: "device-pair", tokens: mintPair() });
         return;
       }
@@ -293,6 +298,28 @@ export function pairServer(opts: PairServerOptions = {}) {
         }
         revoked = true;
         liveAccess.clear();
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      if (url.pathname === "/auth/refresh/logout" && req.method === "POST") {
+        // The real door: a token this server minted ends its family in any state, a spent one too;
+        // one it never minted is the door's own 401. No bearer is read.
+        let parsed: { refreshToken?: unknown } = {};
+        try {
+          parsed = JSON.parse(body) as typeof parsed;
+        } catch {
+          /* refusal below */
+        }
+        const named = typeof parsed.refreshToken === "string" ? familyOf.get(parsed.refreshToken) : undefined;
+        if (named === undefined) {
+          json(401, { error: { code: "unauthorized", message: "nothing to sign out" } });
+          return;
+        }
+        if (named === family) {
+          revoked = true;
+          liveAccess.clear();
+        }
         res.writeHead(204);
         res.end();
         return;

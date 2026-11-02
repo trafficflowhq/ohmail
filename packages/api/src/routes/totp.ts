@@ -1,4 +1,5 @@
 import { serviceContext } from "../context.js";
+import { presentedResumeMarker } from "../cookies.js";
 import type { Route } from "../router.js";
 import { clientKind, json, noContent, readBody } from "./shared.js";
 import { auth, enrollmentResult, webSession } from "./shared-cloud.js";
@@ -45,8 +46,11 @@ export const totpRoutes: Route[] = [
       // `kind` is the caller's own device declaration — the desktop's cloud-door sign-in names
       // its platform here so the session gets a device row the staleness alarm can attribute.
       // Whitelist-gated in the service (desktop kinds only; none can reach the native window).
-      const body = await readBody<{ loginToken: string; code: string; kind?: unknown }>(req);
-      return webSession(deps, req, (ctx) => auth(deps).totpVerify(ctx, body));
+      // `previousSession` is that desktop's previous family, honoured for a desktop kind only.
+      const body = await readBody<{ loginToken: string; code: string; kind?: unknown; previousSession?: unknown }>(req);
+      return webSession(deps, req, (ctx) => auth(deps).totpVerify(
+        { ...ctx, supersedesInstall: presentedResumeMarker(body.previousSession) }, body,
+      ));
     },
   },
   {

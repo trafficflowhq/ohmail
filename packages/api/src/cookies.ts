@@ -53,8 +53,11 @@ const resumeMarkerFor = hashToken;
 
 const RESUME_MARKER = /^[A-Za-z0-9_-]{43}$/;
 
-/** The marker a jar presented, or `null`: a legacy `1` or anything not a digest names no family. */
-export function presentedResumeMarker(raw: string | null | undefined): string | null {
+/**
+ * The marker a jar presented, or `null`: a legacy `1` or anything not a digest names no family. A
+ * desktop's sign-in body carries the same digest as `previousSession` (`ServiceContext.supersedesInstall`).
+ */
+export function presentedResumeMarker(raw: unknown): string | null {
   return typeof raw === "string" && RESUME_MARKER.test(raw) ? raw : null;
 }
 

@@ -750,8 +750,10 @@ describe("the pre-auth Cloud engine", () => {
     }));
     expect(second.status, await second.clone().text()).toBe(200);
     expect(claims).toHaveLength(2);
+    // No verifier; and the family the first sign-in held is named, so the server can end it.
     expect(Object.keys(claims[1] as object).sort(), "a spent commitment was reused")
-      .toEqual(["code", ...(HOST_KIND ? ["kind"] : [])].sort());
+      .toEqual(["code", ...(HOST_KIND ? ["kind"] : []), "previousSession"].sort());
+    expect((claims[1] as { previousSession?: string }).previousSession).toBe(hashToken("claimed-refresh"));
   }, 30_000);
 
   /**

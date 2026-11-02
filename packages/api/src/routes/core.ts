@@ -1,6 +1,6 @@
 import { silentLogger } from "@trafficflow/core";
 import { serviceContext } from "../context.js";
-import { jarCookie, ownerCookie } from "../cookies.js";
+import { jarCookie, ownerCookie, presentedResumeMarker } from "../cookies.js";
 import type { ApiDeps } from "../deps.js";
 import { withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
@@ -208,9 +208,11 @@ export const coreRoutes: Route[] = [
     handler: async (req, deps) => {
       // `kind` is the claimant's own platform declaration (desktop-linux/-macos/-windows, or
       // the legacy "macos" — also the default when absent, which is what every shipped desktop
-      // sends). Whitelist-gated in the service BEFORE the ip slot and the burn.
-      const body = await readBody<{ code?: unknown; verifier?: unknown; kind?: unknown }>(req);
-      return json(await auth(deps).claimDesktopLink(serviceContext(deps, req), body), 200);
+      // sends). Whitelist-gated in the service BEFORE the ip slot and the burn. `previousSession`
+      // names the install's previous family; a malformed one names none and refuses nothing.
+      const body = await readBody<{ code?: unknown; verifier?: unknown; kind?: unknown; previousSession?: unknown }>(req);
+      const ctx = { ...serviceContext(deps, req), supersedesInstall: presentedResumeMarker(body.previousSession) };
+      return json(await auth(deps).claimDesktopLink(ctx, body), 200);
     },
   },
 ];

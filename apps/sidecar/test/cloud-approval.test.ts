@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CloudSignInError, pollDesktopApproval, requestDesktopApproval, APPROVAL_BUSY_ATTEMPTS,
+  CloudSignInError, cloudSignIn, pollDesktopApproval, redeemPairingToken, requestDesktopApproval, APPROVAL_BUSY_ATTEMPTS,
 } from "../src/cloud-signin.js";
 
 /**
@@ -79,6 +79,36 @@ describe("pollDesktopApproval", () => {
     expect(await pollDesktopApproval(opts(fetchImpl), ID)).toEqual({ status: "pending", retryAfterMs: 4000, note: "busy" });
     expect(await pollDesktopApproval(opts(fetchImpl), ID)).toEqual({ status: "pending", retryAfterMs: 2000, note: "unreachable" });
     expect(calls[0]).toEqual({ path: "/auth/desktop-approval/claim", body: { approvalId: ID, verifier: "v".repeat(43) } });
+  });
+
+  it("the claim carries the install's previous family when the engine names one, and only then", async () => {
+    const previousSession = "p".repeat(43);
+    const { fetchImpl, calls } = fake([
+      () => json({ status: "pending", retryAfterMs: 2000 }, 202),
+      () => json({ status: "pending", retryAfterMs: 2000 }, 202),
+    ]);
+    await pollDesktopApproval({ ...opts(fetchImpl), previousSession }, ID);
+    await pollDesktopApproval(opts(fetchImpl), ID);
+    expect(calls.map((c) => c.body.previousSession)).toEqual([previousSession, undefined]);
+  });
+
+  it("so do the code claim, the second step of the password sign-in and a pairing redeem", async () => {
+    const previousSession = "p".repeat(43);
+    const pair = { tokens: { accessToken: "a", refreshToken: "r" } };
+    const { fetchImpl, calls } = fake([
+      () => json(pair),
+      () => json({ status: "twofa_required", loginToken: "lt" }),
+      () => json(pair),
+      () => json({ grant: "device-pair", ...pair }),
+    ]);
+    const base = { baseUrl: "https://cloud.test", fetchImpl, previousSession };
+    await cloudSignIn(base, { handoffCode: "code" });
+    await cloudSignIn(base, { email: "e@x.test", password: "pw", totp: "123456" });
+    await redeemPairingToken({ ...base, deviceKind: "desktop-linux" }, "pair-token");
+    expect(calls.map((c) => [c.path, c.body.previousSession])).toEqual([
+      ["/auth/desktop-claim", previousSession], ["/auth/login", undefined],
+      ["/auth/2fa/totp/verify", previousSession], ["/pair/redeem", previousSession],
+    ]);
   });
 
   it("the pair once approved, and each refusal with its own sentence", async () => {

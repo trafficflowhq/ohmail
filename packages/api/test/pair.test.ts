@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { pairingTokens, users } from "@trafficflow/db";
 import { ACCOUNT_HEADER, createApp, type ApiDeps, type Route } from "@trafficflow/api";
-import { PAIRING_TTL_BOUNDS } from "@trafficflow/services";
+import { PAIRING_TTL_BOUNDS, hashToken } from "@trafficflow/services";
 import { apiRoutes } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
 import { selfHostRoutes } from "@trafficflow/api/self-host";
@@ -552,6 +552,21 @@ describe("POST /pair/redeem — device-pair, and whose account the answer is abo
     expect(named, "a successful pair named no account").toBeTruthy();
     const [row] = await db.select().from(users).where(eq(users.id, s.userId));
     expect(named).toBe(row!.accountId);
+  });
+
+  it("a desktop's redeem carrying its install's previous digest ends that family", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const redeem = async (extra: Record<string, unknown> = {}): Promise<Response> => {
+      const minted = await (await H(mintReq(s.token, { grant: "device-pair", label: "Spare laptop" }), deps)).json();
+      return H(req("POST", "/pair/redeem", {
+        body: JSON.stringify({ grant: "device-pair", token: minted.token, kind: "desktop-linux", ...extra }),
+      }), deps);
+    };
+    const first = (await (await redeem()).json()).tokens.refreshToken as string;
+    expect((await redeem({ previousSession: hashToken(first) })).status).toBe(200);
+    const late = await H(req("POST", "/auth/refresh", { body: JSON.stringify({ refreshToken: first }) }), deps);
+    expect(late.status, "the install's previous family still renews").toBe(401);
   });
 
   it("ADMITS a redeem made while signed in to the SAME account", async () => {

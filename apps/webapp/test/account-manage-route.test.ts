@@ -109,6 +109,32 @@ describe("a session: the mint is asked once, and its answer is where the person 
   });
 });
 
+describe("a sign-out the server has not confirmed: the jar's session is nobody's to use here", () => {
+  const PENDING = `tf_owner=signed_out_pending; tf_session=${TOKEN}`;
+
+  it("GET is 307 to /login?next=manage and asks nobody, whatever token the jar still holds", async () => {
+    const { GET } = await route();
+    const res = await GET(get({ cookie: PENDING }));
+    expect(res.status, "the previous person's account page was minted").toBe(307);
+    expect(res.headers.get("location")).toBe("/login?next=manage");
+    expect(seen).toEqual([]);
+  });
+
+  it("HEAD and a prefetch answer the same 307", async () => {
+    const { GET, HEAD } = await route();
+    const head = HEAD(get({ cookie: PENDING }, "HEAD"));
+    const pre = await GET(get({ cookie: PENDING, "sec-purpose": "prefetch" }));
+    for (const res of [head, pre]) expect([res.status, res.headers.get("location")]).toEqual([307, "/login?next=manage"]);
+  });
+
+  it("control: a marker naming an account still mints", async () => {
+    const { GET } = await route();
+    const res = await GET(get({ cookie: `tf_owner=acct-1; tf_session=${TOKEN}` }));
+    expect(res.status).toBe(302);
+    expect(seen).toHaveLength(1);
+  });
+});
+
 describe("never an open redirect", () => {
   it("leaves only for https on ohmail.app or a subdomain of it", async () => {
     const { mayLeaveFor } = await import("../app/manage-handoff.js");

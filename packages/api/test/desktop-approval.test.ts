@@ -288,6 +288,22 @@ describe("the desktop's claim: pending, then the pair ONCE, and every refusal by
     expect(await code(sixth)).toBe("approval_expired");
   });
 
+  it("a claim carrying the previous claim's digest ends that desktop's family", async () => {
+    const { db, deps } = await makeDeps();
+    const me = await signedIn({ db });
+    const claimed = async (extra: Record<string, unknown> = {}): Promise<string> => {
+      const { id, verifier } = await request(deps);
+      expect((await confirm(deps, id, me.token)).status).toBe(200);
+      const res = await claim(deps, { approvalId: id, verifier, kind: "desktop-linux", ...extra });
+      expect(res.status, await res.clone().text()).toBe(200);
+      return ((await res.json()) as { tokens: { refreshToken: string } }).tokens.refreshToken;
+    };
+    const first = await claimed();
+    await claimed({ previousSession: hashToken(first) });
+    const late = await H(req("POST", "/auth/refresh", { body: JSON.stringify({ refreshToken: first }) }), deps);
+    expect(late.status, "the install's previous family still renews").toBe(401);
+  });
+
   it("an unknown request and a wrong verifier cost slots: the eleventh from one connection is 429", async () => {
     const { deps } = await makeDeps();
     for (let i = 0; i < 10; i++) {
