@@ -9,10 +9,15 @@ import { mailboxes } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes, ensureWordIndex } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
-import { searchIndexBackfillPass, searchIndexProgress } from "@trafficflow/core/mail";
+import { searchIndexProgress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { CALIBRATED_REF_MS, LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, judgedClockOf, judgedVerdicts, mustJudge, outcomeOf, scaleOf, verdicts, windowOf, type Round, type Verdict, type Window } from "./_budget-clock.js";
+import {
+  D, D_SALT, MATRIX_DELETED, MATRIX_REST, NOISE, NOISE_SALT, autovacuum, coldReads, draw, idOf, isExplain, isSession, matrixCells, matrixOldest,
+  matrixOver, matrixWalk, matrixWhole, matrixWork, planNodes, plantMatrix, recording, seedDocumented, vocabWord, type MatrixBounds,
+  type MatrixFilters, type PlanNode,
+} from "./_search-budget-fixture.js";
 
 /**
  * SEARCH IS MILLISECONDS: the first page of a search answers inside 100 ms of server time at p95
@@ -25,82 +30,25 @@ import { CALIBRATED_REF_MS, LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, judge
  * a large corpus of messages.
  */
 const PG_URL = pgTestUrl(import.meta.url);
-const client = postgres(PG_URL, { max: 1 });
-const base = brandDialect(drizzle(client, { schema }), "pg");
+/** The file's connection, closed while a cold copy of its database is made and opened again ({@link reconnect}). */
+let client = postgres(PG_URL, { max: 1 });
+let base = brandDialect(drizzle(client, { schema }), "pg");
 const BUDGET_MS = 100;
 const N = 74_000;
-/* THE SAME MAILBOXES EVERY RUN. They were drawn with random() and random ids, so each run measured
-   the budget over a different mailbox: one common-class page read 12,657 shared buffers on one
-   seed and 31,669 on the next, and on the slowest CI runners a heavy draw read 129-134 ms where the
-   rest of that run's figures matched every green run. Ids, account ids and every word are now
-   derived from md5 of a salt, the message's index and the word's position, so a run measures what
-   the last one did whatever order Postgres evaluates the rows in. */
+/** A's mailbox, before its backfill; `D` and its neighbour are the fixture's ({@link seedDocumented}). */
 const A = "5eed0000-0000-4000-8000-00000000000a";
-const D = "5eed0000-0000-4000-8000-00000000000d";
-const NOISE = "5eed0000-0000-4000-8000-00000000000e";
-/**
- * D's salt: the HEAVIEST of the seeds sampled, by the shared buffers its common-class pages read
- * (the class's p95 over seven queries is its heaviest one), so the budget is held over a heavy
- * mailbox rather than a lucky draw. Sampled on 2026-10-17 over twelve salts budget-d-s01..s12, each
- * on a database made from empty, reading each common query's page with EXPLAIN (ANALYZE, BUFFERS):
- * the heaviest query read 25,348 to 32,069 shared buffers by salt, and s04 is the 32,069 (gijubadale;
- * fehora 25,385, gileledatu 22,112, letumitu 19,589, sovejuso 17,120, portal 7,642, axa 3,855).
- * If this mailbox reads over the budget on a runner, that is search over budget on a heavy mailbox:
- * a product row with the plan, never a looser bound.
- */
-const D_SALT = "budget-d-s04";
 const A_SALT = "budget-a";
-const NOISE_SALT = "budget-noise";
-/** A uniform draw in [0, 1) from md5 of (salt, message index, position): deterministic and order-free. */
-const draw = (salt: string, g: SQL, i: SQL): SQL =>
-  sql`((('x' || substr(md5(${salt} || ':' || ${g} || ':' || ${i}), 1, 8))::bit(32)::bigint)::float8 / 4294967296.0)`;
-/** A message id from md5 of its account and index. */
-const idOf = (acct: string, g: SQL): SQL => sql`md5('budget-id:' || ${acct} || ':' || ${g})::uuid`;
 
-/**
- * Every statement the service sends — on the handle and inside any transaction it opens, where the
- * page runs — so the test can ask Postgres how it ran them under the same session settings.
- */
+/** Every statement the service sends, as `search-budget-fixture`'s recorder sees it. */
 const seen: SQL[] = [];
-const wrap = <T extends object>(target: T): T => new Proxy(target, {
-  get(t, p, r) {
-    if (p === "execute") return (st: SQL) => { seen.push(st); return (t as { execute: (s: SQL) => unknown }).execute(st); };
-    if (p === "select") return (...a: unknown[]) => recorded((t as { select: (...x: unknown[]) => object }).select(...a), seen);
-    if (p === "transaction") {
-      return (fn: (tx: unknown) => Promise<unknown>) =>
-        (t as { transaction: (f: (tx: object) => Promise<unknown>) => Promise<unknown> }).transaction((tx) => fn(wrap(tx)));
-    }
-    return Reflect.get(t, p, r);
-  },
-});
-const db = wrap(base);
-
-/**
- * A query builder whose statement is recorded when it runs: a search page's rows and their DTOs
- * are ONE builder read, so a recorder that saw only `execute` would miss the statement it guards.
- */
-function recorded<B extends object>(b: B, seen: SQL[]): B {
-  return new Proxy(b, {
-    get(t, p) {
-      const v = Reflect.get(t, p, t) as unknown;
-      if (p === "then" && typeof v === "function") {
-        seen.push((t as unknown as { getSQL: () => SQL }).getSQL());
-        return (v as (...x: unknown[]) => unknown).bind(t);
-      }
-      if (typeof v !== "function") return v;
-      return (...a: unknown[]) => {
-        const out = (v as (...x: unknown[]) => unknown).apply(t, a);
-        return out !== null && typeof out === "object" && ("from" in out || "getSQL" in out) ? recorded(out, seen) : out;
-      };
-    },
-  });
+let db = recording(base, seen);
+/** A new connection after a cold copy, with the session setting `beforeAll` gave the first. */
+async function reconnect(): Promise<void> {
+  client = postgres(PG_URL, { max: 1 });
+  base = brandDialect(drizzle(client, { schema }), "pg");
+  db = recording(base, seen);
+  await base.execute(sql`set max_parallel_workers_per_gather = 0`);
 }
-/** A statement's text as Postgres receives it. */
-const textOf = (st: SQL): string =>
-  (base as unknown as { dialect: { sqlToQuery: (s: SQL) => { sql: string } } }).dialect.sqlToQuery(st).sql;
-const isSession = (st: SQL): boolean => textOf(st).includes("set_config");
-/** The service's own planner estimate is an EXPLAIN already; it is not a read to plan. */
-const isExplain = (st: SQL): boolean => /^\s*explain\b/i.test(textOf(st));
 
 // A skewed vocabulary — word k = floor(5000 · u⁴) — so `w1` is in almost every body and `w3000`
 // in a rare few; subjects of 3–6 words, bodies of 100–227.
@@ -139,73 +87,6 @@ async function seed(acct: string, n: number): Promise<void> {
     select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
 }
 
-/**
- * `D`'s mailbox as production holds it: a pseudo-word vocabulary (word k is 3-5 syllables from
- * md5, so words share trigrams the way a language does and the typo tier has real candidates),
- * skewed k = floor(5000 · u⁴); planted rare words; file names on about two letters in five, as
- * mail carries them (signature images, dated invoices, scans, phone photos, joined words, reports,
- * camel-case sheets). A letter with no file name gets its document as `searchDocumentOf` writes it
- * for a sender and no recipients; one with a file name gets the writer's own, through the backfill,
- * which writes the marker.
- */
-async function seedDocumented(acct: string, n: number, salt: string): Promise<void> {
-  const [mb] = await base.insert(mailboxes).values({ accountId: acct, provider: "imap", address: `${acct.slice(0, 8)}@tf.example` }).returning();
-  await base.execute(sql`create temp table if not exists vocab as
-    select k, (select string_agg((array['ba','ke','ri','so','tu','na','le','mi','po','da','fe','gi','ho','ju','ra','ve'])[(get_byte(decode(md5('v' || k), 'hex'), i) % 16) + 1], '' order by i)
-               from generate_series(0, 2 + k % 3) i) as w
-    from generate_series(0, 4999) k`);
-  const words = (g: SQL, part: string, count: SQL) => sql`(select string_agg(v.w, ' ' order by r.i) from (select i, floor(5000 * power(${draw(salt, g, sql`${part} || i`)}, 4))::int as k from generate_series(1, ${count}) i) r join vocab v using (k))`;
-  await base.execute(sql`
-    insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator)
-    select ${idOf(acct, sql`g`)}, ${acct}::uuid, ${mb!.id}::uuid, 'h', 'budget:' || ${acct} || ':' || g,
-      case when g % 200 = 0 then 'myAXA Portal ' || (g % 97) when g % 4933 = 3 then 'heron sighting ' || g
-           else ${words(sql`g`, "s", sql`3 + (g % 4)`)} end,
-      case when g % 8222 = 1 then 'news@dunlin.example' when g % 333 = 0 then 'news@axa.example'
-           else 'sender' || (g % 2000) || '@dom' || (g % 300) || '.example' end,
-      timestamptz '2026-09-01T00:00:00Z' - make_interval(mins => g * 97), g % 3 = 0, g % 10 = 0,
-      jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g)
-    from generate_series(1, ${n}) g`);
-  // Planted: kestrel 1, osprey 4, plover 12, egret 24, avocet 37 bodies.
-  await base.execute(sql`
-    insert into message_bodies (message_id, text)
-    select m.id, ${words(sql`x.g`, "b", sql`100 + (hashtext(x.g::text) & 127)`)}
-      || case when x.g = 31337 then ' kestrel' else '' end || case when x.g % 18500 = 17 then ' osprey' else '' end
-      || case when x.g % 6166 = 11 then ' plover' else '' end || case when x.g % 3083 = 7 then ' egret' else '' end
-      || case when x.g % 2000 = 13 then ' avocet' else '' end
-    from messages m cross join lateral (select split_part(m.dedup_key, ':', 3)::int as g) x where m.account_id = ${acct}::uuid`);
-  await base.execute(sql`
-    insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-    select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
-  await base.execute(sql`
-    insert into attachments (account_id, message_id, filename, content_type)
-    select m.account_id, m.id, f.name, 'application/octet-stream'
-    from messages m
-    cross join lateral (select split_part(m.dedup_key, ':', 3)::int as g) x
-    join vocab v1 on v1.k = (x.g * 7) % 5000
-    join vocab v2 on v2.k = (x.g * 13 + 1) % 5000
-    cross join lateral (values
-      (case when x.g % 5 = 0 then 'image001.png' end),
-      (case when x.g % 10 = 0 then 'image002.jpg' end),
-      (case when x.g % 12 = 1 then 'Invoice_' || (2024 + x.g % 3) || '-' || lpad(((x.g % 12) + 1)::text, 2, '0') || '-' || lpad(((x.g % 28) + 1)::text, 2, '0') || '.pdf' end),
-      (case when x.g % 25 = 2 then 'scan' || lpad((x.g % 10000)::text, 4, '0') || '.PDF' end),
-      (case when x.g % 33 = 3 then 'IMG_' || (20240101 + x.g % 1000) || '_' || lpad((x.g % 2400)::text, 4, '0') || '.jpg' end),
-      (case when x.g % 50 = 4 then v1.w || '-' || v2.w || '-' || (x.g % 10000) || '.pdf' end),
-      (case when x.g % 100 = 5 then 'Report Q' || (1 + x.g % 4) || ' ' || (2024 + x.g % 3) || '.docx' end),
-      (case when x.g % 100 = 6 then initcap(v1.w) || initcap(v2.w) || (x.g % 100) || '.xlsx' end)
-    ) f(name)
-    where f.name is not null and m.account_id = ${acct}::uuid`);
-  await base.execute(sql`
-    insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
-    select m.id, m.account_id,
-      setweight(to_tsvector('english', coalesce(m.subject, '')), 'A')
-        || setweight(to_tsvector('simple', m.from_address || ' ' || regexp_replace(m.from_address, '[@.+_-]+', ' ', 'g')), 'B'),
-      to_tsvector('english', b.text), left(lower(trim(coalesce(m.subject, '') || ' ' || m.from_address)), 2048), 'text'
-    from messages m join message_bodies b on b.message_id = m.id
-    where m.account_id = ${acct}::uuid and not exists (select 1 from attachments a where a.account_id = m.account_id and a.message_id = m.id)`);
-  const filled = await searchIndexBackfillPass({ db: base as never, accountId: acct, batch: 2_000, rounds: 1_000 });
-  expect(filled.marked).toBe(true);
-}
-
 /** Every row the seeds wrote, by the fixed account ids. */
 async function removeSeeded(): Promise<void> {
   for (const acct of [A, D, NOISE]) {
@@ -223,21 +104,6 @@ function ctx(accountId: string = A): ServiceContext {
   return { db, accountId, userId: null, now: () => new Date("2026-09-23T12:00:00Z"), requestId: "search-budget" };
 }
 
-type PlanNode = Record<string, unknown>;
-/** Every node of a statement's plan as it ran, under the session settings. */
-async function planNodes(st: SQL, session: SQL[]): Promise<PlanNode[]> {
-  const r = (await base.transaction(async (tx) => {
-    for (const s of session) await tx.execute(s);
-    return tx.execute(sql`explain (analyze, format json) ${st}`);
-  })) as unknown as Array<Record<string, unknown>>;
-  const out: PlanNode[] = [];
-  const walk = (p: PlanNode) => {
-    out.push(p);
-    for (const c of (p["Plans"] as PlanNode[] | undefined) ?? []) walk(c);
-  };
-  walk(((r[0]!["QUERY PLAN"] as PlanNode[])[0]!)["Plan"] as PlanNode);
-  return out;
-}
 /** The shared buffers (hit and read) a statement touched as it ran, under the session settings. */
 async function buffersOf(st: SQL, session: SQL[]): Promise<number> {
   const r = (await base.transaction(async (tx) => {
@@ -249,7 +115,7 @@ async function buffersOf(st: SQL, session: SQL[]): Promise<number> {
 }
 /** The relations a statement read by a sequential scan, from its own plan, under the session settings. */
 async function seqScans(st: SQL, session: SQL[]): Promise<string[]> {
-  return (await planNodes(st, session)).filter((p) => p["Node Type"] === "Seq Scan").map((p) => String(p["Relation Name"]))
+  return (await planNodes(st, session, base)).filter((p) => p["Node Type"] === "Seq Scan").map((p) => String(p["Relation Name"]))
     .filter((rel) => rel === "messages" || rel === "message_bodies");
 }
 
@@ -321,15 +187,14 @@ const HARNESS: Array<{ cls: Cls; q?: string; k?: number; of?: string }> = [
   ...["heron pdf", "avocet pdf", "sender1237 pdf", "can0102"].map((of) => ({ cls: "rare" as const, of })),
   ...["zqxjv", "quokka", "xylograph"].map((q) => ({ cls: "none" as const, q })),
   { cls: "typo", k: 77_777 }, { cls: "typo", q: "heorn" },
+  // Parts of words and a word beside a common excluded word: the held reads date thousands of a term's matches.
+  ...["ginanas -{1}", "{200} -{1}"].map((of) => ({ cls: "mid" as const, of })),
+  ...["gikena -{1}", "barir -{1}", "sonan -{1}"].map((of) => ({ cls: "rare" as const, of })),
 ];
 /** A first page is begin, the session's settings, one read and commit; the typo tier is in that read. */
 const PAGE_STATEMENTS: Record<Cls, number> = { common: 4, mid: 4, rare: 4, none: 4, typo: 4 };
-
-async function vocabWord(k: number): Promise<string> {
-  const [row] = (await base.execute(sql`select (select string_agg((array['ba','ke','ri','so','tu','na','le','mi','po','da','fe','gi','ho','ju','ra','ve'])[(get_byte(decode(md5('v' || ${k}::int), 'hex'), i) % 16) + 1], '' order by i)
-    from generate_series(0, 2 + ${k}::int % 3) i) as w`)) as unknown as Array<{ w: string }>;
-  return row!.w;
-}
+/** The shape matrix on D (`_search-budget-fixture.ts`), each cell's query spelled as the harness spells its own. */
+const MATRIX = matrixCells(N).map((c) => ({ ...c, q: "" }));
 
 /** The round trip `latent` waits before each statement in production's shape. */
 const RTT_MS = 8;
@@ -436,9 +301,12 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     await base.execute(sql`set statement_timeout = '600s'`);
     // Fixed account ids: a run that died before its afterAll left these rows, so they go first.
     await removeSeeded();
+    // The planted documents lie where the plant wrote them: no vacuum of the server's frees space under it.
+    await autovacuum(base, false);
     await seed(A, N);
-    await seedDocumented(D, N, D_SALT);
-    await seedDocumented(NOISE, 20_000, NOISE_SALT);
+    await seedDocumented(base, D, N, D_SALT);
+    await seedDocumented(base, NOISE, 20_000, NOISE_SALT);
+    await plantMatrix(base, D, N);
     // Built over the seeded documents, as setup builds it over a live store.
     await ensureWordIndex(base, { concurrently: false });
     // Settled as production's are: a vacuumed `messages` lets the History index answer without the
@@ -460,13 +328,19 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     }
     await base.execute(sql`reset default_statistics_target`);
     await base.execute(sql`analyze message_bodies`);
+    await autovacuum(base, true);
     for (const h of HARNESS) {
       if (h.of !== undefined) {
         let q = h.of;
-        for (const [m, k] of h.of.matchAll(/\{(\d+)\}/g)) q = q.replace(m, await vocabWord(Number(k)));
+        for (const [m, k] of h.of.matchAll(/\{(\d+)\}/g)) q = q.replace(m, await vocabWord(Number(k), base));
         h.q = q;
       }
-      h.q = h.q ?? (await vocabWord(h.k!));
+      h.q = h.q ?? (await vocabWord(h.k!, base));
+    }
+    for (const c of MATRIX) {
+      let q = c.of;
+      for (const [m, k] of c.of.matchAll(/\{(\d+)\}/g)) q = q.replace(m, await vocabWord(Number(k), base));
+      c.q = q;
     }
     await base.execute(sql`reset statement_timeout`);
     for (let i = 0; i < 5; i++) {
@@ -478,6 +352,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
 
   afterAll(async () => {
     await base.execute(sql`set statement_timeout = '600s'`);
+    await autovacuum(base, true);
     await removeSeeded();
     await client.end({ timeout: 5 });
   }, 900_000);
@@ -656,11 +531,229 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       const session = seen.filter(isSession);
       const read = new Set<string>();
       for (const st of seen.filter((x) => !isSession(x) && !isExplain(x))) {
-        for (const p of await planNodes(st, session)) if (p["Index Name"] !== undefined && Number(p["Actual Loops"]) > 0) read.add(String(p["Index Name"]));
+        for (const p of await planNodes(st, session, base)) if (p["Index Name"] !== undefined && Number(p["Actual Loops"]) > 0) read.add(String(p["Index Name"]));
       }
       expect([...read], q).toContain(index);
     }
   }, 300_000);
+
+  // A typo with few guesses among thousands of trigram candidates: each candidate costs a similarity, so read once.
+  it("a typo with few guesses reads the trigram index once a page", async () => {
+    const svc = new SearchService();
+    await svc.search(ctx(D), { q: "egrit", parts: "page" });
+    seen.length = 0;
+    const r = await svc.search(ctx(D), { q: "egrit", parts: "page" });
+    expect(r.tier).toBe("similar");
+    const session = seen.filter(isSession);
+    const reads = seen.filter((st) => !isSession(st) && !isExplain(st));
+    expect(reads).toHaveLength(1);
+    const nodes = await planNodes(reads[0]!, session, base);
+    expect(nodes.filter((p) => p["Index Name"] === "message_search_terms_trgm_idx").reduce((n, p) => n + Number(p["Actual Loops"] ?? 0), 0)).toBe(1);
+  }, 120_000);
+
+  // A typo with thousands of guesses (`ginanasu`, about 2,000 here): its newest K are History newest first, each
+  // letter asked whether it is a guess, never a join, which hashed every letter of the mailbox.
+  it("a typo with thousands of guesses reads less than half the mailbox's letters off History", async () => {
+    const svc = new SearchService();
+    await svc.search(ctx(D), { q: "ginanasu", parts: "page" });
+    seen.length = 0;
+    const r = await svc.search(ctx(D), { q: "ginanasu", parts: "page" });
+    expect(r.tier).toBe("similar");
+    const reads = seen.filter((st) => !isSession(st) && !isExplain(st));
+    expect(reads).toHaveLength(1);
+    const letters = (await planNodes(reads[0]!, seen.filter(isSession), base)).filter((p) => p["Index Name"] === "messages_account_msg_order_idx")
+      .reduce((n, p) => n + (Number(p["Actual Rows"] ?? 0) + Number(p["Rows Removed by Filter"] ?? 0)) * Number(p["Actual Loops"] ?? 0), 0);
+    expect(letters).toBeLessThan(N / 2);
+  }, 120_000);
+
+  /**
+   * A WARM PAGE PAYS NOTHING FOR THE COLD PAGE'S GATE (search-budget-cold.pg). A statement is planned
+   * each time it runs (the pooler's `prepare: false`), and the planner prices a pattern clause over the
+   * column's statistics, a `<%` about 5 ms here: every first page plans its typo arm, so the arm reads
+   * its guesses off the trigram index through one read. A term the gate reads off the word index is
+   * the set's own read, never read again.
+   */
+  /** The page statement and its session as the service sent them for `q`, the second time it is asked. */
+  const pageOf = async (q: string, filters?: MatrixFilters): Promise<{ page: SQL; session: SQL[] }> => {
+    const svc = new SearchService();
+    const opts = { q, parts: "page" as const, ...(filters ? { filters } : {}) };
+    await svc.search(ctx(D), opts);
+    seen.length = 0;
+    await svc.search(ctx(D), opts);
+    const reads = seen.filter((st) => !isSession(st) && !isExplain(st));
+    expect(reads, q).toHaveLength(1);
+    return { page: reads[0]!, session: seen.filter(isSession) };
+  };
+
+  it("every first page plans at most one read of its typo arm's guesses", async () => {
+    for (const h of HARNESS) {
+      const { page, session } = await pageOf(h.q!);
+      const reads = (await planNodes(page, session, base, false)).filter((p) => p["Index Name"] === "message_search_terms_trgm_idx");
+      expect(reads.length, `${h.of ?? h.q}: reads of the typo arm's guesses`).toBeLessThanOrEqual(1);
+    }
+  }, 300_000);
+
+  it("no first page reads a term off the word index twice", async () => {
+    for (const h of HARNESS) {
+      const { page, session } = await pageOf(h.q!);
+      const terms = (await planNodes(page, session, base))
+        .filter((p) => p["Index Name"] === "message_search_words_idx" && Number(p["Actual Loops"] ?? 0) > 0).map((p) => String(p["Index Cond"]));
+      expect(terms.filter((t, i) => terms.indexOf(t) !== i), `${h.of ?? h.q}: a term read twice`).toEqual([]);
+    }
+  }, 300_000);
+
+  /**
+   * A WORD, OR A PART OF ONE, BESIDE AN EXCLUDED WORD reads at most the shared buffers its page read before
+   * the gate, to the hundred above. A held read dates a term the gate read as a set, never by a join planned
+   * on the term's estimate: under the word index's key 11,922 matches of `ginana:*` were planned as 76 and
+   * each dated one lookup (78,453 buffers for `ginanas -letumitu`). The base's figures are those of this
+   * mailbox with the matrix's recent layouts planted in it.
+   */
+  const HELD_READS: ReadonlyArray<readonly [string, number]> = [
+    ["ginanas -{1}", 44_000], ["{200} -{1}", 40_300], ["gikena -{1}", 40_500], ["barir -{1}", 41_700], ["sonan -{1}", 36_900],
+  ];
+  it("a word or a part of one beside an excluded word reads at most what its page read before the gate", async () => {
+    const read: Array<readonly [string, number, number]> = [];
+    for (const [of, most] of HELD_READS) {
+      const { page, session } = await pageOf(HARNESS.find((h) => h.of === of)!.q!);
+      read.push([of, await buffersOf(page, session), most]);
+    }
+    console.log(`search-budget held: ${read.map(([of, n, most]) => `${of} ${n} of ${most}`).join(", ")}`);
+    for (const [of, n, most] of read) expect(n, of).toBeLessThanOrEqual(most);
+  }, 300_000);
+
+  /**
+   * THE SHAPE MATRIX (`_search-budget-fixture.ts`): no page scans a table or plans a second read of its typo
+   * arm's guesses, and no cell does the work the cold gate had added. Under a filter the typo arm read every
+   * guess of the account before the filter: under a sender the planner reads the sender's dozen letters
+   * instead of 1,500 guesses (a pair's guesses had cost 7,206 buffers where the sender's letters cost 943;
+   * its bound is main's buffers and a tenth, to the hundred above, as under a date), under unread or
+   * attachments the guesses were looked for along the whole History, and under a folder the folder table was
+   * read a third time. Under a date the planner walks the History for a typo (5,221 buffers) on a database
+   * made from empty, as CI runs this file; on one that earlier seeds have bloated it reads the guesses first
+   * (10,764), main's statement both times.
+   * NO SET READ WALKS PAST THE BOUND IT IS CHOSEN WITH, whatever its members' dates, and a walk is taken only where a
+   * window inside its range saw members, at a rate that puts what it is asked within 60 letters a member: newest first
+   * at the rate of the 2,400 letters after the newest 1,200, within twice the letters that rate assumed (`matrixWalk`);
+   * oldest first, for every member those two windows did not see, at the rate of the oldest 3,600 letters, within those
+   * and twice the letters assumed past them (`matrixOldest`), where that is the shorter estimate; neither past 140
+   * letters a member. Where the account holds at most 60 letters a member (the catalog's estimate), History is walked
+   * whole newest first instead (`matrixWhole`): here every set the matrix reads whole, sets of 1,461 to 2,400 on 74,000
+   * letters, where the base walks History whole too. Anything else is dated, and the members a walk did not meet are
+   * dated. A walking cell's History is bounded at the page's other History reads (`MATRIX_REST`) and that construction,
+   * from the cell's layout here: a set of `s` members, `h` of the newest 1,200 letters, `j` of the 2,400 after them and
+   * `o` of the oldest 3,600 (the typo arm's windows 200, the 2,400 after its newest, and the oldest 2,600). Oldest
+   * first: the oldest 1,500, burst and mix, 1,497 of the oldest 3,600, 3,608 letters assumed (a typo's 2,606); the old
+   * run's 1,467 (0, 0, 140), 37,723 (a typo's 43,344 at (0, 0, 88)); behindfar's 1,472 (0, 2, 151), 35,047 (a typo's
+   * 37,868 at (0, 1, 101)); newestfar's 1,515 (20, 2, 93), 57,794, where the 2,400 after the newest letters' two
+   * members put its 1,200 newest 1,440,000 letters away. Every other walking set walks History whole: spread, the gap,
+   * the recent layouts, the late block, oldtail, sampled and newestfar's typo, so no walking cell dates its set. Walked
+   * at one window's rate, or over a sample's span, behindfar's and newestfar's typos read 16,000 and 26,668 letters for
+   * two and 22 guesses and then looked up 1,521 and 1,544 letters, and beside a rare excluded word behindfar, newestfar
+   * and sampled looked up 1,503, 1,532 and 1,164. A subject word of the oldest letters is read by the head arm
+   * through the whole History as main reads it (`mix`): there the bound is on every other arm's History (`walks`), so a
+   * whole-History walk of any other arm is red. No page writes a temporary file. The same matrix on 240,000 letters is
+   * search-budget-matrix.pg.
+   */
+  /** History whole newest first, within its construction: the whole mailbox here. */
+  const whole = (members: number): number => Math.min(N, matrixWhole(members));
+  const MATRIX_BOUNDS: MatrixBounds = {
+    "typo old sender": { guesses: 100 }, "typo spread sender": { guesses: 100 }, "pair spread sender": { buffers: 1_100, guesses: 100 },
+    "typo old unread": { history: N / 10 }, "typo spread unread": { history: N / 10 },
+    "typo old attachments": { history: N / 10 }, "typo spread attachments": { history: N / 10 },
+    "typo old folder": { folderPasses: 2 }, "typo spread folder": { folderPasses: 2 },
+    "typo old dateTo": { buffers: 5_800 }, "typo spread dateTo": { buffers: 5_800 },
+    "typo old none": { history: MATRIX_REST.typo + matrixOldest(2_606, 2_600, 1_500), lookups: 200 },
+    "typo spread none": { history: MATRIX_REST.typo + whole(1_510), lookups: 200 },
+    "typo deleted none": { history: MATRIX_REST.typo + matrixOldest(2_606, 2_600, 1_500), lookups: 200 },
+    "typo gap none": { history: MATRIX_REST.typo + whole(1_483), lookups: 200 },
+    "typo burst none": { history: MATRIX_REST.typo + matrixOldest(2_606, 2_600, 1_500), lookups: 200 },
+    "typo mix none": { history: MATRIX_REST.typo + matrixOldest(2_606, 2_600, 1_500), lookups: 200 },
+    "typo lateblock none": { history: MATRIX_REST.typo + whole(2_206), lookups: 200 },
+    "typo oldthin none": { history: MATRIX_REST.typo + Math.min(N, matrixOldest(43_344, 2_600, 1_467)), lookups: 200 },
+    "typo recent none": { history: MATRIX_REST.typo + matrixWalk(5_000, 2_400), lookups: 200 },
+    "typo recentthin none": { history: MATRIX_REST.typo + matrixWalk(4_000, 3_598), lookups: 200 },
+    "typo oldtail none": { history: MATRIX_REST.typo + whole(1_500), lookups: 200 },
+    "typo behindfar none": { history: MATRIX_REST.typo + Math.min(N, matrixOldest(37_868, 2_600, 1_472)), lookups: 200 },
+    "typo sampled none": { history: MATRIX_REST.typo + whole(1_513), lookups: 200 },
+    "typo newestfar none": { history: MATRIX_REST.typo + whole(1_515), lookups: 200 },
+    "beside old none": { history: MATRIX_REST.beside + matrixOldest(3_608, 3_600, 1_500), lookups: 200 },
+    "beside spread none": { history: MATRIX_REST.beside + whole(1_510), lookups: 200 },
+    "beside deleted none": { history: MATRIX_REST.beside + matrixOldest(3_608, 3_600, 1_500), lookups: 200 },
+    "beside gap none": { history: MATRIX_REST.beside + whole(1_483), lookups: 200 },
+    "beside burst none": { history: MATRIX_REST.beside + matrixOldest(3_608, 3_600, 1_500), lookups: 200 },
+    "beside mix none": { walks: matrixOldest(3_608, 3_600, 1_500), lookups: 2_000 },
+    "beside lateblock none": { history: MATRIX_REST.beside + whole(1_500), lookups: 200 },
+    "beside oldthin none": { history: MATRIX_REST.beside + Math.min(N, matrixOldest(37_723, 3_600, 1_467)), lookups: 200 },
+    "beside recent none": { history: MATRIX_REST.beside + whole(2_400), lookups: 200 },
+    "beside recentthin none": { history: MATRIX_REST.beside + whole(1_500), lookups: 200 },
+    "beside oldtail none": { history: MATRIX_REST.beside + whole(1_500), lookups: 200 },
+    "beside behindfar none": { history: MATRIX_REST.beside + Math.min(N, matrixOldest(35_047, 3_600, 1_472)), lookups: 200 },
+    "beside sampled none": { history: MATRIX_REST.beside + whole(1_513), lookups: 200 },
+    "beside newestfar none": { history: MATRIX_REST.beside + Math.min(N, matrixOldest(57_794, 3_600, 1_515)), lookups: 200 },
+    "besiderare old none": { history: MATRIX_REST.besiderare + matrixOldest(3_608, 3_600, 1_478), lookups: 200 },
+    "besiderare spread none": { history: MATRIX_REST.besiderare + whole(1_487), lookups: 200 },
+    "besiderare deleted none": { history: MATRIX_REST.besiderare + matrixOldest(3_608, 3_600, 1_478), lookups: 200 },
+    "besiderare gap none": { history: MATRIX_REST.besiderare + whole(1_461), lookups: 200 },
+    "besiderare burst none": { history: MATRIX_REST.besiderare + matrixOldest(3_608, 3_600, 1_478), lookups: 200 },
+    "besiderare mix none": { walks: matrixOldest(3_608, 3_600, 1_500), lookups: 2_000 },
+    "besiderare lateblock none": { history: MATRIX_REST.besiderare + whole(1_482), lookups: 200 },
+    "besiderare oldthin none": { history: MATRIX_REST.besiderare + Math.min(N, matrixOldest(37_800, 3_600, 1_449)), lookups: 200 },
+    "besiderare oldtail none": { history: MATRIX_REST.besiderare + whole(1_476), lookups: 200 },
+    "besiderare behindfar none": { history: MATRIX_REST.besiderare + Math.min(N, matrixOldest(34_848, 3_600, 1_454)), lookups: 200 },
+    "besiderare sampled none": { history: MATRIX_REST.besiderare + whole(1_494), lookups: 200 },
+    "besiderare newestfar none": { history: MATRIX_REST.besiderare + Math.min(N, matrixOldest(57_953, 3_600, 1_503)), lookups: 200 },
+  };
+  /**
+   * COLD, NEVER ABOVE THE BASE: the page read once on a fresh copy of this file's database (`coldReads`, the
+   * connection closed meanwhile), the blocks it reads from outside the cache at most the base's here, to the
+   * hundred below. Dated where a walk meets them, the recent layouts beside a common excluded word had read 7,205
+   * and 5,386 blocks (the base 4,018 and 3,663); the old run's typo and the old run beside a rare excluded word, whose
+   * empty newest letters were walked before every member was dated, 3,749 and 4,221 (the base 2,314 and 2,556); walked
+   * at one window's rate or over a sample's span and then dated, behindfar's and newestfar's typos 4,054 and 4,274
+   * (the base 2,632 and 2,899), behindfar, newestfar and sampled beside a rare excluded word 4,496, 4,844 and 4,309
+   * (2,892, 3,124 and 3,054), and sampled beside a common one 4,708 (3,925).
+   */
+  const MATRIX_COLD: Readonly<Record<string, number>> = {
+    "beside recent none": 4_000, "beside recentthin none": 3_600, "typo oldthin none": 2_300, "besiderare oldthin none": 2_500,
+    "typo behindfar none": 2_600, "typo newestfar none": 2_800, "besiderare behindfar none": 2_800, "besiderare newestfar none": 3_100,
+    "besiderare sampled none": 3_000, "beside sampled none": 3_900,
+  };
+  it("the shape matrix: no page scans a table or reads its guesses twice, and no cell does the work the gate had added", async () => {
+    const [counted] = (await base.execute(sql`select count(*)::int as n from folder_state`)) as unknown as Array<{ n: number }>;
+    const read: string[] = [];
+    const over: string[] = [];
+    for (const c of MATRIX) {
+      const { page, session } = await pageOf(c.q, c.filters);
+      const f = await matrixWork(page, session, base, counted!.n);
+      read.push(`${c.label} ${f.buffers}/${f.history}/${f.lookups}/${f.folderPasses}/${f.guesses}`);
+      expect(f.scans, c.label).toEqual([]);
+      expect(f.guessReads, `${c.label}: reads of the typo arm's guesses`).toBeLessThanOrEqual(1);
+      over.push(...matrixOver(c.label, f, MATRIX_BOUNDS), ...(f.temp > 0 ? [`${c.label} temp ${f.temp} of 0`] : []));
+    }
+    console.log(`search-budget matrix (buffers/History letters/lookups/folder passes/guesses read): ${read.join(", ")}`);
+    expect(over).toEqual([]);
+  }, 600_000);
+
+  it("no layout a set read had read past the base reads more blocks cold than the base", async () => {
+    const pages: Array<{ label: string; page: SQL; session: SQL[] }> = [];
+    for (const c of MATRIX.filter((x) => MATRIX_COLD[x.label] !== undefined)) pages.push({ label: c.label, ...(await pageOf(c.q, c.filters)) });
+    // Nothing may be connected to the database while it is copied.
+    await client.end({ timeout: 5 });
+    const read: string[] = [];
+    const over: string[] = [];
+    try {
+      for (const p of pages) {
+        const blocks = await coldReads(PG_URL, p.page, p.session);
+        read.push(`${p.label} ${blocks}`);
+        if (blocks > MATRIX_COLD[p.label]!) over.push(`${p.label} ${blocks} of ${MATRIX_COLD[p.label]}`);
+      }
+    } finally {
+      await reconnect();
+    }
+    console.log(`search-budget matrix cold (blocks read from outside the cache): ${read.join(", ")}`);
+    expect(over).toEqual([]);
+  }, 600_000);
 
   /**
    * THE ADDRESS ARM BY RECIPIENT (mail 0154) on A's N messages: the own address in To of every
@@ -724,11 +817,13 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
 
   // Every count on an account still building reads its progress: only that account's documents.
   it("the backfill's progress reads only the account's own search documents", async () => {
-    for (const [acct, done, most] of [[A, 0, 0], [D, N, N]] as const) {
+    // The matrix deletes three of D's letters (`MATRIX_DELETED`): progress counts the living ones.
+    const living = N - MATRIX_DELETED.length;
+    for (const [acct, done, total, most] of [[A, 0, N, 0], [D, living, living, N]] as const) {
       seen.length = 0;
-      expect(await searchIndexProgress(db as never, acct)).toEqual({ done, total: N });
+      expect(await searchIndexProgress(db as never, acct)).toEqual({ done, total });
       expect(seen).toHaveLength(1);
-      const nodes = await planNodes(seen[0]!, [pgDialect().search.searchSession({ preferIndexes: true })!]);
+      const nodes = await planNodes(seen[0]!, [pgDialect().search.searchSession({ preferIndexes: true })!], base);
       const read = nodes.filter((p) => p["Relation Name"] === "message_search")
         .reduce((n, p) => n + (Number(p["Actual Rows"]) + Number(p["Rows Removed by Filter"] ?? 0)) * Number(p["Actual Loops"]), 0);
       expect(read, acct === A ? "A" : "D").toBeLessThanOrEqual(most);

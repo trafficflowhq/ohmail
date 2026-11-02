@@ -1,12 +1,14 @@
 import { and, asc, eq, gt, ilike } from "drizzle-orm";
 import { contacts, contactNotes, threadNotes, threads } from "@trafficflow/db";
+import { containsPattern } from "@trafficflow/db/dialect";
 import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { ContactDTO, NoteDTO, Page } from "./dto/types.js";
 
 /**
- * The longest `?q=` the contact list accepts. `q` becomes the ILIKE pattern `'%' || q || '%'` —
+ * The longest `?q=` the contact list accepts. `q` becomes the ILIKE pattern `'%' || q || '%'`, its
+ * `_`, `%` and `\` taken as typed —
  * an unanchored substring match against every contact row, its length a per-row cost the caller
  * chose. 320 is a deliberate over-cap: pasting a complete address into the search is the obvious
  * use, so the ceiling must clear the longest address a row can hold — RFC 5321 §4.5.3.1 makes a
@@ -80,7 +82,7 @@ export class ContactsService {
           `q is ${opts.q.length} characters; the limit is ${CONTACTS_QUERY_MAX_CHARS}`,
         );
       }
-      filters.push(ilike(contacts.address, `%${opts.q}%`));
+      filters.push(ilike(contacts.address, containsPattern(opts.q)));
     }
     if (opts.cursor) filters.push(gt(contacts.id, decodeListCursor(opts.cursor)));
 

@@ -125,6 +125,13 @@ describe("the document's parts", () => {
       accountId: "a", subject: "s".repeat(5000), from: null, to: [], cc: [], attachmentNames: [], bodyText: "", source: "headers_only",
     });
     expect(long.terms.length).toBe(SEARCH_TERMS_MAX_CHARS);
+    // A long recipient list fills the header text's ceiling; the names keep their own.
+    const crowd = searchDocumentOf({
+      accountId: "a", subject: "Papers", from: null, cc: [], bodyText: "", source: "headers_only", attachmentNames: ["Harbour-Ledger-7731.pdf"],
+      to: Array.from({ length: 60 }, (_, i) => ({ name: `Recipient Number ${i}`, address: `recipient.number.${i}@distribution.example` })),
+    });
+    const [head, names] = crowd.terms.split("\u001f");
+    expect({ head: head!.length, names }).toEqual({ head: SEARCH_TERMS_MAX_CHARS, names: "harbour-ledger-7731.pdf" });
   });
 
   it("writes each file name whole and its parts as words of the text, after the body; the head holds no name", () => {

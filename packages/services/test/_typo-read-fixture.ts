@@ -78,14 +78,14 @@ export async function typoPages(svc: SearchService, ctx: ServiceContext, q: stri
 
 /**
  * Which reads the typo arm (`sa0`) ran, off the page statement's EXPLAIN ANALYZE: `walked` when the
- * walk (`tw`, past its probe) looked up a document, `read` when a node outside the walk asked `<%`.
+ * walk (`tw`, past its probes `tz`, `tf` and `tp`) looked up a document, `read` when a node outside the walk asked `<%`.
  */
 export function typoPaths(plan: Record<string, unknown>): { walked: boolean; read: boolean } {
   const out = { walked: false, read: false };
   const visit = (n: Record<string, unknown>, inArm: boolean, inCte: string): void => {
     const name = String(n["Subplan Name"] ?? "");
     const arm = inArm || name === "CTE sa0";
-    const cte = name === "CTE tw" || name === "CTE tp" ? name : name.startsWith("InitPlan") ? "init" : inCte;
+    const cte = ["CTE tw", "CTE tp", "CTE tf", "CTE tz"].includes(name) ? name : name.startsWith("InitPlan") ? "init" : inCte;
     const ran = Number(n["Actual Loops"] ?? 0) > 0;
     const asks = JSON.stringify([n["Index Cond"], n["Recheck Cond"], n["Filter"], n["Join Filter"]]).includes("<%");
     if (arm && ran && cte === "" && asks) out.read = true;
