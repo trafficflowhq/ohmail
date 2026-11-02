@@ -68,17 +68,32 @@ describe("GET /events proves it is live by frames", () => {
   it("an EventSource hears ready and ping only through listeners for them; the 0.25.17 set hears sync alone", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
-    const sse: SseConfig = { heartbeatMs: 40, pollMs: 20, lifetimeMs: 60_000 };
+    const sse: SseConfig = { heartbeatMs: 100, pollMs: 20, lifetimeMs: 60_000 };
+    // No timers decide what is heard: the change waits for both streams' ready frame (both
+    // subscribed), and each stream ends once it has carried the change and three heartbeats after it.
+    let subscribed = 0;
+    let bothSubscribed!: () => void;
+    const subscribedBoth = new Promise<void>((r) => { bothSubscribed = r; });
     const server = createServer((_in, out) => {
       void (async () => {
         const res = await H(req("GET", "/events", { bearer: s.token }), deps, sse);
         out.writeHead(res.status, Object.fromEntries(res.headers));
         const reader = res.body!.getReader();
         out.on("close", () => { void reader.cancel(); });
+        const dec = new TextDecoder();
+        let text = "";
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
           out.write(value);
+          const was = text;
+          text += dec.decode(value, { stream: true });
+          if (!was.includes("event: ready\n") && text.includes("event: ready\n") && ++subscribed === 2) bothSubscribed();
+          const afterChange = text.split("event: sync\n")[1];
+          if (afterChange !== undefined && afterChange.split("event: ping\ndata: {}\n\n").length > 3) {
+            await reader.cancel();
+            break;
+          }
         }
         out.end();
       })();
@@ -88,7 +103,7 @@ describe("GET /events proves it is live by frames", () => {
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/events`;
     const child = fileURLToPath(new URL("./eventsource-child.fixture.mjs", import.meta.url));
     const listen = (types: string[]): Promise<string[]> => new Promise((resolve, reject) => {
-      const p = spawn(process.execPath, ["--no-warnings", "--experimental-eventsource", child, url, JSON.stringify(types), "1500"]);
+      const p = spawn(process.execPath, ["--no-warnings", "--experimental-eventsource", child, url, JSON.stringify(types), "15000"]);
       let out = "";
       p.stdout.on("data", (b: Buffer) => { out += b.toString(); });
       p.on("error", reject);
@@ -97,21 +112,26 @@ describe("GET /events proves it is live by frames", () => {
         resolve((JSON.parse(out.trim()) as { heard: string[] }).heard);
       });
     });
-    // A change while both listen: one sync each.
-    setTimeout(() => {
-      void H(req("POST", "/rules", { bearer: s.token, body: JSON.stringify({ kind: "sender", match: "x@y.example", destination: "INBOX" }) }),
-        deps, sse);
-    }, 500);
-    const [shipped, current] = await Promise.all([
+    const heard = Promise.all([
       listen(["open", "sync", "error"]),
       listen(["open", "ready", "ping", "sync", "error"]),
     ]);
-    expect(shipped.filter((t) => t !== "open")).toEqual(["sync"]);
+    // A change while both listen: one sync each.
+    const endedEarly = heard.then(() => { if (subscribed < 2) throw new Error("a listener ended before both subscribed"); });
+    endedEarly.catch(() => {});   // read by the race below; `heard` itself is awaited after it
+    await Promise.race([subscribedBoth, endedEarly]);
+    await H(req("POST", "/rules", { bearer: s.token, body: JSON.stringify({ kind: "sender", match: "x@y.example", destination: "INBOX" }) }),
+      deps, sse);
+    const [shipped, current] = await heard;
+    // The last `error` is the stream's end, which the server writes; nothing else errs.
+    expect(shipped.filter((t) => t !== "open")).toEqual(["sync", "error"]);
     expect(shipped).not.toContain("message");
     expect(current[0]).toBe("open");
     expect(current[1]).toBe("ready");
     expect(current.filter((t) => t === "ping").length).toBeGreaterThan(2);
     expect(current.filter((t) => t === "sync")).toEqual(["sync"]);
+    expect(current.filter((t) => t === "error")).toEqual(["error"]);
+    expect(current.at(-1)).toBe("error");
     expect(current).not.toContain("message");
   }, 20_000);
 });
