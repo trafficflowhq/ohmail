@@ -64,6 +64,7 @@ import {
   type HolderKind,
   setImapTls,
   setTyped,
+  standaloneAutofill,
   withAddress,
   type PhoneClaim,
   type StandaloneFields,
@@ -234,11 +235,13 @@ describe("screen 2: the credential form", () => {
     expect(ROUTE, "the address field takes no ref to focus").toContain("inputRef={address}");
   });
 
+  /* The mailbox password is often an App Password: autofill offers an address, never a saved password. */
   it("carries the autofill hints both platforms read", () => {
-    for (const hint of ['autoComplete: "username"', 'autoComplete: "current-password"',
-                        'textContentType: "username"', 'textContentType: "password"']) {
-      expect(ROUTE, `the form does not set ${hint}`).toContain(hint);
+    for (const field of ["address", "password"] as const) {
+      expect(ROUTE, `the ${field} field does not take the form's hints`).toContain(`...standaloneAutofill("${field}")`);
     }
+    expect(standaloneAutofill("address")).toEqual({ autoComplete: "email", textContentType: "emailAddress" });
+    expect(standaloneAutofill("password")).toMatchObject({ autoComplete: "off", textContentType: "none" });
     expect(ROUTE, "the address field is not an email keyboard")
       .toContain('keyboardType: "email-address"');
   });

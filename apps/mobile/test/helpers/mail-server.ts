@@ -234,6 +234,8 @@ export function mailServer() {
    * Off unless asked (`setContentClaim`); a send carrying staged files has no claim on the server.
    */
   let contentClaim = false;
+  /** The first send's status the claim names: the server says `pending` while its outcome is open. */
+  let claimStatus = "sent";
   const deliveredContent = new Map<string, number>();
   const duplicateKeys: string[] = [];
   const contentOf = (row: Record<string, unknown>): string => JSON.stringify([
@@ -883,7 +885,7 @@ export function mailServer() {
           if (idem !== null) duplicateKeys.push(idem);
           json(409, { error: {
             code: "duplicate_send", message: "This message was already sent.", retryable: false,
-            details: { firstSend: { status: "sent", at: new Date(firstAt).toISOString() } },
+            details: { firstSend: { status: claimStatus, at: new Date(firstAt).toISOString() } },
           } });
           return;
         }
@@ -973,7 +975,7 @@ export function mailServer() {
     /** `false` turns the withdraw route off: a server that predates it answers 404. */
     setWithdrawRoute: (on: boolean) => { withdrawRoute = on; },
     /** `true`: the server's one-hour content claim refuses a second copy under a new key. */
-    setContentClaim: (on: boolean) => { contentClaim = on; },
+    setContentClaim: (on: boolean, firstStatus = "sent") => { contentClaim = on; claimStatus = firstStatus; },
     /** The keys the content claim refused as a second copy (`duplicate_send`). */
     duplicates: (): string[] => [...duplicateKeys],
     /**

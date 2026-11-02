@@ -55,20 +55,28 @@ export const PRESET_AUTH_REFUSALS: ReadonlySet<string> = new Set([
   "microsoft", "icloud", "yahoo", "fastmail", "gmx", "infomaniak", "webde", "tonline", "bluewin",
 ]);
 
+/** The reasons whose sentence names the host and port to check. */
+const NAMES_HOST: ReadonlySet<string> = new Set(["connect", "timeout", "tls"]);
+
 /**
  * The `mailboxes.probe_*` key: a local server's own sentence for `auth`, and for `timeout` on the
  * incoming leg only — the two-minute wait is that leg's; the submission leg keeps its 20 s. Google's
  * refused sign-in says its own (`probe_auth_gmail_<hint>`), and so does a refused password on the
- * chosen preset (`presetId`, {@link PRESET_AUTH_REFUSALS}), the incoming leg only.
+ * chosen preset (`presetId`, {@link PRESET_AUTH_REFUSALS}), the incoming leg only. A password the
+ * outgoing server refused names that server, after the incoming one has signed in; a local server's
+ * keeps its own sentence on either leg. The sentences that name a host and port name the outgoing
+ * server's on its leg (`probe_<reason>_smtp`, the server's own English).
  */
 export function probeCopyKey(
   reason: string, localServer: boolean, transport: "imap" | "smtp" = "imap", authHint?: AuthHint | null,
   presetId?: string | null,
 ): string {
+  if (reason === "auth" && transport === "smtp" && !localServer) return "probe_auth_smtp";
   if (reason === "auth" && transport === "imap" && !localServer) {
     if (authHint) return `probe_auth_gmail_${authHint}`;
     if (presetId && PRESET_AUTH_REFUSALS.has(presetId)) return `probe_auth_${presetId}`;
   }
   const own = reason === "auth" || (reason === "timeout" && transport === "imap");
-  return localServer && own ? `probe_${reason}_local` : `probe_${reason}`;
+  if (localServer && own) return `probe_${reason}_local`;
+  return transport === "smtp" && NAMES_HOST.has(reason) ? `probe_${reason}_smtp` : `probe_${reason}`;
 }

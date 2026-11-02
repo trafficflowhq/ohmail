@@ -4764,6 +4764,64 @@ fn a_saved_attachment_lands_in_downloads_and_never_outside_it() {
     assert!(downloads_root(None).is_err(), "a missing Downloads folder was invented");
 }
 
+/// A PROFILE THAT NAMES NO DOWNLOADS FOLDER SAVES INTO `~/Downloads`, made if absent; the
+/// platform's own folder still wins, and a sandbox or a missing home still refuses by name.
+#[test]
+fn a_profile_naming_no_downloads_folder_saves_into_home_downloads() {
+    let fixture = Fixture::new("downloads-fallback");
+    let home = fixture.dir.join("home");
+    fs::create_dir_all(&home).expect("home");
+    let xdg = fixture.dir.join("Named");
+
+    assert_eq!(downloads_dir(None, Some(home.clone()), false), Some(home.join("Downloads")));
+    assert_eq!(downloads_dir(Some(xdg.clone()), Some(home.clone()), false), Some(xdg.clone()));
+    assert_eq!(downloads_dir(Some(xdg.clone()), Some(home.clone()), true), Some(xdg));
+    assert_eq!(downloads_dir(None, Some(home.clone()), true), None, "a sandbox's throwaway home was used");
+    assert_eq!(downloads_dir(None, None, false), None);
+    assert_eq!(
+        downloads_root(downloads_dir(None, None, true).as_deref()),
+        Err("ohmail: this computer named no Downloads folder".to_string())
+    );
+
+    // The save itself: no platform answer, `~/Downloads` does not exist yet.
+    let home_for_save = home.clone();
+    let paths = ShellPaths {
+        app_data: None,
+        resources: None,
+        downloads: Some(Arc::new(move || downloads_dir(None, Some(home_for_save.clone()), false))),
+    };
+    let dir = downloads_now(&paths).expect("fallback folder");
+    assert_eq!(dir, home.join("Downloads"));
+    let saved = save_into_downloads(&dir, "Invoice.pdf", b"pdf").expect("save");
+    assert_eq!(fs::read(home.join("Downloads").join("Invoice.pdf")).expect("landed"), b"pdf");
+    assert_eq!(saved.parent(), Some(home.join("Downloads").as_path()));
+
+    // No resolver at all is the refusal by name.
+    let none = ShellPaths { app_data: None, resources: None, downloads: None };
+    assert_eq!(downloads_now(&none), Err("ohmail: this computer named no Downloads folder".to_string()));
+}
+
+/// THE FOLDER IS ASKED AT EACH SAVE: a person who sets their Downloads folder while ohmail is open
+/// gets the next file there, without a restart.
+#[test]
+fn the_downloads_folder_is_asked_at_each_save() {
+    let fixture = Fixture::new("downloads-per-save");
+    let first = fixture.dir.join("first");
+    let second = fixture.dir.join("second");
+    let asked = Arc::new(AtomicU32::new(0));
+    let (a, b, n) = (first.clone(), second.clone(), asked.clone());
+    let paths = ShellPaths {
+        app_data: None,
+        resources: None,
+        downloads: Some(Arc::new(move || Some(if n.fetch_add(1, Ordering::SeqCst) == 0 { a.clone() } else { b.clone() }))),
+    };
+    let one = save_into_downloads(&downloads_now(&paths).expect("first"), "a.txt", b"1").expect("save 1");
+    let two = save_into_downloads(&downloads_now(&paths).expect("second"), "a.txt", b"2").expect("save 2");
+    assert_eq!(one, first.join("a.txt"));
+    assert_eq!(two, second.join("a.txt"));
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+}
+
 /// TWO ATTACHMENTS WITH ONE NAME BECOME TWO FILES, NUMBERED THE WAY A BROWSER NUMBERS THEM.
 ///
 /// A unique DIRECTORY per file is unavailable here, because this

@@ -4813,6 +4813,45 @@ describe("the row takes a new password without the mailbox being removed", () =>
     expect(last.smtp).toBeUndefined();
   });
 
+  /* A SERVER ON THIS COMPUTER WITH ITS OWN CERTIFICATE (Proton Mail Bridge): the refusal offers
+     it, the line names its fingerprint unticked, only the ticked press claims it — on both blocks
+     when the engine says one host serves both legs — and a later Sign in again asks again. */
+  const PRINT = ["4A", ...Array.from({ length: 31 }, (_, i) => (i + 16).toString(16).toUpperCase())].join(":");
+  const ownCertificate = (): Response => new Response(JSON.stringify({
+    error: {
+      code: "mailbox_probe_failed", message: "the server uses its own certificate",
+      details: {
+        reason: "tls", transport: "imap", localServer: true, sameHost: true,
+        tls: { kind: "self_signed", certificate: { sha256: PRINT } },
+      },
+    },
+  }), { status: 400, headers: { "content-type": "application/json" } });
+
+  it("a server on this computer with its own certificate: only the ticked press trusts it, and the next sign-in asks again", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = sealsAnswer(ownCertificate, () => new Response("{}", { status: 200 }), ownCertificate);
+    const el = await render("local");
+    await openAndType(el, "bridge");
+    await submitSignIn(el);
+    const box = (): HTMLInputElement | null => el.querySelector<HTMLInputElement>("#mbx-sign-in-trust-both");
+    expect(box(), "no trust line for the one host").not.toBeNull();
+    expect(box()!.checked, "the trust arrived ticked").toBe(false);
+    expect(el.textContent).toContain(PRINT);
+    await tick(box()!);
+    await submitSignIn(el);
+    expect(el.textContent).toContain(copy.signInAgainDone!);
+
+    await openAndType(el, "bridge2");
+    expect(box(), "the trust outlived its sign-in").toBeNull();
+    await submitSignIn(el);
+    expect(sentBodies.map((b) => JSON.parse(b.body) as unknown)).toEqual([
+      { imap: { pass: "bridge" } },
+      { imap: { pass: "bridge", trustCertificate: PRINT }, smtp: { pass: "bridge", trustCertificate: PRINT } },
+      { imap: { pass: "bridge2" } },
+    ]);
+    expect(box()!.checked, "a later sign-in inherited the trust").toBe(false);
+  });
+
   it("CONTROL: a refusal that offers nothing asks for no consent", async () => {
     FACTS = [MAILBOX];
     bridgeReply = sealsAnswer(() => new Response(JSON.stringify({

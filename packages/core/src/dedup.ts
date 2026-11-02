@@ -5,7 +5,7 @@
  * server's locator. The rule and its four consumers are `sender-headers.ts`.
  */
 import { permitsAdoption, type Change, type MoveEvidence, type StoredMessage } from "./ports.js";
-import { canonicalDestination, isSentFolderPath } from "./types.js";
+import { canonicalDestination, isSentFolderOf } from "./types.js";
 
 export type DedupOutcome =
   | { kind: "new" }
@@ -65,7 +65,7 @@ export function classifyDedup(input: DedupInput): DedupOutcome {
   // appearance may make: out of Sent, into INBOX. The row was found by fingerprint, or by
   // Message-ID with every fingerprinted field but the Date agreeing with a row in Sent: the content
   // is the account's own letter, so nothing a stranger wrote passes the gate this way.
-  const knownIsSent = isSentFolderPath(knownFolder) || (sentFolder != null && knownFolder === canonicalDestination(sentFolder));
+  const knownIsSent = isSentFolderOf(knownFolder, sentFolder == null ? null : canonicalDestination(sentFolder));
   if (observedFolder === "INBOX" && knownIsSent) return { kind: "received_copy", existing };
   return { kind: "external_copy", existing };
 }

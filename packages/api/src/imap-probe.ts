@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { resolveCname as dnsResolveCname } from "node:dns/promises";
 import { type MailboxErrorCode } from "@trafficflow/db";
 import {
-  ImapAdapter, buildImapAuth, googleAuthHint, loopbackHarnessReason, verifySmtpLogin,
-  type GoogleAuthHint, type ImapConfig, type NetTimeouts, type SmtpLoginProof,
+  ImapAdapter, buildImapAuth, fingerprint256Of, googleAuthHint, loopbackHarnessReason, verifySmtpLogin,
+  type GoogleAuthHint, type ImapConfig, type NetTimeouts, type SmtpLoginProof, type TlsPin,
 } from "@trafficflow/core/adapters/imap";
 import { MAIL_DIAL_PORTS, MAX_PINNED_ADDRESSES, MailDialRefusal, clearMailDial } from "@trafficflow/core/net";
 import {
@@ -167,7 +167,11 @@ export type ImapProbeVerdict =
  * password arm still routes through the builder.
  */
 export type ImapProbeCredential =
-  | { host: string; port?: number; secure?: boolean; user: string; pass: string; accessToken?: undefined; allowInsecure?: boolean }
+  | {
+    host: string; port?: number; secure?: boolean; user: string; pass: string; accessToken?: undefined; allowInsecure?: boolean;
+    /** A fingerprint the person trusted for a server on this computer — a claim this probe re-reads. */
+    trustCertificate?: string;
+  }
   | { host: string; port?: number; secure?: boolean; user: string; accessToken: string; pass?: undefined; allowInsecure?: undefined };
 
 export interface ImapProbeInput {
@@ -629,7 +633,39 @@ export interface ImapProbeOptions {
    * The desktop's local door passes it, nothing else does (a census pins the one caller).
    */
   localServerDial?: NetTimeouts;
+  /**
+   * A SERVER ON THIS COMPUTER MAY BE TRUSTED BY ITS OWN CERTIFICATE — see {@link LoopbackCertificateReader}.
+   * Passed by the desktop's local door alone (a census pins the one caller); everywhere else a
+   * self-signed certificate is refused as it always was.
+   */
+  loopbackCertificate?: LoopbackCertificateReader;
 }
+
+/**
+ * READ THE ONE CERTIFICATE A MAIL SERVER ON THIS COMPUTER PRESENTS — a gateway such as Proton Mail
+ * Bridge — on the rung that presented it, or `null` when it is not a single self-signed certificate
+ * valid now. Its implementation is the desktop's (`host-pin-probe.ts`), the one place allowed an
+ * unverified handshake; it sends no credential.
+ */
+export type LoopbackCertificateReader = (dial: {
+  host: string; port: number; secure: boolean; protocol: "imap" | "smtp";
+}) => Promise<TlsPin | null>;
+
+/**
+ * Whether a refused rung's certificate is one this door may offer to trust: self-signed, on a host
+ * this computer is by spelling, and a reader to see it with. The reader's own refusal is `null`.
+ */
+async function ownCertificateOf(
+  reader: LoopbackCertificateReader | undefined, host: string, cert: ProbeTlsDetail | null,
+  attempt: ProbeAttempt | null, protocol: "imap" | "smtp",
+): Promise<TlsPin | null> {
+  if (!reader || cert?.kind !== "self_signed" || attempt === null || loopbackHarnessReason(host) === null) return null;
+  return reader({ host, port: attempt.port, secure: attempt.secure, protocol }).catch(() => null);
+}
+
+/** The refusal that offers a server's own certificate, by its fingerprint. */
+const ownCertificateRefusal = (seen: TlsPin): ImapProbeVerdict =>
+  ({ verdict: "refuse", code: "tls", tls: { kind: "self_signed", certificate: { sha256: seen.sha256 } } });
 
 /**
  * Build the add-time IMAP probe. Injected by `routes/mailboxes.ts` at the call site, the same
@@ -690,7 +726,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
      * double, whose close resolves by construction.
      */
     const dialOnce = async (
-      attempt: ProbeAttempt, allowInsecure: boolean, dialPin: readonly string[] | undefined = pin,
+      attempt: ProbeAttempt, allowInsecure: boolean, dialPin: readonly string[] | undefined = pin, tlsPin?: TlsPin,
     ): Promise<{ ok: true; folders?: number } | { ok: false; err: unknown; timedOut: boolean }> => {
       const adapter = makeAdapter({
         // The NAME, still — SNI and certificate validation must see what the user typed. Only
@@ -700,6 +736,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
         secure: attempt.secure,
         ...(allowInsecure ? { allowInsecure: true } : {}),
         ...(dialPin ? { pin: dialPin } : {}),
+        ...(tlsPin ? { tlsPin } : {}),
         auth,
         timeouts: local ?? PROBE_TIMEOUTS,
       });
@@ -744,6 +781,8 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
       // certificate at all presents it on first.
       let certDetail: ProbeTlsDetail | null = null;
       let certErr: unknown;
+      /** The rung that presented that certificate. */
+      let certAttempt: ProbeAttempt | null = null;
       let starttlsAbsent = false;
       let sawTimeout = false;
       let fallback: ImapProbeVerdict | null = null;
@@ -783,11 +822,31 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
           } else if (!certDetail) {
             certDetail = tlsDetailOf(r.err, input.imap.host);
             certErr = r.err;
+            certAttempt = attempt;
           }
           continue;
         }
         if (v.verdict === "refuse" && v.code === "timeout") { sawTimeout = true; continue; }
         fallback = fallback ?? v;
+      }
+
+      /* A SERVER ON THIS COMPUTER WITH ITS OWN CERTIFICATE (a gateway such as Proton Mail Bridge),
+         on the door that may trust one: its certificate is offered by its fingerprint, and a press
+         that claims exactly that certificate is dialled pinned to it, on the rung that presented it. */
+      const own = await ownCertificateOf(opts.loopbackCertificate, input.imap.host, certDetail, certAttempt, "imap");
+      if (own !== null && certAttempt !== null) {
+        const claimed = input.imap.pass !== undefined ? fingerprint256Of(input.imap.trustCertificate) : null;
+        if (claimed === own.sha256 && budgetLeft() >= 250) {
+          const r = await dialOnce(certAttempt, false, pin, own);
+          const proven = { host: input.imap.host, port: certAttempt.port, secure: certAttempt.secure, tlsPin: own };
+          if (r.ok) return { verdict: "ok", proven, ...(r.folders === undefined ? {} : { folders: r.folders }) };
+          if (r.timedOut) return { verdict: "refuse", code: "timeout" };
+          const v = verdictFor(r.err, input.imap.host);
+          if (v.verdict === "store_unverified") return { ...v, proven };
+          // A certificate that changed since it was read is offered again, below; any other answer is the server's.
+          if (!(v.verdict === "refuse" && v.code === "tls")) return v;
+        }
+        return ownCertificateRefusal(own);
       }
 
       /**
@@ -998,9 +1057,13 @@ export interface SmtpProbeOptions {
       pin?: readonly string[];
       /** Set on the consent dial only, with `pin` the private addresses the host resolved to. */
       allowInsecure?: boolean;
+      /** Set on the pinned dial of a server on this computer only — see {@link LoopbackCertificateReader}. */
+      tlsPin?: TlsPin;
     },
   ) => Promise<SmtpLoginProof | void>;
   resolveCname?: (host: string) => Promise<string | null>;
+  /** As on {@link ImapProbeOptions.loopbackCertificate}, for the submission server. */
+  loopbackCertificate?: LoopbackCertificateReader;
 }
 
 /** Build the add-time SMTP probe. Injected by `routes/mailboxes.ts` beside {@link makeImapProbe}. */
@@ -1030,6 +1093,7 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
       const attempts = smtpProbeAttempts(input.smtp.port, input.smtp.secure);
       let certDetail: ProbeTlsDetail | null = null;
       let certErr: unknown;
+      let certAttempt: ProbeAttempt | null = null;
       let starttlsAbsent = false;
       let sawTimeout = false;
       let fallback: ImapProbeVerdict | null = null;
@@ -1069,7 +1133,7 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
         const tls = smtpTlsDetailOf(failure.err, input.smtp.host);
         if (tls) {
           if (tls.kind === "tls_unavailable") { starttlsAbsent = true; continue; }
-          if (!certDetail) { certDetail = tls; certErr = failure.err; }
+          if (!certDetail) { certDetail = tls; certErr = failure.err; certAttempt = attempt; }
           continue;
         }
         const v = smtpVerdictFor(failure.err);
@@ -1079,6 +1143,28 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
         if (v.verdict === "refuse" && v.code === "auth") return v;
         if (v.verdict === "refuse" && v.code === "timeout") { sawTimeout = true; continue; }
         fallback = fallback ?? v;
+      }
+
+      // The IMAP walk's own-certificate arm, for the submission server on this computer.
+      const own = await ownCertificateOf(opts.loopbackCertificate, input.smtp.host, certDetail, certAttempt, "smtp");
+      if (own !== null && certAttempt !== null) {
+        if (fingerprint256Of(input.smtp.trustCertificate) === own.sha256 && budgetLeft() >= 250) {
+          const proven = { host: input.smtp.host, port: certAttempt.port, secure: certAttempt.secure, tlsPin: own };
+          try {
+            const proof = await withDeadline(dial({
+              host: input.smtp.host, port: certAttempt.port, secure: certAttempt.secure,
+              auth: { user: input.smtp.user, pass: input.smtp.pass }, ...(pin ? { pin } : {}), tlsPin: own,
+            }), Math.max(1, budgetLeft()));
+            return { verdict: "ok", proven: { ...proven, maxMessageBytes: proof?.maxMessageBytes ?? null } };
+          } catch (err) {
+            if (err instanceof ProbeDeadlineExceeded) return { verdict: "refuse", code: "timeout" };
+            if (!smtpTlsDetailOf(err, input.smtp.host)) {
+              const v = smtpVerdictFor(err);
+              return v.verdict === "store_unverified" ? { ...v, proven } : v;
+            }
+          }
+        }
+        return ownCertificateRefusal(own);
       }
 
       /* THE CONSENT GATE, the IMAP walk's rule verbatim: no STARTTLS on any rung, no certificate

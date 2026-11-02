@@ -1,7 +1,7 @@
 import { and, eq, exists, isNull, lte, or, sql } from "drizzle-orm";
 import { mailboxes, mailboxCredentials, type SmtpSizeProbeCode } from "@trafficflow/db";
 import {
-  buildImapAuth, learnSmtpMaxSize, oauthSmtpEndpoint, verifySmtpLogin,
+  buildImapAuth, learnSmtpMaxSize, oauthSmtpEndpoint, storedTlsPin, verifySmtpLogin,
   type CredMetaAuth, type SmtpSizeCreds, type SmtpSizeDial, type SmtpSizeOutcome,
 } from "@trafficflow/core/adapters/imap";
 import { dialFieldsFor, dialPort, portForDial } from "./dial-host-guard.js";
@@ -39,10 +39,11 @@ export const SMTP_SIZE_DEADLINE_MS = 40_000;
  * `learnSmtpMaxSize`: this mailbox goes without a ceiling today, and nothing is sent anywhere.
  */
 function apiSmtpSizeDialFor(deps: ApiDeps): SmtpSizeDial {
-  return async ({ allowInsecure, ...smtp }) => verifySmtpLogin({
+  return async ({ allowInsecure, tlsPin, ...smtp }) => verifySmtpLogin({
     ...smtp,
     ...(await dialFieldsFor(deps, {
       host: smtp.host, port: smtp.port, secure: smtp.secure, consent: allowInsecure === true,
+      ...(tlsPin ? { tlsPin } : {}),
     }, "smtp")),
   }, PROBE_TIMEOUTS);
 }
@@ -155,6 +156,8 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
       auth: { user, pass: secret },
       // The smtp row's own consent, as `send-adapter.ts` reads it; the fallback borrows none.
       ...(smtpRow && smtpMeta.insecureConsent === true ? { allowInsecure: true } : {}),
+      // …and its own trusted certificate, by the same rule.
+      ...(smtpRow && storedTlsPin(smtpMeta) ? { tlsPin: storedTlsPin(smtpMeta) } : {}),
     },
     // The row whose SECRET is being presented — the smtp row when there is one, otherwise the
     // imap row the fallback borrows from. That is the row a rotation would touch, and NAMING it

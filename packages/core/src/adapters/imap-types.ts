@@ -1,14 +1,14 @@
 // `../mail.js`, not `../index.js`: this module needs the mail vocabulary, and the default barrel
 // re-exports the model half beside it — so naming it here would put the classifier and the drafter
 // into the import graph of every artifact that opens a mailbox.
-import type { Change, MimeStructure, NativeLocator } from "../mail.js";
+import type { Change, LegacyIdentityColumns, MimeStructure, NativeLocator } from "../mail.js";
 // The runtime imports of this module both come from `types.js`, a module with no imports of its
 // own — see the note on the TLS floor below for why that restriction exists and what it is about
 // (`imapflow` / `nodemailer` / `node:net`, none of which `types.js` touches).
 // `RESERVED_FOLDER_LEAF` is the passive belt's SOURCE since the stage-2 folder verbs: the
 // user-facing name validator (`folderNameError`) must refuse exactly what this belt hides, and
 // two copies of one regex drift. The import points this way because `types.js` stays import-free.
-import { DESTINATIONS as DESTINATIONS_VALUE, RESERVED_FOLDER_LEAF, SENT_SHAPED_CANONICAL as SENT_SHAPED_CANONICAL_VALUE } from "../types.js";
+import { DESTINATIONS as DESTINATIONS_VALUE, RESERVED_FOLDER_LEAF, isSentFolderOf } from "../types.js";
 
 /**
  * The two model types this module's own interfaces are written in, handed on:
@@ -157,16 +157,17 @@ export interface ListedFolder {
 
 /**
  * Why a `mailbox_folders` row is NOT one of the user's own folders, or `null` when it IS: the
- * Imbox, the organized six, the `ohmail` namespace and Sent-shaped paths. The services' folder
- * reads and the worker's folder `create` both ask this one rule.
+ * Imbox, the organized six, the `ohmail` namespace and the mailbox's Sent folder (Sent-shaped, or
+ * `recordedSent`, `mailboxes.sent_folder`). The services' folder reads and the worker's folder
+ * `create` both ask this one rule.
  */
-export function userFolderExclusion(path: string): string | null {
+export function userFolderExclusion(path: string, recordedSent: string | null): string | null {
   if (path.toUpperCase() === "INBOX") return "it is the Imbox";
   if ((DESTINATIONS_VALUE as readonly string[]).includes(path)) {
     return "it is one of the folders ohmail organizes";
   }
   if (OHMAIL_SEGMENT.test(path)) return "it is inside the ohmail namespace";
-  if (SENT_SHAPED_CANONICAL_VALUE.test(path)) return "it is the mailbox's Sent folder";
+  if (isSentFolderOf(path, recordedSent)) return "it is the mailbox's Sent folder";
   return null;
 }
 
@@ -256,6 +257,51 @@ export const TLS_FLOOR = { rejectUnauthorized: true, minVersion: "TLSv1.2" } as 
 export interface TlsFloorOptions { readonly rejectUnauthorized: true; readonly minVersion: "TLSv1.2" }
 
 /**
+ * THE ONE CERTIFICATE A PERSON TRUSTED for a mail server on this computer — a gateway such as
+ * Proton Mail Bridge, which serves its own self-signed certificate. `sha256` is the DER SHA-256 in
+ * Node's `fingerprint256` form (`AB:CD:…`), `pem` the certificate. Written only from a probe that
+ * dialled it pinned; honoured only for a loopback host ({@link imapTlsFloor}).
+ */
+export interface TlsPin { readonly sha256: string; readonly pem: string }
+
+/** The floor with one certificate as the whole trust store, and its fingerprint as the identity. */
+export interface PinnedTlsOptions extends TlsFloorOptions {
+  readonly ca: string[];
+  readonly checkServerIdentity: (host: string, cert: { fingerprint256?: string }) => Error | undefined;
+}
+
+/** A certificate's SHA-256 as Node spells `fingerprint256`: 32 colon-separated upper-case hex pairs. */
+const FINGERPRINT_256 = /^[0-9A-F]{2}(:[0-9A-F]{2}){31}$/;
+
+/** A fingerprint a person or a row claims, in that form, or `null` for anything else. */
+export function fingerprint256Of(claim: unknown): string | null {
+  if (typeof claim !== "string") return null;
+  const upper = claim.trim().toUpperCase();
+  return FINGERPRINT_256.test(upper) ? upper : null;
+}
+
+/** A credential row's stored `meta.tlsPin`, or `undefined` when it holds none (or a cleared `null`). */
+export function storedTlsPin(meta: unknown): TlsPin | undefined {
+  const pin = (meta as { tlsPin?: unknown } | null | undefined)?.tlsPin as { sha256?: unknown; pem?: unknown } | null | undefined;
+  const sha256 = fingerprint256Of(pin?.sha256);
+  return sha256 !== null && typeof pin?.pem === "string" && pin.pem.includes("BEGIN CERTIFICATE")
+    ? { sha256, pem: pin.pem } : undefined;
+}
+
+/**
+ * The floor's TLS options with the pin as the trust store: the certificate verifies as a chain of
+ * one, and the identity check is the fingerprint — the certificate names no host a person typed.
+ */
+function pinnedTls(pin: TlsPin): PinnedTlsOptions {
+  return {
+    ...TLS_FLOOR,
+    ca: [pin.pem],
+    checkServerIdentity: (_host, cert) => (cert?.fingerprint256 === pin.sha256
+      ? undefined : new Error("the certificate is not the one trusted for this server")),
+  };
+}
+
+/**
  * Is `host` a literal IP address rather than a DNS name? Hand-rolled for the same reason
  * {@link loopbackHarnessReason} is: this module may not import `node:net`. A dotted quad is v4;
  * anything containing a colon can only be a v6 literal (RFC 952/1123 names cannot carry one).
@@ -334,7 +380,7 @@ export interface ImapTlsFloorOptions {
   doSTARTTLS?: true;
   /** SNI, pinned. See {@link sniServername}; absent only for an IP-literal host. */
   servername?: string;
-  tls?: TlsFloorOptions;
+  tls?: TlsFloorOptions | PinnedTlsOptions;
 }
 
 /** The TLS-relevant slice of nodemailer's `SMTPTransport.Options`, and nothing else. */
@@ -348,7 +394,7 @@ export interface SmtpTlsFloorOptions {
   opportunisticTLS?: false;
   /** SNI, pinned — `smtp-connection/index.js:84` reads it. See {@link sniServername}. */
   servername?: string;
-  tls?: TlsFloorOptions;
+  tls?: TlsFloorOptions | PinnedTlsOptions;
 }
 
 /**
@@ -358,15 +404,24 @@ export interface SmtpTlsFloorOptions {
  * (`Server does not support STARTTLS`), checked in `startSession()` one line before
  * `authenticate()` — the ordering the whole guard rests on.
  */
-export function imapTlsFloor(host: string, secure: boolean, allowInsecure = false): {
+export function imapTlsFloor(host: string, secure: boolean, allowInsecure = false, tlsPin?: TlsPin): {
   options: ImapTlsFloorOptions; exemptReason: string | null;
 } {
   const exemptReason = loopbackHarnessReason(host);
+  const servername = sniServername(host);
+  const sni = servername ? { servername } : {};
+  /* A TRUSTED CERTIFICATE ON THIS COMPUTER: encryption becomes mandatory, verified against that one
+     certificate. Loopback only: off this computer the pin is ignored and the floor below applies. */
+  if (exemptReason && tlsPin) {
+    const tls = pinnedTls(tlsPin);
+    return {
+      options: secure ? { secure: true, ...sni, tls } : { secure: false, doSTARTTLS: true, ...sni, tls },
+      exemptReason: null,
+    };
+  }
   // The exempt path adds NOTHING and removes NOTHING — it declines to add the floor, so
   // the harness gets byte-identical behaviour to before the TLS floor and no new hole is invented.
   if (exemptReason) return { options: { secure }, exemptReason };
-  const servername = sniServername(host);
-  const sni = servername ? { servername } : {};
   /**
    * The consent branch — the one way authentication may cross an unencrypted socket, reachable
    * only with `secure: false` AND an explicit `allowInsecure`, which callers derive from a stored
@@ -398,13 +453,23 @@ export function imapTlsFloor(host: string, secure: boolean, allowInsecure = fals
  * instead of the `opportunisticTLS` "continuing unencrypted" branch. AUTH is only reached
  * after `_upgradeConnection` has set `this.secure = true`.
  */
-export function smtpTlsFloor(host: string, secure: boolean, allowInsecure = false): {
+export function smtpTlsFloor(host: string, secure: boolean, allowInsecure = false, tlsPin?: TlsPin): {
   options: SmtpTlsFloorOptions; exemptReason: string | null;
 } {
   const exemptReason = loopbackHarnessReason(host);
-  if (exemptReason) return { options: { secure }, exemptReason };
   const servername = sniServername(host);
   const sni = servername ? { servername } : {};
+  // The IMAP floor's pinned branch, for the submission server on this computer.
+  if (exemptReason && tlsPin) {
+    const tls = pinnedTls(tlsPin);
+    return {
+      options: secure
+        ? { secure: true, ignoreTLS: false, opportunisticTLS: false, ...sni, tls }
+        : { secure: false, requireTLS: true, ignoreTLS: false, opportunisticTLS: false, ...sni, tls },
+      exemptReason: null,
+    };
+  }
+  if (exemptReason) return { options: { secure }, exemptReason };
   /* The consent branch, the SMTP twin of the IMAP one: reachable only with `secure: false` and a
      consent the SMTP probe earned for THIS submission server (the IMAP marker licenses nothing
      here). `requireTLS` is dropped, so an advertised STARTTLS is still taken and still validated,
@@ -435,7 +500,12 @@ export interface ImapPasswordAuth { user: string; pass: string }
  * FRESH adapter, whose `connect()` calls this again — which is the entire freshness story, with no
  * mid-session re-auth and no token pinning anywhere.
  */
-export interface ImapOAuthAuth { user: string; fetchAccessToken: () => Promise<string> }
+export interface ImapOAuthAuth {
+  user: string;
+  fetchAccessToken: () => Promise<string>;
+  /** Whose token this is. Microsoft files every SMTP submission into Sent Items itself. */
+  provider?: "microsoft";
+}
 /** The auth a stored config may carry. The union defaults to the password path byte-for-byte. */
 export type ImapAuth = ImapPasswordAuth | ImapOAuthAuth;
 /**
@@ -464,6 +534,9 @@ export interface ImapConfig {
    * here, or a mailbox the probe admitted will strand on its first sync.
    */
   allowInsecure?: boolean;
+  /** The certificate a person trusted for a server on this computer — see {@link TlsPin}. Threaded
+   * from the `imap` row's `meta.tlsPin` by every dialler of a stored credential on the desktop. */
+  tlsPin?: TlsPin;
   auth: ImapAuth;
   /**
    * The addresses this dial may connect to — the SSRF gate's clearance, carried to the socket.
@@ -481,6 +554,8 @@ export interface ImapConfig {
     /** The submission server's own plaintext consent — see {@link smtpTlsFloor}. Threaded from
      * the `smtp` credential row's `meta.insecureConsent`, never from the IMAP row's. */
     allowInsecure?: boolean;
+    /** The submission server's own trusted certificate, from the `smtp` row's `meta.tlsPin`. */
+    tlsPin?: TlsPin;
     /** The submission leg's own pin — see {@link ImapConfig.pin}. Resolved separately because the
      * submission host is a different name from the IMAP host and was cleared by its own check. */
     pin?: readonly string[];
@@ -1234,6 +1309,15 @@ export interface MailboxAdapter {
    * changed epoch or a lost selection answers `unanswered`. Optional.
    */
   messageIdsGone?(folder: string, uidValidity: string, messageIds: readonly string[]): Promise<MessageIdsGoneAnswer>;
+  /**
+   * Where in `folder` each asked letter is, proved by its own bytes: a Message-ID only nominates
+   * (an OR of `HEADER Message-ID` per group, then the hits' envelopes), and a candidate is the letter
+   * when its bytes give the stored dedup key (a legacy key is verified as ingest verifies it). One
+   * proven copy is `found`; no letter carrying the id is `absent`; anything else (none or two proven,
+   * a nameless or unreadable hit, a bound reached, no Message-ID) is `undecided`. Read-only, one
+   * lock; a refused or partial read, or an epoch that moved under it, answers `unanswered`. Optional.
+   */
+  findLetters?(folder: string, asks: readonly LetterAsk[]): Promise<FindLettersAnswer>;
   watch(onSignal: () => void): Promise<() => Promise<void>>;
   /**
    * Re-establish what {@link watch} set up — INBOX selected, IDLE running — after other
@@ -1281,3 +1365,17 @@ export type UidsHeldAnswer = { k: "held"; uidValidity: string; present: Readonly
 /** {@link MailboxAdapter.messageIdsGone}'s answer: the asked Message-IDs, spelled as asked, that no letter there carries. */
 export type MessageIdsGoneAnswer = { k: "read"; uidValidity: string; gone: ReadonlySet<string> }
   | { k: "renumbered"; uidValidity: string } | { k: "absent" } | { k: "unanswered" };
+/** One letter {@link MailboxAdapter.findLetters} looks for: the stored identity a copy must prove. */
+export interface LetterAsk {
+  /** The caller's key for its verdict. */
+  key: string;
+  messageIdHeader: string | null;
+  /** `messages.dedup_key` as stored. */
+  dedupKey: string;
+  /** The columns a legacy key is verified against. */
+  legacy: LegacyIdentityColumns;
+}
+export type LetterVerdict = { k: "found"; locator: NativeLocator } | { k: "absent" } | { k: "undecided" };
+/** {@link MailboxAdapter.findLetters}'s answer: a verdict per asked key, under the folder's epoch. */
+export type FindLettersAnswer = { k: "read"; uidValidity: string; verdicts: ReadonlyMap<string, LetterVerdict> }
+  | { k: "absent" } | { k: "unanswered" };

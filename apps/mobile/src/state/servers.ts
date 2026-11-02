@@ -34,7 +34,9 @@ export type StoreFaultCode =
   | "engine_removal_not_recorded" | "engine_removal_still_recorded"
   | "engine_store_not_deleted" | "engine_key_not_removed"
   /* The engine's store opened without durable commits — see `holdDurableCommits`. */
-  | "engine_store_not_durable";
+  | "engine_store_not_durable"
+  /* A statement asked of the engine's store after it was closed — see `expoEngineExecutor`. */
+  | "engine_store_closed";
 
 export class StoreFault extends Error {
   constructor(readonly code: StoreFaultCode, message: string) {

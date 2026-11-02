@@ -563,13 +563,13 @@ describe("the pane is the same flow as the menu item, not a second one", () => {
 describe("the install switch", () => {
   const sw = (): HTMLButtonElement | null => hostEl.querySelector<HTMLButtonElement>('[role="switch"]');
 
-  /* THE SENTENCE IS WHAT THE SHELL WILL DO on this copy: only an AppImage stages the release and
-     installs it at its next start; the Windows setup and the macOS app install as they quit; and
-     a copy whose replacing needs a password waits for Restart. */
+  /* THE SENTENCE IS WHAT THE SHELL WILL DO on this copy: an AppImage and a Windows setup stage the
+     release and install it at their next start; the macOS app installs as it quits; and a copy
+     whose replacing needs a password waits for Restart. */
   it("is on by default, drawn on the three kinds that install themselves, and says when each installs", async () => {
     const cases = [
       ["appimage", "quitOrLaunch", copy.autoOn],
-      ["windowsSetup", "quit", copy.autoOnQuit],
+      ["windowsSetup", "quitOrLaunch", copy.autoOn],
       ["macBundle", "quit", copy.autoOnQuit],
       ["macBundle", "restart", copy.autoOnRestart],
       ["appimage", "restart", copy.autoOnRestart],

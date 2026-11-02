@@ -129,6 +129,7 @@ export function buildImapAuth(
     }
     return {
       user: meta.user ?? "",
+      provider: "microsoft",
       fetchAccessToken: makeFetcher({
         refreshToken: secret,
         tenant: meta.tenant ?? "",

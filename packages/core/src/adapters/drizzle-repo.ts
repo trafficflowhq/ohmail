@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, listBrandsOf, readListAddresses } from "@trafficflow/db";
+import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, listBrandsOf, readListAddresses } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, MessageIdCandidate, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -12,8 +12,10 @@ import type {
   // default barrel re-exports the model half beside it — so naming it here would put the
   // classifier and the drafter into the import graph of every artifact that stores a message.
 } from "../mail.js";
-import { canonicalDestination, LEGACY_NEWS_FOLDER, NEWS_FOLDER, SENT_SHAPED_PATHS } from "../types.js";
-import { messageSearchUpsert, reindexMessageSearch, type MessageSearchInput } from "../message-search.js";
+import { canonicalDestination, isSentFolderOf, LEGACY_NEWS_FOLDER, NEWS_FOLDER, SENT_SHAPED_PATHS } from "../types.js";
+import {
+  messageSearchUpsert, reindexMessageSearch, storedSearchInputWith, upsertMessageSearch, type MessageSearchInput,
+} from "../message-search.js";
 import type { NormalizedMessage } from "../types.js";
 import {
   refillStorageCapBody as refillStorageCapBodyTx, unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
@@ -40,10 +42,10 @@ import { dialect, pgOnly, type Dialect } from "@trafficflow/db/dialect";
 import { effectForDestination } from "../rules.js";
 // The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
 // export in imap-types.ts carries the watermark argument).
-import { SENT_SHAPED_CANONICAL, userFolderExclusion } from "./imap-types.js";
+import { userFolderExclusion } from "./imap-types.js";
 /* The stop's two shapes, imported rather than respelt: `BudgetStop` is what a pass REPORTS (it
    names the folder), `FolderBudgetStop` what one folder's row HOLDS (the row names it). */
-import type { BudgetStop, FolderBudgetStop, ImapConfig, MailboxAdapter } from "./imap-types.js";
+import type { BudgetStop, FolderBudgetStop, ImapConfig, LetterAsk, MailboxAdapter } from "./imap-types.js";
 import { providerAuthservIds } from "../authserv-ids.js";
 import { correspondentsAmong, inSentFolderSql, ownSentCopies, type CorrespondentEvidence } from "../correspondent.js";
 // The one correspondent predicate, on the leaf the worker passes and the services already import.
@@ -369,6 +371,11 @@ export interface FolderCompletion {
    * writing it on a miss would overwrite what a fresher writer had just committed.
    */
   physicalObservation?: boolean;
+  /**
+   * Clear `trashed_from` on a match: the status repair of an Undo's row (`MessageService.restore`'s
+   * cancel keeps the origin as its mark) spends the mark once it settles or finds the copy.
+   */
+  clearTrashedFrom?: boolean;
 }
 
 /**
@@ -645,8 +652,10 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   /**
    * Empty one stored body the way the storage cap does — real headers kept, `text=''`,
    * `html=NULL`, the closed marker, bytes released — for the two 0065 reasons. A row already
-   * withheld keeps its first reason (see the column's doc). Returns whether content was freed.
-   * OPTIONAL so every fake keeps compiling; the caller treats absence as "cannot husk here".
+   * withheld keeps its first reason (see the column's doc). `'expunged'`, on a tombstoned row, also
+   * empties the preview and deletes the search document, on every call.
+   * Returns whether content was freed. OPTIONAL so every fake keeps compiling; the caller treats
+   * absence as "cannot husk here".
    */
   huskBody?(accountId: string, messageId: string, reason: "junk_filed" | "expunged"): Promise<boolean>;
   /**
@@ -656,8 +665,9 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * already tombstoned; rows that never had an instance (`native_locator IS NULL`); rows marked
    * missing on the server (mail 0164), whose mirror copy is the only one; and rows
    * whose `folder_state` is reconciled-while-divergent — the junk-parked signature only the
-   * `satisfiedBy` completion writes, where no watched instance is the design. Optional; returns
-   * how many rows were tombstoned.
+   * `satisfiedBy` completion writes, where no watched instance is the design; and rows with our
+   * pending `folder_state` whose folders agree on its `trashed_from` (an Undo of a delete), until the
+   * organizer has looked for the copy. Optional; returns how many rows were tombstoned.
    */
   tombstoneInstanceless?(accountId: string, mailboxId: string, limit: number): Promise<number>;
   /**
@@ -689,6 +699,11 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * `deleted_at` and the locator stay, and no change row is written. Answers the ids dropped. Optional.
    */
   dropGoneFromTrash?(accountId: string, mailboxId: string, trash: string, rows: readonly TrashGoneRow[]): Promise<string[]>;
+  /**
+   * The stored identity of these letters of the account, by id: what {@link MailboxAdapter.findLetters}
+   * asks a copy to prove. A read. Optional; absence reads as none.
+   */
+  letterIdentities?(accountId: string, ids: readonly string[]): Promise<Map<string, Omit<LetterAsk, "key">>>;
   /**
    * Which of these messages owe their `ohmail/Quarantine` placement to an AI AUTO-APPLY (mail
    * 0065) — a graduated pattern's per-message act, not a user's press and not a rule. The
@@ -998,6 +1013,18 @@ const JUNK_PARKED = sql`exists (select 1 from ${folderState}
       where ${folderState.messageId} = ${messages.id}
         and ${folderState.reconcileStatus} = 'reconciled'
         and ${folderState.desiredFolder} <> ${folderState.observedFolder})`;
+
+/**
+ * An Undo of a delete: our pending row whose folders agree on the origin the delete recorded, the
+ * mark `MessageService.restore`'s cancel leaves. Its copy may be in Trash by a move whose answer was
+ * lost; the organizer looks there before it settles the row.
+ */
+const AWAITING_ITS_COPY = sql`exists (select 1 from ${folderState}
+      where ${folderState.messageId} = ${messages.id}
+        and ${folderState.reconcileStatus} = 'pending'
+        and ${folderState.lastSetBy} = 'us'
+        and ${folderState.desiredFolder} = ${folderState.observedFolder}
+        and ${folderState.trashedFrom} = ${folderState.desiredFolder})`;
 
 /** {@link WorkerRepo.listJunkParked}'s filter, shared with the re-read before a tombstone. */
 function junkParkedRows(accountId: string, mailboxId: string, folder: string): SQL {
@@ -1599,7 +1626,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * which is the zero we are about to write — then update, then release the counter under the
    * same rules every other movement uses. `withheld_reason IS NULL` in both statements keeps a
    * row's FIRST reason and makes the pair idempotent: a husk is never re-husked, its bytes are
-   * never released twice.
+   * never released twice. `'expunged'` also takes the preview and the search document of the
+   * tombstoned letter, whatever withheld its text first ({@link scrubGone}).
    */
   async huskBody(accountId: string, messageId: string, reason: "junk_filed" | "expunged"): Promise<boolean> {
     // THE ACCOUNT COUNTER ROW IS LOCKED FIRST — `evictOldestBodies`' exact idiom, and for the
@@ -1620,13 +1648,54 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       eq(messageBodies.messageId, messageId),
       isNull(messageBodies.withheldReason),
     )).limit(1);
-    if (!victim) return false;
-    await this.db.update(messageBodies)
-      .set({ text: "", html: null, withheldReason: reason })
-      .where(and(eq(messageBodies.id, victim.id), isNull(messageBodies.withheldReason)));
-    const freed = Number(victim.freed);
-    if (freed > 0) await releaseBodyBytes(this.db, this.d, accountId, freed);
-    return true;
+    if (victim) {
+      await this.db.update(messageBodies)
+        .set({ text: "", html: null, withheldReason: reason })
+        .where(and(eq(messageBodies.id, victim.id), isNull(messageBodies.withheldReason)));
+      const freed = Number(victim.freed);
+      if (freed > 0) await releaseBodyBytes(this.db, this.d, accountId, freed);
+    }
+    if (reason === "expunged") await this.scrubGone(accountId, messageId);
+    return victim !== undefined;
+  }
+
+  /**
+   * What a letter gone from the server leaves besides its text: the preview, the search document,
+   * and what was drawn from its words, the classifier's summary and a tracker's address (how it was
+   * filed and the tracker's host stay). Only on a tombstoned row of the account: every read already
+   * skips one, so nothing a person sees changes, and no change row is owed. The header block stays:
+   * it is written once, at ingest (the Screener floor's premise). The identity columns serve
+   * re-adoption and the return.
+   */
+  private async scrubGone(accountId: string, messageId: string): Promise<void> {
+    const gone = and(eq(messages.id, messageId), eq(messages.accountId, accountId), isNotNull(messages.deletedAt));
+    const isGone = exists(this.db.select({ id: messages.id }).from(messages).where(gone));
+    await this.db.update(messages).set({ snippet: "" }).where(gone);
+    await this.db.delete(messageSearch).where(and(
+      eq(messageSearch.messageId, messageId), eq(messageSearch.accountId, accountId), isGone,
+    ));
+    await this.db.update(routingDecisions).set({ rationale: null }).where(and(
+      eq(routingDecisions.messageId, messageId), eq(routingDecisions.accountId, accountId),
+      isNotNull(routingDecisions.rationale), isGone,
+    ));
+    await this.db.update(trackerEvents).set({ url: null }).where(and(
+      eq(trackerEvents.messageId, messageId), eq(trackerEvents.accountId, accountId), isNotNull(trackerEvents.url), isGone,
+    ));
+  }
+
+  /** See {@link RepoPort.refillGone}: only what {@link scrubGone} emptied is written. */
+  async refillGone(
+    messageId: string,
+    arrival: { snippet: string; searchBody: { bodyText: string; source: SearchSource } },
+    accountId: string,
+  ): Promise<void> {
+    await this.db.update(messages).set({ snippet: arrival.snippet })
+      .where(and(eq(messages.id, messageId), eq(messages.accountId, accountId), eq(messages.snippet, "")));
+    const [doc] = await this.db.select({ id: messageSearch.messageId }).from(messageSearch)
+      .where(and(eq(messageSearch.messageId, messageId), eq(messageSearch.accountId, accountId))).limit(1);
+    if (doc) return;
+    const input = await storedSearchInputWith(this.db as unknown as Tx, accountId, messageId, arrival.searchBody);
+    if (input !== null) await upsertMessageSearch(this.db as unknown as Tx, messageId, input);
   }
 
   /**
@@ -1855,6 +1924,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
           sql`not exists (select 1 from ${messageInstances}
                 where ${messageInstances.messageId} = ${messages.id})`,
           sql`not ${JUNK_PARKED}`,
+          sql`not ${AWAITING_ITS_COPY}`,
         ))
         .orderBy(asc(messages.id))
         .limit(limit - victims.length);
@@ -1959,6 +2029,19 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }
     for (const id of dropped) await this.huskBody(accountId, id, "expunged");
     return dropped;
+  }
+
+  /** See {@link WorkerRepo.letterIdentities}. */
+  async letterIdentities(accountId: string, ids: readonly string[]): Promise<Map<string, Omit<LetterAsk, "key">>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.db.select({
+      id: messages.id, dedupKey: messages.dedupKey, messageIdHeader: messages.messageIdHeader,
+      bodyHash: messages.bodyHash, subject: messages.subject, fromAddress: messages.fromAddress,
+    }).from(messages).where(and(eq(messages.accountId, accountId), inArray(messages.id, [...ids])));
+    return new Map(rows.map((r) => [r.id, {
+      messageIdHeader: r.messageIdHeader ?? null, dedupKey: r.dedupKey,
+      legacy: { messageIdHeader: r.messageIdHeader ?? null, bodyHash: r.bodyHash, subject: r.subject, fromAddress: r.fromAddress },
+    }]));
   }
 
   /** Mail 0065 — a re-appearance un-deletes: the adopt path's half of "a LATER create resurrects". */
@@ -2187,7 +2270,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         next_attempt_at = CASE WHEN ${matched}
           THEN NULL ELSE next_attempt_at END,
         last_error_class = CASE WHEN ${matched}
-          THEN NULL ELSE last_error_class END
+          THEN NULL ELSE last_error_class END${c.clearTrashedFrom === true ? sql`,
+        trashed_from = CASE WHEN ${matched}
+          THEN NULL ELSE trashed_from END` : sql``}
       WHERE message_id = ${this.d.castUuid(messageId)}
       RETURNING desired_folder AS "desiredFolder"
     `);
@@ -3074,7 +3159,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         serverExists: sql`coalesce(${excluded("server_exists")}, ${mailboxFolders.serverExists})`,
       },
     });
-    await this.announceNewFolders(mailboxId, names.filter((n) => !had.has(n) && userFolderExclusion(n) === null));
+    await this.announceNewFolders(mailboxId, names.filter((n) => !had.has(n)));
   }
 
   /**
@@ -3082,11 +3167,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * one exclusion rule admits; the materializer still decides the rest (a mailbox with folders
    * off drains it as a tombstone of an id nobody holds).
    */
-  private async announceNewFolders(mailboxId: string, made: readonly string[]): Promise<void> {
-    if (made.length === 0) return;
-    const [mb] = await this.db.select({ accountId: mailboxes.accountId }).from(mailboxes)
+  private async announceNewFolders(mailboxId: string, candidates: readonly string[]): Promise<void> {
+    if (candidates.length === 0) return;
+    const [mb] = await this.db.select({ accountId: mailboxes.accountId, sentFolder: mailboxes.sentFolder }).from(mailboxes)
       .where(eq(mailboxes.id, mailboxId)).limit(1);
     if (!mb) return;
+    // Only the user's own folders announce: the recorded Sent is read once, here.
+    const made = candidates.filter((n) => userFolderExclusion(n, mb.sentFolder) === null);
+    if (made.length === 0) return;
     const rows = await this.db.select({ id: mailboxFolders.id }).from(mailboxFolders)
       .where(and(eq(mailboxFolders.mailboxId, mailboxId), inArray(mailboxFolders.folder, [...made])));
     const changes = rows.map((r) => ({
@@ -3126,7 +3214,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       target: [mailboxFolders.mailboxId, mailboxFolders.folder],
       set: { budgetStopUid: BigInt(stop.uid), budgetStopUidvalidity: BigInt(stop.uidValidity) },
     });
-    if (!had && userFolderExclusion(stop.folder) === null) await this.announceNewFolders(mailboxId, [stop.folder]);
+    if (!had) await this.announceNewFolders(mailboxId, [stop.folder]);
   }
 
   /**
@@ -3499,7 +3587,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
               sql`${mailboxFolders.uidvalidity} is not null and ${mailboxFolders.uidvalidity} not in (0, ${messageInstances.uidvalidity})`,
             ));
           const removable = staleRows
-            .filter((r) => r.folder !== (sentFolder ?? null) && !SENT_SHAPED_CANONICAL.test(r.folder))
+            .filter((r) => !isSentFolderOf(r.folder, sentFolder))
             .map((r) => r.id);
           if (removable.length > 0) {
             await this.db.delete(messageInstances).where(inArray(messageInstances.id, removable));

@@ -1452,13 +1452,44 @@ pub const CLOUD_SESSION_SEAL: &str = "cloud-tokens.seal";
 /// deleted account's apart.
 /// Absent is not an error — a sign-out on a door that was never signed in is a no-op, and running
 /// this twice must not fail the second time.
+///
+/// The directory is flushed after the unlink, and also when the file was already gone (the
+/// engine's own removal may not have reached the disk): an unflushed removal comes back after a
+/// power cut, signed in. Best effort, as in `write_private`.
 pub fn remove_sealed_session(root: &Path, mode: Mode) -> Result<(), String> {
-    let path = data_dir(root, mode).join(CLOUD_SESSION_SEAL);
-    match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(format!("{} could not be removed ({err})", path.display())),
+    remove_sealed_session_with(root, mode, &mut flush_directory)
+}
+
+/// [`remove_sealed_session`] with the directory flush injected, so a test can see it.
+pub(crate) fn remove_sealed_session_with(
+    root: &Path,
+    mode: Mode,
+    flush: &mut dyn FnMut(&Path),
+) -> Result<(), String> {
+    let dir = data_dir(root, mode);
+    let path = dir.join(CLOUD_SESSION_SEAL);
+    // Emptied and flushed first: Windows cannot flush the directory, so a removal a power cut
+    // undoes there brings back an empty file, never the session. Best effort.
+    if let Ok(file) = fs::OpenOptions::new().write(true).open(&path) {
+        let _ = file.set_len(0).and_then(|()| file.sync_all());
     }
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("{} could not be removed ({err})", path.display())),
+    }
+    flush(&dir);
+    Ok(())
+}
+
+/// Flush a directory's entries; Windows cannot open a directory for that.
+fn flush_directory(dir: &Path) {
+    #[cfg(unix)]
+    {
+        let _ = fs::File::open(dir).and_then(|dir| dir.sync_all());
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 // ── A DOOR SWITCH THAT HAS NOT BEEN ANSWERED YET ──────────────────────────────────────────────

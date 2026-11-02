@@ -635,7 +635,10 @@ three ways.
 
 A comma, other whitespace, an IPv4 address written in IPv6 form or a word such
 as `private_ranges` could read differently to the proxy and the api, so the api
-refuses to start on one and says what to write instead. A value of nothing but
+refuses to start on one and says what to write instead. The proxy hands Caddy
+`gateway`'s address or addresses and CIDRs separated by single spaces and
+nothing else, so this value cannot become Caddy configuration: any other value
+stops the proxy with a line saying what to write. A value of nothing but
 whitespace counts as unset.
 
 **Your terminator must set or append `X-Forwarded-For` with the visitor's

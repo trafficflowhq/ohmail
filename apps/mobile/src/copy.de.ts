@@ -772,6 +772,8 @@ export const DE: Deck = {
         return "der Schlüsselspeicher wollte den Schlüssel nicht entfernen, der das gespeicherte Passwort dieses Postfachs öffnet";
       case "engine_store_not_durable":
         return "die Datenbank dieses Handys sicherte nicht zu, eine gespeicherte Änderung über einen Stromausfall zu behalten, deshalb wurde das Postfach darauf nicht geöffnet";
+      case "engine_store_closed":
+        return "das Postfach auf diesem Handy war bereits geschlossen, deshalb wurde nichts gelesen oder gespeichert";
       default: return code;
     }
   },
@@ -1230,7 +1232,7 @@ export const DE: Deck = {
   liveBodyWithheldJunk:
     "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Spam-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
   liveBodyWithheldExpunged:
-    "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Diese Vorschau ist, was bleibt.",
+    "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Ab dieser Version verschwinden mit dem Text einer solchen Nachricht auch Vorschau und Suchwörter; bis du das Postfach entfernst oder deinen Account löschst, behält ohmail ihre Header, die Namen ihrer Dateien, wie sie einsortiert wurde, und die Tracker, die darin gefunden wurden.",
   liveBodyWithheldTooLarge:
     "Nicht heruntergeladen — diese Nachricht ist größer als 64 MB, mehr lädt ohmail nicht herunter. Text und Dateien werden hier deshalb nicht gezeigt. Öffne sie bei deinem Mailanbieter.",
   liveBodyJunkLoading: "Diese Nachricht wird von deinem Mailserver geladen…",

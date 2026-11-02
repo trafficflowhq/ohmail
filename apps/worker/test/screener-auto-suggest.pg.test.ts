@@ -538,6 +538,50 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     expect(spy.screened.some((i) => i.from.address === "bank@example.test")).toBe(false);
   });
 
+  /* ── 1c. MAIL GONE FROM THE SERVER — a tombstoned letter is no candidate ────────────────── *
+   * Mutation: drop `isNull(messages.deletedAt)` from `selectCandidates` and both cases go red. */
+
+  /** A tombstone: `deleted_at`, the column the reaper and a delete write. Its words are kept here. */
+  const tombstone = (id: string) =>
+    db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, id));
+
+  it("a held letter gone from the server is never asked about, charged for or stored", async () => {
+    const w = await newWorld({ credits: 50 });
+    const live = await held(w, "live@example.test", AFTER);
+    const gone = await held(w, "gone@example.test", new Date(AFTER.getTime() + 1000));
+    await tombstone(gone);
+    const spy = spyClassifier();
+
+    const result = await screenerAutoSuggestPass(db, {
+      accountId: w.accountId, classifier: spy, credits: w.gate,
+    });
+
+    expect(spy.screened.map((i) => i.from.address), "a letter gone from the server was sent to the model")
+      .toEqual(["live@example.test"]);
+    expect(w.gate.spends.some((c) => c.source === screenerLedgerSource(gone))).toBe(false);
+    expect(result.examined).toBe(1);
+    expect(result.bought).toBe(1);
+    expect((await suggestionsOf(w)).map((r) => r.messageId)).toEqual([live]);
+    expect(await debitsOf(w)).toEqual([{ delta: -1, source: screenerLedgerSource(live) }]);
+  });
+
+  /* The representative is chosen among live letters, as the queue chooses it (`heldSenderReps`):
+     the sender's older held letter is the row on screen. A filter outside the window skips them. */
+  it("a sender whose newest held letter is gone is asked about the live one the queue lists", async () => {
+    const w = await newWorld({ credits: 50 });
+    const older = await held(w, "mixed@example.test", AFTER, { subject: "the letter still held" });
+    const newer = await held(w, "mixed@example.test", new Date(AFTER.getTime() + 5000), { subject: "the letter gone" });
+    await db.update(messages).set({ date: new Date(AFTER.getTime() + 5000) }).where(eq(messages.id, newer));
+    await tombstone(newer);
+    const spy = spyClassifier();
+
+    await screenerAutoSuggestPass(db, { accountId: w.accountId, classifier: spy, credits: w.gate });
+
+    expect(spy.screened.map((i) => i.subject)).toEqual(["the letter still held"]);
+    expect((await suggestionsOf(w)).map((r) => r.messageId)).toEqual([older]);
+    expect(await debitsOf(w)).toEqual([{ delta: -1, source: screenerLedgerSource(older) }]);
+  });
+
   /* ── 2. THE GATE ──────────────────────────────────────────────────────────────────────── */
 
   it("an EMPTY balance produces ZERO classifier invocations and ZERO stored rows", async () => {

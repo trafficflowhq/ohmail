@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { sendService } from "@trafficflow/services/mail";
 import { ServiceError } from "@trafficflow/services/mail";
 import type { ServiceContext, AttachmentAdapter, OpenAdapter } from "@trafficflow/services/mail";
-import { MessageGoneError } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, MessageGoneError, ReadNotAnsweredError } from "@trafficflow/core/adapters/imap";
 import type { SendAdapter, OutboundMessage, NativeLocator } from "@trafficflow/core/mail";
 import { FIXED_NOW, makeDeps, seedMailbox, seedMessage, seedSession, seedBody } from "../../api/test/helpers.js";
 
@@ -395,4 +395,56 @@ describe("a forward whose original cannot be read because the mail server cannot
       expect(row!.status).toBe("failed");
     });
   }
+});
+
+describe("a forward whose original read came back empty and the server would not say it is gone", () => {
+  it("send_busy, offered again under the key, nothing sent, never 'the original moved'", async () => {
+    const w = await world();
+    const smtp = sendSpy();
+    const openFetchAdapter: OpenAdapter = async () => ({
+      async fetchPart(loc: NativeLocator) { throw new ReadNotAnsweredError(loc); },
+      async close() { /* nothing */ },
+    });
+    const err = await sendService.send(
+      w.ctx, w.draftId, "key-throttled",
+      // The send route's own deps: a transient refusal is offered again under the key.
+      { openSendAdapter: smtp.openSendAdapter, openFetchAdapter, rearmTransient: true },
+      { forwardOf: w.originalId },
+    ).then(() => null, (e: unknown) => e as ServiceError);
+    expect(err).toBeInstanceOf(ServiceError);
+    expect({ code: err!.code, status: err!.httpStatus, retryable: err!.retryable, sent: smtp.sent.length, probed: smtp.probed.length })
+      .toEqual({ code: "send_busy", status: 424, retryable: true, sent: 0, probed: 0 });
+  });
+});
+
+describe("a forward whose original's part FETCH is throttled while the UID search is answered", () => {
+  // Exchange Online answers `BAD Request is throttled` to every body FETCH; imapflow retries, then
+  // answers nothing. The message is still at its UID and its tree declares the part: not now.
+  it("send_busy, nothing offered, never 'the original moved', for a row with no digest", async () => {
+    const w = await world();
+    const smtp = sendSpy();
+    const openFetchAdapter: OpenAdapter = async () => {
+      const adapter = new ImapAdapter({ host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" } });
+      Object.assign(adapter as unknown as Record<string, unknown>, {
+        delimiter: "/", established: true,
+        client: {
+          mailbox: { path: "INBOX", uidValidity: 12n },
+          getMailboxLock: async () => ({ release: () => undefined }),
+          download: async () => ({}),
+          search: async () => [7],
+          fetchOne: async () => ({ uid: 7, bodyStructure: { type: "multipart/mixed", childNodes: [
+            { type: "text/plain", size: 17 }, { type: "application/pdf", size: 4 },
+          ] } }),
+        },
+      });
+      return adapter as unknown as AttachmentAdapter;
+    };
+    const err = await sendService.send(
+      w.ctx, w.draftId, "key-part-throttled",
+      { openSendAdapter: smtp.openSendAdapter, openFetchAdapter, rearmTransient: true },
+      { forwardOf: w.originalId },
+    ).then(() => null, (e: unknown) => e as ServiceError);
+    expect({ code: err?.code, retryable: err?.retryable, sent: smtp.sent.length, probed: smtp.probed.length })
+      .toEqual({ code: "send_busy", retryable: true, sent: 0, probed: 0 });
+  });
 });

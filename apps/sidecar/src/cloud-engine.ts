@@ -19,7 +19,7 @@ import {
   createCloudAuth, openSealedTokens, readSessionMarker, sealTokens, ACCOUNT_ERASED, REFUSAL_CODES,
   REUSE_CAUSE, SESSION_MARKER_FILE, type CloudAuth, type CloudSessionReading, type CloudTokens, type SealOpen,
 } from "./cloud-auth.js";
-import { writeAtomic } from "./fs-atomic.js";
+import { removeAtomic, writeAtomic } from "./fs-atomic.js";
 import { readMachineBinding } from "./machine-binding.js";
 import {
   cloudIdentity,
@@ -441,8 +441,9 @@ async function decorateStoreStuck(
 }
 
 /**
- * The file recording which hosted account this cloud mirror was bootstrapped for: the ADDRESS on
- * the first line and the SERVER's base URL on the second.
+ * The file recording which hosted account this cloud mirror was bootstrapped for: one JSON object
+ * naming the ADDRESS, the SERVER's base URL and, once a server named it, the account
+ * (`encodeMirrorRecord` in `cloud-origin.ts`; a legacy one-line record is still read).
  *
  * It held the address alone until there was a third door. See `cloud-origin.ts` for why the server
  * had to join it — in one sentence: the mirror directory is keyed by MODE, so `me@example.com` on
@@ -1195,7 +1196,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // safe in every ordering: these tokens are dead (or leaving) either way, and a crash
       // right after leaves a pre-auth launch, which is the correct next state.
       try {
-        rmSync(sealPath, { force: true });
+        removeAtomic(sealPath);
       } catch (err) {
         log?.("cloud_seal_removal_failed", {
           err,
@@ -1217,7 +1218,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // seal, because `POST /cloud/signin` awaits `sessionTeardown` (every teardown is retained
       // there, the user-initiated one included) before it seals anything.
       try {
-        rmSync(sealPath, { force: true });
+        removeAtomic(sealPath);
       } catch {
         /* logged by the first attempt's arm if it matters; nothing of this session reads it */
       }

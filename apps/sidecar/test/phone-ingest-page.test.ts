@@ -290,4 +290,32 @@ describe("the page and everybody else's writes (the statement runner)", () => {
     await paged.endPage();
     expect(relaunch()).toEqual(["a", "c"]);
   });
+
+  /* A REFUSED CONNECT CLOSES THE STORE while an app statement waits out a letter: it is answered
+     in JS and never reaches the closed native handle. */
+  it("refuses every statement after the close without reaching the store, the waiting app's too", async () => {
+    const { exec } = fileStore();
+    const reached: string[] = [];
+    let shut = false;
+    const watched: PhoneSqlExecutor = {
+      all: (sql, params) => { if (shut) reached.push(sql); return exec.all(sql, params); },
+      run: (sql, params) => { if (shut) reached.push(sql); return exec.run(sql, params); },
+      batch: (statements) => { if (shut) reached.push("batch"); return exec.batch(statements); },
+      close: () => { shut = true; return exec.close(); },
+    };
+    const paged = pagedExecutor(watched);
+    await paged.ingest.run("begin", []);
+    await paged.ingest.run("insert into t (k) values (?)", ["mail"]);
+    const read = paged.main.all("select k from t", []);
+    expect(await settled(read), "the read was served inside the letter").toBe(false);
+    await Promise.all([paged.main.close(), paged.engine.close()]);
+    expect(await settled(read), "the waiting read outlived the close").toBe(true);
+    await expect(read).rejects.toMatchObject({ code: "engine_store_closed" });
+    await expect(paged.ingest.run("commit", [])).rejects.toMatchObject({ code: "engine_store_closed" });
+    await expect(paged.engine.all("select k from t", [])).rejects.toMatchObject({ code: "engine_store_closed" });
+    await expect(paged.main.run("insert into t (k) values (?)", ["draft"])).rejects.toMatchObject({ code: "engine_store_closed" });
+    await expect(paged.ingest.batch([{ sql: "select 1" }])).rejects.toMatchObject({ code: "engine_store_closed" });
+    await paged.main.close();
+    expect(reached, "a statement reached the closed store").toEqual([]);
+  });
 });

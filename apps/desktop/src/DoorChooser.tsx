@@ -16,7 +16,10 @@ import { Button } from "@ohmail/ui";
 import { shortPin } from "@ohmail/client-engine";
 
 import { ProviderHelpLinks, ProviderPicker } from "../../webapp/app/shell/ProviderPicker";
-import { PlaintextConsent } from "../../webapp/app/shell/PlaintextConsent";
+import { PlaintextConsent, plaintextClaims, sameServerHost } from "../../webapp/app/shell/PlaintextConsent";
+import {
+  CertificateTrust, certificateOfferOf, trustClaims, type TrustOffer,
+} from "../../webapp/app/shell/CertificateTrust";
 import { useAddressFirst } from "../../webapp/app/shell/address-first";
 import { authHintPreset, authHintWantsLinks, hostsFor, providerById, type AuthHint } from "../../webapp/app/shell/providers";
 import { refusalAuthHint } from "../../webapp/app/shell/local-server-host";
@@ -235,6 +238,8 @@ export function DoorChooser({
    * the answer that offered it. The card holds the ticks and retires both on a server change.
    */
   const [plainOffer, setPlainOffer] = useState<DoorConsent>(NO_CONSENT);
+  /** The certificates a refusal offered to trust, per transport — a server on this computer's own. */
+  const [trustOffer, setTrustOffer] = useState<TrustOffer>({});
   /** Why Google refused the last press, with the sentence it came with: the links ride that sentence. */
   const [authHelp, setAuthHelp] = useState<{ problem: string; hint: AuthHint } | null>(null);
 
@@ -246,13 +251,16 @@ export function DoorChooser({
     setBusy(true);
     setProblem(null);
     setSuggestion(null);
-    setPlainOffer(NO_CONSENT);
     try {
       const result = await run();
       setProblem(result.problem);
       setSuggestion(result.suggestion ?? null);
+      /* THE LINES ACCUMULATE, press over press, until a server field changes: the outgoing server
+         is asked only once the incoming one has signed in, and its line must not take the first's. */
       const offered = result.engineRefusal ? localPlaintextOffer(result.engineRefusal) : null;
-      if (offered !== null) setPlainOffer({ ...NO_CONSENT, [offered]: true });
+      if (offered !== null) setPlainOffer((o) => ({ ...o, [offered]: true }));
+      const certificate = result.engineRefusal ? certificateOfferOf(result.engineRefusal) : null;
+      if (certificate !== null) setTrustOffer((o) => ({ ...o, [certificate.transport]: certificate.sha256 }));
       const hint = result.engineRefusal ? refusalAuthHint(result.engineRefusal) : null;
       setAuthHelp(hint !== null && result.problem ? { problem: result.problem, hint } : null);
       if (result.switchAccount) setMustSwitch(true);
@@ -663,8 +671,9 @@ export function DoorChooser({
             suggestion={suggestion}
             authLinks={authHelp !== null && authHelp.problem === problem && authHintWantsLinks(authHelp.hint)}
             offer={plainOffer}
-            onRetireOffer={() => setPlainOffer(NO_CONSENT)}
-            onBack={() => { setProblem(null); setSuggestion(null); setPlainOffer(NO_CONSENT); setStep("doors"); }}
+            trustOffer={trustOffer}
+            onRetireOffer={() => { setPlainOffer(NO_CONSENT); setTrustOffer({}); }}
+            onBack={() => { setProblem(null); setSuggestion(null); setPlainOffer(NO_CONSENT); setTrustOffer({}); setStep("doors"); }}
             onCancel={onCancel}
             onSubmit={(fields, consent) =>
               attempt(async () =>
@@ -876,6 +885,7 @@ function LocalDoor({
   suggestion,
   authLinks = false,
   offer,
+  trustOffer,
   onRetireOffer,
   onBack,
   onCancel,
@@ -889,6 +899,8 @@ function LocalDoor({
   authLinks?: boolean;
   /** The plaintext lines the last refusal offered (the Add form's consent), per transport. */
   offer: DoorConsent;
+  /** The certificates of a server on this computer a refusal offered to trust, per transport. */
+  trustOffer: TrustOffer;
   /** A server changed: the offer is about the old one and goes, with the ticks. */
   onRetireOffer: () => void;
   onBack: () => void;
@@ -904,8 +916,11 @@ function LocalDoor({
    * retires the offer and the ticks together; the address and the password do not.
    */
   const [plain, setPlain] = useState<DoorConsent>(NO_CONSENT);
+  /** The fingerprint each trust line was ticked for — a changed certificate un-ticks its line. */
+  const [trusted, setTrusted] = useState<TrustOffer>({});
   const retireConsent = (): void => {
     setPlain(NO_CONSENT);
+    setTrusted({});
     onRetireOffer();
   };
   const setServer = <K extends "imapHost" | "imapPort" | "smtpHost" | "smtpPort">(
@@ -950,11 +965,14 @@ function LocalDoor({
      mailbox" entry is the one where nobody but them can supply it. */
   const manual = preset?.manual === true;
 
+  /* One host on both legs: the one line covers both servers' consent. */
+  const sameHost = sameServerHost(fields.imapHost, fields.smtpHost);
+
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(fields, { imap: offer.imap && plain.imap, smtp: offer.smtp && plain.smtp });
+        onSubmit(fields, { ...plaintextClaims(offer, plain, sameHost), trust: trustClaims(trustOffer, trusted, sameHost) });
       }}
     >
       <h1>{DOOR_COPY.localTitle}</h1>
@@ -977,14 +995,16 @@ function LocalDoor({
         value={fields.providerId || null}
         onChange={(id) => { addressFirst.pick(id); chooseProvider(id); }}
         proton={addressFirst.guess?.proton === true}
+        bridgeHere
       />
 
       <label className="join-label" htmlFor="door-password">{DOOR_COPY.localPassword}</label>
+      {/* The MAILBOX's password, often an app password: never the saved ohmail account password. */}
       <input
         id="door-password"
         className="join-input"
         type="password"
-        autoComplete="current-password"
+        autoComplete="off"
         value={fields.password}
         onChange={(e) => set("password", e.target.value)}
       />
@@ -1038,8 +1058,13 @@ function LocalDoor({
 
       {/* THE ADD FORM'S CONSENT, one line per transport the refusal offered it for, and its warning. */}
       <PlaintextConsent
-        id="door-plaintext" offer={offer} checked={plain}
+        id="door-plaintext" offer={offer} checked={plain} sameHost={sameHost}
         onChange={(k, on) => setPlain((v) => ({ ...v, [k]: on }))}
+      />
+      {/* A SERVER ON THIS COMPUTER WITH ITS OWN CERTIFICATE (Proton Mail Bridge): trusted by its fingerprint. */}
+      <CertificateTrust
+        id="door-trust" offer={trustOffer} ticked={trusted} sameHost={sameHost}
+        onChange={(k, sha256) => setTrusted((v) => ({ ...v, [k]: sha256 }))}
       />
       {/* ── THE REFUSAL, AND THE HOST IT NAMED, BESIDE THE BUTTON THAT WAS PRESSED ────────────
           `onUse` is passed ONLY while the host fields are on screen. Behind a named provider the

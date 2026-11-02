@@ -1186,9 +1186,9 @@ describe("a mail server on this computer — the wait's own line and the server'
     expect(el.textContent).not.toContain(en.mailboxes.probe_auth_local);
   });
 
-  it("an outgoing-leg timeout from it keeps the plain sentence: the two minutes are the incoming leg's", async () => {
+  it("an outgoing-leg timeout from it says the outgoing server's sentence: the two minutes are the incoming leg's", async () => {
     const el = await pressTest("127.0.0.1", refusal({ reason: "timeout", transport: "smtp", localServer: true }));
-    expect(el.textContent).toContain(en.mailboxes.probe_timeout);
+    expect(el.textContent).toContain(en.mailboxes.probe_timeout_smtp);
     expect(el.textContent).not.toContain(en.mailboxes.probe_timeout_local);
   });
 });

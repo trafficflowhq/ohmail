@@ -48,6 +48,7 @@ export interface FieldProps {
     | "autoCapitalize"
     | "autoComplete"
     | "autoCorrect"
+    | "importantForAutofill"
     | "inputMode"
     | "keyboardType"
     | "multiline"

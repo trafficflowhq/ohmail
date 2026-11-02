@@ -1,12 +1,16 @@
 /**
- * THE TWO DOORS, as decisions rather than as screens. A fresh install is asked whose mail this
- * is — the mailbox on your own server, or a hosted ohmail account, mirrored. `DoorChooser.tsx`
- * is what that looks like; this file is what it MEANS, separate so the rules are driven by a
- * test. A door's SETTINGS go to the shell over `engine_configure` (it remembers them across a
- * quit and composes the engine's environment). A door's SECRET does NOT: it travels over the
- * bridge to the ENGINE, which seals it under this install's key — the shell REFUSES a
- * configuration carrying a secret-shaped field, and a command argument is process state in the
- * shell. So each door is configure, then `PATCH /mailboxes/:id` / `POST /cloud/signin`.
+ * THE DOORS, as decisions rather than as screens. A fresh install is asked whose mail this is:
+ * the mailbox on your own mail server, read here (`local`); a hosted ohmail account, mirrored
+ * (`managed`); an ohmail server you run (`selfhost`, `self-host.ts`: the hosted door with the
+ * address made a variable, so the address is probed first and a credential belongs to one
+ * server); or another computer of yours, paired (`desktop-host`). {@link flavorOf} tells them
+ * apart. `DoorChooser.tsx` is what that looks like; this file is what it MEANS, separate so the
+ * rules are driven by a test. A door's SETTINGS go to the shell over `engine_configure` (it
+ * remembers them across a quit and composes the engine's environment). A door's SECRET does NOT:
+ * it travels over the bridge to the ENGINE, which seals it under this install's key — the shell
+ * REFUSES a configuration carrying a secret-shaped field, and a command argument is process state
+ * in the shell. So the local door is configure, then `PATCH /mailboxes/:id`; the hosted and
+ * self-hosted doors configure, then `POST /cloud/signin`; the paired door proves its link first.
  */
 
 /*
@@ -20,6 +24,7 @@
 
 import { originNeedsPin, parsePairLink, type PairLink } from "@ohmail/client-engine";
 
+import { refusalCopy } from "../../webapp/app/shell/server-refusal";
 import { BUILD_PLATFORM } from "./platform.js";
 import { hostLabelOf } from "./host-label.js";
 import { LOCAL_SERVER_CALL_DEADLINE_MS } from "./local-server-deadline.js";
@@ -1305,6 +1310,8 @@ export interface DoorResult {
 export interface DoorConsent {
   imap: boolean;
   smtp: boolean;
+  /** The fingerprints the press trusts for a server on this computer, per transport: ticked lines only. */
+  trust?: { imap?: string; smtp?: string };
 }
 
 /** No line ticked — every door attempt's default, so a consent is never inherited. */
@@ -1429,9 +1436,15 @@ async function sealLocalPassword(
         imap: {
           ...imap, pass: password, smtpHost, ...(smtp ? { smtpUnsettled: "" } : {}),
           ...(consent.imap ? { allowInsecure: true } : {}),
+          ...(consent.trust?.imap ? { trustCertificate: consent.trust.imap } : {}),
         },
         // The same password on both blocks: one form, one secret, two servers the person named.
-        ...(smtp ? { smtp: { ...smtp, pass: password, ...(consent.smtp ? { allowInsecure: true } : {}) } } : {}),
+        ...(smtp ? {
+          smtp: {
+            ...smtp, pass: password, ...(consent.smtp ? { allowInsecure: true } : {}),
+            ...(consent.trust?.smtp ? { trustCertificate: consent.trust.smtp } : {}),
+          },
+        } : {}),
       }),
     });
     if (res.ok) return null;
@@ -2213,9 +2226,10 @@ async function refused(
     };
     const code = parsed.error?.code ?? null;
     /* The probe can say more than its own sentence does — see {@link probeTlsRefusal}, which is
-       also what the self-hosted door reads, so the two cannot diverge. */
+       also what the self-hosted door reads, so the two cannot diverge. The engine's sentence is
+       English; the catalogue says it in the window's language. */
     const sharper = probeTlsRefusal(parsed.error?.details);
-    const message = sharper?.sentence ?? parsed.error?.message ?? parsed.error?.code;
+    const message = sharper?.sentence ?? refusalCopy(parsed.error) ?? parsed.error?.code;
     if (message) {
       return { problem: message, code, details: parsed.error?.details ?? null, suggestion: sharper?.suggestion ?? null };
     }
@@ -2287,13 +2301,16 @@ export function probeTlsRefusal(details: unknown): DoorRefusal | null {
     `That server's certificate is for ${certHost}, not ${expectedHost}, ` +
     "so we stopped before sending the password.";
 
+  /* The English below is the catalogue's own (`probe_tls_hostname*`); the window says its language. */
+  const said = (english: string): string =>
+    refusalCopy({ code: "mailbox_probe_failed", message: english, details }) ?? english;
   const suggestedHost = str(tls.suggestedHost);
   return suggestedHost
     ? {
-        sentence: `${opening} It answers to ${suggestedHost} — use that as the ${protocol} host.`,
+        sentence: said(`${opening} It answers to ${suggestedHost} — use that as the ${protocol} host.`),
         suggestion: { host: suggestedHost, transport },
       }
-    : { sentence: `${opening} Check the ${protocol} host with your provider.`, suggestion: null };
+    : { sentence: said(`${opening} Check the ${protocol} host with your provider.`), suggestion: null };
 }
 
 /** Whatever was thrown, as something a person can read. Shared with `self-host.ts`; see {@link stalled}. */

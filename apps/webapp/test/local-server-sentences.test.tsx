@@ -107,7 +107,7 @@ describe("the chooser picks the local server's own key beside auth and timeout o
   it("the probe key: the two-minute sentence is the incoming leg's only", async () => {
     const { probeCopyKey } = await import("../app/shell/local-server-host.js");
     expect(probeCopyKey("timeout", true)).toBe("probe_timeout_local");
-    expect(probeCopyKey("timeout", true, "smtp")).toBe("probe_timeout");
+    expect(probeCopyKey("timeout", true, "smtp")).toBe("probe_timeout_smtp");
     expect(probeCopyKey("auth", true, "smtp")).toBe("probe_auth_local");
     expect(probeCopyKey("auth", false)).toBe("probe_auth");
   });

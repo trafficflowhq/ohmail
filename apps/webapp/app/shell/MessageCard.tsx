@@ -86,7 +86,6 @@ export function MessageHeader({
 }) {
   const tm = useTranslations("message");
   const tr = useTranslations("screening");
-  const tfrom = useTranslations("ohbox");
   const senderCheck = useSenderCheckWords();
   const chrome = useMessageChrome();
   /* Null on a one-mailbox account and wherever the shell has no mailbox facts — the gate is inside
@@ -271,7 +270,7 @@ export function MessageHeader({
         {/* THE ADDRESS IS NEVER OFF SCREEN. Under a 420px header the address leaves the sender's
             line (message.css); this line, drawn only then, carries it on its own — whatever the
             recipients block shows, because a display name alone is what a spoofed sender relies on. */}
-        {address ? <p className="msg-from-line">{tfrom("fromAddress", { address })}</p> : null}
+        {address ? <MessageFromLine address={address} /> : null}
         {/* THE IDENTITY FACT, under the address it is about: the name claims a company this address
             does not belong to, or the company's own address went unconfirmed by the provider
             (`MessageDTO.senderCheck`). Not a block notice — nothing is withheld. */}
@@ -298,6 +297,15 @@ export function MessageHeader({
       <AwayMark message={message} now={now} />
     </>
   );
+}
+
+/**
+ * The header's own address line under a 420px header (message.css). The address is `AddressText`, so a
+ * long local part takes the ellipsis rather than breaking mid-name, and the domain stays whole.
+ */
+export function MessageFromLine({ address }: { address: string }) {
+  const t = useTranslations("ohbox");
+  return <p className="msg-from-line">{t.rich("fromAddress", { address, addr: () => <AddressText address={address} /> })}</p>;
 }
 
 /**

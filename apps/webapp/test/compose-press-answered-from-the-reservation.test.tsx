@@ -22,9 +22,9 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 let root: Root | null = null;
 
-function engineOver(reserved: Set<string>, deliveries: string[], pressed: string[] = [], claimed = new Set<string>(), loseFirst = false): OhmailEngine {
+function engineOver(reserved: Set<string>, deliveries: string[], pressed: string[] = [], claimed = new Set<string>(), loseFirst = false, store = new MemoryMirrorStore()): OhmailEngine {
   return new OhmailEngine({
-    store: new MemoryMirrorStore(),
+    store,
     adapter: {
       sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "1", hasMore: false, serverTime: new Date().toISOString() }),
       fetchBody: async () => null,
@@ -55,13 +55,21 @@ const MESSAGE = {
   to: [{ name: null, address: "bo@fake.test" }], mailboxId: "mb-1",
 };
 
-async function mount(engine: OhmailEngine, said: string[], settled: string[]): Promise<() => Promise<void>> {
+const PARENT = {
+  id: "msg-parent", accountId: "a", mailboxId: "mb-1", threadId: null, messageIdHeader: null, subject: "Friday",
+  from: { name: "Bo", address: "bo@fake.test" }, to: [], cc: [], date: new Date().toISOString(), folder: "INBOX",
+  snippet: "", unread: false, hasAttachments: false, attachmentCount: 0, triage: null, labels: [], remoteContent: "none",
+  sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+  updatedAt: new Date().toISOString(),
+};
+
+async function mount(engine: OhmailEngine, said: string[], settled: string[], message: unknown = MESSAGE, opts?: unknown): Promise<() => Promise<void>> {
   const { useMailSend } = await import("../app/shell/mail-send.js");
   let press!: () => Promise<void>;
   const Probe = (): null => {
     const mail = useMailSend(engine as never, ((text: string) => { said.push(text); }) as never,
       ((key: string) => { settled.push(key); }) as never);
-    press = async () => { await act(async () => { (mail.send as unknown as (m: unknown) => void)(MESSAGE); }); };
+    press = async () => { await act(async () => { (mail.send as unknown as (m: unknown, o?: unknown) => void)(message, opts); }); };
     return null;
   };
   const host = document.createElement("div"); document.body.appendChild(host);
@@ -97,6 +105,28 @@ for (const shape of ["a record left standing, the server holding its key", "no r
         ? { said: ["Message sent."], settled: true, deliveries: 1 }
         : { said: ["This message had already been sent. It went once."], settled: true, deliveries: 0 },
     );
+  });
+}
+
+for (const lane of ["reply", "forward"] as const) {
+  it(`the ${lane} lane: a record left standing whose key the server holds says already sent, and delivers nothing`, async () => {
+    const { claimSendLock, sendIdentity, SEND_LOCK_FORMAT } = await import("../app/shell/send-lock.js");
+    const { sendLockOwed, sendKeyOf } = await import("../app/shell/mail-send.js");
+    const m = lane === "reply"
+      ? { ...MESSAGE, inReplyTo: "msg-parent", subject: "Re: Friday" }
+      : { ...MESSAGE, forwardOf: "msg-parent", subject: "Fwd: Friday" };
+    const surface = lane === "reply" ? undefined : { surface: "inline" as const };
+    const reserved = new Set<string>(["K-earlier"]); const deliveries: string[] = [];
+    const store = new MemoryMirrorStore();
+    await store.putLocal("message", "msg-parent", PARENT);
+    const engine = engineOver(reserved, deliveries, [], new Set(), false, store);
+    const id = sendIdentity(m as never, null);
+    claimSendLock({ v: SEND_LOCK_FORMAT, lane: sendKeyOf(m as never, surface?.surface), key: "K-earlier", at: Date.now(), draftId: null, fp: id.fp,
+      ...(id.subjects[0] !== undefined ? { subject: id.subjects[0] } : {}) }, sendLockOwed(engine));
+    const said: string[] = []; const settled: string[] = [];
+    const press = await mount(engine, said, settled, m, surface);
+    await press(); await settleAll();
+    expect({ said, deliveries: deliveries.length }).toEqual({ said: ["This message had already been sent. It went once."], deliveries: 0 });
   });
 }
 

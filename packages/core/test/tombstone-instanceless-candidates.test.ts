@@ -16,7 +16,7 @@ const MAILBOX = "00000000-0000-4000-8000-0000000000b1";
 const OTHER = "00000000-0000-4000-8000-0000000000b2";
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
 
-type Shape = "ordinary" | "orphan" | "junkParked" | "trashParked" | "tombstoned" | "locatorless" | "keepsSecond" | "otherMailbox";
+type Shape = "ordinary" | "orphan" | "junkParked" | "trashParked" | "undone" | "moved" | "tombstoned" | "locatorless" | "keepsSecond" | "otherMailbox";
 
 async function seeded(shapes: Shape[], opts: { strayInOther?: boolean } = {}) {
   const db = await makeTestDb();
@@ -43,6 +43,14 @@ async function seeded(shapes: Shape[], opts: { strayInOther?: boolean } = {}) {
     if (shape === "junkParked") {
       await db.insert(folderState).values({
         messageId: id(n), desiredFolder: "Junk", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled",
+      });
+    }
+    if (shape === "undone" || shape === "moved") {
+      // An Undo of a delete whose move may have landed, marked by its origin: kept until the
+      // organizer has looked. A move and its undo leave the same row without the mark.
+      await db.insert(folderState).values({
+        messageId: id(n), desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending",
+        trashedFrom: shape === "undone" ? "INBOX" : null,
       });
     }
     if (shape === "trashParked") {
@@ -72,6 +80,9 @@ async function seeded(shapes: Shape[], opts: { strayInOther?: boolean } = {}) {
       sql`not exists (select 1 from ${messageInstances} where ${messageInstances.messageId} = ${messages.id})`,
       sql`not exists (select 1 from ${folderState} where ${folderState.messageId} = ${messages.id}
             and ${folderState.reconcileStatus} = 'reconciled' and ${folderState.desiredFolder} <> ${folderState.observedFolder})`,
+      sql`not exists (select 1 from ${folderState} where ${folderState.messageId} = ${messages.id}
+            and ${folderState.reconcileStatus} = 'pending' and ${folderState.lastSetBy} = 'us'
+            and ${folderState.desiredFolder} = ${folderState.observedFolder} and ${folderState.trashedFrom} = ${folderState.desiredFolder})`,
     )).orderBy(asc(messages.id)).limit(limit)).map((r) => r.id);
   const deleted = async () => (await db.select({ id: messages.id }).from(messages)
     .where(sql`${messages.deletedAt} is not null`).orderBy(asc(messages.id))).map((r) => r.id);
@@ -86,22 +97,29 @@ const crowd = (n: number, s: Shape = "ordinary"): Shape[] => Array.from({ length
 describe("the reaper finds the whole scan's victims from the instance-less rows alone", () => {
   it("every shape: only the instance-less, live, located, unparked messages of this mailbox go, in id order", async () => {
     const shapes: Shape[] = [
-      ...crowd(40), ...crowd(5, "orphan"), ...crowd(3, "junkParked"), ...crowd(2, "tombstoned"),
+      ...crowd(40), ...crowd(5, "orphan"), ...crowd(3, "junkParked"), ...crowd(2, "undone"), ...crowd(2, "moved"), ...crowd(2, "tombstoned"),
       ...crowd(2, "locatorless"), ...crowd(2, "keepsSecond"), ...crowd(3, "otherMailbox"),
     ];
-    const { reap, oracle, deleted } = await seeded(shapes, { strayInOther: true });
+    const { reap, oracle, deleted, db } = await seeded(shapes, { strayInOther: true });
     const expected = await oracle(200);
-    expect(expected, "the planted orphans are the oracle's whole answer").toHaveLength(5);
+    expect(expected, "the planted orphans and undone moves are the oracle's whole answer").toHaveLength(7);
+    const pending = await db.select({ id: folderState.messageId, mark: folderState.trashedFrom }).from(folderState)
+      .where(eq(folderState.reconcileStatus, "pending"));
+    const undone = pending.filter((r) => r.mark !== null).map((r) => r.id);
+    const moved = pending.filter((r) => r.mark === null).map((r) => r.id);
+    expect([undone.length, moved.length], "the precondition: two Undos and two undone moves planted").toEqual([2, 2]);
     const before = new Set(await deleted());
 
     expect(await reap(3)).toBe(3);
     const first = (await deleted()).filter((x) => !before.has(x));
     expect(first, "a bounded pass takes the FIRST victims by id, as the scan did").toEqual(expected.slice(0, 3));
 
-    expect(await reap(200)).toBe(2);
+    expect(await reap(200)).toBe(4);
     expect((await deleted()).filter((x) => !before.has(x))).toEqual(expected);
     expect(await reap(200)).toBe(0);
     expect(await oracle(200)).toEqual([]);
+    expect((await deleted()).filter((x) => undone.includes(x)), "the reaper took a letter an Undo kept").toEqual([]);
+    expect(moved.filter((x) => !expected.includes(x)), "the reaper kept a letter only moved and moved back").toEqual([]);
   });
 
   it("across the check's chunks and the limit: the same first victims as the scan, parked rows passed over", async () => {

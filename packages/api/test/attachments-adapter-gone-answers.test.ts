@@ -6,8 +6,8 @@ import * as imapModule from "@trafficflow/core/adapters/imap";
 import {
   AttachmentTooLargeError, DestinationMissingError, EpochUnknownError, ImapAdapter, ImapBoundConfigError, ImapBoundExceeded,
   ImapConnectionClosedError, MessageGoneError, MoveIncompleteError, MoveRefusedError, MoveVerifyError,
-  RawMessageTooLargeError, SameFolderMoveError, StoreRefusedError, StoreUnansweredError, UnsupportedAuthTypeError,
-  WriteDeclinedError,
+  RawMessageTooLargeError, ReadNotAnsweredError, SameFolderMoveError, StoreRefusedError, StoreUnansweredError,
+  UnsupportedAuthTypeError, WriteDeclinedError,
 } from "@trafficflow/core/adapters/imap";
 import type { MimeStructure, NativeLocator, OutboundMessage, SendAdapter } from "@trafficflow/core/mail";
 import { sendService, type AttachmentAdapter, type ServiceContext } from "@trafficflow/services/mail";
@@ -111,6 +111,8 @@ const MODULE_CLASSES: Record<string, { verdict: Verdict; make: () => unknown }> 
   EpochUnknownError: { verdict: "latch", make: () => new EpochUnknownError(STALE) },
   AttachmentTooLargeError: { verdict: "latch", make: () => new AttachmentTooLargeError(STALE, 10, 11) },
   RawMessageTooLargeError: { verdict: "latch", make: () => new RawMessageTooLargeError(STALE, 10, 11) },
+  // A throttled read: the next request dials again rather than queue behind the throttle.
+  ReadNotAnsweredError: { verdict: "latch", make: () => new ReadNotAnsweredError(STALE) },
   ImapConnectionClosedError: { verdict: "latch", make: () => new ImapConnectionClosedError() },
   ImapBoundExceeded: { verdict: "latch", make: () => new ImapBoundExceeded("list_folders", 1, 2) },
   ImapBoundConfigError: { verdict: "latch", make: () => new ImapBoundConfigError("TF_X", "not a number") },

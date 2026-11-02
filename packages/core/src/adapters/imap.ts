@@ -54,7 +54,8 @@ import XOAuth2 from "nodemailer/lib/xoauth2/index.js";
 // barrel would pull the classifier and drafter prompts into every artifact that opens a mailbox.
 import {
   messageFingerprint, normalizeMessageId, normalizeMime, isStorableMessageId,
-  type Change, type NativeLocator, type AdapterPort,
+  fingerprintDedupKey, isFingerprintDedupKey, legacyDedupKey, runtimeDedupKey, verifiesLegacyIdentity,
+  type Change, type NativeLocator, type AdapterPort, type NormalizedMessage,
   // The folder-scan port this class also satisfies. It arrives from the same mail-half entry as
   // the other two ports, which is the point of moving it there: the adapter states what it
   // offers without naming the migration that consumes it.
@@ -66,6 +67,7 @@ import {
   type MimeStructure,
 } from "../mail.js";
 import { structureOf } from "./imap-structure.js";
+import { enumerateSections } from "../mime-sections.js";
 import { googleAppPassword } from "./google-auth.js";
 import {
   WATCHED_FOLDERS, OHMAIL_FOLDERS, DEFAULT_NET_TIMEOUTS, DEFAULT_SENT_SCAN_MESSAGES,
@@ -73,7 +75,7 @@ import {
   DEFAULT_SYNC_BATCH_MAX_MESSAGES, DEFAULT_SYNC_BATCH_MAX_BYTES, DEFAULT_SYNC_BATCH_MAX_FLAGS,
   DEFAULT_PASSIVE_FOLDERS_MAX, PASSIVE_FOLDERS_MAX_NO_STATUS, passiveFolderExclusion,
   imapTlsFloor, smtpTlsFloor, loopbackDialPin, LOCALHOST_DIAL_ADDRESS,
-  type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter,
+  type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter, type TlsPin,
   type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type FolderCursor,
   type BudgetStop, type MessageSite,
   type KnownEntry,
@@ -85,6 +87,7 @@ import {
   type FolderSweepFence, type FolderSweepResult, type FolderDeleteOutcome,
   PASSIVE_EXCLUDED_SPECIAL_USE, type SpecialFolders,
   type FolderKeysAnswer, type UidsHeldAnswer, type MessageIdsGoneAnswer,
+  type LetterAsk, type LetterVerdict, type FindLettersAnswer,
 } from "./imap-types.js";
 // The News pile's resolver (0.22): the adapter is the one place canonical names meet the live
 // tree, so `toServerPath` routes both spellings onto the folder the mailbox actually has.
@@ -221,7 +224,8 @@ function serverRoleFlag(flags: ReadonlySet<string> | undefined): string | null {
  * says `X-GM-EXT-1` and saves each message its SMTP accepted under Sent Mail, so an APPEND after
  * the submission is a second copy in every client reading the folder. Read from the capability,
  * never the host name: a Google Workspace domain is Gmail under any name. Outlook.com and
- * Microsoft 365 file submissions too and announce nothing that says so (an open gap).
+ * Microsoft 365 file submissions too and announce nothing that says so: they accept third-party
+ * IMAP and SMTP only through Microsoft OAuth, so a Microsoft OAuth mailbox is read as one.
  */
 export const FILES_SUBMISSIONS_CAPABILITIES: readonly string[] = ["X-GM-EXT-1"];
 
@@ -312,7 +316,7 @@ export function imapFlowOptions(
   opts: Pick<ImapAdapterOpts, "logger"> = {},
 ): ImapFlowOptions {
   const t: NetTimeouts = { ...DEFAULT_NET_TIMEOUTS, ...(config.timeouts ?? {}) };
-  const floor = imapTlsFloor(config.host, config.secure, config.allowInsecure === true).options;
+  const floor = imapTlsFloor(config.host, config.secure, config.allowInsecure === true, config.tlsPin).options;
   // `localhost` is exempt from the floor by name, so it is dialled at 127.0.0.1 whatever is pinned.
   const pin = loopbackDialPin(config.host) ?? dialPin(config.pin);
   return {
@@ -416,7 +420,7 @@ export function smtpTransportOptions(config: ImapConfig): SMTPTransport.Options 
   const named = loop?.[0] === LOCALHOST_DIAL_ADDRESS;
   return {
     host: pin ? pin[0]! : smtp.host, port: smtp.port,
-    ...smtpTlsFloor(smtp.host, smtp.secure, smtp.allowInsecure === true).options,
+    ...smtpTlsFloor(smtp.host, smtp.secure, smtp.allowInsecure === true, smtp.tlsPin).options,
     // The pinned `localhost` keeps its name for the certificate, as the floor's own pin does.
     ...(named ? { servername: "localhost" } : {}),
     auth: smtp.auth ? googleDialAuth(smtp.host, smtp.auth) : smtp.auth,
@@ -482,6 +486,8 @@ export type SmtpSizeDial = (smtp: {
   auth: SmtpSizeDialAuth;
   /** The stored SMTP plaintext consent, so the ceiling is read the way a send would dial. */
   allowInsecure?: boolean;
+  /** The stored trusted certificate, for the same reason. */
+  tlsPin?: TlsPin;
 }) => Promise<SmtpLoginProof>;
 
 export type SmtpSizeOutcome =
@@ -563,6 +569,8 @@ export interface SmtpSizeCreds {
   auth: unknown;
   /** The `smtp` row's own `meta.insecureConsent`, as the send path reads it. */
   allowInsecure?: boolean;
+  /** The `smtp` row's own `meta.tlsPin`, as the send path reads it. */
+  tlsPin?: TlsPin;
 }
 
 /** The static password auth, or `null` for anything else (an oauth token callback included). */
@@ -651,6 +659,7 @@ export async function learnSmtpMaxSize(input: {
     const proof = await dial({
       host: smtp.host, port: smtp.port, secure: smtp.secure, auth: dialAuth,
       ...(smtp.allowInsecure === true ? { allowInsecure: true } : {}),
+      ...(smtp.tlsPin ? { tlsPin: smtp.tlsPin } : {}),
     });
     const bytes = proof.maxMessageBytes;
     // The same admissibility test the column's readers apply, restated rather than trusted: this
@@ -694,6 +703,8 @@ export async function verifySmtpLogin(
     pin?: readonly string[];
     /** The probe's consent dial only — see {@link smtpTlsFloor}. */
     allowInsecure?: boolean;
+    /** The probe's pinned dial of a server on this computer — see {@link TlsPin}. */
+    tlsPin?: TlsPin;
   },
   timeouts?: Partial<NetTimeouts>,
 ): Promise<SmtpLoginProof> {
@@ -716,6 +727,7 @@ export async function verifySmtpLogin(
       // dials from. The top-level fields above are the IMAP half and it reads none of them.
       ...(smtp.pin ? { pin: smtp.pin } : {}),
       ...(smtp.allowInsecure === true ? { allowInsecure: true } : {}),
+      ...(smtp.tlsPin ? { tlsPin: smtp.tlsPin } : {}),
     },
     ...(timeouts ? { timeouts } : {}),
   });
@@ -808,6 +820,19 @@ export class MessageGoneError extends Error {
   ) {
     super(`message not at source locator ${locator.folder}#${locator.ref}`);
     this.name = "MessageGoneError";
+  }
+}
+
+/**
+ * A read came back empty and the server's UID SEARCH could not say the message is gone (refused, or
+ * the message is there): imapflow answers a FETCH throttled past its retries with nothing and no
+ * error. "Not now", under the code every caller already reads as a throttle; never a gone message.
+ */
+export class ReadNotAnsweredError extends Error {
+  readonly code = "ETHROTTLE";
+  constructor(public locator: NativeLocator) {
+    super(`the mail server gave no answer for ${locator.folder}#${locator.ref}`);
+    this.name = "ReadNotAnsweredError";
   }
 }
 
@@ -1491,6 +1516,19 @@ function sourceBytes(m: FetchMessageObject): Buffer {
 /** An enumeration's UIDs, each once and in order: a flag change on a listed letter is a second row for it. */
 function eachUidOnce(uids: readonly number[]): number[] {
   return [...new Set(uids.filter((u) => u > 0))];
+}
+
+/** A candidate copy's identity, from its own bytes: what {@link provesLetter} compares. */
+interface LetterProof { n: NormalizedMessage; fp: string; runtime: string | null; legacy: string }
+
+/**
+ * Is this copy the asked letter? The keys ingest stores and looks up (`resolveExisting`): the
+ * fingerprint or its runtime-date twin for an `fp1:` row; a legacy key only with its four columns.
+ */
+function provesLetter(p: LetterProof | null, a: LetterAsk): boolean {
+  if (p === null) return false;
+  if (isFingerprintDedupKey(a.dedupKey)) return p.fp === a.dedupKey || p.runtime === a.dedupKey;
+  return p.legacy === a.dedupKey && verifiesLegacyIdentity(a.legacy, p.n);
 }
 
 export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
@@ -2922,6 +2960,122 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       return { k: "read", uidValidity: live, gone };
     } finally {
       lock.release();
+    }
+  }
+
+  /**
+   * See {@link MailboxAdapter.findLetters}. One lock; per group of ids one bounded `UID SEARCH`, the
+   * hits' envelopes, then each candidate's bytes. The sender chooses a Message-ID, so a hit binds
+   * nothing until its own bytes give the stored key.
+   */
+  async findLetters(folder: string, asks: readonly LetterAsk[]): Promise<FindLettersAnswer> {
+    const path = this.toServerPath(folder);
+    let lock: { release(): void };
+    try {
+      lock = await this.bounded(this.client.getMailboxLock(path));
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) throw err;
+      if (!(this.client as unknown as { usable?: boolean }).usable) return { k: "unanswered" };
+      return (err as { serverResponseCode?: unknown } | null)?.serverResponseCode === "NONEXISTENT"
+        ? { k: "absent" } : { k: "unanswered" };
+    }
+    try {
+      const selected = (): MailboxObject | false => {
+        const mb = this.client.mailbox as MailboxObject | false;
+        return mb && mb.path === path ? mb : false;
+      };
+      const mb = selected();
+      if (!mb) return { k: "unanswered" };
+      const epoch = epochOf(mb.uidValidity);
+      if (!epoch.known) return { k: "unanswered" };
+      const undecided: LetterVerdict = { k: "undecided" };
+      const verdicts = new Map<string, LetterVerdict>();
+      // The asks under each id; a letter with no id it can search for cannot be found by one.
+      const byId = new Map<string, LetterAsk[]>();
+      for (const a of asks) {
+        const id = a.messageIdHeader === null ? null : normalizeMessageId(a.messageIdHeader);
+        if (id === null || !/^[\x21-\x7e]+$/.test(id) || /[<>]/.test(id) || !isStorableMessageId(id)) {
+          verdicts.set(a.key, undecided);
+          continue;
+        }
+        byId.set(id, [...(byId.get(id) ?? []), a]);
+      }
+      const ids = [...byId.keys()];
+      const clock = this.readDeadline();
+      const decide = (id: string, v: LetterVerdict): void => { for (const a of byId.get(id)!) verdicts.set(a.key, v); };
+      for (let i = 0; i < ids.length; i += ImapAdapter.BY_MESSAGE_ID_CHUNK) {
+        const chunk = ids.slice(i, i + ImapAdapter.BY_MESSAGE_ID_CHUNK);
+        const found = await this.searchBounded(
+          chunk.length === 1
+            ? { header: { "message-id": chunk[0]! } }
+            : { or: chunk.map((id) => ({ header: { "message-id": id } })) },
+          { uid: true }, folder, clock,
+        );
+        if (!Array.isArray(found)) return { k: "unanswered" };
+        const hits = new Set(found);
+        if (hits.size > 2 * chunk.length) { for (const id of chunk) decide(id, undecided); continue; }
+        const carried = new Map<number, string>();
+        if (hits.size > 0) {
+          const rows = await this.client.fetchAll([...hits].join(","), { uid: true, envelope: true }, { uid: true });
+          for (const r of rows) {
+            if (askedRow(r, hits, "envelope")) carried.set(r.uid, (r.envelope?.messageId ?? "").toLowerCase());
+          }
+          if (carried.size !== hits.size) return { k: "unanswered" };
+        }
+        // A hit naming no Message-ID could be any letter of the group.
+        if ([...carried.values()].includes("")) { for (const id of chunk) decide(id, undecided); continue; }
+        const proofs = new Map<number, LetterProof | null>();
+        for (const id of chunk) {
+          const low = id.toLowerCase();
+          const candidates = [...carried].filter(([, carries]) => carries.includes(low)).map(([uid]) => uid);
+          if (candidates.length === 0) { decide(id, { k: "absent" }); continue; }
+          if (candidates.length > IMAP_CANDIDATE_BODY_PROBES_MAX) { decide(id, undecided); continue; }
+          for (const uid of candidates) if (!proofs.has(uid)) proofs.set(uid, await this.letterProof(uid, folder));
+          for (const a of byId.get(id)!) {
+            const proven = candidates.filter((uid) => provesLetter(proofs.get(uid) ?? null, a));
+            verdicts.set(a.key, proven.length === 1
+              ? { k: "found", locator: { folder: canonicalDestination(folder), ref: makeRef(epoch.value, proven[0]!) } }
+              : undecided);
+          }
+        }
+      }
+      // One copy is one letter: a copy proven for two of them proves neither.
+      const byCopy = new Map<string, string[]>();
+      for (const [key, v] of verdicts) if (v.k === "found") byCopy.set(v.locator.ref, [...(byCopy.get(v.locator.ref) ?? []), key]);
+      for (const keys of byCopy.values()) if (keys.length > 1) for (const key of keys) verdicts.set(key, undecided);
+      const after = selected();
+      if (!after || !sameEpoch(epochOf(after.uidValidity), epoch)) return { k: "unanswered" };
+      return { k: "read", uidValidity: epoch.value, verdicts };
+    } finally {
+      lock.release();
+    }
+  }
+
+  /**
+   * One candidate's identity keys from its own bytes, under the message ceiling as `destinationLook`
+   * reads them; `null` for a body over the ceiling, short or unparseable: it proves nothing.
+   */
+  private async letterProof(uid: number, folder: string): Promise<LetterProof | null> {
+    const probe = await this.bounded(this.client.download(
+      String(uid), undefined, { uid: true, maxBytes: MAX_RAW_MESSAGE_BYTES + 1 },
+    ), folder);
+    if (!probe || !probe.content) return null;
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let over = false;
+    for await (const chunk of probe.content) {
+      const buf = chunk as Buffer;
+      total += buf.length;
+      if (total > MAX_RAW_MESSAGE_BYTES) { over = true; break; }
+      chunks.push(buf);
+    }
+    const declared = probe.meta?.expectedSize;
+    if (over || (typeof declared === "number" && (declared > MAX_RAW_MESSAGE_BYTES || total < declared))) return null;
+    try {
+      const n = await normalizeMime(Buffer.concat(chunks));
+      return { n, fp: fingerprintDedupKey(messageFingerprint(n)), runtime: runtimeDedupKey(n), legacy: legacyDedupKey(n.canonical) };
+    } catch {
+      return null;
     }
   }
 
@@ -5750,6 +5904,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     return { locator, raw };
   }
 
+  /**
+   * THE SERVER'S WORD ON ONE UID, asked after a read came back empty: imapflow answers an absent
+   * UID, a throttled FETCH and one with no mailbox selected alike. `UID SEARCH UID n` does not:
+   * an array is an answer, anything else is none. No selection is a lost connection.
+   */
+  private async uidAnswer(uid: number, folder: string): Promise<"present" | "absent" | "unanswered"> {
+    if (this.connectionGone() || !this.client.mailbox) throw connectionGoneError();
+    const found = await this.searchBounded({ uid: String(uid) }, { uid: true }, folder);
+    return !Array.isArray(found) ? "unanswered" : found.includes(uid) ? "present" : "absent";
+  }
+
   /** The connection is known dead: closed, retired, or the driver's own `usable` cleared. */
   private connectionGone(): boolean {
     return !this.established || this.closing || this.retiredBecause !== null
@@ -5764,6 +5929,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   /** Does this server file every SMTP submission into Sent itself? See {@link FILES_SUBMISSIONS_CAPABILITIES}. */
   private serverFilesSubmissions(): boolean {
+    const auth = this.config.auth;
+    if ("fetchAccessToken" in auth && auth.provider === "microsoft") return true;
     const caps = this.client?.capabilities;
     return FILES_SUBMISSIONS_CAPABILITIES.some((c) => caps?.has?.(c) === true);
   }
@@ -5780,7 +5947,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (!inner) return null;
     const clock = ImapDeadline.in(SERVER_SENT_COPY_FIND_MS, "read_deadline", () => this.now());
     try {
-      const sentCanonical = await this.resolveSentFolder();
+      // Read-only: a look never creates a folder.
+      const sentCanonical = await this.findSentForScan();
+      if (sentCanonical === null) return null;
       for (let look = 0; look <= SERVER_SENT_COPY_LOOK_WAITS_MS.length; look++) {
         if (look > 0) {
           const wait = SERVER_SENT_COPY_LOOK_WAITS_MS[look - 1]!;
@@ -5919,7 +6088,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // one hands one person's file to another.
       this.assertLocatorEpoch(locator);
       const dl = await this.bounded(this.client.download(String(uid), part, { uid: true, chunkSize: PART_CHUNK_BYTES }));
-      if (!dl || !dl.content) throw new MessageGoneError(locator);
+      // Present and empty is a missing section (gone, the door's repair route) only when the
+      // server's tree lacks it; a section the tree declares with bytes is a throttled read.
+      if (!dl || !dl.content) {
+        const answer = await this.uidAnswer(uid, locator.folder);
+        if (answer === "unanswered" || (answer === "present" && await this.declaresSection(uid, part, locator))) {
+          throw new ReadNotAnsweredError(locator);
+        }
+        throw new MessageGoneError(locator);
+      }
       // COUNT AS WE GO, and stop the moment the ceiling is crossed.
       //
       // The check has to be INSIDE the loop. Buffering the whole part and measuring afterwards
@@ -5947,7 +6124,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // cut this read. Gone is the door's re-resolved retry, never a short part handed on as whole.
       if (total >= CUT_PART_READ_FLOOR) {
         const still = await this.bounded(this.client.fetchOne(String(uid), { uid: true }, { uid: true }));
-        if (!still) throw new MessageGoneError(locator, true);
+        const answer = still ? "present" : await this.uidAnswer(uid, locator.folder);
+        if (answer === "unanswered") throw new ReadNotAnsweredError(locator);
+        if (answer === "absent") throw new MessageGoneError(locator, true);
       }
       return {
         contentType: dl.meta?.contentType ?? "application/octet-stream",
@@ -5970,10 +6149,24 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     try {
       this.assertLocatorEpoch(locator);
       const m = await this.bounded(this.client.fetchOne(String(uid), { uid: true, bodyStructure: true }, { uid: true }));
-      return m ? structureOf(m.bodyStructure) ?? null : null;
+      if (m) return structureOf(m.bodyStructure) ?? null;
+      if (await this.uidAnswer(uid, locator.folder) === "absent") return null;
+      throw new ReadNotAnsweredError(locator);
     } finally {
       lock.release();
     }
+  }
+
+  /**
+   * Does the server's tree for a message still at its UID declare `section` with bytes? Asked under
+   * the caller's lock after an empty part read; an empty structure answer is itself not now.
+   */
+  private async declaresSection(uid: number, section: string, locator: NativeLocator): Promise<boolean> {
+    const m = await this.bounded(this.client.fetchOne(String(uid), { uid: true, bodyStructure: true }, { uid: true }));
+    if (!m) throw new ReadNotAnsweredError(locator);
+    const tree = structureOf(m.bodyStructure);
+    const node = tree && enumerateSections(tree)?.find((s) => s.section === section)?.node;
+    return (node?.size ?? 0) > 0;
   }
 
   /**
@@ -6006,7 +6199,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // falsy, which is a property of the driver rather than a thing it promises.
       const dl = await this.bounded(
         this.client.download(String(uid), undefined, { uid: true, maxBytes }));
-      if (!dl || !dl.content) throw new MessageGoneError(locator);
+      if (!dl || !dl.content) {
+        if (await this.uidAnswer(uid, locator.folder) === "absent") throw new MessageGoneError(locator);
+        throw new ReadNotAnsweredError(locator);
+      }
       const chunks: Buffer[] = [];
       let total = 0;
       for await (const chunk of dl.content) {

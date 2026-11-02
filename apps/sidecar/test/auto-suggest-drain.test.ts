@@ -11,7 +11,7 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import {
-  accountSettings, folderState, messages, routingDecisions,
+  accountSettings, folderState, messageInstances, messages, routingDecisions,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
 } from "@trafficflow/db";
 import { AUTO_SUGGEST_BATCH } from "@trafficflow/worker/screener-auto-suggest";
@@ -62,6 +62,9 @@ import { grantOrganizeConsent } from "./_consent.js";
  * And the seventh, which is about the DECLARATION rather than about this door: remove
  * `unmetered: true` from the sidecar's call and the pass returns EMPTY, because an absent gate
  * alone is never permission. That one is asserted from the other side in the worker's pg test.
+ *
+ * And mail the drain finds gone from the server is no candidate: drop `isNull(messages.deletedAt)`
+ * from `selectCandidates` → the letter the drain's reaper just tombstoned is sent to the model.
  */
 
 /** An empty `ohmail/_meta` that accepts this install's claim — `readMailboxLease` requires one. */
@@ -91,11 +94,11 @@ const EMPTY_BATCH: ChangeBatch = {
 };
 
 /**
- * A mailbox with nothing in it.
+ * A mailbox where nothing changes: no arrival, no expunge.
  *
  * The senders under test are seeded straight into the local store, because what is being proved is
  * what the PASS does with a queue and not how a queue comes to exist — the ingest half has its own
- * suites. An empty mailbox also settles the drain in one cycle, so "within one drain" is a claim
+ * suites. A quiet mailbox also settles the drain in one cycle, so "within one drain" is a claim
  * about the pass rather than about how long a backlog took.
  */
 function quietMailbox(): (cfg: ImapConfig) => MailboxAdapter & { leaseIo(): LeaseIo } {
@@ -252,15 +255,27 @@ describe("automatic suggestions at the standalone drain's tail", () => {
     return ((await res.json()) as { since: string | null }).since;
   }
 
+  /** One UID per letter, as a server numbers them. */
+  let nextUid = 100;
+
   /**
    * One held first-contact sender, waiting in the Screener.
    *
    * `createdAt` is OUR ingest stamp and is set explicitly, because that is the clock the watermark
    * is read against — `messages.date` is the sender's own header and the pass deliberately never
    * reads it.
+   *
+   * ON THE SERVER by default: held at arrival in INBOX with a watched instance, as the ingest records
+   * it, and the drain files it. `onServer: false` is a letter filed into the Screener earlier whose
+   * copy is gone: no instance, so the drain's reaper (`tombstoneInstanceless`) tombstones it.
    */
-  async function seedHeld(s: Sidecar, address: string, createdAt: Date): Promise<string> {
+  async function seedHeld(
+    s: Sidecar, address: string, createdAt: Date, o: { onServer?: boolean } = {},
+  ): Promise<string> {
+    const onServer = o.onServer !== false;
+    const folder = onServer ? "INBOX" : SCREENER;
     const dedup = `mid:${address}@auto.test`;
+    const uid = nextUid++;
     const [m] = await s.db.insert(messages).values({
       accountId: s.world.accountId,
       mailboxId: s.world.mailboxId,
@@ -270,17 +285,23 @@ describe("automatic suggestions at the standalone drain's tail", () => {
       subject: `hello from ${address}`,
       fromAddress: address,
       snippet: "a short extract of the mail",
-      nativeLocator: { folder: "INBOX", ref: `1:${address.length}` },
+      nativeLocator: { folder, ref: `1:${uid}` },
       createdAt,
     }).returning();
+    if (onServer) {
+      await s.db.insert(messageInstances).values({
+        accountId: s.world.accountId, mailboxId: s.world.mailboxId, messageId: m!.id,
+        folder, uidvalidity: 1n, uid, isPrimary: true,
+      });
+    }
     await s.db.insert(folderState).values({
       messageId: m!.id,
-      observedFolder: "INBOX",
+      observedFolder: folder,
       desiredFolder: SCREENER,
       // `us`, because the gate is OUR decision: the pipeline held this first-contact sender, which
       // is the same value `ScreenerService` writes when it places one.
       lastSetBy: "us",
-      reconcileStatus: "pending",
+      reconcileStatus: onServer ? "pending" : "reconciled",
     });
     return m!.id;
   }
@@ -328,6 +349,29 @@ describe("automatic suggestions at the standalone drain's tail", () => {
        is what would have left this machine, so this is a claim about bytes and not about which
        function was called. */
     for (const body of sent) expect(body).toContain("a short extract of the mail");
+  }, 120_000);
+
+  it("never sends a letter the drain found gone from the server — the live one beside it still goes", async () => {
+    const m = model();
+    const s = await boot(m);
+    await giveItAModel(s);
+    const since = await armIt(s);
+    const after = new Date(Date.parse(since!) + 60_000);
+    const live = await seedHeld(s, "still-here@example.test", after);
+    const gone = await seedHeld(s, "gone-away@example.test", after, { onServer: false });
+
+    const before = m.completions.length;
+    await s.syncUntilQuiet();
+    const sent = m.completions.slice(before);
+
+    const [row] = await s.db.select({ deletedAt: messages.deletedAt }).from(messages).where(eq(messages.id, gone));
+    expect(row!.deletedAt, "the drain did not find the letter gone, so this case proves nothing").not.toBeNull();
+    expect(sent.join("\n"), "a letter gone from the server was sent to the model")
+      .not.toContain("gone-away@example.test");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("still-here@example.test");
+    expect(sent[0]).toContain("a short extract of the mail");
+    expect((await suggestionsOf(s)).map((r) => r.messageId)).toEqual([live]);
   }, 120_000);
 
   it("does nothing at all — not one request — while the switch is off", async () => {

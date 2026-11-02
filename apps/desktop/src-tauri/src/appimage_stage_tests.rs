@@ -3,8 +3,8 @@
 
 use super::{
     apply, discard, forget_failure, read_failure, read_policy, read_record, read_staged, replace, stage,
-    staged_path, write_failure, write_policy, Failure, PolicyRead, Record, FAILED_FILE, POLICY_FILE,
-    RECORD_FILE,
+    staged_path, write_failure, write_policy, write_setup_copy, Failure, PolicyRead, Record, FAILED_FILE,
+    POLICY_FILE, RECORD_FILE,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -178,4 +178,27 @@ fn the_policy_file_is_read_as_written_and_absent_is_absent() {
     write_policy(&bed.data, "auto").unwrap();
     assert_eq!(read_policy(&bed.data), PolicyRead::Text("auto\n".into()));
     assert_eq!(bed.names().iter().filter(|n| n.ends_with(".part")).count(), 0);
+}
+
+/// The launch's copy of a Windows setup: a fresh `.exe` each time, holding exactly the bytes, and
+/// never written over a file already there.
+#[test]
+fn a_setup_copy_is_a_fresh_exe_holding_the_bytes_and_no_name_is_reused() {
+    let bed = Bed::new("setup-copy");
+    let temp = bed.root.join("Temp");
+    let first = write_setup_copy(&temp, "0.30.28", b"MZ the setup").unwrap();
+    let second = write_setup_copy(&temp, "0.30.28", b"MZ the setup").unwrap();
+    assert_ne!(first, second, "a setup copy reused a name");
+    for copy in [&first, &second] {
+        assert_eq!(copy.parent(), Some(temp.as_path()));
+        assert_eq!(copy.extension().and_then(|e| e.to_str()), Some("exe"));
+        assert_eq!(fs::read(copy).unwrap(), b"MZ the setup");
+    }
+    // A name somebody else holds is left as it was.
+    let held = temp.join("ohmail-0.30.29-setup-1.exe");
+    fs::create_dir_all(&temp).unwrap();
+    fs::write(&held, b"not ours").unwrap();
+    let third = write_setup_copy(&temp, "0.30.29", b"MZ").unwrap();
+    assert_ne!(third, held);
+    assert_eq!(fs::read(&held).unwrap(), b"not ours");
 }

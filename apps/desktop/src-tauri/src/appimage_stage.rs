@@ -1,6 +1,7 @@
 //! Every file the update flow writes, and nothing else: a verified release staged beside the
-//! AppImage it will replace, the record naming that release, Settings' install policy, and an
-//! automatic install that failed, for the next launch to say.
+//! AppImage it will replace (or beside the Windows setup's exe, for the next launch to run), the
+//! record naming that release, Settings' install policy, and an automatic install that failed, for
+//! the next launch to say.
 //!
 //! `updater.rs` writes nothing itself. Each write here goes through a `.part` name, an fsync, a
 //! rename and an fsync of the folder, and the image is only ever replaced by one `rename(2)`: a
@@ -70,6 +71,60 @@ pub fn staged_path(image: &Path) -> Option<PathBuf> {
 pub fn running_image() -> Option<PathBuf> {
     let image = std::env::var_os("APPIMAGE").filter(|value| !value.is_empty())?;
     fs::canonicalize(image).ok()
+}
+
+/// The running Windows copy's exe, resolved: what a release is staged beside there.
+pub fn running_setup() -> Option<PathBuf> {
+    fs::canonicalize(std::env::current_exe().ok()?).ok()
+}
+
+/// A copy of a verified setup for the launch to run, under a fresh `.exe` name in `dir`: created
+/// new (never over a file already there), written and flushed.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub fn write_setup_copy(dir: &Path, version: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    for n in 1..=1000u32 {
+        let path = dir.join(format!("ohmail-{version}-setup-{n}.exe"));
+        let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        };
+        if let Err(err) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+            drop(file);
+            let _ = fs::remove_file(&path);
+            return Err(err);
+        }
+        return Ok(path);
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "no free name for the setup copy"))
+}
+
+/// Start the setup as `tauri-plugin-updater` 2.12.0 starts it (`install_inner`), without its exit.
+#[cfg(windows)]
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub fn run_setup(file: &Path, parameters: &std::ffi::OsStr) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::{
+        w,
+        Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOW},
+    };
+    let encode_wide = |string: &std::ffi::OsStr| string.encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let file = encode_wide(file.as_os_str());
+    let parameters = encode_wide(parameters);
+    let result = unsafe {
+        ShellExecuteW(std::ptr::null_mut(), w!("open"), file.as_ptr(), parameters.as_ptr(), std::ptr::null(), SW_SHOW)
+    };
+    if result as isize <= 32 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub fn run_setup(_: &Path, _: &std::ffi::OsStr) -> io::Result<()> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "a setup runs only on Windows"))
 }
 
 fn not_an_image() -> io::Error {

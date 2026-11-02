@@ -3,14 +3,15 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql as raw } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accounts, accountStorage, changeLog, folderState, mailboxes, messageBodies, messageInstances,
-  messages, routingDecisions, rules,
+  accounts, accountStorage, attachments, changeLog, folderState, mailboxes, messageBodies, messageInstances,
+  messages, messageSearch, routingDecisions, rules, trackerEvents,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
+import { reindexMessageSearch } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { NativeLocator } from "@trafficflow/core";
@@ -91,6 +92,122 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
 
   const repoOf = (): WorkerRepo & { transaction: <T>(fn: (r: WorkerRepo) => Promise<T>) => Promise<T> } =>
     makeDrizzleRepo(db as never) as never;
+
+  /**
+   * A preview, a header block, a file and the search document, as ingest stores them; the
+   * classifier's summary of its words, and a tracker's address from its text.
+   */
+  async function worded(accountId: string, messageId: string): Promise<void> {
+    await db.update(messages).set({ snippet: "the preview of the letter" }).where(eq(messages.id, messageId));
+    await db.update(messageBodies).set({ headers: { subject: ["s"] } }).where(eq(messageBodies.messageId, messageId));
+    await db.insert(attachments).values({ accountId, messageId, filename: "harbour-ledger.pdf", contentType: "application/pdf" });
+    await reindexMessageSearch(db as never, accountId, messageId);
+    await db.insert(routingDecisions).values({
+      accountId, messageId, inputProvenance: "ai", destination: "ohmail/Receipts", status: "auto_applied",
+      rationale: "Order 4411 shipping to the harbour office",
+    });
+    await db.insert(trackerEvents).values({
+      accountId, messageId, kind: "pixel", trackerHost: "t.example.test", url: "https://t.example.test/o/4411?r=anna",
+    });
+  }
+  const wordsOf = async (messageId: string) => ({
+    snippet: (await db.select({ s: messages.snippet }).from(messages).where(eq(messages.id, messageId)))[0]!.s,
+    headers: (await db.select({ h: messageBodies.headers }).from(messageBodies).where(eq(messageBodies.messageId, messageId)))[0]!.h,
+    documents: (await db.select({ id: messageSearch.messageId }).from(messageSearch).where(eq(messageSearch.messageId, messageId))).length,
+    filed: await db.select({ to: routingDecisions.destination, why: routingDecisions.rationale }).from(routingDecisions)
+      .where(eq(routingDecisions.messageId, messageId)),
+    trackers: await db.select({ kind: trackerEvents.kind, host: trackerEvents.trackerHost, url: trackerEvents.url }).from(trackerEvents)
+      .where(eq(trackerEvents.messageId, messageId)),
+  });
+  const KEPT = {
+    snippet: "the preview of the letter", headers: { subject: ["s"] }, documents: 1,
+    filed: [{ to: "ohmail/Receipts", why: "Order 4411 shipping to the harbour office" }],
+    trackers: [{ kind: "pixel", host: "t.example.test", url: "https://t.example.test/o/4411?r=anna" }],
+  };
+  // The header block stays: it is written once, at ingest. How it was filed and who tracked it stay.
+  const SCRUBBED = {
+    snippet: "", headers: { subject: ["s"] }, documents: 0,
+    filed: [{ to: "ohmail/Receipts", why: null }], trackers: [{ kind: "pixel", host: "t.example.test", url: null }],
+  };
+  const identityOf = async (messageId: string) => (await db.select({
+    dedupKey: messages.dedupKey, header: messages.messageIdHeader, from: messages.fromAddress, subject: messages.subject,
+    bodyHash: messages.bodyHash, loc: messages.nativeLocator, threadId: messages.threadId,
+  }).from(messages).where(eq(messages.id, messageId)))[0];
+  const filesOf = async (messageId: string) =>
+    (await db.select({ f: attachments.filename }).from(attachments).where(eq(attachments.messageId, messageId))).map((r) => r.f);
+
+  it("an expunged letter loses its preview and search document; who, when, what about, its headers and files stay", async () => {
+    const { accountId, mailboxId, messageId } = await seed();
+    await worded(accountId, messageId);
+    const before = await identityOf(messageId);
+    const repo = repoOf();
+    await repo.forgetInstanceAt(mailboxId, LOC("INBOX", "1:300"));
+    expect(await repo.transaction((r) => r.tombstoneInstanceless!(accountId, mailboxId, 200))).toBe(1);
+
+    expect(await wordsOf(messageId)).toEqual(SCRUBBED);
+    expect(await identityOf(messageId), "the tombstone lost what identifies the letter").toEqual(before);
+    expect(await filesOf(messageId)).toEqual(["harbour-ledger.pdf"]);
+    const [changes] = await db.select({ n: raw<number>`count(*)::int` }).from(changeLog)
+      .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityId, messageId)));
+    expect(changes!.n, "the scrub wrote a change of its own").toBe(1);
+  });
+
+  it("a letter withheld for space or filed to Junk is scrubbed once found gone; a live Junk husk keeps all three", async () => {
+    const cap = await seed();
+    await worded(cap.accountId, cap.messageId);
+    await db.update(messageBodies).set({ text: "", html: null, withheldReason: "storage_cap" })
+      .where(eq(messageBodies.messageId, cap.messageId));
+    const repo = repoOf();
+    await repo.forgetInstanceAt(cap.mailboxId, LOC("INBOX", "1:300"));
+    await repo.transaction((r) => r.tombstoneInstanceless!(cap.accountId, cap.mailboxId, 200));
+    expect(await wordsOf(cap.messageId), "a husk withheld for space kept its words once gone").toEqual(SCRUBBED);
+    const [first] = await db.select({ w: messageBodies.withheldReason }).from(messageBodies).where(eq(messageBodies.messageId, cap.messageId));
+    expect(first!.w, "the first reason was replaced").toBe("storage_cap");
+
+    const { accountId, mailboxId } = await seed();
+    const junked = await parked(accountId, mailboxId, "Junk", "4:1");
+    await db.insert(messageBodies).values({ messageId: junked, text: "the junk letter's text", html: null });
+    await worded(accountId, junked);
+    await repo.transaction(async (r) => { await r.huskBody!(accountId, junked, "junk_filed"); });
+    expect(await wordsOf(junked), "a live Junk husk lost its words").toEqual(KEPT);
+    const gone = await repo.listJunkParked!(accountId, mailboxId, { folder: "Junk", limit: 10 });
+    expect(await repo.transaction((r) => r.tombstoneJunkParkedGone!(accountId, mailboxId, gone))).toBe(1);
+    expect(await wordsOf(junked), "a Junk husk kept its words once gone").toEqual(SCRUBBED);
+  });
+
+  it("a gone letter that comes back gets its preview and words from the arrival, and nothing else is rewritten", async () => {
+    const { accountId, mailboxId, messageId } = await seed();
+    await worded(accountId, messageId);
+    await db.update(messageBodies).set({ text: "", html: null, withheldReason: "storage_cap" })
+      .where(eq(messageBodies.messageId, messageId));
+    const repo = repoOf();
+    await repo.forgetInstanceAt(mailboxId, LOC("INBOX", "1:300"));
+    await repo.transaction((r) => r.tombstoneInstanceless!(accountId, mailboxId, 200));
+    const arrival = {
+      snippet: "the preview it came back with", searchBody: { bodyText: "lighthouse keeper", source: "text" as const },
+    };
+    await repo.transaction(async (r) => {
+      expect(await r.clearDeletedOnAdopt!(messageId)).toBe(true);
+      await r.refillGone!(messageId, arrival, accountId);
+    });
+    // The summary and the tracker's address are not the arrival's to give back.
+    expect(await wordsOf(messageId)).toEqual({ ...KEPT, snippet: arrival.snippet, filed: SCRUBBED.filed, trackers: SCRUBBED.trackers });
+    const [doc] = await db.select({ source: messageSearch.source, text: raw<string>`${messageSearch.textTsv}::text` })
+      .from(messageSearch).where(eq(messageSearch.messageId, messageId));
+    expect(doc!.source).toBe("text");
+    expect(doc!.text, "the document lacks the arrival's words").toContain("lighthous");
+    expect(doc!.text, "the document lacks the stored file name").toContain("ledger");
+
+    // CONTROL — a letter that kept them (deleted in ohmail, back from Trash) is rewritten nowhere.
+    const other = await seed();
+    await worded(other.accountId, other.messageId);
+    await db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, other.messageId));
+    await repo.transaction(async (r) => {
+      expect(await r.clearDeletedOnAdopt!(other.messageId)).toBe(true);
+      await r.refillGone!(other.messageId, arrival, other.accountId);
+    });
+    expect(await wordsOf(other.messageId)).toEqual(KEPT);
+  });
 
   it("an expunge of the ONLY instance tombstones the row: deleted_at, one delete change, the expunged husk, bytes released", async () => {
     const { accountId, mailboxId, messageId, bytes } = await seed();
@@ -343,6 +460,8 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
       ...await repo.listTrashParked!(other.accountId, other.mailboxId, { folder: trash, limit: 10 }),
     ];
     expect(read).toHaveLength(5);
+    for (const id of [gone, label, redecided]) await worded(accountId, id);
+    expect(await wordsOf(redecided), "a letter parked in Trash lost its words").toEqual(KEPT);
     const kept = async () => (await db.select({ deletedAt: messages.deletedAt, loc: messages.nativeLocator })
       .from(messages).where(eq(messages.id, gone)))[0];
     const before = await kept();
@@ -363,6 +482,9 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
     expect(await kept(), "the deletion time or the locator changed").toEqual(before);
     const changes = await db.select().from(changeLog).where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityId, gone)));
     expect(changes, "a drop wrote a change row").toEqual([]);
+    expect(await wordsOf(gone), "a letter dropped from Trash kept its words").toEqual(SCRUBBED);
+    expect(await wordsOf(label)).toEqual(SCRUBBED);
+    expect(await wordsOf(redecided), "a spared letter lost its words").toEqual(KEPT);
   });
 
   it("trashGonePass asks Trash for a letter parked at a dropped copy by its Message-ID: carried keeps it, carried by none lets it go", async () => {

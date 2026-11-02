@@ -177,3 +177,27 @@ describe("localServerDial census — passed by the desktop's local door only", (
   });
 });
 
+/**
+ * THE ONE CALLER of `loopbackCertificate`, on the `localServerDial` census's terms: trusting a
+ * server's own certificate is the desktop's local door's alone (a gateway such as Proton Mail Bridge
+ * on that computer), never a hosted door's, a self-hosted server's or the phone's.
+ */
+const PASSES_LOOPBACK_TRUST = /(?<![.?\w])loopbackCertificate\s*:|[{,]\s*loopbackCertificate\s*[,}]/g;
+
+describe("loopbackCertificate census — passed by the desktop's local door only", () => {
+  const files = [...srcTreesUnder(ROOT), ...srcTreesUnder(join(REPO, "packages"))];
+  const passes = (code: string): number => [...code.matchAll(PASSES_LOOPBACK_TRUST)].length;
+
+  it("exactly one file passes it, once, and it is the local door", () => {
+    const probe = files.find((f) => f.file === "packages/api/src/imap-probe.ts");
+    expect(probe?.code, "the probe source is swept").toMatch(/\bloopbackCertificate\?:/);
+    expect(files.filter((f) => passes(f.code) > 0).map((f) => `${f.file} x${passes(f.code)}`)).toEqual([`${LOCAL_DOOR} x1`]);
+  });
+
+  it("refuses a planted second caller and admits the declaration and a read (positive control)", () => {
+    expect(passes("makeSmtpProbe(deps, { loopbackCertificate: read })")).toBe(1);
+    expect(passes("interface X { loopbackCertificate?: Reader }")).toBe(0);
+    expect(passes("const r = opts.loopbackCertificate;")).toBe(0);
+  });
+});
+

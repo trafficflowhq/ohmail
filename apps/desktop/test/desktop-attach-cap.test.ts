@@ -10,7 +10,8 @@ import {
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { CLOUD_URL } from "../src/doors.js";
 import {
-  DESKTOP_WINDOW_SEND_MAX_TOTAL_BYTES, desktopSendSurface, stagesAttachments,
+  DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES, DESKTOP_WINDOW_SEND_MAX_TOTAL_BYTES, desktopSendSurface,
+  stagesAttachments,
 } from "../src/desktop-send-surface.js";
 
 /**
@@ -32,6 +33,7 @@ import {
  *  · make `composeAttachCap` read an unmeasured SIZE as 3 MB again → the 4 MB cases go red;
  *  · declare the standalone door `null` again → the standalone and binding cases go red;
  *  · stage on every cloud door → the self-hosted and paired staging cases go red;
+ *  · let the self-hosted door declare nothing again → the self-hosted 32 MiB case goes red;
  *  · raise the window's ceiling past the outbox door's bound → the fit case goes red;
  *  · stop forwarding `smtpMaxSizeBytes` in `readMailboxFacts` → the probe cases go red.
  */
@@ -76,11 +78,20 @@ describe("each door declares what one send from this window carries", () => {
       .toBe(Math.min(DESKTOP_WINDOW_SEND_MAX_TOTAL_BYTES, COMPOSE_ATTACH_STAGED_SURFACE_BYTES));
   });
 
-  it("the self-hosted and paired doors declare nothing: the strict inline constant, as before", () => {
-    expect(desktopSendSurface(selfhost)).toBeUndefined();
+  it("the self-hosted door: the server's own 32 MiB, not the Cloud web's 3 MB inline cap", () => {
+    // Every self-hosted server takes 32 MiB of attachments inline (`SELF_HOST_SEND_MAX_TOTAL_BYTES`).
+    expect(desktopSendSurface(selfhost)).toBe(DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES);
+    expect(DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES).toBe(32 * MIB);
+    expect(composeAttachCap(70 * MIB, desktopSendSurface(selfhost))).toBe(32 * MIB);
+    expect(composeAttachCapBinding(70 * MIB, desktopSendSurface(selfhost))).toBe("surface");
+    expect(composeAttachCap(25 * MIB, desktopSendSurface(selfhost))).toBe(composeAttachBudgetFor(25 * MIB));
+    expect(composeAttachCap(25 * MIB, desktopSendSurface(selfhost))).toBeGreaterThan(4 * MIB);
+  });
+
+  it("the paired door and an unknown one declare nothing: the strict inline constant, as before", () => {
     expect(desktopSendSurface(paired)).toBeUndefined();
     expect(desktopSendSurface(null)).toBeUndefined();
-    expect(composeAttachCap(25 * MIB, desktopSendSurface(selfhost))).toBe(COMPOSE_ATTACH_MAX_TOTAL_BYTES);
+    expect(composeAttachCap(25 * MIB, desktopSendSurface(paired))).toBe(COMPOSE_ATTACH_MAX_TOTAL_BYTES);
   });
 
   it("only the hosted door stages to the account's storage", () => {

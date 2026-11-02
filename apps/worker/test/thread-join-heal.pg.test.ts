@@ -47,11 +47,11 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
 
   interface Seeded { accountId: string; mailboxId: string }
 
-  async function seedAccount(): Promise<Seeded> {
+  async function seedAccount(sentFolder: string | null = null): Promise<Seeded> {
     const accountId = randomUUID();
     await db.insert(accounts).values({ id: accountId, name: `join-${accountId.slice(0, 8)}` });
     const [mb] = await db.insert(mailboxes).values({
-      accountId, provider: "imap", address: OWNER,
+      accountId, provider: "imap", address: OWNER, sentFolder,
     }).returning({ id: mailboxes.id });
     return { accountId, mailboxId: mb!.id };
   }
@@ -71,9 +71,9 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
    * wrote to or a sender's claim about who else is involved. Seeding every row under INBOX would
    * make the account's own messages read as inbound and starve every join in this file.
    */
-  function locatorFor(from: string): { folder: string; ref: string } {
+  function locatorFor(from: string, sent = "Sent"): { folder: string; ref: string } {
     return {
-      folder: from === OWNER ? "Sent" : "INBOX",
+      folder: from === OWNER ? sent : "INBOX",
       ref: `1:${Math.floor(Math.random() * 1e6)}`,
     };
   }
@@ -82,13 +82,15 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
     subject: string; date: Date; from: string; to?: string[]; cc?: string[];
     /** `messages.auth_verdict` as the ingest wrote it. Absent ⇒ NULL, "nobody asked". */
     authVerdict?: string;
+    /** The folder the account's own letters are filed in. Default `Sent`. */
+    sent?: string;
   }): Promise<string> {
     const [m] = await db.insert(messages).values({
       accountId: s.accountId, mailboxId: s.mailboxId, threadId,
       messageIdHeader: `${randomUUID()}@seed.example`,
       bodyHash: randomUUID(), dedupKey: randomUUID(),
       subject: over.subject, fromAddress: over.from, date: over.date,
-      nativeLocator: locatorFor(over.from),
+      nativeLocator: locatorFor(over.from, over.sent),
       toAddresses: (over.to ?? []).map((address) => ({ name: null, address })),
       ccAddresses: (over.cc ?? []).map((address) => ({ name: null, address })),
       ...(over.authVerdict ? { authVerdict: over.authVerdict } : {}),
@@ -342,6 +344,19 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
     expect(r.merged).toBe(1);
     expect(r.refusedUncorroborated).toBe(0);
   });
+
+  for (const recorded of [true, false]) {
+    it(`own letters in a localized Sent ('Envoyés') ${recorded ? "the attach recorded are the account's" : "nobody recorded read as received (control)"}`, async () => {
+      const s = await seedAccount(recorded ? "Envoyés" : null);
+      const colleague = "colleague@own.example";
+      const a = await seedThread(s, "Zahlung Projekt", new Date(t0));
+      await seedMessage(s, a, { subject: "Zahlung Projekt", date: new Date(t0), from: OWNER, to: [colleague], sent: "Envoyés" });
+      const b = await seedThread(s, "Zahlung Projekt", new Date(t0 + DAY));
+      await seedMessage(s, b, { subject: "AW: Zahlung Projekt", date: new Date(t0 + DAY), from: colleague, to: [OWNER] });
+      const r = await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId });
+      expect(r.merged).toBe(recorded ? 1 : 0);
+    });
+  }
 
   /**
    * ═══ A FORGED `From` CANNOT JOIN TWO CONVERSATIONS ════════════════════════════════════════

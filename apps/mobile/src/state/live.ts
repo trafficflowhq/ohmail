@@ -2936,13 +2936,19 @@ export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnr
   | "replyForwardOriginalUnavailable" | "replyForwardPartsChanged" | "replyForwardPartsUnsupported" | "replyFailed" | "replySentElsewhere"
   | "replyDeletedElsewhere"
   | "replyChangedElsewhere" | "replyChangedElsewhereUnsaved"
-  | "replyTooLong" | "replyTooLarge";
+  | "replyTooLong" | "replyTooLarge" | "unsavedSendAlreadyWent" | "replyUnverifiedAgain";
 
 /** The draft limit as the phone names it — `replyTooLong`, `composeTooLong` and the keep notes. */
 export const draftLimitLabel = (): string => sizeLabel(DRAFT_BODY_MAX_BYTES);
 
 export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
   const code = r?.error?.code;
+  /* The same words under a new key inside the server's content claim: only a first send the server
+     calls sent (or names no status for) went; a pending or unverified one may still not go. */
+  if (code === "duplicate_send") {
+    const first = firstSendOf(r?.error?.details);
+    return first === undefined || first === "sent" ? "unsavedSendAlreadyWent" : "replyUnverifiedAgain";
+  }
   return code === "send_not_secured" ? "replyNotSecured"
     : code === "send_login_refused" ? "replyLoginRefused"
       : code === "send_unreachable" ? "replyUnreachable"
@@ -2972,7 +2978,16 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
             : kind === "replyChangedElsewhereUnsaved" ? refuse("replyChangedElsewhereUnsaved")
               : kind === "replyTooLong" ? refuse("replyTooLong", draftLimitLabel())
                 : kind === "replyTooLarge" ? refuse("replyTooLarge")
-                  : refuse("replyFailed");
+                  : kind === "unsavedSendAlreadyWent" ? refuse("unsavedSendAlreadyWent")
+                    : kind === "replyUnverifiedAgain" ? refuse("replyUnverifiedAgain")
+                      : refuse("replyFailed");
+}
+
+/** `details.firstSend.status` of a refusal, when it names one. */
+function firstSendOf(details: unknown): string | undefined {
+  const fs = details !== null && typeof details === "object" ? (details as { firstSend?: unknown }).firstSend : undefined;
+  const status = fs !== null && typeof fs === "object" ? (fs as { status?: unknown }).status : undefined;
+  return typeof status === "string" ? status : undefined;
 }
 
 /**
@@ -5462,14 +5477,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * queued intent die together (an app kill sends nothing the reader was not shown), and the
    * locked Send keeps a fresh-key duplicate impossible while the reconnect flush retries.
    */
+  /** The answers to presses that resumed a standing key (`dispatchSend`), read by `sent`. */
+  const resumedAnswers = new WeakSet<MutationResult>();
   const sent = async (
     p: Promise<MutationResult>,
     sentToast: RefusalArg,
     earlierWentToast: RefusalArg,
     /** `false` for a caller that says a refused send in its own place (the Drafts card). */
     sayRefusals = true,
-    /** What a confirmation answered from an earlier send of the same message says (Send again). */
-    alreadyWentToast: RefusalArg = sentToast,
+    /** What a confirmation answered from an earlier send says; unset, a resumed press says it was already sent. */
+    alreadyWentToast?: RefusalArg,
     /** A bound row changed elsewhere: keeps the words as a new row, or answers `null` when it could not. */
     keepChanged?: () => Promise<{ draftId: string | null; revision?: string } | null>,
   ): Promise<SendResult> => {
@@ -5511,7 +5528,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const earlierWent = outcome !== "queued" && earlierVersionWent(settled);
     const alreadyWent = outcome === "sent" && !earlierWent && settled?.firstSend !== undefined;
     /* A delivered letter whose Sent copy could not be written says so, in one more line. */
-    const confirmed = earlierWent ? earlierWentToast : alreadyWent ? alreadyWentToast : sentToast;
+    /* A press's own key answered late is its own delivery; only a press that resumed a standing key was answered by another. */
+    const resumed = first !== null && resumedAnswers.has(first);
+    const confirmed = earlierWent ? earlierWentToast
+      : alreadyWent ? (alreadyWentToast ?? (resumed ? Copy.unsavedSendAlreadyWent : sentToast)) : sentToast;
     const sentSay = settled?.sentCopy === "missing" ? refuse("sentCopyMissing", confirmed) : confirmed;
     const said = first ? done.get(first.key) : undefined;
     if (said) toast(said.say, said.opts);
@@ -5572,7 +5592,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        Send (or back), take the resume below: the latest press decides, under the same key. */
     if (standing !== undefined && networkNow() === "offline" && !sendWireDiffers(standing.mutation, m)
       && sameIntent(standing.andDone ?? null, andDone)) {
-      return Promise.resolve({ id: standing.id, key: standing.key, status: "queued", seq: null });
+      const joined: MutationResult = { id: standing.id, key: standing.key, status: "queued", seq: null };
+      resumedAnswers.add(joined);
+      return Promise.resolve(joined);
     }
     return engine.mutate(m, {
       ...(standing === undefined ? {} : { key: standing.key }),
@@ -5581,6 +5603,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }).then((r) => {
       noteQueuedSend(engine, r, m);
       noteReply(engine, r.key, m);
+      if (standing !== undefined) resumedAnswers.add(r);
       return r;
     });
   };
@@ -5715,7 +5738,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // arrangement nobody made.
       Copy.replyEarlierWent,
       true,
-      sentSay,
+      // A scheduled reply answered from the reservation keeps its appointment sentence.
+      sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : undefined,
       draftId === null ? undefined : keepChangedWords(draftId, {
         mailboxId: m.mailboxId, inReplyToMessageId: messageId, threadId: m.threadId ?? null,
         subject: replySubject(m.subject), body: text, to: env ? env.to : [m.from], cc: env ? env.cc : [], bcc: [],
@@ -6070,7 +6094,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       Copy.forwarded,
       Copy.forwardEarlierWent,
       true,
-      Copy.forwarded,
+      undefined,
       draftId === null ? undefined : keepChangedWords(draftId, {
         mailboxId: m.mailboxId, forwardOfMessageId: messageId, subject: forwardSubject(m.subject), body, to, cc: [], bcc: [],
         ...(opts.forwardParts !== undefined ? { forwardParts: [...opts.forwardParts] } : {}),
@@ -6135,7 +6159,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       sentSay,
       Copy.composeEarlierWent,
       true,
-      sentSay,
+      sendAt ? sentSay : undefined,
       draftId === null ? undefined : keepChangedWords(draftId, {
         mailboxId, subject: subject.trim(), body: text, to, cc: copies.cc, bcc: copies.bcc,
       }, waited),

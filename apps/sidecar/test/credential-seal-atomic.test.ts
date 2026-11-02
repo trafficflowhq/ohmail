@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { loadSealedTokens, readSessionMarker, sealTokens } from "../src/cloud-auth.js";
+import { loadSealedTokens, openSealedTokens, readSessionMarker, sealTokens } from "../src/cloud-auth.js";
+import { removeAtomic } from "../src/fs-atomic.js";
 
 /**
  * THE SEAL IS THE PREVIOUS COMPLETE FILE OR THE NEW COMPLETE FILE — never a prefix of either.
@@ -39,6 +40,10 @@ vi.mock("node:fs", async (importOriginal) => {
       }
       ops.push(`flush ${path}`);
       actual.fsyncSync(fd);
+    },
+    unlinkSync: (path: import("node:fs").PathLike): void => {
+      actual.unlinkSync(path);
+      ops.push(`unlink ${String(path)}`);
     },
     renameSync: (from: import("node:fs").PathLike, to: import("node:fs").PathLike): void => {
       if (renameFaultFor !== null && String(to) === renameFaultFor) {
@@ -131,5 +136,36 @@ describe("the token seal is written atomically", () => {
     expect(readdirSync(dir).sort(), "the staging file is cleaned up").toEqual(["cloud-session.marker", "cloud-tokens.seal"]);
     expect(readSessionMarker(dir, null), "a seal that did not land names no new family")
       .toBe(createHash("sha256").update("old-refresh", "utf8").digest("base64url"));
+  });
+
+  // Windows cannot flush a directory, so there the unlink stands alone.
+  it.skipIf(process.platform === "win32")("a removed seal stays removed: its directory is flushed after the unlink", async () => {
+    const dir = tmp();
+    const path = join(dir, "cloud-tokens.seal");
+    await sealTokens(path, new StaticKeyProvider({ 1: aKek() }), { accessToken: "a", refreshToken: "r" });
+    ops.length = 0;
+    removeAtomic(path);
+    expect(existsSync(path)).toBe(false);
+    expect(ops, "an unflushed unlink comes back after a power cut")
+      .toEqual([`flush ${path}`, `unlink ${path}`, `flush ${dir}`]);
+
+    // Already gone: nothing to unlink, and the directory is flushed anyway (an earlier removal may not be).
+    ops.length = 0;
+    removeAtomic(path);
+    expect(ops).toEqual([`flush ${dir}`]);
+  });
+
+  it("a seal an unflushed unlink brings back holds no session, on every platform", async () => {
+    const dir = tmp();
+    const path = join(dir, "cloud-tokens.seal");
+    const kp = new StaticKeyProvider({ 1: aKek() });
+    await sealTokens(path, kp, { accessToken: "a", refreshToken: "r" });
+    // A second name for the same file stands for the entry a power cut puts back (Windows flushes no directory).
+    const ghost = join(dir, "returned.seal");
+    linkSync(path, ghost);
+    removeAtomic(path);
+    expect(existsSync(path)).toBe(false);
+    expect(readFileSync(ghost, "utf8"), "the seal is emptied and flushed before the unlink").toBe("");
+    expect((await openSealedTokens(ghost, kp, null)).kind).toBe("unreadable");
   });
 });

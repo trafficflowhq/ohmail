@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -8,6 +8,19 @@ import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
 import type { FirstRunHost, FirstRunProbeOk } from "../app/shell/first-run-host";
 import type { OnboardingFacts } from "../app/shell/onboarding";
+
+/** The hosted door's probe, as `POST /mailboxes/probe` answers it; every body it was sent. */
+const mockProbe = vi.fn();
+vi.mock("../app/api-client", async () => {
+  const actual = await vi.importActual<typeof import("../app/api-client")>("../app/api-client");
+  return {
+    ...actual,
+    aiSettings: { get: async () => ({ aiEnabled: true, aiAnswered: true }), set: async () => ({ aiEnabled: true }) },
+    consent: { completeOnboarding: async () => undefined },
+    mailboxes: { ...actual.mailboxes, probe: (...args: unknown[]) => mockProbe(...args), create: async () => ({ id: "m" }) },
+  };
+});
+vi.mock("../app/hello", () => ({ SELF_HOST_BUILD: false, serverHello: async () => null }));
 
 /**
  * ═══ "TEST CONNECTION" SAYS WHAT CONNECT WILL DO — BOTH SERVERS ════════════════════════════
@@ -159,5 +172,50 @@ describe("the connection test states both legs", () => {
 
     expect(rig.text(), "the incoming verdict did not render at all").toContain("imap.example.test answered");
     expect(rig.text(), "a verdict was invented for a leg nobody tested").not.toContain("Sending:");
+  });
+});
+
+/**
+ * ON CLOUD THE TEST ASKS BOTH SERVERS TOO. The hosted door's host sent only the incoming block, so a
+ * green test promised a connect the outgoing server was about to refuse. It sends the outgoing
+ * block the connect sends, without its password, and the stage says the answer.
+ */
+describe("the hosted door's connection test", () => {
+  it("sends the outgoing server and renders its verdict", async () => {
+    const { useCloudFirstRun } = await import("../app/(product)/mailbox/useCloudFirstRun");
+    mockProbe.mockResolvedValue({
+      ok: true, host: "imap.gmail.com", user: "pat@gmail.test", folders: 4,
+      sending: { state: "refused", host: "smtp.gmail.com", reason: "auth" },
+    });
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const root = createRoot(el);
+    roots.push(root);
+    const Stage = () => {
+      const host = useCloudFirstRun(false);
+      return host ? h(FirstRun, {
+        host, facts: { ...facts, door: "cloud", ai: "on" }, add: true,
+        onRefresh: () => {}, onLeave: () => {}, pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: null,
+      }) : null;
+    };
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages, timeZone: "UTC", children: h(KeymapProvider, { children: h(Stage) }),
+      }));
+    });
+    for (const [suffix, value] of [["address", "pat@gmail.test"], ["pass", "app-password-fixture"]]) {
+      const input = el.querySelector<HTMLInputElement>(`input[id$='-${suffix}']`)!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    const test = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === messages.onboarding.test)!;
+    await act(async () => { test.click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
+
+    const sent = mockProbe.mock.calls[0]![0] as { smtp?: Record<string, unknown> };
+    expect(sent.smtp, "the outgoing server was not asked about").toMatchObject({ host: "smtp.gmail.com" });
+    expect(sent.smtp, "the password travelled in the outgoing block").not.toHaveProperty("pass");
+    expect(el.textContent).toContain(messages.onboarding.sendingRefusedAuth.replace("{host}", "smtp.gmail.com"));
   });
 });

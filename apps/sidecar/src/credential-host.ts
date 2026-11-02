@@ -56,6 +56,25 @@ export function seedConsentFor(
 }
 
 /**
+ * THE CERTIFICATE THE SEED MAY TRUST on its settings' server — the one its own credential row
+ * records (`meta.tlsPin`, written only by a pinned probe), for exactly the endpoint the settings
+ * name, on {@link seedConsentFor}'s rule: an edited server loses the pin rather than inheriting it.
+ */
+export function seedPinFor(
+  meta: unknown, dial: { host: string; port: number; secure: boolean },
+): { sha256: string; pem: string } | undefined {
+  if (typeof meta !== "object" || meta === null) return undefined;
+  const m = meta as { port?: unknown; secure?: unknown; tlsPin?: { sha256?: unknown; pem?: unknown } | null };
+  const host = sealedHost(meta);
+  if (host === null || host !== normalizeHost(dial.host) || m.port !== dial.port || m.secure !== dial.secure) return undefined;
+  const pin = m.tlsPin;
+  // Node's `fingerprint256` form, and a certificate; a cleared pin is `null`.
+  return typeof pin?.sha256 === "string" && /^[0-9A-F]{2}(:[0-9A-F]{2}){31}$/.test(pin.sha256)
+    && typeof pin.pem === "string" && pin.pem.includes("BEGIN CERTIFICATE")
+    ? { sha256: pin.sha256, pem: pin.pem } : undefined;
+}
+
+/**
  * Was this credential sealed for a DIFFERENT server than the one the engine is configured for? The
  * one-sided default is the whole care: `false` — usable — whenever the comparison cannot be made.
  * The row records no host (a credential predating the probe would otherwise be refused on every

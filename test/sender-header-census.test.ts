@@ -141,12 +141,12 @@ const CLASSIFIED: Record<string, Row> = {
     why: "`dsnVerdict` collects candidate ids for a bounce; the caller matches them against the account's own post-consent Sent copies only (`citesOwnWriting`), and the report's own id is dropped",
   },
   "packages/core/src/adapters/imap.ts": {
-    terms: ["inReplyTo", "message-id", "messageIdHeader", "messageIdKey", "references"], classes: ["display", "presence-keeps"],
-    why: "the adapter reads the headers off the wire and hands them on parsed; a UIDVALIDITY reset proves a remembered letter gone only when its old locator is gone AND no held message carries its id",
+    terms: ["inReplyTo", "message-id", "messageIdHeader", "messageIdKey", "references"], classes: ["display", "presence-keeps", "dedup-content"],
+    why: "the adapter reads the headers off the wire and hands them on parsed; a UIDVALIDITY reset proves a remembered letter gone only when its old locator is gone AND no held message carries its id; `findLetters` lets an id only nominate a Trash copy, bound only when its own bytes give the stored dedup key",
   },
   "packages/core/src/adapters/imap-types.ts": {
-    terms: ["inReplyTo", "references"], classes: ["display"],
-    why: "the envelope shape the adapter fills",
+    terms: ["inReplyTo", "messageIdHeader", "references"], classes: ["display", "dedup-content"],
+    why: "the envelope shape the adapter fills, and the stored identity `findLetters` asks a copy to prove",
   },
   "packages/core/src/adapters/drizzle-repo.ts": {
     terms: ["ccAddresses", "messageIdHeader", "references", "toAddresses"],

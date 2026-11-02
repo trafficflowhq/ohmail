@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -801,6 +801,48 @@ describe("useMailSend refuses on its own, not only via the button", () => {
       p.stateOf("m1").accepted,
       "a committed reservation stopped being remembered, so the surface un-said it",
     ).toBe(true);
+  });
+
+  it("a queued send keeps its retry timer when the hook's callbacks change, and retries with no online event", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await unmount();
+      const { useMailSend } = await import("../app/shell/mail-send.js");
+      const said: string[] = []; const keys: string[] = []; let flushes = 0;
+      const engine = {
+        mutate: async () => ({ id: "i", key: "k1", seq: 1, status: "queued", error: { code: "network", retryable: true } }),
+        read: () => ({ get: () => message, list: () => [], entries: () => [], version: () => 1 }),
+        flushPending: async () => { flushes += 1; keys.push("k1"); return [{ id: "i", key: "k1", seq: 1, status: "confirmed" }]; },
+        pendingMutations: () => [], subscribe: () => () => {}, hasLateResults: () => false,
+      };
+      let send!: (m: Mut) => void;
+      const Probe = ({ toast }: { toast: (m: string) => void }): null => {
+        const api = useMailSend(engine as never, toast as never, (() => {}) as never);
+        send = api.send as unknown as (m: Mut) => void;
+        return null;
+      };
+      // A new toast each render is a new `absorb`, so a new `flush`.
+      const render = async (): Promise<void> => {
+        await act(async () => {
+          root!.render(h(NextIntlClientProvider, {
+            locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe, { toast: (m: string) => { said.push(m); } }),
+          }));
+        });
+      };
+      const tick = async (ms: number): Promise<void> => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
+      host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+      await render();
+      await act(async () => { send(reply("Danke!")); });
+      await tick(0); await tick(0);
+      await render();
+      await tick(6_000);
+      expect({ flushes, keys, said }).toEqual({ flushes: 1, keys: ["k1"], said: ["Reply sent."] });
+      await unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("an empty reply body dispatches NOTHING, even called directly", async () => {

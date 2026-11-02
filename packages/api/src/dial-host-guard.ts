@@ -1,6 +1,7 @@
 import {
   MailboxSideRefusal, ServiceError, privateNetworkScope, type HostResolver,
 } from "@trafficflow/services/mail";
+import type { TlsPin } from "@trafficflow/core/adapters/imap";
 import { pinFrom, probeHostGuardFor } from "./imap-probe.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -64,6 +65,8 @@ function hostRefusal(err: unknown, transport: "imap" | "smtp"): unknown {
     "mailbox_host_refused", 502,
     `This mailbox's ${leg} server is at an address that is not one this service will connect to. `
       + "Check the server settings in Settings → Mailboxes.",
+    // Which leg, and which of the two refusals under this code: a client words it from these.
+    { transport, why: "address" },
   );
 }
 
@@ -97,8 +100,11 @@ export function portForDial(port: number | undefined | PortAsStored): number | u
   return typeof port === "object" ? (port.asStored as number) : port;
 }
 
-/** One stored leg of a mailbox: where it dials, its TLS mode and its own plaintext consent. */
-interface DialLeg { host: string; port: number; secure: boolean; consent: boolean }
+/**
+ * One stored leg of a mailbox: where it dials, its TLS mode, its own plaintext consent, and the
+ * certificate its row trusts for a server on this computer (the floor honours it on loopback only).
+ */
+interface DialLeg { host: string; port: number; secure: boolean; consent: boolean; tlsPin?: TlsPin }
 
 /**
  * THE FIELDS ONE LEG DIALS WITH, and the only place `allowInsecure` is set for a stored consent.
@@ -108,12 +114,13 @@ interface DialLeg { host: string; port: number; secure: boolean; consent: boolea
  */
 export async function dialFieldsFor(
   deps: ApiDeps, leg: DialLeg, transport: "imap" | "smtp",
-): Promise<{ pin?: readonly string[]; allowInsecure?: true }> {
+): Promise<{ pin?: readonly string[]; allowInsecure?: true; tlsPin?: TlsPin }> {
   const pin = await clearedFor(deps, leg.host, leg.port, transport);
-  if (!leg.consent || leg.secure) return pin ? { pin } : {};
+  const trusted = leg.tlsPin ? { tlsPin: leg.tlsPin } : {};
+  if (!leg.consent || leg.secure) return pin ? { pin, ...trusted } : trusted;
   // The enforcing guard clears public addresses only, so a pin from it is never a private one.
   if (pin) throw new PlaintextDialRefused(transport);
-  return { pin: await plaintextDialPin(deps.services?.probeScopeResolver, leg.host, transport), allowInsecure: true };
+  return { pin: await plaintextDialPin(deps.services?.probeScopeResolver, leg.host, transport), allowInsecure: true, ...trusted };
 }
 
 /**
@@ -139,6 +146,7 @@ export class PlaintextDialRefused extends MailboxSideRefusal {
       "mailbox_host_refused", 502,
       `This mailbox's ${transport === "imap" ? "incoming (IMAP)" : "outgoing (SMTP)"} server's address `
         + "is no longer on your own network, so ohmail will not send your password to it unencrypted.",
+      { transport, why: "plaintext" },
     );
     this.name = "PlaintextDialRefused";
   }

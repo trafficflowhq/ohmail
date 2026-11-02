@@ -94,12 +94,22 @@ export interface EngineStoreDatabase {
  */
 export function expoEngineExecutor(db: EngineStoreDatabase): PhoneSqlExecutor {
   let tail: Promise<unknown> = Promise.resolve();
-  const serial = <T>(job: () => Promise<T>): Promise<T> => {
+  const queue = <T>(job: () => Promise<T>): Promise<T> => {
     const next = tail.then(job, job);
     // Swallowed on the CHAIN only: one statement's failure must not reject the next caller's turn.
     tail = next.catch(() => undefined);
     return next;
   };
+  /* THE CLOSE TAKES ITS TURN, and nothing after it reaches the handle: expo-sqlite aborts the app
+     on a statement prepared on a closed database, or a close under one still running. */
+  let closed = false;
+  let closing: Promise<void> | null = null;
+  const serial = <T>(job: () => Promise<T>): Promise<T> => queue(async () => {
+    if (closed) {
+      throw new StoreFault("engine_store_closed", `"${ENGINE_DB_FILE}" is closed, so the statement was not run`);
+    }
+    return job();
+  });
 
   /** Prepare, use, finalize — a statement left unfinalized holds a cursor open on the file. */
   const withStatement = async <T>(
@@ -148,8 +158,12 @@ export function expoEngineExecutor(db: EngineStoreDatabase): PhoneSqlExecutor {
         }
       });
     },
-    async close() {
-      await db.closeAsync();
+    close() {
+      closing ??= queue(async () => {
+        closed = true;
+        await db.closeAsync();
+      });
+      return closing;
     },
   };
 }

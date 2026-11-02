@@ -1,10 +1,14 @@
 import net from "node:net";
+import tls from "node:tls";
+import { X509Certificate, generateKeyPairSync } from "node:crypto";
 import { describe, it, expect, afterEach } from "vitest";
-import { ImapAdapter, imapFlowOptions, smtpTransportOptions } from "../../src/adapters/imap.js";
+import { ImapAdapter, imapFlowOptions, smtpTransportOptions, verifySmtpLogin } from "../../src/adapters/imap.js";
 import {
-  loopbackHarnessReason, imapTlsFloor, smtpTlsFloor, TLS_FLOOR, type ImapConfig,
+  loopbackHarnessReason, imapTlsFloor, smtpTlsFloor, TLS_FLOOR, type ImapConfig, type TlsPin,
 } from "../../src/adapters/imap-types.js";
 import { isLocalServerHost } from "../../../../apps/webapp/app/shell/local-server-host.js";
+/* The desktop's own certificate minter, so the fixture is a self-signed leaf as a gateway serves one. */
+import { buildSelfSignedCert } from "../../../../apps/sidecar/src/host-lan-tls.js";
 import { LOOPBACK_ADMITTED, LOOPBACK_LOOKALIKES } from "./_loopback-table.js";
 
 /**
@@ -477,5 +481,126 @@ describe("SMTP on the wire", () => {
     await expect(adapter.send(outbound)).rejects.toMatchObject({ code: "EAUTH" });
 
     expect(sawAuth(srv), `transcript: ${JSON.stringify(srv.lines)}`).toBe(true);
+  });
+});
+
+// ─── a certificate trusted for a server on this computer ────────────────────────────────
+
+/** A self-signed certificate of the shape a gateway such as Proton Mail Bridge serves. */
+function bridgeIdentity(): { key: string; cert: string; pin: TlsPin } {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const der = buildSelfSignedCert(publicKey, privateKey, "bridge.invalid");
+  const cert = new X509Certificate(der);
+  return {
+    key: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    cert: cert.toString(),
+    pin: { sha256: cert.fingerprint256, pem: cert.toString() },
+  };
+}
+
+/** A line server that takes STARTTLS for real, with `identity`, and records every line before and after. */
+function starttlsServer(
+  identity: { key: string; cert: string }, greeting: string, onLine: (line: string, write: (s: string) => void) => "upgrade" | void,
+): Promise<Fake> {
+  const lines: string[] = [];
+  const live = new Set<net.Socket>();
+  const srv = net.createServer((raw) => {
+    live.add(raw);
+    raw.on("error", () => { /* a client that refuses the certificate hangs up */ });
+    raw.on("close", () => live.delete(raw));
+    let sock: net.Socket = raw;
+    let buf = "";
+    const onData = (d: Buffer): void => {
+      buf += d.toString("utf8");
+      let i: number;
+      while ((i = buf.indexOf("\r\n")) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        lines.push(line);
+        if (onLine(line, (s) => { if (!sock.destroyed) sock.write(s); }) === "upgrade") {
+          raw.removeListener("data", onData);
+          const secured = new tls.TLSSocket(raw, { isServer: true, key: identity.key, cert: identity.cert });
+          secured.on("error", () => { /* the client's refusal of the certificate */ });
+          secured.on("data", onData);
+          sock = secured;
+          return;
+        }
+      }
+    };
+    raw.on("data", onData);
+    raw.write(greeting);
+  });
+  return new Promise((resolve) => {
+    srv.listen(0, "127.0.0.1", () => resolve({
+      port: (srv.address() as net.AddressInfo).port,
+      lines,
+      close: () => new Promise<void>((res) => { for (const s of live) s.destroy(); srv.close(() => res()); }),
+    }));
+  });
+}
+
+const bridgeImap = (identity: { key: string; cert: string }): Promise<Fake> => starttlsServer(identity,
+  "* OK [CAPABILITY IMAP4rev1 STARTTLS] bridge ready\r\n", (line, write) => {
+    const [tag, cmd] = line.split(" ");
+    const c = (cmd ?? "").toUpperCase();
+    if (c === "STARTTLS") { write(`${tag} OK begin TLS\r\n`); return "upgrade"; }
+    if (c === "CAPABILITY") write(`* CAPABILITY IMAP4rev1\r\n${tag} OK done\r\n`);
+    else if (c === "LOGIN") write(`${tag} NO fake server refuses every password\r\n`);
+    else write(`${tag} BAD unsupported\r\n`);
+  });
+
+const bridgeSmtp = (identity: { key: string; cert: string }): Promise<Fake> => starttlsServer(identity,
+  "220 bridge ESMTP ready\r\n", (line, write) => {
+    const c = line.toUpperCase();
+    if (c.startsWith("EHLO")) write("250-bridge greets you\r\n250-STARTTLS\r\n250 AUTH PLAIN LOGIN\r\n");
+    else if (c.startsWith("STARTTLS")) { write("220 go ahead\r\n"); return "upgrade"; }
+    else if (c.startsWith("AUTH")) write("535 fake server refuses every password\r\n");
+    else if (c.startsWith("QUIT")) write("221 bye\r\n");
+    else write("500 unsupported\r\n");
+  });
+
+describe("a certificate trusted for a server on this computer", () => {
+  it("makes encryption mandatory against that one certificate, on loopback only", () => {
+    const { pin } = bridgeIdentity();
+    const imap = imapTlsFloor("127.0.0.1", false, false, pin);
+    expect(imap.exemptReason, "a pinned loopback dial is held to a floor").toBeNull();
+    expect(imap.options).toMatchObject({ secure: false, doSTARTTLS: true, tls: { ...TLS_FLOOR, ca: [pin.pem] } });
+    const smtp = smtpTlsFloor("127.0.0.1", false, false, pin).options;
+    expect(smtp).toMatchObject({ secure: false, requireTLS: true, opportunisticTLS: false, tls: { ...TLS_FLOOR, ca: [pin.pem] } });
+    // The identity is the fingerprint: the certificate names no host a person typed.
+    const check = (imap.options.tls as { checkServerIdentity: (h: string, c: { fingerprint256?: string }) => Error | undefined }).checkServerIdentity;
+    expect(check("127.0.0.1", { fingerprint256: pin.sha256 })).toBeUndefined();
+    expect(check("127.0.0.1", { fingerprint256: bridgeIdentity().pin.sha256 })).toBeInstanceOf(Error);
+    // Off this computer the pin is ignored: the floor is exactly what it always was.
+    expect(imapTlsFloor("mail.example.com", false, false, pin)).toEqual(imapTlsFloor("mail.example.com", false));
+    expect(smtpTlsFloor("smtp.example.com", true, false, pin)).toEqual(smtpTlsFloor("smtp.example.com", true));
+  });
+
+  it("IMAP: the trusted certificate signs in, and another one at the same address is refused before LOGIN", async () => {
+    const bridge = bridgeIdentity();
+    const srv = await open(bridgeImap(bridge));
+    const trusted = await new ImapAdapter({ ...wireCfg("127.0.0.1", srv.port), tlsPin: bridge.pin }).connect()
+      .then(() => null, (e: Error) => e);
+    expect(sawLogin(srv), `the pinned dial never reached LOGIN: ${String(trusted)}`).toBe(true);
+
+    const other = await open(bridgeImap(bridgeIdentity()));
+    const refused = await new ImapAdapter({ ...wireCfg("127.0.0.1", other.port), tlsPin: bridge.pin }).connect()
+      .then(() => null, (e: Error) => e);
+    expect(refused).toBeInstanceOf(Error);
+    expect(sawLogin(other), `LOGIN reached a server whose certificate was not trusted: ${JSON.stringify(other.lines)}`).toBe(false);
+    expect(other.lines.join("\n")).not.toContain(PASSWORD);
+  });
+
+  it("SMTP: the same, at the submission server's AUTH", async () => {
+    const bridge = bridgeIdentity();
+    const auth = { user: "victim@example.net", pass: PASSWORD };
+    const srv = await open(bridgeSmtp(bridge));
+    await expect(verifySmtpLogin({ host: "127.0.0.1", port: srv.port, secure: false, auth, tlsPin: bridge.pin }))
+      .rejects.toMatchObject({ code: "EAUTH" });
+    expect(sawAuth(srv), `transcript: ${JSON.stringify(srv.lines)}`).toBe(true);
+
+    const other = await open(bridgeSmtp(bridgeIdentity()));
+    await expect(verifySmtpLogin({ host: "127.0.0.1", port: other.port, secure: false, auth, tlsPin: bridge.pin })).rejects.toBeInstanceOf(Error);
+    expect(sawAuth(other), `AUTH reached an untrusted certificate: ${JSON.stringify(other.lines)}`).toBe(false);
   });
 });

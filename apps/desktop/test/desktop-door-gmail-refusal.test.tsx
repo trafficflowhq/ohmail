@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { launchRefused } from "@trafficflow/services/mail";
 
 import en from "../../webapp/messages/en.json";
+import de from "../../webapp/messages/de.json";
+import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../../webapp/app/shell/locale";
 
 /**
  * THE DESKTOP'S OWN-SERVER DOOR ON GMAIL: the note before the press, and Google's refusal with its
@@ -84,14 +86,14 @@ const button = (el: HTMLElement, label: string): HTMLButtonElement => {
 const count = (el: HTMLElement, href: string): number =>
   [...el.querySelectorAll("a")].filter((a) => a.getAttribute("href") === href).length;
 
-async function gmailDoor(): Promise<HTMLElement> {
+async function gmailDoor(locale: "en" | "de" = "en"): Promise<HTMLElement> {
   const { DoorChooser } = await import("../src/DoorChooser.js");
   mount = document.createElement("div");
   document.body.append(mount);
   root = createRoot(mount);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages: en as never, timeZone: "Europe/Zurich",
+      locale, messages: (locale === "de" ? de : en) as never, timeZone: "Europe/Zurich",
       children: h(DoorChooser, { start: "local", onEntered: () => {} }),
     }));
   });
@@ -100,8 +102,8 @@ async function gmailDoor(): Promise<HTMLElement> {
   await set(mount, "door-password", "the-google-password");
   return mount;
 }
-async function open(el: HTMLElement): Promise<void> {
-  await act(async () => { button(el, "Open this mailbox").click(); });
+async function open(el: HTMLElement, label = "Open this mailbox"): Promise<void> {
+  await act(async () => { button(el, label).click(); });
   for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
@@ -132,5 +134,88 @@ describe("the desktop's own-server door on Gmail", () => {
     await open(el);
     expect(el.querySelector(".join-error")?.textContent).toBe(said);
     expect(count(el, HELP)).toBe(1);
+  });
+
+  /* A GERMAN WINDOW SAYS THE ENGINE'S REFUSAL IN GERMAN: the engine writes English, and the door
+     words the refusal from its code and details through the catalogue the window set. */
+  it("in a German window, the engine's refusal is the catalogue's German sentence", async () => {
+    const said = refusingShell();
+    setActiveCatalog("de", fillFrom(en as never, de as never));
+    try {
+      const el = await gmailDoor("de");
+      await open(el, "Dieses Postfach öffnen");
+      expect(el.querySelector(".join-error")?.textContent).toBe((de.mailboxes as Record<string, string>).probe_auth);
+      expect(el.textContent).not.toContain(said);
+    } finally {
+      setActiveCatalog(DEFAULT_LOCALE, null);
+    }
+  });
+});
+
+/* A SERVER ON THIS COMPUTER WITH ITS OWN CERTIFICATE (Proton Mail Bridge) on the same door: the
+   engine's refusal offers that certificate, the line names its fingerprint unticked, and only a
+   press made with the tick carries it — on both blocks, one host on both legs. */
+describe("the desktop's own-server door and a server on this computer with its own certificate", () => {
+  const PRINT = ["4A", ...Array.from({ length: 31 }, (_, i) => (i + 16).toString(16).toUpperCase())].join(":");
+  const LINE = en.mailboxes.trustCertificateLabelBoth.replace("{fingerprint}", PRINT);
+
+  /** The engine refuses every seal with the offer; the fingerprints each seal claimed, nothing else. */
+  function bridgeShell(): Array<{ imap?: unknown; smtp?: unknown }> {
+    const claimed: Array<{ imap?: unknown; smtp?: unknown }> = [];
+    const body = JSON.stringify({ error: {
+      code: "mailbox_probe_failed", message: "The server on this computer uses its own certificate.",
+      details: { reason: "tls", transport: "imap", localServer: true, tls: { kind: "self_signed", certificate: { sha256: PRINT } } },
+    } });
+    host.__TAURI_INTERNALS__ = {
+      transformCallback: () => 1,
+      invoke: async (command, payload) => {
+        if (command === "engine_configure") return { state: "starting", mode: "local" };
+        if (command === "engine_status") {
+          return { state: "serving", mode: "local", address: "mila@bridge.test", mailboxId: "mbx-1", credentialState: "absent" };
+        }
+        if (command === "engine_request") {
+          const req = payload as { method?: string; body?: number[] };
+          if ((req.method ?? "GET") === "GET") return encode(200, JSON.stringify({ id: "mbx-1", address: "mila@bridge.test" }));
+          const sent = JSON.parse(new TextDecoder().decode(new Uint8Array(req.body ?? []))) as {
+            imap?: { trustCertificate?: unknown }; smtp?: { trustCertificate?: unknown };
+          };
+          claimed.push({ imap: sent.imap?.trustCertificate, smtp: sent.smtp?.trustCertificate });
+          return encode(400, body, "Bad Request");
+        }
+        throw new Error(`unexpected command ${command}`);
+      },
+    };
+    return claimed;
+  }
+  const line = (el: HTMLElement): HTMLInputElement | null =>
+    [...el.querySelectorAll("label")].find((l) => (l.textContent ?? "").includes(LINE))?.querySelector("input") ?? null;
+
+  it("names the fingerprint unticked, and the tick's press claims it on both blocks", async () => {
+    const claimed = bridgeShell();
+    const { DoorChooser } = await import("../src/DoorChooser.js");
+    mount = document.createElement("div");
+    document.body.append(mount);
+    root = createRoot(mount);
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en as never, timeZone: "Europe/Zurich",
+        children: h(DoorChooser, { start: "local", onEntered: () => {} }),
+      }));
+    });
+    await act(async () => { button(mount!, en.providerPicker.otherLabel).click(); });
+    await set(mount, "door-address", "mila@bridge.test");
+    await set(mount, "door-password", "the-bridge-password");
+    await set(mount, "door-imap-host", "127.0.0.1");
+    await set(mount, "door-imap-port", "1143");
+    await set(mount, "door-smtp-host", "127.0.0.1");
+    await set(mount, "door-smtp-port", "1025");
+    await open(mount);
+    expect(line(mount), "no trust line naming the fingerprint").not.toBeNull();
+    expect(line(mount)!.checked).toBe(false);
+    expect(claimed[0]).toEqual({ imap: undefined, smtp: undefined });
+
+    await act(async () => { line(mount!)!.click(); });
+    await open(mount);
+    expect(claimed[1]).toEqual({ imap: PRINT, smtp: PRINT });
   });
 });

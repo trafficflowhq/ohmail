@@ -466,6 +466,7 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
          absent field would refuse every call that names none. */
       ...(options.deadlineMs !== undefined ? { ms: options.deadlineMs }
         : url.startsWith(STAGED_UPLOAD_PATH_PREFIX) ? { ms: STAGED_UPLOAD_DEADLINE_MS }
+        : method === "POST" && INLINE_SEND_PATH.test(url) ? { ms: STAGED_UPLOAD_DEADLINE_MS }
         : method === "GET" && ATTACHMENT_BYTES_PATH.test(url) ? { ms: ATTACHMENT_BYTES_DEADLINE_MS } : {}),
     },
   );
@@ -928,6 +929,9 @@ export const STAGED_UPLOAD_PATH_PREFIX = "/cloud/staged-upload/";
  * minute every other request has. Decided in {@link bridgeFetch}, by the path the engine minted.
  */
 export const STAGED_UPLOAD_DEADLINE_MS = 5 * 60_000 + 15_000;
+
+/** A send, which carries its attachments inline on every door but the hosted one: the upload bound too. */
+const INLINE_SEND_PATH = /^\/drafts\/[^/?#]+\/send(?:[?#]|$)/;
 
 /** One attachment's bytes, `GET /attachments/<id>`: what a PDF's preview reads, as a browser does. */
 const ATTACHMENT_BYTES_PATH = /^\/attachments\/[^/?#]+$/;
