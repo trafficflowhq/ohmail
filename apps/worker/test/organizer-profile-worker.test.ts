@@ -2422,6 +2422,10 @@ describe("the hold's OTHER release — the user's durable answer", () => {
 
     await sync.onOrganize(); // release (writes nothing of its own)
     await sync.onOrganize(); // the resumed write-behind
+    /* CHANGED ON PURPOSE: the imported document stays until the merged copy is in the folder, and goes
+       on the pass after, so a refused append never leaves the import on this install alone. */
+    expect(profileDocs(fleet, mb.mailboxId).map((d) => d.installId).sort()).toEqual([INSTALL, "someone-elses-mac"].sort());
+    await sync.onOrganize(); // the tidy the landed write owes
     const docs = profileDocs(fleet, mb.mailboxId);
     expect(docs).toHaveLength(1);
     expect(docs[0]!.installId).toBe(INSTALL);

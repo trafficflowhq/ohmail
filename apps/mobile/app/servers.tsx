@@ -14,6 +14,10 @@ import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { organizesHere } from "../src/engine/standalone-door";
+import { organizerSettingsLeftOnlyHere } from "../src/engine/organizer-session";
+import {
+  stopAndRemoveAsks, stopAndRemoveKept, stopAndRemoveLines, stopAndRemoveVerb, type StopAndRemoveAsk,
+} from "../src/ui/standalone-form";
 import { useConnection } from "../src/net/connection";
 import { isPairEnded } from "../src/net/session-death";
 import { gateFor } from "../src/state/gate";
@@ -248,10 +252,16 @@ function ProfileRow({ profile, active, onForgetFailed }: {
   // "the app went back to its first screen" must not depend on which screen was focused.
   // Counted before the await (this handler's `conn` is the render's snapshot; the forget
   // removes exactly this row).
-  const forget = async () => {
+  const forget = async (anyway = false) => {
     const wasLast = conn.profiles.length === 1;
     onForgetFailed(null);
-    const outcome = await conn.forget(profile.id);
+    const outcome = await conn.forget(profile.id, { anyway });
+    if (!outcome.ok && "settingsKept" in outcome) {
+      /* NOTHING WAS REMOVED: the hand-back could not leave this phone's settings in the mailbox. The row
+         stands, so the confirm opens on it again, about the settings. */
+      setAsking(stopAndRemoveKept(outcome.settingsKept));
+      return;
+    }
     if (!outcome.ok) {
       // NOT a local setState: the credential half succeeds first, so this component is usually
       // already unmounted by the time the outcome arrives. The screen holds it instead.
@@ -260,16 +270,19 @@ function ProfileRow({ profile, active, onForgetFailed }: {
     }
     if (wasLast) router.replace("/welcome");
   };
-  /* ── THIS PHONE'S OWN MAILBOX ASKS FIRST WHILE IT HOLDS UNSENT DRAFTS ────────
-     The forget deletes the whole store, and an unsent draft is on no server. A known zero keeps
-     the single press; a count, or a count nobody can read, opens the confirm below the row. A
-     pairing's Forget is unchanged: its drafts are on its server. */
-  const [asking, setAsking] = useState<{ drafts: number | null } | null>(null);
-  const pressRemove = () => {
+  /* ── THIS PHONE'S OWN MAILBOX ASKS FIRST WHILE THE STORE HOLDS WHAT NO SERVER HAS ────────
+     The forget deletes the whole store: an unsent draft is on no server, and settings waiting for
+     the settings question (or behind a newer ohmail's copy) are not in the mailbox. A known zero and
+     a known `none` keep the single press; anything else opens the confirm below the row. A mailbox
+     that refuses the hand-back's write is found only then: the forget keeps the store and the
+     confirm opens after it. A pairing's Forget is unchanged: its drafts are on its server. */
+  const [asking, setAsking] = useState<StopAndRemoveAsk | null>(null);
+  const pressRemove = async () => {
     if (!here) { void forget(); return; }
     const drafts = conn.unsentDraftsHere(profile.id);
-    if (drafts === 0) { void forget(); return; }
-    setAsking({ drafts });
+    const ask = stopAndRemoveAsks(drafts, await organizerSettingsLeftOnlyHere());
+    if (ask === null) { void forget(); return; }
+    setAsking(ask);
   };
   return (
     <View style={{ marginHorizontal: 8 }}>
@@ -307,7 +320,7 @@ function ProfileRow({ profile, active, onForgetFailed }: {
         <Button
           label={here ? Copy.serversStopHere : Copy.serversForget}
           variant="quiet"
-          onPress={pressRemove}
+          onPress={() => void pressRemove()}
         />
         {/* The row press already re-pairs, and a gesture with no name is invisible to a screen
             reader — the verb is spelled out, the same word the panel above uses. */}
@@ -315,16 +328,20 @@ function ProfileRow({ profile, active, onForgetFailed }: {
       </View>
       {asking !== null ? (
         <View style={{ paddingHorizontal: 12, paddingBottom: 10, gap: 8 }}>
-          <Txt variant="hint" tone="ink2">
-            {asking.drafts === null ? Copy.serversStopHereDraftsUnknown : Copy.serversStopHereDrafts(asking.drafts)}
-          </Txt>
-          {/* The safe answer first; the forget only on this second, explicit press. */}
+          {stopAndRemoveLines(asking).map((line) => (
+            <Txt key={line} variant="hint" tone="ink2">{line}</Txt>
+          ))}
+          {/* The safe answer first, and after a kept store it opens the mailbox again; the forget only on
+              this second, explicit press, which answers a named settings risk. */}
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <Button label={Copy.serversStopHereKeep} onPress={() => setAsking(null)} />
             <Button
-              label={Copy.serversStopHereDelete}
+              label={Copy.serversStopHereKeep}
+              onPress={() => { setAsking(null); if (asking.kept) void conn.switchTo(profile.id); }}
+            />
+            <Button
+              label={stopAndRemoveVerb(asking)}
               variant="quiet"
-              onPress={() => { setAsking(null); void forget(); }}
+              onPress={() => { setAsking(null); void forget(asking.settings !== null); }}
             />
           </View>
         </View>

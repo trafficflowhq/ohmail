@@ -122,6 +122,14 @@ describe("which mailbox asks, and where", () => {
     expect(savedRows(rows).map((r) => r.mailboxId)).toEqual(["b"]);
   });
 
+  // The card keeps the mailbox it shows while its question is open; an earlier mailbox's question waits.
+  it("a question already on the card stays there until it is answered, then the first open one takes it", () => {
+    const later = [row("a", questionOf(FOUND)), row("c", questionOf(FOUND))];
+    expect(cardQuestion(later, "c")?.mailboxId).toBe("c");
+    expect(cardQuestion([row("a", questionOf(FOUND)), row("c", { state: "none" })], "c")?.mailboxId).toBe("a");
+    expect(cardQuestion(later, "gone")?.mailboxId).toBe("a");
+  });
+
   it("says the counts in words, drops the zero parts, and names who saved it", () => {
     setActiveLocale("en");
     expect(countsSaid(FOUND.counts)).toBe("58 screener decisions, 3 rules, and 1 tag");

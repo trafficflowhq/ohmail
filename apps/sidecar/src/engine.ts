@@ -752,6 +752,13 @@ export interface Sidecar {
    */
   peekOrganizer(mailboxId: string): Promise<LeasePeekAnswer>;
   /**
+   * WHAT A STOP AND REMOVE WOULD LEAVE ONLY ON THIS INSTALL, for one mailbox: decisions waiting for the
+   * settings question (`answer`), behind a newer ohmail's copy (`newer`), or `none`. The store's read,
+   * never the mail server's; `null` for a mailbox this install does not run. `leaving`: read after the
+   * hand-back, the store against the last copy written, with no shortcut (`OrganizerProfileSync`).
+   */
+  settingsLeftOnlyHere(mailboxId: string, opts?: { leaving?: boolean }): Promise<"answer" | "newer" | "none" | null>;
+  /**
    * The desktop-host door — `Request → Response` over `desktopHostRoutes`, the surface a paired
    * phone reaches. Present IFF host mode is armed; a disarmed install has no second door at all,
    * not a refusing one. Same engine, store and fresh-deps discipline as {@link handle}, with
@@ -9001,6 +9008,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                key for the whole hand-back, so a second connection's flush finds it written. */
             let settingsLeft = undefined as Awaited<ReturnType<typeof profileSync.flushBeforeLeaving>> | undefined;
             const leaving = await lettingGo();
+            /* Owed while this install organizes the mailbox: a hand-back no connection could run it on did not save. */
+            const flushOwed = organizer.organizing && organizer.claimed;
             const ask = async (conn: MailboxAdapter) => {
               if (organizer.organizing && organizer.claimed) {
                 settingsLeft = await profileSync.flushBeforeLeaving(leasePermit, conn, leaving);
@@ -9035,6 +9044,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 void Promise.resolve(fresh.close()).catch(() => undefined);
               }
             }
+            if (settingsLeft === undefined && flushOwed) settingsLeft = profileSync.flushNotRun();
             // The settings' last answer, once: a fresh connection's flush may have written what the dead one could not.
             if (settingsLeft !== undefined) settingsNotLeft(settingsLeft, "background");
             /* A sibling refusal at a hand-back is a COMPLETE answer that none of this runtime's
@@ -11184,6 +11194,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const rt = runtimes.all().find((r) => r.mailboxId === mailboxId);
         if (rt === undefined) return { answer: "unreadable", op: "no_lease_peek_io", cause: undefined };
         return rt.peekOrganizer();
+      },
+      settingsLeftOnlyHere: async (mailboxId: string, opts?: { leaving?: boolean }) => {
+        const rt = runtimes.all().find((r) => r.mailboxId === mailboxId);
+        return rt === undefined ? null : rt.profileSync.settingsLeftOnlyHere(opts);
       },
       credentialState: async () => (await seedRuntime()?.credentialState()) ?? "absent",
       forgetStoredLogin: async (opts) => (await seedRuntime()?.forgetStoredLogin(opts)) ?? false,

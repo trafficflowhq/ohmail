@@ -481,6 +481,15 @@ const TABLE = {
   serversStopHereDraftsUnknown: "Removing it deletes any unsent drafts on this phone. No mail server has them.",
   serversStopHereKeep: "Keep the mailbox",
   serversStopHereDelete: "Remove and delete drafts",
+  /* Settings changed here that the mailbox does not have yet: removing deletes the store they are in. */
+  serversStopHereSettingsAnswer:
+    "Settings you changed on this phone are not in the mailbox yet: they wait for your answer to the settings question above your mail. Answer it first, or removing deletes them.",
+  serversStopHereSettingsNewer:
+    "Settings you changed on this phone are not in the mailbox: a newer ohmail saved the mailbox's settings. Update ohmail first, or removing deletes them.",
+  serversStopHereSettingsUnknown: "Removing it may delete settings you changed on this phone that are not in the mailbox yet.",
+  serversStopHereSettingsUnsaved:
+    "Settings you changed on this phone could not be saved to the mailbox, so nothing was removed. Removing it now deletes them.",
+  serversStopHereAnyway: "Remove anyway",
   serversForget: "Forget",
   // CLAIMS ARE CONTRACTS. This sentence used to stop at "removes the pairing", and that was the
   // whole truth: forget closed a database handle and left the mail on the phone for ever. Now it

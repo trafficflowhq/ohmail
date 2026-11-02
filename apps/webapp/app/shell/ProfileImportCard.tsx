@@ -131,8 +131,38 @@ export interface ProfileImportTransport {
   replace(mailboxId: string, fingerprint: string): Promise<unknown>;
 }
 
+/**
+ * THE QUEUE OF OFFERS, ONE ANSWER AT A TIME. The card shows the head until it is answered or dismissed:
+ * a mailbox's new answer replaces its offer where it stands (the same question keeps its identity), and a
+ * mailbox not queued yet waits behind the head, the waiting ones in the listed mailbox order. The head
+ * itself is replaced only while `headLocked` is false, so a press in flight keeps its card.
+ */
+export function queueOffer(
+  prev: readonly ProfileImportOffer[], next: ProfileImportOffer, order: readonly string[], headLocked = false,
+): ProfileImportOffer[] {
+  const at = prev.findIndex((o) => o.mailboxId === next.mailboxId);
+  if (at >= 0) {
+    const was = prev[at]!;
+    if (was.address === next.address && JSON.stringify(was.candidate) === JSON.stringify(next.candidate)) return prev as ProfileImportOffer[];
+    if (at === 0 && headLocked) return prev as ProfileImportOffer[];
+    return prev.map((o, i) => (i === at ? next : o));
+  }
+  if (prev.length === 0) return [next];
+  const rank = (id: string): number => { const i = order.indexOf(id); return i === -1 ? order.length : i; };
+  const [head, ...rest] = prev;
+  return [head!, ...[...rest, next].sort((a, b) => rank(a.mailboxId) - rank(b.mailboxId))];
+}
+
+/** A row per mailbox, updated where it stands; a new one goes last, and `null` removes it. */
+function placeRow<R extends { mailboxId: string }>(prev: R[], mailboxId: string, row: R | null): R[] {
+  const at = prev.findIndex((r) => r.mailboxId === mailboxId);
+  if (row === null) return at === -1 ? prev : prev.filter((r) => r.mailboxId !== mailboxId);
+  if (at === -1) return [...prev, row];
+  return JSON.stringify(prev[at]) === JSON.stringify(row) ? prev : prev.map((r, i) => (i === at ? row : r));
+}
+
 export interface ProfileImportState {
-  /** The offer on screen — the oldest unanswered one; the next queues behind it. */
+  /** The offer on screen — the first to arrive, until answered; the next queues behind it ({@link queueOffer}). */
   offer: ProfileImportOffer | null;
   phase: ProfileImportPhase;
   importNow: () => void;
@@ -332,14 +362,8 @@ export function useProfileImport(
           if ((answered.current.get(m.id) ?? 0) !== epoch) return;
           /* The same answer says whether a "Not now" stands: a `declined` document is a row. */
           const saved = asDeclined(dto);
-          setDeclined((prev) => [
-            ...prev.filter((r) => r.mailboxId !== m.id),
-            ...(saved ? [{ mailboxId: m.id, address: m.address, candidate: saved }] : []),
-          ]);
-          setUnkept((prev) => [
-            ...prev.filter((r) => r.mailboxId !== m.id),
-            ...(copyUnkept(dto) ? [{ mailboxId: m.id, address: m.address }] : []),
-          ]);
+          setDeclined((prev) => placeRow(prev, m.id, saved ? { mailboxId: m.id, address: m.address, candidate: saved } : null));
+          setUnkept((prev) => placeRow(prev, m.id, copyUnkept(dto) ? { mailboxId: m.id, address: m.address } : null));
           const candidate = asOffer(dto); // unrecognised answers — including `none` — are no offer
           if (candidate === null) {
             // An authoritative non-offer RETIRES a standing card for this mailbox: another
@@ -353,10 +377,10 @@ export function useProfileImport(
             });
             return;
           }
-          setOffers((prev) => [
-            ...prev.filter((o) => o.mailboxId !== m.id),
-            { mailboxId: m.id, address: m.address, candidate },
-          ]);
+          setOffers((prev) => queueOffer(
+            prev, { mailboxId: m.id, address: m.address, candidate }, (list.current ?? []).map((b) => b.id),
+            phaseRef.current.kind !== "offer",
+          ));
         } catch {
           // Could not ask: the card stays absent, and the next beat asks again. Never a prompt
           // built on a guess — the claim "your settings are waiting" is the server's to make.
@@ -425,10 +449,7 @@ export function useProfileImport(
           retire(mailboxId);
           /* The document just declined IS the row the server now answers, so no ask is needed. */
           if (candidate.state === "found") {
-            setDeclined((prev) => [
-              ...prev.filter((r) => r.mailboxId !== mailboxId),
-              { mailboxId, address: offer.address, candidate: { ...candidate, state: "declined" } },
-            ]);
+            setDeclined((prev) => placeRow(prev, mailboxId, { mailboxId, address: offer.address, candidate: { ...candidate, state: "declined" } }));
           }
         }
       } catch (err) {
@@ -529,7 +550,7 @@ export function ProfileImportCard({
   if (phase.kind === "done") {
     const details = detailsOf(t, locale, phase.applied.imported);
     return (
-      <section className="pfi-card" role="region" aria-label={t("doneTitle")}>
+      <section className="stage-card pfi-card" role="region" aria-label={t("doneTitle")}>
         <h2>{t("doneTitle")}</h2>
         {details ? <p className="pfi-lede">{t("doneDetails", { details })}</p> : null}
         {/* Disclosed, not hidden: a rule this build's own validation refuses is left out, and
@@ -548,7 +569,7 @@ export function ProfileImportCard({
 
   if (offer.candidate.state === "newer") {
     return (
-      <section className="pfi-card" role="region" aria-label={t("newerTitle")}>
+      <section className="stage-card pfi-card" role="region" aria-label={t("newerTitle")}>
         <h2>{t("newerTitle")}</h2>
         {/* No import button, deliberately: this build cannot read all of a newer document, and a
             lossy import offered anyway would be a restore that quietly drops settings. */}
@@ -575,7 +596,7 @@ export function ProfileImportCard({
     : format.dateTime(savedDate, { dateStyle: "long" });
 
   return (
-    <section className="pfi-card" role="region" aria-label={t("title")}>
+    <section className="stage-card pfi-card" role="region" aria-label={t("title")}>
       <h2>{t("title")}</h2>
       <p className="pfi-lede">{t("lede", { address: displayAddress(offer.address) })}</p>
       {details ? <p className="pfi-holds">{t("holds", { details })}</p> : null}

@@ -327,6 +327,15 @@ export const DE: Deck = {
     "Beim Entfernen werden alle nicht gesendeten Entwürfe auf diesem Handy gelöscht. Kein Mailserver hat sie.",
   serversStopHereKeep: "Postfach behalten",
   serversStopHereDelete: "Entfernen und Entwürfe löschen",
+  serversStopHereSettingsAnswer:
+    "Einstellungen, die du auf diesem Handy geändert hast, sind noch nicht im Postfach: Sie warten auf deine Antwort auf die Frage zu den Einstellungen über deinen Mails. Beantworte sie zuerst, sonst werden sie beim Entfernen gelöscht.",
+  serversStopHereSettingsNewer:
+    "Einstellungen, die du auf diesem Handy geändert hast, sind nicht im Postfach: Ein neueres ohmail hat die Einstellungen des Postfachs gespeichert. Aktualisiere ohmail zuerst, sonst werden sie beim Entfernen gelöscht.",
+  serversStopHereSettingsUnknown:
+    "Beim Entfernen werden vielleicht Einstellungen gelöscht, die du auf diesem Handy geändert hast und die noch nicht im Postfach sind.",
+  serversStopHereSettingsUnsaved:
+    "Einstellungen, die du auf diesem Handy geändert hast, konnten nicht im Postfach gespeichert werden, darum wurde nichts entfernt. Wenn du es jetzt entfernst, werden sie gelöscht.",
+  serversStopHereAnyway: "Trotzdem entfernen",
   serversForget: "Vergessen",
   serversForgetNote:
     "Vergessen löscht die Kopplung und die Mails, die dieses Handy kopiert hatte. Über die Geräteliste des Servers lässt sie sich auch dort widerrufen. Wer ein Postfach auf dem Server selbst entfernt, kann dort auch die Kopie seiner Mails bei ohmail löschen.",

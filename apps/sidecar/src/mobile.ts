@@ -382,6 +382,12 @@ export interface PhoneEngine {
    */
   heldElsewhere(): Promise<boolean | null>;
   /**
+   * WHAT STOP AND REMOVE WOULD DROP from this phone's store: decisions waiting for the settings question
+   * (`answer`), behind a newer ohmail's copy (`newer`), or `none`. `null` where the store cannot say.
+   * `leaving`: the removal's read after its hand-back, the store against the last copy written.
+   */
+  settingsLeftOnlyHere(opts?: { leaving?: boolean }): Promise<"answer" | "newer" | "none" | null>;
+  /**
    * The person stopped — the half a relaunch can still read. {@link handBack} removes the claim but
    * leaves the ROW saying organizer, serving an app that left the foreground: the next resume takes
    * the mailbox back with no press. A person's stop is the opposite and needs the opposite
@@ -1941,6 +1947,16 @@ async function composePhoneEngine(
     }
   };
 
+  const settingsLeftOnlyHere = async (opts?: { leaving?: boolean }): Promise<"answer" | "newer" | "none" | null> => {
+    const mailboxId = soleMailbox();
+    if (mailboxId === null) return null;
+    try {
+      return await sidecar.settingsLeftOnlyHere(mailboxId, opts);
+    } catch {
+      return null;
+    }
+  };
+
   const claimHere = async (opts: { by: ClaimHereBy }): Promise<ClaimHereOutcome> => {
     const mailboxId = soleMailbox();
     if (mailboxId === null) {
@@ -2161,6 +2177,7 @@ async function composePhoneEngine(
     resume: () => sidecar.resume(),
     claimHere,
     heldElsewhere,
+    settingsLeftOnlyHere,
     stopOrganizing,
     forgetStoredLogin: () => sidecar.forgetStoredLogin(),
     serverSettings: () => storedServers(store.db, sidecar.world.mailboxId),

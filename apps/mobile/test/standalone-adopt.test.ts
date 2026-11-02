@@ -811,6 +811,27 @@ describe("stopping here — one verb, three effects", () => {
        each at a real store; this asserts the ceremony reaches them at all). */
     expect(enginesRemoved).toEqual(["held"]);
   });
+
+  /* THE HAND-BACK'S WRITE IS THE ONE THAT FINDS A FULL MAILBOX (the removal's end reads it, then this):
+     the store says what the mailbox does not, so nothing is touched until the person says remove anyway.
+     Before, the store went whatever the hand-back left. */
+  it("keeps the row, the mail and the engine's store while the hand-back left settings only here, until anyway", async () => {
+    const door = fakeDoor(doorLog());
+    const env = testEnv(heldPort(door));
+    const row = await env.profiles.addStandalone({
+      origin: LOCAL_ENGINE_ORIGIN, flavor: "local", accountId: door.accountId,
+    });
+    const kept = await forgetProfile(env, row.id, { settingsKept: "unsaved" });
+    const untouched = {
+      rows: (await env.profiles.list()).map((p) => p.id), engines: [...enginesRemoved], mirrors: dropped.length,
+      owed: (await env.profiles.pendingWipes()).length,
+    };
+    const anyway = await forgetProfile(env, row.id, { settingsKept: "unsaved", anyway: true });
+    expect({ kept, untouched, anyway: anyway.kind, rows: await env.profiles.list(), engines: enginesRemoved }).toEqual({
+      kept: { kind: "kept", settings: "unsaved" }, untouched: { rows: [row.id], engines: [], mirrors: 0, owed: 0 },
+      anyway: "forgotten", rows: [], engines: ["held"],
+    });
+  });
 });
 
 describe("a refused connect leaves no engine, and a second press makes no second one", () => {
@@ -1068,7 +1089,7 @@ describe("forgetting this phone's mailbox answers whether the claim actually wen
     );
     /* The provider is React, so the wiring is read: the answer is kept and it decides the outcome
        rather than being discarded into a `void`. */
-    expect(src).toContain("const claimWentBack = row?.origin === LOCAL_ENGINE_ORIGIN");
+    expect(src).toContain("const claimWentBack = ended?.released ?? true");
     expect(src).toContain('refuse("forgetClaimStands", CLAIM_LAPSES_AFTER_MINUTES)');
     /* AND IT IS A SENTENCE A PERSON CAN READ, with the wait filled in. */
     const said = sayRefusal(refuse("forgetClaimStands", CLAIM_LAPSES_AFTER_MINUTES));

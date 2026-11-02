@@ -109,6 +109,13 @@ export interface StandaloneEngine {
   /** The row's own answer to "does a live foreign claim hold this mailbox" — no press. */
   heldElsewhere(): Promise<boolean | null>;
   /**
+   * What Stop and remove would drop from the store: decisions waiting for the settings question
+   * (`answer`), behind a newer ohmail's copy (`newer`), or `none`; `null` where it cannot say. Optional:
+   * an engine bundle without it answers nothing, and the confirm asks. `leaving`: the removal's read after
+   * its hand-back, the store against the last copy written, with no shortcut.
+   */
+  settingsLeftOnlyHere?(opts?: { leaving?: boolean }): Promise<"answer" | "newer" | "none" | null>;
+  /**
    * THE PERSON'S STOP, WHERE A RELAUNCH CAN STILL READ IT.
    *
    * NOT {@link handBack}, and the difference is the whole of rows 1 and 3 of the device run.
