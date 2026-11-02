@@ -9,6 +9,7 @@
 import { act, createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorldTrashRow } from "../src/state/live";
+import { Copy } from "../src/copy";
 
 vi.mock("react-native", async () => ({ ...(await import("./_rendered-dom")).rnDom }));
 vi.mock("../src/ui/base", () => {
@@ -16,7 +17,7 @@ vi.mock("../src/ui/base", () => {
   return {
     Screen: box, Scroller: box, TapRow: box, Tail: box, Panel: box,
     Button: (p: { label: string; onPress: () => void }) => createElement("button", { onClick: p.onPress }, p.label),
-    Empty: (p: { title: string }) => createElement("span", { "data-empty": "" }, p.title),
+    Empty: (p: { title: string; hint?: string }) => createElement("span", { "data-empty": "", "data-hint": p.hint }, p.title),
     Txt: (p: { children?: ReactNode }) => createElement("span", null, p.children),
   };
 });
@@ -97,6 +98,18 @@ describe("a letter deleted just before Trash opened", () => {
     expect(listed(s.el)).toEqual(["just-deleted"]);
     expect(s.el.querySelector("[data-empty]")).toBeNull();
     s.unmount();
+  });
+});
+
+describe("the empty Trash says what it holds", () => {
+  it.each([[false, Copy.trashEmptyHint], [true, Copy.trashEmptyHintStandalone]])("standalone %s", async (standalone, hint) => {
+    Object.assign(world, { standalone });
+    pages.push({ items: [] });
+    const s = mount(createElement(TrashScreen));
+    await settle();
+    expect(s.el.querySelector("[data-empty]")!.getAttribute("data-hint")).toBe(hint);
+    s.unmount();
+    Object.assign(world, { standalone: false });
   });
 });
 

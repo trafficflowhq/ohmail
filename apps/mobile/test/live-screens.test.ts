@@ -947,6 +947,7 @@ describe("the actions facade is ONE object delegating per call", () => {
     draftSendAgain: () => (calls.push(`${tag}:draftSendAgain`), Promise.resolve("sent" as const)),
     draftKeep: () => (calls.push(`${tag}:draftKeep`), Promise.resolve("kept" as const)),
     keepEnvelope: () => (calls.push(`${tag}:keepEnvelope`), null),
+    keptReply: () => (calls.push(`${tag}:keptReply`), { kind: "none" as const }),
     draftSent: () => (calls.push(`${tag}:draftSent`), false),
     draftLeft: () => (calls.push(`${tag}:draftLeft`), null),
     sendOutcome: () => (calls.push(`${tag}:sendOutcome`), "unknown" as const),

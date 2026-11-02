@@ -31,12 +31,12 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 
 /** The fact variants: the full message, and each absence rule exercised alone. */
 const FACTS: Record<string, ReaderVerbFacts> = {
-  everything: { canReplyAll: true, forwardOffered: true, foldersEnabled: true, junkOffered: true, screeningOffered: true },
-  "no reply-all envelope": { canReplyAll: false, forwardOffered: true, foldersEnabled: true, junkOffered: true, screeningOffered: true },
-  no_forward: { canReplyAll: true, forwardOffered: true, foldersEnabled: true, junkOffered: true, screeningOffered: true },
-  "folders off": { canReplyAll: true, forwardOffered: true, foldersEnabled: false, junkOffered: true, screeningOffered: true },
-  "already in spam": { canReplyAll: true, forwardOffered: true, foldersEnabled: true, junkOffered: false, screeningOffered: true },
-  "own mail": { canReplyAll: true, forwardOffered: true, foldersEnabled: true, junkOffered: true, screeningOffered: false },
+  everything: { canReplyAll: true, forwardOffered: true, junkOffered: true, screeningOffered: true },
+  "no reply-all envelope": { canReplyAll: false, forwardOffered: true, junkOffered: true, screeningOffered: true },
+  no_forward: { canReplyAll: true, forwardOffered: true, junkOffered: true, screeningOffered: true },
+  "standalone door": { canReplyAll: true, forwardOffered: true, junkOffered: true, screeningOffered: true },
+  "already in spam": { canReplyAll: true, forwardOffered: true, junkOffered: false, screeningOffered: true },
+  "own mail": { canReplyAll: true, forwardOffered: true, junkOffered: true, screeningOffered: false },
 };
 
 function postureOf(name: string, platform: PlatformName) {

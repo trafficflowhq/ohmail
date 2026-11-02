@@ -13,6 +13,8 @@ const { join } = require("node:path");
 
 /** The generated module, relative to the app. One spelling, shared with the test. */
 const ARTIFACT = join("generated", "phone-engine.js");
+/** pdf.js for the attachment preview, written by the same generator. */
+const PDF_FRAME = join("generated", "pdf-frame.js");
 
 /**
  * Throw unless the app carries its engine.
@@ -21,7 +23,15 @@ const ARTIFACT = join("generated", "phone-engine.js");
  * @param {(p: string) => boolean} [exists] seam, so the absent arm is driven without moving files.
  */
 function assertPhoneEngineArtifact(projectRoot, exists = existsSync) {
-  if (exists(join(projectRoot, ARTIFACT))) return;
+  if (exists(join(projectRoot, ARTIFACT))) {
+    if (exists(join(projectRoot, PDF_FRAME))) return;
+    throw new Error(
+      "the attachment preview's pdf.js is missing.\n" +
+      `  Expected: apps/mobile/${PDF_FRAME}\n` +
+      "  It is generated with the engine — from the repository root, before every phone build:\n\n" +
+      "    node apps/mobile/scripts/bundle-engine.mjs\n",
+    );
+  }
   throw new Error(
     "the phone's mail engine is missing, so this build would have no fourth door.\n" +
     `  Expected: apps/mobile/${ARTIFACT}\n` +
@@ -31,4 +41,4 @@ function assertPhoneEngineArtifact(projectRoot, exists = existsSync) {
   );
 }
 
-module.exports = { ARTIFACT, assertPhoneEngineArtifact };
+module.exports = { ARTIFACT, PDF_FRAME, assertPhoneEngineArtifact };

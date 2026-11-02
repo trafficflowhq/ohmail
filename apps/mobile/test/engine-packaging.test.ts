@@ -25,7 +25,8 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, relative } from "node:path";
+import { createRequire } from "node:module";
+import { basename, dirname, join, relative } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -35,6 +36,7 @@ import {
   REPO,
   TYPES,
   buildPhoneEngine,
+  pdfFrameSource,
   stripBuildPaths,
 } from "../scripts/bundle-engine.mjs";
 import { ARTIFACT, assertPhoneEngineArtifact } from "../src/engine/artifact-present.js";
@@ -283,6 +285,29 @@ describe("a build without the artifact stops, by name", () => {
     expect(message).toContain("no fourth door");
     expect(message).toContain(GENERATE);
     expect(message).toContain(`apps/mobile/${ARTIFACT}`);
+  });
+
+  it("refuses when the preview's pdf.js is missing, and names the generator", () => {
+    let message = "";
+    try {
+      assertPhoneEngineArtifact(APP, (p) => !p.endsWith("pdf-frame.js"));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain("pdf.js is missing");
+    expect(message).toContain(GENERATE);
+  });
+
+  it("the preview's pdf.js is the web app's pinned build, byte for byte, licence notices included", () => {
+    const mod = { exports: {} as Record<string, string> };
+    new Function("module", pdfFrameSource())(mod);
+    const dist = dirname(createRequire(join(REPO, "apps", "webapp", "package.json")).resolve("pdfjs-dist/package.json"));
+    const pinned = (JSON.parse(readFileSync(join(REPO, "apps", "webapp", "package.json"), "utf8")) as { dependencies: Record<string, string> })
+      .dependencies["pdfjs-dist"];
+    expect(mod.exports.PDFJS_VERSION).toBe(pinned);
+    expect(mod.exports.PDF_LIB).toBe(readFileSync(join(dist, "legacy", "build", "pdf.min.mjs"), "utf8"));
+    expect(mod.exports.PDF_WORKER).toBe(readFileSync(join(dist, "legacy", "build", "pdf.worker.min.mjs"), "utf8"));
+    expect(mod.exports.PDF_LIB).toContain("Mozilla Foundation");
   });
 
   it("metro.config.js runs the check before it configures anything", () => {
