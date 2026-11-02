@@ -5,6 +5,7 @@ import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
 import { leftOf } from "./pair-undo.js";
 import { routeKeyOf, writeRowsOf } from "./cloud-write-rows.js";
+import { STAGED_UPLOAD_TIMEOUT_MS } from "./cloud-staged-upload.js";
 
 /**
  * The write-through proxy — a Cloud-mode install owns no mailbox, so every WRITE is against the
@@ -96,6 +97,17 @@ function parseSeq(raw: string | null): bigint | null {
 function routeClassOf(method: string, pathname: string): string {
   const key = routeKeyOf(method, pathname);
   return key === null ? "other" : key.slice(key.indexOf(" ") + 1);
+}
+
+/** A send carries its attachments inline on a self-hosted door (32 MiB), so its upload gets a staged file's bound. */
+const SEND_PATH = /^\/drafts\/[^/]+\/send$/;
+
+/** An abort at `ms`, on the process's own timers; `clear` once the forward settles. */
+function writeDeadline(ms: number): { signal: AbortSignal; clear: () => void } {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new DOMException("the write's deadline passed", "TimeoutError")), ms);
+  (timer as { unref?: () => void }).unref?.();
+  return { signal: ctl.signal, clear: () => clearTimeout(timer) };
 }
 
 /** A prefix of the Idempotency-Key's sha256, so a line can be matched to the account's record. */
@@ -200,6 +212,8 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
 
     let res: Response;
     const started = Date.now();
+    const sends = method === "POST" && SEND_PATH.test(url.pathname);
+    const deadline = mutation ? writeDeadline(sends ? STAGED_UPLOAD_TIMEOUT_MS : REQUEST_DEADLINE_MS) : null;
     try {
       res = await cfg.auth.authedFetch(path, {
         method,
@@ -208,9 +222,18 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
         /* A WRITE THE WINDOW MADE IS THE WINDOW'S. Its own signal keeps it out of what the session's
            stop ends: a sign-out pressed while it is out lets it finish on this deadline, and the
            account receives it once. A read stays the session's, and a sign-out ends it. */
-        ...(mutation ? { signal: AbortSignal.timeout(REQUEST_DEADLINE_MS) } : {}),
+        ...(deadline ? { signal: deadline.signal } : {}),
       });
     } catch (err) {
+      /* A send that outlasted its own upload says nothing about the door: the window is answered
+         the same retryable 503 and every other write stays open. */
+      if (sends && deadline?.signal.aborted === true) {
+        cfg.log?.("cloud_forward_failed", {
+          err,
+          reason: "a send's upload outlasted its bound; the window is answered 503 and keeps the send for its next try",
+        });
+        return offlineResponse();
+      }
       // The forward could not reach Cloud: mark the mirror offline so the next request short-
       // circuits, and answer the same 503. Nothing was written anywhere. A failed probe owes none.
       probeOwed = cfg.mirror.online();
@@ -222,6 +245,7 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
       });
       return offlineResponse();
     } finally {
+      deadline?.clear();
       answered();
     }
 

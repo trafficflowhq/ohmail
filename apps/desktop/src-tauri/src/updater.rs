@@ -1280,9 +1280,12 @@ impl Payload for Plugin {
         self.put(bytes, restart)
     }
 
+    /// Read back and verified again: on Windows the plugin's install verifies nothing itself.
     fn read_staged(&self) -> Result<Vec<u8>, Self::Error> {
         let staging = self.1.as_ref().ok_or_else(no_image)?;
-        Ok(crate::appimage_stage::read_staged(&staging.image)?)
+        let bytes = crate::appimage_stage::read_staged(&staging.image)?;
+        self.verify(staging, &bytes)?;
+        Ok(bytes)
     }
 }
 
@@ -1292,19 +1295,30 @@ impl Plugin {
     /// wrote in place, is never reached. Every other kind is the plugin's, the Windows installer
     /// told whether to start the app again.
     fn put(&self, bytes: &[u8], restart: bool) -> Result<(), tauri_plugin_updater::Error> {
-        if install_kind() == InstallKind::AppImage {
+        let kind = install_kind();
+        if kind == InstallKind::AppImage {
             let staging = self.1.as_ref().ok_or_else(no_image)?;
-            let running = env!("CARGO_PKG_VERSION");
-            if verify_staged(bytes, &self.0.signature, &staging.pubkey, running, &self.0.version, EXPECTED_ASSET).is_none() {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "the release did not verify").into());
-            }
+            self.verify(staging, bytes)?;
             crate::appimage_stage::replace(&staging.image, bytes)?;
             if let Some(dir) = &staging.dir {
                 crate::appimage_stage::forget_record(dir);
             }
             return Ok(());
         }
+        // A Windows release staged for the next launch goes first, so no launch runs it again.
+        if let (InstallKind::WindowsSetup, Some(Staging { image, dir: Some(dir), .. })) = (kind, &self.1) {
+            crate::appimage_stage::discard(dir, image);
+        }
         self.0.clone().restart_after_install(restart).install(bytes)
+    }
+
+    /// [`verify_staged`] against this release's signature and the shipped key.
+    fn verify(&self, staging: &Staging, bytes: &[u8]) -> Result<(), tauri_plugin_updater::Error> {
+        let running = env!("CARGO_PKG_VERSION");
+        match verify_staged(bytes, &self.0.signature, &staging.pubkey, running, &self.0.version, EXPECTED_ASSET) {
+            Some(_) => Ok(()),
+            None => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "the release did not verify").into()),
+        }
     }
 }
 
@@ -1406,9 +1420,9 @@ pub struct Standing {
 /// When Settings' switch, on, installs a ready release on this copy: what the sentence under it says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AutoAt {
-    /// At quit, or at the next launch: an AppImage that stages the release beside itself.
+    /// At quit, or at the next launch: an AppImage or a Windows setup that stages the release.
     QuitOrLaunch,
-    /// At quit: the Windows setup and the macOS app hold the release in memory until then.
+    /// At quit: the macOS app (or a copy that cannot stage) holds the release in memory until then.
     Quit,
     /// Only on Restart: replacing this copy needs a password, which no quit can ask for.
     Restart,
@@ -1430,7 +1444,8 @@ pub fn auto_at(kind: InstallKind, replaceable: bool, stages: bool) -> Option<Aut
     if !kind.self_applies() {
         return None;
     }
-    Some(match (replaceable, kind == InstallKind::AppImage && stages) {
+    let stages = stages && matches!(kind, InstallKind::AppImage | InstallKind::WindowsSetup);
+    Some(match (replaceable, stages) {
         (false, _) => AutoAt::Restart,
         (true, true) => AutoAt::QuitOrLaunch,
         (true, false) => AutoAt::Quit,
@@ -1744,7 +1759,7 @@ pub fn update_set_auto<R: Runtime>(window: tauri::WebviewWindow<R>, on: bool) ->
     let state = app.state::<Updater<R>>();
     *lock(&state.policy) = Some(next);
     if next == Policy::Ask {
-        if let Some(image) = crate::appimage_stage::running_image() {
+        if let Some(image) = staged_image(install_kind()) {
             crate::appimage_stage::discard(&dir, &image);
         }
         // An install or a fetch holding the slot has already taken what was held.
@@ -2034,8 +2049,9 @@ async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
         Err(_) => return failed(&app, user_initiated),
     };
 
-    // With the switch on, an AppImage's release is staged beside it and freed from memory: a
-    // quit that never reaches the loop's last event (a reboot, SIGTERM) still finds it at launch.
+    // With the switch on, an AppImage's or a Windows setup's release is staged beside it and freed
+    // from memory: a quit that never reaches the loop's last event (a reboot, SIGTERM, a session
+    // end) still finds it at launch.
     // Not a release whose install at quit or launch already failed: that one waits for a press.
     let staging = staging_for(&app);
     let to_stage = staging.as_ref().and_then(|staging| {
@@ -2067,16 +2083,23 @@ async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
     prompt_ready(&app, &version);
 }
 
-/// What an AppImage's install needs beside the release, or `None` on every other kind.
+/// What an AppImage's or a Windows setup's install needs beside the release, or `None` on every
+/// other kind.
 fn staging_for<R: Runtime>(app: &AppHandle<R>) -> Option<Staging> {
-    if install_kind() != InstallKind::AppImage {
-        return None;
-    }
     Some(Staging {
-        image: crate::appimage_stage::running_image()?,
+        image: staged_image(install_kind())?,
         dir: data_dir(app),
         pubkey: shipped_pubkey(app),
     })
+}
+
+/// The file a release is staged beside: the AppImage, or the Windows setup's exe.
+fn staged_image(kind: InstallKind) -> Option<PathBuf> {
+    match kind {
+        InstallKind::AppImage => crate::appimage_stage::running_image(),
+        InstallKind::WindowsSetup => crate::appimage_stage::running_setup(),
+        _ => None,
+    }
 }
 
 /// The app's data folder: the policy file and the staged release's record.
@@ -2162,7 +2185,8 @@ fn standing<R: Runtime>(app: &AppHandle<R>, flow: &Flow) -> Standing {
         ..QuitFacts::default()
     };
     let failed = failure(app).filter(|failed| failure_stands(failed, env!("CARGO_PKG_VERSION"), flow.offered()));
-    standing_of(auto, facts, failed.as_ref(), auto_at(kind, replaceable, data_dir(app).is_some()))
+    let stages = data_dir(app).is_some() && staged_image(kind).is_some();
+    standing_of(auto, facts, failed.as_ref(), auto_at(kind, replaceable, stages))
 }
 
 /// The install at quit or launch that failed, as the data folder keeps it. Read each time, so a
@@ -2279,14 +2303,17 @@ pub(crate) fn keep_quit_outcome<E: std::fmt::Debug>(dir: &Path, version: &str, o
 }
 
 /// A STAGED RELEASE A QUIT NEVER REACHED goes in at the next launch, before the engine and the
-/// window start, and the app restarts into it with its launch arguments.
+/// window start. An AppImage restarts into it with its launch arguments. A Windows setup is started
+/// behind the fence on a plain launch only (a link waits for the next), and `true` asks `main` to
+/// return: the installer replaces this copy and starts the app again.
 #[cfg(feature = "local-engine")]
-pub fn apply_staged_at_launch(app: &tauri::App) {
-    if install_kind() != InstallKind::AppImage {
-        return;
-    }
+pub fn apply_staged_at_launch(app: &tauri::App) -> bool {
+    let kind = install_kind();
     let app = app.handle();
-    let (Some(dir), Some(image)) = (data_dir(app), crate::appimage_stage::running_image()) else { return };
+    let (Some(dir), Some(image)) = (data_dir(app), staged_image(kind)) else { return false };
+    if kind == InstallKind::WindowsSetup && !plain_launch(&std::env::args_os().collect::<Vec<_>>()) {
+        return false;
+    }
     let pubkey = shipped_pubkey(app);
     let launch = Launch {
         dir: &dir,
@@ -2296,14 +2323,102 @@ pub fn apply_staged_at_launch(app: &tauri::App) {
         policy: policy(app),
         expected_asset: EXPECTED_ASSET,
     };
-    match launch_apply(&launch) {
-        AtLaunch::Nothing => {}
-        AtLaunch::Refused(reason) => log_verdict_with(Verdict::Refused, None, &[("reason", reason), ("at", "launch")]),
+    let outcome = if kind == InstallKind::WindowsSetup {
+        let parameters = setup_parameters(app.config().plugins.0.get("updater"));
+        let temp = std::env::temp_dir();
+        let put = windows_launch_put(&dir, &temp, &image, &parameters, crate::appimage_stage::run_setup);
+        let Some(outcome) = fenced(&FENCE, || launch_apply(&launch, put)) else { return false };
+        outcome
+    } else {
+        launch_apply(&launch, appimage_launch_put(&dir, &image))
+    };
+    match outcome {
+        AtLaunch::Nothing => false,
+        AtLaunch::Refused(reason) => {
+            log_verdict_with(Verdict::Refused, None, &[("reason", reason), ("at", "launch")]);
+            false
+        }
         AtLaunch::Applied(_) => {
             // No loop has run to let go of the single-instance name; the new copy needs it free.
             tauri_plugin_single_instance::destroy(app);
+            if kind == InstallKind::WindowsSetup {
+                log_verdict_with(Verdict::Installed, None, &[("at", "launch")]);
+                return true;
+            }
             restart_into_the_new_copy(app, "launch");
+            false
         }
+    }
+}
+
+/// Is this a plain launch, argv holding the exe alone? A `mailto:` or `ohmail://` start is not.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub(crate) fn plain_launch(args: &[std::ffi::OsString]) -> bool {
+    args.len() == 1
+}
+
+/// The setup's arguments as the plugin composes them for a restart with no launch arguments:
+/// its install mode's, `/UPDATE`, `/R` (but for basicUi), `/ARGS`, then `installerArgs`.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub(crate) fn setup_parameters(updater: Option<&serde_json::Value>) -> std::ffi::OsString {
+    let windows = updater
+        .and_then(|value| serde_json::from_value::<tauri_plugin_updater::Config>(value.clone()).ok())
+        .and_then(|config| config.windows)
+        .unwrap_or_default();
+    let mut args: Vec<std::ffi::OsString> = windows.install_mode.nsis_args().iter().map(|arg| std::ffi::OsString::from(*arg)).collect();
+    args.push("/UPDATE".into());
+    if windows.install_mode.to_string() != "basicUi" {
+        args.push("/R".into());
+    }
+    args.push("/ARGS".into());
+    args.extend(windows.installer_args);
+    let mut joined = std::ffi::OsString::new();
+    for (n, arg) in args.iter().enumerate() {
+        if n > 0 {
+            joined.push(" ");
+        }
+        joined.push(arg);
+    }
+    joined
+}
+
+/// The AppImage's launch install: the staged release renamed over the image, its record and any
+/// kept failure then forgotten.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub(crate) fn appimage_launch_put<'a>(
+    dir: &'a Path,
+    image: &'a Path,
+) -> impl FnOnce(&[u8], &semver::Version) -> std::io::Result<()> + 'a {
+    move |_, _| {
+        crate::appimage_stage::apply(image)?;
+        crate::appimage_stage::forget_record(dir);
+        crate::appimage_stage::forget_failure(dir);
+        Ok(())
+    }
+}
+
+/// The Windows launch install: the stage goes first, then a provisional failure (which the new
+/// version, once it runs, finds over), so a setup that starts and then fails is never run again by
+/// itself; then a copy of the verified setup in `temp`, started by `run`.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub(crate) fn windows_launch_put<'a>(
+    dir: &'a Path,
+    temp: &'a Path,
+    image: &'a Path,
+    parameters: &'a std::ffi::OsStr,
+    run: impl FnOnce(&Path, &std::ffi::OsStr) -> std::io::Result<()> + 'a,
+) -> impl FnOnce(&[u8], &semver::Version) -> std::io::Result<()> + 'a {
+    move |bytes, version| {
+        crate::appimage_stage::discard(dir, image);
+        let provisional = crate::appimage_stage::Failure {
+            version: version.to_string(),
+            error_class: "Started".into(),
+            at: "launch".into(),
+            at_unix_ms: now_unix_ms(),
+        };
+        crate::appimage_stage::write_failure(dir, &provisional)?;
+        let setup = crate::appimage_stage::write_setup_copy(temp, &version.to_string(), bytes)?;
+        run(&setup, parameters)
     }
 }
 
@@ -2326,13 +2441,16 @@ pub(crate) enum AtLaunch {
     Refused(&'static str),
 }
 
-/// THE LAUNCH'S DECISION AND ITS ONE RENAME. Applied only for this image, with the switch on, and
-/// for a release that verifies again and is newer than the one running; anything else is refused,
-/// the image untouched, and the staged release and its record discarded so no launch retries it.
-/// A release that should have gone in and could not (gone, or not renamed) is kept as a failure,
+/// THE LAUNCH'S DECISION, THEN `put`. Applied only for this image, with the switch on, and for a
+/// release that verifies again and is newer than the one running; anything else is refused, the
+/// image untouched, and the staged release and its record discarded so no launch retries it. A
+/// release that should have gone in and could not (gone, or `put` failed) is kept as a failure,
 /// for the line to say.
 #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
-pub(crate) fn launch_apply(launch: &Launch<'_>) -> AtLaunch {
+pub(crate) fn launch_apply(
+    launch: &Launch<'_>,
+    put: impl FnOnce(&[u8], &semver::Version) -> std::io::Result<()>,
+) -> AtLaunch {
     let Some(record) = crate::appimage_stage::read_record(launch.dir) else { return AtLaunch::Nothing };
     let refuse = |reason| {
         crate::appimage_stage::discard(launch.dir, launch.image);
@@ -2366,14 +2484,11 @@ pub(crate) fn launch_apply(launch: &Launch<'_>) -> AtLaunch {
         &record.version,
         launch.expected_asset,
     );
-    drop(bytes);
     let Some(version) = verified else { return refuse("unverified") };
-    match crate::appimage_stage::apply(launch.image) {
-        Ok(()) => {
-            crate::appimage_stage::forget_record(launch.dir);
-            crate::appimage_stage::forget_failure(launch.dir);
-            AtLaunch::Applied(version)
-        }
+    let put = put(&bytes, &version);
+    drop(bytes);
+    match put {
+        Ok(()) => AtLaunch::Applied(version),
         Err(err) => failed("notApplied", err),
     }
 }

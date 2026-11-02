@@ -1271,18 +1271,21 @@ impl Drop for Engine {
 //  · the configuration file, which is the only durable answer to "which door";
 //  · the current engine, behind a lock, replaced whole rather than mutated.
 
+/// Where the person's Downloads folder is now; see [`ShellPaths::downloads`].
+pub type DownloadsResolver = Arc<dyn Fn() -> Option<PathBuf> + Send + Sync>;
+
 /// Where this install's things are. Resolved once from the Tauri app.
 pub struct ShellPaths {
     /// The app's data directory. `config.json` sits in it and the per-mode mirrors under it.
     pub app_data: Option<PathBuf>,
     /// THE USER'S OWN DOWNLOADS DIRECTORY — the one place in this struct the app does not own.
     ///
-    /// Resolved from the framework (`app.path().download_dir()`) rather than composed from `$HOME`,
-    /// because the three platforms disagree about where it is and one of them lets the person move
-    /// it: Linux reads `XDG_DOWNLOAD_DIR`, Windows the `Downloads` known folder, macOS
-    /// `~/Downloads`. `None` where the platform names none — the save command then refuses by name
-    /// instead of inventing a path somewhere else.
-    pub downloads: Option<PathBuf>,
+    /// Resolved from the framework (`app.path().download_dir()`), because the three platforms
+    /// disagree about where it is and one of them lets the person move it: Linux reads
+    /// `XDG_DOWNLOAD_DIR`, Windows the `Downloads` known folder, macOS `~/Downloads`. Where the
+    /// platform names none, `~/Downloads` ([`downloads_dir`]). A QUESTION asked at each save, not
+    /// an answer kept from launch: a person who fixes their user-dirs needs no restart.
+    pub downloads: Option<DownloadsResolver>,
     /// The app's RESOURCE directory — where the engine and its Node runtime are looked for when
     /// nothing names them explicitly.
     ///
@@ -1719,12 +1722,14 @@ impl Shell {
     /// The data directory is included even though it has never been observed in the verbatim form
     /// — it comes from `dirs`' known-folder lookup, which does not canonicalise. It is normalised
     /// anyway because it travels the same way and the cost of covering it is one call.
-    pub fn paths(app: &tauri::App) -> ShellPaths {
+    ///
+    /// `sandboxed` is a Flatpak, whose home is the sandbox's: a save there never falls back to it.
+    pub fn paths(app: &tauri::App, sandboxed: bool) -> ShellPaths {
         use tauri::Manager;
         ShellPaths {
             app_data: app.path().app_data_dir().ok().map(|d| without_verbatim_prefix(&d)),
             resources: resource_dir_of(app),
-            downloads: app.path().download_dir().ok().map(|d| without_verbatim_prefix(&d)),
+            downloads: Some(downloads_resolver(app.handle().clone(), sandboxed)),
         }
     }
 
@@ -1734,9 +1739,9 @@ impl Shell {
     /// armed spawn, or the port a previous stand-down published and this launch must hold, or
     /// `None` for every install that has not armed it. `None` composes the launch BYTE-IDENTICALLY
     /// to the builds that predate host mode, which `extend_plan`'s tests hold by equality.
-    pub fn start(app: &tauri::App, host: Option<crate::host::HostPlan>) -> Shell {
+    pub fn start(app: &tauri::App, host: Option<crate::host::HostPlan>, sandboxed: bool) -> Shell {
         Shell::open_log(app);
-        let paths = Shell::paths(app);
+        let paths = Shell::paths(app, sandboxed);
         let stored = paths.config();
         let plan = crate::host::extend_plan(
             paths.plan_now(stored.as_ref()),
@@ -6850,6 +6855,29 @@ fn save_into_downloads_with(
     Err(format!("ohmail: there are already {DOWNLOAD_NAME_TRIES} files called {name} in your Downloads folder"))
 }
 
+/// The Downloads folder a save uses: the platform's, else `home/Downloads` (the XDG default, and
+/// where macOS and Windows keep it too), and none inside a sandbox, whose `$HOME` is not the
+/// person's and is thrown away at quit.
+pub(crate) fn downloads_dir(platform: Option<PathBuf>, home: Option<PathBuf>, sandboxed: bool) -> Option<PathBuf> {
+    platform.or_else(|| if sandboxed { None } else { home.map(|home| home.join("Downloads")) })
+}
+
+/// The framework's answer, asked again at every save (`download_dir()` re-reads `user-dirs.dirs`).
+fn downloads_resolver(app: tauri::AppHandle, sandboxed: bool) -> DownloadsResolver {
+    use tauri::Manager;
+    Arc::new(move || {
+        downloads_dir(app.path().download_dir().ok(), app.path().home_dir().ok(), sandboxed)
+            .map(|dir| without_verbatim_prefix(&dir))
+    })
+}
+
+/// The Downloads folder for this save, asked now and made if it is not there.
+#[cfg(feature = "local-engine")]
+fn downloads_now(paths: &ShellPaths) -> Result<PathBuf, String> {
+    let dir = paths.downloads.as_ref().and_then(|resolve| resolve());
+    downloads_root(dir.as_deref())
+}
+
 /// The user's Downloads directory, made if it is not there.
 ///
 /// `create_dir_all` and not a bare existence check: a person can delete the folder, and the answer
@@ -6887,7 +6915,7 @@ fn save_attachment(
     sweep_attachments(&root, ATTACHMENT_KEEP);
     let staged = staging_path(&root).map_err(serde_json::Value::String)?;
     let saved = stage_attachment(&shell.engine(), &staged, &attachment_id).and_then(|bytes| {
-        downloads_root(shell.paths.downloads.as_deref())
+        downloads_now(&shell.paths)
             .and_then(|dir| {
                 save_into_downloads_with(&dir, &attachment_file_name(&filename), &mut |file| {
                     copy_staged(&staged, bytes, file)

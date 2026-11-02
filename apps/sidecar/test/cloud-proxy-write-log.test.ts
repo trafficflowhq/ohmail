@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { REQUEST_DEADLINE_MS } from "../src/cloud-auth.js";
 import { createWriteThroughProxy } from "../src/cloud-proxy.js";
+import { STAGED_UPLOAD_TIMEOUT_MS } from "../src/cloud-staged-upload.js";
 import { createSidecarLog } from "../src/log.js";
 import type { CloudAuth } from "../src/cloud-auth.js";
 import type { CloudMirror } from "../src/cloud-mirror.js";
@@ -89,5 +91,48 @@ describe("a forwarded write leaves one line in the engine log", () => {
     await d.proxy.forward(new Request("http://engine/consent"));
     expect(d.sent).toEqual(["/consent"]);
     expect(d.events("cloud_write_forwarded")).toEqual([]);
+  });
+});
+
+describe("a send's upload is bounded as a staged file's is, not as a write's", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  /** A server still reading the body: the forward settles only when its signal aborts. */
+  function slowDoor() {
+    const connectivity: boolean[] = [];
+    const auth = {
+      authedFetch: (_path: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      }),
+    } as unknown as CloudAuth;
+    const mirror = { online: () => true, markConnectivity: (on: boolean) => { connectivity.push(on); } } as unknown as CloudMirror;
+    const proxy = createWriteThroughProxy({ auth, mirror });
+    const settle = async (path: string, ms: number): Promise<string> => {
+      const verdict = proxy.forward(new Request(`http://engine${path}`, {
+        method: "POST", body: JSON.stringify({ attachments: [{ contentBase64: "QUFB" }] }),
+        headers: { "content-type": "application/json", "idempotency-key": KEY },
+      })).then((r) => `answered ${r.status}`);
+      await vi.advanceTimersByTimeAsync(ms);
+      return await Promise.race([verdict, Promise.resolve("still pending")]);
+    };
+    return { settle, connectivity };
+  }
+
+  it("a send still uploading past the write deadline is not cut, and its own timeout leaves the door online", async () => {
+    vi.useFakeTimers();
+    const d = slowDoor();
+    const send = d.settle("/drafts/d-1/send", REQUEST_DEADLINE_MS + 1_000);
+    expect(await send).toBe("still pending");
+    expect(d.connectivity).toEqual([]);
+    // At the bound the window is answered the retryable 503, and other writes stay open.
+    expect(await d.settle("/drafts/d-2/send", STAGED_UPLOAD_TIMEOUT_MS)).toBe("answered 503");
+    expect(d.connectivity).toEqual([]);
+  });
+
+  it("control: any other write keeps its deadline, and a forward that fails marks the door offline", async () => {
+    vi.useFakeTimers();
+    const d = slowDoor();
+    expect(await d.settle("/drafts", REQUEST_DEADLINE_MS)).toBe("answered 503");
+    expect(d.connectivity).toEqual([false]);
   });
 });

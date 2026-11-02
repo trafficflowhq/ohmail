@@ -218,6 +218,10 @@ fn main() {
         .build(context)
         .expect("ohmail: failed to start the Tauri runtime");
 
+    // A Flatpak's home is the sandbox's own, so no save falls back to it.
+    #[cfg(feature = "local-engine")]
+    let sandboxed = updater::install_kind() == updater::InstallKind::Flatpak;
+
     // HOST MODE IS DECIDED BEFORE THE ENGINE STARTS, because the decision is part of the spawn:
     // an armed install's engine gets three extra environment variables (`host.rs` carries the
     // whole design), and an engine's environment is fixed at its spawn. The log is opened first
@@ -226,10 +230,13 @@ fn main() {
     #[cfg(feature = "local-engine")]
     let (host_boot, launch_undone) = {
         engine::Shell::open_log(&app);
-        // A release staged beside the AppImage that no quit installed goes in now, before the
-        // engine or the window starts, and the app restarts into it.
-        updater::apply_staged_at_launch(&app);
-        let paths = engine::Shell::paths(&app);
+        // A release staged beside the AppImage or the Windows setup that no quit installed goes in
+        // now, before the engine or the window starts. On Windows its installer starts the app
+        // again, and this launch leaves at once.
+        if updater::apply_staged_at_launch(&app) {
+            return;
+        }
+        let paths = engine::Shell::paths(&app, sandboxed);
         // A pairing the last run never settled puts its replaced door back before anything reads
         // it; what that undo took back is finished below, once the shell and host mode exist.
         let undone = engine::recover_door_switch(&paths);
@@ -247,7 +254,7 @@ fn main() {
         });
     }
     #[cfg(feature = "local-engine")]
-    let shell = std::sync::Arc::new(engine::Shell::start(&app, host_boot.plan()));
+    let shell = std::sync::Arc::new(engine::Shell::start(&app, host_boot.plan(), sandboxed));
     #[cfg(feature = "local-engine")]
     shell.note_pairing_left(launch_undone.session_left_at.clone());
     #[cfg(feature = "local-engine")]

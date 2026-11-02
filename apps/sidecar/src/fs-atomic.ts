@@ -1,4 +1,4 @@
-import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, ftruncateSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { open, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -87,6 +87,29 @@ export async function writeAtomicFileSynced(path: string, contents: string, mode
 export async function removeFileSynced(path: string): Promise<void> {
   await unlink(path).catch((err: NodeJS.ErrnoException) => { if (err.code !== "ENOENT") throw err; });
   await syncDirectory(dirname(path));
+}
+
+/**
+ * {@link removeFileSynced}, synchronously, for a caller that must remove before its first await.
+ * The file is emptied and flushed first: Windows cannot flush the directory, so an unlink a power
+ * cut undoes there brings back an empty file, never its contents. Emptying is best effort.
+ */
+export function removeAtomic(path: string): void {
+  try {
+    const fd = openSync(path, "r+");
+    try {
+      ftruncateSync(fd, 0);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch { /* absent, or not writable: the unlink below still decides */ }
+  try {
+    unlinkSync(path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  syncDirectorySync(dirname(path));
 }
 
 /**

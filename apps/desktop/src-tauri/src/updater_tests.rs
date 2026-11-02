@@ -2384,6 +2384,7 @@ pub(crate) struct StubPayload {
     quit_handed: std::sync::Mutex<Vec<(Vec<u8>, bool)>>,
     /// What reading the staged release back answers.
     staged: std::sync::Mutex<Option<Result<Vec<u8>, String>>>,
+    staged_reads: AtomicUsize,
     /// Does preparing succeed? `false` is a disk that cannot take the installer: no hook runs.
     prepares: bool,
     start: Start,
@@ -2398,6 +2399,7 @@ impl StubPayload {
             handed: std::sync::Mutex::new(Vec::new()),
             quit_handed: std::sync::Mutex::new(Vec::new()),
             staged: std::sync::Mutex::new(None),
+            staged_reads: AtomicUsize::new(0),
             prepares,
             start,
         }
@@ -2462,6 +2464,7 @@ impl Payload for StubPayload {
     }
 
     fn read_staged(&self) -> Result<Vec<u8>, String> {
+        self.staged_reads.fetch_add(1, Ordering::SeqCst);
         self.staged.lock().unwrap().clone().unwrap_or_else(|| Err("nothing staged".into()))
     }
 }
@@ -2774,10 +2777,11 @@ fn our_signers_trusted_comment_names_no_version_field_and_the_signature_still_ve
  * again before it is used. */
 
 use super::{
-    at_quit, auto_at, failure_stands, keep_quit_outcome, launch_apply, press_now, quit_install, report_with,
-    standing_of, verify_staged, AtLaunch, AtQuit, AutoAt, Held, Launch, Policy, QuitFacts, QuitInstall, SendHold,
-    Skip, Standing, HOLD_FOR,
+    appimage_launch_put, at_quit, auto_at, failure_stands, keep_quit_outcome, launch_apply, plain_launch,
+    press_now, quit_install, report_with, setup_parameters, standing_of, verify_staged, windows_launch_put,
+    AtLaunch, AtQuit, AutoAt, Held, Launch, Policy, QuitFacts, QuitInstall, SendHold, Skip, Standing, HOLD_FOR,
 };
+use std::ffi::{OsStr, OsString};
 use crate::appimage_stage::{self, tests::Bed, Failure, PolicyRead};
 
 /// Every fact a quit reads, each allowing the install.
@@ -2978,15 +2982,17 @@ fn the_window_is_told_the_switch_the_hold_and_whether_the_quit_installs() {
     assert_eq!(asks["autoInstallsAt"], serde_json::Value::Null);
 }
 
-/* WHAT SETTINGS SAYS UNDER THE SWITCH is what the shell will do on this copy: only an AppImage that
-   can stage beside itself installs at its next start; the Windows setup and the macOS app install
-   as they quit; where replacing the app needs a password, nothing goes in without Restart. */
+/* WHAT SETTINGS SAYS UNDER THE SWITCH is what the shell will do on this copy: an AppImage or a
+   Windows setup that can stage beside itself installs at its next start too; the macOS app installs
+   as it quits; where replacing the app needs a password, nothing goes in without Restart. */
 #[test]
 fn the_switch_says_when_this_copy_installs_and_never_more() {
     use InstallKind::*;
     assert_eq!(auto_at(AppImage, true, true), Some(AutoAt::QuitOrLaunch));
     assert_eq!(auto_at(AppImage, true, false), Some(AutoAt::Quit), "an AppImage that cannot stage");
-    assert_eq!(auto_at(WindowsSetup, true, true), Some(AutoAt::Quit), "the Windows setup installs at a start");
+    // A session end skips the quit's install on Windows, so the staged setup runs at the next launch.
+    assert_eq!(auto_at(WindowsSetup, true, true), Some(AutoAt::QuitOrLaunch), "the Windows setup stages for a launch");
+    assert_eq!(auto_at(WindowsSetup, true, false), Some(AutoAt::Quit), "a Windows setup that cannot stage");
     assert_eq!(auto_at(MacBundle, true, true), Some(AutoAt::Quit), "the macOS app installs at a start");
     assert_eq!(auto_at(MacBundle, false, true), Some(AutoAt::Restart));
     assert_eq!(auto_at(AppImage, false, true), Some(AutoAt::Restart));
@@ -3083,7 +3089,8 @@ fn staged_bed(name: &str) -> Bed {
 
 fn at_launch(bed: &Bed, running: &str, policy: Policy, asset: &str) -> AtLaunch {
     let key = shipped_pubkey();
-    launch_apply(&Launch { dir: &bed.data, image: &bed.image, running, pubkey: &key, policy, expected_asset: asset })
+    let launch = Launch { dir: &bed.data, image: &bed.image, running, pubkey: &key, policy, expected_asset: asset };
+    launch_apply(&launch, appimage_launch_put(&bed.data, &bed.image))
 }
 
 #[test]
@@ -3177,6 +3184,156 @@ fn the_staged_release_is_found_beside_the_image_and_never_where_a_record_points(
     assert!(matches!(outcome, AtLaunch::Refused(_)), "{outcome:?}");
     assert_eq!(fs::read(&bed.image).unwrap(), b"the old image");
     assert_eq!(fs::read(&planted).unwrap(), payload, "a file the record named was moved");
+}
+
+/* ── WINDOWS: A RELEASE A SESSION END SKIPPED GOES IN AT THE NEXT LAUNCH ──────────────────────
+ *
+ * The verified setup is staged beside the exe as it downloads. A session end skips the quit's
+ * install without reading it, and the next plain launch verifies it again and starts it, the
+ * stage gone and a provisional failure written first: a setup that starts and then fails is never
+ * run again by itself. The decision is the AppImage's, so every refusal runs nothing. */
+
+/// What the injected run saw at the moment the launch started the setup.
+struct SetupRun {
+    bytes: Vec<u8>,
+    parameters: OsString,
+    record_left: bool,
+    staged_left: bool,
+    failure: Option<Failure>,
+}
+
+fn windows_at_launch(bed: &Bed, running: &str, policy: Policy, asset: &str, answer: std::io::Result<()>) -> (AtLaunch, Option<SetupRun>) {
+    let key = shipped_pubkey();
+    let temp = bed.root.join("Temp");
+    let mut seen = None;
+    let run = |setup: &Path, parameters: &OsStr| {
+        seen = Some(SetupRun {
+            bytes: fs::read(setup).unwrap(),
+            parameters: parameters.to_os_string(),
+            record_left: appimage_stage::read_record(&bed.data).is_some(),
+            staged_left: appimage_stage::staged_path(&bed.image).unwrap().exists(),
+            failure: appimage_stage::read_failure(&bed.data),
+        });
+        answer
+    };
+    let launch = Launch { dir: &bed.data, image: &bed.image, running, pubkey: &key, policy, expected_asset: asset };
+    let outcome = launch_apply(&launch, windows_launch_put(&bed.data, &temp, &bed.image, OsStr::new("/P /UPDATE /R /ARGS"), run));
+    (outcome, seen)
+}
+
+#[test]
+fn a_windows_launch_starts_the_verified_setup_with_its_stage_gone_and_a_failure_written_first() {
+    let bed = staged_bed("win-launch-applies");
+    let (outcome, run) = windows_at_launch(&bed, "0.13.2", Policy::Auto, ASSET, Ok(()));
+    assert_eq!(outcome, AtLaunch::Applied(semver::Version::parse("0.13.3").unwrap()));
+    let run = run.expect("the setup was not started");
+    assert_eq!(run.bytes, fs::read(fixtures_dir().join("payload.bin")).unwrap(), "the setup is not the staged release");
+    assert_eq!(run.parameters, OsString::from("/P /UPDATE /R /ARGS"));
+    assert!(!run.record_left && !run.staged_left, "the stage outlived the start: the next launch would run it again");
+    let provisional = run.failure.expect("no failure before the start: a setup that fails later would run every launch");
+    assert_eq!((provisional.version.as_str(), provisional.at.as_str()), ("0.13.3", "launch"));
+    // The new version, once it runs, finds the provisional failure over.
+    assert!(!failure_stands(&provisional, "0.13.3", None));
+    assert_eq!(fs::read(&bed.image).unwrap(), b"the old image", "the launch wrote over the exe itself");
+    let (again, run) = windows_at_launch(&bed, "0.13.2", Policy::Auto, ASSET, Ok(()));
+    assert_eq!(again, AtLaunch::Nothing);
+    assert!(run.is_none(), "a second launch started the setup again");
+}
+
+#[test]
+fn a_windows_setup_that_does_not_start_is_kept_as_failed_with_its_class_and_nothing_stays_staged() {
+    let bed = staged_bed("win-launch-not-started");
+    let refused = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    let (outcome, run) = windows_at_launch(&bed, "0.13.2", Policy::Auto, ASSET, Err(refused));
+    assert!(run.is_some());
+    assert_eq!(outcome, AtLaunch::Refused("notApplied"));
+    let kept = appimage_stage::read_failure(&bed.data).expect("the failed start was only logged");
+    assert_eq!((kept.version.as_str(), kept.at.as_str(), kept.error_class.as_str()), ("0.13.3", "launch", "PermissionDenied"));
+    assert_eq!(appimage_stage::read_record(&bed.data), None);
+    assert!(!appimage_stage::staged_path(&bed.image).unwrap().exists());
+}
+
+#[test]
+fn a_windows_launch_starts_no_setup_on_any_mismatch() {
+    let none = |bed: &Bed, running: &str, policy: Policy, asset: &str| {
+        let (outcome, run) = windows_at_launch(bed, running, policy, asset, Ok(()));
+        assert!(matches!(outcome, AtLaunch::Refused(_)), "{outcome:?}");
+        assert!(run.is_none(), "a refused release was started");
+        assert_eq!(fs::read(&bed.image).unwrap(), b"the old image");
+    };
+    none(&staged_bed("win-launch-equal"), "0.13.3", Policy::Auto, ASSET);
+    none(&staged_bed("win-launch-older"), "0.14.0", Policy::Auto, ASSET);
+    none(&staged_bed("win-launch-switch-off"), "0.13.2", Policy::Ask, ASSET);
+    none(&staged_bed("win-launch-other-asset"), "0.13.2", Policy::Auto, "ohmail-linux-aarch64.AppImage");
+
+    let flipped = staged_bed("win-launch-flipped");
+    let staged = appimage_stage::staged_path(&flipped.image).unwrap();
+    let mut bytes = fs::read(&staged).unwrap();
+    bytes[0] ^= 0x01;
+    fs::write(&staged, bytes).unwrap();
+    none(&flipped, "0.13.2", Policy::Auto, ASSET);
+
+    let elsewhere = staged_bed("win-launch-other-image");
+    let other = elsewhere.root.join("Elsewhere").join("ohmail.exe");
+    fs::create_dir_all(other.parent().unwrap()).unwrap();
+    fs::write(&other, b"another copy").unwrap();
+    let payload = fs::read(fixtures_dir().join("payload.bin")).unwrap();
+    let record = appimage_stage::Record { image: other.clone(), version: "0.13.3".into(), signature: versioned_sig_b64() };
+    appimage_stage::stage(&elsewhere.data, &record, &payload).unwrap();
+    none(&elsewhere, "0.13.2", Policy::Auto, ASSET);
+
+    // A record that names a path of its own: the stage is read beside the exe, never there.
+    let planted_bed = Bed::new("win-launch-record-path");
+    let planted = planted_bed.root.join("planted.exe");
+    fs::write(&planted, &payload).unwrap();
+    let named = serde_json::json!({
+        "image": planted_bed.image.to_str().unwrap(),
+        "version": "0.13.3",
+        "signature": versioned_sig_b64(),
+        "staged": planted.to_str().unwrap(),
+    });
+    fs::write(planted_bed.data.join(appimage_stage::RECORD_FILE), named.to_string()).unwrap();
+    none(&planted_bed, "0.13.2", Policy::Auto, ASSET);
+}
+
+#[test]
+fn the_launch_setup_gets_the_plugins_own_arguments_for_a_restart_with_none() {
+    let conf: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(manifest_dir().join("tauri.conf.json")).unwrap()).unwrap();
+    assert_eq!(setup_parameters(conf["plugins"].get("updater")), OsString::from("/P /UPDATE /R /ARGS"));
+    let with = |windows: serde_json::Value| serde_json::json!({ "pubkey": "", "windows": windows });
+    let rows = [
+        (with(serde_json::json!({ "installMode": "quiet" })), "/S /UPDATE /R /ARGS"),
+        (with(serde_json::json!({ "installMode": "basicUi" })), "/UPDATE /ARGS"),
+        (with(serde_json::json!({ "installMode": "passive", "installerArgs": ["/NS", "/D=x"] })), "/P /UPDATE /R /ARGS /NS /D=x"),
+        (serde_json::json!({ "pubkey": "" }), "/P /UPDATE /R /ARGS"),
+    ];
+    for (updater, want) in rows {
+        assert_eq!(setup_parameters(Some(&updater)), OsString::from(want), "{updater}");
+    }
+}
+
+#[test]
+fn only_a_plain_launch_starts_the_setup_and_a_link_waits() {
+    let exe = OsString::from("C:\\Apps\\ohmail\\ohmail.exe");
+    assert!(plain_launch(&[exe.clone()]));
+    assert!(!plain_launch(&[exe.clone(), OsString::from("mailto:?subject=hello")]));
+    assert!(!plain_launch(&[exe, OsString::from("ohmail://signin")]));
+    assert!(!plain_launch(&[]));
+}
+
+#[test]
+fn a_session_end_leaves_the_staged_setup_unread_for_the_next_launch() {
+    let hook = Arc::new(InstallHook::new(Arc::new(StubDoor::default())));
+    let staged = StubPayload::new(&hook, true, Start::Replaces).staged(Ok(b"v2".to_vec()));
+    let pending = holding(staged, hook, Held::Staged);
+    let ending = QuitFacts { session_ending: true, ..quitting() };
+    assert_eq!(at_quit(&AtomicBool::new(false), &pending, ending), AtQuit::Skipped(Skip::SessionEnding));
+    let slot = pending.lock().unwrap();
+    let waiting = slot.as_ref().unwrap();
+    assert_eq!(waiting.payload.staged_reads.load(Ordering::SeqCst), 0, "the session end read the stage");
+    assert!(matches!(waiting.held, Held::Staged), "the session end let go of the stage");
+    assert!(waiting.payload.quit_handed().is_empty());
 }
 
 /// THE RELAUNCH CARD'S RESTART IS AN EXIT TOO: the release goes in, and the installer is told to start
