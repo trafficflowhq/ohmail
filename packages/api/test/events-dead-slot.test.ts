@@ -1,6 +1,6 @@
 import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp, apiRoutes, type ApiDeps, type SseConfig } from "@trafficflow/api";
 import { writeWebResponse } from "@trafficflow/core/adapters/http-host";
 import { createLogger } from "@trafficflow/core/mail";
@@ -30,6 +30,7 @@ afterEach(async () => {
   await Promise.all(readers.splice(0).map((r) => r.cancel().catch(() => {})));
   await Promise.all(servers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
   resetSseCounters();
+  vi.restoreAllMocks();
 });
 
 /** Read until the ready frame, then either keep reading (a live tab) or stop (a dead one). */
@@ -101,6 +102,31 @@ describe("GET /events frees the slot of a stream nobody reads", () => {
     const fifth = await open(4);
     expect(fifth.status).toBe(429);
     expect((await fifth.json()).error.code).toBe("sse_too_many_streams");
+  });
+
+  it("the bound reads the config's clock: a wall-clock jump (a stalled loop) ends no live stream", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const tab = await openTab(await H(req("GET", "/events", { bearer: s.token }), deps, { ...CFG, now: () => 0 }), true);
+    while (tab.pings() < 1) await sleep(5);              // its frames are being taken
+    const wall = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => wall() + 10 * BOUND);
+    while (tab.pings() < 4 && !tab.ended()) await sleep(HB);
+    expect(tab.ended(), "a wall-clock jump ended a live stream").toBe(false);
+    expect(countFor(s.accountId)).toBe(1);
+  });
+
+  it("CONTROL: with the wall clock held still, the config's clock jumping past the bound ends the stream", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    let t = 0;
+    vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    const tab = await openTab(await H(req("GET", "/events", { bearer: s.token }), deps, { ...CFG, now: () => t }), true);
+    while (tab.pings() < 1) await sleep(5);
+    t += 10 * BOUND;
+    while (tab.pings() < 4 && !tab.ended()) await sleep(HB);
+    expect(tab.ended(), "the bound did not read the config's clock").toBe(true);
+    expect(countFor(s.accountId)).toBe(0);
   });
 
   it("a request whose client left (its signal aborted) frees its slot at once", async () => {

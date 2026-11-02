@@ -388,6 +388,8 @@ export interface SseConfig {
   maxPerAccount?: number;
   /** Max concurrent streams in ONE warm instance — the per-instance backstop (503 beyond it). */
   maxPerInstance?: number;
+  /** The clock of the delivery bound and the pushed-frame freshness check; `Date.now` when absent. */
+  now?: () => number;
 }
 
 export const DEFAULT_SSE: SseConfig = {
