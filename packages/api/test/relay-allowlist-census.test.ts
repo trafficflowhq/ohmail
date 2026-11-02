@@ -109,7 +109,8 @@ describe("the projection the sidecar reads matches the table", () => {
     // holds the rows, like the gap offer's answer beside them.
     // 190 -> 191 with `POST /auth/reuse-sweeps/ack`: the account's own notice, put away on the server
     // that listed it, like `GET /auth/session` beside it.
-    expect(RELAY_ALLOWLIST.length).toBe(191);
+    // 191 -> 192 with `POST /auth/step-up/recovery-code`, relayed like `POST /auth/step-up/totp`.
+    expect(RELAY_ALLOWLIST.length).toBe(192);
   });
 
   it("every pattern in the projection is a real route", () => {

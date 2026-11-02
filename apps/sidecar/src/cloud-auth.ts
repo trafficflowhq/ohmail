@@ -101,7 +101,8 @@ const CREDENTIAL_REFUSED = "credential_refused";
  * `test/factor-routes-never-refresh.test.ts`, which drives this transport over every relayed route.
  */
 const NEVER_RENEW = [
-  "/auth/step-up/totp", "/auth/step-up/webauthn/verify", "/auth/2fa/totp/activate", "/auth/2fa/webauthn/register/verify",
+  "/auth/step-up/totp", "/auth/step-up/webauthn/verify", "/auth/step-up/recovery-code",
+  "/auth/2fa/totp/activate", "/auth/2fa/webauthn/register/verify",
   "/auth/2fa/webauthn/assert/options",
   // A wrong current password at the password change.
   "/auth/password",

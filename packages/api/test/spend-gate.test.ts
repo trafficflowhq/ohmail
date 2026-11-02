@@ -400,7 +400,9 @@ const CEREMONY = [
   // `ceremony` on `POST /auth/2fa/totp/verify`'s exact reasoning: identity lifecycle, no work,
   // no socket, no model — and the exemption buys an unverified account nothing it can spend:
   // every re-stamped session meets this same gate on every route that matters. Sorted between
-  // `register` and `verify-email` (`r` < `s` < `v`).
+  // `register` and `verify-email` (`r` < `s` < `v`). The recovery code is the same ceremony for
+  // somebody whose authenticator is gone.
+  "POST /auth/step-up/recovery-code",
   "POST /auth/step-up/totp",
   "POST /auth/step-up/webauthn/options",
   "POST /auth/step-up/webauthn/verify",
@@ -971,7 +973,9 @@ describe("the route table declares what every handler causes", () => {
     // `UNAUTHENTICATED` and this total together and the gated remainder is unchanged.
     // 259 -> 260: `POST /auth/reuse-sweeps/ack`, a `ceremony`, so it joins `CEREMONY` and this total
     // together and the gated remainder is unchanged.
-    expect(apiRoutes).toHaveLength(260);
+    // 260 -> 261: `POST /auth/step-up/recovery-code`, a `ceremony` like its step-up siblings, so it
+    // joins `CEREMONY` and this total together and the gated remainder is unchanged.
+    expect(apiRoutes).toHaveLength(261);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1207,7 +1211,8 @@ describe("the route table declares what every handler causes", () => {
     // 257 -> 258 with the connect-attempt read, `unauthenticated`: the remainder does not move.
     // 258 -> 259 with the late Sent-copy pass, `unauthenticated`: the remainder does not move.
     // 259 -> 260 with the reuse sweeps' acknowledgement, a `ceremony`: the remainder does not move.
-    expect(gated.length).toBe(260 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 260 -> 261 with the recovery code's step-up, a `ceremony`: the remainder does not move.
+    expect(gated.length).toBe(261 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

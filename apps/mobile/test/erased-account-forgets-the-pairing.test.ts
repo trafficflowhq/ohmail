@@ -116,7 +116,7 @@ describe("the paired phone of an erased account", () => {
     const asked: Array<string | null> = [];
     const bearer = new BearerManagerRN({
       origin: "https://cloud.test", accessToken: "a", refreshToken: "r", accountId: "acct-x",
-      vault: { save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed" },
+      vault: { save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed", oweSignOut: async () => false },
       fetchImpl: async (_url, init) => {
         asked.push(((init ?? {}) as { headers?: Record<string, string> }).headers?.["x-ohmail-accepts"] ?? null);
         return new Response(JSON.stringify({ error: { code: "unauthorized", message: "x" } }), { status: 401 });
@@ -132,7 +132,7 @@ describe("what ends nothing as erased", () => {
     const deaths: SessionDeath[] = [];
     const bearer = new BearerManagerRN({
       origin: "https://cloud.test", accessToken: "a", refreshToken: "r", accountId,
-      vault: { save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed" },
+      vault: { save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed", oweSignOut: async () => false },
       fetchImpl: async () => answer(),
     });
     bearer.onSessionDead((why) => deaths.push(why));
@@ -167,7 +167,7 @@ describe("what ends nothing as erased", () => {
   it("a refresh answering 410 naming ANOTHER account keeps the pair", async () => {
     const refreshing = new BearerManagerRN({
       origin: "https://cloud.test", accessToken: "a", refreshToken: "r", accountId: "acct-x",
-      vault: { save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed" },
+      vault: { save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed", oweSignOut: async () => false },
       fetchImpl: async (url) => (url.endsWith("/auth/refresh")
         ? coded(410, "account_erased", "acct-y") : coded(401, "unauthorized", null)),
     });

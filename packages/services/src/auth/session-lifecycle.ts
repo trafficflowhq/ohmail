@@ -171,6 +171,20 @@ const AUTO_MINT_DEVICE_LABELS: Partial<Record<DeviceKind, string>> = {
   "desktop-windows": "ohmail for Windows",
 };
 
+/**
+ * WHICH KIND OF INSTALL A NAMED SESSION IS, for `previousSession`: a sign-in ends the previous
+ * family only when it is the same kind of install's, so a phone's re-pair never ends the desktop
+ * and a desktop's sign-in never ends a phone. `named` is a device row: a browser sign-in mints
+ * none, and only a paired browser (the pairing redeem's row) has a family it can name.
+ */
+type InstallClass = "desktop" | "phone" | "paired-web";
+
+function installClassOf(kind: string, named: boolean): InstallClass | null {
+  if (Object.hasOwn(AUTO_MINT_DEVICE_LABELS, kind)) return "desktop";
+  if (kind === "mobile-android" || kind === "mobile-ios") return "phone";
+  return kind === "web" && named ? "paired-web" : null;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -666,10 +680,11 @@ export class SessionLifecycle {
     // rather than at seven call sites, one of which would eventually be added without it.
     // `revokeEnrollmentSessions` below is a write, so the check precedes it.
     refuseCrossAccountCredential(ctx, user.accountId);
+    const cls = installClassOf(o.kind, o.deviceId !== undefined);
     const jar = {
       accessToken: ctx.supersedes || null, marker: ctx.supersedesMarker || null,
-      // An install's previous family is a desktop's, and only a desktop's sign-in names one.
-      install: AUTO_MINT_DEVICE_LABELS[o.kind] !== undefined ? ctx.supersedesInstall || null : null,
+      // An install's previous family, named only by a sign-in that is itself an install's.
+      install: cls !== null && ctx.supersedesInstall ? { digest: ctx.supersedesInstall, cls } : null,
     };
     if (!jar.accessToken && !jar.marker && !jar.install) return this.mintEstablished(ctx, user, o);
     // THE SUPERSEDE AND THE MINT COMMIT TOGETHER, never as two calls: a new session beside a
@@ -686,14 +701,15 @@ export class SessionLifecycle {
    * browser presented beside the ceremony. The access token: an expired one still names its
    * session; an enrollment token or an unknown hash revokes nothing. The resume marker, which
    * outlives the access cookie: the family whose refresh token it digests, only when that is the
-   * signer's own plain browser session. The install's digest, a desktop's same marker in its body:
-   * only the signer's own desktop's family. The FAMILY goes, not only the row a hash found, so a
-   * rotation that lands after this read leaves no live successor; each once, and each of the
-   * signer's own written down as a `logout`.
+   * signer's own plain browser session. The install's digest, in a desktop's, a phone's or a paired
+   * browser's body: only the signer's own family of that same kind of install. The FAMILY goes,
+   * not only the row a hash found, so a rotation that lands after this read leaves no live
+   * successor; each once, and each of the signer's own written down as a `logout`.
    */
   protected async supersede(
     db: Tx, ctx: ServiceContext, user: typeof users.$inferSelect,
-    jar: { accessToken: string | null; marker: string | null; install: string | null }, now: Date,
+    jar: { accessToken: string | null; marker: string | null; install: { digest: string; cls: InstallClass } | null },
+    now: Date,
   ): Promise<void> {
     const named = new Map<string, { familyId: string; userId: string; sessionId: string }>();
     const found = { familyId: sessions.familyId, userId: sessions.userId, sessionId: sessions.id };
@@ -723,18 +739,18 @@ export class SessionLifecycle {
       if (own) named.set(own.familyId, own);
     }
     if (jar.install) {
-      // The hash is unique, so the kind is asked of the one row it finds: a desktop's, never a phone's.
+      // The hash is unique, so the kind is asked of the one row it finds: the same kind of install's only.
       const [prev] = await db.select({ ...found, kind: devices.kind }).from(refreshTokens)
         .innerJoin(sessions, eq(sessions.id, refreshTokens.sessionId))
         .innerJoin(devices, eq(devices.id, sessions.deviceId))
         .where(and(
-          eq(refreshTokens.tokenHash, jar.install),
+          eq(refreshTokens.tokenHash, jar.install.digest),
           eq(sessions.userId, user.id),
           eq(sessions.scope, "full"),
           isNull(sessions.revokedAt),
         ))
         .limit(1);
-      if (prev && Object.hasOwn(AUTO_MINT_DEVICE_LABELS, prev.kind)) {
+      if (prev && installClassOf(prev.kind, true) === jar.install.cls) {
         named.set(prev.familyId, { familyId: prev.familyId, userId: prev.userId, sessionId: prev.sessionId });
       }
     }

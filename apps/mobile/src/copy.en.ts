@@ -846,6 +846,10 @@ const TABLE = {
     "The pairing and the mail this phone had copied are gone. The server could not be reached to "
     + "end the session, so it may still count this phone as connected — revoke this device from its "
     + "Devices list to finish.",
+  /** The server was out of reach, and the sign-out is kept for the next time it is not. */
+  forgetServerOwed:
+    "The pairing and the mail this phone had copied are gone. The server could not be reached to "
+    + "end the session; this phone tells it the next time it reaches it.",
   forgetClaimStands: (minutes: number) =>
     "The mailbox and its mail are gone from this phone. Its claim on the mailbox could not be "
     + `given back, so another machine can take the mailbox in about ${minutes} minutes.`,
@@ -1128,6 +1132,9 @@ const TABLE = {
       case "wake_queue_full": return "this phone already has more unfinished wake removals than it can record";
       case "wake_not_recorded": return "this phone could not record that the wake registration is owed a removal";
       case "wake_still_owed": return "this phone still records a wake removal owed for that registration";
+      case "sign_out_queue_full": return "this phone already has more unfinished sign-outs than it can record";
+      case "sign_out_not_recorded": return "this phone could not record that a server is owed a sign-out";
+      case "sign_out_still_owed": return "this phone still holds a sign-out it owes a server";
       case "index_unreadable": return "this phone's list of pairings could not be read";
       case "purge_refused": return "the keystore would not give up the earlier installation's pairings";
       case "mirror_not_deleted":

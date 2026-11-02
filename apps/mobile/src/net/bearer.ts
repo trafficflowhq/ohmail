@@ -41,7 +41,15 @@ export interface RefreshVault {
    * relaunches on a pair the server can answer. Adopting clears the name.
    */
   armAttempt(attemptId: string, head: string, held: ReadonlySet<string>): Promise<RefreshWrite>;
+  /**
+   * Keep a sign-out the server was not told, to be sent at the next connection
+   * (`pairing.ts#drainPendingSignOuts`); answers whether it was kept, read back.
+   */
+  oweSignOut(refreshToken: string): Promise<boolean>;
 }
+
+/** What became of a sign-out's half at the server: said, owed for the next connection, or neither. */
+export type SignOutOutcome = "told" | "owed" | "untold";
 
 /**
  * WHY A SESSION ENDED, for the surface that has to say it. `revoked` is the server withdrawing
@@ -446,19 +454,32 @@ export class BearerManagerRN implements SessionRenewalDoor {
     // local half happens either way, but the server half is what revokes the session and, on
     // the hosted tier, takes this device's wake registration down; reporting a forget over a
     // logout that never landed leaves both alive with nothing left to retry them.
+    return (await this.signOut()) === "told";
+  }
+
+  /**
+   * {@link logout}, saying what became of the server's half: a sign-out the server was not told is
+   * OWED — its refresh token kept through the vault before the credential goes, and sent at the
+   * next connection — and `untold` is one this phone could not even keep a note of.
+   */
+  async signOut(): Promise<SignOutOutcome> {
     let told = true;
-    if (this.access !== null || this.refresh !== null) {
+    const held = this.refresh;
+    if (this.access !== null || held !== null) {
       told = false;
       try {
         told = await this.endAtServer();
       } catch {
-        /* unreachable server — the server-side session ages out; this device is out now */
+        /* unreachable server — owed below; this device is out now */
       }
     }
+    // The newest token of the family: an older server's routed sign-out may have renewed it.
+    const owing = this.refresh ?? held;
+    const owed = !told && owing !== null && await this.vault.oweSignOut(owing).catch(() => false);
     // "refused", not "revoked": a deliberate sign-out is not a family somebody replayed, and the
     // surface must not tell the person their key was presented twice when they pressed the button.
     await this.die("refused");
-    return told;
+    return told ? "told" : owed ? "owed" : "untold";
   }
 
   /** Did the server say this session is over? A 2xx, or the refresh door's own 401 (nothing left to end). */
