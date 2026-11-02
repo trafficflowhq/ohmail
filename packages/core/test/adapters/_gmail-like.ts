@@ -24,6 +24,8 @@ export interface GmailLikeOptions {
   sentFolder?: string;
   /** Swallow every SEARCH the client sends — a server that never answers the look. */
   hangSearch?: boolean;
+  /** Announce `AUTH=XOAUTH2` and sign in with its bearer token as the password (an OAuth mailbox). */
+  xoauth2?: boolean;
 }
 
 export interface GmailLikePair {
@@ -41,6 +43,18 @@ export interface GmailLikePair {
 }
 
 const GM_ITEM = / X-GM-(MSGID|THRID|LABELS)\b/gi;
+
+/** `AUTHENTICATE XOAUTH2 <b64>` as the `LOGIN` GreenMail speaks: the bearer token is the password. */
+function asLogin(line: string): string {
+  const m = /^(\S+) AUTHENTICATE XOAUTH2 (\S+)$/i.exec(line);
+  if (!m) return line;
+  const fields = Buffer.from(m[2]!, "base64").toString("utf8").split("\x01");
+  const user = fields.find((f) => f.startsWith("user="))?.slice(5) ?? "";
+  const token = fields.find((f) => f.startsWith("auth=Bearer "))?.slice(12) ?? "";
+  const q = (v: string): string => `"${v.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+  return `${m[1]} LOGIN ${q(user)} ${q(token)}`;
+}
+
 const LITERAL_AT_END = /\{(\d+)\+?\}$/;
 
 /**
@@ -94,9 +108,13 @@ export async function startGmailLikePair(o: GmailLikeOptions): Promise<GmailLike
     const upstream = net.connect(o.upstream.port, o.upstream.host);
     sockets.add(client); sockets.add(upstream);
     const toServer = lineRewriter((line) => o.hangSearch && /^\S+ (UID )?SEARCH /i.test(line)
-      ? null : line.replace(GM_ITEM, () => { stripped++; return ""; }));
-    const toClient = lineRewriter((line) =>
-      announce && /^\* CAPABILITY /i.test(line) && !/\bX-GM-EXT-1\b/i.test(line) ? `${line} X-GM-EXT-1` : line);
+      ? null : o.xoauth2 ? asLogin(line).replace(GM_ITEM, () => { stripped++; return ""; })
+        : line.replace(GM_ITEM, () => { stripped++; return ""; }));
+    const toClient = lineRewriter((line) => {
+      const caps = /^\* CAPABILITY /i.test(line) || /^\* OK \[CAPABILITY /i.test(line);
+      const withAuth = o.xoauth2 && caps ? line.replace(/^(\* (?:OK \[)?CAPABILITY )/i, "$1AUTH=XOAUTH2 ") : line;
+      return announce && /^\* CAPABILITY /i.test(withAuth) && !/\bX-GM-EXT-1\b/i.test(withAuth) ? `${withAuth} X-GM-EXT-1` : withAuth;
+    });
     client.on("data", (c: Buffer) => toServer(c, (b) => upstream.write(b)));
     upstream.on("data", (c: Buffer) => toClient(c, (b) => client.write(b)));
     client.on("close", () => upstream.destroy());

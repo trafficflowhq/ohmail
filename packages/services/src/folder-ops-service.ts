@@ -265,13 +265,15 @@ export class FolderOpsService {
      * answer, and a refusal is what comes back — a COUNT answered from an arbitrary subset would
      * be a wrong number presented as a right one. The exclusion stays in JS: it decides a
      * user-facing number and moving it into SQL is a different change. */
-    const all = await db.select({ folder: mailboxFolders.folder }).from(mailboxFolders)
-      .where(eq(mailboxFolders.mailboxId, subject.mailboxId))
+    const all = await db.select({ folder: mailboxFolders.folder, sentFolder: mailboxes.sentFolder }).from(mailboxFolders)
+      .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+      .where(and(eq(mailboxFolders.mailboxId, subject.mailboxId), eq(mailboxes.accountId, ctx.accountId)))
       .limit(folderInventoryProbe());
     refuseOverFolderInventory(all, "this folder");
     const subtree = all
-      .map((r) => r.folder)
-      .filter((f) => (f === subject.folder || f.startsWith(subject.folder + "/")) && userFolderExclusion(f) === null);
+      .filter((r) => (r.folder === subject.folder || r.folder.startsWith(subject.folder + "/"))
+        && userFolderExclusion(r.folder, r.sentFolder) === null)
+      .map((r) => r.folder);
     if (subtree.length === 0) return { folders: 0, messages: 0 };
 
     const [row] = await db
@@ -357,7 +359,8 @@ export class FolderOpsService {
     if (err !== null) {
       throw new ServiceError("validation_failed", 400, `folder_name_${err}`);
     }
-    const excluded = userFolderExclusion(name);
+    // A typed name, by the rule alone: the recorded Sent already has an inventory row, which the insert refuses.
+    const excluded = userFolderExclusion(name, null);
     if (excluded !== null) {
       throw new ServiceError("validation_failed", 400, "folder_name_reserved");
     }

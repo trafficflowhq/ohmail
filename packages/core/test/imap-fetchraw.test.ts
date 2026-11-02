@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  ImapAdapter, RawMessageTooLargeError, MessageGoneError, DEFAULT_FETCH_RAW_MAX_BYTES,
+  ImapAdapter, RawMessageTooLargeError, MessageGoneError, ReadNotAnsweredError, DEFAULT_FETCH_RAW_MAX_BYTES,
 } from "../src/adapters/imap.js";
 import type { NativeLocator } from "../src/types.js";
 
@@ -20,11 +20,13 @@ import type { NativeLocator } from "../src/types.js";
 
 const locator: NativeLocator = { folder: "INBOX", ref: "1:42" };
 
-/** A message delivered as `chunks`, recording what the adapter asked the driver for. */
-function fakeAdapter(chunks: Buffer[], expectedSize?: number) {
+/** A message delivered as `chunks`, recording what the adapter asked the driver for. `uidSearch`
+    is the server's answer to `UID SEARCH UID n`: an array, or `false` for a refused one. */
+function fakeAdapter(chunks: Buffer[], expectedSize?: number, uidSearch: number[] | false = []) {
   const state = {
     pulled: 0,
     released: 0,
+    searched: 0,
     part: "unset" as unknown,
     options: null as Record<string, unknown> | null,
   };
@@ -36,7 +38,9 @@ function fakeAdapter(chunks: Buffer[], expectedSize?: number) {
   });
   const total = chunks.reduce((n, c) => n + c.length, 0);
   (adapter as unknown as { delimiter: string }).delimiter = "/"; // what connect() learns on a flat server
+  (adapter as unknown as { established: boolean }).established = true;
   (adapter as unknown as { client: unknown }).client = {
+    search: async () => { state.searched += 1; return uidSearch; },
     getMailboxLock: async () => ({ release: () => { state.released += 1; } }),
     // The SELECTED mailbox, as every real server reports it: `[UIDVALIDITY n]` is required on a
     // successful SELECT, and the epoch guard refuses a locator-addressed command when it is
@@ -147,5 +151,83 @@ describe("fetchRaw — a read-only re-read of one whole message", () => {
     expect(err).toBeInstanceOf(MessageGoneError);
     // The lock is released on the failure path too, or one vanished message wedges the mailbox.
     expect(state.released).toBe(1);
+  });
+});
+
+/**
+ * AN EMPTY ANSWER IS NOT A GONE MESSAGE. imapflow answers a FETCH throttled past its retries (and
+ * one sent with no mailbox selected) with nothing and no error, exactly as it answers an absent
+ * UID. Only the server's UID SEARCH tells them apart, and an unanswered one is "not now".
+ */
+describe("an empty read is asked again by UID before it is called gone", () => {
+  const empty = (adapter: ImapAdapter): void => {
+    const client = (adapter as unknown as { client: Record<string, unknown> }).client;
+    client.download = async () => ({});
+    client.fetchOne = async () => false;
+  };
+  const read = {
+    fetchRaw: (a: ImapAdapter) => a.fetchRaw(locator),
+    fetchPart: (a: ImapAdapter) => a.fetchPart(locator, "2"),
+    fetchStructure: (a: ImapAdapter) => a.fetchStructure(locator),
+  };
+  const outcomes: Record<keyof typeof read, Record<"absent" | "present" | "unanswered", string>> = {
+    fetchRaw: { absent: "gone", present: "not now", unanswered: "not now" },
+    // Present with no structure answered either: the throttle covers the tree too.
+    fetchPart: { absent: "gone", present: "not now", unanswered: "not now" },
+    fetchStructure: { absent: "null", present: "not now", unanswered: "not now" },
+  };
+  const said = (v: unknown): string => v instanceof ReadNotAnsweredError && v.code === "ETHROTTLE" ? "not now"
+    : v instanceof MessageGoneError ? "gone" : v === null ? "null" : String(v);
+  for (const [name, call] of Object.entries(read) as Array<[keyof typeof read, (a: ImapAdapter) => Promise<unknown>]>) {
+    for (const [answer, search] of [["absent", []], ["present", [42]], ["unanswered", false]] as const) {
+      it(`${name}, the UID search ${answer}: ${outcomes[name][answer]}`, async () => {
+        const { adapter, state } = fakeAdapter([], undefined, search as number[] | false);
+        empty(adapter);
+        const got = await call(adapter).then((v) => v, (e: unknown) => e);
+        expect({ said: said(got), searched: state.searched, released: state.released })
+          .toEqual({ said: outcomes[name][answer], searched: 1, released: 1 });
+      });
+    }
+  }
+
+  it("a whole part whose witness fetch comes back empty: the search decides, never the empty answer", async () => {
+    for (const [search, want] of [[false, "not now"], [[], "gone"], [[42], "whole"]] as const) {
+      const { adapter } = fakeAdapter([], undefined, search as number[] | false);
+      const client = (adapter as unknown as { client: Record<string, unknown> }).client;
+      client.download = async () => ({ content: (async function* () { yield Buffer.alloc(8 * 1024); })(), meta: {} });
+      client.fetchOne = async () => false;
+      const got = await adapter.fetchPart(locator, "2").then(() => "whole", (e: unknown) => said(e));
+      expect(got, `search ${JSON.stringify(search)}`).toBe(want);
+    }
+  });
+
+  it("an empty part of a message still there: the server's tree decides between not now and a missing section", async () => {
+    const tree = (pdfSize: number | null, parts = 2) => ({
+      type: "multipart/mixed",
+      childNodes: [{ type: "text/plain", size: 10 }, { type: "application/pdf", size: pdfSize }].slice(0, parts),
+    });
+    for (const [what, structure, want] of [
+      ["the section is declared with bytes", tree(4), "not now"],
+      ["the section is not in the tree", tree(4, 1), "gone"],
+      ["the section is declared empty", tree(0), "gone"],
+    ] as const) {
+      const { adapter, state } = fakeAdapter([], undefined, [42]);
+      const client = (adapter as unknown as { client: Record<string, unknown> }).client;
+      client.download = async () => ({});
+      client.fetchOne = async (_r: string, query: Record<string, unknown>) => (query.bodyStructure ? { uid: 42, bodyStructure: structure } : false);
+      const got = await adapter.fetchPart(locator, "2").then(() => "whole", (e: unknown) => said(e));
+      expect({ got, released: state.released }, what).toEqual({ got: want, released: 1 });
+    }
+  });
+
+  it("no mailbox selected is a lost connection, not an answer", async () => {
+    const { adapter, state } = fakeAdapter([], undefined, []);
+    empty(adapter);
+    const client = (adapter as unknown as { client: Record<string, unknown> }).client;
+    // The lock was granted, then the selection went: the epoch guard reads `mailbox` first.
+    let reads = 0;
+    Object.defineProperty(client, "mailbox", { get: () => (reads++ === 0 ? { path: "INBOX", uidValidity: 1n } : false) });
+    const got = await adapter.fetchRaw(locator).then((v) => v, (e: unknown) => e);
+    expect({ code: (got as { code?: string }).code, searched: state.searched }).toEqual({ code: "NoConnection", searched: 0 });
   });
 });

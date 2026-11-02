@@ -190,8 +190,8 @@ describe("a cancel pressed after the send already went", () => {
   });
 
   /** THE SAME WORDS ARE NOT A DIFFERENT MESSAGE — the ordinary retry, commoner than case 8. The
-   *  server names the replay here too, so its field ALONE would say the wrong thing about it. */
-  it("9 — a retry of the same words is an ordinary send, though the server names the replay", async () => {
+   *  server names the replay: the press delivered nothing new, and says the message went once. */
+  it("9 — a retry of the same words says it already went, never that newer text was held back", async () => {
     const live = await scene();
     live.loseTheAnswer(true);
     expect((await live.actions.sendReply("m-1", "the same words", false, null)).outcome).toBe("queued");
@@ -202,7 +202,7 @@ describe("a cancel pressed after the send already went", () => {
     expect(
       { outcome: again.outcome, said: live.toasts.at(-1) },
       "an unchanged retry was told its newer text had been held back",
-    ).toEqual({ outcome: "sent", said: Copy.replySent });
+    ).toEqual({ outcome: "sent", said: Copy.unsavedSendAlreadyWent });
     live.store.close();
     live.fake.server.close();
   });

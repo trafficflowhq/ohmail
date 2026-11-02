@@ -124,6 +124,7 @@ const sentCopies = (s: Scene): string[] => s.engine.read().list<{ folder?: strin
   .filter((x) => x.folder === "Sent").map((x) => JSON.stringify(x));
 const replySent = sayArg(Copy.replySent);
 const earlierWent = sayArg(Copy.replyEarlierWent);
+const alreadyWent = sayArg(Copy.unsavedSendAlreadyWent);
 const EARLIER = "Reply to Ada.";
 const EDITED = "Reply to Ada, with the figures.";
 
@@ -161,7 +162,7 @@ describe("an edited re-press sends the edited words", () => {
    * Mutation: drop the PUT-path `onDraftRow` report → the same-words press after the restart PUTs
    * blind over the sent row and says the earlier words went about words nobody changed.
    */
-  it("control 1R — after a restart, an unchanged press over a sent row replays with no PUT and the plain sentence", async () => {
+  it("control 1R — after a restart, an unchanged press over a sent row replays with no PUT and says it went once", async () => {
     const s = await scene();
     const made = await fetch(`${s.origin}/drafts`, {
       method: "POST", headers: { "content-type": "application/json" },
@@ -181,7 +182,7 @@ describe("an edited re-press sends the edited words", () => {
     const said = s.toasts.length;
     expect((await after.actions.sendReply("m-1", EARLIER, false, null, null, [], false, draftId)).outcome).toBe("sent");
     expect({ puts: contentPuts(s) - putsBefore, said: s.toasts.slice(said).map((t) => t.say), delivered: deliveredWords(s) })
-      .toEqual({ puts: 0, said: [replySent], delivered: [EARLIER] });
+      .toEqual({ puts: 0, said: [alreadyWent], delivered: [EARLIER] });
     after.store.close();
   }, 60_000);
 
