@@ -3,7 +3,7 @@ import {
 } from "@trafficflow/core/sender-headers";
 import { ORGANIZED_FOLDERS, canonicalDestination, isConsentingDestination } from "@trafficflow/core/destinations";
 import {
-  bodyTermOf, compareRules, effectForDestination, personConsentRule, placingRule, ruleMatchKey,
+  bodyTermOf, compareRules, effectForDestination, personConsentRule, personDomainConsentRule, placingRule, ruleMatchKey,
   sharedProviderAllowRefusal, subjectTermOf, type OrderedRule,
 } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
@@ -465,6 +465,14 @@ function goneMailboxes(reader: EntityReader): ReadonlySet<string> {
   return gone === undefined || gone.length === 0 ? NO_SENDERS : new Set(gone);
 }
 
+/**
+ * A HELD CLAIM: a company claim (mail 0148), or a letter the gate holds for want of confirmation
+ * (`held`, mail 0176) — the server's `heldForIdentitySql`, read off the wire's mark, never derived.
+ */
+function isHeldClaim(m: EngineMessage): boolean {
+  return m.senderCheck?.reason === "impersonation" || m.senderCheck?.held === true;
+}
+
 /** The senders a claim at the gate is held for inside the cutline ({@link claimInside}) — the server's
  *  `senderHasHeldClaimSql` with its cutoff, and like it not a row the person skip takes ({@link personSkip}). */
 function sendersWithAHeldClaim(
@@ -473,7 +481,7 @@ function sendersWithAHeldClaim(
 ): ReadonlySet<string> {
   const out = new Set<string>();
   for (const m of messages) {
-    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation"
+    if (m.folder === "ohmail/Screener" && isHeldClaim(m)
         && claimInside(m, cutOf(m.mailboxId).cutoff, imports)) {
       const key = senderKey(m.from.address);
       if (!personSkip(index, m, key)) out.add(key);
@@ -488,11 +496,19 @@ function sendersWithAHeldClaim(
  * the mirror; the store's queue page answers for it, since `senderHasHeldClaimSql` skips it there. A
  * claim from a LIST ADDRESS (`senderCheck.list`, mail 0150) is never skipped: only a brand a press
  * consented there would be, and a claim the gate still holds under one carries a brand no press gave.
+ * A letter held for want of confirmation alone (`unverified` and `held`, mail 0176) is answered by a
+ * domain rule a person wrote or pressed too (`personDomainConsentRule`, the wire's `personDecided`), as
+ * `senderHasPersonConsentSql` reads it.
  */
 function personConsented(index: ConsentIndex, m: EngineMessage, key: string): boolean {
   if (m.senderCheck?.list === true) return false;
-  const named = scoped(index, m.mailboxId).allBySender.get(key) ?? [];
-  return named.some((r) => personConsentRule({ ...r, effect: effectForDestination(r.destination) }, key));
+  const own = scoped(index, m.mailboxId);
+  const named = own.allBySender.get(key) ?? [];
+  if (named.some((r) => personConsentRule({ ...r, effect: effectForDestination(r.destination) }, key))) return true;
+  if (m.senderCheck?.reason !== "unverified" || m.senderCheck.held !== true) return false;
+  const domain = domainOfAddress(key);
+  const wide = domain === null ? [] : own.allByDomain.get(domain) ?? [];
+  return wide.some((r) => personDomainConsentRule({ ...r, effect: effectForDestination(r.destination) }, key));
 }
 
 /**
@@ -506,13 +522,15 @@ function personSkip(index: ConsentIndex, m: EngineMessage, key: string): boolean
 /**
  * IS THIS HELD CLAIM INSIDE THE CUTLINE — the server's `heldClaimInsideSql` over the wire: a fact the
  * store wrote at ingest by its record time (`arrivedAt`, `messages.created_at`) once the mailbox's first
- * import had finished, a backfilled fact never, a fact from an older build by its arrival key.
+ * import had finished, a backfilled fact never, a fact from an older build by its arrival key. A hold
+ * for want of confirmation (`held`) is dated by its record time alone, a first import's included.
  */
 function claimInside(m: EngineMessage, cutoff: number, imports: ConsentOptions["firstImportDoneAt"]): boolean {
+  const recorded = m.arrivedAt == null ? Number.NaN : Date.parse(m.arrivedAt);
+  if (m.senderCheck?.held === true) return Number.isFinite(recorded) && recorded >= cutoff;
   const by = m.senderCheck?.by;
   if (by === "backfill") return false;
   if (by !== "ingest") return storeInstantOf(m) >= cutoff;
-  const recorded = m.arrivedAt == null ? Number.NaN : Date.parse(m.arrivedAt);
   if (!Number.isFinite(recorded) || recorded < cutoff) return false;
   return recordedAfterFirstImport(m, imports);
 }
@@ -685,7 +703,7 @@ export function senderActivity(
     // A claim the gate holds inside the cutline keeps its sender active ({@link claimInside}, never by its
     // Date): the server's `heldClaimWaitsSql`, so queue, counts and partition agree — and, like it, not a
     // row the person skip takes ({@link personSkip}).
-    if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation"
+    if (m.folder === "ohmail/Screener" && isHeldClaim(m)
         && claimInside(m, cutoff, opts.firstImportDoneAt) && !(index !== null && personSkip(index, m, key))) {
       out.set(key, "active");
       continue;

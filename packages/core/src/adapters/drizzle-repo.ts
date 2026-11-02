@@ -46,6 +46,7 @@ import { userFolderExclusion } from "./imap-types.js";
 /* The stop's two shapes, imported rather than respelt: `BudgetStop` is what a pass REPORTS (it
    names the folder), `FolderBudgetStop` what one folder's row HOLDS (the row names it). */
 import type { BudgetStop, FolderBudgetStop, ImapConfig, LetterAsk, MailboxAdapter } from "./imap-types.js";
+import { outgoingHostOf } from "./imap-auth.js";
 import { providerAuthservIds } from "../authserv-ids.js";
 import { correspondentsAmong, inSentFolderSql, ownSentCopies, type CorrespondentEvidence } from "../correspondent.js";
 // The one correspondent predicate, on the leaf the worker passes and the services already import.
@@ -1242,6 +1243,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       // …and that the store wrote it as it took the message in (mail 0149): the Screener dates such a
       // claim by this row's own record time, which a backfilled row's fact never earns.
       senderCheckBy: input.senderCheck === undefined ? null : "ingest",
+      unconfirmedHold: input.unconfirmedHold === true ? true : null,
     }).onConflictDoNothing({ target: [messages.mailboxId, messages.dedupKey] }).returning();
     if (inserted[0]) {
       // Every message row gets its primary instance here, and only here:
@@ -1612,6 +1614,15 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return {
       junkFolder: row?.junkFolder ?? null, trashFolder: row?.trashFolder ?? null, sentFolder: row?.sentFolder ?? null,
     };
+  }
+
+  /** {@link RepoPort.mailboxOutgoing}: the credential rows' non-secret halves only, never `secret_enc`. */
+  async mailboxOutgoing(mailboxId: string): Promise<{ smtpHost: string | null; address: string | null }> {
+    const [mb] = await this.db.select({ address: mailboxes.address }).from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
+    const rows = await this.db.select({ transport: mailboxCredentials.transport, meta: mailboxCredentials.meta })
+      .from(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, mailboxId));
+    const metaOf = (transport: string) => rows.find((r) => r.transport === transport)?.meta;
+    return { smtpHost: outgoingHostOf(metaOf("imap"), metaOf("smtp")), address: mb?.address ?? null };
   }
 
   /** Mail 0065/0132 — persist the connect-time discovery, all three columns every time (re-written on attach). */

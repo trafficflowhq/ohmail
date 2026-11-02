@@ -1363,8 +1363,10 @@ export class HttpAdapter implements EngineAdapter {
       name: typeof sender.name === "string" && sender.name !== "" ? sender.name : null,
       receivedAt: text(r.receivedAt), subject: text(r.subject), snippet: text(r.snippet),
       mailboxId: typeof r.mailboxId === "string" && r.mailboxId !== "" ? r.mailboxId : null,
+      // A claim, or a letter held for want of confirmation (`held`, mail 0176): the server marks both.
       ...(typeof r.checked === "object" && r.checked !== null
-        && (r.checked as { reason?: unknown }).reason === "impersonation" ? { marked: true as const } : {}),
+        && ((r.checked as { reason?: unknown }).reason === "impersonation" || (r.checked as { held?: unknown }).held === true)
+        ? { marked: true as const } : {}),
       ...(typeof r.checked === "object" && r.checked !== null && (r.checked as { reason?: unknown }).reason === "impersonation"
         && (r.checked as { claimsOnly?: unknown }).claimsOnly === true ? { claimsOnly: true as const } : {}),
     };

@@ -878,6 +878,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0172_html_words_backfill — the html-words backfill's stamp and cursor, one facet. LOUD: the
   // settings reads select `account_settings` whole. Deploy order migration → API → worker.
   ["account_settings", "html_words_backfill_at"],
+  // mail 0176_messages_unconfirmed_hold — a letter held because nothing confirmed a company's own
+  // address. LOUD: `select().from(messages)` on every read surface and in the ingest's insert. Deploy
+  // order migration → API → worker.
+  ["messages", "unconfirmed_hold"],
 ] as const;
 
 /**
@@ -1307,7 +1311,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0172_html_words_backfill";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0176_messages_unconfirmed_hold";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

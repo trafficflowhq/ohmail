@@ -278,6 +278,8 @@ function promotedRule(
     stats: { hits: 0, lastHitAt: null, demotions: 0 },
     createdAt: iso,
     updatedAt: iso,
+    // A press is a person's decision, stamped as theirs by the server.
+    personDecided: true,
   };
 }
 
@@ -376,10 +378,13 @@ function derivedScreenerEffects(
     effects.push({ type: "rule", id: rule.id, entity: rule });
   } else {
     const moved = canonicalDestination(acting.destination) !== canonicalDestination(destination) || !acting.enabled;
+    // A person's first yes on a domain rule asks for the walk, as the server's press does: it is consent.
+    const consents = scope === "domain" && m.decision === "yes" && acting.personDecided !== true;
     effects.push({ type: "rule", id: acting.id, entity: {
       ...acting, destination, enabled: true, priority: Math.max(acting.priority, liftedPriority),
       provenance: acting.provenance === "manual" || acting.provenance === "migrated" ? acting.provenance : "promoted",
-      ...(moved && m.applyRetro !== false ? { retro: { requestedAt: iso, doneAt: null } } : {}),
+      ...((moved || consents) && m.applyRetro !== false ? { retro: { requestedAt: iso, doneAt: null } } : {}),
+      personDecided: true,
       updatedAt: iso,
     } });
     for (const twin of under) if (twin.id !== acting.id) effects.push({ type: "rule", id: twin.id, entity: null });

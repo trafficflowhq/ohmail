@@ -421,6 +421,13 @@ export class FakeRepo implements RepoPort {
   /** The account's own mailbox addresses, lower-cased — `RepoPort.ownAddresses`. */
   own = new Set<string>();
   async ownAddresses(_accountId: string): Promise<Set<string>> { return this.own; }
+  /** Each mailbox's outgoing server and own address — `RepoPort.mailboxOutgoing`; unset reads as none stored. */
+  outgoing = new Map<string, { smtpHost: string | null; address: string | null }>();
+  outgoingCalls = 0;
+  async mailboxOutgoing(mailboxId: string): Promise<{ smtpHost: string | null; address: string | null }> {
+    this.outgoingCalls++;
+    return this.outgoing.get(mailboxId) ?? { smtpHost: null, address: null };
+  }
   /**
    * The account's own Sent copies among `references`, by header — the fake's `ownSentCopies`, the
    * ONE read both the reply arm and the bounce arm ask, as production's two readers share one

@@ -17,7 +17,7 @@ import {
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type CutlineSet, notGoneSql, readGoneMailboxIds,
-  senderHasHeldClaimSql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
+  senderHasHeldClaimSql, heldForIdentitySql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
   readRequestEligibility, decisionCanBeApplied, readListAddresses, readListAddressesLetIn, mailboxTakesPressSql,
   readListClaimsFiledAlone, listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -835,6 +835,8 @@ interface ScreenerRow {
    * on the page instead (`claimedIdentity`, through the sender check).
    */
   markedBrand: string | null;
+  /** A held letter of the sender waits for want of confirmation (`unconfirmed_hold`, mail 0176). */
+  held: boolean;
 }
 
 /**
@@ -865,12 +867,13 @@ function toScreenerRow(r: {
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
   updatedAt: Date; unread: boolean; mailboxId: string;
   fromName?: string | null; authVerdict?: string | null; sortKey: Date;
-  senderMarked?: number | boolean | null; senderMarkedBrand?: string | null;
+  senderMarked?: number | boolean | null; senderMarkedBrand?: string | null; senderHeld?: number | boolean | null;
 }): ScreenerRow {
   const marked = r.senderMarked === true || Number(r.senderMarked ?? 0) === 1;
   return {
     sortAt: r.sortKey,
     markedBrand: marked ? r.senderMarkedBrand ?? null : null,
+    held: r.senderHeld === true || Number(r.senderHeld ?? 0) === 1,
     mailboxId: r.mailboxId,
     messageId: r.messageId,
     threadId: r.threadId ?? null,
@@ -1732,10 +1735,14 @@ export class ScreenerReadService {
       )`.as("rank"),
       /* THE IDENTITY FACT FOR THE SENDER, over the same partition (mail 0148): any held message
          marked, and the brand of the newest marked one. A max of a case and a first_value, which
-         both stores spell alike — a pg-only `bool_or` would break the phone's queue. */
-      senderMarked: sql<number>`max(case when ${messages.senderCheck} = 'impersonation' then 1 else 0 end) over (
+         both stores spell alike — a pg-only `bool_or` would break the phone's queue. A letter held
+         for want of confirmation (mail 0176) marks the sender too, with no brand: `sender_held`. */
+      senderMarked: sql<number>`max(case when ${heldForIdentitySql({ senderCheck: messages.senderCheck, unconfirmed: messages.unconfirmedHold })} then 1 else 0 end) over (
         partition by ${sender}
       )`.as("sender_marked"),
+      senderHeld: sql<number>`max(case when ${messages.unconfirmedHold} is true then 1 else 0 end) over (
+        partition by ${sender}
+      )`.as("sender_held"),
       senderMarkedBrand: sql<string | null>`first_value(${messages.senderCheckBrand}) over (
         partition by ${sender}
         order by case when ${messages.senderCheck} = 'impersonation' then 1 else 0 end desc, ${sortKey} desc, ${messages.id} desc
@@ -1809,7 +1816,7 @@ export class ScreenerReadService {
     // scoped-by: `reps` is the account-scoped messages subquery (eq messages.accountId, ctx.accountId)
     const page = ctx.db.select({
       messageId: reps.messageId, sortKey: reps.sortKey, senderMarked: reps.senderMarked,
-      senderMarkedBrand: reps.senderMarkedBrand, waitingTotal,
+      senderMarkedBrand: reps.senderMarkedBrand, senderHeld: reps.senderHeld, waitingTotal,
     }).from(reps)
       .where(and(
         ...this.waitingFilters(ctx, held, opts.cutline, opts.gone),
@@ -1827,7 +1834,7 @@ export class ScreenerReadService {
     // scoped-by: `page` holds only ids of the account-scoped `reps` subquery above
     const rows = await ctx.db.select({
       ...HELD_COLUMNS, sortKey: page.sortKey, senderMarked: page.senderMarked,
-      senderMarkedBrand: page.senderMarkedBrand, waitingTotal: page.waitingTotal,
+      senderMarkedBrand: page.senderMarkedBrand, senderHeld: page.senderHeld, waitingTotal: page.waitingTotal,
     }).from(page)
       .innerJoin(messages, eq(messages.id, page.messageId))
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
@@ -2849,16 +2856,18 @@ function parseAutomatic(body: ScreenerSuggestBody): boolean {
  * is capped whichever message it was bought on. `list`: the address is one a list posts as.
  * Unmarked, a representative at a brand's own domain its provider did not confirm reads
  * `unverified`, named as the message's own line names it (`ownedSenderName`): said on the row, and
- * the signals and the advice are left exactly as they were.
+ * the signals and the advice are left exactly as they were. A held letter the gate keeps for want of
+ * confirmation (`held`, mail 0176) says so whatever the representative's own verdict.
  */
 function checkedOfSender(
   r: ScreenerRow, signals: SenderSignals | undefined, isList: boolean, claimsOnly: boolean,
 ): ScreenerItem["checked"] {
   const brand = r.markedBrand ?? signals?.impersonation?.brand ?? null;
   if (brand === null) {
-    const owned = asAuthVerdict(r.authVerdict) === "pass" ? undefined : ownedSenderName(r.fromAddress);
+    const owned = !r.held && asAuthVerdict(r.authVerdict) === "pass" ? undefined : ownedSenderName(r.fromAddress);
     return owned === undefined ? undefined : {
       reason: "unverified", brand: owned, domainShared: false, ...(isList ? { list: true as const } : {}),
+      ...(r.held ? { held: true as const } : {}),
     };
   }
   if (signals && !signals.impersonation) {

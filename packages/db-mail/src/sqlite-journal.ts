@@ -653,6 +653,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     ]
   },
   {
+    "name": "0176_messages_unconfirmed_hold.sql",
+    "statements": [
+      "ALTER TABLE \"messages\" ADD COLUMN \"unconfirmed_hold\" integer;"
+    ]
+  },
+  {
     "name": "0177_device_stopword_stems.sql",
     "statements": [
       "DROP TABLE IF EXISTS stopwords_fts;",

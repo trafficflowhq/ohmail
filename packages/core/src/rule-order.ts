@@ -267,6 +267,22 @@ export function personConsentRule(
 }
 
 /**
+ * {@link personConsentRule}'s `domain` twin: an enabled allow `domain` rule a person wrote naming the
+ * author's domain, or one the person's own Screener press on the domain wrote (`promoted`, stamped
+ * `personDecided` from `rules.person_decided_at`; the act's and the AI's never are). Consent for a hold
+ * for want of confirmation only (mail 0176), never for the identity fact. The gate and the client's
+ * held-claim term ask it.
+ */
+export function personDomainConsentRule(
+  r: Pick<ClaimingRule, "kind" | "match" | "destination" | "provenance"> & { enabled: boolean; effect?: string; personDecided?: boolean },
+  author: string | null,
+): boolean {
+  return r.enabled && r.kind === "domain" && r.effect !== "deny" && effectForDestination(r.destination) === "allow"
+    && (PERSON_WRITTEN_PROVENANCE.has(r.provenance) || (r.provenance === "promoted" && r.personDecided === true))
+    && namesAuthor(r, author);
+}
+
+/**
  * THE ONE CLAIM: does `r` file this message? The principal (author or header), then the subject
  * term, then the body term — conjuncts, so a term only ever turns a claim into a decline. A header
  * rule without the headers, or a body term without the text, answers `unknown`, never a guess.

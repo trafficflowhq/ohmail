@@ -131,6 +131,19 @@ describe("the Cloud mirror carries the organizer's arrangement", () => {
     expect(served?.applied).toEqual(["req-1"]);
   });
 
+  it("a rule a person decided keeps the mark through the mirror, and an undecided one stays unmarked", async () => {
+    // The organizer's own Screener press on a domain: the consent its gate reads for a hold for want of confirmation.
+    const pressed: RuleDTO = { ...profileRule(0, "paypal.com"), kind: "domain", destination: "INBOX", provenance: "promoted", personDecided: true };
+    const decided: MailboxProfileDTO = { ...PROFILE, rules: [pressed, profileRule(2, "digest@weekly.test")] };
+    const { db, world, cursorPath } = await standUp();
+    await createCloudMirror({
+      db, world, cursorPath, now: () => new Date(AS_OF), auth: fakeAuth([syncPage([change("create", 1, decided)], "c1")], EMPTY_SNAPSHOT),
+    }).pullOnce();
+    expect((await localProfile(db, world))?.rules.map((r) => [r.match, r.personDecided])).toEqual([
+      ["paypal.com", true], ["digest@weekly.test", undefined],
+    ]);
+  });
+
   it("a delete takes it away again", async () => {
     const { db, world, cursorPath } = await standUp();
     const pull = (page: SyncResponse) => createCloudMirror({

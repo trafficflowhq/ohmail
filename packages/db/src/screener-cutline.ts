@@ -288,16 +288,43 @@ export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQ
 }
 
 /**
+ * A HELD ROW THE IDENTITY CHECKS KEEP: a company claim (`'impersonation'`, mail 0148), or a letter the
+ * gate held because nothing confirmed a company's own address (`unconfirmed_hold`, mail 0176). The
+ * release doors read {@link notHeldForIdentitySql}, its NULL-safe negation.
+ */
+export function heldForIdentitySql(r: { senderCheck: SQL | AnyColumn; unconfirmed: SQL | AnyColumn }): SQL {
+  return sql`(${r.senderCheck} = 'impersonation' or ${r.unconfirmed} is true)`;
+}
+
+/** No claim and no unconfirmed hold ({@link heldForIdentitySql}): NULL in either column reads as none. */
+export function notHeldForIdentitySql(r: { senderCheck: SQL | AnyColumn; unconfirmed: SQL | AnyColumn }): SQL {
+  return sql`((${r.senderCheck} is null or ${r.senderCheck} <> 'impersonation') and ${r.unconfirmed} is not true)`;
+}
+
+/**
+ * HELD FOR WANT OF CONFIRMATION AND NOTHING ELSE: the mark and no company claim. The one hold a domain
+ * rule a person wrote answers ({@link senderHasPersonConsentSql}); a claim keeps the identity fact's terms.
+ */
+export function heldUnconfirmedOnlySql(r: { senderCheck: SQL | AnyColumn; unconfirmed: SQL | AnyColumn }): SQL {
+  return sql`(${r.unconfirmed} is true and (${r.senderCheck} is null or ${r.senderCheck} <> 'impersonation'))`;
+}
+
+/**
  * A HELD CLAIM INSIDE THE CUTLINE: a live row at the gate marked `'impersonation'`, dated by WHO wrote
  * the fact (mail 0149). The store's own write at ingest dates it by the row's record time, once the
  * mailbox's first import had finished: a first import is old mail, however recently recorded. A fact
  * given later to a row stored before it existed (`'backfill'`) never counts, so the update puts no old
  * mail back in the queue. A fact from a build older than the column (NULL) is dated by its arrival key
- * ({@link Dialect.arrivalKey}). One spelling, two readers; the client's twin is `claimInside`.
+ * ({@link Dialect.arrivalKey}). A letter held for want of confirmation (`unconfirmed`, mail 0176) is
+ * dated by its record time alone, a first import's included: the gate holds only a letter young enough
+ * to check, so no such hold is old mail. One spelling, two readers; the client's twin is `claimInside`.
  */
 export function heldClaimInsideSql(
   d: Dialect,
-  r: { folder: SQL; deletedAt: SQL; senderCheck: SQL; by: SQL; date: SQL; arrivedAt: SQL; recordedAt: SQL; mailboxId: SQL },
+  r: {
+    folder: SQL; deletedAt: SQL; senderCheck: SQL; by: SQL; date: SQL; arrivedAt: SQL; recordedAt: SQL; mailboxId: SQL;
+    unconfirmed: SQL;
+  },
   cutoff: Date | CutlineSet,
 ): SQL {
   if (!(cutoff instanceof Date)) {
@@ -310,9 +337,11 @@ export function heldClaimInsideSql(
   }
   const cut = d.ts(cutoff);
   const importDone = sql`(select mbi.initial_import_completed_at from mailboxes mbi where mbi.id = ${r.mailboxId})`;
-  return sql`(${r.folder} = ${CUTLINE_GATE_FOLDER} and ${r.deletedAt} is null and ${r.senderCheck} = 'impersonation'
-    and ((${r.by} = 'ingest' and ${r.recordedAt} >= ${cut} and ${r.recordedAt} > ${importDone})
-      or (${r.by} is null and ${d.arrivalKey(r.date, r.arrivedAt)} >= ${cut})))`;
+  return sql`(${r.folder} = ${CUTLINE_GATE_FOLDER} and ${r.deletedAt} is null
+    and ((${r.senderCheck} = 'impersonation'
+        and ((${r.by} = 'ingest' and ${r.recordedAt} >= ${cut} and ${r.recordedAt} > ${importDone})
+          or (${r.by} is null and ${d.arrivalKey(r.date, r.arrivedAt)} >= ${cut})))
+      or (${r.unconfirmed} is true and ${r.recordedAt} >= ${cut})))`;
 }
 
 /**
@@ -361,8 +390,9 @@ export function senderHasHeldArrivalSql(
 
 /**
  * HELD BY THE IDENTITY FACT (mail 0148): a message of this sender sits at the gate naming a company
- * its address is not — whatever rule or contact decided the sender otherwise (the act's promotion, a
- * domain rule, an inferred contact). Such a sender is waiting again while the claim keeps them so
+ * its address is not, or held because nothing confirmed a company's own address (mail 0176) —
+ * whatever rule or contact decided the sender otherwise (the act's promotion, a domain rule, an
+ * inferred contact). Such a sender is waiting again while the claim keeps them so
  * ({@link heldClaimWaitsSql}); no release takes the row whatever its age. `screening` is core's
  * `SCREENING_AUTH_VERDICTS` ({@link personSkipSql}). A `gone` mailbox's claim keeps nobody waiting.
  */
@@ -374,7 +404,7 @@ export function senderHasHeldClaimSql(
     folder: sql`hf.desired_folder`, deletedAt: sql`hm.deleted_at`, senderCheck: sql`hm.sender_check`,
     by: sql`hm.sender_check_by`, date: sql`hm.date`, arrivedAt: sql`hm.arrived_at`,
     recordedAt: sql`hm.created_at`, mailboxId: sql`hm.mailbox_id`, sender: senderExpr, auth: sql`hm.auth_verdict`,
-    brand: sql`hm.sender_check_brand`,
+    brand: sql`hm.sender_check_brand`, unconfirmed: sql`hm.unconfirmed_hold`,
   }, cutoff, screening);
   return sql`exists (
     select 1 from messages hm
@@ -394,22 +424,28 @@ export function heldClaimWaitsSql(
   d: Dialect, accountId: string, r: Parameters<typeof heldClaimInsideSql>[1] & { sender: SQL; auth: SQL; brand: SQL },
   cutoff: Date | CutlineSet, screening: readonly string[],
 ): SQL {
-  return sql`(${heldClaimInsideSql(d, r, cutoff)} and not ${personSkipSql(d, accountId, r, screening)})`;
+  const skip = personSkipSql(d, accountId, {
+    ...r, unconfirmedOnly: heldUnconfirmedOnlySql({ senderCheck: r.senderCheck, unconfirmed: r.unconfirmed }),
+  }, screening);
+  return sql`(${heldClaimInsideSql(d, r, cutoff)} and not ${skip})`;
 }
 
 /**
  * THE PERSON SKIP, ONE SPELLING: a person consented to the address for this row's claim
  * ({@link senderHasPersonConsentSql}) and the row's STORED authentication verdict is not one the gate
- * screens on, so the gate would not hold this row now. `screening` is core's `SCREENING_AUTH_VERDICTS`,
- * handed in by the caller: this package does not import core and spells no verdict of its own. The
- * queue, the count and the release offer read it; the client's twin is `consent-cutline.ts#personSkip`.
+ * screens on, so the gate would not hold this row now. `unconfirmedOnly` is the row's
+ * {@link heldUnconfirmedOnlySql}, the hold a person's domain rule answers too. `screening` is core's
+ * `SCREENING_AUTH_VERDICTS`, handed in by the caller: this package does not import core and spells no
+ * verdict of its own. The queue, the count and the release doors read it; the client's twin is
+ * `consent-cutline.ts#personSkip`.
  */
 export function personSkipSql(
-  d: Dialect, accountId: string, row: { sender: SQL; auth: SQL; brand: SQL }, screening: readonly string[],
+  d: Dialect, accountId: string, row: { sender: SQL; auth: SQL; brand: SQL; unconfirmedOnly: SQL },
+  screening: readonly string[],
 ): SQL {
   const screens = screening.length === 0 ? sql`false`
     : sql`coalesce(${row.auth}, '') in (${sql.join(screening.map((v) => sql`${v}`), sql`, `)})`;
-  return sql`(${senderHasPersonConsentSql(d, accountId, row.sender, row.brand)} and not (${screens}))`;
+  return sql`(${senderHasPersonConsentSql(d, accountId, row.sender, row.brand, row.unconfirmedOnly)} and not (${screens}))`;
 }
 
 /**
@@ -424,11 +460,27 @@ export const CUTLINE_PERSON_WRITTEN_PROVENANCE: readonly string[] = ["manual", "
  * consented there, `brandExpr` among its `consented_brands`. Otherwise an enabled allow `sender` rule
  * a person wrote naming it, or a contact whose source is not `'inferred'` (NULL predates the column; a
  * person's row outvotes an inferred twin). A domain rule, a promoted rule and an inferred contact are
- * inference. `senderExpr` is lower-cased.
+ * inference, but where `unconfirmedOnly` holds (a row held for want of confirmation alone, mail 0176)
+ * an enabled allow `domain` rule a person wrote naming the address's domain is consent too, and so is a
+ * promoted one a person's own press stamped (`person_decided_at`, mail 0128; the act's and the AI's never
+ * are): the gate's `personDomainConsent`. `senderExpr` is lower-cased.
  */
-export function senderHasPersonConsentSql(d: Dialect, accountId: string, senderExpr: SQL, brandExpr: SQL): SQL {
+export function senderHasPersonConsentSql(
+  d: Dialect, accountId: string, senderExpr: SQL, brandExpr: SQL, unconfirmedOnly?: SQL,
+): SQL {
   const allow = sql`(${sql.join(CUTLINE_ALLOW_DESTINATIONS.map((f) => sql`${f}`), sql`, `)})`;
   const person = sql`(${sql.join(CUTLINE_PERSON_WRITTEN_PROVENANCE.map((p) => sql`${p}`), sql`, `)})`;
+  // Such a row's address is a company's own, never at a shared provider, so no shared-provider allow
+  // rule (which names nobody) can match its domain here.
+  const domainRule = unconfirmedOnly === undefined ? sql`` : sql` or (${unconfirmedOnly} and exists (
+      select 1 from rules rpd
+       where rpd.account_id = ${d.castUuid(accountId)}
+         and rpd.enabled
+         and rpd.kind = 'domain'
+         and rpd.destination in ${allow}
+         and (rpd.provenance in ${person} or (rpd.provenance = 'promoted' and rpd.person_decided_at is not null))
+         and ${ruleMatchKeySql(sql`rpd.match`)} = ${d.domainOf(senderExpr)}
+    ))`;
   const brand = d.jsonArrayElements(sql`lpb.consented_brands`, "lpe");
   return sql`(case when exists (
       select 1 from list_addresses lpa
@@ -449,7 +501,7 @@ export function senderHasPersonConsentSql(d: Dialect, accountId: string, senderE
        where cpc.account_id = ${d.castUuid(accountId)}
          and lower(cpc.address) = ${senderExpr}
          and (cpc.source is null or cpc.source <> 'inferred')
-    )) end)`;
+    )${domainRule}) end)`;
 }
 
 /**
