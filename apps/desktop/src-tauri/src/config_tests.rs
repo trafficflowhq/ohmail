@@ -150,8 +150,12 @@ fn only_the_cloud_door_clears_the_inherited_mail_server_settings() {
     for name in ["OHMAIL_IMAP_HOST", "OHMAIL_IMAP_USER", "OHMAIL_IMAP_PORT", "OHMAIL_IMAP_SECURE", "OHMAIL_IMAP_PASS"] {
         assert!(cleared.iter().any(|c| c == name), "{name} is not cleared for a cloud door");
     }
-    // The local door clears nothing: inheritance is how a developer configures it by hand.
-    assert!(unset_for(&local_door()).is_empty());
+    // The local door clears only the unsaved-door flags: inheritance is how a developer configures
+    // it by hand, and an inherited flag would undo a saved door, or keep an attempt nobody saved.
+    assert_eq!(
+        unset_for(&local_door()),
+        vec![std::ffi::OsString::from(DOOR_PENDING_VAR), std::ffi::OsString::from(DOOR_SAVE_VAR)]
+    );
 }
 
 // ── The pending door: the browser approval's first boot, with no address ────────────────────
@@ -1326,4 +1330,25 @@ fn a_pending_local_door_is_never_written_and_a_file_carrying_it_reads_as_no_door
     std::fs::write(&file, serde_json::to_vec(&pending_json(serde_json::Value::Bool(false))).unwrap()).unwrap();
     assert!(read(&file).is_some(), "the same door without the flag must read");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_pending_local_door_tells_its_engine_and_a_saved_one_does_not() {
+    // The engine undoes an attempt nobody saved at its next start (`first-door.ts`); a saved door
+    // composed with the flag would be undone, and a pending one without it would never be. The save
+    // flag is no door's own: the shell adds it to the one launch that saves its pending door.
+    let root = Path::new("/data");
+    let pending = parse(&pending_json(serde_json::Value::Bool(true))).expect("parses");
+    assert_eq!(env_map(&env_for(&pending, root)).get(DOOR_PENDING_VAR).map(String::as_str), Some("1"));
+    let saved = parse(&pending_json(serde_json::Value::Bool(false))).expect("parses");
+    for config in [saved, local_door(), cloud_door()] {
+        assert!(!env_map(&env_for(&config, root)).contains_key(DOOR_PENDING_VAR), "{config:?}");
+    }
+    // Removed before the composition on every door, so an inherited flag reaches no engine.
+    for config in [pending, local_door(), cloud_door()] {
+        assert!(!env_map(&env_for(&config, root)).contains_key(DOOR_SAVE_VAR), "{config:?}");
+        for flag in [DOOR_PENDING_VAR, DOOR_SAVE_VAR] {
+            assert!(unset_for(&config).iter().any(|v| v == flag), "{flag} {config:?}");
+        }
+    }
 }
