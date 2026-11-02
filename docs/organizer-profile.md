@@ -409,8 +409,9 @@ imported it or saved this install's settings over it, and a copy it does not
 keep once the current document is ten minutes newer: another install's while
 that install holds no fresh claim, and one under its own install id that is not
 its own, as its own only once it has read the current document. It reads the
-copies that are not its own by body, newest first and at most 64 a pass, and
-until it has read them all no copy goes by age. It never
+copies that are not its own by body, newest first and at most 64 a pass, a pass
+every 30 seconds until it has read them all, and until then no copy goes by
+age. It never
 removes the current document, a found copy it keeps ("Not now" included), a
 claim, or a message that is not an ohmail settings message.
 
