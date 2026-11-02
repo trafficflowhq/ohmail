@@ -449,8 +449,9 @@ export function InlineReply({
    * (`envelope === null`) nothing changes: the wire carries the computed envelope byte-for-byte, and
    * `test/inline-reply.test.ts` pins the mutation's exact key set for that case.
    */
-  /** The head was pressed: the rows open with focus in To, or the removed button drops it on the list row. */
-  const focusTo = useRef(false);
+  /** The head was pressed: the rows open with focus in To, or the removed button drops it on the list row.
+      A forward names nobody yet, so it opens in To. */
+  const focusTo = useRef(focusAtOpen && mode === "forward");
   const expand = onEnvelope === undefined
     ? undefined
     : (): void => {
@@ -813,7 +814,7 @@ export function InlineReply({
            "Write your reply…". The forward's sentence is the compose editor's own, because it is
            the same act: a message of your own, above the one being passed on. */
         placeholder={mode === "forward" ? t("forwardPlaceholder") : t("placeholder")}
-        autoFocus={focusAtOpen}
+        autoFocus={focusAtOpen && mode !== "forward"}
         value={value}
         /* The text is never taken away from the author, not even mid-send: a failed send
            whose draft had been cleared would be a reply the user has to write twice. It stops

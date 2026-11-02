@@ -300,7 +300,8 @@ export function onboardingPath(
  * The plan's promise is that leaving the pull screen does not lose the pull: "the person may
  * leave this screen; the pull continues and the status bar carries the counters". This is the
  * predicate behind that sentence, kept here rather than in the strip so that the flow and the
- * strip cannot disagree about when the import is finished.
+ * strip cannot disagree about when the import is finished. No strip reads it yet, so the pull
+ * screen promises only the strip's own message count (`onboarding.pullLead`).
  */
 export function ONBOARDING_STATUS_COUNTERS(facts: OnboardingFacts): boolean {
   const mb = facts.mailbox;

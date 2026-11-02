@@ -190,6 +190,24 @@ describe("parseIcsEvent — time forms", () => {
     expect(ev.start.wall).toEqual({ year: 2026, month: 8, day: 19, hour: 14, minute: 0 });
   });
 
+  it.each([
+    "/freeassociation.sourceforge.net/Tzfile/Europe/Berlin",
+    "/freeassociation.sourceforge.net/Europe/Berlin",
+    "/mozilla.org/20050126_1/Europe/Berlin",
+    "/softwarestudio.org/Olson_20011030_5/Europe/Berlin",
+  ])("a libical or Lightning prefixed TZID resolves to its Olson zone (%s)", (tzid) => {
+    const ev = parseIcsEvent(wrap(["SUMMARY:X", `DTSTART;TZID=${tzid}:20260819T140000`]))!;
+    expect(ev.start.epochMs).toBe(utc(2026, 8, 19, 12, 0));
+    expect(ev.start.tzid).toBe(tzid);
+  });
+
+  it("a prefixed TZID resolves even when the prefix takes it past the label length", () => {
+    const tzid = "/freeassociation.sourceforge.net/Tzfile/America/Argentina/ComodRivadavia";
+    expect(tzid.length).toBeGreaterThan(64);
+    const ev = parseIcsEvent(wrap(["SUMMARY:X", `DTSTART;TZID=${tzid}:20260819T140000`]))!;
+    expect(ev.start.epochMs).toBe(utc(2026, 8, 19, 17, 0));
+  });
+
   it("a floating time (no TZID, no Z) carries the wall fields with no zone claim", () => {
     const ev = parseIcsEvent(wrap(["SUMMARY:X", "DTSTART:20260819T140000"]))!;
     expect(ev.start.epochMs).toBeNull();
