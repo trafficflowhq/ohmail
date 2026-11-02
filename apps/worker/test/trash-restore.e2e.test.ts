@@ -339,7 +339,7 @@ describe("delete → Trash → restore, against real GreenMail", () => {
     expect(trash.items.map((m) => m.id), "and it IS in Trash").toContain(id);
   }, 90000);
 
-  it("a restore whose Trash copy the provider PURGED stays pending — the observed shape", async () => {
+  it("a restore whose Trash copy the provider PURGED leaves Trash: nothing arrives, the tombstone stands", async () => {
     /* THE OTHER HARD STOP THE BRIEF NAMES, driven rather than reasoned about:
        `RESTORE-OF-A-PURGED-TRASH-COPY-STAYS-PENDING`. A mail server may empty its own Trash on
        its own schedule, so between the delete's move and the restore's move the copy can be
@@ -393,20 +393,14 @@ describe("delete → Trash → restore, against real GreenMail", () => {
     await runSyncCycle(deps);
     await runSyncCycle(deps);
 
-    /* THE SETTLEMENT, ruled after this case first recorded the shape: a restore whose copy the
-       server purged VOIDS AGAINST THE OBSERVATION. Never `observed := desired` — that said the
-       message was back in INBOX with the server holding nothing anywhere. */
+    /* THE SETTLEMENT: a restore whose copy the server purged never completes (`observed := desired`
+       would say the message is back in INBOX with the server holding nothing anywhere), and it does
+       not go back to Trash either: no server holds it there. Its row leaves, so no move is owed. */
     const [after] = await db.select().from(folderState).where(eq(folderState.messageId, id));
     expect((await uidInFolder(raw, "INBOX", "trashpurge@x")).length, "nothing arrived in INBOX").toBe(0);
-    expect(after!.observedFolder, "the observation is where it last was").toBe(trashPath);
-    expect(
-      after!.desiredFolder,
-      "the desire is voided against the OBSERVATION, so the row stops asking for a move that cannot run",
-    ).toBe(trashPath);
-    expect(after!.desiredFolder, "and never observed := desired — that is the false state").not.toBe("INBOX");
-    // NO RETRY SCHEDULE AND NO REFUSAL CLASS: a purged copy has no next attempt.
-    expect(after!.nextAttemptAt).toBeNull();
-    expect(after!.lastErrorClass).toBeNull();
+    expect(after, "the purged letter kept a row asking for a move that cannot run").toBeUndefined();
+    const listed = await svc.listTrash(ctxOf(db, accountId), { view: "trash" });
+    expect(listed.items.map((m) => m.id), "Trash lists a letter no server holds").not.toContain(id);
     // THE TOMBSTONE STANDS — only a LANDED move clears it, and nothing landed.
     const [stillGone] = await db.select({ d: messages.deletedAt }).from(messages).where(eq(messages.id, id));
     expect(stillGone!.d, "the message must stay deleted: no copy of it exists").not.toBeNull();

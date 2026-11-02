@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, listBrandsOf, readListAddresses } from "@trafficflow/db";
 import type {
@@ -148,6 +148,13 @@ export interface PendingFolderState {
 }
 /** A letter ohmail filed into Junk, with the location it was filed at. */
 export interface JunkParkedRow { messageId: string; locator: NativeLocator }
+/**
+ * A letter a landed delete parked in Trash, with its stored location: its Trash UID, or a copy
+ * outside Trash that the server dropped after the park (Gmail drops a deleted letter's labels).
+ */
+export interface TrashParkedRow { messageId: string; locator: NativeLocator; messageIdHeader: string | null }
+/** A parked letter the server no longer holds, at the location read, and the desire its drop is conditional on. */
+export interface TrashGoneRow { messageId: string; locator: NativeLocator; expectDesired: string }
 /**
  * ONE message the re-route pass may reconsider: still desired into `ohmail/Screener`, and
  * carrying everything `evaluateRules` needs to decide again — no IMAP, only persisted headers.
@@ -668,6 +675,21 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   tombstoneJunkParkedGone?(accountId: string, mailboxId: string, gone: readonly JunkParkedRow[]): Promise<number>;
   /**
+   * The letters a landed delete parked in the provider's Trash `folder`: tombstoned, not missing on
+   * the server, a stored location, no copy on record, and a `folder_state` converged on `folder`.
+   * Paged by id. Optional; absence reads as none.
+   */
+  listTrashParked?(
+    accountId: string, mailboxId: string, opts: { folder: string; afterId?: string; limit: number },
+  ): Promise<TrashParkedRow[]>;
+  /**
+   * Take parked letters the server no longer holds out of Trash: per row, one conditional delete of
+   * its `folder_state` (the desire given, observed in `trash`, the row still that tombstoned,
+   * copyless letter at the stored location read), then the `'expunged'` husk for the rows it took.
+   * `deleted_at` and the locator stay, and no change row is written. Answers the ids dropped. Optional.
+   */
+  dropGoneFromTrash?(accountId: string, mailboxId: string, trash: string, rows: readonly TrashGoneRow[]): Promise<string[]>;
+  /**
    * Which of these messages owe their `ohmail/Quarantine` placement to an AI AUTO-APPLY (mail
    * 0065) — a graduated pattern's per-message act, not a user's press and not a rule. The
    * amended product rule allows only USER-COMMANDED writes into the provider's \Junk, so the
@@ -987,6 +1009,21 @@ function junkParkedRows(accountId: string, mailboxId: string, folder: string): S
     sql`${messages.nativeLocator}->>'folder' = ${folder}`,
     sql`not exists (select 1 from ${messageInstances} where ${messageInstances.messageId} = ${messages.id})`,
     JUNK_PARKED,
+  )!;
+}
+
+/** {@link WorkerRepo.listTrashParked}'s filter: a landed delete's park, converged on `folder`. */
+function trashParkedRows(accountId: string, mailboxId: string, folder: string): SQL {
+  return and(
+    eq(messages.accountId, accountId),
+    eq(messages.mailboxId, mailboxId),
+    isNotNull(messages.deletedAt),
+    isNull(messages.serverMissingAt),
+    sql`${messages.nativeLocator}->>'folder' is not null`,
+    sql`not exists (select 1 from ${messageInstances} where ${messageInstances.messageId} = ${messages.id})`,
+    sql`exists (select 1 from ${folderState}
+      where ${folderState.messageId} = ${messages.id} and ${folderState.reconcileStatus} = 'reconciled'
+        and ${folderState.desiredFolder} = ${folder} and ${folderState.observedFolder} = ${folder})`,
   )!;
 }
 
@@ -1883,6 +1920,45 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }
     await this.tombstoneGone(accountId, victims, threadsOf);
     return victims.length;
+  }
+
+  /** See {@link WorkerRepo.listTrashParked}. */
+  async listTrashParked(
+    accountId: string, mailboxId: string, opts: { folder: string; afterId?: string; limit: number },
+  ): Promise<TrashParkedRow[]> {
+    const rows = await this.db.select({ id: messages.id, locator: messages.nativeLocator, header: messages.messageIdHeader })
+      .from(messages)
+      .where(and(
+        trashParkedRows(accountId, mailboxId, opts.folder),
+        ...(opts.afterId !== undefined ? [sql`${messages.id} > ${this.d.castUuid(opts.afterId)}`] : []),
+      ))
+      .orderBy(asc(messages.id))
+      .limit(opts.limit);
+    return rows.map((r) => ({ messageId: r.id, locator: r.locator as NativeLocator, messageIdHeader: r.header }));
+  }
+
+  /** See {@link WorkerRepo.dropGoneFromTrash}. The delete decides; only a row it took is emptied. */
+  async dropGoneFromTrash(accountId: string, mailboxId: string, trash: string, rows: readonly TrashGoneRow[]): Promise<string[]> {
+    const dropped: string[] = [];
+    for (const r of rows) {
+      const [hit] = await this.db.delete(folderState).where(and(
+        eq(folderState.messageId, r.messageId),
+        eq(folderState.desiredFolder, r.expectDesired),
+        eq(folderState.observedFolder, trash),
+        exists(this.db.select({ id: messages.id }).from(messages).where(and(
+          eq(messages.id, r.messageId),
+          eq(messages.accountId, accountId),
+          eq(messages.mailboxId, mailboxId),
+          isNotNull(messages.deletedAt),
+          sql`${messages.nativeLocator}->>'folder' = ${r.locator.folder}`,
+          sql`${messages.nativeLocator}->>'ref' = ${r.locator.ref}`,
+          sql`not exists (select 1 from ${messageInstances} where ${messageInstances.messageId} = ${messages.id})`,
+        ))),
+      )).returning({ messageId: folderState.messageId });
+      if (hit) dropped.push(hit.messageId);
+    }
+    for (const id of dropped) await this.huskBody(accountId, id, "expunged");
+    return dropped;
   }
 
   /** Mail 0065 — a re-appearance un-deletes: the adopt path's half of "a LATER create resurrects". */

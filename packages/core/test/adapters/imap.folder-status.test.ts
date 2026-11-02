@@ -181,3 +181,78 @@ describe("folderKeys and uidsHeld — the Junk check's two reads", () => {
     expect(asked.join(",").split(",").map(Number).sort((a, b) => a - b)).toEqual(uids);
   });
 });
+
+describe("messageIdsGone — the Trash check's read of letters parked at a dropped copy", () => {
+  type Query = { header?: Record<string, string>; or?: Array<{ header: Record<string, string> }> };
+  /** A folder of `letters` (uid → Message-ID; "" for an envelope naming none). */
+  async function trash(o: {
+    letters?: Record<number, string>; uidValidity?: bigint; select?: unknown;
+    search?: (q: Query, client: { mailbox: unknown }) => unknown; answered?: (uids: number[]) => number[];
+  } = {}) {
+    const fake = fakeClient(async () => ({ messages: 2, uidValidity: 7n, uidNext: 30 }));
+    const letters = new Map(Object.entries(o.letters ?? {}).map(([u, id]) => [Number(u), id]));
+    const searched: string[][] = [];
+    Object.assign(fake, {
+      async getMailboxLock(path: string) {
+        fake.calls.push(`select ${path}`);
+        if (o.select !== undefined) throw o.select;
+        fake.mailbox = { path, uidValidity: o.uidValidity ?? 7n, exists: letters.size };
+        return { release() { fake.calls.push("release"); } };
+      },
+      async search(q: Query) {
+        fake.calls.push("search");
+        const terms = (q.or ?? [q]).map((x) => x.header!["message-id"]!);
+        searched.push(terms);
+        if (o.search) return o.search(q, fake);
+        // A HEADER search matches a substring of the field, in any case.
+        return [...letters].filter(([, id]) => terms.some((t) => id.toLowerCase().includes(t.toLowerCase()))).map(([u]) => u);
+      },
+      async fetchAll(range: string) {
+        fake.calls.push("fetchAll");
+        const asked = range.split(",").map(Number);
+        return (o.answered ? o.answered(asked) : asked).map((uid) => ({
+          uid, envelope: { messageId: letters.get(uid) ? `<${letters.get(uid)}>` : undefined },
+        }));
+      },
+    });
+    const adapter = new ImapAdapter(cfg, { client: fake });
+    await adapter.connect();
+    fake.calls.length = 0;
+    return { adapter, fake, searched };
+  }
+
+  it("names the asked Message-IDs no letter carries as the server matches them, under one lock", async () => {
+    const { adapter, fake } = await trash({ letters: { 3: "a@x", 4: "B@x", 6: "xc@x" } });
+    expect(await adapter.messageIdsGone("Trash", "7", ["<a@x>", "b@x", "c@x", "d@x"]))
+      .toEqual({ k: "read", uidValidity: "7", gone: new Set(["d@x"]) });
+    expect(fake.calls).toEqual(["select Trash", "search", "fetchAll", "release"]);
+    const empty = await trash();
+    expect(await empty.adapter.messageIdsGone("Trash", "7", ["a@x"])).toEqual({ k: "read", uidValidity: "7", gone: new Set(["a@x"]) });
+    expect(empty.fake.calls).toEqual(["select Trash", "search", "release"]);
+  });
+
+  it("a refused search, a hit left unread, a lost or renumbered selection and a missing folder give no verdict", async () => {
+    const letters = { 3: "a@x" };
+    const ask = async (o: Parameters<typeof trash>[0]) => (await trash(o)).adapter.messageIdsGone("Trash", "7", ["a@x", "b@x"]);
+    expect(await ask({ letters, search: () => false })).toEqual({ k: "unanswered" });
+    expect(await ask({ letters, answered: () => [] })).toEqual({ k: "unanswered" });
+    expect(await ask({ letters, search: (_q, c) => { c.mailbox = false; return [3]; } })).toEqual({ k: "unanswered" });
+    expect(await ask({ letters, uidValidity: 8n })).toEqual({ k: "renumbered", uidValidity: "8" });
+    expect(await ask({ select: Object.assign(new Error("no"), { serverResponseCode: "NONEXISTENT" }) })).toEqual({ k: "absent" });
+    // A hit whose envelope names no Message-ID could be either letter's.
+    expect(await ask({ letters: { 3: "" }, search: () => [3] })).toEqual({ k: "read", uidValidity: "7", gone: new Set() });
+  });
+
+  it("asks in bounded groups, and never names a Message-ID it cannot search for or a group it cannot read", async () => {
+    const ids = Array.from({ length: 120 }, (_, i) => `m${i}@x`);
+    const { adapter, searched } = await trash({ letters: { 9: "m7@x" } });
+    const r = await adapter.messageIdsGone("Trash", "7", [...ids, "", "<>", "a b@x", "ü@x"]);
+    expect(searched.length).toBeGreaterThan(1);
+    for (const s of searched) expect(s.length).toBeLessThanOrEqual(50);
+    expect(searched.flat().sort()).toEqual([...ids].sort());
+    expect(r).toEqual({ k: "read", uidValidity: "7", gone: new Set(ids.filter((id) => id !== "m7@x")) });
+    // A Message-ID that matches more letters than its group may read gets no verdict.
+    const crowd = await trash({ letters: { 1: "z@x", 2: "z@xa", 3: "z@xb" } });
+    expect(await crowd.adapter.messageIdsGone("Trash", "7", ["z@x"])).toEqual({ k: "read", uidValidity: "7", gone: new Set() });
+  });
+});

@@ -28,6 +28,8 @@ interface Opts {
   idle?: { special: number; caps: number };
   /** One owed `\Seen` write of ours. */
   seen?: boolean;
+  /** The pending move is a restore out of Trash, whose park left no copy on record. */
+  restoreGone?: boolean;
 }
 
 function repoOf(calls: string[], o: Opts): WorkerRepo {
@@ -45,6 +47,9 @@ function repoOf(calls: string[], o: Opts): WorkerRepo {
       if (o.idle !== undefined) return [];
       if (first && o.pendingThrows !== undefined) { first = false; throw o.pendingThrows; }
       first = false;
+      if (o.restoreGone === true) {
+        return [{ messageId: "m-1", desiredFolder: "INBOX", observedFolder: "Trash", lastSetBy: "us" as const, nativeLocator: LOC("Trash", "42:1") }];
+      }
       return [
         { messageId: "m-1", desiredFolder: "ohmail/News", observedFolder: "INBOX", lastSetBy: "us" as const, nativeLocator: LOC("INBOX", "42:1") },
       ];
@@ -59,7 +64,7 @@ function repoOf(calls: string[], o: Opts): WorkerRepo {
     upsertFolderState: async () => {},
     completeFolderState: async () => { calls.push("completeFolderState"); return true; },
     upsertFlagState: async () => {},
-    primaryInstanceVanished: async () => false,
+    primaryInstanceVanished: async () => o.restoreGone === true,
     onlyInstanceAt: async () => true,
     recordAudit: async () => {},
     recordAuditMany: async () => {},
@@ -67,6 +72,14 @@ function repoOf(calls: string[], o: Opts): WorkerRepo {
     deferFlagReconcile: async () => {},
     ...(o.idle === undefined ? {} : {
       getMailboxSpecialFolders: async () => { o.idle!.special += 1; return { junkFolder: null, trashFolder: null }; },
+    }),
+    ...(o.restoreGone !== true ? {} : {
+      getMailboxSpecialFolders: async () => ({ junkFolder: null, trashFolder: "Trash" }),
+      adoptFolderState: async () => { calls.push("adoptFolderState"); return true; },
+      dropGoneFromTrash: async (_a: string, _m: string, _t: string, rows: Array<{ messageId: string }>) => {
+        calls.push("dropGoneFromTrash");
+        return rows.map((r) => r.messageId);
+      },
     }),
   };
   return {
@@ -98,6 +111,9 @@ function adapterOf(calls: string[], o: Opts): MailboxAdapter {
     },
     setFlags: async () => { calls.push("setFlags"); },
     ...(o.idle === undefined ? {} : { capabilities: async () => { o.idle!.caps += 1; return {}; } }),
+    ...(o.restoreGone !== true ? {} : {
+      uidsHeld: async (_f: string, v: string) => { calls.push("uidsHeld"); return { k: "held", uidValidity: v, present: new Set() }; },
+    }),
   } as unknown as MailboxAdapter;
 }
 
@@ -162,6 +178,16 @@ describe("a move pending at the drain's start reaches the wire before the folder
     // Two attempts — before and after the walk — and the void (`completeFolderState`) only after it.
     expect(calls.filter((c) => c === "move")).toHaveLength(2);
     expect(calls.indexOf("completeFolderState")).toBeGreaterThan(calls.indexOf("changesSince"));
+  });
+
+  it("a restore whose Trash copy the move finds absent leaves Trash before the walk; the walk never reads Trash", async () => {
+    const { calls, err } = await order({ fileBeforeWalk: true }, { goneOnMove: true, restoreGone: true });
+    expect(err).toBeNull();
+    expect(calls).toContain("dropGoneFromTrash");
+    expect(calls.indexOf("uidsHeld"), "dropped on the move's reading alone").toBeGreaterThan(-1);
+    expect(calls.indexOf("uidsHeld")).toBeLessThan(calls.indexOf("dropGoneFromTrash"));
+    expect(calls.indexOf("dropGoneFromTrash")).toBeLessThan(calls.indexOf("changesSince"));
+    expect(calls, "the gone copy was put back into Trash").not.toContain("adoptFolderState");
   });
 
   /* AN IDLE EARLY PASS ASKS FOR THE PENDING LIST AND NOTHING ELSE. With nothing to file it returns

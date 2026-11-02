@@ -119,6 +119,7 @@ const IN_WORKER_PASSES: readonly string[] = [
   "thread-backfill.ts::runThreadBackfill",
   "thread-join-heal.ts::threadJoinHealPass",
   "thread-subject-heal.ts::runThreadSubjectHeal",
+  "trash-gone.ts::trashGonePass",
   "workflow-cron.ts::runWorkflowCron",
   "workflow-cron.ts::workflowDrainPass",
   "workflow-cron.ts::workflowTimeScanPass",

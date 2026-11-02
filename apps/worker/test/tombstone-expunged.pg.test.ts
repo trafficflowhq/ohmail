@@ -16,6 +16,7 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { NativeLocator } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { junkGonePass } from "../src/junk-gone.js";
+import { trashGonePass } from "../src/trash-gone.js";
 
 /**
  * ═══ EXPUNGE PROPAGATION — WHAT THE MIRROR DOES WHEN THE SERVER NO LONGER HOLDS THE MESSAGE ══
@@ -262,6 +263,170 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
     await visit();
     await visit();
     expect(await visit(), "a walk Junk moved under was taken as proof").toBeUndefined();
+    await visit();
+    await visit();
+    expect(asked).toBe(9);
+    expect(await visit()).toBe("unchanged");
+  });
+
+  /**
+   * One more deleted letter in `mailboxId` at `folder`/`ref` with no copy on record: by default a landed delete.
+   * `parkedIn`: its decision is parked there while its stored copy is at `folder` (Gmail's dropped label).
+   */
+  async function landed(
+    accountId: string, mailboxId: string, folder: string, ref: string,
+    o: { desired?: string; pending?: boolean; live?: boolean; parkedIn?: string } = {},
+  ): Promise<string> {
+    const tag = randomUUID().slice(0, 8);
+    const [m] = await db.insert(messages).values({
+      accountId, mailboxId, dedupKey: `mid:<tp-${tag}@example.test>`, messageIdHeader: `tp-${tag}@example.test`,
+      fromAddress: "stranger@example.test", subject: "s", bodyHash: `tp-${tag}`, nativeLocator: LOC(folder, ref),
+      deletedAt: o.live === true ? null : new Date(),
+    }).returning();
+    const observed = o.parkedIn ?? folder;
+    await db.insert(folderState).values({
+      messageId: m!.id, desiredFolder: o.desired ?? observed, observedFolder: observed, lastSetBy: "us",
+      reconcileStatus: o.pending === true ? "pending" : "reconciled",
+    });
+    await db.insert(messageBodies).values({ messageId: m!.id, text: "the text of a deleted letter", html: null });
+    return m!.id;
+  }
+  const headerOf = async (id: string) =>
+    (await db.select({ h: messages.messageIdHeader }).from(messages).where(eq(messages.id, id)))[0]!.h;
+  const locatorOf = async (id: string) =>
+    (await db.select({ loc: messages.nativeLocator }).from(messages).where(eq(messages.id, id)))[0]!.loc;
+  const byId = <T extends { messageId: string }>(rows: T[]) => rows.sort((x, y) => (x.messageId < y.messageId ? -1 : 1));
+
+  it("listTrashParked answers exactly the letters whose delete landed in Trash, at a Trash UID or at a dropped copy", async () => {
+    const { accountId, mailboxId } = await seed();
+    const other = await seed();
+    const repo = repoOf();
+    const trash = "Trash";
+    const a = await landed(accountId, mailboxId, trash, "5:1");
+    const label = await landed(accountId, mailboxId, "Work", "5:7", { parkedIn: trash });
+    await landed(accountId, mailboxId, trash, "5:2", { desired: "INBOX", pending: true });
+    await landed(accountId, mailboxId, trash, "5:3", { live: true });
+    const missing = await landed(accountId, mailboxId, trash, "5:4");
+    await db.update(messages).set({ serverMissingAt: new Date() }).where(eq(messages.id, missing));
+    const copy = await landed(accountId, mailboxId, trash, "5:5");
+    await repo.recordInstance(copy, LOC("INBOX", "1:77"));
+    const elsewhere = await landed(accountId, mailboxId, "Other", "5:6");
+    const deleting = await landed(accountId, mailboxId, "INBOX", "1:78", { desired: trash, pending: true });
+    await repo.recordInstance(deleting, LOC("INBOX", "1:78"));
+    const theirs = await landed(other.accountId, other.mailboxId, trash, "5:1");
+
+    const parked = await repo.listTrashParked!(accountId, mailboxId, { folder: trash, limit: 10 });
+    expect(parked).toEqual(byId([
+      { messageId: a, locator: LOC(trash, "5:1"), messageIdHeader: await headerOf(a) },
+      { messageId: label, locator: LOC("Work", "5:7"), messageIdHeader: await headerOf(label) },
+    ]));
+    expect(await repo.listTrashParked!(accountId, mailboxId, { folder: trash, limit: 10, afterId: parked[0]!.messageId }))
+      .toEqual(parked.slice(1));
+    expect((await repo.listTrashParked!(accountId, mailboxId, { folder: "Other", limit: 10 })).map((r) => r.messageId))
+      .toEqual([elsewhere]);
+    expect((await repo.listTrashParked!(other.accountId, other.mailboxId, { folder: trash, limit: 10 })).map((r) => r.messageId))
+      .toEqual([theirs]);
+  });
+
+  it("dropGoneFromTrash drops a gone letter's Trash row and text, and spares a re-decided, moved or foreign one", async () => {
+    const { accountId, mailboxId } = await seed();
+    const other = await seed();
+    const repo = repoOf();
+    const trash = "Trash";
+    const gone = await landed(accountId, mailboxId, trash, "6:1");
+    const label = await landed(accountId, mailboxId, "Work", "6:5", { parkedIn: trash });
+    const redecided = await landed(accountId, mailboxId, trash, "6:2");
+    const moved = await landed(accountId, mailboxId, trash, "6:3");
+    const foreign = await landed(other.accountId, other.mailboxId, trash, "6:4");
+    const read = [
+      ...await repo.listTrashParked!(accountId, mailboxId, { folder: trash, limit: 10 }),
+      ...await repo.listTrashParked!(other.accountId, other.mailboxId, { folder: trash, limit: 10 }),
+    ];
+    expect(read).toHaveLength(5);
+    const kept = async () => (await db.select({ deletedAt: messages.deletedAt, loc: messages.nativeLocator })
+      .from(messages).where(eq(messages.id, gone)))[0];
+    const before = await kept();
+    // Since the read: a Restore press, and a new stored location.
+    await repo.upsertFolderState(redecided, { desiredFolder: "INBOX", observedFolder: trash, lastSetBy: "us" });
+    await db.update(messages).set({ nativeLocator: LOC(trash, "6:30") }).where(eq(messages.id, moved));
+
+    const dropped = await repo.transaction((r) =>
+      r.dropGoneFromTrash!(accountId, mailboxId, trash, read.map((g) => ({ ...g, expectDesired: trash }))));
+    expect(dropped.sort()).toEqual([gone, label].sort());
+    const all = [gone, label, redecided, moved, foreign];
+    const states = await db.select({ id: folderState.messageId }).from(folderState).where(inArray(folderState.messageId, all));
+    expect(states.map((s) => s.id).sort()).toEqual([redecided, moved, foreign].sort());
+    const bodies = await db.select({ id: messageBodies.messageId, withheld: messageBodies.withheldReason })
+      .from(messageBodies).where(inArray(messageBodies.messageId, all));
+    expect(bodies.filter((b) => b.withheld !== null).sort((x, y) => (x.id < y.id ? -1 : 1)))
+      .toEqual([gone, label].sort().map((id) => ({ id, withheld: "expunged" })));
+    expect(await kept(), "the deletion time or the locator changed").toEqual(before);
+    const changes = await db.select().from(changeLog).where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityId, gone)));
+    expect(changes, "a drop wrote a change row").toEqual([]);
+  });
+
+  it("trashGonePass asks Trash for a letter parked at a dropped copy by its Message-ID: carried keeps it, carried by none lets it go", async () => {
+    const { accountId, mailboxId } = await seed();
+    await db.update(mailboxes).set({ trashFolder: "Trash" }).where(eq(mailboxes.id, mailboxId));
+    const gone = await landed(accountId, mailboxId, "Work", "9:1", { parkedIn: "Trash" });
+    const held = await landed(accountId, mailboxId, "Work", "9:2", { parkedIn: "Trash" });
+    const nameless = await landed(accountId, mailboxId, "Work", "9:3", { parkedIn: "Trash" });
+    await db.update(messages).set({ messageIdHeader: null }).where(eq(messages.id, nameless));
+    const goneId = await headerOf(gone);
+    let answer: "read" | "unanswered" = "unanswered";
+    const asked: string[] = [];
+    const adapter = {
+      folderKeys: async () => ({ k: "keys" as const, keys: { uidValidity: "9", uidNext: 50, messages: 3 } }),
+      uidsHeld: async () => { throw new Error("no letter here is parked at a Trash UID"); },
+      messageIdsGone: async (_f: string, v: string, ids: readonly string[]) => {
+        asked.push(...ids);
+        return answer === "unanswered" ? { k: "unanswered" as const }
+          : { k: "read" as const, uidValidity: v, gone: new Set(ids.filter((m) => m === goneId)) };
+      },
+    } as unknown as MailboxAdapter;
+    const repo = repoOf();
+    const visit = () => trashGonePass({ repo, adapter, accountId, mailboxId, write: (fn) => repo.transaction(fn) });
+    const bodyOf = async (id: string) =>
+      (await db.select({ w: messageBodies.withheldReason }).from(messageBodies).where(eq(messageBodies.messageId, id)))[0]!.w;
+    const listed = async () => (await repo.listTrashParked!(accountId, mailboxId, { folder: "Trash", limit: 10 }))
+      .map((r) => r.messageId).sort();
+
+    expect((await visit()).skipped).toBe("unanswered");
+    expect(await listed(), "an unanswered search let a letter go").toEqual([gone, held, nameless].sort());
+    expect(await bodyOf(gone)).toBeNull();
+    answer = "read";
+    asked.length = 0;
+    expect(await visit()).toMatchObject({ asked: 2, dropped: 1 });
+    expect(asked.sort(), "a letter with no Message-ID was asked").toEqual([goneId, await headerOf(held)].sort());
+    expect(await bodyOf(gone)).toBe("expunged");
+    expect(await locatorOf(gone), "the drop moved the stored location").toEqual(LOC("Work", "9:1"));
+    expect(await listed()).toEqual([held, nameless].sort());
+    expect(await bodyOf(held)).toBeNull();
+  });
+
+  it("trashGonePass proves an unchanged Trash over several pages, then skips it until its keys move", async () => {
+    const { accountId, mailboxId } = await seed();
+    await db.update(mailboxes).set({ trashFolder: "Trash" }).where(eq(mailboxes.id, mailboxId));
+    for (let i = 1; i <= 5; i++) await landed(accountId, mailboxId, "Trash", `8:${i}`);
+    let keys = { uidValidity: "8", uidNext: 100, messages: 5 };
+    let asked = 0;
+    const adapter = {
+      folderKeys: async () => ({ k: "keys" as const, keys }),
+      uidsHeld: async (_f: string, v: string, uids: readonly number[]) => { asked++; return { k: "held" as const, uidValidity: v, present: new Set(uids) }; },
+    } as unknown as MailboxAdapter;
+    const repo = repoOf();
+    const visit = async () => (await trashGonePass({ repo, adapter, accountId, mailboxId, page: 2, write: (fn) => repo.transaction(fn) })).skipped;
+    for (let i = 0; i < 3; i++) await visit();
+    expect(asked, "a walk of three pages").toBe(3);
+    expect(await visit(), "an unchanged Trash was walked again").toBe("unchanged");
+    expect(asked).toBe(3);
+    // Trash moves mid-walk: that walk proves nothing, the next one does.
+    keys = { ...keys, uidNext: 101, messages: 6 };
+    await visit();
+    keys = { ...keys, uidNext: 102, messages: 7 };
+    await visit();
+    await visit();
+    expect(await visit(), "a walk Trash moved under was taken as proof").toBeUndefined();
     await visit();
     await visit();
     expect(asked).toBe(9);

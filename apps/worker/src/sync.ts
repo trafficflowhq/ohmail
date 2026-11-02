@@ -39,6 +39,7 @@ import {
 } from "./junk-filing.js";
 import { junkRestorePass } from "./junk-restore.js";
 import { junkGonePass } from "./junk-gone.js";
+import { forgetTrashProof, trashGonePass } from "./trash-gone.js";
 import { storageRefillPass } from "./storage-refill.js";
 import { blankRepairPass } from "./blank-repair.js";
 import { folderOpsPass } from "./folder-ops.js";
@@ -1801,6 +1802,28 @@ async function syncCycleWithin(
     }
   }
 
+  // THE TRASH CHECK: letters a landed delete parked in Trash and another client removed there leave
+  // ohmail's Trash (`trash-gone.ts`). Same placement and error handling as the Junk check.
+  if (deferred.size === 0) {
+    try {
+      await trashGonePass({
+        repo, adapter, accountId, mailboxId,
+        ...(log !== undefined ? { log } : {}),
+        write: (fn) => fencedLiveGroup(deps, fn),
+      });
+    } catch (err) {
+      if (refusalIsRemoval(err)) {
+        log?.info("trash_gone_mailbox_removed", {
+          mailboxId, accountId,
+          reason: "the mailbox was removed while this pass was reading it, so nothing was dropped",
+        });
+        throw err;
+      }
+      rethrowRefusal(err);
+      log?.warn("trash_gone_pass_failed", { mailboxId, accountId, err });
+    }
+  }
+
   // THE STORAGE REFILL: letters whose text the trim emptied for space get it back from the mail
   // server once the account has room (`storage-refill.ts`). Same placement and error handling.
   if (deferred.size === 0) {
@@ -2584,6 +2607,8 @@ async function fileChunk(
   // due, and the next `changesSince` adopts what the server shows — the same convergence a crash takes.
   let reopened = false;
   let landed = 0;
+  // Read before the write group: which gone restores Trash, read whole, also lacks.
+  const proved = await trashCopiesGone(deps, special, chunk.filter((p) => !result.moved.has(p.nativeLocator!.ref)));
   try {
     await fencedLiveGroup(deps, async (r) => {
       const audits: Array<{ action: string; payload: unknown; inverse: unknown }> = [];
@@ -2597,7 +2622,12 @@ async function fileChunk(
         // filing is voided. See {@link voidGoneFiling}. Cross-checking
         // `result.gone` as well would be a second reading of one fact, with a branch no test can
         // redden.
-        if (!newLoc) { await voidGoneFiling(r, accountId, p, special, !beforeWalk); continue; }
+        if (!newLoc) {
+          if (await voidGoneFiling(r, accountId, mailboxId, p, special, !beforeWalk, proved.has(p.messageId))) {
+            recheckTrashAfter(deps, p, special);
+          }
+          continue;
+        }
         // Mail 0065: ONE completion writer for every path that lands a move — the ordinary
         // converge, the junk filing's satisfied/parked/husked shape, and the delete's park.
         // Written ONLY here, after `moveMany` reported the batch whole: the claim follows the
@@ -2701,6 +2731,35 @@ async function recordAudits(
 }
 
 /**
+ * The gone restores out of Trash that a whole read of Trash also finds gone. The move's own reading
+ * is not proof enough to empty a letter: imapflow answers a FETCH throttled four times in a row as no
+ * message. One bounded `UID SEARCH` under the locators' UIDVALIDITY, outside the write group; any
+ * other answer, or a failed read, proves none.
+ */
+async function trashCopiesGone(
+  deps: SyncDeps, special: SpecialFolderMap, rows: readonly PendingFolderState[],
+): Promise<ReadonlySet<string>> {
+  const trash = special.trashFolder;
+  const restores = rows.filter((p) => trash !== null && p.observedFolder === trash && p.desiredFolder !== trash
+    && p.nativeLocator?.folder === trash);
+  if (trash === null || restores.length === 0 || typeof deps.adapter.uidsHeld !== "function") return new Set();
+  // One epoch per read: a batch shares one, a single move has one.
+  const epoch = epochOfRef(restores[0]!.nativeLocator!.ref);
+  if (!epoch.known) return new Set();
+  const asked = restores.filter((p) => sameEpoch(epochOfRef(p.nativeLocator!.ref), epoch));
+  const held = await deps.adapter.uidsHeld(trash, epoch.value, asked.map((p) => parseRef(p.nativeLocator!.ref).uid))
+    .catch((err: unknown) => { rethrowRefusal(err); return null; });
+  if (held === null || held.k !== "held") return new Set();
+  return new Set(asked.filter((p) => !held.present.has(parseRef(p.nativeLocator!.ref).uid)).map((p) => p.messageId));
+}
+
+/** A closed void of a delete or a Restore can leave a letter parked in Trash after this visit's check. */
+function recheckTrashAfter(deps: SyncDeps, p: PendingFolderState, special: SpecialFolderMap): void {
+  const trash = special.trashFolder;
+  if (trash !== null && (p.desiredFolder === trash || p.observedFolder === trash)) forgetTrashProof(deps.adapter);
+}
+
+/**
  * The terminal check for a GONE member: void the filing if the message no longer exists anywhere this
  * mailbox's record knows of. "Gone from the source" has two readings needing opposite treatment. A
  * message MID-MOVE (a prior run's crash before the DB write, or an external move whose create is a
@@ -2711,8 +2770,10 @@ async function recordAudits(
  * true only once the DELETE is durably observed under a matching epoch. The write is the COMPLETION write (`observed := desired`), and `native_locator` is left alone deliberately (clearing it would erase the adoption evidence). Takes the repo it must write through, because one caller is already fenced.
  */
 async function voidGoneFiling(
-  repo: WorkerRepo, accountId: string, p: PendingFolderState, special: SpecialFolderMap,
+  repo: WorkerRepo, accountId: string, mailboxId: string, p: PendingFolderState, special: SpecialFolderMap,
   absentAtSource: boolean,
+  /** The locator is a Trash UID that a whole read of Trash under its UIDVALIDITY lacks ({@link trashCopiesGone}). */
+  trashCopyGone: boolean,
 ): Promise<boolean> {
   /* `absentAtSource` is FALSE from the pass before the walk: there an absent UID is most often an
      external move the walk has not read yet, and the walk adopts it by Message-ID. Only a delete
@@ -2726,15 +2787,25 @@ async function voidGoneFiling(
     && typeof repo.onlyInstanceAt === "function" && await repo.onlyInstanceAt(p.messageId, p.nativeLocator);
   // `false`: the row is kept for ingest to adopt — the caller owes a stale epoch its own answer.
   if (!vanished && !absentOnly) return false;
-  /* A RESTORE OUT OF TRASH IS VOIDED AGAINST THE OBSERVATION, NEVER `observed := desired`.
-   * A mail server empties its own Trash on its own schedule, so between the delete's move and the
-   * restore's the copy can be gone — and completing the restore would say the message is back in
-   * INBOX with the server holding nothing anywhere. The observation is what is true: it is still
-   * where it last was, and there is no copy left to carry. The tombstone stands (nothing here
-   * clears `deleted_at`; only a LANDED move does), the row leaves the queue converged on the
-   * truth, and the restore verb refuses at the door rather than queueing a move that cannot run. */
+  /* A RESTORE OUT OF TRASH WHOSE COPY IS GONE NEVER COMPLETES: `observed := desired` would say the
+   * letter is back with the server holding nothing anywhere. The tombstone stands either way (only a
+   * LANDED move clears `deleted_at`). */
   const trash = special.trashFolder;
   if (trash !== null && p.observedFolder === trash && p.desiredFolder !== trash) {
+    // Its Trash copy proved gone: no server holds the letter, so it leaves Trash rather than going
+    // back there, and the restore verb answers `not_in_trash`. Not gated on the walk, which never
+    // reads Trash.
+    if (trashCopyGone && p.nativeLocator !== null && typeof repo.dropGoneFromTrash === "function"
+      && (await repo.dropGoneFromTrash(accountId, mailboxId, trash, [
+        { messageId: p.messageId, locator: p.nativeLocator, expectDesired: p.desiredFolder },
+      ])).length > 0) {
+      await repo.recordAudit(accountId, "reconcile.move.voided", {
+        messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, outcome: "gone", evidence: "absent_at_move",
+      }, null);
+      return true;
+    }
+    // Nothing else proves it gone (a stale epoch, an unanswered Trash, a copy outside Trash, a drop
+    // the row no longer matched): the letter goes back to Trash as it was, or the newer desire stands.
     const adopted = await repo.adoptFolderState(
       p.messageId,
       { desiredFolder: p.observedFolder, observedFolder: p.observedFolder, lastSetBy: p.lastSetBy },
@@ -2751,8 +2822,8 @@ async function voidGoneFiling(
       {
         messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder,
         reason: adopted
-          ? "the copy this restore would have carried is no longer on the mail server — the "
-            + "message stays deleted, and the restore is not offered again"
+          ? "the copy this restore would have carried was not found, and Trash was not read whole without it — "
+            + "the message stays deleted and in Trash, and the next Trash check decides"
           : "the gone-restore void was computed against a desired folder that has since changed; "
             + "nothing was written and the newer intent stands",
       },
@@ -2938,7 +3009,10 @@ async function fileOne(
       // Already moved (crash between IMAP move and DB update) → leave pending; the next
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
       // voidGoneFiling for how the two are told apart.
-      const closed = await fencedLiveGroup(deps, (r) => voidGoneFiling(r, accountId, p, special, err.absent && !beforeWalk));
+      const proved = err.absent ? await trashCopiesGone(deps, special, [p]) : new Set<string>();
+      const closed = await fencedLiveGroup(deps, (r) =>
+        voidGoneFiling(r, accountId, mailboxId, p, special, err.absent && !beforeWalk, proved.has(p.messageId)));
+      if (closed) recheckTrashAfter(deps, p, special);
       // A stale epoch with no copy on record is NEVER silent: an audit row, a deferral on the
       // ladder under a class that is not a refusal, and a log line.
       if (!closed && stale) {
