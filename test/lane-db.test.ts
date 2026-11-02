@@ -531,6 +531,18 @@ describe("the lane role", () => {
     expect(spawnSync("git", ["check-ignore", "-q", "lane-db.env.tmp-12345"], { cwd: REPO }).status).toBe(1);
   });
 
+  it("git-ignores env files, keys and the credential files by name anywhere, and hides no tracked file", () => {
+    // The rules alone (--no-index), and the credential files only under a directory that does not exist.
+    const ignored = (p: string): number | null => spawnSync("git", ["check-ignore", "--no-index", "-q", p], { cwd: REPO }).status;
+    const absent = `no-such-dir-${process.pid}`;
+    for (const p of [".env", ".env.local", "deploy/selfhost/.env", ".vercel/project.json", "apps/api-vercel/.vercel/project.json",
+      "release.pem", `${absent}/.access-tokens`, `${absent}/.testmailaccounts`]) expect(ignored(p), p).toBe(0);
+    for (const p of ["deploy/selfhost/.env.example", `${absent}/.env.example`, "docs/env.md"]) expect(ignored(p), p).toBe(1);
+    const tracked = spawnSync("git", ["ls-files", "-z"], { cwd: REPO, encoding: "utf8", maxBuffer: 64 << 20 }).stdout;
+    const hidden = spawnSync("git", ["check-ignore", "--no-index", "--stdin", "-z"], { cwd: REPO, input: tracked, encoding: "utf8" });
+    expect([hidden.status, hidden.stdout.split("\0").filter(Boolean)]).toEqual([1, []]);
+  });
+
   it("classifies an env file by the role it dials as, legacy tf apart", () => {
     expect(classifyEnv(`PG_TEST_URL=postgres://tf:tf@localhost:5433/${DB}\n`).kind).toBe("legacy");
     expect(classifyEnv(`PG_TEST_URL=postgres://tf_l_0123456789ab:${PW}@localhost:5433/${DB}\n`).kind).toBe("lane-role");

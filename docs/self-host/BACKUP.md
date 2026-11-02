@@ -168,3 +168,6 @@ adding a version is not containment by itself:
 (A bulk re-encryption pass exists in the organizer's source —
 `run-kek-rewrap` — for retiring an old key version without touching each
 mailbox by hand; it is an operator tool without a written guide yet.)
+Retiring a key version is not supported on a self-hosted server yet: the
+server refuses to start while `TF_KEK_RETIRED` is set, so keep every
+`TF_KEK_V<n>` you have ever set.
