@@ -129,6 +129,8 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   // ── a correspondent let through: at ingest (`pipeline.ts`) and by the retro
   //    (`apps/worker/src/screener-correspondent-retro.ts`), which also retires the auto-act's rule ─
   "screener.correspondent_admitted", "screener.correspondent_rule_retired",
+  // ── a sender only the act on suggestions let in, retired once (`apps/worker/src/act-admission-retire.ts`) ─
+  "screener.act_admission_retired",
   // ── a delivery report let through at ingest (`pipeline.ts`): it cited the account's own Sent copy ─
   "screener.bounce_admitted",
   // ── Settings → Mailboxes' two presses on waiting filings (`packages/services/src/mailbox-filings.ts`) ─

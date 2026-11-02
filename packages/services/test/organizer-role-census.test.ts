@@ -195,6 +195,9 @@ const REFUSAL_SITES = new Set([
   // import run on a reader still leaves rules the organizing install never sees. That is a rules
   // door, not a move door, and it is filed rather than claimed closed here.
   ["packages", "services", "src", "hey-migration.ts"].join(sep),         // reroute → N message.move
+  // …and the one-time retirement of what the act on suggestions let in: it deletes rules and
+  // contacts the organizer owns, so an install that organizes none of the mailboxes writes nothing.
+  ["apps", "worker", "src", "act-admission-retire.ts"].join(sep),
 ]);
 
 

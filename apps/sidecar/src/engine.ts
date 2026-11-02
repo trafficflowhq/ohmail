@@ -222,6 +222,7 @@ import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/work
    the authority nothing else will ever check, and one fact function decides every row. */
 import { senderCheckBackfillPass } from "@trafficflow/worker/sender-check-backfill";
 import { listAddressBackfillPass } from "@trafficflow/worker/list-address-backfill";
+import { retireActAdmissionsPass } from "@trafficflow/worker/act-admission-retire";
 import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
 // The HISTORICAL-NAME REPAIR, from the same package and for the fourth instance of the same
 // argument. The values it writes have to be the ones ingest would have written from the same
@@ -1948,6 +1949,9 @@ export async function discloseProviderConfirms(
 export const LOCAL_NAME_BACKFILL_BATCH = 100;
 export const LOCAL_NAME_BACKFILL_PAGES = 2;
 
+/** Pages of senders the launch's act-admission retirement may walk: a bound, never reached in practice. */
+const LOCAL_ACT_RETIRE_PAGES = 1000;
+
 /**
  * How often a launch runs the THREAD-JOIN HEAL (`@trafficflow/worker/thread-join-heal`) at the
  * tail of a drain. Six hours — the hosted worker's own gate — because it repairs presentation
@@ -3254,6 +3258,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       });
     });
     const repairInferredPresses = async (): Promise<void> => { if (!stopping) await repairOnce(); };
+    /**
+     * THE ACT'S PAST ADMISSIONS, RETIRED ONCE PER LAUNCH (the worker's own pass): a sender only the act
+     * on suggestions let in loses its rule and the contact only it wrote, and waits at the Screener
+     * again. Paged to the end; it moves no mail. A failure is said once and the next launch asks again.
+     */
+    const retireOnce = oncePerLaunch(async () => {
+      let after: string | undefined;
+      for (let pages = 0; pages < LOCAL_ACT_RETIRE_PAGES && !stopping; pages++) {
+        const r = await retireActAdmissionsPass(db as unknown as Tx, { accountId: world.accountId, ...(after ? { after } : {}) });
+        if (r.rules + r.contacts > 0) log("act_admission_retired", { examined: r.examined, resolved: r.rules, cleared: r.contacts });
+        if (r.done || r.next === null) return;
+        after = r.next;
+      }
+    }, (err) => {
+      log("act_admission_retire_failed", {
+        err,
+        reason: "a sender the act let in before this release keeps its rule or contact for now; no letter " +
+          "moved, and the next launch asks again",
+      });
+    });
+    const retireActAdmissions = async (): Promise<void> => { if (!stopping) await retireOnce(); };
 
 
     /**
@@ -7087,6 +7112,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (organizing) await onceForTheAccount(correspondentRetroDue);
           // The 0.25.9 press repair, behind the organizer gate: it writes the rules this store owns.
           if (organizing) await onceForTheAccount(repairInferredPresses);
+          // The act's past admissions retired, behind the same gate and for the same reason.
+          if (organizing) await onceForTheAccount(retireActAdmissions);
           /* AND THE HISTORICAL-NAME REPAIR LAST OF ALL THE WORK, which is the ordering claim the
              suite pins rather than a preference. It is about rows that have been on this disk for as
              long as the install has existed, so nothing it does is urgent, and a cold launch's first

@@ -342,7 +342,7 @@ export interface UnconfirmedRerouteResult {
  * names, when given), and writes nothing standing: no rule, contact, learning signal, baseline, retro
  * or list brand. A promoted deny rule wins before authentication is read, so one written on a
  * forgery's advice would file the real address's mail. With no rule to undo, each letter filed gets
- * the automatic filing's audit row and its inverse (`screener-auto.ts`'s), which Filed automatically
+ * an automatic filing's audit row and its inverse, which Filed automatically
  * lists and Put back reads. A put-back letter stays; a key with any rule is not this pass's (`skip`).
  * Fences as the decision does: the erased account, then the rule-key lock before the bag's mailbox
  * locks. Files only to a deny destination; anything else throws before a statement.
@@ -602,6 +602,18 @@ export interface ApplyScreenerDecisionResult {
 }
 
 /**
+ * A PASS ASKED TO LET A SENDER IN (owner ruling 2026-11-02): only a person's press admits a stranger,
+ * so the door refuses before it reads or writes anything. A pass's deny still files.
+ */
+export class PassMayNotAdmitError extends Error {
+  readonly code = "pass_may_not_admit";
+  constructor() {
+    super("a pass may not let a sender in: only a person's press admits");
+    this.name = "PassMayNotAdmitError";
+  }
+}
+
+/**
  * THE ONE IMPLEMENTATION. The screening baseline, the subject's ONE rule (the key converged onto
  * its acting row, or the promoted rule where it has none), contacts, the held-bag re-route
  * (guarded on `desired_folder = 'ohmail/Screener'`: a row that moved on keeps where it went),
@@ -614,6 +626,7 @@ export interface ApplyScreenerDecisionResult {
 export async function applyScreenerDecision(
   tx: Tx, input: ApplyScreenerDecisionInput,
 ): Promise<ApplyScreenerDecisionResult> {
+  if (input.decidedBy === "pass" && input.decision === "yes") throw new PassMayNotAdmitError();
   const {
     accountId, scope, address, appliedFolder, decision, triggeringActionId, now,
     stampBaseline = true, applyRetro = true, overExisting, liftOverDomain = true, decidedBy, marked = "pressed",

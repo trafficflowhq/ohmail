@@ -23,7 +23,7 @@ import { ORGANIZED_FOLDERS } from "@trafficflow/core";
  *
  * ── WHY THIS IS A CENSUS AND NOT A CLAUSE IN EACH PASS ────────────────────────────────────
  *
- * The property is already TRUE of all four sites, and adding a redundant clause to each would be
+ * The property is already TRUE of all three sites, and adding a redundant clause to each would be
  * a condition whose contrary state is unreachable — a guard nobody can watch fail, which the next
  * reader takes for a guarantee. What is NOT guaranteed is that the FIFTH mover, written by
  * somebody who has not read that comment, keeps the shape. That is the thing worth pinning, and
@@ -42,10 +42,9 @@ import { ORGANIZED_FOLDERS } from "@trafficflow/core";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const src = (rel: string): string => readFileSync(`${HERE}../../../${rel}`, "utf8");
 
-/** The four candidate selections, by the file that owns each. */
+/** The three candidate selections, by the file that owns each. */
 /* `passName`, not `pass`: the push gate reads a quoted value under a `pass` key as a password. */
 const MOVERS: ReadonlyArray<{ passName: string; file: string }> = [
-  { passName: "screener-auto", file: "apps/worker/src/screener-auto.ts" },
   { passName: "ohbox-tidy", file: "apps/worker/src/ohbox-tidy.ts" },
   { passName: "rule-retro", file: "apps/worker/src/rule-retro.ts" },
   { passName: "junk-sweep", file: "packages/db/src/junk-sweep.ts" },
@@ -62,7 +61,7 @@ type Constraint = { readonly polarity: "positive" | "negative"; readonly operand
 /**
  * Every constraint on `folderState.desiredFolder` in one source, with its polarity.
  *
- * A real parse, not a regex: two of the four sites express the clause inside a raw `sql`
+ * A real parse, not a regex: sites express the clause inside a raw `sql`
  * template, and one of those holds `sql.join` over a mapped list — shapes a line-oriented match
  * reads wrongly in both directions. `ts.preProcessFile` is not usable here for the reason
  * recorded against `box-files.mjs`: it is a token scanner and reads sequences out of template
@@ -238,7 +237,7 @@ describe("a mover's candidate set is an allow-list over the folders ohmail organ
     expect(denyOnly.every((c) => c.polarity === "negative"),
       "the denylist form was read as an allow-list").toBe(true);
 
-    // And the `eq` form, which two of the four sites use.
+    // And the `eq` form.
     const eqForm = `const f = [eq(folderState.desiredFolder, SCREENER)];`;
     expect(desiredFolderConstraints(eqForm)).toEqual([{ polarity: "positive", operand: "SCREENER" }]);
   });

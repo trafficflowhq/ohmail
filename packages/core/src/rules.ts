@@ -536,50 +536,6 @@ function isBulkSend(headers: Readonly<Record<string, unknown>>): boolean {
 }
 
 /**
- * THE FLOOR'S VERSION — the key the Screener auto-apply pass writes into
- * `folder_state.screener_floor_version` when it reads {@link migrationBulkPlacement} null for a
- * message. Bump it when anything that verdict reads changes: the five header names or the
- * conjunction in {@link hasStrongBulkFloor}, how {@link headerValues} reads a header map, or the
- * five-key header projection `selectCandidates` hands it (`apps/worker/src/screener-auto.ts`).
- * Marks under any other number are withdrawn and re-judged by the pass's next full walk, with no
- * migration.
- */
-export const STRONG_BULK_FLOOR_VERSION = 1;
-
-/**
- * The strong-bulk floor — a STRICTER conjunction than {@link isBulkSend}, for the migration
- * backfill and nothing else. `isBulkSend` fires on any one marker, correct where it refines a
- * sender already past the gate; {@link migrationBulkPlacement} reaches mail the legacy migration
- * filed under a blanket default, neither contact nor ruled — and there one marker is too weak: a
- * Google security notice carries a `Feedback-ID` and no `List-Unsubscribe`, exactly the relevant
- * alert that must stay. The floor is a CONJUNCTION: `List-Unsubscribe` REQUIRED, AND at least one
- * corroborating list/ESP marker. `Feedback-ID` alone is deliberately not enough — the count
- * landing below the raw population IS the safety margin. Do NOT loosen this to an OR.
- */
-function hasStrongBulkFloor(headers: Readonly<Record<string, unknown>>): boolean {
-  if (headerValues(headers, LIST_UNSUBSCRIBE_HEADER) === null) return false;
-  if (headerValues(headers, "list-id") !== null) return true;
-  if (headerValues(headers, LIST_UNSUBSCRIBE_POST_HEADER) !== null) return true;
-  if (headerValues(headers, "feedback-id") !== null) return true;
-  return headerValues(headers, "precedence")?.some((v) => /bulk/i.test(v)) ?? false;
-}
-
-/**
- * The migration backfill's placement for a strong-bulk message — Reads, or Receipts on a money
- * subject — or `null` to KEEP the message where it is. One router, not two: it composes {@link
- * headerHeuristic}'s Receipts-before-Reads ordering, gated on {@link hasStrongBulkFloor}, reusing
- * {@link isMoneySubject} — the logic lives in THIS file once, and the worker backfill must never
- * re-encode it. Not reachable from {@link evaluateRules}: the backfill's population is the one
- * the heuristic must never see, since running it before the gate is the pre-gate consent bypass.
- * A MIGRATION decision: it only demotes mail already admitted, establishes no consent, writes no
- * rule. Sensitivity is the CALLER's exclusion.
- */
-export function migrationBulkPlacement(msg: NormalizedMessage): Destination | null {
-  if (!hasStrongBulkFloor(msg.headers)) return null;
-  return isMoneySubject(msg.subject) ? "ohmail/Receipts" : "ohmail/News";
-}
-
-/**
  * Is the claimed author a service mailbox rather than a person? `no-reply@`, `notifications@`,
  * `bounce@`, `postmaster@` and the auto-responder locals — punctuation stripped, the same
  * normalisation `consent-seed.ts#isRobotAddress` uses. A "machine-generated" signal, NOT a

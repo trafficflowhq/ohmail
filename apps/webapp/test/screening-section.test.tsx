@@ -159,51 +159,18 @@ describe("the editable Ohbox bar", () => {
   });
 });
 
-describe("the auto-apply toggle", () => {
-  const autoApplySwitch = (): HTMLButtonElement =>
-    host!.querySelector(
-      `[aria-label="${messages.settings.screening.autoApplyTitle}"]`,
-    ) as HTMLButtonElement;
-
-  it("renders OFF by default and its copy states the spend model and the sensitivity carve-out", () => {
-    // The copy is a claim under test: it must name that it costs nothing and that sensitive mail is
-    // never moved, or the control would be describing a different, less safe feature.
-    const copy = messages.settings.screening.autoApplyDescription.toLowerCase();
-    expect(copy).toContain("no ai");
-    expect(copy).toMatch(/never spends|no spend|costs nothing/);
-    expect(copy).toContain("sensitive");
-    expect(copy).toContain("move anything back");
-    expect(copy).toContain("off by default");
-  });
-
-  it("is OFF for a fresh account and turning it on PATCHes exactly { screenerAutoApply: true }", async () => {
-    await mount();
-    expect(autoApplySwitch().getAttribute("aria-checked")).toBe("false");
-
-    await act(async () => {
-      autoApplySwitch().dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-
-    // ONE axis, nothing else — a body that also named the posture or bar would move mail the user did
-    // not ask to move.
-    expect(patchBodies).toEqual([{ screenerAutoApply: true }]);
-    expect(autoApplySwitch().getAttribute("aria-checked")).toBe("true");
-  });
-
-  it("reflects the stored ON state on load", async () => {
+/* NO SWITCH FILES A FIRST-TIME SENDER (owner report 2026-11-02): "File obvious bulk out of my
+   Screener for me" let a stranger's letter into News on headers the sender writes. It is gone; a
+   stored value from before draws nothing, and the pane's one switch is the posture. */
+describe("no switch files a first-time sender out of the Screener", () => {
+  it("draws no bulk-filing switch, whatever the stored value, and writes nothing on load", async () => {
     stored.screenerAutoApply = true;
     await mount();
-    expect(autoApplySwitch().getAttribute("aria-checked")).toBe("true");
-  });
-
-  // The sentence as RENDERED beside the switch. What makes "no AI" true is pinned against the
-  // passes in `landing-mailbox-truth.test.ts` §8, beside the Junk row.
-  it("renders the switch's no-AI sentence next to it", async () => {
-    await mount();
     const text = host!.textContent ?? "";
-    expect(text).toContain(messages.settings.screening.autoApplyTitle);
-    expect(text).toContain(messages.settings.screening.autoApplyDescription);
-    expect(text).toContain("Deterministic rules only — no AI");
+    expect(text).not.toContain("File obvious bulk out of my Screener");
+    expect(text).not.toContain("Deterministic rules only");
+    const switches = [...host!.querySelectorAll('button[role="switch"]')].map((b) => b.getAttribute("aria-label"));
+    expect(switches).toEqual([messages.settings.screening.postureTitle]);
+    expect(patchBodies).toEqual([]);
   });
 });

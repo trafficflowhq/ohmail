@@ -80,6 +80,7 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
       where "deleted_at" is null`,
   },
   {
+    // Its reader, the Screener auto-apply pass, is retired (2026-11-02); a later migration drops it.
     // THE SCREENER AUTO-APPLY HELD PAGE (`screener-auto.ts` `heldPageSql`): the held rows whose
     // floor is unjudged (`screener_floor_version is null`), by `message_id` from the cursor, and the
     // full walk's stale-version read (`< N or > N`). The version is a KEY, so both are one range.

@@ -4,13 +4,12 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
 import {
-  accountSettings, accounts, awayReplies, folderState,
+  accountSettings, accounts, contacts, folderState,
   mailboxes, messageBodies, messages, rules, threads,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { ohboxTidyPass } from "../src/ohbox-tidy.js";
 import { ruleRetroPass } from "../src/rule-retro.js";
-import { screenerAutoApplyPass } from "../src/screener-auto.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import type { Tx } from "@trafficflow/db";
 import { brandDialect } from "@trafficflow/db/dialect";
@@ -18,13 +17,12 @@ import { brandDialect } from "@trafficflow/db/dialect";
 /**
  * ═══ BEING ON A THREAD IS NOT ANSWERING THE PERSON ON IT ═════════════════════════════════════
  *
- * `ohbox-tidy`, `rule-retro` and `screener-auto` each leave a message alone when the person has
- * already dealt with it, and each asked the same wrong question: is there ANY own-address message
- * in this thread. We write to Alice; Alice's colleague joins the thread and writes; their mail is
- * excluded from all three passes for ever by a reply that was never to them. `screener-auto` also
- * counted the away responder's reply, which no other pass does.
+ * `ohbox-tidy` and `rule-retro` each leave a message alone when the person has already dealt with
+ * it, and each asked the same wrong question: is there ANY own-address message in this thread. We
+ * write to Alice; Alice's colleague joins the thread and writes; their mail is excluded from both
+ * passes for ever by a reply that was never to them.
  *
- * All three now ask `@trafficflow/db#weAnsweredThisSenderWhere`. Every case here is a PAIR,
+ * Both now ask `@trafficflow/db#weAnsweredThisSenderWhere`. Every case here is a PAIR,
  * because a narrowing can only be judged by both halves at once: admitting more candidates is the
  * fix, and admitting a message the person really answered is a new bug in the fix's clothes. The
  * three arms that keep the exclusion are each driven — the recipient, the reference header, and
@@ -40,14 +38,13 @@ import { brandDialect } from "@trafficflow/db/dialect";
 
 const OHBOX = "INBOX";
 const READS = "ohmail/News";
-const SCREENER = "ohmail/Screener";
 const SENDER = "news@sender.test";
 const STRANGER = "someone-else@elsewhere.test";
 
 /** The explicit empty trust set — this directory's convention; see the sibling pg file. */
 const NONE = async (): Promise<ReadonlySet<string>> => new Set<string>();
 
-/** The strong-bulk floor `migrationBulkPlacement` demands: List-Unsubscribe PLUS a corroborator. */
+/** List-Unsubscribe PLUS a corroborator: the router files a contact's mail with these to News. */
 const BULK_HEADERS: Record<string, string[]> = {
   "list-unsubscribe": ["<https://sender.test/u>"],
   "list-id": ["<news.sender.test>"],
@@ -80,20 +77,14 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
     return { accountId, mailboxId: mb!.id, own };
   }
 
+  /** The tidy owed, and SENDER a contact: it moves a contact's bulk and keeps a stranger's. */
   async function armTidy(w: World): Promise<void> {
+    await db.insert(contacts).values({ accountId: w.accountId, address: SENDER }).onConflictDoNothing();
     await db.insert(accountSettings).values({
       accountId: w.accountId, ohboxPolicy: "people_only", ohboxTidyRequestedAt: new Date(),
     }).onConflictDoUpdate({
       target: accountSettings.accountId,
       set: { ohboxPolicy: "people_only", ohboxTidyRequestedAt: new Date(), ohboxTidyCursor: null },
-    });
-  }
-
-  async function armScreenerAuto(w: World): Promise<void> {
-    await db.insert(accountSettings).values({
-      accountId: w.accountId, screenerAutoApplyAt: new Date(),
-    }).onConflictDoUpdate({
-      target: accountSettings.accountId, set: { screenerAutoApplyAt: new Date() },
     });
   }
 
@@ -126,13 +117,12 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
    *
    * `to` is who it was addressed to — `null` means the recipients were never recorded, which is
    * what an older Sent row holds and is NOT the same as "addressed to somebody else". `references`
-   * names a message it answers. `machine: true` mints the away responder's ledger row, so the
-   * reply is the responder's and not the person's.
+   * names a message it answers.
    */
   async function ourSend(
     w: World, threadId: string,
     opts: {
-      to: string[] | null; references?: string; machine?: string;
+      to: string[] | null; references?: string;
       /** The `To` the stored headers carry — what `sender-name-backfill` copies into the column. */
       headerTo?: string; noBody?: boolean;
     },
@@ -151,7 +141,7 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
       await db.insert(messageBodies).values({
         messageId: m!.id, text: "reply",
         headers: {
-          "auto-submitted": [opts.machine ? "auto-replied" : "no"],
+          "auto-submitted": ["no"],
           ...(opts.references ? { references: [`<${opts.references}>`] } : {}),
           ...(opts.headerTo ? { to: [opts.headerTo] } : {}),
         },
@@ -161,12 +151,6 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
       messageId: m!.id, desiredFolder: "Sent", observedFolder: "Sent",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
-    if (opts.machine) {
-      await db.insert(awayReplies).values({
-        accountId: w.accountId, mailboxId: w.mailboxId, messageId: opts.machine,
-        sender: SENDER, outcome: "sent", mintedMessageId: `<${bare}>`,
-      });
-    }
     return m!.id;
   }
 
@@ -186,9 +170,8 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
     ohboxTidyPass(db, { accountId: w.accountId, trustedAuthservIdsFor: NONE });
   const retro = (w: World) =>
     ruleRetroPass(db, { accountId: w.accountId, trustedAuthservIdsFor: NONE });
-  const screener = (w: World) => screenerAutoApplyPass(db, { accountId: w.accountId });
 
-  /* ═══ 1 · COPIED ON A THREAD WE NEVER ANSWERED — NONE of the three may count it ══════════ */
+  /* ═══ 1 · COPIED ON A THREAD WE NEVER ANSWERED — NEITHER pass may count it ═══════════════ */
 
   it("the Ohbox tidy demotes mail on a thread our reply was addressed to somebody else", async () => {
     const w = await newWorld();
@@ -213,35 +196,21 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
     expect(await desiredOf(bulk)).toBe(READS);
   });
 
-  it("the Screener auto-apply files mail on a thread our reply was addressed to somebody else", async () => {
-    const w = await newWorld();
-    await armScreenerAuto(w);
-    const t = await newThread(w);
-    const held = await bulkIn(w, t, SCREENER);
-    await ourSend(w, t, { to: [STRANGER] });
+  /* ═══ 2 · A GENUINE REPLY STILL COUNTS — in both ═════════════════════════════════════════ */
 
-    const res = await screener(w);
-    expect(res.ran).toBe(true);
-    expect(await desiredOf(held)).not.toBe(SCREENER);
-  });
-
-  /* ═══ 2 · A GENUINE REPLY STILL COUNTS — in all three ════════════════════════════════════ */
-
-  // One case per pass, not a loop in one: three passes in one case ran past the default timeout,
-  // and a red that is the harness's clock says nothing about the predicate.
-  for (const pass of ["tidy", "retro", "screener"] as const) {
+  // One case per pass, not a loop in one: passes in one case ran past the default timeout, and a
+  // red that is the harness's clock says nothing about the predicate.
+  for (const pass of ["tidy", "retro"] as const) {
     it(`POSITIVE CONTROL — a reply addressed to THIS sender still protects their mail (${pass})`, async () => {
       const w = await newWorld();
       const t = await newThread(w);
-      const folder = pass === "screener" ? SCREENER : OHBOX;
-      const held = await bulkIn(w, t, folder);
+      const held = await bulkIn(w, t, OHBOX);
       await ourSend(w, t, { to: [SENDER] });
 
       if (pass === "tidy") { await armTidy(w); await tidy(w); }
       if (pass === "retro") { await owedRule(w); await retro(w); }
-      if (pass === "screener") { await armScreenerAuto(w); await screener(w); }
 
-      expect(await desiredOf(held), `${pass} moved mail the person answered`).toBe(folder);
+      expect(await desiredOf(held), `${pass} moved mail the person answered`).toBe(OHBOX);
     });
   }
 
@@ -315,30 +284,5 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
 
     await tidy(w);
     expect(await desiredOf(bulk), "a reply that named nobody protected this sender").toBe(READS);
-  });
-
-  /* ═══ 5 · THE MACHINE'S REPLY — and the Screener pass, which never excluded it ═══════════ */
-
-  it("the Screener auto-apply no longer reads the away responder's reply as the person's", async () => {
-    const w = await newWorld();
-    await armScreenerAuto(w);
-    const t = await newThread(w);
-    const held = await bulkIn(w, t, SCREENER);
-    // Addressed to the sender, so ONLY the auto-reply arm can keep it out of the pass.
-    await ourSend(w, t, { to: [SENDER], machine: held });
-
-    await screener(w);
-    expect(await desiredOf(held), "a machine answering is not the person answering").not.toBe(SCREENER);
-  });
-
-  it("POSITIVE CONTROL — the person's own reply still holds mail at the gate", async () => {
-    const w = await newWorld();
-    await armScreenerAuto(w);
-    const t = await newThread(w);
-    const held = await bulkIn(w, t, SCREENER);
-    await ourSend(w, t, { to: [SENDER] });
-
-    await screener(w);
-    expect(await desiredOf(held)).toBe(SCREENER);
   });
 });

@@ -74,10 +74,10 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
    * populations the widened pass acts on:
    *  · default        → a seeded/promoted allow rule, NO contact — the `policy` class.
    *  · `noRule: true` → a bare CONTACT, no rule — the `header` class.
-   *  · `stranger`     → NEITHER a rule NOR a contact — the `migration_bulk` class (the legacy
-   *                     migration's blanket default admitted it; `evaluateRules` answers `screener`).
+   *  · `stranger`     → NEITHER a rule NOR a contact (the legacy migration's blanket default admitted
+   *                     it; `evaluateRules` answers `screener`) — kept: only a person lets a sender in.
    * `ruleDest` lets a `manual`/deny rule name a different destination; `sensitivityCategory`/`noAi`
-   * flag the row so the `migration_bulk` exclusion can be exercised.
+   * flag the row so the sensitivity exclusion can be exercised.
    */
   async function seed(w: World, o: {
     from: string;
@@ -129,12 +129,11 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
     return m!.id;
   }
 
-  // A single List-Unsubscribe — passes the lenient `isBulkSend` (header class) but NOT the strong
-  // migration_bulk floor, which requires a corroborating marker.
+  // A single List-Unsubscribe — passes the lenient `isBulkSend` (header class).
   const BULK = { "list-unsubscribe": ["<https://x.test/u>"] };
-  // The strong floor: List-Unsubscribe AND a corroborating list/ESP marker.
+  // List-Unsubscribe AND a corroborating list/ESP marker: every bulk header a sender can write.
   const STRONG_BULK = { "list-unsubscribe": ["<https://x.test/u>"], "list-id": ["<news.shop.test>"] };
-  // Feedback-ID with NO List-Unsubscribe — the Google-account/security-notice shape the floor rejects.
+  // Feedback-ID with NO List-Unsubscribe — the Google-account/security-notice shape.
   const FEEDBACK_ONLY = { "feedback-id": ["1:2:3:campaign"] };
 
   const basisOf = async (accountId: string, messageId: string): Promise<string | undefined> => {
@@ -319,7 +318,7 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
   });
 
   // ══════════════════════════════════════════════════════════════════════════════════════════
-  //  2b. THE THREE POPULATIONS — header (rule-less contact) and migration_bulk (stranger)
+  //  2b. THE POPULATIONS — header (rule-less contact) moves; a stranger stays
   // ══════════════════════════════════════════════════════════════════════════════════════════
 
   it("header class: a rule-less CONTACT's bulk mail is filed to the engine's own pile (basis: header)", async () => {
@@ -368,55 +367,28 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
     }
   });
 
-  it("migration_bulk class: a STRANGER (no rule, no contact) is demoted only over the strong floor", async () => {
+  it("MUTATION-WATCH: a STRANGER (no rule, no contact) stays in the Ohbox whatever its headers; a contact's newsletter still moves", async () => {
+    // Owner report 2026-11-02: every bulk header is the sender's to write, and cold outreach carries
+    // them too, so no header lets a stranger into News or Receipts. Only a person lets a sender in.
     const w = await newWorld();
     await arm(w);
-    // MOVES — strong floor (List-Unsubscribe + List-Id). basis migration_bulk.
     const strong = await seed(w, { from: "news@nobody.test", headers: STRONG_BULK, stranger: true });
     const strongReceipt = await seed(w, {
       from: "billing@nobody.test", subject: "Your invoice", headers: STRONG_BULK, stranger: true,
     });
-    // STAYS — Feedback-ID ALONE (no List-Unsubscribe): the genuinely-relevant service-alert shape the
-    // ruling requires the floor to REJECT.
     const feedbackOnly = await seed(w, { from: "noreply@google.test", headers: FEEDBACK_ONLY, stranger: true });
-    // STAYS — List-Unsubscribe alone, no corroborating marker: below the floor's conjunction.
     const unsubOnly = await seed(w, { from: "solo@nobody.test", headers: BULK, stranger: true });
-    // STAYS — no markers at all: a first-contact human the migration dumped in the Ohbox.
     const bare = await seed(w, { from: "human@nobody.test", subject: "hi there", stranger: true });
+    // CONTROL — the same headers from a person's contact: the router files it to News.
+    const known = await seed(w, { from: "list@known.test", headers: STRONG_BULK, noRule: true });
 
     const r = await ohboxTidyPass(db, { trustedAuthservIdsFor: NONE, accountId: w.accountId });
-    expect(r).toMatchObject({ examined: 5, moved: 2, kept: 3 });
-    expect(r.destinations).toEqual({ [READS]: 1, [RECEIPTS]: 1 });
-    expect(r.basis).toEqual({ migration_bulk: 2 });
-
-    expect((await stateOf(strong)).desired).toBe(READS);
-    expect((await stateOf(strongReceipt)).desired).toBe(RECEIPTS);
-    expect(await basisOf(w.accountId, strong)).toBe("migration_bulk");
-    for (const id of [feedbackOnly, unsubOnly, bare]) {
-      expect((await stateOf(id)).desired, `${id} demoted below the strong floor`).toBe(OHBOX);
+    expect(r).toMatchObject({ examined: 6, moved: 1, kept: 5 });
+    expect(r.basis).toEqual({ header: 1 });
+    for (const id of [strong, strongReceipt, feedbackOnly, unsubOnly, bare]) {
+      expect((await stateOf(id)).desired, `${id}: a stranger's letter left the Ohbox`).toBe(OHBOX);
     }
-  });
-
-  it("migration_bulk EXCLUDES a sensitivity-flagged stranger even with the full markers", async () => {
-    // The floor is fully met (strong bulk) and the sender is a non-contact — the exact migration_bulk
-    // shape — but the row is sensitivity-flagged, so it is `sensitive-rescreen.ts`'s jurisdiction and
-    // this pass must never touch it. It is COUNTED as sensitivity-excluded (the safety margin) and
-    // KEPT. Two flavours: a `sensitivity_category`, and a bare `no_ai`.
-    const w = await newWorld();
-    await arm(w);
-    const byCategory = await seed(w, {
-      from: "alerts@bank.test", headers: STRONG_BULK, stranger: true, sensitivityCategory: "security_alert",
-    });
-    const byNoAi = await seed(w, { from: "otp@bank.test", headers: STRONG_BULK, stranger: true, noAi: true });
-    // CONTROL — the same shape without the flag DOES move, so a broken exclusion shows as this pair
-    // diverging.
-    const control = await seed(w, { from: "news@shop.test", headers: STRONG_BULK, stranger: true });
-
-    const r = await ohboxTidyPass(db, { trustedAuthservIdsFor: NONE, accountId: w.accountId });
-    expect(r).toMatchObject({ examined: 3, moved: 1, kept: 2, sensitivityExcluded: 2 });
-    expect((await stateOf(byCategory)).desired).toBe(OHBOX);
-    expect((await stateOf(byNoAi)).desired).toBe(OHBOX);
-    expect((await stateOf(control)).desired).toBe(READS);
+    expect((await stateOf(known)).desired).toBe(READS);
   });
 
   it("KEEPS a sensitivity-flagged POLICY and HEADER row — the live router's carve-out, every class", async () => {
@@ -511,20 +483,6 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
     const bare = await newWorld();
     await seed(bare, { from: "n@shop.test", headers: BULK });
     expect(await ohboxTidyPass(db, { trustedAuthservIdsFor: NONE, accountId: bare.accountId })).toMatchObject({ ran: false });
-  });
-
-  it("the WIDENED basis runs ONLY inside the owed gate — a stranger's bulk is untouched when not owed", async () => {
-    // The new `migration_bulk` basis is the most permissive class (it moves mail from a sender with
-    // neither a rule nor a contact), so the owed gate is exactly what keeps it from running against an
-    // account that never opted in. Not owed ⇒ EMPTY() ⇒ nothing read, nothing moved. A mutant that
-    // drops the gate check (`if (!deps.assumePolicy && (policy !== "people_only" || !owed)) return
-    // EMPTY()`) turns this red, because the stranger's strong-bulk mail would then be demoted.
-    const unarmed = await newWorld();
-    await arm(unarmed, { requested: null });   // people_only, but requested_at NULL ⇒ not owed
-    const stranger = await seed(unarmed, { from: "news@nobody.test", headers: STRONG_BULK, stranger: true });
-    expect(await ohboxTidyPass(db, { trustedAuthservIdsFor: NONE, accountId: unarmed.accountId })).toMatchObject({ ran: false, moved: 0 });
-    expect((await stateOf(stranger)).desired).toBe(OHBOX);
-    expect(await movesTo(unarmed.accountId)).toHaveLength(0);
   });
 
   // ══════════════════════════════════════════════════════════════════════════════════════════
@@ -699,57 +657,6 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
     }
 
     expect((await stateOf(m)).desired).toBe(OHBOX);
-  }, 60_000);
-
-  it("a MIGRATION_BULK candidate re-proves the drag-back guard AND the FOR UPDATE OF folder_state race", async () => {
-    // The concurrency guards were only ever proven for the POLICY basis (a seeded sender). The
-    // widened `migration_bulk` basis reaches a stranger through a different code path (the strong-bulk
-    // floor, not the policy demotion), so its safety under the user-always-wins guards is a guard
-    // nobody had watched fail on this path. Same construction as the policy race tests above, and the
-    // same honesty about which guard bites: the change-log drag-back exclusion is the mutation-killed
-    // guarantee (drop it and this goes red); `FOR UPDATE OF folder_state` is the serialization
-    // backstop for the sub-case where the pass reads before the drag commits, and — as with the
-    // sibling policy tests — its independent contribution is covered by the guard under this timing.
-    const w = await newWorld();
-    await arm(w);
-
-    // (a) The change-log drag-back guard, on a stranger: a move-to-INBOX row excludes the row even
-    // though its strong-bulk headers would otherwise make it a migration_bulk mover.
-    const dragged = await seed(w, { from: "back@nobody.test", headers: STRONG_BULK, stranger: true });
-    await db.insert(changeLog).values({
-      accountId: w.accountId, seq: 991_001n, entityType: "message", entityId: dragged,
-      op: "move", meta: { from: READS, to: OHBOX },
-    });
-    // A control stranger with no such row, so a broken guard shows as both moving.
-    const control = await seed(w, { from: "ctl@nobody.test", headers: STRONG_BULK, stranger: true });
-
-    // (b) The user-drag race, on a stranger: a held folder_state lock stands in for the pass mid-page
-    // while the user drags the message back and commits; the pass, serialized behind the lock, wakes
-    // against the committed row — now carrying the move-to-INBOX change — and must NOT demote it.
-    const raced = await seed(w, { from: "race@nobody.test", headers: STRONG_BULK, stranger: true });
-
-    const held = await sql.reserve();
-    try {
-      await held`begin`;
-      await held`select 1 from folder_state where message_id = ${raced}::uuid for update`;
-      const passPromise = ohboxTidyPass(db, { trustedAuthservIdsFor: NONE, accountId: w.accountId });
-      await holdUntilPassIsParked();
-      await held`update folder_state set desired_folder = 'INBOX', last_set_by = 'us' where message_id = ${raced}::uuid`;
-      await held`insert into change_log (account_id, seq, entity_type, entity_id, op, meta)
-                 values (${w.accountId}::uuid, 991100, 'message', ${raced}::uuid, 'move', ${JSON.stringify({ from: READS, to: OHBOX })}::jsonb)`;
-      await held`commit`;
-      const r = await passPromise;
-      // Only the control moved: the dragged row is excluded in SQL, the raced row is excluded once the
-      // drag-back is visible — the user's placement is the last word on the migration_bulk path too.
-      expect(r.moved, "a migration_bulk mover escaped a user drag-back").toBe(1);
-      expect(r.basis).toEqual({ migration_bulk: 1 });
-    } finally {
-      await held.release();
-    }
-
-    expect((await stateOf(control)).desired).toBe(READS);
-    expect((await stateOf(dragged)).desired).toBe(OHBOX);
-    expect((await stateOf(raced)).desired).toBe(OHBOX);
   }, 60_000);
 
   // ══════════════════════════════════════════════════════════════════════════════════════════

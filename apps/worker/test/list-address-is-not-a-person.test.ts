@@ -7,7 +7,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { carryDialect } from "@trafficflow/db/dialect";
 import {
   accounts, accountSettings, applyScreenerDecision, auditLog, contacts, folderState, listAddresses, listBrandsOf,
-  mailboxFolders, mailboxes, messageBodies, messageInstances, messages, rules, type Tx,
+  mailboxFolders, mailboxes, messageBodies, messageInstances, messages, PassMayNotAdmitError, rules, type Tx,
 } from "@trafficflow/db";
 import type { OrganizerRole } from "@trafficflow/db";
 import { runSyncCycle } from "../src/sync.js";
@@ -367,12 +367,11 @@ describe("only a person's press consents a brand under a list address", () => {
     expect(other.desired, "one press does not open the address to every name").toBe("ohmail/Screener");
   });
 
-  it("ACCEPTANCE 1f: the act's yes over a held claim writes no consent", async () => {
+  it("ACCEPTANCE 1f: the act's yes over a held claim is refused and writes no consent", async () => {
     const w = await world();
     await w.deliver("l-12@elsewhere.invalid", listMail(12));
     await w.deliver("spoof-12@lists.invalid", spoof("PostFinance", 12));
-    const r = await w.press({ decidedBy: "pass" });
-    expect(r.skipped).toBe("identity");
+    await expect(w.press({ decidedBy: "pass" })).rejects.toBeInstanceOf(PassMayNotAdmitError);
     expect(await w.listRow(LIST)).toEqual({ brands: [] });
   });
 

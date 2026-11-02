@@ -1500,6 +1500,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // The failure is `error` on the name repair's reading: the next drain asks again.
   inferred_presses_repaired: "info",
   inferred_presses_repair_failed: "error",
+  // engine.ts — the act's past admissions retired, once per launch: counts only, and only when it
+  // retired one; the failure is `error` on the press repair's reading, and the next launch asks again.
+  act_admission_retired: "info",
+  act_admission_retire_failed: "error",
   // db.ts and search-backfill.ts — the local store's search. A setup that failed is `error`: the
   // store searches through the unindexed arms until a later launch builds the indexes. The
   // backfill writes one `info` line when it finishes; a failed round is `error` by the suffix rule,
