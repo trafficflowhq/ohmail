@@ -122,7 +122,8 @@ function press(el: HTMLElement, prefix: string): HTMLElement {
   return hits[0] as HTMLElement;
 }
 
-async function typedForm(): Promise<HTMLDivElement> {
+/** The connect form typed; the incoming host is `mail.home.arpa`, the outgoing one `outgoing`. */
+async function typedForm(outgoing = "smtp.home.arpa"): Promise<HTMLDivElement> {
   const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -135,7 +136,7 @@ async function typedForm(): Promise<HTMLDivElement> {
   await click(press(host, picker.otherLabel!));
   await typeInto(host.querySelector("#mb-address"), "person@example.test");
   await typeInto(host.querySelector("#mb-imap"), "mail.home.arpa");
-  await typeInto(host.querySelector("#mb-smtp"), "mail.home.arpa");
+  await typeInto(host.querySelector("#mb-smtp"), outgoing);
   await typeInto(host.querySelector("#mb-pass"), "app-password-fixture");
   return host;
 }
@@ -192,6 +193,20 @@ describe("Settings → Mailboxes, a home server without TLS on either half", () 
     await connectOnce(el);
     expect(mockCreated[2]!.imap.allowInsecure).toBe(true);
     expect(mockCreated[2]!.smtp.allowInsecure).toBe(true);
+  });
+
+  /* ONE SERVER ON BOTH LEGS, ONE CONSENT: the line the refusal opens names both servers, and its tick
+     claims both blocks, each re-proved by its own probe. */
+  it("one host on both legs: one line for both, and its tick claims both blocks", async () => {
+    mockCreates = [noTls("imap", "offered")];
+    const el = await typedForm("mail.home.arpa");
+    await connectOnce(el);
+    expect(line(el, copy.insecureConsentLabelBoth!), "no line for the one server").not.toBeNull();
+    expect(line(el, copy.insecureConsentLabel!), "a line per protocol over one server").toBeNull();
+    expect(line(el, copy.insecureConsentLabelSmtp!)).toBeNull();
+    await click(line(el, copy.insecureConsentLabelBoth!)!);
+    await connectOnce(el);
+    expect([mockCreated[1]!.imap.allowInsecure, mockCreated[1]!.smtp.allowInsecure]).toEqual([true, true]);
   });
 
   it("a server not on the person's network gets no line, and the sentence says why", async () => {

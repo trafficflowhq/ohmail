@@ -303,6 +303,23 @@ describe("testing a connection on the standalone door", () => {
     expect(smtp.dialled).toEqual([SMTP_OK]);
   });
 
+  /* AN OUTGOING SERVER WITH NO ENCRYPTION ON THIS NETWORK: the test says so with the offer, so the
+     form opens the outgoing consent line from the test rather than only from a refused connect. */
+  it("an outgoing server with no encryption on this network carries the plaintext offer", async () => {
+    const s = await boot(async (smtp) => {
+      if ((smtp as { allowInsecure?: boolean }).allowInsecure !== true) {
+        throw new Error("Error upgrading connection with STARTTLS: 502 5.5.1 Unrecognized command");
+      }
+    });
+    const res = await probeVia(s, "/local/mailboxes/probe", {
+      ...body, smtp: { host: "192.168.1.20", port: 587, secure: false, user: "second@example.test" },
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json() as { sending?: unknown }).sending).toEqual({
+      state: "refused", host: "192.168.1.20", reason: "tls", tls: { kind: "tls_unavailable", plaintext: "offered" },
+    });
+  });
+
   it("a BLANK outgoing field is an answer, not a refusal — and nothing is dialled", async () => {
     /* `smtpHost: ""` records a pair with nothing on the outgoing side, which this product
        supports: the mailbox receives and does not send. The verdict says so rather than passing

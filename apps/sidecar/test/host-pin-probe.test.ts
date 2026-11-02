@@ -1,11 +1,13 @@
 import { createServer, type Server } from "node:https";
+import { X509Certificate, generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
+import { TLSSocket } from "node:tls";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ensureLanIdentity, type LanIdentity } from "../src/host-lan-tls.js";
+import { buildSelfSignedCert, ensureLanIdentity, type LanIdentity } from "../src/host-lan-tls.js";
 import {
   HOST_LEAF_FILE,
   PIN_CHANGED_SENTENCE,
@@ -15,6 +17,7 @@ import {
   pinOfCertificate,
   pinnedIdentity,
   probeHostPin,
+  readLoopbackMailCertificate,
 } from "../src/host-pin-probe.js";
 
 /**
@@ -629,5 +632,106 @@ describe("createHostFetch", () => {
     // wrong, and a transport failure would send them to this one.
     await expect(f(`https://127.0.0.1:${d.port}/hello`)).rejects.toThrow(/identity could not be confirmed/);
     expect(loadHostLeaf(dataDir)).toBeNull();
+  });
+});
+
+/**
+ * A MAIL SERVER ON THIS COMPUTER, READ FOR ITS OWN CERTIFICATE (a gateway such as Proton Mail
+ * Bridge). The servers below take STARTTLS for real and count what they are sent: in cleartext only
+ * the protocol's own way into TLS, and nothing at all once encrypted — never a credential.
+ */
+describe("reading a mail server's own certificate on this computer", () => {
+  interface MailFake { port: number; cleartext: string[]; encryptedBytes: () => number; close: () => Promise<void> }
+  const fakes: MailFake[] = [];
+  afterEach(async () => { while (fakes.length > 0) await fakes.pop()!.close(); });
+
+  /** A STARTTLS server for `protocol` serving `tls` (key and certificate PEM). */
+  async function mailServer(protocol: "imap" | "smtp", tlsId: { key: string; cert: string }): Promise<MailFake> {
+    const cleartext: string[] = [];
+    let encrypted = 0;
+    const live = new Set<Socket>();
+    const server = createNetServer((raw) => {
+      live.add(raw);
+      raw.on("error", () => { /* the reader hangs up once it has the certificate */ });
+      raw.on("close", () => live.delete(raw));
+      let buf = "";
+      const onData = (chunk: Buffer): void => {
+        buf += chunk.toString("latin1");
+        let end: number;
+        while ((end = buf.indexOf("\r\n")) >= 0) {
+          const line = buf.slice(0, end);
+          buf = buf.slice(end + 2);
+          cleartext.push(line);
+          const upgrade = protocol === "imap" ? /^a1 STARTTLS$/i.test(line) : /^STARTTLS$/i.test(line);
+          if (protocol === "smtp" && /^EHLO /i.test(line)) raw.write("250-bridge\r\n250-STARTTLS\r\n250 AUTH PLAIN\r\n");
+          if (upgrade) {
+            raw.write(protocol === "imap" ? "a1 OK begin TLS\r\n" : "220 go ahead\r\n");
+            raw.removeListener("data", onData);
+            const secured = new TLSSocket(raw, { isServer: true, key: tlsId.key, cert: tlsId.cert });
+            secured.on("error", () => { /* closed by the reader */ });
+            secured.on("data", (d: Buffer) => { encrypted += d.byteLength; });
+            return;
+          }
+        }
+      };
+      raw.on("data", onData);
+      raw.write(protocol === "imap" ? "* OK [CAPABILITY IMAP4rev1 STARTTLS] bridge ready\r\n" : "220 bridge ESMTP ready\r\n");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const fake: MailFake = {
+      port: (server.address() as AddressInfo).port, cleartext, encryptedBytes: () => encrypted,
+      close: () => new Promise<void>((resolve) => { for (const s of live) s.destroy(); server.close(() => resolve()); }),
+    };
+    fakes.push(fake);
+    return fake;
+  }
+
+  it("IMAP: sends only STARTTLS, nothing once encrypted, and answers the certificate's fingerprint", async () => {
+    const id = identity();
+    const srv = await mailServer("imap", id);
+    const seen = await readLoopbackMailCertificate({ host: "127.0.0.1", port: srv.port, secure: false, protocol: "imap" });
+    expect(seen?.sha256).toBe(new X509Certificate(id.cert).fingerprint256);
+    expect(seen?.pem).toContain("BEGIN CERTIFICATE");
+    expect(srv.cleartext).toEqual(["a1 STARTTLS"]);
+    expect(srv.encryptedBytes(), "bytes were written over the unverified connection").toBe(0);
+  });
+
+  it("SMTP: sends only EHLO and STARTTLS, nothing once encrypted", async () => {
+    const id = identity();
+    const srv = await mailServer("smtp", id);
+    const seen = await readLoopbackMailCertificate({ host: "localhost", port: srv.port, secure: false, protocol: "smtp" });
+    expect(seen?.sha256).toBe(new X509Certificate(id.cert).fingerprint256);
+    expect(srv.cleartext).toEqual(["EHLO [127.0.0.1]", "STARTTLS"]);
+    expect(srv.encryptedBytes()).toBe(0);
+  });
+
+  it("an implicit-TLS server is read with nothing written at all", async () => {
+    const id = identity();
+    const d = await stand(id);
+    const seen = await readLoopbackMailCertificate({ host: "127.0.0.1", port: d.port, secure: true, protocol: "imap" });
+    expect(seen?.sha256).toBe(new X509Certificate(id.cert).fingerprint256);
+    expect(d.bytesIn()).toBe(0);
+  });
+
+  it("refuses an address that is not this computer by its spelling, without dialling it", async () => {
+    const id = identity();
+    const srv = await mailServer("imap", id);
+    for (const host of ["0.0.0.0", "localhost.example.com", "192.168.1.20", "::ffff:127.0.0.1"]) {
+      expect(await readLoopbackMailCertificate({ host, port: srv.port, secure: false, protocol: "imap" }), host).toBeNull();
+    }
+    expect(srv.cleartext).toEqual([]);
+  });
+
+  it("answers nothing for a certificate that is not its own signer's, or not valid now", async () => {
+    const own = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const other = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const forged = new X509Certificate(buildSelfSignedCert(own.publicKey, other.privateKey)).toString();
+    const srv = await mailServer("imap", { key: own.privateKey.export({ type: "pkcs8", format: "pem" }).toString(), cert: forged });
+    expect(await readLoopbackMailCertificate({ host: "127.0.0.1", port: srv.port, secure: false, protocol: "imap" })).toBeNull();
+    const id = identity();
+    const later = await mailServer("imap", id);
+    expect(await readLoopbackMailCertificate(
+      { host: "127.0.0.1", port: later.port, secure: false, protocol: "imap" }, { now: () => new Date("2100-01-02T00:00:00Z") },
+    ), "an expired certificate was offered").toBeNull();
   });
 });

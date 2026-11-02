@@ -55,7 +55,11 @@ import {
 } from "./sign-in-again-server.js";
 import { LocalWireError, localPlaintextOffer } from "./local-first-run.js";
 import { LOCAL_SERVER_CALL_DEADLINE_MS } from "./local-server-deadline.js";
-import { PlaintextConsent } from "../../webapp/app/shell/PlaintextConsent";
+import { PlaintextConsent, plaintextClaims } from "../../webapp/app/shell/PlaintextConsent";
+import {
+  CertificateTrust, certificateOfferOf, trustClaims, type TrustOffer,
+} from "../../webapp/app/shell/CertificateTrust";
+import { refusalCopy } from "../../webapp/app/shell/server-refusal";
 import { openServerMailboxes, openWeb } from "./native.js";
 import { linksOutToBilling } from "./distribution.js";
 
@@ -532,7 +536,9 @@ export async function readMirrorFreshness(): Promise<{
  * offline is told their mailbox is broken.
  */
 async function reasonOf(res: Response): Promise<string> {
-  return (await refusalOf(res)).message;
+  const refusal = await refusalOf(res);
+  // In the window's language where the catalogue words this code; the engine's own words otherwise.
+  return refusalCopy(refusal) ?? refusal.message;
 }
 
 /**
@@ -1002,6 +1008,10 @@ export function DesktopMailboxes(
    */
   const [plaintextAsk, setPlaintextAsk] = useState<{
     id: string; offer: { imap: boolean; smtp: boolean }; checked: { imap: boolean; smtp: boolean };
+    /** The engine says both legs are one host: one line, for both. */
+    sameHost?: boolean;
+    /** A server on this computer offered its own certificate, and the one each line was ticked for. */
+    trustOffer?: TrustOffer; trusted?: TrustOffer;
   } | null>(null);
   const cloud = door === "cloud";
   /* PAIRED: a cloud door whose far side is a computer of the person's own. Everything the ENGINE
@@ -1071,11 +1081,21 @@ export function DesktopMailboxes(
     setProblem(null);
     setSignInBusy(true);
     const asking = serverAsk?.id === m.id ? incomingFromAsk(serverAsk.ask) : null;
-    const consent = plaintextAsk?.id === m.id ? plaintextAsk.checked : null;
+    const asked = plaintextAsk?.id === m.id ? plaintextAsk : null;
+    const consent = asked ? plaintextClaims(asked.offer, asked.checked, asked.sameHost === true) : null;
+    const trust = asked ? trustClaims(asked.trustOffer ?? {}, asked.trusted ?? {}, asked.sameHost === true) : {};
     void (async () => {
       const sealBody = (imap: Record<string, unknown>): string => JSON.stringify({
-        imap: consent?.imap ? { ...imap, allowInsecure: true } : imap,
-        ...(consent?.smtp ? { smtp: { pass: password, allowInsecure: true } } : {}),
+        imap: {
+          ...imap, ...(consent?.imap ? { allowInsecure: true } : {}),
+          ...(trust.imap ? { trustCertificate: trust.imap } : {}),
+        },
+        ...(consent?.smtp || trust.smtp ? {
+          smtp: {
+            pass: password, ...(consent?.smtp ? { allowInsecure: true } : {}),
+            ...(trust.smtp ? { trustCertificate: trust.smtp } : {}),
+          },
+        } : {}),
       });
       // The seal probes before it stores: a server on this computer gets its long wait here too.
       const seal = (imap: Record<string, unknown>): Promise<Response> =>
@@ -1088,17 +1108,27 @@ export function DesktopMailboxes(
       try {
         let res = await seal(asking ? { ...asking, pass: password } : { pass: password });
         if (!res.ok) {
-          const refusal = await refusalOf(res);
+          const wire = await refusalOf(res);
+          // The engine's English sentence, said in the window's language where the catalogue has it.
+          const refusal = { ...wire, message: refusalCopy(wire) ?? wire.message };
           const offered = localPlaintextOffer(
             new LocalWireError(refusal.message, refusal.code ?? null, refusal.details), "add",
           );
-          if (offered !== null) {
+          const certificate = certificateOfferOf(refusal);
+          if (offered !== null || certificate !== null) {
             /* NOTHING WAS STORED. The line joins the one already asked for, unticked: the person
                ticks it and presses again, and only that press carries the consent. */
+            const sameHost = (refusal.details as { sameHost?: unknown } | undefined)?.sameHost === true;
             setPlaintextAsk((a) => {
               const none = { imap: false, smtp: false };
               const kept = a?.id === m.id ? a : { id: m.id, offer: none, checked: none };
-              return { ...kept, offer: { ...kept.offer, [offered]: true } };
+              return {
+                ...kept,
+                offer: offered !== null ? { ...kept.offer, [offered]: true } : kept.offer,
+                trustOffer: certificate !== null
+                  ? { ...kept.trustOffer, [certificate.transport]: certificate.sha256 } : kept.trustOffer,
+                sameHost: kept.sameHost === true || sameHost,
+              };
             });
             throw new Error(refusal.message);
           }
@@ -2425,8 +2455,19 @@ export function DesktopMailboxes(
                   id="mbx-sign-in-insecure"
                   offer={plaintextAsk.offer}
                   checked={plaintextAsk.checked}
+                  sameHost={plaintextAsk.sameHost === true}
                   onChange={(k, on) => setPlaintextAsk((a) => (
                     a ? { ...a, checked: { ...a.checked, [k]: on } } : a))}
+                />
+              ) : null}
+              {plaintextAsk?.id === shown.id && plaintextAsk.trustOffer ? (
+                <CertificateTrust
+                  id="mbx-sign-in-trust"
+                  offer={plaintextAsk.trustOffer}
+                  ticked={plaintextAsk.trusted ?? {}}
+                  sameHost={plaintextAsk.sameHost === true}
+                  onChange={(k, sha256) => setPlaintextAsk((a) => (
+                    a ? { ...a, trusted: { ...a.trusted, [k]: sha256 } } : a))}
                 />
               ) : null}
               <div className="acct-actions">

@@ -42,9 +42,16 @@ export interface FirstRunProbeOk {
 export interface FirstRunMailboxInput {
   address: string;
   provider: string;
-  /** `allowInsecure`: the person's plaintext consent for that protocol, a claim the server re-proves. */
-  imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean };
-  smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean };
+  /**
+   * `allowInsecure`: the person's plaintext consent for that protocol, a claim the server re-proves.
+   * `trustCertificate`: the fingerprint they trusted for a server on this computer, a claim re-read.
+   */
+  imap: {
+    host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean; trustCertificate?: string;
+  };
+  smtp?: {
+    host: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean; trustCertificate?: string;
+  };
 }
 
 /**

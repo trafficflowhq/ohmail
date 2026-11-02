@@ -36,6 +36,8 @@ const HOST = "imap.example.test";
 const USER = "owner@example.test";
 const GOOD_SMTP = "smtp-good.example.test";
 const BAD_SMTP = "smtp-blocked.example.test";
+/** A submission server on this network that offers no encryption: it takes a plaintext login only with consent. */
+const PLAIN_SMTP = "192.168.1.25";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -88,7 +90,7 @@ function dialer() {
      * `{ dial: async () => undefined }` when an `adapterFactory` is present — a double that always
      * succeeds — so a case about a REFUSED submission server has to replace it.
      */
-    smtpDial: async (smtp: { host?: string }): Promise<void> => {
+    smtpDial: async (smtp: { host?: string; allowInsecure?: boolean }): Promise<void> => {
       /* THE FIRST PARAMETER IS THE SMTP CONFIG ITSELF, not a wrapper carrying one. Reading it as
          `opts.smtp.host` gave `undefined`, the refusal never fired, and the case failed against
          working code for a reason that had nothing to do with the product. */
@@ -98,6 +100,9 @@ function dialer() {
         const err = new Error("authentication failed") as Error & { authenticationFailed?: boolean };
         err.authenticationFailed = true;
         throw err;
+      }
+      if (host === PLAIN_SMTP && smtp.allowInsecure !== true) {
+        throw new Error("Error upgrading connection with STARTTLS: 502 5.5.1 Unrecognized command");
       }
     },
   };
@@ -209,6 +214,34 @@ describe("connecting a mailbox whose submission server refuses", () => {
     expect(rows.map((r) => r.transport).sort()).toEqual(["imap", "smtp"]);
   });
 
+  /* A REFUSAL THE PERSON CAN ANSWER IS ASKED, NOT SWALLOWED: an outgoing server with no encryption
+     on this network takes a plaintext login once its own consent line is ticked, so the press
+     refuses with what the line needs and stores nothing; with the consent it stores both rows. */
+  it("an outgoing server with no encryption on this network is asked about, then stored with its consent", async () => {
+    const s = await boot();
+    const typed = {
+      provider: "imap",
+      address: "fifth@example.test",
+      imap: { host: HOST, port: 993, secure: true, user: "fifth@example.test", pass: "right", smtpUnsettled: "" },
+      smtp: { host: PLAIN_SMTP, port: 587, secure: false, user: "fifth@example.test", pass: "right" },
+    };
+    const asked = await add(s, typed);
+    expect(asked.status, await asked.clone().text()).toBe(400);
+    expect((await asked.json() as { error: { details?: unknown } }).error.details).toEqual({
+      reason: "tls", transport: "smtp", tls: { kind: "tls_unavailable", plaintext: "offered" },
+    });
+    const live = (await s.db.execute("select address from mailboxes where status <> 'disabled'" as never)).rows as Array<{ address: string }>;
+    expect(live.map((r) => r.address), "the refused press added a mailbox").not.toContain("fifth@example.test");
+
+    const res = await add(s, { ...typed, smtp: { ...typed.smtp, allowInsecure: true } });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const { id } = await res.json() as { id: string };
+    const consent = (await s.db.execute(
+      `select transport, meta->>'insecureConsent' as consent from mailbox_credentials where mailbox_id = '${id}' order by transport` as never,
+    )).rows as Array<{ transport: string; consent: string | null }>;
+    expect(consent).toEqual([{ transport: "imap", consent: null }, { transport: "smtp", consent: "true" }]);
+  });
+
   it("AN INCOMING REFUSAL IS STILL FATAL — the line this does not cross", async () => {
     /* The whole trade is that a SUBMISSION refusal is survivable. An IMAP refusal is the password
        the person is being asked for, and storing one nothing has logged in with is the defect the
@@ -226,5 +259,69 @@ describe("connecting a mailbox whose submission server refuses", () => {
       "select address from mailboxes where status <> 'disabled'" as never,
     )).rows as Array<{ address: string }>;
     expect(live.map((r) => r.address)).not.toContain("fourth@example.test");
+  });
+});
+
+/**
+ * THE NEXT LAUNCH KEEPS A REFUSED OUTGOING HALF REFUSED. The door's settings name the outgoing
+ * server and its seal records it unsettled; the start that follows used to copy an `smtp` row nobody
+ * had proved over that record, with no consent on it, so every send then failed to secure a
+ * connection the person had been told was not set up.
+ */
+describe("a relaunch after the seal kept the outgoing server unsettled", () => {
+  /** The door's seed: settings naming both servers and no password — the door seals that. */
+  async function bootSeed(dataDir: string): Promise<Sidecar> {
+    const d = dialer();
+    dialledHosts = d.smtpDialled;
+    const s = await createSidecar({
+      dataDir,
+      imap: { host: HOST, port: 993, secure: true, auth: { user: USER }, smtp: { host: BAD_SMTP, port: 465, secure: true } },
+      address: USER,
+      machineName: "this machine",
+      pollIntervalMs: 60 * 60 * 1000,
+      leaseStaleAfterMs: 60_000,
+      keks: { 1: Buffer.alloc(32, 7) },
+      adapterFactory: d.factory,
+      smtpDial: d.smtpDial,
+      log: () => {},
+    } as never);
+    await s.start();
+    return s;
+  }
+
+  it("writes no outgoing credential over it, and a send says sending is not set up", async () => {
+    const dataDir = await freshDataDir("ohmail-sending-seed-");
+    let s = await bootSeed(dataDir);
+    cleanups.push(async () => {
+      await s.stop().catch(() => undefined);
+      rmSync(dataDir, { recursive: true, force: true });
+    });
+    const seal = await s.handle(new Request(`http://local/local/mailboxes/${s.world.mailboxId}`, {
+      method: "PATCH", headers: auth(s),
+      body: JSON.stringify({
+        imap: { host: HOST, port: 993, secure: true, user: USER, pass: "right", smtpHost: BAD_SMTP, smtpUnsettled: "" },
+        smtp: { host: BAD_SMTP, port: 465, secure: true, user: USER, pass: "right" },
+      }),
+    }));
+    expect(seal.status, await seal.clone().text()).toBe(200);
+    const sealed = (await creds(s, s.world.mailboxId)).map((r) => [r.transport, r.unsettled]);
+    expect(sealed, "the seal kept no record of the refused outgoing server").toEqual([["imap", expect.stringMatching(/^[a-z]+$/)]]);
+
+    await s.stop();
+    s = await bootSeed(dataDir);
+    expect((await creds(s, s.world.mailboxId)).map((r) => [r.transport, r.unsettled]),
+      "the relaunch wrote an outgoing credential nothing proved").toEqual(sealed);
+
+    const draft = await s.handle(new Request("http://local/drafts", {
+      method: "POST", headers: auth(s),
+      body: JSON.stringify({ mailboxId: s.world.mailboxId, subject: "a note", body: "hello", to: [{ name: null, address: "you@example.test" }] }),
+    }));
+    expect(draft.status, await draft.clone().text()).toBe(201);
+    const { id } = await draft.json() as { id: string };
+    const sent = await s.handle(new Request(`http://local/drafts/${id}/send`, {
+      method: "POST", headers: { ...auth(s) as Record<string, string>, "idempotency-key": "unsettled-relaunch-1" }, body: "{}",
+    }));
+    expect(sent.status, await sent.clone().text()).toBe(502);
+    expect((await sent.json() as { error: { code: string } }).error.code).toBe("smtp_not_settled");
   });
 });

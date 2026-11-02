@@ -1156,6 +1156,8 @@ const TABLE = {
         return "the keystore would not remove the key that opens this mailbox's stored password";
       case "engine_store_not_durable":
         return "this phone's database would not promise to keep a saved change through a power cut, so the mailbox on it was not opened";
+      case "engine_store_closed":
+        return "the mailbox on this phone had already been closed, so nothing was read or saved";
       /* A code this build does not know is a newer store talking to an older deck. Saying the code
          is better than saying nothing, and it is the one arm that can reach a screen unworded. */
       default: return code;

@@ -39,11 +39,19 @@ describe("probeCopyKey and refusalAuthHint", () => {
     expect(refusalAuthHint(refusal({ reason: "auth", authHint: "invalid" }))).toBe("invalid");
   });
 
-  it("control: no hint, the outgoing leg, a local server and other reasons keep their keys", () => {
+  it("control: no hint, a local server and other reasons keep their keys; the outgoing leg has its own", () => {
     expect(probeCopyKey("auth", false, "imap", null)).toBe("probe_auth");
-    expect(probeCopyKey("auth", false, "smtp", "invalid")).toBe("probe_auth");
+    expect(probeCopyKey("auth", false, "smtp", "invalid")).toBe("probe_auth_smtp");
     expect(probeCopyKey("auth", true, "imap", "invalid")).toBe("probe_auth_local");
     expect(probeCopyKey("connect", false, "imap", "invalid")).toBe("probe_connect");
+    // The sentences that name a host and port name the outgoing server's on its leg, a local one's too.
+    for (const reason of ["connect", "timeout", "tls"]) {
+      expect(probeCopyKey(reason, false, "smtp")).toBe(`probe_${reason}_smtp`);
+      expect(probeCopyKey(reason, true, "smtp")).toBe(`probe_${reason}_smtp`);
+      expect((en.mailboxes as Record<string, string>)[`probe_${reason}_smtp`], reason).toMatch(/SMTP host/);
+      expect((de.mailboxes as Record<string, string>)[`probe_${reason}_smtp`], reason).toMatch(/SMTP-Server/);
+    }
+    expect(probeCopyKey("unknown", false, "smtp")).toBe("probe_unknown");
     for (const bad of [refusal({ authHint: "toString" }), refusal({ authHint: 1 }), refusal(null), { code: "other", details: { authHint: "invalid" } }, null]) {
       expect(refusalAuthHint(bad)).toBeNull();
     }
@@ -60,9 +68,9 @@ describe("a refused password on a named preset says what that provider wants", (
     expect(probeCopyKey("auth", false, "imap", null, "microsoft")).toBe("probe_auth_microsoft");
   });
 
-  it("Google's own hint, the outgoing leg, a local server, the generic entry and other reasons keep their keys", () => {
+  it("Google's own hint, a local server, the generic entry and other reasons keep their keys; the outgoing leg has its own", () => {
     expect(probeCopyKey("auth", false, "imap", "invalid", "gmail")).toBe("probe_auth_gmail_invalid");
-    expect(probeCopyKey("auth", false, "smtp", null, "yahoo")).toBe("probe_auth");
+    expect(probeCopyKey("auth", false, "smtp", null, "yahoo")).toBe("probe_auth_smtp");
     expect(probeCopyKey("auth", true, "imap", null, "yahoo")).toBe("probe_auth_local");
     expect(probeCopyKey("auth", false, "imap", null, "imap")).toBe("probe_auth");
     expect(probeCopyKey("auth", false, "imap", null, "not-a-preset")).toBe("probe_auth");

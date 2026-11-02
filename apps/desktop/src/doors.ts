@@ -20,6 +20,7 @@
 
 import { originNeedsPin, parsePairLink, type PairLink } from "@ohmail/client-engine";
 
+import { refusalCopy } from "../../webapp/app/shell/server-refusal";
 import { BUILD_PLATFORM } from "./platform.js";
 import { hostLabelOf } from "./host-label.js";
 import { LOCAL_SERVER_CALL_DEADLINE_MS } from "./local-server-deadline.js";
@@ -1305,6 +1306,8 @@ export interface DoorResult {
 export interface DoorConsent {
   imap: boolean;
   smtp: boolean;
+  /** The fingerprints the press trusts for a server on this computer, per transport: ticked lines only. */
+  trust?: { imap?: string; smtp?: string };
 }
 
 /** No line ticked — every door attempt's default, so a consent is never inherited. */
@@ -1429,9 +1432,15 @@ async function sealLocalPassword(
         imap: {
           ...imap, pass: password, smtpHost, ...(smtp ? { smtpUnsettled: "" } : {}),
           ...(consent.imap ? { allowInsecure: true } : {}),
+          ...(consent.trust?.imap ? { trustCertificate: consent.trust.imap } : {}),
         },
         // The same password on both blocks: one form, one secret, two servers the person named.
-        ...(smtp ? { smtp: { ...smtp, pass: password, ...(consent.smtp ? { allowInsecure: true } : {}) } } : {}),
+        ...(smtp ? {
+          smtp: {
+            ...smtp, pass: password, ...(consent.smtp ? { allowInsecure: true } : {}),
+            ...(consent.trust?.smtp ? { trustCertificate: consent.trust.smtp } : {}),
+          },
+        } : {}),
       }),
     });
     if (res.ok) return null;
@@ -2213,9 +2222,10 @@ async function refused(
     };
     const code = parsed.error?.code ?? null;
     /* The probe can say more than its own sentence does — see {@link probeTlsRefusal}, which is
-       also what the self-hosted door reads, so the two cannot diverge. */
+       also what the self-hosted door reads, so the two cannot diverge. The engine's sentence is
+       English; the catalogue says it in the window's language. */
     const sharper = probeTlsRefusal(parsed.error?.details);
-    const message = sharper?.sentence ?? parsed.error?.message ?? parsed.error?.code;
+    const message = sharper?.sentence ?? refusalCopy(parsed.error) ?? parsed.error?.code;
     if (message) {
       return { problem: message, code, details: parsed.error?.details ?? null, suggestion: sharper?.suggestion ?? null };
     }
@@ -2287,13 +2297,16 @@ export function probeTlsRefusal(details: unknown): DoorRefusal | null {
     `That server's certificate is for ${certHost}, not ${expectedHost}, ` +
     "so we stopped before sending the password.";
 
+  /* The English below is the catalogue's own (`probe_tls_hostname*`); the window says its language. */
+  const said = (english: string): string =>
+    refusalCopy({ code: "mailbox_probe_failed", message: english, details }) ?? english;
   const suggestedHost = str(tls.suggestedHost);
   return suggestedHost
     ? {
-        sentence: `${opening} It answers to ${suggestedHost} — use that as the ${protocol} host.`,
+        sentence: said(`${opening} It answers to ${suggestedHost} — use that as the ${protocol} host.`),
         suggestion: { host: suggestedHost, transport },
       }
-    : { sentence: `${opening} Check the ${protocol} host with your provider.`, suggestion: null };
+    : { sentence: said(`${opening} Check the ${protocol} host with your provider.`), suggestion: null };
 }
 
 /** Whatever was thrown, as something a person can read. Shared with `self-host.ts`; see {@link stalled}. */

@@ -315,19 +315,28 @@ describe("MAILBOX-SMTP-EDIT — the edit form can correct the outgoing server", 
     expect(mockUpdateCalls.length, "a bad SMTP port still sent a PATCH").toBe(0);
   });
 
-  it("a refused SMTP probe returns to the edit form with the SMTP fields intact", async () => {
-    mockUpdateThrows = new ApiError(400, "mailbox_probe_failed", "that outgoing server refused", { reason: "connect" });
+  it("a refused SMTP probe returns to the edit form with the SMTP fields intact, naming the SMTP host", async () => {
+    for (const [details, key] of [
+      [{ reason: "connect", transport: "smtp" }, "probe_connect_smtp"],
+      [{ reason: "tls", transport: "smtp", tls: { kind: "generic" } }, "probe_tls_smtp"],
+    ] as const) {
+      mockUpdateCalls = [];
+      mockUpdateThrows = new ApiError(400, "mailbox_probe_failed", "that outgoing server refused", details);
 
-    const el = await mount(dto());
-    await click(byText(el, copy.edit!)!);
-    await fillEdit(el, { pass: "pw", smtpHost: "typo.example.test" });
-    await finishCeremony(el);
+      const el = await mount(dto());
+      await click(byText(el, copy.edit!)!);
+      await fillEdit(el, { pass: "pw", smtpHost: "typo.example.test" });
+      await finishCeremony(el);
 
-    expect(mockUpdateCalls.length).toBe(1);
-    // Back on the edit form, the typed SMTP host still in its field — the correction is a keystroke.
-    const smtp = el.querySelector<HTMLInputElement>("#mb-edit-smtp");
-    expect(smtp, "did not return to the edit form").toBeTruthy();
-    expect(smtp!.value).toBe("typo.example.test");
+      expect(mockUpdateCalls.length).toBe(1);
+      // Back on the edit form, the typed SMTP host still in its field — the correction is a keystroke.
+      const smtp = el.querySelector<HTMLInputElement>("#mb-edit-smtp");
+      expect(smtp, "did not return to the edit form").toBeTruthy();
+      expect(smtp!.value).toBe("typo.example.test");
+      const said = el.querySelector('[role="alert"]')?.textContent ?? "";
+      expect(said, details.reason).toBe(copy[key]);
+      expect(said, "an outgoing refusal sent the person to the incoming server").not.toMatch(/IMAP/);
+    }
   });
 });
 

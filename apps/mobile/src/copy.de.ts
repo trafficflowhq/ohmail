@@ -772,6 +772,8 @@ export const DE: Deck = {
         return "der Schlüsselspeicher wollte den Schlüssel nicht entfernen, der das gespeicherte Passwort dieses Postfachs öffnet";
       case "engine_store_not_durable":
         return "die Datenbank dieses Handys sicherte nicht zu, eine gespeicherte Änderung über einen Stromausfall zu behalten, deshalb wurde das Postfach darauf nicht geöffnet";
+      case "engine_store_closed":
+        return "das Postfach auf diesem Handy war bereits geschlossen, deshalb wurde nichts gelesen oder gespeichert";
       default: return code;
     }
   },

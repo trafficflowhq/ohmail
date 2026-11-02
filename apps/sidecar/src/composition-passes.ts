@@ -50,6 +50,24 @@ export const COMPOSITION_SEAL: Readonly<Record<OrganizerKind, {
 };
 
 /**
+ * THE LOCAL DOORS' OWN REFUSALS, as the add and seal routes raise them. Server copy: a client words
+ * each by its code (`apps/webapp/app/shell/server-refusal.ts`), and its test builds them here.
+ */
+export const sameLoginRefusal = (): ServiceError => new ServiceError(
+  "same_login", 409,
+  "this machine already has that mailbox. The server and username you entered open a mailbox that "
+    + "is already connected here. Use \"Sign in again\" on that mailbox to change its password.",
+);
+
+/** A new incoming server on a mailbox this phone organizes, refused; `holder` names who holds it there. */
+export const hostChangeRefusal = (holder: { name: string; kind: string } | null): ServiceError => new ServiceError(
+  "organizer_host_change_refused", 409,
+  "While this phone organizes this mailbox, its incoming server stays as it is. Stop organizing here, "
+    + "change the server, then start organizing here again.",
+  holder === null ? undefined : { holder },
+);
+
+/**
  * WHAT THE SCHEDULE DOOR SAYS on a composition that keeps no appointments.
  *
  * Server copy, under `STAND_DOWN_SEND_SENTENCES`' rule: whichever client asked quotes it inside

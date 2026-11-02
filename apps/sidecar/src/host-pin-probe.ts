@@ -1,9 +1,11 @@
 import { X509Certificate } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Agent, request as httpsRequest } from "node:https";
+import { connect as netConnect, type Socket } from "node:net";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { connect as tlsConnect, type PeerCertificate } from "node:tls";
+import { connect as tlsConnect, type PeerCertificate, type TLSSocket } from "node:tls";
+import { loopbackDialPin, loopbackHarnessReason } from "@trafficflow/core/adapters/imap-types";
 
 import { spkiFingerprint } from "./host-lan-tls.js";
 import type { Diagnostic } from "./log.js";
@@ -161,8 +163,9 @@ function peerCertificate(host: string, port: number, timeoutMs: number): Promise
     const socket = tlsConnect({
       host,
       port,
-      /* THE ONE SITE. Everything above explains why, and `host-pin-census.test.ts` asserts this
-         file is the only one in `apps/sidecar/src` that contains this option at all. */
+      /* ONE OF THE TWO SITES (the other is {@link readLoopbackMailCertificate}'s). Everything above
+         explains why, and `host-pin-probe.test.ts` asserts this file is the only one in
+         `apps/sidecar/src` that contains this option at all. */
       rejectUnauthorized: false,
       /* SNI is a NAME, and an IP literal is not one — the standard forbids it and a server may
          reject the handshake outright. The door serves one certificate regardless of what is
@@ -185,6 +188,106 @@ function peerCertificate(host: string, port: number, timeoutMs: number): Promise
       const raw = cert && typeof cert === "object" ? cert.raw : undefined;
       finish(() => { resolve(Buffer.isBuffer(raw) ? raw : Buffer.alloc(0)); });
     });
+  });
+}
+
+/**
+ * A MAIL SERVER ON THIS COMPUTER AND THE ONE CERTIFICATE IT PRESENTS — for the desktop's local door,
+ * which lets a person trust a gateway such as Proton Mail Bridge by that certificate. The
+ * bootstrap's rule above: one handshake with verification off, to a loopback address only (by its
+ * spelling, `localhost` at 127.0.0.1, never a name that merely resolves here), writing nothing but
+ * the protocol's own way into TLS — IMAP `STARTTLS`; SMTP `EHLO`, then `STARTTLS` — and no
+ * credential. Judged here: a single self-signed certificate, valid now, or `null`.
+ */
+export async function readLoopbackMailCertificate(
+  dial: { host: string; port: number; secure: boolean; protocol: "imap" | "smtp" },
+  opts: { timeoutMs?: number; now?: () => Date } = {},
+): Promise<{ sha256: string; pem: string } | null> {
+  if (loopbackHarnessReason(dial.host) === null) return null;
+  const address = loopbackDialPin(dial.host)?.[0] ?? dial.host.replace(/^\[|\]$/g, "");
+  let der: Buffer;
+  try {
+    der = await mailPeerCertificate(address, dial.port, dial.secure, dial.protocol, opts.timeoutMs ?? PIN_PROBE_DEADLINE_MS);
+  } catch {
+    return null;
+  }
+  const cert = new X509Certificate(der);
+  const now = (opts.now ?? (() => new Date()))().getTime();
+  // Its own issuer, signed by its own key; `checkIssued` would also demand a CA's key usage.
+  const selfSigned = cert.issuer === cert.subject && cert.verify(cert.publicKey);
+  const current = Date.parse(cert.validFrom) <= now && now <= Date.parse(cert.validTo);
+  return selfSigned && current ? { sha256: cert.fingerprint256, pem: cert.toString() } : null;
+}
+
+/** The mail server's own way into TLS on a cleartext socket, then that one unverified handshake. */
+function mailPeerCertificate(
+  address: string, port: number, secure: boolean, protocol: "imap" | "smtp", timeoutMs: number,
+): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    let settled = false;
+    let socket: Socket | TLSSocket;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      fn();
+    };
+    const timer = setTimeout(() => finish(() => { reject(new Error("the server did not finish its handshake in time")); }), timeoutMs);
+    const handshake = (over: Socket | null): void => {
+      const secured = tlsConnect({
+        ...(over ? { socket: over } : { host: address, port }),
+        /* The second site, on the bootstrap's terms: nothing is written over the encrypted socket,
+           it is destroyed once read, and the certificate is trusted only by the person's press. */
+        rejectUnauthorized: false,
+      });
+      socket = secured;
+      secured.on("error", (err) => { finish(() => { reject(err); }); });
+      secured.on("secureConnect", () => {
+        const peer = secured.getPeerCertificate(true);
+        const raw = peer && typeof peer === "object" ? peer.raw : undefined;
+        // One certificate: a chain to another issuer is not a server's own certificate.
+        const issuer = peer?.issuerCertificate;
+        const chained = issuer !== undefined && issuer !== null && issuer.fingerprint256 !== peer.fingerprint256;
+        finish(() => {
+          if (!Buffer.isBuffer(raw) || raw.length === 0 || chained) reject(new Error("not one certificate"));
+          else resolve(raw);
+        });
+      });
+    };
+    if (secure) { handshake(null); return; }
+    const plain = netConnect({ host: address, port });
+    socket = plain;
+    plain.on("error", (err) => { finish(() => { reject(err); }); });
+    /* The preamble, line by line: what the server must say, and the one thing written after it. */
+    const steps: Array<{ until: RegExp; fail?: RegExp; write?: string }> = protocol === "imap"
+      ? [{ until: /^\* OK/i, fail: /^\* (BYE|PREAUTH)/i, write: "a1 STARTTLS\r\n" }, { until: /^a1 OK/i, fail: /^a1 /i }]
+      : [{ until: /^220 /, fail: /^[45]\d\d /, write: "EHLO [127.0.0.1]\r\n" },
+        { until: /^250 /, fail: /^[45]\d\d /, write: "STARTTLS\r\n" }, { until: /^220 /, fail: /^[45]\d\d /i }];
+    let buffered = "";
+    const onData = (chunk: Buffer): void => {
+      buffered += chunk.toString("latin1");
+      if (buffered.length > 16_384) { finish(() => { reject(new Error("the server said too much before TLS")); }); return; }
+      let end: number;
+      while ((end = buffered.indexOf("\n")) >= 0) {
+        const line = buffered.slice(0, end).replace(/\r$/, "");
+        buffered = buffered.slice(end + 1);
+        const step = steps[0]!;
+        if (step.until.test(line)) {
+          steps.shift();
+          if (step.write) plain.write(step.write);
+          if (steps.length === 0) {
+            plain.removeListener("data", onData);
+            handshake(plain);
+            return;
+          }
+        } else if (step.fail?.test(line)) {
+          finish(() => { reject(new Error("the server refused its own way into TLS")); });
+          return;
+        }
+      }
+    };
+    plain.on("data", onData);
   });
 }
 

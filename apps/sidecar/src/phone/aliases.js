@@ -243,6 +243,9 @@ const SIDECAR_SUBSTITUTES = {
   /* The pairing check dials another computer over a pinned TLS handshake (`node:tls`); the phone
      pairs through its own flow, so its engine refuses the route and carries none of that code. */
   "./cloud-probe.js": path.join(PHONE, "cloud-probe.ts"),
+  /* A mail server on this computer read for its own certificate (`node:tls`, one unverified
+     handshake): the desktop's local door alone; a phone trusts no certificate of its own. */
+  "./host-pin-probe.js": path.join(PHONE, "host-pin-probe.ts"),
   /* The desktop's streamed save writes a file the shell named; a phone names none. The route's own
      module, the specifier `engine.ts` writes; `attachment-file.ts` then is in no phone graph. */
   "./attachment-file-route.js": path.join(PHONE, "attachment-file-route.ts"),

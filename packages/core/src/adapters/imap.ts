@@ -73,7 +73,7 @@ import {
   DEFAULT_SYNC_BATCH_MAX_MESSAGES, DEFAULT_SYNC_BATCH_MAX_BYTES, DEFAULT_SYNC_BATCH_MAX_FLAGS,
   DEFAULT_PASSIVE_FOLDERS_MAX, PASSIVE_FOLDERS_MAX_NO_STATUS, passiveFolderExclusion,
   imapTlsFloor, smtpTlsFloor, loopbackDialPin, LOCALHOST_DIAL_ADDRESS,
-  type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter,
+  type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter, type TlsPin,
   type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type FolderCursor,
   type BudgetStop, type MessageSite,
   type KnownEntry,
@@ -312,7 +312,7 @@ export function imapFlowOptions(
   opts: Pick<ImapAdapterOpts, "logger"> = {},
 ): ImapFlowOptions {
   const t: NetTimeouts = { ...DEFAULT_NET_TIMEOUTS, ...(config.timeouts ?? {}) };
-  const floor = imapTlsFloor(config.host, config.secure, config.allowInsecure === true).options;
+  const floor = imapTlsFloor(config.host, config.secure, config.allowInsecure === true, config.tlsPin).options;
   // `localhost` is exempt from the floor by name, so it is dialled at 127.0.0.1 whatever is pinned.
   const pin = loopbackDialPin(config.host) ?? dialPin(config.pin);
   return {
@@ -416,7 +416,7 @@ export function smtpTransportOptions(config: ImapConfig): SMTPTransport.Options 
   const named = loop?.[0] === LOCALHOST_DIAL_ADDRESS;
   return {
     host: pin ? pin[0]! : smtp.host, port: smtp.port,
-    ...smtpTlsFloor(smtp.host, smtp.secure, smtp.allowInsecure === true).options,
+    ...smtpTlsFloor(smtp.host, smtp.secure, smtp.allowInsecure === true, smtp.tlsPin).options,
     // The pinned `localhost` keeps its name for the certificate, as the floor's own pin does.
     ...(named ? { servername: "localhost" } : {}),
     auth: smtp.auth ? googleDialAuth(smtp.host, smtp.auth) : smtp.auth,
@@ -482,6 +482,8 @@ export type SmtpSizeDial = (smtp: {
   auth: SmtpSizeDialAuth;
   /** The stored SMTP plaintext consent, so the ceiling is read the way a send would dial. */
   allowInsecure?: boolean;
+  /** The stored trusted certificate, for the same reason. */
+  tlsPin?: TlsPin;
 }) => Promise<SmtpLoginProof>;
 
 export type SmtpSizeOutcome =
@@ -563,6 +565,8 @@ export interface SmtpSizeCreds {
   auth: unknown;
   /** The `smtp` row's own `meta.insecureConsent`, as the send path reads it. */
   allowInsecure?: boolean;
+  /** The `smtp` row's own `meta.tlsPin`, as the send path reads it. */
+  tlsPin?: TlsPin;
 }
 
 /** The static password auth, or `null` for anything else (an oauth token callback included). */
@@ -651,6 +655,7 @@ export async function learnSmtpMaxSize(input: {
     const proof = await dial({
       host: smtp.host, port: smtp.port, secure: smtp.secure, auth: dialAuth,
       ...(smtp.allowInsecure === true ? { allowInsecure: true } : {}),
+      ...(smtp.tlsPin ? { tlsPin: smtp.tlsPin } : {}),
     });
     const bytes = proof.maxMessageBytes;
     // The same admissibility test the column's readers apply, restated rather than trusted: this
@@ -694,6 +699,8 @@ export async function verifySmtpLogin(
     pin?: readonly string[];
     /** The probe's consent dial only — see {@link smtpTlsFloor}. */
     allowInsecure?: boolean;
+    /** The probe's pinned dial of a server on this computer — see {@link TlsPin}. */
+    tlsPin?: TlsPin;
   },
   timeouts?: Partial<NetTimeouts>,
 ): Promise<SmtpLoginProof> {
@@ -716,6 +723,7 @@ export async function verifySmtpLogin(
       // dials from. The top-level fields above are the IMAP half and it reads none of them.
       ...(smtp.pin ? { pin: smtp.pin } : {}),
       ...(smtp.allowInsecure === true ? { allowInsecure: true } : {}),
+      ...(smtp.tlsPin ? { tlsPin: smtp.tlsPin } : {}),
     },
     ...(timeouts ? { timeouts } : {}),
   });

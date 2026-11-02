@@ -23,12 +23,17 @@ const MANUAL: ProviderPreset = PROVIDERS.find((p) => p.manual)!;
 /** Focus/arrow order: the grid left-to-right, then the manual row. */
 const ORDER: ProviderPreset[] = [...NAMED, MANUAL];
 
-export function ProviderPicker({ value, onChange, note, showHelp = true, proton: protonAddress = false }: {
+export function ProviderPicker({ value, onChange, note, showHelp = true, proton: protonAddress = false, bridgeHere = false }: {
   /** The selected provider id, or `null` while nothing is chosen yet. */
   value: string | null;
   onChange: (id: string) => void;
   /** The typed address is on Proton (`useAddressFirst`): its note opens until a provider is chosen. */
   proton?: boolean;
+  /**
+   * This door reaches Proton Mail Bridge on this computer (the desktop's own door): the Proton note
+   * says how to connect through it. Elsewhere it points to that door.
+   */
+  bridgeHere?: boolean;
   /**
    * Override the selected provider's own `note`. The preset note is written for the app-password
    * path; a caller that connects the SAME provider a different way (Microsoft by sign-in, when the
@@ -164,7 +169,7 @@ export function ProviderPicker({ value, onChange, note, showHelp = true, proton:
       </div>
       {proton ? (
         <div key="proton" className="pvp-note" id={protonId}>
-          <p>{t("protonNote", { other: t("otherLabel") })}</p>
+          <p>{t(bridgeHere ? "protonNoteDesktop" : "protonNote", { other: t("otherLabel") })}</p>
         </div>
       ) : selected ? (
         // Keyed by provider so switching re-runs the rise — the panel visibly answers

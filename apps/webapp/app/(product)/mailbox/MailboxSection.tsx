@@ -83,7 +83,8 @@ import { SELF_HOST_BUILD } from "../../hello";
 import { StepUpPrompt } from "./StepUpPrompt";
 import { gatedRefusal } from "./gated-refusal";
 import { mailboxErrorKey, storeRefusalsFigure } from "../../shell/mailbox-error-key";
-import { PlaintextConsent } from "../../shell/PlaintextConsent";
+import { PlaintextConsent, sameServerHost } from "../../shell/PlaintextConsent";
+import { sendingLine, sendingPlaintextOffered, type ProbeSending } from "../../shell/onboarding";
 
 /**
  * `list` → the pane at rest. `form` → typing credentials for a NEW mailbox. `edit` → changing the
@@ -1400,7 +1401,8 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
     const hint = reason === "auth" ? refusalAuthHint(err) : null;
     setAuthHelp(hint);
     // Google's refused sign-in says why (`probe_auth_gmail_*`), a named preset its own line, the rest the pane's.
-    if (!tls || reason !== "tls") return t(probeCopyKey(reason, false, refusalTransport(err), hint, ownRefusalOf(presetId)));
+    const byReason = (): string => t(probeCopyKey(reason, false, refusalTransport(err), hint, ownRefusalOf(presetId)));
+    if (!tls || reason !== "tls") return byReason();
     const protocol = tls.transport === "smtp" ? "SMTP" : "IMAP";
     if (tls.kind === "tls_unavailable") {
       // A line for THIS protocol, only where the server said the host is on a private network.
@@ -1428,7 +1430,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
       self_signed: "probe_tls_self_signed", untrusted: "probe_tls_untrusted",
     };
     const key = keys[tls.kind];
-    return key ? t(key) : t("probe_tls");
+    return key ? t(key) : byReason();
   };
 
   /** Google's App Password links, under its sentence while that sentence is the one shown. */
@@ -1922,7 +1924,9 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
     // The failed write's sentence goes with it, through `clearVerdict` above — which retires it on
     // EVERY field edit, not only on a host change.
   }, [clearVerdict]);
-  const [probeOk, setProbeOk] = useState<{ host: string; user: string; folders: number | null } | null>(null);
+  const [probeOk, setProbeOk] = useState<{
+    host: string; user: string; folders: number | null; sending?: ProbeSending;
+  } | null>(null);
   /** The last refusal was an unreachable host on the manual tile: the lookup's hosts may be offered. */
   const [hostRefused, setHostRefused] = useState(false);
   const [probeBad, setProbeBad] = useState<{
@@ -1979,8 +1983,17 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
              It is only ever true after the server itself reported `tls_unavailable`. */
           ...(typed.allowInsecure ? { allowInsecure: true } : {}),
         },
+        /* …AND THE OUTGOING BLOCK `connect()` sends, less the password (the server tries the
+           incoming one): the create refuses the whole mailbox when this server says no. */
+        smtp: {
+          ...(chosen.manual ? splitHostPort(typed.smtpHost) : { host: typed.smtpHost.trim(), port: chosen.smtp.port, secure: chosen.smtp.secure }),
+          user: typed.user.trim() || address,
+          ...(typed.allowInsecureSmtp ? { allowInsecure: true } : {}),
+        },
       });
       if (probeSeq.current !== mine) return;
+      // A server with no encryption on this network: its consent line opens from the test.
+      if (sendingPlaintextOffered(r.sending)) setInsecureOffer((o) => ({ ...o, smtp: true }));
       setProbeOk(r);
     } catch (err) {
       if (probeSeq.current !== mine) return;
@@ -2741,6 +2754,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
                     id="mb-insecure"
                     offer={insecureOffer}
                     checked={{ imap: typed.allowInsecure, smtp: typed.allowInsecureSmtp }}
+                    sameHost={sameServerHost(splitHostPort(typed.imapHost).host, splitHostPort(typed.smtpHost).host)}
                     onChange={(k, on) => {
                       setTyped((v) => (k === "imap" ? { ...v, allowInsecure: on } : { ...v, allowInsecureSmtp: on }));
                       clearVerdict();
@@ -2815,6 +2829,18 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
               detail={tob("probeOkDetail")}
             />
           ) : null}
+          {/* The outgoing server's own line: the create refuses the mailbox when it says no. */}
+          {!microsoftOauth && !probing && probeOk && sendingLine(probeOk.sending) ? (() => {
+            const line = sendingLine(probeOk.sending)!;
+            // Each key by name, so the pane's census reads what this line can say.
+            const said = line.state === "off" ? tob("sendingNotSet")
+              : line.key === "sendingOk" ? tob("sendingOk", { host: line.host })
+                : line.key === "sendingRefusedAuth" ? tob("sendingRefusedAuth", { host: line.host })
+                  : line.key === "sendingRefusedTls" ? tob("sendingRefusedTls", { host: line.host })
+                    : line.key === "sendingRefusedNoTls" ? tob("sendingRefusedNoTls", { host: line.host })
+                      : tob("sendingRefused", { host: line.host });
+            return <SettingsVerdict state={line.state} headline={said} />;
+          })() : null}
           {/* THE SERVER'S OWN SENTENCE when the taxonomy has no member this build knows — a newer
               API that adds one must degrade to something true, and the message always is. */}
           {!microsoftOauth && !probing && probeBad ? (
@@ -2948,6 +2974,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
             id="mb-edit-insecure"
             offer={insecureOffer}
             checked={{ imap: edited.allowInsecure, smtp: edited.allowInsecureSmtp }}
+            sameHost={sameServerHost(edited.host, edited.smtpHost)}
             onChange={(k, on) => setEdited((v) => (k === "imap" ? { ...v, allowInsecure: on } : { ...v, allowInsecureSmtp: on }))}
           />
 

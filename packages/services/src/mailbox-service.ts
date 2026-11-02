@@ -270,7 +270,16 @@ export interface TransportInput {
    * carries its first refusal for ever. Incoming transport only, on {@link smtpHost}'s rule.
    */
   smtpUnsettled?: string;
+  /**
+   * A certificate fingerprint the person trusted for this server, on this computer — a CLAIM the
+   * probe re-reads and dials pinned, never stored from here: `meta.tlsPin` is the proof's alone.
+   */
+  trustCertificate?: string;
 }
+
+/** A trust claim as the probe takes it: a string, or nothing. The probe checks its shape. */
+const trustClaim = (block: { trustCertificate?: unknown } | undefined): { trustCertificate?: string } =>
+  typeof block?.trustCertificate === "string" ? { trustCertificate: block.trustCertificate } : {};
 
 export interface CreateMailboxBody {
   provider: string;
@@ -292,10 +301,15 @@ export interface CreateMailboxBody {
     smtpHost?: string;
     /** See {@link TransportInput.smtpUnsettled} — why sending is not set up, or `""`. */
     smtpUnsettled?: string;
+    /** See {@link TransportInput.trustCertificate}. */
+    trustCertificate?: string;
   };
   /** `port`/`secure` optional for the same reason as the IMAP block: absence asks the probe's ladder.
    * `allowInsecure` is the SMTP server's OWN consent claim, re-proved like the IMAP one. */
-  smtp?: { host: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean };
+  smtp?: {
+    host: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean;
+    trustCertificate?: string;
+  };
 }
 
 export interface UpdateMailboxBody {
@@ -335,7 +349,11 @@ export interface MailboxProbeInput {
    * rather than the refresh token it was derived from.
    */
   imap:
-    | { host: string; port?: number; secure?: boolean; user: string; pass: string; accessToken?: undefined; allowInsecure?: boolean }
+    | {
+      host: string; port?: number; secure?: boolean; user: string; pass: string; accessToken?: undefined; allowInsecure?: boolean;
+      /** A fingerprint the person trusted for a server on this computer: a claim the probe re-reads. */
+      trustCertificate?: string;
+    }
     | { host: string; port?: number; secure?: boolean; user: string; accessToken: string; pass?: undefined; allowInsecure?: undefined };
 }
 
@@ -378,6 +396,11 @@ export interface ProbeTlsDetail {
   plaintext?: "offered" | "not_private";
   /** `self_signed`/`untrusted` on a private network only: how this server's operator trusts a private authority. */
   trustVariable?: string;
+  /**
+   * `self_signed` on a server ON THIS COMPUTER whose one certificate a person may trust (the desktop's
+   * local door only, a gateway such as Proton Mail Bridge): its fingerprint, to show and to claim.
+   */
+  certificate?: { sha256: string };
 }
 
 /**
@@ -389,6 +412,11 @@ export interface ProbeTlsDetail {
  */
 export interface ProvenEndpoint {
   host: string; port: number; secure: boolean; insecure?: true;
+  /**
+   * The certificate the dial was pinned to — a server on this computer whose own certificate the
+   * person trusted. It becomes `meta.tlsPin` on THAT transport's row, and only ever from here.
+   */
+  tlsPin?: { sha256: string; pem: string };
   /**
    * SMTP ONLY — the server's advertised `SIZE` ceiling in bytes, from the EHLO of the dial that
    * proved this endpoint, or `null`/absent when it declared none (see `SmtpLoginProof`).
@@ -441,7 +469,11 @@ export type MailboxProbeVerdict =
 export interface SmtpProbeInput {
   accountId: string;
   address: string;
-  smtp: { host: string; port?: number; secure?: boolean; user: string; pass: string; allowInsecure?: boolean };
+  smtp: {
+    host: string; port?: number; secure?: boolean; user: string; pass: string; allowInsecure?: boolean;
+    /** As on {@link MailboxProbeInput}'s incoming block, for this submission server. */
+    trustCertificate?: string;
+  };
 }
 
 /**
@@ -462,7 +494,8 @@ export type SmtpProbe = (input: SmtpProbeInput) => Promise<MailboxProbeVerdict>;
  */
 export type SendingProbe =
   | { state: "ok"; host: string }
-  | { state: "refused"; host: string; reason: MailboxErrorCode }
+  /** `tls`: the kind, and whether plaintext may be offered — never a name the certificate carried. */
+  | { state: "refused"; host: string; reason: MailboxErrorCode; tls?: ProbeTlsDetail }
   | { state: "not_configured" };
 
 /**
@@ -879,6 +912,7 @@ const addressTaken = (): ServiceError => new ServiceError(
 const mailboxDisabled = (): ServiceError => new ServiceError(
   "mailbox_disabled", 409,
   "This mailbox is disconnected. Reconnect it before setting new credentials.",
+  { write: "credentials" },
 );
 
 /**
@@ -891,6 +925,7 @@ const signsInWithOAuth = (provider: string): ServiceError => new ServiceError(
   provider === "microsoft"
     ? "This mailbox signs in with Microsoft, so it takes no password. Reconnect it from Settings → Mailboxes."
     : "This mailbox signs in through its provider, so it takes no password. Reconnect it from Settings → Mailboxes.",
+  { provider },
 );
 
 /** The one test for {@link signsInWithOAuth}: an OAuth row, and a patch that carries a password. */
@@ -957,6 +992,10 @@ function mergedTransportMeta(
      */
     if (proven.insecure === true) merged.insecureConsent = true;
     else if (merged.insecureConsent !== undefined) merged.insecureConsent = false;
+    /* The trusted certificate, on that rule: from the proof alone (a patch's `metaOf` never carries
+       one), and a stale pin rewritten to `null` rather than deleted, for the `||` merge's reason. */
+    if (proven.tlsPin) merged.tlsPin = { sha256: proven.tlsPin.sha256, pem: proven.tlsPin.pem };
+    else if (merged.tlsPin !== undefined) merged.tlsPin = null;
   }
   return merged;
 }
@@ -1033,6 +1072,15 @@ const configMoved = (transport: ProbeTransport): ServiceError => new ServiceErro
       "not stored. Try again.",
   { transport },
 );
+
+/**
+ * The connect refusals above, as the service raises them. A client words each from its code and
+ * `details` in the reader's language (`apps/webapp/app/shell/server-refusal.ts`); its tests build
+ * them here so the English the catalogue repeats is the English this module writes.
+ */
+export const MAILBOX_REFUSALS = {
+  addressTaken, mailboxDisabled, signsInWithOAuth, credentialNeeded, configMoved,
+} as const;
 
 /**
  * Decrypt a stored `mailbox_credentials` secret back to its plaintext (the worker's
@@ -1306,8 +1354,12 @@ export class MailboxService {
     ctx: ServiceContext,
     input: {
       address: string;
-      imap: { host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean };
-      smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean };
+      imap: {
+        host: string; port?: number; secure?: boolean; user?: string; pass: string; allowInsecure?: boolean; trustCertificate?: string;
+      };
+      smtp?: {
+        host?: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean; trustCertificate?: string;
+      };
     },
     opts: { probe: MailboxProbe; smtpProbe?: SmtpProbe },
   ): Promise<{ ok: true; host: string; user: string; folders: number | null; sending?: SendingProbe }> {
@@ -1320,10 +1372,10 @@ export class MailboxService {
     // prove the account can READ anything. No ownership check (a PRE-create action); the injected
     // probe closure bounds it: the SSRF/port guard, the admission counter, the deadline.
     const address = canonicalAddress(input.address ?? "");
-    if (!address) throw new ServiceError("validation_failed", 400, "address is required");
+    if (!address) throw new ServiceError("validation_failed", 400, "address is required", { field: "address" });
     const host = (input.imap?.host ?? "").trim();
-    if (!host) throw new ServiceError("validation_failed", 400, "imap.host is required");
-    if (!input.imap?.pass) throw new ServiceError("validation_failed", 400, "imap.pass is required");
+    if (!host) throw new ServiceError("validation_failed", 400, "imap.host is required", { field: "imap.host" });
+    if (!input.imap?.pass) throw new ServiceError("validation_failed", 400, "imap.pass is required", { field: "imap.pass" });
     // The username defaults to the address, which is what every provider preset does and what the
     // connect form fills in. Defaulted HERE rather than at the route so the test and the create
     // that follows it dial the same identity — a test that quietly proved a different username
@@ -1337,6 +1389,7 @@ export class MailboxService {
         host, port: input.imap.port, secure: input.imap.secure, user, pass: input.imap.pass,
         // A consent CLAIM, as `create` forwards it: the probe re-proves it or refuses.
         allowInsecure: input.imap.allowInsecure === true ? true : undefined,
+        ...trustClaim(input.imap),
       },
     });
 
@@ -1375,7 +1428,9 @@ export class MailboxService {
     imapUser: string,
     input: {
       imap: { pass: string };
-      smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean };
+      smtp?: {
+        host?: string; port?: number; secure?: boolean; user?: string; pass?: string; allowInsecure?: boolean; trustCertificate?: string;
+      };
     },
     smtpProbe: SmtpProbe,
   ): Promise<SendingProbe> {
@@ -1399,13 +1454,23 @@ export class MailboxService {
         user: (input.smtp?.user ?? "").trim() || imapUser,
         pass: input.smtp?.pass ?? input.imap.pass,
         allowInsecure: input.smtp?.allowInsecure === true ? true : undefined,
+        ...trustClaim(input.smtp),
       },
     });
     // `store_unverified` is a refusal HERE for `probeConnection`'s own reason: the question is
     // "did this work", and a server that declined to serve has not answered it yes. An ok names
     // the PROVEN rung; a refusal has none, so it names the host that was tried.
     if (verdict.verdict === "ok") return { state: "ok", host: verdict.proven?.host ?? host };
-    return { state: "refused", host, reason: verdict.code };
+    /* The certificate's own names stay out: `sending` echoes only the host the person typed. The
+       kind, the plaintext offer and a certificate to trust open the outgoing lines from a test. */
+    const tls = verdict.verdict === "refuse" && verdict.tls
+      ? {
+        kind: verdict.tls.kind,
+        ...(verdict.tls.plaintext ? { plaintext: verdict.tls.plaintext } : {}),
+        ...(verdict.tls.certificate ? { certificate: { sha256: verdict.tls.certificate.sha256 } } : {}),
+      }
+      : undefined;
+    return { state: "refused", host, reason: verdict.code, ...(tls ? { tls } : {}) };
   }
 
   async create(
@@ -1424,11 +1489,11 @@ export class MailboxService {
     // blank address that the index would then treat as a legitimate distinct key.
     const address = canonicalAddress(body.address ?? "");
     if (!body.provider || !address) {
-      throw new ServiceError("validation_failed", 400, "provider and address are required");
+      throw new ServiceError("validation_failed", 400, "provider and address are required", { field: "provider" });
     }
     const authKind = body.authKind ?? "password";
     if (authKind !== "oauth" && !body.imap?.pass) {
-      throw new ServiceError("validation_failed", 400, "imap credentials are required");
+      throw new ServiceError("validation_failed", 400, "imap credentials are required", { field: "imap" });
     }
 
     let provenImap: ProvenEndpoint | undefined;
@@ -1443,13 +1508,13 @@ export class MailboxService {
       // caught by the old requiredness check as falsy, and dropping that check must not quietly
       // turn an impossible port into a dial.
       if (!body.imap.host) {
-        throw new ServiceError("validation_failed", 400, "imap host is required");
+        throw new ServiceError("validation_failed", 400, "imap host is required", { field: "imap.server" });
       }
       if (body.imap.port !== undefined && !isValidPort(body.imap.port)) {
-        throw new ServiceError("validation_failed", 400, "imap port must be an integer between 1 and 65535");
+        throw new ServiceError("validation_failed", 400, "imap port must be an integer between 1 and 65535", { field: "imap.port" });
       }
       if (body.smtp?.port !== undefined && !isValidPort(body.smtp.port)) {
-        throw new ServiceError("validation_failed", 400, "smtp port must be an integer between 1 and 65535");
+        throw new ServiceError("validation_failed", 400, "smtp port must be an integer between 1 and 65535", { field: "smtp.port" });
       }
 
       // No duplicate pre-check, and the reason is a guard it would have blinded. A pre-check
@@ -1474,6 +1539,7 @@ export class MailboxService {
           // A CLAIM, not a permission: the probe honors it only after re-proving, in this same
           // call, that the server offers no TLS at all. See {@link ProvenEndpoint.insecure}.
           allowInsecure: body.imap.allowInsecure === true ? true : undefined,
+          ...trustClaim(body.imap),
         },
       });
       if (verdict.verdict === "refuse") {
@@ -1507,6 +1573,7 @@ export class MailboxService {
           pass: smtpPass,
           // A claim for THIS server, honored only as the IMAP one is. See {@link ProvenEndpoint.insecure}.
           allowInsecure: body.smtp.allowInsecure === true ? true : undefined,
+          ...trustClaim(body.smtp),
         },
       });
       if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "smtp");
@@ -1562,6 +1629,8 @@ export class MailboxService {
         // what every dialler reads back as `ImapConfig.allowInsecure`, so its absence on a secure
         // mailbox is as load-bearing as its presence on a consented one.
         if (provenImap?.insecure) meta.insecureConsent = true;
+        // The trusted certificate, on the same rule: from the pinned dial that proved it only.
+        if (provenImap?.tlsPin) meta.tlsPin = { sha256: provenImap.tlsPin.sha256, pem: provenImap.tlsPin.pem };
         /**
          * The two witnesses `metaOf` does not carry. `metaOf` is PER TRANSPORT and both of these
          * are statements about the PAIR, so they are applied here exactly as
@@ -1590,6 +1659,7 @@ export class MailboxService {
           });
           // The SMTP server's own consent, from its verdict only, as on the IMAP row.
           if (provenSmtp?.insecure) smtpMeta.insecureConsent = true;
+          if (provenSmtp?.tlsPin) smtpMeta.tlsPin = { sha256: provenSmtp.tlsPin.sha256, pem: provenSmtp.tlsPin.pem };
           await this.upsertCredOn(tx, ctx, kp, row!.id, "smtp", pass, smtpMeta, MINTED_HERE);
         }
       }
@@ -2846,7 +2916,7 @@ export class MailboxService {
     // PORT may legitimately be absent — the probe walks the ladder then, as it does on create.
     const host = typeof merged.host === "string" ? merged.host : "";
     if (!host) {
-      throw new ServiceError("validation_failed", 400, "imap host is required");
+      throw new ServiceError("validation_failed", 400, "imap host is required", { field: "imap.server" });
     }
 
     const verdict = await opts.probe({
@@ -2859,6 +2929,7 @@ export class MailboxService {
         user: typeof merged.user === "string" ? merged.user : "",
         pass: patch.imap!.pass!,
         allowInsecure: patch.imap?.allowInsecure === true ? true : undefined,
+        ...trustClaim(patch.imap),
       },
     });
     if (verdict.verdict === "refuse") {
@@ -2895,7 +2966,7 @@ export class MailboxService {
 
     const host = typeof merged.host === "string" ? merged.host : "";
     if (!host) {
-      throw new ServiceError("validation_failed", 400, "smtp host is required");
+      throw new ServiceError("validation_failed", 400, "smtp host is required", { field: "smtp.server" });
     }
 
     const verdict = await smtpProbe({
@@ -2908,6 +2979,7 @@ export class MailboxService {
         user: typeof merged.user === "string" ? merged.user : "",
         pass: patch.smtp!.pass!,
         allowInsecure: patch.smtp?.allowInsecure === true ? true : undefined,
+        ...trustClaim(patch.smtp),
       },
     });
     if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "smtp");

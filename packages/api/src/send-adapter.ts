@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { mailboxes } from "@trafficflow/db";
-import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, buildImapAuth, storedTlsPin, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import type { NetTimeouts } from "@trafficflow/core/adapters/imap";
 import { SendConnections, type SendAdapter, type WarmSendAdapter } from "@trafficflow/core/mail";
 import { MailboxSideRefusal } from "@trafficflow/services/mail";
@@ -72,7 +72,7 @@ export async function makeSendAdapter(
     // built is a refusal that arrives after a socket may have opened. See {@link dialFieldsFor}.
     const imapDial = await dialFieldsFor(deps, {
       host: imapMeta.host ?? "", port: imapPort, secure: imapMeta.secure ?? true,
-      consent: imapMeta.insecureConsent === true,
+      consent: imapMeta.insecureConsent === true, tlsPin: storedTlsPin(imapMeta),
     }, "imap");
     const imapSecret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
     // The IMAP auth goes through the SHARED builder — an oauth2 row becomes the token callback here,
@@ -87,6 +87,8 @@ export async function makeSendAdapter(
     // The smtp ROW's consent only: the no-row fallback guessed its server, and a guess was never
     // probed, so it has nothing to consent to.
     let smtpConsent = false;
+    // The smtp ROW's own trusted certificate, never the imap row's, as with the consent.
+    let smtpPin: ReturnType<typeof storedTlsPin>;
     if (imapMeta.authType === "oauth2") {
       const s = imapMeta.smtp ?? {};
       smtpConfig = {
@@ -129,13 +131,14 @@ export async function makeSendAdapter(
         ...(smtpUser ? { auth: { user: smtpUser, pass: smtpPass } } : {}),
       };
       smtpConsent = smtpRow !== undefined && smtpMeta.insecureConsent === true;
+      smtpPin = smtpRow !== undefined ? storedTlsPin(smtpMeta) : undefined;
     }
 
     // The submission server is its own name on its own transport — its own check, its own pin. The
     // no-smtp-row fallback dials the IMAP host on 587, which is a second transport on one name and
     // is checked as one rather than borrowing the IMAP leg's verdict.
     const smtpDial = await dialFieldsFor(deps, {
-      host: smtpConfig.host, port: smtpConfig.port, secure: smtpConfig.secure, consent: smtpConsent,
+      host: smtpConfig.host, port: smtpConfig.port, secure: smtpConfig.secure, consent: smtpConsent, tlsPin: smtpPin,
     }, "smtp");
 
     const adapter = newAdapter({

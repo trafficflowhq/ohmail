@@ -182,10 +182,15 @@ describe("refusals are the server's sentence, never a client copy of it", () => 
    */
   const WEBAPP_SOURCE = walkSources(`${HERE}../app`).concat([`${HERE}../messages/en.json`]);
 
-  it("the client passes `error.message` through verbatim", () => {
+  it("the client passes `error.message` through verbatim", async () => {
     // The server's own sentence first; the fallback is this client's, in the reader's language.
     expect(client).toMatch(/env\?\.message \?\? said\("somethingWrong", "Something went wrong/);
-    expect(client).toMatch(/if \(err instanceof ApiError\) return err\.message;/);
+    /* A code the catalogue words (`server-refusal.ts`) is said from it in the reader's language, its
+       English the server's own (`refusal-sentences-localized.test.tsx`); with no catalogue, and for
+       any other code, the sentence is the server's as it came. */
+    const { ApiError, messageOf } = await import("../app/api-client");
+    expect(messageOf(new ApiError(409, "a_code_nobody_words", "The server's own sentence."))).toBe("The server's own sentence.");
+    expect(messageOf(new ApiError(409, "same_login", "The server's own sentence."))).toBe("The server's own sentence.");
   });
 
   it("no webapp source re-states a server refusal — every file, including the copy", () => {
