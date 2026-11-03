@@ -1405,11 +1405,11 @@ export class OrganizerProfileSync {
     const expired = ask === null && row !== null && row.fingerprint !== null && row.outcome === null
       ? row.fingerprint : null;
     const tidyMode = deps.tidyMode ?? "remove";
-    /* A TIDY OWED runs on its own clock, not the write's debounce: 30 s apart while it removes,
-       once per flush interval while it only counts. The seed owes one, so an attach's first
-       tick counts the folder. */
-    const tidyDue = (): boolean => this.tidyOwed
-      && now.getTime() - this.lastTidyAt >= (tidyMode === "count" ? interval : PROFILE_TIDY_SPACING_MS);
+    /* A TIDY OWED runs on its own clock, not the write's debounce: 30 s apart while it removes, and while it
+       counts until every found copy is read; once per flush interval while it counts a whole reading. The seed
+       owes one, so an attach's first tick counts the folder. Read at each call: the seed moves `foundSoFar`. */
+    const tidyDue = (): boolean => this.tidyOwed && now.getTime() - this.lastTidyAt >= (tidyMode === "remove" ? PROFILE_TIDY_SPACING_MS
+      : this.foundSoFar === "partly" ? Math.min(interval, PROFILE_TIDY_SPACING_MS) : interval);
     let writeDue = !this.seeded || ask !== null || expired !== null || now.getTime() - this.lastAttemptAt >= interval;
     /* AN ANSWER TO THE HELD QUESTION does not wait out the interval either: one indexed read per tick,
        only while a found hold stands; a Not now too while another kept copy waits to be asked. */

@@ -1916,7 +1916,7 @@ describe("every found copy is kept and asked about", () => {
 const PILE_META = "INBOX.ohmail._meta";
 const BARE_COMMIT = "52a56a5";
 
-async function pile(o: { tidyMode: "remove" | "count"; rowAt?: Date }) {
+async function pile(o: { tidyMode: "remove" | "count"; rowAt?: Date; flushIntervalMs?: number }) {
   const server = memoryImapServer({ prefix: "INBOX.", folders: ["INBOX.ohmail", PILE_META] });
   const db = (await makeTestDb()) as unknown as Tx;
   const rowAt = o.rowAt ?? new Date("2026-01-01T00:00:00.000Z");
@@ -1928,7 +1928,7 @@ async function pile(o: { tidyMode: "remove" | "count"; rowAt?: Date }) {
   const clock = { at: new Date("2026-11-01T12:00:00.000Z") };
   const plans: Array<Record<string, unknown>> = [];
   const attach = (): OrganizerProfileSync => new OrganizerProfileSync({
-    db, accountId, mailboxId, tidyMode: o.tidyMode, flushIntervalMs: 0, now: () => clock.at,
+    db, accountId, mailboxId, tidyMode: o.tidyMode, flushIntervalMs: o.flushIntervalMs ?? 0, now: () => clock.at,
     adapter: { profileIo: (id: { installId: string; mailboxId: string }) => makeProfileIo(server, (c) => c.replace(/\//g, "."), id) } as unknown as MailboxAdapter,
     self: { installId: "w-cloud", kind: "cloud" }, producerVersion: `0.30.25+${BARE_COMMIT}`,
     log: (event, detail) => { if (event === "profile_tidy_planned") plans.push(detail); },
@@ -1953,6 +1953,7 @@ async function pile(o: { tidyMode: "remove" | "count"; rowAt?: Date }) {
   return {
     db, accountId, mailboxId, clock, plant, parsed, holds, ticks, asking, server,
     plan: (): Record<string, unknown> | undefined => plans.at(-1),
+    planned: (): number => plans.length,
     decide: (name: string) => db.insert(tags).values({ accountId, name, createdAt: clock.at, updatedAt: clock.at }),
     answer: (d: OrganizerProfileDoc, decision: "declined" | "replaced") => recordProfileImportResolution(db, {
       accountId, mailboxId, decision, fingerprint: profileFingerprint(d),
@@ -1980,6 +1981,27 @@ describe("the store's own old copies on a server that kept them", () => {
     await r.ticks(8);
     expect({ plan: pick(r.plan(), ["records", "own", "removable", "keptFound", "keptUnread", "foundStale"]), asking: await r.asking() })
       .toEqual({ plan: { records: 300, own: 299, removable: 299, keptFound: 0, keptUnread: 0, foundStale: 0 }, asking: null });
+  });
+
+  // At the default flush interval, as Cloud runs: the case above runs at an interval of 0, where every tick may count.
+  it("count mode at the flush interval: 323 copies are read whole within one attachment, removing nothing, then counted once per interval", async () => {
+    const r = await pile({ tidyMode: "count", flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    await r.decide("now");
+    plantPile(r, 323);
+    await r.ticks(5);
+    const whole = { plan: pick(r.plan(), ["records", "own", "removable", "keptUnread", "foundStale"]), copies: r.parsed().length, asking: await r.asking() };
+    const at = r.planned();
+    await r.ticks(1);
+    const next = r.planned() - at;
+    // Through the write-due tick an interval after the seed's write, which owes a pass, and one tick after it: still inside an interval of the last pass.
+    await r.ticks(6);
+    const owed = r.planned() - at;
+    r.clock.at = new Date(r.clock.at.getTime() + DEFAULT_PROFILE_FLUSH_INTERVAL_MS);
+    await r.ticks(2);
+    expect({ whole, next, owed, later: r.planned() - at, keptUnread: r.plan()?.keptUnread, copies: r.parsed().length }).toEqual({
+      whole: { plan: { records: 323, own: 322, removable: 322, keptUnread: 0, foundStale: 0 }, copies: 323, asking: null },
+      next: 0, owed: 0, later: 1, keptUnread: 0, copies: 323,
+    });
   });
 
   it("remove mode: they leave the folder, nothing is asked, and the store's copy says its settings", async () => {
