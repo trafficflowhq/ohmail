@@ -78,6 +78,21 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.31" date="2026-11-03">
+      <description>
+        <ul>
+          <li>News and Receipts say which letters came from senders you never let in</li>
+          <li>Only a sender you let in reaches News or Receipts</li>
+          <li>The phone composer chooses its From address, adds Cc and Bcc, sends large files and edits signatures</li>
+          <li>The phone composer's From list, Cc and Bcc, large files and signature settings are tested as drawn</li>
+          <li>Phone: Connect opens sooner, the first tap acts with the keyboard up, and address search reaches your whole mailbox</li>
+          <li>A phone search for the start of a word no longer reaches words that only share its stem</li>
+          <li>A reinstalled phone takes its mailbox over from a claim nobody renews</li>
+          <li>A letter deleted on the mail server keeps only who it was from and to, and older deleted letters lose their words too</li>
+          <li>Removed mailboxes and mailing-list claims in the Screener</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.30" date="2026-11-03">
       <description>
         <ul>
@@ -125,16 +140,6 @@
           <li>Letters removed from Trash in another mail app leave ohmail's Trash</li>
           <li>The phone keeps the letter you opened in Trash when a delete commits</li>
           <li>Words you typed are kept when you quit, close, press Escape or reload</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.26" date="2026-11-02">
-      <description>
-        <ul>
-          <li>The desktop app keeps syncing after a mailbox is removed and connected again while it is closed</li>
-          <li>Shift+J, Shift+K and Shift-click select only the messages you step over, even after a read message</li>
-          <li>A minus word only leaves letters out of a search</li>
-          <li>A new search order starts at the top result again</li>
         </ul>
       </description>
     </release>
