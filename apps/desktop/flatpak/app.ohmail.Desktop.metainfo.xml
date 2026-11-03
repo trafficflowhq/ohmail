@@ -78,6 +78,23 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.32" date="2026-11-03">
+      <description>
+        <ul>
+          <li>The approval page warns unless the computer asked from this browser's own address</li>
+          <li>The test suite's sign-in links and sample passwords are made at run time</li>
+          <li>Cloud reads the API's server errors from the worker, and the API holds no platform token</li>
+          <li>A picture named in a style with an escaped line break loads again</li>
+          <li>The desktop app stays responsive while it organizes a large mailbox</li>
+          <li>The demo's invented senders live on reserved domains</li>
+          <li>The README shows the folders ohmail creates again</li>
+          <li>A session check already on its way no longer undoes Sign out</li>
+          <li>A tab opened while Sign out is under way no longer shows the mail</li>
+          <li>A website address typed in other capitals opens its page</li>
+          <li>A forward with no note, or a plain one, keeps the original's pictures in place</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.31" date="2026-11-03">
       <description>
         <ul>
@@ -128,18 +145,6 @@
           <li>A letter your mail provider failed waits in the Screener for you to decide</li>
           <li>Signing out reaches the server later when it cannot at once, and a recovery code confirms it is you</li>
           <li>Three timing tests wait for events, not milliseconds</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.27" date="2026-11-02">
-      <description>
-        <ul>
-          <li>A sign-out, and a sign-in after one, end the previous session on the server</li>
-          <li>Erasing a mailbox takes the fingerprint of its saved settings too</li>
-          <li>ohmail clears out its own old settings copies that a mail server kept</li>
-          <li>Letters removed from Trash in another mail app leave ohmail's Trash</li>
-          <li>The phone keeps the letter you opened in Trash when a delete commits</li>
-          <li>Words you typed are kept when you quit, close, press Escape or reload</li>
         </ul>
       </description>
     </release>

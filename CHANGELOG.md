@@ -21,6 +21,96 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.32] — 2026-11-03
+
+### The approval page warns unless the computer asked from this browser's own address
+
+On ohmail Cloud, the page that confirms a computer's sign-in now says the request came from a different
+network address unless the computer asked from the browser's own address (over IPv6, its own local
+network). Before, a request from elsewhere in the same provider's block of addresses showed no warning.
+
+### The test suite's sign-in links and sample passwords are made at run time
+
+The tests that decide whether a sign-in link in a message carries a credential now build every token
+in their links at run time, at reserved example domains, instead of keeping whole links at real
+services. The sample passwords across the test suite are fixture values that name themselves. Nothing
+changes in the apps.
+
+### Cloud reads the API's server errors from the worker, and the API holds no platform token
+
+ohmail Cloud counts the server errors (5xx) its API answers by reading the hosting platform's request
+log. That read now runs in the worker, with a platform token of the worker's own:
+`TF_SIGNAL_VERCEL_TOKEN` and `TF_SIGNAL_VERCEL_TEAM_ID`, `TF_SIGNAL_PROJECTS` for the projects to read
+(`ohmail-api` when unset) and `TF_SIGNAL_SSE_OFF=1` while the API's live connection is off. The API no
+longer reads `VERCEL_TOKEN`, `VERCEL_TEAM_ID` or `VERCEL_SIGNAL_PROJECTS`, and its route
+`GET /internal/platform-signals/run` is removed, so code running in the internet-facing API can no longer
+reach a token that changes deployments. A worker without the `TF_SIGNAL_*` pair reads nothing, and the
+operator console says "5xx: not measured" as before.
+
+The read now runs on the five-minute bucket grid, 100 to 130 seconds after each bucket closes, instead of
+five minutes after the last read ended. Each bucket is read once, after the platform has finished indexing
+it, so the 5xx alert judges every fifteen-minute window whose buckets were read in full, at least twice,
+where before it could judge only a minority of them (Cloud).
+
+### A picture named in a style with an escaped line break loads again
+
+After Show images, a letter's style that names a picture inside a quoted url with a backslash and a line
+break in it (a CSS line continuation) asked for a different address, with the backslash kept, so that
+picture did not load. The continuation is now removed before the address is counted and asked, as the
+browser reads it, on the phone, the web and the desktop app.
+
+### The desktop app stays responsive while it organizes a large mailbox
+
+On the desktop app, the walks that organizing runs over mail already stored (the count on the
+organize screen, screening the backlog after you agree, a rule applied to existing mail, and letters
+from a gap) now hand the app's engine back after every few letters, instead of holding it until the
+whole walk is done. Your clicks, searches and new mail no longer wait behind them. What is moved and
+counted is unchanged.
+
+### The demo's invented senders live on reserved domains
+
+The demo mailbox's invented shops, newsletters and senders now write from `.example` domains, which nobody
+can register, instead of names that could one day belong to a real business. Their avatars change colour
+with the new addresses. The test suite's fixture values follow the same rule: no address at a real
+provider, credential or token in it is copied from a real value or split to stay out of sight.
+
+### The README shows the folders ohmail creates again
+
+The README has its section on how ohmail organizes inside your mailbox back: the folders it creates, and
+what travels with a mailbox between the desktop app, ohmail Cloud and your own server. The self-hosting
+steps are under "Run the server yourself", and the Microsoft 365 note says the sign-in works on ohmail
+Cloud and on self-hosted servers set up for it.
+
+### A session check already on its way no longer undoes Sign out
+
+On the web app and ohmail Cloud, a tab that was checking or renewing the session when Sign out was pressed in
+another tab could write the account's name back into the browser once its answer arrived, and a tab opened then
+could show the mailbox. Only a sign-in names the account now. A browser that has lost the name gets it back from
+its own session check, and only where nothing else is written.
+
+### A tab opened while Sign out is under way no longer shows the mail
+
+On the web app and ohmail Cloud, pressing Sign out now marks the browser as signing out before anything
+else is sent, so a page opened in another tab from that moment goes straight to the sign-in page. A tab
+that had started loading just before the press, or whose check of the session was still on its way, now
+leaves for the sign-in page as it starts instead of showing the mailbox until the sign-out finished.
+
+### A website address typed in other capitals opens its page
+
+On ohmail Cloud, an address of the website written in other capitals, such as `ohmail.app/PRIVACY` or
+`ohmail.app/De`, now leads to the page at its own address. It used to show the not-found page, and that page
+was sent without the security policy every other page carries.
+
+### A forward with no note, or a plain one, keeps the original's pictures in place
+
+Since 0.30.30 a forward kept the pictures in the quoted original's text only when your note above it had
+formatting. A forward with no note, or with a note in plain text, still arrived with the pictures as loose
+files and the original's formatting gone. It now keeps the pictures where they stood and the original's
+formatting, whatever the note, on the web, the desktop app, Cloud and your own server. The quoted letter
+also keeps its line breaks and table cells apart, a letter too long to keep whole is quoted as text (in
+full when it came with a plain-text version of its own), and a letter whose formatted version shows only
+pictures from the web is quoted with its words.
+
 ## [0.30.31] — 2026-11-03
 
 ### News and Receipts say which letters came from senders you never let in
@@ -16454,7 +16544,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.31...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.32...HEAD
+[0.30.32]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.32
 [0.30.31]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.31
 [0.30.30]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.30
 [0.30.29]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.29
