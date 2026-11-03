@@ -149,7 +149,8 @@ One app, two faces. **paper** is the default everywhere but Linux: light, soft c
 
 <kbd>Gmail</kbd> · <kbd>iCloud</kbd> · <kbd>Fastmail</kbd> · <kbd>Microsoft 365\*</kbd> · <kbd>any IMAP server</kbd>
 
-<sub>[Gmail](docs/connect-gmail.md) connects with an app password. \*Microsoft 365 connects with your Microsoft sign-in on ohmail.app and on self-hosted servers set up for it; on the desktop, through a [local mail gateway](docs/local-mail-gateway.md).</sub>
+<sub>[Gmail](docs/connect-gmail.md) connects with an app password.
+\* Microsoft 365 connects with your Microsoft sign-in on ohmail Cloud and on self-hosted servers set up for it; on the desktop, through a [local mail gateway](docs/local-mail-gateway.md).</sub>
 
 ## Install
 
@@ -174,7 +175,7 @@ sudo dnf install ./ohmail-linux-x86_64.rpm                                # Fedo
 
 [ohmail-android.apk](https://github.com/trafficflowhq/ohmail/releases/latest/download/ohmail-android.apk). The phone can organize one mailbox on its own, or pair with the desktop app, ohmail.app or your own server and keep a copy.
 
-### Your own server
+### Run the server yourself
 
 ```bash
 git clone https://github.com/trafficflowhq/ohmail.git
@@ -189,6 +190,25 @@ On a server with a public domain, also set `OHMAIL_BIND=0.0.0.0` in `.env`. Preb
 ### Hosted
 
 [ohmail.app](https://ohmail.app) runs the same server source.
+
+## How ohmail organizes inside your mailbox
+
+The folders ohmail creates are a small, frozen set:
+
+```
+Inbox                    mail from people you've said yes to
+Junk                     your provider's own — your spam verdicts file into it
+Sent                     your replies, left where your provider already keeps them
+ohmail/
+├── Screener             new senders wait here until you decide where they go
+├── News                 newsletters and things you read when you have a minute
+├── Receipts             receipts, confirmations, orders
+├── Screened             senders you keep, but out of the Inbox
+├── Quarantine           spam the automatic patterns set aside, held for review
+└── _meta                a small bookkeeping folder; some mail apps show it
+```
+
+There is no folder called "Spam": "Spam" is only a label the app shows. The desktop app, ohmail Cloud and a server you run share no database, so what travels between them is the mailbox: your mail in these folders, and your settings (the senders you've screened in, your rules, notification choices, away reply, signature and tag names) as one small versioned-JSON message in `ohmail/_meta`, in a [published format](docs/organizer-profile.md). Connect the same mailbox from another of them and ohmail finds those settings and asks before using them. Triage piles, Resurface timers, learned patterns, notes and snippets stay where they were made. [How it works →](docs/how-it-works.md)
 
 ## Privacy
 
