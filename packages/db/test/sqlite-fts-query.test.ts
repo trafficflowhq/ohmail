@@ -61,19 +61,25 @@ describe("the device store's full-text query builder", () => {
     expect(() => ask("sign-in")).toThrow(/no such column/);
     expect(() => ask(`"a${String.fromCodePoint(0x19b0)}b"*`, "p")).toThrow(/phrase/);
     let asked = 0;
+    let routed = 0;
     for (const q of typedShapes()) {
       for (const mode of ["words", "stems", "starts"] as const) {
         const f = ftsQueryOf(q, mode);
         for (const m of [f.match, f.exclude]) {
           if (m === null) continue;
           expect(() => ask(m), `${mode} ${JSON.stringify(q)} -> ${m}`).not.toThrow();
-          // The unstemmed reading is asked of the tables that keep no positions too.
-          if (mode === "starts") expect(() => ask(m, "p"), `${mode} ${JSON.stringify(q)} -> ${m}`).not.toThrow();
+          // The unstemmed reading, and one a stopword's stem may route there (mail 0177), is asked of the tables that keep no positions too.
+          if (mode === "starts" || f.stops !== null) expect(() => ask(m, "p"), `${mode} ${JSON.stringify(q)} -> ${m}`).not.toThrow();
           asked++;
         }
+        if (f.stops === null) continue;
+        expect(mode, "the starts reading is never routed").not.toBe("starts");
+        expect(() => ask(f.stops!), `stops ${JSON.stringify(q)} -> ${f.stops}`).not.toThrow();
+        routed++;
       }
     }
     expect(asked).toBeGreaterThan(1000);
+    expect(routed).toBeGreaterThan(500);
   });
 
   it("reads the words the way the server's parser reads them", () => {
@@ -83,7 +89,13 @@ describe("the device store's full-text query builder", () => {
     expect(ftsQueryOf("NOT").match).toBeNull();
     expect(ftsQueryOf("minutes:budget").match).toBe('"minutes" "budget"');
     expect(ftsQueryOf("--fixture").match).toBe('"fixture"');
-    expect(ftsQueryOf("fixture - ohmail")).toEqual({ match: '"fixture" NOT "ohmail"', exclude: null });
+    expect(ftsQueryOf("fixture - ohmail")).toEqual({ match: '"fixture" NOT "ohmail"', exclude: null, stops: '"fixture" OR "ohmail"' });
+    // Asked of the stopword table only when every operand is one word.
+    expect(ftsQueryOf("sign-in code").stops).toBeNull();
+    expect(ftsQueryOf('"ines ledger"').stops).toBeNull();
+    expect(ftsQueryOf("ines or ledger").stops).toBe('"ines" OR "ledger"');
+    expect(ftsQueryOf("ines", "stems").stops).toBe('"ines"');
+    expect(ftsQueryOf("ines", "starts").stops).toBeNull();
   });
 
   it("reads a part-word twice: whole for the stemming tables, from four letters as a word's start for the unstemmed ones", () => {
@@ -133,17 +145,20 @@ describe("the device store's people and file names' words (mail 0173)", () => {
   it("are each read once as a list of letters, people with the head and file names with the text, never the document", async () => {
     const d = sqliteDialect();
     const across = d.search.words("ines ledger");
+    const ALL = ["message_bodies_fts", "message_bodies_part_fts", "message_files_fts", "message_files_part_fts",
+      "message_people_fts", "messages_fts", "messages_part_fts", "stopwords_fts"];
     const ARMS: ReadonlyArray<readonly [arm: string, pred: SQL, tables: readonly string[]]> = [
-      ["head", d.search.words("ledger").head.pred, ["message_people_fts", "messages_fts"]],
-      ["text", d.search.words("ledger").text.pred, ["message_bodies_fts", "message_files_fts"]],
-      ["part head", d.search.partWords("ledg")!.head.pred, ["message_people_fts", "messages_fts", "messages_part_fts"]],
+      // A porter table's reading of one-word operands reads its unstemmed twin too, as the stopword table says (mail 0177).
+      ["head", d.search.words("ledger").head.pred, ["message_people_fts", "messages_fts", "messages_part_fts", "stopwords_fts"]],
+      ["text", d.search.words("ledger").text.pred,
+        ["message_bodies_fts", "message_bodies_part_fts", "message_files_fts", "message_files_part_fts", "stopwords_fts"]],
+      ["part head", d.search.partWords("ledg")!.head.pred, ["message_people_fts", "messages_fts", "messages_part_fts", "stopwords_fts"]],
       ["part text", d.search.partWords("ledg")!.text.pred,
-        ["message_bodies_fts", "message_bodies_part_fts", "message_files_fts", "message_files_part_fts"]],
-      ["exclusions only", d.search.words("-pdf").head.pred, ["message_people_fts", "messages_fts"]],
-      ["across head", across.head.pred, ["message_bodies_fts", "message_files_fts", "message_people_fts", "messages_fts"]],
-      ["across text", across.text.pred, ["message_bodies_fts", "message_files_fts", "message_people_fts", "messages_fts"]],
-      ["across parts", d.search.partWords("ines ledg")!.text.pred, ["message_bodies_fts", "message_bodies_part_fts",
-        "message_files_fts", "message_files_part_fts", "message_people_fts", "messages_fts", "messages_part_fts"]],
+        ["message_bodies_fts", "message_bodies_part_fts", "message_files_fts", "message_files_part_fts", "stopwords_fts"]],
+      ["exclusions only", d.search.words("-pdf").head.pred, ["message_people_fts", "messages_fts", "messages_part_fts", "stopwords_fts"]],
+      ["across head", across.head.pred, [...ALL]],
+      ["across text", across.text.pred, [...ALL]],
+      ["across parts", d.search.partWords("ines ledg")!.text.pred, [...ALL]],
     ];
     const got: Array<{ arm: string; tables: string[]; perLetter: string[]; others: string[] }> = [];
     for (const [arm, pred] of ARMS) {
@@ -155,16 +170,39 @@ describe("the device store's people and file names' words (mail 0173)", () => {
         while (up !== undefined && /^(COMPOUND QUERY|LEFT-MOST SUBQUERY|UNION ALL)/.test(up.detail)) up = node.get(up.parent);
         return up?.detail ?? "";
       };
-      const reads = plan.filter((r) => /^SCAN \w+_fts VIRTUAL TABLE/.test(r.detail));
+      // `EXISTS` marks a subquery SQLite turned into a join, read per row.
+      const reads = plan.filter((r) => /^SCAN \w+_fts (EXISTS )?VIRTUAL TABLE/.test(r.detail));
       got.push({
         arm, tables: [...new Set(reads.map((r) => r.detail.split(" ")[1]!))].sort(),
-        // A words table asked per letter (`rowid = ?`) or under a correlated subquery costs a read a letter.
-        perLetter: reads.filter((r) => /:=/.test(r.detail) || !/^LIST SUBQUERY/.test(listOf(r))).map((r) => r.detail),
+        // A words table asked per letter (`rowid = ?`) or under a correlated subquery costs a read a letter;
+        // the stopword table is asked once, as one uncorrelated value (mail 0177), never as a list joined per letter.
+        perLetter: reads.filter((r) => /:=/.test(r.detail)
+          || !(r.detail.startsWith("SCAN stopwords_fts ") ? /^SCALAR SUBQUERY/ : /^LIST SUBQUERY/).test(listOf(r))).map((r) => r.detail),
         // Nothing read beside the letter, its body and the word lists: the document is never looked up.
         others: plan.filter((r) => /^(SEARCH|SCAN) /.test(r.detail) && !/^(SEARCH|SCAN) (m|b|\w+_fts)\b/.test(r.detail)).map((r) => r.detail),
       });
     }
     expect(got).toEqual(ARMS.map(([arm, , tables]) => ({ arm, tables: [...tables], perLetter: [], others: [] })));
+  });
+});
+
+describe("the server's stopwords on the device (mail 0177)", () => {
+  it("are one porter row that tells which words share a stopword's stem, and a second run writes the same", async () => {
+    const db = new DatabaseSync(":memory:");
+    const target = { run: async (s: string) => { db.exec(s); }, all: async <T,>(s: string) => db.prepare(s).all() as T[] };
+    await migrateSqlite(target, SQLITE_JOURNAL);
+    db.exec("create virtual table control using fts5(words, tokenize='porter unicode61 remove_diacritics 2')");
+    db.prepare("insert into control(words) values (?)").run([...ENGLISH_STOPWORDS].join(" "));
+    db.exec("create virtual table got_v using fts5vocab(stopwords_fts, row); create virtual table control_v using fts5vocab(control, row)");
+    const terms = (v: string): string[] => (db.prepare(`select term from ${v} order by term`).all() as { term: string }[]).map((r) => r.term);
+    expect(terms("got_v").length).toBeGreaterThan(100);
+    expect(terms("got_v")).toEqual(terms("control_v"));
+    const shares = (w: string): boolean => db.prepare("select 1 from stopwords_fts where stopwords_fts match ?").all(`"${w}"`).length > 0;
+    expect(["ines", "ones", "willing", "outing"].filter(shares)).toEqual(["ines", "ones", "willing", "outing"]);
+    expect(["ledger", "invoice", "meeting"].filter(shares)).toEqual([]);
+    const entry = SQLITE_JOURNAL.find((e) => e.name.endsWith("_device_stopword_stems.sql"))!;
+    for (const statement of entry.statements) db.exec(statement);
+    expect(terms("got_v"), "a second run wrote other words").toEqual(terms("control_v"));
   });
 });
 
