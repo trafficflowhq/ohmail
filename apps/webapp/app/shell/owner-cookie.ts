@@ -25,8 +25,9 @@ import { cookieFromJar } from "./cookie-jar";
 export const OWNER_COOKIE = "tf_owner";
 
 /**
- * "A sign-out was asked for and the server did not confirm it" — a reserved value this CLIENT writes. The API never
- * sends it and it is not an account id: no mirror is named for it, and {@link readOwner} answers `null` for it.
+ * "A sign-out was asked for and the server did not confirm it" — a reserved value this CLIENT writes; the edge re-sets
+ * the word a request carried ({@link pendingSignOutCookie}), the API never sends it. It is not an account id: no mirror
+ * is named for it, and {@link readOwner} answers `null` for it.
  * Sign-out does its local half whatever the server said — a borrowed machine's sign-out must work offline — and
  * clearing this cookie on a FAILED server call left the one state nothing could reason about: an HttpOnly session
  * live on the server and no readable marker saying whose. Absence read as silence, so a mailbox window open for a
@@ -140,22 +141,37 @@ export function forgetOwner(write?: (cookie: string) => void): void {
 /**
  * SAY THAT A SIGN-OUT WAS ASKED FOR AND NOT CONFIRMED — see {@link OWNER_SIGNED_OUT}. Written INSTEAD of clearing,
  * and only on that one path: erasing the marker while the server may still hold a live session is what let a window
- * for another account go on using it. It lives as long as the refresh token it is about (ninety days, written once:
- * no server answer writes the marker except a sign-in's), because the next visit FINISHES the sign-out: `/` sends it
- * to the sign-in page, which presents it at the sign-out door behind its form. A session cookie forgotten at a
- * browser restart left the session to be resumed by whoever opened ohmail.app next. `Secure` on a secure page only,
- * for {@link forgetOwner}'s reason: a plain-http development origin DISCARDS a `Secure` write silently.
+ * for another account go on using it. It lives as long as the refresh token it is about (ninety days), because the
+ * next visit FINISHES the sign-out: `/` sends it to the sign-in page, which presents it at the sign-out door behind its
+ * form. A session cookie forgotten at a browser restart left the session to be resumed by whoever opened ohmail.app
+ * next. `Secure` on a secure page only, for {@link forgetOwner}'s reason: a plain-http development origin DISCARDS a
+ * `Secure` write silently.
  */
 export const SIGNED_OUT_PENDING_MAX_AGE_S = 7_776_000;
 
 export function markSignedOutPending(write?: (cookie: string) => void): void {
+  // A jar already saying it keeps its cookie: the edge's copy is a server cookie, and a script write over it is capped.
+  if (readOwnerMarker().kind === "signed-out") return;
   put(markerLine(OWNER_SIGNED_OUT), write);
 }
 
-/** Every write of a value into the marker but a sign-in's: the pending word's attributes, ninety days. */
+/** Every client write of a value into the marker: the pending word's attributes, ninety days. */
 function markerLine(value: string): string {
-  const secure = typeof location !== "undefined" && location.protocol === "https:" ? "; Secure" : "";
-  return `${OWNER_COOKIE}=${value}; Path=/; Max-Age=${SIGNED_OUT_PENDING_MAX_AGE_S}; SameSite=Strict${secure}`;
+  return ownerLine(value, typeof location !== "undefined" && location.protocol === "https:");
+}
+
+function ownerLine(value: string, secure: boolean): string {
+  return `${OWNER_COOKIE}=${value}; Path=/; Max-Age=${SIGNED_OUT_PENDING_MAX_AGE_S}; SameSite=Strict${secure ? "; Secure" : ""}`;
+}
+
+/**
+ * THE WORD AS THE EDGE RE-SETS IT (`middleware.ts`). Safari caps every cookie page script writes at seven days, so the
+ * word {@link markSignedOutPending} wrote was gone a week later while the server's `tf_refresh` and `tf_resume` lived
+ * on, and the next visit resumed the session. A `Set-Cookie` from ohmail.app escapes the cap. Always `Secure`: the
+ * edge writes it only beside the session cookies, which are.
+ */
+export function pendingSignOutCookie(): string {
+  return ownerLine(OWNER_SIGNED_OUT, true);
 }
 
 function put(cookie: string, write?: (cookie: string) => void): void {
@@ -201,16 +217,12 @@ export function restampOwner(write?: (cookie: string) => void): void {
 /**
  * Paired with `bindApiOwner` at the one call site, and it has to be: binding without writing leaves a client that has
  * been told there is an account here and cannot see it named, which fails closed on every subsequent request — the
- * enrolment session sets no marker of its own.
+ * enrolment session sets no marker of its own. Ninety days, like the server's: a session cookie was forgotten at a
+ * browser restart. A jar already naming the account keeps the server's own cookie, which Safari does not cap.
  */
 export function rememberOwner(accountId: string, write?: (cookie: string) => void): void {
   if (!isOwnerShaped(accountId)) return;
-  const secure = typeof location !== "undefined" && location.protocol === "https:" ? "; Secure" : "";
-  const cookie = `${OWNER_COOKIE}=${accountId}; Path=/; SameSite=Strict${secure}`;
-  if (write) {
-    write(cookie);
-    return;
-  }
-  if (typeof document === "undefined") return;
-  document.cookie = cookie;
+  const marker = readOwnerMarker();
+  if (marker.kind === "account" && marker.id === accountId) return;
+  put(markerLine(accountId), write);
 }

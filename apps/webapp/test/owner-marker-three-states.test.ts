@@ -147,6 +147,32 @@ describe("the refusal names the state it is in", () => {
     expect(lines).toHaveLength(1);
   });
 
+  it("A SIGN-IN'S NAME is written with the pending word's ninety days, and never over the server's cookie naming it", async () => {
+    const { markSignedOutPending, rememberOwner } = await import("../app/shell/owner-cookie.js");
+    let pending = "";
+    markSignedOutPending((c) => { pending = c; });
+    const lines: string[] = [];
+    rememberOwner(B, (c) => lines.push(c));
+    expect(lines, "a session cookie: a browser closed without restore forgets the name").toEqual([pending.replace("=signed_out_pending;", `=${B};`)]);
+    setJar("account");
+    rememberOwner(A, (c) => lines.push(c));
+    expect(lines, "the sign-in's own ninety-day cookie was rewritten by script").toHaveLength(1);
+    rememberOwner(B, (c) => lines.push(c));
+    expect(lines.at(-1), "another account's sign-in left the previous name").toBe(lines[0]);
+  });
+
+  it("THE WORD is written over a name or silence, and never again over itself: the edge's copy outlives Safari's cap", async () => {
+    const { markSignedOutPending } = await import("../app/shell/owner-cookie.js");
+    const writes = (shape: keyof typeof SHAPES): number => {
+      setJar(shape);
+      let n = 0;
+      markSignedOutPending(() => { n += 1; });
+      return n;
+    };
+    expect({ account: writes("account"), absent: writes("absent"), "signed-out": writes("signed-out") })
+      .toEqual({ account: 1, absent: 1, "signed-out": 0 });
+  });
+
   it("the three codes are distinct — a surface that classifies one can tell them apart", async () => {
     const { ownerRefusalCodes } = await import("../app/api-client.js");
     const codes = ownerRefusalCodes();

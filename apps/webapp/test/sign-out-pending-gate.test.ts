@@ -1,7 +1,9 @@
+/** @vitest-environment jsdom */
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveSurface } from "../app/session-gate.js";
+
+process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 /**
  * A BROWSER THAT ASKED TO SIGN OUT IS FINISHED, NEVER SERVED THE APP AND NEVER RESUMED. A sign-out
@@ -15,7 +17,7 @@ import { resolveSurface } from "../app/session-gate.js";
  * no probe.
  */
 
-const HERE = fileURLToPath(new URL(".", import.meta.url));
+const HERE = `${process.cwd()}/apps/webapp/test/`;
 const API = "https://api.ohmail.app";
 const TOKEN = "tf_access_token_value";
 
@@ -128,6 +130,8 @@ afterEach(() => {
   }
   vi.resetModules();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
+  Reflect.deleteProperty(document, "cookie");
 });
 
 /** Evaluate the middleware under `env`, every key not named unset; `fetch` counted, never answered. */
@@ -152,22 +156,97 @@ async function front(env: Partial<Record<(typeof KEYS)[number], string>>, cookie
 const MANAGED = { TF_API_ORIGIN: API };
 const SELF_HOST = { NEXT_PUBLIC_OHMAIL_FLAVOR: "selfhost", OHMAIL_INTERNAL_API_ORIGIN: "http://api:8080" };
 
+/** The word as the edge re-sets it: a server cookie, host-only, never HttpOnly, ninety days. */
+const HELD = "tf_owner=signed_out_pending; Path=/; Max-Age=7776000; SameSite=Strict; Secure";
+const ownerLines = (res: Response): string[] => res.headers.getSetCookie().filter((l) => l.startsWith("tf_owner="));
+
 describe("the front door sends a pending sign-out to the sign-in page", () => {
   for (const [build, env] of [["managed", MANAGED], ["self-host", SELF_HOST]] as const) {
     for (const [jar, cookie] of [
       ["an access cookie", `tf_session=${ISSUED}; tf_resume=1; tf_owner=signed_out_pending`],
       ["a lapsed access cookie", "tf_resume=1; tf_owner=signed_out_pending"],
     ] as const) {
-      it(`${build}, ${jar}: 307 to /login, the query dropped, private and no-store, nothing fetched`, async () => {
+      it(`${build}, ${jar}: 307 to /login, the query dropped, private and no-store, nothing fetched, the word re-set`, async () => {
         const { res, asked } = await front(env, cookie);
         expect(res.status, "the pending sign-out was not redirected").toBe(307);
         expect(new URL(res.headers.get("location")!).pathname + new URL(res.headers.get("location")!).search).toBe("/login");
         expect(res.headers.get("cache-control")).toBe("private, no-store");
         expect(res.headers.get("x-middleware-rewrite"), "the splash was served").toBeNull();
         expect(asked, "the front door asked the API about a browser that asked to sign out").toEqual([]);
+        expect(res.headers.getSetCookie(), "the word stays a script cookie, which Safari forgets in seven days").toEqual([HELD]);
       });
     }
   }
+
+  it("/login re-sets the word beside a session cookie, and not without one, nor over an account's marker", async () => {
+    expect(ownerLines((await front(MANAGED, "tf_resume=1; tf_owner=signed_out_pending", "/login")).res)).toEqual([HELD]);
+    expect(ownerLines((await front(MANAGED, "tf_owner=signed_out_pending", "/login")).res)).toEqual([]);
+    expect(ownerLines((await front(MANAGED, "tf_resume=1; tf_owner=acct_A", "/login")).res)).toEqual([]);
+  });
+
+  const DAY = 86_400_000;
+  /**
+   * Safari keeps a cookie page script writes for seven days at most; one a server sets is not capped. Page script
+   * (`document.cookie`, bound by {@link bindDocumentCookie}) neither sees nor writes an HttpOnly cookie.
+   */
+  function cappedJar() {
+    const kept = new Map<string, { value: string; until: number; httpOnly: boolean }>();
+    const write = (line: string, now: number, by: "script" | "server"): void => {
+      const [pair = "", ...attrs] = line.split(";").map((a) => a.trim());
+      const name = pair.slice(0, pair.indexOf("="));
+      if (by === "script" && kept.get(name)?.httpOnly) return;
+      const age = attrs.find((a) => /^max-age=/i.test(a));
+      const ms = age === undefined ? Infinity : Number(age.slice("max-age=".length)) * 1000;
+      const httpOnly = attrs.some((a) => /^httponly$/i.test(a));
+      if (ms <= 0) kept.delete(name);
+      else kept.set(name, { value: pair.slice(name.length + 1), until: now + (by === "script" ? Math.min(ms, 7 * DAY) : ms), httpOnly });
+    };
+    const header = (now: number, by: "script" | "server" = "server"): string =>
+      [...kept].filter(([, c]) => c.until > now && (by === "server" || !c.httpOnly)).map(([n, c]) => `${n}=${c.value}`).join("; ");
+    return { write, header };
+  }
+  /** The page's `document.cookie`, over `jar` at `at()`. */
+  const bindDocumentCookie = (jar: ReturnType<typeof cappedJar>, at: () => number): void => {
+    Object.defineProperty(document, "cookie", {
+      configurable: true, get: () => jar.header(at(), "script"), set: (line: string) => jar.write(line, at(), "script"),
+    });
+  };
+  /** Every request answered as a sign-out door that is down. */
+  const doorDown = (): void => {
+    vi.stubGlobal("fetch", (async () =>
+      json({ error: { code: "db_busy", message: "busy", retryable: false } }, 503)) as unknown as typeof fetch);
+  };
+
+  it("a sign-out refused at the press and again at the sign-in page: eight days on, the next visit still goes to the sign-in page", async () => {
+    const jar = cappedJar();
+    let now = Date.parse("2026-11-03T10:00:00Z");
+    jar.write(`tf_session=${ISSUED}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=900`, now, "server");
+    jar.write("tf_resume=1; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=7776000", now, "server");
+    jar.write("tf_owner=acct_A; SameSite=Strict; Secure; Path=/; Max-Age=7776000", now, "server");
+    bindDocumentCookie(jar, () => now);
+    // The press, its door refused: the word, written by script.
+    doorDown();
+    await (await import("../app/sign-out.js")).signOut("acct_A");
+    // The press's own navigation to `/`, and the 307 to the sign-in page: each answer's Set-Cookie a server write.
+    for (const path of ["/", "/login"]) {
+      for (const line of (await front(MANAGED, jar.header(now), path)).res.headers.getSetCookie()) jar.write(line, now, "server");
+    }
+    // The sign-in page's finisher, the door still down: its whole ladder, each refusal's local half again.
+    doorDown();
+    await import("../app/sign-out.js"); // the finisher's own import: a module never loads on the pinned clock
+    const { finishPendingSignOut } = await import("../app/(product)/login/finish-sign-out.js");
+    vi.useFakeTimers();
+    let ended = false;
+    const ladder = finishPendingSignOut({ isCancelled: () => false }).finally(() => { ended = true; });
+    for (let i = 0; i < 200 && !ended; i += 1) await vi.advanceTimersByTimeAsync(250);
+    expect((await ladder).outcome).toBe("refused");
+    vi.useRealTimers();
+    now += 8 * DAY;
+    const { res } = await front(MANAGED, jar.header(now), "/");
+    const to = res.headers.get("location") ?? res.headers.get("x-middleware-rewrite") ?? "https://ohmail.app/";
+    expect({ status: res.status, to: new URL(to).pathname }, "the next visit resumed the session the person signed out of")
+      .toEqual({ status: 307, to: "/login" });
+  });
 
   it("THE CONTROL — the same jar naming an account is the splash: a rewrite, never a redirect", async () => {
     const { res, asked } = await front(MANAGED, "tf_resume=1; tf_owner=acct_A", "/");
@@ -175,11 +254,14 @@ describe("the front door sends a pending sign-out to the sign-in page", () => {
     expect(res.headers.get("location")).toBeNull();
     expect(new URL(res.headers.get("x-middleware-rewrite")!).pathname).toBe("/resume");
     expect(asked).toEqual([]);
+    expect(ownerLines(res), "the edge wrote over an account's marker").toEqual([]);
   });
 
   it("THE CONTROL — the marker alone, nothing left to finish: the landing, never the sign-in page", async () => {
     const { res } = await front(MANAGED, "tf_owner=signed_out_pending", "/");
     expect(res.status).toBe(200);
     expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.getSetCookie(), "a cacheable landing carried a cookie").toEqual([]);
+    expect((await front(MANAGED, "", "/")).res.headers.getSetCookie(), "an anonymous visit was given a cookie").toEqual([]);
   });
 });

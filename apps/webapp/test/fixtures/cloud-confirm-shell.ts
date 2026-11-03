@@ -25,6 +25,8 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { vi } from "vitest";
+import { clearSessionCookies, csrfTokenFor, sessionCookies } from "@trafficflow/api";
+import { makeAuthConfig } from "@trafficflow/services/auth";
 import messages from "../../messages/en.json";
 import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
 import { act as fencedAct, caseLive, endCase, tracked } from "../_case-fence";
@@ -115,8 +117,38 @@ export const uncoded401 = (): Response =>
     status: 401, headers: { "content-type": "text/html" },
   });
 
-/** `POST /auth/refresh` succeeding: a fresh session, no body. */
-export const refresh204 = (): Response => new Response(null, { status: 204 });
+/** A bodiless answer carrying the server's own `Set-Cookie` lines. */
+function withCookies(status: number, lines: string[]): Response {
+  const headers = new Headers();
+  for (const line of lines) headers.append("set-cookie", line);
+  return new Response(null, { status, headers });
+}
+
+const RENEWED = { accessToken: "renewed-access-token", refreshToken: "renewed-refresh-token", tokenType: "Bearer" as const, expiresIn: 900 };
+const AUTH = makeAuthConfig({ rpID: "ohmail.app", origin: "https://ohmail.app" });
+
+/** `POST /auth/refresh` succeeding: a fresh session, no body, and the cookies the server writes for it. */
+export const refresh204 = (): Response =>
+  withCookies(204, sessionCookies(RENEWED, csrfTokenFor(RENEWED.accessToken), AUTH, null));
+
+type DomJar = { setCookieSync(line: string, url: string, opts: { http: boolean }): unknown; removeAllCookiesSync(): void };
+
+/** jsdom's own jar: an HttpOnly cookie is held there and never shown to `document.cookie`. */
+function domJar(): DomJar {
+  const jar = (globalThis as { jsdom?: { cookieJar: DomJar } }).jsdom?.cookieJar;
+  if (jar === undefined) throw new Error("the cloud-confirm fixture needs the jsdom environment's cookie jar");
+  return jar;
+}
+
+/** Each answer's `Set-Cookie`, taken in as a browser takes it. The test origin is plain http: `Secure` alone is dropped there. */
+function takeCookies(url: string, res: Response): Response {
+  const at = new URL(url, window.location.href).href;
+  const plain = window.location.protocol !== "https:";
+  for (const line of res.headers.getSetCookie()) {
+    domJar().setCookieSync(plain ? line.replace(/;\s*Secure(?=\s*(?:;|$))/gi, "") : line, at, { http: true });
+  }
+  return res;
+}
 
 /* ── The script ────────────────────────────────────────────────────────────────────────────── */
 
@@ -228,7 +260,8 @@ export function installConfirmEnv(): void {
   resetResumeLaneForTests();
   vi.setSystemTime(new Date(ISO));
   window.location.hash = "";
-  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  // An HttpOnly cookie cannot be cleared through `document.cookie`.
+  domJar().removeAllCookiesSync();
   originalFetch = globalThis.fetch;
   sessionScript = [];
   syncScript = null;
@@ -236,10 +269,10 @@ export function installConfirmEnv(): void {
   refreshScript = [coded401];
   sessionAt = [];
   refreshAt = [];
-  logoutScript = [() => new Response(null, { status: 204 })];
+  logoutScript = [() => withCookies(204, clearSessionCookies())];
   logoutAt = 0;
 
-  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+  const wire = async (input: unknown, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     if (url.includes("/api/auth/session")) {
       sessionAt.push(Date.now());
@@ -290,7 +323,9 @@ export function installConfirmEnv(): void {
     }
     void init;
     return json({}, 200);
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) =>
+    takeCookies(String(input), await wire(input, init))) as unknown as typeof globalThis.fetch;
 
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -320,7 +355,7 @@ export async function teardownConfirmEnv(): Promise<void> {
   for (const root of roots) await act(() => root.unmount());
   roots = [];
   document.body.innerHTML = "";
-  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  domJar().removeAllCookiesSync();
   globalThis.fetch = originalFetch;
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;

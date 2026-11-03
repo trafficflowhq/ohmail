@@ -21,7 +21,7 @@
 
 import { ApiError, auth } from "../api-client";
 import { csrfToken } from "../csrf";
-import { lastRefreshOutcome } from "../session-refresh";
+import { lastRefreshOutcome, sessionMints } from "../session-refresh";
 import type { OwnerOutcome } from "../shell/engine";
 import { healOwner } from "../shell/owner-cookie";
 
@@ -56,6 +56,7 @@ export async function resolveOwnerOutcome(
      * become somebody else. The exemption belongs to this caller, not to the route.
      */
     const held = csrfToken() !== null;
+    const mints = sessionMints();
     const { user, scope } = await auth.session({ ...opts, ceremony: true });
     /*
      * A 200 THAT IS NOT OUR ANSWER. A captive portal, a proxy interstitial and a cache with
@@ -81,8 +82,9 @@ export async function resolveOwnerOutcome(
        * classifier returns an identity and commits nothing; the caller binds after its own cancellation check
        * and comparison against the mirror's account (`EngineProvider.onConfirmed`).
        */
-      // The jar lost its session while this was out (a sign-out's 204 took `tf_csrf`): no answer, ask again.
-      if (held && csrfToken() === null) return UNKNOWN;
+      // The jar lost its session while this was out (a sign-out's 204 took `tf_csrf`), or lost the one
+      // this check renewed into: no answer, ask again.
+      if ((held || sessionMints() !== mints) && csrfToken() === null) return UNKNOWN;
       // The server no longer writes the marker here; a silent jar gets the name back, and only a silent one.
       healOwner(accountId);
       return { kind: "owner", accountId };

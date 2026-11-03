@@ -37,6 +37,7 @@ import {
   teardownConfirmEnv, tick, tryAgainButton, uncoded401, warmCloudShell,
 } from "./fixtures/cloud-confirm-shell";
 import { markSessionDead, resetSessionTruthForTests, sessionIsDead } from "../app/shell/session-truth";
+import { csrfToken } from "../app/csrf";
 
 /** The whole ladder's worst case: 5 s + 8 s + 8 s of waiting, plus slack. */
 const LADDER_MS = 30_000;
@@ -161,6 +162,19 @@ describe("a transient failure of the session read is retried, never rendered as 
     expect(sessionCalls(), "the ladder did not re-ask after the retried read blinked").toBe(3);
     expect(showsEnded(el)).toBe(false);
     expect(shellRoot(el)).not.toBeNull();
+  });
+
+  /** The renewal's cookies reach the jar as a browser takes them: `tf_csrf` readable, the HttpOnly ones not. */
+  it("coded 401, refresh 204, then 200: the 204's cookies are in the jar and its retry opens the mailbox", async () => {
+    scriptSession(coded401, sessionFull);
+    scriptRefresh(refresh204);
+    const sent = /(?:^|\n)tf_csrf=([^;]*)/.exec(refresh204().headers.getSetCookie().join("\n"))?.[1] ?? "no tf_csrf in the 204";
+    const el = await mountCloudShell();
+    await tick(LADDER_MS);
+    expect({
+      csrf: csrfToken(), scriptSees: document.cookie.split("; ").map((c) => c.slice(0, c.indexOf("="))).sort(),
+      renewals: refreshCalls(), checks: sessionCalls(), mailbox: shellRoot(el) !== null,
+    }).toEqual({ csrf: sent, scriptSees: ["tf_csrf", "tf_owner"], renewals: 1, checks: 2, mailbox: true });
   });
 
   /**
