@@ -5,6 +5,8 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { ZONE_FORWARDED_HEADERS } from "../landing-zone.mjs";
 
 /**
@@ -19,7 +21,8 @@ import { ZONE_FORWARDED_HEADERS } from "../landing-zone.mjs";
 const ENABLED = process.env.TF_PROXY_E2E === "1";
 
 const WEBAPP = fileURLToPath(new URL("..", import.meta.url));
-const NEXT_BIN = `${WEBAPP}node_modules/.bin/next`;
+/** next's own CLI as node resolves it from the web app (the hoisted root copy under npm), run with this node. */
+const NEXT_CLI = join(dirname(createRequire(`${WEBAPP}package.json`).resolve("next/package.json")), "dist/bin/next");
 const BYPASS = "test-bypass";
 
 interface Seen { method: string; path: string; query: string; headers: IncomingMessage["headers"]; body: string }
@@ -129,7 +132,7 @@ const coded401 = (_req: IncomingMessage, res: ServerResponse): void => {
 
 describe.skipIf(!ENABLED)("the landing zone, over a real socket", () => {
   beforeAll(async () => {
-    expect(existsSync(NEXT_BIN), `next binary missing at ${NEXT_BIN} — run pnpm install`).toBe(true);
+    expect(existsSync(NEXT_CLI), `next's CLI missing at ${NEXT_CLI} — install the workspace's dependencies`).toBe(true);
     ({ server: api, port: apiPort } = await listen(() => apiSeen, (req, res) => apiReply(req, res)));
     ({ server: zone, port: zonePort } = await listen(() => zoneSeen, zoneAnswer));
     appPort = await freePort();
@@ -139,8 +142,8 @@ describe.skipIf(!ENABLED)("the landing zone, over a real socket", () => {
       LANDING_ZONE_ORIGIN: `http://127.0.0.1:${zonePort}`,
       LANDING_ZONE_BYPASS: BYPASS,
     };
-    await run(NEXT_BIN, ["build"], env);
-    next = spawn(NEXT_BIN, ["start", "-p", String(appPort)], { cwd: WEBAPP, env: { ...process.env, ...env }, stdio: "pipe" });
+    await run(process.execPath, [NEXT_CLI, "build"], env);
+    next = spawn(process.execPath, [NEXT_CLI, "start", "-p", String(appPort)], { cwd: WEBAPP, env: { ...process.env, ...env }, stdio: "pipe" });
     const deadline = Date.now() + 60_000;
     for (;;) {
       try { await raw("/login"); break; } catch {
@@ -324,15 +327,23 @@ describe.skipIf(!ENABLED)("the landing zone, over a real socket", () => {
     expect(zoneSeen, "a product path reached the zone").toHaveLength(0);
   });
 
-  it("a case variant of a zone path is the product's own 404 and never reaches the zone", async () => {
-    zoneSeen = [];
-    for (const path of ["/PRIVACY", "/De", "/Landing/x.webp"]) {
-      const r = await raw(path, { headers: { cookie: JAR } });
-      expect(r.status, path).toBe(404);
-      expect(all(r, "x-ohmail-zone"), path).toEqual([]);
-      expect(all(r, "x-frame-options"), path).toEqual(["DENY"]);
+  it("a case variant of a zone path is a 308 to the zone's spelling, which the zone answers under its one policy", async () => {
+    for (const [variant, path] of [
+      ["/PRIVACY", "/privacy"], ["/De", "/de"], ["/Landing/x.webp", "/landing/x.webp"],
+      ["/.Well-Known/org.flathub.verifiedapps.txt", "/.well-known/org.flathub.VerifiedApps.txt"],
+    ]) {
+      zoneSeen = [];
+      const r = await raw(variant!, { headers: { cookie: JAR } });
+      expect(r.status, variant).toBe(308);
+      expect(zoneSeen, `${variant} reached the zone`).toHaveLength(0);
+      const location = new URL(all(r, "location")[0]!, `http://127.0.0.1:${appPort}`);
+      expect(location.pathname, variant).toBe(path);
+      const followed = await raw(`${location.pathname}${location.search}`, { headers: { cookie: JAR } });
+      expect(followed.status, path).toBe(200);
+      expect(all(followed, "content-security-policy"), path).toEqual(["zone-policy"]);
+      expect(all(followed, "x-ohmail-zone"), path).toEqual(["cookie-absent"]);
+      expect(zoneSeen.map((s) => s.path), path).toEqual([path]);
     }
-    expect(zoneSeen, "a case variant reached the zone").toHaveLength(0);
   });
 
   it("CENSUS: every request the zone received carried only the allow-list, the hop's own names and the middleware's cache mark", () => {

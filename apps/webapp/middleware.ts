@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveApiOrigin, resolveInternalApiOrigin } from "./app/api-origin";
 import { canonicalRedirect } from "./app/canonical-host";
-import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS, zonePathOf } from "./routes.mjs";
+import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS, zoneCaseVariantOf, zonePathOf } from "./routes.mjs";
 import { armedZone, resolveLandingZone, zoneRequestHeaders, zoneTarget } from "./landing-zone.mjs";
 import { newNonce, nonceCsp } from "./app/security-headers";
 import { cookieFromStore } from "./app/shell/cookie-jar";
@@ -243,6 +243,14 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     // Decided on the path the router would serve too, so `/%70rivacy` meets the zone, never a copy.
     const zonePath = zone !== null ? zonePathOf(pathname) : null;
     if (zone !== null && zonePath !== null) return zoneRewrite(request, zone, bypass, zonePath);
+    // A zone path in other capitals would be a page the header rules leave without a policy: it goes to
+    // the zone's own spelling, on this origin, the query as sent.
+    const variant = zone !== null ? zoneCaseVariantOf(pathname) : null;
+    if (variant !== null) {
+      const canonical = request.nextUrl.clone();
+      canonical.pathname = variant;
+      return NextResponse.redirect(canonical, 308);
+    }
     if (
       pathname === "/login" || pathname === "/join" || pathname === "/verify-email" ||
       // `/link-desktop` receives no credential and PRINTS one, which needs the same three
@@ -468,6 +476,10 @@ function withPathname(request: NextRequest, pathname: string): URL {
  * the first `{`, so a note containing `"/"` reads as a duplicate matcher entry. Measured while
  * adding `/de`.
  *
+ * The first object arm takes a zone path in other capitals: `ZONE_CASE_SOURCE` in `routes.mjs`, spelled out,
+ * every letter a class of its two cases so a case-insensitive matcher reads the same set. Step 3 sends such a
+ * path to the zone's own spelling.
+ *
  * The last arm takes a path with a `.` or `..` segment, which no literal matches although the router
  * serves it (`/./privacy` is the privacy page): the middleware sees it already resolved.
  * The two arms before it reach EVERY page — the catch-all and `/demo` too — but only for a request that
@@ -481,6 +493,7 @@ export const config = {
     "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/de", "/privacy", "/imprint",
     "/subprocessors", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt", "/api/waitlist",
     "/site-assets/:path*", "/landing/:path*",
+    { source: "/((?:[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Ii][Mm][Pp][Rr][Ii][Nn][Tt]|[Ss][Uu][Bb][Pp][Rr][Oo][Cc][Ee][Ss][Ss][Oo][Rr][Ss]|[Dd][Ee]|[Aa][Pp][Ii]/[Ww][Aa][Ii][Tt][Ll][Ii][Ss][Tt]|[Ff][Ll][Aa][Tt][Hh][Uu][Bb]-[Vv][Ee][Rr][Ii][Ff][Ii][Cc][Aa][Tt][Ii][Oo][Nn]|\\.[Ww][Ee][Ll][Ll]-[Kk][Nn][Oo][Ww][Nn]/[Oo][Rr][Gg]\\.[Ff][Ll][Aa][Tt][Hh][Uu][Bb]\\.[Vv][Ee][Rr][Ii][Ff][Ii][Ee][Dd][Aa][Pp][Pp][Ss]\\.[Tt][Xx][Tt])|(?:[Ss][Ii][Tt][Ee]-[Aa][Ss][Ss][Ee][Tt][Ss]|[Ll][Aa][Nn][Dd][Ii][Nn][Gg])/.*)" },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "next-action" }] },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "content-type" }] },
     { source: "/((?:[^/]*/)*\\.\\.?(?:/.*)?)" },
