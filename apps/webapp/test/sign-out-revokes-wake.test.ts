@@ -65,6 +65,8 @@ function installSubscribedBrowser(unsubscribed: { value: boolean }): void {
 }
 
 const deleted: string[] = [];
+/** What each DELETE was handed beside the id: the sign-out press's pass, or nothing. */
+const passes: unknown[] = [];
 
 /* The Cloud client, configured — the shape a browser build has. `subscribe`/`vapidKey` are here
    because the module's `PushApi` names them; only `unsubscribe` is exercised by an OFF. */
@@ -73,7 +75,7 @@ vi.mock("../app/api-client", () => ({
   push: {
     vapidKey: () => Promise.resolve({ publicKey: null }),
     subscribe: () => Promise.resolve({ id: "unused" }),
-    unsubscribe: (id: string) => { deleted.push(id); return Promise.resolve(); },
+    unsubscribe: (id: string, opts?: unknown) => { deleted.push(id); passes.push(opts); return Promise.resolve(); },
   },
 }));
 
@@ -81,6 +83,7 @@ describe("revokeWakeRegistration", () => {
   beforeEach(() => {
     cachePuts.length = 0;
     deleted.length = 0;
+    passes.length = 0;
     window.localStorage.clear();
     installFakeCaches();
   });
@@ -101,6 +104,27 @@ describe("revokeWakeRegistration", () => {
     // failed delete left behind is collected by the sender's own prune.
     expect(unsubscribed.value, "the browser kept its push subscription").toBe(true);
     expect(outcome).toBe("unsubscribed");
+  });
+
+  it("hands the sign-out press's account to the DELETE on both turn-off paths, and nothing when it names none", async () => {
+    /* The press marks the jar pending before it revokes, so the row's DELETE carries the account the
+       jar named at the press (`api-client.ts` lets that one call through). Both OFF paths delete a row:
+       a live subscription, and an id left with no subscription under it. */
+    const { revokeWakeRegistration } = await import("../app/shell/notification-settings");
+    installSubscribedBrowser({ value: false });
+    window.localStorage.setItem("ohmail.notifications.subscriptionId", "row-live");
+    await revokeWakeRegistration({ signingOutOf: "acct_A" });
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(null) } }) },
+    });
+    window.localStorage.setItem("ohmail.notifications.subscriptionId", "row-left");
+    await revokeWakeRegistration({ signingOutOf: "acct_A" });
+    window.localStorage.setItem("ohmail.notifications.subscriptionId", "row-bare");
+    await revokeWakeRegistration();
+    expect(deleted).toEqual(["row-live", "row-left", "row-bare"]);
+    expect(passes, "the press's account did not reach the DELETE, or a bare revoke carried one")
+      .toEqual([{ signingOutOf: "acct_A" }, { signingOutOf: "acct_A" }, undefined]);
   });
 
   it("writes the notify state OFF — the last half, for a row that somehow survives", async () => {
