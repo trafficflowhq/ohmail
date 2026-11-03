@@ -6,7 +6,7 @@ import {
   threads, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import {
-  createLogger, htmlWords, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime, prepareHtmlForStorage, recordSentMessage,
+  createLogger, HTML_TRUNCATION_MARKER, htmlWords, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime, prepareHtmlForStorage, recordSentMessage,
   SendNotSubmitted, SentCopyAppendFailed,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundAddress, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
@@ -65,14 +65,14 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * THE QUOTED ORIGINAL of a forward — a text block always, an html block for a rich send. The
- * header is the conventional forwarded-message banner (From / Date / Subject). The original's
- * stored html is RE-SANITIZED before quoting (attacker-authored, and this is the last touch
- * before the wire); a plain original is escaped into `<br>`-joined text. The html half is folded
- * in only when the draft is itself rich. THE BLOCK CARRIES NO SEPARATOR — `forwardJoin` owns
- * that: a forward may be sent with NO note, and a baked-in gap became the first thing in the mail
- * (two blank lines above the banner, a rule floating over nothing). A separator between two
- * things belongs to the join; the block starts on the banner.
+ * THE QUOTED ORIGINAL of a forward — a text block always, an html block when the draft is rich or
+ * the original has html a reader sees (`ownHtml`). The header is the conventional forwarded-message
+ * banner (From / Date / Subject). The original's stored html is RE-SANITIZED before quoting
+ * (attacker-authored, and this is the last touch before the wire); a plain original is escaped
+ * into `<br>`-joined text. THE BLOCK CARRIES NO SEPARATOR — `forwardJoin` owns that: a forward
+ * may be sent with NO note, and a baked-in gap became the first thing in the mail (two blank lines
+ * above the banner, a rule floating over nothing). A separator between two things belongs to the
+ * join; the block starts on the banner.
  */
 function forwardedQuote(
   orig: { from: string; date: Date | null; subject: string },
@@ -80,7 +80,7 @@ function forwardedQuote(
   originalHtml: string | null,
   clock: { zone?: string; locale?: string } = {},
   cids: ReadonlySet<string> = new Set(),
-): { text: string; html: string } {
+): { text: string; html: string; ownHtml: boolean } {
   // The date as the SENDER reads it, both parts: a raw ISO instant was what every forward carried.
   const dateStr = orig.date ? forwardedDate(orig.date, clock.zone, clock.locale) : "";
   const headerLines = [
@@ -95,15 +95,22 @@ function forwardedQuote(
   const derived = originalHtml !== null && originalText !== "" && originalText === htmlWords(originalHtml);
   const plain = originalText.trim() !== "" && !derived ? originalText : safeHtml ? htmlToPlainText(safeHtml) : "";
   const text = `${headerLines.join("\n")}\n\n${plain}`;
-  const bodyHtml = safeHtml ?? escapeHtml(plain).replace(/\n/g, "<br>");
+  // The html is quoted only when a reader sees something in it and the store holds it whole;
+  // otherwise the words are (a remote-pictures-only letter, a body cut at the stored cap).
+  const shows = safeHtml !== null && !originalHtml!.endsWith(HTML_TRUNCATION_MARKER)
+    && (/<img\b/i.test(safeHtml) || safeHtml.replace(/<[^>]*>/g, "").replace(/&nbsp;|&#160;/gi, " ").trim() !== "");
+  const bodyHtml = shows ? safeHtml : plainAsHtml(plain);
   const html =
     `<div>---------- Forwarded message ----------</div>` +
     `<div>From: ${escapeHtml(orig.from)}</div>` +
     (dateStr ? `<div>Date: ${escapeHtml(dateStr)}</div>` : "") +
     `<div>Subject: ${escapeHtml(orig.subject)}</div>` +
     `<blockquote>${bodyHtml}</blockquote>`;
-  return { text, html };
+  return { text, html, ownHtml: shows };
 }
+
+/** Plain text as html: escaped, line breaks as `<br>`, no formatting added. */
+const plainAsHtml = (s: string): string => escapeHtml(s).replace(/\n/g, "<br>");
 
 /** A Content-ID as a `cid:` url names it: no angle brackets. */
 const bareCid = (contentId: string): string => contentId.replace(/[<>]/g, "");
@@ -449,8 +456,9 @@ type ForwardSource = {
 
 /**
  * THE ONE COMPOSER of a forward's body: the note, then the quoted original, in text and (for a rich
- * note) html. Called from the reservation for stored words and from the mailbox read for words the
- * store let go, so the two sources differ in where the words come from and nowhere else.
+ * note, or an original with html of its own, whose inline pictures need an html part) html, a
+ * plain note joining it escaped. Called from the reservation for stored words and from the mailbox
+ * read for words the store let go, so the two sources differ in where the words come from and nowhere else.
  */
 function composeForward(
   note: { text: string; html: string | null; blank: boolean },
@@ -460,9 +468,10 @@ function composeForward(
   cids: ReadonlySet<string>,
 ): { text: string; html?: string } {
   const quoted = forwardedQuote(banner, originalText, originalHtml, clock, cids);
+  const noteHtml = note.html ? note.html : quoted.ownHtml ? plainAsHtml(note.text) : null;
   return {
     text: forwardJoin(note.text, quoted.text, "\n\n", note.blank),
-    ...(note.html ? { html: forwardJoin(note.html, quoted.html, "<br><br><hr>", note.blank) } : {}),
+    ...(noteHtml !== null ? { html: forwardJoin(noteHtml, quoted.html, "<br><br><hr>", note.blank) } : {}),
   };
 }
 
@@ -2951,7 +2960,7 @@ export class SendService {
         // The user's text, then the quoted original on a forward whose words the store holds
         // (`composeForward`); otherwise the note alone — a normal send, or a forward whose words
         // are read from the mailbox at send and composed there by the same function. The html
-        // half exists ONLY when the draft is itself rich; a plain forward quotes in text alone.
+        // half exists when the draft is rich or a forwarded original has html of its own.
         ...(fwdBody ?? { text: d.body, ...(html ? { html } : {}) }),
         messageId: mintedMessageId,
         ...(inReplyTo ? { inReplyTo, references } : {}),

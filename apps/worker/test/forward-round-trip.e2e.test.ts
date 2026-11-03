@@ -109,7 +109,12 @@ describe("forward round trip (GreenMail SMTP+IMAP + Postgres)", () => {
   const closers: Array<() => Promise<void>> = [];
   afterEach(async () => { for (const c of closers.splice(0)) await c(); });
 
-  it("an HTML-only original with a cid picture and two files arrives whole and parses whole", async () => {
+  // The three notes a forward is sent with: formatted, plain (stored with no html), and none.
+  it.each([
+    ["a formatted note", { body: "Passing this along.", html: "<p>Passing this along.</p>" }],
+    ["a plain note", { body: "Passing this along." }],
+    ["no note", { body: "" }],
+  ] as const)("an HTML-only original with a cid picture and two files arrives whole and parses whole (%s)", async (_shape, note) => {
     const h = await makeHarness();
     closers.push(() => h.adapter.close());
     const ctx: ServiceContext = { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
@@ -135,11 +140,10 @@ describe("forward round trip (GreenMail SMTP+IMAP + Postgres)", () => {
     const origParts = await h.db.select().from(attachments).where(eq(attachments.messageId, orig!.id));
     expect(origParts).toHaveLength(3);
 
-    // 2. The forward: a rich note above the original, addressed to a second GreenMail user.
+    // 2. The forward: the note above the original, addressed to a second GreenMail user.
     const recipient = `r-${randomUUID()}@trafficflow.test`;
     const [draft] = await h.db.insert(drafts).values({
-      accountId: h.accountId, mailboxId: h.mailboxId, subject: "Fwd: Q3 numbers",
-      body: "Passing this along.", html: "<p>Passing this along.</p>",
+      accountId: h.accountId, mailboxId: h.mailboxId, subject: "Fwd: Q3 numbers", ...note,
       to: [{ name: null, address: recipient }], cc: [], bcc: [],
       status: "draft", createdAt: new Date(), updatedAt: new Date(),
     }).returning();
@@ -165,7 +169,7 @@ describe("forward round trip (GreenMail SMTP+IMAP + Postgres)", () => {
     const source = await deliveredSource(h.cfg, recipient, res.providerMessageId!);
     const parsed = await normalizeMime(source);
     // The plain alternative: the note, the banner, and the ORIGINAL'S WORDS — derived from its html.
-    expect(parsed.textBody).toContain("Passing this along.");
+    expect(parsed.textBody.startsWith(note.body || "---------- Forwarded message")).toBe(true);
     const afterBanner = parsed.textBody.split("---------- Forwarded message ----------")[1] ?? "";
     expect(afterBanner).toContain("From: lena@atelier.example");
     expect(afterBanner, "the text part carries the original, not headers over nothing").toContain("Quarterly numbers attached");

@@ -3,9 +3,10 @@ import { accountStorage, attachments, drafts, messages, messageBodies, outboundS
 import { eq } from "drizzle-orm";
 import { FORWARD_MAX_RAW_BYTES, forwardedDate, sendService } from "@trafficflow/services/mail";
 import type { ServiceContext, AttachmentAdapter, OpenAdapter } from "@trafficflow/services/mail";
-import { normalizeMime, prepareHtmlForStorage, STORED_HTML_CAP_BYTES, textFromHtml } from "@trafficflow/core/mail";
+import { htmlToPlainText, normalizeMime, prepareHtmlForStorage, STORED_HTML_CAP_BYTES, textFromHtml } from "@trafficflow/core/mail";
 import type { SendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core/mail";
-import { MessageGoneError, RawMessageTooLargeError } from "@trafficflow/core/adapters/imap";
+import { MessageGoneError, RawMessageTooLargeError, outboundToMail } from "@trafficflow/core/adapters/imap";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { FIXED_NOW, makeDeps, seedMailbox, seedMessage, seedSession, seedBody } from "../../api/test/helpers.js";
 
 /**
@@ -560,7 +561,10 @@ describe("a forward whose original cannot be loaded is refused; an html-only one
     await sendService.send(w.ctx, w.draftId, "fwd-key-words", { openSendAdapter: send.openSendAdapter, openFetchAdapter: fetch.openFetchAdapter },
       { forwardOf: w.originalId });
     const msg = send.delivered[0]!;
-    expect(msg.html).toBeUndefined();
+    // An html original keeps an html part under a plain note; the picture's part is not on this send.
+    expect(msg.html).toContain('href="https://meet.example/j/9876543210"');
+    expect(msg.html!.startsWith("See below.<br><br><hr>")).toBe(true);
+    expect(msg.html).not.toContain("<img");
     expect(msg.text).toContain("Join the meeting (https://meet.example/j/9876543210)");
   });
 
@@ -937,9 +941,11 @@ describe("a forward is refused only when neither its words nor its files can be 
  */
 describe("a forwarded letter's inline pictures stay in place in the quote", () => {
   const PIC = "dddddddd-0000-4000-8000-000000000004";
-  async function pictured() {
+  type Note = { note: string; noteHtml?: string };
+  const RICH: Note = { note: "See the photo.", noteHtml: "<p>See the photo.</p>" };
+  async function pictured(n: Note = RICH) {
     const w = await world({
-      note: "See the photo.", noteHtml: "<p>See the photo.</p>",
+      ...n,
       origHtml: '<p>Before</p><img src="cid:photo@x" alt="Photo" width="320"><p>After</p>'
         + '<img src="cid:gone@x" alt="Not sent"><img src="https://tracker.example/p.gif">',
     });
@@ -954,10 +960,15 @@ describe("a forwarded letter's inline pictures stay in place in the quote", () =
       { openSendAdapter: s.send.openSendAdapter, openFetchAdapter: s.fetch.openFetchAdapter },
       { forwardOf: s.w.originalId, ...input });
 
-  it("the quote keeps the picture where it stood, naming the inline part that travels with it", async () => {
-    const s = await pictured();
+  it.each([
+    ["a formatted note", RICH, "<p>See the photo.</p><br><br><hr>"],
+    ["a plain note", { note: "See the photo." }, "See the photo.<br><br><hr>"],
+    ["no note", { note: "" }, "<div>---------- Forwarded message"],
+  ] as const)("the quote keeps the picture where it stood, naming the inline part that travels with it (%s)", async (_shape, n, opens) => {
+    const s = await pictured(n);
     expect((await go(s, "fwd-pic-1")).status).toBe("sent");
     const msg = s.send.delivered[0]!;
+    expect(msg.html!.startsWith(opens)).toBe(true);
     const quote = msg.html!.slice(msg.html!.indexOf("<blockquote>"));
     expect(quote).toMatch(/<p>Before<\/p><img src="cid:photo@x" alt="Photo" width="320" \/><p>After<\/p>/);
     expect(msg.attachments?.map((a) => a.cid)).toEqual(["photo@x"]);
@@ -971,6 +982,131 @@ describe("a forwarded letter's inline pictures stay in place in the quote", () =
     const s = await pictured();
     expect((await go(s, "fwd-pic-2", { forwardParts: [] })).status).toBe("sent");
     expect(s.send.delivered[0]!.html).not.toContain("<img");
+  });
+
+  it("under a plain note, a picture taken off the forward leaves the quote, which keeps its html", async () => {
+    const s = await pictured({ note: "See the photo." });
+    expect((await go(s, "fwd-pic-3", { forwardParts: [] })).status).toBe("sent");
+    const msg = s.send.delivered[0]!;
+    expect(msg.html).toContain("<blockquote><p>Before</p>");
+    expect(msg.html).not.toContain("<img");
+    expect(msg.html).not.toContain("cid:");
+    expect(msg.attachments ?? []).toEqual([]);
+  });
+
+  it("a plain note joins the html part escaped, with no markup of its own", async () => {
+    const s = await pictured({ note: "Use <b>bold</b> & co.\nThanks" });
+    expect((await go(s, "fwd-pic-4")).status).toBe("sent");
+    const msg = s.send.delivered[0]!;
+    expect(msg.html!.startsWith("Use &lt;b&gt;bold&lt;/b&gt; &amp; co.<br>Thanks<br><br><hr><div>")).toBe(true);
+    expect(msg.text.startsWith("Use <b>bold</b> & co.\nThanks\n\n---------- Forwarded message")).toBe(true);
+  });
+
+  it("a forward of a note-less forward keeps the picture in the nested quote, with its cid", async () => {
+    // The first forward as the wire carries it, received back and parsed as ingest parses it.
+    const first = await pictured({ note: "" });
+    expect((await go(first, "fwd-pic-5")).status).toBe("sent");
+    const raw: Buffer = await new Promise((resolve, reject) => {
+      new MailComposer({ ...outboundToMail(first.send.delivered[0]!, "<fwd-1@atelier.example>", FIXED_NOW), disableFileAccess: true, disableUrlAccess: true })
+        .compile().build((err: Error | null, out: Buffer) => (err ? reject(err) : resolve(out)));
+    });
+    const parsed = await normalizeMime(raw);
+    const pic = parsed.attachments.find((a) => a.filename === "part-2.bin")!;
+    expect(pic).toMatchObject({ contentId: "photo@x", inline: true });
+
+    const w = await world({ note: "See the photo.", noteHtml: "<p><strong>See the photo.</strong></p>" });
+    await w.db.update(messageBodies).set({ text: parsed.textBody, html: prepareHtmlForStorage(parsed.htmlBody) })
+      .where(eq(messageBodies.messageId, w.originalId));
+    await w.db.insert(attachments).values({
+      accountId: w.ctx.accountId, messageId: w.originalId, filename: pic.filename, contentType: pic.contentType,
+      sizeBytes: 3, partId: pic.partId, inline: pic.inline, contentId: pic.contentId,
+    });
+    const send = sendSpy();
+    const fetch = fetchSpy({ [pic.partId!]: new Uint8Array([1, 2, 3]) });
+    expect((await sendService.send(w.ctx, w.draftId, "fwd-pic-6",
+      { openSendAdapter: send.openSendAdapter, openFetchAdapter: fetch.openFetchAdapter },
+      { forwardOf: w.originalId })).status).toBe("sent");
+    const msg = send.delivered[0]!;
+    const quote = msg.html!.slice(msg.html!.indexOf("<blockquote>"));
+    expect(quote).toMatch(/<p>Before<\/p><img src="cid:photo@x" alt="Photo" width="320" \/><p>After<\/p>/);
+    expect(msg.attachments?.map((a) => a.cid)).toEqual(["photo@x"]);
+  });
+});
+
+/** The common html shapes of a forwarded letter, under no note, a plain note and a bold one. */
+describe("a forwarded html letter reads as it was written in the quote", () => {
+  const NOTES = [
+    ["no note", { note: "" }],
+    ["a plain note", { note: "See below." }],
+    ["a bold note", { note: "See below.", noteHtml: "<p><strong>See below.</strong></p>" }],
+  ] as const;
+  type Note = (typeof NOTES)[number][1];
+  async function forward(n: Note, origHtml: string, set: { text?: string; pic?: string } = {}) {
+    const w = await world({ ...n, origHtml });
+    if (set.text !== undefined) await w.db.update(messageBodies).set({ text: set.text }).where(eq(messageBodies.messageId, w.originalId));
+    if (set.pic) {
+      await w.db.insert(attachments).values({
+        accountId: w.ctx.accountId, messageId: w.originalId, filename: "crane.jpg",
+        contentType: "image/jpeg", sizeBytes: 3, partId: "2", inline: true, contentId: `<${set.pic}>`,
+      });
+    }
+    const send = sendSpy();
+    const fetch = fetchSpy({ "2": new Uint8Array([1, 2, 3]) });
+    expect((await sendService.send(w.ctx, w.draftId, `fwd-read-${crypto.randomUUID()}`,
+      { openSendAdapter: send.openSendAdapter, openFetchAdapter: fetch.openFetchAdapter },
+      { forwardOf: w.originalId })).status).toBe("sent");
+    const msg = send.delivered[0]!;
+    const quote = msg.html === undefined ? null : msg.html.slice(msg.html.indexOf("<blockquote>"));
+    return { msg, quote, read: quote === null ? "" : htmlToPlainText(quote) };
+  }
+  const GMAIL = '<div dir="ltr"><div>Hi Sam,</div><div><br></div><div>Here are the numbers for Q3.</div>'
+    + "<div>Revenue is up 4%.</div><div>Costs are flat.</div><div><br></div><div>Best,</div><div>Lena</div></div>";
+
+  it.each(NOTES)("a letter written one div per line keeps its lines (%s)", async (_shape, n) => {
+    const { read } = await forward(n, GMAIL);
+    expect(read).toContain("> Hi Sam,\n> \n> Here are the numbers for Q3.\n> Revenue is up 4%.\n> Costs are flat.\n> \n> Best,\n> Lena");
+  });
+
+  it.each(NOTES)("a picture between div lines stays in place and the lines stay apart (%s)", async (_shape, n) => {
+    const { msg, quote, read } = await forward(n,
+      '<div>Here is the crane we saw.</div><div><img src="cid:ii_m1" alt="crane.jpg" width="320" height="240"><br></div>'
+      + "<div>Taken on Sunday.</div><div>Lena</div>", { pic: "ii_m1" });
+    expect(quote).toMatch(/Here is the crane we saw\.<br \/><img src="cid:ii_m1" alt="crane.jpg" width="320" height="240" \/><br \/>Taken on Sunday\./);
+    expect(read).toContain("> Taken on Sunday.\n> Lena");
+    expect(msg.attachments?.map((a) => a.cid)).toEqual(["ii_m1"]);
+  });
+
+  it.each(NOTES)("a table receipt keeps its cells apart (%s)", async (_shape, n) => {
+    const { read } = await forward(n, "<table><tr><th>Item</th><th>Qty</th><th>Price</th></tr>"
+      + "<tr><td>Desk lamp</td><td>2</td><td>15.00</td></tr><tr><td>Total</td><td></td><td>30.00</td></tr></table>");
+    expect(read).toMatch(/> Item\W+Qty\W+Price\n> Desk lamp\W+2\W+15\.00\n> Total\W+30\.00/);
+    expect(read).not.toContain("215.00");
+  });
+
+  it.each(NOTES)("the document head never reaches the quote (%s)", async (_shape, n) => {
+    const { read } = await forward(n, "<html><head><title>Mailer title</title></head><body><noscript>Enable js</noscript><h1>Hello</h1><p>Body</p></body></html>");
+    expect(read).toContain("> Hello\n> Body");
+    expect(read).not.toContain("Mailer title");
+    expect(read).not.toContain("Enable js");
+  });
+
+  it.each(NOTES)("an original past the stored cap is quoted whole, never cut at the cap (%s)", async (_shape, n) => {
+    const lines = Array.from({ length: 6000 }, (_, i) => `Line ${i + 1} of 6000, written out in full.`);
+    const stored = prepareHtmlForStorage(lines.map((l) => `<div>${l}</div>`).join(""))!;
+    expect(stored.length).toBeLessThan(lines.join("").length + 6000 * 11);
+    const { msg, quote } = await forward(n, stored, { text: lines.join("\n") });
+    expect(msg.text).toContain("Line 6000 of 6000, written out in full.");
+    if (n.note === "" || !("noteHtml" in n)) expect(msg.html).toBeUndefined();
+    else expect(quote).toContain("Line 5999 of 6000, written out in full.<br>Line 6000 of 6000, written out in full.");
+  });
+
+  it.each(NOTES)("a letter whose html shows only a remote picture forwards its words, never an empty quote (%s)", async (_shape, n) => {
+    const { msg, quote } = await forward(n,
+      '<p><a href="https://shop.example/sale"><img src="https://cdn.example/flyer.jpg" alt="Autumn sale"></a></p><p><img src="https://cdn.example/b.jpg"></p>',
+      { text: "Autumn sale, 30% off everything. Shop: https://shop.example/sale" });
+    expect(msg.text).toContain("Autumn sale, 30% off everything.");
+    if ("noteHtml" in n) expect(quote).toContain("Autumn sale, 30% off everything.");
+    else expect(msg.html).toBeUndefined();
   });
 });
 

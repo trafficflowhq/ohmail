@@ -3,9 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { drafts } from "@trafficflow/db";
+import { randomUUID } from "node:crypto";
+import { attachments, drafts, mailboxCredentials } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
+import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineDraft, type FetchLike } from "@ohmail/client-engine";
 import {
   FIXED_NOW, makeDeps, seedBody, seedMailbox, seedMessage, seedSession, seedThread,
@@ -60,8 +62,11 @@ async function waitFor(p: () => boolean | Promise<boolean>, what: string, timeou
 }
 const go = async (hash: string) => act(async () => { window.location.hash = hash; window.dispatchEvent(new HashChangeEvent("hashchange")); });
 
+/** A letter whose picture sits in its text: an html-only body and the inline part it names. */
+const PICTURED = '<p>Before</p><p><img src="cid:crane@x" alt="crane" width="96" height="48"></p><p>The picture sits above this line.</p>';
+
 /** A letter from Lena open in her view, and another draft in Drafts the composer moves on to. */
-async function world() {
+async function world(o: { pictured?: boolean } = {}) {
   const delivered: OutboundMessage[] = [];
   const factory: OpenSendAdapter = async () => ({
     async send(msg: OutboundMessage) { delivered.push(msg); return { providerMessageId: msg.messageId ?? "<none>" }; },
@@ -87,7 +92,24 @@ async function world() {
     accountId: s.accountId, mailboxId, threadId, subject: "Plans", fromAddress: "lena@atelier.example",
     date: FIXED_NOW, unread: false, folder: "INBOX",
   })).id;
-  await seedBody(db, { messageId: letter, text: "Shall we meet?" });
+  if (o.pictured) {
+    await seedBody(db, { messageId: letter, text: "", html: PICTURED });
+    await db.insert(attachments).values({
+      accountId: s.accountId, messageId: letter, filename: "crane.png", contentType: "image/png",
+      sizeBytes: 4, partId: "2", inline: true, contentId: "crane@x",
+    });
+    // The send reads the inline part through the real fetch door; the IMAP socket is the only double.
+    const sealed = await (deps as ApiDeps).keyProvider.encrypt(randomUUID());
+    await db.insert(mailboxCredentials).values({
+      mailboxId, transport: "imap", secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
+      meta: { host: "imap.forward-picture.example", port: 993, secure: true, user: "me@forward-picture.example" },
+    });
+    vi.spyOn(ImapAdapter.prototype, "fetchPart").mockResolvedValue({ contentType: "image/png", filename: "crane.png", body: new Uint8Array([137, 80, 78, 71]) });
+    vi.spyOn(ImapAdapter.prototype, "forceClose").mockImplementation(() => { /* no socket to destroy */ });
+    ((deps as ApiDeps).services as { imapAdmission: unknown }).imapAdmission = { acquire: async () => true, release: async () => {} };
+  } else {
+    await seedBody(db, { messageId: letter, text: "Shall we meet?" });
+  }
   const other = await fetchImpl("http://localhost/drafts", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -262,5 +284,36 @@ describe("a dock's forward row the composer took while the dock's write waited",
       await act(async () => { await w.engine.flushPending(); await new Promise((r) => setTimeout(r, 100)); });
     }
     expect(await kept(), "a forward's words were lost or left twice").toEqual(both);
+  }, 120_000);
+});
+
+describe("a web forward of a letter whose picture sits in its text", () => {
+  it.each([
+    ["no note", null, ""],
+    ["a plain note", "<p>See the crane.</p>", "See the crane.<br><br><hr>"],
+    ["a bold note", "<p><strong>See the crane.</strong></p>", "<p><strong>See the crane.</strong></p><br><br><hr>"],
+  ] as const)("Shift+F with %s keeps the picture in place in the quote", async (_shape, note, opens) => {
+    const w = await world({ pictured: true });
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "F", shiftKey: true, bubbles: true, cancelable: true }));
+    });
+    await waitFor(() => dock() !== null && q(".reply[data-reply-for] .rcp-input") !== null, "the forward dock");
+    const input = q<HTMLInputElement>(".reply[data-reply-for] .rcp-input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, `${TO}, `);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    if (note !== null) await act(async () => { editorOf(dock()!).commands.setContent(note); });
+    const send = [...container.querySelectorAll<HTMLButtonElement>(".reply[data-reply-for] button")]
+      .find((b) => (b.textContent ?? "").trim().startsWith("Send"))!;
+    await act(async () => { send.click(); });
+    await waitFor(() => w.delivered.length > 0, "the forward delivered", SAVED);
+    const msg = w.delivered[0]!;
+    expect(msg.html, "the forward left without an html part").toBeTruthy();
+    expect(msg.html!.startsWith(opens ? opens : "<div>---------- Forwarded message")).toBe(true);
+    const quote = msg.html!.slice(msg.html!.indexOf("<blockquote>"));
+    expect(quote).toMatch(/<p>Before<\/p><p><img src="cid:crane@x" alt="crane" width="96" height="48" \/><\/p><p>The picture sits above this line\.<\/p>/);
+    expect(msg.attachments?.map((a) => a.cid)).toEqual(["crane@x"]);
+    expect(msg.text).not.toContain("cid:");
   }, 120_000);
 });
