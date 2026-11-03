@@ -9,10 +9,12 @@ import {
 import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
   NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, autoReplySuppression,
-  dsnVerdict, effectForDestination, evaluateRules, gateAuthor, isDeliveryReportShape, screenerAdmits,
+  dsnVerdict, effectForDestination, evaluateRules, gateAuthor, isDaemonAddress, isDeliveryReportShape, screenerAdmits,
   unsubscribeHeaderState, type AuthVerdict, type KnownSenders, type OhboxPolicy, type Rule,
 } from "./rules.js";
-import { claimedIdentity, ownedBrand, registrableDomain, type IdentityFact } from "./sender-check.js";
+import {
+  claimedIdentity, companyDomainsOf, ownedBrand, registrableDomain, senderDomainOf, type IdentityFact,
+} from "./sender-check.js";
 // TYPE-ONLY: the check is injected by the Node compositions, so no bundle carries it through here.
 import type { LookupBudget, SignatureCheck } from "./adapters/dkim.js";
 import { authScreens } from "./sender-headers.js";
@@ -379,6 +381,11 @@ export interface NewPlan {
    */
   listAddresses: readonly string[];
   /**
+   * The gate placed this letter for want of confirmation ({@link RuleDecision.unconfirmed}):
+   * `messages.unconfirmed_hold`. Absent where nothing held it so, or a cutoff kept its folder.
+   */
+  unconfirmedHold?: true;
+  /**
    * This placement was made by somebody other than this organizer — the customer's own hand, or
    * the previous organizer an import hold has not yet asked about. It decides ONE thing at
    * commit, the third of the three structural gates: the `folder_state` row is written
@@ -607,7 +614,7 @@ export interface PlanDeps {
    */
   trustedAuthservIds?: ReadonlySet<string>;
   /**
-   * The sender's own DKIM signature, checked where {@link trustedAuthservIds} is empty — see
+   * The sender's own DKIM signature, checked where the header verdict is `unavailable` — see
    * {@link signatureVerdict} for which letters — within the cycle's lookup budget
    * ({@link signaturesForCycle}). Absent or `null`: no check, and no lookup.
    */
@@ -695,23 +702,31 @@ export function signaturesForCycle(signatures: PlanSignatures | null | undefined
 const SIGNATURE_CHECK_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * THE SENDER'S OWN SIGNATURE, IN PLACE OF A HEADER NOBODY VOUCHES FOR. Only where the mailbox's
- * provider is named by no authserv-id (the header verdict is then `unavailable`), and only for a
- * letter something automatic reads `pass` on: a company's own domain (the act's admission and the
- * identity line), or a one-click letter while the account lets a screen-out unsubscribe. Never the
- * person's own mail, an oversize letter, or one INTERNALDATE says is over 30 days old. The check
- * answers `pass` or `unavailable` and never `fail`, so routing, which reads `fail` alone, is
- * unchanged. Outside any transaction, like the classifier call, and within the cycle's lookup
- * budget; logged by reason alone.
+ * YOUNG ENOUGH, BY THE SERVER'S CLOCK, FOR ITS SENDER'S SIGNATURE TO BE CHECKED ({@link signatureVerdict});
+ * no arrival time is young. The gate's `ownedUnconfirmed` reads the same age: a letter too old to check
+ * is never held for want of a check, and nobody outside can backdate INTERNALDATE.
+ */
+export function signatureCheckableAge(arrivedAt: Date | null | undefined, now: Date): boolean {
+  return arrivedAt == null || now.getTime() - arrivedAt.getTime() <= SIGNATURE_CHECK_MAX_AGE_MS;
+}
+
+/**
+ * THE SENDER'S OWN SIGNATURE, IN PLACE OF A HEADER NOBODY VOUCHES FOR. Wherever the header verdict is
+ * `unavailable` — a provider named by no authserv-id, or one whose believed position said nothing —
+ * and only for a letter something reads `pass` on: a company's own domain (the gate's
+ * `ownedUnconfirmed`, the act's admission and the identity line), or a one-click letter while the
+ * account lets a screen-out unsubscribe. Never the person's own mail, an oversize letter, or one
+ * INTERNALDATE says is over 30 days old. The check answers `pass` or `unavailable` and never `fail`.
+ * Outside any transaction, like the classifier call, and within the cycle's lookup budget; logged by
+ * reason alone.
  */
 async function signatureVerdict(
-  change: Change, msg: NormalizedMessage, trusted: ReadonlySet<string>, deps: PlanDeps, header: AuthVerdict,
+  change: Change, msg: NormalizedMessage, deps: PlanDeps, header: AuthVerdict,
 ): Promise<AuthVerdict> {
   const signatures = deps.signatures ?? null;
-  if (signatures === null || change.ownAuthored === true || trusted.size > 0) return header;
+  if (signatures === null || change.ownAuthored === true || header !== "unavailable") return header;
   if (change.raw === undefined || change.oversizeBytes !== undefined) return header;
-  const arrived = change.internalDate;
-  if (arrived !== undefined && signatures.now().getTime() - arrived.getTime() > SIGNATURE_CHECK_MAX_AGE_MS) return header;
+  if (!signatureCheckableAge(change.internalDate, signatures.now())) return header;
   const candidate = ownedBrand(msg.from.address) !== undefined
     || (signatures.listLetters && unsubscribeHeaderState(msg.headers) === "one_click");
   if (!candidate) return header;
@@ -750,11 +765,12 @@ export type SweepClearance =
  */
 function documentKeeps(
   hold: ImportHold, msg: NormalizedMessage, auth: AuthVerdict, ohboxPolicy: OhboxPolicy, arrival: string,
-  ownAddresses: ReadonlySet<string>, identity: IdentityFact | null, lists: KnownSenders["lists"],
+  ownAddresses: ReadonlySet<string>, identity: IdentityFact | null, lists: KnownSenders["lists"], ownedUnconfirmed: boolean,
 ): boolean {
   if (hold.kind === "unreadable") return true;
   const verdict = evaluateRules({
     msg, rules: hold.rules, knownSenders: { ...hold.knownSenders, lists }, auth, ohboxPolicy, ownAddresses, identity,
+    ownedUnconfirmed,
   });
   if (verdict.source === "screener") return false;
   if (verdict.destination !== null && canonicalDestination(verdict.destination) === canonicalDestination(arrival)) return true;
@@ -954,13 +970,14 @@ function readerAdoption(arrivalFolder: string): { adoption?: "peer" } {
  */
 export async function correspondentAtGate(
   repo: Pick<RepoPort, "isCorrespondent">, accountId: string, msg: NormalizedMessage,
-  decision: { source: string; matchedRuleId: string | null; identity?: IdentityFact }, auth: AuthVerdict,
+  decision: { source: string; matchedRuleId: string | null; identity?: IdentityFact; unconfirmed?: true }, auth: AuthVerdict,
   known: KnownSenders,
 ): Promise<{ author: string; evidence: CorrespondentEvidence } | null> {
   // A held identity claim is not an unanswered stranger: a reply citing your Sent copy does not
-  // make "PostFinance" at gmail.com PostFinance, and nothing is taught.
+  // make "PostFinance" at gmail.com PostFinance, and nothing is taught. Nor does it confirm a
+  // company's own address its provider and signature left unconfirmed.
   if (decision.source !== "screener" || decision.matchedRuleId !== null || authScreens(auth)
-    || decision.identity !== undefined) return null;
+    || decision.identity !== undefined || decision.unconfirmed === true) return null;
   if (isDeliveryReportShape(msg.from.address, (msg.headers["content-type"] ?? []).join(" "))) return null;
   const author = gateAuthor(msg)?.toLowerCase() ?? null;
   if (author === null || known.addresses.has(author)) return null;
@@ -987,6 +1004,21 @@ async function fromOwnDomain(
     if (domainOf(id) === domain && await repo.isOwnAwayReply(accountId, [id])) return true;
   }
   return false;
+}
+
+/**
+ * Is a delivery report from the person's own hoster: a daemon role (`mailer-daemon@`, `postmaster@`) at the
+ * registrable domain of the mailbox's own outgoing server or of its own address, or at another domain the
+ * company owning that one sends from? The person chose that hoster by configuring it, so the hold for want
+ * of confirmation never keeps its report of their own letter from them; the reader still says nothing
+ * confirmed it. Every other company address is held.
+ */
+async function fromOwnHostersDaemon(repo: RepoPort, mailboxId: string, from: string): Promise<boolean> {
+  const domain = senderDomainOf(from);
+  if (domain === "" || !isDaemonAddress(from)) return false;
+  const { smtpHost, address } = await repo.mailboxOutgoing(mailboxId);
+  return [smtpHost === null ? "" : registrableDomain(smtpHost), address === null ? "" : senderDomainOf(address)]
+    .some((own) => companyDomainsOf(own).has(domain));
 }
 
 /** The domain of an address or a bracket-free Message-ID, lower-cased, no trailing dot; "" without one. */
@@ -1161,14 +1193,14 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     // The provider's own report about the claimed author, read once, HERE — invoked on the path
     // that ROUTES. It used to be an `"unauthenticated"` literal, so a forged `From` naming an
     // allowed sender was promoted normally even when `Authentication-Results` said `dkim=fail`.
-    // The asymmetry, restated where it can be broken: `evaluateRules` reads exactly one member —
-    // `"fail"` — and only to send a message DOWN; there is no `auth !== "pass"` anywhere and
-    // there must never be one. Reading this may DEMOTE; it may never be REQUIRED before a
-    // consented identity is honoured. With the trusted set empty this returns `"unavailable"` on
-    // its first line, and the sender's own signature may then say `pass` ({@link signatureVerdict},
-    // never for own mail). Above the `ownAuthored` return: both plans need it. `normalized.headers`,
-    // not `change.raw`: the same map the row stores, so re-evaluation passes parse the SAME input.
-    const authVerdict = await signatureVerdict(change, normalized, trustedAuthservIds, deps, authVerdictFromHeaders(
+    // The asymmetry, restated where it can be broken: `evaluateRules` reads `"fail"` to send a
+    // message DOWN, and a person's consent is honoured without `pass`. The one exception is an
+    // inferred admission of a company's own address: `ownedUnconfirmed` below holds it unless this
+    // says `pass`. Where the header says nothing ohmail believes (`"unavailable"`), the sender's own
+    // signature may say `pass` ({@link signatureVerdict}, never for own mail). Above the `ownAuthored`
+    // return: both plans need it. `normalized.headers`, not `change.raw`: the same map the row
+    // stores, so re-evaluation passes parse the SAME input.
+    const authVerdict = await signatureVerdict(change, normalized, deps, authVerdictFromHeaders(
       normalized.headers, normalized.from.address, trustedAuthservIds,
     ));
 
@@ -1282,9 +1314,14 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     const rules = await repo.listRules(accountId);
     const known = withListAddresses(await repo.knownSenders(accountId), listAddresses);
     const ownAddresses = deps.ownAddresses ?? await repo.ownAddresses(accountId);
+    // An arrival door's fact (`EvaluateRulesInput.ownedUnconfirmed`): a company's own address that
+    // neither its provider nor its signature confirmed, on a letter young enough to be checked. An
+    // oversize letter, a spent lookup budget and a composition with no check still hold.
+    const ownedUnconfirmed = ownedBrand(normalized.from.address) !== undefined && authVerdict !== "pass"
+      && signatureCheckableAge(change.internalDate, deps.signatures?.now() ?? new Date());
     let decision = evaluateRules({
       msg: normalized, rules, knownSenders: known, auth: authVerdict, ohboxPolicy, ownAddresses,
-      identity: senderCheck,
+      identity: senderCheck, ownedUnconfirmed,
     });
     /* A CORRESPONDENT IS NEVER FIRST CONTACT. Asked only where the gate would hold for want of a
        known author — a rule, a standing denial and a failed authentication all stand — and
@@ -1301,7 +1338,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
           inferred: known.inferred,
           lists: known.lists,
         },
-        auth: authVerdict, ohboxPolicy, ownAddresses, identity: senderCheck,
+        auth: authVerdict, ohboxPolicy, ownAddresses, identity: senderCheck, ownedUnconfirmed,
       });
     }
 
@@ -1314,7 +1351,8 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     // still yield INBOX for sensitive mail. The bounce arm: a quoted Message-ID that is one of the
     // account's own post-consent Sent copies (any other row's id was chosen by its author). It may
     // pass the GATE, never overrule the USER (a rule id stands), and never carries a failed
-    // authentication, nor a brand claim other than its own provider's or organisation's, past it.
+    // authentication, nor a brand claim other than its own provider's or organisation's, past it, nor a
+    // company's own address nothing confirmed but for the daemon of the person's own hoster.
     const dsn = dsnVerdict(normalized, change.raw);
     let ownBounce = false;
     let citedOwnCopy: string | null = null;
@@ -1352,7 +1390,11 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
       && await fromOwnDomain(
         repo, accountId, normalized.from.address, ownAddresses, awayReplyBounce ? dsn!.originalMessageIds : [],
       );
-    const liftable = !authScreens(authVerdict)
+    /* Nor a company's own address the gate holds for want of confirmation (the reply arm's refusal too),
+       but for the daemon of the person's own hoster: their report of the person's letter reaches them. */
+    const hostersReport = ownBounce && decision.unconfirmed === true
+      && await fromOwnHostersDaemon(repo, mailboxId, normalized.from.address);
+    const liftable = !authScreens(authVerdict) && (decision.unconfirmed !== true || hostersReport)
       && (decision.identity === undefined || ownProvidersReport || ownOrganisationReport);
     /** A corroborated bounce the account has expressed no opinion about. */
     const admitBounce = ownBounce && decision.matchedRuleId === null
@@ -1397,6 +1439,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
       && !authScreens(authVerdict)
       && documentKeeps(
         deps.importHold, normalized, authVerdict, ohboxPolicy, change.locator.folder, ownAddresses, senderCheck, known.lists,
+        ownedUnconfirmed,
       );
 
     /* AHEAD OF `sensitive`, which is the one ordering choice here worth stating. A sensitivity
@@ -1523,6 +1566,9 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
         authVerdict,
         senderCheck: ownOrganisationReport ? null : senderCheck,
         listAddresses,
+        // Only where the hold placed it: a backlog or an import hold that kept the folder marks nothing.
+        ...(decision.unconfirmed === true && canonicalDestination(desired) === "ohmail/Screener"
+          ? { unconfirmedHold: true as const } : {}),
         // A placement adopted under the import hold — mail the travelling document admits — is the
         // standing state of the user's mailbox, not this organizer's decision: `passive` commits
         // `'external'`, out of every retro pass's reach once the import lands. Only where the hold
@@ -1827,6 +1873,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // and the same stored headers.
       authVerdict: p.authVerdict,
       senderCheck: p.senderCheck,
+      ...(p.unconfirmedHold === true ? { unconfirmedHold: true as const } : {}),
       // The fence the allocation below is already carrying — see `InsertMessageInput`: the write
       // door asks nothing of its own when this commit's own statement asks for it.
       mailboxMustBeLive: deps.mailboxMustBeLive,

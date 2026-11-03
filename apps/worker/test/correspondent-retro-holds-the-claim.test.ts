@@ -105,6 +105,33 @@ describe("the correspondent retro and a held identity claim", () => {
     expect(await w.contactOf(PHISH)).toBeNull();
   });
 
+  it("a company's own address nothing confirmed, answering a copy written to somebody else, stays held and marked", async () => {
+    const w = await world();
+    const brand = await w.deliver(`"PayPal" <service@paypal.com>`, "Ihr Konto", CITES);
+    expect(brand, "an answer is no confirmation (mail 0176)").toMatchObject({ desired: "ohmail/Screener", check: "none" });
+    const [row] = await w.db.select({ held: messages.unconfirmedHold }).from(messages).where(eq(messages.id, brand.id));
+    expect(row!.held).toBe(true);
+    const r = await screenerCorrespondentRetroPass(w.db, { accountId: w.accountId });
+    expect(r.released).toBe(0);
+    expect(await w.desiredOf(brand.id)).toBe("ohmail/Screener");
+    expect(await w.contactOf("service@paypal.com")).toBeNull();
+    expect(await w.admissionsOf(brand.id)).toEqual([]);
+  });
+
+  it("beside a confirmed answer the retro releases, a held unconfirmed one from the same address stays", async () => {
+    const w = await world({ trusted: new Set(["mx.google.com"]) });
+    const PASSED = "Authentication-Results: mx.google.com; dkim=pass header.d=paypal.com; dmarc=pass header.from=paypal.com";
+    const confirmed = await w.deliver(`"PayPal" <service@paypal.com>`, "Ihre Unterlagen", [...CITES, PASSED]);
+    expect(confirmed, "premise: a confirmed answer is let in at the gate").toMatchObject({ desired: "INBOX" });
+    await w.holdAtGate(confirmed.id);
+    const unconfirmed = await w.deliver(`"PayPal" <service@paypal.com>`, "Ihr Konto", CITES);
+    expect(unconfirmed, "premise: held and marked").toMatchObject({ desired: "ohmail/Screener", check: "none" });
+    const r = await screenerCorrespondentRetroPass(w.db, { accountId: w.accountId });
+    expect(r.released).toBe(1);
+    expect(await w.desiredOf(confirmed.id)).toBe("INBOX");
+    expect(await w.desiredOf(unconfirmed.id), "mail 0176: an answer is no confirmation").toBe("ohmail/Screener");
+  });
+
   it("a CLEAN answer citing a copy written to somebody else reaches the Ohbox at the gate, untaught", async () => {
     const w = await world();
     const clean = await w.deliver(`"Karten Service" <${PHISH}>`, "Ihre Unterlagen", CITES);

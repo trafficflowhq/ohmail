@@ -53,6 +53,20 @@ export function oauthSmtpEndpoint(
 }
 
 /**
+ * THE HOST A MAILBOX'S OUTGOING MAIL LEAVES THROUGH, from its credential rows' non-secret `meta` in the
+ * send door's order (`makeSendAdapter`): an OAuth mailbox's submission endpoint, the `smtp` row's host,
+ * else the incoming host, which the door then dials on 587. `smtpMeta` is `undefined` where there is no
+ * `smtp` row; `null` where nothing names a host.
+ */
+export function outgoingHostOf(imapMeta: unknown, smtpMeta: unknown): string | null {
+  const imap = (imapMeta ?? {}) as CredMetaAuth & { host?: unknown; smtp?: { host?: string } };
+  if (imap.authType === "oauth2") return oauthSmtpEndpoint(imap.smtp).host;
+  const smtp = (smtpMeta ?? {}) as { host?: unknown };
+  const named = typeof smtp.host === "string" && smtp.host !== "" ? smtp.host : imap.host;
+  return typeof named === "string" && named !== "" ? named : null;
+}
+
+/**
  * A HOST-PROVIDED factory that turns the stored refresh token + oauth params into the freshness
  * callback {@link ImapOAuthAuth} carries. The host binds it to a mailbox and to its own caching +
  * rotation-persist policy (worker: per-mailbox, long-lived; API: per-invocation); this module knows

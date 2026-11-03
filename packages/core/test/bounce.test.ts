@@ -7,6 +7,7 @@ import { FakeRepo, FakeAdapter } from "./fakes.js";
 import type { Change, PipelineDeps } from "../src/ports.js";
 import type { PlanDeps } from "../src/pipeline.js";
 import { providerAuthservIds } from "../src/authserv-ids.js";
+import { ownedSenderName } from "../src/sender-check.js";
 
 /**
  * ═══ A BOUNCE OF YOUR OWN MAIL REACHES YOU; BACKSCATTER DOES NOT ══════════════════════════
@@ -317,6 +318,108 @@ describe("BOUNCE — the report reaches the Ohbox only on evidence the sender ca
       headers: ["Authentication-Results: mx.microsoft.com; dmarc=fail header.from=lichtgrat.example"],
     });
     expect(await desiredFolderOf(failed, d, "1:11", MICROSOFT)).toBe("ohmail/Screener");
+  });
+
+  /* A COMPANY'S OWN ADDRESS NOTHING CONFIRMED (mail 0176) is no report this arm lifts: a forger who
+     holds one of the person's Message-IDs writes a perfect report from it as easily as a letter. */
+  const COMPANY = "service@paypal.com";
+  const PAYPAL_PASS = "Authentication-Results: mx.google.com; dkim=pass header.d=paypal.com; dmarc=pass header.from=paypal.com";
+
+  it("a report from a company's own address nothing confirmed is held, the act's admission or none", async () => {
+    const acted = makeDeps();
+    await seedOurSent(acted);
+    acted.repo.rules.push({
+      id: "act", kind: "sender", match: COMPANY, destination: "INBOX", effect: "allow", priority: 10,
+      provenance: "promoted", enabled: true, subjectContains: null, bodyContains: null,
+    });
+    acted.repo.senders.add(COMPANY);
+    acted.repo.inferredSenders.add(COMPANY);
+    expect(await desiredFolderOf(bounce({ quotes: OURS, from: COMPANY }), acted)).toBe("ohmail/Screener");
+    const stranger = makeDeps();
+    await seedOurSent(stranger);
+    expect(await desiredFolderOf(bounce({ quotes: OURS, from: "postmaster@paypal.com" }), stranger)).toBe("ohmail/Screener");
+  });
+
+  it("CONTROL: the company's report its provider confirmed, or from an address a person let in, is lifted", async () => {
+    const mapped = makeDeps();
+    await seedOurSent(mapped);
+    const confirmed = bounce({ quotes: OURS, from: "postmaster@paypal.com", headers: [PAYPAL_PASS] });
+    expect(await desiredFolderOf(confirmed, mapped, "1:11", GMAIL)).toBe("INBOX");
+    const person = makeDeps();
+    await seedOurSent(person);
+    person.repo.senders.add(COMPANY);
+    expect(await desiredFolderOf(bounce({ quotes: OURS, from: COMPANY }), person)).toBe("INBOX");
+  });
+
+  /* THE PERSON'S OWN HOSTER'S REPORT OF THEIR LETTER is lifted though nothing confirmed it: a daemon role
+     at the registrable domain of the mailbox's own outgoing server or of its own address, or at another
+     domain of the company owning that one. Its stored verdict stays, so the reader keeps the did-not-confirm
+     line. Every other company address still waits. */
+  const HOSTERS: ReadonlyArray<[string, string]> = [
+    ["MAILER-DAEMON@mo1.mail-out.ovh.net", "ssl0.ovh.net"],
+    ["MAILER-DAEMON@spool.mail.gandi.net", "mail.gandi.net"],
+    // Infomaniak's preset submits at its .com and its relays report from its .ch: one company's two domains.
+    ["MAILER-DAEMON@smtp-1.mail.infomaniak.ch", "mail.infomaniak.com"],
+    ["MAILER-DAEMON@asmtp010.mail.hostpoint.ch", "asmtp.mail.hostpoint.ch"],
+  ];
+  /** A mailbox whose outgoing server and own address are stored as given. */
+  const hosted = (smtpHost: string | null, address: string | null = "mila@lichtgrat.example") => {
+    const d = makeDeps();
+    d.repo.outgoing.set(d.mailboxId, { smtpHost, address });
+    return d;
+  };
+  /** Ingest, and answer with the folder, the stored verdict and the hold's mark. */
+  const stored = async (raw: Buffer, d: ReturnType<typeof makeDeps>) => {
+    const plan = await planChange(createChange("INBOX", raw, "1:11"), { repo: d.repo, accountId: d.accountId, mailboxId: d.mailboxId });
+    const res = await commitChange(plan, { storageCap: UNMETERED_STORAGE_CAP, repo: d.repo, accountId: d.accountId, mailboxId: d.mailboxId });
+    const input = d.repo.rows.get(res.messageId)!.input;
+    return { folder: (await d.repo.getFolderState(res.messageId))!.desiredFolder, auth: input.authVerdict, held: input.unconfirmedHold === true };
+  };
+
+  it("the person's own hoster's unsigned report of their letter reaches the Ohbox, its verdict kept for the line", async () => {
+    for (const [from, smtpHost] of HOSTERS) {
+      expect(ownedSenderName(from), `premise: ${from} is a company's own address`).toBeDefined();
+      const d = hosted(smtpHost);
+      await seedOurSent(d);
+      expect(await stored(bounce({ quotes: OURS, from }), d), from).toEqual({ folder: "INBOX", auth: "unavailable", held: false });
+    }
+    // The organisation of the mailbox's own address reports the same way, whatever server it submits through.
+    const own = hosted(null, "anna@paypal.com");
+    await seedOurSent(own);
+    expect(await stored(bounce({ quotes: OURS, from: "postmaster@mx1.paypal.com" }), own))
+      .toEqual({ folder: "INBOX", auth: "unavailable", held: false });
+  });
+
+  it("every other company's report still waits: forged PayPal, another hoster's daemon, the hoster's other roles", async () => {
+    for (const from of ["postmaster@paypal.com", "Postmaster@PayPal.com", COMPANY]) {
+      const d = hosted("ssl0.ovh.net");
+      await seedOurSent(d);
+      expect(await stored(bounce({ quotes: OURS, from }), d), from).toEqual({ folder: "ohmail/Screener", auth: "unavailable", held: true });
+    }
+    // Each hoster's daemon is that hoster's: OVH's report at a mailbox that submits through Infomaniak waits.
+    const other = hosted("mail.infomaniak.com");
+    await seedOurSent(other);
+    expect((await stored(bounce({ quotes: OURS, from: HOSTERS[0]![0] }), other)).folder).toBe("ohmail/Screener");
+    // Only the daemon roles: anybody else at the hoster writes letters as any company's address does.
+    const role = hosted("ssl0.ovh.net");
+    await seedOurSent(role);
+    expect((await stored(bounce({ quotes: OURS, from: "support@mail-out.ovh.net" }), role)).folder).toBe("ohmail/Screener");
+    // Nothing stored about the mailbox: nothing is the person's hoster.
+    const none = hosted(null, null);
+    await seedOurSent(none);
+    expect((await stored(bounce({ quotes: OURS, from: HOSTERS[0]![0] }), none)).folder).toBe("ohmail/Screener");
+  });
+
+  it("CONTROL: a daemon at a host no company owns is lifted as before, and the hoster's backscatter is held", async () => {
+    const d = hosted("ssl0.ovh.net");
+    await seedOurSent(d);
+    expect(await stored(bounce({ quotes: OURS }), d)).toEqual({ folder: "INBOX", auth: "unavailable", held: false });
+    const scatter = hosted("ssl0.ovh.net");
+    await seedOurSent(scatter);
+    expect((await stored(bounce({ quotes: "<spammers-own-id@spam.example>", from: HOSTERS[0]![0] }), scatter)).folder)
+      .toBe("ohmail/Screener");
+    // Asked only for a report the gate would hold for want of confirmation.
+    expect(d.repo.outgoingCalls + scatter.repo.outgoingCalls).toBe(0);
   });
 
   it("BACKSCATTER — a perfectly formed report about mail we never sent is held at the gate", async () => {

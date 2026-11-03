@@ -35,10 +35,10 @@ import type { Change, PipelineDeps } from "../src/ports.js";
 
 const CORRESPONDENT = "correspondent@elsewhere.example";
 
-function bounce(opts: { quotes: string; id?: string }): Buffer {
+function bounce(opts: { quotes: string; id?: string; from?: string }): Buffer {
   return Buffer.from([
     `Message-ID: <${opts.id ?? "dsn-1"}@their-host.example>`,
-    "From: MAILER-DAEMON@their-host.example",
+    `From: ${opts.from ?? "MAILER-DAEMON@their-host.example"}`,
     "To: reader@lichtgrat.example",
     "Subject: Undelivered Mail Returned to Sender",
     `X-Failed-Recipients: ${CORRESPONDENT}`,
@@ -143,6 +143,21 @@ describe("the DSN that files as a receipt is the DSN that stamps the sender", ()
 
     await ingest(d, bounce({ quotes: "<not-ours-1@elsewhere.example>" }), "1:1");
     expect(d.repo.awayUndeliverable.size).toBe(0);
+  });
+
+  it("the person's own hoster's unsigned report files and stamps; another company's report does neither", async () => {
+    // Nothing confirms either sender at a mailbox no provider id names; only the first is the hoster's daemon.
+    const minted = mintMessageId("lichtgrat.example");
+    const hoster = world(minted);
+    hoster.repo.outgoing.set(hoster.mailboxId, { smtpHost: "ssl0.ovh.net", address: "reader@lichtgrat.example" });
+    expect(await ingest(hoster, bounce({ quotes: minted, from: "MAILER-DAEMON@mo1.mail-out.ovh.net" }), "1:1"))
+      .toBe("ohmail/Receipts");
+    expect([...hoster.repo.awayUndeliverable.keys()]).toEqual([CORRESPONDENT]);
+
+    const forged = world(minted);
+    forged.repo.outgoing.set(forged.mailboxId, { smtpHost: "ssl0.ovh.net", address: "reader@lichtgrat.example" });
+    expect(await ingest(forged, bounce({ quotes: minted, from: "postmaster@paypal.com" }), "1:1")).toBe("ohmail/Screener");
+    expect(forged.repo.awayUndeliverable.size).toBe(0);
   });
 });
 

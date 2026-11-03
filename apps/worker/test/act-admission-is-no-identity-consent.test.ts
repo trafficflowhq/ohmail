@@ -1,17 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
+import { SCREENING_AUTH_VERDICTS, UNMETERED_STORAGE_CAP, providerAuthservIds } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeSignatureCheck } from "@trafficflow/core/adapters/dkim";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accounts, accountSettings, applyScreenerDecision, auditLog, changeLog, contactNotes, contacts, folderState,
-  learningSignals, mailboxFolders, mailboxes, messageInstances, messages, rules, type Tx,
+  learningSignals, mailboxFolders, mailboxes, messageInstances, messages, resolveCutline, rules, senderHasHeldClaimSql,
+  type Tx,
 } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
+import { sql } from "drizzle-orm";
 import { runSyncCycle } from "../src/sync.js";
 import { retireActAdmissionsPass } from "../src/act-admission-retire.js";
+import { ruleRetroPass } from "../src/rule-retro.js";
+import { ohboxTidyPass } from "../src/ohbox-tidy.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
 import { FIXTURE_LEASE } from "./_door.js";
+import { fakeKeys, letter, nodemailerSign, rsaKey } from "../../../packages/core/test/fixtures/dkim-signed.js";
 
 /**
  * WHAT THE ACT ON SUGGESTIONS LET IN BEFORE IT STOPPED ADMITTING, through the real ingest.
@@ -270,5 +277,190 @@ describe("what the act let in is retired once, and its next cold letter waits at
     expect(await reader.contactsOf()).toHaveLength(1);
     expect(await reader.ruleDeletes()).toEqual([]);
     expect(await reader.retirements()).toEqual([]);
+  });
+});
+
+/**
+ * A COMPANY'S OWN ADDRESS THE ACT LET IN WAITS UNLESS CONFIRMED (mail 0176): the act's admission of a letter
+ * Gmail confirmed, seeded as the 0.30.28 act wrote it (the act admits nobody now; such an admission stays
+ * where the person chose the sender another way), and its rule's walk; the same exact address, unsigned, at a mailbox
+ * whose provider no authserv-id names is held at the gate, marked, and its sender waits again by the
+ * held-claim probe the queue's page and its count read (that row through the page, both counts and the
+ * client: `held-claim-twin-parity.test.ts`). A signed letter passes there and at a Microsoft mailbox,
+ * the backlog keeps its folder, the walks never move the confirmed letter, and a person's press admits
+ * the held one and the next. A letter too old to check is never waited for, and a hold made during a
+ * mailbox's first import keeps its sender waiting. Through the real ingest with the real signature
+ * check and the real passes.
+ */
+const BRAND = "service@paypal.com";
+const KEY = rsaKey(1024);
+const NONE = async (): Promise<ReadonlySet<string>> => new Set<string>();
+
+async function brandWorld() {
+  const db = (await makeTestDb()) as unknown as Tx;
+  const accountId = randomUUID();
+  await db.insert(accounts).values({ id: accountId, name: `actu-${accountId.slice(0, 8)}` });
+  await db.insert(accountSettings).values({ accountId, screeningScope: "all_time" });
+  const fleet = new FakeAdapterFleet();
+  const keys = fakeKeys({ "s1._domainkey.paypal.com": KEY.record });
+  const signatures = { ...makeSignatureCheck({ keys }), listLetters: false };
+  const box = async (name: string, host: string, importing = false) => {
+    // A live mailbox: its first import is done, so what arrives now is new mail; or one still importing.
+    const [mb] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `${name}-${accountId.slice(0, 8)}@example.test`,
+      initialImportCompletedAt: importing ? null : new Date(Date.now() - 60 * 60 * 1000),
+    }).returning();
+    const adapter = fleet.factory(
+      { host, port: 143, secure: false, auth: { user: "u", pass: "p" } },
+      { accountId, mailboxId: mb!.id, onConnectionError: () => { /* nothing dials here */ } },
+    );
+    return { id: mb!.id, adapter, trusted: providerAuthservIds(host), sent: [] as Array<{ from: string; subject: string; messageId: string; raw: Buffer; internalDate?: Date }> };
+  };
+  const gmail = await box("gmail", "imap.gmail.com");
+  const other = await box("other", "imap.example-host.test");
+  const microsoft = await box("ms", "outlook.office365.com");
+  /** A mailbox no provider id names, its first import running. */
+  const importing = await box("new", "imap.example-host.test", true);
+  let n = 0;
+  /** One letter from BRAND into `mb`, through a whole sync cycle; its row's place, fact and mark. */
+  const deliver = async (mb: typeof gmail, o: {
+    subject: string; top?: string[]; signed?: boolean; internalDate?: Date; cutoff?: Date; from?: string;
+  }) => {
+    const id = `<u${++n}-${randomUUID().slice(0, 8)}@paypal.com>`;
+    const plain = letter({ subject: o.subject, messageId: id, top: o.top ?? [], ...(o.from ? { from: o.from } : {}) });
+    const raw = Buffer.from(o.signed === true ? await nodemailerSign(plain, "paypal.com", "s1", KEY) : plain, "latin1");
+    mb.sent.push({ from: o.from ?? BRAND, subject: o.subject, messageId: id, raw, ...(o.internalDate ? { internalDate: o.internalDate } : {}) });
+    fleet.behave(mb.id, { deliver: [...mb.sent] });
+    await runSyncCycle({
+      writeAuthority: FIXTURE_LEASE, repo: makeDrizzleRepo(db as never), adapter: mb.adapter, accountId,
+      mailboxId: mb.id, storageCap: UNMETERED_STORAGE_CAP, role: "organizer", trustedAuthservIds: mb.trusted, signatures,
+      ...(o.cutoff ? { screeningCutoff: o.cutoff } : {}),
+    });
+    const [row] = await db.select({
+      id: messages.id, desired: folderState.desiredFolder, held: messages.unconfirmedHold, auth: messages.authVerdict,
+    }).from(messages).innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(eq(messages.accountId, accountId), eq(messages.subject, o.subject)));
+    return { ...row!, held: row!.held === true };
+  };
+  /** The queue's held-claim probe for the sender (`senderHasHeldClaimSql`): what keeps a decided sender waiting. */
+  const waiting = async (): Promise<boolean> => {
+    const cutline = resolveCutline({ baselineAt: null, dormancyDays: null, scope: "all_time", now: new Date() });
+    const d = dialect(db);
+    const rows = await d.exec(db, sql`select case when ${senderHasHeldClaimSql(d, accountId, sql`${BRAND}`, cutline, SCREENING_AUTH_VERDICTS, [])}
+      then 1 else 0 end`);
+    return Number(rows[0]?.[0]) === 1;
+  };
+  const desired = async (id: string) =>
+    (await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
+  /** What the 0.30.28 act wrote when it let BRAND in (`world().actAdmitted`'s shape), then its rule's walk. */
+  const actLetIn = async () => {
+    await db.insert(rules).values({
+      accountId, kind: "sender", match: BRAND, destination: "INBOX", provenance: "promoted", enabled: true, priority: 0,
+      retroRequestedAt: new Date(),
+    });
+    await db.insert(contacts).values({ accountId, address: BRAND, source: "inferred" });
+    await db.insert(learningSignals).values({
+      accountId, triggeringActionId: `screener:auto:${randomUUID()}`, kind: "screener", senderAddress: BRAND,
+      destination: "INBOX", label: "positive",
+    });
+    await ruleRetroPass(db, { accountId, trustedAuthservIdsFor: NONE });
+  };
+  return { db, accountId, gmail, other, microsoft, importing, deliver, waiting, desired, actLetIn, keys };
+}
+
+describe("a company's own address the act let in waits unless confirmed", () => {
+  const CONFIRMED = "mx.google.com; dkim=pass header.d=paypal.com; dmarc=pass header.from=paypal.com";
+
+  it("held and marked at a mailbox no provider id names, its decided sender waiting again; signed letters pass", async () => {
+    const w = await brandWorld();
+    const first = await w.deliver(w.gmail, { subject: "Your receipt", top: [`Authentication-Results: ${CONFIRMED}`] });
+    expect(first, "premise: Gmail confirmed the stranger's first letter").toMatchObject({ desired: "ohmail/Screener", auth: "pass", held: false });
+    await w.actLetIn();
+    expect(await w.desired(first.id), "premise: the act's rule let the sender in").toBe("INBOX");
+    expect(await w.waiting(), "premise: nobody waits").toBe(false);
+
+    const forged = await w.deliver(w.other, { subject: "Your account is limited" });
+    expect(forged).toMatchObject({ desired: "ohmail/Screener", auth: "unavailable", held: true });
+    expect(await w.waiting(), "the decided sender waits again").toBe(true);
+
+    // The company's signature confirms it at the same mailbox, and at a Microsoft one whose own
+    // report ohmail cannot believe: both are let in, unmarked, by the act's rule.
+    expect(await w.deliver(w.other, { subject: "Your statement", signed: true })).toMatchObject({ desired: "INBOX", auth: "pass", held: false });
+    expect(await w.deliver(w.microsoft, { subject: "Your invoice", signed: true })).toMatchObject({ desired: "INBOX", auth: "pass", held: false });
+    // Mail from before the screening cutoff, young enough to check, keeps its folder, and nothing marks it.
+    const old = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    expect(await w.deliver(w.other, { subject: "An old notice", internalDate: old, cutoff: new Date(old.getTime() + 60_000) }))
+      .toMatchObject({ desired: "INBOX", held: false });
+
+    // The walks re-decide without the arrival door's fact: the confirmed letter stays, the held one too.
+    await w.db.insert(accountSettings).values({ accountId: w.accountId, ohboxTidyRequestedAt: new Date() })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { ohboxTidyRequestedAt: new Date() } });
+    await ohboxTidyPass(w.db, { accountId: w.accountId, trustedAuthservIdsFor: NONE });
+    await w.db.update(rules).set({ retroRequestedAt: new Date(), retroDoneAt: null }).where(eq(rules.accountId, w.accountId));
+    await ruleRetroPass(w.db, { accountId: w.accountId, trustedAuthservIdsFor: NONE });
+    expect(await w.desired(first.id)).toBe("INBOX");
+    expect(await w.desired(forged.id)).toBe("ohmail/Screener");
+  });
+
+  it("a properly signed letter too old to check, at a mailbox's first import, stays where the act's rule put it", async () => {
+    const w = await brandWorld();
+    const first = await w.deliver(w.gmail, { subject: "Your receipt", top: [`Authentication-Results: ${CONFIRMED}`] });
+    await w.actLetIn();
+    expect(await w.desired(first.id), "premise").toBe("INBOX");
+    // Forty days old by the server's clock: its signature is never checked, so it is never waited for.
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    expect(await w.deliver(w.importing, { subject: "Your annual statement", signed: true, internalDate: old }))
+      .toMatchObject({ desired: "INBOX", auth: "unavailable", held: false });
+  });
+
+  it("a forged letter during a first import, its address known by an inferred contact alone: its decided sender waits again", async () => {
+    const w = await brandWorld();
+    await w.db.insert(contacts).values({ accountId: w.accountId, address: BRAND, source: "inferred" });
+    const forged = await w.deliver(w.importing, { subject: "Your account is limited" });
+    expect(forged, "premise: held and marked").toMatchObject({ desired: "ohmail/Screener", auth: "unavailable", held: true });
+    // The queue page's own term for a decided sender: listed (the page and the client over it:
+    // `held-claim-twin-parity.test.ts`).
+    expect(await w.waiting()).toBe(true);
+  });
+
+  it("a person's press on the address admits the held letter and the next", async () => {
+    const w = await brandWorld();
+    await w.deliver(w.gmail, { subject: "Your receipt", top: [`Authentication-Results: ${CONFIRMED}`] });
+    await w.actLetIn();
+    const held = await w.deliver(w.other, { subject: "Your account is limited" });
+    expect(held, "premise").toMatchObject({ desired: "ohmail/Screener", held: true });
+    await (w.db as unknown as { transaction: (f: (tx: Tx) => Promise<unknown>) => Promise<unknown> }).transaction((tx) =>
+      applyScreenerDecision(tx, {
+        accountId: w.accountId, scope: "sender", address: BRAND, appliedFolder: "INBOX", decision: "yes",
+        triggeringActionId: `screener:press:${held.id}`, now: new Date(), stampBaseline: false, applyRetro: true,
+        overExisting: "converge", liftOverDomain: true, decidedBy: "person",
+      }));
+    expect(await w.desired(held.id)).toBe("INBOX");
+    expect(await w.deliver(w.other, { subject: "Your new card" })).toMatchObject({ desired: "INBOX", held: false });
+    expect(await w.waiting()).toBe(false);
+  });
+
+  it("a person's press on the domain lets the domain's held and next unsigned letters in; a promoted domain rule no person decided does not", async () => {
+    const w = await brandWorld();
+    const BILLING = "PayPal <billing@paypal.com>";
+    // An allow rule for the domain that no person decided: the AI's, inference.
+    await w.db.insert(rules).values({
+      accountId: w.accountId, kind: "domain", match: "paypal.com", destination: "INBOX", enabled: true, priority: 0, provenance: "promoted",
+    });
+    const held = await w.deliver(w.other, { subject: "Your account is limited" });
+    expect(held, "premise: inference lets no unconfirmed letter in").toMatchObject({ desired: "ohmail/Screener", held: true });
+    const other = await w.deliver(w.other, { subject: "Your statement is ready", from: BILLING });
+    expect(other, "premise").toMatchObject({ desired: "ohmail/Screener", held: true });
+    await (w.db as unknown as { transaction: (f: (tx: Tx) => Promise<unknown>) => Promise<unknown> }).transaction((tx) =>
+      applyScreenerDecision(tx, {
+        accountId: w.accountId, scope: "domain", address: BRAND, appliedFolder: "INBOX", decision: "yes",
+        triggeringActionId: `screener:press:${held.id}`, now: new Date(), stampBaseline: false, applyRetro: true,
+        overExisting: "converge", liftOverDomain: true, decidedBy: "person",
+      }));
+    expect(await w.desired(held.id), "the press moves the letter it was made on").toBe("INBOX");
+    // The rule's walk takes the domain's other held letter, the person having consented to the domain.
+    await ruleRetroPass(w.db, { accountId: w.accountId, trustedAuthservIdsFor: NONE });
+    expect(await w.desired(other.id)).toBe("INBOX");
+    expect(await w.deliver(w.other, { subject: "Your new card", from: BILLING })).toMatchObject({ desired: "INBOX", held: false });
   });
 });

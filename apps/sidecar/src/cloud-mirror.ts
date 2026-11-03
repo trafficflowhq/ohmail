@@ -1423,6 +1423,8 @@ function profileDocRules(rules: readonly RuleDTO[]): unknown[] {
     kind: r.kind, match: r.match, destination: r.destination, priority: r.priority,
     provenance: r.provenance, enabled: r.enabled,
     subjectContains: r.subjectContains, bodyContains: r.bodyContains,
+    // The document's stamp, so the local door says a person decided it; the rule's age stands in for when.
+    ...(r.personDecided === true ? { personDecidedAt: r.updatedAt } : {}),
   });
   const at = rules.map((r) => /^profile:[^:]+:(\d{1,5})$/.exec(r.id)?.[1]);
   const ordered = at.every((n, i) => n !== undefined && (i === 0 || Number(n) > Number(at[i - 1])));
@@ -1581,6 +1583,9 @@ async function applyAccountUpsert(
         // A re-filing owed, so this store answers the same `retro.from` (`pendingRefileFrom`).
         refileFrom: r.retro?.from ?? null,
         refileAt: r.retro?.from ? asDate(r.retro.requestedAt) : null,
+        // A person decided it (their press is consent to a hold for want of confirmation). The wire says
+        // whether, not when: the rule's own last change stands in; no placement reads the instant.
+        personDecidedAt: r.personDecided === true ? asDate(r.updatedAt) ?? now : null,
         updatedAt: asDate(r.updatedAt) ?? now,
       };
       /* THE CREATION INSTANT TRAVELS WITH THE RULE, in the insert AND the conflict set. Without
@@ -1838,6 +1843,8 @@ async function applyUpsert(
         // …and which writer gave it (mail 0149), so the local queue never lists what Cloud's never
         // does. Absent on the wire (an older server) is NULL, dated by the arrival as there.
         senderCheckBy: m.senderCheck?.reason === "impersonation" ? (m.senderCheck.by ?? null) : null,
+        // …and the gate's hold for want of confirmation (mail 0176), so the local queue waits as Cloud's does.
+        unconfirmedHold: m.senderCheck?.held === true ? true : null,
         snippet: m.snippet ?? "",
         toAddresses: m.to ?? [],
         ccAddresses: m.cc ?? [],

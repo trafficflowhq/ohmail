@@ -35,11 +35,12 @@ function outranks(ev: CorrespondentEvidence, held: CorrespondentEvidence | undef
 }
 
 /**
- * A held row whose identity fact is no company claim: the gate's term, and the retro's. Unchecked
- * (NULL, older than the column) passes: the act checks its page first, the Screener reads the name.
+ * A held row whose identity fact is no company claim, nor a hold for want of confirmation (mail
+ * 0176): the gate's term, and the retro's. Unchecked (NULL, older than the column) passes: the act
+ * checks its page first, the Screener reads the name.
  */
 export function notAClaimSql(m: typeof messages): SQL {
-  return sql`(${m.senderCheck} is null or ${m.senderCheck} <> 'impersonation')`;
+  return sql`((${m.senderCheck} is null or ${m.senderCheck} <> 'impersonation') and ${m.unconfirmedHold} is not true)`;
 }
 
 /** Sent copies one `wrote` read may examine. The newest win, and they are what the answer needs. */

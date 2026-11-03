@@ -9,7 +9,7 @@ import { readProfileApplied } from "@trafficflow/core/adapters/organizer-profile
 import { reasonDetail, suggestionAdvice } from "../screener-advice.js";
 import {
   accountSettings, autoReplyByUsWhere, awayReplies, mailboxes, mailboxProfileMirror, isOrganizerKind,
-  invitationWithoutEventWhere, itipReplyHeaderWhere, listAddresses,
+  invitationWithoutEventWhere, itipReplyHeaderWhere, listAddresses, heldForIdentitySql,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
   SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal, rulesTheActWrote, pendingRefileFrom, refileOwed,
@@ -99,6 +99,7 @@ export function ruleRowToDTO(r: typeof rules.$inferSelect, byOhmail = false): Ru
       from: (pendingRefileFrom(r) ?? (refileOwed(r) ? canonicalDestination(r.destination) : null)) as Folder | null,
     },
     byOhmail,
+    ...(r.personDecidedAt != null ? { personDecided: true as const } : {}),
   };
 }
 
@@ -230,13 +231,13 @@ export function sortAtOf(date: Date | null | undefined, arrivedAt: Date | null |
  * the two columns, never stored, and named as the address names itself (`ownedSenderName`: the
  * brand, or a government's umbrella domain, which names no one office). Whether the address is at a
  * shared provider is read here, off the one list; whether a list posts as it (`list`, mail 0150) is
- * the batch's answer.
+ * the batch's answer. `held` is the gate's own mark (`unconfirmed_hold`, mail 0176).
  */
 function senderCheckOf(
   value: string | null, brand: string | null, fromAddress: string, by: string | null | undefined, list: boolean,
-  authVerdict: string | null,
+  authVerdict: string | null, held: boolean,
 ): { senderCheck?: SenderCheckDTO | null } {
-  const owned = value === "impersonation" || asAuthVerdict(authVerdict) === "pass" ? undefined : ownedSenderName(fromAddress);
+  const owned = value === "impersonation" || (!held && asAuthVerdict(authVerdict) === "pass") ? undefined : ownedSenderName(fromAddress);
   if (owned !== undefined) {
     return {
       senderCheck: {
@@ -244,6 +245,7 @@ function senderCheckOf(
         ...(list ? { list: true as const } : {}),
         // The column under the line, for a press: only a checked-clean row moves on another's press.
         ...(value === "none" ? {} : { unchecked: true as const }),
+        ...(held ? { held: true as const } : {}),
       },
     };
   }
@@ -256,6 +258,8 @@ function senderCheckOf(
       // Who wrote it (mail 0149); a NULL column is absent, the reading an older server gives.
       ...(by === "ingest" || by === "backfill" ? { by } : {}),
       ...(list ? { list: true as const } : {}),
+      // Held for want of confirmation as well (mail 0176): dated as such, as `heldClaimInsideSql` dates it.
+      ...(held ? { held: true as const } : {}),
     },
   };
 }
@@ -372,7 +376,10 @@ export function messageRowToDTO(
     // On the row, so every projection carries it; a word from the other vocabulary reads `null`.
     authVerdict: asAuthVerdict(m.authVerdict),
     // The identity fact, spread-in: a NULL column (never checked) leaves the key ABSENT.
-    ...senderCheckOf(m.senderCheck, m.senderCheckBrand, m.fromAddress, m.senderCheckBy, listAddress === true, m.authVerdict),
+    ...senderCheckOf(
+      m.senderCheck, m.senderCheckBrand, m.fromAddress, m.senderCheckBy, listAddress === true, m.authVerdict,
+      m.unconfirmedHold === true,
+    ),
     // A placement somebody decided — a person, or the gate's admission of an answer — keeps the key.
     ...(fs?.decidedAt != null ? { placeDecided: true as const } : {}),
     // Spread-in rather than a plain `autoReplyByUs:` so an un-asked caller yields a DTO with the
@@ -476,8 +483,8 @@ async function materializeRows(
     })} then 1 else 0 end`.as("m_auto_reply"),
     invitation: sql`${invitationWithoutEventWhere(d, { id: sql`${messages.id}`, accountId: sql`${messages.accountId}` })}`.as("m_invitation"),
     itipReply: sql`${itipReplyHeaderWhere(d, { id: sql`${messages.id}`, accountId: sql`${messages.accountId}` })}`.as("m_itip_reply"),
-    // A claim from a list address (mail 0150): one primary-key probe, asked of impersonation rows only.
-    listAddress: sql<unknown>`case when ${messages.senderCheck} = 'impersonation' and exists (
+    // A claim from a list address (mail 0150): one primary-key probe, asked of held claims only.
+    listAddress: sql<unknown>`case when ${heldForIdentitySql({ senderCheck: messages.senderCheck, unconfirmed: messages.unconfirmedHold })} and exists (
       select 1 from ${listAddresses} la
        where la.account_id = ${messages.accountId} and la.address = lower(${messages.fromAddress})
     ) then 1 else 0 end`.as("m_list_address"),
@@ -1077,6 +1084,8 @@ function profileRuleToDTO(mailboxId: string, at: number, e: unknown, asOf: strin
     retro: { requestedAt: null, doneAt: null, from: null },
     // The published document carries no mark, so a holder's rule read here reads as a person's.
     byOhmail: false,
+    // Its stamp does: a person decided it where it was made.
+    ...(typeof r.personDecidedAt === "string" && writtenInstant(r.personDecidedAt) ? { personDecided: true as const } : {}),
   };
 }
 

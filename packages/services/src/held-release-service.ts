@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "dr
 import {
   AccountErasedError, accountSettings, applyScreenerDecision, auditAction, auditLog, authScreensSql, changeLog,
   contactOnlyHeldWhere, CUTLINE_ALLOW_DESTINATIONS, destinationIsDecisionSql, folderState, lockAccountRuleKeys,
-  mailboxes, messages, personSkipSql,
+  heldUnconfirmedOnlySql, mailboxes, messages, notHeldForIdentitySql, personSkipSql,
   recordRuleDelta, ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -133,12 +133,14 @@ function heldAtGate(d: ReturnType<typeof dialect>, accountId: string) {
     sql`${folderState.lastSetBy} in ('external', 'peer', 'us')`,
     eq(folderState.desiredFolder, SCREENER_FOLDER),
     eq(folderState.observedFolder, SCREENER_FOLDER),
-    // A claim the identity fact holds is the Screener's question, with its sentence, never a release —
-    // unless the person skip takes it (`personSkipSql`): a person consented to the address and the
-    // gate would not hold the row now, its stored authentication verdict included.
-    sql`(${messages.senderCheck} is null or ${messages.senderCheck} <> 'impersonation'
+    // A claim the identity fact holds, or a letter held for want of confirmation, is the Screener's
+    // question, with its sentence, never a release — unless the person skip takes it (`personSkipSql`):
+    // a person consented to the address and the gate would not hold the row now, its stored
+    // authentication verdict included.
+    sql`(${notHeldForIdentitySql({ senderCheck: messages.senderCheck, unconfirmed: messages.unconfirmedHold })}
       or ${personSkipSql(d, accountId, {
         sender: sql`lower(${messages.fromAddress})`, auth: sql`${messages.authVerdict}`, brand: sql`${messages.senderCheckBrand}`,
+        unconfirmedOnly: heldUnconfirmedOnlySql({ senderCheck: messages.senderCheck, unconfirmed: messages.unconfirmedHold }),
       }, SCREENING_AUTH_VERDICTS)})`,
     sql`exists (
       select 1 from ${mailboxes} mb

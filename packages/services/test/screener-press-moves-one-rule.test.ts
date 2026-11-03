@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GATE_SCREENING_AUTH_VERDICTS, heldRowMovesOnPress } from "@trafficflow/db";
 import { SCREENING_AUTH_VERDICTS, heldMovesOnPress, type HeldCheck } from "@trafficflow/core/sender-headers";
+import { heldCheckOf } from "@ohmail/client-engine";
 
 /**
  * ONE RULE FOR WHAT A PRESS MOVES: the server's `heldRowMovesOnPress` (db, which does not import core)
@@ -32,6 +33,18 @@ describe("a press moves one set, on the server and in the overlay", () => {
     expect(heldMovesOnPress({ check: "claim", from: "other@a.example", auth: null }, "pressed@a.example")).toBe(false);
     expect(heldMovesOnPress({ check: "claim", from: "Pressed@A.example", auth: null }, "pressed@a.example")).toBe(true);
     expect(heldMovesOnPress({ check: "none", from: "other@a.example", auth: null }, "pressed@a.example")).toBe(true);
+  });
+
+  it("a letter held for want of confirmation (mail 0176) moves as a claim does, on both: on its own address's press only", () => {
+    const wire = heldCheckOf({ reason: "unverified", brand: "PayPal", domainShared: false, held: true });
+    for (const from of ["pressed@a.example", "other@a.example"]) {
+      for (const marked of ["pressed", "none"] as const) {
+        const server = heldRowMovesOnPress(
+          { senderCheck: "none", unconfirmedHold: true, fromAddress: from, authVerdict: null }, "pressed@a.example", marked);
+        expect(heldMovesOnPress({ check: wire, from, auth: null }, "pressed@a.example", marked), `${from} ${marked}`).toBe(server);
+        expect(server, `${from} ${marked}`).toBe(marked === "pressed" && from === "pressed@a.example");
+      }
+    }
   });
 
   it("the db's verdict list is core's", () => {

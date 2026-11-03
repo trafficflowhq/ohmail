@@ -4,7 +4,7 @@ import {
   type AuthVerdict, type OhboxPolicy, type Rule,
 } from "../src/rules.js";
 import type { NormalizedMessage } from "../src/types.js";
-import { claimedIdentity } from "../src/sender-check.js";
+import { claimedIdentity, ownedBrand } from "../src/sender-check.js";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
 
 /* Senders at a shared provider, where the provider is what the rules read: assembled, fixture locals. */
@@ -1001,5 +1001,113 @@ describe("the identity fact holds what only inference admitted", () => {
     });
     expect(gate(named("PostFinance", "x@kundendienst-portal.example"), { rules: [narrowed] }).destination).toBe("ohmail/Screener");
     expect(gate(named("Hans", "x@kundendienst-portal.example"), { rules: [narrowed] }).source).toBe("unclear");
+  });
+});
+
+/* ══ A COMPANY'S OWN ADDRESS NOTHING CONFIRMED (mail 0176) — the hold beside the identity fact ══
+   The flag is computed as the ingest computes it (`ownedBrand` and the verdict after the signature
+   check), so each case is the arrival door's fact and the gate together. */
+describe("a company's own address nothing confirmed is held where only inference admitted it", () => {
+  const BRAND = "service@paypal.com";
+  const PLAIN = "anna@firma.example";
+  const gate = (from: string, o: {
+    rules?: Rule[]; person?: string[]; inferred?: string[]; own?: string[]; auth?: AuthVerdict;
+    lists?: string[]; arrival?: boolean;
+  } = {}) => {
+    const auth = o.auth ?? "unavailable";
+    return evaluateRules({
+      msg: msg(from), rules: o.rules ?? [],
+      knownSenders: {
+        addresses: new Set([...(o.person ?? []), ...(o.inferred ?? [])]), inferred: new Set(o.inferred ?? []),
+        lists: new Map((o.lists ?? []).map((a) => [a, new Set<string>()])),
+      },
+      auth, ohboxPolicy: "people_and_replied", ownAddresses: new Set(o.own ?? []), identity: null,
+      ...(o.arrival === false ? {} : { ownedUnconfirmed: ownedBrand(from) !== undefined && auth !== "pass" }),
+    });
+  };
+  const HELD = { destination: "ohmail/Screener", matchedRuleId: null, source: "screener", unconfirmed: true };
+  const actRule = (match: string) => rule({ id: "act", kind: "sender", match, destination: "INBOX", provenance: "promoted" });
+  const domainRule = (match: string) => rule({ id: "dom", kind: "domain", match, destination: "INBOX" });
+
+  it("every inference is held at a company's own address unless it is confirmed", () => {
+    const inferences: Array<[string, Parameters<typeof gate>[1]]> = [
+      ["the act's rule and its inferred contact", { rules: [actRule(BRAND)], inferred: [BRAND] }],
+      ["an inferred contact alone", { inferred: [BRAND] }],
+      ["a promoted domain rule no person decided (the act's, the AI's, a press before mail 0128)",
+        { rules: [{ ...domainRule("paypal.com"), provenance: "promoted" as const }] }],
+      ["a narrowed promoted rule that stands for the sender",
+        { rules: [{ ...domainRule("paypal.com"), provenance: "promoted" as const, subjectContains: "rechnung" }] }],
+      ["nothing: a stranger", {}],
+    ];
+    for (const [what, o] of inferences) {
+      for (const auth of ["unavailable", "unauthenticated"] as const) {
+        expect(gate(BRAND, { ...o, auth }), `${what}, ${auth}`).toEqual(HELD);
+      }
+      // A verdict of pass is confirmed: the inference admits as before, and nothing is marked.
+      expect(gate(BRAND, { ...o, auth: "pass" }).unconfirmed, `${what}, pass`).toBeUndefined();
+      // An address at no company's domain is no such case, whatever the verdict.
+      const plain = gate(PLAIN, { ...o, rules: (o?.rules ?? []).map((r) => ({ ...r, match: r.kind === "domain" ? "firma.example" : PLAIN })),
+        inferred: o?.inferred === undefined ? undefined : [PLAIN] });
+      expect(plain.unconfirmed, `${what}, plain address`).toBeUndefined();
+    }
+    expect(gate(BRAND, { rules: [actRule(BRAND)], inferred: [BRAND], auth: "pass" }))
+      .toEqual({ destination: "INBOX", matchedRuleId: "act", source: "rule" });
+  });
+
+  it("a person's consent at the address is honoured as before", () => {
+    // A person-written sender rule, and a person's contact (a press, or the person writing to them).
+    for (const provenance of ["manual", "migrated", "seeded-from-sent"] as const) {
+      expect(gate(BRAND, { rules: [{ ...actRule(BRAND), provenance }] }), provenance)
+        .toEqual({ destination: "INBOX", matchedRuleId: "act", source: "rule" });
+    }
+    expect(gate(BRAND, { rules: [actRule(BRAND)], person: [BRAND] }))
+      .toEqual({ destination: "INBOX", matchedRuleId: "act", source: "rule" });
+    expect(gate(BRAND, { person: [BRAND] }).source).toBe("unclear");
+    // A list address answers alone, and no brand is claimed for a press there to have consented.
+    expect(gate(BRAND, { rules: [{ ...actRule(BRAND), provenance: "manual" }], person: [BRAND], lists: [BRAND] })).toEqual(HELD);
+  });
+
+  it("a domain rule a person wrote is consent to this hold, and never to a claim", () => {
+    for (const provenance of ["manual", "migrated"] as const) {
+      expect(gate(BRAND, { rules: [{ ...domainRule("paypal.com"), provenance }] }), provenance)
+        .toEqual({ destination: "INBOX", matchedRuleId: "dom", source: "rule" });
+    }
+    // The person's own Screener press on the domain, stamped as theirs (`rules.person_decided_at`).
+    const pressed = { ...domainRule("paypal.com"), provenance: "promoted" as const, personDecided: true };
+    expect(gate(BRAND, { rules: [pressed] })).toEqual({ destination: "INBOX", matchedRuleId: "dom", source: "rule" });
+    expect(gate(BRAND, { rules: [{ ...pressed, personDecided: false }] })).toEqual(HELD);
+    // Narrowed, it still stands for the sender: admitted past the gate, placed by nothing.
+    expect(gate(BRAND, { rules: [{ ...domainRule("paypal.com"), subjectContains: "rechnung" }] }).source).toBe("unclear");
+    // A list address answers alone, as for an address rule.
+    expect(gate(BRAND, { rules: [domainRule("paypal.com")], lists: [BRAND] })).toEqual(HELD);
+    // The identity fact never reads it: a company named from that domain still waits, unmarked.
+    const claim = evaluateRules({
+      msg: { ...msg(BRAND), from: { name: "PostFinance", address: BRAND } }, rules: [domainRule("paypal.com")],
+      knownSenders: { addresses: new Set(), inferred: new Set(), lists: new Map() }, auth: "unavailable",
+      ohboxPolicy: "people_and_replied", ownAddresses: new Set(), identity: { brand: "PostFinance", via: "name" },
+      ownedUnconfirmed: true,
+    });
+    expect(claim).toEqual({
+      destination: "ohmail/Screener", matchedRuleId: null, source: "screener", identity: { brand: "PostFinance", via: "name" },
+    });
+  });
+
+  it("re-evaluation passes never pass the fact, so a walk decides as before", () => {
+    expect(gate(BRAND, { rules: [actRule(BRAND)], inferred: [BRAND], arrival: false }))
+      .toEqual({ destination: "INBOX", matchedRuleId: "act", source: "rule" });
+  });
+
+  it("every denial and a failed authentication stand above it; own mail is never held", () => {
+    const deny = rule({ id: "no", kind: "sender", match: BRAND, destination: "ohmail/Screened" });
+    expect(gate(BRAND, { rules: [deny] })).toEqual({ destination: "ohmail/Screened", matchedRuleId: "no", source: "rule" });
+    const standingDeny = rule({ id: "sd", kind: "domain", match: "paypal.com", destination: "ohmail/Quarantine", subjectContains: "x" });
+    expect(gate(BRAND, { rules: [standingDeny], inferred: [BRAND] }))
+      .toEqual({ destination: "ohmail/Quarantine", matchedRuleId: "sd", source: "rule" });
+    // `fail` screens, unmarked: the provider's evidence against is its own reason.
+    expect(gate(BRAND, { rules: [actRule(BRAND)], inferred: [BRAND], auth: "fail" }))
+      .toEqual({ destination: "ohmail/Screener", matchedRuleId: null, source: "screener" });
+    expect(gate(BRAND, { inferred: [BRAND], auth: "fail" }))
+      .toEqual({ destination: "ohmail/Screener", matchedRuleId: null, source: "screener" });
+    expect(gate(BRAND, { own: [BRAND] })).toEqual({ destination: null, matchedRuleId: null, source: "own" });
   });
 });

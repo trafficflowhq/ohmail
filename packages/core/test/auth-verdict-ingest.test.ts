@@ -410,18 +410,22 @@ describe("§5 — where the provider writes nothing ohmail believes, the sender'
 
   async function ingestWith(
     repo: FakeRepo, raw: string, trusted: ReadonlySet<string>, keys: ReturnType<typeof fakeKeys>,
-    o: { listLetters?: boolean; change?: Partial<Change> } = {},
-  ): Promise<Ingested> {
+    o: { listLetters?: boolean; change?: Partial<Change>; deps?: Partial<Parameters<typeof planChange>[1]> } = {},
+  ): Promise<Ingested & { held?: true }> {
     const change: Change = {
       type: "create", locator: { folder: "INBOX", ref: "1:10" }, raw: Buffer.from(raw, "latin1"), ...o.change,
     };
     const plan = await planChange(change, {
       repo, accountId: "acct-1", mailboxId: "mb-1", readerMode: false, trustedAuthservIds: trusted,
-      signatures: await signatures(keys, o.listLetters ?? true),
+      signatures: await signatures(keys, o.listLetters ?? true), ...o.deps,
     });
     const res = await commitChange(plan, { repo, accountId: "acct-1", mailboxId: "mb-1", storageCap: UNMETERED_STORAGE_CAP });
     const state = await repo.getFolderState(res.messageId);
-    return { messageId: res.messageId, desired: state!.desiredFolder, persisted: repo.rows.get(res.messageId)!.input.authVerdict };
+    const input = repo.rows.get(res.messageId)!.input;
+    return {
+      messageId: res.messageId, desired: state!.desiredFolder, persisted: input.authVerdict,
+      ...(input.unconfirmedHold === true ? { held: true as const } : {}),
+    };
   }
 
   it("a company's signed letter at a provider nobody names reads pass, and routes as before", async () => {
@@ -454,19 +458,25 @@ describe("§5 — where the provider writes nothing ohmail believes, the sender'
     expect(before).toMatchObject({ desired: "ohmail/News", persisted: "unavailable" });
   });
 
-  it("at Gmail and at Microsoft the same signed letter is read from the provider's header alone, with no lookup", async () => {
+  it("at Gmail and at Microsoft a header that says nothing ohmail believes is checked by the signature too", async () => {
     const signed = await nodemailerSign(letter(), "paypal.com", "s1", KEY);
+    // No position the provider writes says anything (Microsoft's never does): the signature answers.
     for (const host of ["imap.gmail.com", "outlook.office365.com"]) {
       const keys = fakeKeys(TABLE);
       const out = await ingestWith(new FakeRepo(), signed, providerAuthservIds(host), keys);
-      expect(out.persisted, host).toBe("unavailable");
-      expect(keys.calls, host).toEqual([]);
+      expect(out.persisted, host).toBe("pass");
+      expect(keys.calls, host).toEqual(["s1._domainkey.paypal.com"]);
     }
-    // And the provider's own word still reads as it did: a header Gmail wrote, above the signature.
+    // The provider's own word still reads as it did, with no lookup: a pass Gmail wrote, above the signature…
     const confirmed = `Authentication-Results: mx.google.com; dkim=pass header.d=paypal.com; dmarc=pass\r\n${signed}`;
     const keys = fakeKeys(TABLE);
     expect((await ingestWith(new FakeRepo(), confirmed, GMAIL_HOST, keys)).persisted).toBe("pass");
     expect(keys.calls).toEqual([]);
+    // …and a fail Gmail wrote, which no signature outvotes.
+    const failed = `Authentication-Results: mx.google.com; dkim=fail header.d=paypal.com; dmarc=fail header.from=paypal.com\r\n${signed}`;
+    const none = fakeKeys(TABLE);
+    expect((await ingestWith(new FakeRepo(), failed, GMAIL_HOST, none)).persisted).toBe("fail");
+    expect(none.calls).toEqual([]);
   });
 
   it("no lookup for a letter nothing automatic reads, own mail, oversize mail or old mail", async () => {
@@ -492,5 +502,76 @@ describe("§5 — where the provider writes nothing ohmail believes, the sender'
     const keys = fakeKeys(TABLE);
     expect((await ingestWith(new FakeRepo(), signedList, FASTMAIL, keys)).persisted).toBe("pass");
     expect(keys.calls).toEqual(["s1._domainkey.list.example"]);
+  });
+});
+
+describe("§6 — a company's own address only inference let in, nothing confirming it (mail 0176)", () => {
+  const FASTMAIL = providerAuthservIds("imap.fastmail.com");
+  const DAY = 24 * 60 * 60 * 1000;
+  const KEY = rsaKey();
+  const TABLE = { "s1._domainkey.paypal.com": KEY.record };
+  /** The act let `service@paypal.com` in: its promoted rule and its inferred contact. */
+  function actAdmitted(): FakeRepo {
+    const repo = new FakeRepo();
+    repo.rules = [{
+      id: "r-act", kind: "sender", match: "service@paypal.com", destination: "INBOX", effect: "allow",
+      priority: 10, provenance: "promoted", enabled: true, subjectContains: null, bodyContains: null,
+    }];
+    repo.senders.add("service@paypal.com");
+    repo.inferredSenders.add("service@paypal.com");
+    return repo;
+  }
+  async function signatures(keys: ReturnType<typeof fakeKeys>) {
+    const { makeSignatureCheck } = await import("../src/adapters/dkim.js");
+    return signaturesForCycle({ ...makeSignatureCheck({ keys }), listLetters: false });
+  }
+  async function arrive(repo: FakeRepo, raw: string, deps: Partial<Parameters<typeof planChange>[1]> = {}, change: Partial<Change> = {}) {
+    const plan = await planChange({ type: "create", locator: { folder: "INBOX", ref: "1:10" }, raw: Buffer.from(raw, "latin1"), ...change }, {
+      repo, accountId: "acct-1", mailboxId: "mb-1", readerMode: false, trustedAuthservIds: FASTMAIL,
+      signatures: await signatures(fakeKeys(TABLE)), ...deps,
+    });
+    const res = await commitChange(plan, { repo, accountId: "acct-1", mailboxId: "mb-1", storageCap: UNMETERED_STORAGE_CAP });
+    return { desired: (await repo.getFolderState(res.messageId))!.desiredFolder, held: repo.rows.get(res.messageId)!.input.unconfirmedHold };
+  }
+
+  it("an unsigned letter is held and marked; a signed one is let in by the act's rule, unmarked", async () => {
+    expect(await arrive(actAdmitted(), letter())).toEqual({ desired: "ohmail/Screener", held: true });
+    expect(await arrive(actAdmitted(), await nodemailerSign(letter(), "paypal.com", "s1", KEY))).toEqual({ desired: "INBOX", held: undefined });
+  });
+
+  it("only a placement at the gate is marked: the backlog and an import hold keep the folder unmarked", async () => {
+    // Young enough to be checked, and from before the screening cutoff.
+    const backlog = new Date(Date.now() - 10 * DAY);
+    expect(await arrive(actAdmitted(), letter(), { screeningCutoff: new Date(Date.now() - 5 * DAY) }, { internalDate: backlog }))
+      .toEqual({ desired: "INBOX", held: undefined });
+    expect(await arrive(actAdmitted(), letter(), { importHold: { kind: "unreadable" } })).toEqual({ desired: "INBOX", held: undefined });
+  });
+
+  it("a letter too old to have its signature checked is let in by the act's rule, unmarked", async () => {
+    // INTERNALDATE is the server's: a letter the check never reads for its age is never held for want of it.
+    const old = { internalDate: new Date(Date.now() - 40 * DAY) };
+    const signed = await nodemailerSign(letter(), "paypal.com", "s1", KEY);
+    expect(await arrive(actAdmitted(), signed, {}, old)).toEqual({ desired: "INBOX", held: undefined });
+    expect(await arrive(actAdmitted(), letter(), {}, old)).toEqual({ desired: "INBOX", held: undefined });
+    expect(await arrive(actAdmitted(), letter(), { signatures: null }, old)).toEqual({ desired: "INBOX", held: undefined });
+  });
+
+  it("CONTROL: a young letter the check skipped for any other reason still waits, marked", async () => {
+    const young = { internalDate: new Date(Date.now() - 29 * DAY) };
+    const signed = await nodemailerSign(letter(), "paypal.com", "s1", KEY);
+    const { makeSignatureCheck } = await import("../src/adapters/dkim.js");
+    const spent = signaturesForCycle({ ...makeSignatureCheck({ keys: fakeKeys(TABLE), cycleLookupMs: 0 }), listLetters: false });
+    const HELD = { desired: "ohmail/Screener", held: true };
+    expect(await arrive(actAdmitted(), signed, {}, { ...young, oversizeBytes: 70 * 1024 * 1024 }), "oversize").toEqual(HELD);
+    expect(await arrive(actAdmitted(), signed, { signatures: spent }, young), "the lookup budget spent").toEqual(HELD);
+    expect(await arrive(actAdmitted(), signed, { signatures: null }, young), "no check here").toEqual(HELD);
+    expect(await arrive(actAdmitted(), signed, {}, young), "checked, it passes").toEqual({ desired: "INBOX", held: undefined });
+  });
+
+  it("a person's contact is consent, as before; a stranger at the address waits, marked", async () => {
+    const person = new FakeRepo();
+    person.senders.add("service@paypal.com");
+    expect(await arrive(person, letter())).toEqual({ desired: "INBOX", held: undefined });
+    expect(await arrive(new FakeRepo(), letter())).toEqual({ desired: "ohmail/Screener", held: true });
   });
 });

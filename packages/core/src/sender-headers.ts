@@ -7,14 +7,15 @@
  * stranger naming a colleague in Cc reads as that colleague's correspondent.
  */
 /**
- * The authentication evidence about the CLAIMED author. Demote-only: exactly one member changes
- * routing — `"fail"`. Absent evidence must never select the destructive branch: gating the
- * known-sender match on a positive verdict makes every row of a large backlog answer Screener —
- * so routing has no `auth !== "pass"` and there must never be one. Authentication may DEMOTE on
- * evidence against; it may never be REQUIRED before a consented identity is honoured. Members:
- * `"unauthenticated"` — the caller did not look (NULL resolves here); `"unavailable"` — looked,
- * found nothing it may believe; `"pass"` — persisted and shown, never read by routing; `"fail"` —
- * evidence AGAINST, toward the Screener only. A compile-time fixture pins the field required.
+ * The authentication evidence about the CLAIMED author. `"fail"` demotes: evidence against, toward
+ * the Screener only. Absent evidence must never select the destructive branch for a person's
+ * consent: gating the known-sender match on a positive verdict makes every row of a large backlog
+ * answer Screener, so a person's consent is honoured without `pass`. The one exception is an
+ * inferred admission of a company's own address, held at an arrival door unless `pass`
+ * (`rules.ts#EvaluateRulesInput.ownedUnconfirmed`). Members: `"unauthenticated"` — the caller did
+ * not look (NULL resolves here); `"unavailable"` — looked, found nothing it may believe; `"pass"` —
+ * the provider or the sender's own signature confirmed it; `"fail"` — evidence AGAINST. A
+ * compile-time fixture pins the field required.
  */
 export type AuthVerdict = "unauthenticated" | "unavailable" | "pass" | "fail";
 

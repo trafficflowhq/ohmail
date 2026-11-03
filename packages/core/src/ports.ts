@@ -224,6 +224,8 @@ export interface InsertMessageInput {
    * may leave it NULL by omission.
    */
   senderCheck: IdentityFact | null;
+  /** `messages.unconfirmed_hold` (mail 0176): the gate placed it for want of confirmation. Absent writes NULL. */
+  unconfirmedHold?: true;
   /**
    * The fence this commit is already sending — {@link MailboxMustBeLive}, handed to the erasure
    * fence at the write door. Present, the door asks nothing of its own: the caller's allocation
@@ -536,6 +538,12 @@ export interface RepoPort {
   knownSenders(accountId: string): Promise<KnownSenders>;
   /** The account's own mailbox addresses, lower-cased — `@trafficflow/db#readOwnAddresses`. */
   ownAddresses(accountId: string): Promise<Set<string>>;
+  /**
+   * The host this mailbox's outgoing mail leaves through (`adapters/imap-auth.ts#outgoingHostOf`, from its
+   * credential rows' non-secret `meta`) and its own address, each `null` where none is stored. The bounce
+   * arm asks it only for a report the gate would hold for want of confirmation.
+   */
+  mailboxOutgoing(mailboxId: string): Promise<{ smtpHost: string | null; address: string | null }>;
   /**
    * Does `sender` answer this account's writing — `correspondent.ts#correspondentsAmong`, its REPLY
    * arm: `references` (bracket-free, as `threadKeyOf` parses them) name a Sent copy this account

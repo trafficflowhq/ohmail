@@ -589,7 +589,7 @@ async function advisedLettersFileable(
 interface WaitingSender {
   address: string;
   mailboxId: string;
-  /** A non-deleted held message of this sender carries `sender_check = 'impersonation'`. */
+  /** A non-deleted held message of this sender carries `sender_check = 'impersonation'`, or `unconfirmed_hold` (mail 0176). */
   identityHeld: boolean;
   /** A non-deleted held message of this sender is one its provider did not confirm (`auth_verdict` not `pass`, NULL included). */
   unconfirmedHeld: boolean;
@@ -662,7 +662,7 @@ async function selectWaitingSenders(
          and lower(im.from_address) = ${repSender}
          and ifs.desired_folder = ${SCREENER_FOLDER}
          and im.deleted_at is null
-         and im.sender_check = 'impersonation'
+         and (im.sender_check = 'impersonation' or im.unconfirmed_hold is true)
     )`,
     // The same reach for the provider's word, in every mailbox of the account: the decision's door
     // moves them all.

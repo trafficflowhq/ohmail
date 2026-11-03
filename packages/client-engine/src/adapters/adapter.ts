@@ -265,7 +265,7 @@ export interface ScreenerWaitingItemWire {
   subject: string;
   snippet: string;
   mailboxId: string | null;
-  /** The page's `checked`: a held letter of this sender claims a company its address is not. */
+  /** The page's `checked`: a held letter of this sender claims a company its address is not, or is `held`. */
   marked?: true;
   /** The page's `checked.claimsOnly`: a screen-out of this sender files its claims alone and writes no rule (mail 0150). */
   claimsOnly?: true;

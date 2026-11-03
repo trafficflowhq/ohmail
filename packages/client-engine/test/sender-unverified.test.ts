@@ -94,6 +94,9 @@ describe("a press reads the identity column under an unconfirmed line", () => {
     expect(heldCheckOf(CLAIM)).toBe("claim");
     expect(heldCheckOf(UNVERIFIED)).toBe("none");
     expect(heldCheckOf({ ...UNVERIFIED, unchecked: true })).toBe("unchecked");
+    // The gate holds it for want of confirmation (mail 0176): a claim to the press, whatever the column.
+    expect(heldCheckOf({ ...UNVERIFIED, held: true })).toBe("claim");
+    expect(heldCheckOf({ ...UNVERIFIED, unchecked: true, held: true })).toBe("claim");
   });
 
   it("a whole-domain press moves another address's unconfirmed letter and leaves a never-checked one, as the server does", async () => {
@@ -101,11 +104,12 @@ describe("a press reads the identity column under an unconfirmed line", () => {
       held("p1", "billing", null),
       held("p2", "service", UNVERIFIED),
       held("p3", "news", { ...UNVERIFIED, unchecked: true }),
+      held("p4", "alerts", { ...UNVERIFIED, held: true }),
     ]);
     void engine.mutate({ kind: "screener_decide", senderId: "p1", decision: "yes", dest: "ohbox", scope: "domain" });
     await new Promise((r) => setTimeout(r, 0));
     const at = (id: string) => engine.read().get<EngineMessage>("message", id)?.folder;
-    expect([at("p1"), at("p2"), at("p3")]).toEqual(["INBOX", "INBOX", "ohmail/Screener"]);
+    expect([at("p1"), at("p2"), at("p3"), at("p4")]).toEqual(["INBOX", "INBOX", "ohmail/Screener", "ohmail/Screener"]);
   });
 });
 
