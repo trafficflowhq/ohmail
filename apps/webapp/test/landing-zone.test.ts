@@ -3,7 +3,9 @@ import { getPathMatch } from "next/dist/shared/lib/router/utils/path-match";
 import {
   ALLOWED_LANDING_ZONES, ZONE_FORWARDED_HEADERS, armedZone, resolveLandingZone, zoneRequestHeaders, zoneTarget,
 } from "../landing-zone.mjs";
-import { STATIC_REWRITES, ZONE_ONLY_PATHS, ZONE_PATHS, isZonePath, rewritesFor, zonePathOf } from "../routes.mjs";
+import {
+  STATIC_REWRITES, ZONE_CASE_SOURCE, ZONE_ONLY_PATHS, ZONE_PATHS, isZonePath, rewritesFor, zoneCaseVariantOf, zonePathOf,
+} from "../routes.mjs";
 import { BASELINE_CSP } from "../app/security-headers.js";
 
 /**
@@ -63,6 +65,26 @@ async function run(path: string, init: { method?: string; headers?: Record<strin
 /** The header names the zone's request is rebuilt from, as Next reads them off the response. */
 const overridden = (res: Response): string[] =>
   (res.headers.get("x-middleware-override-headers") ?? "").split(",").filter(Boolean);
+
+type Matchers = Array<{ regexp: string }>;
+/** Next's own middleware matcher compiler, and the router's reading of what it compiled. */
+async function nextMatcher() {
+  const info = (await import("next/dist/build/analysis/get-page-static-info.js")) as unknown as {
+    getMiddlewareMatchers: (m: unknown, nextConfig: Record<string, unknown>) => Matchers;
+  };
+  const route = (await import("next/dist/shared/lib/router/utils/middleware-route-matcher.js")) as unknown as {
+    getMiddlewareRouteMatcher: (m: Matchers) => (path: string, req: unknown, query: unknown) => boolean;
+  };
+  return { info, route };
+}
+
+/** Does `next start` run the middleware for a path? `config.matcher` through Next's own matcher. */
+async function edgeRuns(): Promise<(path: string) => boolean> {
+  const { config } = await import("../middleware.js");
+  const { info, route } = await nextMatcher();
+  const runs = route.getMiddlewareRouteMatcher(info.getMiddlewareMatchers(config.matcher, {}));
+  return (path) => runs(path, { headers: {}, cookies: {} }, {});
+}
 
 describe("the zone resolver: one compiled origin, loopback for the harness, null for the rest", () => {
   it("the listed zone and a loopback origin resolve to themselves", () => {
@@ -177,15 +199,7 @@ describe("the zone decision is taken on the path the router serves, not only the
   });
 
   it("the matcher runs the middleware for a dot-segment spelling, which no literal matches", async () => {
-    const { config } = await import("../middleware.js");
-    const info = (await import("next/dist/build/analysis/get-page-static-info.js")) as unknown as {
-      getMiddlewareMatchers: (m: unknown, nextConfig: Record<string, unknown>) => Array<{ regexp: string }>;
-    };
-    const route = (await import("next/dist/shared/lib/router/utils/middleware-route-matcher.js")) as unknown as {
-      getMiddlewareRouteMatcher: (m: Array<{ regexp: string }>) => (path: string, req: unknown, query: unknown) => boolean;
-    };
-    const runs = route.getMiddlewareRouteMatcher(info.getMiddlewareMatchers(config.matcher, {}));
-    const at = (path: string) => runs(path, { headers: {}, cookies: {} }, {});
+    const at = await edgeRuns();
     for (const p of ["/./privacy", "/a/../privacy", "/.", "/privacy", "/privacy/.", "/privacy/x/..", "/de/."]) {
       expect(at(p), p).toBe(true);
     }
@@ -243,7 +257,7 @@ describe("armed: every zone path is rewritten to the zone and the jar stays here
     expect(login.headers.get("x-middleware-rewrite")).toBeNull();
     expect(login.headers.get("content-security-policy")).toMatch(/'nonce-/);
     expect((await run("/mailbox")).status).toBe(308);
-    for (const path of ["/site-assets", "/landing", "/landingx", "/PRIVACY"]) {
+    for (const path of ["/site-assets", "/landing", "/landingx"]) {
       expect((await run(path)).headers.get("x-middleware-rewrite"), path).toBeNull();
     }
   });
@@ -260,7 +274,7 @@ describe("unarmed in every other state: the website is served from here, as befo
       { LANDING_ZONE_ORIGIN: "https://evil.example", LANDING_ZONE_BYPASS: "b" },
     ]) {
       arm(vars);
-      for (const path of ["/", "/privacy", "/landing/a.webp"]) {
+      for (const path of ["/", "/privacy", "/landing/a.webp", "/PRIVACY"]) {
         const headers = await unarmed(path);
         expect(headers.get("x-middleware-rewrite"), `${JSON.stringify(vars)} ${path}`).toBeNull();
         expect(headers.get("x-middleware-next"), `${JSON.stringify(vars)} ${path}`).toBe("1");
@@ -280,6 +294,7 @@ describe("unarmed in every other state: the website is served from here, as befo
     expect(root.status).toBe(307);
     expect(new URL(root.headers.get("location")!).pathname).toBe("/login");
     expect((await run("/privacy")).headers.get("x-middleware-rewrite")).toBeNull();
+    expect((await run("/PRIVACY")).headers.get("x-middleware-next")).toBe("1");
   });
 
   it("a signed-in `/` is still the app under a nonce, armed or not", async () => {
@@ -455,5 +470,83 @@ describe("headerRules: unarmed byte for byte, armed with no policy of ours on th
 
   it("armed: no Google source anywhere, whatever id is passed", async () => {
     expect(JSON.stringify(await rulesOf("G-9SPZX4FS1X", LISTED))).not.toMatch(/google/i);
+  });
+});
+
+describe("armed: a zone path in other capitals is a 308 to the zone's own spelling, never a page without a policy", () => {
+  /** Case variants and the spelling each names: the declared one, a prefix's remainder as sent. */
+  const VARIANTS: Array<[string, string]> = [
+    ["/PRIVACY", "/privacy"], ["/De", "/de"], ["/IMPRINT", "/imprint"], ["/SubProcessors", "/subprocessors"],
+    ["/Flathub-Verification", "/flathub-verification"],
+    ["/.Well-Known/org.flathub.verifiedapps.txt", "/.well-known/org.flathub.VerifiedApps.txt"],
+    ["/Landing/x.webp", "/landing/x.webp"], ["/SITE-ASSETS/_next/static/A.js", "/site-assets/_next/static/A.js"],
+    ["/API/Waitlist", "/api/waitlist"],
+  ];
+  /** Remainders that would leave the prefix if the next request read them decoded (`\`, a tab inside `..`). */
+  const HOSTILE: Array<[string, string]> = [
+    ["/LANDING/..%5C..%5Cx", "/landing/..%5C..%5Cx"], ["/Landing//evil.example/x", "/landing//evil.example/x"],
+    ["/Landing/%2F%2Fevil.example", "/landing/%2F%2Fevil.example"],
+    ["/%4Canding/%5C..%5Clogin", "/landing/%5C..%5Clogin"], ["/%4Canding/.%09./login", "/landing/.%09./login"],
+  ];
+  const CONTROLS = ["/no-such-page", "/PRIVACYX", "/LANDING", "/Landingx/a", "/API/sync", "/Demo", "/LOGIN"];
+
+  it("zoneCaseVariantOf names that spelling, read as sent and as the router serves it", () => {
+    for (const [variant, path] of [
+      ...VARIANTS, ...HOSTILE, ["/%50RIVACY", "/privacy"], ["/PRIVACY/", "/privacy"], ["/./PRIVACY", "/privacy"],
+      ["/%4Canding/x.webp", "/landing/x.webp"], ["/Landing/%41.webp", "/landing/%41.webp"],
+    ]) {
+      expect(zoneCaseVariantOf(variant!), variant).toBe(path);
+      expect(zonePathOf(path!), path).toBe(path);
+    }
+  });
+
+  it("…and nothing for a zone spelling, `/` or any other path", () => {
+    for (const p of [...ZONE_PATHS, "/site-assets/x", "/landing/a.webp", "/%70rivacy", ...CONTROLS, "/%E0%A4%A"]) {
+      expect(zoneCaseVariantOf(p), p).toBeNull();
+    }
+  });
+
+  it("the middleware answers a 308 on this origin with the query as sent, and hands nothing over", async () => {
+    arm({ LANDING_ZONE_ORIGIN: ZONE, LANDING_ZONE_BYPASS: "b" });
+    for (const [variant, path] of [...VARIANTS, ...HOSTILE, ["/PRIVACY?ref=x", "/privacy?ref=x"]]) {
+      const res = await run(variant!, { headers: { cookie: JAR } });
+      expect(res.status, variant).toBe(308);
+      expect(res.headers.get("location"), variant).toBe(`https://ohmail.app${path}`);
+      expect(res.headers.get("x-middleware-rewrite"), variant).toBeNull();
+      expect(res.headers.get("x-middleware-request-cookie"), variant).toBeNull();
+      expect(res.headers.get("cache-control"), variant).toBeNull();
+    }
+  });
+
+  it("the matcher runs the middleware for every variant and no other path, read in either case", async () => {
+    const at = await edgeRuns();
+    const controls = [...CONTROLS, "/api", "/auth/refresh", "/_next/static/x.js", "/a.b"];
+    for (const [variant] of VARIANTS) expect(at(variant), variant).toBe(true);
+    for (const p of controls) expect(at(p), p).toBe(false);
+    const { config } = await import("../middleware.js");
+    expect(config.matcher).toContainEqual({ source: ZONE_CASE_SOURCE });
+    const [caseArm] = (await nextMatcher()).info.getMiddlewareMatchers([{ source: ZONE_CASE_SOURCE }], {});
+    for (const p of [...VARIANTS.flat(), ...controls]) {
+      expect(new RegExp(caseArm!.regexp, "i").test(p), p).toBe(new RegExp(caseArm!.regexp).test(p));
+    }
+  });
+
+  it("THE ROW: every zone path in capitals, or its first letter flipped, gets no policy here and a 308 to it", async () => {
+    arm({ LANDING_ZONE_ORIGIN: ZONE, LANDING_ZONE_BYPASS: "b" });
+    const rules = (await import("../next.config.mjs")).headerRules(null, LISTED) as Rule[];
+    const at = await edgeRuns();
+    const flip = (s: string) => s.replace(/[a-z]/i, (c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
+    const paths = ZONE_PATHS.filter((p) => p !== "/");
+    expect(paths.length).toBeGreaterThan(5);
+    for (const p of paths) {
+      const [spelling, rest] = p.endsWith("/:path*") ? [p.slice(0, -":path*".length), "x.webp"] : [p, ""];
+      for (const variant of [`${spelling.toUpperCase()}${rest}`, `${flip(spelling)}${rest}`]) {
+        expect(csps(rules, variant), variant).toEqual([]);
+        expect(at(variant), variant).toBe(true);
+        const res = await run(variant);
+        expect(res.status, variant).toBe(308);
+        expect(res.headers.get("location"), variant).toBe(`https://ohmail.app${spelling}${rest}`);
+      }
+    }
   });
 });
