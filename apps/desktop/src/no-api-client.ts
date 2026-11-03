@@ -314,6 +314,7 @@ export const auth: {
     logout: (opts?: {
         mayProceed?: () => boolean;
     }) => Promise<void>;
+    armLogoutOnLeave: () => void;
     webauthnRegisterOptions: () => Promise<{
         options: PublicKeyCredentialCreationOptionsJSON;
     }>;

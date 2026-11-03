@@ -7,7 +7,7 @@ import { sliceOfDeclaration } from "./source-anchor.js";
 const mockLogout = vi.fn(async (): Promise<void> => {});
 vi.mock("../app/api-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../app/api-client")>()),
-  auth: { logout: mockLogout },
+  auth: { logout: mockLogout, armLogoutOnLeave: () => undefined },
 }));
 
 /**
