@@ -58,7 +58,7 @@ describe("cloud 0009 — the env bootstrap accepts both spellings, canonical fir
     // is a variable somebody cleared, not a decision to have no client id.
     expect(msOAuthEnv({ MS_OAUTH_CLIENT_ID: "  ", MICROSOFT_CLIENT_ID: "alias" }).clientId).toBe("alias");
     // Values are trimmed — a trailing newline pasted out of a dashboard is invisible and fatal.
-    expect(msOAuthEnv({ MS_OAUTH_CLIENT_SECRET: " s3cret\n" }).clientSecret).toBe("s3cret");
+    expect(msOAuthEnv({ MS_OAUTH_CLIENT_SECRET: " ms-client-fixture-token\n" }).clientSecret).toBe("ms-client-fixture-token");
   });
 
   it("the canonical name is the FIRST alias for every field, so refusals quote a name that is read", () => {

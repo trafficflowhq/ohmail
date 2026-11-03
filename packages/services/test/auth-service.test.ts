@@ -159,7 +159,7 @@ describe("AuthService — registration & first factor", () => {
     // guessable password lets a stranger enroll THEIR passkey on it.
     return (async () => {
       const h = await harness();
-      const bad = ["hunter2", "", "  ", "a".repeat(257)];
+      const bad = ["too-short", "", "  ", "a".repeat(257)];
       for (const password of bad) {
         await expect(
           h.svc.register(h.ctxFor(), { email: `p${bad.indexOf(password)}@x.example`, password, displayName: "P", inviteCode: "INVITE-OK" }),

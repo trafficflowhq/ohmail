@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import React from "react";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, describe, expect, it } from "vitest";
@@ -164,7 +165,7 @@ const FILLED = {
   ...EMPTY_LOCAL,
   providerId: "imap",
   address: ADDRESS,
-  password: "hunter2-not-a-real-secret",
+  password: fixturePassword("door-tls"),
   imapHost: "mail.example.org",
   smtpHost: "smtp.example.org",
   user: ADDRESS,
@@ -268,7 +269,7 @@ describe("the standalone door offers the host the probe named", () => {
     await press(mount, "Any other IMAP mailbox");
 
     await set(mount, "door-address", ADDRESS);
-    await set(mount, "door-password", "hunter2-not-a-real-secret");
+    await set(mount, "door-password", fixturePassword("door-tls"));
     await set(mount, "door-imap-host", "mail.trafficflow.ch");
     await press(mount, "Open this mailbox");
 
@@ -320,7 +321,7 @@ describe("the standalone door offers the host the probe named", () => {
     expect(mount.querySelector("#door-imap-host")).toBeNull();
 
     await set(mount, "door-address", ADDRESS);
-    await set(mount, "door-password", "hunter2-not-a-real-secret");
+    await set(mount, "door-password", fixturePassword("door-tls"));
     await press(mount, "Open this mailbox");
 
     expect(mount.querySelector(".join-error")?.textContent ?? "").toContain(

@@ -9,6 +9,7 @@ import {
   SpyMailer, throttleKeysFor,
 } from "@trafficflow/services";
 import { SoftwareAuthenticator } from "../../services/test/webauthn-authenticator.js";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { makeDeps, req, setCookieMap } from "./helpers.js";
 
 /**
@@ -400,7 +401,8 @@ describe("the password rule is the SERVER's", () => {
     const res = await H(
       req("POST", "/auth/register", {
         body: JSON.stringify({
-          email: "short@example.com", password: "hunter2", displayName: "S", inviteCode: code,
+          // One character under the 12-character minimum.
+          email: "short@example.com", password: fixturePassword("short").slice(0, 11), displayName: "S", inviteCode: code,
         }),
       }),
       deps,

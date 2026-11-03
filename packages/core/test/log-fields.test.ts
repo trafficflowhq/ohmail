@@ -17,6 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { createLogger } from "../src/log.js";
 import { aiBootFields } from "../src/ai/transports/host.js";
 
@@ -239,8 +240,8 @@ describe("the real logger emits the fields call sites pass", () => {
 
   it("redacts a secret-shaped name in place rather than dropping it", () => {
     // The other half of the mechanism, asserted so the two are never confused again.
-    const out = capture((log) => { log.info("mailbox_attached", { imapPassword: "hunter2" }); });
-    expect(out.includes("hunter2"), "a denylisted field's VALUE reached the drain").toBe(false);
+    const out = capture((log) => { log.info("mailbox_attached", { imapPassword: fixturePassword("log-fields-imap") }); });
+    expect(out.includes(fixturePassword("log-fields-imap")), "a denylisted field's VALUE reached the drain").toBe(false);
   });
 
   it("the `token` substring redacts OAuth field VALUES — accessToken / refreshToken / fetchAccessToken", () => {

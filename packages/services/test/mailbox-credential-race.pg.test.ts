@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -80,7 +81,7 @@ const slowSvc = makeMailboxService({
 const ctxOn = (db: typeof dbA, accountId: string): ServiceContext =>
   ({ db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: "r" });
 
-const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: "s3cr3t" };
+const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: fixturePassword("mailbox-credential-race") };
 
 /**
  * The probe seam, satisfied rather than exercised — a later change extended it from `create` to `update`.

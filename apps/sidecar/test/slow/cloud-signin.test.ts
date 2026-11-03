@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { fixturePassword } from "../../../../test/support/fixture-credentials.js";
 import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -157,7 +158,7 @@ describe("tokensFromSetCookie — the reader that has to survive a comma inside 
  */
 describe("the browser handoff's commitment", () => {
   it("is exactly what the account computes over the same string", () => {
-    for (const verifier of ["", "a", "hunter2", newDesktopLinkPair().verifier, "ünïcødé"]) {
+    for (const verifier of ["", "a", "plain-word", newDesktopLinkPair().verifier, "ünïcødé"]) {
       expect(challengeFor(verifier), verifier).toBe(hashToken(verifier));
     }
   });
@@ -278,14 +279,14 @@ describe("cloudSignIn — the two-step hosted login", () => {
 
     const tokens = await cloudSignIn(
       { baseUrl: "https://cloud.test/", fetchImpl },
-      { email: " me@ohmail.test ", password: "hunter2", totp: " 123456 " },
+      { email: " me@ohmail.test ", password: fixturePassword("cloud-signin"), totp: " 123456 " },
     );
 
     expect(tokens).toEqual({ accessToken: "access-1", refreshToken: "refresh-1", expiresIn: 900 });
     expect(seen.map((s) => s.path)).toEqual(["/auth/login", "/auth/2fa/totp/verify"]);
     // The address and the code are trimmed; the password is passed through untouched, because a
     // trailing space in a password is a character of the password.
-    expect(seen[0]!.body).toEqual({ email: "me@ohmail.test", password: "hunter2" });
+    expect(seen[0]!.body).toEqual({ email: "me@ohmail.test", password: fixturePassword("cloud-signin") });
     // THE FIELD IS `loginToken`. `challengeToken` answers 400 and reads exactly like a wrong code.
     // No `deviceKind` option ⇒ no `kind` field — the exact key set an old engine has always sent.
     expect(seen[1]!.body).toEqual({ loginToken: "login-token-1", code: "123456" });
@@ -307,12 +308,12 @@ describe("cloudSignIn — the two-step hosted login", () => {
 
     await cloudSignIn(
       { baseUrl: "https://cloud.test/", fetchImpl, deviceKind: "desktop-windows" },
-      { email: "me@ohmail.test", password: "hunter2", totp: "123456" },
+      { email: "me@ohmail.test", password: fixturePassword("cloud-signin"), totp: "123456" },
     );
 
     // The declaration rides the session-establishing request and only that one: the login is a
     // first factor with no session to label, so the kind would be a field nobody reads.
-    expect(seen[0]!.body).toEqual({ email: "me@ohmail.test", password: "hunter2" });
+    expect(seen[0]!.body).toEqual({ email: "me@ohmail.test", password: fixturePassword("cloud-signin") });
     expect(seen[1]!.body).toEqual({ loginToken: "login-token-1", code: "123456", kind: "desktop-windows" });
   });
 
@@ -409,7 +410,7 @@ describe("cloudSignIn — the browser handoff, which is ONE request and no passw
     }) as unknown as typeof fetch;
 
     await cloudSignIn({ baseUrl: "https://c.test", fetchImpl }, {
-      email: "a@b.test", password: "hunter2", totp: "111111", handoffCode: "code",
+      email: "a@b.test", password: fixturePassword("cloud-signin"), totp: "111111", handoffCode: "code",
     });
     expect(paths).toEqual(["/auth/desktop-claim"]);
   });
@@ -541,7 +542,7 @@ describe("the pre-auth Cloud engine", () => {
     const signin = await sidecar.handle(new Request("http://sidecar/cloud/signin", {
       method: "POST",
       headers: { ...auth, "content-type": "application/json" },
-      body: JSON.stringify({ email: "me@ohmail.test", password: "hunter2", totp: "123456" }),
+      body: JSON.stringify({ email: "me@ohmail.test", password: fixturePassword("cloud-signin"), totp: "123456" }),
     }));
     expect(signin.status).toBe(200);
     expect(await signin.json()).toMatchObject({ status: "signed_in", address: "me@ohmail.test" });
@@ -568,7 +569,7 @@ describe("the pre-auth Cloud engine", () => {
     const again = await sidecar.handle(new Request("http://sidecar/cloud/signin", {
       method: "POST",
       headers: { ...auth, "content-type": "application/json" },
-      body: JSON.stringify({ email: "me@ohmail.test", password: "hunter2", totp: "123456" }),
+      body: JSON.stringify({ email: "me@ohmail.test", password: fixturePassword("cloud-signin"), totp: "123456" }),
     }));
     expect(again.status).toBe(409);
     expect((await again.json()).error.code).toBe("already_signed_in");

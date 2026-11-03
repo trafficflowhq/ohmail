@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import {
   MAILBOX_ERROR_DETAIL_MAX,
   MAILBOX_ERROR_DETAIL_TOKENS,
@@ -139,7 +140,7 @@ describe("a HOSTILE server cannot choose what lands in error_detail", () => {
     // are what a server can say when it wants a string of its choosing in our database.
     const hostile = [
       "SECRETPASSWORD123",                        // the credential itself
-      "HUNTER2",
+      fixturePassword("redaction-atom").toUpperCase(),
       "ANNA-MUELLER-EXAMPLE-COM",                 // a real sender, punctuation swapped for -
       "RE-Q3-INVOICE-FROM-ACME",                  // a subject
       "MILA_TRAFFICFLOW_CH",                    // the login argument, underscored

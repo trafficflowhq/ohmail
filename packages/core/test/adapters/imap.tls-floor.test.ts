@@ -1,4 +1,5 @@
 import net from "node:net";
+import { fixturePassword } from "../../../../test/support/fixture-credentials.js";
 import tls from "node:tls";
 import { X509Certificate, generateKeyPairSync } from "node:crypto";
 import { describe, it, expect, afterEach } from "vitest";
@@ -166,7 +167,7 @@ const PRODUCTION_HOSTS = [
 ] as const;
 
 /** The thing that must never appear in a transcript. */
-const PASSWORD = "s3cr3t-app-password";
+const PASSWORD = fixturePassword("tls-floor-app");
 
 const prodCfg = (over: Partial<ImapConfig> = {}): ImapConfig => ({
   host: "imap.example.net", port: 143, secure: false,

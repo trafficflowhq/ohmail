@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
-import { personalAt } from "../../../test/support/fixture-credentials.js";
+import { personalAt, fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { CLOUD_URL, hostDoorFor } from "../src/doors.js";
 import { selfHostBase, selfHostProblem } from "../src/self-host.js";
 /* THE ENGINE'S OWN RULE, imported rather than restated — `desktop-door-reconfigure.test.tsx` does
@@ -747,7 +747,7 @@ describe("the server address a person types", () => {
     for (const bad of [
       "https://ohmail.example.com/api",
       "https://ohmail.example.com/mail",
-      "https://someone:hunter2@ohmail.example.com",
+      `https://someone:${fixturePassword("door-chooser")}@ohmail.example.com`,
       "ftp://ohmail.example.com",
       "https://ohmail.example.com?next=/",
     ]) {

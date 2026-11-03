@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -16,7 +17,7 @@ import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
 const NOW = new Date("2026-09-29T01:00:00.000Z");
 const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 9), 1);
 const svc = makeMailboxService({ keyProvider: KP, allowance: async () => { /* unmetered here */ } });
-const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: "s3cr3t" };
+const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: fixturePassword("mailbox-password-needs-its-consent") };
 const OAUTH = {
   provider: "microsoft", tenant: "common", refreshToken: "refresh-fixture", accessToken: "access-fixture",
   imap: { host: "outlook.office365.example", port: 993, secure: true },
