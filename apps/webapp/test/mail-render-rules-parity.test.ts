@@ -134,6 +134,7 @@ describe("neutraliseCss: the same answers on the hostile classes", () => {
     'p{content:"a\\\r\nb";background:\\75 rl(https://crlf.example/y)}',
     'div{background:image-set("data:image/png;base64,AA\\")" 1x, "https://e.example/c.png" 2x)}',
     "p{color:red;\r\nmargin:0}\fdiv{color:blue}\r",
+    'div{background:url("https://crlf.example/css3\\\r\n.png")}',
   ];
   it("byte-equal output and identical callback traffic on every fixture", () => {
     for (const css of FIXTURES) {
