@@ -52,6 +52,8 @@ export interface SignInRetentionOptions {
   batch?: number;
   maxBatches?: number;
   sessionBatch?: number;
+  /** Refresh tokens one statement takes from a session batch; a batch that reaches it is a full one. */
+  tokenBatch?: number;
   deadlineMs?: number;
   /** Injected so a test drives the deadline without waiting for it. */
   clock?: () => number;
@@ -74,6 +76,7 @@ export async function pruneSignInRecords(
   const batch = opts.batch ?? RETENTION_DELETE_BATCH;
   const maxBatches = opts.maxBatches ?? RETENTION_BATCHES_PER_ACCOUNT;
   const sessionBatch = opts.sessionBatch ?? SIGN_IN_SESSION_BATCH;
+  const tokenBatch = opts.tokenBatch ?? RETENTION_DELETE_BATCH;
   const deadlineMs = opts.deadlineMs ?? SIGN_IN_RETENTION_DEADLINE_MS;
   const clock = opts.clock ?? Date.now;
   const startedAt = clock();
@@ -82,14 +85,18 @@ export async function pruneSignInRecords(
   const at = sql`${now.toISOString()}::timestamptz`;
   const result = Object.assign(opts.progress ?? emptySignInRetention(), emptySignInRetention());
 
-  /** Batches of one statement into `field`, until a short batch, the batch count or the clock. */
-  const drain = async (field: Counted, step: (n: number) => Promise<number>, n: number): Promise<void> => {
+  /** Batches of one statement into `field`, until a short batch, the batch count or the clock. A step
+   *  that stopped at a cap of its own says its batch was `full` whatever it counted. */
+  const drain = async (
+    field: Counted, step: (n: number) => Promise<number | { got: number; full: true }>, n: number,
+  ): Promise<void> => {
     for (let i = 0; ; i++) {
       if (late()) { result.stoppedBy = "deadline"; return; }
       if (i >= maxBatches) { if (result.stoppedBy === "dry") result.stoppedBy = "batches"; return; }
-      const got = await step(n);
+      const out = await step(n);
+      const got = typeof out === "number" ? out : out.got;
       result[field] += got;
-      if (got < n) return;
+      if (got < n && typeof out === "number") return;
     }
   };
 
@@ -113,7 +120,10 @@ export async function pruneSignInRecords(
   // Neither while the erasure would still name a token of it, nor while its family has a live
   // session (the consumed tokens are the reuse detector's evidence). The family's lock order: the
   // session rows first, FOR UPDATE SKIP LOCKED, then their tokens, under a lock timeout for the one
-  // wait left (a token row some path took without its session row).
+  // wait left (a token row some path took without its session row). The tokens go at most
+  // `tokenBatch` a statement (one per 15-minute rotation for a session's life, pruned nowhere else),
+  // so a long-lived backlog never runs one statement past the worker's timeout; a session goes with
+  // its last token, and a batch that met the cap is a full one.
   const dead = or(
     lt(sessions.revokedAt, sql`${cut}::timestamptz`),
     and(isNull(sessions.revokedAt), sql`${erasureKeepsUntil(sessions.refreshExpiresAt)} <= ${at}`),
@@ -129,11 +139,14 @@ export async function pruneSignInRecords(
         .for("update", { skipLocked: true });
       const ids = rows.map((r) => r.id);
       if (ids.length === 0) return [0, 0] as const;
-      const t = affected(await tx.delete(refreshTokens).where(inArray(refreshTokens.sessionId, ids)));
-      return [affected(await tx.delete(sessions).where(inArray(sessions.id, ids))), t] as const;
+      const t = affected(await tx.delete(refreshTokens).where(sql`${refreshTokens.id} = any(array(
+        select ${refreshTokens.id} from ${refreshTokens} where ${inArray(refreshTokens.sessionId, ids)} limit ${tokenBatch}))`));
+      // The key from a token to its session takes no action on delete: one with a token left stays.
+      return [affected(await tx.delete(sessions).where(and(inArray(sessions.id, ids),
+        sql`not exists (select 1 from ${refreshTokens} where ${refreshTokens.sessionId} = ${sessions.id})`))), t] as const;
     });
     result.refreshTokens += tokens;
-    return gone;
+    return tokens >= tokenBatch ? { got: gone, full: true as const } : gone;
   }, sessionBatch);
 
   // The address a device was added from, once no session of its is left; the row and its name

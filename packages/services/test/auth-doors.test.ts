@@ -70,6 +70,20 @@ describe("the password door: a stranger locks only themselves", () => {
     expect(await attempt(h, "10.0.0.2", "owner@x.example", PASSWORD), "the ceiling reached a known client").toBe("ok");
   }, 60_000);
 
+  it("the ceiling's 429 gives the client's own attempt back, so a slowed client is never locked by it", async () => {
+    const h = await harness({ maxFailures: 5, maxAddressFailures: 20 });
+    await register(h, "slowed@x.example");
+    for (let i = 0; i < 20; i++) expect(await attempt(h, `10.8.0.${i + 1}`, "slowed@x.example")).toBe("credential_refused");
+    const codes: string[] = [];
+    for (let i = 0; i < 6; i++) codes.push(await attempt(h, "10.8.1.1", "slowed@x.example"));
+    expect(codes, "the ceiling's refusals spent the client's own attempts").toEqual(Array(6).fill("sign_in_slowed"));
+    const keys = throttleKeysFor(h.deps.keyProvider);
+    const [bucket] = await h.db.select({ failures: authThrottle.failures }).from(authThrottle)
+      .where(eq(authThrottle.key, `pw:${keys.address("slowed@x.example")}:${keys.client("10.8.1.1")}`));
+    expect(bucket, "the slowed client has no bucket, so this reads nothing").toBeDefined();
+    expect(bucket!.failures).toBe(0);
+  }, 60_000);
+
   it("the ceiling answers 429 with a wait, never 423", async () => {
     const h = await harness({ maxAddressFailures: 20 });
     for (let i = 0; i < 20; i++) await attempt(h, `10.3.0.${i + 1}`, "ghost@x.example");
@@ -93,9 +107,11 @@ describe("the password door: a stranger locks only themselves", () => {
       const codes: string[] = [];
       const counts: number[] = [];
       const derived: number[] = [];
-      for (let i = 0; i < 25; i++) {
+      // One client until it locks, then fresh clients until the address ceiling slows them (the 429
+      // and the attempt it gives back).
+      for (let i = 0; i < 45; i++) {
         statements = 0; derivations = 0;
-        codes.push(await attempt(h, "10.5.0.1", email));
+        codes.push(await attempt(h, i < 25 ? "10.5.0.1" : `10.5.1.${i}`, email));
         counts.push(statements); derived.push(derivations);
       }
       return { codes, counts, derived };
@@ -105,6 +121,7 @@ describe("the password door: a stranger locks only themselves", () => {
     client.query = original;
     expect(ghost.codes).toEqual(known.codes);
     expect(known.codes.slice(0, 6)).toEqual(["credential_refused", "credential_refused", "credential_refused", "credential_refused", "credential_refused", "account_locked"]);
+    expect(known.codes.slice(25)).toEqual([...Array(15).fill("credential_refused"), ...Array(5).fill("sign_in_slowed")]);
     expect(ghost.derived, "hash work differs by branch").toEqual(known.derived);
     // The one named residual: a registered address's refusal writes its audit row (the erasure
     // fence read and the insert), after the verify. Everything before it is statement for statement.

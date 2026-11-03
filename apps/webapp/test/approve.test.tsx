@@ -226,7 +226,8 @@ describe("the page says when the computer asked from another network", () => {
     await waitFor(() => el.querySelector('[data-testid="approve-account"]') !== null, "the account line");
     const line = networkLine(el);
     expect(line, "no line for a request from another network").not.toBeNull();
-    expect(line!.textContent).toBe(messages.approve.otherNetwork);
+    // True of both arms of `different`: another network, or the other address family of one machine.
+    expect(line!.textContent).toBe("This request came from a different network address than this browser.");
     expect(line!.getAttribute("role")).toBe("note");
     expect(line!.previousElementSibling?.tagName).toBe("UL");
     expect(line!.nextElementSibling?.getAttribute("data-testid")).toBe("approve-account");
@@ -236,7 +237,7 @@ describe("the page says when the computer asked from another network", () => {
     readAnswers = [() => Promise.resolve(facts({ network: "different" }))];
     const el = await mount(ID, "de");
     await waitFor(() => networkLine(el) !== null, "the line");
-    expect(networkLine(el)!.textContent).toBe(de.approve.otherNetwork);
+    expect(networkLine(el)!.textContent).toBe("Diese Anfrage kam von einer anderen Netzwerkadresse als dieser Browser.");
   });
 
   it("the line stays on screen while the factor is asked for inline", async () => {

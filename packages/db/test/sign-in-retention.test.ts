@@ -165,6 +165,32 @@ describe("the sign-in retention pass", () => {
     expect(left.every((d) => d.ip === "")).toBe(true);
   });
 
+  it("a session's refresh tokens go in bounded statements: a capped batch keeps the session and the pass goes on", async () => {
+    const { db, tx, accountId, userId, device } = await seeded();
+    const familyId = randomUUID();
+    const [s] = await db.insert(sessions).values({
+      accountId, userId, familyId, accessTokenHash: H(), accessExpiresAt: ago(40), refreshExpiresAt: ago(40),
+      revokedAt: ago(40), createdAt: ago(900), lastSeenAt: ago(41),
+    }).returning();
+    for (let i = 0; i < 5; i++) {
+      await db.insert(refreshTokens).values({
+        accountId, userId, sessionId: s!.id, familyId, tokenHash: H(), expiresAt: ago(40), revokedAt: ago(40),
+      });
+    }
+    const orphan = await device(ago(60));
+    const tokensLeft = async () => (await db.select().from(refreshTokens).where(eq(refreshTokens.sessionId, s!.id))).length;
+    const sessionLeft = async () => (await db.select().from(sessions).where(eq(sessions.id, s!.id))).length;
+
+    const capped = await prune(tx, { tokenBatch: 2, maxBatches: 1 });
+    expect(capped).toMatchObject({ sessions: 0, refreshTokens: 2, deviceAddresses: 1, stoppedBy: "batches" });
+    expect([await tokensLeft(), await sessionLeft()]).toEqual([3, 1]);
+    expect((await db.select({ ip: devices.ip }).from(devices).where(eq(devices.id, orphan)))[0]!.ip).toBe("");
+
+    const rest = await prune(tx, { tokenBatch: 2 });
+    expect(rest).toMatchObject({ sessions: 1, refreshTokens: 3, stoppedBy: "dry" });
+    expect([await tokensLeft(), await sessionLeft()]).toEqual([0, 0]);
+  });
+
   it("an unused invitation goes 30 days past expiry; a used one stays", async () => {
     const { db, tx } = await seeded();
     const invite = async (expiresAt: Date, consumedAt: Date | null) => (await db.insert(invites).values({

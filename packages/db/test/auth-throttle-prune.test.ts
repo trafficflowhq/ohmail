@@ -29,6 +29,27 @@ describe("pruneAuthThrottle", () => {
   });
 
   /**
+   * A BACKLOG GOES IN BOUNDED STATEMENTS. One delete over the whole table could pass the worker's
+   * statement timeout once a spray had built a backlog, and then roll back every hour: rows for ever.
+   */
+  it("deletes in statements of a bounded size under a clock, and the next call drains the rest", async () => {
+    const db = await makeTestDb();
+    const now = new Date();
+    const ago = (ms: number): Date => new Date(now.getTime() - ms);
+    const H = 3_600_000;
+    await db.insert(authThrottle).values([
+      ...Array.from({ length: 5 }, (_, i) => ({ key: `pwa:spray-${i}`, failures: 1, windowStartedAt: ago(49 * H) })),
+      { key: "pwa:locked", failures: 20, windowStartedAt: ago(49 * H), lockedUntil: new Date(now.getTime() + H) },
+      { key: "pwa:young", failures: 1, windowStartedAt: ago(H) },
+    ]);
+    let t = 0;
+    expect(await pruneAuthThrottle(db as never, now, { batch: 2, clock: () => (t += 1_000), deadlineMs: 1_500 })).toBe(2);
+    expect(await pruneAuthThrottle(db as never, now)).toBe(3);
+    const left = (await db.select({ key: authThrottle.key }).from(authThrottle)).map((r) => r.key).sort();
+    expect(left).toEqual(["pwa:locked", "pwa:young"]);
+  });
+
+  /**
    * the prune half: the IMAP admission counters (`imap:mailbox:<id>`, the probe's
    * `imap:mailbox:probe:<hash>`) are swept by this pass like every other prefix — a counter no
    * acquire has touched for a retention holds no live connection (one lives far shorter) — and a fresh
