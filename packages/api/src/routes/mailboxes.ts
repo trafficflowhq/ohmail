@@ -19,6 +19,9 @@ import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
 import { mailbox, profileImport, readBody, noContent } from "./shared.js";
 
+/** Where the import status read carries its fingerprint: a header, never the URL (an older client's query still works). */
+export const PROFILE_FINGERPRINT_HEADER = "x-ohmail-profile-fingerprint";
+
 /**
  * The wire shape of `POST /mailboxes/:id/organize`, validated here and nowhere else. `{ imap?: {
  * pass }, screening?: { dormancyDays?, scope? } }` — every field optional, and the empty body is
@@ -462,7 +465,10 @@ export const mailboxRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps, params) => {
       // A fingerprint is a short fixed-length digest; the cap keeps a caller's string off the read.
-      const fingerprint = (new URL(req.url).searchParams.get("fingerprint") ?? "").slice(0, 200) || undefined;
+      // The header first, so no URL (nor a log that keeps one) carries a hash of the settings;
+      // the query is what an older client sends.
+      const fingerprint = (req.headers.get(PROFILE_FINGERPRINT_HEADER)
+        || new URL(req.url).searchParams.get("fingerprint") || "").slice(0, 200) || undefined;
       return jsonResponse(await profileImport(deps).status(serviceContext(deps, req), params.id!, { fingerprint }));
     },
   },

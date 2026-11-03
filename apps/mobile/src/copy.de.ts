@@ -1245,7 +1245,7 @@ export const DE: Deck = {
   liveBodyWithheldJunk:
     "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Spam-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
   liveBodyWithheldExpunged:
-    "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Ab dieser Version verschwinden mit dem Text einer solchen Nachricht auch Vorschau und Suchwörter; bis du das Postfach entfernst oder deinen Account löschst, behält ohmail ihre Header, die Namen ihrer Dateien, wie sie einsortiert wurde, und die Tracker, die darin gefunden wurden.",
+    "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Mit dem Text sind auch die Vorschau und die anderen Wörter verschwunden, die ohmail daraus behalten hatte; bis du das Postfach entfernst oder deinen Account löschst, behält ohmail, wer sie an wen geschickt hat, ihren Betreff und ihr Datum, die Nachrichten, auf die sie antwortete, die Namen ihrer Dateien, wie sie einsortiert wurde, und die Tracker, die darin gefunden wurden.",
   liveBodyWithheldTooLarge:
     "Nicht heruntergeladen — diese Nachricht ist größer als 64 MB, mehr lädt ohmail nicht herunter. Text und Dateien werden hier deshalb nicht gezeigt. Öffne sie bei deinem Mailanbieter.",
   liveBodyJunkLoading: "Diese Nachricht wird von deinem Mailserver geladen…",

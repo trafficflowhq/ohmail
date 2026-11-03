@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ApiDeps } from "@trafficflow/api";
 import { imapFlowOptions, type ImapConfig } from "@trafficflow/core/adapters/imap";
-import type { HostResolver } from "@trafficflow/services/mail";
+import { StaticKeyProvider, type HostResolver } from "@trafficflow/services/mail";
 import {
   makeImapProbe, makeSmtpProbe, makeProbeHostGuard, ALLOW_ANY_PROBE_HOST,
   MAX_PINNED_PROBE_ADDRESSES,
@@ -49,6 +49,8 @@ function fakeDeps(guard: unknown): ApiDeps {
   return {
     db: {} as ApiDeps["db"],
     now: () => new Date(FIXED_NOW),
+    // The probe keys its slot by the deployment's keyed hash of the address.
+    keyProvider: StaticKeyProvider.fromSecret(Buffer.alloc(32, 5)),
     services: {
       imapAdmission: { acquire: async () => true, release: async () => { /* counted elsewhere */ } },
       probeHostGuard: guard,

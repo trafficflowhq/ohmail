@@ -96,9 +96,9 @@ async function decoy(): Promise<string> {
  *
  * A SECOND throttle implementation for the same job is how two things that are supposed to
  * behave identically stop doing so, so this reuses the row shape rather than the code path
- * (the service's version is bound to `users`). The prefixes are `staff:email:<addr>` and
- * `staff:ip:<sha256 prefix>` — the IP is HASHED, because an operations table is not a place to
- * accumulate a log of where somebody was working from.
+ * (the service's version is bound to `users`). The prefixes are `staff:email:<keyed hash>` and
+ * `staff:ip:<keyed hash>` — both are the deployment's keyed hash (`throttle-keys.ts`), because an
+ * operations table is not a place to accumulate who signed in or where they were working from.
  */
 interface ThrottleVerdict { locked: boolean; retryAfterSeconds: number }
 

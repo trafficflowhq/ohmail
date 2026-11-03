@@ -93,13 +93,28 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
   const repoOf = (): WorkerRepo & { transaction: <T>(fn: (r: WorkerRepo) => Promise<T>) => Promise<T> } =>
     makeDrizzleRepo(db as never) as never;
 
+  /** A whole header block as ingest stores one: the seven lines a gone letter keeps, and the rest. */
+  const BLOCK: Record<string, string[]> = {
+    from: ["Anna <anna@example.test>"], to: ["me@example.test"], cc: ["team@example.test"], subject: ["s"],
+    date: ["Mon, 02 Nov 2026 10:00:00 +0000"], "message-id": ["<tg@example.test>"],
+    "in-reply-to": ["<earlier@example.test>"], references: ["<first@example.test> <earlier@example.test>"],
+    "auto-submitted": ["no"], precedence: ["bulk"], "x-auto-response-suppress": ["OOF"],
+    received: ["from mx.example.test (203.0.113.7) by in.example.test"], "return-path": ["<bounce+anna@example.test>"],
+    "list-unsubscribe": ["<https://t.example.test/u?r=anna>"], "dkim-signature": ["v=1; d=example.test; b=abc"],
+    "x-mailer": ["Harbour Mail 4"], "content-type": ["text/plain; charset=utf-8"],
+  };
+  /** What a gone letter's block keeps: exactly the seven lines readers of deleted mail act on. */
+  const GONE_BLOCK = Object.fromEntries(
+    ["to", "cc", "in-reply-to", "references", "auto-submitted", "precedence", "x-auto-response-suppress"].map((k) => [k, BLOCK[k]!]),
+  );
+
   /**
    * A preview, a header block, a file and the search document, as ingest stores them; the
    * classifier's summary of its words, and a tracker's address from its text.
    */
   async function worded(accountId: string, messageId: string): Promise<void> {
     await db.update(messages).set({ snippet: "the preview of the letter" }).where(eq(messages.id, messageId));
-    await db.update(messageBodies).set({ headers: { subject: ["s"] } }).where(eq(messageBodies.messageId, messageId));
+    await db.update(messageBodies).set({ headers: BLOCK }).where(eq(messageBodies.messageId, messageId));
     await db.insert(attachments).values({ accountId, messageId, filename: "harbour-ledger.pdf", contentType: "application/pdf" });
     await reindexMessageSearch(db as never, accountId, messageId);
     await db.insert(routingDecisions).values({
@@ -120,13 +135,13 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
       .where(eq(trackerEvents.messageId, messageId)),
   });
   const KEPT = {
-    snippet: "the preview of the letter", headers: { subject: ["s"] }, documents: 1,
+    snippet: "the preview of the letter", headers: BLOCK, documents: 1,
     filed: [{ to: "ohmail/Receipts", why: "Order 4411 shipping to the harbour office" }],
     trackers: [{ kind: "pixel", host: "t.example.test", url: "https://t.example.test/o/4411?r=anna" }],
   };
-  // The header block stays: it is written once, at ingest. How it was filed and who tracked it stay.
+  // The header block is cut to the seven lines; how it was filed and who tracked it stay.
   const SCRUBBED = {
-    snippet: "", headers: { subject: ["s"] }, documents: 0,
+    snippet: "", headers: GONE_BLOCK, documents: 0,
     filed: [{ to: "ohmail/Receipts", why: null }], trackers: [{ kind: "pixel", host: "t.example.test", url: null }],
   };
   const identityOf = async (messageId: string) => (await db.select({
@@ -136,7 +151,7 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
   const filesOf = async (messageId: string) =>
     (await db.select({ f: attachments.filename }).from(attachments).where(eq(attachments.messageId, messageId))).map((r) => r.f);
 
-  it("an expunged letter loses its preview and search document; who, when, what about, its headers and files stay", async () => {
+  it("an expunged letter loses its preview, search document and header lines; who, when, what about, seven lines and files stay", async () => {
     const { accountId, mailboxId, messageId } = await seed();
     await worded(accountId, messageId);
     const before = await identityOf(messageId);
@@ -185,6 +200,7 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
     await repo.transaction((r) => r.tombstoneInstanceless!(accountId, mailboxId, 200));
     const arrival = {
       snippet: "the preview it came back with", searchBody: { bodyText: "lighthouse keeper", source: "text" as const },
+      headers: BLOCK,
     };
     await repo.transaction(async (r) => {
       expect(await r.clearDeletedOnAdopt!(messageId)).toBe(true);
@@ -207,6 +223,24 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
       await r.refillGone!(other.messageId, arrival, other.accountId);
     });
     expect(await wordsOf(other.messageId)).toEqual(KEPT);
+  });
+
+  it("a gone letter keeps exactly those of the seven lines it had, and a letter with none of them keeps an empty block", async () => {
+    const some = await seed();
+    await db.update(messageBodies).set({ headers: { from: ["a@example.test"], cc: ["b@example.test"], "auto-submitted": ["auto-replied"] } })
+      .where(eq(messageBodies.messageId, some.messageId));
+    const none = await seed();
+    await db.update(messageBodies).set({ headers: { from: ["a@example.test"], subject: ["s"], received: ["by mx"] } })
+      .where(eq(messageBodies.messageId, none.messageId));
+    const repo = repoOf();
+    for (const w of [some, none]) {
+      await repo.forgetInstanceAt(w.mailboxId, LOC("INBOX", "1:300"));
+      await repo.transaction((r) => r.tombstoneInstanceless!(w.accountId, w.mailboxId, 200));
+    }
+    const headersOf = async (id: string) =>
+      (await db.select({ h: messageBodies.headers }).from(messageBodies).where(eq(messageBodies.messageId, id)))[0]!.h;
+    expect(await headersOf(some.messageId)).toEqual({ cc: ["b@example.test"], "auto-submitted": ["auto-replied"] });
+    expect(await headersOf(none.messageId)).toEqual({});
   });
 
   it("an expunge of the ONLY instance tombstones the row: deleted_at, one delete change, the expunged husk, bytes released", async () => {

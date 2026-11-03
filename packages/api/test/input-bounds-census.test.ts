@@ -515,7 +515,7 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // one `platform_costs` row, plus the operator's `note` on one audit row.
 
   "GET /mailboxes/:id/profile-import/status": {
-    door: "`?fingerprint=` is sliced to 200 characters at the handler and reaches one equality against the mailbox row's own ticket, never a query of its own",
+    door: "the `x-ohmail-profile-fingerprint` header (or an older client's `?fingerprint=`) is sliced to 200 characters at the handler and reaches one equality against the mailbox row's own ticket, never a query of its own",
   },
   "DELETE /mailboxes/:id": {
     door: "`?erase=1` is one word against one word; the body's `confirm` (or an older client's `?confirm=`) is capped at RECIPIENT_ADDRESS_MAX_CHARS and reaches one case-folded comparison against the mailbox's own `address`, never a query",

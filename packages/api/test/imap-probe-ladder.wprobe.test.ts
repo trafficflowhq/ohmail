@@ -11,6 +11,7 @@ import {
 } from "../src/imap-probe.js";
 import { WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
 import { LOOPBACK_ADMITTED, LOOPBACK_LOOKALIKES } from "../../core/test/adapters/_loopback-table.js";
+import { StaticKeyProvider } from "@trafficflow/services/mail";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
 /**
@@ -171,6 +172,8 @@ function fakeDeps(scope?: readonly string[]): ApiDeps {
   return {
     db: {} as ApiDeps["db"],
     now: () => new Date(FIXED_NOW),
+    // The probe keys its slot by the deployment's keyed hash of the address.
+    keyProvider: StaticKeyProvider.fromSecret(Buffer.alloc(32, 5)),
     services: {
       imapAdmission: { acquire: async () => true, release: async () => { /* counted elsewhere */ } },
       // Where the host resolves, for the plaintext bound; absent = this deployment cannot tell.

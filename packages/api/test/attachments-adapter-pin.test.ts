@@ -5,7 +5,10 @@ import { mailboxes, mailboxCredentials } from "@trafficflow/db";
 import { imapAdmissionKey, acquireImapSlot, releaseImapSlot, authThrottle } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { ImapAdapter, imapFlowOptions, type ImapConfig } from "@trafficflow/core/adapters/imap";
-import { ServiceError, type HostResolver } from "@trafficflow/services/mail";
+import { ServiceError, StaticKeyProvider, type HostResolver } from "@trafficflow/services/mail";
+
+/** The probe keys its slot by the deployment's keyed hash of the address. */
+const KEYS = StaticKeyProvider.fromSecret(Buffer.alloc(32, 5));
 import { makeOpenAdapter } from "../src/attachments-adapter.js";
 import { makeImapProbe, makeProbeHostGuard, type ProbeDialer } from "../src/imap-probe.js";
 import type { ApiDeps } from "../src/deps.js";
@@ -58,7 +61,7 @@ async function seed(resolver: HostResolver | null): Promise<{ deps: ApiDeps; mai
     // Required by the probe (one arm drives the real one), optional for the door — supply it once.
     now: () => new Date("2026-01-01T00:00:00Z"),
     // Never asserted on and never printed — only that a fetch was possible at all.
-    keyProvider: { decrypt: async () => "not-printed" },
+    keyProvider: { decrypt: async () => "not-printed", deriveSubkey: (info: string) => KEYS.deriveSubkey(info) },
     services: {
       imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot },
       // No guard at all IS the self-host policy (`ALLOW_ANY_PROBE_HOST`); a resolver means Cloud.

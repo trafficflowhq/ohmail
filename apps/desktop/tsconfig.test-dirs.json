@@ -87,6 +87,7 @@
       "@trafficflow/worker/sender-check-backfill": ["../worker/src/sender-check-backfill.ts"],
       "@trafficflow/worker/list-address-backfill": ["../worker/src/list-address-backfill.ts"],
       "@trafficflow/worker/act-admission-retire": ["../worker/src/act-admission-retire.ts"],
+      "@trafficflow/worker/gone-letter-tidy": ["../worker/src/gone-letter-tidy.ts"],
       "@ohmail/sidecar": ["../sidecar/src/index.ts"],
       "@ohmail/db-mail": ["../../packages/db-mail/src/index.ts"],
       "@trafficflow/db/testing": ["../../packages/db/src/testing.ts"],

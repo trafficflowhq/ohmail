@@ -468,15 +468,16 @@ export interface RepoPort {
     messageId: string, body: MessageBodyInput, storage: BodyStorageContext,
   ): Promise<boolean>;
   /**
-   * A letter gone from the server lost its preview and search document with its text (the
-   * `'expunged'` husk); one that came back gets them from the arrival. Fills only what is empty:
-   * an empty preview, no document (built from the stored headers and file names with these body
-   * words). Called once `clearDeletedOnAdopt` un-deleted the row, before any change row. OPTIONAL
-   * so every fake keeps compiling.
+   * A letter gone from the server lost its preview, search document and most header lines with its
+   * text (the `'expunged'` husk); one that came back gets them from the arrival. Fills only what is
+   * empty: an empty preview, no document (built from the stored identity and file names with these
+   * body words); the header block is written whole when the stored one differs, its Screener floor
+   * mark withdrawn with it (`restoreLetterHeaders`). Called once `clearDeletedOnAdopt` un-deleted the
+   * row, before any change row. OPTIONAL so every fake keeps compiling.
    */
   refillGone?(
     messageId: string,
-    arrival: { snippet: string; searchBody: { bodyText: string; source: SearchSource } },
+    arrival: { snippet: string; searchBody: { bodyText: string; source: SearchSource }; headers: Record<string, string[]> },
     accountId: string,
   ): Promise<void>;
 

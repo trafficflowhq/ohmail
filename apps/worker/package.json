@@ -70,6 +70,12 @@
       "node": "./dist/thread-join-heal.js",
       "default": "./src/thread-join-heal.ts"
     },
+    "./gone-letter-tidy": {
+      "types": "./src/gone-letter-tidy.ts",
+      "ohmail-source": "./src/gone-letter-tidy.ts",
+      "node": "./dist/gone-letter-tidy.js",
+      "default": "./src/gone-letter-tidy.ts"
+    },
     "./inbound-quiet": {
       "types": "./src/inbound-quiet.ts",
       "ohmail-source": "./src/inbound-quiet.ts",

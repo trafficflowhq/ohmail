@@ -80,6 +80,10 @@ const FINGERPRINT = "b".repeat(64);
 
 interface Asked { method: string; url: string; body: Record<string, unknown> | null }
 let asked: Asked[];
+/** The fingerprint header each request carried, in order (absent: null). */
+let fingerprintHeaders: Array<string | null> = [];
+/** When true, the status route answers the bare path as an older engine does: 400, it reads only the query. */
+let statusReadsQueryOnly = false;
 
 /** What the engine currently answers the candidate question with. */
 let candidate: Record<string, unknown>;
@@ -91,16 +95,20 @@ let handedOver: Record<string, unknown> | null = null;
 function engineAnswering(): void {
   host.__TAURI_INTERNALS__ = {
     invoke: async (_command, payload) => {
-      const p = (payload ?? {}) as { method?: string; url?: string; body?: number[] };
+      const p = (payload ?? {}) as { method?: string; url?: string; body?: number[]; headers?: Array<[string, string]> };
       const raw = p.body && p.body.length > 0 ? new TextDecoder().decode(Uint8Array.from(p.body)) : "";
       const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
       const method = (p.method ?? "GET").toUpperCase();
       const url = p.url ?? "";
       asked.push({ method, url, body });
+      fingerprintHeaders.push((p.headers ?? []).find(([n]) => n.toLowerCase() === "x-ohmail-profile-fingerprint")?.[1] ?? null);
       if (url === profileImportPath(MB.id) && method === "GET") {
         return encode(200, JSON.stringify(candidate));
       }
-      if (url.startsWith(`${profileImportPath(MB.id)}/status?fingerprint=`) && method === "GET") {
+      if (url === `${profileImportPath(MB.id)}/status` && method === "GET" && statusReadsQueryOnly) {
+        return encode(400, JSON.stringify({ error: { code: "validation_failed", message: "fingerprint is required" } }));
+      }
+      if (url.startsWith(`${profileImportPath(MB.id)}/status`) && method === "GET") {
         return encode(200, JSON.stringify(handedOver ?? { state: "refused", reason: "superseded", message: "none" }));
       }
       if (url === profileImportPath(MB.id) && method === "POST" && handedOver !== null) {
@@ -175,6 +183,8 @@ const click = async (el: Element): Promise<void> => {
 
 beforeEach(() => {
   asked = [];
+  fingerprintHeaders = [];
+  statusReadsQueryOnly = false;
   applyRefusal = null;
   candidate = {
     state: "found",
@@ -250,16 +260,29 @@ describe("the restore card over the bridge", () => {
     expect(card()).toBeNull();
   });
 
-  it("the engine's 202 is importing, and the status route is asked over the pipe, spelled exactly", async () => {
+  it("the engine's 202 is importing, and the status route is asked over the pipe, the fingerprint in a header", async () => {
     handedOver = { state: "importing", fingerprint: FINGERPRINT };
     try {
       expect(await profileImportOverBridge.apply(MB.id, FINGERPRINT))
         .toEqual({ state: "importing", fingerprint: FINGERPRINT, reason: "slow" });
       handedOver = { state: "imported", imported: { screener: 1, rules: 2, notifyRules: 0, tags: 1, awayResponder: false }, skippedRules: 0 };
       expect(await profileImportOverBridge.status(MB.id, FINGERPRINT)).toMatchObject({ state: "imported" });
-      expect(asked.at(-1)).toEqual({
-        method: "GET", url: `${profileImportPath(MB.id)}/status?fingerprint=${FINGERPRINT}`, body: null,
-      });
+      expect(asked.at(-1)).toEqual({ method: "GET", url: `${profileImportPath(MB.id)}/status`, body: null });
+      expect(fingerprintHeaders.at(-1), "the status read named no fingerprint").toBe(FINGERPRINT);
+    } finally {
+      handedOver = null;
+    }
+  });
+
+  it("an older engine that reads only the query (400 validation_failed) is asked once more by query", async () => {
+    handedOver = { state: "imported", imported: { screener: 1, rules: 2, notifyRules: 0, tags: 1, awayResponder: false }, skippedRules: 0 };
+    statusReadsQueryOnly = true;
+    try {
+      expect(await profileImportOverBridge.status(MB.id, FINGERPRINT)).toMatchObject({ state: "imported" });
+      expect(asked.map((a) => a.url)).toEqual([
+        `${profileImportPath(MB.id)}/status`, `${profileImportPath(MB.id)}/status?fingerprint=${FINGERPRINT}`,
+      ]);
+      expect(fingerprintHeaders).toEqual([FINGERPRINT, null]);
     } finally {
       handedOver = null;
     }

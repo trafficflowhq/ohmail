@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql } from "@trafficflow/db";
+import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, MessageIdCandidate, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -653,7 +653,8 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * Empty one stored body the way the storage cap does — real headers kept, `text=''`,
    * `html=NULL`, the closed marker, bytes released — for the two 0065 reasons. A row already
    * withheld keeps its first reason (see the column's doc). `'expunged'`, on a tombstoned row, also
-   * empties the preview and deletes the search document, on every call.
+   * empties the preview, deletes the search document and cuts the header block to the seven lines
+   * readers of deleted mail act on, on every call.
    * Returns whether content was freed. OPTIONAL so every fake keeps compiling; the caller treats
    * absence as "cannot husk here".
    */
@@ -1626,8 +1627,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * which is the zero we are about to write — then update, then release the counter under the
    * same rules every other movement uses. `withheld_reason IS NULL` in both statements keeps a
    * row's FIRST reason and makes the pair idempotent: a husk is never re-husked, its bytes are
-   * never released twice. `'expunged'` also takes the preview and the search document of the
-   * tombstoned letter, whatever withheld its text first ({@link scrubGone}).
+   * never released twice. `'expunged'` also takes the preview, the search document and most header
+   * lines of the tombstoned letter, whatever withheld its text first ({@link scrubGone}).
    */
   async huskBody(accountId: string, messageId: string, reason: "junk_filed" | "expunged"): Promise<boolean> {
     // THE ACCOUNT COUNTER ROW IS LOCKED FIRST — `evictOldestBodies`' exact idiom, and for the
@@ -1661,13 +1662,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /**
    * What a letter gone from the server leaves besides its text: the preview, the search document,
-   * and what was drawn from its words, the classifier's summary and a tracker's address (how it was
-   * filed and the tracker's host stay). Only on a tombstoned row of the account: every read already
-   * skips one, so nothing a person sees changes, and no change row is owed. The header block stays:
-   * it is written once, at ingest (the Screener floor's premise). The identity columns serve
-   * re-adoption and the return.
+   * what was drawn from its words, the classifier's summary and a tracker's address (how it was
+   * filed and the tracker's host stay), and its header lines but the seven readers of deleted mail
+   * act on (`reduceGoneHeaders`). Only on a tombstoned row of the account: every read already skips
+   * one, so nothing a person sees changes, and no change row is owed. The identity columns serve
+   * re-adoption and the return. Public for the gone-letter tidy, which runs it on letters emptied
+   * before it existed.
    */
-  private async scrubGone(accountId: string, messageId: string): Promise<void> {
+  async scrubGone(accountId: string, messageId: string): Promise<void> {
     const gone = and(eq(messages.id, messageId), eq(messages.accountId, accountId), isNotNull(messages.deletedAt));
     const isGone = exists(this.db.select({ id: messages.id }).from(messages).where(gone));
     await this.db.update(messages).set({ snippet: "" }).where(gone);
@@ -1681,14 +1683,20 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     await this.db.update(trackerEvents).set({ url: null }).where(and(
       eq(trackerEvents.messageId, messageId), eq(trackerEvents.accountId, accountId), isNotNull(trackerEvents.url), isGone,
     ));
+    await reduceGoneHeaders(this.db as unknown as Tx, accountId, messageId);
   }
 
   /** See {@link RepoPort.refillGone}: only what {@link scrubGone} emptied is written. */
   async refillGone(
     messageId: string,
-    arrival: { snippet: string; searchBody: { bodyText: string; source: SearchSource } },
+    arrival: { snippet: string; searchBody: { bodyText: string; source: SearchSource }; headers: Record<string, string[]> },
     accountId: string,
   ): Promise<void> {
+    const [stored] = await this.db.select({ headers: messageBodies.headers }).from(messageBodies)
+      .where(eq(messageBodies.messageId, messageId)).limit(1);
+    if (stored !== undefined && !sameHeaderBlock(stored.headers, arrival.headers)) {
+      await restoreLetterHeaders(this.db as unknown as Tx, accountId, messageId, arrival.headers);
+    }
     await this.db.update(messages).set({ snippet: arrival.snippet })
       .where(and(eq(messages.id, messageId), eq(messages.accountId, accountId), eq(messages.snippet, "")));
     const [doc] = await this.db.select({ id: messageSearch.messageId }).from(messageSearch)

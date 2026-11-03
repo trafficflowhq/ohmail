@@ -602,6 +602,9 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // removal promised. `mailboxId` + `reason`, the same pair as its `_failed` twin above, which the
   // start writes when it cannot.
   local_mirror_wipe_finished: "info",
+  // The start's strip of a removed mailbox's settings hashes off its audit rows could not run.
+  // `err` + `mailboxId` (null: the rows naming no mailbox here) + `reason`; the next start tries again.
+  removed_mailbox_hashes_clear_failed: "error",
   // `inherited_sends_read_failed` — the open's read of the send reservations the last run left
   // pending. `err` + `reason`: nothing is decided early and the rows keep the ten-minute window.
   inherited_sends_read_failed: "error",
@@ -1492,6 +1495,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // The identity backfill (mail 0148): a count of rows checked and marked, and its contained failure.
   sender_check_backfill: "info",
   sender_check_backfill_failed: "error",
+  // The gone-letter tidy: `written` letters cleaned and `more` when a page was left, never which
+  // letter; its contained failure is `error` on the identity backfill's reading.
+  gone_letter_tidy: "info",
+  gone_letter_tidy_failed: "error",
   // The list-address backfill (mail 0150), once per store: two counts (`scanned` List-Post values,
   // `written` addresses), never an address; its failure is `error` on the identity backfill's reading.
   list_address_backfill: "info",

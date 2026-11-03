@@ -89,6 +89,7 @@ const IN_WORKER_PASSES: readonly string[] = [
   "bubble-up-pass.ts::bubbleUpPass",
   "folder-ops.ts::folderOpsPass",
   "gate-release.ts::gateReleasePass",
+  "gone-letter-tidy.ts::goneLetterTidyPass",
   "sender-check-backfill.ts::senderCheckBackfillPass",
   "list-address-backfill.ts::listAddressBackfillPass",
   "html-words-backfill.ts::htmlWordsBackfillPass",

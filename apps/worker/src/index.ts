@@ -126,6 +126,7 @@ import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
 import { SEARCH_INDEX_ACCOUNTS_PER_TAIL, searchIndexBackfillPass, searchIndexOwedAccounts } from "@trafficflow/core/mail";
 import { HTML_WORDS_ACCOUNTS_PER_TAIL, htmlWordsBackfillPass, htmlWordsOwedAccounts } from "./html-words-backfill.js";
+import { goneLetterTidyPass } from "./gone-letter-tidy.js";
 import { storageEvictPass } from "./storage-evict.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
 import {
@@ -898,6 +899,8 @@ export async function startWorkerWithLock(
     /** The act's past admissions retired, per account, once per process: where each walk stands. */
     const actAdmissionsRetired = new Set<string>();
     const actAdmissionCursor = new Map<string, string>();
+    /** The accounts whose gone letters a tidy found clean, for this process's life. */
+    const goneLettersTidied = new Set<string>();
     /**
      * The thread-join heal's gate and resume points. Starts "due" like `lastBubbleUpAt`, and here
      * the reason is survival rather than latency: a deployment cadence shorter than
@@ -5703,6 +5706,26 @@ export async function startWorkerWithLock(
             log.error("search_index_backfill_failed", {
               accountId, err,
               reason: "no marker was written, so the next tail resumes at the first message without a search document; search still reads those through the older columns",
+            });
+          });
+        },
+      },
+      gone_letter_tidy: {
+        // ── LETTERS THAT LEFT THE SERVER BEFORE THEIR WORDS WENT WITH THEM ───────────────────
+        // Store-only: the repo's own scrub over this account's gone letters that still hold a
+        // preview, a search document, a summary, a tracker's address or a whole header block.
+        // Bounded per run under the slice clock; an account a run found clean is not asked again
+        // in this process, so a settled tail pays one set lookup per account.
+        run: async (accountId) => {
+          if (goneLettersTidied.has(accountId)) return;
+          await runTailStage("cycle.goneLetterTidyPass", "database", async () => {
+            const r = await goneLetterTidyPass(db as unknown as Tx, accountId, { until: sliceUntil(), done: goneLettersTidied });
+            if (r.tidied > 0) log.info("gone_letter_tidy_pass", { accountId, written: r.tidied, more: !r.done });
+          }, (err) => {
+            log.error("gone_letter_tidy_failed", {
+              accountId, err,
+              reason: "each page is its own transaction and a tidied letter leaves the set, so the next tail goes on "
+                + "with what is left; nothing a person sees reads these letters",
             });
           });
         },

@@ -44,6 +44,18 @@ async function wireOf<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** The status read's fingerprint header (`packages/api`'s route reads it first). */
+const PROFILE_FINGERPRINT_HEADER = "x-ohmail-profile-fingerprint";
+
+/** Whether a refusal carries this code — read from a clone, so the answer itself stays unread. */
+async function refusedAs(res: Response, code: string): Promise<boolean> {
+  try {
+    return ((await res.clone().json()) as { error?: { code?: string } }).error?.code === code;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The calls the shared card and the Settings row make, over an injected transport function.
  *
@@ -67,10 +79,16 @@ export function profileImportVia(fetchImpl: ProfileImportFetch): ProfileImportTr
           body: JSON.stringify(signatureReplaces === undefined ? { fingerprint } : { fingerprint, signatureReplaces }),
         }),
       ),
-    status: async (mailboxId, fingerprint) =>
-      wireOf<ProfileImportStatusWire>(
-        await fetchImpl(`${profileImportPath(mailboxId)}/status?fingerprint=${encodeURIComponent(fingerprint)}`),
-      ),
+    /* The fingerprint is a hash of the settings: a header, never the URL. An older engine reads only
+       the query and refuses the bare path `validation_failed`, so it is asked once more that way. */
+    status: async (mailboxId, fingerprint) => {
+      const path = `${profileImportPath(mailboxId)}/status`;
+      const res = await fetchImpl(path, { headers: { [PROFILE_FINGERPRINT_HEADER]: fingerprint } });
+      if (res.status === 400 && await refusedAs(res, "validation_failed")) {
+        return wireOf<ProfileImportStatusWire>(await fetchImpl(`${path}?fingerprint=${encodeURIComponent(fingerprint)}`));
+      }
+      return wireOf<ProfileImportStatusWire>(res);
+    },
     decline: async (mailboxId, subject) =>
       wireOf<{ dismissed: boolean }>(
         await fetchImpl(`${profileImportPath(mailboxId)}/decline`, {

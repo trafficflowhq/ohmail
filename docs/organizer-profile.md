@@ -183,7 +183,9 @@ its card said would be replaced. All are rows of the account's audit trail, whic
 days or with the account. Erasing the mailbox takes the fingerprints and the receipts off those rows
 when it is pressed, and again when the erasure finishes; an erasure an earlier ohmail finished loses
 them on the server's next erasure pass. Removing a mailbox from a computer takes them off that
-computer's store. The rows themselves stay.
+computer's store; a removal an earlier ohmail made on a computer or phone loses them at its next start.
+The rows themselves stay. The status read of a press handed to the organizer carries the fingerprint
+in a request header, never in the address it asks.
 
 **`signatureHtml`** — the same sign-off's formatting, when it has any. Optional, and ABSENT rather
 than `null` when there is none: a document that never carried this key must keep the fingerprint it

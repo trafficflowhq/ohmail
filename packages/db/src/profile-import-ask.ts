@@ -148,6 +148,30 @@ export async function settingsHashRows(
       inArray(auditLog.action, Object.keys(SETTINGS_HASH_KEYS)),
       sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
     ));
+  return withoutSettingsHashes(rows);
+}
+
+/**
+ * {@link settingsHashRows} for every mailbox the store holds no row for: a device store's start
+ * strips them, since nothing else will ever name that mailbox again.
+ */
+export async function orphanedSettingsHashRows(
+  db: Tx,
+): Promise<Array<{ id: string; payload: Record<string, unknown> }>> {
+  const named = sql`${auditLog.payload}->>'mailboxId'`;
+  const rows = await db.select({ id: auditLog.id, action: auditLog.action, payload: auditLog.payload }).from(auditLog)
+    .where(and(
+      inArray(auditLog.action, Object.keys(SETTINGS_HASH_KEYS)),
+      sql`${named} is not null`,
+      sql`not exists (select 1 from ${mailboxes} where ${dialect(db).castText(mailboxes.id)} = ${named})`,
+    ));
+  return withoutSettingsHashes(rows);
+}
+
+/** Each row's payload with every settings hash taken off; a row holding none is left out. */
+function withoutSettingsHashes(
+  rows: ReadonlyArray<{ id: string; action: string; payload: unknown }>,
+): Array<{ id: string; payload: Record<string, unknown> }> {
   const out: Array<{ id: string; payload: Record<string, unknown> }> = [];
   for (const r of rows) {
     const keys = SETTINGS_HASH_KEYS[r.action];

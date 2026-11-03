@@ -191,6 +191,9 @@ const READERS = new Set([
   // document before its message, and the desktop store ANALYZEs the table search reads.
   "apps/sidecar/src/cloud-mirror.ts",
   "apps/sidecar/src/db.ts",
+  // The gone-letter tidy asks whether a letter that left the server still has a document; the
+  // delete it runs is the repo's own scrub.
+  "apps/worker/src/gone-letter-tidy.ts",
 ]);
 
 /** The AI, knowledge-base and embedding graph, by path shape — none of it may be a reader. */
