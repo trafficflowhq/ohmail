@@ -103,6 +103,10 @@ describe("KbService.retrieve — dedicated lexical retrieval", () => {
     // "warrant" is a substring but not a full lexeme stem hit path — the degrade arm catches it.
     const hits = await svc.retrieve(ctxA, "warrant");
     expect(hits.map((h) => h.id)).toContain(e.id);
+    // The degrade reads `_` as typed, never as any one character.
+    const typed = await svc.create(ctxA, { title: "Ticket", content: "Logged as tk_42 today." });
+    await svc.create(ctxA, { title: "Ticket two", content: "Logged as tkx42 today." });
+    expect((await svc.retrieve(ctxA, "tk_42")).map((h) => h.id)).toEqual([typed.id]);
   });
 
   it("blank query returns nothing; retrieval is account-scoped", async () => {

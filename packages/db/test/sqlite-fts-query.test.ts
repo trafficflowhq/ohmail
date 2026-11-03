@@ -1,11 +1,12 @@
 import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
 import { sql, type SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
 import { describe, expect, it } from "vitest";
 import { SQLITE_JOURNAL } from "@ohmail/db-mail/sqlite-journal";
 import { ENGLISH_STOPWORDS, ftsQueryOf } from "../src/dialect/sqlite.js";
-import { partOperandsOf, partWordTails, queryOperandsOf, sqliteDialect, straddlesParts } from "../src/dialect/index.js";
+import { partOperandsOf, partWordTails, pgDialect, queryOperandsOf, sqliteDialect, straddlesParts } from "../src/dialect/index.js";
 import { migrateSqlite } from "../src/sqlite-migrate.js";
 
 type Sqlite = { exec(sql: string): void; prepare(sql: string): { all(...p: unknown[]): unknown[] } };
@@ -21,7 +22,7 @@ function fts(): Sqlite {
 
 /** Typed text built from the characters FTS5 and the server's parser give meaning to. */
 function typedShapes(): string[] {
-  const alphabet = [..."ab1-'\".:/@*^()+{}[]!&|<>~#%$,;?\\ "].concat(["AND", "OR", "NOT", "NEAR", "or", "the", "sign"]);
+  const alphabet = [..."ab1-'\".:/@_*^()+{}[]!&|<>~#%$,;?\\ "].concat(["AND", "OR", "NOT", "NEAR", "or", "the", "sign"]);
   let seed = 7;
   const next = (n: number): number => {
     seed = (seed + 0x6d2b79f5) | 0;
@@ -67,6 +68,25 @@ describe("the device store's full-text query builder", () => {
     expect(asked).toBeGreaterThan(1000);
   });
 
+  it("the server's part arm answers every typed shape without an error", async () => {
+    const pg = new PGlite();
+    await pg.exec("create table s (head_tsv tsvector, text_tsv tsvector)");
+    await pg.exec("insert into s values (to_tsvector('english', 'desk@site.example 3.14 harbour_ledger'), to_tsvector('english', 'sign-in node.js'))");
+    const render = new PgDialect();
+    let asked = 0;
+    for (const q of typedShapes()) {
+      const arm = pgDialect().search.partWords(q);
+      if (arm === null) continue;
+      for (const pred of [arm.head.pred, arm.text.pred]) {
+        const { sql: text, params } = render.sqlToQuery(sql`select count(*) from s where ${pred}`);
+        await expect(pg.query(text, params), JSON.stringify(q)).resolves.toBeDefined();
+        asked++;
+      }
+    }
+    expect(asked).toBeGreaterThan(500);
+    await pg.close();
+  }, 120_000);
+
   it("reads the words the way the server's parser reads them", () => {
     expect(ftsQueryOf("o'brien's").match).toBe('"o brien"');
     expect(ftsQueryOf("sign-in code").match).toBe('"sign in" "code"');
@@ -84,7 +104,10 @@ describe("the device store's full-text query builder", () => {
     expect(partWordTails("elevat").length).toBeLessThan(30);
     expect(partWordTails("Elevat"), "the key is read in lower case").toEqual(partWordTails("elevat"));
     expect(partWordTails("zzzq"), "an ending no word has carries no tail").toEqual([]);
-    expect(ftsQueryOf("sign-in code", "parts").match).toBe(`${group("sign")} AND ${group("code")}`);
+    // A piece is also the phrase of its runs, the last a prefix: `sign-in` reaches `sign-ins`.
+    expect(ftsQueryOf("sign-in code", "parts").match).toBe(`(${group("sign")} OR "sign in"*) AND ${group("code")}`);
+    expect(ftsQueryOf("3.14", "parts").match, "no run of four: the piece alone").toBe('("3 14"*)');
+    expect(ftsQueryOf("3.1", "parts").match, "under four characters: no start").toBeNull();
     expect(ftsQueryOf("look over", "parts").match).toBe(`${group("look")} AND ${group("over")}`);
     // The parentheses decide: FTS5 binds AND tighter than OR, so without them one tail form of the
     // first word matches alone. Asked of a real porter table, with the unparenthesised form beside it.
@@ -168,7 +191,7 @@ describe("a query's operands, as both stores read its structure", () => {
     expect(partOperandsOf("re-enter")).toBeNull();
     expect(partOperandsOf("the lantern"), "a stopword-only operand is dropped").toBeNull();
     expect(partOperandsOf("lantern kai")).toEqual([[0], [1]]);
-    expect(partOperandsOf("anna@club.ch dinner")).toEqual([[0, 1, 2], [3]]);
+    expect(partOperandsOf("anna@club.ch dinner"), "a piece is one unit").toEqual([[0], [1]]);
     expect(partOperandsOf("kai samples or food"), "`or` keeps no word").toEqual([[0], [1], [3]]);
   });
 });

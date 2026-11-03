@@ -23,8 +23,12 @@ import { LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, verdicts, windowOf, type
  */
 const N = 40_000;
 const BUDGET_MS = 100;
-/** A file name's part alone, beside that name and a word, excluded, a word's start, fragments typed with their marks. */
-const JUDGED = ["pdf", "image001", "scan pdf", "hartmann pdf", "hartmann -pdf", "ledg", "port-q3", "ger-773"] as const;
+/**
+ * A file name's part alone, beside that name and a word, excluded, a word's start, fragments typed with their marks;
+ * the start of an address with a one-character last run, the account's own, in nearly every To, and one in a body of 90.
+ */
+const JUDGED = ["pdf", "image001", "scan pdf", "hartmann pdf", "hartmann -pdf", "ledg", "port-q3", "ger-773",
+  "mila.hartmann@lichtgrat.e", "desk@site.e"] as const;
 /**
  * Read and printed beside them: that name and its domain, a word in ten subjects, a word in one body of
  * 130, and `ines ledger`, whose `ines` this store's stemmed prefix reads as `in*` (a known difference).
@@ -84,6 +88,7 @@ describe.runIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")(`the phone's search
         const words = Array.from({ length: 40 }, () => pick(FILLER));
         if (i % 130 === 5) words.push("quillon");
         if (i % 50 === 3) words.push("ledger");
+        if (i % 90 === 11) words.push("desk@site.example");
         const n = r() < 0.3 ? 1 + Math.floor(r() * 2) : 0;
         rows.push({
           id, accountId, mailboxId, messageIdHeader: `mid:${id}`, bodyHash: id, dedupKey: `mid:${id}`, subject,

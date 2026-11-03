@@ -223,6 +223,8 @@ export interface MailWordArms {
    * and the typo tier to it, on rows an arm has already cut where the store can.
    */
   readonly excluded?: SQL;
+  /** Each excluded operand's letters as single-vector terms over `s`: `excluded` holds exactly where none does. */
+  readonly excludedTerms?: readonly SQL[];
   /**
    * With an exclusion, one per `or` group: `pred`, every operand of the group in the text and no
    * excluded one anywhere, read off the text index alone (an exclusion there is the index's own);
@@ -374,9 +376,14 @@ export interface UnindexedMailArms {
  */
 export const SEARCH_NAMES_MARK = "\u001f";
 
+/** `q` inside a text, as a LIKE pattern that takes a backslash, `%` and `_` as typed (each escaped with a backslash). */
+export function containsPattern(q: string): string {
+  return `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
 /** From this many characters a query word is also read as the START of a longer word. */
 export const PART_PREFIX_MIN_CHARS = 4;
-/** More words than this and the part-word arm stays shut: each word costs one prefix read. */
+/** More words than this and only the last typed operand is read as a start: each start costs one prefix read. */
 export const PART_MAX_WORDS = 8;
 /** The same over the sides of a bare `or`, in all ({@link partSidesOf}): every read of the arm plans each side's prefixes. */
 export const PART_OR_MAX_WORDS = 4;
@@ -394,13 +401,74 @@ export function partWordTails(part: string): readonly string[] {
 
 /**
  * The words of a query as the part-word arm reads them — letter and digit runs, as typed — or
- * `null` when the arm has nothing to add: no word reaches {@link PART_PREFIX_MIN_CHARS}, or there
- * are more than {@link PART_MAX_WORDS}. Both stores' `partWords` take their words from here.
+ * `null` when the arm has nothing to add ({@link partReadingOf}). Both stores' `partWords` take
+ * their words from here.
  */
 export function partWordsOf(q: string): string[] | null {
-  const words = q.match(/[\p{L}\p{N}]+/gu) ?? [];
-  if (words.length === 0 || words.length > PART_MAX_WORDS) return null;
-  return words.some((w) => [...w].length >= PART_PREFIX_MIN_CHARS) ? words : null;
+  const r = partReadingOf(q);
+  return r === null ? null : [...r.words];
+}
+
+/** Between two runs of one piece: a mark the server's parser keeps inside one token (`desk@site.example`, `3.14`, `docs/setup`). */
+const PART_JOIN = /^[-./@_]$/;
+
+/**
+ * One unit of the part-word arm's reading: one run, or a PIECE, two or more runs each joined by
+ * one {@link PART_JOIN} mark. `at` holds its words' indices, `joined` the piece as typed (null for
+ * a run), `start` whether the piece is read as the start of a longer token.
+ */
+export interface PartUnit { readonly at: readonly number[]; readonly joined: string | null; readonly start: boolean }
+
+/** A query as the part-word arm reads it ({@link partReadingOf}). */
+export interface PartReading {
+  readonly words: readonly string[];
+  readonly units: readonly PartUnit[];
+  /** Each typed operand's unit indices, in order. */
+  readonly operands: ReadonlyArray<readonly number[]>;
+  /** Is word `i` read as a start (from {@link PART_PREFIX_MIN_CHARS} letters), or only whole? */
+  readonly part: readonly boolean[];
+}
+
+/**
+ * THE PART-WORD ARM'S READING of a query: its letter and digit runs, as typed, grouped in units.
+ * A piece is read as the start of the token the server's parser keeps whole (an address, a host,
+ * a path, a decimal) from {@link PART_PREFIX_MIN_CHARS} characters, marks counted: `3.14` is, `3.1`
+ * is not. Past {@link PART_MAX_WORDS} words only the last typed operand keeps its starts; every other
+ * unit is read whole. `null` when no unit is read as a start: the arm has nothing to add.
+ */
+export function partReadingOf(q: string): PartReading | null {
+  const words: string[] = [];
+  const units: PartUnit[] = [];
+  const operands: number[][] = [];
+  for (const { text } of queryTokens(q)) {
+    const runs = [...text.matchAll(/[\p{L}\p{N}]+/gu)].map((m) => ({ w: m[0], at: m.index, end: m.index + m[0].length }));
+    if (runs.length === 0) continue;
+    const op: number[] = [];
+    let from = 0;
+    for (let i = 1; i <= runs.length; i++) {
+      if (i < runs.length && PART_JOIN.test(text.slice(runs[i - 1]!.end, runs[i]!.at))) continue;
+      const piece = runs.slice(from, i);
+      const joined = piece.length > 1 ? text.slice(piece[0]!.at, piece[piece.length - 1]!.end) : null;
+      op.push(units.length);
+      units.push({ at: piece.map((_, j) => words.length + j), joined, start: joined !== null && [...joined].length >= PART_PREFIX_MIN_CHARS });
+      words.push(...piece.map((r) => r.w));
+      from = i;
+    }
+    operands.push(op);
+  }
+  if (words.length === 0) return null;
+  const over = words.length > PART_MAX_WORDS;
+  const last = new Set(operands[operands.length - 1]);
+  const part = words.map(() => !over);
+  const read = units.map((u, k) => {
+    if (!over || last.has(k)) {
+      for (const i of u.at) part[i] = true;
+      return u;
+    }
+    return { ...u, start: false };
+  });
+  const opens = read.some((u) => u.start || u.at.some((i) => part[i]! && [...words[i]!].length >= PART_PREFIX_MIN_CHARS));
+  return opens ? { words, units: read, operands, part } : null;
 }
 
 /**
@@ -431,23 +499,18 @@ export function partWordKept(words: readonly string[], i: number): boolean {
 }
 
 /**
- * The part-word arm's kept words ({@link partWordsOf} indices) of each typed token that keeps one,
- * when the query straddles the letter's parts and two tokens do; else null, and the arm reads the
- * query per part. A token's words stay in one part: `anna@club.ch` is never `anna` in the sender
- * and `club` in the text.
+ * The part-word arm's kept units ({@link partReadingOf} indices, one per group a store builds) of
+ * each typed token that keeps one, when the query straddles the letter's parts and two tokens do;
+ * else null, and the arm reads the query per part. A token's units stay in one part: `anna@club.ch`
+ * is never `anna` in the sender and `club` in the text. A piece is always kept.
  */
 export function partOperandsOf(q: string): number[][] | null {
-  const words = partWordsOf(q);
-  if (words === null || !straddlesParts(queryOperandsOf(q))) return null;
-  const out: number[][] = [];
-  let at = 0;
-  for (const { text } of queryTokens(q)) {
-    const n = (text.match(/[\p{L}\p{N}]+/gu) ?? []).length;
-    const kept = Array.from({ length: n }, (_, j) => at + j).filter((i) => partWordKept(words, i));
-    if (kept.length > 0) out.push(kept);
-    at += n;
-  }
-  return at === words.length && out.length > 1 ? out : null;
+  const r = partReadingOf(q);
+  if (r === null || !straddlesParts(queryOperandsOf(q))) return null;
+  const out = r.operands
+    .map((op) => op.filter((k) => r.units[k]!.joined !== null || r.units[k]!.at.some((i) => partWordKept(r.words, i))))
+    .filter((op) => op.length > 0);
+  return out.length > 1 ? out : null;
 }
 
 /**
@@ -838,7 +901,8 @@ export interface Dialect {
     /**
      * THE PART-WORD ARMS, over the same indexed text as {@link words}: each word of
      * {@link partWordsOf} matches as itself and, from {@link PART_PREFIX_MIN_CHARS} characters,
-     * as the start of a longer word, ANDed across words. A part therefore finds at least what the
+     * as the start of a longer word, ANDed across words; a piece (`desk@site.exa`) also as the start
+     * of the token the parser keeps whole ({@link partReadingOf}). A part therefore finds at least what the
      * whole word finds. `null` when the query has no such word. Several queries (the sides of a bare
      * `or`) are one arm, any side matching ({@link partSidesOf}).
      */

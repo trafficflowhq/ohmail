@@ -24,6 +24,11 @@ const CORPUS: ReadonlyArray<readonly [key: string, subject: string, body: string
   ["time", "Agenda", "The 10:30 meeting moved."], ["report", "Quarterly report attached", "Figures."],
   ["signed", "Please sign here", "Thanks."], ["overview", "Slides", "The project overview is attached."],
   ["decoy", "Holiday plans", "See you soon."],
+  // `_`, `%` and a backslash are typed characters, never a LIKE wildcard or escape.
+  ["uscore", "File xa_bx ready", "Attached."], ["axb", "File xaxbx ready", "Attached."],
+  ["pct", "Code x50%offx", "Sale."], ["fifty", "Code x500offx", "Sale."], ["bslash", "Folder xdir\\subx", "Moved."],
+  ["addons", "Plan", "Your plan includes three add-ons for the quarterly invoice."], ["popups", "Browser", "Block the pop-ups in Chrome."],
+  ["todos", "Checklist", "Your to-dos for tomorrow are listed."], ["apiids", "Schema", "The api_ids column is indexed."],
 ];
 
 /** Query → the keys Postgres answers in the exact tier; `[]` is no exact match on this corpus. */
@@ -38,6 +43,7 @@ const POSTGRES: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
   // An excluded word only leaves letters out: `-the` is a stopword and leaves out none.
   ["ohmail -the", ["hyph", "joined", "spaced"]], ["--fixture", ["hyph", "spaced"]], ["-fixture ohmail", ["joined"]],
   ["fixture*", ["hyph", "spaced"]], ["+fixture", ["hyph", "spaced"]], ["over", ["overview"]], ["C++", []], ["***", []],
+  ["a_b", ["uscore"]], ["50%", ["pct"]], ["dir\\sub", ["bslash"]],
 ];
 
 /**
@@ -50,6 +56,17 @@ const SPACED: ReadonlyArray<readonly [q: string, keys: readonly string[], spaced
   ["ohmail-fixture OR node.js", ["hyph", "nodejs"], ["spaced"]],
   // Each side of an OR answers what it answers alone (`sign-in` above).
   ["sign-in OR co-op", ["bodyhyph", "bodysplit", "coop", "signed", "signin"], ["coopspaced"]],
+];
+
+/**
+ * THE START OF A TOKEN THE SERVER'S PARSER KEEPS WHOLE (an address, a path, a host), from four
+ * characters, marks counted: the part arm read each run apart, a short last run as a whole word, and
+ * found nothing. Watched red at the base on both stores. `3.1` is under four and stays shut.
+ */
+const STARTS: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
+  ["desk@site.exa", ["addr"]], ["docs/set", ["path"]], ["node.j", ["nodejs"]], ["3.1", []],
+  // A whole word with no run of four, beside a start: Postgres keeps `add-ons` as `add-on`, splits `api_ids`.
+  ["add-ons invoi", ["addons"]], ["pop-ups chro", ["popups"]], ["to-dos tomor", ["todos"]], ["api_ids colu", ["apiids"]],
 ];
 
 describe.each([
@@ -82,6 +99,16 @@ describe.each([
       const have = got.tier === "exact" ? got.keys : [];
       const want = [...keys].sort();
       if (have.join() !== want.join()) wrong.push({ q, got: have, want });
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it(`${STARTS.length} starts of a punctuated token: the token's letter in the exact tier, and nothing else`, async () => {
+    const wrong: Array<{ q: string; got: string[]; want: string[] }> = [];
+    for (const [q, keys] of STARTS) {
+      const got = await answer(q);
+      const have = got.tier === "exact" ? got.keys : [];
+      if (have.join() !== [...keys].sort().join()) wrong.push({ q, got: have, want: [...keys] });
     }
     expect(wrong).toEqual([]);
   });
