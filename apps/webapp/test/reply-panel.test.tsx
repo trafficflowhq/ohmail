@@ -462,6 +462,22 @@ describe("three ways out: Cancel, `r` again, Reply on the pill again", () => {
   });
 });
 
+describe("a forward from the keyboard starts in To, and a send with nobody says so", () => {
+  it("⇧F puts the cursor in To; Ctrl+Enter with no recipient sends nothing and says why", async () => {
+    await mountShell();
+    await key("F", { shiftKey: true });
+    await waitFor(() => q(".reply .reply-rcpt") !== null, "⇧F opened no forward with its recipient rows");
+    await waitFor(() => (document.activeElement?.id ?? "").endsWith("-to"), "the forward did not put the cursor in To");
+    const to = document.activeElement as HTMLElement;
+    expect(to.closest(".c-field")?.querySelector("label")?.textContent).toBe("To");
+
+    await key("Enter", { ctrlKey: true });
+    await waitFor(() => (document.body.textContent ?? "").includes(messages.compose.needRecipient),
+      "Ctrl+Enter with no recipient said nothing");
+    expect(q(".reply"), "the refused send closed the forward").not.toBeNull();
+  });
+});
+
 describe("the opened audience is one aligned stack, and From survives Cc/Bcc", () => {
   /**
    * Mutation for the disappearance guard: gate `fromRow` on `!open` (or move it back below

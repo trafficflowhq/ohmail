@@ -204,6 +204,8 @@
   color: var(--ink2);
   text-align: left;
   background: var(--tint);
+  /* A long domain is one word: it breaks inside the tile, never widens the sheet. */
+  overflow-wrap: anywhere;
 }
 .sm-scope button b {
   min-width: 0;

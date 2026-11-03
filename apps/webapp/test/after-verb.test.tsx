@@ -342,6 +342,26 @@ describe("after a verb, on the shipped shell", () => {
     });
   }
 
+  it("a bulk delete over the open row ADVANCES as a single delete does, and never says 'elsewhere'", async () => {
+    const { container } = await shell(["m1", "m2", "m3", "m4"]);
+    await key("j");
+    await waitFor(() => selId(container) != null, "the cursor to stand");
+    const first = selId(container)!;
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "J", shiftKey: true, bubbles: true, cancelable: true }));
+    });
+    await waitFor(() => container.querySelectorAll(".row.picked").length >= 2, "two rows picked");
+    const picked = [...container.querySelectorAll(".row.picked")].map((r) => r.getAttribute("data-id"));
+    await key("Backspace");
+    await waitFor(() => !rowIds(container).includes(first), "the picked rows to leave");
+    await waitFor(() => selId(container) != null, "the selection to advance");
+    await settle();
+    expect(picked).toContain(first);
+    expect(picked).not.toContain(selId(container));
+    expect(container.textContent).not.toContain(messages.reader.gone);
+    expect(container.textContent).not.toContain("Nothing open.");
+  });
+
   it("`close` clears the selection back to the list", async () => {
     window.localStorage.setItem(AFTER_VERB_STORAGE_KEY, "close");
     const { container } = await shell();

@@ -159,6 +159,8 @@ const LOCATION_MAX = 1000;
 const NAME_MAX = 200;
 /** The label of a TZID that does not resolve. */
 const ZONE_LABEL_MAX = 64;
+/** libical's and old Lightning's/Evolution's vendor prefix before an Olson name (`/mozilla.org/20050126_1/Europe/Berlin`). */
+const TZID_VENDOR_PREFIX = /^\/(?:freeassociation\.sourceforge\.net\/(?:Tzfile\/)?|mozilla\.org\/[^/]+\/|softwarestudio\.org\/Olson_[^/]+\/)/;
 /** RFC 5321's 254, the store's `MAX_STORED_ADDRESS_CHARS`: a longer mailto: is no address, never cut. */
 const ADDRESS_MAX = 254;
 
@@ -591,8 +593,9 @@ function parseIcsDate(value: string, tzidParam: string | null, valueParam: strin
   }
   if (tzidParam) {
     // A TZID longer than a label names no zone: it is never looked up, and its label is cut.
-    const nameable = tzidParam.length <= ZONE_LABEL_MAX;
-    const epochMs = nameable ? epochFromWall(wall, WINDOWS_TZ[tzidParam] ?? tzidParam) : null;
+    const zone = tzidParam.replace(TZID_VENDOR_PREFIX, "");
+    const nameable = zone.length <= ZONE_LABEL_MAX;
+    const epochMs = nameable ? epochFromWall(wall, WINDOWS_TZ[zone] ?? zone) : null;
     return { epochMs, wall, allDay: false, tzid: drawnText(tzidParam, ZONE_LABEL_MAX), utc: false };
   }
   // Floating: no zone claimed, so no instant claimed. The consumer may read it as viewer-local.

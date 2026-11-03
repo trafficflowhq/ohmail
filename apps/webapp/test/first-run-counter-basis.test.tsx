@@ -111,6 +111,14 @@ describe("the first-run counters name their basis", () => {
     expect(said).toContain("not the whole mailbox");
   });
 
+  it("the way out promises only what the status bar shows: the messages read, never these counters", async () => {
+    const el = await mountPull();
+    const said = textOf(el);
+    // The strip counts the import's messages (`importingCount`, `importingOf`); Screened and History stay here.
+    expect(said).not.toContain("carries these counters");
+    expect(said).toContain("the status bar shows how many messages it has read");
+  });
+
   it("the fixture is the shape the row is about — the pair is bounded, the import is not", async () => {
     // Without this the two cases above would pass over a small mailbox where the window holds
     // everything and the sentence qualifies nothing.

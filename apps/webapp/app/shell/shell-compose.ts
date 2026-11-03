@@ -1832,6 +1832,13 @@ export function useShellCompose({
         setReplyForwardSaid(true);
         return;
       }
+      const fwdPlan = forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address));
+      // Nobody in To and nothing mistyped: the chord says why Send is waiting.
+      const typo = fwdPlan.invalid.to.length + fwdPlan.invalid.cc.length + fwdPlan.invalid.bcc.length > 0;
+      if ((fwdPlan.to ?? []).length === 0 && !typo) {
+        toast(t("compose.needRecipient"));
+        return;
+      }
       const fwdLane = inlineForwardKey(messageId);
       const fwdRow = laneRowOf(fwdLane);
       // The version the lane's words are based on: a row moved elsewhere refuses the send.
@@ -1853,7 +1860,7 @@ export function useShellCompose({
           // facts are unreadable.
           mailboxId: from.mailboxId ?? parent.mailboxId,
           ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
-          plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
+          plan: fwdPlan,
           confirmed: fwdGate?.confirmed === true && parent.sensitivity?.no_forward === true,
           // The kept files, only once one was removed — the plan the dock's rows were drawn from.
           ...(replyForward?.wire !== undefined ? { forwardParts: replyForward.wire } : {}),
