@@ -6,7 +6,7 @@ import { foldMessageIdDomain } from "./identity.js";
 // Surface `OutboundMessage` on the core entrypoint so the send seam is usable
 // without importing the adapter subpath (it otherwise lives only on the
 // `@trafficflow/core/adapters/imap` export).
-export type { OutboundMessage, SendOptions } from "./adapters/imap-types.js";
+export type { OutboundAddress, OutboundMessage, SendOptions } from "./adapters/imap-types.js";
 
 /**
  * The crash-safe send seam. SMTP is not transactional: a crash between "SMTP accepted" and "we

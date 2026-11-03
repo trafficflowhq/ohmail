@@ -10,8 +10,9 @@
 import { COMPOSE_FILE_TYPE, COMPOSE_LETTER_TYPE } from "@ohmail/client-engine";
 
 /**
- * Files kept with drafts on this phone, all letters together: four times the phone's attach cap.
- * The store loads every row at launch, so this bounds what a launch holds in memory.
+ * Files kept with drafts on this phone, all letters together: four times Cloud's inline attach cap,
+ * less than one large send. The store loads every row at launch, so this bounds what a launch holds
+ * in memory; a letter past it is kept without its files, and the close says so.
  */
 export const KEPT_FILES_MAX_BYTES = 12 * 1024 * 1024;
 

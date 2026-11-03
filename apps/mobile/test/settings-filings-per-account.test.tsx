@@ -55,6 +55,7 @@ vi.mock("../src/ui/Gated", () => ({ Gated: (p: { children?: ReactNode }) => p.ch
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: (p: { children?: ReactNode }) => p.children }));
 vi.mock("../src/ui/Segmented", () => ({ Segmented: () => null }));
 vi.mock("../src/ui/AutoActPanel", () => ({ AutoActPanel: () => null, readsOnly: () => false }));
+vi.mock("../src/ui/SignaturesPanel", () => ({ SignaturesPanel: () => null }));
 vi.mock("../src/ui/AutoFiledPanel", () => ({ AutoFiledPanel: () => null }));
 vi.mock("../src/ui/ProfileImportCard", () => ({ SavedSettingsPanel: () => null }));
 vi.mock("../src/ui/WaitingStrip", () => ({ WaitingStrip: () => null }));

@@ -357,9 +357,9 @@ describe("testing a connection on the standalone door", () => {
 });
 
 /**
- * ═══ THE FAMILY, ENUMERATED — so an EIGHTH member cannot arrive without a test ═════════════
+ * ═══ THE FAMILY, ENUMERATED — so a TENTH member cannot arrive without a test ══════════════
  *
- * Seven paths are served by `engine.ts`'s `handle` AHEAD of the route table. Their authority is
+ * Nine paths are served by `engine.ts`'s `handle` AHEAD of the route table. Their authority is
  * the per-launch bearer — minted at boot, added shell-side, never reaching the window, impossible
  * for a page to compose.
  *
@@ -394,9 +394,11 @@ describe("the ahead-of-table family", () => {
     "/local/mailboxes/connections",
     // The network-return relay's door: THIS computer's sockets, like the read beside it.
     "/local/mailboxes/connections/retry",
+    // The name this computer's letters carry: on the bearer, the display name only, never a credential or a server.
+    "/local/mailboxes/:id/name",
   ] as const;
 
-  it("is exactly these eight, as an EXACT SET read out of the source", () => {
+  it("is exactly these nine, as an EXACT SET read out of the source", () => {
     /* AN EXACT SET, not a one-way containment. A census that only asked "is each of my seven
        served?" would keep saying seven while an eighth arrived — a route with an authority nobody
        argued for, reachable on a bearer nobody re-examined. It did its job on the seventh: the
@@ -423,7 +425,7 @@ describe("the ahead-of-table family", () => {
     FAMILY.filter((path) =>
       routes.some((r) => r.pattern === path || r.pattern.startsWith(`${path}/`)));
 
-  it("is absent from the doors a paired device reaches — all eight, not two", () => {
+  it("is absent from the doors a paired device reaches — all nine, not two", () => {
     /* `lan-routes.test.ts` makes this assertion for the two members that existed when it was
        written. The property belongs to the family rather than to those two, so it is made over
        the whole list here: a phone on the same network must not be able to add a mailbox to

@@ -560,6 +560,7 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // a member of a fixed taxonomy and never a server's own words; `reason` says what was kept.
   local_mailbox_smtp_unsettled: "info",
   local_mailbox_seal_failed: "error",
+  local_mailbox_name_written: "info",
   // `local_mailbox_seal_discarded` — a credential this door wrote was removed again because a
   // sign-out overtook it (`signout-fence.ts`). `info` and not `error`: nothing is wrong, the
   // person asked for exactly this; it is the receipt that the write which raced the sign-out did

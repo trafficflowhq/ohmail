@@ -28,14 +28,17 @@ import { NO_TOASTS, afterDismiss, nextToast, paintGate, type ToastSlots } from "
 import { useLocale } from "../i18n/LocaleProvider";
 import { activeLocale } from "../i18n/locale";
 import { useConnection } from "../net/connection";
-import { forwardPartsReader } from "../net/pairing";
+import { helloReader } from "../net/pairing";
 import {
   readFoldersEnabled,
   writeAutoAct,
   writeFoldersEnabled,
   writeResurfaceTime,
+  writeSignature,
   writeThemeFace,
   type FoldersConsent,
+  type SignatureChange,
+  type SignatureFacts,
 } from "../net/consent";
 import { ownAddressesOf, readMailboxes, type PhoneMailbox } from "../net/mailboxes";
 import { junkFolderSaid } from "./folders";
@@ -55,6 +58,7 @@ import { claimHere } from "../ui/standalone-form";
 import { readFolderSummary } from "../net/folder-ops";
 import { imageRouteOf, type ImageRoute } from "../mail/remote-images";
 import * as Crypto from "expo-crypto";
+import { phoneSendSurface } from "../compose/attach";
 import { openLetterSession, ownedLetters } from "../compose/letter-keeper";
 import { restoreLetters, sayLetterRestore, settleLetters, sweepLetters } from "../compose/letter-restore";
 import { letterDoor } from "../compose/letter-store";
@@ -450,6 +454,17 @@ export interface World {
    */
   signatures: Readonly<Record<string, string>> | null;
   /**
+   * THE SIGNATURES PANE'S OTHER FACTS, off the same reads: the markup, whose signature each mailbox
+   * shows, and where a change to its organizer went; and the one write (`writeSignature`), whose
+   * echo lands in the same freshest-wins sequence as every read. `write` is null with nothing live.
+   */
+  signing: {
+    html: Readonly<Record<string, string>>;
+    sources: Readonly<Record<string, "organizer" | "local">>;
+    changes: Readonly<Record<string, SignatureChange>>;
+    write: ((mailboxId: string, text: string | null) => Promise<boolean>) | null;
+  };
+  /**
    * THE RESURFACE TIME — the account's `'HH:MM'`, or `null` for "never chosen" (mail 0110).
    * Rides the signatures' cadence off the same `GET /consent`, so a time set in the webapp
    * reaches an open phone. NO `known` twin, unlike the face beside it: null here is a usable
@@ -657,6 +672,7 @@ const NO_ACTIONS: WorldActions = {
   keptReply: () => ({ kind: "none" as const }),
   forwardFiles: () => ({ state: "failed" as const, parts: [] }),
   forwardPartsSupported: () => false,
+  sendSurface: () => undefined,
   draftSent: () => false,
   draftLeft: () => null,
   sendOutcome: () => "unknown",
@@ -743,6 +759,7 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
     // Nothing is connected — "Trash is not available here", never an empty Trash.
     trash: { available: false },
     signatures: null,
+    signing: { html: {}, sources: {}, changes: {}, write: null },
     // No account, so nothing has chosen a time and nothing can store one. The sheet still
     // chooses — on the product's 09:00, which is what `null` means everywhere.
     resurfaceTime: null,
@@ -794,8 +811,19 @@ export function useEngineQueuesAsk(): () => void {
   }, [engine]);
 }
 
+/** No signature facts: nothing read yet, or nothing connected. */
+const NO_SIGNING: Omit<World["signing"], "write"> = { html: {}, sources: {}, changes: {} };
+
+/** The signature fields of a consent answer, alone, so the sequence compares only those. */
+function signatureFactsOnly(a: SignatureFacts): SignatureFacts {
+  return {
+    signatures: a.signatures, signaturesHtml: a.signaturesHtml,
+    signatureSources: a.signatureSources, signatureChanges: a.signatureChanges,
+  };
+}
+
 /** The projection plus the per-render facts, the projection's getters carried over by descriptor. */
-function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement">): World {
+function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement" | "signing">): World {
   const out = Object.defineProperties({}, Object.getOwnPropertyDescriptors(projected)) as World;
   return Object.assign(out, facts);
 }
@@ -949,12 +977,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /**
    * The account's stored signatures, or `null` until a consent read SUCCEEDS this session
    * (`signaturesKnown`, structurally — see {@link World.signatures}). They ride the SAME
-   * `GET /consent` the folders flag reads, on the machine's own cadence; the phone never
-   * WRITES a signature, so there is no user-wins epoch to keep — `freshestRead` (built per
-   * machine below) guards the one race that exists: two overlapping reads settling out of
-   * issue order.
+   * `GET /consent` the folders flag reads, on the machine's own cadence; the Signatures pane's
+   * write feeds the same `freshestRead` sequence (built per machine below), so a read issued
+   * before a write never lands over the write's echo.
    */
   const [signatures, setSignatures] = useState<Readonly<Record<string, string>> | null>(null);
+  const [sigMore, setSigMore] = useState<Omit<World["signing"], "write">>(NO_SIGNING);
   /**
    * The account's resurface time, or `null` for "never chosen" — the signatures' cadence and
    * their freshest-successful-read-wins rule, without their `known` gate: null is a usable
@@ -1086,6 +1114,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const current = useRef<ReturnType<typeof foldersFlag> | null>(null);
   /* The consent, relay and queue reads of the live session, so a local writer can tell them (`localWrite`). */
   const consentReadNow = useRef<FreshestRead<FoldersConsent> | null>(null);
+  /** The signatures' own sequence: every consent read and every signature write's echo. */
+  const signaturesNow = useRef<FreshestRead<SignatureFacts> | null>(null);
   const relayReadNow = useRef<FreshestRead<readonly RelayedDecision[]> | null>(null);
   const queueReadNow = useRef<FreshestRead<readonly ServerWaitingSender[]> | null>(null);
   /**
@@ -1129,13 +1159,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       follows: !session.standalone,
     });
     faceCurrent.current = faces;
-    // The signatures ride the flag's read but keep their OWN ordering: the machine's epoch
-    // protects the flag against a user's write; nothing writes signatures from this phone, so
-    // freshest-successful-read-wins is the whole rule (`freshestRead`). Identity-gated like
-    // `apply` — a superseded session's late answer applies nothing.
+    // The signatures ride the flag's read but keep their OWN ordering: each consent read and each
+    // Signatures write's echo takes a place in one sequence when it is issued, and the freshest
+    // successful answer wins (`freshestRead`). Identity-gated like `apply` — a superseded
+    // session's late answer applies nothing.
+    const sigFacts = signaturesNow.current = freshestRead<SignatureFacts>((f) => {
+      if (current.current !== m) return;
+      setSignatures(f.signatures);
+      setSigMore({ html: f.signaturesHtml, sources: f.signatureSources, changes: f.signatureChanges });
+    });
     const sigRead = consentReadNow.current = freshestRead<FoldersConsent>((ans) => {
       if (current.current !== m) return;
-      setSignatures(ans.signatures);
       // The resurface time off the SAME answer and the same rule — one read, every fact on it.
       setResurfaceTime(ans.resurfaceTime);
       autoUnsubscribeNow.current = ans.autoUnsubscribe;
@@ -1189,7 +1223,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */
           const applyFace = faces.beginRead();
           return sigRead(async () => {
-            const ans = await readFoldersEnabled(session);
+            const asked = readFoldersEnabled(session);
+            /* Its place in the signatures' sequence is taken now, before the answer. */
+            void sigFacts(() => asked.then((a) => (a === null ? null : signatureFactsOnly(a))));
+            const ans = await asked;
             // `null` from the read is "could not ask", which the applier must not read as "the
             // account has no face" — the two are different answers (face-scope.ts's contract).
             applyFace(ans === null ? undefined : ans.themeFace);
@@ -1219,6 +1256,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // (account A's signature must never dress account B's composer); the tracker itself is
     // rebuilt with the machine, so its tally starts over with it.
     setSignatures(null);
+    setSigMore(NO_SIGNING);
     // …and the time, for the signatures' reason: account A's chosen hour must not decide when
     // account B's mail comes back. Back to `null`, which reads as the product's 09:00.
     setResurfaceTime(null);
@@ -1251,6 +1289,20 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     drainOwed.current = false; // the debt was the old session's; the new one owes nothing
     if (machine) void machine.refresh();
   }, [machine]);
+  /* THE SIGNATURES PANE'S WRITE: its echo takes its place in the signatures' sequence at the press,
+     so no read issued before it lands over it. False on a refusal; the pane keeps the text. */
+  const writeSignatureNow = useCallback(
+    async (mailboxId: string, text: string | null): Promise<boolean> => {
+      const track = signaturesNow.current;
+      if (!session || track === null) return false;
+      try {
+        return (await track(() => writeSignature(session, mailboxId, text))) !== null;
+      } catch {
+        return false;
+      }
+    },
+    [session],
+  );
   const setAutoActOn = useCallback(
     async (on: boolean): Promise<boolean> => {
       const m = machine;
@@ -1388,9 +1440,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* THE LETTERS BEING WRITTEN, on the same journal (`compose/letter-store.ts`): one door per session. */
   const letters = useMemo(() => (journal ? letterDoor(journal) : null), [journal]);
   /* A FORWARD NAMES ITS KEPT FILES only to a server that announced it reads the list; asked again while unanswered. */
-  const forwardPartsNow = useRef<ReturnType<typeof forwardPartsReader> | null>(null);
+  const forwardPartsNow = useRef<ReturnType<typeof helloReader> | null>(null);
   useEffect(() => {
-    forwardPartsNow.current = session ? forwardPartsReader(session) : null;
+    forwardPartsNow.current = session ? helloReader(session) : null;
     return () => { forwardPartsNow.current = null; };
   }, [session]);
   useLayoutEffect(() => {
@@ -1446,6 +1498,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         engine, toast: showToast, painted: gate.painted, uuid: () => Crypto.randomUUID(), zone,
         ...(letters ? { letters } : {}),
         forwardParts: () => forwardPartsNow.current?.said() ?? null,
+        /* What this session's send carries: the door, and on Cloud whether its `/hello` armed staging. */
+        sendSurface: () => phoneSendSurface({
+          standalone: session?.standalone === true, flavor: session?.profile.flavor ?? null,
+          staging: forwardPartsNow.current?.staging() ?? null,
+        }),
         // The register, not the hook's value: this facade is built once per session, and a
         // captured `locale` would stamp Trash rows in the mount-time language for ever.
         locale: () => activeLocale(),
@@ -1666,6 +1723,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           forwardFetch: (id) => acts.forwardFetch(id),
           forwardFiles: (id) => acts.forwardFiles(id),
           forwardPartsSupported: () => acts.forwardPartsSupported(),
+          sendSurface: () => acts.sendSurface(),
           retryAbandoned: (id) => acts.retryAbandoned(id),
           discardAbandoned: (id) => acts.discardAbandoned(id),
           retryQueued: (id) => acts.retryQueued(id),
@@ -1929,6 +1987,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         choose: chooseFace,
       },
       autoAct: autoAct === null ? null : { ...autoAct, pending: autoActPending, set: setAutoActOn },
+      signing: { ...sigMore, write: writeSignatureNow },
       seed,
       sendOutcome: outcomeOf,
       sendSettlement: settlementOf,
@@ -1936,7 +1995,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projected, engine, session, actions, zone, conn.syncing, conn.syncError, outcomeSeq,
     outcomeOf, settlementOf, shownFace, accountFaceKnown, facePending, applyFaceAllDevices, chooseFace,
-    autoAct, autoActPending, setAutoActOn, seed]);
+    autoAct, autoActPending, setAutoActOn, seed, sigMore, writeSignatureNow]);
 
   /**
    * The freshness watcher — the clock's other half, after the memo because its sentinel IS the

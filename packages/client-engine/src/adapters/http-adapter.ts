@@ -123,6 +123,12 @@ export interface HttpAdapterOptions {
    */
   uploadAdmits?: (url: string) => boolean;
   /**
+   * THE TRANSPORT A STAGED UPLOAD RIDES — a plain fetch that adds nothing. Absent, the adapter's own
+   * `fetch` carries it, as it always has. A host whose `fetch` stamps a credential on every URL (the
+   * phone's bearer manager) passes one here, so the storage host never sees that credential.
+   */
+  uploadFetch?: FetchLike;
+  /**
    * Where a window's failed pull is reported ({@link EngineAdapter.reportSyncFailure}). Set by the
    * desktop's bridge adapter, which posts the record to the local engine; absent on the hosted
    * client, so `reportSyncFailure` is absent too and no request is ever made for it.
@@ -403,6 +409,8 @@ export class HttpAdapter implements EngineAdapter {
   private readonly sendEchoLater: boolean;
   /** See {@link HttpAdapterOptions.uploadAdmits}. Admits every grant unless a host supplied one. */
   private readonly uploadAdmits: (url: string) => boolean;
+  /** See {@link HttpAdapterOptions.uploadFetch}. */
+  private readonly uploadFetch: FetchLike;
   /** See {@link HttpAdapterOptions.mayAsk}. `() => true` unless a host supplied one. */
   private readonly mayAsk: () => boolean;
   /** See {@link HttpAdapterOptions.syncDeadlines}. `null` unless a host asked for them. */
@@ -528,6 +536,7 @@ export class HttpAdapter implements EngineAdapter {
     this.stageAttachments = opts.stageAttachments === true;
     this.sendEchoLater = opts.sendEchoLater === true;
     this.uploadAdmits = opts.uploadAdmits ?? (() => true);
+    this.uploadFetch = opts.uploadFetch ?? this.fetchImpl;
     // The capability EXISTS only where a sink was given, so `typeof adapter.reportSyncFailure`
     // answers the engine's question the way `requestPull` does: absent means "no door for this".
     if (opts.syncFailureSink) {
@@ -3209,7 +3218,9 @@ export class HttpAdapter implements EngineAdapter {
       // client that reconstructed them would be a second implementation of a one-sided contract.
       let put: Response | null = null;
       try {
-        put = await this.fetchImpl(grant.uploadUrl, {
+        // Called unbound: a native fetch refuses the adapter as its receiver.
+        const upload = this.uploadFetch;
+        put = await upload(grant.uploadUrl, {
           method: grant.uploadMethod ?? "PUT",
           headers: grant.uploadHeaders ?? {},
           body: bytes as unknown as BodyInit,

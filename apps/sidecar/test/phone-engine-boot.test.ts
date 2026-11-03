@@ -262,6 +262,21 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
     expect(((await health.json()) as { buildCommit?: string }).buildCommit).toBe(sha);
   });
 
+  it("seeds the mailbox's sender name from the door, and none when the door gave none", async () => {
+    const names: (string | null)[] = [];
+    for (const over of [{ displayName: "Ada Lovelace" }, {}]) {
+      live = await startPhoneEngine(deps(nodeExecutor(recorder()), over));
+      const res = await live.handle(
+        new Request("http://sidecar/mailboxes", { headers: { authorization: `Bearer ${live.sessionToken}` } }),
+      );
+      const items = ((await res.json()) as { items: { displayName: string | null }[] }).items;
+      names.push(items[0]?.displayName ?? null);
+      await live.stop();
+      live = null;
+    }
+    expect(names).toEqual(["Ada Lovelace", null]);
+  }, 60_000);
+
   it("boots over SQLite and ANSWERS a request — not merely resolves", async () => {
     const rec = recorder();
     const exec = nodeExecutor(rec);

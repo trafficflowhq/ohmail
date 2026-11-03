@@ -875,6 +875,9 @@ export {
 } from "./store-timeline.js";
 export { VERB_TARGETS, verbTargetsOf } from "./shadow.js";
 
+/* Which address a new mail leaves from — the web's compose-from re-exports it; the phone reads it. */
+export { defaultFrom, optionsFromFacts, type FromFacts, type FromOption } from "./compose-from.js";
+
 /* The one attach bound every compose surface states — the client mirror of the send service's
    cap rule, here because the webapp AND the phone composer read it. See its header. */
 export {

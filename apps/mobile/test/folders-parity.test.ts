@@ -331,11 +331,10 @@ describe("the signature block — the webapp composer's strings and rules", () =
     expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\)\)/);
   });
   it("no block from a guess: the map must be server-confirmed, the sender the mutation's own", () => {
-    /* The sending mailbox is the composer's: an opened draft keeps its own, a reply inherits the
-       parent's, a mail with no parent takes the engine's compose-from fallback, and ALL reach the
-       block through the one `mailboxId` the send also uses. */
-    expect(actions).toMatch(/w\.signatures === null \|\| mailboxId === null \? null : effectiveSignature\(sig, w\.signatures, mailboxId\)/);
-    expect(actions).toMatch(/const mailboxId = draft\?\.mailboxId \?\? m\?\.mailboxId \?\? w\.mailboxes\.sendingId;/);
+    /* The sending mailbox is the composer's: a reply inherits the parent's, a mail with no parent
+       takes its resolved From, and ALL reach the block through the one `sendFrom` the send uses. */
+    expect(actions).toMatch(/w\.signatures === null \|\| sendFrom === null \? null : effectiveSignature\(sig, w\.signatures, sendFrom\)/);
+    expect(actions).toMatch(/const mailboxId = sender !== null \? sender\.keepFrom : draft\?\.mailboxId \?\? m\?\.mailboxId \?\? w\.mailboxes\.sendingId;/);
   });
   it("a signature never lights Send up — the content rule reads the body and the files, never the block", () => {
     /* The invariant is unchanged; its mechanism moved with the attachments slice: `canSend`

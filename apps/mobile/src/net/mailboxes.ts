@@ -331,6 +331,29 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
 }
 
 /**
+ * THE NAME A STANDALONE MAILBOX'S LETTERS CARRY — `PATCH /local/mailboxes/:id/name`, this phone's own
+ * engine's door (the shared route asks a second factor this phone never has). `null` clears it. The
+ * caller re-reads the roster after a write; a refusal or no answer wrote nothing.
+ */
+export async function writeMailboxName(
+  session: ConnectedSession,
+  mailboxId: string,
+  displayName: string | null,
+): Promise<{ k: "written"; displayName: string | null } | { k: "refused" } | { k: "failed" }> {
+  try {
+    const res = await session.fetch(
+      `${requestBase(session)}/local/mailboxes/${encodeURIComponent(mailboxId)}/name`,
+      { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ displayName }) },
+    );
+    if (res.status !== 200) return { k: "refused" };
+    const body = (await res.json()) as { displayName?: unknown } | null;
+    return { k: "written", displayName: typeof body?.displayName === "string" && body.displayName !== "" ? body.displayName : null };
+  } catch {
+    return { k: "failed" };
+  }
+}
+
+/**
  * HAND A MAILBOX BACK — `POST /mailboxes/:id/release`, the hosted route's local twin.
  *
  * 202 is the honest success: the claim lives in the customer's IMAP folder and the organizer's own

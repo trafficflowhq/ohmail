@@ -399,6 +399,9 @@ export class BearerManagerRN implements SessionRenewalDoor {
    * travels as it was. An arrow property so it can be handed to `HttpAdapterOptions.fetch` bare.
    */
   fetch: FetchLike = async (url, init) => {
+    /* ITS OWN ORIGIN ONLY: a URL elsewhere (a staged upload's grant) is passed through unstamped and
+       never renewed, so the bearer cannot leave the server that minted it. */
+    if (!this.ownOrigin(url)) return this.fetchImpl(url, init);
     const options = (init ?? {}) as LooseInit;
     const stamped = (): LooseInit => ({
       ...options,
@@ -421,6 +424,15 @@ export class BearerManagerRN implements SessionRenewalDoor {
     // was stamped — both mean the same thing: replay once under the current generation.
     return this.heard(await this.fetchImpl(url, stamped()));
   };
+
+  /** Is this request for the origin this pair was minted by. An unreadable URL is not. */
+  private ownOrigin(url: string): boolean {
+    try {
+      return new URL(url).origin === new URL(this.origin).origin;
+    } catch {
+      return false;
+    }
+  }
 
   /** No access token to send, or its stated window has run out ({@link WINDOW_LEAD_MS} early). */
   private windowLapsed(): boolean {

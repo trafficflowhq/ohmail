@@ -13,11 +13,12 @@ import {
   FORWARD_PARTS_HELLO_MS,
   bootEngine,
   forgetMirror,
-  helloForwardParts,
+  helloFeatures,
   localEngineTransport,
   mirrorOwnerKey,
   normalizeOrigin,
   LOCAL_ENGINE_ORIGIN,
+  type HelloFeatures,
   type IdentityVerdict,
   type MobileEngineDeps,
 } from "../engine/boot";
@@ -83,32 +84,40 @@ export function unreachableSaid(detail: RefusalArg): Refusal | null {
 }
 
 /**
- * DOES THIS SESSION'S SERVER SEND ONLY THE FORWARDED PARTS A SEND NAMES — `features.forwardParts`.
- * The phone's own engine always does; `null` is no answer ({@link helloForwardParts}).
+ * WHAT THIS SESSION'S SERVER ANNOUNCES — `features.forwardParts` and `features.staging`. The phone's
+ * own engine sends the named parts and never stages; `null` is no answer ({@link helloFeatures}).
  */
-export async function forwardPartsAnnounced(session: Pick<ConnectedSession, "standalone" | "fetch" | "profile">): Promise<boolean | null> {
+export async function helloAnnounced(session: Pick<ConnectedSession, "standalone" | "fetch" | "profile">): Promise<HelloFeatures | null> {
   return session.standalone
-    || helloForwardParts(session.fetch, normalizeOrigin(session.profile.origin), FORWARD_PARTS_HELLO_MS);
+    ? { forwardParts: true, staging: false }
+    : helloFeatures(session.fetch, normalizeOrigin(session.profile.origin), FORWARD_PARTS_HELLO_MS);
+}
+
+/** Does this session's server send only the forwarded parts a send names. */
+export async function forwardPartsAnnounced(session: Pick<ConnectedSession, "standalone" | "fetch" | "profile">): Promise<boolean | null> {
+  return (await helloAnnounced(session))?.forwardParts ?? null;
 }
 
 /**
  * THE SESSION'S ANSWER, HELD — read at once, and asked again, one read at a time, whenever it is read
  * while still unanswered: a launch without the network does not latch "no" for the whole session.
  */
-export function forwardPartsReader(session: Pick<ConnectedSession, "standalone" | "fetch" | "profile">): {
-  said: () => boolean | null; settled: () => Promise<void>;
+export function helloReader(session: Pick<ConnectedSession, "standalone" | "fetch" | "profile">): {
+  said: () => boolean | null; staging: () => boolean | null; settled: () => Promise<void>;
 } {
-  let said: boolean | null = null;
+  let said: HelloFeatures | null = null;
   let asking: Promise<void> | null = null;
   const ask = (): void => {
     if (asking !== null) return;
-    asking = forwardPartsAnnounced(session)
+    asking = helloAnnounced(session)
       .then((v) => { said = v; }, () => undefined)
       .finally(() => { asking = null; });
   };
   ask();
+  const now = (): HelloFeatures | null => { if (said === null) ask(); return said; };
   return {
-    said: () => { if (said === null) ask(); return said; },
+    said: () => now()?.forwardParts ?? null,
+    staging: () => now()?.staging ?? null,
     settled: () => asking ?? Promise.resolve(),
   };
 }
@@ -1607,6 +1616,8 @@ async function buildSession(
     apiBase,
     accountId: profile.accountId,
     auth: { headers: () => bearer.headers(), fetch: paired },
+    /* Cloud's request body carries 3 MiB; a send past it stages there, and only there. */
+    stageAttachments: profile.flavor === "managed",
   });
   if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
   // The boot makes NO request, but the manager is the slot's, so another holder's last request

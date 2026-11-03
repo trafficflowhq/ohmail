@@ -185,6 +185,35 @@ const TABLE = {
     "This phone connects to your mail server directly. Your password is stored on this phone, encrypted under a key held in its keystore, and is never sent to us.",
   phoneStandaloneAddress: "Mailbox address",
   phoneStandalonePassword: "Mailbox password",
+  /** The sender name, asked at the door: optional, and what recipients see beside the address. */
+  phoneStandaloneName: "Your name (optional)",
+  phoneStandaloneNameHint: "Shown to the people you write to, beside your address.",
+  /** Settings on a standalone phone: the name each mailbox's letters carry. */
+  senderNameTitle: "Your name",
+  senderNameNote: "Shown beside your address on the mail you send from this phone. Leave it empty to send with the address alone.",
+  senderNameSave: "Save",
+  senderNameSaved: "Saved.",
+  senderNameFailed: "That didn't save. Try again.",
+  /** Settings → Signatures: one text signature per mailbox, the web's `settings.signatures` words. */
+  sigSettingsTitle: "Signatures",
+  sigSettingsNote: "One signature per mailbox, added under the mail you write from that address. Leave it empty to sign with nothing.",
+  sigSettingsOn: "Added to messages you write from this address.",
+  sigSettingsOff: "No signature — messages go out as written.",
+  sigSettingsRead: "Set on the install that organizes this mailbox.",
+  sigSettingsMarkup: "This signature has formatting. Change it on the web or in the desktop app.",
+  sigSettingsPlaceholder: "Write a signature…",
+  sigSettingsField: (address: string) => `Signature: ${address}`,
+  sigSettingsSave: "Save",
+  sigSettingsSaving: "Saving…",
+  sigSettingsRevert: "Discard changes",
+  sigSettingsFailed: "That didn't save — your text is still here, try again.",
+  sigSettingsLeaveAsk: "Leave without saving the signature?",
+  sigSettingsLeaveKeep: "Keep editing",
+  sigSettingsAsked: "Not saved here — the machine that organizes this mailbox applies it on its next pass.",
+  sigSettingsRefusedUnreadable: (name: string) => `Not applied — ${name} could not read this change. Update ohmail there, then save it again.`,
+  sigSettingsRefusedUnreadableUnknown: "Not applied — the install that organizes this mailbox could not read this change. Update ohmail there, then save it again.",
+  sigSettingsRefusedOther: (name: string) => `Not applied — ${name} did not take this change. Save it again.`,
+  sigSettingsRefusedOtherUnknown: "Not applied — the install that organizes this mailbox did not take this change. Save it again.",
   phoneStandaloneShowPassword: "Show password",
   phoneStandaloneHidePassword: "Hide password",
   phoneStandaloneAdvanced: "Server settings",
@@ -345,6 +374,8 @@ const TABLE = {
   standaloneNoEngine:
     "This build cannot organize a mailbox on this phone. Connect it to a computer, a server or ohmail Cloud instead.",
   standaloneNoHost: "ohmail needs your incoming server (IMAP). Give its address.",
+  /** A sender name the door or Settings cannot store: too long, or a line break inside it. */
+  standaloneNameRefused: "Your name can hold up to 100 characters, on one line.",
   standaloneNoSmtpHost: "ohmail needs your outgoing server (SMTP). Give its address.",
   standaloneNoPort: "The IMAP port is a whole number from 1 to 65535.",
   standaloneNoSmtpPort: "The SMTP port is a whole number from 1 to 65535.",
@@ -1116,7 +1147,7 @@ const TABLE = {
    * and the Piles screen did not. A screen that reads a private copy of the wording cannot be
    * translated, and the defect is invisible until somebody translates.
    */
-  replyLaterNote: "Answers you owe. A Reply Run walks them one screen at a time.",
+  replyLaterNote: "Answers you owe. Open one to write your reply.",
   setAsideNote: "Kept in view without keeping the Ohbox busy.",
   resurfaceNote: "Comes back on its own, at the time you chose.",
 
@@ -2225,7 +2256,11 @@ const TABLE = {
   replyUnreachable: "Not sent. Your mail server couldn't be reached.",
   /* Past the draft limit (413): nothing left, and no retry helps until the text is shorter. */
   replyTooLong: (size: string) => `Not sent. It's too long to send — the limit is ${size}. Shorten it and send again.`,
-  replyTooLarge: "Not sent. It's too large to send. Shorten it and send again.",
+  replyTooLarge: "Not sent. It's too large to send. Remove a file or shorten it, then send again.",
+  /** A staged file's upload, refused: the grant, the storage or the upload itself. */
+  replyStagingRefused: "Not sent. Files this large can't be uploaded from this phone. Your draft is kept; remove the largest files and send again.",
+  replyStagingUnreachable: "Not sent. A file could not be uploaded. Check your connection and send again.",
+  replyStagingFailed: "Not sent. A file could not be uploaded. Send again.",
   /* It took the dial and would not serve it now, past the send's own retries. */
   replyBusy: "Not sent. Your mail server is busy and wouldn't take it right now. Try again in a moment.",
   replyNotSignedIn: "Not sent — your draft is kept. This mailbox isn't signed in here. Sign in again in Settings.",
@@ -2292,9 +2327,10 @@ const TABLE = {
   forwardAskSensitive: "ohmail flagged this message as sensitive.",
   forwardAskQuestion: "Forward it anyway?",
   forwardTo: "To",
-  /** A new mail's copies, shown where the letter carries them (a mailto link) — the web composer's words. */
+  /** A new mail's copies, and the press that adds them — the web composer's words. */
   composeCc: "Cc",
   composeBcc: "Bcc",
+  composeAddCopies: "Cc, Bcc",
   forwardToPlaceholder: "name@example.org, …",
   forwardNotePlaceholder: "Add a note (optional)",
   forwarded: "Forwarded.",
@@ -2313,6 +2349,9 @@ const TABLE = {
   /** A suggested recipient, read out: what the press adds. */
   composeSuggestion: (name: string, address: string) => (name === "" ? `Add ${address}` : `Add ${name}, ${address}`),
   composeFrom: (address: string) => `From ${address}`,
+  /** A new mail on an account with several addresses: the From line opens the list of them. */
+  composeFromChange: (address: string) => `From ${address}. Choose another address`,
+  composeFromList: "Addresses this mail can leave from",
   /** A draft kept from a removed mailbox leaves from another one (`compose-sender.ts`). */
   composeFromSubstituted: (was: string) => `${was} is disconnected, so this message sends from the address above.`,
   composeFromSubstitutedUnknown: "The address this draft was written from is disconnected, so it sends from the address above.",

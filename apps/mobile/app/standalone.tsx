@@ -308,6 +308,22 @@ function Credentials() {
             },
           }}
         />
+        {/* The name the letters carry; blank sends the bare address, as before. */}
+        <Field
+          value={fields.name ?? ""}
+          onChange={(v) => setFields((cur) => ({ ...cur, name: v }))}
+          label={Copy.phoneStandaloneName}
+          hint={Copy.phoneStandaloneNameHint}
+          input={{
+            autoComplete: "name",
+            textContentType: "name",
+            autoCapitalize: "words",
+            returnKeyType: "done",
+            onSubmitEditing: () => {
+              if (ready) void connect();
+            },
+          }}
+        />
         {/* A provider that takes only an App Password says so here, before the first press. */}
         {note !== null ? (
           <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>

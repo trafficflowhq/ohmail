@@ -16,6 +16,7 @@ import {
   base64SizeBytes,
   photoName,
   pickerGaveNoName,
+  readWithin,
   shrinkBox,
   type AttachPicker,
   type AttachPickOutcome,
@@ -79,7 +80,7 @@ export const nativeImageShrink: ImageShrink = async (uri, type, rule) => {
 
 export function nativeAttachPicker(): AttachPicker {
   return {
-    async pickFiles(): Promise<AttachPickOutcome> {
+    async pickFiles(room = Number.POSITIVE_INFINITY): Promise<AttachPickOutcome> {
       let result: DocumentPicker.DocumentPickerResult;
       try {
         result = await DocumentPicker.getDocumentAsync({
@@ -94,7 +95,13 @@ export function nativeAttachPicker(): AttachPicker {
       if (result.canceled) return { kind: "cancelled" };
       const files: PhoneComposeAttachment[] = [];
       let unreadable = 0;
+      let overCap = 0;
       for (const asset of result.assets ?? []) {
+        /* A file past the room left is never read into memory: a large pick ran the phone out of it. */
+        if (!readWithin(asset.size, room)) {
+          overCap += 1;
+          continue;
+        }
         const base64 = await fileBase64(asset.uri);
         if (base64 === null || base64.length === 0) {
           unreadable += 1;
@@ -102,7 +109,7 @@ export function nativeAttachPicker(): AttachPicker {
         }
         files.push(toAttachment(base64, asset.name, asset.mimeType, asset.uri));
       }
-      return { kind: "picked", files, unreadable };
+      return { kind: "picked", files, unreadable, overCap };
     },
 
     async pickPhotos(zone: string): Promise<AttachPickOutcome> {

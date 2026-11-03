@@ -9,7 +9,7 @@ import type {
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { eq, sql } from "drizzle-orm";
 import { localRoutes } from "@trafficflow/api/local";
-import { mailboxCredentials, sessions } from "@trafficflow/db";
+import { accounts, mailboxCredentials, mailboxes, sessions } from "@trafficflow/db";
 import { localAiRoutes } from "../src/ai-routes.js";
 import { localAutoSuggestRoutes } from "../src/auto-suggest-routes.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -169,6 +169,7 @@ describe("the local action doors' receipt", () => {
     ["POST", "/local/mailboxes/probe", "/local/mailboxes/probe", ""],
     ["POST", `/local/mailboxes/${ID}/organize`, "/local/mailboxes/:id/organize", ID],
     ["PATCH", `/local/mailboxes/${ID}`, "/local/mailboxes/:id", ID],
+    ["PATCH", `/local/mailboxes/${ID}/name`, "/local/mailboxes/:id/name", ID],
     ["DELETE", `/local/mailboxes/${ID}`, "/local/mailboxes/:id", ID],
     ["DELETE", "/local/stored-login", "/local/stored-login", ""],
     ["POST", "/local/organizer/takeover", "/local/organizer/takeover", ""],
@@ -448,7 +449,7 @@ describe("a launch bearer that has expired", () => {
     for (const [method, path] of [
       ["POST", "/local/mailboxes"], ["POST", "/local/mailboxes/probe"],
       ["GET", "/local/mailboxes/connections"], ["POST", `/local/mailboxes/${ID}/organize`],
-      ["PATCH", `/local/mailboxes/${ID}`], ["DELETE", `/local/mailboxes/${ID}`],
+      ["PATCH", `/local/mailboxes/${ID}`], ["PATCH", `/local/mailboxes/${ID}/name`], ["DELETE", `/local/mailboxes/${ID}`],
       ["POST", "/local/organizer/takeover"], ["DELETE", "/local/stored-login"],
       ["POST", WINDOW_SYNC_FAILED_ROUTE], ["POST", WINDOW_SEARCH_PHASES_ROUTE],
       ["POST", WINDOW_CONSENT_READ_FAILED_ROUTE], ["GET", SEARCH_INDEX_ROUTE],
@@ -481,5 +482,70 @@ describe("a launch bearer that has expired", () => {
     }
 
     expect(reached.sort()).toEqual(ENDED_BEARER_EXITS.map((e) => `${e.method} ${e.path}`).sort());
+  });
+});
+
+describe("the sender name door", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => {
+    for (const c of cleanups.splice(0).reverse()) await c();
+  });
+
+  async function boot(): Promise<{ s: Sidecar; dials: () => number }> {
+    const dir = await freshDataDir("ohmail-sender-name-");
+    let dials = 0;
+    const inner = quietMailbox();
+    const s = await createSidecar({
+      dataDir: dir,
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "not-dialled-password-password" } },
+      address: ADDRESS,
+      machineName: "sender name host",
+      pollIntervalMs: 60 * 60 * 1000,
+      vitalsIntervalMs: 60 * 60 * 1000,
+      leaseStaleAfterMs: 60_000,
+      adapterFactory: (cfg) => { dials += 1; return inner(cfg); },
+    });
+    cleanups.push(async () => {
+      await s.stop().catch(() => undefined);
+      rmSync(dir, { recursive: true, force: true });
+    });
+    return { s, dials: () => dials };
+  }
+
+  const name = (s: Sidecar, id: string, body: unknown, bearer: string | null = s.sessionToken): Promise<Response> =>
+    s.handle(new Request(`http://local/local/mailboxes/${id}/name`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...(bearer === null ? {} : { authorization: `Bearer ${bearer}` }) },
+      body: JSON.stringify(body),
+    }));
+  const stored = async (s: Sidecar, id: string): Promise<string | null> =>
+    (await s.db.select({ n: mailboxes.displayName }).from(mailboxes).where(eq(mailboxes.id, id)))[0]?.n ?? null;
+
+  it("writes the name, and blank clears it, with no second dial of the mailbox", async () => {
+    const { s, dials } = await boot();
+    const id = s.world.mailboxId!;
+    const before = dials();
+    const res = await name(s, id, { displayName: "  Ada   Lovelace " });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(((await res.json()) as { displayName: string | null }).displayName).toBe("Ada Lovelace");
+    expect(await stored(s, id)).toBe("Ada Lovelace");
+    expect((await name(s, id, { displayName: "  " })).status).toBe(200);
+    expect(await stored(s, id)).toBeNull();
+    expect(dials(), "the name change re-attached the mailbox").toBe(before);
+  });
+
+  it("refuses a long name, a control character, another account's mailbox and a missing bearer", async () => {
+    const { s } = await boot();
+    const id = s.world.mailboxId!;
+    expect((await name(s, id, { displayName: "x".repeat(101) })).status).toBe(400);
+    expect((await name(s, id, { displayName: "Eve\r\nBcc: x@evil.test" })).status).toBe(400);
+    expect((await name(s, id, { displayName: 7 })).status).toBe(400);
+    expect((await name(s, id, { displayName: "Ada" }, null)).status).toBe(401);
+    const [other] = await s.db.insert(accounts).values({ name: "another" }).returning({ id: accounts.id });
+    const [theirs] = await s.db.insert(mailboxes).values({ accountId: other!.id, provider: "imap", address: "them@trafficflow.test" })
+      .returning({ id: mailboxes.id });
+    expect((await name(s, theirs!.id, { displayName: "Mine now" })).status).toBe(404);
+    expect(await stored(s, theirs!.id)).toBeNull();
+    expect(await stored(s, id)).toBeNull();
   });
 });

@@ -9,63 +9,11 @@
  * `connected`. Pure: the view renders from these functions and `AppShell` builds the mutation from them.
  */
 
-import type { EmailAddress } from "@ohmail/client-engine";
+import { defaultFrom, type EmailAddress, type FromOption } from "@ohmail/client-engine";
 import { parseRecipients } from "./compose";
 
-/** One mailbox, as a From line is entitled to know it. */
-export interface FromOption {
-  /** The selector's value. Never an address — see the header. */
-  id: string;
-  address: string;
-  /** May this be the sender today? `status !== "disabled"`, matching `SendService.reserve`. */
-  sendable: boolean;
-  /** Healthy. The fresh-compose default prefers these. */
-  connected: boolean;
-  /**
-   * The biggest message THIS mailbox's submission server said it will accept, in bytes, or `null`
-   * when it announced none (and on every surface that cannot read `GET /mailboxes` at all).
-   *
-   * It travels with the From option and not beside it because the ceiling is per-MAILBOX: an
-   * account with two addresses on two providers has two different answers, and the one that
-   * applies is the one the user is sending from. It is NOT the cap on its own — see
-   * `composeAttachCap` in `../components/ComposeAttach`.
-   */
-  maxMessageBytes: number | null;
-}
-
-/** The subset of {@link import("./mail-state").MailboxFacts} this module reads. */
-interface FactsShape {
-  id: string;
-  address: string;
-  status: string;
-  createdAt: string;
-  smtpMaxSizeBytes?: number | null;
-}
-
-/**
- * `GET /mailboxes` → the options, **oldest first**.
- *
- * The order is the rule, not a presentation choice: "the oldest connected mailbox" is the
- * default, and sorting here is what lets every consumer express that as "the first sendable
- * one" instead of re-deriving a comparison. `createdAt` is NOT NULL server-side, and ties fall
- * back to the id so the order is total — two mailboxes connected inside the same millisecond
- * must not swap places between renders.
- */
-export function optionsFromFacts(facts: readonly FactsShape[]): FromOption[] {
-  return [...facts]
-    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1))
-    .map((m) => ({
-      id: m.id,
-      address: m.address,
-      sendable: m.status !== "disabled",
-      connected: m.status === "connected",
-      // `?? null` collapses "this API predates the column" and "the server announced no ceiling",
-      // and here that is correct rather than the seam mistake `CloudShell` avoids: both mean
-      // exactly "no measured ceiling for this mailbox", and the compose surface resolves them to
-      // the same fallback. There is no third reading for the distinction to serve.
-      maxMessageBytes: m.smtpMaxSizeBytes ?? null,
-    }));
-}
+/* The options and the default are shared with the phone's composer. */
+export { defaultFrom, optionsFromFacts, type FromOption } from "@ohmail/client-engine";
 
 /** The subset of the mirror's `"mailbox"` entity this module reads. */
 interface MirrorShape {
@@ -88,15 +36,6 @@ export function optionsFromMirror(entities: readonly MirrorShape[]): FromOption[
     // `maxMessageBytes: null` — a mirror row carries no server announcement, so the compose
     // surface states the product constant here, exactly as it did before the field existed.
     .map((m) => ({ id: m.id, address: m.address, sendable: true, connected: true, maxMessageBytes: null }));
-}
-
-/**
- * The default sender: the oldest CONNECTED mailbox, else the oldest that can send at all.
- *
- * `options` must already be oldest-first — see {@link optionsFromFacts}.
- */
-export function defaultFrom(options: readonly FromOption[]): FromOption | null {
-  return options.find((o) => o.connected && o.sendable) ?? options.find((o) => o.sendable) ?? null;
 }
 
 /** What a From line shows and what the mutation carries. One object, so they cannot disagree. */

@@ -110,6 +110,8 @@ export interface PhoneEngineDeps {
   imap: SidecarImapConfig;
   /** The mailbox address. Defaults to the IMAP username, as it does on every other door. */
   address?: string;
+  /** The name this mailbox's letters carry, asked at the door; seeds the mailbox row on first open. */
+  displayName?: string;
   /**
    * HOW THIS PHONE NAMES ITSELF in the claim it writes — required, and required for a reason a
    * default would hide. The holder line on somebody's desktop reads this string. A composition with
@@ -1223,6 +1225,7 @@ async function composePhoneEngine(
       dateReadCommandSize: dial.dateReadCommandSize ?? PHONE_DATE_READ_COMMAND_SIZE,
     },
     ...(deps.address !== undefined ? { address: deps.address } : {}),
+    ...(deps.displayName ? { displayName: deps.displayName } : {}),
     machineName: deps.machineName,
     installId: deps.installId,
     organizerKind: deps.organizerKind ?? "mobile",

@@ -503,6 +503,8 @@ export { attachmentFaultClass, type AttachmentFaultClass } from "@ohmail/client-
 export { ruleMatchKey } from "@ohmail/client-engine";
 /** The draft limit's one predicate — the composer says it before the wire (the web's rule). */
 export { draftOverCeiling } from "@ohmail/client-engine";
+/* A new mail's From: the web's options and default, for the composer (`ui/compose-sender.ts`). */
+export { defaultFrom, optionsFromFacts, type FromOption } from "@ohmail/client-engine";
 // The shared-provider list, for the Screening sheet: a domain there is never offered as a scope.
 export { isSharedProviderDomain } from "@ohmail/client-engine";
 export type { WaitingOnOrganizerView } from "@ohmail/client-engine";
@@ -2963,7 +2965,8 @@ export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnr
   | "replyForwardOriginalUnavailable" | "replyForwardPartsChanged" | "replyForwardPartsUnsupported" | "replyFailed" | "replySentElsewhere"
   | "replyDeletedElsewhere"
   | "replyChangedElsewhere" | "replyChangedElsewhereUnsaved"
-  | "replyTooLong" | "replyTooLarge" | "unsavedSendAlreadyWent" | "replyUnverifiedAgain";
+  | "replyTooLong" | "replyTooLarge" | "unsavedSendAlreadyWent" | "replyUnverifiedAgain"
+  | "replyStagingRefused" | "replyStagingUnreachable" | "replyStagingFailed";
 
 /** The draft limit as the phone names it — `replyTooLong`, `composeTooLong` and the keep notes. */
 export const draftLimitLabel = (): string => sizeLabel(DRAFT_BODY_MAX_BYTES);
@@ -2988,6 +2991,9 @@ export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
             : code === "draft_changed" ? "replyChangedElsewhereUnsaved"
               : code === "draft_too_large" ? "replyTooLong"
                 : code === "payload_too_large" ? "replyTooLarge"
+                  : code === "staging_refused" ? "replyStagingRefused"
+                    : code === "staging_unreachable" ? "replyStagingUnreachable"
+                      : code === "staging_failed" ? "replyStagingFailed"
                   : "replyFailed";
 }
 
@@ -3007,7 +3013,10 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
                 : kind === "replyTooLarge" ? refuse("replyTooLarge")
                   : kind === "unsavedSendAlreadyWent" ? refuse("unsavedSendAlreadyWent")
                     : kind === "replyUnverifiedAgain" ? refuse("replyUnverifiedAgain")
-                      : refuse("replyFailed");
+                      : kind === "replyStagingRefused" ? refuse("replyStagingRefused")
+                        : kind === "replyStagingUnreachable" ? refuse("replyStagingUnreachable")
+                          : kind === "replyStagingFailed" ? refuse("replyStagingFailed")
+                            : refuse("replyFailed");
 }
 
 /** `details.firstSend.status` of a refusal, when it names one. */
@@ -3570,6 +3579,8 @@ export interface LiveDeps {
   letters?: LetterDoor;
   /** The session's server sends only the forwarded parts a send names; `null` is not known yet. A getter. */
   forwardParts?: () => boolean | null;
+  /** The session's send surface (`compose/attach.ts#phoneSendSurface`). A getter. */
+  sendSurface?: () => number | undefined;
   /**
    * THE ACCOUNT'S RESURFACE TIME — `'HH:MM'`, or `null` for "never chosen" (mail 0110), as a
    * GETTER for `ownAddresses`' reason exactly: this facade is identity-stable by design while
@@ -3700,6 +3711,8 @@ export interface LiveWorldActions {
   forwardFiles(messageId: string): ForwardFilesRead;
   /** The server sends only the parts a forward names; `null` until it answers, `false` once it said it cannot. */
   forwardPartsSupported(): boolean | null;
+  /** What this session's send carries at most (`compose/attach.ts#phoneSendSurface`); absent is the strict bound. */
+  sendSurface(): number | undefined;
   /**
    * PUT A GIVEN-UP CHANGE BACK IN THE QUEUE — under its ORIGINAL Idempotency-Key, so an attempt
    * that committed and only lost its answer replays that answer instead of sending a second copy.
@@ -4300,6 +4313,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /** Does the server send only the parts a forward names (`GET /hello` `features.forwardParts`)? */
   let forwardPartsRefused = false;
   const forwardPartsSupported = (): boolean | null => (forwardPartsRefused || deps.forwardParts === undefined ? false : deps.forwardParts());
+  const sendSurface = (): number | undefined => deps.sendSurface?.();
 
   /*
    * THE LISTS A SCREEN SHOWS: the opened message's, each conversation member's, each held
@@ -6668,7 +6682,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     retryQueued: (id) => engine.retryQueued(id),
     discardQueued: (key) => engine.withdrawQueued(key),
     releaseConfirmed,
-    openMessage, leaveMessage, hydrateMessage, forwardFetch, forwardFiles, forwardPartsSupported, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
+    openMessage, leaveMessage, hydrateMessage, forwardFetch, forwardFiles, forwardPartsSupported, sendSurface, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
     watchLists, openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, screeningUnsubClaim, release, setPile,
@@ -6709,6 +6723,8 @@ export interface WorldActions {
   forwardFiles(messageId: string): ForwardFilesRead;
   /** See {@link LiveWorldActions.forwardPartsSupported}. */
   forwardPartsSupported(): boolean | null;
+  /** See {@link LiveWorldActions.sendSurface}. */
+  sendSurface(): number | undefined;
   /**
    * The two verbs on a change the engine gave up on — see {@link LiveWorldActions.retryAbandoned}.
    * Awaited by the caller (the chrome disables the row while one is in flight), so unlike most of
@@ -6878,6 +6894,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     forwardFetch: (id) => current().forwardFetch(id),
     forwardFiles: (id) => current().forwardFiles(id),
     forwardPartsSupported: () => current().forwardPartsSupported(),
+    sendSurface: () => current().sendSurface(),
     retryAbandoned: (id) => current().retryAbandoned(id),
     discardAbandoned: (id) => current().discardAbandoned(id),
     retryQueued: (id) => current().retryQueued(id),

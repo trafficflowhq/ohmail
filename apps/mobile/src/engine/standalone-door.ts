@@ -12,7 +12,7 @@ import { asAuthHint, authHintPreset, portMeansImplicitTls, type AuthHint } from 
 import { LOCAL_ENGINE_ORIGIN } from "./boot";
 import { faultDetail, refuse, type Refusal } from "../refusal";
 import type { EngineLogSink } from "./engine-log";
-import { portRefusal, type GateBlock, type StandaloneFields } from "../ui/standalone-form";
+import { portRefusal, senderNameOf, type GateBlock, type StandaloneFields } from "../ui/standalone-form";
 
 /**
  * WHAT ASKING FOR THIS PHONE ANSWERED — four states, named, and no `null` among them.
@@ -262,6 +262,8 @@ export type StartPhoneEngine = (deps: {
     smtp?: { host: string; port: number; secure: boolean };
   };
   address: string;
+  /** The name the mailbox's letters carry; seeds its row on first open. Absent: the bare address. */
+  displayName?: string;
   machineName: string;
   installId: string;
   keks?: Record<number, string>;
@@ -568,6 +570,8 @@ export async function openStandaloneMailbox(
   /* BOTH PORTS, before anything dials — the rule the fields wear while they are typed. */
   const port = portRefusal(fields);
   if (port !== null) return { ok: false, reason: port };
+  const name = senderNameOf(fields.name ?? "");
+  if (name === undefined) return { ok: false, reason: refuse("standaloneNameRefused") };
   try {
     const platform = await deps.platform();
     /* ITS OWN REASON, PASSED THROUGH. See {@link StandaloneDeps.platform}: the alternative is a
@@ -577,6 +581,7 @@ export async function openStandaloneMailbox(
       exec: platform.exec,
       imap,
       address: imap.auth.user,
+      ...(name !== null ? { displayName: name } : {}),
       machineName: deps.machineName(),
       installId: await deps.installId(),
       keks: platform.keks,
