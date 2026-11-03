@@ -140,17 +140,25 @@ export function forgetOwner(write?: (cookie: string) => void): void {
 /**
  * SAY THAT A SIGN-OUT WAS ASKED FOR AND NOT CONFIRMED — see {@link OWNER_SIGNED_OUT}. Written INSTEAD of clearing,
  * and only on that one path: erasing the marker while the server may still hold a live session is what let a window
- * for another account go on using it. It lives as long as the refresh token it is about (the server's own renewal
- * re-stamps it so), because the next visit FINISHES the sign-out: `/` sends it to the sign-in page, which presents it
- * at the sign-out door behind its form. A session cookie forgotten at a browser restart left the session to be
- * resumed by whoever opened ohmail.app next. `Secure` on a secure page only, for {@link forgetOwner}'s reason: a
- * plain-http development origin DISCARDS a `Secure` write silently.
+ * for another account go on using it. It lives as long as the refresh token it is about (ninety days, written once:
+ * no server answer writes the marker except a sign-in's), because the next visit FINISHES the sign-out: `/` sends it
+ * to the sign-in page, which presents it at the sign-out door behind its form. A session cookie forgotten at a
+ * browser restart left the session to be resumed by whoever opened ohmail.app next. `Secure` on a secure page only,
+ * for {@link forgetOwner}'s reason: a plain-http development origin DISCARDS a `Secure` write silently.
  */
 export const SIGNED_OUT_PENDING_MAX_AGE_S = 7_776_000;
 
 export function markSignedOutPending(write?: (cookie: string) => void): void {
+  put(markerLine(OWNER_SIGNED_OUT), write);
+}
+
+/** Every write of a value into the marker but a sign-in's: the pending word's attributes, ninety days. */
+function markerLine(value: string): string {
   const secure = typeof location !== "undefined" && location.protocol === "https:" ? "; Secure" : "";
-  const cookie = `${OWNER_COOKIE}=${OWNER_SIGNED_OUT}; Path=/; Max-Age=${SIGNED_OUT_PENDING_MAX_AGE_S}; SameSite=Strict${secure}`;
+  return `${OWNER_COOKIE}=${value}; Path=/; Max-Age=${SIGNED_OUT_PENDING_MAX_AGE_S}; SameSite=Strict${secure}`;
+}
+
+function put(cookie: string, write?: (cookie: string) => void): void {
   if (write) {
     write(cookie);
     return;
@@ -160,7 +168,28 @@ export function markSignedOutPending(write?: (cookie: string) => void): void {
 }
 
 /**
- * WRITE THE MARKER FROM WHAT THE SERVER SAID — the one client-side write of an account name, and it relays a server
+ * PUT A LOST NAME BACK, from the session check's answer (`session-outcome.ts`). The server writes the marker only on a
+ * sign-in: a session read decided its write from the jar as the request left, and one that crossed a Sign out press
+ * named the account over the reserved word. So the client heals, from the jar as it is NOW: an id-shaped name, only
+ * where the jar says nothing, never over the reserved word or another account. True when written.
+ */
+export function healOwner(accountId: string, write?: (cookie: string) => void): boolean {
+  if (!isOwnerShaped(accountId) || readOwnerMarker().kind !== "absent") return false;
+  put(markerLine(accountId), write);
+  return true;
+}
+
+/**
+ * A RENEWAL'S 204 KEEPS THE NAME ALIVE (`session-refresh.ts`): the jar's own account marker again, for another ninety
+ * days. The server no longer echoes it, for the reason {@link healOwner} gives. The reserved word and silence stay.
+ */
+export function restampOwner(write?: (cookie: string) => void): void {
+  const marker = readOwnerMarker();
+  if (marker.kind === "account") put(markerLine(marker.id), write);
+}
+
+/**
+ * WRITE THE MARKER FROM WHAT THE SERVER SAID — the client's write of a sign-in's account name, and it relays a server
  * statement rather than inventing one. The marker is otherwise the server's to set, which is what makes it evidence.
  * This exists for one shape: the sign-in and token routes answer with `X-Ohmail-Account` naming the account THE
  * CREDENTIAL resolved to, and on those routes a header disagreeing with the cookie is the new owner rather than a

@@ -57,6 +57,9 @@ let refreshDoor: "answer" | "slow" = "answer";
 /** A wake row's DELETE is answered at once, or held until {@link releaseWakeDelete} lets it through. */
 let wakeDeleteDoor: "answer" | "hold" = "answer";
 let releaseWakeDelete: () => void = () => {};
+/** `hold`: the browser's next session read (cookies, not the edge's bearer probe), held once answered. */
+let sessionDoor: "answer" | "hold" = "answer";
+let releaseSession: () => void = () => {};
 const SLOW_REFRESH_MS = 20_000;
 /** Every request the API saw: method, path, status ("held" / "dropped" for the faults), a refusal's code. */
 let heard: Array<{ method: string; path: string; status: number | "held" | "dropped"; code?: string }> = [];
@@ -114,6 +117,11 @@ async function serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
     await new Promise<void>((r) => { releaseWakeDelete = r; });
   }
   const answer = await app.handle(new Request(url, { method, headers, body }), { ...world.deps, session: null, idempotency: null });
+  if (url.pathname === "/auth/session" && sessionDoor === "hold" && /(^|;\s*)tf_session=/.test(headers.get("cookie") ?? "")) {
+    sessionDoor = "answer";
+    heard.push({ method, path: url.pathname, status: "held" });
+    await new Promise<void>((r) => { releaseSession = r; });
+  }
   if (fault && signOutDoor === "lost") {
     heard.push({ method, path: url.pathname, status: "dropped" });
     req.socket.destroy();
@@ -356,6 +364,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     doorFaultsLeft = Number.POSITIVE_INFINITY;
     refreshDoor = "answer";
     wakeDeleteDoor = "answer";
+    sessionDoor = "answer";
   });
 
   it("THE STUCK JAR — pending marker, live family, lapsed access: one pass, the door, /login", async () => {
@@ -550,6 +559,44 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(asked, "the tab asked the session door under the pending sign-out").toEqual([]);
     expect(samples.at(-1)?.path, `the tab did not end on the sign-in page: ${await said(b)}`).toBe("/login");
     expect(errors, "console errors on the way out").toEqual([]);
+    await ctx.close();
+  }, 120_000);
+
+  it("A COLD TAB WHOSE SESSION CHECK CROSSES THE PRESS: never the shell, /login, and the jar never names the account", async () => {
+    signOutDoor = "hang";
+    doorFaultsLeft = 1;
+    const j = await signedIn();
+    const ctx = await browser!.newContext();
+    await plant(ctx, j, { owner: j.accountId, access: true });
+    const a = await ctx.newPage();
+    await a.goto(`http://localhost:${webPort}/#/settings/account`, { waitUntil: "commit" });
+    const button = a.getByRole("button", { name: /^Sign out$/ });
+    await button.waitFor({ state: "visible", timeout: 60_000 });
+    await a.waitForTimeout(2_000);
+    // The marker went (a browser restart): B boots cold, and only its own session check names the account.
+    await ctx.clearCookies({ name: "tf_owner" });
+    heard = [];
+    sessionDoor = "hold";
+    const b = await ctx.newPage();
+    const t0 = Date.now();
+    await b.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
+    const until = Date.now() + 20_000;
+    while (!heard.some((h) => h.status === "held") && Date.now() < until) await b.waitForTimeout(50);
+    expect(heard.filter((h) => h.status === "held").map((h) => h.path), `B's session check never left: ${await said(b)}`).toEqual(["/auth/session"]);
+    await button.click();
+    while (!heard.some((h) => h.path === "/auth/refresh/logout") && Date.now() < until + 10_000) await a.waitForTimeout(50);
+    releaseSession();
+    const named: string[] = [];
+    const samples = await sampleUntil(b, t0, 25_000, async (s) => {
+      const owner = (await ctx.cookies(`http://localhost:${webPort}/`)).find((c) => c.name === "tf_owner")?.value;
+      if (owner !== undefined) named.push(owner);
+      return s.path === "/login" && s.loginCard;
+    });
+    console.log(`e2e timing cold-tab-check shell_ms=${JSON.stringify(samples.filter((s) => s.shell).map((s) => s.ms))} `
+      + `owner=${JSON.stringify([...new Set(named.map((v) => (v === j.accountId ? "account" : v)))])} last=${samples.at(-1)?.path}`);
+    expect(samples.filter((s) => s.shell).map((s) => s.ms), `the cold tab drew the mailbox: ${await said(b)}`).toEqual([]);
+    expect(named.filter((v) => v === j.accountId), "the jar named the account after the press").toEqual([]);
+    expect(samples.at(-1)?.path, `the cold tab did not end on the sign-in page: ${await said(b)}`).toBe("/login");
     await ctx.close();
   }, 120_000);
 
@@ -761,7 +808,16 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(loginAt!).toBeGreaterThanOrEqual(SLOW_REFRESH_MS - 1_000);
     expect(text).toContain(R.revokedBody);
     expect(heard.filter((h) => h.path === "/auth/refresh").map((h) => `${h.status} ${h.code}`)).toEqual(["401 refresh_revoked"]);
-    expect(await jarNames(ctx)).toEqual([]);
+    // Nothing that names or resumes the session is left. The splash's refusal leaves the reason's word
+    // for a tab opened next (`shareSignedOutNote`): `tf_signed_out`, which lapses within 15 s.
+    const left = await ctx.cookies([`http://localhost:${webPort}/`, `http://localhost:${webPort}/auth/refresh`]);
+    expect(left.filter((c) => ["tf_session", "tf_refresh", "tf_csrf", "tf_resume", "tf_owner"].includes(c.name) && c.value !== "")
+      .map((c) => c.name)).toEqual([]);
+    for (const c of left.filter((c) => c.name === "tf_signed_out")) {
+      expect(c.value).toBe("revoked");
+      expect(c.expires, "the reason outlives its 15 s").toBeGreaterThan(0);
+      expect(c.expires - Date.now() / 1000, "the reason outlives its 15 s").toBeLessThanOrEqual(15);
+    }
     await ctx.close();
   }, 120_000);
 

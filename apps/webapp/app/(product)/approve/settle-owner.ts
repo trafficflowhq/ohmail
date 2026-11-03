@@ -28,7 +28,7 @@ const RESETTLES = 1;
 /**
  * May the classifier's account be bound here? The gate's own order: this tab's unconfirmed
  * sign-out, then the jar's reserved word, then a marker naming somebody else. Read AFTER the
- * answer, because `GET /auth/session` writes the marker back where the jar had none.
+ * answer, because the classifier writes the marker back where the jar had none.
  */
 export function bindRefusal(accountId: string): "owner_signed_out" | "owner_mismatch" | null {
   if (apiOwnerBinding().kind === "blocked") return "owner_signed_out";

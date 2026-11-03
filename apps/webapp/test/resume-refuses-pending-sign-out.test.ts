@@ -18,6 +18,9 @@ let originalFetch: typeof globalThis.fetch;
 const json = (body: unknown, status: number): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const refreshes = (): number => asked.filter((u) => u.endsWith("/auth/refresh")).length;
+/** The marker's writes, read off a spy on the jar's setter. */
+const ownerWrites = (set: { mock: { calls: unknown[][] } }): string[] =>
+  set.mock.calls.map(([c]) => String(c)).filter((c) => c.startsWith("tf_owner="));
 
 /** A minimal Web Locks manager: exclusive, FIFO. */
 function installLocks(): void {
@@ -97,6 +100,22 @@ describe("a pending sign-out is finished at the door, never rotated", () => {
     expect(refreshes()).toBe(0);
   });
 
+  it("a 204 re-stamps the jar's own account once, for ninety days, and never writes over a press made while it was out", async () => {
+    const set = vi.spyOn(Document.prototype, "cookie", "set");
+    const { resumeSession } = await import("../app/session-refresh.js");
+    document.cookie = "tf_owner=acct_A; Path=/";
+    set.mockClear();
+    expect(await resumeSession()).toBe("resumed");
+    expect(ownerWrites(set)).toEqual([expect.stringMatching(/^tf_owner=acct_A; Path=\/; Max-Age=7776000; SameSite=Strict(; Secure)?$/)]);
+    globalThis.fetch = vi.fn(async () => {
+      document.cookie = `tf_owner=${PENDING}; Path=/`;   // Sign out, pressed in another tab meanwhile
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof globalThis.fetch;
+    set.mockClear();
+    expect(await resumeSession()).toBe("resumed");
+    expect(ownerWrites(set), "the renewal's answer wrote over the reserved word").toEqual([`tf_owner=${PENDING}; Path=/`]);
+  });
+
   it("api()'s recovery on a path any client may ask (`/health`) does not resume it", async () => {
     document.cookie = `tf_owner=${PENDING}; Path=/`;
     const { api } = await import("../app/api-client.js");
@@ -114,10 +133,12 @@ describe("THE CONTROL — any other jar is resumed as before", () => {
     expect(refreshes()).toBe(1);
   });
 
-  it("no marker at all: the refresh is asked", async () => {
+  it("no marker at all: the refresh is asked, and the jar stays silent", async () => {
+    const set = vi.spyOn(Document.prototype, "cookie", "set");
     const { resumeSession } = await import("../app/session-refresh.js");
     expect(await resumeSession()).toBe("resumed");
     expect(refreshes()).toBe(1);
+    expect(ownerWrites(set), "a silent jar was given a name").toEqual([]);
   });
 
   it("api()'s recovery under a marker naming an account renews, then asks again", async () => {

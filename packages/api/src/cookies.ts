@@ -70,10 +70,9 @@ export const OWNER_COOKIE = "tf_owner";
 /**
  * The account-id characters this will put in a cookie value, and nothing else. It keeps an id
  * whose shape the browser cannot store — a separator, a space, a newline — out of a header we
- * assemble by concatenation, the only way a value could become an attribute. Applied on both
- * paths: to the id we mint from (a future id format that broke this is a cookie not set, not
- * a header that lies), and to the value the browser hands back on refresh, the only entry
- * point for a value we did not write. `null` means "no marker" and is always safe: the client
+ * assemble by concatenation, the only way a value could become an attribute. Applied to the id we
+ * mint from (a future id format that broke this is a cookie not set, not a header that lies) and
+ * to the account header (`app.ts`). `null` means "no marker" and is always safe: the client
  * falls back to asking `GET /auth/session` first. Account ids are UUIDs, inside the set.
  */
 const OWNER_SAFE = /^[A-Za-z0-9._~-]{1,128}$/;
@@ -89,7 +88,8 @@ export function ownerCookieValue(raw: string | null | undefined): string | null 
  * not a credential (the refresh token's digest, {@link resumeMarkerFor}), living as long as the
  * refresh token so the edge can send a lapsed session to the resume splash; and `tf_owner`, the
  * account id (an identifier, never a credential) so the client opens the account-named mirror at
- * once: not HttpOnly, host-only, `Secure`, `Strict`, never set for an enrollment session.
+ * once: not HttpOnly, host-only, `Secure`, `Strict`, never set for an enrollment session. `owner`
+ * is the account a sign-in resolved; a renewal passes `null` and leaves the jar's marker alone.
  */
 export function sessionCookies(
   tokens: OAuthTokens,
@@ -114,11 +114,12 @@ export function sessionCookies(
 /**
  * The account marker's own Set-Cookie line, or nothing at all.
  *
- * Split out of {@link sessionCookies} because this marker is minted in a second place —
- * `GET /auth/session`, where a jar that has lost it gets it back. Two spellings of these
- * attributes is how a re-mint acquires a different `Path` or a `Domain=` and quietly becomes a
- * different cookie; there is one. `null` and a value outside {@link ownerCookieValue}'s set both
- * mint nothing, which is always safe: the client falls back to asking.
+ * Minted only beside a session a sign-in created ({@link sessionCookies}). The session read and the
+ * renewal used to write it too, decided from the jar as their request left, so an answer landing after
+ * a Sign out press named the account over the client's pending word; the web client now puts a lost
+ * marker back itself. One spelling of these attributes, so no write acquires a different `Path` or a
+ * `Domain=`. `null` and a value outside {@link ownerCookieValue}'s set both mint nothing, which is
+ * always safe: the client falls back to asking.
  */
 export function ownerCookie(owner: string | null, cfg: AuthConfig): string[] {
   const ownerId = ownerCookieValue(owner);

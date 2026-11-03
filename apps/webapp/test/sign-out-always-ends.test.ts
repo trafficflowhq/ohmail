@@ -141,10 +141,12 @@ describe("sign out ends, and asks the server even behind a renewal", () => {
  * cookies here, the others in `document.cookie`, each sent where its path reaches. An answer carrying
  * `Clear-Site-Data` is held as Chrome 151 was measured holding one while it walks its disk cache: it
  * settles at `release()` and its cookie clears apply then; an abort before that rejects with
- * AbortError and drops them. Real timers: PGlite may stall under fake ones.
+ * AbortError and drops them. `hold` picks other answers to keep the same way: the server has
+ * answered, the browser has not taken the answer in yet. Real timers: PGlite may stall under fake ones.
  */
-async function heldBrowser(): Promise<{
-  account: string; refresh: string; revoked: () => Promise<boolean>; httpOnly: Map<string, { value: string; path: string }>;
+async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => boolean } = {}): Promise<{
+  account: string; refresh: string; revoked: () => Promise<boolean>; familyLive: () => Promise<boolean>;
+  httpOnly: Map<string, { value: string; path: string }>;
   sent: Array<{ url: string; init: RequestInit }>; held: Array<{ url: string; release: () => void }>; releaseAll: () => void;
 }> {
   const { db, deps } = await withNodeBlobs(() => makeDeps());
@@ -186,6 +188,7 @@ async function heldBrowser(): Promise<{
     const request = new Request(`http://localhost${url.replace(/^\/api\//, "/")}`, {
       method: init.method ?? "GET", headers, body: init.body as BodyInit | undefined,
     });
+    const keep = opts.hold?.(url, init) === true;
     return new Promise<Response>((resolve, reject) => {
       let aborted = false;
       const abort = (): void => { aborted = true; reject(new DOMException("The operation was aborted.", "AbortError")); };
@@ -198,7 +201,7 @@ async function heldBrowser(): Promise<{
           apply(res.headers.getSetCookie());
           resolve(res);
         };
-        if (res.headers.get("clear-site-data") === null) settle();
+        if (res.headers.get("clear-site-data") === null && !keep) settle();
         else held.push({ url, release: settle });
       }, reject);
     });
@@ -209,8 +212,125 @@ async function heldBrowser(): Promise<{
       .where(eq(refreshTokens.tokenHash, hashToken(refresh)));
     return r?.revokedAt instanceof Date;
   };
-  return { account: s.accountId, refresh, revoked, httpOnly, sent, held, releaseAll: () => { for (const h of held) h.release(); } };
+  /** A token of the family can still mint: the press's door did not end it. */
+  const familyLive = async (): Promise<boolean> => (await db.select({ revokedAt: refreshTokens.revokedAt })
+    .from(refreshTokens).where(eq(refreshTokens.familyId, row!.familyId))).some((r) => r.revokedAt === null);
+  return {
+    account: s.accountId, refresh, revoked, familyLive, httpOnly, sent, held,
+    releaseAll: () => { for (const h of held.splice(0)) h.release(); },
+  };
 }
+
+/** Wait, on real timers, until `ok` holds. */
+async function until(ok: () => boolean, ms = 10_000): Promise<void> {
+  for (const end = Date.now() + ms; !ok() && Date.now() < end;) await new Promise((r) => setTimeout(r, 10));
+  expect(ok(), "the awaited request never reached the server").toBe(true);
+}
+
+/** The browser takes in the held answer to `url` now, its Set-Cookie included. */
+function release(world: { held: Array<{ url: string; release: () => void }> }, url: string): void {
+  const at = world.held.findIndex((h) => h.url === url);
+  expect(at, `no answer to ${url} is held`).toBeGreaterThanOrEqual(0);
+  world.held.splice(at, 1)[0]!.release();
+}
+
+const isHeld = (world: { held: Array<{ url: string }> }, url: string) => (): boolean => world.held.some((h) => h.url === url);
+
+/**
+ * AN ANSWER THAT CROSSES THE PRESS NEVER RENAMES THE JAR. A renewal and a session check decided their
+ * Set-Cookie from the jar as the request left; Sign out pressed meanwhile wrote the reserved word, the
+ * answer landed after it and named the account again, and a booting tab's checks then read an account.
+ * The server writes the marker only on a sign-in now; the client heals a silent jar and re-stamps its own.
+ */
+describe("an answer that crosses the Sign out press never names the account again", () => {
+  const RENEWAL = (url: string, init: RequestInit): boolean =>
+    url === "/auth/refresh" && new Headers(init.headers).get("x-ohmail-clear") === null;
+  const DOOR = "/auth/refresh/logout";
+  const CHECK = "/api/auth/session";
+
+  it("a renewal out at the press: its 204 leaves the reserved word, and the door's 204 ends the family", async () => {
+    vi.useRealTimers();
+    const world = await heldBrowser({ hold: (url, init) => RENEWAL(url, init) || url === DOOR });
+    try {
+      const { resumeSession } = await import("../app/session-refresh.js");
+      const { signOut } = await import("../app/sign-out.js");
+      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const renewed = resumeSession();
+      await until(isHeld(world, "/auth/refresh"));
+      // The press waits 3 s for the lock the renewal holds, then asks the door without it.
+      const out = signOut(world.account);
+      await until(isHeld(world, DOOR));
+      release(world, "/auth/refresh");
+      expect(await renewed).toBe("resumed");
+      expect(readOwnerMarker().kind, "the renewal's answer named the account under the pending sign-out").toBe("signed-out");
+      release(world, DOOR);
+      const ended = await out;
+      expect({ serverRefused: ended.serverRefused, marker: readOwnerMarker().kind, familyLive: await world.familyLive() })
+        .toEqual({ serverRefused: null, marker: "absent", familyLive: false });
+    } finally {
+      world.releaseAll();
+    }
+  }, 30_000);
+
+  /** Tab 2's jar says nothing (a browser restart took the marker); its client is public. */
+  async function silentTab(): Promise<void> {
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    (await import("../app/api-client.js")).bindApiOwner(null);
+  }
+
+  it("a session check out at the press over a silent jar: the account answers, the reserved word stays, nothing may bind", async () => {
+    vi.useRealTimers();
+    const world = await heldBrowser({ hold: (url) => url === CHECK || url === DOOR });
+    try {
+      await silentTab();
+      const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
+      const { bindRefusal } = await import("../app/(product)/approve/settle-owner.js");
+      const { signOut } = await import("../app/sign-out.js");
+      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const check = resolveOwnerOutcome();
+      await until(isHeld(world, CHECK));
+      const out = signOut(world.account);
+      await until(isHeld(world, DOOR));
+      release(world, CHECK);
+      expect(await check).toEqual({ kind: "owner", accountId: world.account });
+      expect(readOwnerMarker().kind, "the check's answer named the account under the pending sign-out").toBe("signed-out");
+      expect(bindRefusal(world.account)).toBe("owner_signed_out");
+      release(world, DOOR);
+      expect((await out).serverRefused).toBeNull();
+    } finally {
+      world.releaseAll();
+    }
+  }, 30_000);
+
+  it("CONTROL: with no press, the check puts the account back in the silent jar", async () => {
+    vi.useRealTimers();
+    const world = await heldBrowser();
+    await silentTab();
+    const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
+    const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+    expect(await resolveOwnerOutcome()).toEqual({ kind: "owner", accountId: world.account });
+    expect(readOwnerMarker()).toEqual({ kind: "account", id: world.account });
+  }, 30_000);
+
+  it("a session check answered after the sign-out ended on the 204: no answer, and the emptied jar stays empty", async () => {
+    vi.useRealTimers();
+    const world = await heldBrowser({ hold: (url) => url === CHECK });
+    try {
+      await silentTab();
+      const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
+      const { signOut } = await import("../app/sign-out.js");
+      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const check = resolveOwnerOutcome();
+      await until(isHeld(world, CHECK));
+      expect((await signOut(world.account)).serverRefused).toBeNull();
+      release(world, CHECK);
+      expect(await check).toEqual({ kind: "unknown", retryAfterMs: null });
+      expect(readOwnerMarker().kind, "a signed-out jar was given the account's name").toBe("absent");
+    } finally {
+      world.releaseAll();
+    }
+  }, 30_000);
+});
 
 describe("an answer Chrome holds for its cache walk never holds the sign-out or the erase", () => {
   it("the sign-out press is confirmed at once, the jar cleared, and one purge sent that nothing awaits", async () => {

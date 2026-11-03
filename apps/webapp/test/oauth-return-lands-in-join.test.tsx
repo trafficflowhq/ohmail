@@ -20,8 +20,6 @@ const SESSION = {
 
 let calls: Array<{ url: string; at: string }> = [];
 let release: (() => void) | null = null;
-/** The server's own repair of a jar with no `tf_owner`: `GET /auth/session` writes it back (`healOwnerMarker`). */
-let healsMarker = false;
 let replaced: string | null = null;
 let originalFetch: typeof globalThis.fetch;
 const realLocation = Object.getOwnPropertyDescriptor(window, "location")!;
@@ -29,7 +27,6 @@ const realLocation = Object.getOwnPropertyDescriptor(window, "location")!;
 beforeEach(() => {
   calls = [];
   release = null;
-  healsMarker = false;
   replaced = null;
   sessionStorage.clear();
   document.cookie = "tf_owner=; path=/; max-age=0";
@@ -39,10 +36,8 @@ beforeEach(() => {
     calls.push({ url, at: document.URL });
     const json = (status: number, body: unknown) =>
       new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-    if (url.includes("/auth/session")) {
-      if (healsMarker) document.cookie = "tf_owner=a1; path=/";
-      return json(200, SESSION);
-    }
+    // The session read names the account and writes no cookie: the client heals a jar with no marker.
+    if (url.includes("/auth/session")) return json(200, SESSION);
     if (url.includes("/oauth/microsoft/start")) return json(201, { authorizeUrl: "https://login.microsoftonline.com/x", state: "STATE-R" });
     if (url.includes("/oauth/microsoft/complete")) {
       if (release === null) await new Promise<void>((go) => { release = go; });
@@ -149,7 +144,6 @@ describe("the return of a sign-in the wizard started", () => {
 
   it("a session born in sign-up, with no tf_owner in the jar, is asked first and still completes", async () => {
     await startFrom("join");
-    healsMarker = true;
     release = () => {};
     const mod = await loadAt("/?settings=mailboxes&oauth=pending&state=STATE-R&code=CODE-R#/settings");
     await settle();
