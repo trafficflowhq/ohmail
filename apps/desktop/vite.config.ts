@@ -878,11 +878,12 @@ export default defineConfig({
          four entries above exist; listed after them because it is the same kind of seam. */
       { find: "@trafficflow/core/ics", replacement: r("../../packages/core/src/ics.ts") },
       { find: "@trafficflow/core/url-escapes", replacement: r("../../packages/core/src/url-escapes.ts") },
+      { find: "@trafficflow/core/image-dimensions", replacement: r("../../packages/core/src/image-dimensions.ts") },
       { find: "@trafficflow/core/away-scope", replacement: r("../../packages/core/src/away-scope.ts") },
       /* The organized six and the retro-move question — `@ohmail/client-engine` re-exports
          `retroPassWouldMove` from this leaf, so the shell's screening sheet pulls it into the
          renderer bundle. Aliased in BOTH files or the mirror's build fails where nothing here
-         can (`test/core-leaf-registration.test.ts`). */
+         can (`test/desktop-shell.test.ts`). */
       { find: "@trafficflow/core/destinations", replacement: r("../../packages/core/src/destinations.ts") },
       /* The folder-name validator (FOLDERS-SPEC.md stage 2) — the rail's Folders group
          validates a create/rename BEFORE the wire with the same rules the server runs, and

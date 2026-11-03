@@ -127,6 +127,13 @@ describe("neutraliseCss: the same answers on the hostile classes", () => {
     "div{background-image:image-set(var(--x) 1x)}",
     "@imports q; p{color:red}",
     "p{width:1px;height:1px}",
+    "div{background:\\75\r\nrl(https://crlf.example/x)}",
+    "div{background:\\75\rrl(https://cr.example/x)}",
+    "div{background:\\75\frl(https://ff.example/x)}",
+    '@\\69\r\nmport"https://crlf.example/a.css";p{color:red}',
+    'p{content:"a\\\r\nb";background:\\75 rl(https://crlf.example/y)}',
+    'div{background:image-set("data:image/png;base64,AA\\")" 1x, "https://e.example/c.png" 2x)}',
+    "p{color:red;\r\nmargin:0}\fdiv{color:blue}\r",
   ];
   it("byte-equal output and identical callback traffic on every fixture", () => {
     for (const css of FIXTURES) {

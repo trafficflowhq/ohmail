@@ -337,4 +337,8 @@ describe("the notice says what happened, in both languages", () => {
     expect(blockedNotice(b(3, 2), [], true, "phone")).toBe(DECKS.en.mailPixelsRefused(2));
     expect(blockedNotice(b(3, 0), [], true, "computer")).toBeNull();
   });
+  it("shown: a picture this phone fetched whose own bytes are a pixel joins the refused beacons", () => {
+    expect(blockedNotice(b(3, 1), [], true, "phone", 1)).toBe(DECKS.en.mailPixelsRefused(2));
+    expect(blockedNotice(b(3, 0), [], true, "phone", 1)).toBe(DECKS.en.mailPixelOnly);
+  });
 });

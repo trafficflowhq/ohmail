@@ -17,6 +17,14 @@ const PNG = Buffer.from(
   "hex",
 );
 
+/** A 1×1 PNG — a beacon by its own bytes, whatever its tag declared. */
+const PIXEL = Buffer.from(
+  "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c6360000200000500017a5eab3f0000000049454e44ae426082",
+  "hex",
+);
+/** Labelled a PNG, with no header any decoder sizes. */
+const UNSIZED = Buffer.from("labelled a picture, sized by nothing");
+
 interface Seen { method: string; path: string; bearer: boolean }
 
 function recorder(answer: (req: IncomingMessage) => { status: number; type?: string; body?: Buffer }) {
@@ -31,7 +39,9 @@ function recorder(answer: (req: IncomingMessage) => { status: number; type?: str
 }
 
 let consentStatus = 200;
-const sender = recorder(() => ({ status: 200, type: "image/png", body: PNG }));
+const sender = recorder((req) => ({
+  status: 200, type: "image/png", body: req.url === "/pixel.png" ? PIXEL : req.url === "/odd.png" ? UNSIZED : PNG,
+}));
 const paired = recorder((req) => {
   if (req.method === "POST" && /^\/messages\/[^/]+\/load-remote$/.test(req.url ?? "")) {
     return { status: consentStatus, type: "application/json", body: Buffer.from("{}") };
@@ -84,6 +94,7 @@ describe("a paired phone's pictures come through the paired server's /img", () =
     expect([...got.minted.keys()]).toEqual(urls());
     expect([...got.minted.values()].every((v) => v.startsWith("data:image/png;base64,"))).toBe(true);
     expect(got.consentRefused).toBe(false);
+    expect(got.pixels, "the server's /img sizes a paired door's pictures").toEqual([]);
   });
 
   it("a body the server already marked loaded is not asked again", async () => {
@@ -120,6 +131,16 @@ describe("the standalone door has no server, so this phone dials — and the not
     expect(sender.seen.some((r) => r.bearer), "a credential reached the sender").toBe(false);
     expect(got.minted.size).toBe(2);
     expect(imagesSeenBy(route)).toBe("phone");
+  });
+
+  it("a picture whose own bytes are 1×1 is not drawn and is reported; bytes nothing can size are not drawn", async () => {
+    const route = imageRouteOf(session("local", true));
+    const pixel = `${origin(sender.server)}/pixel.png`;
+    const odd = `${origin(sender.server)}/odd.png`;
+    const picture = urls()[0]!;
+    const got = await fetchRemoteImages(route, "m-7", [pixel, odd, picture], { consented: false });
+    expect([...got.minted.keys()], "a disguised pixel or an unsized body was drawn").toEqual([picture]);
+    expect(got.pixels).toEqual([pixel]);
   });
 
   it("with nothing live, nothing is fetched", async () => {

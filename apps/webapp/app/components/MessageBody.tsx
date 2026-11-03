@@ -391,7 +391,7 @@ function continuesIdent(code: number): boolean {
  * position, so the pass is linear. An unterminated token ends the scan; the remainder is copied
  * verbatim — a token the browser will not parse either.
  */
-const CSS_TOKEN = /@import|(?:-webkit-)?image-set\(|url\(|\\(?:[0-9a-fA-F]{1,6}[ \t\n\r\f]?|[^\n\r\f])/gi;
+const CSS_TOKEN = /@import|(?:-webkit-)?image-set\(|url\(|\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f])/gi;
 
 /**
  * The name of a function can be escaped too — for a while only the argument was. `\75 rl(…)` and
@@ -437,9 +437,11 @@ function escapedIdentAt(css: string, at: number): { start: number; name: string;
         hex++;
       }
       if (hex > 0) {
-        // ONE optional whitespace terminates a hex escape and is part of it (CSS Syntax §4.3.7).
+        // ONE optional whitespace terminates a hex escape and is part of it (CSS Syntax §4.3.7);
+        // CRLF is one.
         const w = css.charCodeAt(i);
-        if (w === 0x20 || w === 0x09 || w === 0x0a || w === 0x0d || w === 0x0c) i++;
+        if (w === 0x0d && css.charCodeAt(i + 1) === 0x0a) i += 2;
+        else if (w === 0x20 || w === 0x09 || w === 0x0a || w === 0x0d || w === 0x0c) i++;
       } else if (i < limit) {
         i++; // `\X` — one literal character
       }
@@ -462,7 +464,7 @@ function escapedIdentAt(css: string, at: number): { start: number; name: string;
 function decodeCssEscapes(raw: string): string {
   if (!raw.includes("\\")) return raw;
   return raw.replace(
-    /\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|([^\n\r\f]))/g,
+    /\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\n\r\f])?|([^\n\r\f]))/g,
     (_m, hex: string | undefined, literal: string | undefined) => {
       if (hex === undefined) return literal ?? "";
       const cp = Number.parseInt(hex, 16);
@@ -481,7 +483,10 @@ function cssString(value: string): string {
   return value.replace(/[\\"]/g, "\\$&").replace(/[\n\r\f]/g, "");
 }
 
-/** The `)` that closes the `(` we just consumed, or -1. Quote-aware, single forward pass. */
+/**
+ * The `)` that closes the `(` we just consumed, or -1. Quote-aware, single forward pass. A string
+ * is walked as {@link endOfAtRule} walks one: an escaped quote does not end it.
+ */
 function closingParen(css: string, from: number): number {
   let depth = 1;
   for (let i = from; i < css.length; i++) {
@@ -497,9 +502,14 @@ function closingParen(css: string, from: number): number {
       if (close === -1) return -1; // runs to EOF, so the function never closes
       i = close + 1;
     } else if (c === '"' || c === "'") {
-      const close = css.indexOf(c, i + 1);
-      if (close === -1) return -1;
-      i = close;
+      let j = i + 1;
+      while (j < css.length) {
+        const d = css[j];
+        if (d === "\\") { j += 2; continue; }
+        if (d === c || d === "\n" || d === "\r" || d === "\f") break;
+        j++;
+      }
+      i = j;
     } else if (c === "(") depth++;
     else if (c === ")" && --depth === 0) return i;
   }
@@ -709,6 +719,8 @@ export function neutraliseCss(
   onCid?: (cid: string) => string | null,
 ): string {
   if (css.length === 0) return css;
+  // CSS reads CRLF, a lone CR and a form feed as one newline before it tokenizes (Syntax §3.3).
+  css = css.replace(/\r\n?|\f/g, "\n");
   let out = "";
   let copied = 0;
 

@@ -27,7 +27,7 @@ export { autoReplyByUsWhere } from "./auto-reply-by-us.js";
 export { contactOnlyHeldWhere } from "./contact-only-held.js";
 export { upgradeContactsToPerson } from "./contact-source.js";
 export {
-  consentListBrands, forgetListConsents, LIST_ADDRESS_CHUNK, listBrandsOf, readListAddresses,
+  consentListBrands, forgetListConsents, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses,
 } from "./list-addresses.js";
 // "Did the person answer this sender" — ONE spelling, read by ohbox-tidy, rule-retro and
 // screener-auto. See the module: three copies asked thread membership instead.

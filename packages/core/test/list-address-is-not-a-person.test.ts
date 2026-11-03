@@ -237,6 +237,32 @@ describe("the first claim through a list address the person wrote to (FakeRepo)"
   });
 });
 
+/** A list address in punycode: the parser hands the gate its From in Unicode, and so is the list read. */
+const IDN_LIST = "list@xn--bcher-kva.invalid";
+const IDN_POST = `List-Post: <mailto:${IDN_LIST}>`;
+const idnClaim = (n: number, extra: string[] = []) => inbox(eml({
+  from: `"PostFinance" <${IDN_LIST}>`, to: ME, messageId: `idn-${n}@lists.invalid`, subject: "Ihre Karte", extra,
+}));
+
+describe("an internationalised list address is one list (FakeRepo)", () => {
+  it("a post to the list, its mail, then a company claim under it — held", async () => {
+    const s = setup();
+    await ingest(s, sent(eml({ from: ME, to: IDN_LIST, messageId: "idn-post-1@own.invalid" })));
+    await ingest(s, inbox(eml({ from: MEMBER, to: IDN_LIST, messageId: "idn-l-1@elsewhere.invalid", extra: [IDN_POST, LIST_ID] })));
+    const { plan } = await ingest(s, idnClaim(1));
+    expect(plan.new!.desired, "a punycode List-Post never matched the Unicode From").toBe("ohmail/Screener");
+    expect(plan.new!.senderCheck?.brand).toBe("PostFinance");
+  });
+
+  it("the claim naming the list in its own List-Post is held at its own plan", async () => {
+    const s = setup();
+    await ingest(s, sent(eml({ from: ME, to: IDN_LIST, messageId: "idn-post-2@own.invalid" })));
+    const { plan } = await ingest(s, idnClaim(2, [IDN_POST, LIST_ID]));
+    expect(plan.new!.desired, "a punycode List-Post never matched the Unicode From").toBe("ohmail/Screener");
+    expect(plan.new!.listAddresses).toEqual(["list@bücher.invalid"]);
+  });
+});
+
 /** A delivery report citing `id` in its own In-Reply-To. */
 const dsn = (id: string, n: number) => inbox(Buffer.from([
   `Message-ID: <dsn-${n}@their-host.invalid>`, "From: MAILER-DAEMON@their-host.invalid", `To: ${ME}`,

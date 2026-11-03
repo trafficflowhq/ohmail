@@ -95,7 +95,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   const w = useWorld();
   const toast = useWorldToast();
   const [asked, setAsked] = useState<string | null>(null);
-  const [remote, setRemote] = useState<{ id: string; map: ReadonlyMap<string, string> } | null>(null);
+  const [remote, setRemote] = useState<{ id: string; map: ReadonlyMap<string, string>; pixels: ReadonlySet<string> } | null>(null);
   const [linkAsk, setLinkAsk] = useState<string | null>(null);
   const [refusedFor, setRefusedFor] = useState<string | null>(null);
   const [frameHeight, setFrameHeight] = useState<FrameHeight | null>(null);
@@ -215,7 +215,9 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
         return;
       }
       log.recorded = true;
-      setRemote((was) => ({ id: m.id, map: was?.id === m.id ? new Map([...was.map, ...got.minted]) : got.minted }));
+      setRemote((was) => was?.id === m.id
+        ? { id: m.id, map: new Map([...was.map, ...got.minted]), pixels: new Set([...was.pixels, ...got.pixels]) }
+        : { id: m.id, map: got.minted, pixels: new Set(got.pixels) });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imagesWanted, asking, m.id]);
@@ -246,7 +248,8 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
     );
   }
 
-  const said = blockedNotice(sanitized.blocked, sanitized.sheets, imagesWanted, imagesSeenBy(route));
+  const fetchedPixels = remote?.id === m.id ? remote.pixels.size : 0;
+  const said = blockedNotice(sanitized.blocked, sanitized.sheets, imagesWanted, imagesSeenBy(route), fetchedPixels);
   // A refused state with an earlier document still drawn: the pictures are what did not fit, and it says so.
   const lead = shows.show === "frame" && shows.withheld
     ? Copy.mailImagesTooLarge

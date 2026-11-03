@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, listBrandsOf, readListAddresses } from "@trafficflow/db";
+import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, MessageIdCandidate, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -2560,7 +2560,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * their row locks in one order, and an address no transport delivers to is not stored, nor one of
    * the account's own (read only when there is something to write). Before the change-log append in
    * every caller: the press and the reset take this table after the rule-key lock and before their
-   * first delta, the same order.
+   * first delta, the same order. `List-Post` is the sender's to write, so a new address past
+   * {@link LIST_ADDRESSES_PER_ACCOUNT_MAX} rows is recorded only when a person consented to it (the
+   * only addresses whose list fact changes an outcome); a known one is seen again whatever the count.
    */
   async recordListAddresses(accountId: string, addresses: readonly string[]): Promise<number> {
     let unique = [...new Set(addresses.map((a) => a.trim().toLowerCase())
@@ -2569,9 +2571,20 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       const own = await readOwnAddresses(this.db as unknown as Tx, accountId);
       unique = unique.filter((a) => !own.has(a));
     }
+    const account = this.d.castUuid(accountId);
+    const now = this.d.now();
     for (let at = 0; at < unique.length; at += LIST_ADDRESS_CHUNK) {
-      await this.db.insert(listAddressesTbl)
-        .values(unique.slice(at, at + LIST_ADDRESS_CHUNK).map((address) => ({ accountId, address })))
+      const chunk = unique.slice(at, at + LIST_ADDRESS_CHUNK);
+      /* One statement per chunk on both stores, every column in the table's order (an insert from a
+         select names them all); `column1` is how both stores name an unaliased VALUES column. */
+      await this.db.insert(listAddressesTbl).select(sql`
+        SELECT ${account}, lv.address, ${now}, ${now}, '[]' FROM (
+          SELECT lc.column1 AS address, row_number() OVER (ORDER BY lc.column1) AS nth
+            FROM (VALUES ${sql.join(chunk.map((a) => sql`(${a})`), sql`, `)}) lc
+        ) lv
+        WHERE EXISTS (SELECT 1 FROM list_addresses lk WHERE lk.account_id = ${account} AND lk.address = lv.address)
+           OR (SELECT count(*) FROM list_addresses ln WHERE ln.account_id = ${account}) + lv.nth <= ${LIST_ADDRESSES_PER_ACCOUNT_MAX}
+           OR ${senderHasPersonConsentSql(this.d, accountId, sql`lv.address`, sql`''`)}`)
         .onConflictDoUpdate({
           target: [listAddressesTbl.accountId, listAddressesTbl.address],
           set: { lastSeenAt: sql`excluded.last_seen_at` },

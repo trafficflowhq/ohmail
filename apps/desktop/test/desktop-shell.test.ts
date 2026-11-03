@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 /* The namespace lists themselves, so the marker contract below reads the build config
    rather than a copy of it — the drift this file exists to catch. */
 import viteConfig, { WINDOW_ONLY_NAMESPACES } from "../vite.config";
@@ -3081,6 +3082,58 @@ describe("the UI bundle's build config", () => {
     expect(buildUi).toMatch(/if \(!engine && !hostClient\) \{/);
     expect(buildUi).toMatch(/retired/);
   });
+
+  /**
+   * CI typechecks and bundles the window on this directory's install alone, where no workspace
+   * link resolves `@trafficflow/*` or `@ohmail/*`: `paths` and the alias table are then the only
+   * resolvers. So the window's program is walked here with those links hidden.
+   */
+  it("resolves every workspace module the window imports through paths and the alias table, to one file", () => {
+    const linked = (p: string) => /[\\/]node_modules[\\/]@(?:trafficflow|ohmail)(?:[\\/]|$)/.test(p);
+    const workspace = (spec: string) => /^@(?:trafficflow|ohmail)\//.test(spec);
+    const parsed = ts.getParsedCommandLineOfConfigFile(path.join(APP, "tsconfig.json"), {}, {
+      ...ts.sys, onUnRecoverableConfigFileDiagnostic: (d) => { throw new Error(String(d.messageText)); },
+    })!;
+    const host = ts.createCompilerHost(parsed.options);
+    host.fileExists = (p) => !linked(p) && ts.sys.fileExists(p);
+    host.directoryExists = (p) => !linked(p) && ts.sys.directoryExists!(p);
+    // Every import tsc resolves, by importing file: the specifier and the file it reached.
+    const imports = new Map<string, Array<[string, string | undefined]>>();
+    host.resolveModuleNameLiterals = (literals, containing, redirected, options) => literals.map(({ text }) => {
+      const resolved = ts.resolveModuleName(text, containing, options, host, undefined, redirected);
+      const file = resolved.resolvedModule?.resolvedFileName;
+      const from = path.resolve(containing);
+      imports.set(from, [...(imports.get(from) ?? []), [text, file && path.resolve(file)]]);
+      return resolved;
+    });
+    ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options, host });
+    // tsc compiles every file it reaches; a style sheet is the bundler's alone.
+    for (const [from, list] of imports) for (const [spec, file] of list) {
+      if (workspace(spec) && !spec.endsWith(".css")) {
+        expect(file, `${spec} in ${path.relative(APP, from)}: no entry in tsconfig.json paths`).toBeTruthy();
+      }
+    }
+    // The bundler loads what the two entries reach, taking the first alias whose `find` is the
+    // specifier or a path prefix of it (@rollup/plugin-alias); an aliased-away module is not walked.
+    const aliases = viteConfig.resolve!.alias as Array<{ find: string | RegExp; replacement: string }>;
+    const aliased = (spec: string) => {
+      const hit = aliases.find(({ find }) =>
+        typeof find === "string" ? spec === find || spec.startsWith(`${find}/`) : find.test(spec));
+      return hit && path.resolve(spec.replace(hit.find, hit.replacement));
+    };
+    const reached = new Set(["src/main.tsx", "src/host-client/main.tsx"].map((f) => path.join(APP, f)));
+    for (const from of reached) for (const [spec, file] of imports.get(from) ?? []) {
+      const target = aliased(spec);
+      if (workspace(spec)) {
+        expect(target && (target === file || spec.endsWith(".css")) && fs.existsSync(target),
+          `${spec} in ${path.relative(APP, from)}: no alias in vite.config.ts`).toBe(true);
+      }
+      const next = target ?? file;
+      if (next && !next.includes(`${path.sep}node_modules${path.sep}`)) reached.add(next);
+    }
+    expect([...reached], "the walk did not reach the engine")
+      .toContain(path.resolve(APP, "../../packages/client-engine/src/index.ts"));
+  }, 60_000);
 
   /**
    * THE BRIDGE REACHES THE SHELL AND NOTHING ELSE.

@@ -1708,13 +1708,14 @@ export function screenOutboundText(...parts: Array<string | null | undefined>): 
 export type ModelSinkReason = "vocabulary" | "credential_shape" | "auth_url_token";
 
 /**
- * One document a model sink is about to serialise — a label for the log and its fields IN ORDER.
+ * One document a model sink is about to serialise — a label for the log and its fields in order,
+ * an address last.
  *
- * PROSE FIRST, ADDRESSES LAST, and the order is the whole point. {@link CODE_PROXIMITY} is 40
- * characters, so a 37-character `From:` set between a subject and its snippet pushes the two
- * halves of a split credential out of each other's window and the join answers `safe` — measured
- * on `Your passphrase` / `It is 481920…`, which refuses as (subject, snippet, from) and passes as
- * (subject, from, snippet). The label is a constant this codebase chose, never content.
+ * The door reads the fields' join and every pair of its prose fields in this order, so a field set
+ * between the two halves of a split credential cannot push them out of each other's
+ * {@link CODE_PROXIMITY} window. An address is read in the join only: paired, it would sit beside a
+ * subject's tail, where no letter puts it. The label is a constant this codebase chose, never
+ * content.
  */
 export interface ModelSinkDocument {
   label: string;
@@ -1754,12 +1755,30 @@ export const MODEL_SINK_REFUSAL_SENTENCE: Record<ModelSinkReason, string> = {
  */
 export function screenModelInput(docs: ModelSinkDocument[]): ModelSinkVerdict {
   for (const doc of docs) {
-    const screen = screenOutboundText(...doc.fields);
-    if (screen.safe) continue;
-    // Every refusal `screenOutboundText` makes today names its class. `credential_shape` is the
-    // fail-closed default rather than a cast, so a future unclassified refusal still refuses.
-    const reason = screen.reason ?? "credential_shape";
-    return { admitted: false, reason, category: screen.category, where: doc.label };
+    for (const parts of readingsOf(doc)) {
+      const screen = screenOutboundText(...parts);
+      if (screen.safe) continue;
+      // Every refusal `screenOutboundText` makes today names its class. `credential_shape` is the
+      // fail-closed default rather than a cast, so a future unclassified refusal still refuses.
+      const reason = screen.reason ?? "credential_shape";
+      return { admitted: false, reason, category: screen.category, where: doc.label };
+    }
   }
   return { admitted: true, reason: null, category: null, where: null };
+}
+
+/** A field that is one address and nothing else: a sender, never prose. */
+const BARE_ADDRESS = /^[^\s@]+@[^\s@]+$/;
+
+/**
+ * A document's join, then every pair of its non-empty prose fields in their order: the join with
+ * the fields between two halves taken out. Never a pair reversed, and never one with an address,
+ * either of which sets two texts side by side that the document never had there.
+ */
+function readingsOf(doc: ModelSinkDocument): string[][] {
+  const fields = doc.fields.filter((f): f is string => typeof f === "string" && f.length > 0);
+  // Two fields' one pair is their join.
+  if (fields.length < 3) return [fields];
+  const prose = fields.filter((f) => !BARE_ADDRESS.test(f.trim()));
+  return [fields, ...prose.flatMap((a, i) => prose.slice(i + 1).map((b) => [a, b]))];
 }

@@ -977,6 +977,8 @@ export {
   tinyDimension,
   withoutFiller,
 } from "./mail-render-rules.js";
+// A picture's size from its own bytes, the image proxy's sizer: the phone's standalone door has no proxy.
+export { imageDimensions, type ImageSize } from "@trafficflow/core/image-dimensions";
 // Where a body's quoted history starts and ends — one reading for every reader. See `quoted-history.ts`.
 export {
   QUOTED_HISTORY_LIMITS,
