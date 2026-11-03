@@ -21,6 +21,128 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.30] — 2026-11-03
+
+### A file dragged from the file manager into a message is attached, not pasted as its path
+
+In the desktop app on Linux, dropping a file from the file manager onto a message (its text, Subject, To or
+the attachments row, in a new message or a reply) pasted the file's path into the message instead of
+attaching it. The file is now attached, through the same steps as picking it: pictures are shrunk to the
+chosen quality, the size limit applies, and a file that is too large or cannot be read is said so. The app
+reads only the files that were dropped on its window from another program, once, and only within ten seconds
+of the drop. Dropped anywhere else in the app, a file no longer turns into text.
+
+### Signing out closes the mail at once, and sign-in records stay bounded
+
+On the web app and ohmail Cloud, pressing Sign out now marks the browser as signing out before the
+server has answered, so for the few seconds the request takes no page opened in another tab shows the
+mail, and the browser's other tabs close theirs at once. A tab that missed the news (a frozen tab, or
+a browser without the channel tabs talk over) closes the mail the moment it is looked at again when
+the browser no longer names its account, without waiting for the server. A tab that closes because
+another tab signed out now also forgets its own notes for the session.
+
+A device slowed by the sign-in limit for an address is no longer locked out for its own refused
+attempts: a refusal from that limit no longer counts as a wrong password from that device.
+
+On ohmail Cloud, the page that confirms a computer's sign-in in the browser now also says the request
+came from a different network address when the computer and the browser reached ohmail over different
+kinds of address (IPv4 and IPv6), and reads every spelling of an IPv4 address inside an IPv6 one as that
+IPv4 address.
+
+Deleting an account no longer fails when a verification link or a pairing code is created for it at the
+same moment; that request fails instead. The hourly clean-up of old sign-in records and sign-in limits
+now deletes in bounded steps, so a large backlog can no longer stop it from finishing.
+
+### Forged letters, disguised tracking pixels and mailing lists are caught in more places
+
+With "Act on suggestions" on, a letter waiting in the Screener whose mail provider's sender check failed is
+no longer let into the Ohbox with its sender's other mail: it waits for you, and the rest is filed as before.
+A suggestion made about such a letter lets nothing in. Your own press still moves it. On every app.
+
+A remote picture a letter's style names in a spelling the reader did not recognise, an escape ended by a
+Windows line break or an escaped quote inside a picture set, is now counted among the blocked images and
+taken out of the letter like every other spelling. It was never loaded: the reader's frame refused it.
+Web, desktop and phone.
+
+The phone app used on its own, without a paired server, now reads the size of each picture it fetches
+once you allow pictures, as the server does for Cloud and your own server: a tracking pixel disguised as
+an ordinary picture is not drawn and is counted with the blocked tracking pixels, and a picture whose
+format it cannot read is not drawn. The help page no longer names the phone as the exception.
+
+Before a letter goes to an AI model for a draft, ohmail checks whether its subject and text together carry
+a sign-in code or a password, and refuses to send it if they do. A field between the two halves could hide
+them from each other; its subject and text are now also read side by side, without the sender's address
+between them.
+
+A mailing list whose address is written in punycode in its List-Post header, as an internationalised domain
+such as `xn--bcher-kva.example` is on the wire, is now recognised as the list its mail comes from. A company
+name a member puts on that list's address waits in the Screener, as it does on every other list.
+
+ohmail records the addresses mailing lists post as, from a header any sender can write. An account now
+records at most 1,000 of them, plus any address you wrote to or allowed yourself, so forged headers cannot
+grow that record without bound.
+
+### A worker set to count old settings copies reads all of them while the mailbox stays connected
+
+On your own server, a worker set to only count the settings copies its tidy would remove
+(`TF_PROFILE_TIDY=count`, the setting a first deploy reads) now reads every copy in a mailbox's settings folder
+while the mailbox stays connected: 64 at a time, half a minute apart, until all are read, then a count once per
+settings interval as before. Before, it read 64 per five-minute interval and started over whenever the mailbox
+reconnected, so on a mailbox holding hundreds of copies the count never covered the whole folder. Counting still
+removes nothing but the copy a new one replaces, and the default, which removes the old copies, is unchanged.
+
+### Coloured answers keep their colour, and five reading and sending fixes
+
+On desktop and the web, an answer someone typed in red under your question inside a quoted letter is drawn in
+red again, instead of in the same ink as the question. Colours that mark part of the text keep a matching
+colour from ohmail's palette, readable in light and dark; a letter or quote written entirely in one colour still
+reads in your normal text colour, and links keep their link colour.
+
+- A long letter in the web reader no longer shows a sideways scrollbar under the message: the action bar now
+  leaves room for the reader's vertical scrollbar.
+- A PDF set in a standard font that is not embedded in the file (Helvetica, Times, Courier) now previews with
+  its text on the web, on any computer: ohmail serves pdf.js's own font data instead of relying on the fonts the
+  computer has.
+- Forwarding a letter with pictures in its text keeps those pictures where they stood in the quoted original,
+  instead of only attaching them as files.
+- Searching old mail and opening a letter from someone who is still waiting in the Screener now opens the letter
+  you found, with the sender's Screener card behind it, instead of the card's newest letter.
+- On the web, if ohmail's app code does not load after you sign in, the page now says it is still opening and
+  offers Reload after a few seconds, instead of staying empty.
+
+### Found settings keep their answers and stay out of the way
+
+An imported settings copy now stays in the mailbox until this install's copy carrying the import is
+saved there, so a full mailbox or a refused write never leaves what you imported on one device only.
+On the phone, Stop and remove no longer deletes settings you changed that are not in the mailbox: it
+removes the mailbox from the phone only once the phone saved its settings there on the way out, or
+they say nothing the last copy it saved there does not. It asks first, beside any unsent drafts, when
+they wait for your answer to the settings question, a newer ohmail saved the mailbox's settings, a
+settings write was refused since the last one that was saved, or it cannot tell. When the mail server
+cannot be reached on the way out, the phone removes the mailbox only when none of its settings, the
+Screener window included, are missing from the last copy it saved there; otherwise, and when the server
+refuses the settings, it keeps the mailbox and asks, with Keep the mailbox first, which opens the mailbox
+again.
+The found-settings question stays on the mailbox it asks about
+until you answer it; another mailbox's question waits behind it. On desktop and web the
+found-settings card and the desktop's default mail app card now stand above the mail instead of over
+it, so they no longer cover the open message's sender and recipients, a signature field or its Save.
+
+### Six small fixes on the web and the desktop
+
+- A calendar invitation whose time zone carries an old Thunderbird or libical prefix (such as
+  `/mozilla.org/20050126_1/Europe/Berlin`) now shows its time in your own zone, on every app.
+- The Screening sheet keeps a long domain inside the "Everyone at" card, wrapped, instead of scrolling
+  sideways, at phone width too.
+- Shift+F opens a forward with the cursor in To, and Ctrl+Enter with nobody in To says so instead of
+  doing nothing.
+- After deleting several selected messages, the reader moves on to the next one, as it does after a single
+  delete, instead of saying the message was moved elsewhere.
+- While the Ohbox is still being read in after a sign-in, its header and the side rail say "Counting
+  unread…" over the letters already shown, instead of showing nothing.
+- The first pull screen now says what the status bar shows while you are away: how many messages have been
+  read.
+
 ## [0.30.29] — 2026-11-02
 
 ### Connecting a mailbox says which server failed, and why
@@ -16230,7 +16352,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.29...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.30...HEAD
+[0.30.30]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.30
 [0.30.29]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.29
 [0.30.28]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.28
 [0.30.27]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.27
