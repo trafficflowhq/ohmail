@@ -81,6 +81,7 @@ describe("the desktop asks — public, bounded, and nothing it stores identifies
     expect(row.label).toBe("studio-mac");
     expect(row.platform).toBe("Linux");
     expect(row.ipClass).toBe("203.0.x.x");
+    expect(row.oauthMeta).toEqual({ networkKey: expect.stringMatching(/^[0-9a-f]{32}$/) });
     // The verifier and the full address are nowhere at rest.
     expect(JSON.stringify(rows)).not.toContain(verifier);
     expect(JSON.stringify(rows)).not.toContain(IP);
@@ -119,7 +120,7 @@ describe("the page reads what it is about to confirm", () => {
     expect(JSON.stringify(body)).not.toContain(IP);
   });
 
-  it("says in one word whether the computer asked from this browser's network", async () => {
+  it("says in one word whether the computer asked from this browser's address", async () => {
     const { db, deps } = await makeDeps();
     const { id } = await request(deps);
     const me = await signedIn({ db });
@@ -133,7 +134,8 @@ describe("the page reads what it is about to confirm", () => {
     const elsewhere = await readFrom("198.51.100.9");
     expect(elsewhere.network).toBe("different");
     expect(JSON.stringify(elsewhere)).not.toContain("198.51");
-    expect((await readFrom("203.0.5.6")).network).toBe("same");
+    expect((await readFrom("203.0.5.6")).network).toBe("different");
+    expect((await readFrom(IP)).network).toBe("same");
   });
 
   it("TTL at read: past five minutes the page says it expired", async () => {
@@ -166,6 +168,7 @@ describe("the confirm is ONE press, step-up gated, CSRF-bound, own account only"
     [row] = await db.select().from(loginTokens).where(eq(loginTokens.id, id));
     expect(row!.userId).toBe(me.userId);
     expect(row!.approvedAt?.toISOString()).toBe(FIXED_NOW.toISOString());
+    expect(row!.oauthMeta, "the confirm replaces the request's key").not.toHaveProperty("networkKey");
     const events = await db.select().from(authEvents).where(eq(authEvents.userId, me.userId));
     expect(events.map((e) => e.event)).toContain("desktop_approval_confirmed");
     // A second press is the same answer, not a refusal.

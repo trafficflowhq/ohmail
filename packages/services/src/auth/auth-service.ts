@@ -29,7 +29,7 @@ import { bridgeTx, type Db, type ServiceContext } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
 import { reserveIpSlot } from "../ip-throttle.js";
-import { ipClassOf, networkVerdict, type NetworkVerdict } from "./ip-class.js";
+import { addressUnitOf, ipClassOf, networkVerdict, type NetworkVerdict } from "./ip-class.js";
 import { credentialRefused } from "./credential-refused.js";
 import { clampPageLimit } from "../pagination.js";
 // The ONE definition of "a valid address" — see {@link requireEmail} for why registration
@@ -244,6 +244,16 @@ function readDesktopGrantMeta(raw: unknown): DesktopGrantMeta | null {
   const m = raw as Record<string, unknown>;
   const at = typeof m.twofaAt === "string" && !Number.isNaN(Date.parse(m.twofaAt)) ? m.twofaAt : null;
   return { sessionId: typeof m.sessionId === "string" ? m.sessionId : null, twofaAt: at };
+}
+
+/**
+ * A pending approval's meta is `{networkKey}` until the confirm replaces it with the grant's: the
+ * key when it is one (32 hex), else `""`, which never reads `same`.
+ */
+function pendingNetworkKey(raw: unknown): string {
+  if (typeof raw !== "object" || raw === null) return "";
+  const key = (raw as Record<string, unknown>).networkKey;
+  return typeof key === "string" && /^[0-9a-f]{32}$/.test(key) ? key : "";
 }
 
 /**
@@ -1468,8 +1478,9 @@ export class AuthService extends SessionLifecycle {
    * The desktop asks: one `desktop_approval` row, unbound, committed to the PKCE challenge whose
    * verifier stays in the desktop's engine. Public; the per-IP slot (shared with failed claims)
    * bounds it. The label is the desktop's own hostname made safe to show, the platform comes from
-   * the kind's closed set, and the network is stored as a class. The id goes in the page's URL;
-   * it is worth nothing without a signed-in browser's confirm AND the verifier.
+   * the kind's closed set, and the network is stored as a class, the address only as a keyed digest
+   * for the read to compare. The id goes in the page's URL; it is worth nothing without a
+   * signed-in browser's confirm AND the verifier.
    */
   async issueDesktopApproval(
     ctx: ServiceContext, b: { challenge?: unknown; kind?: unknown; label?: unknown },
@@ -1489,6 +1500,7 @@ export class AuthService extends SessionLifecycle {
       if (!admitted) throw desktopClaimRateLimited();
     }
     const approvalId = randomUUID();
+    const unit = addressUnitOf(ip);
     await db.insert(loginTokens).values({
       id: approvalId,
       userId: null,
@@ -1499,6 +1511,7 @@ export class AuthService extends SessionLifecycle {
       label,
       platform: APPROVAL_PLATFORM[kind] ?? "",
       ipClass: ipClassOf(ip),
+      oauthMeta: unit === "" ? null : { networkKey: this.keys.approvalNetwork(approvalId, unit) },
       expiresAt: new Date(now.getTime() + this.cfg.desktopApprovalTtlMs),
       createdAt: now,
     });
@@ -1517,8 +1530,9 @@ export class AuthService extends SessionLifecycle {
   /**
    * What the page shows before the press. Session-gated. A row bound to another user is 404
    * whatever its state; an unbound or own row answers its state's sentence, or the facts.
-   * `network` compares the request's class with this reader's own and is the only thing said
-   * about the reader's network: no address or class of it goes back.
+   * `network` says whether this reader is at the request's own address (over IPv6, its /64), by the
+   * key the request kept, and is the only thing said about the reader's network: no address, class
+   * or key goes back.
    */
   async readDesktopApproval(
     ctx: ServiceContext, approvalId: string,
@@ -1534,7 +1548,9 @@ export class AuthService extends SessionLifecycle {
     if (refusal) throw refusal;
     return {
       label: row.label, platform: row.platform, ipClass: row.ipClass,
-      network: networkVerdict(row.ipClass, ctx.ip),
+      network: networkVerdict(
+        row.ipClass, pendingNetworkKey(row.oauthMeta), ctx.ip, (unit) => this.keys.approvalNetwork(row.id, unit),
+      ),
       requestedAt: row.createdAt.toISOString(),
       expiresIn: Math.max(0, Math.floor((row.expiresAt.getTime() - now.getTime()) / 1000)),
       approved: row.approvedAt !== null,

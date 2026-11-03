@@ -226,7 +226,7 @@ describe("the page says when the computer asked from another network", () => {
     await waitFor(() => el.querySelector('[data-testid="approve-account"]') !== null, "the account line");
     const line = networkLine(el);
     expect(line, "no line for a request from another network").not.toBeNull();
-    // True of both arms of `different`: another network, or the other address family of one machine.
+    // True of every `different`: another address (over IPv6, another /64), or the other address family.
     expect(line!.textContent).toBe("This request came from a different network address than this browser.");
     expect(line!.getAttribute("role")).toBe("note");
     expect(line!.previousElementSibling?.tagName).toBe("UL");
