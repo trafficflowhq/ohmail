@@ -13,16 +13,31 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile";
 import { memoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
 import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
-import { OrganizerProfileSync, serializeOrganizerProfile, writtenByABuildThatRecordsNothing } from "../src/profile.js";
+import {
+  DEFAULT_PROFILE_FLUSH_INTERVAL_MS, OrganizerProfileSync, PROFILE_VERSION, serializeOrganizerProfile, writtenByABuildThatRecordsNothing,
+  type SettingsLeft,
+} from "../src/profile.js";
 import type { OrganizerWriteAuthority } from "../src/lease.js";
+/* The phone's removal end, read through this store (`apps/mobile`): what Stop and remove deletes. */
+import {
+  endStandaloneForRemoval, forgetOrganizerSessionForTests, holdStandaloneDoor,
+} from "../../mobile/src/engine/organizer-session.js";
+import type { StandaloneEngine } from "../../mobile/src/engine/standalone-door.js";
 
 /* One failed read of the answer to one copy, as a dropped database connection fails it; every other read passes. */
 const answerReadFault = vi.hoisted(() => ({ fingerprint: null as string | null, fired: 0 }));
+/* An answer recorded just before the first read of it: after the tick serialized the store. */
+const answerLands = vi.hoisted(() => ({ fingerprint: null as string | null, record: null as (() => Promise<unknown>) | null }));
 vi.mock("@trafficflow/db", async (load) => {
   const db = await load<typeof import("@trafficflow/db")>();
   return {
     ...db,
     profileImportWriteReleased: async (...a: Parameters<typeof db.profileImportWriteReleased>): Promise<boolean> => {
+      if (a[1].fingerprint === answerLands.fingerprint && answerLands.record !== null) {
+        const record = answerLands.record;
+        answerLands.record = null;
+        await record();
+      }
       if (a[1].fingerprint !== answerReadFault.fingerprint) return db.profileImportWriteReleased(...a);
       answerReadFault.fingerprint = null;
       answerReadFault.fired += 1;
@@ -45,13 +60,18 @@ class Folder implements ProfileIo {
   private lists = 0;
   /** A document that lands on the folder's Nth listing, between a read and the write after it. */
   landOn: { n: number; raw: string } | null = null;
+  /** A full mailbox: every append is refused. */
+  full = false;
   async ensureMetaFolder(): Promise<void> {}
   async listProfileMessages(): Promise<RawProfileMessage[]> {
     this.lists += 1;
     if (this.landOn?.n === this.lists) await this.appendProfile(this.landOn.raw);
     return this.messages.map((m) => ({ ...m, generation: 1 }));
   }
-  async appendProfile(raw: string): Promise<void> { this.messages.push({ ref: this.uid++, raw, generation: 1 }); }
+  async appendProfile(raw: string): Promise<void> {
+    if (this.full) throw new Error("the mailbox is over its quota");
+    this.messages.push({ ref: this.uid++, raw, generation: 1 });
+  }
   async removeProfiles(refs: readonly unknown[]): Promise<void> { this.messages = this.messages.filter((m) => !refs.includes(m.ref)); }
   writers(): string[] { return this.messages.map((m) => /X-Ohmail-Install-Id: (.+)/.exec(m.raw)?.[1]?.trim() ?? "?").sort(); }
   copies(): Array<{ by: string | null; screener: number; rules: number; tags: string[] }> {
@@ -501,7 +521,9 @@ describe("a store restored from a backup never rolls the mailbox's settings back
   });
 
   /* Restored while it asked about another install's settings: the marker still names that question,
-     and the later life's copy beside it is not the restored store's to replace. It is asked next. */
+     and the later life's copy beside it is not the restored store's to replace. It is asked next.
+     CHANGED ON PURPOSE: the replaced copy now stays until the store's own copy is in the mailbox, which
+     waits for the answer about the later copy; Not now on that one publishes it, and only then theirs goes. */
   it("restored while it asked about another install's settings, keeps its later copy and asks about it next", async () => {
     const r = await rig({ planted: true });
     await r.decide("before");
@@ -515,13 +537,20 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const restoredAsks = { copies: r.folder.copies(), asking: await asking(), open: restored.importDecisionOpen() };
     await r.answer("replaced");
     await r.ticks(3, restored);
-    expect({ beside, restoredAsks, answered: { copies: r.folder.copies(), asking: await asking(), open: restored.importDecisionOpen() } }).toEqual({
+    const answered = { copies: r.folder.copies(), asking: await asking(), open: restored.importDecisionOpen() };
+    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileFingerprint(restored.asked) });
+    await r.ticks(3, restored);
+    expect({ beside, restoredAsks, answered, published: r.folder.copies() }).toEqual({
       beside: ["w-new", "w-old"],
       restoredAsks: {
         copies: [{ by: "w-old", screener: 1, rules: 0, tags: ["theirs"] }, { by: "w-new", screener: 1, rules: 0, tags: ["after", "before"] }],
         asking: "theirs", open: true,
       },
-      answered: { copies: [{ by: "w-new", screener: 1, rules: 0, tags: ["after", "before"] }], asking: "later", open: true },
+      answered: {
+        copies: [{ by: "w-old", screener: 1, rules: 0, tags: ["theirs"] }, { by: "w-new", screener: 1, rules: 0, tags: ["after", "before"] }],
+        asking: "later", open: true,
+      },
+      published: [{ by: "w-new", screener: 1, rules: 0, tags: ["after", "before"] }, { by: "w-new", screener: 0, rules: 0, tags: ["before"] }],
     });
   });
 
@@ -548,13 +577,15 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
     const asked = {
       kept: kept(), asking: marker?.fingerprint === profileFingerprint(restored.asked) && marker.heldForImport,
-      routing, left: await restored.flushBeforeLeaving(HELD),
+      routing, left: await restored.flushBeforeLeaving(HELD), risk: await restored.settingsLeftOnlyHere(),
+      // The imported copy waits with the store's decisions: the write waits for the answer about the later copy.
+      theirs: r.folder.writers().includes("w-old"),
     };
     await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileFingerprint(restored.asked) });
     await r.ticks(3, restored);
-    expect({ asked, published: { kept: kept(), newest: r.folder.newest(), left: await restored.flushBeforeLeaving(HELD) } }).toEqual({
-      asked: { kept: true, asking: true, routing: "document", left: "not_saved" },
-      published: { kept: true, newest: { by: "w-new", screener: 1, rules: 0, tags: decided === null ? ["theirs"] : ["before", "theirs"] }, left: "saved" },
+    expect({ asked, published: { kept: kept(), newest: r.folder.newest(), left: await restored.flushBeforeLeaving(HELD), theirs: r.folder.writers().includes("w-old") } }).toEqual({
+      asked: { kept: true, asking: true, routing: "document", left: "not_saved", risk: "answer", theirs: true },
+      published: { kept: true, newest: { by: "w-new", screener: 1, rules: 0, tags: decided === null ? ["theirs"] : ["before", "theirs"] }, left: "saved", theirs: false },
     });
   });
 
@@ -871,6 +902,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     });
   });
 
+  // CHANGED ON PURPOSE: the replaced copy stays while the store's decisions wait for the later copy's answer.
   it("restored while it asked about another install's settings, a decision and a restart: its later copy is asked about next", async () => {
     const r = await rig({ planted: true });
     await r.decide("before");
@@ -885,7 +917,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     await r.ticks(3, again);
     const fp = (await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId))?.fingerprint;
     expect({ asking: fp === profileFingerprint(restored.asked), open: again.importDecisionOpen(), copies: r.folder.copies() })
-      .toEqual({ asking: true, open: true, copies: [{ by: "w-new", screener: 1, rules: 0, tags: ["after", "before"] }] });
+      .toEqual({ asking: true, open: true, copies: [{ by: "w-old", screener: 1, rules: 0, tags: ["theirs"] }, { by: "w-new", screener: 1, rules: 0, tags: ["after", "before"] }] });
   });
 
   /* Restored, and another install took the mailbox over after the later life and published its own copy:
@@ -1089,6 +1121,412 @@ describe("found settings and the Import that answers them", () => {
     expect({ beside, newest: r.folder.newest() }).toEqual({
       beside: [{ by: "w-old", screener: 1, rules: 0, tags: ["theirs"] }, { by: "w-new", screener: 0, rules: 0, tags: ["theirs"] }],
       newest: { by: "w-new", screener: 1, rules: 0, tags: ["theirs"] },
+    });
+  });
+});
+
+/* WHAT A STOP AND REMOVE WOULD LOSE, read without the mailbox: decisions waiting for the answer about a
+   copy under the store's own id, or behind a newer ohmail's copy. The hand-back's own answer agrees. */
+describe("the settings a Stop and remove would leave only here", () => {
+  const reconnect = () => rig({ planted: true, theirs: PREVIOUS, by: "w-new", rowAt: RECONNECTED });
+
+  it("a decision waiting for the answer about the removed store's copy: answer, and the flush is not saved", async () => {
+    const r = await reconnect();
+    await r.decide("fresh");
+    await r.ticks(3);
+    const waiting = { risk: await r.sync.settingsLeftOnlyHere(), left: await r.sync.flushBeforeLeaving(HELD) };
+    await r.answer("declined");
+    await r.ticks(3);
+    expect({ waiting, answered: { risk: await r.sync.settingsLeftOnlyHere(), left: await r.sync.flushBeforeLeaving(HELD) } })
+      .toEqual({ waiting: { risk: "answer", left: "not_saved" }, answered: { risk: "none", left: "saved" } });
+  });
+
+  it("an empty store beside that question has nothing to lose", async () => {
+    const r = await reconnect();
+    await r.ticks(3);
+    expect({ open: r.sync.importDecisionOpen(), risk: await r.sync.settingsLeftOnlyHere() }).toEqual({ open: true, risk: "none" });
+  });
+
+  it("another install's question: the store publishes beside it, so nothing is left only here", async () => {
+    const r = await rig({ planted: true });
+    await r.decide("mine");
+    await r.ticks(2);
+    expect({ open: r.sync.importDecisionOpen(), risk: await r.sync.settingsLeftOnlyHere(), left: await r.sync.flushBeforeLeaving(HELD) })
+      .toEqual({ open: true, risk: "none", left: "saved" });
+  });
+
+  /* A COLD ATTACHMENT (a restart before the first drain, or a reader) holds nothing in memory: the marker
+     says the same-id question stands. To watch it fail: drop the marker read from `settingsLeftOnlyHere`. */
+  it("restarted or a reader, the decision still waits for the answer: answer, and the flush is not saved", async () => {
+    const r = await reconnect();
+    await r.decide("fresh");
+    await r.ticks(3);
+    const again = r.attach();
+    const cold = await again.settingsLeftOnlyHere();
+    await again.armHoldFromFolder();
+    expect({ cold, armed: await again.settingsLeftOnlyHere(), left: await again.flushBeforeLeaving(HELD) })
+      .toEqual({ cold: "answer", armed: "answer", left: "not_saved" });
+  });
+
+  it("cold with no question on record: a store with settings cannot say, an empty one has nothing", async () => {
+    const r = await rig({ planted: false });
+    await r.decide("mine");
+    await r.ticks(1);
+    const empty = await rig({ planted: false });
+    expect({ settings: await r.attach().settingsLeftOnlyHere(), empty: await empty.attach().settingsLeftOnlyHere() })
+      .toEqual({ settings: null, empty: "none" });
+  });
+
+  /* AT THE PHONE'S OWN INTERVAL a tick between writes writes nothing. Before a write is tried after the answer
+     the store cannot know the mailbox is full; the hand-back's flush finds out, and from then on the refusal
+     stands until a write lands, across ticks that write nothing and a restart. The phone's removal reads it
+     after its hand-back. To watch it fail: drop `refusedSinceLanded` from `settingsLeftOnlyHere`. */
+  it("answered, then a full mailbox, at the production interval: the hand-back finds the refusal, which stands until a write lands", async () => {
+    const r = await rig({ planted: true, theirs: PREVIOUS, by: "w-new", rowAt: RECONNECTED, flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    await r.decide("fresh");
+    await r.ticks(3);
+    const waiting = await r.sync.settingsLeftOnlyHere();
+    r.folder.full = true;
+    await r.answer("declined");
+    await r.ticks(3);
+    const untried = await r.sync.settingsLeftOnlyHere();
+    const left = await r.sync.flushBeforeLeaving(HELD);
+    const handedBack = await r.sync.settingsLeftOnlyHere();
+    await r.ticks(3);
+    const refused = { risk: await r.sync.settingsLeftOnlyHere(), restarted: await r.attach().settingsLeftOnlyHere() };
+    r.folder.full = false;
+    expect({ waiting, untried, left, handedBack, refused, landed: { left: await r.sync.flushBeforeLeaving(HELD), risk: await r.sync.settingsLeftOnlyHere() } }).toEqual({
+      waiting: "answer", untried: "none", left: "not_saved", handedBack: null, refused: { risk: null, restarted: null },
+      landed: { left: "saved", risk: "none" },
+    });
+  });
+
+  /* A TICK THAT ONLY TIDIES ends no refusal: an Import over a full mailbox, then a restart, at the production
+     interval. The restarted store's first write is refused and its next tick only tidies. */
+  it("an Import over a full mailbox and a restart: the refusal stands through the tick that only tidies", async () => {
+    const r = await rig({ planted: true, flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    await r.decide("mine");
+    r.folder.full = true;
+    await r.ticks(1);
+    await r.importInline(THEIRS);
+    await r.ticks(2);
+    const again = r.attach();
+    await again.armHoldFromFolder();
+    await r.ticks(1, again);
+    const refused = await again.settingsLeftOnlyHere();
+    await r.ticks(1, again);
+    const tidied = await again.settingsLeftOnlyHere();
+    expect({ refused, tidied, left: await again.flushBeforeLeaving(HELD), theirs: r.folder.holds(THEIRS) })
+      .toEqual({ refused: null, tidied: null, left: "not_saved", theirs: true });
+  });
+
+  /* NOR DOES THE TICK THAT RELEASES AN ANSWER, which writes nothing on purpose: Import of the held copy after a
+     refused write, at the production interval. */
+  it("Import of the held copy after a refused write: the refusal stands through the release tick", async () => {
+    const r = await rig({ planted: true, flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    await r.decide("mine");
+    r.folder.full = true;
+    await r.ticks(1);
+    const refused = await r.sync.settingsLeftOnlyHere();
+    await r.importInline(THEIRS);
+    await r.ticks(1);
+    const released = await r.sync.settingsLeftOnlyHere();
+    const left = await r.sync.flushBeforeLeaving(HELD);
+    r.folder.full = false;
+    const landed = { left: await r.sync.flushBeforeLeaving(HELD), risk: await r.sync.settingsLeftOnlyHere() };
+    // A landed write ends it: a later decision waits for the next write, as any does.
+    await r.decide("later");
+    expect({ refused, released, left, landed, later: await r.sync.settingsLeftOnlyHere() })
+      .toEqual({ refused: null, released: null, left: "not_saved", landed: { left: "saved", risk: "none" }, later: "none" });
+  });
+
+  /* A HAND-BACK THAT WROTE NOTHING (its lease stood down) leaves a decision made since the last write unknown,
+     never none: nothing will write it now. To watch it fail: return a bare "not_saved" from `flushBeforeLeaving`. */
+  it("a hand-back whose lease stood down: a decision since the last write is unknown, not none", async () => {
+    const r = await rig({ planted: false, flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    await r.decide("mine");
+    await r.ticks(1);
+    await r.decide("more");
+    const pending = await r.sync.settingsLeftOnlyHere();
+    const left = await r.sync.flushBeforeLeaving({ revoked: true } as unknown as OrganizerWriteAuthority);
+    expect({ pending, left, after: await r.sync.settingsLeftOnlyHere(), mailbox: r.folder.copies() })
+      .toEqual({ pending: "none", left: "not_saved", after: null, mailbox: [{ by: "w-new", screener: 0, rules: 0, tags: ["mine"] }] });
+  });
+
+  it("a newer ohmail's copy: decisions since are left only here, and the flush keeps the other", async () => {
+    const r = await rig({ planted: false });
+    await r.decide("mine");
+    await r.ticks(1);
+    const before = await r.sync.settingsLeftOnlyHere();
+    await r.folder.appendProfile(formatProfileMessage({ ...THEIRS, updatedAt: r.clock.at.toISOString() }, { installId: "w-old" })
+      .replace(`"v": ${PROFILE_VERSION}`, `"v": ${PROFILE_VERSION + 1}`));
+    await r.decide("more");
+    await r.ticks(2);
+    expect({ before, risk: await r.sync.settingsLeftOnlyHere(), left: await r.sync.flushBeforeLeaving(HELD) })
+      .toEqual({ before: "none", risk: "newer", left: "kept_other" });
+  });
+
+  /* OFFLINE NO TICK RUNS AND NO WRITE IS TRIED, so nothing is refused: a decision made since the last write is in the
+     store only, and the press's read says none, since the hand-back's flush is due to save it. On the way out
+     (`leaving`) nothing stands in for the comparison. To watch it fail: let `leaving` return at the shortcut. */
+  it("offline at the production interval: on the way out a decision since the last write is not none, the last copy alone is", async () => {
+    const r = await rig({ planted: false, flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    await r.decide("mine");
+    await r.ticks(1);
+    const written = await r.sync.settingsLeftOnlyHere({ leaving: true });
+    r.later(60_000);
+    await r.decide("offline");
+    expect({ written, pressed: await r.sync.settingsLeftOnlyHere(), leaving: await r.sync.settingsLeftOnlyHere({ leaving: true }), mailbox: r.folder.copies() })
+      .toEqual({ written: "none", pressed: "none", leaving: null, mailbox: [{ by: "w-new", screener: 0, rules: 0, tags: ["mine"] }] });
+  });
+
+  /* THE SCREENER WINDOW travels in the copy's envelope, outside the fingerprint: moved since the last write, it is in
+     the store only too. The hand-back's flush carries where the gap began, so it writes. To watch it fail: compare
+     the fingerprint alone. */
+  it("a Screener window moved since the last write is not none on the way out, and the hand-back's write ends it", async () => {
+    const r = await rig({ planted: false, baseline: true, flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    await r.decide("mine");
+    await r.ticks(1);
+    await r.db.update(accountSettings).set({ dormancyDays: 60 }).where(eq(accountSettings.accountId, r.accountId));
+    const moved = await r.sync.settingsLeftOnlyHere({ leaving: true });
+    const gap = { gap: { since: r.clock.at.toISOString(), by: "w-new", at: r.clock.at.toISOString() } };
+    expect({ moved, left: await r.sync.flushBeforeLeaving(HELD, undefined, gap), after: await r.sync.settingsLeftOnlyHere({ leaving: true }) })
+      .toEqual({ moved: null, left: "saved", after: "none" });
+  });
+
+  /* A HAND-BACK THAT OWED THE WRITE AND REACHED NO SERVER ran no flush: `flushNotRun` says not saved, and that stands
+     for the press's read until a write lands, as a flush's own refusal does. */
+  it("a hand-back that reached no server: not saved, and it stands until a write lands", async () => {
+    const r = await rig({ planted: false, flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    await r.decide("mine");
+    await r.ticks(1);
+    await r.decide("offline");
+    const left = r.sync.flushNotRun();
+    const pressed = await r.sync.settingsLeftOnlyHere();
+    expect({ left, pressed, landed: { left: await r.sync.flushBeforeLeaving(HELD), pressed: await r.sync.settingsLeftOnlyHere() } })
+      .toEqual({ left: "not_saved", pressed: null, landed: { left: "saved", pressed: "none" } });
+  });
+});
+
+/* STOP AND REMOVE ON THE PHONE, its removal end read through this store at the phone's own interval. The door stands
+   in for the engine's hand-back (`apps/sidecar/src/engine.ts`): one that saves, one that says nothing (a dead socket
+   whose fresh dial was refused, on an engine that never said more, or a mailbox already handed back, which owes no
+   write), and one that says not saved, as an engine that owed the write and reached no server does. The store is
+   deleted only when it says no more than the last copy written, as a hand-back that saved leaves it; anything else
+   keeps it. */
+describe("Stop and remove on the phone keeps a store the mailbox does not have", () => {
+  const phone = () => rig({ planted: false, flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+  /** `lets_go` flushes with the gap the engine's hand-back carries (`lettingGo`). */
+  function door(r: Awaited<ReturnType<typeof phone>>, hand: "saves" | "lets_go" | "says_nothing" | "not_saved"): StandaloneEngine {
+    let left: SettingsLeft | undefined;
+    const no = async (): Promise<never> => { throw new Error("not driven"); };
+    const at = r.clock.at.toISOString();
+    return {
+      accountId: "engine-account", address: "phone@example.test", sessionToken: "t", handle: no, log: () => undefined,
+      stop: async () => undefined, leave: () => undefined, forgetStoredLogin: async () => true, serverSettings: async () => null,
+      resume: no, claimHere: no, heldElsewhere: async () => null, stopOrganizing: no,
+      handBack: async () => {
+        left = hand === "saves" ? await r.sync.flushBeforeLeaving(HELD)
+          : hand === "lets_go" ? await r.sync.flushBeforeLeaving(HELD, undefined, { gap: { since: at, by: "w-new", at } })
+          : hand === "not_saved" ? r.sync.flushNotRun() : undefined;
+        return [{ mailboxId: r.mailboxId, released: hand === "saves" ? 1 : null }];
+      },
+      runtimes: () => ({
+        organizer: { [r.mailboxId]: {
+          organizing: false, heldBy: null, reason: null, releaseRequestedAt: null, claimed: false, ...(left === undefined ? {} : { settingsLeft: left }),
+        } },
+        connection: { [r.mailboxId]: { reachable: false, unreachableSince: null, signInRefused: false, firstSync: "finished" } },
+      }),
+      settingsLeftOnlyHere: (opts?: { leaving?: boolean }) => r.sync.settingsLeftOnlyHere(opts),
+    } as unknown as StandaloneEngine;
+  }
+  const end = async (d: StandaloneEngine) => {
+    forgetOrganizerSessionForTests();
+    expect(holdStandaloneDoor(d)).toBe(true);
+    return (await endStandaloneForRemoval()).settingsKept;
+  };
+  /** The first write, then a decision a minute later: in the store only. */
+  const decidedOffline = async () => {
+    const r = await phone();
+    await r.decide("mine");
+    await r.ticks(1);
+    r.later(60_000);
+    await r.decide("offline");
+    return r;
+  };
+
+  it("the mail server cannot be reached: a decision since the last write keeps the store, whatever the hand-back said", async () => {
+    const quiet = await decidedOffline();
+    const told = await decidedOffline();
+    expect({ quiet: await end(door(quiet, "says_nothing")), told: await end(door(told, "not_saved")), mailbox: quiet.folder.tagsOf("w-new") })
+      .toEqual({ quiet: "unknown", told: "unsaved", mailbox: [["mine"]] });
+  });
+
+  /* THE iOS WINDOW: the background hand-back saved, the app came back in front and the resume has not claimed yet. A
+     change made then owes no write to this hand-back, so it says nothing; the store says more than the last copy. */
+  it("a change made while the mailbox is handed back keeps the store", async () => {
+    const r = await phone();
+    await r.decide("mine");
+    await r.ticks(1);
+    const background = await r.sync.flushBeforeLeaving(HELD);
+    r.later(60_000);
+    await r.decide("while handed back");
+    expect({ background, kept: await end(door(r, "says_nothing")), newest: r.folder.newest()?.tags })
+      .toEqual({ background: "saved", kept: "unknown", newest: ["mine"] });
+  });
+
+  /* A DOUBLE TAP whose first removal kept the store: the second one, queued behind it, holds no door, and the claim
+     the first could not give back still stands. */
+  it("a removal queued behind one that kept the store holds no door, and keeps it too", async () => {
+    const r = await decidedOffline();
+    const first = await end(door(r, "says_nothing"));
+    expect({ first, second: await endStandaloneForRemoval() }).toEqual({ first: "unknown", second: { released: false, settingsKept: "unknown" } });
+  });
+
+  it("CONTROL: nothing new since the last write lets the store go offline; a hand-back that saves lets it go too", async () => {
+    const r = await phone();
+    await r.decide("mine");
+    await r.ticks(1);
+    const unchanged = await end(door(r, "not_saved"));
+    const saved = await decidedOffline();
+    expect({ unchanged, saved: await end(door(saved, "saves")), newest: saved.folder.newest()?.tags })
+      .toEqual({ unchanged: null, saved: null, newest: ["mine", "offline"] });
+  });
+
+  it("CONTROL: the hand-back's write refused by a full mailbox keeps it: unsaved", async () => {
+    const r = await decidedOffline();
+    r.folder.full = true;
+    expect({ kept: await end(door(r, "saves")), mailbox: r.folder.tagsOf("w-new") }).toEqual({ kept: "unsaved", mailbox: [["mine"]] });
+  });
+
+  /** A consent that moved no dial: the baseline alone. */
+  const consentOnly = (r: Awaited<ReturnType<typeof phone>>) =>
+    r.db.insert(accountSettings).values({ accountId: r.accountId, updatedAt: r.clock.at, screeningBaselineAt: r.clock.at });
+  /** The seed adopts another install's copy saying what the store says; the store's first write is refused. */
+  const adoptedThenRefused = async (window: "dialled" | "consented" | "unset") => {
+    const r = await rig({ planted: false, ...(window === "dialled" ? { baseline: true as const } : {}), flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    if (window === "consented") await consentOnly(r);
+    await r.decide("mine");
+    const same = makeProfileDoc(await serializeOrganizerProfile(r.db, r.accountId, r.mailboxId),
+      { updatedAt: new Date("2026-09-28T11:00:00.000Z"), producer: { kind: "local", version: "0.30.20" } });
+    await r.folder.appendProfile(formatProfileMessage(same, { installId: "w-old" }));
+    r.folder.full = true;
+    await r.ticks(1);
+    r.later(60_000);
+    return r;
+  };
+  const moveWindow = (r: Awaited<ReturnType<typeof phone>>) =>
+    r.db.update(accountSettings).set({ dormancyDays: 61 }).where(eq(accountSettings.accountId, r.accountId));
+
+  /* AN ADOPTED COPY STATES NO WINDOW OF THE STORE'S, so until a write of its own lands the store's window is not known
+     to be in the mailbox: moved, it is there only. To watch it fail: count an unknown window as written. */
+  it("an adopted copy and a refused first write: a moved Screener window keeps the store, full or offline", async () => {
+    const full = await adoptedThenRefused("dialled");
+    await moveWindow(full);
+    const off = await adoptedThenRefused("dialled");
+    await moveWindow(off);
+    expect({ full: await end(door(full, "lets_go")), off: await end(door(off, "not_saved")), writers: [full.folder.writers(), off.folder.writers()] })
+      .toEqual({ full: "unsaved", off: "unsaved", writers: [["w-old"], ["w-old"]] });
+  });
+
+  /* AN EMPTY STORE SAYS ITS WINDOW, which a consented one publishes. To watch it fail: let an empty store go whatever
+     its window. */
+  it("an empty consented store whose first write was refused keeps a moved Screener window", async () => {
+    const r = await rig({ planted: false, baseline: true, flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    r.folder.full = true;
+    await r.ticks(1);
+    r.later(60_000);
+    await moveWindow(r);
+    expect({ kept: await end(door(r, "not_saved")), mailbox: r.folder.copies() }).toEqual({ kept: "unsaved", mailbox: [] });
+  });
+
+  it("CONTROL: offline, the window the store's own copy carries, or the default window beside an adopted copy, lets it go", async () => {
+    const own = await rig({ planted: false, baseline: true, flushIntervalMs: DEFAULT_PROFILE_FLUSH_INTERVAL_MS });
+    await own.decide("mine");
+    await own.ticks(1);
+    own.later(60_000);
+    const unconsented = await adoptedThenRefused("unset");
+    expect({ own: await end(door(own, "not_saved")), unconsented: await end(door(unconsented, "not_saved")) })
+      .toEqual({ own: null, unconsented: null });
+  });
+
+  /* THE BASELINE IS THE ORGANIZER'S OWN CONSENT INSTANT, which every organizer stamps anew and none takes from the
+     mailbox: no setting to lose. To watch it fail: compare the baseline of a window no write published. */
+  it("CONTROL: consented with no dial moved, the first write refused: an empty store and an adopted copy let it go", async () => {
+    const empty = await phone();
+    await consentOnly(empty);
+    empty.folder.full = true;
+    await empty.ticks(1);
+    const adopted = await adoptedThenRefused("consented");
+    expect({ empty: await end(door(empty, "not_saved")), adopted: await end(door(adopted, "not_saved")), mailbox: empty.folder.copies() })
+      .toEqual({ empty: null, adopted: null, mailbox: [] });
+  });
+});
+
+/* A REFUSED APPEND NEVER LEAVES AN IMPORT ONLY IN THE STORE: the copy an Import lets go stays in the mailbox
+   until a write of the store as the answer left it lands, then goes on the next pass. To watch it fail:
+   drop `stillUnpublished()` from the write's `kept` or from the tidy's, or ignore the stamp in
+   `answersPublished`. */
+describe("an imported copy stays until the store's copy carrying it lands", () => {
+  const merged = { by: "w-new", screener: 1, rules: 0, tags: ["mine", "theirs"] };
+
+  it("Import, then a full mailbox: theirs stays through the refusals, the merged copy lands, then theirs goes", async () => {
+    const r = await rig({ planted: true });
+    await r.decide("mine");
+    await r.ticks(1);
+    await r.importInline(THEIRS);
+    r.folder.full = true;
+    const refused: boolean[] = [];
+    for (let i = 0; i < 4; i++) { await r.ticks(1); refused.push(r.folder.holds(THEIRS)); }
+    r.folder.full = false;
+    await r.ticks(1);
+    const landed = { theirs: r.folder.holds(THEIRS), newest: r.folder.newest() };
+    await r.ticks(1);
+    expect({ refused, landed, after: r.folder.copies() }).toEqual({
+      refused: [true, true, true, true], landed: { theirs: true, newest: merged }, after: [merged],
+    });
+  });
+
+  // Nothing of the store's ever landed, so theirs is the newest copy the restarted seed reads.
+  it("a full mailbox, Import and a restart: no question again, theirs stays, then the merged copy replaces it", async () => {
+    const r = await rig({ planted: true });
+    await r.decide("mine");
+    r.folder.full = true;
+    await r.ticks(1);
+    await r.importInline(THEIRS);
+    await r.ticks(2);
+    const asked = async (): Promise<number> => (await r.db.select({ payload: auditLog.payload }).from(auditLog))
+      .filter((row) => (row.payload as { state?: string; heldForImport?: boolean } | null)?.heldForImport === true).length;
+    const before = await asked();
+    const again = r.attach();
+    await again.armHoldFromFolder();
+    await r.ticks(1, again);
+    const seeded = { open: again.importDecisionOpen(), asked: (await asked()) - before };
+    await r.ticks(2, again);
+    const restarted = { ...seeded, routing: await r.routing(again), theirs: r.folder.holds(THEIRS) };
+    r.folder.full = false;
+    await r.ticks(2, again);
+    expect({ restarted, after: r.folder.copies() })
+      .toEqual({ restarted: { open: false, asked: 0, routing: "closed", theirs: true }, after: [merged] });
+  });
+
+  /* THE STAMP: an answer read after the tick serialized the store is not in that tick's copy, so that copy
+     landing lets nothing go; the next tick's store carries it, and while that one is refused theirs stays. */
+  it("an Import committed after the tick read the store: theirs stays through that tick's write and the refused next", async () => {
+    const r = await rig({ planted: true });
+    await r.decide("mine");
+    Object.assign(answerLands, { fingerprint: profileFingerprint(THEIRS), record: () => r.importInline(THEIRS) });
+    await r.ticks(1);
+    const first = { theirs: r.folder.holds(THEIRS), newest: r.folder.newest() };
+    await r.decide("more");
+    r.folder.full = true;
+    await r.ticks(2);
+    const refused = r.folder.holds(THEIRS);
+    r.folder.full = false;
+    await r.ticks(2);
+    expect({ first, refused, after: r.folder.copies() }).toEqual({
+      first: { theirs: true, newest: { by: "w-new", screener: 0, rules: 0, tags: ["mine"] } }, refused: true,
+      after: [{ by: "w-new", screener: 1, rules: 0, tags: ["mine", "more", "theirs"] }],
     });
   });
 });

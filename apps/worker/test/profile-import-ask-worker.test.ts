@@ -439,6 +439,41 @@ describe("the organizer's tick answers a handed-over press", () => {
     }
   });
 
+  /* A REFUSED APPEND AFTER THE PRESS: the merge is in the store, and the copy it came from stays in the mailbox
+     until the store's copy carrying it lands; never only on this install. */
+  it("a handed-over press, then a server that does not keep the write: the imported copy stays until the merged one lands", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const mb = await seed(db);
+    const meta = fleet.metaFor(mb.mailboxId);
+    // The store began before this test's clock, so its own copies are its own (`ownSince`).
+    await db.update(mailboxes).set({ createdAt: new Date("2026-09-01T00:00:00Z") }).where(eq(mailboxes.id, mb.mailboxId));
+    await db.insert(tags).values({ accountId: mb.accountId, name: "mine" });
+    await meta.appendProfile(formatProfileMessage(FOREIGN, { installId: "another-mac" }));
+    let now = new Date("2026-09-26T20:00:00Z");
+    const s = sync(db, fleet, mb, () => now, []);
+    await s.onOrganize();
+    const writers = (): string[] => meta.messages.map((m) => /X-Ohmail-Install-Id: (.+)/.exec(m.raw)?.[1]?.trim() ?? "?").sort();
+    const beside = writers();
+    now = new Date(now.getTime() + 1000);
+    await recordImportAsk(db as unknown as Tx, { accountId: mb.accountId, mailboxId: mb.mailboxId, fingerprint: FP, now });
+    // The server keeps a different tag than it was handed ("mine" as "mime"): the copy reads back otherwise and is removed.
+    meta.profileStoredAs = (raw) => raw.split("\\u006e\\u0065\"").join("\\u006d\\u0065\"");
+    const refused: string[][] = [];
+    for (let i = 0; i < 3; i++) { await s.onOrganize(); refused.push(writers()); now = new Date(now.getTime() + INTERVAL); }
+    meta.profileStoredAs = null;
+    now = new Date(now.getTime() + 25 * 60 * 60 * 1000);
+    await s.onOrganize();
+    const landed = writers();
+    now = new Date(now.getTime() + INTERVAL);
+    await s.onOrganize();
+    expect({ asked: (await askOf(db, mb.mailboxId)).outcome, beside, refused, landed, after: writers() }).toEqual({
+      asked: "imported", beside: ["another-mac", INSTALL],
+      refused: [["another-mac", INSTALL], ["another-mac", INSTALL], ["another-mac", INSTALL]],
+      landed: ["another-mac", INSTALL], after: [INSTALL],
+    });
+  }, 60_000);
+
   it("CONTROL: with no ask, the debounce still holds — no read inside the interval", async () => {
     const db = makeDb(DB);
     const fleet = new FakeAdapterFleet();

@@ -23,11 +23,12 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { BackgroundService, ServiceNotice } from "../src/engine/background";
 import {
   appPhaseOf,
+  endStandaloneForRemoval,
   forgetOrganizerSessionForTests,
   holdStandaloneDoor,
   organizerBackgrounded,
@@ -35,6 +36,7 @@ import {
   organizerRestrictedSaid,
   organizerSessionLive,
   organizerSettingsLeft,
+  organizerSettingsLeftOnlyHere,
   claimHereStandalone,
   stopOrganizingStandalone,
   sayOrganizerRestricted,
@@ -43,7 +45,7 @@ import {
   startOrganizerSession,
   stopOrganizerSession,
 } from "../src/engine/organizer-session";
-import type { StandaloneEngine } from "../src/engine/standalone-door";
+import { CLAIM_LAPSES_AFTER_MINUTES, type StandaloneEngine } from "../src/engine/standalone-door";
 import { claimChipLabel, claimHere, settingsLeftLine } from "../src/ui/standalone-form";
 import { EN } from "../src/copy.en";
 
@@ -643,5 +645,152 @@ describe("a stop that could not leave this phone's settings in the mailbox says 
 
   it("Settings renders the sentence under the card", () => {
     expect(SETTINGS).toContain("settingsLeftLine(organizerSettingsLeft(), claim)");
+  });
+});
+
+/* ── what a Stop and remove would drop ───────────────────────────────────────────────────────── */
+
+describe("the store's own read of what Stop and remove would drop", () => {
+  it("is the engine's answer, and null where no door, no read or a failed read can say", async () => {
+    forgetOrganizerSessionForTests();
+    const none = await organizerSettingsLeftOnlyHere();
+    expect(holdStandaloneDoor(fakeDoor())).toBe(true);
+    const older = await organizerSettingsLeftOnlyHere();
+    forgetOrganizerSessionForTests();
+    expect(holdStandaloneDoor({ ...fakeDoor(), settingsLeftOnlyHere: async () => "answer" })).toBe(true);
+    const answered = await organizerSettingsLeftOnlyHere();
+    forgetOrganizerSessionForTests();
+    expect(holdStandaloneDoor({ ...fakeDoor(), settingsLeftOnlyHere: async () => { throw new Error("the store is closed"); } })).toBe(true);
+    expect({ none, older, answered, failed: await organizerSettingsLeftOnlyHere() })
+      .toEqual({ none: null, older: null, answered: "answer", failed: null });
+  });
+});
+
+/* ── what the removal's end leaves in the store ──────────────────────────────────────────────── */
+
+/* THE HAND-BACK'S WRITE IS THE ONE THAT FINDS A FULL MAILBOX, so the removal reads the store after it, while
+   the engine still runs (its store closes with it). The forget keeps the store for anything but `null`, and `null`
+   only where the store says no more than the mailbox's last copy or, with no read to go by, the hand-back saved. */
+describe("the removal's end says what deleting the store would drop", () => {
+  type Said = "answer" | "newer" | "none" | null;
+  /**
+   * A door whose hand-back leaves `left` and whose store says `said` on the way out; the press's read (no `leaving`)
+   * says `pressed`, its shortcut. That read fails once the engine stopped.
+   */
+  function leaving(
+    left: "saved" | "kept_other" | "not_saved" | undefined, said: Said | "absent" | "throws", pressed: Said = "none",
+  ): StandaloneEngine {
+    let stopped = false;
+    const door = fakeDoor();
+    const organizer = {
+      organizing: false, heldBy: null, reason: null, releaseRequestedAt: null, claimed: false,
+      ...(left === undefined ? {} : { settingsLeft: left }),
+    };
+    return {
+      ...door,
+      stop: async () => { stopped = true; },
+      runtimes: () => ({ ...door.runtimes(), organizer: { m1: organizer } }),
+      ...(said === "absent" ? {} : {
+        settingsLeftOnlyHere: async (opts?: { leaving?: boolean }): Promise<Said> => {
+          if (stopped || said === "throws") throw new Error("the store is closed");
+          return opts?.leaving === true ? said : pressed;
+        },
+      }),
+    };
+  }
+  const end = async (door: StandaloneEngine | null) => {
+    forgetOrganizerSessionForTests();
+    if (door !== null) expect(holdStandaloneDoor(door)).toBe(true);
+    return (await endStandaloneForRemoval()).settingsKept;
+  };
+
+  it("a refused write on the way out with the store saying more keeps it: unsaved", async () => {
+    expect(await end(leaving("not_saved", null))).toBe("unsaved");
+  });
+
+  it("nothing more than the mailbox's last copy, or a save, lets the store go", async () => {
+    expect({ unsaved: await end(leaving("not_saved", "none")), saved: await end(leaving("saved", "none")) })
+      .toEqual({ unsaved: null, saved: null });
+  });
+
+  /* THE PRESS'S SHORTCUT IS NO ANSWER ON THE WAY OUT: offline, or with the mailbox already handed back, no flush ran
+     and nothing was refused, so a press would read none over a store that says more. */
+  it("the way out reads the store against the last copy, never the press's shortcut", async () => {
+    expect({ quiet: await end(leaving(undefined, null)), told: await end(leaving("not_saved", null)) })
+      .toEqual({ quiet: "unknown", told: "unsaved" });
+  });
+
+  it("with no read to go by, a hand-back that saved lets the store go", async () => {
+    expect({ unread: await end(leaving("saved", "throws")), absent: await end(leaving("saved", "absent")) })
+      .toEqual({ unread: null, absent: null });
+  });
+
+  it("a store that says more than the copy the hand-back saved keeps it: a change since the flush", async () => {
+    expect(await end(leaving("saved", null))).toBe("unknown");
+  });
+
+  it("no door: nothing can read the store, so it stays", async () => {
+    expect(await end(null)).toBe("unknown");
+  });
+
+  it("the settings question and a newer ohmail's copy keep it, read before the engine stops", async () => {
+    expect({ answer: await end(leaving(undefined, "answer")), newer: await end(leaving("kept_other", "newer")) })
+      .toEqual({ answer: "answer", newer: "newer" });
+  });
+
+  it("an engine without the read: only a save lets the store go", async () => {
+    expect({
+      unsaved: await end(leaving("not_saved", "absent")), newer: await end(leaving("kept_other", "absent")),
+      saved: await end(leaving("saved", "absent")), none: await end(leaving(undefined, "absent")),
+    }).toEqual({ unsaved: "unsaved", newer: "newer", saved: null, none: "unknown" });
+  });
+
+  it("a read that fails keeps it, failing closed", async () => {
+    expect({ unsaved: await end(leaving("not_saved", "throws")), unknown: await end(leaving(undefined, "throws")) })
+      .toEqual({ unsaved: "unsaved", unknown: "unknown" });
+  });
+
+  it("still answers whether the claim went, and stops the engine", async () => {
+    forgetOrganizerSessionForTests();
+    const log = { stopped: 0 };
+    const door = leaving("not_saved", null);
+    expect(holdStandaloneDoor({ ...door, handBack: async () => [{ mailboxId: "m1", released: null }], stop: async () => { log.stopped += 1; } }))
+      .toBe(true);
+    expect({ ended: await endStandaloneForRemoval(), stopped: log.stopped })
+      .toEqual({ ended: { released: false, settingsKept: "unsaved" }, stopped: 1 });
+  });
+
+  /* REMOVE ANYWAY, after a removal that kept the store, holds no door and hands nothing back: the claim that removal
+     could not give back still stands, and the forget says so. A door held again (Keep the mailbox) answers for
+     itself. To watch it fail: answer a removal with no door as released. */
+  it("a removal behind one that kept the store says the claim that one could not give back still stands", async () => {
+    forgetOrganizerSessionForTests();
+    const handingBack = (released: number | null): StandaloneEngine =>
+      ({ ...leaving(undefined, null), handBack: async () => [{ mailboxId: "m1", released }] });
+    expect(holdStandaloneDoor(handingBack(null))).toBe(true);
+    const kept = await endStandaloneForRemoval();
+    const anyway = await endStandaloneForRemoval();
+    expect(holdStandaloneDoor(handingBack(1))).toBe(true);
+    const reopened = await endStandaloneForRemoval();
+    expect({ kept, anyway, reopened, after: await endStandaloneForRemoval() }).toEqual({
+      kept: { released: false, settingsKept: "unknown" }, anyway: { released: false, settingsKept: "unknown" },
+      reopened: { released: true, settingsKept: "unknown" }, after: { released: true, settingsKept: "unknown" },
+    });
+  });
+
+  /* The claim lapses on its own: a Remove anyway after that says nothing holds the mailbox. */
+  it("a removal behind a kept one once the claim has lapsed says it went", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      forgetOrganizerSessionForTests();
+      expect(holdStandaloneDoor({ ...leaving(undefined, null), handBack: async () => [{ mailboxId: "m1", released: null }] })).toBe(true);
+      await endStandaloneForRemoval();
+      vi.setSystemTime(Date.now() + CLAIM_LAPSES_AFTER_MINUTES * 60_000 - 1_000);
+      const inside = (await endStandaloneForRemoval()).released;
+      vi.setSystemTime(Date.now() + 1_000);
+      expect({ inside, lapsed: (await endStandaloneForRemoval()).released }).toEqual({ inside: false, lapsed: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

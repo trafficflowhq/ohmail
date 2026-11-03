@@ -1619,6 +1619,14 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
            question is about this COMPUTER, not about a door, so both doors get it. Every read
            and verb in the row is a shell command (`DesktopDefaultMail.tsx`). */
         {...(status ? { defaultMailSection: <DefaultMailRow /> } : {})}
+        /* THE ONE-TIME DEFAULT-MAIL ASK — in the stage's card slot above the mail, once a mailbox is
+           connected, and never twice: either answer persists, and "already the default" persists too;
+           the Settings row is the durable way back for "Not now". In the flow, so it covers no Save.
+           NOT WHILE THE SETUP FLOW IS OPEN — measured on the released 0.13.7: at +15 s this prompt
+           stacked ON TOP of the flow's own Continue and Cancel. `route.firstRun` is the stage's own
+           gate in `AppShell`, read through the shared hash router so the two cannot disagree. It WAITS
+           rather than being withheld, as it waits behind a found-settings question. */
+        stageCard={routeNow.firstRun ? undefined : <DefaultMailAsk />}
         /* A MAILTO CLICK BECOMING THE COMPOSE FORM — the claim effect above holds the parsed
            fields until this render has a real engine behind it, and the shell seeds compose
            exactly the way `writeTo` does (see `AppShell`'s `mailtoDraft`). Cleared once seeded,
@@ -1637,15 +1645,6 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
         {...(firstRun ? { firstRun } : {})}
         onUnread={onUnread}
       />
-      {/* THE ONE-TIME DEFAULT-MAIL ASK — over the mail, once a mailbox is connected, and
-          never twice: either answer persists, and "already the default" persists too; the
-          Settings row above is the durable way back for "Not now". NOT WHILE THE SETUP FLOW
-          IS OPEN — measured on the released 0.13.7: at +15 s this prompt stacked ON TOP of
-          the flow's own Continue and Cancel and HID them until dismissed. `route.firstRun`
-          is the stage's own gate in `AppShell`, read through the shared hash router so the
-          two cannot disagree. It WAITS rather than being withheld: the ask is one-time and
-          un-answered, so it is offered on the next visit with the flow closed. */}
-      {routeNow.firstRun ? null : <DefaultMailAsk />}
       {doorOverlay}
       {refusedCard}
     </>

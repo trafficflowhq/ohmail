@@ -106,6 +106,7 @@ class MemoryMetaFolder implements LeaseIo, ProfileIo {
     return this.claims.filter((c) => c.raw.includes(`X-Ohmail-Install-Id: ${installId}`)).map((c) => ({ ...c }));
   }
   get count(): number { return this.claims.length; }
+  get copies(): number { return this.profiles.length; }
 }
 
 let uid = 70;
@@ -431,5 +432,22 @@ describe.runIf(ON_DEVICE_STORE)("the gap window a hand-back opens, on the device
     for (let i = 0; i < 80 && gap().letters === null; i++) { server.ring?.(); await new Promise((r) => setTimeout(r, 50)); }
     expect(gap(), "the imported rule's letter was never offered").toMatchObject({ letters: 1, pressed: null });
     expect(server.moves, "an offer moved mail").toEqual([]);
+  }, 60_000);
+});
+
+/* STOP AND REMOVE READS THE DEVICE STORE AGAINST THE LAST SETTINGS COPY on the way out (`leaving`), through the phone
+   engine's own door; the press's read keeps its shortcut while the hand-back's flush is due. */
+describe.runIf(ON_DEVICE_STORE)("the phone engine's read of what Stop and remove would drop", () => {
+  it("a decision since the last write: none to the press, not none on the way out until the hand-back saves it", async () => {
+    const p = await organizingPhone();
+    expect(p.meta.copies, "premise: the phone's settings are in the mailbox").toBe(1);
+    const at = Date.now();
+    p.exec.direct(`insert into rules (account_id, kind, match, destination, provenance, enabled, created_at, updated_at)
+      values ((select account_id from mailboxes where id = ?), 'sender', 'later@news.test', 'ohmail/News', 'manual', 1, ?, ?)`,
+    [p.id, at, at]);
+    const decided = { pressed: await p.engine.settingsLeftOnlyHere(), leaving: await p.engine.settingsLeftOnlyHere({ leaving: true }) };
+    await p.engine.handBack();
+    expect({ decided, left: p.engine.runtimes().organizer[p.id]?.settingsLeft, leaving: await p.engine.settingsLeftOnlyHere({ leaving: true }) })
+      .toEqual({ decided: { pressed: "none", leaving: null }, left: "saved", leaving: "none" });
   }, 60_000);
 });

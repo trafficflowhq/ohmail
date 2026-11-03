@@ -9,8 +9,9 @@
  * is already released — a standing notification would say "Organizing" over a reader.
  */
 import { faultDetail, refuse, type Refusal } from "../refusal";
-import type {
-  ClaimHereOutcome, PhoneServerSettings, StandaloneEngine, StopOrganizingOutcome,
+import {
+  CLAIM_LAPSES_AFTER_MINUTES,
+  type ClaimHereOutcome, type PhoneServerSettings, type StandaloneEngine, type StopOrganizingOutcome,
 } from "./standalone-door";
 import { gateBlockOf, type GateBlock } from "../ui/standalone-form";
 import {
@@ -67,6 +68,9 @@ export function appPhaseOf(status: string): AppPhase {
  */
 let door: StandaloneEngine | null = null;
 
+/** When the last door's hand-back could not give its claim back; `null` when it did, or a door was held since. */
+let claimLeftAt: number | null = null;
+
 /**
  * Record the door this app just opened. Answers whether THIS call is the held one, so a caller that
  * cares can say so; a second, different door changes nothing.
@@ -74,6 +78,7 @@ let door: StandaloneEngine | null = null;
 export function holdStandaloneDoor(opened: StandaloneEngine): boolean {
   if (door === null) {
     door = opened;
+    claimLeftAt = null;
     /* THE PANEL HAS A DOOR TO READ NOW. A screen mounted before the engine came up would
        otherwise keep rendering nothing until something else re-rendered it. */
     notifyOrganizerState();
@@ -940,6 +945,53 @@ export function sayOrganizerRestricted(): void {
  * comes back. Never throws, and `false` never blocks the row removal — the caller says so.
  */
 export async function endStandaloneHere(): Promise<boolean> {
+  return (await endHere(false)).released;
+}
+
+/**
+ * What deleting the store would drop, read once the hand-back is over: decisions waiting for the settings
+ * question (`answer`), behind a newer ohmail's copy (`newer`), refused by the mailbox (`unsaved`), or settings
+ * the engine cannot vouch for (`unknown`).
+ */
+export type SettingsKeptHere = "answer" | "newer" | "unsaved" | "unknown";
+
+/**
+ * THE REMOVAL'S END: {@link endStandaloneHere}, reading between the hand-back and the engine's stop what
+ * deleting the store would drop ({@link settingsOnlyInStore}). The forget keeps the store and asks while
+ * `settingsKept` is not `null`: the hand-back's own write is the one that can find a full mailbox.
+ */
+export async function endStandaloneForRemoval(): Promise<{ released: boolean; settingsKept: SettingsKeptHere | null }> {
+  return endHere(true);
+}
+
+/**
+ * THE STORE GOES ONLY WHERE ITS SETTINGS ARE KNOWN TO BE IN THE MAILBOX: the engine reads the store against the
+ * last copy written (`leaving`, never the press's shortcut) and it says no more, or, with no read to go by, the
+ * hand-back saved them. Anything else keeps it: a flush no connection could run, one refused, a newer ohmail's
+ * copy, a change since the flush. A mailbox already handed back owes no flush, so a change made since is found here.
+ */
+async function settingsOnlyInStore(held: StandaloneEngine): Promise<SettingsKeptHere | null> {
+  const left = leftBehindOf(held);
+  const said = typeof held.settingsLeftOnlyHere === "function"
+    ? await held.settingsLeftOnlyHere({ leaving: true }).catch(() => undefined)
+    : undefined;
+  if (said === "none") return null;
+  if (said === "answer" || said === "newer") return said;
+  if (said === undefined && handBackSaved(held)) return null;
+  return left === "not_saved" ? "unsaved" : left === "kept_other" ? "newer" : "unknown";
+}
+
+/** Every mailbox's hand-back said it saved this install's settings into the mailbox. */
+function handBackSaved(held: StandaloneEngine): boolean {
+  try {
+    const states = Object.values(held.runtimes().organizer);
+    return states.length > 0 && states.every((s) => s.settingsLeft === "saved");
+  } catch {
+    return false;
+  }
+}
+
+async function endHere(readKept: boolean): Promise<{ released: boolean; settingsKept: SettingsKeptHere | null }> {
   const held = door;
   door = null;
   /* The launch is over too, and for the discard's reason: this stops the engine, so a background
@@ -951,17 +1003,32 @@ export async function endStandaloneHere(): Promise<boolean> {
   queued = null;
   sessionDeps = null;
   notifyOrganizerState();
-  /* A throw and a `null` entry are the same fact — nothing proves the claim left the folder — and
-     an install holding no door has none to give back, which is not a failed release. */
+  /* A throw and a `null` entry are the same fact — nothing proves the claim left the folder. An install
+     holding no door gives nothing back now: what the last hand-back could not give back stands until it lapses
+     (Remove anyway behind a removal that kept the store). */
   const released = held === null
-    ? true
+    ? claimLeftAt === null || Date.now() - claimLeftAt >= CLAIM_LAPSES_AFTER_MINUTES * 60_000
     : await held.handBack().then(
       (entries) => entries.every((e) => e.released !== null),
       () => false,
     );
+  if (held !== null) claimLeftAt = released ? null : Date.now();
+  /* While the engine still runs: its store closes with it. No door, no engine to read it with (a removal queued
+     behind one that kept the store): nothing vouches for it. */
+  const settingsKept = !readKept ? null : held === null ? "unknown" : await settingsOnlyInStore(held);
   await stopOrganizerSession();
   if (held !== null) await held.stop().catch(() => undefined);
-  return released;
+  return { released, settingsKept };
+}
+
+/**
+ * WHAT STOP AND REMOVE WOULD DROP FROM THE STORE — the engine's own read, no mail server. `null` where no
+ * door is held, the engine has no such read, or it failed: the caller then asks rather than guesses.
+ */
+export async function organizerSettingsLeftOnlyHere(): Promise<"answer" | "newer" | "none" | null> {
+  const held = door;
+  if (held === null || typeof held.settingsLeftOnlyHere !== "function") return null;
+  return held.settingsLeftOnlyHere().catch(() => null);
 }
 
 /**
@@ -1036,6 +1103,7 @@ export function pokeOrganizerState(): void {
 export function forgetOrganizerSessionForTests(): void {
   live = null;
   door = null;
+  claimLeftAt = null;
   launching = false;
   instruction = "idle";
   queued = null;

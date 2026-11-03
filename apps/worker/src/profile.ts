@@ -15,7 +15,7 @@ import { dialect } from "@trafficflow/db/dialect";
    `packages/core/dist/ai/*`, from this one line. `/mail` re-exports `./log.js`, which is where
    `describeError` lives, and the sidecar's own logger already imports from there — so this adds
    nothing to the engine's closure. `lease.ts` carries the same warning for the same reason. */
-import { describeError, type ImportHold, type SweepClearance } from "@trafficflow/core/mail";
+import { DEFAULT_DORMANCY_DAYS, describeError, type ImportHold, type SweepClearance } from "@trafficflow/core/mail";
 import { epochOf, sameEpoch, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 /* The one post-pass fact — see `flushBeforeLeaving`. `lease.ts` imports nothing from here. */
 import { leaseStoodDown, type OrganizerWriteAuthority } from "./lease.js";
@@ -295,6 +295,13 @@ export class OrganizerProfileSync {
    */
   private released: ProfileLocator[] = [];
   /**
+   * Copies an Import or a Save let go, each with the {@link tick} it was let go in: kept in the mailbox until a
+   * write of a later tick's store lands, or the mailbox's newest copy says that store. In memory, like `released`.
+   */
+  private unpublished: Array<{ at: ProfileLocator; tick: number }> = [];
+  /** Counts the store's serializations: a payload of a later tick than a stamp carries the answer behind it. */
+  private tick = 0;
+  /**
    * FOUND COPIES KEPT FOR THE PERSON'S ANSWER, newest first, at most {@link PROFILE_KEPT_MAX}: every copy not
    * this store's own that the seed found, and every copy it held since. One leaves only on an Import or a
    * Save of it here, once the store says what it says, or with its message; never on Not now, a newer copy
@@ -361,6 +368,12 @@ export class OrganizerProfileSync {
    * it leaves with.
    */
   private failuresNoted = 0;
+  /**
+   * A WRITE-DUE TICK FAILED, or a hand-back's flush did not save, since the last write that landed: the store
+   * may say more than the mailbox. Kept apart from {@link consecutiveFailures}, which any completed tick clears
+   * (one that only tidies, or releases an answer, writes nothing); only a landed write clears this.
+   */
+  private refusedSinceLanded = false;
   /** {@link ownSince}, read once per attachment. */
   private ownSinceSecond: number | null = null;
   /** {@link recorded}: the seconds this store recorded writing, each with its newest record's time; unread. */
@@ -497,6 +510,25 @@ export class OrganizerProfileSync {
   private letGo(at: ProfileLocator): void {
     this.kept = this.kept.filter((k) => !sameLocator(k, at));
     this.released = [...this.released.filter((k) => !sameLocator(k, at)).slice(-(PROFILE_KEPT_MAX - 1)), at];
+    // The first stamp stands: the answer was on record then.
+    if (!this.unpublished.some((u) => sameLocator(u.at, at))) this.unpublished = [...this.unpublished, { at, tick: this.tick }];
+    this.tidyOwed = true;
+    this.lastTidyAt = 0;
+  }
+
+  /** The let-go copies the write and the tidy keep until the answer is in the mailbox. */
+  private stillUnpublished(): ProfileLocator[] {
+    return this.unpublished.map((u) => u.at);
+  }
+
+  /**
+   * THIS TICK'S STORE IS IN THE MAILBOX: a copy let go before it may go now, under `released`, on the next pass.
+   */
+  private answersPublished(): void {
+    const due = this.unpublished.filter((u) => u.tick < this.tick);
+    if (due.length === 0) return;
+    this.unpublished = this.unpublished.filter((u) => u.tick >= this.tick);
+    for (const { at } of due) this.released = [...this.released.filter((k) => !sameLocator(k, at)), at];
     this.tidyOwed = true;
     this.lastTidyAt = 0;
   }
@@ -514,6 +546,75 @@ export class OrganizerProfileSync {
       }))) out.push(k);
     }
     return out;
+  }
+
+  /**
+   * A WRITE WAITS FOR THE PERSON'S ANSWER: the held copy is under our id, unanswered (Not now is an answer), and
+   * at least as new as our current copy and every other kept one, so readers read it.
+   */
+  private async writeWaitsForAnswer(keep: ProfileLocator | undefined): Promise<boolean> {
+    const { deps } = this;
+    if (keep === undefined || keep.installId !== deps.self.installId) return false;
+    if (await profileImportResolutionExists(deps.db, {
+      accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: keep.fingerprint,
+    })) return false;
+    return keep.second >= Math.max(this.currentOwnSecond ?? Number.NEGATIVE_INFINITY,
+      ...this.kept.filter((k) => !sameLocator(k, keep)).map((k) => k.second));
+  }
+
+  /**
+   * WHAT A STOP AND REMOVE WOULD LOSE: `answer` while the store's decisions wait for the settings question,
+   * `newer` while a newer ohmail's copy stands, `none` when the store has nothing the mailbox does not say or
+   * nothing stands in the next write's way, `null` when this attachment cannot tell: it has armed nothing yet (a
+   * restart, a reader) and no question is on record, or a write failed (or a hand-back's flush did not save)
+   * since the last write that landed. Before a write is tried the mailbox's refusal is unknown, so the removal
+   * reads this again after its hand-back, `leaving`: then nothing stands in for the comparison, since a write
+   * that was never tried (no connection, a mailbox already handed back) refused nothing, and `none` means the
+   * store says no more than the last copy written, its Screener window included. A window no write of ours
+   * published (a copy adopted at the seed states none of ours; an empty store says its window alone) is known
+   * only while its dial and scope are the defaults: the baseline is the organizer's own consent instant, which
+   * every organizer stamps anew and none takes from the mailbox. Never reads the mailbox. Throws when the store
+   * cannot be read.
+   */
+  async settingsLeftOnlyHere(opts: { leaving?: boolean } = {}): Promise<"answer" | "newer" | "none" | null> {
+    const { deps } = this;
+    let risk: "answer" | "newer" | null = await this.writeWaitsForAnswer(this.retained()) ? "answer"
+      : this.holdNewerV !== null || this.blockedByNewer ? "newer" : null;
+    const cold = risk === null && !this.seeded && this.retained() === undefined;
+    if (cold) risk = await this.questionOnRecord();
+    const refused = this.refusedSinceLanded || this.consecutiveFailures > 0 || this.lastFailure !== null
+      || UNKEPT.has(JSON.stringify([deps.self.installId, deps.mailboxId]));
+    if (risk === null && !cold && !refused && opts.leaving !== true) return "none";
+    const { payload, screening } = await serializeOrganizerProfileCounted(deps.db, deps.accountId, deps.mailboxId);
+    // The window travels outside the fingerprint; a write that published one says which.
+    const unset = screening.dormancyDays === DEFAULT_DORMANCY_DAYS && screening.scope === "window";
+    const written = this.lastWrittenFingerprint === null ? isEmptyProfilePayload(payload) && unset
+      : profileFingerprint(payload) === this.lastWrittenFingerprint
+        && (this.lastWrittenScreening === null ? unset : screeningKeyOf(screening) === this.lastWrittenScreening);
+    return written ? "none" : risk;
+  }
+
+  /**
+   * A HAND-BACK OWED THIS INSTALL'S LAST WRITE AND NO CONNECTION COULD RUN IT: not saved, and that stands for
+   * {@link settingsLeftOnlyHere} until a write lands, as a flush's own `not_saved` does.
+   */
+  flushNotRun(): SettingsLeft {
+    this.refusedSinceLanded = true;
+    return "not_saved";
+  }
+
+  /** The durable marker's open question for an attachment that armed none: same-id `answer`, or `newer`. */
+  private async questionOnRecord(): Promise<"answer" | "newer" | null> {
+    const { deps } = this;
+    const at = { accountId: deps.accountId, mailboxId: deps.mailboxId };
+    const m = await latestProfileFoundMarker(deps.db, deps.accountId, deps.mailboxId);
+    if (m?.state === "found" && m.heldForImport && m.installId === deps.self.installId && m.fingerprint !== null) {
+      return await profileImportResolutionExists(deps.db, { ...at, fingerprint: m.fingerprint }) ? null : "answer";
+    }
+    if (m?.state === "newer" && m.v !== undefined) {
+      return await profileImportResolutionExists(deps.db, { ...at, newerV: m.v }) ? null : "newer";
+    }
+    return null;
   }
 
   /** The mailbox's newest copy says what the store says: a kept copy the store also says carries nothing more. */
@@ -791,6 +892,7 @@ export class OrganizerProfileSync {
     this.lastTidyAt = 0;
     this.seenForeignFingerprints = new Set<string>();
     this.released = [];
+    this.unpublished = [];
     this.kept = [];
     this.adopted = new Set();
     this.judged = new Set();
@@ -1326,6 +1428,7 @@ export class OrganizerProfileSync {
       /* THE PINNED CONNECTION, not the live getter — see the parameter. Correct wherever this
          line moves to, and no longer dependent on nothing awaiting above it. */
       const io = adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
+      this.tick += 1;
       const { payload, leftOut, normalized, screening, applied } = await serializeOrganizerProfileCounted(
         deps.db, deps.accountId, deps.mailboxId, { applied: true, now },
       );
@@ -1360,6 +1463,7 @@ export class OrganizerProfileSync {
       }
       if (writeDue) await this.keepRecordAlive(io, now);
       if (this.kept.length > 0) await this.refreshKept(payload);
+      if (this.published(payload)) this.answersPublished();
 
       if (tidyDue()) {
         this.lastTidyAt = now.getTime();
@@ -1380,7 +1484,7 @@ export class OrganizerProfileSync {
           io, installId: deps.self.installId, mode: tidyMode, now, ownSince: await this.ownSince(), owns: await this.owns(),
           ...(keep === undefined ? {} : { retain: keep }),
           ...(released.length === 0 ? {} : { released }),
-          ...(this.kept.length === 0 ? {} : { kept: this.kept }),
+          ...(this.kept.length + this.unpublished.length === 0 ? {} : { kept: [...this.kept, ...this.stillUnpublished()] }),
           ...(found === undefined ? {} : { found }),
           // What this organizer has seen, as the write's `replaceable`: its own copies stay beside an unseen one.
           replaceable: [
@@ -1392,6 +1496,8 @@ export class OrganizerProfileSync {
         if (tidyMode === "count" || tidied.remaining === 0) this.tidyOwed = false;
         if (this.foundSoFar === "partly") this.tidyOwed = true;
         if (tidyMode === "remove" && tidied.remaining === 0) this.released = [];
+        // A copy let go this tick is looked at again on the next pass, not only at the next write.
+        if (this.unpublished.some((u) => u.tick >= this.tick)) this.tidyOwed = true;
       }
       if (!writeDue) return;
 
@@ -1588,12 +1694,10 @@ export class OrganizerProfileSync {
            install's, and the held copy stays in the mailbox to import. A copy of ours already newer than it
            (published beside another install's question first) is what readers read: it is kept current, and
            the write, not holding it, refuses if that copy is the newest after all. */
+        if (await this.writeWaitsForAnswer(keep)) return "done";
         const sameIdOpen = keep?.installId === deps.self.installId && !(await profileImportResolutionExists(deps.db, {
           accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: keep.fingerprint,
         }));
-        // …while it is the newest: one older than a kept copy is not what readers read.
-        if (sameIdOpen && keep!.second >= Math.max(this.currentOwnSecond ?? Number.NEGATIVE_INFINITY,
-          ...this.kept.filter((k) => !sameLocator(k, keep!)).map((k) => k.second))) return "done";
         // The record as it stands now: another attachment of this store may have written since this one read it.
         this.recordedSeconds = undefined;
         // Every kept copy and the held one, an unanswered one under our id too: `kept` leaves that one out on purpose.
@@ -1603,7 +1707,7 @@ export class OrganizerProfileSync {
           beforeAppend: (second) => this.vouch(second),
           ...(keep === undefined || sameIdOpen ? {} : { retain: keep }),
           ...(found === undefined ? {} : { found }),
-          kept: await this.keptElsewhere(),
+          kept: [...await this.keptElsewhere(), ...this.stillUnpublished()],
           // What this writer may replace: its own last write, and any foreign document it has
           // already SURFACED. Anything else refuses as `foreign` below — the engine's guarantee
           // that no foreign configuration is ever expunged before it was recorded. The HELD record
@@ -1621,6 +1725,8 @@ export class OrganizerProfileSync {
           this.currentOwnSecond = Math.floor(now.getTime() / 1000);
           this.seenForeignFingerprints.clear();
           UNKEPT.delete(unkeptKey);
+          this.refusedSinceLanded = false;
+          this.answersPublished();
           if (result.owed === true) this.tidyOwed = true;
           log("organizer_profile_written", {
             mailboxId: deps.mailboxId, accountId: deps.accountId, pruned: result.removed,
@@ -1727,6 +1833,7 @@ export class OrganizerProfileSync {
          normally with a failure recorded a few frames down. Comparing the count is what stops a
          recovery being announced in the same drain that reported the fault. */
       if (this.failuresNoted === failuresAtEntry) this.noteTickSucceeded(log);
+      else if (writeDue) this.refusedSinceLanded = true;
       await this.recordCopy(log);
       this.inFlight = false;
     }
@@ -1855,22 +1962,27 @@ export class OrganizerProfileSync {
         && gapKeyOf(this.leavingGap ?? undefined) === this.lastWrittenGap;
     };
     this.leavingGap = leaving?.gap ?? null;
+    // Not saved stands, for `settingsLeftOnlyHere`, until a write lands.
+    const unsaved = (): SettingsLeft => {
+      this.refusedSinceLanded = true;
+      return "not_saved";
+    };
     try {
       for (let tick = 0; tick < 2; tick += 1) {
         if (this.seeded && await settled()) return "saved";
         const wasHeld = this.seeded && newerHeld();
         const failures = this.failuresNoted;
-        if (leaseStoodDown(authority)) return "not_saved";
+        if (leaseStoodDown(authority)) return unsaved();
         this.lastAttemptAt = 0;
         await this.onOrganize(adapter);
-        if (this.failuresNoted !== failures) return "not_saved";
+        if (this.failuresNoted !== failures) return unsaved();
         /* A hold that one tick did not release has no answer on record: nothing more to write. */
         if (wasHeld && newerHeld()) break;
       }
       if (await settled()) return "saved";
-      return newerHeld() ? "kept_other" : "not_saved";
+      return newerHeld() ? "kept_other" : unsaved();
     } catch {
-      return "not_saved";
+      return unsaved();
     } finally {
       this.leavingGap = null;
     }
@@ -1981,6 +2093,15 @@ export class OrganizerProfileSync {
           detected(ours ? "found_own" : "found_in_sync");
           await this.lapseStaleMarker(read, local, log);
           // Kept copies beside it are asked about, the newest with no answer here first.
+          const queued = this.kept.length === 0 ? null : await this.nextKept(io, local);
+          if (queued !== null) await this.commitNextHold(queued, log);
+          return;
+        }
+        // Imported or saved before a restart: answered, and its copy goes once the store's is in the mailbox.
+        if (await profileImportWriteReleased(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: docFingerprint })) {
+          clearProvisionalHold();
+          this.seenForeignFingerprints.add(docFingerprint);
+          detected("resolved");
           const queued = this.kept.length === 0 ? null : await this.nextKept(io, local);
           if (queued !== null) await this.commitNextHold(queued, log);
           return;
@@ -2121,7 +2242,7 @@ export class OrganizerProfileSync {
       owns: await this.owns(), beforeAppend: (second) => this.vouch(second),
       ...(keep === undefined ? {} : { retain: keep }),
       ...(found === undefined ? {} : { found }),
-      kept: await this.keptElsewhere(),
+      kept: [...await this.keptElsewhere(), ...this.stillUnpublished()],
       replaceable: [
         profileFingerprint(read.doc),
         ...(this.lastWrittenFingerprint === null ? [] : [this.lastWrittenFingerprint]),
@@ -2134,7 +2255,9 @@ export class OrganizerProfileSync {
       this.lastWrittenScreening = screeningKeyOf(screening);
       this.lastWrittenGap = GAP_ABSENT;
       this.currentOwnSecond = Math.floor(now.getTime() / 1000);
+      this.refusedSinceLanded = false;
       if (result.owed === true) this.tidyOwed = true;
+      this.answersPublished();
     } else if (result.reason === "cleanup_owed") {
       this.tidyOwed = true;
     }

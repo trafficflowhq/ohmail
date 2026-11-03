@@ -1,77 +1,60 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { bracketSpan, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
 import { DE } from "../src/copy.de";
 import { EN } from "../src/copy.en";
+import { stopAndRemoveAsks, stopAndRemoveKept, stopAndRemoveLines, stopAndRemoveVerb } from "../src/ui/standalone-form";
 
 /**
- * REMOVING THIS PHONE'S OWN MAILBOX NAMES ITS UNSENT DRAFTS FIRST.
+ * REMOVING THIS PHONE'S OWN MAILBOX NAMES WHAT ONLY THE PHONE HOLDS FIRST.
  *
- * "Stop and remove" deletes the engine store, and an unsent draft is on no server, so its words
- * went with it on one press. The press now asks first whenever the live session holds unsent
- * drafts, or cannot say; a known zero keeps the single press. A pairing's Forget is unchanged.
- *
- * The handler is EXTRACTED from `app/servers.tsx` and RUN with its closures injected — the
- * `servers-pane-is-never-a-dead-end.test.ts` shape, since this workspace has no React Native
- * renderer. Mutation: make `pressRemove` call `forget()` for any count and §2's first case goes red.
+ * "Stop and remove" deletes the engine store. An unsent draft is on no server, and settings waiting for
+ * the settings question (or behind a newer ohmail's copy) are not in the mailbox, so each went with the
+ * store on one press. The press now asks first whenever the store holds either, or cannot say; a known
+ * zero and a known `none` keep the single press. A pairing's Forget is unchanged.
  */
 
-const SRC = readFileSync(fileURLToPath(new URL("../app/servers.tsx", import.meta.url)), "utf8");
-
-function pressRemoveOf(src: string): string {
-  const blank = withoutCommentsAndLiterals(src);
-  const at = blank.indexOf("const pressRemove = () => {");
-  if (at === -1) throw new Error("no `const pressRemove = () => {` in app/servers.tsx");
-  const body = bracketSpan(blank, blank.indexOf("{", at), "{", "}");
-  if (!body.closed) throw new Error("the handler never closed");
-  return `() => {${src.slice(body.start, body.end)}}`;
-}
-
-interface Run { forgot: number; asked: Array<{ drafts: number | null }> }
-
-function press(args: { here: boolean; drafts: number | null }): Run {
-  const run: Run = { forgot: 0, asked: [] };
-  const conn = { unsentDraftsHere: (id: string) => (id === "p-1" ? args.drafts : 0) };
-  const make = new Function(
-    "here", "conn", "profile", "forget", "setAsking",
-    `"use strict"; return (${pressRemoveOf(SRC)});`,
-  ) as (...a: unknown[]) => () => void;
-  make(
-    args.here, conn, { id: "p-1" },
-    async () => { run.forgot += 1; },
-    (next: { drafts: number | null }) => { run.asked.push(next); },
-  )();
-  return run;
-}
-
-describe("§1 the press, read off the pane", () => {
-  it("asks the connection how many unsent drafts the store holds", () => {
-    expect(pressRemoveOf(SRC)).toContain("conn.unsentDraftsHere(profile.id)");
-  });
-  it("the row's verb is that press, and the confirm's danger verb is the forget", () => {
-    expect(SRC).toContain("onPress={pressRemove}");
-    expect(SRC).toContain("label={Copy.serversStopHereDelete}");
-    expect(SRC).toContain("label={Copy.serversStopHereKeep}");
-  });
-});
-
-describe("§2 the press, run", () => {
-  it("unsent drafts on this phone: asks first, deletes nothing", () => {
-    expect(press({ here: true, drafts: 2 })).toEqual({ forgot: 0, asked: [{ drafts: 2 }] });
+describe("§2 what the press asks", () => {
+  it("unsent drafts on this phone: asks first", () => {
+    expect(stopAndRemoveAsks(2, "none")).toEqual({ drafts: 2, settings: null });
   });
   it("a count it cannot read: asks first too", () => {
-    expect(press({ here: true, drafts: null })).toEqual({ forgot: 0, asked: [{ drafts: null }] });
+    expect(stopAndRemoveAsks(null, "none")).toEqual({ drafts: null, settings: null });
   });
-  it("CONTROL: a known zero keeps the single press", () => {
-    expect(press({ here: true, drafts: 0 })).toEqual({ forgot: 1, asked: [] });
+  it("CONTROL: a known zero and nothing left only here keeps the single press", () => {
+    expect(stopAndRemoveAsks(0, "none")).toBeNull();
   });
-  it("CONTROL: a pairing's Forget is unchanged — the drafts are on its server", () => {
-    expect(press({ here: false, drafts: 3 })).toEqual({ forgot: 1, asked: [] });
+  it("settings waiting for the settings question, or behind a newer ohmail: asks first, with no drafts", () => {
+    expect(stopAndRemoveAsks(0, "answer")).toEqual({ drafts: 0, settings: "answer" });
+    expect(stopAndRemoveAsks(0, "newer")).toEqual({ drafts: 0, settings: "newer" });
+  });
+  it("an engine that cannot say: asks, failing closed", () => {
+    expect(stopAndRemoveAsks(0, null)).toEqual({ drafts: 0, settings: "unknown" });
+  });
+  it("drafts and settings: one confirm lists both, and the danger verb is Remove anyway", () => {
+    const ask = stopAndRemoveAsks(3, "answer")!;
+    expect({ lines: stopAndRemoveLines(ask), verb: stopAndRemoveVerb(ask) }).toEqual({
+      lines: [EN.serversStopHereDrafts(3), EN.serversStopHereSettingsAnswer], verb: EN.serversStopHereAnyway,
+    });
+  });
+  it("drafts alone keep their verb", () => {
+    const ask = stopAndRemoveAsks(1, "none")!;
+    expect({ lines: stopAndRemoveLines(ask), verb: stopAndRemoveVerb(ask) })
+      .toEqual({ lines: [EN.serversStopHereDrafts(1)], verb: EN.serversStopHereDelete });
+  });
+  it("settings alone say nothing about drafts", () => {
+    expect(stopAndRemoveLines(stopAndRemoveAsks(0, "newer")!)).toEqual([EN.serversStopHereSettingsNewer]);
+    expect(stopAndRemoveLines(stopAndRemoveAsks(0, null)!)).toEqual([EN.serversStopHereSettingsUnknown]);
+  });
+  it("after the hand-back kept the store: the settings alone, Remove anyway, and Keep opens it again", () => {
+    const ask = stopAndRemoveKept("unsaved");
+    expect({ ask, lines: stopAndRemoveLines(ask), verb: stopAndRemoveVerb(ask), newer: stopAndRemoveLines(stopAndRemoveKept("newer")) })
+      .toEqual({
+        ask: { drafts: 0, settings: "unsaved", kept: true }, lines: [EN.serversStopHereSettingsUnsaved],
+        verb: EN.serversStopHereAnyway, newer: [EN.serversStopHereSettingsNewer],
+      });
   });
 });
 
-describe("§3 the sentence", () => {
+describe("§3 the sentences", () => {
   it("names the count, says no server has them, in English and German", () => {
     expect(EN.serversStopHereDrafts(2)).toContain("2 unsent drafts");
     expect(EN.serversStopHereDrafts(1)).toContain("the unsent draft");
@@ -83,5 +66,16 @@ describe("§3 the sentence", () => {
       expect(said).toContain("Kein Mailserver");
     }
     expect(DE.serversStopHereDrafts(2)).toContain("2 nicht gesendeten");
+  });
+  it("the settings sentences say what to do first, in English and German", () => {
+    expect(EN.serversStopHereSettingsAnswer).toContain("settings question");
+    expect(EN.serversStopHereSettingsNewer).toContain("Update ohmail first");
+    expect(EN.serversStopHereSettingsUnknown).toContain("may delete settings");
+    expect(DE.serversStopHereSettingsAnswer).toContain("Beantworte sie zuerst");
+    expect(DE.serversStopHereSettingsNewer).toContain("Aktualisiere ohmail zuerst");
+    expect(DE.serversStopHereSettingsUnknown).toContain("vielleicht Einstellungen");
+    expect(EN.serversStopHereSettingsUnsaved).toContain("could not be saved to the mailbox, so nothing was removed");
+    expect(DE.serversStopHereSettingsUnsaved).toContain("darum wurde nichts entfernt");
+    expect({ en: EN.serversStopHereAnyway, de: DE.serversStopHereAnyway }).toEqual({ en: "Remove anyway", de: "Trotzdem entfernen" });
   });
 });
