@@ -323,7 +323,9 @@ function readUrlToken(css: string, from: number): { raw: string; end: number } |
     if (close === -1) return null;
     const paren = css.indexOf(")", close + 1);
     if (paren === -1) return null;
-    return { raw: css.slice(i + 1, close), end: paren + 1 };
+    // An escaped newline inside a string is a continuation, removed (CSS Syntax §4.3.5).
+    const raw = css.slice(i + 1, close).replace(/\\([\s\S])/g, (e, c: string) => (c === "\n" ? "" : e));
+    return { raw, end: paren + 1 };
   }
   const paren = css.indexOf(")", i);
   if (paren === -1) return null;
