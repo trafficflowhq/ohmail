@@ -8,6 +8,7 @@
  * suite drives the race with deferred promises. The world layer builds one machine per
  * session; `apply`/`drain` close over that session, so a machine outliving it writes nothing.
  */
+import type { SignatureFacts } from "../net/consent";
 
 export interface FoldersFlagDeps {
   /** `GET /consent` → the flag, or `null` for "could not ask" (kept, never read as off). */
@@ -79,6 +80,36 @@ export function freshestRead<T>(apply: (ans: T) => void): FreshestRead<T> {
     return ans;
   };
   return Object.assign(read, { localWrite: () => { last = null; } });
+}
+
+export interface SignatureSequence {
+  /** A consent read, its place taken now; only its signature fields are compared and applied. */
+  read(asked: Promise<SignatureFacts | null>): void;
+  /** A signature write, its echo in the same sequence. False on a refusal. */
+  write(send: () => Promise<SignatureFacts>): Promise<boolean>;
+}
+
+/**
+ * THE SIGNATURES' ONE SEQUENCE: every consent read and every signature write's echo takes its place
+ * when it is issued, and the freshest answer wins, so a read issued before a write never lands over
+ * the write's echo.
+ */
+export function signatureSequence(apply: (facts: SignatureFacts) => void): SignatureSequence {
+  const seq = freshestRead<SignatureFacts>(apply);
+  const only = (a: SignatureFacts): SignatureFacts => ({
+    signatures: a.signatures, signaturesHtml: a.signaturesHtml,
+    signatureSources: a.signatureSources, signatureChanges: a.signatureChanges,
+  });
+  return {
+    read: (asked) => { void seq(() => asked.then((a) => (a === null ? null : only(a)))); },
+    write: async (send) => {
+      try {
+        return (await seq(send)) !== null;
+      } catch {
+        return false;
+      }
+    },
+  };
 }
 
 /** Structural equality over JSON-shaped answers, object keys compared in sorted order. */
