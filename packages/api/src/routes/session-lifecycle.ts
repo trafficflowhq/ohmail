@@ -1,7 +1,7 @@
 import { classifyRefreshFailure, type SessionLifecycle } from "@trafficflow/services/auth";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { clearResumeCookie, clearSessionCookies, jarCookie, ownerCookieValue, sessionCookies } from "../cookies.js";
+import { clearResumeCookie, clearSessionCookies, jarCookie, sessionCookies } from "../cookies.js";
 import { csrfTokenFor } from "../csrf.js";
 import type { ApiDeps } from "../deps.js";
 import { accountErasedResponse, erasedAccountBearer, withSessionAcquireCeiling } from "../middleware.js";
@@ -146,19 +146,8 @@ export const sessionLifecycleRoutes: Route[] = [
             serviceContext(deps, req), { refreshToken: cookieRefresh, attemptId },
             { concurrentGrace: true, surface: "cookie" },
           );
-          // The `tf_owner` marker is re-stamped here, not minted: `refresh` rotates a token family and
-          // resolves no user, so this handler has no account id of its own to write — what it has
-          // is the marker the browser already holds, and extending its life is the job: without
-          // this, a session renewing for its full ninety days outlives the cookie that makes its
-          // next cold start fast. Echoing a client value into a `Set-Cookie` is safe for two
-          // reasons together: `ownerCookieValue` refuses anything outside an id-shaped character
-          // set (nothing the browser sends can become an attribute), and the value has no
-          // authority — it names a local database, is read by no handler, and the client still
-          // confirms against `GET /auth/session`. Absent or malformed answers `null`: no cookie
-          // set, none cleared.
-          return noContent(sessionCookies(
-            tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, ownerCookieValue(jarCookie(jar, "tf_owner")),
-          ));
+          // No `tf_owner`: an echo of the request's jar named the account over a Sign out pressed meanwhile.
+          return noContent(sessionCookies(tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, null));
         } catch (err) {
           /*
            * DECIDED BY THE THROWN VALUE'S CLASS. This answered every failure with one coded 401

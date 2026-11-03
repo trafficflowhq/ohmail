@@ -1,30 +1,13 @@
 import { silentLogger } from "@trafficflow/core";
 import { serviceContext } from "../context.js";
-import { jarCookie, ownerCookie, presentedResumeMarker } from "../cookies.js";
-import type { ApiDeps } from "../deps.js";
+import { presentedResumeMarker } from "../cookies.js";
 import { withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
-import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
+import { json, noContent, readBody } from "./shared.js";
 import { auth, enrollmentSession } from "./shared-cloud.js";
 // The carved lifecycle pair — `/auth/logout` + `/auth/refresh` — spread back in below at their
 // old positions, as the same objects. See `session-lifecycle.ts` for the carve.
 import { sessionLifecycleRoutes } from "./session-lifecycle.js";
-
-/**
- * AN ABSENT ACCOUNT MARKER SELF-HEALS HERE — the only route that mints one outside a sign-in.
- *
- * The browser's gate refuses every call while it cannot read `tf_owner`, and `POST /auth/refresh`
- * resolves no user: it can re-stamp what the jar holds and nothing more, so a lost marker meant
- * ninety days of refusals. This route resolves a user, so it writes the id it just resolved.
- *
- * Narrow: a cookie surface, a FULL session, and only where the jar says nothing. A marker naming
- * another account is a disagreement to report, and `signed_out_pending` a refusal not to undo.
- */
-function healOwnerMarker(req: Request, deps: ApiDeps, accountId: string): string[] {
-  if (!cookieSurface(deps)) return [];
-  if (jarCookie(parseCookies(req.headers.get("cookie")), "tf_owner") !== undefined) return [];
-  return ownerCookie(accountId, deps.authConfig);
-}
 
 /** §2.2 — register, login, session, logout, refresh. */
 export const coreRoutes: Route[] = [
@@ -143,11 +126,9 @@ export const coreRoutes: Route[] = [
     // A busy pool answers this door fast — see `withSessionAcquireCeiling`.
     options: { enrollmentOk: true, middleware: [withSessionAcquireCeiling] },
     handler: async (req, deps) => {
-      const result = await auth(deps).getSession(serviceContext(deps, req));
-      // An enrollment session owns no mailbox and gets no marker — the same rule
-      // `enrollmentCookies` keeps on the way in.
-      const heal = result.scope === "full" ? healOwnerMarker(req, deps, result.user.accountId) : [];
-      return json(result, 200, heal);
+      // No `tf_owner`: an answer that crossed a Sign out press would name the account over it. The
+      // web client puts a lost marker back from this body, where its jar says nothing.
+      return json(await auth(deps).getSession(serviceContext(deps, req)), 200);
     },
   },
   {

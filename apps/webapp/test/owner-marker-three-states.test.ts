@@ -11,8 +11,8 @@
 /**
  * The other half is the sentence. One boolean answered three states with the rarest one's words,
  * so a person with ONE account was told about a second and nothing named the way out. Three
- * states, three codes, three sentences — and the absent one heals on the next page load
- * (`packages/api/test/owner-marker-self-heals.test.ts`).
+ * states, three codes, three sentences — and the absent one heals on the next page load, from the
+ * session check's answer (`healOwner`, below).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -116,7 +116,7 @@ describe("the refusal names the state it is in", () => {
   });
 
   it("THE FRONT DOOR still goes out, which is what makes the recovery reachable", async () => {
-    // `GET /auth/session` is the route that mints an absent marker back, so a browser in the
+    // `GET /auth/session` names the account an absent marker is healed from, so a browser in the
     // `absent` state must be able to reach it while every other call refuses. It can: the front
     // door's call carries `ceremony: true` (`(product)/session-outcome.ts`), which is the first
     // arm of the verdict. Without this the recovery is a route nobody in that state can ask for.
@@ -128,6 +128,23 @@ describe("the refusal names the state it is in", () => {
     expect(apiOwnerVerdict("/auth/session", { ceremony: true })).toBe("holds");
     await expect(api("/auth/session", { ceremony: true })).resolves.toBeDefined();
     expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it("THE HEAL writes the pending word's line with the id, and only into a silent jar", async () => {
+    const { healOwner, markSignedOutPending, readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+    let pending = "";
+    markSignedOutPending((c) => { pending = c; });
+    const lines: string[] = [];
+    expect(healOwner(A, (c) => lines.push(c))).toBe(true);
+    expect(lines).toEqual([pending.replace("=signed_out_pending;", `=${A};`)]);
+    expect(healOwner(A)).toBe(true);
+    expect(readOwnerMarker()).toEqual({ kind: "account", id: A });
+    // Never over the reserved word, never over another account, never a value no id can be.
+    for (const [shape, id] of [["signed-out", A], ["account", B], ["absent", "not an id"]] as const) {
+      setJar(shape);
+      expect(healOwner(id, (c) => lines.push(c)), `the heal wrote over a ${shape} jar`).toBe(false);
+    }
+    expect(lines).toHaveLength(1);
   });
 
   it("the three codes are distinct — a surface that classifies one can tell them apart", async () => {

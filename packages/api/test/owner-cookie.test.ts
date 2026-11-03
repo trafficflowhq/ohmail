@@ -96,9 +96,8 @@ describe("the marker is set beside the session, with the session's own narrownes
 
 describe("the marker has ONE spelling, minted from one place", () => {
   it("`sessionCookies` and the standalone mint produce the identical line", () => {
-    // `GET /auth/session` mints this when a live jar has lost the marker. Two spellings of these
-    // attributes is how a re-mint acquires a different `Path` — or a `Domain=` — and quietly
-    // becomes a different cookie the clear above can no longer reach.
+    // Two spellings of these attributes is how a re-mint acquires a different `Path` — or a
+    // `Domain=` — and quietly becomes a different cookie the clear above can no longer reach.
     expect(ownerLine(sessionCookies(TOKENS, "csrf-1", CFG, ACCOUNT)))
       .toBe(ownerCookie(ACCOUNT, CFG)[0]);
   });
@@ -190,8 +189,8 @@ describe("no Set-Cookie this module mints carries Domain=", () => {
     enrollmentCookies: () => enrollmentCookies("enroll-tok", "csrf-2", CFG),
     clearSessionCookies: () => clearSessionCookies(),
     ownerCookieValue: () => [],
-    // The marker's own line, minted a second time by `GET /auth/session` when a browser's jar
-    // has lost it. Both arms: an id, and the `null` that mints nothing.
+    // The marker's own line, which `sessionCookies` mints through. Both arms: an id, and the
+    // `null` that mints nothing.
     ownerCookie: () => [...ownerCookie(ACCOUNT, CFG), ...ownerCookie(null, CFG)],
     // The resume marker's own clear, answered by the refresh door when there is nothing to rotate.
     clearResumeCookie: () => clearResumeCookie(),
