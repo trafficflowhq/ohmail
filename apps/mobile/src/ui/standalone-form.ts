@@ -503,11 +503,21 @@ export function scheduledNotHereSentence(holder: { name: string; stopped?: boole
 }
 
 /**
- * The connect notice's sentence: the holder named, or the claim that named nobody — and where the
- * Connect's agreement was recorded without a claim, what the person's next press does.
+ * What the connect's refused press said: the holder's name (`""` where the claim named nobody),
+ * whether the door kept the agreement without a claim, and whether it waits to carry the press out
+ * once the claims it was refused over lapse.
  */
-export function readingAtConnectLine(holder: { name: string; consentRecorded?: boolean }): string {
+export interface ReadingAtConnect { name: string; consentRecorded?: boolean; joinWaits?: boolean }
+
+/**
+ * The connect notice's sentence: the holder named, or the claim that named nobody — and where the
+ * Connect's agreement was recorded without a claim, what happens to the mailbox next.
+ */
+export function readingAtConnectLine(holder: ReadingAtConnect): string {
   const name = holder.name.trim();
+  if (holder.consentRecorded === true && holder.joinWaits === true) {
+    return name === "" ? Copy.readingAtConnectJoinWaitsUnknown : Copy.readingAtConnectJoinWaits(name);
+  }
   if (holder.consentRecorded === true) {
     return name === "" ? Copy.readingAtConnectKeptUnknown : Copy.readingAtConnectKept(name);
   }
@@ -520,11 +530,10 @@ export function readingAtConnectLine(holder: { name: string; consentRecorded?: b
  * organizes the mailbox, until a restart. It names the holder the claim names now;
  * a claim not read yet keeps what the connect said.
  */
-export function readingAtConnectNow(
-  said: { name: string; consentRecorded?: boolean } | null, claim: PhoneClaim | null,
-): { name: string; consentRecorded?: boolean } | null {
+export function readingAtConnectNow(said: ReadingAtConnect | null, claim: PhoneClaim | null): ReadingAtConnect | null {
   if (said === null || claim === null) return null;
-  const kept = said.consentRecorded === true ? { consentRecorded: true } : {};
+  const kept = said.consentRecorded === true
+    ? { consentRecorded: true, ...(said.joinWaits === true ? { joinWaits: true } : {}) } : {};
   if (claim.k === "theirs") return { name: claim.name, ...kept };
   if (claim.k === "theirsUnnamed") return { name: "", ...kept };
   return claim.k === "unknown" ? said : null;

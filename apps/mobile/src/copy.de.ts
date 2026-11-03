@@ -1224,6 +1224,10 @@ export const DE: Deck = {
     `Dieses Handy liest dieses Postfach. ${name} organisiert es. Deine Zustimmung bleibt gespeichert: Sobald ${name} es freigibt, bietet dieses Handy das Postfach an, und ein Tippen übernimmt es.`,
   readingAtConnectKeptUnknown:
     "Dieses Handy liest dieses Postfach. Eine andere Installation organisiert es. Deine Zustimmung bleibt gespeichert: Sobald sie es freigibt, bietet dieses Handy das Postfach an, und ein Tippen übernimmt es.",
+  readingAtConnectJoinWaits: (name: string) =>
+    `Dieses Handy liest dieses Postfach. ${name} organisiert es. Deine Zustimmung bleibt gespeichert: Lief ${name} beim Verbinden schon nicht mehr, übernimmt dieses Handy das Postfach innerhalb weniger Minuten, solange ohmail darauf offen bleibt. Sonst bietet dieses Handy das Postfach an, sobald ${name} es freigibt, und ein Tippen übernimmt es.`,
+  readingAtConnectJoinWaitsUnknown:
+    "Dieses Handy liest dieses Postfach. Eine andere Installation organisiert es. Deine Zustimmung bleibt gespeichert: Lief sie beim Verbinden schon nicht mehr, übernimmt dieses Handy das Postfach innerhalb weniger Minuten, solange ohmail darauf offen bleibt. Sonst bietet dieses Handy das Postfach an, sobald sie es freigibt, und ein Tippen übernimmt es.",
   liveVerdictKept: (count: number, place: string, kept: number, keptPlace: string, term: string) =>
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place} · ${kept === 1 ? "1 bleibt" : `${kept} bleiben`} nach deiner Regel »${term}« in ${keptPlace}.`,
   liveVerdictKeptDomain: (count: number, place: string, kept: number, keptPlace: string, domain: string, term: string) =>

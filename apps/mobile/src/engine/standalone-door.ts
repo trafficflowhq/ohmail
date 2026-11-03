@@ -182,6 +182,11 @@ export interface StandaloneEngine {
        * `kept_other`: a newer ohmail's document stands; `not_saved`: the write failed.
        */
       settingsLeft?: "saved" | "kept_other" | "not_saved";
+      /**
+       * A PERSON'S REFUSED PRESS WAITS: once the claims it was refused over lapse unrenewed, the claim
+       * watch's next press carries it out. Absent on an engine older than the field.
+       */
+      joinWaits?: boolean;
     }>;
     /**
      * CAN THIS INSTALL REACH THE MAIL SERVER RIGHT NOW — the engine's own connection facts, which

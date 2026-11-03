@@ -1103,6 +1103,12 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // the only thing that tells a slow door apart from a door that never asked, which is device run
   // 4's defect through a different await. No line on the fast path: a `held` row costs no look.
   organizer_consent_look: "info",
+  // A PERSON'S REFUSED PRESS KEPT TO BE CARRIED OUT, and its two ends: carried out as a join once
+  // the claims it was refused over lapsed unrenewed, or void (`verdict` says why: a later press, a
+  // stop, a removal, its window, its claims renewed, released or joined). `info`: never a fault.
+  organizer_join_armed: "info",
+  organizer_join_carried_out: "info",
+  organizer_join_void: "info",
   // THE WAY BACK, and it is the only one of the six that is a becoming. `info`: the consent was
   // recorded and the gate still decides, so this is a decision by a human (or, for the claim
   // watch, by the app being open over a mailbox nothing holds) and never an outcome about mail.

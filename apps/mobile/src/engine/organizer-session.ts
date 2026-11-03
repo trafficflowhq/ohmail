@@ -13,7 +13,7 @@ import {
   CLAIM_LAPSES_AFTER_MINUTES,
   type ClaimHereOutcome, type PhoneServerSettings, type StandaloneEngine, type StopOrganizingOutcome,
 } from "./standalone-door";
-import { gateBlockOf, type GateBlock } from "../ui/standalone-form";
+import { gateBlockOf, type GateBlock, type ReadingAtConnect } from "../ui/standalone-form";
 import {
   createBackgroundOrganizing,
   type AppPhase,
@@ -55,6 +55,23 @@ export function appPhaseOf(status: string): AppPhase {
   if (status === "active") return "active";
   if (status === "background") return "background";
   return "inactive";
+}
+
+/**
+ * THE ENGINE'S ANSWER PER MAILBOX IN THE SHAPE THE WATCH READS ({@link BackgroundEngine.organizing}),
+ * mapped here for {@link appPhaseOf}'s reason. `standDown` is a stand-down reason or a person's
+ * refused press the engine keeps waiting (`joinWaits`): the two states the claim watch may come back
+ * from. `claimed` straight through: the background half decides on it, never on `organizing`.
+ */
+export function watchedStates(
+  organizer: ReturnType<StandaloneEngine["runtimes"]>["organizer"],
+): ReturnType<BackgroundEngine["organizing"]> {
+  return Object.entries(organizer).map(([mailboxId, state]) => ({
+    mailboxId,
+    organizing: state.organizing,
+    standDown: state.reason !== null || state.joinWaits === true,
+    claimed: state.claimed,
+  }));
 }
 
 /**
@@ -473,19 +490,19 @@ export const organizeRefusal = (): Refusal | null => organizeRefused;
  * press was refused to, said once where the person lands: the door promised
  * organizing and this phone reads instead. `name` is `""` where the claim named nobody.
  */
-let readingAtConnect: { name: string; consentRecorded?: boolean } | null = null;
+let readingAtConnect: ReadingAtConnect | null = null;
 
 /**
  * Record it, or clear it: a dismissal, or a connect that was not refused to a holder.
  * `consentRecorded`: the door kept the person's agreement without a claim.
  */
-export function sayReadingAtConnect(holder: { name: string; consentRecorded?: boolean } | null): void {
+export function sayReadingAtConnect(holder: ReadingAtConnect | null): void {
   readingAtConnect = holder;
   notifyOrganizerState();
 }
 
 /** The standing connect notice, or `null`. Read by the Ohbox. */
-export const readingAtConnectSaid = (): { name: string; consentRecorded?: boolean } | null => readingAtConnect;
+export const readingAtConnectSaid = (): ReadingAtConnect | null => readingAtConnect;
 
 /**
  * The person's hand-back from Settings, on this door — and it is REMEMBERED. This was

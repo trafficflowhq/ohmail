@@ -202,4 +202,19 @@ describe("a Start refused with the consent kept says both facts", () => {
     expect(DE.settingsStartHeldConsented(NAME)).not.toBe(EN.settingsStartHeldConsented(NAME));
     expect(DE.readingAtConnectKept(NAME)).not.toBe(EN.readingAtConnectKept(NAME));
   });
+
+  /* A PRESS THE DOOR KEEPS WAITING: the notice says when the phone takes the mailbox by itself, and
+     goes once it does. TO WATCH IT FAIL: drop `joinWaits` from `readingAtConnectNow`'s kept facts. */
+  it("a waiting press says the phone takes over a holder already gone, and the notice ends once it organizes", () => {
+    const said = { name: "", consentRecorded: true, joinWaits: true };
+    const now = readingAtConnectNow(said, { k: "theirs", name: NAME, kind: "mobile" });
+    expect(now).toEqual({ name: NAME, consentRecorded: true, joinWaits: true });
+    expect(readingAtConnectLine(now!)).toBe(EN.readingAtConnectJoinWaits(NAME));
+    expect(readingAtConnectLine({ ...said, name: " " })).toBe(EN.readingAtConnectJoinWaitsUnknown);
+    expect(EN.readingAtConnectJoinWaits(NAME)).not.toBe(EN.readingAtConnectKept(NAME));
+    expect(EN.readingAtConnectJoinWaits(NAME)).toContain(`once ${NAME} lets go, this phone offers the mailbox`);
+    expect(DE.readingAtConnectJoinWaits(NAME)).not.toBe(EN.readingAtConnectJoinWaits(NAME));
+    expect(readingAtConnectNow(said, { k: "ours", stopping: false, releasePending: false }), "the notice outlived the take-over")
+      .toBeNull();
+  });
 });

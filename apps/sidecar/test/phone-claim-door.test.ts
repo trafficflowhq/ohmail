@@ -167,6 +167,8 @@ class MemoryMeta {
   unreadable = false;
   /** The gate's read refused by name (`meta_folder_full`, …); the peek still answers. */
   refusedAs: "meta_folder_full" | "meta_undeletable" | "clock_skew" | null = null;
+  /** The APPEND-less look does not land, whatever the gate's own read does. */
+  lookFails = false;
   async ensureMetaFolder(): Promise<void> {}
   async listClaims(): Promise<RawClaimMessage[]> {
     if (this.refusedAs === "clock_skew") throw new LeaseClockSkewError("clock off", { skewMs: 240_000, bound: "ahead", boundMs: 150_000 });
@@ -198,7 +200,7 @@ class MemoryMeta {
 function claimable(meta: MemoryMeta): () => MailboxAdapter {
   return () => ({
     leaseIo: () => meta,
-    leasePeekIo: () => ({ listClaims: () => meta.peek() }),
+    leasePeekIo: () => ({ listClaims: () => (meta.lookFails ? Promise.reject(new Error("the look did not land")) : meta.peek()) }),
     async connect(): Promise<void> {},
     async close(): Promise<void> {},
     async capabilities() {
@@ -942,22 +944,6 @@ describe.runIf(ON_DEVICE_STORE)("the person's two verbs, on the engine's own doo
     expect(row!.t, "a refused press authorized a becoming").toBeNull();
   });
 
-  it("…and once that install lets go, the WATCH takes nothing: a refused press licenses no machine", async () => {
-    const exec = nodeExecutor();
-    const meta = new MemoryMeta();
-    live = await startPhoneEngine(deps(exec, { adapterFactory: claimable(meta) }));
-    const id = soleMailbox(live);
-    seedCredential(exec, id);
-    heldByALaptop(exec, id);
-    expect((await pressConnect(live, id)).status).toBe(409);
-    exec.direct("update mailboxes set organizer_state = 'stopped' where id = ?", [id]);
-    await expect(live.claimHere({ by: "watch" })).resolves.toBe("refused");
-    expect(meta.count, "the phone took over by itself a mailbox it never organized").toBe(0);
-    /* THE PERSON'S FRESH PRESS — the offer's verb — takes it, on the consent already recorded. */
-    await expect(live.claimHere({ by: "press" })).resolves.toBe("claimed");
-    expect(meta.count, "the person's press did not take the freed mailbox").toBe(1);
-  });
-
   it("CONTROL: the watch RETURNS a mailbox this phone organized, once the install that took it lets go", async () => {
     const exec = nodeExecutor();
     const meta = new MemoryMeta();
@@ -1168,6 +1154,202 @@ describe.runIf(ON_DEVICE_STORE)("the person's two verbs, on the engine's own doo
     ) as { r: number | null; t: number | null }[];
     expect(row!.r, "the stop the person changed their mind about still stands").toBeNull();
     expect(row!.t).not.toBeNull();
+  });
+});
+
+/**
+ * ══ A REFUSED PRESS WAITS ON THE CLAIMS IT WAS REFUSED OVER ═══════════════════════════════════
+ *
+ * A reinstalled phone found its uninstalled copy's claim in `ohmail/_meta`, Connect was refused, and
+ * nothing organized the mailbox once that claim lapsed until the person pressed Start. The door keeps
+ * the refused press and the claim watch carries it out as a `join` once the claims it was refused over
+ * lapse unrenewed: never over a renewal, a new claim, a restart or past its window.
+ */
+describe.runIf(ON_DEVICE_STORE)("a refused press waits on the claims it was refused over", () => {
+  const MINUTE = 60_000;
+  const claimBy = (meta: MemoryMeta, installId: string, kind: "mobile" | "local", heartbeat: Date): Promise<void> =>
+    meta.appendClaim(formatClaim({
+      installId, kind, displayName: "ohmail on a phone", heartbeat, claimedAt: heartbeat,
+      nonce: `${installId}-${heartbeat.getTime()}`, authorizedAt: heartbeat, capabilities: [],
+    }));
+  const installsIn = async (meta: MemoryMeta): Promise<string[]> =>
+    (await meta.peek()).map((c) => /X-Ohmail-Install-Id: (\S+)/.exec(c.raw)?.[1] ?? "");
+  const roleOf = (exec: ReturnType<typeof nodeExecutor>, id: string): string =>
+    (exec.direct("select organizer_role as r from mailboxes where id = ?", [id]) as { r: string }[])[0]!.r;
+
+  /** A reinstalled phone beside its old copy's claim, `ageMs` old, as its own look left the row. */
+  async function besideAnOldClaim(ageMs: number, store?: ReturnType<typeof nodeExecutor>) {
+    const exec = store ?? nodeExecutor();
+    const c = clock();
+    const meta = new MemoryMeta();
+    const lines: string[] = [];
+    live = await startPhoneEngine(deps(exec, {
+      now: c.now, adapterFactory: claimable(meta), logSink: (line: string) => { lines.push(line); },
+    }));
+    const id = soleMailbox(live);
+    /* A store that outlives this engine keeps the login its launch sealed, for the relaunch to open. */
+    if (store === undefined) seedCredential(exec, id);
+    await claimBy(meta, "the-old-copy", "mobile", new Date(c.now().getTime() - ageMs));
+    await live.resume();
+    return { exec, c, meta, id, lines, said: (event: string) => lines.filter((l) => l.includes(`"${event}"`)) };
+  }
+
+  it("Connect over a claim nobody renews waits for it, and the watch takes the mailbox once it lapses", async () => {
+    const { exec, c, meta, id, said } = await besideAnOldClaim(MINUTE);
+    const res = await pressConnect(live!, id);
+    expect(res.status).toBe(409);
+    expect((await res.json() as { joinWaits?: unknown }).joinWaits, "the refusal did not say the press waits").toBe(true);
+    expect(exec.direct("select takeover_authorized_at as t from mailboxes where id = ?", [id]))
+      .toEqual([{ t: null }]);
+    expect(live!.runtimes().organizer[id]!.joinWaits).toBe(true);
+    expect(said("organizer_join_armed")).toHaveLength(1);
+    c.advance(10 * MINUTE);
+    await live!.resume();
+    await expect(live!.claimHere({ by: "watch" }), "the lapsed claim kept the mailbox from the phone").resolves.toBe("claimed");
+    expect(await installsIn(meta), "the lapsed claim stayed, or no claim of ours was written").toEqual([OUR_INSTALL]);
+    expect(roleOf(exec, id)).toBe("organizer");
+    expect(said("organizer_join_carried_out")).toHaveLength(1);
+    expect(live!.runtimes().organizer[id]!.joinWaits).toBeUndefined();
+  });
+
+  it("CONTROL: Connect over a claim that already lapsed takes the mailbox at once", async () => {
+    const { meta, id } = await besideAnOldClaim(11 * MINUTE);
+    expect(await outcomeOf(await pressConnect(live!, id))).toBe("authorized");
+    await live!.resume();
+    expect(live!.runtimes().organizer[id]!.organizing).toBe(true);
+    expect(await installsIn(meta)).toEqual([OUR_INSTALL]);
+  });
+
+  /* The press used to license nothing at all; it now waits on THOSE claim records only. */
+  it("a holder that renews after the press and then stops: the watch takes nothing, Start does", async () => {
+    const { c, meta, id, said } = await besideAnOldClaim(MINUTE);
+    expect((await pressConnect(live!, id)).status).toBe(409);
+    c.advance(2 * MINUTE);
+    await claimBy(meta, "the-old-copy", "mobile", c.now());
+    c.advance(11 * MINUTE);
+    await live!.resume();
+    await expect(live!.claimHere({ by: "watch" })).resolves.toBe("refused");
+    expect(await installsIn(meta), "the phone took the mailbox over a renewal").toEqual(["the-old-copy", "the-old-copy"]);
+    expect(said("organizer_join_void").join(), "the void did not say the claims moved").toContain('"changed"');
+    expect(live!.runtimes().organizer[id]!.joinWaits).toBeUndefined();
+    await expect(live!.claimHere({ by: "press" })).resolves.toBe("claimed");
+    expect(await installsIn(meta)).toEqual([OUR_INSTALL]);
+  });
+
+  /* Letting go is no lapse, renewed first or not: the notice's offer path, never the waiting press. */
+  it.each<[string, number]>([["renews twice and then lets go", 2], ["lets go", 0]])(
+    "a holder that %s: the watch takes nothing, Start does",
+    async (_, renewals) => {
+      const { c, meta, id, said } = await besideAnOldClaim(MINUTE);
+      expect((await pressConnect(live!, id)).status).toBe(409);
+      for (let i = 0; i < renewals; i++) {
+        c.advance(MINUTE);
+        await claimBy(meta, "the-old-copy", "mobile", c.now());
+      }
+      await meta.removeClaims((await meta.peek()).map((r) => r.ref));
+      await live!.resume();
+      await expect(live!.claimHere({ by: "watch" }), "the phone took a mailbox its holder let go").resolves.toBe("refused");
+      expect(await installsIn(meta)).toEqual([]);
+      expect(said("organizer_join_carried_out")).toEqual([]);
+      expect(said("organizer_join_void").join()).toContain('"changed"');
+      await expect(live!.claimHere({ by: "press" })).resolves.toBe("claimed");
+      expect(await installsIn(meta)).toEqual([OUR_INSTALL]);
+    },
+  );
+
+  it("a claim it could not read going away voids it too", async () => {
+    const { c, meta, id } = await besideAnOldClaim(MINUTE);
+    await meta.appendClaim(formatClaim({
+      installId: "a-torn-copy", kind: "local", displayName: "", heartbeat: c.now(), claimedAt: c.now(),
+      nonce: "torn", authorizedAt: null, capabilities: [],
+    }).replace(/X-Ohmail-Heartbeat: [^\r\n]*/, "X-Ohmail-Heartbeat: torn"));
+    expect((await pressConnect(live!, id)).status).toBe(409);
+    await meta.removeClaims((await meta.peek()).filter((r) => r.raw.includes("a-torn-copy")).map((r) => r.ref));
+    c.advance(11 * MINUTE);
+    await live!.resume();
+    await expect(live!.claimHere({ by: "watch" })).resolves.toBe("refused");
+    expect(await installsIn(meta)).toEqual(["the-old-copy"]);
+  });
+
+  it("a holder that stays live: nothing of ours is ever written", async () => {
+    const { c, meta, id } = await besideAnOldClaim(MINUTE);
+    expect((await pressConnect(live!, id)).status).toBe(409);
+    for (let i = 0; i < 6; i++) {
+      c.advance(4 * MINUTE);
+      await claimBy(meta, "the-old-copy", "mobile", c.now());
+      await live!.resume();
+      await expect(live!.claimHere({ by: "watch" })).resolves.toBe("held");
+    }
+    expect((await installsIn(meta)).filter((i) => i === OUR_INSTALL)).toEqual([]);
+  });
+
+  it("the waiting press ends with its window", async () => {
+    const { c, meta, id } = await besideAnOldClaim(MINUTE);
+    expect((await pressConnect(live!, id)).status).toBe(409);
+    c.advance(21 * MINUTE);
+    expect(live!.runtimes().organizer[id]!.joinWaits, "the window passed and the press still waits").toBeUndefined();
+    await live!.resume();
+    await expect(live!.claimHere({ by: "watch" })).resolves.toBe("refused");
+    expect(await installsIn(meta)).toEqual(["the-old-copy"]);
+  });
+
+  it("a claim the press was not refused over voids it", async () => {
+    const { c, meta, id } = await besideAnOldClaim(MINUTE);
+    expect((await pressConnect(live!, id)).status).toBe(409);
+    await claimBy(meta, "the-laptop", "local", c.now());
+    c.advance(11 * MINUTE);
+    await live!.resume();
+    await expect(live!.claimHere({ by: "watch" })).resolves.toBe("refused");
+    expect(await installsIn(meta)).toEqual(["the-old-copy", "the-laptop"]);
+  });
+
+  it("a person's stop, and the mailbox's removal, end it", async () => {
+    const { id, said } = await besideAnOldClaim(MINUTE);
+    expect((await pressConnect(live!, id)).status).toBe(409);
+    await live!.stopOrganizing();
+    expect(live!.runtimes().organizer[id]!.joinWaits, "a stop left the press waiting").toBeUndefined();
+    expect((await pressConnect(live!, id)).status).toBe(409);
+    expect(live!.runtimes().organizer[id]!.joinWaits).toBe(true);
+    await live!.handle(new Request(`http://engine.invalid/local/mailboxes/${encodeURIComponent(id)}`, {
+      method: "DELETE", headers: { authorization: `Bearer ${live!.sessionToken}` },
+    }));
+    expect(said("organizer_join_void").map((l) => /"(pressed|stopped|removed|expired|changed)"/.exec(l)?.[1]))
+      .toEqual(["stopped", "removed"]);
+  });
+
+  it("a restart forgets it: the watch takes nothing and the offer stands", async () => {
+    const exec = nodeExecutor();
+    /* The engine's stop closes the store; this one outlives the first engine as a phone's file does. */
+    const kept = { ...exec, close: async (): Promise<void> => undefined };
+    const { c, meta, id } = await besideAnOldClaim(MINUTE, kept);
+    expect((await pressConnect(live!, id)).status).toBe(409);
+    await live!.stop();
+    live = await startPhoneEngine(deps(kept, { now: c.now, adapterFactory: claimable(meta) }));
+    expect(live.runtimes().organizer[id]!.joinWaits).toBeUndefined();
+    c.advance(11 * MINUTE);
+    await live.resume();
+    await expect(live.claimHere({ by: "watch" })).resolves.toBe("refused");
+    expect(await installsIn(meta)).toEqual(["the-old-copy"]);
+    await expect(live.heldElsewhere(), "the freed mailbox is not offered").resolves.toBe(false);
+    await expect(live.claimHere({ by: "press" })).resolves.toBe("claimed");
+  });
+
+  it("a look that does not land at the press arms nothing", async () => {
+    const exec = nodeExecutor();
+    const meta = new MemoryMeta();
+    meta.lookFails = true;
+    live = await startPhoneEngine(deps(exec, { adapterFactory: claimable(meta) }));
+    const id = soleMailbox(live);
+    seedCredential(exec, id);
+    exec.direct(
+      `update mailboxes set organizer_role = 'reader', organizer_state = 'held', organized_by_name = 'a laptop',
+         organized_by_kind = 'local', organized_by_install_id = 'the-laptop' where id = ?`,
+      [id],
+    );
+    const res = await pressConnect(live, id);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ consentRecorded: true, joinWaits: false });
+    expect(live.runtimes().organizer[id]!.joinWaits).toBeUndefined();
   });
 });
 
