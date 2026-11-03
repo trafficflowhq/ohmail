@@ -23,6 +23,12 @@ export interface ThrottleKeys {
    * identify, and takes no lock: the password lock never keys on it (`AuthService.passwordKeys`).
    */
   client(ip: string): string;
+  /**
+   * A desktop approval's network key: the address unit it was asked from (`addressUnitOf`), salted
+   * by the request's id, so two requests from one address, and a request and its client key, are
+   * not linkable. No throttle row carries it.
+   */
+  approvalNetwork(requestId: string, unit: string): string;
 }
 
 export function throttleKeys(keyProvider: KeyProvider): ThrottleKeys {
@@ -31,7 +37,10 @@ export function throttleKeys(keyProvider: KeyProvider): ThrottleKeys {
     subkey ??= keyProvider.deriveSubkey(THROTTLE_SUBKEY_INFO);
     return createHmac("sha256", subkey).update(JSON.stringify([kind, value])).digest("hex").slice(0, 32);
   };
-  return { address: (email) => mac("address", email), client: (ip) => mac("client", ip) };
+  return {
+    address: (email) => mac("address", email), client: (ip) => mac("client", ip),
+    approvalNetwork: (requestId, unit) => mac("approval-network", `${requestId} ${unit}`),
+  };
 }
 
 /** One keyer per provider, so the subkey is derived once per process and not per request. */

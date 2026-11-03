@@ -23,20 +23,44 @@ export function ipClassOf(raw: string | null | undefined): string {
   return `${groups.slice(0, 3).map((g) => g.toString(16)).join(":")}::/48`;
 }
 
+/**
+ * What `same` is decided on: the whole IPv4 address (an IPv4-mapped IPv6 address, in any spelling,
+ * as the IPv4 it carries), or the IPv6 /64 as `p:q:r:s::/64`. Never stored or returned, only its
+ * keyed digest. An empty or unparseable input answers `""`.
+ */
+export function addressUnitOf(raw: string | null | undefined): string {
+  const ip = (raw ?? "").trim();
+  if (isIP(ip) === 4) return ip; // node rejects leading-zero spellings: canonical
+  if (isIP(ip) !== 6) return "";
+  const g = hextetsOf(ip);
+  if (!g) return "";
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) {
+    return `${g[6]! >> 8}.${g[6]! & 0xff}.${g[7]! >> 8}.${g[7]! & 0xff}`;
+  }
+  return `${g.slice(0, 4).map((x) => x.toString(16)).join(":")}::/64`;
+}
+
 /** What the approval read answers about the two networks; never either class itself. */
 export type NetworkVerdict = "same" | "different" | "unknown";
 
 /**
- * Is a reader at `readerIp` on the network a request's stored class names? A class missing on
- * either side is `unknown`, never `different`. Two classes of different families are `different`:
- * one machine can reach a server over both, but whoever crafts a request must not be able to pick
- * the family that keeps the note off the page, and the page's sentence holds either way.
+ * Is a reader at `readerIp` at the address a request was made from (over IPv6, in its /64)?
+ * `storedKey` is the request's keyed digest of that unit, and `keyOf` digests the reader's the same
+ * way. A class or a reader address missing is `unknown`, never `different`. A row kept without the
+ * key never reads `same`. Two families are `different`: one machine can reach a server over both,
+ * but whoever crafts a request must not be able to pick the family that keeps the note off the
+ * page, and the page's sentence holds either way.
  */
-export function networkVerdict(storedClass: string | null | undefined, readerIp: string | null | undefined): NetworkVerdict {
-  const stored = (storedClass ?? "").trim();
-  const reader = ipClassOf(readerIp);
-  if (familyOf(stored) === null || familyOf(reader) === null) return "unknown";
-  return stored === reader ? "same" : "different";
+export function networkVerdict(
+  storedClass: string | null | undefined, storedKey: string | null | undefined,
+  readerIp: string | null | undefined, keyOf: (unit: string) => string,
+): NetworkVerdict {
+  const cls = (storedClass ?? "").trim();
+  const key = (storedKey ?? "").trim();
+  const unit = addressUnitOf(readerIp);
+  if (familyOf(cls) === null || unit === "") return "unknown";
+  if (key === "") return cls === ipClassOf(readerIp) ? "unknown" : "different";
+  return keyOf(unit) === key ? "same" : "different";
 }
 
 /** The family a class was written for by `ipClassOf`, or null for an empty or foreign one. */
