@@ -76,6 +76,14 @@ function localSaysWhatTheDocumentSays(local: OrganizerProfilePayload, doc: Organ
   return localSaysWhatAFingerprintSays(local, profileFingerprint(doc));
 }
 
+/**
+ * ANOTHER INSTALL'S COPY THAT SAYS ONLY ITS WINDOW — an organizer that has decided nothing yet publishes one.
+ * It asks nothing (an Import would add nothing and retire every rule this store made): the next write supersedes it.
+ */
+function onlyAWindow(installId: string | null, doc: OrganizerProfileDoc, self: string): boolean {
+  return installId !== self && isEmptyProfilePayload(doc);
+}
+
 /** The found-marker's name for the copy's signature (`signatureReceipt`), when it carries one (blank is none). */
 function signatureOf(doc: OrganizerProfileDoc): { signatureReceipt?: string } {
   const receipt = signatureReceipt(doc.signature, doc.signatureHtml);
@@ -665,7 +673,7 @@ export class OrganizerProfileSync {
         continue;
       }
       // One the store already says asks nothing: the store's next write says it too.
-      if (localSaysWhatTheDocumentSays(local, c.doc)) continue;
+      if (localSaysWhatTheDocumentSays(local, c.doc) || onlyAWindow(c.installId, c.doc, deps.self.installId)) continue;
       this.noteLocator(c.installId, c.doc);
       const fresh = !reset && !this.kept.some((k) => sameLocator(k, c.locator));
       this.keep(c.locator);
@@ -715,7 +723,7 @@ export class OrganizerProfileSync {
         continue;
       }
       // What the store already says is no question; it goes once the mailbox's newest copy says it too.
-      if (localSaysWhatTheDocumentSays(local, read.doc)) {
+      if (localSaysWhatTheDocumentSays(local, read.doc) || onlyAWindow(read.installId, read.doc, deps.self.installId)) {
         if (this.published(local)) this.letGo(at);
         continue;
       }
@@ -769,7 +777,7 @@ export class OrganizerProfileSync {
     if (await profileImportWriteReleased(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: m.fingerprint })) return null;
     const read = await readOrganizerProfile(io, { retain: { installId: m.installId, second: Math.floor(at / 1000), fingerprint: m.fingerprint } });
     if (read.state !== "found" || read.installId !== m.installId || profileFingerprint(read.doc) !== m.fingerprint) return null;
-    if (localSaysWhatTheDocumentSays(local, read.doc)) return null;
+    if (localSaysWhatTheDocumentSays(local, read.doc) || onlyAWindow(read.installId, read.doc, deps.self.installId)) return null;
     return { doc: read.doc, installId: m.installId, fingerprint: m.fingerprint };
   }
 
@@ -1065,8 +1073,8 @@ export class OrganizerProfileSync {
           /* …EXCEPT THE QUESTION THIS ORGANIZER HOLDS, which its own document published beside it
              does not answer: the held record stays a question until the person answers it. */
           const asked = fp === this.holdFingerprint;
-          if (asked || (!(this.lastWrittenFingerprint !== null && fp !== this.lastWrittenFingerprint)
-            && !this.seenForeignFingerprints.has(fp))) {
+          if (!onlyAWindow(read.installId, read.doc, deps.self.installId) && (asked
+            || (!(this.lastWrittenFingerprint !== null && fp !== this.lastWrittenFingerprint) && !this.seenForeignFingerprints.has(fp)))) {
             // An oversized document is no hold: Import refuses it, so it is not an answer to one.
             const view = oversizedProfileList(read.doc) === null ? profileGateView(read.doc) : null;
             verdict = { kind: "found", fingerprint: fp, view };
@@ -1177,7 +1185,10 @@ export class OrganizerProfileSync {
       // ownership alone cannot tell "never owned" from "mid-supersede".
       if (this.seenForeignFingerprints.has(fp)) return;
       const payload = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
-      if (localSaysWhatTheDocumentSays(payload, read.doc)) { await this.lapseStaleMarker(read, payload, log); return; }
+      if (localSaysWhatTheDocumentSays(payload, read.doc) || onlyAWindow(read.installId, read.doc, deps.self.installId)) {
+        await this.lapseStaleMarker(read, payload, log);
+        return;
+      }
       // Already answered (an earlier hold on this same document, resolved by import or decline):
       // a re-attach must not re-open a question the person closed.
       if (await profileImportResolutionExists(deps.db, {
@@ -1258,7 +1269,8 @@ export class OrganizerProfileSync {
       const newFp = profileFingerprint(still.doc);
       const subject = { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: newFp };
       // The WRITE question: a declined replacement is still held, or the next write prunes it.
-      if (!localSaysWhatTheDocumentSays(local, still.doc) && !(await profileImportWriteReleased(deps.db, subject))
+      if (!localSaysWhatTheDocumentSays(local, still.doc) && !onlyAWindow(still.installId, still.doc, deps.self.installId)
+        && !(await profileImportWriteReleased(deps.db, subject))
         // A kept copy answered Not now yields to a kept copy with no answer yet.
         && (!this.kept.some((k) => k.fingerprint === newFp) || !(await profileImportResolutionExists(deps.db, subject)))) {
         return { kind: "found", fingerprint: newFp, doc: still.doc, installId: still.installId };
@@ -1363,7 +1375,7 @@ export class OrganizerProfileSync {
     const stillAsks =
       (marker.state === "found" && read.state === "found" && marker.fingerprint !== null
         && profileFingerprint(read.doc) === marker.fingerprint
-        && foreignRead
+        && foreignRead && !onlyAWindow(read.installId, read.doc, deps.self.installId)
         && (local === null || !localSaysWhatTheDocumentSays(local, read.doc)))
       || (marker.state === "newer" && read.state === "newer" && read.v === marker.v);
     if (!stillAsks) {
@@ -1656,10 +1668,12 @@ export class OrganizerProfileSync {
       // organizer it must carry the held-marker surfacing a late-landing travelling document
       // needs — or the routing hold the evaluator computes would be a question no surface could
       // ever offer for answering. Flush cadence, self-guarded.
-      // A CONSENTED organizer (a baseline) always publishes: its window is what a reader applies.
-      // Except beside a held document: readers would take an empty copy as the newest settings.
+      // A CONSENTED organizer (a baseline) always publishes: its window is what a reader applies,
+      // beside another install's held document too. Beside one under our id it waits for the answer.
+      const heldHere = this.retained();
       if (this.lastWrittenFingerprint === null && isEmptyProfilePayload(payload)
-        && (screening.baselineAt === null || this.holdFingerprint !== null)) {
+        && (screening.baselineAt === null
+          || (this.holdFingerprint !== null && (heldHere === undefined || heldHere.installId === deps.self.installId)))) {
         await this.armHoldFromFolder();
         return;
       }
@@ -1781,7 +1795,8 @@ export class OrganizerProfileSync {
           // a copy under its id that is not its own (a later life's, a gone store's), takes the takeover
           // posture: hold it and write the held marker the surface answers, unless an import or a replace
           // already released it. Superseding here would prune it with nobody asked.
-          if ((this.lastWrittenFingerprint === null || underOurId) && !(await profileImportWriteReleased(deps.db, {
+          if ((this.lastWrittenFingerprint === null || underOurId) && !onlyAWindow(result.installId, result.doc, deps.self.installId)
+            && !(await profileImportWriteReleased(deps.db, {
             accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: foreignFp,
           }))) {
             // The question it held stays kept beside the new one.
@@ -1797,9 +1812,10 @@ export class OrganizerProfileSync {
               mailboxId: deps.mailboxId, accountId: deps.accountId, state: "found",
             });
             await this.writeMarker({ state: "found", doc: result.doc, installId: result.installId, fingerprint: foreignFp, heldForImport: true }, log);
-            // …AND PUBLISHES BESIDE IT, keeping the held record: asked, never pruned unasked —
-            // unless there is nothing to say: readers would take an empty copy as the newest settings.
-            return this.retained() === undefined || isEmptyProfilePayload(payload) ? "done" : "again";
+            // …AND PUBLISHES BESIDE IT, keeping the held record: asked, never pruned unasked. An empty
+            // store says its window, except beside a copy under our id (readers would take it as the newest).
+            return this.retained() === undefined
+              || (isEmptyProfilePayload(payload) && (screening.baselineAt === null || underOurId)) ? "done" : "again";
           }
           // An ESTABLISHED organizer meeting another install's (the transient overlap's loser, or a
           // hand-back mid-race), or a copy an import or a replace answered, surfaces it unheld —
@@ -2082,9 +2098,9 @@ export class OrganizerProfileSync {
         if (ours) this.lastWrittenScreening = screeningKeyOf(read.doc.screening);
         // And which gap: a key our last release left is dropped by the next write.
         if (ours) this.lastWrittenGap = gapKeyOf(read.doc.gap);
-        if (ours || localSaysWhatTheDocumentSays(local, read.doc)) {
+        if (ours || localSaysWhatTheDocumentSays(local, read.doc) || onlyAWindow(read.installId, read.doc, deps.self.installId)) {
           // Our own previous write (stale or not), or a foreign one that says exactly what we
-          // would say: seed the dirty check from it and let write-behind do its ordinary work.
+          // would say or only its window: seed the dirty check from it and let write-behind do its ordinary work.
           // A foreign-but-identical document is ours to replace on the next change — record it,
           // or the engine's foreign refusal would deadlock the first post-convergence write.
           clearProvisionalHold();

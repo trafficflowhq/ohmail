@@ -1303,17 +1303,19 @@ export function FirstRun({
      step ends on the server's stamp. "So far" because the count grows as folders are opened. */
   const readAll = typeof serverMessageCount === "number" && remaining === null;
 
+  /* A HOLDER THAT STOPPED CHECKING IN organizes nothing, so the lead, both choices and the
+     reader summary take their stopped twins: no "stops on its next pass" from an install that
+     runs no pass, no "keeps organizing" over a mailbox nothing organizes. One predicate for
+     every sentence here — see {@link holderStopped}. */
+  const stopped = holderStopped(facts.mailbox);
   /**
-   * The default is the choice a first run is about, and it is no longer withheld. It used to follow a
-   * predicate — would the lease decline this press? — because a hosted claim outranked a local one;
-   * on those rows the pre-selected option would have been the refused one. An explicit press outranks
-   * a claim that carries none now, whichever machine wrote it, so there is no refused case left:
-   * `here` is the default on every door, and any press still writes `elsewhereChoicePicked`, which
-   * wins from then on. What the screen owes is the CONSEQUENCE, stated on the choice itself
-   * (`elsewhereChoiceHereWhy`): the holding install stops organizing within a minute and goes on
-   * reading — the half that has to be there before the press.
+   * NOTHING IS PRE-SELECTED OVER A LIVE HOLDER: an unread Continue displaced a running organizer and
+   * re-baselined its Screener window. A stopped holder and the consented re-entry keep "here", and a
+   * press writes `elsewhereChoicePicked`, which wins from then on. The consequence is stated on the
+   * choice itself (`elsewhereChoiceHereWhy`).
    */
-  const elsewhereChoice: "here" | "read" = elsewhereChoicePicked ?? "here";
+  const elsewhereChoice: "here" | "read" | null = elsewhereChoicePicked
+    ?? (stopped || facts.mailbox?.organizeConsentedAt ? "here" : null);
 
   /* WHAT AGREEING WILL SCREEN, for the window being chosen — read before the press from the walk the
      organizer runs after it (`countDecision`). A join only: a takeover keeps the arrangement the other
@@ -1369,11 +1371,6 @@ export function FirstRun({
    * install · Since —". `reader-holder.ts` carries the measurement and the wire's own contract.
    */
   const held = readerHolder(facts.mailbox?.organizedBy);
-  /* A HOLDER THAT STOPPED CHECKING IN organizes nothing, so the lead, both choices and the
-     reader summary take their stopped twins: no "stops on its next pass" from an install that
-     runs no pass, no "keeps organizing" over a mailbox nothing organizes. One predicate for
-     every sentence here — see {@link holderStopped}. */
-  const stopped = holderStopped(facts.mailbox);
   /**
    * Is there a date to print — the second fact the two reader surfaces select on, and the second
    * answered by something else. `AppShell` withholds {@link FirstRunProps.organizedSince} when
@@ -1787,6 +1784,7 @@ export function FirstRun({
              * organizes the mailbox, and without this flag "Organize here instead" would move
              * the cursor to `consent` and be thrown straight back here — the consent stamp
              * that ends the situation is two screens away. See the guard's own note. */
+            if (elsewhereChoice === null) return;
             if (mailboxId) setClaimAnsweredFor(mailboxId);
             /* "Just read it here" writes nothing about organizing: this install is already a
              * reader (which put this screen on screen), and a reader is a mail client — reads,
@@ -1907,7 +1905,7 @@ export function FirstRun({
                   before choosing rather than after. */}
               {claimed ? <SettingsVerdict state="wait" headline={t("elsewhereQueued")} /> : null}
               {stepProblem ? <SettingsVerdict state="bad" headline={stepProblem} /> : null}
-              {foot({ back: true, primary: next(t("continue")) })}
+              {foot({ back: true, primary: next(t("continue"), { disabled: elsewhereChoice === null }) })}
             </>
           ),
         ) : null}

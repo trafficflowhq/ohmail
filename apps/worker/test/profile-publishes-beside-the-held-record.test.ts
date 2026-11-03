@@ -1072,21 +1072,47 @@ describe("a store restored from a backup never rolls the mailbox's settings back
   });
 });
 
-/* AN ANSWER REACHES THE MAILBOX AT ONCE, and nothing empty stands beside found settings: another
-   device reads the newest copy, so an empty one or a stale one of ours reads as the settings. */
+/* AN ANSWER REACHES THE MAILBOX AT ONCE. A consented store with nothing else to say publishes its
+   Screener window beside another install's settings: readers apply the newest copy's window, and the
+   old organizer's would keep counting senders the new one does not. The held copy stays. */
 describe("found settings and the Import that answers them", () => {
-  it("a consented empty store publishes nothing beside another install's settings", async () => {
+  const windowBeside = (r: Awaited<ReturnType<typeof rig>>) => ({
+    copies: r.folder.writers(), baselineAt: r.folder.docBy("w-new").screening?.baselineAt,
+    held: r.folder.messages.some((m) => m.raw === THEIRS_RAW), open: r.sync.importDecisionOpen(),
+  });
+  const BESIDE = { copies: ["w-new", "w-old"], baselineAt: "2026-01-01T00:00:00.000Z", held: true, open: true };
+
+  it("a consented empty store publishes its window beside another install's settings", async () => {
     const r = await rig({ planted: true, baseline: true });
     await r.sync.armHoldFromFolder();
     await r.ticks(3);
-    expect({ copies: r.folder.writers(), open: r.sync.importDecisionOpen() }).toEqual({ copies: ["w-old"], open: true });
+    expect(windowBeside(r)).toEqual(BESIDE);
   });
 
-  it("the same store publishes nothing beside settings that land mid-write", async () => {
+  it("the same store publishes its window beside settings that land mid-write", async () => {
     const r = await rig({ planted: false, baseline: true });
     r.folder.landOn = { n: 3, raw: THEIRS_RAW };
     await r.ticks(2);
-    expect({ copies: r.folder.writers(), open: r.sync.importDecisionOpen() }).toEqual({ copies: ["w-old"], open: true });
+    expect(windowBeside(r)).toEqual(BESIDE);
+  });
+
+  /* ANOTHER INSTALL'S COPY THAT SAYS ONLY ITS WINDOW (an organizer that decided nothing) asks nothing: its
+     Import would retire every rule this store made. The store's next write replaces it. */
+  const WINDOW_ONLY = makeProfileDoc({ screener: [], rules: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null },
+    { updatedAt: new Date("2026-09-28T11:00:00.000Z"), producer: { kind: "local", version: "0.30.31" } });
+  it.each([
+    ["found at the seed", { n: 0 }],
+    ["landing mid-write", { n: 3 }],
+  ] as const)("a copy that says only another install's window, %s, is no question and is replaced", async (_, land) => {
+    const r = await rig({ planted: land.n === 0, theirs: WINDOW_ONLY });
+    if (land.n > 0) r.folder.landOn = { n: land.n, raw: formatProfileMessage(WINDOW_ONLY, { installId: "w-old" }) };
+    await r.decide("mine");
+    await r.sync.armHoldFromFolder();
+    const preflight = await r.routing();
+    await r.ticks(3);
+    const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
+    expect({ preflight, routing: await r.routing(), open: r.sync.importDecisionOpen(), asked: marker?.state === "found" && marker.heldForImport, copies: r.folder.copies() })
+      .toEqual({ preflight: "closed", routing: "closed", open: false, asked: false, copies: [{ by: "w-new", screener: 0, rules: 0, tags: ["mine"] }] });
   });
 
   it("an Import reaches the mailbox within two passes, inside the flush interval", async () => {

@@ -12,7 +12,9 @@ import {
   type OrganizerProfileDoc, type ParsedProfileMessage, type ProfileIo, type RawProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
-import { fencedAccountWrite, lockAccountRuleKeys, mailboxes, organizerRequests } from "@trafficflow/db";
+import {
+  accountSettings, fencedAccountWrite, folderState, lockAccountRuleKeys, mailboxes, messageBodies, messages, organizerRequests, rules as ruleRows,
+} from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { freshDataDir } from "./_datadir.js";
 
@@ -373,5 +375,209 @@ describe("a desktop restored from a backup", () => {
       kept: meta.docs().some((d) => d.installId !== "local:w-old" && profileFingerprint(d.doc!) === profileFingerprint(later)),
       card: [next.state, next.fingerprint === profileFingerprint(later)],
     }).toEqual({ asked: true, kept: true, card: ["found", true] });
+  }, 120_000);
+});
+
+/* THE STOOD-DOWN ORGANIZER COUNTS WITH THE NEW ORGANIZER'S WINDOW. W-old consented hours before the
+   takeover; the new install's window starts at its own consent. A sender whose newest letter lies
+   between the two cutoffs waited on W-old's Screener for as long as W-old mirrored its own document,
+   which stood as the newest until the new organizer's first decision was published. */
+describe("after a takeover, the install that stood down shows the new organizer's Screener count", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
+  const HOUR = 60 * 60 * 1000;
+  /** Both installs' clock: moved past the reader's settings-mirror cadence, never the lease's staleness alone. */
+  const clock = { skew: 0 };
+  const at = (ms: number): Date => new Date(Date.now() + clock.skew + ms);
+
+  const launch = async (meta: MemoryMeta, machineName: string) => {
+    const dataDir = await freshDataDir("ohmail-takeover-counts-");
+    const sidecar = await createSidecar({
+      dataDir,
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      address: "owner@trafficflow.test", machineName,
+      pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
+      adapterFactory: factory(meta), log: () => {}, now: () => at(0), dkimKeys: null,
+    });
+    cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
+    await sidecar.start();
+    const call = (method: string, path: string, body?: unknown) => sidecar.handle(new Request(`http://engine.invalid${path}`, {
+      method, headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }));
+    return { sidecar, call };
+  };
+  /** The same held mail on both installs: one sender inside both windows, one between the two cutoffs. */
+  const held = async (s: Sidecar, between: Date) => {
+    const { accountId, mailboxId } = s.world;
+    const letters = [["recent@stranger.test", at(-HOUR)], ["between@stranger.test", between]] as const;
+    for (const [i, [from, date]] of letters.entries()) {
+      const key = `takeover-counts:${from}`;
+      const [m] = await s.db.insert(messages).values({
+        accountId, mailboxId, bodyHash: key, dedupKey: key, messageIdHeader: key, subject: "Hello", snippet: "",
+        fromAddress: from, fromName: from, date, arrivedAt: date, unread: false, createdAt: date,
+        nativeLocator: { folder: "ohmail/Screener", ref: `1:${i + 1}` },
+      }).returning();
+      await s.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+      await s.db.insert(folderState).values({
+        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us",
+        reconcileStatus: "reconciled", conflict: false,
+      });
+    }
+  };
+  const waiting = async (w: Awaited<ReturnType<typeof launch>>) =>
+    ((await (await w.call("GET", "/screener?live=1")).json()) as { total?: number }).total;
+  const role = async (s: Sidecar) =>
+    (await s.db.select().from(mailboxes).where(eq(mailboxes.id, s.world.mailboxId)))[0]!.organizerRole;
+
+  it("one reader pass after the new organizer's first pass, both installs count the same senders", async () => {
+    const meta = new MemoryMeta();
+    const old = await launch(meta, "W-old");
+    expect((await old.call("POST", `/local/mailboxes/${old.sidecar.world.mailboxId}/organize`, { screening: { scope: "window" } })).status).toBe(200);
+    // W-old's settings say something, so the new organizer holds them for the person's answer.
+    expect((await old.call("POST", "/rules", { kind: "sender", match: "news@shop.test", destination: "INBOX" })).status).toBe(201);
+    // W-old's consent, six hours before the takeover's.
+    await old.sidecar.db.update(accountSettings).set({ screeningBaselineAt: at(-6 * HOUR) })
+      .where(eq(accountSettings.accountId, old.sidecar.world.accountId));
+    await old.sidecar.syncUntilQuiet();
+    expect(meta.docs().length, "W-old published its settings").toBe(1);
+
+    const next = await launch(meta, "the new laptop");
+    expect((await next.call("POST", `/local/mailboxes/${next.sidecar.world.mailboxId}/organize`, { screening: { scope: "window" }, intent: "takeover" })).status).toBe(200);
+    await next.sidecar.syncUntilQuiet();
+    await old.sidecar.syncUntilQuiet();
+    // Past the mirror's cadence: the new organizer renews its claim, then W-old's reader pass reads the folder.
+    clock.skew += 6 * 60_000;
+    await next.sidecar.syncUntilQuiet();
+    await old.sidecar.syncUntilQuiet();
+    // Inside W-old's default 60-day cutoff by three hours, outside the new organizer's.
+    const between = at(-60 * 24 * HOUR - 3 * HOUR);
+    await held(old.sidecar, between);
+    await held(next.sidecar, between);
+    expect({
+      roles: [await role(old.sidecar), await role(next.sidecar)],
+      held: meta.docs().some((d) => d.doc!.rules.length === 1),
+      waiting: [await waiting(old), await waiting(next)],
+    }).toEqual({ roles: ["reader", "organizer"], held: true, waiting: [1, 1] });
+  }, 120_000);
+});
+
+/* THE INSTALL THAT STOOD DOWN TAKES THE MAILBOX BACK. The new organizer decided nothing, so its copy says only
+   its window. W-old, relaunched, presses "Organize here instead": that copy is no question to import (an Import
+   of it would retire every rule W-old made), and W-old's own settings are the mailbox's newest again. */
+describe("the install that stood down takes the mailbox back after a relaunch", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
+  const HOUR = 60 * 60 * 1000;
+  const clock = { skew: 0 };
+  const at = (ms: number): Date => new Date(Date.now() + clock.skew + ms);
+
+  const launch = async (meta: MemoryMeta, machineName: string, dataDir: string) => {
+    const sidecar = await createSidecar({
+      dataDir,
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      address: "owner@trafficflow.test", machineName,
+      pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
+      keks: { 1: Buffer.alloc(32, 9) }, adapterFactory: factory(meta), log: () => {}, now: () => at(0), dkimKeys: null,
+    });
+    let stopped = false;
+    cleanups.push(async () => { if (!stopped) await sidecar.stop(); });
+    await sidecar.start();
+    const call = (method: string, path: string, body?: unknown) => sidecar.handle(new Request(`http://engine.invalid${path}`, {
+      method, headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }));
+    return { sidecar, call, stop: async () => { stopped = true; await sidecar.stop(); } };
+  };
+  type Install = Awaited<ReturnType<typeof launch>>;
+  const organize = async (w: Install, intent?: "takeover") =>
+    (await w.call("POST", `/local/mailboxes/${w.sidecar.world.mailboxId}/organize`, { screening: { scope: "window" }, ...(intent === undefined ? {} : { intent }) })).status;
+  const passes = async (n: number, ...ws: Install[]) => { for (let i = 0; i < n; i++) for (const w of ws) await w.sidecar.syncUntilQuiet(); };
+
+  it("the new organizer decided nothing: no card, W-old keeps its rules and its copy is the newest", async () => {
+    const meta = new MemoryMeta();
+    const dir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(dir, { recursive: true, force: true }));
+    let old = await launch(meta, "W-old", dir);
+    expect(await organize(old)).toBe(200);
+    for (const match of ["news@shop.test", "bank@bank.test"]) {
+      expect((await old.call("POST", "/rules", { kind: "sender", match, destination: "INBOX" })).status).toBe(201);
+    }
+    await passes(1, old);
+    clock.skew += 3 * HOUR;
+    await passes(1, old);
+
+    const nextDir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(nextDir, { recursive: true, force: true }));
+    const next = await launch(meta, "the new laptop", nextDir);
+    expect(await organize(next, "takeover")).toBe(200);
+    await passes(2, next, old);
+
+    clock.skew += 10 * 60_000;
+    await old.stop();
+    old = await launch(meta, "W-old", dir);
+    await passes(2, old, next);
+    expect(await organize(old, "takeover")).toBe(200);
+    await passes(1, old, next);
+    const card = (await (await old.call("GET", `/mailboxes/${old.sidecar.world.mailboxId}/profile-import`)).json()) as { state?: string };
+    const newest = meta.docs().sort((a, b) => Date.parse(b.doc!.updatedAt) - Date.parse(a.doc!.updatedAt))[0]!;
+    expect({
+      card: card.state,
+      rules: (await old.sidecar.db.select().from(ruleRows)).map((r) => r.match).sort(),
+      newest: [newest.installId === old.sidecar.world.accountId ? "W-old" : "the new laptop", newest.doc!.rules.map((r) => r.match).sort()],
+    }).toEqual({ card: "none", rules: ["bank@bank.test", "news@shop.test"], newest: ["W-old", ["bank@bank.test", "news@shop.test"]] });
+  }, 120_000);
+
+  /* A REMOVAL ON THE INTERIM ORGANIZER STICKS. The new laptop imported W-old's settings and the person removed a
+     rule there; W-old takes the mailbox back and imports the new laptop's settings: that rule is gone here too. */
+  it("a rule removed on the new organizer after its Import stays removed when W-old takes back and imports", async () => {
+    clock.skew = 0;
+    const meta = new MemoryMeta();
+    const dir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(dir, { recursive: true, force: true }));
+    const card = async (w: Install) =>
+      (await (await w.call("GET", `/mailboxes/${w.sidecar.world.mailboxId}/profile-import`)).json()) as { state?: string; fingerprint?: string };
+    const importIt = async (w: Install) =>
+      (await w.call("POST", `/mailboxes/${w.sidecar.world.mailboxId}/profile-import`, { fingerprint: (await card(w)).fingerprint })).status;
+    const rules = async (w: Install) => (await w.sidecar.db.select().from(ruleRows)).map((r) => r.match).sort();
+    let old = await launch(meta, "W-old", dir);
+    expect(await organize(old)).toBe(200);
+    for (const match of ["keep@shop.test", "gone@shop.test"]) {
+      expect((await old.call("POST", "/rules", { kind: "sender", match, destination: "ohmail/Screened" })).status).toBe(201);
+    }
+    await passes(1, old);
+    clock.skew += 3 * HOUR;
+    await passes(1, old);
+
+    const nextDir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(nextDir, { recursive: true, force: true }));
+    const next = await launch(meta, "the new laptop", nextDir);
+    expect(await organize(next, "takeover")).toBe(200);
+    await passes(2, next, old);
+    expect(await importIt(next)).toBe(202);
+    await passes(3, next, old);
+    const imported = await rules(next);
+    clock.skew += HOUR;
+    const gone = (await next.sidecar.db.select().from(ruleRows)).find((r) => r.match === "gone@shop.test")!;
+    expect((await next.call("DELETE", `/rules/${gone.id}`)).status).toBe(204);
+    await passes(3, next, old);
+
+    clock.skew += 10 * 60_000;
+    await old.stop();
+    old = await launch(meta, "W-old", dir);
+    await passes(2, old, next);
+    expect(await organize(old, "takeover")).toBe(200);
+    await passes(2, old, next);
+    const asked = (await card(old)).state;
+    expect(await importIt(old)).toBe(202);
+    await passes(4, old, next);
+    const newest = meta.docs().sort((a, b) => Date.parse(b.doc!.updatedAt) - Date.parse(a.doc!.updatedAt))[0]!;
+    expect({
+      imported, asked,
+      rules: await rules(old),
+      newest: [newest.installId === old.sidecar.world.accountId ? "W-old" : "the new laptop", newest.doc!.rules.map((r) => r.match).sort()],
+    }).toEqual({
+      imported: ["gone@shop.test", "keep@shop.test"], asked: "found", rules: ["keep@shop.test"], newest: ["W-old", ["keep@shop.test"]],
+    });
   }, 120_000);
 });

@@ -6,7 +6,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, accounts, auditLog, awayResponders, changeLog, contacts, eraseOwedMailbox, folderState, mailboxCredentials, mailboxes,
   mailboxProfileMirror, messages, organizerRequests, profileImportWriteReleased, rules, settleReaderRuleRows, tags,
-  PROFILE_COPY_AUDIT_ACTION, PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, recordProfileCopy,
+  PROFILE_COPY_AUDIT_ACTION, PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, recordProfileCopy, recordProfileWrite,
   type Tx,
 } from "@trafficflow/db";
 import {
@@ -1485,6 +1485,24 @@ describe("a takeover import retires the dead rule rows of a former reader-only i
     const d = doc({ ...PAYLOAD, rules: [...PAYLOAD.rules, { kind: "sender", match: "past@example.com", destination: "ohmail/News", priority: 1001, enabled: true, provenance: "manual" }] });
     expect((await apply(w, d)).retiredRules).toBe(0);
     expect(await stillThere(w, id)).toBe(true);
+  });
+
+  /* A copy naming no rule retires as any other: the organizer may have removed its last one. */
+  it("a document that names no rule retires the row", async () => {
+    const w = await world();
+    const id = await dead(w);
+    expect((await apply(w, doc({ ...PAYLOAD, rules: [] }))).retiredRules).toBe(1);
+    expect(await stillThere(w, id)).toBe(false);
+  });
+
+  /* So does a store that wrote this mailbox's copy before: a rule the person removed on the install that
+     organized since stays removed when this one takes the mailbox back. */
+  it("a store that once wrote this mailbox's copy retires the row too", async () => {
+    const w = await world();
+    const id = await dead(w);
+    await recordProfileWrite(w.db as unknown as Tx, { accountId: w.accountId, mailboxId: w.mailboxId, installId: "local:here", second: 1, version: "0.30.31" });
+    expect((await apply(w, doc())).retiredRules).toBe(1);
+    expect(await stillThere(w, id)).toBe(false);
   });
 
   it("a document whose instant does not parse retires nothing", async () => {

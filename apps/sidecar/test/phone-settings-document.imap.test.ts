@@ -538,13 +538,13 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone organizing a mailbox with 
     expect(row?.settingsLeft).toBeUndefined();
   }, 600_000);
 
-  /* A REAL FLUSH INTERVAL: a fresh phone meeting another install's settings writes no empty copy
-     beside them, and after Import the mailbox's copy says the imported settings within two passes,
-     not an interval later: another device reading the mailbox meanwhile reads them. */
-  it("with a real flush interval, nothing empty stands beside the found settings and Import reaches the mailbox within two passes", async () => {
+  /* A REAL FLUSH INTERVAL: a fresh consented phone meeting another install's settings publishes its
+     Screener window beside them (readers apply the newest copy's window), and after Import the mailbox's
+     copy says the imported settings within two passes, not an interval later. */
+  it("with a real flush interval, the phone's window stands beside the found settings and Import reaches the mailbox within two passes", async () => {
     const { phone, user, mailboxId, session } = await organizingPhone({ planted: "doc", flushMs: 5 * 60 * 1000 });
     await twoPasses(phone);
-    const before = (await documentsOnServer(user)).map((d) => d.installId);
+    const before = (await documentsOnServer(user)).map((d) => d.installId).sort();
     await decide(phone, "carol@elsewhere.test", "INBOX");
     const q = await readProfileImport(session, mailboxId);
     const imported = await answerProfileImport(session, mailboxId, "import", { fingerprint: (q as { fingerprint: string }).fingerprint });
@@ -552,7 +552,7 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone organizing a mailbox with 
     await twoPasses(phone);
     const ours = (await documentsOnServer(user)).filter((d) => d.installId === phone.installId);
     expect({ before, ours: ours.map((d) => [d.rules.sort(), d.tagNames]) }, `events ${events(phone)}`).toEqual({
-      before: [OTHER_INSTALL], ours: [[["carol@elsewhere.test>INBOX", "news@elsewhere.test>ohmail/Screened"], ["Invoices"]]],
+      before: [OTHER_INSTALL, phone.installId].sort(), ours: [[["carol@elsewhere.test>INBOX", "news@elsewhere.test>ohmail/Screened"], ["Invoices"]]],
     });
   }, 600_000);
 

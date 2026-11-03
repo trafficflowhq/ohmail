@@ -304,24 +304,35 @@ describe("the claim question cannot be walked past", () => {
     expect(s.heading()).toBe(t.windowTitle);
   });
 
-  /* ── THE DEFAULT IS THE CHOICE THAT CAN SUCCEED, AND NOW BOTH CAN ─────────────────────────
+  /* ── NOTHING IS PRE-SELECTED OVER A LIVE HOLDER ─────────────────────────────────────────────
    *
-   * This row used to assert the OPPOSITE, and the inversion is the ruling arriving on screen.
-   * Measured on the released 0.13.7: "Organize here instead" was pre-selected directly above a
-   * block saying the holder was still checking in and the takeover could not be taken, so ↵ on an
-   * untouched screen pressed the refused thing — and the fix was to move the default off it.
+   * "Organize here instead" used to be pre-selected on every door, so an unread Continue displaced a
+   * running organizer and re-baselined its Screener window. Over a holder that is still checking in
+   * the person picks; a stopped holder (below) and the consented re-entry keep the default.
    *
-   * A press over a live holder is honoured now, so the option is no longer refused and the
-   * default belongs back on the choice this flow is about. What the screen owes in its place is
-   * the CONSEQUENCE, which the row below this one pins.
-   *
-   * HOW TO WATCH IT FAIL: restore the `claimRefusedOnThisDoor` branch on `elsewhereChoice`. */
-  it("THE PRE-SELECTED CHOICE IS THE TAKEOVER, live holder or not", async () => {
+   * HOW TO WATCH IT FAIL: default `elsewhereChoice` to "here" again. */
+  it("NOTHING IS PRE-SELECTED OVER A LIVE HOLDER, and Continue does nothing until a pick", async () => {
     const live = await mount({ facts: facts(PEEKED) });
     expect(live.heading()).toBe(t.elsewhereTitle);
-    expect(live.picked(), "a first run defaulted away from organizing").toBe("here");
+    expect(live.picked(), "a live organizer's mailbox defaulted to the takeover").toBeNull();
+    const cont = [...live.el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(t.continue));
+    expect(cont?.disabled, "Continue is pressable with nothing picked").toBe(true);
+    await live.press(t.continue);
+    // Enter submits the step's form whatever the button says.
+    await act(async () => { live.el.querySelector("form")!.requestSubmit(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
+    expect({ heading: live.heading(), organized: live.organizedWith }).toEqual({ heading: t.elsewhereTitle, organized: [] });
     const stopped = await mount({ facts: facts({ ...PEEKED, organizerState: "stopped" }) });
     expect(stopped.picked()).toBe("here");
+  });
+
+  it("A PICKED 'Organize here instead' walks on to Agree, which asks for the takeover", async () => {
+    const s = await mount({ facts: facts(PEEKED) });
+    await s.pick("here");
+    await s.press(t.continue);
+    await s.press(t.continue);
+    expect(s.heading()).toBe(t.windowTitle);
+    await s.press(t.agree);
+    expect(s.organizedWith.map((b) => (b as { intent?: string }).intent)).toEqual(["takeover"]);
   });
 
   it("CONTROL: where the claim CAN win, the default is still 'Organize here instead'", async () => {

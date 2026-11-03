@@ -538,14 +538,18 @@ answer, Settings offers the newest one answered "Not now", and the next once
 that one is imported or replaced. The question survives a restart, and a store
 that is removed leaves every found copy in the mailbox for the next install to
 ask about. A found copy that says exactly what the store says asks nothing, and
-the store's own copy replaces it. An older copy that lands beside an organizer
+the store's own copy replaces it; so does another install's copy that says only
+its Screener window (an organizer that has decided nothing yet), since an Import
+of it would add nothing and remove this store's rules. An older copy that lands beside an organizer
 already organizing is an overlap's loser, not a question, and a found copy
 older than the eight newest, whoever wrote it, follows the ten-minute rule once
 the organizer has read every found copy; until then none goes by age, so a copy
 behind many others is still found and asked about.
 
-An empty store writes no copy beside found settings, so a reader never takes
-an empty copy for the mailbox's newest settings. An answer reaches the mailbox
+An organizer whose store says nothing yet still writes its Screener window
+beside another install's found settings once it has a consent, because readers
+apply the newest copy's window; beside an unanswered copy under its own id it
+writes nothing until the person answers. An answer reaches the mailbox
 within two profile passes, whatever the flush interval: the pass that reads the
 answer releases the question, and the next one writes the store as the answer
 left it. The copy the answer released stays in the mailbox until a copy of the
