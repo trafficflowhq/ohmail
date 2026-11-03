@@ -38,7 +38,7 @@ import { makeDeps, req } from "./helpers.js";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, deps: ApiDeps) => app.handle(r, deps);
-const SECRET = "send-reconcile-route-test-secret-abcdefghij-fixture-token";
+const SECRET = "send-reconcile-internal-secret-fixture-token";
 const MIN = 60_000;
 
 /** A stranded reservation: `pending`, eleven minutes old, its draft still at `sending`. */
@@ -63,7 +63,7 @@ async function stranded(deps: ApiDeps, db: Awaited<ReturnType<typeof makeDeps>>[
 
 async function armed() {
   const { db, deps } = await makeDeps();
-  deps.alerts = { secret: SECRET, cronSecret: "vercel-cron-secret-abcdefghijabc-fixture-token" };
+  deps.alerts = { secret: SECRET, cronSecret: "send-reconcile-cron-secret-fixture-token" };
   // The route must build its OWN admission-wrapped factory, so this stays unset.
   deps.services!.sendAdapter = undefined;
   return { db, deps };
@@ -85,7 +85,7 @@ describe("mounting and the gate", () => {
     expect((await H(req("GET", SEND_RECONCILE_CRON_PATH, { bearer: "wrong" }), deps)).status).toBe(401);
     expect((await H(req("GET", SEND_RECONCILE_CRON_PATH, { bearer: SECRET }), deps)).status).toBe(200);
     expect((await H(
-      req("GET", SEND_RECONCILE_CRON_PATH, { bearer: "vercel-cron-secret-abcdefghijabc-fixture-token" }), deps,
+      req("GET", SEND_RECONCILE_CRON_PATH, { bearer: "send-reconcile-cron-secret-fixture-token" }), deps,
     )).status).toBe(200);
   });
 });

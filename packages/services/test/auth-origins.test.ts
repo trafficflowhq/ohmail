@@ -170,11 +170,11 @@ describe("rpID is validated against the Public Suffix List", () => {
   });
 
   it("counts PRIVATE-section suffixes too — the stricter, safer reading", () => {
-    // github.io and the hosting platform's app domain are PSL private-section entries: `foo.github.io` and
+    // github.io and a hosting platform's app domain are PSL private-section entries: `foo.github.io` and
     // `bar.github.io` are different owners, so `github.io` must not be an rpID either.
     for (const [rpID, origin] of [
       ["github.io", "https://foo.github.io"],
-      ["vercel" + ".app", "https://ohmail-staging.vercel" + ".app"],
+      ["netlify.app", "https://ohmail-staging.netlify.app"],
     ] as const) {
       expect(() => makeAuthConfig({ rpID, origin }), rpID).toThrow(/PUBLIC SUFFIX/);
     }

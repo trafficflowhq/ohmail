@@ -198,7 +198,7 @@ function dbFailingDeleteFrom(db: ApiDeps["db"], table: unknown, thrown: unknown)
 }
 
 describe("admin_oauth_failed and admin_oauth_reread_failed — routes/admin-oauth.ts", () => {
-  const ADMIN_SECRET = "admin-secret-for-tests-abcdefghij-fixture-token";
+  const ADMIN_SECRET = "admin-console-internal-secret-fixture-token";
 
   async function seeded(thrown: unknown): Promise<{
     deps: ApiDeps; token: string; lines: Record<string, unknown>[];
@@ -207,7 +207,7 @@ describe("admin_oauth_failed and admin_oauth_reread_failed — routes/admin-oaut
     const { logger, lines } = capture();
     const [staff] = await deps.db.insert(staffUsers).values({
       email: `ops-${Math.random().toString(36).slice(2, 8)}@ohmail.app`,
-      passwordHash: await scryptHasher.hash("correct-horse-battery-staple-4x-password"),
+      passwordHash: await scryptHasher.hash("staff-console-sign-in-password"),
     }).returning();
     // Cloud 0047: roles are read live; the registration routes admit ops and owner.
     await deps.db.insert(staffRoleGrants).values({ staffUserId: (staff as { id: string }).id, role: "owner" });

@@ -215,7 +215,7 @@ const signIn = (sidecar: CloudSidecar, address: string, token: string): Promise<
   sidecar.handle(new Request("http://sidecar/cloud/signin", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ email: address, password: "hunter2-and-then-some-password-password", totp: "123456" }),
+    body: JSON.stringify({ email: address, password: "cloud-sign-in-password", totp: "123456" }),
   }));
 
 /** Wait for the first pull to land the message, since the sign-in deliberately does not await it. */

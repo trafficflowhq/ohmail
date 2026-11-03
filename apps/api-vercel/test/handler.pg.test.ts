@@ -337,7 +337,7 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
     });
 
     it("an unknown host fails CLOSED to bearer-only", async () => {
-      expect((await handleApiRequest(cookieReq("ohmail-api-abc123.vercel" + ".app"))).status).toBe(401);
+      expect((await handleApiRequest(cookieReq("ohmail-api-preview.hosting.example"))).status).toBe(401);
     });
 
     it("a cookie host consults the cookie — same 401 here, but by a different path", async () => {

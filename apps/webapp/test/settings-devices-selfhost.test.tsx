@@ -28,7 +28,7 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const TOKEN = "udfcxjjqlambhcvfnzikwbasgdteghcyrfepaoqiiue-fixture-token";
+const TOKEN = "invite-and-pair-link-fixture-token";
 
 let originalFetch: typeof globalThis.fetch;
 let root: Root | null = null;

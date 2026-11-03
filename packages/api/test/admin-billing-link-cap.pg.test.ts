@@ -21,7 +21,7 @@ import {
  */
 const PG_UP = await realPgAvailable();
 
-const SECRET = "admin-secret-for-tests-abcdefghij-fixture-token";
+const SECRET = "admin-console-internal-secret-fixture-token";
 const ADMIN: AdminConfig = { secret: SECRET, environment: "test" };
 const app = createApp(apiRoutes);
 const PRESSES = 6;

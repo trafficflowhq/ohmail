@@ -422,7 +422,7 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
    * now correctly declines to look up; the fixture was never realistic, and the check that
    * exposed it is the point.
    */
-  const TOKEN = "wtodazjkkdrmkvkkbogsbndzgxedvjdcrzrfabmtjhc-fixture-token";
+  const TOKEN = "proxy-session-cookie-fixture-token";
   const withSession = { headers: { cookie: `tf_session=${TOKEN}` } };
 
   /* This repository carries the app and not the website: an anonymous `/` with no landing zone armed

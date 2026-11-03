@@ -39,9 +39,9 @@ import { STAFF_SESSION_HEADER } from "../src/routes/admin.js";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
-const ADMIN_SECRET = "admin-secret-for-tests-abcdefghij-fixture-token";
+const ADMIN_SECRET = "admin-console-internal-secret-fixture-token";
 const ADMIN: AdminConfig = { secret: ADMIN_SECRET, environment: "test" };
-const STAFF_TOKEN = "staff-session-token-fixture-abcdefghij-fixture-token";
+const STAFF_TOKEN = "staff-session-cookie-fixture-token";
 
 const H = (r: Request, d: ApiDeps): Promise<Response> =>
   app.handle(r, { ...d, session: null, idempotency: null, admin: ADMIN });

@@ -798,7 +798,7 @@ describe("the cloud door", () => {
   it("configures the door with an address and no secret, then signs in over the bridge", async () => {
     const asked = shellThatWorks({ ...SERVING, mode: "cloud" });
 
-    const result = await enterCloudDoor("mila@lichtgrat.example", "hunter2-and-then-some", "123456");
+    const result = await enterCloudDoor("mila@lichtgrat.example", "cloud-sign-in-password", "123456");
     expect(result.problem).toBeNull();
 
     const configure = asked.find((a) => a.command === "engine_configure")!;
@@ -807,7 +807,7 @@ describe("the cloud door", () => {
       cloudUrl: CLOUD_URL,
       address: "mila@lichtgrat.example",
     });
-    expect(JSON.stringify(configure.payload)).not.toContain("hunter2");
+    expect(JSON.stringify(configure.payload)).not.toContain("cloud-sign-in-password");
     expect(JSON.stringify(configure.payload)).not.toContain("123456");
 
     const request = asked.find((a) => a.command === "engine_request")!;
@@ -816,7 +816,7 @@ describe("the cloud door", () => {
     const body = new TextDecoder().decode(Uint8Array.from(request.payload!.body as number[]));
     expect(JSON.parse(body)).toEqual({
       email: "mila@lichtgrat.example",
-      password: "hunter2-and-then-some",
+      password: "cloud-sign-in-password",
       totp: "123456",
     });
   });

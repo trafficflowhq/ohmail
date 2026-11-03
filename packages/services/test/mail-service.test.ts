@@ -405,8 +405,8 @@ describe("MailService — the config it refuses to boot with", () => {
     expect(() => build({ appUrl: "http://localhost:3000", siteUrl: "http://127.0.0.1:5173" })).not.toThrow();
     // A preview deployment has to NAME its origin — deliberately.
     expect(() => build({
-      appUrl: "https://ohmail-preview.vercel" + ".app",
-      allowedOrigins: ["https://ohmail-preview.vercel" + ".app", "https://ohmail.app"],
+      appUrl: "https://ohmail-preview.hosting.example",
+      allowedOrigins: ["https://ohmail-preview.hosting.example", "https://ohmail.app"],
     })).not.toThrow();
   });
 
@@ -632,7 +632,7 @@ describe("MailService — email verification (built, not wired)", () => {
     // …and the TRANSACTIONAL budget is untouched, so the mail the product owes this person still
     // sends. Reverting the quota to `transactional` makes this line fail.
     expect((await h.svc.sendInvite(h.ctx, {
-      to: email, code: "OHMAIL-7QR4-2K9F-" + "1234", expiresAt: new Date(START.getTime() + 86_400_000),
+      to: email, code: "transactional-invite", expiresAt: new Date(START.getTime() + 86_400_000),
     })).status).toBe("sent");
     expect((await h.svc.sendNewDeviceSignIn(h.ctx, {
       to: email, device: "Web", ip: "1.1.1.1", at: START,

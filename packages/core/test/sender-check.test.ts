@@ -20,6 +20,8 @@ import { personalAt } from "../../../test/support/fixture-credentials.js";
 const GMAIL = "gmail.com";
 /** A sender at a shared provider whose local part claims nothing. */
 const SENDER = personalAt("fixture.reto", GMAIL);
+/** A domain that owns no brand, for a local part that IS the claim: no address at a real provider carries it. */
+const ELSEWHERE = "firma.example";
 
 /** The model's answer in the reported screenshot, as this file reads one. */
 const READS_095: CheckedSuggestion = {
@@ -377,8 +379,10 @@ describe("the identity fact — claimedIdentity, the one definition the gate rea
   });
 
   it("the local part speaks beside any name; the subject only through its lead-in", () => {
-    expect(fact(null, `postfinance.kundendienst@${GMAIL}`)).toEqual({ brand: "PostFinance", via: "local_part" });
-    expect(fact("Hans Muster", `postfinance.kundendienst@${GMAIL}`)).toEqual({ brand: "PostFinance", via: "local_part" });
+    expect(fact(null, `postfinance.kundendienst@${ELSEWHERE}`)).toEqual({ brand: "PostFinance", via: "local_part" });
+    expect(fact("Hans Muster", `postfinance.kundendienst@${ELSEWHERE}`)).toEqual({ brand: "PostFinance", via: "local_part" });
+    // At a shared provider too: the provider owns no brand, so its local part still claims one.
+    expect(fact(null, personalAt("fixture.postfinance", GMAIL))).toEqual({ brand: "PostFinance", via: "local_part" });
     expect(fact("Hans Muster", "hans.muster@mail.example")).toBeUndefined();
     expect(fact("Kartenservice", SENDER, "PostFinance: Reaktivierung Ihrer Karte"))
       .toEqual({ brand: "PostFinance", via: "subject_lead" });
@@ -441,9 +445,9 @@ describe("the identity fact — claimedIdentity, the one definition the gate rea
   });
 
   it("the local part claims beside any name, an invisible or punctuation-only name included", () => {
-    expect(fact("\u200B", `postfinance.service@${GMAIL}`)).toEqual({ brand: "PostFinance", via: "local_part" });
-    expect(fact(".", `postfinance.service@${GMAIL}`)).toEqual({ brand: "PostFinance", via: "local_part" });
-    expect(fact("Kundendienst", `postfinance.kundendienst@${GMAIL}`)).toEqual({ brand: "PostFinance", via: "local_part" });
+    expect(fact("\u200B", `postfinance.service@${ELSEWHERE}`)).toEqual({ brand: "PostFinance", via: "local_part" });
+    expect(fact(".", `postfinance.service@${ELSEWHERE}`)).toEqual({ brand: "PostFinance", via: "local_part" });
+    expect(fact("Kundendienst", `postfinance.kundendienst@${ELSEWHERE}`)).toEqual({ brand: "PostFinance", via: "local_part" });
     expect(fact("Anna Brunner", "anna.brunner@mail.example")).toBeUndefined();
     expect(fact("PostFinance", "postfinance.news@postfinance.ch")).toBeUndefined();
   });
@@ -552,7 +556,7 @@ describe("the identity fact — claimedIdentity, the one definition the gate rea
   };
   const CRAFTED_NAME = "a".repeat(2000) + " ubs".repeat(250);
   const CRAFTED_LOCAL = "ab1cd2".repeat(500);
-  const CRAFTED_SUBJECT = "Aa" + " ".repeat(2997) + "x";
+  const CRAFTED_SUBJECT = `Aa${" ".repeat(2997)}x`;
 
   it("a crafted name of 3,000 characters claims nothing within 250 ms, and a brand at its end is found", () => {
     expect(CRAFTED_NAME).toHaveLength(3000);
@@ -563,8 +567,8 @@ describe("the identity fact — claimedIdentity, the one definition the gate rea
   it("a crafted local part of 3,000 characters claims nothing within 100 ms, and a brand ending its first 256 units is found", () => {
     expect(CRAFTED_LOCAL).toHaveLength(3000);
     expect(fastest(() => expect(fact("Crafted Sender", `${CRAFTED_LOCAL}@example.com`)).toBeUndefined())).toBeLessThan(100);
-    expect(fact(null, `${CRAFTED_LOCAL.slice(0, 244)}.postfinance@${GMAIL}`)).toEqual({ brand: "PostFinance", via: "local_part" });
-    expect(fact(null, `${CRAFTED_LOCAL.slice(0, 2988)}.postfinance@${GMAIL}`)).toBeUndefined();
+    expect(fact(null, `${CRAFTED_LOCAL.slice(0, 244)}.postfinance@${ELSEWHERE}`)).toEqual({ brand: "PostFinance", via: "local_part" });
+    expect(fact(null, `${CRAFTED_LOCAL.slice(0, 2988)}.postfinance@${ELSEWHERE}`)).toBeUndefined();
   });
 
   it("a local part of 4,096 characters the fold expands claims nothing within 100 ms", () => {
@@ -574,15 +578,15 @@ describe("the identity fact — claimedIdentity, the one definition the gate rea
   });
 
   it("a local part and a name are read to their cap after the fold: a brand past it is not a claim, one inside it is", () => {
-    expect(fact(null, `${"⒜".repeat(80)}.postfinance@${GMAIL}`)).toEqual({ brand: "PostFinance", via: "local_part" });
-    expect(fact(null, `${"⒜".repeat(100)}.postfinance@${GMAIL}`)).toBeUndefined();
+    expect(fact(null, `${"⒜".repeat(80)}.postfinance@${ELSEWHERE}`)).toEqual({ brand: "PostFinance", via: "local_part" });
+    expect(fact(null, `${"⒜".repeat(100)}.postfinance@${ELSEWHERE}`)).toBeUndefined();
     expect(fact(`${"⒜".repeat(1300)} PostFinance`, SENDER)).toEqual({ brand: "PostFinance", via: "name" });
     expect(fact(`${"⒜".repeat(1400)} PostFinance`, SENDER)).toBeUndefined();
   });
 
   it("a local part with more runs than the belt stores still has every word and every short run read", () => {
-    expect(fact(null, `${"a.".repeat(122)}postfinance@${GMAIL}`)).toEqual({ brand: "PostFinance", via: "local_part" });
-    expect(fact(null, `${"a.".repeat(117)}p.o.s.t.f.i.n.a.n.c.e@${GMAIL}`)).toEqual({ brand: "PostFinance", via: "local_part" });
+    expect(fact(null, `${"a.".repeat(122)}postfinance@${ELSEWHERE}`)).toEqual({ brand: "PostFinance", via: "local_part" });
+    expect(fact(null, `${"a.".repeat(117)}p.o.s.t.f.i.n.a.n.c.e@${ELSEWHERE}`)).toEqual({ brand: "PostFinance", via: "local_part" });
   });
 
   it("a crafted subject of 3,000 characters claims nothing within 40 ms, and a lead-in naming the brand is found", () => {
@@ -601,8 +605,8 @@ describe("the identity fact — claimedIdentity, the one definition the gate rea
     for (const name of ["Post CH", "Post-CH", "PostCH Kundendienst", "Die Post CH"]) {
       expect(fact(name, SENDER)?.brand, name).toBe("Die Post");
     }
-    expect(fact(null, `postch@${GMAIL}`)?.brand).toBe("Die Post");
-    expect(fact("Post Chalet", `post.x7@${GMAIL}`)).toBeUndefined();
+    expect(fact(null, `postch@${ELSEWHERE}`)?.brand).toBe("Die Post");
+    expect(fact("Post Chalet", `post.x7@${ELSEWHERE}`)).toBeUndefined();
     expect(fact("Shop", "news@shop.example", "Post-Christmas Sale: 20% auf alles")).toBeUndefined();
     expect(fact("Bank", "info@bank.example", "Postcheck-Konto: Ihr Auszug")).toBeUndefined();
   });
@@ -626,7 +630,8 @@ describe("the identity fact — claimedIdentity, the one definition the gate rea
     ]) {
       expect(isSharedProviderDomain(d), d).toBe(true);
     }
-    expect(fact("O" + "2 Kundenservice", "x@o2online.de")?.brand).toBe("O" + "2");
+    const o2 = `${"O"}2`; // the push gate reads a capital and a digit as an internal id
+    expect(fact(`${o2} Kundenservice`, personalAt("fixture.reto", "o2online.de"))?.brand).toBe(o2);
   });
 
   it("identityOfRow: the column when checked, the function when the row never was", () => {

@@ -238,15 +238,15 @@ describe("deriveRequestKey", () => {
   const ADDR = "person@mailbox.example";
 
   it("two installs holding the same credential derive the SAME key", () => {
-    const a = deriveRequestKey({ auth: { user: ADDR, pass: "s3cret" }, address: ADDR });
-    const b = deriveRequestKey({ auth: { user: "typed-by-someone-else", pass: "s3cret" }, address: ADDR });
+    const a = deriveRequestKey({ auth: { user: ADDR, pass: "request-key-password" }, address: ADDR });
+    const b = deriveRequestKey({ auth: { user: "typed-by-someone-else", pass: "request-key-password" }, address: ADDR });
     expect(a).not.toBeNull();
     expect(b).toBe(a);
   });
 
   it("a DIFFERENT password derives a different key — which is what a password change is", () => {
-    const before = deriveRequestKey({ auth: { user: ADDR, pass: "s3cret" }, address: ADDR });
-    const after = deriveRequestKey({ auth: { user: ADDR, pass: "s3cret-2-password-password" }, address: ADDR });
+    const before = deriveRequestKey({ auth: { user: ADDR, pass: "request-key-password" }, address: ADDR });
+    const after = deriveRequestKey({ auth: { user: ADDR, pass: "request-key-changed-password" }, address: ADDR });
     expect(after).not.toBe(before);
   });
 

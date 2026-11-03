@@ -1789,8 +1789,7 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
       // indistinguishable, to this role, from the one that did not.
       expect(
         after.text,
-        "a chosen delivery is VISIBLE to the staff role — the mail-content rule. Diff the two sweeps: the " +
-        "relation named on the changed line is the oracle.",
+        "a chosen delivery is VISIBLE to the staff role — the mail-content rule. Diff the two sweeps: the relation named on the changed line is the oracle.",
       ).toBe(before.text);
       expect(after.rows).toBe(before.rows);
 
@@ -1811,8 +1810,7 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
         const bitten = await sweepEverything();
         expect(
           bitten.text,
-          "the sweep did not change when a row was added to a relation the role CAN read — it " +
-          "is not measuring anything, and the equality above is vacuous",
+          "the sweep did not change when a row was added to a relation the role CAN read — it is not measuring anything, and the equality above is vacuous",
         ).not.toBe(before.text);
         expect(bitten.rows).toBe(before.rows + 1);
       } finally {

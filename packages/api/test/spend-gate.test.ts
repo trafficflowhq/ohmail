@@ -1446,7 +1446,7 @@ describe("the requirement is a COMPOSITION POLICY, and its absence is the strict
    */
   const MAILBOX_BODY = JSON.stringify({
     provider: "imap", address: "mila@lichtgrat.example",
-    imap: { host: "imap.example", port: 993, secure: true, user: "mila", pass: "s3cr3t-imap-password-password" },
+    imap: { host: "imap.example", port: 993, secure: true, user: "mila", pass: "mailbox-imap-password" },
   });
   const addMailbox = (deps: ApiDeps, token: string): Promise<Response> =>
     H(req("POST", "/mailboxes", { bearer: token, body: MAILBOX_BODY }), deps);

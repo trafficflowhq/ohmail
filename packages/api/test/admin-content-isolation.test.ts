@@ -1927,16 +1927,13 @@ describe("no staff surface carries a marker from ANY column of the schema", () =
     // pinned with a reason. Same mechanism as the console's SEAM_FIELDS census.
     expect(
       sweep.emptyTables,
-      "a table in the schema has no row, so the sweep could not taint it. Seed it in " +
-        "`seedWorld`, or add it to UNSEEDED_TABLES with a reason.",
+      "a table in the schema has no row, so the sweep could not taint it. Seed it in `seedWorld`, or add it to UNSEEDED_TABLES with a reason.",
     ).toEqual([...UNSEEDED_TABLES].sort());
 
     // A new CHECK-constrained column fails here rather than being silently skipped.
     expect(
       sweep.refused.sort(),
-      "the database refused a marker for a column that is not in REFUSED_BY_CONSTRAINT — " +
-        "classify it (a closed-set status column cannot carry mail; a free-text one must be " +
-        "tainted another way).",
+      "the database refused a marker for a column that is not in REFUSED_BY_CONSTRAINT — classify it (a closed-set status column cannot carry mail; a free-text one must be tainted another way).",
     ).toEqual([...REFUSED_BY_CONSTRAINT].sort());
 
     expect(

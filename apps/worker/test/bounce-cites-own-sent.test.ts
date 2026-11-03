@@ -153,13 +153,15 @@ describe("a delivery report at the Screener, through a sync cycle", () => {
   });
 
   const MICROSOFT = providerAuthservIds("outlook.office365.com");
+  /** Microsoft's consumer domain: its own postmaster reports, so the domain is the property. */
+  const OUTLOOK = "outlook.com";
   const EXCHANGE = '"Microsoft Outlook" <MicrosoftExchange329e71ec88ae4615bbc36ab6ce41109e@own.invalid>';
 
   it("on a Microsoft mailbox, Microsoft's own reports of the person's mail reach the Ohbox, recorded", async () => {
     const w = await world({ trusted: MICROSOFT });
     const tenant = await w.deliver("ndr-1@own.invalid", dsn({ id: "ndr-1@own.invalid", inReplyTo: OURS, from: EXCHANGE }));
     const consumer = await w.deliver("ndr-2@outlook.invalid", dsn({
-      id: "ndr-2@outlook.invalid", inReplyTo: OURS, from: '"Microsoft Outlook" <postmaster@outlook.com>',
+      id: "ndr-2@outlook.invalid", inReplyTo: OURS, from: `"Microsoft Outlook" <postmaster@${OUTLOOK}>`,
     }));
     expect([tenant.desired, consumer.desired]).toEqual(["INBOX", "INBOX"]);
     expect(await w.admissions()).toEqual([
@@ -190,6 +192,8 @@ describe("the account's own organisation reports at its own domain, whatever the
   const TENANT = '"Microsoft Outlook" <MicrosoftExchange329e71ec88ae4615bbc36ab6ce41109e@contoso.invalid>';
   const EXCHANGE = '"Microsoft Outlook" <MicrosoftExchange329e71ec88ae4615bbc36ab6ce41109e@own.invalid>';
   const MICROSOFT = providerAuthservIds("outlook.office365.com");
+  /** Microsoft's consumer domain: its own postmaster reports, so the domain is the property. */
+  const OUTLOOK = "outlook.com";
   const DAVMAIL = providerAuthservIds("127.0.0.1");
 
   it("Exchange's report at the mailbox's own domain, with no provider named, reaches the Ohbox, recorded and unmarked", async () => {
@@ -241,7 +245,7 @@ describe("the account's own organisation reports at its own domain, whatever the
   it("CONTROL: an address at a shared provider is no organisation: another brand's name there stays held", async () => {
     const w = await world({ trusted: DAVMAIL, address: personalAt("fixture.nadja", "gmail.com") });
     const ndr = await w.deliver("ndr-sh@gmail.invalid", dsn({
-      id: "ndr-sh@gmail.invalid", inReplyTo: OURS, from: '"PayPal" <service@gmail.com>',
+      id: "ndr-sh@gmail.invalid", inReplyTo: OURS, from: `"PayPal" <${personalAt("fixture.ndr", "gmail.com")}>`,
     }));
     expect(ndr.desired, "everybody at gmail.com shares the domain").toBe("ohmail/Screener");
     expect(await w.admissions()).toEqual([]);

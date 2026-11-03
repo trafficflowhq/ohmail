@@ -30,7 +30,7 @@ const CFG: S3StagingStorageConfig = {
   endpoint: "http://127.0.0.1:3902",
   region: "us-east-1",
   accessKeyId: "AKIDEXAMPLE",
-  secretAccessKey: "wjalrxutnfemi-khmdeng-bpxrficyexamplekey-fixture-token",
+  secretAccessKey: "attachment-staging-secret-access-fixture-token",
   bucket: "staging",
 };
 
