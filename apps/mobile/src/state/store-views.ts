@@ -6,7 +6,9 @@
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useWorld, type WorldMail } from "./world";
-import { createSessionReask, type SessionRenewalDoor, type StoreMessage, type StoreReadSource } from "./live";
+import {
+  createSessionReask, type AddressDirection, type SessionRenewalDoor, type StoreMessage, type StoreReadSource,
+} from "./live";
 
 /** The phone's Search debounce: 250 ms (the webapp types at 100); the ceiling is the walker's own. */
 export const STORE_SEARCH_DEBOUNCE_MS = 250;
@@ -198,4 +200,59 @@ export function useStoreSearch(query: string, deviceIds: readonly string[]): Pho
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walker, rev, q, w, renewing]);
+}
+
+/** The archive's half of the address view, for the direction on screen. */
+export type PhoneAddressArchive =
+  | { state: "idle" }
+  | { state: "searching" }
+  /** No archive behind this door (the standalone phone): the device's rows are the answer. */
+  | { state: "unavailable" }
+  | { state: "failed"; cause: string; retry(): void }
+  /** `direction` is the one the server answered: one before the recipient index answers `from`. */
+  | {
+    state: "ready"; items: readonly StoreMessage[]; total: number; direction: AddressDirection;
+    importing: boolean; atLeast: boolean;
+  };
+
+const IDLE: PhoneAddressArchive = { state: "idle" };
+const ASKING: PhoneAddressArchive = { state: "searching" };
+
+/**
+ * THE ARCHIVE ASKED ABOUT ONE ADDRESS, per direction — the web address view's pass
+ * (`address-view.ts#useAddressView`): one ask per (address, direction), an answer held so a toggle
+ * back asks nothing, an answer for another address or direction dropped, a refusal asked again
+ * only by the person's press.
+ */
+export function useAddressArchive(address: string | null, direction: AddressDirection): PhoneAddressArchive {
+  const w = useWorld();
+  const ask = useRef(w.store.addressSearch);
+  ask.current = w.store.addressSearch;
+  const held = useMemo(() => new Map<string, PhoneAddressArchive>(), [address, w.worldKey]);
+  const [pass, setPass] = useState<{ key: string; outcome: PhoneAddressArchive } | null>(null);
+  const [tick, setTick] = useState(0);
+  const asked = address !== null && address.trim() !== "";
+  const key = JSON.stringify([address, direction]);
+  useEffect(() => {
+    if (!asked || held.has(key)) return undefined;
+    let live = true;
+    setPass({ key, outcome: ASKING });
+    void ask.current(address, direction).then((o) => {
+      if (!live) return;
+      const outcome: PhoneAddressArchive = o.state === "ready"
+        ? {
+          state: "ready", items: o.items, total: o.total, direction: o.direction,
+          importing: o.importing === true, atLeast: o.totalExact === false,
+        }
+        : o.state === "failed"
+          ? { state: "failed", cause: o.errorClass, retry: () => setTick((n) => n + 1) }
+          : { state: "unavailable" };
+      if (outcome.state === "ready") held.set(key, outcome);
+      setPass({ key, outcome });
+    });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [held, key, tick]);
+  if (!asked) return IDLE;
+  return held.get(key) ?? (pass?.key === key ? pass.outcome : ASKING);
 }

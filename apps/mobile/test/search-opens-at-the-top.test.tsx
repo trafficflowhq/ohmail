@@ -11,7 +11,7 @@
  * And a result opened from Search stays over it: Search holds the pushed reader's move to the
  * pair's pane, so Back returns to the query instead of past it.
  */
-import { createElement as h, useImperativeHandle, useLayoutEffect, useRef } from "react";
+import { act, createElement as h, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "./_rendered-dom";
 
@@ -64,6 +64,7 @@ vi.mock("react-native", async () => {
   return {
     ...rnDom,
     SectionList,
+    Keyboard: { addListener: () => ({ remove: () => undefined }) },
     TextInput: (p: { onChangeText: (t: string) => void }) => { input.change = p.onChangeText; return null; },
   };
 });
@@ -75,8 +76,9 @@ vi.mock("../src/ui/base", async () => {
   const line = (p: { children?: unknown }) => React.createElement("span", { "data-line": "" }, p.children as never);
   return {
     Screen: (p: { children?: unknown }) => React.createElement("div", null, p.children as never),
-    Empty: () => null,
-    Tap: (p: { children?: unknown }) => React.createElement("div", null, p.children as never),
+    Empty: (p: { title: string }) => React.createElement("span", { "data-empty": "" }, p.title),
+    Tap: (p: { children?: unknown; onPress?: () => void; accessibilityLabel?: string }) =>
+      React.createElement("div", { onClick: p.onPress, "data-label": p.accessibilityLabel }, p.children as never),
     Txt: line,
     Section: line,
     panelSurface: () => ({}),
@@ -88,23 +90,41 @@ vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null }));
 vi.mock("../src/ui/Gated", () => ({ Gated: ({ children }: { children: unknown }) => children }));
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: ({ children }: { children: unknown }) => children }));
 vi.mock("../src/ui/MailRow", () => ({ MailRow: () => null }));
-vi.mock("../src/ui/Segmented", () => ({ Segmented: () => null }));
+vi.mock("../src/ui/Segmented", async () => {
+  const React = await import("react");
+  return {
+    Segmented: (p: { segments: { value: string; label: string }[]; onChange: (v: string) => void }) =>
+      React.createElement("div", null, ...p.segments.map((g) =>
+        React.createElement("div", { key: g.value, "data-label": g.label, onClick: () => p.onChange(g.value) }))),
+  };
+});
 vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
 vi.mock("../src/net/network-door", () => ({ useNetworkNow: () => "online" }));
 vi.mock("expo-router", () => ({ router: { push: () => undefined } }));
-vi.mock("../src/state/live", () => ({ addressShaped: () => null, unansweredSaid: () => "" }));
+vi.mock("../src/state/live", () => ({ addressShaped: (q: string) => (q.includes("@") ? q.trim() : null), unansweredSaid: () => "" }));
 
 /** The device's own matches: every query finds its first eleven here, newest first. */
 const device = (q: string) => (q.trim().length < 2 ? [] : Array.from({ length: 11 }, (_, i) => ({ id: `${q.trim()}-d${i}` })));
 vi.mock("../src/state/world", () => ({
   useWorld: () => ({
-    search: { warm: () => undefined, query: (q: string) => ({ items: device(q), similar: [], indexing: false }), address: () => null },
-    store: { open: () => undefined },
+    search: {
+      warm: () => undefined, query: (q: string) => ({ items: q.includes("@") ? [] : device(q), similar: [], indexing: false }),
+      address: (_a: string, d: "any" | "from" | "to") => ({ items: around[d], counts: { any: 2, from: 1, to: 1 }, indexing: false }),
+    },
+    store: {
+      open: () => undefined,
+      rowOf: (m: { id: string }) => m,
+      addressSearch: (a: string, d: string) => new Promise((resolve) => { archive.asked.push([a, d, resolve]); }),
+    },
   }),
 }));
+/** The address view's device half per direction, and the archive's asks, each answered by the test. */
+const around = vi.hoisted(() => ({ any: [{ id: "d0" }, { id: "d1" }], from: [{ id: "d0" }], to: [{ id: "d1" }] }));
+const archive = vi.hoisted(() => ({ asked: [] as [string, string, (o: unknown) => void][] }));
 /** The whole-mailbox pass: searching, then its page of `length` slots. */
 const store = vi.hoisted(() => ({ ready: false, length: 0 }));
-vi.mock("../src/state/store-views", () => ({
+vi.mock("../src/state/store-views", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   useStoreSearch: (q: string) => ({
     verdict: q.trim().length < 2 ? "idle" : store.ready ? "ready" : "searching",
     ready: store.ready, length: store.length, total: store.length, totalExact: true, about: null, tier: "exact",
@@ -114,12 +134,14 @@ vi.mock("../src/state/store-views", () => ({
 }));
 
 const { default: SearchScreen } = await import("../app/search");
+const { Copy } = await import("../src/copy");
 const { readerHeldNow } = await import("../src/ui/reader-held");
 
 let screen: ReturnType<typeof mount> | null = null;
 beforeEach(() => {
   list.offset = 0; list.total = 0; list.stack = []; list.props = null;
   store.ready = false; store.length = 0;
+  archive.asked = [];
   screen = mount(h(SearchScreen));
 });
 afterEach(() => { screen?.unmount(); screen = null; });
@@ -158,11 +180,76 @@ describe("a search opens at its top", () => {
   });
 });
 
+describe("a press on a result lands with the keyboard up", () => {
+  it("the list keeps the press instead of spending it on closing the keyboard", () => {
+    type("fenwick");
+    expect(list.props!.keyboardShouldPersistTaps).toBe("handled");
+    expect(list.props!.automaticallyAdjustKeyboardInsets).toBe(true);
+  });
+});
+
 describe("a result opened from Search stays over it", () => {
   it("Search holds the pushed reader's move to the pane while it is open", () => {
     expect(readerHeldNow(), "Search is open").toBe(true);
     screen!.unmount();
     screen = null;
     expect(readerHeldNow(), "Search closed").toBe(false);
+  });
+});
+
+describe("the address view asks the archive, one direction at a time", () => {
+  const ADDR = "ann@example.test";
+  const press = (label: string): void => {
+    const el = screen!.el.querySelector(`[data-label="${label}"]`) as HTMLElement | null;
+    expect(el, label).not.toBeNull();
+    act(() => el!.click());
+  };
+  const keys = (): string[] =>
+    (list.props!.sections as { data: unknown[] }[]).flatMap((s) => s.data.map((r) => list.props!.keyExtractor(r) as string));
+  const answerArchive = async (i: number, outcome: unknown): Promise<void> => {
+    await act(async () => { archive.asked[i]![2](outcome); });
+  };
+  const said = (): string => screen!.el.textContent ?? "";
+
+  it("adds the archive's rows the device lacks under All, and says the archive's count", async () => {
+    type(ADDR);
+    answer(0);
+    press(Copy.searchEmptyAddressScopes(ADDR));
+    expect(archive.asked.map(([a, d]) => [a, d])).toEqual([[ADDR, "any"]]);
+    expect(said()).toContain(Copy.searchWholeSearching);
+    expect(keys()).toEqual(["d0", "d1"]);
+    await answerArchive(0, { state: "ready", items: [{ id: "d1" }, { id: "a1" }, { id: "a2" }], total: 40, direction: "any" });
+    expect(keys()).toEqual(["d0", "d1", "archive:a1", "archive:a2"]);
+    expect(said()).toContain(Copy.searchAddressArchive(40, false, false, false));
+  });
+
+  it("an older server answers To them by sender: its rows stay out and the line says why; a toggle back asks nothing", async () => {
+    type(ADDR);
+    answer(0);
+    press(Copy.searchEmptyAddressScopes(ADDR));
+    await answerArchive(0, { state: "ready", items: [{ id: "a1" }], total: 1, direction: "any" });
+    press(Copy.searchAddressTo);
+    expect(archive.asked.map(([, d]) => d)).toEqual(["any", "to"]);
+    await answerArchive(1, { state: "ready", items: [{ id: "a9" }], total: 7, direction: "from" });
+    expect(keys()).toEqual(["d1"]);
+    expect(said()).toContain(Copy.searchAddressArchiveNoRecipients);
+    press(Copy.searchAddressAll);
+    expect(archive.asked).toHaveLength(2);
+    expect(keys()).toEqual(["d0", "d1", "archive:a1"]);
+  });
+
+  it("an archive that refused is said with its retry, and nothing is claimed empty meanwhile", async () => {
+    around.any = [];
+    try {
+      type(ADDR);
+      answer(0);
+      press(Copy.searchEmptyAddressScopes(ADDR));
+      expect(screen!.el.querySelector("[data-empty]"), "no empty claim while the archive is asked").toBeNull();
+      await answerArchive(0, { state: "failed", error: "boom", errorClass: "network" });
+      press(Copy.searchWholeRetry);
+      expect(archive.asked.map(([, d]) => d)).toEqual(["any", "any"]);
+    } finally {
+      around.any = [{ id: "d0" }, { id: "d1" }];
+    }
   });
 });

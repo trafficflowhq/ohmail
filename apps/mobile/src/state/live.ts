@@ -97,6 +97,7 @@ import {
   StoreTimelineWalker,
   type ServerSearchOutcome,
   type ServerSearchOpts,
+  type ServerAddressOutcome,
   type PressVerdict,
   type RuleDTO,
   type ScreenDest,
@@ -2277,7 +2278,7 @@ export function storeRowOf(engine: OhmailEngine, m: EngineMessage, v: WorldView,
   return row;
 }
 
-export type { EngineMessage as StoreMessage, ServerSearchOpts, ServerSearchOutcome, StoreSearchWalker, StoreTimelineWalker };
+export type { EngineMessage as StoreMessage, ServerAddressOutcome, ServerSearchOpts, ServerSearchOutcome, StoreSearchWalker, StoreTimelineWalker };
 /** The one re-ask rule the store reads bind (`store-views.ts`); the web binds the same one. */
 export { createSessionReask, type SessionRenewalDoor, type StoreReadSource } from "@ohmail/client-engine";
 
@@ -7516,6 +7517,11 @@ export function firstSyncSay(here: { firstSync: string | null } | null): FirstSy
  */
 export function firstSyncSaid(verdict: FirstSyncSay | null): string | null {
   return verdict === "nothingReadable" ? Copy.firstSyncNothingReadable : null;
+}
+
+/** The Ohbox's line while a first sync runs on behind an opened mailbox; `null` otherwise. */
+export function firstSyncReadingSaid(verdict: FirstSyncSay | null): string | null {
+  return verdict === "pending" ? Copy.firstSyncReading : null;
 }
 
 /**

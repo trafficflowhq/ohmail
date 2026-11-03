@@ -690,6 +690,8 @@ const TABLE = {
      those would be false in the other direction. `yet` is the whole of the promise: the engine
      keeps asking, and a mailbox that later reads stops saying this. */
   firstSyncNothingReadable: "Nothing could be read from this mailbox yet.",
+  /* A FIRST SYNC STILL RUNNING, said where Connect lands: the mailbox opens at its first page. */
+  firstSyncReading: "Reading your mailbox for the first time — the rest of your mail arrives here as it is read.",
   /* MESSAGES THIS PHONE SET ASIDE: it could not read them and moved on, so they are not in the
      list. A count only, never an address or a subject; said until a re-read takes them in. No
      claim about the server: the message or its folder may since have gone from it. */
@@ -886,6 +888,11 @@ const TABLE = {
     "The pairing and the mail this phone had copied are gone. The server could not be reached to "
     + "end the session, so it may still count this phone as connected — revoke this device from its "
     + "Devices list to finish.",
+  /** The server had already ended the pairing (a Devices revoke, or a token it refused). */
+  forgetServerEnded:
+    "The pairing and the mail this phone had copied are gone. The server had already ended this "
+    + "phone's session, so there was nothing left to sign out. If its Devices list still shows "
+    + "this phone, remove it there.",
   /** The server was out of reach, and the sign-out is kept for the next time it is not. */
   forgetServerOwed:
     "The pairing and the mail this phone had copied are gone. The server could not be reached to "
@@ -1412,6 +1419,11 @@ const TABLE = {
   searchAddressEmptyAny: (address: string) => `Nothing from or to ${address}.`,
   searchAddressEmptyFrom: (address: string) => `Nothing from ${address}.`,
   searchAddressEmptyTo: (address: string) => `Nothing sent to ${address}.`,
+  /* THE ARCHIVE'S HALF of an address view — the webapp's `search.addressArchive*`. */
+  searchAddressArchive: (n: number, synced: boolean, atLeast: boolean, bySender: boolean) =>
+    `${atLeast ? `At least ${n}` : String(n)} in ${synced ? "the mail synced so far" : "your whole mailbox"}`
+    + (bySender ? " (by sender)" : ""),
+  searchAddressArchiveNoRecipients: "Your whole mailbox cannot be searched by recipient yet.",
 
   /* ------------------------------------------------- two panes (big screens) */
 

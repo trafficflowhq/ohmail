@@ -48,8 +48,11 @@ export interface RefreshVault {
   oweSignOut(refreshToken: string): Promise<boolean>;
 }
 
-/** What became of a sign-out's half at the server: said, owed for the next connection, or neither. */
-export type SignOutOutcome = "told" | "owed" | "untold";
+/**
+ * What became of a sign-out's half at the server: said, owed for the next connection, or neither.
+ * `ended`: the server had already ended this session (a Devices revoke), so there was nothing to say.
+ */
+export type SignOutOutcome = "told" | "owed" | "untold" | "ended";
 
 /**
  * WHY A SESSION ENDED, for the surface that has to say it. `revoked` is the server withdrawing

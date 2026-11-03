@@ -39,7 +39,7 @@ function MoreBody() {
   return (
     <Screen>
       <TopBar />
-      <Scroller>
+      <Scroller avoidKeyboard>
         {/* The header names whose mail this is: the paired server and account. */}
         <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}>
           <Txt variant="h1" numberOfLines={1}>{w.account.name}</Txt>

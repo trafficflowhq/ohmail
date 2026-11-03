@@ -1013,8 +1013,18 @@ describe("the review's own findings, each with the sequence that reaches it", ()
     const outcome = await forgetProfile(env, row.id);
     expect(outcome.kind).toBe("partial");
     if (outcome.kind !== "partial") return;
-    expect(sayRefusal(outcome.reason)).toMatch(/could not be reached/);
+    // The server WAS reached: it ended the pairing itself (a Devices revoke from the web).
+    expect(outcome.reason).toEqual(refuse("forgetServerEnded"));
+    expect(sayRefusal(outcome.reason)).not.toMatch(/could not be reached/);
+    expect(sayRefusal(outcome.reason)).toMatch(/already ended/);
     expect(sayRefusal(outcome.reason)).toMatch(/Devices list/);
+    // And through the seam a live forget takes: the outcome, not a boolean.
+    const again = await profiles.add({
+      origin: "http://b.example", flavor: "selfhost", accountId: "acct-2", refreshToken: "ref-2",
+    });
+    expect(await forgetProfile(env, again.id, { revoke: async () => "ended" })).toEqual({
+      kind: "partial", reason: refuse("forgetServerEnded"),
+    });
   });
 
   it("a kill mid-`add` cannot leave a credential the purge can never name", async () => {

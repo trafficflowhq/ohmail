@@ -726,6 +726,8 @@ export interface OpenLocalDb {
   routeDb?: LocalDb;
   /** Commit the open page, if any. Called at every cycle edge and before the drain's tail. */
   endIngestPage?(): Promise<void>;
+  /** Settles when the drain's first page is committed — what the phone's Connect waits for. */
+  firstIngestPage?: Promise<void>;
   /**
    * Flush and release. Idempotent — shutdown paths call it from more than one place, and they share
    * one close. On the desktop store it refuses new calls, waits for the admitted ones, and rejects

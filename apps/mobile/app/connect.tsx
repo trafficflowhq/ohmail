@@ -113,7 +113,7 @@ function ConnectBody() {
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
       <DetailBar />
-      <Scroller bounded>
+      <Scroller bounded avoidKeyboard>
         {/* The FORM is put away for the confirmation, for the reason the scanner puts the camera
             away: a field that can still be edited beside three facts about what answered would
             let somebody read one computer's key while pairing with another — the desktop's own
