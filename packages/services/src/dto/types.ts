@@ -273,6 +273,14 @@ export interface SenderCheckDTO {
    * letter as never checked, exactly as the server's press does (`heldRowMovesOnPress`).
    */
   unchecked?: true;
+  /**
+   * The gate holds the letter (on a queue row, a letter of the sender) for want of confirmation
+   * (`messages.unconfirmed_hold`, mail 0176); on a message, beside a claim too. A held claim to every
+   * reader: it keeps its sender waiting, dated by its record time, no release takes it unless a person
+   * consented (on `unverified`, a domain rule a person wrote or pressed too), and only a press on its own address
+   * moves it.
+   */
+  held?: true;
 }
 
 /**
@@ -1052,6 +1060,12 @@ export interface RuleDTO {
    * published document, which carries no mark.
    */
   byOhmail: boolean;
+  /**
+   * A person decided this rule (`rules.person_decided_at`, mail 0128; a document's `personDecidedAt`):
+   * their own Screener press wrote it, or they paused it. A promoted domain rule so marked is consent to a
+   * hold for want of confirmation (mail 0176). Present only as `true`; absent from an older server.
+   */
+  personDecided?: true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

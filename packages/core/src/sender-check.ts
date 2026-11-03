@@ -454,6 +454,17 @@ export function ownedBrand(fromAddress: string): Brand | undefined {
 }
 
 /**
+ * A REGISTRABLE DOMAIN AND THE OTHERS ITS COMPANY SENDS ITS OWN MAIL FROM: every domain of each brand
+ * that owns it (Infomaniak's servers sit under `infomaniak.com` and `infomaniak.ch` alike), or the
+ * domain alone where no brand owns it. Empty for `""`. Pure.
+ */
+export function companyDomainsOf(domain: string): ReadonlySet<string> {
+  const out = new Set<string>(domain === "" ? [] : [domain]);
+  for (const b of BRANDS) if (owns(b, domain)) for (const d of b.domains) out.add(d);
+  return out;
+}
+
+/**
  * WHO AN ADDRESS AT A BRAND'S OWN DOMAIN SAYS IT IS FROM, as the "did not confirm" line names it: the
  * brand, where its registrable domain is that one brand's; the domain itself where it names no ONE
  * brand — a government's umbrella (`UMBRELLA_DOMAINS`: every federal office sends from under

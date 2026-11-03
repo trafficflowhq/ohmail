@@ -215,6 +215,7 @@ export async function cutlineCounts(
                by: sql`m.sender_check_by`, date: sql`m.date`, arrivedAt: sql`m.arrived_at`,
                recordedAt: sql`m.created_at`, mailboxId: sql`m.mailbox_id`,
                sender: sql`lower(m.from_address)`, auth: sql`m.auth_verdict`, brand: sql`m.sender_check_brand`,
+               unconfirmed: sql`m.unconfirmed_hold`,
              }, set, SCREENING_AUTH_VERDICTS))}
                as held_claim,
              -- A letter at the gate that arrived inside the cutline, whatever its Date: the queue's term.

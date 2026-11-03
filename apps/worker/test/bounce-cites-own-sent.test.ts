@@ -7,7 +7,7 @@ import { providerAuthservIds } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accounts, accountSettings, auditLog, contacts, folderState, mailboxFolders, mailboxes, messageBodies,
+  accounts, accountSettings, auditLog, contacts, folderState, mailboxCredentials, mailboxFolders, mailboxes, messageBodies,
   messageInstances, messages, type Tx,
 } from "@trafficflow/db";
 import { runSyncCycle } from "../src/sync.js";
@@ -41,8 +41,13 @@ function dsn(o: { id: string; from?: string; inReplyTo: string; headers?: string
   ].join("\r\n"));
 }
 
-/** `address`: the mailbox's own, at `own.invalid` unless given; `trusted`: the provider's authserv-ids. */
-async function world(o: { trusted?: ReadonlySet<string>; address?: string } = {}) {
+/**
+ * `address`: the mailbox's own, at `own.invalid` unless given; `trusted`: the provider's authserv-ids;
+ * `servers`: its credential rows' non-secret halves, by transport (none unless given).
+ */
+async function world(o: {
+  trusted?: ReadonlySet<string>; address?: string; servers?: Partial<Record<"imap" | "smtp", Record<string, unknown>>>;
+} = {}) {
   const db = (await makeTestDb()) as unknown as Tx;
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `b026-${accountId.slice(0, 8)}` });
@@ -50,6 +55,9 @@ async function world(o: { trusted?: ReadonlySet<string>; address?: string } = {}
   const me = o.address ?? `me-${accountId.slice(0, 8)}@own.invalid`;
   const [mb] = await db.insert(mailboxes)
     .values({ accountId, provider: "imap", address: me, status: "connected", createdAt: CONNECT }).returning();
+  for (const [transport, meta] of Object.entries(o.servers ?? {})) {
+    await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, transport, secretEnc: "enc:never-read", keyVersion: 1, meta });
+  }
   await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
   // The account's own Sent copy after the consent point: the one id a genuine report cites.
   const [s] = await db.insert(messages).values({
@@ -81,10 +89,12 @@ async function world(o: { trusted?: ReadonlySet<string>; address?: string } = {}
       mailboxId: mb!.id, storageCap: UNMETERED_STORAGE_CAP, role: "organizer",
       trustedAuthservIds: o.trusted ?? new Set<string>(),
     });
-    const [row] = await db.select({ id: messages.id, desired: folderState.desiredFolder, check: messages.senderCheck })
-      .from(messages).innerJoin(folderState, eq(folderState.messageId, messages.id))
+    const [row] = await db.select({
+      id: messages.id, desired: folderState.desiredFolder, check: messages.senderCheck, held: messages.unconfirmedHold,
+      auth: messages.authVerdict,
+    }).from(messages).innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(eq(messages.accountId, accountId), eq(messages.messageIdHeader, messageId)));
-    return row!;
+    return { ...row!, held: row!.held === true };
   };
   /** The admissions on record under one action — the payload is JSON text on the device store. */
   const audits = (action: string) => async () => (await db.select({ payload: auditLog.payload }).from(auditLog)
@@ -259,5 +269,39 @@ describe("the account's own organisation reports at its own domain, whatever the
     }));
     expect(ndr.desired).toBe("ohmail/Screener");
     expect(ndr.check, "a forgery of the domain keeps its fact").toBe("impersonation");
+  });
+});
+
+/**
+ * THE PERSON'S OWN HOSTER'S REPORT OF THEIR LETTER, unsigned at a mailbox no provider id names (mail
+ * 0176's bounce arm): a daemon at the registrable domain of the mailbox's own outgoing server reaches the
+ * Ohbox, recorded, its stored verdict and fact as they were, so the reader's line (`unverified`, read
+ * off the two) still says nothing confirmed it. The same report at a mailbox that submits elsewhere, and
+ * a forged company report, wait, marked.
+ */
+describe("the person's own hoster's report of their letter, unsigned, at an unmapped mailbox", () => {
+  const OVH = "MAILER-DAEMON@mo1.mail-out.ovh.net";
+
+  it("through the outgoing server the mailbox stores: lifted, recorded, the verdict the line reads kept", async () => {
+    const w = await world({ servers: { imap: { host: "imap.example-host.test" }, smtp: { host: "ssl0.ovh.net" } } });
+    const ndr = await w.deliver("ovh-1@mail-out.ovh.net", dsn({ id: "ovh-1@mail-out.ovh.net", inReplyTo: OURS, from: OVH }));
+    expect(ndr).toMatchObject({ desired: "INBOX", held: false, auth: "unavailable", check: "none" });
+    expect(await w.admissions()).toEqual([{ messageId: ndr.id, header: OURS }]);
+  });
+
+  it("with no outgoing row, through the incoming server the send door dials then", async () => {
+    const w = await world({ servers: { imap: { host: "ssl0.ovh.net" } } });
+    const ndr = await w.deliver("ovh-2@mail-out.ovh.net", dsn({ id: "ovh-2@mail-out.ovh.net", inReplyTo: OURS, from: OVH, quoted: true }));
+    expect(ndr).toMatchObject({ desired: "INBOX", held: false });
+  });
+
+  it("CONTROL: at a mailbox submitting elsewhere, and from a company's address forged, the report waits marked", async () => {
+    const elsewhere = await world({ servers: { smtp: { host: "mail.infomaniak.com" } } });
+    const ndr = await elsewhere.deliver("ovh-3@mail-out.ovh.net", dsn({ id: "ovh-3@mail-out.ovh.net", inReplyTo: OURS, from: OVH }));
+    expect(ndr).toMatchObject({ desired: "ohmail/Screener", held: true, auth: "unavailable" });
+    const forged = await world({ servers: { smtp: { host: "ssl0.ovh.net" } } });
+    const pp = await forged.deliver("pp-1@paypal.com", dsn({ id: "pp-1@paypal.com", inReplyTo: OURS, from: "postmaster@paypal.com" }));
+    expect(pp).toMatchObject({ desired: "ohmail/Screener", held: true });
+    expect(await forged.admissions()).toEqual([]);
   });
 });

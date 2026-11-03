@@ -6,7 +6,8 @@ import {
 } from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, canonicalDestination, dsnVerdict, evaluateRules,
-  identityOfRow, ROWS_PER_TURN, silentLogger, turnsEvery, WRITES_PER_TURN, type Logger, type LoopTurn, type SweepClearance,
+  identityOfRow, ownedBrand, ROWS_PER_TURN, screenerAdmits, signatureCheckableAge, silentLogger, turnsEvery, WRITES_PER_TURN,
+  type Logger, type LoopTurn, type SweepClearance,
   /* The mail leaf, never the barrel: the local engines bundle this pass (rule-retro.ts says why). */
 } from "@trafficflow/core/mail";
 import {
@@ -87,12 +88,18 @@ interface GapRow extends RuleInputRow {
   tagged: unknown;
   /** `coalesce(date, created_at)`, as the store answers it. */
   at: unknown;
+  /** `messages.auth_verdict`, the ingest's: its signature check is in it. */
+  authVerdict: string | null;
+  /** `messages.created_at`: the ingest's clock, which judged the letter's age for that check. */
+  recordedAt: Date;
 }
 
 /** What one walk of the window found: what the rules file, and the letters from strangers. */
 interface GapSet {
   file: Array<{ c: GapRow; to: string; ruleId: string | null }>;
   screen: GapRow[];
+  /** Of `screen`, the letters the gate holds for want of confirmation (`unconfirmed_hold`). */
+  unconfirmed: ReadonlySet<string>;
 }
 
 export async function gapCatchupPass(
@@ -198,6 +205,11 @@ export async function gapCatchupPass(
         if (res.total !== set.screen.length) {
           throw new Error(`gap strangers: screened ${res.total} of ${set.screen.length} counted`);
         }
+        const held = set.screen.filter((c) => set.unconfirmed.has(c.messageId)).map((c) => c.messageId);
+        for (let i = 0; i < held.length; i += UNCONFIRMED_MARK_SLICE) {
+          await tx.update(messages).set({ unconfirmedHold: true })
+            .where(and(eq(messages.accountId, deps.accountId), inArray(messages.id, held.slice(i, i + UNCONFIRMED_MARK_SLICE))));
+        }
       }
       await tx.update(mailboxes).set(close).where(here);
       result.moved += set.file.length + set.screen.length;
@@ -206,6 +218,9 @@ export async function gapCatchupPass(
   }
   return result;
 }
+
+/** Ids per statement marking screened letters held for want of confirmation. */
+const UNCONFIRMED_MARK_SLICE = 500;
 
 /**
  * Letters taken in inside the window with no arrival time: the walk cannot see them (a phone stored
@@ -260,7 +275,8 @@ function unscreenedRowOf(c: GapRow): UnscreenedRow {
  * moved alike, or `null` past the page bound. A rule younger than the letter is not one an
  * organizer live at its arrival could have applied; a delivery report keeps its place. A stranger
  * is the organize decision's own ({@link gateHoldsSender}), past a decided placement and a tag,
- * within the Screener's group bound so the count shown is the set moved.
+ * within the Screener's group bound so the count shown is the set moved. This screen is an arrival
+ * door: a company's own address nothing confirmed is held as the ingest holds it (`ownedUnconfirmed`).
  */
 async function gapSet(
   tx: Tx, deps: GapCatchupDeps, mailboxId: string, own: readonly string[],
@@ -273,6 +289,7 @@ async function gapSet(
   const known = await repo.knownSenders(deps.accountId);
   const cutoff = await agreeWindowCutoff(tx, deps.accountId, now);
   const screen: GapRow[] = [];
+  const unconfirmed = new Set<string>();
   /* A RULE'S AGE: the person's decision when stamped, its last change otherwise. Typed columns,
      computed here, so both stores read it alike. */
   const ruleAge = new Map((await tx.select({
@@ -292,15 +309,24 @@ async function gapSet(
       const msg = ruleInputOf(c);
       if (dsnVerdict(msg) !== null) continue;
       // LENIENT, rule-retro's argument: a `rule` answer files, a stranger's `screener` answer screens, `policy` never acts.
+      const auth = authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId));
       const d = evaluateRules({
-        msg, rules, knownSenders: known, ownAddresses: ownSet, identity: identityOfRow(c),
-        auth: authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId)),
+        msg, rules, knownSenders: known, ownAddresses: ownSet, identity: identityOfRow(c), auth,
         ohboxPolicy: DEFAULT_OHBOX_POLICY,
+        // As the ingest read it: a letter its ingest found too old to check is never held for want of a check.
+        ownedUnconfirmed: ownedBrand(c.fromAddress) !== undefined && auth !== "pass" && c.authVerdict !== "pass"
+          && signatureCheckableAge(c.arrivedAt, c.recordedAt),
       });
       if (d.source === "screener") {
-        if (c.decidedAt === null && Number(c.tagged) === 0 && await gateHoldsSender(unscreenedRowOf(c), {
-          rules, known, own: ownSet, cutoff, ask: repo, accountId: deps.accountId,
-        })) screen.push(c);
+        // A hold for want of confirmation is the gate's own, not a stranger's: the window alone decides it.
+        if (c.decidedAt === null && Number(c.tagged) === 0 && (d.unconfirmed === true
+          ? screenerAdmits({ arrivedAt: c.arrivedAt, cutoff, source: d.source, authFailed: false })
+          : await gateHoldsSender(unscreenedRowOf(c), {
+            rules, known, own: ownSet, cutoff, ask: repo, accountId: deps.accountId,
+          }))) {
+          screen.push(c);
+          if (d.unconfirmed === true) unconfirmed.add(c.messageId);
+        }
         continue;
       }
       const age = d.matchedRuleId === null ? undefined : ruleAge.get(d.matchedRuleId);
@@ -311,7 +337,7 @@ async function gapSet(
     }
     if (page.length < batch) {
       const shown = new Set(unscreenedGroups(screen.map(unscreenedRowOf)).map((g) => g.address));
-      return { file: out, screen: screen.filter((c) => shown.has(c.fromAddress.toLowerCase())) };
+      return { file: out, screen: screen.filter((c) => shown.has(c.fromAddress.toLowerCase())), unconfirmed };
     }
     afterId = page[page.length - 1]!.messageId;
   }
@@ -382,6 +408,8 @@ async function selectGapCandidates(
     headers: messageBodies.headers,
     bodyText: messageBodies.text,
     messageIdHeader: messages.messageIdHeader,
+    authVerdict: messages.authVerdict,
+    recordedAt: messages.createdAt,
     decidedAt: folderState.decidedAt,
     tagged: sql<number>`case when exists (select 1 from ${messageTags} mt where mt.message_id = ${messages.id}) then 1 else 0 end`,
     at: sql<unknown>`coalesce(${messages.date}, ${messages.createdAt})`,

@@ -585,6 +585,16 @@ describe("a credential route's answer is the new owner, not a mismatch", () => {
       .not.toBe("bound");
   });
 
+  it("an answer that names the account and sets no cookie (an enrolment session) leaves the ninety-day marker", async () => {
+    const { api, apiOwnerBinding } = await import("../app/api-client.js");
+    answerAccount = B;
+    await expect(api("/auth/login", { method: "POST" })).resolves.toBeTruthy();
+    const jar = (globalThis as { jsdom?: { cookieJar: { getCookiesSync(url: string): Array<{ key: string; value: string; maxAge: unknown }> } } })
+      .jsdom!.cookieJar.getCookiesSync(location.href).find((c) => c.key === "tf_owner");
+    expect({ binding: apiOwnerBinding(), marker: jar && { value: jar.value, maxAge: jar.maxAge } }, "a session cookie: a browser restart forgets the name")
+      .toEqual({ binding: { kind: "bound", owner: B }, marker: { value: B, maxAge: 7_776_000 } });
+  });
+
   it("establishes nothing when the answer names nobody", async () => {
     const { api, bindApiOwner, apiOwnerBinding } = await import("../app/api-client.js");
     setOwnerCookie(A);

@@ -30,6 +30,9 @@ const CORPUS: ReadonlyArray<readonly [key: string, subject: string, body: string
   ["myaxa", "Welcome to myAXA", "Sign in."], ["unbelievable", "Wow", "An unbelievable result."],
   ["quarterly", "Figures", "The quarterly figures are in."], ["awe", "Notes", "A sense of awe."],
   ["awful", "Diary", "An awful day."], ["awfully", "Queue", "An awfully long wait."], ["decoy", "Holiday plans", "See you soon."],
+  ["ines", "Papers", "Ines sent the papers."], ["ones", "Glazes", "The red ones are sold."], ["willing", "Help", "Are you willing to help?"],
+  ["outing", "Friday", "The team outing starts at nine."], ["will", "Call", "We will call tomorrow."],
+  ["out", "Report", "The report is out now."], ["on", "Budget", "Notes on the budget."], ["one", "Seats", "Only one seat left."],
 ];
 
 /** Query → the keys Postgres answers in the exact tier; `[]` is a closest-words answer or none. */
@@ -52,6 +55,8 @@ const TABLE: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
   ["levation", []], ["believ", []], ["arterly", []], ["AXA", ["myaxa"]], ["voice", ["invoice"]],
   // under four letters
   ["inv", ["invoice"]], ["del", ["delivery"]], ["co", ["coop"]], ["qua", []], ["ele", []],
+  // a word whose stem a stopword shares: never the letters holding only the stopword
+  ["ines", ["ines"]], ["ones", ["one", "ones"]], ["willing", ["willing"]], ["outing", ["outing"]],
 ];
 
 /**
@@ -61,6 +66,7 @@ const TABLE: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
 const STEMMER: Readonly<Record<string, { device: readonly string[] }>> = {
   awfully: { device: ["awfully"] },      // the server alone reaches `awful`
   awe: { device: ["awe", "awful"] },     // the device alone reaches `awful`
+  ones: { device: ["ones"] },            // a word sharing a stopword's stem (`on`) is read as typed
 };
 /**
  * PREFIX: where the device reads a part-word's start otherwise than the server, it answers MORE than
@@ -431,6 +437,7 @@ describe("each part of a file name beside another word", () => {
     ["inv", "Accounts Desk", "billing@desk.example", "Your invoice 0042", "The invoice and the information you asked for.", "inv_0042.pdf"],
     ["amz", "Shop Orders", "orders@shop.example", "Your amazon order", "It ships today.", "order-5531.txt"],
     ["amg", "Lea Moser", "lea@post.example", "Amazing news", "The kiln worked.", "kiln.jpg"],
+    ["hall", "Room Desk", "room@desk.example", "Room booking", "See you in the hall at noon.", "plan.txt"],
   ];
   const FOUND: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
     ["ledger", ["d2", "sr2"]], ["ines harbour", ["sr2"]], ["ines ledger", ["sr2"]], ["ines pdf", ["sr2"]], ["ines 7731", ["sr2"]],

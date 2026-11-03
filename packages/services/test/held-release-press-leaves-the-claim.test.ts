@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { carryDialect } from "@trafficflow/db/dialect";
-import { accounts, applyScreenerDecision, contacts, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
-import { heldReleaseSenders, releaseHeld } from "../src/held-release-service.js";
+import { accounts, applyScreenerDecision, contacts, folderState, mailboxes, messageBodies, messages, rules } from "@trafficflow/db";
+import { heldReleaseGroups, heldReleaseSenders, releaseHeld } from "../src/held-release-service.js";
 import type { ServiceContext } from "../src/context.js";
 
 /**
@@ -23,12 +23,15 @@ async function world() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@ohmail.test`, organizerRole: "organizer",
   }).returning();
-  const held = async (name: string, check: "none" | "impersonation" | null, n: number, authVerdict: string | null = null) => {
+  const held = async (
+    name: string, check: "none" | "impersonation" | null, n: number, authVerdict: string | null = null, unconfirmed = false,
+  ) => {
     const at = new Date(`2026-10-06T0${n}:00:00.000Z`);
     const [m] = await db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `hr:${randomUUID()}`,
       subject: `m${n}`, snippet: "", fromAddress: SENDER, fromName: name, authVerdict,
       senderCheck: check, senderCheckBrand: check === "impersonation" ? "PostFinance" : null,
+      ...(unconfirmed ? { unconfirmedHold: true } : {}),
       date: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: `1:${n}` },
     }).returning();
     await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
@@ -88,5 +91,40 @@ describe("the held-release contact line and a claim beside it", () => {
       triggeringActionId: "press", now: NOW, overExisting: "converge", decidedBy: "person",
     }));
     expect(await w.desired(claim)).toBe("INBOX");
+  });
+
+  it("a letter held for want of confirmation (mail 0176) is offered by neither line and moved by no press", async () => {
+    const w = await world();
+    const benign = await w.held("Anna Meier", "none", 1);
+    const held = await w.held("Kundendienst", "none", 2, null, true);
+    expect(await heldReleaseSenders(w.db as never, w.accountId)).toEqual([{ sender: SENDER, count: 1 }]);
+    expect((await releaseHeld(w.ctx, { senders: [SENDER] })).total).toBe(1);
+    expect(await w.desired(benign)).toBe("INBOX");
+    expect(await w.desired(held)).toBe(GATE);
+    // The rule's line: the act's promoted rule decided the sender, and still the held letter is no release.
+    const r = await world();
+    await r.held("Kundendienst", "none", 1, null, true);
+    await r.db.insert(rules).values({
+      accountId: r.accountId, kind: "sender", match: SENDER, destination: "INBOX", enabled: true, priority: 0, provenance: "promoted",
+    });
+    expect(await heldReleaseGroups(r.db as never, r.accountId)).toEqual([]);
+    // CONTROL: a person's contact is the person skip: the gate would not hold it now, and the line offers it.
+    await r.db.update(contacts).set({ source: "person" }).where(eq(contacts.accountId, r.accountId));
+    expect((await heldReleaseGroups(r.db as never, r.accountId)).map((g) => g.count)).toEqual([1]);
+  });
+
+  it("a domain rule the person wrote is the person skip for that letter, and the rule's line offers it; one ohmail inferred is not", async () => {
+    const offered = async (provenance: "manual" | "promoted", claim = false) => {
+      const w = await world();
+      await w.held(claim ? "PostFinance" : "Kundendienst", claim ? "impersonation" : "none", 1, null, true);
+      await w.db.insert(rules).values({
+        accountId: w.accountId, kind: "domain", match: "karten-service.test", destination: "INBOX", enabled: true, priority: 0, provenance,
+      });
+      return (await heldReleaseGroups(w.db as never, w.accountId)).map((g) => g.count);
+    };
+    expect(await offered("manual")).toEqual([1]);
+    expect(await offered("promoted")).toEqual([]);
+    // A claim the hold's mark sits beside is the identity fact's, which no domain rule answers.
+    expect(await offered("manual", true)).toEqual([]);
   });
 });

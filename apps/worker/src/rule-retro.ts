@@ -1,14 +1,14 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import {
   approvals, auditAction, auditLog, automaticAiAdmits, drafts, folderState, isRefileRun, mailboxes, messageBodies,
-  messageStates, messages, OwnAddressesPerPass, PARKED_FENCE_PREFIX, pendingRefileFrom, recordChange, recordRuleDelta,
-  rules as rulesTbl, rulesTheActWrote, weAnsweredThisSenderWhere,
+  heldUnconfirmedOnlySql, messageStates, messages, OwnAddressesPerPass, PARKED_FENCE_PREFIX, pendingRefileFrom, personSkipSql, recordChange,
+  recordRuleDelta, rules as rulesTbl, rulesTheActWrote, weAnsweredThisSenderWhere,
   type LedgerTx, type RefileState, type Tx,
 } from "@trafficflow/db";
 import {
-  DEFAULT_OHBOX_POLICY, ORGANIZED_FOLDERS, REFILE_HOLD_MS, authVerdictFromHeaders, canonicalDestination, evaluateRules,
-  identityOfRow, ROWS_PER_TURN, silentLogger, turnsEvery, WRITES_PER_TURN, type Destination, type KnownSenders,
-  type Logger, type LoopTurn, type NormalizedMessage, type Rule,
+  DEFAULT_OHBOX_POLICY, ORGANIZED_FOLDERS, REFILE_HOLD_MS, SCREENING_AUTH_VERDICTS, authVerdictFromHeaders,
+  canonicalDestination, evaluateRules, identityOfRow, ROWS_PER_TURN, silentLogger, turnsEvery, WRITES_PER_TURN,
+  type Destination, type KnownSenders, type Logger, type LoopTurn, type NormalizedMessage, type Rule,
   /* The mail leaf, never the barrel: the local engines bundle this pass, and a value import from
      the barrel carries the model half into them (the engine census refuses the build). */
 } from "@trafficflow/core/mail";
@@ -811,6 +811,15 @@ async function selectCandidates(
       ? sql`(${folderState.decidedAt} is null or ${folderState.decidedAt} <= ${rule.retroRequestedAt === null ? sql`null` : d.ts(rule.retroRequestedAt)})`
       : sql`(${folderState.decidedAt} is null or ${folderState.desiredFolder} = ${SCREENER_GATE})`);
   }
+  /* A LETTER HELD FOR WANT OF CONFIRMATION (mail 0176) leaves the gate only on a person's word:
+     a press on its own address, or the person skip (a person consented to the address, or wrote a rule
+     for its domain, and the gate would not hold it now). The walk re-evaluates without the arrival
+     door's fact, so it asks here. */
+  filters.push(sql`not (${folderState.desiredFolder} = ${SCREENER_GATE} and ${messages.unconfirmedHold} is true
+    and not ${personSkipSql(d, rule.accountId, {
+      sender: sql`lower(${messages.fromAddress})`, auth: sql`${messages.authVerdict}`, brand: sql`${messages.senderCheckBrand}`,
+      unconfirmedOnly: heldUnconfirmedOnlySql({ senderCheck: messages.senderCheck, unconfirmed: messages.unconfirmedHold }),
+    }, SCREENING_AUTH_VERDICTS)})`);
   // 6 — THE ACT ON SUGGESTIONS' RULE LEAVES WHAT THE PERSON PUT BACK (mail 0138): it re-walks the
   // sender's backlog, and a filing the person undid is not an automatic decision's to make again.
   // Nor a letter no automatic path may read (a code, a reset), held or filed; a person's release

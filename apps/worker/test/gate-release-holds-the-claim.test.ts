@@ -15,7 +15,7 @@ import { gateReleasePass } from "../src/gate-release.js";
 const GATE = "ohmail/Screener";
 const SENDER = "pal@karten-service.test";
 
-async function world() {
+async function world(source: "inferred" | "person" | null = null) {
   const db = await makeTestDb();
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `grc-${accountId.slice(0, 8)}` });
@@ -23,13 +23,16 @@ async function world() {
     accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@ohmail.test`, organizerRole: "organizer",
   }).returning();
   let n = 0;
-  const held = async (fromName: string, senderCheck: "impersonation" | "none" | null, authVerdict: string | null = null) => {
+  const held = async (
+    fromName: string, senderCheck: "impersonation" | "none" | null, authVerdict: string | null = null, unconfirmed = false,
+  ) => {
     const i = n++;
     const at = new Date("2026-09-01T09:00:00.000Z");
     const [m] = await db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: `h${i}`, dedupKey: `grc:${randomUUID()}`,
       subject: `Note ${i}`, snippet: "", fromAddress: SENDER, fromName, date: at, unread: true, createdAt: at,
       senderCheck, senderCheckBrand: senderCheck === "impersonation" ? "PostFinance" : null, authVerdict,
+      ...(unconfirmed ? { unconfirmedHold: true } : {}),
       nativeLocator: { folder: GATE, ref: `1:${i}` },
     }).returning();
     await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
@@ -38,7 +41,7 @@ async function world() {
     });
     return m!.id;
   };
-  await db.insert(contacts).values({ accountId, address: SENDER });
+  await db.insert(contacts).values({ accountId, address: SENDER, ...(source === null ? {} : { source }) });
   const row = async (id: string) => (await db.select({ desired: folderState.desiredFolder, check: messages.senderCheck })
     .from(folderState).innerJoin(messages, eq(messages.id, folderState.messageId)).where(eq(messages.id, id)))[0]!;
   return { db: db as unknown as Tx, accountId, held, row };
@@ -65,5 +68,20 @@ describe("the gate-release repair and the identity fact", () => {
     expect(r).toMatchObject({ ran: true, contactRowsReleased: 1, completed: true });
     expect((await w.row(forged)).desired, "the provider said this mail is not the contact's").toBe(GATE);
     expect((await w.row(genuine)).desired).toBe("INBOX");
+  });
+
+  it("a letter held for want of confirmation stays while only an inferred contact knows the sender; a person's contact releases it", async () => {
+    const inferred = await world("inferred");
+    const held = await inferred.held("PayPal", "none", null, true);
+    const clean = await inferred.held("Pal Meier", "none");
+    expect(await gateReleasePass(inferred.db, { accountId: inferred.accountId }))
+      .toMatchObject({ ran: true, contactRowsReleased: 1, completed: true });
+    expect((await inferred.row(held)).desired, "mail 0176: only a person's word lets it in").toBe(GATE);
+    expect((await inferred.row(clean)).desired).toBe("INBOX");
+    // CONTROL: a person's contact is the person skip; the gate would not hold the row now.
+    const person = await world("person");
+    const consented = await person.held("PayPal", "none", null, true);
+    expect(await gateReleasePass(person.db, { accountId: person.accountId })).toMatchObject({ contactRowsReleased: 1 });
+    expect((await person.row(consented)).desired).toBe("INBOX");
   });
 });

@@ -170,7 +170,7 @@ async function release(
       const ct = dialect(tx).jsonGet(messageBodies.headers, "content-type");
       const held = await tx.select({
         id: messages.id, fromName: messages.fromName, fromAddress: messages.fromAddress,
-        subject: messages.subject, senderCheck: messages.senderCheck,
+        subject: messages.subject, senderCheck: messages.senderCheck, unconfirmedHold: messages.unconfirmedHold,
         // Aliased: the device store returns rows positionally and refuses two same-named columns.
         contentType: sql<unknown>`${ct}`.as("cr_content_type"),
       }).from(folderState)
@@ -183,7 +183,9 @@ async function release(
       const marked = new Set((await writeSenderChecks(tx, accountId, candidates.filter((r) => r.senderCheck === null)
         .map((r) => ({ id: r.id, fromName: r.fromName, fromAddress: r.fromAddress, subject: r.subject }))))
         .map((r) => r.id));
-      cleared = new Set(candidates.filter((r) => r.senderCheck === "none" || (r.senderCheck === null && !marked.has(r.id)))
+      // A letter held for want of confirmation (mail 0176) is no answer either: nobody consented to the address.
+      cleared = new Set(candidates.filter((r) => r.unconfirmedHold !== true
+        && (r.senderCheck === "none" || (r.senderCheck === null && !marked.has(r.id))))
         .map((r) => r.id));
       if (cleared.size === 0) return 0;
     }

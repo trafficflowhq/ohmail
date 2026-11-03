@@ -44,7 +44,10 @@ type RequiredKeys<T> = { [K in keyof T]-?: Record<never, never> extends Pick<T, 
  * removing an unread field as dead code.
  */
 export type EvaluateRulesInputKeysArePinned = Expect<
-  Equal<keyof EvaluateRulesInput, "msg" | "rules" | "knownSenders" | "auth" | "ohboxPolicy" | "ownAddresses" | "identity">
+  Equal<
+    keyof EvaluateRulesInput,
+    "msg" | "rules" | "knownSenders" | "auth" | "ohboxPolicy" | "ownAddresses" | "identity" | "ownedUnconfirmed"
+  >
 >;
 
 /**
@@ -71,6 +74,15 @@ export type OhboxPolicyIsRequired = Expect<
  */
 export type OwnAddressesIsRequired = Expect<
   Equal<Extract<RequiredKeys<EvaluateRulesInput>, "ownAddresses">, "ownAddresses">
+>;
+
+/**
+ * TWO-QUATER — `ownedUnconfirmed` is the one OPTIONAL field, on purpose: an arrival door's fact (the
+ * ingest and the gap catch-up's screen pass it), which a re-evaluation pass never computes, so its
+ * absence must read as no hold there rather than be a value every walk has to invent.
+ */
+export type OwnedUnconfirmedIsOptional = Expect<
+  Equal<Extract<RequiredKeys<EvaluateRulesInput>, "ownedUnconfirmed">, never>
 >;
 
 /** THREE — and so is `Rule.effect`. */

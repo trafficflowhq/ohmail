@@ -66,7 +66,7 @@ async function seedRule(w: World, match: string, o: { kind?: string; updatedAt?:
 async function seedArrival(w: World, o: {
   from: string; arrivedAt?: Date | null; takenInAt?: Date; folder?: string; lastSetBy?: string;
   sensitivityCategory?: string | null; noAi?: boolean; headers?: Record<string, string[]>; threadId?: string;
-  decidedAt?: Date;
+  decidedAt?: Date; authVerdict?: string;
 }): Promise<string> {
   const dedup = `mid:${randomUUID()}`;
   const folder = o.folder ?? INBOX;
@@ -77,6 +77,7 @@ async function seedArrival(w: World, o: {
     ...(o.takenInAt ? { createdAt: o.takenInAt } : {}),
     sensitivityCategory: o.sensitivityCategory ?? null, noAi: o.noAi ?? false,
     ...(o.threadId ? { threadId: o.threadId } : {}),
+    ...(o.authVerdict ? { authVerdict: o.authVerdict } : {}),
   }).returning();
   if (o.headers) await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: o.headers });
   await w.db.insert(folderState).values({
@@ -521,6 +522,45 @@ describe("letters from new senders in a gap go to the Screener, and only on the 
     expect(await placement(w, a)).toEqual({ d: SCREENER, by: "us" });
     expect(await placement(w, b)).toEqual({ d: SCREENER, by: "us" });
     expect(await windowOf(w)).toEqual(CLOSED);
+  });
+
+  it("screens a company's own address only inference let in unless it was confirmed, and marks it held (mail 0176)", async () => {
+    const w = await newWorld();
+    // The act let the address in: its promoted rule and its inferred contact.
+    await w.db.insert(rules).values({
+      accountId: w.accountId, kind: "sender", match: "service@paypal.com", destination: INBOX,
+      provenance: "promoted", enabled: true, createdAt: RULE_MADE, updatedAt: RULE_MADE,
+    });
+    await w.db.insert(contacts).values({ accountId: w.accountId, address: "service@paypal.com", source: "inferred" });
+    const unconfirmed = await seedArrival(w, { from: "service@paypal.com", takenInAt: IN_GAP });
+    // The ingest's own verdict, its signature check in it: confirmed, so the rule's admission stands.
+    const confirmed = await seedArrival(w, { from: "service@paypal.com", authVerdict: "pass", takenInAt: IN_GAP });
+    expect(await run(w)).toEqual({ offered: 1, moved: 0, completed: 0 });
+    expect(await windowOf(w)).toMatchObject({ letters: 0, strangers: 1, pressed: null });
+    await press(w);
+    expect(await run(w)).toEqual({ offered: 0, moved: 1, completed: 1 });
+    expect(await placement(w, unconfirmed)).toEqual({ d: SCREENER, by: "us" });
+    expect(await placement(w, confirmed)).toEqual({ d: INBOX, by: "peer" });
+    const marks = await w.db.select({ id: messages.id, held: messages.unconfirmedHold }).from(messages)
+      .where(eq(messages.accountId, w.accountId));
+    expect(new Map(marks.map((m) => [m.id, m.held === true]))).toEqual(new Map([[unconfirmed, true], [confirmed, false]]));
+  });
+
+  it("a letter taken in too late for its signature to be checked is never screened for want of it (mail 0176)", async () => {
+    const w = await newWorld();
+    await w.db.insert(rules).values({
+      accountId: w.accountId, kind: "sender", match: "service@paypal.com", destination: INBOX,
+      provenance: "promoted", enabled: true, createdAt: RULE_MADE, updatedAt: RULE_MADE,
+    });
+    await w.db.insert(contacts).values({ accountId: w.accountId, address: "service@paypal.com", source: "inferred" });
+    const DAY = 24 * 3_600_000;
+    // Taken in thirty-one days after it arrived: by the ingest's clock it was too old to check.
+    const late = await seedArrival(w, { from: "service@paypal.com", takenInAt: new Date(IN_GAP.getTime() + 31 * DAY) });
+    const pass = await gapCatchupPass(w.db as unknown as Tx, {
+      accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: () => CLEAR,
+    }, new Date(IN_GAP.getTime() + 32 * DAY));
+    expect(pass).toEqual({ offered: 0, moved: 0, completed: 1 });
+    expect(await placement(w, late)).toEqual({ d: INBOX, by: "peer" });
   });
 
   it("screens none of the shapes the gate or the person already answered, beside a stranger it screens", async () => {

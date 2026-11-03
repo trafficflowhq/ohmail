@@ -187,6 +187,8 @@ export interface AppliedScreenerRow {
   senderCheckBrand: string | null;
   /** `messages.dedup_key`: how a `message.move` request names the row to the install that organizes it. */
   dedupKey: string;
+  /** `messages.unconfirmed_hold` (mail 0176): held as a claim is, though it names no other company. */
+  unconfirmedHold: boolean;
 }
 
 const HELD_COLUMNS = {
@@ -195,13 +197,14 @@ const HELD_COLUMNS = {
   date: messages.date, nativeLocator: messages.nativeLocator, observedFolder: folderState.observedFolder,
   updatedAt: messages.updatedAt, unread: messages.unread, senderCheck: messages.senderCheck,
   authVerdict: messages.authVerdict, senderCheckBrand: messages.senderCheckBrand, dedupKey: messages.dedupKey,
+  unconfirmedHold: messages.unconfirmedHold,
 } as const;
 
 function toAppliedScreenerRow(r: {
   messageId: string; mailboxId: string; threadId: string | null; fromAddress: string; subject: string;
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
   updatedAt: Date; unread: boolean; senderCheck: string | null; authVerdict: string | null;
-  senderCheckBrand: string | null; dedupKey: string;
+  senderCheckBrand: string | null; dedupKey: string; unconfirmedHold: boolean | null;
 }): AppliedScreenerRow {
   return {
     messageId: r.messageId, mailboxId: r.mailboxId, threadId: r.threadId ?? null, fromAddress: r.fromAddress,
@@ -215,6 +218,7 @@ function toAppliedScreenerRow(r: {
     nativeLocator: r.nativeLocator ?? null, updatedAt: r.updatedAt, unread: r.unread,
     senderCheck: r.senderCheck ?? null, authVerdict: r.authVerdict ?? null, senderCheckBrand: r.senderCheckBrand ?? null,
     dedupKey: r.dedupKey,
+    unconfirmedHold: r.unconfirmedHold === true,
   };
 }
 
@@ -470,13 +474,14 @@ const HELD_CHECK_READ_BATCH = 500;
  * DOES A PERSON'S PRESS MOVE THIS HELD ROW — `@trafficflow/core/sender-headers#heldMovesOnPress`,
  * copied for the header's reason and pinned equal by `screener-press-moves-one-rule.test.ts`
  * (services). The client's optimistic overlay asks core's, so the two cannot hide different rows.
+ * A letter held for want of confirmation (mail 0176) is a claim here.
  */
 export function heldRowMovesOnPress(
-  r: Pick<AppliedScreenerRow, "senderCheck" | "fromAddress" | "authVerdict">,
+  r: Pick<AppliedScreenerRow, "senderCheck" | "fromAddress" | "authVerdict"> & { unconfirmedHold?: boolean },
   pressed: string, marked: "pressed" | "none" = "pressed",
 ): boolean {
   if (marked === "none" && storedAuthScreens(r.authVerdict)) return false;
-  if (r.senderCheck === "none") return true;
+  if (r.senderCheck === "none" && r.unconfirmedHold !== true) return true;
   return marked === "pressed" && r.fromAddress.trim().toLowerCase() === pressed.trim().toLowerCase();
 }
 
@@ -718,14 +723,15 @@ export async function applyScreenerDecision(
      contacts or move statement: a pass's yes over held mail whose name claims a brand its address
      does not own leaves the sender waiting and writes nothing of the decision. A row the check
      never reached (NULL) counts as marked here: this door cannot compute the fact, and the act
-     checks its senders' rows before it decides (fail closed). A person's press stands; the row
-     told them. The act stamps no baseline (`stampBaseline: false`). */
+     checks its senders' rows before it decides (fail closed). A letter held for want of
+     confirmation (mail 0176) is marked here too. A person's press stands; the row told them. The
+     act stamps no baseline (`stampBaseline: false`). */
   const passAdmits = decidedBy === "pass" && decision === "yes";
   if (passAdmits) {
     const bag = scope === "domain"
       ? await heldRowsForDomain(tx, accountId, domain, undefined, { skipPutBack: true })
       : await heldRowsForSender(tx, accountId, address, undefined, { skipPutBack: true });
-    if (bag.some((r) => r.senderCheck !== "none")) {
+    if (bag.some((r) => r.senderCheck !== "none" || r.unconfirmedHold)) {
       return { createdRuleId: null, retargetedRuleIds: [], rerouted: [], lastSeq: null, heldElsewhere: [], skipped: "identity" };
     }
   }
@@ -799,7 +805,10 @@ export async function applyScreenerDecision(
       const provenance = keptProvenance(row.provenance, "promoted");
       if (provenance !== row.provenance) d.provenance = provenance;
       if (decidedBy === "person" && row.personDecidedAt === null) d.personDecidedAt = now;
-      if (applyRetro) return d.destination !== undefined || d.enabled === true ? { ...d, ...retro } : d;
+      /* A person's first yes on a domain rule is consent the hold for want of confirmation reads (mail
+         0176), so its walk takes the domain's held letters as a new rule's would. */
+      const consents = kind === "domain" && decision === "yes" && d.personDecidedAt !== undefined;
+      if (applyRetro) return d.destination !== undefined || d.enabled === true || consents ? { ...d, ...retro } : d;
       // Moved with past mail declined: a walk still owed ends here.
       return d.destination !== undefined ? { ...d, retroDoneAt: endOwedWalk(tx, now) } : d;
     },
@@ -853,7 +862,8 @@ export async function applyScreenerDecision(
   // A claim, or a row nobody checked, moves only on a press made on its own address; a row its
   // provider failed never moves on a pass's yes.
   const movable = (r: AppliedScreenerRow): boolean =>
-    passAdmits ? r.senderCheck === "none" && !storedAuthScreens(r.authVerdict) : heldRowMovesOnPress(r, address, marked);
+    passAdmits ? r.senderCheck === "none" && !r.unconfirmedHold && !storedAuthScreens(r.authVerdict)
+      : heldRowMovesOnPress(r, address, marked);
   const moved = await rerouteHeldBag(tx, accountId, heldMail.filter(movable), appliedFolder, now);
   if (moved.lastSeq !== null) lastSeq = moved.lastSeq;
   const { rerouted, heldElsewhere } = moved;

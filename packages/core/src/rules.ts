@@ -3,8 +3,8 @@ import { authScreens, type AuthVerdict } from "./sender-headers.js";
 import type { IdentityFact } from "./sender-check.js";
 import type { NormalizedMessage, Destination } from "./types.js";
 import {
-  compareRules, effectForDestination as effectOfDestination, namesAuthor, personConsentRule, placingRule, ruleMatchKey,
-  type RuleEffect,
+  compareRules, effectForDestination as effectOfDestination, namesAuthor, personConsentRule, personDomainConsentRule,
+  placingRule, ruleMatchKey, type RuleEffect,
 } from "./rule-order.js";
 
 export type RuleKind = "sender" | "domain" | "header";
@@ -250,6 +250,14 @@ export interface EvaluateRulesInput {
    * would hold it silently, so every caller names the set it read.
    */
   ownAddresses: ReadonlySet<string>;
+  /**
+   * AN ARRIVAL DOOR'S FACT, never a re-evaluation's: the author is at a company's own domain
+   * (`sender-check.ts#ownedBrand`) and nothing confirmed it — the verdict is not `pass` after the
+   * sender's own signature was checked, on a letter young enough to be checked. Only the ingest and the
+   * gap catch-up's screen pass it; absent reads false. It holds what the identity fact holds, every
+   * admission no person gave at the address, except one a domain rule a person wrote or pressed gave.
+   */
+  ownedUnconfirmed?: boolean;
 }
 
 export interface RuleDecision {
@@ -276,6 +284,8 @@ export interface RuleDecision {
    * by a person's address-level consent it rides along. Absent when the input had none.
    */
   identity?: IdentityFact;
+  /** The hold is {@link EvaluateRulesInput.ownedUnconfirmed}'s: written as `unconfirmed_hold` where it places the letter. */
+  unconfirmed?: true;
 }
 
 /**
@@ -479,6 +489,15 @@ function addressLevelConsent(
   if (consented !== undefined) return brand !== null && consented.has(brand);
   if (rules.some((r) => personConsentRule(r, author))) return true;
   return known.addresses.has(author) && !known.inferred.has(author);
+}
+
+/**
+ * A DOMAIN RULE A PERSON WROTE OR PRESSED for the author's domain (`personDomainConsentRule`): consent for
+ * the hold for want of confirmation alone. A list address answers alone, as in {@link addressLevelConsent}.
+ */
+function personDomainConsent(author: string | null, rules: readonly Rule[], known: KnownSenders): boolean {
+  if (author === null || known.lists.has(author)) return false;
+  return rules.some((r) => personDomainConsentRule(r, author));
 }
 
 /**
@@ -1027,7 +1046,12 @@ const MESSAGE_ID_TOKEN = /<[^<>@\s]+@[^<>@\s]+>/g;
  */
 export function isDeliveryReportShape(fromAddress: string, contentType: string): boolean {
   return (DELIVERY_REPORT_CONTENT_TYPE.test(contentType) && DELIVERY_STATUS_REPORT_TYPE.test(contentType))
-    || DAEMON_LOCAL_PARTS.test(fromAddress.split("@")[0] ?? "");
+    || isDaemonAddress(fromAddress);
+}
+
+/** Is this a mail system's own daemon role: `mailer-daemon@` or `postmaster@`, in any case? */
+export function isDaemonAddress(address: string): boolean {
+  return DAEMON_LOCAL_PARTS.test(address.split("@")[0] ?? "");
 }
 
 /**
@@ -1137,10 +1161,11 @@ function policyDemotion(
  * decision outranks anything inferred, the gate included; (2) the account's {@link standingRule} for
  * this sender, whether or not a term claimed THIS message; (3) a POSITIVE authenticated-known check;
  * (4) fail closed to `ohmail/Screener` for an unknown, absent, unparseable or ambiguous sender, never
- * an own address; (5) THEN {@link headerHeuristic}, refinement only. The identity fact holds every
- * admission in (1)-(3) no person gave at the address level, own mail apart, below every denial and
- * the `"fail"` screen; `"fail"` screens what is otherwise allowed and never weakens a DENY. One
- * refinement, {@link policyDemotion}, between allow-side piles, `matchedRuleId: null` (no consent taught).
+ * an own address; (5) THEN {@link headerHeuristic}, refinement only. The identity fact, and a company's
+ * own address nothing confirmed, hold every admission in (1)-(3) no person gave at the address level
+ * (the second, nor by a domain rule a person wrote or pressed), own mail apart, below every denial and the `"fail"` screen; `"fail"` screens what is otherwise
+ * allowed and never weakens a DENY. One refinement, {@link policyDemotion}, between allow-side piles,
+ * `matchedRuleId: null` (no consent taught).
  */
 export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
   const { msg, knownSenders, auth, ohboxPolicy, ownAddresses, identity } = input;
@@ -1163,13 +1188,21 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
      screened by `auth` as before. */
   const hold = identity !== null && !ownMail && !addressLevelConsent(author, rules, knownSenders, identity.brand);
   const rides = identity !== null ? { identity } : {};
+  /* BESIDE IT, A COMPANY'S OWN ADDRESS NOTHING CONFIRMED (`ownedUnconfirmed`): the same hold, marked so
+     the row says why, and below `fail`, which screens it unmarked. No brand is claimed, so a list
+     address's brand consent never answers it. A domain rule a person wrote or pressed answers it too:
+     their consent to the whole domain, which the identity fact never reads. */
+  const unconfirmed = !hold && input.ownedUnconfirmed === true && !ownMail && !authScreens(auth)
+    && !addressLevelConsent(author, rules, knownSenders, null) && !personDomainConsent(author, rules, knownSenders);
+  const held: RuleDecision | null = hold ? { ...screened, ...rides }
+    : unconfirmed ? { ...screened, ...rides, unconfirmed: true } : null;
 
   const winner = winningRule(rules, msg, author);
   if (winner) {
     const denies = winner.effect === "deny" || effectForDestination(winner.destination) === "deny";
     if (denies) return { destination: winner.destination, matchedRuleId: winner.id, source: "rule" };
     if (authScreens(auth)) return screened;
-    if (hold) return { ...screened, ...rides };
+    if (held) return held;
     const demoted = policyDemotion(msg, winner, ohboxPolicy);
     if (demoted) return { ...demoted, ...rides };
     return { destination: winner.destination, matchedRuleId: winner.id, source: "rule", ...rides };
@@ -1187,7 +1220,7 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
     return { destination: standing.destination, matchedRuleId: standing.id, source: "rule" };
   }
   // One line for a standing allow, an inferred contact and a stranger.
-  if (hold) return { ...screened, ...rides };
+  if (held) return held;
   if (standing === null && !isKnownAuthor(author, knownSenders.addresses)) {
     /* THE ACCOUNT ITSELF IS NOT FIRST CONTACT: its own mail keeps the place the mailbox gave it
        (`destination: null`, `source: "own"` — no pile, no AI question), where every other mail

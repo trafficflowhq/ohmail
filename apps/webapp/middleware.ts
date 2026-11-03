@@ -5,7 +5,7 @@ import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS, zoneCaseVariantOf, zoneP
 import { armedZone, resolveLandingZone, zoneRequestHeaders, zoneTarget } from "./landing-zone.mjs";
 import { newNonce, nonceCsp } from "./app/security-headers";
 import { cookieFromStore } from "./app/shell/cookie-jar";
-import { OWNER_COOKIE, OWNER_SIGNED_OUT } from "./app/shell/owner-cookie";
+import { OWNER_COOKIE, OWNER_SIGNED_OUT, pendingSignOutCookie } from "./app/shell/owner-cookie";
 import {
   APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, SIGNED_OUT_COOKIE, resolveSurface,
 } from "./app/session-gate";
@@ -338,7 +338,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     door.search = "";
     const response = NextResponse.redirect(door, 307);
     response.headers.set("Cache-Control", "private, no-store");
-    return response;
+    return holdPendingSignOut(request, response);
   }
 
   // THERE IS NO MARKETING SITE ON A SELF-HOST INSTALL — self-host builds only
@@ -410,6 +410,19 @@ function credentialPage(request: NextRequest): NextResponse {
   const response = strict(request, (init) => NextResponse.next(init));
   response.headers.set("Referrer-Policy", "no-referrer");
   response.headers.set("Cache-Control", "private, no-store");
+  return holdPendingSignOut(request, response);
+}
+
+/**
+ * A PENDING SIGN-OUT OUTLIVES SAFARI'S SEVEN-DAY CAP on what page script writes: the word the request carried goes back
+ * as a server cookie (`pendingSignOutCookie`), on the private answers that finish a sign-out, and only beside a
+ * session cookie, the one case with a sign-out left to finish. It copies the request's word and decides nothing.
+ */
+function holdPendingSignOut(request: NextRequest, response: NextResponse): NextResponse {
+  const jar = request.cookies;
+  if (cookieFromStore(jar, OWNER_COOKIE) !== OWNER_SIGNED_OUT) return response;
+  if (cookieFromStore(jar, SESSION_COOKIE) === null && cookieFromStore(jar, RESUME_COOKIE) === null) return response;
+  response.headers.append("Set-Cookie", pendingSignOutCookie());
   return response;
 }
 

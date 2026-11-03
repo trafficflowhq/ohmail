@@ -250,6 +250,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "getFolderState", "listRules", "knownSenders", "findThreadParent", "listThreadBacklog",
   // `mailboxes.address` — a table this projection does not join.
   "ownAddresses",
+  // `mailboxes.address` and `mailbox_credentials.meta` for one mailbox, the bounce arm's — reads of tables not joined.
+  "mailboxOutgoing",
   // `away_replies`, one column, `LIMIT 1` — a table this projection does not join at all.
   "isOwnAwayReply",
   /* The correspondent predicate's reply arm, the bounce arm's question over the same Sent copies,

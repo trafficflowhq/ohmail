@@ -147,6 +147,19 @@ describe("the Cloud mirror and MessageDTO.senderCheck", () => {
     expect(got.get(confirmed.id)?.senderCheck).toBeNull();
   });
 
+  it("a letter Cloud's gate holds for want of confirmation (mail 0176) mirrors held, and the local door says so", async () => {
+    const { db, world, cursorPath } = await standUp();
+    const held: MessageDTO = {
+      ...inbound(randomUUID(), "service@paypal.com", "unavailable"), folder: "ohmail/Screener",
+      senderCheck: { reason: "unverified", brand: "PayPal", domainShared: false, held: true },
+    };
+    await createCloudMirror({ db, world, cursorPath, now: () => new Date(), auth: fakeAuth(page([held])) }).pullOnce();
+    const [row] = await db.select({ held: messages.unconfirmedHold }).from(messages).where(eq(messages.id, held.id));
+    expect(row!.held).toBe(true);
+    expect((await materializeMessages(db, world.accountId, [held.id])).get(held.id)?.senderCheck)
+      .toEqual({ reason: "unverified", brand: "PayPal", domainShared: false, unchecked: true, held: true });
+  });
+
   it("a Cloud that named one office for an umbrella domain is not repeated: the local door names the domain", async () => {
     const { db, world, cursorPath } = await standUp();
     // What a Cloud before this change served for a BAG letter: the first office listed under admin.ch.

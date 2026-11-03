@@ -65,6 +65,14 @@ const SIGN_OUT_PATH = `${REFRESH_ENDPOINT}/logout` as const;
 const SIGN_OUT_LOCK_WAIT_MS = 3_000;
 const SIGN_OUT_DEADLINE_MS = 10_000;
 
+/** The `pagehide` hand of a Sign out press whose door request has not left yet (`auth.armLogoutOnLeave`). */
+let logoutOnLeave: (() => void) | null = null;
+
+function disarmLogoutOnLeave(): void {
+  if (logoutOnLeave !== null) globalThis.window?.removeEventListener("pagehide", logoutOnLeave);
+  logoutOnLeave = null;
+}
+
 /** Is this build wired to a server at all? `false` ⇒ demo/gate only. */
 export const apiConfigured = (): boolean => typeof API_BASE === "string" && API_BASE.length > 0;
 
@@ -1007,6 +1015,8 @@ async function attempt<T>(
     if (csrf) headers["X-CSRF-Token"] = csrf;
   }
 
+  // The door's request leaves now: a press that armed `pagehide` for it has nothing left to send.
+  if (path === SIGN_OUT_PATH) disarmLogoutOnLeave();
   let res: Response;
   try {
     res = await fetch(path === SIGN_OUT_PATH ? path : `${API_BASE}${path}`, {
@@ -1015,6 +1025,8 @@ async function attempt<T>(
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
       signal: opts.signal,
       cache: "no-store",
+      // The sign-out's requests: the browser finishes them for a tab closed at the press.
+      keepalive: path === SIGN_OUT_PATH || opts.signingOutOf !== undefined,
     });
   } catch {
     ticket?.done(false);
@@ -1638,6 +1650,17 @@ export const auth = {
     } finally {
       clearTimeout(timer);
     }
+  },
+
+  /**
+   * A Sign out press's door request leaves after the wake revoke and the cookie lock, and no page load
+   * follows a tab closed before that: such a page sends it from `pagehide` (outside the lock, kept alive,
+   * unread). The press's only: the finisher's door waits for `mayProceed`.
+   */
+  armLogoutOnLeave: (): void => {
+    disarmLogoutOnLeave();
+    logoutOnLeave = () => { void attempt<void>(SIGN_OUT_PATH, { method: "POST" }).catch(() => undefined); };
+    globalThis.window?.addEventListener("pagehide", logoutOnLeave);
   },
 
   // ── 2FA enrollment (the enrollment-session surface: the server's `enrollmentOk` routes) ──

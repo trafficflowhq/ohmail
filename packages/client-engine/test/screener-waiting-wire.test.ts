@@ -41,6 +41,19 @@ describe("the queue page's wire", () => {
     expect(page.inFlight).toEqual([{ scope: "sender", match: "gone@x.test" }, { scope: "domain", match: "dom.test" }]);
   });
 
+  it("a claim, or a letter held for want of confirmation (mail 0176), marks the row; an unverified line alone does not", async () => {
+    const row = (id: string, checked: unknown) => ({ messageId: id, sender: { address: `${id}@paypal.com` }, checked });
+    const page = await adapterAnswering(200, {
+      items: [
+        row("claim", { reason: "impersonation", brand: "PostFinance", domainShared: false }),
+        row("held", { reason: "unverified", brand: "PayPal", domainShared: false, held: true }),
+        row("line", { reason: "unverified", brand: "PayPal", domainShared: false }),
+      ],
+      nextCursor: null,
+    }).adapter.screenerWaiting();
+    expect(page.items.map((i) => [i.messageId, i.marked === true])).toEqual([["claim", true], ["held", true], ["line", false]]);
+  });
+
   it("a server that states no count, or an unreadable one, is `null` — never a guessed zero", async () => {
     expect((await adapterAnswering(200, { items: [], nextCursor: null }).adapter.screenerWaiting()).total).toBeNull();
     expect((await adapterAnswering(200, { items: [], nextCursor: null, total: -3 }).adapter.screenerWaiting()).total).toBeNull();

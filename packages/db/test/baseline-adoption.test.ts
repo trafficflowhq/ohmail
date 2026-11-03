@@ -920,6 +920,9 @@ describe("the baseline cutoff is frozen", () => {
       // The html-words backfill's stamp and cursor: two nullable ADD COLUMN IF NOT EXISTS on
       // account_settings, no data. Safe over any history.
       "0172_html_words_backfill",
+      // A letter held because nothing confirmed a company's own address: one nullable ADD COLUMN IF
+      // NOT EXISTS on messages, no default, no data. Safe over any history.
+      "0176_messages_unconfirmed_hold",
     ]);
 
     // The cloud half of the same set, read the same way.

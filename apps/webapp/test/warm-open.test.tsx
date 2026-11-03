@@ -62,7 +62,7 @@ const mockLogout = vi.fn(async () => {});
  */
 vi.mock("../app/api-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../app/api-client")>()),
-  auth: { logout: mockLogout },
+  auth: { logout: mockLogout, armLogoutOnLeave: () => undefined },
 }));
 
 type EngineModule = typeof import("../app/shell/engine");

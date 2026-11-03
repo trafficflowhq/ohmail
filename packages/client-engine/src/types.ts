@@ -428,10 +428,12 @@ export interface EngineMessage extends EngineMessageExtras {
    * `unverified` — the address is `brand`'s own and its provider did not confirm the sender: a line
    * to read, never a claim; `unchecked` says the identity column under it was never written. There
    * `brand` may be a domain (`admin.ch`), where the address names no one brand: say it as given.
+   * `held`: the gate holds the letter for want of confirmation (mail 0176), a claim to the partition
+   * and the press alike, dated by its record time; beside `impersonation` it changes only the dating.
    */
   senderCheck?: {
     reason: "impersonation" | "unverified"; brand: string; domainShared: boolean; by?: "ingest" | "backfill";
-    list?: boolean; unchecked?: true;
+    list?: boolean; unchecked?: true; held?: true;
   } | null;
   /**
    * THIS LETTER'S PLACE IS DECIDED (`MessageDTO.placeDecided`): a person placed it, or the gate
@@ -754,6 +756,12 @@ export interface RuleDTO {
    * Absent from an older server, and from a copy that does not carry it; both read as a person's.
    */
   byOhmail?: boolean;
+  /**
+   * A PERSON DECIDED THIS RULE (their own Screener press, or their pause): a promoted domain rule so
+   * marked is consent to a hold for want of confirmation, as the server's gate reads it. Absent from an
+   * older server and on every other rule; absent reads as nobody's decision, the reading that holds.
+   */
+  personDecided?: true;
 }
 
 export interface EngineDraft {

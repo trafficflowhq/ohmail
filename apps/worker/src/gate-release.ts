@@ -3,10 +3,11 @@ import {
   accountSettings, approvals, contactOnlyHeldWhere, drafts, folderState, mailboxes,
   messageStates, messages, recordChange, recordRuleDelta, rules as rulesTbl,
   AccountErasedError, readAccountErasedAt,
-  CUTLINE_ALLOW_DESTINATIONS, ruleNamesSenderSql, type LedgerTx, type Tx,
+  CUTLINE_ALLOW_DESTINATIONS, heldUnconfirmedOnlySql, personSkipSql, ruleNamesSenderSql, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { silentLogger, type Destination, type Logger } from "@trafficflow/core";
-import { dialect } from "@trafficflow/db/dialect";
+import { SCREENING_AUTH_VERDICTS } from "@trafficflow/core/mail";
+import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { writeSenderChecks } from "./sender-check-backfill.js";
 
 /* THE ONE-TIME REPAIR FOR MAIL STUCK AT THE SCREENING GATE BEHIND A DECISION ALREADY MADE.
@@ -75,15 +76,21 @@ export interface GateReleaseResult {
  * both folders the gate, so a hand file elsewhere and a row in flight are untouched; a mailbox
  * this install organizes; and the three cheap user-intent exclusions.
  */
-function atTheGate(accountId: string) {
+function atTheGate(accountId: string, d: Dialect) {
   return and(
     eq(messages.accountId, accountId),
     isNull(messages.deletedAt),
     sql`${folderState.lastSetBy} in ('us', 'peer', 'external')`,
     eq(folderState.desiredFolder, SCREENER_GATE),
     eq(folderState.observedFolder, SCREENER_GATE),
-    // A claim the identity fact holds is the Screener's question, never this repair's (mail 0148).
+    // A claim the identity fact holds is the Screener's question, never this repair's (mail 0148);
+    // so is a letter held for want of confirmation (mail 0176), unless a person consented to the address
+    // or wrote a rule for its domain.
     sql`(${messages.senderCheck} is null or ${messages.senderCheck} <> 'impersonation')`,
+    sql`(${messages.unconfirmedHold} is not true or ${personSkipSql(d, accountId, {
+      sender: sql`lower(${messages.fromAddress})`, auth: sql`${messages.authVerdict}`, brand: sql`${messages.senderCheckBrand}`,
+      unconfirmedOnly: heldUnconfirmedOnlySql({ senderCheck: messages.senderCheck, unconfirmed: messages.unconfirmedHold }),
+    }, SCREENING_AUTH_VERDICTS)})`,
     sql`not exists (
       select 1 from ${mailboxes} mb
        where mb.id = ${messages.mailboxId}
@@ -169,7 +176,7 @@ export async function gateReleasePass(
         sql`exists (
           select 1 from ${messages}
             join ${folderState} on ${folderState.messageId} = ${messages.id}
-           where ${atTheGate(accountId)}
+           where ${atTheGate(accountId, d)}
              and ${ruleNamesSenderSql(d, { kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination }, sql`lower(${messages.fromAddress})`)}
         )`,
       ))
@@ -199,7 +206,7 @@ export async function gateReleasePass(
        gate, so the only reason theirs is held is that it arrived before the row existed — hence
        the Ohbox. The one spelling of "held, and only a contact" (`contactOnlyHeldWhere`), which
        the held-release offer's sender lines count and press by after this sweep has run. */
-    const filters = [atTheGate(accountId), ...contactOnlyHeldWhere(dialect(tx as unknown as Tx), { ownAddresses: own })];
+    const filters = [atTheGate(accountId, d), ...contactOnlyHeldWhere(d, { ownAddresses: own })];
 
     const selected = await tx.select({
       messageId: messages.id, observedFolder: folderState.observedFolder,

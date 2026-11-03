@@ -103,6 +103,24 @@ describe("the decide's effects over the subject's twins", () => {
     expect(ruleEffects(effects)).toEqual([["rule-promoted", "INBOX"]]);
   });
 
+  it("the press is the person's: its rule carries the mark, and a first yes on a domain asks for the walk", async () => {
+    // A domain rule no person decided, already at the place: the press makes it theirs, and its walk then
+    // takes the domain's letters held for want of confirmation, as the server's press asks.
+    const inferred = { kind: "domain" as const, match: "atelier.example", provenance: "promoted" as const };
+    const store = await mirror([msg("m1", "ohmail/Screener")], [rule("r-domain", "INBOX", inferred)]);
+    const effects = mutationEffects(store, { kind: "screener_decide", senderId: "m1", decision: "yes", scope: "domain" }, ctx);
+    expect(effects.find((e) => e.id === "r-domain")?.entity)
+      .toMatchObject({ personDecided: true, retro: { requestedAt: NOW.toISOString(), doneAt: null } });
+    // Already the person's, at the place: nothing is asked again.
+    const decided = await mirror([msg("m2", "ohmail/Screener")], [rule("r-mine", "INBOX", { ...inferred, personDecided: true })]);
+    const again = mutationEffects(decided, { kind: "screener_decide", senderId: "m2", decision: "yes", scope: "domain" }, ctx);
+    expect((again.find((e) => e.id === "r-mine")?.entity as RuleDTO).retro).toBeUndefined();
+    // A new rule is the person's too.
+    const fresh = await mirror([msg("m3", "ohmail/Screener")], []);
+    const created = mutationEffects(fresh, { kind: "screener_decide", senderId: "m3", decision: "yes" }, ctx);
+    expect((created.find((e) => e.type === "rule")?.entity as RuleDTO).personDecided).toBe(true);
+  });
+
   it("a retargeted twin is masked until the mirror agrees, as a rule_update's is", () => {
     expect(SHADOWED_ROWS.screener_decide).toContain("rule");
   });

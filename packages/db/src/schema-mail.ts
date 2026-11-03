@@ -779,6 +779,14 @@ export const messages = pgTable("messages", {
    * The reaper never takes a row that carries it, so its body stays for a re-append. NULL = held.
    */
   serverMissingAt: timestamp("server_missing_at", { withTimezone: true }),
+  /**
+   * HELD FOR WANT OF CONFIRMATION (mail 0176): `true` when the gate placed this letter at the
+   * Screener because its address is a company's own, nothing confirmed it (`auth_verdict` not
+   * `pass`) and no person had consented to the address (`rules.ts#EvaluateRulesInput.ownedUnconfirmed`).
+   * Written by the ingest and the gap catch-up's screen only; NULL otherwise. Read beside
+   * `sender_check = 'impersonation'` by every reader of a held claim.
+   */
+  unconfirmedHold: boolean("unconfirmed_hold"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
   ckSenderCheck: check("messages_sender_check_closed", sql`${t.senderCheck} in ('none', 'impersonation')`),

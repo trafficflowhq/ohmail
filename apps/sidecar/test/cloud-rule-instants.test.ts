@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { changeLog, rules } from "@trafficflow/db/mail";
+import { materializeRule } from "@trafficflow/services/mail";
 import type {
   MailboxDTO, MessageDTO, RuleDTO, SnapshotResponse, SyncChange, SyncResponse,
 } from "@trafficflow/services/mail";
@@ -210,6 +211,30 @@ describe("a mirrored rule keeps the account's backlog pass stamps", () => {
     expect(await stamps()).toEqual([ASKED, DONE]);
     await pull(3, { requestedAt: AGAIN, doneAt: null });
     expect(await stamps(), "a finished pass stayed finished after the account asked again").toEqual([AGAIN, null]);
+  });
+});
+
+/**
+ * AND WHETHER A PERSON DECIDED IT (`RuleDTO.personDecided`, `rules.person_decided_at`): a person's own
+ * Screener press on a domain is consent to a hold for want of confirmation, so the paired desktop's door
+ * says it as Cloud's does, and a rule Cloud no longer marks reads unmarked here too.
+ */
+describe("a mirrored rule keeps whether a person decided it", () => {
+  it("the local door re-emits the mark, and a later copy without it clears it", async () => {
+    const { db, world, cursorPath } = await standUp();
+    const ruleId = randomUUID();
+    const pressed = ruleDTO(ruleId, { kind: "domain", match: "paypal.com", personDecided: true });
+    const pull = (seq: number, entity: RuleDTO) => createCloudMirror({
+      db, world, cursorPath, now: () => new Date(),
+      auth: fakeAuth([syncPage([change("rule", ruleId, seq === 1 ? "create" : "update", seq, entity)], `c${seq}`)]),
+    }).pullOnce();
+    await pull(1, pressed);
+    expect((await ruleRow(db, ruleId)).personDecidedAt, "the person's decision was dropped").not.toBeNull();
+    expect((await materializeRule(db, world.accountId, ruleId))?.personDecided).toBe(true);
+    const { personDecided: _gone, ...unmarked } = pressed;
+    await pull(2, unmarked);
+    expect((await ruleRow(db, ruleId)).personDecidedAt).toBeNull();
+    expect((await materializeRule(db, world.accountId, ruleId))?.personDecided).toBeUndefined();
   });
 });
 
