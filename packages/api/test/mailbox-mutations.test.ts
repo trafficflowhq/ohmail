@@ -15,8 +15,8 @@ const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 7), 1);
 
 const body = (o: unknown): string => JSON.stringify(o);
 
-const IMAP = { host: "imap.example", port: 993, secure: true, user: "mila", pass: "s3cr3t-imap-password-password" };
-const SMTP = { host: "smtp.example", port: 465, secure: true, user: "mila", pass: "s3cr3t-smtp-password-password" };
+const IMAP = { host: "imap.example", port: 993, secure: true, user: "mila", pass: "mailbox-imap-password" };
+const SMTP = { host: "smtp.example", port: 465, secure: true, user: "mila", pass: "mailbox-smtp-password" };
 
 describe("mailbox mutations (create / update / delete)", () => {
   it("POST /mailboxes → 201; creds encrypted-at-rest + round-trip; no secret in the DTO", async () => {
@@ -37,7 +37,8 @@ describe("mailbox mutations (create / update / delete)", () => {
     expect(dto.authKind).toBe("password");
     // No credential leakage of any kind in the response body.
     const flat = JSON.stringify(dto);
-    expect(flat).not.toContain("s3cr3t");
+    expect(flat).not.toContain("mailbox-imap-password");
+    expect(flat).not.toContain("mailbox-smtp-password");
     expect(dto.imap).toBeUndefined();
     expect(dto.smtp).toBeUndefined();
     expect(dto.credentials).toBeUndefined();
@@ -47,11 +48,11 @@ describe("mailbox mutations (create / update / delete)", () => {
     const rows = await db.select().from(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, dto.id));
     expect(rows).toHaveLength(2);
     const imap = rows.find((r) => r.transport === "imap")!;
-    expect(imap.secretEnc).not.toContain("s3cr3t-imap-password-password");
-    expect(await KP.decrypt(imap.secretEnc, imap.keyVersion)).toBe("s3cr3t-imap-password-password");
+    expect(imap.secretEnc).not.toContain("mailbox-imap-password");
+    expect(await KP.decrypt(imap.secretEnc, imap.keyVersion)).toBe("mailbox-imap-password");
     expect(imap.meta).toEqual({ host: "imap.example", port: 993, secure: true, user: "mila" });
     const smtp = rows.find((r) => r.transport === "smtp")!;
-    expect(await KP.decrypt(smtp.secretEnc, smtp.keyVersion)).toBe("s3cr3t-smtp-password-password");
+    expect(await KP.decrypt(smtp.secretEnc, smtp.keyVersion)).toBe("mailbox-smtp-password");
   });
 
   it("POST /mailboxes without an smtp block creates only the imap credential row", async () => {

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import {
-  FIXTURE_SHAPES, anthropicKey, base32Seed, fixturePassword, hex64, managedAddress, managedDomain, openAiKey,
-  pemHeader, personalAt, resendKey, stripeTestKey,
+  FIXTURE_SHAPES, anthropicKey, base32Seed, fixturePassword, hex64, managedAddress, managedDomain, opaqueRun,
+  openAiKey, pemHeader, personalAt, resendKey, stripeTestKey,
 } from "../../../test/support/fixture-credentials.js";
 import { SECRET_VALUE_PATTERNS } from "../src/log.js";
 import { ANTHROPIC_KEY_PREFIX } from "../src/ai/anthropic-client.js";
@@ -40,10 +40,21 @@ describe("the assemblers yield the shape they are for", () => {
     expect(base32Seed("helper")).toMatch(FIXTURE_SHAPES.base32);
   });
 
+  it("an opaque run is letters and digits of the length asked, the same for its tag on every call", () => {
+    expect(opaqueRun("helper", 24)).toMatch(/^[A-Za-z0-9]{24}$/);
+    expect(opaqueRun("helper", 150)).toMatch(/^[A-Za-z0-9]{150}$/);
+    expect(opaqueRun("helper", 150).startsWith(opaqueRun("helper", 24))).toBe(true);
+    expect(opaqueRun("helper", 60)).toMatch(/[a-z]/);
+    expect(opaqueRun("helper", 60)).toMatch(/[A-Z]/);
+    expect(opaqueRun("helper", 60)).toMatch(/[0-9]/);
+    for (const n of [0, -1, 1.5, Number.NaN]) expect(() => opaqueRun("helper", n), String(n)).toThrow(TypeError);
+  });
+
   it("two tags never share a value", () => {
     for (const make of [anthropicKey, openAiKey, stripeTestKey, resendKey, hex64, base32Seed, fixturePassword]) {
       expect(make("helper-one"), make.name).not.toBe(make("helper-two"));
     }
+    expect(opaqueRun("helper-one", 24)).not.toBe(opaqueRun("helper-two", 24));
   });
 });
 
@@ -52,7 +63,9 @@ describe("addresses and passwords", () => {
     const managed = managedAddress("fixture.mila");
     expect(managed.split("@")).toEqual(["fixture.mila", managedDomain()]);
     expect(personalAt("fixture.mila", "gmail.com").split("@")).toEqual(["fixture.mila", "gmail.com"]);
-    for (const local of ["mila", "fixture.mila+news", "Fixture.Mila", "fixture.", "fixture.mila@x"]) {
+    // One segment after the prefix: a first and last name behind it would be a person's local part.
+    for (const local of ["mila", "fixture.mila+news", "Fixture.Mila", "fixture.", "fixture.mila@x",
+      "fixture.mila.brunner", "fixture.mila-brunner", "fixture.mila_brunner"]) {
       expect(() => managedAddress(local), local).toThrow(TypeError);
       expect(() => personalAt(local, "gmail.com"), local).toThrow(TypeError);
     }
@@ -85,6 +98,8 @@ describe("no export has a default", () => {
     expect(() => hex64()).toThrow(TypeError);
     // @ts-expect-error the tag is required
     expect(() => base32Seed()).toThrow(TypeError);
+    // @ts-expect-error the length is required
+    expect(() => opaqueRun("helper")).toThrow(TypeError);
     // @ts-expect-error the local part is required
     expect(() => managedAddress()).toThrow(TypeError);
     // @ts-expect-error the domain is required

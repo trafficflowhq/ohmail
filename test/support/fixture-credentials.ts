@@ -69,15 +69,29 @@ export function base32Seed(tag: string): string {
   return out;
 }
 
+const RUN_ALPHABET = `${ALPHABET.slice(0, 26)}${ALPHABET.slice(0, 26).toLowerCase()}0123456789`;
+/** `length` letters and digits from the tag's digest, stretched: an opaque token whose shape, not its bytes,
+ *  is the property. The same tag gives the same run, and a longer run starts with the shorter one. */
+export function opaqueRun(tag: string, length: number): string {
+  const t = tagOf("opaqueRun", tag);
+  if (!Number.isInteger(length) || length < 1) throw new TypeError("opaqueRun: a length is a positive integer");
+  let out = "";
+  for (let block = 0; out.length < length; block++) {
+    for (const b of createHash("sha256").update(`${t}:${block}`).digest()) out += RUN_ALPHABET[b % RUN_ALPHABET.length];
+  }
+  return out.slice(0, length);
+}
+
 /** The managed service's mail domain. */
 export function managedDomain(): string {
   return ["ohmail", "app"].join(".");
 }
 
-const LOCAL = /^fixture\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+/* One segment after the prefix: `fixture.<a>.<b>` would put a first and last name behind it. */
+const LOCAL = /^fixture\.[a-z0-9]+$/;
 const localOf = (fn: string, local: unknown): string => {
   const l = need(fn, "a local part", local);
-  if (!LOCAL.test(l)) throw new TypeError(`${fn}: a local part is fixture.<name>, lower-case, with no + tag`);
+  if (!LOCAL.test(l)) throw new TypeError(`${fn}: a local part is fixture.<name>, one lower-case word, with no + tag`);
   return l;
 };
 

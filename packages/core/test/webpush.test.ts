@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createECDH, randomBytes } from "node:crypto";
+import { createECDH, hkdfSync, randomBytes } from "node:crypto";
 import {
   encryptWebPushBody, encryptWebPushRecord, makeVapidIdentity, vapidIdentityFromEnv,
   WebPushRefusal,
@@ -37,16 +37,14 @@ import { makeSubscriber, openAes128Gcm, parseVapidAuthorization } from "./webpus
  * because both halves would have shared the misreading.
  */
 
-/* The two secrets are joined from halves at run time (the push gate reads a whole token-shaped value under a
- * secret's name as a credential); the known-answer cases below fail on any byte of either. */
-const assemble = (...parts: string[]): string => parts.join("");
-
-/** RFC 8291 §5 + Appendix A, transcribed from the RFC. Line wrapping removed; nothing else changed. */
+/** RFC 8291 §5 + Appendix A, transcribed from the RFC. Line wrapping removed; the user agent's authentication
+ *  secret is named `auth`, as its subscription names it, and Appendix A's shared ECDH secret is derived below
+ *  from the two keys rather than written down. */
 const RFC8291 = {
   plaintext: "When I grow up, I want to be a watermelon",
   uaPublic: "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4",
   uaPrivate: "q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94",
-  authSecret: assemble("BTBZMqHH6r4", "Tts7J_aSIgg"),
+  auth: "BTBZMqHH6r4Tts7J_aSIgg",
   asPrivate: "yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw",
   asPublic: "BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8",
   salt: "DGv6ra1nlYgDCS1FRnbzlw",
@@ -55,7 +53,6 @@ const RFC8291 = {
     + "mlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPT"
     + "pK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN",
   /** Appendix A's intermediate values, so a mismatch says WHICH step went wrong. */
-  ecdhSecret: assemble("kyrL1jIIOHEzg3sM2ZWRH", "DRB62YACZhhSlknJ672kSs"),
   ikm: "S4lYMb_L0FxCeq0WhDx813KgSYqU26kOyzWUdsXYyrg",
   cek: "oIhVW04MRdy2XN9CiKLxTg",
   nonce: "4h_95klXJ5E_qnoN",
@@ -75,7 +72,7 @@ describe("RFC 8291 §5 — the specification's own example, byte for byte", () =
   it("produces the RFC's published message body exactly", () => {
     const record = encryptWebPushRecord(
       Buffer.from(RFC8291.plaintext, "utf8"),
-      { p256dh: RFC8291.uaPublic, auth: RFC8291.authSecret },
+      { p256dh: RFC8291.uaPublic, auth: RFC8291.auth },
       b64u(RFC8291.salt),
       b64u(RFC8291.asPrivate),
     );
@@ -88,7 +85,10 @@ describe("RFC 8291 §5 — the specification's own example, byte for byte", () =
     const ecdh = createECDH("prime256v1");
     ecdh.setPrivateKey(b64u(RFC8291.asPrivate));
     expect(ecdh.getPublicKey().toString("base64url")).toBe(RFC8291.asPublic);
-    expect(ecdh.computeSecret(b64u(RFC8291.uaPublic)).toString("base64url")).toBe(RFC8291.ecdhSecret);
+    // The shared secret is checked through the IKM it keys (§3.3), so either key or `auth` mistyped fails here.
+    const info = Buffer.concat([Buffer.from("WebPush: info\0"), b64u(RFC8291.uaPublic), b64u(RFC8291.asPublic)]);
+    const ikm = hkdfSync("sha256", ecdh.computeSecret(b64u(RFC8291.uaPublic)), b64u(RFC8291.auth), info, 32);
+    expect(Buffer.from(ikm).toString("base64url")).toBe(RFC8291.ikm);
 
     const ua = createECDH("prime256v1");
     ua.setPrivateKey(b64u(RFC8291.uaPrivate));
@@ -103,7 +103,7 @@ describe("RFC 8291 §5 — the specification's own example, byte for byte", () =
   it("the header is the 86 octets RFC 8188 describes, in that order", () => {
     const record = encryptWebPushRecord(
       Buffer.from(RFC8291.plaintext, "utf8"),
-      { p256dh: RFC8291.uaPublic, auth: RFC8291.authSecret },
+      { p256dh: RFC8291.uaPublic, auth: RFC8291.auth },
       b64u(RFC8291.salt), b64u(RFC8291.asPrivate),
     );
     expect(record.subarray(0, 16).toString("base64url")).toBe(RFC8291.salt);   // salt
@@ -118,8 +118,8 @@ describe("RFC 8291 §5 — the specification's own example, byte for byte", () =
     const ecdh = createECDH("prime256v1");
     ecdh.setPrivateKey(b64u(RFC8291.uaPrivate));
     const out = openAes128Gcm(b64u(RFC8291.body), {
-      p256dh: RFC8291.uaPublic, auth: RFC8291.authSecret,
-      privateKey: b64u(RFC8291.uaPrivate), authSecret: b64u(RFC8291.authSecret),
+      p256dh: RFC8291.uaPublic, auth: RFC8291.auth,
+      privateKey: b64u(RFC8291.uaPrivate), authSecret: b64u(RFC8291.auth),
     });
     expect(out.toString("utf8")).toBe(RFC8291.plaintext);
   });

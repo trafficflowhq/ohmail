@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { classifySensitivity, screenOutboundText } from "../src/sensitive.js";
 import type { NormalizedMessage } from "../src/types.js";
+import { hex64, opaqueRun } from "../../../test/support/fixture-credentials.js";
 
 /**
  * THE AUTHENTICATION-URL RULE, AT BOTH ENDS.
@@ -127,14 +128,17 @@ const DOC =
   + "to reach us if anything is not quite right. We appreciate your business and hope to see you "
   + "again soon at our shop for more of the things you love the most this season.";
 
-/* The token-bearing URLs below are the subject, so their tokens stay byte-exact: each is assembled at run time
- * from two halves (the push gate reads a whole token-shaped value after `token=` as a credential), and the case
- * after the two tables asserts every one whole. */
-const assemble = (...parts: string[]): string => parts.join("");
-const UNSUB_TOKEN = assemble("66336662-3233", "-18c3-1811-30ab");
-const DEREFER_TOKEN = assemble("f0c3c200-9cda", "-4d2d-8168-1a2b3c");
-const QUOTED_DEREFER_TOKEN = assemble("f0c3c200-9cda", "-4d2d-8168-1a2b");
-const SET_PASSWORD_TOKEN = assemble("JXdx6Oaw3JCG", "4HtbIbZyXuKV");
+/* The token-bearing URLs below are the subject, so their tokens keep their shape: each is derived from its tag
+ * at run time, and the case after the two tables asserts every one whole. */
+const hexGroups = (tag: string, ...lengths: number[]): string => {
+  const hex = hex64(tag);
+  let at = 0;
+  return lengths.map((n) => hex.slice(at, (at += n))).join("-");
+};
+const UNSUB_TOKEN = hexGroups("auth-url-unsubscribe", 8, 4, 4, 4, 4);
+const DEREFER_TOKEN = hexGroups("auth-url-derefer", 8, 4, 4, 4, 6);
+const QUOTED_DEREFER_TOKEN = hexGroups("auth-url-quoted-derefer", 8, 4, 4, 4, 4);
+const SET_PASSWORD_TOKEN = opaqueRun("auth-url-set-password", 24);
 
 /** The FALSE-POSITIVE classes. Each carries a real ≥16 opaque run, and none is a credential. */
 const NOT_A_CREDENTIAL: Array<[string, string]> = [

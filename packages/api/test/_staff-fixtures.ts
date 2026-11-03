@@ -8,9 +8,9 @@ import { makeDeps, FIXED_NOW } from "./helpers.js";
 /** The cloud 0047 staff suites' shared harness: one app, one secret, staff with chosen roles. */
 
 export const app = createApp(apiRoutes);
-export const SECRET = "admin-secret-for-tests-abcdefghij-fixture-token";
+export const SECRET = "admin-console-internal-secret-fixture-token";
 export const ADMIN: AdminConfig = { secret: SECRET, environment: "test" };
-export const PASSWORD = "correct-horse-battery-staple-4x-password";
+export const PASSWORD = "staff-console-sign-in-password";
 
 export const H = (r: Request, d: ApiDeps): Promise<Response> =>
   app.handle(r, { ...d, session: null, idempotency: null });

@@ -88,7 +88,7 @@ describe("no-collapse: held mail", () => {
   });
 
   it("screened-out senders carry every held message — '8 held' means eight", () => {
-    const fashion = screenedOut.find((s) => s.address === "promo@fashion-deals.ch")!;
+    const fashion = screenedOut.find((s) => s.address === "promo@fashion-deals.example")!;
     expect(fashion.held).toHaveLength(8);
     expect(fashion.held.map((h) => h.id)).toEqual([
       "fd-1",
@@ -104,7 +104,7 @@ describe("no-collapse: held mail", () => {
     expect(fashion.held[fashion.held.length - 1]!.subject).toBe(
       "Mid-Season Sale: bis 70% auf alles",
     );
-    const forum = screenedOut.find((s) => s.address === "notifications@old-forum.net")!;
+    const forum = screenedOut.find((s) => s.address === "notifications@old-forum.example")!;
     expect(forum.held).toHaveLength(2);
   });
 
@@ -383,14 +383,14 @@ describe("privacy guard", () => {
   it("the renamed senders are the coined ones, not the real brands they collided with", () => {
     expect(reads.find((m) => m.id === "f5")?.from).toEqual({
       name: "Gratbrief",
-      address: "post@gratbrief.ch",
+      address: "post@gratbrief.example",
     });
     expect(reads.find((m) => m.id === "f12")?.from).toEqual({
       name: "Röstsonntag",
-      address: "hallo@roestsonntag.ch",
+      address: "hallo@roestsonntag.example",
     });
     expect(receipts.find((r) => r.id === "roestsonntag")?.from.address).toBe(
-      "hallo@roestsonntag.ch",
+      "hallo@roestsonntag.example",
     );
   });
 
@@ -405,15 +405,15 @@ describe("privacy guard", () => {
     expect(mailboxes[0]!.name).toBe("lichtgrat.example");
     expect(reads.find((m) => m.id === "f3")?.from).toEqual({
       name: "Wohnfalz",
-      address: "news@wohnfalz.ch",
+      address: "news@wohnfalz.example",
     });
     expect(waiting.find((w) => w.id === "lena")?.from.address).toBe("lena@atelier-eichspan.example");
     // Both halves of the phishing demo must be fictional: a real security
     // company must not be the brand the product is shown catching an
     // impersonation of.
     const verifier = ohbox.find((m) => m.from.name === "Cinderlock");
-    expect(verifier?.from.address).toBe("no-reply@cinderlock.app");
-    expect(spam.some((s) => s.from === "support@cinderl0ck-secure.info")).toBe(true);
+    expect(verifier?.from.address).toBe("no-reply@cinderlock.example");
+    expect(spam.some((s) => s.from === "support@cinderl0ck-secure.example")).toBe(true);
   });
 });
 

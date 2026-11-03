@@ -42,7 +42,7 @@ const replace = vi.fn();
 const router = { replace, push: vi.fn() };
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
-const TOKEN = "udfcxjjqlambhcvfnzikwbasgdteghcyrfepaoqiiue-fixture-token";
+const TOKEN = "invite-and-pair-link-fixture-token";
 
 type Answer = { status: number; body?: unknown };
 let answers: Record<string, Answer> = {};

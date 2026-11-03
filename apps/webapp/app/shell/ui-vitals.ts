@@ -552,7 +552,7 @@ export function takeUiVitals(): UiVitalsReport {
     deriveMs: engine.derives === 0 ? null : engine.deriveMsMax,
     /* AND WHAT THE WINDOW IS USUALLY LIKE, beside what its worst moment was. The max alone cannot
        say whether a mailbox is slow or had one bad pass, which is the question a reader asks of a
-       75k mailbox; the count says how many bumps paid it. `deriveCount` is a plain count — zero
+       large mailbox; the count says how many bumps paid it. `deriveCount` is a plain count — zero
        derivations in five minutes is a real reading — while the three durations are `null` rather
        than `0`, because a window that derived nothing measured no milliseconds. */
     deriveP50Ms: engine.deriveMsP50,

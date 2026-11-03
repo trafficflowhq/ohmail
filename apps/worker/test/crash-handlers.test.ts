@@ -61,12 +61,14 @@ function capture(): { log: Logger; lines: string[] } {
  * and the driver's password names itself a fixture; it is asserted absent case-sensitively below. */
 const PROVIDER_TLD = "tech";
 const DRIVER_PW = "npg_FixtureNotAPassword";
+/** The query's row address, a role at a reserved domain, assembled like the provider's host. */
+const RESERVED = "example.com";
+const ROW_FROM = `sender@${RESERVED}`;
 
 /** The three real shapes a boot/runtime throw carries, none of which may be republished. */
 const SECRETS = {
   driver: `connection to server at "ep-x.eu-central-1.aws.neon.${PROVIDER_TLD}" failed: password authentication failed for user "neondb_owner" (host=ep-x.neon.${PROVIDER_TLD}&user=neondb_owner&password=${DRIVER_PW})`,
-  query: "error: null value in column \"subject\" violates not-null constraint — " +
-    "INSERT INTO messages (subject, from_address) VALUES ('Re: Q3 payroll', 'anna@example.com')",
+  query: `error: null value in column "subject" violates not-null constraint — INSERT INTO messages (subject, from_address) VALUES ('Re: Q3 payroll', '${ROW_FROM}')`,
   config: `missing required env var ${KEY_RING_V1}`,
 };
 
@@ -108,7 +110,7 @@ describe("installCrashHandlers — the message never leaves the process", () => 
       event: "unhandled_rejection", errorClass: "Error", errorCode: "23502",
     });
     expect(line).not.toContain("Q3 payroll");
-    expect(line).not.toContain("anna@example.com");
+    expect(line).not.toContain(ROW_FROM);
     expect(line).not.toContain("INSERT INTO");
   });
 

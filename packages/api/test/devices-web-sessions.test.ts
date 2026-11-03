@@ -179,7 +179,7 @@ describe("POST /devices/revoke-web-sessions — the bulk take-back", () => {
     const web1Row = (await db.select().from(sessions).where(eq(sessions.id, web1.sessionId)))[0]!;
     await db.insert(refreshTokens).values({
       accountId: me.accountId, userId: me.userId, sessionId: web1.sessionId,
-      familyId: web1Row.familyId, tokenHash: "fixture-hash-webb-fixture-token",
+      familyId: web1Row.familyId, tokenHash: "web-session-row-hash-fixture-token",
       expiresAt: new Date(now.getTime() + 60 * 60 * 1000),
     });
 

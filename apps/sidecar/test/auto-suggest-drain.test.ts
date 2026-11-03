@@ -515,8 +515,7 @@ describe("automatic suggestions at the standalone drain's tail", () => {
     // refuse, so the first fault has to be what stops the pass.
     expect(
       m.completions.length - before,
-      "the pass kept asking a model that had already failed — on this door that is somebody's own " +
-        "API key being spent against an outage, once per candidate, on every drain",
+      "the pass kept asking a model that had already failed — on this door that is somebody's own API key being spent against an outage, once per candidate, on every drain",
     ).toBe(1);
 
     // THE RECOVERY, which is the half a "stops on fault" assertion alone would let rot: the

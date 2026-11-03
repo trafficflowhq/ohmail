@@ -219,7 +219,7 @@ export const ohbox: MessageFixture[] = [
   {
     id: "cinderlock",
     folder: "ohbox",
-    from: { name: "Cinderlock", address: "no-reply@cinderlock.app" },
+    from: { name: "Cinderlock", address: "no-reply@cinderlock.example" },
     subject: "Your verification code",
     time: "08:31",
     /* read — see techcheck's note; a code already used is the natural read state anyway */
@@ -367,7 +367,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f2",
     folder: "reads",
-    from: { name: "Blattgang", address: "post@blattgang.press" },
+    from: { name: "Blattgang", address: "post@blattgang.example" },
     subject: "Why paper keeps winning",
     snippet: "Three hundred years of interface design, still undefeated.",
     time: "06:31",
@@ -377,7 +377,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f3",
     folder: "reads",
-    from: { name: "Wohnfalz", address: "news@wohnfalz.ch" },
+    from: { name: "Wohnfalz", address: "news@wohnfalz.example" },
     subject: "Ideen für kleine Räume",
     snippet: "Neu diese Woche: Klappbares für Balkon und Flur.",
     time: "05:44",
@@ -391,7 +391,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f4",
     folder: "reads",
-    from: { name: "The Maker’s Dozen", address: "hello@makersdozen.studio" },
+    from: { name: "The Maker’s Dozen", address: "hello@makersdozen.example" },
     subject: "#41 — twelve things makers loved",
     snippet: "A kiln timer, a broom, and a very honest pricing essay.",
     time: "05:12",
@@ -401,7 +401,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f5",
     folder: "reads",
-    from: { name: "Gratbrief", address: "post@gratbrief.ch" },
+    from: { name: "Gratbrief", address: "post@gratbrief.example" },
     subject: "This week’s hike: the Chäserrugg ridge",
     snippet: "Four hours, one ridge, zero regrets.",
     time: "04:58",
@@ -421,7 +421,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f7",
     folder: "reads",
-    from: { name: "Brandung Records", address: "post@brandung-records.de" },
+    from: { name: "Brandung Records", address: "post@brandung-records.example" },
     subject: "New signings + Sommernacht lineup 🎶",
     snippet: "Two new bands, one lake stage, all summer.",
     time: "Mon",
@@ -431,7 +431,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f8",
     folder: "reads",
-    from: { name: "Nordwind Outdoor", address: "news@nordwind-outdoor.ch" },
+    from: { name: "Nordwind Outdoor", address: "news@nordwind-outdoor.example" },
     subject: "Fünf Zelte im Test",
     snippet: "Fünf Modelle, ein klarer Favorit.",
     time: "Mon",
@@ -441,7 +441,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f9",
     folder: "reads",
-    from: { name: "Comet Courier", address: "mail@cometcourier.space" },
+    from: { name: "Comet Courier", address: "mail@cometcourier.example" },
     subject: "A very good week above the clouds",
     snippet: "Meteor showers, a comet with a schedule, and one happy telescope.",
     time: "Mon",
@@ -451,7 +451,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f10",
     folder: "reads",
-    from: { name: "Bergbahn Club", address: "club@bergbahnclub.ch" },
+    from: { name: "Bergbahn Club", address: "club@bergbahnclub.example" },
     subject: "Dein Sommerpass ist aktiv 🚠",
     snippet: "Alle 23 Bahnen, den ganzen August — los geht’s.",
     time: "Mon",
@@ -471,7 +471,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f12",
     folder: "reads",
-    from: { name: "Röstsonntag", address: "hallo@roestsonntag.ch" },
+    from: { name: "Röstsonntag", address: "hallo@roestsonntag.example" },
     subject: "August roast: Kenya AA",
     snippet: "Blackcurrant, bright, dangerous before noon.",
     time: "Sun",
@@ -491,7 +491,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f14",
     folder: "reads",
-    from: { name: "Blattgang", address: "post@blattgang.press" },
+    from: { name: "Blattgang", address: "post@blattgang.example" },
     subject: "Weekly wrap — the week in one read",
     snippet: "Everything lovely, compressed.",
     time: "Thu",
@@ -501,7 +501,7 @@ export const reads: MessageFixture[] = [
   {
     id: "f15",
     folder: "reads",
-    from: { name: "Wohnfalz", address: "news@wohnfalz.ch" },
+    from: { name: "Wohnfalz", address: "news@wohnfalz.example" },
     subject: "Sommer-Sale endet Sonntag",
     snippet: "Letzte Chance auf Balkon-Lieblinge.",
     time: "Wed",
@@ -533,7 +533,7 @@ export const receipts: MessageFixture[] = [
   {
     id: "brandung",
     folder: "receipts",
-    from: { name: "Brandung Records", address: "tickets@brandung-records.de" },
+    from: { name: "Brandung Records", address: "tickets@brandung-records.example" },
     subject: "Your tickets — Sommernacht Open Air 🎫",
     amount: "CHF 96.00",
     snippet: "2 × Sommernacht Open Air, 22 Aug — see you at the lake stage.",
@@ -544,7 +544,7 @@ export const receipts: MessageFixture[] = [
   {
     id: "kino",
     folder: "receipts",
-    from: { name: "Open-Air Kino Seeblick", address: "tickets@kino-seeblick.ch" },
+    from: { name: "Open-Air Kino Seeblick", address: "tickets@kino-seeblick.example" },
     subject: "Deine Tickets — Filmnacht am See",
     amount: "CHF 36.00",
     snippet: "2 × Liegestuhl, Do 21:15 — Decken gibt’s am Eingang.",
@@ -566,7 +566,7 @@ export const receipts: MessageFixture[] = [
   {
     id: "roestsonntag",
     folder: "receipts",
-    from: { name: "Röstsonntag", address: "hallo@roestsonntag.ch" },
+    from: { name: "Röstsonntag", address: "hallo@roestsonntag.example" },
     subject: "Receipt — August roast subscription",
     amount: "CHF 24.00",
     snippet: "Kenya AA ships Monday — your subscription rolled over.",
@@ -577,7 +577,7 @@ export const receipts: MessageFixture[] = [
   {
     id: "speichenhof",
     folder: "receipts",
-    from: { name: "Speichenhof Velos", address: "service@speichenhof-velos.ch" },
+    from: { name: "Speichenhof Velos", address: "service@speichenhof-velos.example" },
     subject: "Bike service — ready to ride 🚲",
     amount: "CHF 89.00",
     snippet: "New chain, fresh brakes — she runs like spring again.",
@@ -588,7 +588,7 @@ export const receipts: MessageFixture[] = [
   {
     id: "alpenbahn",
     folder: "receipts",
-    from: { name: "Alpenbahn", address: "tickets@alpenbahn.ch" },
+    from: { name: "Alpenbahn", address: "tickets@alpenbahn.example" },
     subject: "Dein Billett Winterthur–Lugano",
     amount: "CHF 52.00",
     snippet: "Winterthur ab 08:02 — Sitzplatz am Fenster, Seeseite.",
@@ -599,7 +599,7 @@ export const receipts: MessageFixture[] = [
   {
     id: "pigment",
     folder: "receipts",
-    from: { name: "Pigment & Papier", address: "shop@pigmentpapier.de" },
+    from: { name: "Pigment & Papier", address: "shop@pigmentpapier.example" },
     subject: "Order #5521 shipped 📦",
     amount: "€31.40",
     snippet: "Gouache set + two brushes — on the way to the studio.",
@@ -646,7 +646,7 @@ export const waiting: WaitingSenderFixture[] = [
   },
   {
     id: "paperbird",
-    from: { name: "Paperbird", address: "team@mail.paperbird.app" },
+    from: { name: "Paperbird", address: "team@mail.paperbird.example" },
     initial: "P",
     time: "07:26",
     scope: "sender",
@@ -694,7 +694,7 @@ export const waiting: WaitingSenderFixture[] = [
  */
 export const screenedOut: ScreenedSenderFixture[] = [
   {
-    address: "promo@fashion-deals.ch",
+    address: "promo@fashion-deals.example",
     screenedOn: "12 Jul",
     held: [
       {
@@ -748,7 +748,7 @@ export const screenedOut: ScreenedSenderFixture[] = [
     ],
   },
   {
-    address: "notifications@old-forum.net",
+    address: "notifications@old-forum.example",
     screenedOn: "3 Jun",
     held: [
       {
@@ -769,7 +769,7 @@ export const screenedOut: ScreenedSenderFixture[] = [
 
 export const spam: SpamItemFixture[] = [
   {
-    from: "crypto-bonus@win-invest.biz",
+    from: "crypto-bonus@win-invest.example",
     detection: {
       source: "auto-detected",
       confidence: 0.98,
@@ -782,12 +782,12 @@ export const spam: SpamItemFixture[] = [
         subject: "Ihr Bitcoin Gewinn wartet 🎁",
         time: "Tue",
         trackerNote: "12 tracking links blocked",
-        body: "Sehr geehrter Kunde,\n\nIhr Konto zeigt einen nicht abgeholten Gewinn von 0.4 BTC. Bestätigen Sie Ihre Wallet-Adresse innert 48 Stunden, sonst verfällt der Betrag.\n\nJetzt bestätigen → wallet-verify-ch.win-invest.biz\n\nSupport Team",
+        body: "Sehr geehrter Kunde,\n\nIhr Konto zeigt einen nicht abgeholten Gewinn von 0.4 BTC. Bestätigen Sie Ihre Wallet-Adresse innert 48 Stunden, sonst verfällt der Betrag.\n\nJetzt bestätigen → wallet-verify-ch.win-invest.example\n\nSupport Team",
       },
     ],
   },
   {
-    from: "support@cinderl0ck-secure.info",
+    from: "support@cinderl0ck-secure.example",
     detection: {
       source: "auto-detected",
       confidence: 0.96,
@@ -799,8 +799,8 @@ export const spam: SpamItemFixture[] = [
         id: "sk-1",
         subject: "Ihr Konto wurde eingeschränkt",
         time: "Mon",
-        trackerNote: "lookalike link flagged: cinderl0ck-secure.info",
-        body: "Ihr Cinderlock-Konto wurde vorübergehend eingeschränkt. Um die Einschränkung aufzuheben, bestätigen Sie Ihre Daten über den folgenden Link.\n\nKonto bestätigen → secure.cinderl0ck-secure.info/login\n\nDieser Vorgang dauert nur 2 Minuten.",
+        trackerNote: "lookalike link flagged: cinderl0ck-secure.example",
+        body: "Ihr Cinderlock-Konto wurde vorübergehend eingeschränkt. Um die Einschränkung aufzuheben, bestätigen Sie Ihre Daten über den folgenden Link.\n\nKonto bestätigen → secure.cinderl0ck-secure.example/login\n\nDieser Vorgang dauert nur 2 Minuten.",
       },
     ],
   },

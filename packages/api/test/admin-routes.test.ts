@@ -61,7 +61,7 @@ import {
 const app = createApp(apiRoutes);
 
 /** A secret of a realistic length — the host loader refuses anything under 24 characters. */
-const SECRET = "admin-secret-for-tests-abcdefghij-fixture-token";
+const SECRET = "admin-console-internal-secret-fixture-token";
 const ADMIN: AdminConfig = { secret: SECRET, environment: "test" };
 
 /**
@@ -90,7 +90,7 @@ const H = (r: Request, d: ApiDeps): Promise<Response> =>
  * shared secret alone no longer reads anything). Seeded by {@link makeAdminDeps}; the guards
  * that prove the requirement present the SECRET without it.
  */
-const STAFF_TOKEN = "staff-session-token-fixture-abcdefghij-fixture-token";
+const STAFF_TOKEN = "staff-session-cookie-fixture-token";
 
 /** `makeDeps`, plus the staff session the reads now require. */
 const makeAdminDeps: typeof makeDeps = async (...args) => {
@@ -828,7 +828,7 @@ describe("admin reads never return message content, credentials or payloads", ()
     from: "zzmarkersender@example.invalid",
     body: "ZZMARKERBODYZZ",
     header: "ZZMARKERHEADERZZ",
-    credential: "zzmarkercredentialzz-fixture-token",
+    credential: "admin-routes-marker-credential-fixture-token",
   } as const;
 
   async function seedEverythingSensitive() {

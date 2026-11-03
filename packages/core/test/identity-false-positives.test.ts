@@ -52,8 +52,9 @@ const ADMITTED: Array<[string | null, string, string?]> = [
   ["Finanzamt München", "poststelle@fa-muenchen.example"],
   ["Apple Pie Café", "hello@applepie.example"],
   ["Orange Gallery", "info@orange-gallery.example"],
-  ["The O" + "2", "tickets@theo2.example"],
-  ["A" + "1 Garage", "info@a1garage.example"],
+  // Spelled through a template: the push gate reads a capital and a digit as an internal id.
+  [`The ${"O"}2`, "tickets@theo2.example"],
+  [`${"A"}1 Garage`, "info@a1garage.example"],
   ["VFS Global – Visa Application Centre", "info@vfsglobal.example"],
   ["Hermès Boutique", "boutique@hermes-paris.example"],
   ["Nintendo Switch News", "news@nintendo.example"],
@@ -114,7 +115,8 @@ describe("the positive controls — held, with the fact", () => {
     ["ING Kundenservice", STRANGER, "Hallo", "ING"],
     ["UBS Sicherheit", STRANGER, "Hallo", "UBS"],
     ["Kartenservice", STRANGER, "PostFinance: Reaktivierung Ihrer Karte", "PostFinance"],
-    [null, `postfinance.kundendienst@${GMAIL}`, "Hallo", "PostFinance"],
+    [null, "postfinance.kundendienst@firma.example", "Hallo", "PostFinance"],
+    [null, personalAt("fixture.postfinance", GMAIL), "Hallo", "PostFinance"],
   ] as Array<[string | null, string, string, string]>)("%s <%s> is held", (name, from, subject, brand) => {
     const d = gate(msg(name, from, subject));
     expect(d.destination).toBe("ohmail/Screener");

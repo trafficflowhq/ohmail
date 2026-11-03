@@ -170,13 +170,13 @@ describe("the performance budgets are one table", () => {
        keyed on the MAILBOX, it passed or failed on how far the install had been driven and no row
        said. The numbers stay here so a reader of an older run still knows what it was judged
        against, and so a later lane cannot quietly revive one as a ceiling. */
-    for (const cls of ["steady-75k", "steady-5k"]) {
+    for (const cls of ["steady-large", "steady-5k"]) {
       const b = r[cls];
       expect(b.state, `renderer/${cls}`).toBe("retired");
       expect(b.ceilingKb, `renderer/${cls}: a retired line still readable as a ceiling`).toBeNull();
       expect(b.goalKb ?? null, `renderer/${cls}: a retired line still readable as a goal`).toBeNull();
     }
-    expect(r["steady-75k"].retiredKb).toBe(716800);
+    expect(r["steady-large"].retiredKb).toBe(716800);
     expect(r["steady-5k"].retiredKb).toBe(665600);
   });
 

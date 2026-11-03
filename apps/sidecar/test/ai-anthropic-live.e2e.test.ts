@@ -190,8 +190,7 @@ describe("a standalone install, an Anthropic key of your own, and a real answer"
     expect(status.settings.anthropic.draftModel).toBe(DEFAULT_ANTHROPIC_MODELS.draft);
     // eslint-disable-next-line no-console
     console.log(
-      `[ai-anthropic-live] verified ${DEFAULT_ANTHROPIC_MODELS.classify} + `
-      + `${DEFAULT_ANTHROPIC_MODELS.draft}; the key can see ${status.probe?.models.length} models`,
+      `[ai-anthropic-live] verified ${DEFAULT_ANTHROPIC_MODELS.classify} + ${DEFAULT_ANTHROPIC_MODELS.draft}; the key can see ${status.probe?.models.length} models`,
     );
   }, 180_000);
 
@@ -273,8 +272,7 @@ describe("a standalone install, an Anthropic key of your own, and a real answer"
     expect(result.spam).toBe(result.destination === "ohmail/Quarantine");
     // eslint-disable-next-line no-console
     console.log(
-      `[ai-anthropic-live] screened → ${result.destination} `
-      + `(confidence ${result.confidence}) — ${result.rationale}`,
+      `[ai-anthropic-live] screened → ${result.destination} (confidence ${result.confidence}) — ${result.rationale}`,
     );
   }, 180_000);
 

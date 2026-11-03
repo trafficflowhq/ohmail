@@ -29,7 +29,7 @@
       "messages": 25000,
       "note": "the design notes' class"
     },
-    "75k": {
+    "large": {
       "messages": 80000,
       "note": "the rig corpus (its size differs slightly by platform)"
     }
@@ -65,12 +65,12 @@
             "via": "the project's design notes"
           }
         },
-        "75k": {
+        "large": {
           "ceilingKb": 716800,
           "unit": "RSS kB",
           "state": "ruled",
           "ruledBy": "dispatcher 2026-09-13",
-          "why": "716 800 kB (700 MB) is what has been APPLIED to the engine at this class since 2026-09-13. The design notes' Windows release-candidate run header states the per-class scale ('5k 400 MB \u00b7 25k 500 MB \u00b7 75k 700 MB'); four run tables then read engine figures against it as a percentage of class; the 0.19.0 macOS line prints 'flat 460 800 / class 716 800'; and the plan's 2026-09-13 reading calls a Linux 735 872 kB '> the 75k class 716 800'. WHAT IT DOES NOT HAVE IS A NUMERIC TRAIL OF ITS OWN: the two documents the ruling is cited to - two of the project's change notes - are the RENDERER's retired `steady-75k` row, which carries the same number for a different surface. The readings below are the engine's own at this class and they do not converge on it: they span 273 to 736 MB across three platforms and two builds. The figure is written with that gap stated; the 400-vs-450 contest above is where it gets settled.",
+          "why": "716 800 kB (700 MB) is what has been APPLIED to the engine at this class since 2026-09-13. The design notes' Windows release-candidate run header states the per-class scale ('5k 400 MB \u00b7 25k 500 MB \u00b7 large 700 MB'); four run tables then read engine figures against it as a percentage of class; the 0.19.0 macOS line prints 'flat 460 800 / class 716 800'; and the plan's 2026-09-13 reading calls a Linux 735 872 kB '> the large class 716 800'. WHAT IT DOES NOT HAVE IS A NUMERIC TRAIL OF ITS OWN: the two documents the ruling is cited to - two of the project's change notes - are the RENDERER's retired `steady-large` row, which carries the same number for a different surface. The readings below are the engine's own at this class and they do not converge on it: they span 273 to 736 MB across three platforms and two builds. The figure is written with that gap stated; the 400-vs-450 contest above is where it gets settled.",
           "readings": [
             {
               "value": "427-668 MB over the rig corpus, 668 MB at the last sample - a build with a known defect",
@@ -129,7 +129,7 @@
           {
             "case": "per size class - 400 MB empty, 450 MB at the small and middle classes, 700 MB at the large corpus class",
             "kb": null,
-            "origin": "the design notes' measured settles for the small classes; the 75k class as ruled and applied since 2026-09-13",
+            "origin": "the design notes' measured settles for the small classes; the large class as ruled and applied since 2026-09-13",
             "document": "the project's design notes; the project's ledger; the project's design notes",
             "date": "2026-09-11",
             "against": "the class BOUNDARIES have never been measured as boundaries. The small and middle classes share one figure taken from one document, and the large corpus class's only numeric trail is a renderer row (see that row's `why`)."
@@ -148,14 +148,14 @@
         "THE ENGINE CEILING IS PER SIZE CLASS, AND THE 400-vs-450 CONTEST IS A MAINTAINER'S TO READ.",
         "",
         "Measured 2026-09-16: FOUR spellings of this ceiling were live and none of them was this table.",
-        "  1. here and the performance notes    400 MB empty \u00b7 450 MB at 5 000 and 25 000 \u00b7 75k owed",
-        "  2. the performance notes' Windows    '5k 400 MB \u00b7 25k 500 MB \u00b7 75k 700 MB' - the only place",
+        "  1. here and the performance notes    400 MB empty \u00b7 450 MB at 5 000 and 25 000 \u00b7 the large class owed",
+        "  2. the performance notes' Windows    '5k 400 MB \u00b7 25k 500 MB \u00b7 large 700 MB' - the only place",
         "     run header                        that scale is ever written, and four run tables read",
         "                                       engine figures as a percentage of it",
         "  3. the perf kit's budgets.env        one FLAT 460 800 kB that three readers DECIDE on",
         "  4. the 0.19.0 macOS line          both at once: 'flat 460 800 / class 716 800'",
         "",
-        "The 75k class is stated below because a ceiling four run tables already judge against belongs",
+        "The large class is stated below because a ceiling four run tables already judge against belongs",
         "in the table rather than in a run header. What it rests on - including the part of it that is a",
         "RENDERER row carrying the same number - is written in that row's `why` rather than papered over.",
         "",
@@ -441,10 +441,10 @@
           "retiredGoalKb": 614400,
           "retiredBy": "dispatcher 2026-09-15"
         },
-        "steady-75k": {
+        "steady-large": {
           "ceilingKb": null,
           "state": "retired",
-          "why": "RETIRED from pass/fail, kept as history, for the reason under `steady-5k`. Its own readings show the problem: 'steady' at 75k read LOWER than at 5k, which is a statement about two differently driven installs and not about the mailbox.",
+          "why": "RETIRED from pass/fail, kept as history, for the reason under `steady-5k`. Its own readings show the problem: 'steady' at the large class read LOWER than at 5k, which is a statement about two differently driven installs and not about the mailbox.",
           "readings": [
             {
               "value": "~360 MB steady after an import of the rig corpus (Windows, a release candidate)",
@@ -452,7 +452,7 @@
               "date": "2026-09-12"
             },
             {
-              "value": "the plan's stated goal: < 600 MB steady at 75k (goal 400)",
+              "value": "the plan's stated goal: < 600 MB steady at the large class (goal 400)",
               "document": "the 0.19.1 plan's budget section",
               "date": "2026-09-12"
             }
@@ -1301,7 +1301,7 @@
           },
           {
             "name": "PERF_RENDERER_STEADY_KB",
-            "from": "surfaces.renderer.budgets.steady-75k.retiredSpellings.1.ceilingKb",
+            "from": "surfaces.renderer.budgets.steady-large.retiredSpellings.1.ceilingKb",
             "note": [
               "A RETIRED LINE THE READER HAS NOT LEFT. This table retired the one-number steady",
               "line on 2026-09-15 - it passed or failed on how far the app had been driven and no",
@@ -1312,7 +1312,7 @@
           },
           {
             "name": "PERF_RENDERER_STEADY_GOAL_KB",
-            "from": "surfaces.renderer.budgets.steady-75k.retiredSpellings.1.goalKb",
+            "from": "surfaces.renderer.budgets.steady-large.retiredSpellings.1.goalKb",
             "note": [
               "The goal half of the same retired spelling."
             ]
@@ -1350,14 +1350,14 @@
           },
           {
             "name": "PERF_ENGINE_STEADY_75K_KB",
-            "from": "surfaces.engine.budgets.75k.ceilingKb",
+            "from": "surfaces.engine.budgets.large.ceilingKb",
             "note": [
               "716,800 kB, ruled 2026-09-13 and applied in four run tables since. What it does and does not rest on is in that row's `why`."
             ]
           },
           {
             "name": "PERF_ENGINE_STEADY_75K_GOAL_KB",
-            "from": "surfaces.engine.budgets.75k.goalKb",
+            "from": "surfaces.engine.budgets.large.goalKb",
             "note": [
               "Printed beside the arm and never gated."
             ]

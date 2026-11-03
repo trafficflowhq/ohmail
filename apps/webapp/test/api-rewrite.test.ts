@@ -119,7 +119,7 @@ describe("apiOrigin — a typo fails the BUILD, never the deployed app", () => {
     const bad = [
       "https://evil.example",
       "https://api.ohmail.app.evil.example",     // suffix games
-      "https://ohmail-api.vercel" + ".app",           // the bearer-only host is not a rewrite target
+      "https://ohmail-api.hosting.example",      // the platform's own host for the API is not a rewrite target
       "https://ohmail.app",                      // proxying to ourselves is an infinite loop
       "https://api.ohmail.app:8443",             // an unexpected port is a different endpoint
     ];

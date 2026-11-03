@@ -202,7 +202,7 @@ async function type(el: HTMLElement, id: string, value: string): Promise<void> {
 /** Fill the password form for `address` and press Sign in. */
 async function signIn(el: HTMLElement, address: string): Promise<void> {
   await type(el, "cloud-address", address);
-  await type(el, "cloud-password", "hunter2-and-then-some");
+  await type(el, "cloud-password", "cloud-sign-in-password");
   await type(el, "cloud-totp", "123456");
   await click(buttonSaying(el, "Sign in"));
 }
@@ -246,7 +246,7 @@ describe("a hosted sign-in refused because this install mirrors another account"
 
     // THE SECRETS STILL NEVER TOUCH THE SHELL, on the path a person only reaches while being
     // refused — which is exactly the path least likely to be looked at again.
-    expect(JSON.stringify(configure.payload)).not.toContain("hunter2");
+    expect(JSON.stringify(configure.payload)).not.toContain("cloud-sign-in-password");
     expect(JSON.stringify(configure.payload)).not.toContain("123456");
   });
 
