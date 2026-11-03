@@ -7,12 +7,13 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accounts, contacts, folderState, mailboxes, messageBodies, messages,
+  accounts, contacts, folderState, mailboxes, messageBodies, messages, rules,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { planChange } from "@trafficflow/core/mail";
 import { organizeDecisionCount, screenUnscreened, unscreenedSummary } from "@trafficflow/services/mail";
-import type { Db, ServiceContext } from "@trafficflow/services";
+import { ScreenerService, type Db, type ServiceContext } from "@trafficflow/services";
 
 /**
  * THE PRESS HANDS THE MAIL TO THE ORGANIZER — and to nothing else.
@@ -72,6 +73,27 @@ async function seedOhbox(w: World, from: string, arrivedAt = ARRIVED): Promise<s
   });
   return m!.id;
 }
+
+/** A letter a pass or an old release placed in News, nobody's decision. */
+async function seedNews(w: World, from: string, arrivedAt: Date | null): Promise<string> {
+  const i = n++;
+  const [m] = await db.insert(messages).values({
+    accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `h${i}`,
+    dedupKey: `oup:${randomUUID()}`, subject: `Letter ${i}`, fromAddress: from,
+    date: arrivedAt ?? OLD, createdAt: arrivedAt ?? OLD, arrivedAt, unread: true,
+    nativeLocator: { folder: NEWS, ref: `2:${i}` },
+  }).returning();
+  await db.insert(messageBodies).values({
+    messageId: m!.id, text: "", html: null, headers: { "list-unsubscribe": ["<https://x.test/u>"] },
+  });
+  await db.insert(folderState).values({
+    messageId: m!.id, desiredFolder: NEWS, observedFolder: NEWS,
+    lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+  });
+  return m!.id;
+}
+
+const NEWS = "ohmail/News";
 
 describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue", () => {
   beforeAll(async () => {
@@ -138,5 +160,52 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
 
     await screenUnscreened(ctxOf(w));
     expect(await repo.listPendingFolderStates(w.mailboxId)).toHaveLength(1);
+  });
+
+  /* THE NOTE ON NEWS (owner report 2026-11-02): letters there from a sender nobody let in. Its
+     press queues them for the gate like the Ohbox's, the Screener asks about the sender, the press
+     wrote nothing that lets them in, so their next letter is held at the arrival, and a second
+     press finds nothing. */
+  it("the News note's press queues the stranger's letters for the gate, the Screener asks, and the next letter is held", async () => {
+    const w = await newWorld();
+    await db.insert(contacts).values({ accountId: w.accountId, address: "pal@x.test" });
+    const fresh = await seedNews(w, "stranger@x.test", ARRIVED);
+    const undated = await seedNews(w, "stranger@x.test", null);
+    const pal = await seedNews(w, "pal@x.test", ARRIVED);
+    const door = await seedOhbox(w, "door@x.test");
+    const repo = makeDrizzleRepo(db as never);
+    expect(await unscreenedSummary(db as never, w.accountId, NOW, "news")).toMatchObject({ total: 2 });
+    expect(await repo.listPendingFolderStates(w.mailboxId), "the note's read moved a letter").toEqual([]);
+
+    expect(await screenUnscreened(ctxOf(w), { pile: "news" })).toMatchObject({ total: 2 });
+
+    const owed = await repo.listPendingFolderStates(w.mailboxId);
+    expect(owed.map((r) => r.messageId).sort()).toEqual([fresh, undated].sort());
+    for (const row of owed) {
+      expect(row.desiredFolder).toBe(GATE);
+      expect(row.observedFolder).toBe(NEWS);
+      expect(row.lastSetBy).toBe("us");
+      expect(row.nativeLocator).toMatchObject({ folder: NEWS });
+    }
+    for (const [id, at] of [[pal, NEWS], [door, OHBOX]] as const) {
+      const [still] = await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id));
+      expect(still!.d).toBe(at);
+    }
+
+    const waiting = await new ScreenerService({}).list(ctxOf(w));
+    expect(waiting.items.map((i) => i.sender.address), "GET /screener does not ask about the sender").toEqual(["stranger@x.test"]);
+
+    expect(await db.select().from(rules).where(eq(rules.accountId, w.accountId)), "the press wrote a rule").toEqual([]);
+    const raw = Buffer.from([
+      "Message-ID: <next@x.test>", "From: stranger@x.test", `To: oup@example.test`, "Subject: Again",
+      "List-Unsubscribe: <https://x.test/u>", "Content-Type: text/plain; charset=utf-8", "", "Hello again.",
+    ].join("\r\n"));
+    const next = await planChange({ type: "create", locator: { folder: OHBOX, ref: "1:900" }, raw }, {
+      repo, accountId: w.accountId, mailboxId: w.mailboxId, readerMode: false,
+    });
+    expect(next.new?.desired, "their next letter was let in").toBe(GATE);
+
+    expect(await screenUnscreened(ctxOf(w), { pile: "news" })).toEqual({ screened: [], total: 0 });
+    expect(await repo.listPendingFolderStates(w.mailboxId)).toHaveLength(2);
   });
 });

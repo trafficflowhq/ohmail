@@ -1452,6 +1452,10 @@ export const DE: Deck = {
   unscreenedMoved: (n: number) => `${n} in den Screener gelegt. Dein Organizer verschiebt sie beim nächsten Durchlauf.`,
   unscreenedMovedNone: "Nichts mehr zu screenen.",
   unscreenedFailed: "Screenen nicht möglich. Versuch es noch einmal.",
+  pileUnscreenedLead: (n: number, atLeast?: boolean) =>
+    atLeast ? `Mindestens ${n} Nachrichten hier stammen von Absendern, die du nie hereingelassen hast.`
+      : n === 1 ? "1 Nachricht hier stammt von einem Absender, den du nie hereingelassen hast."
+        : `${n} Nachrichten hier stammen von Absendern, die du nie hereingelassen hast.`,
   toastRead: "Als gelesen markiert.",
   toastReadPartial: (done: number, of: number) => `${done} von ${of} als gelesen markiert.`,
   toastUnread: "Als ungelesen markiert.",

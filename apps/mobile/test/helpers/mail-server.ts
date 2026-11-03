@@ -70,6 +70,8 @@ export function ruleDto(id: string, kind: "sender" | "domain", match: string, de
 export function mailServer() {
   const log: SyncChange[] = [];
   let unscreenedBound: number | null = null;
+  /** A server from before the piles' note: it reads `?pile=` and `{ pile }` as the Ohbox's offer. */
+  let pilesUnknown = false;
   const messages = new Map<string, Dto>();
   /**
    * WHAT THE SERVER'S TRASH HOLDS — every DELETEd message, with when and where it came from.
@@ -614,14 +616,23 @@ export function mailServer() {
        * `GET` / `POST /screener/unscreened` — INBOX mail from senders nobody ever decided about, as
        * `ohbox-unscreened-service.ts` answers it: one group per sender no enabled term-free rule
        * names, largest first; the press moves the named groups (all shown when none are named) to
-       * the Screener and answers what it moved, and a second press finds nothing.
+       * the Screener and answers what it moved, and a second press finds nothing. `?pile=` (the
+       * press's `{ pile }`) asks News, in both spellings, or Receipts instead, and the read says
+       * the pile back.
        */
       if (url.pathname === "/screener/unscreened" && (method === "GET" || method === "POST")) {
         const decided = (address: string): boolean => [...rules.values()].some((r) => r.enabled
           && !r.subjectContains && !r.bodyContains
           && (r.kind === "sender" ? r.match.toLowerCase() === address : r.kind === "domain" && r.match.toLowerCase() === address.split("@")[1]));
+        const asked = method === "GET" ? url.searchParams.get("pile") : (JSON.parse(body || "{}") as { pile?: string }).pile ?? null;
+        const pile = pilesUnknown ? null : asked;
+        if (pile !== null && pile !== "news" && pile !== "receipts") {
+          json(400, { error: { code: "validation_failed", message: "pile must be news or receipts" } });
+          return;
+        }
+        const folders = pile === "news" ? ["ohmail/News", "ohmail/Reads"] : pile === "receipts" ? ["ohmail/Receipts"] : ["INBOX"];
         const bySender = new Map<string, Dto[]>();
-        const undecided = [...messages.values()].filter((m) => m.folder === "INBOX" && !decided(m.from.address.toLowerCase()));
+        const undecided = [...messages.values()].filter((m) => folders.includes(m.folder) && !decided(m.from.address.toLowerCase()));
         // The service's walk stops at its bound and says so (`complete: false`).
         const walked = unscreenedBound === null ? undecided : undecided.slice(0, unscreenedBound);
         for (const m of walked) {
@@ -632,7 +643,10 @@ export function mailServer() {
           .map(([address, list]) => ({ address, count: list.length, newestAt: list.map((m) => String(m.date ?? "")).sort().at(-1) ?? "" }))
           .sort((a, b) => b.count - a.count || a.address.localeCompare(b.address));
         if (method === "GET") {
-          json(200, { groups, total: groups.reduce((n, g) => n + g.count, 0), complete: walked.length === undecided.length, max: 200 }, seq);
+          json(200, {
+            groups, total: groups.reduce((n, g) => n + g.count, 0), complete: walked.length === undecided.length, max: 200,
+            ...(pile === null ? {} : { pile }),
+          }, seq);
           return;
         }
         const named = (JSON.parse(body || "{}") as { addresses?: string[] }).addresses;
@@ -1053,6 +1067,8 @@ export function mailServer() {
     failNext: (method: string, prefix: string) => failures.push({ method, prefix }),
     /** Stops `GET /screener/unscreened`'s walk after `n` letters, as the service's bound does. */
     boundUnscreened: (n: number | null) => { unscreenedBound = n; },
+    /** Answers as a server from before the piles' note: every pile read is the Ohbox's offer. */
+    pilesUnknown: (on: boolean) => { pilesUnknown = on; },
     /**
      * The next matching request answers 202 with the organizer's request record — the reader
      * mailbox's door. `holder` is the install's name, or `null` for a real holder without one.

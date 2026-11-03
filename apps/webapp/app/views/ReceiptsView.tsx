@@ -39,6 +39,8 @@ import { useStreamNear } from "../shell/stream-near";
 import { afterPaint, useCursorFollowsTop, useVisit } from "../shell/visit";
 import { useStreamInPlace } from "../shell/stream-in-place";
 import { ThreadStrip } from "../shell/ThreadStrip";
+import { PileNote } from "../shell/PileNote";
+import type { PileNoteOffer } from "../shell/pile-note";
 
 export function ReceiptsView({
   settled,
@@ -71,6 +73,7 @@ export function ReceiptsView({
   onAction,
   onMarkAllRead,
   onPick,
+  strangers,
 }: {
   /** `ReadsView`'s pair, same reading, same reason. */
   settled: boolean;
@@ -152,6 +155,8 @@ export function ReceiptsView({
   onMarkAllRead?: (ids: string[]) => void;
   /** The card that carries the bar — `ReadsView`'s, same reading. */
   onPick?: (id: string | null) => void;
+  /** Letters here from senders nobody let in, and the press — `ReadsView`'s. Absent draws nothing. */
+  strangers?: PileNoteOffer | null;
 }) {
   const t = useTranslations("receipts");
   const { row: senderCheckRow } = useSenderCheckWords();
@@ -662,6 +667,7 @@ export function ReceiptsView({
         <div className="stream-hints">
           <ShortcutHint />
         </div>
+        <PileNote offer={strangers} />
         {streamArmed ? (
           <>
             {/* Reserved height above the window — same shape as `ReadsView`. */}

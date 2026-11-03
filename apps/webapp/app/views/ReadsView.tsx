@@ -47,6 +47,8 @@ import { readLandedCard } from "../shell/stream-landing-read";
 import { waterlineStamp } from "../shell/format";
 import { useStreamInPlace } from "../shell/stream-in-place";
 import { ThreadStrip } from "../shell/ThreadStrip";
+import { PileNote } from "../shell/PileNote";
+import type { PileNoteOffer } from "../shell/pile-note";
 
 export type ReadsChipState = null | "approved" | "corrected";
 
@@ -87,6 +89,7 @@ export function ReadsView({
   onAction,
   onMarkAllRead,
   onPick,
+  strangers,
 }: {
   /**
    * The pair every list asks before it states anything about the mailbox — `MailState.settled`
@@ -185,6 +188,8 @@ export function ReadsView({
   onMarkAllRead?: (ids: string[]) => void;
   /** The card that carries the bar — the stream's open reading, which the address names. */
   onPick?: (id: string | null) => void;
+  /** Letters here from senders nobody let in, and the press — the shell's (`pile-note.ts`). Absent draws nothing. */
+  strangers?: PileNoteOffer | null;
 }) {
   const t = useTranslations("reads");
   const { row: senderCheckRow } = useSenderCheckWords();
@@ -895,6 +900,7 @@ export function ReadsView({
         <div className="stream-hints">
           <ShortcutHint />
         </div>
+        <PileNote offer={strangers} />
         {streamArmed ? (
           <>
             {/* Reserved height above the window — the mail the reader scrolled past keeps its room. */}

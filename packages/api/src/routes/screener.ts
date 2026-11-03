@@ -1,6 +1,6 @@
 import {
   ServiceError, dismissHeldRelease, heldReleaseSummary, releaseHeld, HELD_RELEASE_GROUPS_MAX,
-  screenUnscreened, unscreenedSummary, organizeDecisionCount, OHBOX_UNSCREENED_GROUPS_MAX,
+  screenUnscreened, unscreenedSummary, organizeDecisionCount, OHBOX_UNSCREENED_GROUPS_MAX, isUnscreenedPile,
   autoFiledSummary, undoAutoFiled, AUTO_FILED_PAGE_MAX, whyStayed, WHY_STAYED_IDS_MAX,
   type ScreenBody,
 } from "@trafficflow/services/mail";
@@ -178,12 +178,21 @@ export const screenerRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const { groups, total, complete } = await unscreenedSummary(ctx.db, ctx.accountId, ctx.now());
+      // `pile` asks News or Receipts instead of the Ohbox, with no window: that pile's note.
+      const pile = new URL(req.url).searchParams.get("pile");
+      if (pile !== null && !isUnscreenedPile(pile)) {
+        throw new ServiceError("validation_failed", 400, "pile must be news or receipts");
+      }
+      const { groups, total, complete } = await unscreenedSummary(ctx.db, ctx.accountId, ctx.now(), pile ?? undefined);
       // `total` is the SHOWN groups' messages: every message has one sender, so a list cut at the
       // bound must not report the mail behind the cut as offered. `max` travels so a client learns
       // the ceiling by READING it rather than carrying a constant of its own that drifts.
-      // `complete: false` says the walk stopped at its bound, so `total` is a floor.
-      return jsonResponse({ groups, total, complete, max: OHBOX_UNSCREENED_GROUPS_MAX });
+      // `complete: false` says the walk stopped at its bound, so `total` is a floor. The pile is
+      // said back: a server from before piles answers the Ohbox's offer, and a client reads that
+      // answer's missing `pile` as "this door has no such note".
+      return jsonResponse({
+        groups, total, complete, max: OHBOX_UNSCREENED_GROUPS_MAX, ...(pile === null ? {} : { pile }),
+      });
     },
   },
   {
@@ -250,12 +259,13 @@ export const screenerRoutes: Route[] = [
     replay: "guarded",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const body = await readBody<{ addresses?: unknown }>(req);
+      const body = await readBody<{ addresses?: unknown; pile?: unknown }>(req);
       // Left `unknown` to the service on purpose: it refuses a non-array, a non-string member, an
-      // over-long address and more than `OHBOX_UNSCREENED_GROUPS_MAX` of them, and a route that
-      // pre-narrowed them would be a second, weaker copy of that rule.
+      // over-long address and more than `OHBOX_UNSCREENED_GROUPS_MAX` of them, and a pile that is
+      // not News or Receipts; a route that pre-narrowed them would be a second, weaker copy.
       return jsonResponse(await screenUnscreened(ctx, {
         addresses: body.addresses as readonly string[] | undefined,
+        ...(body.pile === undefined ? {} : { pile: body.pile }),
       }));
     },
   },

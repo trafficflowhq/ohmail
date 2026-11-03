@@ -14,7 +14,7 @@
 import { CALENDAR_FALLBACK_FILENAME, calendarPartRank, isCalendarBodyPart, isCalendarMime } from "@trafficflow/core/ics";
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ReadIntent, ScreenerWaitingItemWire, ScreenerWaitingWire,
-  StayedWhy, WithdrawSendAnswer, WithdrawSendOutcome,
+  StayedWhy, UnscreenedPileWire, WithdrawSendAnswer, WithdrawSendOutcome,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -6938,6 +6938,33 @@ export class OhmailEngine {
     const out = await press.call(this.adapter, addresses);
     void this.syncFresh().catch(() => { /* the press landed; the next poll catches up */ });
     await this.refreshUnscreened();
+    return out.total;
+  }
+
+  /**
+   * LETTERS IN NEWS OR RECEIPTS FROM SENDERS NOBODY LET IN — the pile's note, asked of the door each
+   * time the pile is shown and never kept in the mirror, for the Ohbox offer's reason: the deciding
+   * fact is the arrival gate's answer. `null` when this door has no such read, a server from before
+   * piles included: its answer is the Ohbox's offer and does not say the pile back.
+   */
+  async pileUnscreened(pile: UnscreenedPileWire): Promise<{ total: number; atLeast: boolean } | null> {
+    const ask = this.adapter.unscreened;
+    if (!ask) return null;
+    const wire = await ask.call(this.adapter, pile);
+    if (wire.pile !== pile) return null;
+    return { total: wire.total, atLeast: wire.complete === false };
+  }
+
+  /**
+   * THE NOTE'S PRESS: screens the pile's letters from senders nobody let in, as the note counted
+   * them. The server writes the intents and the organizer moves the mail, so the answer is what was
+   * screened; one drain after it shows the moved letters, never awaited.
+   */
+  async screenPileUnscreened(pile: UnscreenedPileWire): Promise<number> {
+    const press = this.adapter.screenUnscreened;
+    if (!press) return 0;
+    const out = await press.call(this.adapter, undefined, pile);
+    void this.syncFresh().catch(() => { /* the press landed; the next poll catches up */ });
     return out.total;
   }
 

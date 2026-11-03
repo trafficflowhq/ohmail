@@ -2061,6 +2061,10 @@ const TABLE = {
   unscreenedMoved: (n: number) => `Screened ${n}. Your organizer moves them on the next pass.`,
   unscreenedMovedNone: "Nothing left to screen.",
   unscreenedFailed: "Could not screen that mail. Try again.",
+  /** THE NOTE ON NEWS AND RECEIPTS — the web's `screener.pileUnscreened*` sentences, word for word. */
+  pileUnscreenedLead: (n: number, atLeast?: boolean) =>
+    atLeast ? `At least ${n} letters here are from senders you never let in.`
+      : n === 1 ? "1 letter here is from a sender you never let in." : `${n} letters here are from senders you never let in.`,
   /** The deliberate read/unread, spoken so the pill has a sentence to ride (silent before the undo work). */
   toastRead: "Marked as read.",
   toastReadPartial: (done: number, of: number) => `Marked ${done} of ${of} as read.`,
