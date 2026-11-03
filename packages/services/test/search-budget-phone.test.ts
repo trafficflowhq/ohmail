@@ -27,9 +27,8 @@ const BUDGET_MS = 100;
 const JUDGED = ["pdf", "image001", "scan pdf", "hartmann pdf", "hartmann -pdf", "ledg", "port-q3", "ger-773"] as const;
 /**
  * Read and printed beside them: that name and its domain, a word in ten subjects, a word in one body of
- * 130, and `ines ledger`, a name in one Cc of 211 beside a word, whose `ines` this store's stemming
- * tables read whole as `in`, a stopword's stem the server drops (a known difference); its start is read
- * unstemmed (mail 0175).
+ * 130, and `ines ledger`, a name in one Cc of 211 beside a word, whose `ines` shares a stopword's stem
+ * (`in`) and is read as typed in the unstemmed tables (mail 0175, 0177), its start too.
  */
 const CONTROLS = ["hartmann", "lichtgrat", "kestrel", "quillon", "ines ledger"] as const;
 const PRE_EXISTING_OVER = ["scan", "ledger", "quarterly"] as const;
