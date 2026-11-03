@@ -78,6 +78,16 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.33" date="2026-11-04">
+      <description>
+        <ul>
+          <li>A phone search for ines, ones or willing no longer lists every letter holding in, on or will</li>
+          <li>A company's own address waits unless confirmed</li>
+          <li>Closing the tab right after Sign out still signs out</li>
+          <li>Safari no longer forgets a sign-out that is still owed</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.32" date="2026-11-03">
       <description>
         <ul>
@@ -131,20 +141,6 @@
           <li>Desktop downloads always find a folder, Windows updates go in at the next start</li>
           <li>The sender's address line keeps the name before the @ whole, and the proxy reads OHMAIL_TLS_TERMINATOR only as addresses</li>
           <li>Sending says what happened, and Microsoft mailboxes keep one Sent copy</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.28" date="2026-11-02">
-      <description>
-        <ul>
-          <li>An unfinished first mailbox setup's password is no longer used</li>
-          <li>Look-alike link text gets its note, and a web PDF preview only ever opens in its worker</li>
-          <li>The phone previews pictures and PDFs, resumes a kept reply and deletes on its own</li>
-          <li>A search with "or" keeps the letters each word finds inside a longer word</li>
-          <li>A self-hosted server behind your own terminator needs OHMAIL_TLS_TERMINATOR set before you update</li>
-          <li>A letter your mail provider failed waits in the Screener for you to decide</li>
-          <li>Signing out reaches the server later when it cannot at once, and a recovery code confirms it is you</li>
-          <li>Three timing tests wait for events, not milliseconds</li>
         </ul>
       </description>
     </release>
