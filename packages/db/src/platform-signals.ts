@@ -1,12 +1,13 @@
 import { and, sql } from "drizzle-orm";
-import { platformSignals } from "@trafficflow/db/cloud";
-import type { Db } from "./context.js";
+import { platformSignals } from "./schema-cloud.js";
+import type { Tx as Db } from "./change-log.js";
+import { SIGNAL_BUCKET_MS } from "./alerts.js";
 
 /**
  * THE 5xx POLLER — what the hosting platform served, read into this database for the rule. An
  * invocation that 502s and dies writes nothing here; the platform's request log is the surface
- * that knows (`scripts/vercel-errors.mjs` reads the same endpoint). THREE outcomes — `rows |
- * unconfigured | failed`: two arms would collapse "never measured" into "measured zero".
+ * that knows, read by the worker on its own credential (`platform-signal-poll.ts`). THREE
+ * outcomes — `rows | unconfigured | failed`: two arms would collapse "never measured" into "measured zero".
  * Unconfigured WRITES NO ROW; rule and panel both read `platformSignalWindow`, so "not measured"
  * and a real zero cannot blur. ONE unfiltered walk classifies rows by `statusCode`, so numerator
  * and denominator cover the same population; the walk is bounded and marked `truncated`, both
@@ -178,8 +179,8 @@ const DEADLINE_UNREAD = "deadline_before_first_page";
 export const SIGNAL_BACKFILL_BUCKETS = 3;
 
 
-/** The window one poll covers. Matches the cron's cadence — three of these make the rule's 15 min. */
-export const SIGNAL_WINDOW_MS = 5 * 60 * 1000;
+/** The window one poll covers: the rule's bucket — three of these make the rule's 15 min. */
+export const SIGNAL_WINDOW_MS = SIGNAL_BUCKET_MS;
 
 /**
  * How long after a bucket CLOSES before a read may be called complete. A closed window is not an
@@ -600,7 +601,7 @@ export function makePlatformSignalPort(
   };
 }
 
-/** What one pass did, per project — the shape the route logs and answers with. */
+/** What one pass did, per project — the shape the worker's poll logs. */
 export interface PlatformSignalPassReport {
   outcome: "written" | "unconfigured" | "failed";
   /** The failure code, when `outcome` is `failed`. Never a vendor message. */
@@ -727,7 +728,7 @@ export async function runPlatformSignalPass(
   // succeeding and an older gap failing persistently, each run discarded a fresh complete reading
   // on account of a stale one, and the detector stayed dark as long as the gap did. A measurement
   // taken is evidence; another bucket's refusal does not un-take it. The pass's OUTCOME is still
-  // the failure — the cron target goes red and the log carries the code — but the rows already
+  // the failure — the poll's health goes red and the log carries the code — but the rows already
   // read are kept.
   const failed = answers.find((a) => "failed" in a) as { failed: string } | undefined;
   const unconfigured = answers.some((a) => "unconfigured" in a);

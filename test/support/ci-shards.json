@@ -2028,6 +2028,7 @@
       "apps/worker/test/junk-sweep-gone.test.ts",
       "apps/worker/test/organizer-lease-worker.test.ts",
       "apps/worker/test/pipeline-move-cas.pg.test.ts",
+      "apps/worker/test/platform-signal-poll.test.ts",
       "apps/worker/test/profile-fan-out-round-trip.pg.test.ts",
       "apps/worker/test/profile-mirror-change-row.pg.test.ts",
       "apps/worker/test/provider-refusal-soft-block.e2e.test.ts",
