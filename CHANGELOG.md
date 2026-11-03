@@ -21,6 +21,108 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.31] — 2026-11-03
+
+### News and Receipts say which letters came from senders you never let in
+
+At the top of News and of Receipts, a note says how many letters there came from senders you never let in:
+no contact of yours and none of your rules names them. Older releases could file such a letter there on
+their own. "Screen N" moves those letters to the Screener and lets nobody in. Nothing moves until you press
+it, and the note is gone when there is nothing to say. On the web, the desktop app and the phone.
+
+### Only a sender you let in reaches News or Receipts
+
+A letter from a first-time sender now waits in the Screener even when its headers look like a newsletter's
+or a receipt's. Those headers are written by the sender, and cold outreach sent through a mailing service
+carries them too. The setting "File obvious bulk out of my Screener for me" is gone, and tidying the Ohbox
+no longer moves mail from a sender who is neither your contact nor under one of your rules.
+
+"Act on confident suggestions for me" now files only spam and screen-outs. A suggestion to let a sender
+into the Ohbox, News or Receipts waits for your own press, however sure it is. A sender it let in before
+this release, and that you never chose yourself, loses the rule and the contact it wrote for them, once,
+so their next letter waits in the Screener. Letters already filed stay where they are. A sender you wrote
+to, let in yourself, named, wrote a note about, or approved a suggestion for keeps everything. On every
+app.
+
+### The phone composer chooses its From address, adds Cc and Bcc, sends large files and edits signatures
+
+On the phone, a new mail on an account with several addresses opens a list under From, and the signature
+and attachment limit follow the address you pick. A new mail adds Cc and Bcc with one press. Files over
+3 MB now attach where the phone's send can carry them: on a phone that organizes its own mailbox, paired
+with a desktop or with your own server, and on ohmail Cloud, where they are uploaded the way the web uploads
+them and the message is still sent once. Settings on the phone sets and changes each mailbox's text
+signature, the same one the web and the desktop app use; a signature with formatting, or one set by the
+install that organizes the mailbox, is shown there and changed where it was made.
+
+Names now travel with addresses on every app: a reply keeps the name of the person you answer, the people
+you add keep theirs, and your From line carries your mailbox's name where one is set. On ohmail Cloud this
+is the name your provider gave the mailbox when it was connected. A phone that organizes its own mailbox
+asks for your name when you set it up (it is optional) and changes it in Settings.
+
+The phone's Answer Later pile no longer mentions a Reply Run, which the phone does not have.
+
+### The phone composer's From list, Cc and Bcc, large files and signature settings are tested as drawn
+
+Tests now render the phone's composer and its Settings panes: a From picked from the list is the mailbox
+the mail leaves from, with that mailbox's signature; Cc and Bcc reach the send; Save in Signatures and in
+Your name writes what was typed. A Cloud session built the way the app builds it uploads a large file
+only where the server offers it and sends the mail once. Nothing changes in the apps.
+
+### Phone: Connect opens sooner, the first tap acts with the keyboard up, and address search reaches your whole mailbox
+
+On the phone, the first press on a button while the keyboard is up now acts instead of only closing the
+keyboard, on every screen with a text field (adding a server, first-run setup, pairing by hand, the
+out-of-office reply, Search, the folder filter in More, the Tag sheet and the forms that already did).
+
+Setting up the phone on its own over a large mailbox no longer waits for the end of a long first read: the
+mailbox opens once you are signed in and its first page of mail is stored (measured at 1,500 letters: about
+10 to 16 seconds instead of about 34), and the Ohbox says the first sync is still running.
+
+Searching for an address on the phone now asks your server too, one direction at a time, as the web does:
+the letters this phone does not hold are listed under the ones it does, with the server's count beside them.
+
+Forgetting a server after the web already signed the phone out from Devices now says the server had ended the
+session, instead of saying the server could not be reached.
+
+### A phone search for the start of a word no longer reaches words that only share its stem
+
+On the phone, a search read the start of a word through its stem, so a name like `ines` was read as
+the start of `in` and listed letters with an invoice, information or an `INV-` file name, and `amazing`
+found `amazon`. The phone now reads the start of a word as you typed it, in index tables of its own
+that it builds once from the mail already on it, and a whole word still finds its other forms. Searches
+on a computer, on Cloud and on your own server were not affected.
+
+### A reinstalled phone takes its mailbox over from a claim nobody renews
+
+On the phone, pressing Connect over a mailbox whose organizer claim had stopped being renewed (an
+uninstalled copy of ohmail, a computer that is switched off) left the mailbox unorganized until you
+pressed Start, even after the claim had run out. The phone now keeps your press and takes the mailbox
+over once that claim lapses, while ohmail stays open on it. A claim that is still being renewed, or a
+new one, is never taken, and the notice after Connect says so.
+
+### A letter deleted on the mail server keeps only who it was from and to, and older deleted letters lose their words too
+
+On Cloud, your own server, the desktop app and the phone, a letter deleted on the mail server or in another
+mail app kept every line of its header after its text, preview and search words went. Now ohmail keeps only
+who sent it and to whom, its subject and date, the letters it answered and whether it was an automatic reply,
+besides the names of its files, how it was filed and which trackers were found in it. A letter that comes back
+gets its whole header back. The away reply no longer answers a letter that was deleted before the reply went
+out. Letters that left the server before this release lose their preview, their search words and the rest of
+their header too, a few hundred at a time in the background.
+
+While a mailbox's organizer finishes an Import settings press, the web, desktop and phone apps ask how it
+stands with the settings' fingerprint in a request header instead of in the address they ask, so request logs
+no longer hold it; an older server is still asked the old way. On the desktop app and the phone, a mailbox
+that an earlier version removed loses the fingerprints of its settings from the device's records at the next
+start.
+
+On Cloud and your own server, Test connection counts its attempts per mailbox address under the server's
+keyed hash, as sign-in already does, instead of a plain hash that could be reversed by guessing addresses.
+
+### Removed mailboxes and mailing-list claims in the Screener
+
+After you remove a mailbox and keep ohmail's copy, its senders no longer wait in the Screener or count; its letters from senders you have no rule for are under History. On a mailing list you let in yourself, screening out a message that uses a company's name sets aside only those messages and writes no rule: the list's own mail stays where it is and no unsubscribe is sent. An address that only names itself as a list is screened out as any other.
+
 ## [0.30.30] — 2026-11-03
 
 ### A file dragged from the file manager into a message is attached, not pasted as its path
@@ -16352,7 +16454,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.30...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.31...HEAD
+[0.30.31]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.31
 [0.30.30]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.30
 [0.30.29]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.29
 [0.30.28]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.28
