@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, type ApiDeps, type ChangeWakeHub, type SseConfig } from "@trafficflow/api";
 import { refreshTokens, sessions } from "@trafficflow/db";
@@ -507,7 +508,7 @@ function realLogger(): { logger: Logger; raw: string[]; lines: () => Array<Recor
 }
 
 describe("a failed read logs one sse_read_failed line: its error class and nothing else", () => {
-  const SECRET_TEXT = `password=hunter2 account ${PRESET!.accountId} session ${PRESET!.sessionId}`;
+  const SECRET_TEXT = `password=${fixturePassword("events-session")} account ${PRESET!.accountId} session ${PRESET!.sessionId}`;
 
   for (const arm of ["first read", "poll"] as const) {
     it(`the ${arm}'s failure arm: one warn line, the class only, no message text and no ids`, async () => {
@@ -524,7 +525,7 @@ describe("a failed read logs one sse_read_failed line: its error class and nothi
       expect(mine).toHaveLength(1);
       expect(mine[0]).toMatchObject({ level: "warn", errorClass: "Error" });
       expect(Object.keys(mine[0]!).sort()).toEqual(["errorClass", "event", "level", "requestId", "service", "ts"]);
-      for (const leak of ["hunter2", PRESET!.accountId, PRESET!.sessionId]) expect(raw.join("\n")).not.toContain(leak);
+      for (const leak of [fixturePassword("events-session"), PRESET!.accountId, PRESET!.sessionId]) expect(raw.join("\n")).not.toContain(leak);
     }, 20_000);
   }
 
@@ -537,7 +538,7 @@ describe("a failed read logs one sse_read_failed line: its error class and nothi
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ errorClass: "String" });
     expect(Object.keys(mine[0]!)).not.toContain("errorText");
-    for (const leak of ["hunter2", PRESET!.accountId, PRESET!.sessionId]) expect(raw.join("\n")).not.toContain(leak);
+    for (const leak of [fixturePassword("events-session"), PRESET!.accountId, PRESET!.sessionId]) expect(raw.join("\n")).not.toContain(leak);
   }, 20_000);
 
   it("controls: a stream that ends by its lifetime or its session logs no sse_read_failed", async () => {

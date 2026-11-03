@@ -21,7 +21,7 @@
  * that the enrolment session underneath this screen has been replaced.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FIXTURE_SHAPES, base32Seed } from "../../../test/support/fixture-credentials.js";
+import { FIXTURE_SHAPES, base32Seed, fixturePassword } from "../../../test/support/fixture-credentials.js";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -199,7 +199,7 @@ describe("the ordinary first signup — the path the guard was OFF for", () => {
         const pw = c.querySelector<HTMLInputElement>('input[type="password"]');
         const name = c.querySelector<HTMLInputElement>('input[type="text"]');
         if (email) setValue(email, "a@example.invalid");
-        if (pw) setValue(pw, "hunter2hunter2");
+        if (pw) setValue(pw, fixturePassword("join-account-switch"));
         if (name) setValue(name, "Pat");
       });
       await act(async () => {
@@ -298,7 +298,7 @@ describe("the ordinary first signup — the path the guard was OFF for", () => {
         const pw = c.querySelector<HTMLInputElement>('input[type="password"]');
         const name = c.querySelector<HTMLInputElement>('input[type="text"]');
         if (email) setValue(email, "a@example.invalid");
-        if (pw) setValue(pw, "hunter2hunter2");
+        if (pw) setValue(pw, fixturePassword("join-account-switch"));
         if (name) setValue(name, "Pat");
       });
       await act(async () => {
@@ -512,7 +512,7 @@ describe("a switch between the check and the write is the server's refusal, said
         const pw = c.querySelector<HTMLInputElement>('input[type="password"]');
         const name = c.querySelector<HTMLInputElement>('input[type="text"]');
         if (email) setValue(email, "a@example.invalid");
-        if (pw) setValue(pw, "hunter2hunter2");
+        if (pw) setValue(pw, fixturePassword("join-account-switch"));
         if (name) setValue(name, "Pat");
       });
       await act(async () => { form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });

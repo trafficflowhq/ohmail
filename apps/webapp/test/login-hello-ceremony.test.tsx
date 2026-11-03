@@ -24,6 +24,7 @@
  * before any module under test loads, which is the test-side twin of the build inlining it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -166,7 +167,7 @@ function submit(el: HTMLElement): Promise<void> {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   };
   setValue(el.querySelector<HTMLInputElement>('input[type="email"]')!, "l@example.invalid");
-  setValue(el.querySelector<HTMLInputElement>('input[type="password"]')!, "hunter2hunter2");
+  setValue(el.querySelector<HTMLInputElement>('input[type="password"]')!, fixturePassword("login-hello-ceremony"));
   return act(async () => {
     el.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });

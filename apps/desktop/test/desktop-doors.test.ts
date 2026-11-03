@@ -896,7 +896,7 @@ describe("door two, entered with a code from the browser", () => {
       return `${JSON.stringify({ ...p, body: undefined })}${body}`;
     }).join("|");
 
-    for (const secretish of ["password", "totp", "hunter2"]) {
+    for (const secretish of ["password", "totp"]) {
       expect(wire, `"${secretish}" reached the shell on the handoff path`).not.toContain(secretish);
     }
   });

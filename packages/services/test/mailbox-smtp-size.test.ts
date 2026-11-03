@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -19,8 +20,8 @@ import { makeMailboxService, type ServiceContext, type SmtpProbe } from "@traffi
 const NOW = new Date("2026-08-11T12:00:00.000Z");
 const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 7), 1);
 const svc = makeMailboxService({ keyProvider: KP, allowance: async () => { /* unmetered here */ } });
-const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: "s3cr3t" };
-const SMTP = { host: "smtp.example", port: 587, secure: false, user: "u", pass: "s3cr3t" };
+const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: fixturePassword("mailbox-smtp-size") };
+const SMTP = { host: "smtp.example", port: 587, secure: false, user: "u", pass: fixturePassword("mailbox-smtp-size") };
 
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 

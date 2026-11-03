@@ -52,12 +52,26 @@ const MARKER_WITHOUT_TOKEN: Array<[string, string]> = [
   ["an invitation page", "https://x.example.com/invite"],
 ];
 
+/* Every token-bearing URL in this file is the subject, so its tokens keep their shape: each is derived from its
+ * tag at run time, at a reserved host, and "the assembled tokens" below asserts every one whole. */
+const hexGroups = (tag: string, ...lengths: number[]): string => {
+  const hex = hex64(tag);
+  let at = 0;
+  return lengths.map((n) => hex.slice(at, (at += n))).join("-");
+};
+const base64Url = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString("base64url");
+const MAGIC_TOKEN = hex64("auth-url-magic-link").slice(0, 32);
+const JWT_HEADER = base64Url({ alg: "HS256", typ: "JWT" });
+const RESET_TAIL = opaqueRun("auth-url-reset", 20);
+const LOGIN_TOKEN = opaqueRun("auth-url-login-token", 20);
+const HREF_TOKEN = hex64("auth-url-href").slice(0, 24);
+
 /** A marker AND an opaque token. These are credentials in URL form and must stay withheld. */
 const MARKER_WITH_TOKEN: Array<[string, string]> = [
-  ["a magic link with a 32-character token", "https://app.example.com/verify?token=8f3a9b2c1d4e5f6a7b8c9d0e1f2a3b4c"],
-  ["a JWT under /auth", "https://app.example.com/auth/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"],
-  ["a password reset with an opaque tail", "https://acct.example.com/reset/Ab3Kd9Xm2Pq7Rt5Vw8Zy"],
-  ["an explicit login_token parameter", "https://example.com/x?login_token=QQ7h2Kd9Xm2Pq7Rt5Vw8"],
+  ["a magic link with a 32-character token", `https://app.example.com/verify?token=${MAGIC_TOKEN}`],
+  ["a JWT under /auth", `https://app.example.com/auth/${JWT_HEADER}`],
+  ["a password reset with an opaque tail", `https://acct.example.com/reset/${RESET_TAIL}`],
+  ["an explicit login_token parameter", `https://example.com/x?login_token=${LOGIN_TOKEN}`],
 ];
 
 describe("an authentication marker WITHOUT a token is a page, not a credential", () => {
@@ -85,7 +99,7 @@ describe("an authentication marker WITHOUT a token is a page, not a credential",
 
     const tokenised = classifySensitivity(
       msg("Newsletter", PROSE,
-        `<p>${PROSE}</p><a href="https://mail.example.com/verify?token=8f3a9b2c1d4e5f6a7b8c9d0e">Confirm</a>`),
+        `<p>${PROSE}</p><a href="https://mail.example.com/verify?token=${HREF_TOKEN}">Confirm</a>`),
     );
     expect(tokenised.flags.no_ai).toBe(true);
   });
@@ -128,29 +142,31 @@ const DOC =
   + "to reach us if anything is not quite right. We appreciate your business and hope to see you "
   + "again soon at our shop for more of the things you love the most this season.";
 
-/* The token-bearing URLs below are the subject, so their tokens keep their shape: each is derived from its tag
- * at run time, and the case after the two tables asserts every one whole. */
-const hexGroups = (tag: string, ...lengths: number[]): string => {
-  const hex = hex64(tag);
-  let at = 0;
-  return lengths.map((n) => hex.slice(at, (at += n))).join("-");
-};
+const BILLING_SESSION = opaqueRun("auth-url-billing-session", 18);
+const TICKET_TRACKING = hex64("auth-url-ticket-tracking").slice(0, 19);
+const PREFERENCES_TOKEN = base64Url({ action: "unsubscribe" });
+const ATTACHMENT_TOKEN = opaqueRun("auth-url-attachment", 25);
+const NOTIFICATION_KEY = hex64("auth-url-notification-key").slice(0, 20);
+const AVATAR_KEY = hex64("auth-url-avatar-key").slice(0, 21);
 const UNSUB_TOKEN = hexGroups("auth-url-unsubscribe", 8, 4, 4, 4, 4);
 const DEREFER_TOKEN = hexGroups("auth-url-derefer", 8, 4, 4, 4, 6);
 const QUOTED_DEREFER_TOKEN = hexGroups("auth-url-quoted-derefer", 8, 4, 4, 4, 4);
 const SET_PASSWORD_TOKEN = opaqueRun("auth-url-set-password", 24);
+const VERIFY_CODE = hex64("auth-url-verify-code").slice(0, 30);
+const ACTIVATION_KEY = hexGroups("auth-url-activation-key", 8, 4, 4, 4, 12);
+const MAGIC_LOGIN_TOKEN = hex64("auth-url-magic-login").slice(0, 26);
 
 /** The FALSE-POSITIVE classes. Each carries a real ≥16 opaque run, and none is a credential. */
 const NOT_A_CREDENTIAL: Array<[string, string]> = [
-  ["a login PAGE with a session id", "https://billing.stripe.com/p/login/aEUdRA5Wc8t25a03cc?referer=invoice_receipt"],
-  ["a login PAGE with a tracking param", "https://www.ticketcorner.ch/login?t=94613046328576ee25c&errordoc=globalError"],
-  ["a login PAGE with a campaign param", "https://www.notion.so/login?target=plans&utm_campaign=2022-06-08+Upgrade+Campaign"],
-  ["a newsletter unsubscribe token", `https://contabo.com/en/newsletter/unsubscribe/?email=x@y.invalid&token=${UNSUB_TOKEN}`],
-  ["a mailing-preferences token", "https://homeservice24.ch/de/mailing_preferences?token=eyJhY3Rpb24iOiJ1bnN1YnNjcmliZSJ9x"],
-  ["an attachment access token", "https://digitec.zendesk.com/attachments/token/SLv7L4W1jDnK3ykv37wyAfpmL/?name=logo.jpg"],
+  ["a login PAGE with a session id", `https://billing.payments.example/p/login/${BILLING_SESSION}?referer=invoice_receipt`],
+  ["a login PAGE with a tracking param", `https://www.tickets.example/login?t=${TICKET_TRACKING}&errordoc=globalError`],
+  ["a login PAGE with a campaign param", "https://www.notes.example/login?target=plans&utm_campaign=2026-01-01+Upgrade+Campaign"],
+  ["a newsletter unsubscribe token", `https://hosting.example/en/newsletter/unsubscribe/?email=x@y.invalid&token=${UNSUB_TOKEN}`],
+  ["a mailing-preferences token", `https://home-service.example/de/mailing_preferences?token=${PREFERENCES_TOKEN}`],
+  ["an attachment access token", `https://helpdesk.example/attachments/token/${ATTACHMENT_TOKEN}/?name=logo.jpg`],
   ["a mail-archive derefer wrapper", `https://mailstore.example.com:8462/a/outlook/derefer/?url=http%3a%2f%2fx.invalid&token=${DEREFER_TOKEN}`],
-  ["an app notification-settings link", "https://app.asana.com/-/confirm_change_notification_category_setting?domain=1206300745632908&key=0fd6c555aa635b1c2d3e"],
-  ["an app avatar image url", "https://app.asana.com/-/domain_user_profile_photo?size=60x60&domain=1206300745632908&key=ec155547570dfd11b7a1b"],
+  ["an app notification-settings link", `https://app.tasks.example/-/confirm_change_notification_category_setting?domain=fixture&key=${NOTIFICATION_KEY}`],
+  ["an app avatar image url", `https://app.tasks.example/-/domain_user_profile_photo?size=60x60&domain=fixture&key=${AVATAR_KEY}`],
 ];
 
 describe("an auth-shaped URL that is a PAGE or UTILITY link in a document is not a credential", () => {
@@ -170,11 +186,11 @@ describe("an auth-shaped URL that is a PAGE or UTILITY link in a document is not
       "nicht gestört, und das Captcha erscheint erst nach fünf fehlgeschlagenen Versuchen. Passt das",
       "auch für dich? Den Rollen-Guard bespreche ich TrafficFlow-intern und melde mich dann wieder.",
       "",
-      "> *Von: *Niklaus Hari <niklaus.hari@kingnature.invalid>",
+      "> *Von: *Fixture Sender <fixture.sender@shop.example>",
       "> *Betreff: *WG: Webshop",
       ">",
       "> Bitte einmal hier bestätigen:",
-      `> https://mailstore.kingnature.invalid:8462/a/outlook/derefer/?url=x&token=${QUOTED_DEREFER_TOKEN}`,
+      `> https://mailstore.shop.example:8462/a/outlook/derefer/?url=x&token=${QUOTED_DEREFER_TOKEN}`,
     ].join("\n");
     const v = classifySensitivity(msg("Re: AW: AW: AW: Webshop", body));
     expect(v.flags.no_ai).toBe(false);
@@ -188,9 +204,9 @@ describe("an auth-shaped URL that is a PAGE or UTILITY link in a document is not
  * prove they fire on delivery evidence and not on being short.
  */
 const IS_A_CREDENTIAL: Array<[string, string]> = [
-  ["a password reset in a long email", "https://acct.example.com/reset/Ab3Kd9Xm2Pq7Rt5Vw8Zy"],
-  ["an email verify path in a long email", "https://secure.example.org/de/signup/verify/code/a0f21a9ba125539be2d29b75572e28"],
-  ["an account activation key in a long email", "https://cicero.example.org/activate.php?key=49b5ce27-9196-fabf-d2e6-479a5e41c442"],
+  ["a password reset in a long email", `https://acct.example.com/reset/${RESET_TAIL}`],
+  ["an email verify path in a long email", `https://secure.example.org/de/signup/verify/code/${VERIFY_CODE}`],
+  ["an account activation key in a long email", `https://members.example.org/activate.php?key=${ACTIVATION_KEY}`],
   ["a set-password token in a long email", `https://shop.example.org/customer/account/createPassword/?id=485&token=${SET_PASSWORD_TOKEN}`],
 ];
 
@@ -199,7 +215,20 @@ describe("the assembled tokens", () => {
     for (const t of [UNSUB_TOKEN, DEREFER_TOKEN, QUOTED_DEREFER_TOKEN]) {
       expect(t).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4,6}$/);
     }
-    expect(SET_PASSWORD_TOKEN).toMatch(/^[A-Za-z0-9]{24}$/);
+    expect(ACTIVATION_KEY).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    // Each run is long enough and carries a digit or a capital, the two things a token needs to read as one.
+    const runs: Array<[string, RegExp]> = [
+      [MAGIC_TOKEN, /^[0-9a-f]{32}$/], [HREF_TOKEN, /^[0-9a-f]{24}$/], [TICKET_TRACKING, /^[0-9a-f]{19}$/],
+      [NOTIFICATION_KEY, /^[0-9a-f]{20}$/], [AVATAR_KEY, /^[0-9a-f]{21}$/], [VERIFY_CODE, /^[0-9a-f]{30}$/],
+      [MAGIC_LOGIN_TOKEN, /^[0-9a-f]{26}$/], [RESET_TAIL, /^[A-Za-z0-9]{20}$/], [LOGIN_TOKEN, /^[A-Za-z0-9]{20}$/],
+      [BILLING_SESSION, /^[A-Za-z0-9]{18}$/], [ATTACHMENT_TOKEN, /^[A-Za-z0-9]{25}$/], [SET_PASSWORD_TOKEN, /^[A-Za-z0-9]{24}$/],
+    ];
+    for (const [run, shape] of runs) {
+      expect(run).toMatch(shape);
+      expect(run).toMatch(/[\dA-Z]/);
+    }
+    expect(JSON.parse(Buffer.from(JWT_HEADER, "base64url").toString())).toEqual({ alg: "HS256", typ: "JWT" });
+    expect(PREFERENCES_TOKEN).toMatch(/^eyJ[A-Za-z0-9_-]{29}$/);
   });
 });
 
@@ -226,7 +255,7 @@ describe("a genuine credential-delivery URL stays withheld even inside a long do
   });
 
   it("a magic-login link carrying a credential-NAMED token fires even in a document", () => {
-    const body = `${DOC} https://app.example.com/login?token=8f3a9b2c1d4e5f6a7b8c9d0e1f`;
+    const body = `${DOC} https://app.example.com/login?token=${MAGIC_LOGIN_TOKEN}`;
     const v = classifySensitivity(msg("Sign in", body));
     expect(v.flags.no_ai).toBe(true);
     expect(v.reasons).toContain("auth_url_token");

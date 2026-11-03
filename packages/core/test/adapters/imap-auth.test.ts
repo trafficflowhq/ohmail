@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { fixturePassword } from "../../../../test/support/fixture-credentials.js";
 import { buildImapAuth, UnsupportedAuthTypeError } from "../../src/adapters/imap-auth.js";
 
 /**
@@ -7,8 +8,8 @@ import { buildImapAuth, UnsupportedAuthTypeError } from "../../src/adapters/imap
  */
 describe("buildImapAuth", () => {
   it("a password row (no authType) yields { user, pass } and NOTHING else — the byte-for-byte no-op", () => {
-    const auth = buildImapAuth({ user: "u@example.net" }, "s3cret");
-    expect(auth).toEqual({ user: "u@example.net", pass: "s3cret" });
+    const auth = buildImapAuth({ user: "u@example.net" }, fixturePassword("imap-auth"));
+    expect(auth).toEqual({ user: "u@example.net", pass: fixturePassword("imap-auth") });
     // The union must not have quietly grown a token member on the password path.
     expect("fetchAccessToken" in auth).toBe(false);
   });

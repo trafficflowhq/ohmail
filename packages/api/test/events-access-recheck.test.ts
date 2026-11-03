@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { createApp, apiRoutes, type ApiDeps, type ChangeWakeHub, type SseConfig } from "@trafficflow/api";
 import {
   UNMETERED, type AccessReadOpts, type AccessRefusal, type AccessVerdict, type EntitlementsPort,
@@ -316,7 +317,7 @@ describe("controls: an admitted account, a port that throws, and a host with no 
     const { logger, raw, lines } = realLogger();
     const s = await seedSession(db, { now: FIXED_NOW });
     const w = await watch({ ...deps, logger }, s.token);
-    const secret = `password=hunter2 account ${s.accountId} session ${s.sessionId}`;
+    const secret = `password=${fixturePassword("events-access")} account ${s.accountId} session ${s.sessionId}`;
     let thrown = 0;
     prog.answer(s.accountId, () => {
       if (thrown === 0) { thrown += 1; throw new Error(secret); }
@@ -330,7 +331,7 @@ describe("controls: an admitted account, a port that throws, and a host with no 
     expect(mine[0]).toMatchObject({ level: "warn", errorClass: "Error" });
     expect(Object.keys(mine[0]!).sort()).toEqual(["errorClass", "event", "level", "requestId", "service", "ts"]);
     expect(lines().filter((l) => l.event === "sse_read_failed")).toEqual([]);
-    for (const leak of ["hunter2", s.accountId, s.sessionId]) expect(raw.join("\n")).not.toContain(leak);
+    for (const leak of [fixturePassword("events-access"), s.accountId, s.sessionId]) expect(raw.join("\n")).not.toContain(leak);
   }, 20_000);
 
   it("the default harness (no composition; its handle, set to refuse, feeds only the mailbox service) and a host declaring UNMETERED: both streams stay open", async () => {

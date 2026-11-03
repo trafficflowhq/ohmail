@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -82,7 +83,7 @@ const svc = makeMailboxService({
 const ctxOn = (db: typeof dbA, accountId: string): ServiceContext =>
   ({ db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: "r" });
 
-const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: "s3cr3t" };
+const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: fixturePassword("mailbox-takeover") };
 /** Always "ok": every case here is about the row, and a probe that could refuse would decide it first. */
 const PROBE_OK = { probe: async () => ({ verdict: "ok" as const }) };
 

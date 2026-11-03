@@ -11,6 +11,7 @@
  * advance past `CONFIRM_CAP_MS`, the jitter is never pinned.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -161,7 +162,7 @@ async function submit(el: HTMLElement): Promise<void> {
   };
   await act(async () => {
     setValue(el.querySelector<HTMLInputElement>('input[type="email"]')!, "l@example.invalid");
-    setValue(el.querySelector<HTMLInputElement>('input[type="password"]')!, "hunter2hunter2");
+    setValue(el.querySelector<HTMLInputElement>('input[type="password"]')!, fixturePassword("login-finishes-sign-out"));
   });
   await act(async () => {
     el.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
