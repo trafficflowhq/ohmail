@@ -330,6 +330,50 @@ describe("an answer that crosses the Sign out press never names the account agai
       world.releaseAll();
     }
   }, 30_000);
+
+  /** The access window lapsed too: no access cookie and no `tf_csrf` as the check leaves, so it renews. */
+  async function lapsedTab(world: { httpOnly: Map<string, unknown> }): Promise<void> {
+    await silentTab();
+    world.httpOnly.delete("tf_session");
+    document.cookie = "tf_csrf=; Path=/; Max-Age=0";
+  }
+  const renewals = (world: { sent: Array<{ url: string; init: RequestInit }> }): number =>
+    world.sent.filter((s) => RENEWAL(s.url, s.init)).length;
+
+  it("a check that renewed, answered after another tab's sign-out 204: no answer, and the emptied jar stays empty", async () => {
+    vi.useRealTimers();
+    let checks = 0;
+    const world = await heldBrowser({ hold: (url) => url === CHECK && ++checks === 2 });
+    try {
+      await lapsedTab(world);
+      const { setThisTabForTest } = await import("../app/signed-out-signal.js");
+      const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
+      const { signOut } = await import("../app/sign-out.js");
+      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const check = resolveOwnerOutcome();
+      await until(isHeld(world, CHECK));
+      expect(renewals(world), "premise: the check renewed").toBe(1);
+      // Another tab presses: this tab's own press count never moves.
+      setThisTabForTest("another-tab");
+      expect((await signOut(world.account)).serverRefused).toBeNull();
+      release(world, CHECK);
+      expect({ answer: await check, marker: readOwnerMarker().kind }, "a signed-out jar was given the account's name")
+        .toEqual({ answer: { kind: "unknown", retryAfterMs: null }, marker: "absent" });
+    } finally {
+      world.releaseAll();
+    }
+  }, 30_000);
+
+  it("CONTROL: a check that renewed with no press puts the account back in the silent jar", async () => {
+    vi.useRealTimers();
+    const world = await heldBrowser();
+    await lapsedTab(world);
+    const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
+    const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+    expect(await resolveOwnerOutcome()).toEqual({ kind: "owner", accountId: world.account });
+    expect(renewals(world), "premise: the check renewed").toBe(1);
+    expect(readOwnerMarker()).toEqual({ kind: "account", id: world.account });
+  }, 30_000);
 });
 
 describe("an answer Chrome holds for its cache walk never holds the sign-out or the erase", () => {
