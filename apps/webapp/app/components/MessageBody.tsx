@@ -14,7 +14,7 @@
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { BODY_PAGE_CHARS, useOptionalTheme } from "@ohmail/ui";
+import { BODY_PAGE_CHARS, useOptionalTheme, type TagHueName } from "@ohmail/ui";
 import { decodeUnreservedEscapes } from "@trafficflow/core/url-escapes";
 import {
   anchorFor,
@@ -2591,7 +2591,7 @@ export const MAX_RICH_CHARS = BODY_PAGE_CHARS;
  * The walk's budget, per EMITTED node and per character of text; below zero the build is refused.
  * `own` rides with it: the message's own picture URLs, the only `blob:` srcs an image run copies.
  */
-interface RichBudget { left: number; chars: number; own: ReadonlySet<string> }
+interface RichBudget { left: number; chars: number; own: ReadonlySet<string>; tone: TagHueName | null }
 function spend(b: RichBudget): boolean { return --b.left >= 0; }
 /** Spend a node that carries `n` characters of the sender's text. */
 function spendText(b: RichBudget, n: number): boolean {
@@ -2656,8 +2656,13 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
   }
   if (node.nodeType !== 1 /* ELEMENT_NODE */) return;
   const el = node as Element;
-  const tag = el.tagName.toLowerCase();
   if (unseen(el)) return;
+  inTone(el, b, out, (into) => appendElement(el, into, b, nest));
+}
+
+/** One element of inline content, in the ink {@link appendInline} settled. */
+function appendElement(el: Element, out: InlineNode[], b: RichBudget, nest: number): void {
+  const tag = el.tagName.toLowerCase();
   if (tag === "img") {
     // AN EMBEDDED PICTURE, ALREADY RESOLVED — the walk runs on the post-passed document, so a
     // `cid:` image the resolve step could serve carries its gated URL here and every
@@ -2705,6 +2710,7 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
     // A marked link asked about in the page holds its address in {@link ASK_ATTR} alone.
     const gate = anchorFor((el.getAttribute("href") ?? el.getAttribute(ASK_ATTR) ?? "").trim());
     const children = inlineOf(el, b, nest);
+    if (gate !== null) uninked(children); // a link draws in the link's colour
     if (gate === null) { out.push(...children); return; }
     const host = hostOfUrl(gate.href);
     if (spend(b)) {
@@ -2752,6 +2758,105 @@ function inlineOf(el: Element, b: RichBudget, nest: number): InlineNode[] {
   return out;
 }
 
+/* ── the writer's ink: a coloured answer keeps its colour, as one of the palette's inks ────── */
+
+/** The palette's inks by their hue on the OKLCH wheel (`packages/tokens`, the tag hues). */
+const INK_HUES: ReadonlyArray<readonly [TagHueName, number]> = [
+  ["rosewood", 25], ["ochre", 78], ["olive", 112], ["moss", 150], ["verdigris", 182],
+  ["denim", 214], ["indigo", 250], ["iris", 288], ["mulberry", 320], ["heather", 352],
+];
+
+/** Below this OKLCH chroma a colour is a black, a grey or a near one: the reader's own ink. */
+const INK_CHROMA = 0.06;
+
+/** The colour words clients write ink in that {@link parseCssColor} leaves to the paper's list. */
+const INK_NAMES: Record<string, string> = {
+  red: "#ff0000", darkred: "#8b0000", maroon: "#800000", orange: "#ffa500", green: "#008000",
+  darkgreen: "#006400", olive: "#808000", teal: "#008080", blue: "#0000ff", darkblue: "#00008b",
+  purple: "#800080", fuchsia: "#ff00ff", magenta: "#ff00ff",
+};
+
+/** An opaque colour's ink: the palette hue nearest its own, or `null` for a colourless one. */
+export function inkToneOf(c: Rgb): TagHueName | null {
+  const lin = (v: number): number => {
+    const x = Math.min(Math.max(v, 0), 255) / 255;
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  };
+  const r = lin(c.r), g = lin(c.g), bl = lin(c.b);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * bl);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * bl);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * bl);
+  const a = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+  const b = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+  if (Math.hypot(a, b) < INK_CHROMA) return null;
+  const hue = ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360;
+  const off = (h: number): number => Math.min(Math.abs(hue - h), 360 - Math.abs(hue - h));
+  return INK_HUES.reduce((best, x) => (off(x[1]) < off(best[1]) ? x : best))[0];
+}
+
+/** The ink an element's own colour asks for — `null` for a colourless one — or `undefined`: it states none. */
+function ownTone(el: Element): TagHueName | null | undefined {
+  const fromStyle = /(?:^|;)\s*color\s*:\s*([^;!]+)/i.exec(el.getAttribute("style") ?? "")?.[1];
+  const said = (fromStyle ?? (el.tagName.toLowerCase() === "font" ? el.getAttribute("color") : null))?.trim().toLowerCase();
+  if (!said) return undefined;
+  const c = parseCssColor(INK_NAMES[said] ?? said);
+  return c === null || c.a < 0.5 ? undefined : inkToneOf(c);
+}
+
+/** The ink inside `el`, given the ink around it. */
+function nextTone(el: Element, around: TagHueName | null): TagHueName | null {
+  const own = ownTone(el);
+  return own === undefined ? around : own;
+}
+
+/** Emit `el` through `emit`, in its own ink when that differs from the ink around it. */
+function inTone(el: Element, b: RichBudget, out: InlineNode[], emit: (into: InlineNode[]) => void): void {
+  const around = b.tone;
+  const tone = nextTone(el, around);
+  if (tone === around) { emit(out); return; }
+  const inner: InlineNode[] = [];
+  b.tone = tone;
+  emit(inner);
+  b.tone = around;
+  if (inner.length > 0 && spend(b)) out.push({ kind: "ink", tone: tone ?? "plain", children: inner });
+}
+
+/** Take the ink off a run, in place: a link draws in the link's own colour. */
+function uninked(nodes: InlineNode[]): void {
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i]!;
+    if (n.kind === "ink") { nodes.splice(i, 1, ...n.children); i -= 1; }
+    else if (n.kind !== "text" && n.kind !== "break" && n.kind !== "image") uninked(n.children);
+  }
+}
+
+/**
+ * A COLOUR CARRIES MEANING WHERE IT MARKS PART OF THE TEXT. Within one scope — the letter's own
+ * level, or one quote — words all in one ink are the writer's ink, not an answer, and draw in the
+ * reader's; each quote is its own scope.
+ */
+function quietWholeInk(nodes: BodyNode[]): BodyNode[] {
+  const inks = new Set<string | null>();
+  const tally = (ns: InlineNode[], tone: string | null): void => {
+    for (const n of ns) {
+      if (n.kind === "text") { if (n.text.trim() !== "") inks.add(tone); }
+      else if (n.kind === "ink") tally(n.children, n.tone === "plain" ? null : n.tone);
+      else if (n.kind !== "break" && n.kind !== "image") tally(n.children, tone);
+    }
+  };
+  const blocks = (ns: BodyNode[], visit: (inline: InlineNode[]) => void): void => {
+    for (const n of ns) {
+      if (n.kind === "rich" || n.kind === "heading") visit(n.children);
+      else if (n.kind === "list") for (const item of n.items) blocks(item, visit);
+      else if (n.kind === "table") for (const row of n.rows) for (const cell of row.cells) blocks(cell.children, visit);
+    }
+  };
+  blocks(nodes, (inline) => tally(inline, null));
+  if (inks.size === 1 && !inks.has(null)) blocks(nodes, uninked);
+  for (const n of nodes) if (n.kind === "quote") n.children = quietWholeInk(n.children);
+  return nodes;
+}
+
 /** The tags the BLOCK walk handles by name. Anything else is a transparent block. */
 const RICH_INLINE = new Set(["br", "img", "strong", "b", "em", "i", "u", "a", "span", "font",
   "abbr", "acronym", "bdi", "bdo", "big", "cite", "code", "data", "dfn", "del", "ins",
@@ -2784,6 +2889,8 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
   let run: InlineNode[] = [];
   const spacing: RichParagraphNode["spacing"] =
     RICH_PARAGRAPH_CONTAINERS.has(container.tagName.toLowerCase()) ? "paragraph" : "line";
+  /** The ink this container's runs are drawn in; a run's own spans are read against it. */
+  const tone = b.tone;
   const flush = (): void => {
     if (run.length === 0) return;
     const children = run;
@@ -2805,7 +2912,7 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
         kind: "rich",
         attribution: isAttribution(words),
         spacing,
-        children,
+        children: tone !== null && spend(b) ? [{ kind: "ink", tone, children }] : children,
       };
       out.push(para);
     }
@@ -2820,12 +2927,14 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
     if (RICH_INLINE.has(tag)) { appendInline(node, run, b, nest + 1); continue; }
 
     flush();
+    const prevTone = b.tone;
+    b.tone = nextTone(el, b.tone);
     if (tag === "blockquote") {
       // The clamp is the SAME semantic as the text path's: past MAX_QUOTE_DEPTH the words
       // survive at the deepest level and only the wrapper count is capped.
-      if (depth >= MAX_QUOTE_DEPTH) { out.push(...blocksOf(el, depth, b, nest + 1)); continue; }
-      const children = blocksOf(el, depth + 1, b, nest + 1);
-      if (children.length > 0 && spend(b)) {
+      const children = blocksOf(el, Math.min(depth + 1, MAX_QUOTE_DEPTH), b, nest + 1);
+      if (depth >= MAX_QUOTE_DEPTH) out.push(...children);
+      else if (children.length > 0 && spend(b)) {
         const quote: QuoteNode = { kind: "quote", depth: depth + 1, children };
         out.push(quote);
       }
@@ -2857,7 +2966,7 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
         out.push({
           kind: "heading",
           level: Number(tag[1]) as 1 | 2 | 3 | 4 | 5 | 6,
-          children,
+          children: b.tone !== null && spend(b) ? [{ kind: "ink", tone: b.tone, children }] : children,
         });
       }
     } else {
@@ -2867,6 +2976,7 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
       // element it is about to walk.
       out.push(...blocksOf(el, depth, b, nest + 1));
     }
+    b.tone = prevTone;
   }
   flush();
   return out;
@@ -2887,12 +2997,15 @@ function tableOf(el: Element, depth: number, b: RichBudget, out: BodyNode[], nes
       const tag = c.tagName.toLowerCase();
       if ((tag !== "td" && tag !== "th") || unseen(c)) continue;
       if (!spend(b)) break;
+      const prevTone = b.tone;
+      b.tone = nextTone(c, b.tone);
       cells.push({
         header: tag === "th",
         colSpan: boundedSpan(c.getAttribute("colspan")),
         rowSpan: boundedSpan(c.getAttribute("rowspan")),
         children: blocksOf(c, depth, b, nest + 1),
       });
+      b.tone = prevTone;
     }
     if (cells.length > 0 && spend(b)) rows.push({ cells });
   };
@@ -2925,9 +3038,9 @@ export function buildRichNodes(root: Element, own: ReadonlySet<string> = NO_OWN_
 
 /** The walk of one side of a folded body's cut: empty when it holds nothing, `null` past the budget. */
 function buildRichNodesOf(root: Element, own: ReadonlySet<string>): BodyNode[] | null {
-  const b: RichBudget = { left: MAX_RICH_NODES, chars: MAX_RICH_CHARS, own };
+  const b: RichBudget = { left: MAX_RICH_NODES, chars: MAX_RICH_CHARS, own, tone: null };
   const nodes = blocksOf(root, 0, b, 0);
-  return b.left < 0 ? null : nodes;
+  return b.left < 0 ? null : quietWholeInk(nodes);
 }
 
 /**

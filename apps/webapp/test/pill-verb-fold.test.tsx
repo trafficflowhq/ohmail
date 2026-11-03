@@ -673,6 +673,18 @@ describe("the bar's room is the reading pane, not the reading column", () => {
     }
   });
 
+  it("a long letter's vertical scrollbar is not room: the row stays inside the pane's scrollport", async () => {
+    /* A pane's border box includes its classic scrollbar; the row set to that width overflowed the
+       scrollport by the gutter, and the pane drew a sideways scrollbar under every long letter. */
+    paneWidth = 740 + PILL_PAD;
+    await mountBar(msg(AUDIENCE));
+    Object.defineProperty(host!, "offsetWidth", { configurable: true, get: () => paneWidth });
+    Object.defineProperty(host!, "clientWidth", { configurable: true, get: () => paneWidth - 15 });
+    await setRow(WIDE);
+    const box = host!.querySelector<HTMLElement>(".msg-actions")!;
+    expect(box.style.getPropertyValue("--abar-room")).toBe(`${740 + PILL_PAD - 15}px`);
+  });
+
   it("a pane reading 0 leaves the row measuring itself, and the property removed", async () => {
     /* A mid-layout frame, or a mount with no pane at all (the selection pill in the list
        column's foot, a stream card's bar): the row is what it has always been. */

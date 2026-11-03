@@ -25,7 +25,7 @@ import {
 } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { requireUuid } from "./ids.js";
-import { htmlToPlainText, sanitizeOutboundHtml } from "./outbound-html.js";
+import { htmlToPlainText, sanitizeOutboundHtml, sanitizeQuotedHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
 import { carryDialect, dialect, dialectOf } from "@trafficflow/db/dialect";
 
@@ -79,6 +79,7 @@ function forwardedQuote(
   originalText: string,
   originalHtml: string | null,
   clock: { zone?: string; locale?: string } = {},
+  cids: ReadonlySet<string> = new Set(),
 ): { text: string; html: string } {
   // The date as the SENDER reads it, both parts: a raw ISO instant was what every forward carried.
   const dateStr = orig.date ? forwardedDate(orig.date, clock.zone, clock.locale) : "";
@@ -90,7 +91,7 @@ function forwardedQuote(
   ];
   // An html-only original stores no text or its html's words (no link targets); the plain
   // alternative then derives from the sanitized html, or a text-first reader loses the links.
-  const safeHtml = originalHtml ? sanitizeOutboundHtml(originalHtml) : null;
+  const safeHtml = originalHtml ? sanitizeQuotedHtml(originalHtml, cids) : null;
   const derived = originalHtml !== null && originalText !== "" && originalText === htmlWords(originalHtml);
   const plain = originalText.trim() !== "" && !derived ? originalText : safeHtml ? htmlToPlainText(safeHtml) : "";
   const text = `${headerLines.join("\n")}\n\n${plain}`;
@@ -102,6 +103,14 @@ function forwardedQuote(
     `<div>Subject: ${escapeHtml(orig.subject)}</div>` +
     `<blockquote>${bodyHtml}</blockquote>`;
   return { text, html };
+}
+
+/** A Content-ID as a `cid:` url names it: no angle brackets. */
+const bareCid = (contentId: string): string => contentId.replace(/[<>]/g, "");
+
+/** The Content-IDs of the inline parts a forward carries: the pictures its quote may keep in place. */
+function inlineCids(parts: ReadonlyArray<{ inline: boolean | null; contentId: string | null }>): Set<string> {
+  return new Set(parts.flatMap((p) => (p.inline && p.contentId ? [bareCid(p.contentId)] : [])));
 }
 
 /**
@@ -448,8 +457,9 @@ function composeForward(
   banner: { from: string; date: Date | null; subject: string },
   originalText: string, originalHtml: string | null,
   clock: { zone?: string; locale?: string },
+  cids: ReadonlySet<string>,
 ): { text: string; html?: string } {
-  const quoted = forwardedQuote(banner, originalText, originalHtml, clock);
+  const quoted = forwardedQuote(banner, originalText, originalHtml, clock, cids);
   return {
     text: forwardJoin(note.text, quoted.text, "\n\n", note.blank),
     ...(note.html ? { html: forwardJoin(note.html, quoted.html, "<br><br><hr>", note.blank) } : {}),
@@ -2887,7 +2897,7 @@ export class SendService {
           : { kind: "mailbox", banner, clock, note: d.body, noteHtml: html, blankNote };
         if (loadable) {
           fwdBody = composeForward(
-            { text: d.body, html, blank: blankNote }, banner, body!.text ?? "", body!.html ?? null, clock,
+            { text: d.body, html, blank: blankNote }, banner, body!.text ?? "", body!.html ?? null, clock, inlineCids(sentRows),
           );
         }
         forward = {
@@ -3205,6 +3215,7 @@ export class SendService {
         }
         const body = composeForward(
           { text: words.note, html: words.noteHtml, blank: words.blankNote }, words.banner, text, html, words.clock,
+          inlineCids(forward.parts),
         );
         msg.text = body.text;
         if (body.html !== undefined) msg.html = body.html;
@@ -3221,7 +3232,7 @@ export class SendService {
           filename: bytes.filename ?? part.filename,
           contentType: bytes.contentType || part.contentType,
           content: bytes.body,
-          ...(part.inline && part.contentId ? { cid: part.contentId.replace(/[<>]/g, "") } : {}),
+          ...(part.inline && part.contentId ? { cid: bareCid(part.contentId) } : {}),
         });
       }
       msg.attachments = [...(msg.attachments ?? []), ...fetched];

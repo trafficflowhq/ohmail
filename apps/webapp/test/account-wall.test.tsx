@@ -590,6 +590,40 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     expect(document.body.textContent).toContain(wallTitle);
   });
 
+  it("the server's frame holds a Reload for a page whose script never runs; hydrated, it passes", async () => {
+    /* Seen once on Cloud: a signed-in page stayed on the server's empty frame for minutes (its
+       script never ran, on a network that kept changing). The frame now says so and offers a
+       Reload, which needs no script; the stylesheet holds it back for the first seconds. */
+    const { renderToString } = await import("react-dom/server");
+    const { hydrateRoot } = await import("react-dom/client");
+    const { CloudShell } = await import("../app/(product)/mailbox/CloudShell");
+    const { ToastHost } = await import("@ohmail/ui");
+    localStorage.setItem(`ohmail.access.${OWNER}`, "open");
+    walled = false;
+    const tree = () => React.createElement(NextIntlClientProvider, {
+      locale: "en", messages: en, timeZone: "UTC", now: new Date(shell.ISO),
+      children: React.createElement(ThemeProvider, { storageKey: null,
+        children: React.createElement(ToastHost, { children: React.createElement(CloudShell, { demo: false }) }) }),
+    });
+    const host = document.createElement("div");
+    host.innerHTML = renderToString(tree());
+    document.body.appendChild(host);
+    const late = host.querySelector(".gate .gate-late");
+    expect(late?.textContent, "the server's frame is empty").toContain(en.session.opening);
+    expect(late?.querySelector("a")?.getAttribute("href")).toBe("/");
+    expect(late?.querySelector("a")?.textContent).toBe(en.appError.reload);
+    const recoverable: unknown[] = [];
+    let root: Root | null = null;
+    await shell.act(async () => {
+      root = hydrateRoot(host, tree(), { onRecoverableError: (e) => { recoverable.push(e); } });
+    });
+    await shell.tick(500);
+    expect(recoverable, "the frame did not hydrate as the server drew it").toEqual([]);
+    expect(host.querySelector(".gate-late"), "the line outlived hydration").toBeNull();
+    await shell.act(async () => { root!.unmount(); });
+    host.remove();
+  });
+
   it("CONTROL: a stored `open` paints the mirror at once and asks nothing before it", async () => {
     localStorage.setItem(`ohmail.access.${OWNER}`, "open");
     access = () => jsonOf(OPEN);
