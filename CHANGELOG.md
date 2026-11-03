@@ -21,6 +21,37 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.33] — 2026-11-04
+
+### A phone search for ines, ones or willing no longer lists every letter holding in, on or will
+
+On the phone, a word that shares its stem with a word every search leaves out, such as `ines` (`in`),
+`ones` (`on`), `willing` (`will`) or `outing` (`out`), listed every letter holding that short word, so a
+first name could list most letters written in English. The phone now reads such a word as you typed it,
+and finds the letters holding it as they do on a computer; `ones` no longer also finds `one` there.
+Searches on a computer, on Cloud and on your own server were not affected.
+
+### A company's own address waits unless confirmed
+
+When ohmail let a company's own address in on its own, by acting on a confident suggestion or through a domain it learned to let in, a later message from that address is let in only when your mail provider or the company's signature confirms it. Any other waits for you in the Screener, at every mailbox of the account and during a mailbox's first import too, and so does a delivery report from that address, unless the mail system of the provider you send through, or of your own address's domain, wrote it about a message you sent. The company's signature is now also checked where your provider's own report says nothing ohmail can believe, Microsoft's included. An address you let in yourself, a domain you let in yourself in the Screener or wrote a rule for, and mail over 30 days old are let in as before.
+
+### Closing the tab right after Sign out still signs out
+
+On the web app and ohmail Cloud, a tab closed right after Sign out was pressed could go before its sign-out
+reached the server. The session then stayed open there until a later visit finished the sign-out, and after a
+week Safari could forget that one was owed. The browser now completes a sign-out that was on its way when the tab
+closed, and one still waiting to be sent goes out as the tab closes.
+
+### Safari no longer forgets a sign-out that is still owed
+
+On the web app and ohmail Cloud, a sign-out the server could not confirm is finished on the next visit, at the
+sign-in page. Safari drops what a page writes into the browser after seven days, and with it the note that a
+sign-out was still owed, so a visit a week later could reopen the session that had been signed out of. From the next
+page the browser loads, the server now sets that note itself, the way it sets the session, and the page no longer
+writes over it, so from then on it lasts as long as the session could be resumed. Two smaller fixes beside it: the account name a sign-in leaves in the browser no longer
+ends when the browser closes, and a session check that renewed the session while another tab signed out no longer
+writes the account's name back.
+
 ## [0.30.32] — 2026-11-03
 
 ### The approval page warns unless the computer asked from this browser's own address
@@ -16544,7 +16575,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.32...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.33...HEAD
+[0.30.33]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.33
 [0.30.32]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.32
 [0.30.31]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.31
 [0.30.30]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.30
