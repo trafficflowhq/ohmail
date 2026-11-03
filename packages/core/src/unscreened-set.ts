@@ -10,6 +10,7 @@ import {
   type KnownSenders, type Rule, type ScreeningScope,
 } from "./rules.js";
 import { correspondentAtGate } from "./pipeline.js";
+import { ROWS_PER_TURN, turnsEvery, type LoopTurn } from "./loop-turns.js";
 import type { RepoPort } from "./ports.js";
 import { LEGACY_NEWS_FOLDER, NEWS_FOLDER, type Destination, type NormalizedMessage } from "./types.js";
 
@@ -176,8 +177,16 @@ export async function gateHoldsSender(
  */
 export async function unscreenedWalk(
   t: Tx, knowledge: UnscreenedKnowledge, accountId: string,
-  opts: { lock: boolean; scope: UnscreenedScope; stopAt?: number },
+  opts: {
+    lock: boolean; scope: UnscreenedScope; stopAt?: number;
+    /** Pages this walk may read, {@link MAX_PAGES} unless a host says less. */
+    maxPages?: number;
+    /** The host's loop turn, awaited once per {@link ROWS_PER_TURN} rows checked. */
+    turn?: LoopTurn;
+  },
 ): Promise<UnscreenedWalk> {
+  // The walk starts on a turn of its own, apart from the request or slice before it.
+  if (opts.turn) await opts.turn();
   const rules = await knowledge.listRules(accountId);
   const known = await knowledge.knownSenders(accountId);
   const ownRows = await t.select({ address: mailboxes.address }).from(mailboxes)
@@ -199,16 +208,21 @@ export async function unscreenedWalk(
     if (!still) afterId = null;
   }
   let last: string | null = afterId;
-  pages: for (let page = 0; page < MAX_PAGES; page++) {
+  const checked = turnsEvery(ROWS_PER_TURN, opts.turn);
+  pages: for (let page = 0; page < (opts.maxPages ?? MAX_PAGES); page++) {
     const rows = await selectCandidates(t, {
       accountId, ownAddresses, needsBody, afterId, lock: opts.lock, scope: opts.scope,
     });
+    // A page read is its own stretch, apart from the reads before it and the checks after it.
+    if (opts.turn) await opts.turn();
     for (const row of rows) {
       last = row.messageId;
-      if (!(await gateHoldsSender(row, {
+      const holds = await gateHoldsSender(row, {
         rules, known, own: ownSet, cutoff: cutoffOf(opts.scope), ask: knowledge, accountId,
         window: opts.scope.kind !== "pile",
-      }))) continue;
+      });
+      await checked();
+      if (!holds) continue;
       matched++;
       senders.add(row.fromAddress.toLowerCase());
       if (out.length < OHBOX_UNSCREENED_MESSAGES_MAX) out.push(row);
@@ -382,6 +396,8 @@ export async function writeScreenerIntents(
   input: {
     accountId: string; rows: readonly UnscreenedRow[]; now: Date; via: "offer" | "agree" | "gap" | "pile";
     groups: "shown" | "all"; from?: Destination;
+    /** The host's loop turn, awaited after each statement that writes the rows. */
+    turn?: LoopTurn;
   },
 ): Promise<{ screened: UnscreenedSenderGroup[]; total: number }> {
   const from = input.from ?? OHBOX;
@@ -408,11 +424,13 @@ export async function writeScreenerIntents(
         reconcileStatus: sql`excluded.reconcile_status`, conflict: false, updatedAt: input.now,
       },
     });
+    if (input.turn) await input.turn();
   }
   await recordChanges(ledger, rows.map((row) => ({
     accountId: input.accountId, entityType: "message" as const, entityId: row.messageId, op: "move" as const,
     meta: { from, to: SCREENER },
   })));
+  if (input.turn && rows.length > 0) await input.turn();
   if (screened.length > 0) {
     await t.insert(auditLog).values(screened.map((g) => ({
       accountId: input.accountId,
@@ -525,6 +543,10 @@ export interface AgreeSweepInput {
   cursor?: AgreeSweepCursor | null;
   /** Letters one slice moves, {@link OHBOX_UNSCREENED_MESSAGES_MAX} unless a host says less. */
   slice?: number;
+  /** Pages one slice's walk reads, the walk's own bound unless a host says less. */
+  pages?: number;
+  /** The host's loop turn, passed to the walk. */
+  turn?: LoopTurn;
 }
 
 /**
@@ -554,12 +576,15 @@ export async function agreeSweepSlice(db: Tx, input: AgreeSweepInput): Promise<A
     const cutoff = narrowerWindow(agreed ?? undefined, current);
     const walk = await unscreenedWalk(t, input.knowledgeFor(t), input.accountId, {
       lock: true, stopAt: input.slice ?? OHBOX_UNSCREENED_MESSAGES_MAX,
+      ...(input.pages !== undefined ? { maxPages: input.pages } : {}),
+      ...(input.turn !== undefined ? { turn: input.turn } : {}),
       scope: { kind: "agree", mailboxId: input.mailboxId, cutoff, storedBy, after: input.cursor?.after ?? null },
     });
     const next = walk.complete ? null : { storedBy, after: walk.last, agreed };
     if (walk.rows.length === 0) return { kind: "swept", total: 0, senders: 0, next } as const;
     const res = await writeScreenerIntents(t, input.ledgerOf(t), {
       accountId: input.accountId, rows: walk.rows, now: input.now, via: "agree", groups: "all",
+      ...(input.turn !== undefined ? { turn: input.turn } : {}),
     });
     return { kind: "swept", total: res.total, senders: res.screened.length, next } as const;
   });

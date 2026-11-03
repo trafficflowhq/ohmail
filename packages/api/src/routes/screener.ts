@@ -183,7 +183,9 @@ export const screenerRoutes: Route[] = [
       if (pile !== null && !isUnscreenedPile(pile)) {
         throw new ServiceError("validation_failed", 400, "pile must be news or receipts");
       }
-      const { groups, total, complete } = await unscreenedSummary(ctx.db, ctx.accountId, ctx.now(), pile ?? undefined);
+      const { groups, total, complete } = await unscreenedSummary(
+        ctx.db, ctx.accountId, ctx.now(), pile ?? undefined, ctx.loopTurn,
+      );
       // `total` is the SHOWN groups' messages: every message has one sender, so a list cut at the
       // bound must not report the mail behind the cut as offered. `max` travels so a client learns
       // the ceiling by READING it rather than carrying a constant of its own that drifts.

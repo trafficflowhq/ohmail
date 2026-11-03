@@ -49,10 +49,11 @@ async function scopeFor(db: Tx, accountId: string, now: Date, pile: UnscreenedPi
  * behind the cut.
  */
 export async function unscreenedSummary(
-  db: Tx, accountId: string, now: Date, pile?: UnscreenedPile,
+  db: Tx, accountId: string, now: Date, pile?: UnscreenedPile, turn?: () => Promise<void>,
 ): Promise<UnscreenedSummary> {
   const walk = await unscreenedWalk(db, knowledgeOf(db), accountId, {
     lock: false, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope: await scopeFor(db, accountId, now, pile),
+    ...(turn ? { turn } : {}),
   });
   const groups = unscreenedGroups(walk.rows);
   // Either bound makes `total` a floor: the walk's message bound or the shown groups' sender bound.
@@ -93,12 +94,14 @@ export async function screenUnscreened(
     const scope = await scopeFor(tx, ctx.accountId, now, pile);
     const walk = await unscreenedWalk(tx, knowledgeOf(tx), ctx.accountId, {
       lock: true, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope,
+      ...(ctx.loopTurn ? { turn: ctx.loopTurn } : {}),
     });
     const rows = walk.rows.filter((r) => named === null || named.has(r.fromAddress.toLowerCase()));
     if (rows.length === 0) return { screened: [], total: 0 };
     return writeScreenerIntents(tx, t as unknown as LedgerTx, {
       accountId: ctx.accountId, rows, now, via: pile === undefined ? "offer" : "pile", groups: "shown",
       from: unscreenedSourceFolder(scope),
+      ...(ctx.loopTurn ? { turn: ctx.loopTurn } : {}),
     });
   });
 }
@@ -140,7 +143,7 @@ export async function organizeDecisionCount(
   if (!mb || mb.status === "disabled") throw new ServiceError("not_found", 404, "mailbox not found");
   const cutoff = await agreeWindowCutoff(db, ctx.accountId, ctx.now(), answer);
   const walk = await unscreenedWalk(db, knowledgeOf(db), ctx.accountId, {
-    lock: false, scope: { kind: "agree", mailboxId, cutoff },
+    lock: false, scope: { kind: "agree", mailboxId, cutoff }, ...(ctx.loopTurn ? { turn: ctx.loopTurn } : {}),
   });
   return {
     letters: walk.matched, senders: walk.senders, total: walk.matched, complete: walk.complete,

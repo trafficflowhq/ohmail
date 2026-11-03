@@ -137,3 +137,20 @@ export const COMPOSITION_WINDOW_OUTBOX: Readonly<Record<OrganizerKind, boolean>>
   cloud: true,
   mobile: false,
 };
+
+/**
+ * HOW EACH COMPOSITION RUNS THE ORGANIZE WALKS (the agree's sweep, the decision count, rule retro,
+ * gap catch-up). On the desktop they run on the engine's own event loop, so they hand it back after
+ * counted work (`@trafficflow/core/mail` `turnsEvery`), and the agree's sweep reads one page per
+ * transaction, 250 of them per drain: as far as the core's 10 slices of 25 pages. Cloud walks nothing
+ * locally; on the phone `setImmediate` is a microtask, so it keeps the core's sizing.
+ */
+export const COMPOSITION_WALKS: Readonly<Record<OrganizerKind, {
+  readonly turns: boolean;
+  readonly agreePages?: number;
+  readonly agreeSlices?: number;
+}>> = {
+  local: { turns: true, agreePages: 1, agreeSlices: 250 },
+  cloud: { turns: false },
+  mobile: { turns: false },
+};

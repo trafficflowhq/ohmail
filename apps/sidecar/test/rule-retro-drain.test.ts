@@ -9,7 +9,7 @@ import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organi
 import { folderState, messageInstances, messages, rules } from "@trafficflow/db";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
-import { createSidecar, type Sidecar } from "../src/engine.js";
+import { createSidecar, type Sidecar, type SidecarConfig } from "../src/engine.js";
 
 /**
  * A SCREENER DECISION MOVES THE BACKLOG IN THE MAILBOX, NOT ONLY ON SCREEN — the local door's half.
@@ -67,7 +67,7 @@ describe("a rule's 'apply to existing mail' reaches the mailbox on a standalone 
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
-  async function boot(moves: Array<{ from: string; to: string }>): Promise<Sidecar> {
+  async function boot(moves: Array<{ from: string; to: string }>, extra: Partial<SidecarConfig> = {}): Promise<Sidecar> {
     const dataDir = await freshDataDir("ohmail-rule-retro-");
     const sidecar = await createSidecar({
       dataDir,
@@ -78,6 +78,7 @@ describe("a rule's 'apply to existing mail' reaches the mailbox on a standalone 
       leaseStaleAfterMs: 60_000,
       adapterFactory: recordingMailbox(moves),
       log: () => {},
+      ...extra,
     });
     cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
     await grantOrganizeConsent(sidecar);
@@ -129,6 +130,22 @@ describe("a rule's 'apply to existing mail' reaches the mailbox on a standalone 
     expect(moves.filter((m) => m.from === "INBOX")).toHaveLength(1);
     const [rule] = await sidecar.db.select({ done: rules.retroDoneAt }).from(rules).where(eq(rules.match, "news@sender.test"));
     expect(rule!.done, "the rule's backlog is recorded finished").not.toBeNull();
+  }, 60_000);
+
+  it("a backlog past 25 letters hands the engine's loop back while it is walked", async () => {
+    const moves: Array<{ from: string; to: string }> = [];
+    let turns = 0;
+    const sidecar = await boot(moves, { loopTurn: async () => { turns++; } });
+    const ids: string[] = [];
+    for (let uid = 100; uid < 140; uid++) ids.push(await seedInbox(sidecar, "news@sender.test", uid));
+    await sidecar.db.insert(rules).values({
+      accountId: sidecar.world.accountId, kind: "sender", match: "news@sender.test",
+      destination: "ohmail/News", provenance: "manual", enabled: true, retroRequestedAt: new Date(),
+    });
+    const before = turns;
+    await sidecar.syncUntilQuiet();
+    for (const id of ids) expect(await desiredOf(sidecar, id)).toBe("ohmail/News");
+    expect(turns - before, "40 letters were walked without a turn").toBeGreaterThan(0);
   }, 60_000);
 
   it("CONTROL — a reader walks nothing: the pass is behind the organizer gate", async () => {

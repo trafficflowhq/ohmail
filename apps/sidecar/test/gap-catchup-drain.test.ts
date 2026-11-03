@@ -11,7 +11,7 @@ import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { folderState, mailboxes, messages, rules } from "@trafficflow/db";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
-import { createSidecar, type Sidecar } from "../src/engine.js";
+import { createSidecar, type Sidecar, type SidecarConfig } from "../src/engine.js";
 import { requestOrganizerTakeover } from "../src/organize-here.js";
 
 /**
@@ -113,6 +113,7 @@ describe("letters from a gap are counted for the person and filed only on their 
     settings = true,
     /** The News rule, made before this instant, in place before the start: two installs then publish one rule. */
     ruleBefore: Date | null = null,
+    extra: Partial<SidecarConfig> = {},
   ): Promise<Sidecar> {
     const dataDir = await freshDataDir("ohmail-gap-offer-");
     cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
@@ -121,6 +122,7 @@ describe("letters from a gap are counted for the person and filed only on their 
       imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
       address: "owner@trafficflow.test", machineName: "the phone", pollIntervalMs: 60 * 60 * 1000,
       leaseStaleAfterMs: 60_000, adapterFactory: server(meta, pending, moves, settings), log: () => {},
+      ...extra,
     });
     cleanups.push(() => s.stop().catch(() => undefined));
     if (ruleBefore !== null) await newsRule(s, ruleBefore);
@@ -322,6 +324,24 @@ describe("letters from a gap are counted for the person and filed only on their 
     expect(await rowOf(s), "the window stayed open after its letters were filed").toEqual({ since: null, letters: null, pressed: null });
     for (let i = 0; i < 3; i++) await s.syncUntilQuiet();
     expect(moves, "the letter was filed more than once").toHaveLength(1);
+  }, 90_000);
+
+  it("a gap of 30 letters is counted with the engine's loop handed back while it is walked", async () => {
+    const meta = new MemoryMetaFolder();
+    const moves: Array<{ from: string; to: string }> = [];
+    const pending: Array<ChangeBatch["creates"][number]> = [];
+    let turns = 0;
+    await meta.laptopHolds();
+    const s = await boot(meta, pending, moves, true, null, { loopTurn: async () => { turns++; } });
+    meta.clear();
+    await s.syncUntilQuiet();
+    await newsRule(s, (await sinceOf(s))!);
+    for (let i = 0; i < 30; i++) pending.push(letter(new Date()));
+    await s.syncUntilQuiet();
+    const before = turns;
+    await promote(s);
+    expect((await rowOf(s)).letters, "premise: the letters were offered").toBe(30);
+    expect(turns - before, "30 letters were walked without a turn").toBeGreaterThan(0);
   }, 90_000);
 
   it("a stand-down to another install's newer claim closes the window and its offer", async () => {
