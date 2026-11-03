@@ -12,6 +12,8 @@ import {
   IMAGE_QUALITY_STORAGE_KEY,
 } from "../app/components/image-quality";
 import type { ComposeAttachment } from "@ohmail/client-engine";
+import { enableDesktopDroppedFiles } from "../app/shell/dropped-files";
+import { restartHold } from "../app/shell/app-update";
 
 /**
  * THE SHRINK DIAL, IN THE COMPOSE ATTACH ROW.
@@ -140,7 +142,7 @@ const attachmentBytes = (a: ComposeAttachment): number => {
  * component does when the list it is showing is the list it produced. A static `[]` prop would
  * make both green-by-vacancy.
  */
-function Wrap(o: { maxTotalBytes?: number; disabled?: boolean }) {
+function Wrap(o: { maxTotalBytes?: number; disabled?: boolean; onAttaching?: (files: readonly string[]) => void }) {
   const [atts, setAtts] = React.useState<ComposeAttachment[]>([]);
   // The surface pastes and drops land on — the compose wrap / reply panel in the real callers.
   const zone = React.useRef<HTMLDivElement | null>(null);
@@ -157,6 +159,7 @@ function Wrap(o: { maxTotalBytes?: number; disabled?: boolean }) {
       dropZone: zone,
       ...(o.maxTotalBytes === undefined ? {} : { maxTotalBytes: o.maxTotalBytes }),
       ...(o.disabled === undefined ? {} : { disabled: o.disabled }),
+      ...(o.onAttaching === undefined ? {} : { onAttaching: o.onAttaching }),
     } as never),
   );
 }
@@ -257,7 +260,9 @@ async function startPick(files: File[]): Promise<void> {
   });
 }
 
-async function mount(o: { maxTotalBytes?: number; disabled?: boolean; locale?: "en" | "de" } = {}): Promise<void> {
+async function mount(
+  o: { maxTotalBytes?: number; disabled?: boolean; locale?: "en" | "de"; onAttaching?: (files: readonly string[]) => void } = {},
+): Promise<void> {
   handed = [];
   handedHistory = [];
   if (root) {
@@ -275,7 +280,7 @@ async function mount(o: { maxTotalBytes?: number; disabled?: boolean; locale?: "
         messages: o.locale === "de" ? de : messages,
         timeZone: "UTC",
         now: new Date("2026-08-11T09:00:00.000Z"),
-        children: h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled }),
+        children: h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled, onAttaching: o.onAttaching }),
       }),
     );
   });
@@ -662,6 +667,186 @@ describe("pasted and dropped files are picks — CMP-F8", () => {
       await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     }
     expect(handed).toHaveLength(0);
+  });
+});
+
+describe("a file manager's drop on the Linux desktop attaches its files — CMP-F8", () => {
+  /**
+   * The shapes WebKitGTK 2.52 gives the page, measured with a GTK4 file-list drag onto a
+   * WebKitGTK 4.1 view: a file manager's drop lists `text/uri-list` and `text/html`, withholds the
+   * data and carries no File objects, so the zone saw no `Files` and the editor inserted the path.
+   * A browser's link lists `text/plain` too, and its data reads. The paths here are synthetic.
+   */
+  type Shape = { types: string[]; drop: Record<string, string> };
+  const WITHHELD: Shape = {
+    types: ["text/uri-list", "text/html"],
+    drop: { "text/html": '<a style="font-weight: 400;">file:///tmp/drop/notes.txt</a>' },
+  };
+  const LINK: Shape = {
+    types: ["text/plain", "text/html", "text/uri-list"],
+    drop: {
+      "text/plain": "https://example.org/a",
+      "text/uri-list": "https://example.org/a\r\n",
+      "text/html": '<a href="https://example.org/a">https://example.org/a</a>',
+    },
+  };
+  const CHIP: Shape = {
+    types: ["application/x-ohmail-recipient", "text/plain"],
+    drop: { "application/x-ohmail-recipient": '{"entry":"a@example.org","row":"to"}', "text/plain": "a@example.org" },
+  };
+  /** Every getData reads "" until the drop, as in the browser's protected mode. */
+  function dragEvent(type: "dragover" | "drop", shape: Shape): Event {
+    const e = new Event(type, { bubbles: true, cancelable: true });
+    const getData = (t: string): string => (type === "drop" ? (shape.drop[t] ?? "") : "");
+    Object.defineProperty(e, "dataTransfer", { value: { files: [], types: shape.types, getData } });
+    return e;
+  }
+  const zone = (): HTMLElement => host!.querySelector<HTMLElement>(".zone")!;
+
+  const TOKEN = "f".repeat(32);
+  const NOTES = new TextEncoder().encode("the notes, from the file manager");
+  const b64 = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes));
+  const notesTake = () => ({
+    drop: TOKEN,
+    files: [{ name: "notes.txt", size: NOTES.length, type: "text/plain", state: "ok" }],
+  });
+
+  /** The shell, stubbed: every command recorded with its payload, the answers per case. */
+  let calls: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+  let take: () => Promise<unknown> = async () => null;
+  let chunk: (payload: Record<string, unknown>) => Promise<unknown> = async () => ({ bytes64: b64(NOTES), end: true });
+  let disarm: (() => void) | null = null;
+  beforeEach(() => {
+    calls = [];
+    take = async () => notesTake();
+    chunk = async () => ({ bytes64: b64(NOTES), end: true });
+    (globalThis as Mutable).__TAURI_INTERNALS__ = {
+      invoke: (command: string, payload?: Record<string, unknown>) => {
+        calls.push(payload === undefined ? { command } : { command, payload });
+        return command === "dropped_files_take" ? take() : chunk(payload ?? {});
+      },
+    };
+  });
+  afterEach(() => {
+    disarm?.();
+    disarm = null;
+    delete (globalThis as Mutable).__TAURI_INTERNALS__;
+  });
+
+  /**
+   * THE REPORTED BUG: the drop pasted the path. Now the dragover is claimed, the drop is prevented
+   * (nothing inserts), and the shell's file lands through the same admit pipeline as a pick.
+   *
+   * Mutation: drop the withheld branch from the zone's `drop` listener → red (nothing attaches and
+   * the drop is left to WebKit's insert).
+   */
+  it("claims the drag, prevents the drop and attaches the file the shell read", async () => {
+    disarm = enableDesktopDroppedFiles();
+    await mount({ maxTotalBytes: 3 * MIB });
+    const over = dragEvent("dragover", WITHHELD);
+    await act(async () => { zone().dispatchEvent(over); });
+    expect(over.defaultPrevented, "the drag was not claimed, so a drop on the attach strip never lands").toBe(true);
+
+    const drop = dragEvent("drop", WITHHELD);
+    await act(async () => { zone().dispatchEvent(drop); });
+    await drain();
+    expect(drop.defaultPrevented, "the drop was left to WebKit, which inserts the path").toBe(true);
+    expect(handed.map((a) => [a.filename, a.contentType, a.contentBase64])).toEqual([["notes.txt", "text/plain", b64(NOTES)]]);
+    expect(calls).toEqual([
+      { command: "dropped_files_take" },
+      { command: "dropped_file_chunk", payload: { drop: TOKEN, index: 0 } },
+    ]);
+  });
+
+  /** The lock is the take's from the first moment: a send pressed while the shell answers waits. */
+  it("holds the attaching lock and the restart from the drop to the commit", async () => {
+    disarm = enableDesktopDroppedFiles();
+    const reported: Array<readonly string[]> = [];
+    await mount({ maxTotalBytes: 3 * MIB, onAttaching: (files) => reported.push(files) });
+    let answerTake!: () => void;
+    const taken = new Promise<void>((resolve) => { answerTake = resolve; });
+    let answerChunk!: () => void;
+    const read = new Promise<void>((resolve) => { answerChunk = resolve; });
+    take = async () => { await taken; return notesTake(); };
+    chunk = async () => { await read; return { bytes64: b64(NOTES), end: true }; };
+
+    await act(async () => { zone().dispatchEvent(dragEvent("drop", WITHHELD)); });
+    expect(reported.at(-1)?.length, "nothing was attaching while the shell was asked").toBe(1);
+    expect(restartHold()).toBe("files");
+
+    await act(async () => { answerTake(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(reported.at(-1)).toEqual(["notes.txt"]);
+    expect(handed).toHaveLength(0);
+
+    await act(async () => { answerChunk(); });
+    await drain();
+    expect(handed).toHaveLength(1);
+    expect(reported.at(-1)).toEqual([]);
+    expect(reported.slice(0, -1).every((files) => files.length > 0), "the lock opened before the commit").toBe(true);
+    expect(restartHold()).toBe(null);
+  });
+
+  /** A link and a recipient chip are other drags' business: claiming a link's dragover makes
+      WebKit navigate to the link instead of inserting it. */
+  it("leaves an https link and a recipient chip alone", async () => {
+    disarm = enableDesktopDroppedFiles();
+    await mount();
+    for (const shape of [LINK, CHIP]) {
+      const over = dragEvent("dragover", shape);
+      const drop = dragEvent("drop", shape);
+      await act(async () => { zone().dispatchEvent(over); zone().dispatchEvent(drop); });
+      expect([over.defaultPrevented, drop.defaultPrevented], shape.types.join(",")).toEqual([false, false]);
+    }
+    await drain();
+    expect(calls).toEqual([]);
+    expect(handed).toHaveLength(0);
+  });
+
+  /** The web app and the preview arm nothing: the shape alone never asks a shell. */
+  it("asks no shell when the window is not armed", async () => {
+    await mount();
+    const over = dragEvent("dragover", WITHHELD);
+    const drop = dragEvent("drop", WITHHELD);
+    await act(async () => { zone().dispatchEvent(over); zone().dispatchEvent(drop); });
+    await drain();
+    expect([over.defaultPrevented, drop.defaultPrevented]).toEqual([false, false]);
+    expect(calls).toEqual([]);
+  });
+
+  /** The shell holds nothing (the drop was this page's own drag, or ten seconds went by). */
+  it("attaches nothing and inserts nothing when the shell holds no drop", async () => {
+    disarm = enableDesktopDroppedFiles();
+    await mount();
+    take = async () => null;
+    const drop = dragEvent("drop", WITHHELD);
+    await act(async () => { zone().dispatchEvent(drop); });
+    await drain();
+    expect(drop.defaultPrevented).toBe(true);
+    expect(handed).toHaveLength(0);
+    expect(host!.querySelector(".compose-attach-error")).toBeNull();
+    expect(calls).toEqual([{ command: "dropped_files_take" }]);
+  });
+
+  /** The shell's refusals are the pick's own sentences, and nothing over the cap is read. */
+  it("says the pick's own sentences for a file too large or unreadable, reading none of them", async () => {
+    disarm = enableDesktopDroppedFiles();
+    await mount({ maxTotalBytes: 3 * MIB });
+    take = async () => ({
+      drop: TOKEN,
+      files: [
+        { name: "film.mov", size: 45 * MIB, type: "video/quicktime", state: "too_large" },
+        { name: "pipe", size: 0, type: "", state: "unreadable" },
+        { name: "scan.pdf", size: 4 * MIB, type: "application/pdf", state: "ok" },
+      ],
+    });
+    await act(async () => { zone().dispatchEvent(dragEvent("drop", WITHHELD)); });
+    await drain();
+    const said = host!.querySelector(".compose-attach-error")?.textContent ?? "";
+    expect(said).toContain("Some files were not added — they would have put the total over");
+    expect(said).toContain("Some files couldn't be read and were not added.");
+    expect(handed).toHaveLength(0);
+    expect(calls.map((c) => c.command), "a file the cap refuses was read anyway").toEqual(["dropped_files_take"]);
   });
 });
 

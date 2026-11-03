@@ -44,6 +44,7 @@ import { useTranslations } from "next-intl";
 import { Button, Icon, formatFileSize } from "@ohmail/ui";
 import {
   COMPOSE_ATTACH_MAX_TOTAL_BYTES,
+  encodableImageType,
   type ComposeAttachCapBinding,
   type ComposeAttachment,
 } from "@ohmail/client-engine";
@@ -57,6 +58,13 @@ import {
   writeImageQualityLevel,
 } from "./image-quality";
 import { holdFilesForRestart } from "../shell/app-update";
+import {
+  desktopDroppedFilesEnabled,
+  isWithheldFileDrop,
+  looksLikeWithheldFileDrag,
+  takeDroppedFiles,
+  type DroppedSource,
+} from "../shell/dropped-files";
 import { activeFormatLocale } from "../shell/locale";
 import { storageOwner } from "../shell/storage-owner";
 
@@ -513,7 +521,7 @@ export function ComposeAttach({
   }, []);
 
   const onFiles = useCallback(
-    async (fileList: FileList | null) => {
+    async (fileList: FileList | readonly (File | DroppedSource)[] | null) => {
       if (!fileList || fileList.length === 0) return;
       /* THE LOCK IS TAKEN BEFORE THE FIRST AWAIT, and given back in `finally` — a refused file, a
          discarded compose and an ordinary commit all end the same way, or a send stays blocked
@@ -547,8 +555,21 @@ export function ComposeAttach({
           originalBytes: number;
           compressed: boolean;
         }> = [];
-        for (const file of Array.from(fileList)) {
+        for (const item of Array.from(fileList)) {
           try {
+            // A dropped file's bytes are the shell's, read only when the cap could admit them.
+            let file: File;
+            if (item instanceof File) {
+              file = item;
+            } else {
+              const capNow = maxTotalBytesRef.current;
+              const unshrinkable = encodableImageType(item.type) === null;
+              if (item.state === "too_large" || (unshrinkable && item.size > capNow)) {
+                refuseAt(capNow);
+                continue;
+              }
+              file = await item.read();
+            }
             // BEFORE THE CAP CHECK. The whole value of compressing on the client is that it changes
             // which files are admissible, and it cannot do that from behind the check that refuses
             // them. See the header note. Admission itself is deferred to the COMMIT below, against
@@ -708,13 +729,34 @@ export function ComposeAttach({
     [t, requalify],
   );
 
+  /**
+   * A FILE MANAGER'S DROP ON THE LINUX DESKTOP: WebKitGTK gives the page no File objects for it,
+   * and the shell, which saw the drop itself, holds the files for this take. The lock and the
+   * restart hold are taken before the take is asked, so a send pressed meanwhile waits; the pick
+   * below takes them over by name in the same step.
+   */
+  const onDropped = useCallback(async () => {
+    const take = ++pickSeq.current;
+    picksInFlight.current.set(take, ["attachment"]);
+    reportAttaching.current();
+    let sources: readonly DroppedSource[] | null = null;
+    try {
+      sources = await takeDroppedFiles();
+    } catch {
+      if (mounted.current) setError(t("attachUnreadable"));
+    }
+    picksInFlight.current.delete(take);
+    if (sources && sources.length > 0 && mounted.current) void onFiles(sources);
+    else reportAttaching.current();
+  }, [onFiles, t]);
 
   /**
    * PASTE AND DROP, ON THE CALLER'S SURFACE. Native listeners rather than React props because
    * the surface is the caller's element (the compose wrap, the reply panel), not something this
    * component renders. `dragover` must prevent default or the browser never allows the drop and
    * — for a file dropped anywhere else — navigates away to it. The recipient rows' own chip
-   * drags carry no `Files` entry, so they pass through untouched.
+   * drags carry no `Files` entry, so they pass through untouched, and so does a link: the
+   * desktop claims only the shape WebKitGTK gives a file manager's drag (`dropped-files.ts`).
    */
   useEffect(() => {
     const zone = dropZone?.current;
@@ -728,13 +770,19 @@ export function ComposeAttach({
       void onFiles(files);
     };
     const onDragOver = (e: DragEvent): void => {
-      if (!hasFiles(e.dataTransfer)) return;
+      const withheld = desktopDroppedFilesEnabled() && looksLikeWithheldFileDrag(e.dataTransfer);
+      if (!hasFiles(e.dataTransfer) && !withheld) return;
       e.preventDefault();
     };
     const onDrop = (e: DragEvent): void => {
-      if (!hasFiles(e.dataTransfer)) return;
-      e.preventDefault();
-      void onFiles(e.dataTransfer?.files ?? null);
+      if (hasFiles(e.dataTransfer)) {
+        e.preventDefault();
+        void onFiles(e.dataTransfer?.files ?? null);
+        return;
+      }
+      if (!desktopDroppedFilesEnabled() || !isWithheldFileDrop(e.dataTransfer)) return;
+      e.preventDefault(); // WebKit would insert the path
+      void onDropped();
     };
     zone.addEventListener("paste", onPaste);
     zone.addEventListener("dragover", onDragOver);
@@ -744,7 +792,7 @@ export function ComposeAttach({
       zone.removeEventListener("dragover", onDragOver);
       zone.removeEventListener("drop", onDrop);
     };
-  }, [dropZone, disabled, onFiles]);
+  }, [dropZone, disabled, onFiles, onDropped]);
 
   const remove = useCallback(
     (index: number) => {
