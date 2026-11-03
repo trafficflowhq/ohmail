@@ -111,8 +111,13 @@ export interface NotificationHost {
    * true when written, false one commit later, and wrong anyway: a press
    * proves the SESSION, never which account owns the registration already
    * live on this browser, which is the only question `unchanged` is asked.
+   *
+   * `opts.signingOutOf` — the sign-out press's revoke, for the row's DELETE:
+   * see {@link revokeWakeRegistration}.
    */
-  syncSubscription?: (wanted: boolean, opts?: { forceAnnounce?: boolean }) => Promise<PushSyncOutcome | null>;
+  syncSubscription?: (
+    wanted: boolean, opts?: { forceAnnounce?: boolean; signingOutOf?: string },
+  ) => Promise<PushSyncOutcome | null>;
   /**
    * This surface cannot read the operating system's answer — its shell asks
    * on first use. Absent (the browser) means `permission()` IS the OS
@@ -138,7 +143,7 @@ export const browserNotificationHost: NotificationHost = {
    * is a no-op there even though the module is compiled in, the same guard `consent-state.ts`
    * uses for the same reason.
    */
-  syncSubscription: async (wanted: boolean, opts?: { forceAnnounce?: boolean }) => {
+  syncSubscription: async (wanted: boolean, opts?: { forceAnnounce?: boolean; signingOutOf?: string }) => {
     /* `null` means "there was nothing to reconcile here", which is not the same as a failure and
        must not be rendered as one. `apiConfigured()` is false in every desktop build — its Cloud
        adapter is aliased out of the bundle — so this is a no-op there even though the module is
@@ -285,7 +290,7 @@ function decodeVapidKey(base64url: string): ArrayBuffer {
 export interface PushApi {
   vapidKey: () => Promise<{ publicKey: string | null }>;
   subscribe: (endpoint: string, p256dh: string, auth: string) => Promise<{ id: string }>;
-  unsubscribe: (id: string) => Promise<void>;
+  unsubscribe: (id: string, opts?: { signingOutOf?: string }) => Promise<void>;
 }
 
 /**
@@ -368,7 +373,7 @@ function serialize<T>(op: () => Promise<T>): Promise<T> {
  * cannot be recovered from — the three orderings below.
  */
 export function syncWebPush(
-  wanted: boolean, api: PushApi, opts?: { forceAnnounce?: boolean },
+  wanted: boolean, api: PushApi, opts?: { forceAnnounce?: boolean; signingOutOf?: string },
 ): Promise<PushSyncOutcome> {
   return serialize(() => syncWebPushNow(wanted, api, opts));
 }
@@ -385,7 +390,7 @@ export function syncWebPush(
 const namedRow = (id: unknown): id is string => typeof id === "string" && id.length > 0;
 
 async function syncWebPushNow(
-  wanted: boolean, api: PushApi, opts?: { forceAnnounce?: boolean },
+  wanted: boolean, api: PushApi, opts?: { forceAnnounce?: boolean; signingOutOf?: string },
 ): Promise<PushSyncOutcome> {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return "unsupported";
   let reg: ServiceWorkerRegistration;
@@ -399,12 +404,14 @@ async function syncWebPushNow(
 
   if (!wanted) {
     const id = readId();
+    // The sign-out press's pass for its own row (`revokeWakeRegistration`), on these two DELETEs only.
+    const pass = opts?.signingOutOf === undefined ? undefined : { signingOutOf: opts.signingOutOf };
     if (existing === null) {
       /* NO LOCAL SUBSCRIPTION, BUT PERHAPS A ROW. A browser that cleared its site data, or a
          previous attempt that unsubscribed and then failed to delete, leaves an id with nothing
          under it. The row is what causes wakes, so it is still worth removing. */
       if (id === null) return "unchanged";
-      try { await api.unsubscribe(id); writeId(null); return "unsubscribed"; }
+      try { await api.unsubscribe(id, pass); writeId(null); return "unsubscribed"; }
       catch { return "row_remains"; }
     }
     /* LOCAL FIRST — unsubscribing here is what actually stops this browser being woken — but the
@@ -414,7 +421,7 @@ async function syncWebPushNow(
     try { await existing.unsubscribe(); } catch { localGone = false; }
     if (id === null) return localGone ? "unsubscribed" : "row_remains";
     try {
-      await api.unsubscribe(id);
+      await api.unsubscribe(id, pass);
       writeId(null);
       return localGone ? "unsubscribed" : "row_remains";
     } catch {
@@ -526,8 +533,11 @@ async function syncWebPushNow(
  * delete the row, write `enabled: false` — whichever lands helps (a dropped subscription 404s the sender into pruning the row a
  * failed DELETE left). No sentence on screen: there is no action a signed-out browser could take, and the residue collects
  * itself. Never throws; a no-op on desktop builds (`apiConfigured()` false).
+ *
+ * `signingOutOf` is the sign-out press's: the account its jar named. The press marks the jar pending before it revokes, so
+ * the account boundary lets the row's DELETE through on that account alone (`api-client.ts`, `RequestOptions`).
  */
-export async function revokeWakeRegistration(): Promise<PushSyncOutcome | null> {
+export async function revokeWakeRegistration(opts?: { signingOutOf?: string }): Promise<PushSyncOutcome | null> {
   /*
    * Bounded, and the bound is load-bearing (review — it inverted "the wipe runs REGARDLESS"). Every
    * call joins the module-global {@link serialize} queue, whose ops are `fetch`es with no timeout;
@@ -542,7 +552,7 @@ export async function revokeWakeRegistration(): Promise<PushSyncOutcome | null> 
     timer = setTimeout(() => resolve("row_remains"), WAKE_BUDGET_MS);
   });
   try {
-    return await Promise.race([revokeWakeRegistrationNow(), budget]);
+    return await Promise.race([revokeWakeRegistrationNow(opts), budget]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -561,12 +571,12 @@ export async function revokeWakeRegistration(): Promise<PushSyncOutcome | null> 
 const WAKE_BUDGET_MS = 4_000;
 
 /** The revoke itself. Never throws; see {@link revokeWakeRegistration} for the bound around it. */
-async function revokeWakeRegistrationNow(): Promise<PushSyncOutcome | null> {
+async function revokeWakeRegistrationNow(opts?: { signingOutOf?: string }): Promise<PushSyncOutcome | null> {
   // The words go first and unconditionally: it is the one half that needs neither the network nor
   // a live subscription, so a browser that fails everything below still refuses to draw.
   try { await disarmNotifyState("", ""); } catch { /* no Cache API, or storage refused */ }
   try {
-    return (await browserNotificationHost.syncSubscription?.(false)) ?? null;
+    return (await browserNotificationHost.syncSubscription?.(false, opts)) ?? null;
   } catch {
     /* The host's own guard threw before its try block could catch — a mocked `../api-client` with
        no `apiConfigured`, or a platform without one. Reported as the state that is true either

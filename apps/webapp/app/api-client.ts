@@ -147,6 +147,12 @@ interface RequestOptions {
   mayProceed?: () => boolean;
   /** A read the person is waiting for (a search, an export): the resume lane's cap does not hold it. */
   asked?: boolean;
+  /**
+   * The account the jar named when this tab pressed Sign out, on that press's own wake row DELETE and
+   * nowhere else. The press marks the jar pending before it revokes, so the boundary would refuse the
+   * DELETE the session still has to authorize; {@link apiOwnerVerdict} lets it through on that account.
+   */
+  signingOutOf?: string;
 }
 
 /**
@@ -308,10 +314,13 @@ export function apiOwnerHolds(path: string, opts: { ceremony?: boolean } = {}): 
  */
 export type OwnerVerdict = "holds" | "absent" | "signed-out" | "mismatch";
 
-export function apiOwnerVerdict(path: string, opts: { ceremony?: boolean } = {}): OwnerVerdict {
+export function apiOwnerVerdict(
+  path: string, opts: { ceremony?: boolean; signingOutOf?: string } = {},
+): OwnerVerdict {
   if (opts.ceremony === true) return "holds";
   if (OWNER_FREE_EXACT.some((p) => path === p)) return "holds";
   if (OWNER_FREE_PREFIXES.some((p) => path.startsWith(p))) return "holds";
+  if (opts.signingOutOf !== undefined && signingOutPasses(path, opts.signingOutOf)) return "holds";
   /*
    * A PAGE THAT NEVER BINDS THE CLIENT, OVER A SIGN-OUT THE SERVER NEVER CONFIRMED. The jar still carries
    * the previous person's cookies, and an account request from here answers for them: `/join`, one link
@@ -328,6 +337,17 @@ export function apiOwnerVerdict(path: string, opts: { ceremony?: boolean } = {})
   if (marker.kind === "signed-out") return "signed-out";
   const expected = binding.owner;
   return expected === null || marker.id === expected ? "holds" : "mismatch";
+}
+
+/**
+ * THE SIGN-OUT PRESS'S OWN WAKE ROW, under the pending marker the press wrote first: one path, the
+ * reserved word in the jar, and a client bound (or pending) to the account the jar named at the press.
+ * Anything else gets the ordinary verdict, so no call goes out under a session this client is not bound to.
+ */
+function signingOutPasses(path: string, account: string): boolean {
+  if (!path.startsWith("/push/subscriptions/")) return false;
+  if (readOwnerMarker().kind !== "signed-out") return false;
+  return (binding.kind === "bound" || binding.kind === "pending") && binding.owner === account;
 }
 
 /**
@@ -555,9 +575,15 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
   if (!sessionMayAsk() && !healablePath(path, opts.ceremony === true)) {
     throw new ApiError(401, SESSION_ENDED_REFUSAL_CODE, said("refusedSessionEnded", "This browser's session has ended."));
   }
+  /* What the boundary is asked with. The sign-out press's pass rides here and never into the recovery's
+     `whose` below: a refusal of that DELETE starts no renewal under the pending sign-out. */
+  const held = {
+    ...(opts.ceremony === true ? { ceremony: true } : {}),
+    ...(opts.signingOutOf !== undefined ? { signingOutOf: opts.signingOutOf } : {}),
+  };
   /** Refuse with the sentence this state has earned — see {@link ownerRefusal}. */
   const mustHold = (): void => {
-    const verdict = apiOwnerVerdict(path, { ...(opts.ceremony === true ? { ceremony: true } : {}) });
+    const verdict = apiOwnerVerdict(path, held);
     if (verdict !== "holds") throw ownerRefusal(verdict);
   };
   // BEFORE the request and AGAIN after it. The first stops a call being made under somebody
@@ -592,7 +618,7 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
    * has lost the name of the account": no wipe, no receipt.
    */
   const answerHolds = (): void => {
-    const verdict = apiOwnerVerdict(path, { ...(ceremony ? { ceremony: true } : {}) });
+    const verdict = apiOwnerVerdict(path, held);
     if (verdict === "absent" && (CLEARS_ONLY as readonly string[]).includes(path)) return;
     if (verdict !== "holds") throw ownerRefusal(verdict);
   };
@@ -2783,9 +2809,15 @@ export const push = {
       method: "POST",
       body: { transport: "webpush", endpoint, p256dh, auth },
     }),
-  /** Idempotent by intent: a 404 means the row is already gone, which is the desired state. */
-  unsubscribe: (id: string) =>
-    api<void>(`/push/subscriptions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /**
+   * Idempotent by intent: a 404 means the row is already gone, which is the desired state.
+   * `signingOutOf`: the sign-out press's pass for its own row (`RequestOptions`).
+   */
+  unsubscribe: (id: string, opts: { signingOutOf?: string } = {}) =>
+    api<void>(`/push/subscriptions/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      ...(opts.signingOutOf !== undefined ? { signingOutOf: opts.signingOutOf } : {}),
+    }),
 };
 
 export const consent = {

@@ -10,10 +10,26 @@
 import * as shell from "./fixtures/cloud-confirm-shell";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetSessionTruthForTests } from "../app/shell/session-truth";
+import { readOwnerMarker } from "../app/shell/owner-cookie";
 import {
   listenSignedOut, postSignedOut, setSignedOutLeaveForTest, setThisTabForTest, signedOutChannel,
 } from "../app/signed-out-signal";
 import { SESSION_FRESH_MS } from "../app/(product)/mailbox/useSignedOutElsewhere";
+
+/** Runs once, right before the next listener subscribes: the jar written between a tab's first frame and its listener. */
+const seam = vi.hoisted(() => ({ beforeListen: null as (() => void) | null }));
+vi.mock("../app/signed-out-signal", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../app/signed-out-signal")>();
+  return {
+    ...real,
+    listenSignedOut: (owner: string, onSignal: () => void) => {
+      const before = seam.beforeListen;
+      seam.beforeListen = null;
+      before?.();
+      return real.listenSignedOut(owner, onSignal);
+    },
+  };
+});
 
 const { ACCOUNT, act } = shell;
 const OTHER = "acct_other_2";
@@ -54,6 +70,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  for (const w of watchers.splice(0)) w.disconnect();
+  seam.beforeListen = null;
   await shell.teardownConfirmEnv();
   setSignedOutLeaveForTest(null);
   setThisTabForTest(null);
@@ -120,6 +138,49 @@ async function finishPendingIn(name: string): Promise<void> {
 const oneTick = async (): Promise<void> => {
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
 };
+
+const watchers: MutationObserver[] = [];
+
+/** Every node put on `el` from now on, read as it was added: true once any of it was mail. */
+function mailEverOn(el: HTMLElement): () => boolean {
+  let seen = showsMail(el);
+  const isMail = (n: Node): boolean => (n.textContent ?? "").includes(SUBJECT)
+    || (n instanceof Element && (n.matches(".app-root, .row[data-id]") || n.querySelector(".app-root, .row[data-id]") !== null));
+  const watch = new MutationObserver((records) => {
+    for (const r of records) for (const n of r.addedNodes) if (isMail(n)) seen = true;
+  });
+  watch.observe(el, { childList: true, subtree: true });
+  watchers.push(watch);
+  return () => seen || showsMail(el);
+}
+
+/** A tab opened now, on whatever the jar says, while the session still answers for the account. */
+async function bootTab(name: string): Promise<HTMLElement> {
+  setThisTabForTest(name);
+  shell.scriptSession(() => shell.sessionFull());
+  return shell.mountCloudShell();
+}
+
+/** The door holds the next sign-out request; the answer is a 204, or a refusal (a busy server). */
+function holdTheDoor(): (answer: "204" | "refused") => void {
+  let reply: (answer: "204" | "refused") => void = () => {};
+  shell.scriptLogout(() => new Promise<Response>((resolve) => {
+    reply = (answer) => resolve(answer === "204" ? new Response(null, { status: 204 }) : shell.db503());
+  }));
+  return (answer) => reply(answer);
+}
+
+/** Run `p` to its end in steps of the pinned clock, every step committed; true once it settled. */
+async function settle(p: Promise<unknown>): Promise<boolean> {
+  let settled = false;
+  void p.then(() => { settled = true; }, () => { settled = true; });
+  for (let i = 0; i < 40 && !settled; i += 1) await shell.tick(250);
+  return settled;
+}
+
+/** React's warning for a `flushSync` inside an effect: a tab leaving from its mount must not earn one. */
+const flushSyncWarnings = (): string[] => vi.mocked(console.error).mock.calls
+  .map((args) => args.map(String).join(" ")).filter((line) => line.includes("flushSync"));
 
 describe("a sign-out in one tab reaches every other tab of the account", { timeout: 60_000 }, () => {
   it("tab 1 renders no row and no body within one tick of tab 0's sign out, and leaves", async () => {
@@ -279,6 +340,180 @@ describe("which tabs hear it, and when", { timeout: 60_000 }, () => {
       expect(heard, "a death the jar does not agree with was posted").toEqual([]);
     } finally {
       stop();
+    }
+  });
+});
+
+/**
+ * A TAB BORN WHILE THE SIGN-OUT IS OUT. Measured on Cloud 0.30.30: a tab opened about 0.2 s after Sign
+ * out's request left drew the Ohbox until the request answered. The page was served before the jar
+ * said anything; its script ran after. It reads the jar before it draws any mail now: at its first
+ * frame, when its confirm answers, and when its listener mounts.
+ */
+describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
+  beforeEach(async () => {
+    (await import("../app/api-client")).bindApiOwner(null);
+  });
+
+  it("THE REPORTED SHAPE: a tab opened during the held request never draws the mail, asks nothing, and leaves", async () => {
+    const tab0 = await openTab("tab-0");
+    const reply = holdTheDoor();
+    setThisTabForTest("tab-0");
+    const { signOut } = await import("../app/sign-out");
+    const done = signOut(ACCOUNT);
+    for (let i = 0; i < 200 && shell.logoutCalls() === 0; i += 1) await oneTick();
+    expect(shell.logoutCalls(), "the press never reached the door").toBe(1);
+
+    const asked = shell.sessionCalls();
+    const tab2 = await bootTab("tab-2");
+    const sawMail = mailEverOn(tab2);
+    await shell.tick(2_000);
+    expect(sawMail(), "the tab born during the request drew the mailbox").toBe(false);
+    expect(shell.sessionCalls() - asked, "the new tab asked the session door").toBe(0);
+    expect(leaves, "the new tab stayed").toBe(1);
+    expect(flushSyncWarnings()).toEqual([]);
+
+    /* Refused: the marker stays pending, and the pressing tab still stays to say so. */
+    setThisTabForTest("tab-0");
+    reply("refused");
+    expect(await settle(done), "the sign-out never ended").toBe(true);
+    expect((await done).serverRefused, "the door's refusal was read as a sign-out").not.toBeNull();
+    expect(tab0.querySelector(".app-root"), "the pressing tab left").not.toBeNull();
+    expect(leaves).toBe(1);
+  });
+
+  it("the jar is pending and the tabs are told at the press: while the wake row's DELETE is out, a new tab draws nothing", async () => {
+    const tab1 = await openTab("tab-1");
+    await openTab("tab-0");
+    /* A browser that registered for wakes, installed after the boots so only the press's revoke meets it. */
+    const sub = {
+      endpoint: "https://push.example/ep/1",
+      getKey: (n: string) => new Uint8Array(n === "auth" ? 16 : 65).fill(7).buffer,
+      unsubscribe: () => Promise.resolve(true),
+    };
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(sub) } }) },
+    });
+    localStorage.setItem("ohmail.notifications.subscriptionId", "row-7");
+    localStorage.setItem("ohmail.notifications.subscriptionEndpoint", sub.endpoint);
+    const deletes: string[] = [];
+    let release: () => void = () => {};
+    const inner = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+      if (init?.method === "DELETE" && String(input).includes("/push/subscriptions/")) {
+        deletes.push(String(input));
+        await new Promise<void>((resolve) => { release = resolve; });
+        return new Response(null, { status: 204 });
+      }
+      return inner(input as RequestInfo, init);
+    }) as unknown as typeof globalThis.fetch;
+    try {
+      setThisTabForTest("tab-0");
+      const { signOut } = await import("../app/sign-out");
+      const done = signOut(ACCOUNT);
+      for (let i = 0; i < 200 && deletes.length === 0 && shell.logoutCalls() === 0; i += 1) await oneTick();
+      expect(deletes, "the press's own wake row was not deleted").toEqual(["/api/push/subscriptions/row-7"]);
+      expect(readOwnerMarker().kind, "the jar named the account while the DELETE was out").toBe("signed-out");
+      expect(showsMail(tab1), "tab 1 kept the mail while the DELETE was out").toBe(false);
+      expect(leaves).toBe(1);
+
+      const tab2 = await bootTab("tab-2");
+      await shell.tick(1_000);
+      expect(showsMail(tab2), "a tab opened while the DELETE was out drew the mailbox").toBe(false);
+      expect(leaves).toBe(2);
+      expect(shell.logoutCalls(), "the door was asked before the wake row went").toBe(0);
+
+      setThisTabForTest("tab-0");
+      release();
+      expect(await settle(done), "the sign-out never ended").toBe(true);
+      expect(shell.logoutCalls()).toBe(1);
+      expect(localStorage.getItem("ohmail.notifications.subscriptionId"), "the row's id outlived the sign-out").toBeNull();
+    } finally {
+      Reflect.deleteProperty(navigator, "serviceWorker");
+    }
+  });
+
+  it("a cold tab whose confirm was out at the press leaves when it answers: no mail, nothing bound", async () => {
+    const reply = holdTheDoor();
+    /* Cold: the jar names nobody at its first frame, so only its confirm can name the account. The
+       only shell in this document, so the client's binding is this tab's alone. */
+    let confirm: () => void = () => {};
+    setThisTabForTest("tab-2");
+    shell.scriptSession(() => new Promise<Response>((resolve) => { confirm = () => resolve(shell.sessionFull()); }));
+    const tab2 = await shell.mountCloudShell();
+    const sawMail = mailEverOn(tab2);
+    await shell.tick(500);
+    expect(shell.sessionCalls(), "the cold tab's confirm never left").toBe(1);
+
+    setThisTabForTest("tab-0");
+    const { signOut } = await import("../app/sign-out");
+    const done = signOut(ACCOUNT);
+    for (let i = 0; i < 200 && shell.logoutCalls() === 0; i += 1) await oneTick();
+    expect(leaves, "sanity: the cold tab had no listener yet, so its confirm is what is measured").toBe(0);
+
+    confirm();
+    await shell.tick(1_000);
+    expect(sawMail(), "the confirm's answer drew the mailbox under a pending sign-out").toBe(false);
+    expect(leaves, "the cold tab stayed").toBe(1);
+    const { apiOwnerBinding } = await import("../app/api-client");
+    expect(apiOwnerBinding(), "the leaving tab bound the client to the answer").toEqual({ kind: "pending", owner: null });
+
+    reply("204");
+    expect(await settle(done), "the sign-out never ended").toBe(true);
+  });
+
+  it.each([
+    ["a pending sign-out", "tf_owner=signed_out_pending; Path=/", 1],
+    ["nothing", "tf_owner=; Path=/; Max-Age=0", 0],
+    ["another account", `tf_owner=${OTHER}; Path=/`, 0],
+  ])("a jar that turned to %s between the first frame and the listener: leaves at the listener's mount only when pending", async (_what, jar, left) => {
+    setThisTabForTest("tab-2");
+    shell.rememberOwner(ACCOUNT);
+    /* The confirm stays out, so nothing but the mount itself can send the tab away. */
+    let confirm: () => void = () => {};
+    shell.scriptSession(() => new Promise<Response>((resolve) => { confirm = () => resolve(shell.sessionFull()); }));
+    seam.beforeListen = () => { document.cookie = jar; };
+    const tab2 = await shell.mountCloudShell();
+    await shell.tick(250);
+    expect(seam.beforeListen, "the listener never mounted, so this proves nothing").toBeNull();
+    expect(leaves, left === 1 ? "the tab stayed on a pending sign-out" : "a jar that is no pending sign-out sent the tab away")
+      .toBe(left);
+    if (left === 1) expect(showsMail(tab2), "the leaving tab kept the mailbox").toBe(false);
+    expect(flushSyncWarnings()).toEqual([]);
+    confirm();
+    await shell.tick(250);
+  });
+
+  it("CONTROL: the pressing tab's own confirm, answering after its refused press, never sends it away", async () => {
+    setThisTabForTest("tab-0");
+    shell.rememberOwner(ACCOUNT);
+    let confirm: () => void = () => {};
+    shell.scriptSession(() => new Promise<Response>((resolve) => { confirm = () => resolve(shell.sessionFull()); }));
+    const tab0 = await shell.mountCloudShell();
+    await shell.tick(500);
+    expect(tab0.querySelector(".app-root"), "the warm mirror did not open").not.toBeNull();
+    shell.scriptLogout(shell.db503);
+    const { signOut } = await import("../app/sign-out");
+    expect(await settle(signOut(ACCOUNT)), "the refused sign-out never ended").toBe(true);
+    expect(readOwnerMarker().kind).toBe("signed-out");
+    confirm();
+    await shell.tick(1_000);
+    expect(leaves, "the pressing tab left at its own confirm").toBe(0);
+    expect(tab0.querySelector(".app-root")).not.toBeNull();
+  });
+
+  it("CONTROL: the demo is never sent away by a pending sign-out", async () => {
+    window.history.replaceState(null, "", "/?demo=1");
+    try {
+      document.cookie = "tf_owner=signed_out_pending; Path=/";
+      setThisTabForTest("tab-2");
+      const demo = await shell.mountCloudShell();
+      await shell.tick(1_000);
+      expect(leaves, "the demo left").toBe(0);
+      expect(demo.querySelector(".app-root"), "the demo drew nothing").not.toBeNull();
+    } finally {
+      window.history.replaceState(null, "", "/");
     }
   });
 });

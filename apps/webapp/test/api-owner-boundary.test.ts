@@ -416,6 +416,56 @@ describe("the storage-owner boundary", () => {
 });
 
 /**
+ * ═══ THE SIGN-OUT PRESS'S OWN WAKE ROW, UNDER ITS OWN PENDING MARKER ═══════════════════════════
+ *
+ * The press writes the reserved word before it revokes the wake registration, so a tab opened during
+ * the request is sent to the sign-in page. The row's DELETE still needs the session the press is
+ * ending: it passes on that one path, with the reserved word in the jar, from a client bound (or
+ * pending) to the account the jar named at the press. Anything else is today's refusal.
+ */
+describe("the press's own wake row under its pending sign-out", () => {
+  const ROW = "/push/subscriptions/row-7";
+
+  it("goes out with the reserved word in the jar, the client bound or pending to the account the press named", async () => {
+    const { bindApiOwner, pendApiOwner, push } = await import("../app/api-client.js");
+    const { OWNER_SIGNED_OUT } = await import("../app/shell/owner-cookie.js");
+    answerAccount = A;                     // the session the press is ending is still A's
+    for (const bind of [() => bindApiOwner(A), () => { bindApiOwner(null); pendApiOwner(A); }]) {
+      setOwnerCookie(A);
+      bind();
+      setOwnerCookie(OWNER_SIGNED_OUT);
+      await expect(push.unsubscribe("row-7", { signingOutOf: A }), "the press's own row was refused").resolves.toBeTruthy();
+    }
+    expect(asked, "the DELETE never reached the wire").toEqual([`/api${ROW}`, `/api${ROW}`]);
+  });
+
+  it.each([
+    ["without the pass", { pass: undefined, jar: "pending", bound: "A", path: ROW }, /sign-out was asked for/],
+    ["for another account", { pass: B, jar: "pending", bound: "A", path: ROW }, /sign-out was asked for/],
+    ["with the jar naming another account", { pass: A, jar: B, bound: "A", path: ROW }, /different account/],
+    ["with the jar silent", { pass: A, jar: null, bound: "A", path: ROW }, /lost the name of the account/],
+    ["from a public client", { pass: A, jar: "pending", bound: "public", path: ROW }, /sign-out was asked for/],
+    ["from a cold shell", { pass: A, jar: "pending", bound: "cold", path: ROW }, /sign-out was asked for/],
+    ["after a refused sign-out", { pass: A, jar: "pending", bound: "blocked", path: ROW }, /sign-out was asked for/],
+    ["on another path", { pass: A, jar: "pending", bound: "A", path: "/mailboxes" }, /sign-out was asked for/],
+    ["on the registration's own announce", { pass: A, jar: "pending", bound: "A", path: "/push/subscriptions" }, /sign-out was asked for/],
+  ] as const)("is refused %s", async (_case, c, refusal) => {
+    const { api, bindApiOwner, blockApiOwner, pendApiOwner } = await import("../app/api-client.js");
+    const { OWNER_SIGNED_OUT } = await import("../app/shell/owner-cookie.js");
+    answerAccount = A;
+    setOwnerCookie(A);
+    if (c.bound === "A") bindApiOwner(A);
+    else if (c.bound === "cold") { bindApiOwner(null); pendApiOwner(null); }
+    else if (c.bound === "blocked") blockApiOwner();
+    else bindApiOwner(null);
+    setOwnerCookie(c.jar === "pending" ? OWNER_SIGNED_OUT : c.jar);
+    await expect(api(c.path, { method: "DELETE", ...(c.pass === undefined ? {} : { signingOutOf: c.pass }) }))
+      .rejects.toThrow(refusal);
+    expect(asked, "a refused call reached the wire").toEqual([]);
+  });
+});
+
+/**
  * ═══ AF-RESPONSE-NOT-OWNER-BOUND — THE ANSWER SAYS WHOSE IT IS ════════════════════════════
  *
  * Every other guard in this file asks the BROWSER: the marker before the request, the marker

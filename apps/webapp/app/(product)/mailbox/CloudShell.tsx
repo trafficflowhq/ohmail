@@ -99,8 +99,9 @@ export function CloudShell({ demo }: { demo: boolean }) {
   /** The server-confirmed account, for the Help & contact pane's diagnostics block. */
   const [accountId, setAccountId] = useState<string | null>(null);
   const onConfirmed = useCallback((accountId: string) => {
+    // A sign-out pending on this jar: the tab is leaving, and nothing is bound for this answer.
+    if (!listenFor(accountId)) return;
     bindApiOwner(accountId);
-    listenFor(accountId);
     setAccountId(accountId);
   }, [listenFor]);
   /**

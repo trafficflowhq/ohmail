@@ -336,7 +336,19 @@ export async function signOut(
   owner?: string,
   opts: { mayProceed?: () => boolean } = {},
 ): Promise<SignOutResult | null> {
-  if (opts.mayProceed === undefined) presses.set(thisTabName(), signOutPresses() + 1);
+  /*
+   * PENDING FROM THE PRESS, before any await: from here every gate reads a sign-out (the edge sends a
+   * new tab to the sign-in page, the manage hand-off, the sync gate, this client's verdict, a tab booting
+   * from an earlier answer) and the account's other tabs leave. A 204 or our coded 401 clears it, a
+   * refusal leaves it. `named` is the account the jar named at the press: the wake row's DELETE below
+   * still goes out under it. The finisher's jar is already pending.
+   */
+  const named = opts.mayProceed === undefined ? readOwner() : null;
+  if (opts.mayProceed === undefined) {
+    presses.set(thisTabName(), signOutPresses() + 1);
+    markSignedOutPending();
+    postSignedOut(owner ?? null);
+  }
   // NEVER THROWS, and the refusal rides the result instead. A `return` inside a `finally`
   // would have silently swallowed this exception, which is the same shape of quiet loss the
   // rest of this file exists to stop; and throwing would throw away `remaining`, which is the
@@ -352,17 +364,7 @@ export async function signOut(
    * It runs before the logout, and the logout runs regardless of how it
    * went — a browser asking to be signed out is asking either way.
    */
-  await revokeWakeRegistration();
-  /*
-   * PENDING FROM THE MOMENT THE PRESS LEAVES, not from the door's answer: while the door is out every
-   * gate already reads a sign-out (the edge, the manage hand-off, the sync gate, this client's verdict)
-   * and the account's other tabs leave. A 204 or our coded 401 clears it, a refusal leaves it. After the
-   * wake revoke, whose DELETE still needs this tab's owner check to pass. The finisher's jar is pending.
-   */
-  if (opts.mayProceed === undefined) {
-    markSignedOutPending();
-    postSignedOut(owner ?? null);
-  }
+  await revokeWakeRegistration(named !== null ? { signingOutOf: named } : undefined);
   try {
     await auth.logout({ mayProceed: opts.mayProceed });
   } catch (err) {

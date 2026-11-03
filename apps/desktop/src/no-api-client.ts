@@ -115,7 +115,7 @@ export const apiOwnerHolds: (path: string, opts?: { ceremony?: boolean }) => boo
  */
 export type OwnerVerdict = "holds" | "absent" | "signed-out" | "mismatch";
 
-export const apiOwnerVerdict: (path: string, opts?: { ceremony?: boolean }) => OwnerVerdict =
+export const apiOwnerVerdict: (path: string, opts?: { ceremony?: boolean; signingOutOf?: string }) => OwnerVerdict =
   () => "holds";
 
 export const ownerRefusalCodes: () => readonly string[] = () => [];
@@ -749,7 +749,7 @@ export const push: {
     subscribe: (endpoint: string, p256dh: string, auth: string) => Promise<{
         id: string;
     }>;
-    unsubscribe: (id: string) => Promise<void>;
+    unsubscribe: (id: string, opts?: { signingOutOf?: string }) => Promise<void>;
 } = absent;
 
 export const consent: {
