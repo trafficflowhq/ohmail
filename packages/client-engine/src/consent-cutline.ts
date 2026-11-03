@@ -455,6 +455,16 @@ function heldAheadOfTheCopy(reader: EntityReader, messages: readonly EngineMessa
 }
 const NO_SENDERS: ReadonlySet<string> = new Set();
 
+/**
+ * THE MAILBOXES THE STORE'S QUEUE PAGE LEAVES OUT (`ScreenerWaitingPageDTO.gone`: removed with the
+ * copy kept, or erased). Their mail asks nothing: no page lists their senders, so the page's silence
+ * is no answer about it. Empty with no page, or a page from a server older than the field.
+ */
+function goneMailboxes(reader: EntityReader): ReadonlySet<string> {
+  const gone = screenerWaitingOf(reader)?.page.gone;
+  return gone === undefined || gone.length === 0 ? NO_SENDERS : new Set(gone);
+}
+
 /** The senders a claim at the gate is held for inside the cutline ({@link claimInside}) — the server's
  *  `senderHasHeldClaimSql` with its cutoff, and like it not a row the person skip takes ({@link personSkip}). */
 function sendersWithAHeldClaim(
@@ -705,8 +715,12 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const messages = reader.list<EngineMessage>("message");
   const index = consentIndex(rulesList(reader), mailboxProfiles(reader));
   const own = ownAddressKeys(reader, opts);
-  const notWaiting = storeSaysNotWaiting(reader, messages);
-  const heldAhead = heldAheadOfTheCopy(reader, messages);
+  /* A REMOVED MAILBOX ASKS NOTHING: the queue is read as if its mail did not exist, so every
+     reckoning of who waits runs over the rest (`live`), and its own letters take the arm below. */
+  const gone = goneMailboxes(reader);
+  const live = gone.size === 0 ? messages : messages.filter((m) => !gone.has(m.mailboxId));
+  const notWaiting = storeSaysNotWaiting(reader, live);
+  const heldAhead = heldAheadOfTheCopy(reader, live);
   /* The user's own folders, when "Use folders" is on (FOLDERS-SPEC.md
    * §16.5). Two gates, both must say yes: the caller's
    * {@link ConsentOptions.foldersEnabled} (the account's consent answer —
@@ -732,12 +746,14 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
   const inUserFolder = (m: EngineMessage): boolean =>
     userFolders.has(`${m.mailboxId}|${m.folder}`) || userFolders.has(m.folder);
   const rulesOnly = opts.rulesOnly === true;
-  const activity = rulesOnly ? new Map<string, SenderActivity>() : senderActivity(messages, opts, own, index);
+  const activity = rulesOnly ? new Map<string, SenderActivity>() : senderActivity(live, opts, own, index);
   // The same line {@link senderActivity} measures from, read here for outbound mail — see the
   // own-sent branch below. One call, so the two halves of the partition cannot disagree about
   // where the cutline is.
   const cutOf = cutlineOfMailbox(opts);
-  const heldClaim = sendersWithAHeldClaim(messages, cutOf, index, opts.firstImportDoneAt);
+  const heldClaim = sendersWithAHeldClaim(live, cutOf, index, opts.firstImportDoneAt);
+  /** A removed mailbox's letters held at the gate, which no thread rescues into a pile. */
+  const goneHeld = new Set<string>();
 
   const placeOf = new Map<string, Folder | null>();
   /** Messages whose sender is consented, by thread — the anchor the thread rule uses. */
@@ -841,7 +857,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     /* "Yes, I hear from this person" is core's one list (`isConsentingDestination`), which the
        server's queue SQL is pinned to: Screened and Quarantine are decisions that are not consent. */
     const consented = decided !== null && isConsentingDestination(decided);
-    if (consented) consentedSenders.add(key);
+    if (consented && !gone.has(m.mailboxId)) consentedSenders.add(key);
 
     /**
      * A RESURFACED ROW IS THE USER'S OWN ACT, AND THE CUTLINE KEEPS ITS HANDS OFF: Rule 1 above says consent comes
@@ -887,6 +903,17 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
       // and never pulls this one back, a screen-out of its author never shelves it, and it is
       // neither queued, cut nor counted; `cutlineCounts` leaves the same row out of its residences.
       placeOf.set(m.id, m.folder);
+    } else if (gone.has(m.mailboxId)) {
+      // A REMOVED MAILBOX'S LETTER, counted nowhere: a rule's screen-out keeps its shelf, an admitted
+      // sender's INBOX letter stays in the INBOX, and the rest is History. Never at the gate, and
+      // never the Ohbox on the page's silence: no page names who waits there.
+      if (placed !== null && effectForDestination(placed) === "deny") placeOf.set(m.id, placed);
+      else if (m.folder === "INBOX" && consented) placeOf.set(m.id, "INBOX");
+      else {
+        placeOf.set(m.id, null);
+        historyIds.add(m.id);
+        if (m.folder === "ohmail/Screener") goneHeld.add(m.id);
+      }
     } else if (placed !== null || decided !== null) {
       placeOf.set(m.id, placed !== null && effectForDestination(placed) === "deny" ? placed : m.folder);
       if (m.folder === "ohmail/Screener" && !active) retiredDecided.add(key);
@@ -967,7 +994,7 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     for (const [threadId, list] of onThread) ourRecordOn.set(threadId, counterpartyEvidence(list));
 
     for (const m of messages) {
-      if (!historyIds.has(m.id) || !m.threadId) continue;
+      if (!historyIds.has(m.id) || !m.threadId || goneHeld.has(m.id)) continue;
       const anchor = consentedByThread.get(m.threadId);
       if (!anchor) continue;
       /* The account's OWN mail is not an admission of anybody: this rescue keeps the user's own

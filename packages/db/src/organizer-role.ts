@@ -1,4 +1,4 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { Dialect } from "./dialect/index.js";
 import { mailboxes } from "./schema-mail.js";
 import { isMailboxDisabledReason, type MailboxDisabledReason } from "./mailbox-errors.js";
@@ -525,6 +525,24 @@ export async function accountWritesHere(tx: Tx, accountId: string): Promise<bool
     c[fanOutPlace(e)]++;
   }
   return writesHere(c);
+}
+
+/**
+ * A MAILBOX A PRESS FILES OR ASKS: neither erased nor disabled (removed, or stood down for another
+ * install). A list address's screen-out counts only claims held in one (mail 0150).
+ */
+export function mailboxTakesPressSql(m: { status: SQL | AnyColumn; erasureDoneAt: SQL | AnyColumn }): SQL {
+  return sql`(${m.erasureDoneAt} is null and ${m.status} <> 'disabled')`;
+}
+
+/** The account's mailboxes among `ids` that {@link mailboxTakesPressSql} admits. */
+export async function readMailboxesTakingAPress(tx: Tx, accountId: string, ids: readonly string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const rows = await tx.select({ id: mailboxes.id }).from(mailboxes).where(and(
+    eq(mailboxes.accountId, accountId), inArray(mailboxes.id, [...new Set(ids)]),
+    mailboxTakesPressSql({ status: mailboxes.status, erasureDoneAt: mailboxes.erasureDoneAt }),
+  ));
+  return new Set(rows.map((r) => r.id));
 }
 
 /**

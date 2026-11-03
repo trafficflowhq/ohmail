@@ -2982,7 +2982,9 @@ function WaitingPreview({
   const ruleTarget =
     scope === "domain" ? displayDomainLabel(sender.from.address) : displayAddress(sender.from.address);
   const aiDest = sender.ai?.dest as Parameters<typeof DecisionBar>[0]["aiDest"];
-  const barCopy = useDecisionBarCopy(ruleTarget);
+  // A LIST'S CLAIMS THE STORE SAYS A SCREEN-OUT FILES ALONE (mail 0150): that press writes no rule.
+  const claimsAlone = (sharedDomain || scope === "sender") && sender.checked?.claimsOnly === true;
+  const barCopy = useDecisionBarCopy(ruleTarget, claimsAlone);
   const firstContact = firstContactTime(sender);
   return (
     <>
@@ -3032,6 +3034,12 @@ function WaitingPreview({
                 count: reach.others.reduce((n, o) => n + o.count, 0),
                 senders: reach.others.map((o) => `${displayAddress(o.address)} (${o.count})`).join(", "),
               })}
+            </div>
+          ) : null}
+          {/* A LIST'S CLAIMS (mail 0150): a screen-out of this sender files those letters alone. */}
+          {claimsAlone ? (
+            <div className="scn-caption" data-list-claim="">
+              {t("listClaimScreenOut", { brand: sender.checked!.brand })}
             </div>
           ) : null}
         </>

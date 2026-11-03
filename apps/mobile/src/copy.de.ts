@@ -690,6 +690,8 @@ export const DE: Deck = {
   scopeDomain: "ganze Domain",
   decideRule: (target: string) =>
     `Wird zur Regel: Künftige Mails von ${target} werden automatisch einsortiert. Die ✓-Hälfte markiert diese Mails außerdem als gelesen.`,
+  decideRuleListClaim: (target: string) =>
+    `Ohbox, News und Belege werden zur Regel: Künftige Mails von ${target} werden automatisch einsortiert. Aussortieren und Spam schreiben hier keine Regel. Die ✓-Hälfte markiert diese Mails außerdem als gelesen.`,
   decideUnsub: (claim: UnsubSaid, target: string, domain: boolean) =>
     domain
       ? claim === "sends"
@@ -1147,6 +1149,8 @@ export const DE: Deck = {
     "Nichts hat sich geändert — dieses Handy liest dieses Postfach nur. Im Moment organisiert es nichts.",
   liveDecided: (dest: string, target: string) =>
     `${dest} — künftige Mails von ${target} werden automatisch dorthin einsortiert.`,
+  liveDecidedClaims: (dest: string, brand: string) =>
+    `${dest} — nur die Nachrichten, die sich als ${brand} ausgeben. Es wurde keine Regel erstellt, die übrigen Mails der Liste bleiben, wo sie sind.`,
   liveAlsoUnsubscribing: (said: string, how: UnsubToast) =>
     how === "sends"
       ? `${said} Rückgängig stoppt auch die Ein-Klick-Abmeldung. Sobald Rückgängig weg ist, wird sie gesendet und lässt sich nicht zurücknehmen, und spätere Mails des Absenders mit Ein-Klick-Abmeldung werden ebenfalls abgemeldet.`
@@ -1814,6 +1818,8 @@ export const DE: Deck = {
     "Erster Kontakt. Von diesem Absender hat es noch nichts in die Ohbox geschafft — es hat hier gewartet.",
   domainAlsoFiles: (count: number, senders: string): string =>
     `Sortiert außerdem ${count === 1 ? "1 Mail" : `${count} Mails`} von anderen bei dieser Domain ein: ${senders}.`,
+  listClaimScreenOut: (brand: string): string =>
+    `Aussortieren legt nur die Nachrichten ab, die sich als ${brand} ausgeben. Die übrigen Mails der Liste bleiben, wo sie sind.`,
   senderPastTheGate: (n: number): string =>
     n === 1
       ? "Eine Mail dieses Absenders ist schon in deinen Mails. Die Mails unten haben hier gewartet."

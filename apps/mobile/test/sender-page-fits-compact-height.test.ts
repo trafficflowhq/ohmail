@@ -42,7 +42,7 @@ describe("the decision panel at compact height (DECISION_PANEL_TALL)", () => {
     expect(bar).toContain("{scopeInRow ? null : scopeControl}");
     expect(bar).toContain("const scopeInRow = shape.scopeInRow && scopeFitsRow(fit.row, fit.capsules, fit.scope);");
     // Also gated on `nobody`: while nothing organizes a mailbox the sentence would promise filing nothing does.
-    expect(bar).toMatch(/\{shape\.explainer && !nobody \? \(\s*<Txt variant="hint"[^>]*>\s*\{Copy\.decideRule\(target\)\}/);
+    expect(bar).toMatch(/\{shape\.explainer && !nobody \? \(\s*<Txt variant="hint"[^>]*>\s*\{ruleLine\}/);
   });
 
   it("the scope control ends the row only when the whole row fits; else its own row, never scrolled off", () => {
@@ -58,7 +58,7 @@ describe("the decision panel at compact height (DECISION_PANEL_TALL)", () => {
 
   it("the explainer the panel drops is still said, as every capsule's hint", () => {
     // While nothing organizes a mailbox the hint says so instead of promising a filing.
-    expect(bar).toContain("hint={nobody ? Copy.screeningNoteNobody : Copy.decideRule(target)}");
+    expect(bar).toContain("hint={nobody ? Copy.screeningNoteNobody : ruleLine}");
     const capsule = page.slice(page.indexOf("function DecisionCapsule("));
     expect(capsule).toContain("accessibilityHint={hint}");
   });

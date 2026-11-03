@@ -17,6 +17,17 @@ export async function readOwnAddresses(db: Tx, accountId: string): Promise<Set<s
   return new Set(rows.map((r) => r.address.toLowerCase()).filter((a) => a !== ""));
 }
 
+/**
+ * THE ACCOUNT'S REMOVED MAILBOXES — erased, or removed with the copy kept: the ones
+ * `mailboxCountsAsOwnSql` says are no longer the account's (a stood-down mailbox still is). Their
+ * mail asks no Screener decision (`notGoneSql`). Ids, sorted.
+ */
+export async function readGoneMailboxIds(db: Tx, accountId: string): Promise<string[]> {
+  const rows = await db.select({ id: mailboxes.id }).from(mailboxes)
+    .where(and(eq(mailboxes.accountId, accountId), sql`not ${mailboxCountsAsOwnSql(mailboxes)}`));
+  return rows.map((r) => r.id).sort();
+}
+
 /** An account's mailbox row as a pass already read it, with the three columns the own test reads. */
 export interface OwnMailboxRow {
   address: string; status: string; disabledReason: string | null; erasureDoneAt: Date | string | null;

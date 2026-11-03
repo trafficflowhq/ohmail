@@ -45,6 +45,25 @@ describe("the list sentence on the phone", () => {
     expect(byKey.get(SHOP)?.checked).toEqual({ brand: "PostFinance", domainShared: false, domain: "postfinance-sicherheit.example" });
   });
 
+  it("the screen-out line on a list address's claims says what the press files, in both languages", () => {
+    expect(en.listClaimScreenOut("PostFinance"))
+      .toBe("Screening out sets aside only the messages that claim to be PostFinance. The list's other mail stays where it is.");
+    expect(de.listClaimScreenOut("PostFinance"))
+      .toBe("Aussortieren legt nur die Nachrichten ab, die sich als PostFinance ausgeben. Die übrigen Mails der Liste bleiben, wo sie sind.");
+  });
+
+  it("a list claim's screen-out promises no rule, under the bar and after the press, in both languages", () => {
+    expect(en.decideRuleListClaim(LIST)).toBe(`Ohbox, News and Receipts become a rule — future mail from ${LIST} files automatically. `
+      + "Screen out and Spam write no rule here. The ✓ half also marks this mail read.");
+    expect(de.decideRuleListClaim(LIST)).toBe(`Ohbox, News und Belege werden zur Regel: Künftige Mails von ${LIST} werden automatisch einsortiert. `
+      + "Aussortieren und Spam schreiben hier keine Regel. Die ✓-Hälfte markiert diese Mails außerdem als gelesen.");
+    expect(en.liveDecidedClaims(en.segScreened, "PostFinance"))
+      .toBe("Screened out — only the messages that claim to be PostFinance. No rule was made, so the list's other mail stays where it is.");
+    expect(de.liveDecidedClaims(de.segScreened, "PostFinance"))
+      .toBe("Aussortiert — nur die Nachrichten, die sich als PostFinance ausgeben. Es wurde keine Regel erstellt, die übrigen Mails der Liste bleiben, wo sie sind.");
+    expect(/\b(Sie|Ihnen|Ihr|Ihre)\b/.test(de.decideRuleListClaim(LIST) + de.liveDecidedClaims("Spam", "PostFinance"))).toBe(false);
+  });
+
   it("the copy twins carry the sentence in both languages, the German addressing the reader as du", () => {
     expect(en.senderCheckList).toBe("Sent through a mailing list — anyone on it can write as this address.");
     expect(de.senderCheckList).toBe("Über eine Mailingliste verschickt — alle auf der Liste können unter dieser Adresse schreiben.");

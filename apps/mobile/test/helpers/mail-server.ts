@@ -132,6 +132,8 @@ export function mailServer() {
   let waitingRequests: unknown[] = [];
   /** What `GET /screener` names under `pendingDecisions` — this install's decisions still with the organizer. */
   let pendingDecisions: unknown[] = [];
+  /** List addresses the person let in, whose screen-out files their claims alone (`checked.claimsOnly`). */
+  const claimsAlone = new Set<string>();
   const addMessage = (m: Dto) => { messages.set(m.id, m); push("message", "create", m.id, m); };
   /** Mail the store holds and no drain carries — what a windowed mirror never received. */
   const holdOnServer = (m: Dto) => { messages.set(m.id, m); };
@@ -597,12 +599,17 @@ export function mailServer() {
         const page = rows.slice(from, from + screenerPageSize);
         const nextCursor = from + screenerPageSize < rows.length ? String(from + screenerPageSize) : null;
         json(200, {
-          items: page.map((m) => ({
-            id: m.id, messageId: m.id, threadId: m.threadId ?? null,
-            sender: { name: m.from.name ?? null, address: m.from.address },
-            subject: m.subject, snippet: m.snippet ?? "",
-            receivedAt: m.date ?? "", aiSuggestion: null, updatedAt: m.updatedAt ?? m.date ?? "",
-          })),
+          items: page.map((m) => {
+            const check = (m as { senderCheck?: { reason?: string; brand?: string } | null }).senderCheck;
+            const alone = claimsAlone.has(m.from.address.toLowerCase()) && check?.reason === "impersonation";
+            return {
+              id: m.id, messageId: m.id, threadId: m.threadId ?? null,
+              sender: { name: m.from.name ?? null, address: m.from.address },
+              subject: m.subject, snippet: m.snippet ?? "",
+              receivedAt: m.date ?? "", aiSuggestion: null, updatedAt: m.updatedAt ?? m.date ?? "",
+              ...(alone ? { checked: { reason: "impersonation", brand: check!.brand, domainShared: false, list: true, claimsOnly: true } } : {}),
+            };
+          }),
           nextCursor,
           // The store's own count, stated on the first page only — the route's shape since it
           // began answering the whole queue's size.
@@ -681,6 +688,17 @@ export function mailServer() {
         const parsed = JSON.parse(body) as { decision: "yes" | "no"; dest?: string; scope?: "sender" | "domain" };
         const dest = parsed.dest ?? (parsed.decision === "yes" ? "INBOX" : "ohmail/Screened");
         const key = rep.from.address.toLowerCase();
+        // A list address the person let in: its screen-out files the claims alone and writes no rule.
+        if (parsed.decision === "no" && (parsed.scope ?? "sender") === "sender" && claimsAlone.has(key)) {
+          for (const m of [...messages.values()]) {
+            const check = (m as { senderCheck?: { reason?: string } | null }).senderCheck;
+            if (m.folder === "ohmail/Screener" && m.from.address.toLowerCase() === key && check?.reason === "impersonation") {
+              updateMessage(m.id, { folder: dest });
+            }
+          }
+          json(200, { messageId: rep.id, appliedFolder: dest, createdRuleId: null }, seq);
+          return;
+        }
         for (const m of [...messages.values()]) {
           if (m.folder === "ohmail/Screener" && m.from.address.toLowerCase() === key) updateMessage(m.id, { folder: dest });
         }
@@ -1143,6 +1161,8 @@ export function mailServer() {
     /** Cut `GET /screener` into pages of this size, so the client's cursor loop is measured. */
     setScreenerPageSize: (n: number) => { screenerPageSize = n; },
     setPendingDecisions: (list: unknown[]) => { pendingDecisions = list; },
+    /** These list addresses' screen-out files their claims alone, as the server's page and press say. */
+    setClaimsAlone: (...addresses: string[]) => { for (const a of addresses) claimsAlone.add(a.toLowerCase()); },
     holdOnServer,
     currentSeq: () => seq,
     message: (id: string) => messages.get(id),

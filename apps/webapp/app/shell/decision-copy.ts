@@ -79,7 +79,7 @@ export function pileNames(t: T): Record<DecisionDestination, string> {
  * same set rather than a second hand-written list: "a demoting destination has no read verb" is
  * one fact, and the day it moves it has to move once.
  */
-export function useDecisionBarCopy(ruleTarget: string): DecisionBarCopy {
+export function useDecisionBarCopy(ruleTarget: string, claimsAlone = false): DecisionBarCopy {
   const t = useTranslations("screener") as unknown as T;
   return useMemo(() => {
     const dest = {} as DecisionBarCopy["dest"];
@@ -104,10 +104,11 @@ export function useDecisionBarCopy(ruleTarget: string): DecisionBarCopy {
       scopeAria: t("barScopeAria"),
       scopeSender: t("barScopeSender"),
       scopeDomain: t("barScopeDomain"),
-      rule: t("barRule", { target: ruleTarget }),
+      // Where a screen-out files a list's claims alone, Screen out and Spam write no rule (mail 0150).
+      rule: t(claimsAlone ? "barRuleListClaim" : "barRule", { target: ruleTarget }),
       halvesLabel: t("barHalvesLabel"),
       halves: t("barHalves"),
       back: t("back"),
     };
-  }, [t, ruleTarget]);
+  }, [t, ruleTarget, claimsAlone]);
 }

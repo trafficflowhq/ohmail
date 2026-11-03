@@ -2612,11 +2612,18 @@ const WIRE_KIND: Partial<Record<EngineMutation["kind"], string>> = {
 };
 
 /** A queue row off the wire as the mirror stores it. */
+/** Do two pages name the same left-out mailboxes (`gone`, sorted; absent from an older server)? */
+function sameGone(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
 function waitingRow(item: ScreenerWaitingItemWire, order: number, total: number): ScreenerWaitingSenderDTO {
   return {
     id: `sender:${senderKey(item.address)}`, kind: "sender", order, messageId: item.messageId,
     address: item.address, name: item.name, receivedAt: item.receivedAt, subject: item.subject,
     snippet: item.snippet, mailboxId: item.mailboxId, total, ...(item.marked ? { marked: true } : {}),
+    ...(item.claimsOnly ? { claimsOnly: true } : {}),
   };
 }
 
@@ -7019,6 +7026,7 @@ export class OhmailEngine {
         id: SCREENER_WAITING_PAGE_ID, kind: "page", total, nextCursor: wire.nextCursor,
         inFlight: wire.inFlight, ask: seq, rows: puts.length,
         ...(this.queueStaysBehind(wire) ? { copyBehind: true as const } : {}),
+        ...(wire.gone !== undefined ? { gone: wire.gone } : {}),
       };
       puts.push({ type: SCREENER_WAITING_TYPE, id: SCREENER_WAITING_PAGE_ID, entity: page });
     }
@@ -7060,7 +7068,12 @@ export class OhmailEngine {
       if (this.screenerPageReps.size <= SCREENER_PAGE_REPS_MAX) break;
       this.screenerPageReps.delete(id);
     }
-    if (cursor !== null) await this.noteQueueWalk(cursor, wire);
+    /* A PAGE LEAVING OUT OTHER MAILBOXES THAN THE STORED ONE (a removal since it was asked): the stored
+       page's silence about them reads as "let in", so it is asked again and this page records no walk. */
+    const stored = page?.entity?.kind === "page" ? page.entity : undefined;
+    if (stored !== undefined && !sameGone(stored.gone, wire.gone)) {
+      await this.refreshScreenerWaiting().catch(() => { /* marked dirty: the next settle asks again */ });
+    } else if (cursor !== null) await this.noteQueueWalk(cursor, wire);
     return { senders: wire.items.map((item, i) => waitingRow(item, i, total)), nextCursor: wire.nextCursor };
   }
 

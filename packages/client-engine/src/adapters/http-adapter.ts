@@ -1356,6 +1356,8 @@ export class HttpAdapter implements EngineAdapter {
       mailboxId: typeof r.mailboxId === "string" && r.mailboxId !== "" ? r.mailboxId : null,
       ...(typeof r.checked === "object" && r.checked !== null
         && (r.checked as { reason?: unknown }).reason === "impersonation" ? { marked: true as const } : {}),
+      ...(typeof r.checked === "object" && r.checked !== null && (r.checked as { reason?: unknown }).reason === "impersonation"
+        && (r.checked as { claimsOnly?: unknown }).claimsOnly === true ? { claimsOnly: true as const } : {}),
     };
   }
 
@@ -1363,10 +1365,12 @@ export class HttpAdapter implements EngineAdapter {
     const q = new URLSearchParams();
     if (page.limit !== undefined) q.set("limit", String(page.limit));
     if (page.cursor) q.set("cursor", page.cursor);
+    // This engine presents a removed mailbox's mail itself (`consentPartition`), so the page may leave it out.
+    q.set("live", "1");
     const res = await this.request("GET", `/screener?${q.toString()}`);
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as {
-      items?: unknown; nextCursor?: unknown; total?: unknown; pendingDecisions?: unknown; copyBehind?: unknown;
+      items?: unknown; nextCursor?: unknown; total?: unknown; pendingDecisions?: unknown; copyBehind?: unknown; gone?: unknown;
     } | null;
     // A body that is not a queue page is no answer. Read as an empty page it would say nobody is
     // waiting, and the partition would present held mail in the Ohbox on the strength of it.
@@ -1389,6 +1393,9 @@ export class HttpAdapter implements EngineAdapter {
         ? Math.trunc(wire.total) : null,
       inFlight,
       ...(wire.copyBehind === true ? { copyBehind: true as const } : {}),
+      // A list this build cannot read is no answer about any mailbox: read as absent, today's page.
+      ...(Array.isArray(wire.gone) && wire.gone.every((id) => typeof id === "string" && id !== "")
+        ? { gone: [...new Set(wire.gone as string[])].sort() } : {}),
     };
   }
 

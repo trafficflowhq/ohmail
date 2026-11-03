@@ -267,6 +267,8 @@ export interface ScreenerWaitingItemWire {
   mailboxId: string | null;
   /** The page's `checked`: a held letter of this sender claims a company its address is not. */
   marked?: true;
+  /** The page's `checked.claimsOnly`: a screen-out of this sender files its claims alone and writes no rule (mail 0150). */
+  claimsOnly?: true;
 }
 
 /** One page of the queue. `total` is stated on the first page only; `null` where none was. */
@@ -281,6 +283,12 @@ export interface ScreenerWaitingWire {
    * ahead of the mail and rules it is read beside. Absent everywhere else.
    */
   copyBehind?: true;
+  /**
+   * The mailboxes the queue leaves out (removed with the copy kept, or erased), sorted: their mail
+   * makes nobody waiting, so the page's silence says nothing about it. Absent from an older server,
+   * whose page lists their senders as before.
+   */
+  gone?: string[];
 }
 
 /** The press's answer: the groups it screened and how many messages they held. */

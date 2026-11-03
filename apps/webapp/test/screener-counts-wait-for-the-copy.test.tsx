@@ -6,6 +6,9 @@ import { NextIntlClientProvider } from "next-intl";
 import {
   OhmailEngine,
   MemoryMirrorStore,
+  consentPartition,
+  ohboxView,
+  presentationReader,
   type EngineAdapter,
   type EngineMessage,
   type Folder,
@@ -14,6 +17,10 @@ import {
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
+import { withNodeBlobs } from "./fixtures/node-blobs";
+import {
+  NOW as WORLD_NOW, SENDERS, removedMailboxWorld,
+} from "../../../packages/services/test/helpers/removed-mailbox-world.js";
 import { ScreenerView } from "../app/views/ScreenerView";
 import { KeymapProvider } from "../app/shell/keymap";
 import { LOADING_GRACE_MS } from "../app/shell/loading-grace";
@@ -225,5 +232,48 @@ describe("an account with older screened-out mail and a fresh import, on the rea
     await d.engine.refreshScreenerWaiting();
     await flush();
     expect(badges(el)[1]).toBe("2");
+  });
+});
+
+// ── A mailbox removed with its copy kept, on the real engine over the real route ─────────────
+
+async function mountPresented(engine: OhmailEngine, own: string) {
+  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  function Live(): React.ReactElement {
+    const [v, setV] = React.useState(0);
+    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
+    const presented = React.useMemo(
+      () => presentationReader(engine.read(), consentPartition(engine.read(), { now: WORLD_NOW, ownAddresses: [own] })), [v],
+    );
+    const state = useScreenerState(engine, v, (() => {}) as never, undefined, presented);
+    return view(state, { owed: false, storeImportOpen: false });
+  }
+  return render(provided(h(Live)));
+}
+
+describe("a mailbox removed with its copy kept asks nothing (helpers/removed-mailbox-world.ts)", () => {
+  it("the Screener counts and lists the live mailbox's strangers only", async () => {
+    const w = await withNodeBlobs(() => removedMailboxWorld("removed"));
+    const engine = await w.engine();
+    const el = await mountPresented(engine, w.own);
+    await flush();
+    expect(badges(el)[0], "the waiting count").toBe("2");
+    const shown = text(el);
+    for (const who of [SENDERS.B, SENDERS.I]) expect(shown, who).toContain(who);
+    for (const who of [SENDERS.A, SENDERS.C, SENDERS.D, SENDERS.E]) expect(shown, `${who} waits`).not.toContain(who);
+  });
+
+  it("a removal between the stored page and the Screener's own walk past it: the Ohbox shows none of the removed mailbox's strangers", async () => {
+    const w = await withNodeBlobs(() => removedMailboxWorld("stood-down"));
+    const engine = await w.engine({ pageLimit: 2 });
+    const el = await mountPresented(engine, w.own);
+    await flush();
+    await w.removeSecond();
+    const more = [...el.querySelectorAll("button")].find((b) => b.textContent === en.screener.waitingMoreAction);
+    await act(async () => { more!.click(); });
+    for (let i = 0; i < 5; i++) await flush();
+    const box = ohboxView(presentationReader(engine.read(), consentPartition(engine.read(), { now: WORLD_NOW, ownAddresses: [w.own] })));
+    const inBox = [...box.resurfaced, ...box.newForYou, ...box.previouslySeen].map((m) => m.id);
+    for (const name of ["A.held", "C.held", "C.inbox"]) expect(inBox, name).not.toContain(w.idOf(name));
   });
 });

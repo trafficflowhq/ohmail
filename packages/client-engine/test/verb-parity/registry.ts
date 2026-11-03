@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
-import { folderOps, mailboxes, outboundSends, recordChange, type Tx } from "@trafficflow/db";
+import {
+  contacts, folderOps, folderState, listAddresses, mailboxes, messages, outboundSends, recordChange, type LedgerTx, type Tx,
+} from "@trafficflow/db";
 import { seedScreenerHeld } from "../../../api/test/helpers.js";
 import {
   ohboxView,
@@ -517,6 +519,83 @@ export const VERB_MATRIX: Record<MutationKind, VerbEntry> = {
             "FOR SHARE role locks in applyScreenerDecision); the request road for mailboxes this " +
             "install cannot write is pg-tested in screener-decide-scope.pg.test.ts, and rule-retro " +
             "stays the backstop, pinned idempotent there",
+        },
+      },
+      {
+        // A REMOVED MAILBOX'S LETTER STAYS WHERE IT IS: the server writes none of it (`heldElsewhere`),
+        // so the overlay moves only the live mailbox's, read off the queue page's `gone`.
+        name: "a Yes where one mailbox was removed files the live mailbox's letter and leaves the removed one's",
+        seed: async (w) => {
+          const removed = randomUUID();
+          await w.db.insert(mailboxes).values({
+            id: removed, accountId: w.accountId, provider: "imap", status: "disabled",
+            address: `removed-${randomUUID().slice(0, 8)}@example.test`,
+          });
+          const there = await seedScreenerHeld(w.db, {
+            accountId: w.accountId, mailboxId: removed, fromAddress: "post@onehome.example", subject: "Dort",
+            date: new Date(Date.parse("2026-07-28T12:05:00.000Z")),
+          });
+          await w.db.transaction(async (tx) => {
+            await recordChange(tx as unknown as LedgerTx, {
+              accountId: w.accountId, entityType: "message", entityId: there.id, op: "create", meta: null,
+            });
+          });
+          await w.engine.syncOnce();
+          // The page names the removed mailbox and, asked before the live letter, no sender row.
+          await w.engine.refreshScreenerWaiting();
+          const live = await w.seedHeld({ fromAddress: "post@onehome.example", subject: "Hier" });
+          return { live, there: there.id };
+        },
+        mutation: (_w, c) => ({ kind: "screener_decide", senderId: c.live as string, decision: "yes" }),
+        landed: (r, c) => {
+          expect(msgOf(r, c.live as string)?.folder).toBe("INBOX");
+          expect(msgOf(r, c.there as string)?.folder, "the removed mailbox's letter moved").toBe("ohmail/Screener");
+        },
+        optimistic: "landed",
+        pass: {
+          none: "the decide files in its own transaction, and no in-process pass writes a removed " +
+            "mailbox's mail: every one asks the mailbox's role and skips a disabled one",
+        },
+      },
+      {
+        // A SCREEN-OUT OF A CLAIM THROUGH A LIST'S ADDRESS THE PERSON LET IN (mail 0150) files that letter
+        // alone: anyone on the list writes as its address, so no rule is written and the list's own held
+        // letter waits. The overlay reads the store's page, which says so (`checked.claimsOnly`).
+        name: "a No on a claim through a list's address files the claim alone: no rule, the list's own letter waits",
+        seed: async (w) => {
+          const list = "post@list.example";
+          await w.db.insert(listAddresses).values({ accountId: w.accountId, address: list, consentedBrands: [] });
+          await w.db.insert(contacts).values({ accountId: w.accountId, address: list, source: "person" });
+          const letter = async (o: { name: string | null; check: "none" | "impersonation"; at: string }) => {
+            const [m] = await w.db.insert(messages).values({
+              accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "h", dedupKey: `lst:${randomUUID()}`,
+              subject: "Konto", snippet: "", fromAddress: list, fromName: o.name, senderCheck: o.check,
+              senderCheckBrand: o.check === "impersonation" ? "PostFinance" : null, date: new Date(Date.parse(o.at)),
+              unread: true, nativeLocator: { folder: "ohmail/Screener", ref: `1:${randomUUID().slice(0, 6)}` },
+            }).returning();
+            await w.db.insert(folderState).values({
+              messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+              lastSetBy: "us", reconcileStatus: "reconciled",
+            });
+            await w.emit(m!.id, true);
+            return m!.id;
+          };
+          const own = await letter({ name: "The List", check: "none", at: "2026-07-28T12:00:00.000Z" });
+          const claim = await letter({ name: "PostFinance", check: "impersonation", at: "2026-07-28T12:06:00.000Z" });
+          await w.engine.syncOnce();
+          await w.engine.refreshScreenerWaiting();
+          return { own, claim, list };
+        },
+        mutation: (_w, c) => ({ kind: "screener_decide", senderId: c.claim as string, decision: "no" }),
+        landed: (r, c) => {
+          expect(msgOf(r, c.claim as string)?.folder).toBe("ohmail/Screened");
+          expect(msgOf(r, c.own as string)?.folder, "the list's own letter rode a forgery's screen-out").toBe("ohmail/Screener");
+          expect(r.list<RuleDTO>("rule").filter((x) => x.match === c.list), "a forgery screened out the list's address").toEqual([]);
+        },
+        optimistic: "landed",
+        pass: {
+          none: "the decide files the claim in its own transaction and writes no rule, so no rule's " +
+            "retro or tidy pass has anything of this press to carry out",
         },
       },
     ],

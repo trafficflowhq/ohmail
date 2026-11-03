@@ -12,6 +12,9 @@ import {
 import {
   liveOhbox, liveScreener, presentedWorld, SCREENING_UNSUPPLIED, type WorldView,
 } from "../src/state/live";
+import {
+  NOW as WORLD_NOW, SENDERS, removedMailboxWorld,
+} from "../../../packages/services/test/helpers/removed-mailbox-world.js";
 
 /**
  * THE PHONE PRESENTS WHAT THE STORE LISTS. A correspondent's letter the organizer admitted sits in
@@ -86,5 +89,33 @@ describe("the phone's screens present what the store lists", () => {
     }]);
     expect(afterRead.waiting.map((r) => r.address)).toEqual([STRANGER]);
     expect(afterRead.source).toBe("server");
+  });
+});
+
+describe("a mailbox removed with its copy kept asks nothing (helpers/removed-mailbox-world.ts)", () => {
+  it("the phone's Screener lists the live strangers, its walk names none past them, its Ohbox none of the strangers", async () => {
+    const w = await removedMailboxWorld("removed");
+    const engine = await w.engine();
+    const at: WorldView = { now: WORLD_NOW, zone: "UTC", ownAddresses: [w.own] };
+    const pres = presentedWorld(engine.read(), WORLD_NOW, false, SCREENING_UNSUPPLIED, [w.own]).reader;
+    const walked = (await engine.screenerWaitingPage(null))!.senders;
+    expect(walked.map((s) => w.nameOf(s.messageId))).toEqual(["I.held", "B.live"]);
+    for (const server of [null, walked]) {
+      expect(liveScreener(pres, at, {}, server).waiting.map((r) => r.address).sort()).toEqual([SENDERS.B, SENDERS.I].sort());
+    }
+    const box = liveOhbox(pres, at);
+    const inBox = [...box.resurfaced, ...box.fresh, ...box.seen].map((m) => m.id);
+    expect(inBox, "an admitted sender's letter in the removed mailbox").toContain(w.idOf("F.inbox"));
+    for (const name of ["A.held", "C.inbox", "D.second", "H.second"]) expect(inBox, name).not.toContain(w.idOf(name));
+  });
+
+  it("a removal between the stored page and the phone's walk past it: its Ohbox shows none of the removed mailbox's strangers", async () => {
+    const w = await removedMailboxWorld("stood-down");
+    const engine = await w.engine({ pageLimit: 2 });
+    await w.walkPastARemoval(engine);
+    const at: WorldView = { now: WORLD_NOW, zone: "UTC", ownAddresses: [w.own] };
+    const box = liveOhbox(presentedWorld(engine.read(), WORLD_NOW, false, SCREENING_UNSUPPLIED, [w.own]).reader, at);
+    const inBox = [...box.resurfaced, ...box.fresh, ...box.seen].map((m) => m.id);
+    for (const name of ["A.held", "C.held", "C.inbox"]) expect(inBox, name).not.toContain(w.idOf(name));
   });
 });

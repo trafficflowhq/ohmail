@@ -6,7 +6,7 @@ import { heldCheckOf } from "./held-check.js";
 import { domainOfAddress } from "./consent-cutline.js";
 import { ruleKeyOf, twinWinner } from "./rule-twins.js";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
-import { lineHoldsAbove, rulesList, senderKey } from "./selectors.js";
+import { lineHoldsAbove, rulesList, screenerWaitingOf, senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import { storeInstantOf } from "./store-pages.js";
 import {
@@ -321,18 +321,38 @@ function derivedScreenerEffects(
      leaves another address's claim, and a letter nobody checked, at the gate; that sender stays. */
   const inScope = (address: string): boolean =>
     scope === "domain" ? domainOfAddress(senderKey(address)) === domainOfAddress(key) : senderKey(address) === key;
+  // A removed mailbox's letters stay where they are: the server writes none of them (`heldElsewhere`).
+  const gone = new Set(screenerWaitingOf(reader)?.page.gone ?? []);
   const gate = reader.list<EngineMessage>("message")
-    .filter((x) => x.folder === FOLDER_OF_VIEW.screener && inScope(x.from.address));
+    .filter((x) => x.folder === FOLDER_OF_VIEW.screener && inScope(x.from.address) && !gone.has(x.mailboxId));
   const moves = (x: EngineMessage): boolean => heldMovesOnPress({
     check: heldCheckOf(x.senderCheck), from: x.from.address, auth: x.authVerdict,
   }, key);
-  const kept = new Set(gate.filter((x) => !moves(x)).map((x) => senderKey(x.from.address)));
-  const effects: MutationEffect[] = gate.filter(moves).map((msg) => ({
+  const moveOf = (msg: EngineMessage): MutationEffect => ({
     type: "message",
     id: msg.id,
     entity: { ...msg, folder: destination, updatedAt: iso } satisfies EngineMessage,
     move: { from: msg.folder, to: destination },
-  }));
+  });
+  /* A SCREEN-OUT OF A LIST'S CLAIMS files those letters alone where the store's queue says so (a list
+     the person let in, `claimsOnly`), as the server's press does: no rule, and the row stays while the
+     list's own held mail waits. */
+  const alone = reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)
+    .some((r) => r.kind === "sender" && r.claimsOnly === true && senderKey(r.address) === key);
+  const listClaims = alone && m.decision === "no" && scope === "sender"
+    ? gate.filter((x) => x.senderCheck?.reason === "impersonation" && moves(x))
+    : [];
+  if (listClaims.length > 0) {
+    const effects = listClaims.map(moveOf);
+    if (gate.length === listClaims.length) {
+      for (const row of reader.list<ScreenerWaitingDTO>(SCREENER_WAITING_TYPE)) {
+        if (row.kind === "sender" && senderKey(row.address) === key) effects.push({ type: SCREENER_WAITING_TYPE, id: row.id, entity: null });
+      }
+    }
+    return effects;
+  }
+  const kept = new Set(gate.filter((x) => !moves(x)).map((x) => senderKey(x.from.address)));
+  const effects: MutationEffect[] = gate.filter(moves).map(moveOf);
 
   // The decide lifts an address rule over its domain's (`screener-apply.ts#liftOverDomain`), and
   // stamps the backlog when past mail is asked for; the overlay writes what the server will.

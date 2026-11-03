@@ -942,12 +942,15 @@ export interface ScreenerSenderDTO {
    * this row lists, the newest marked message naming the brand. `domain` is the address's own, for
    * the shared-provider sentence. Rendered outside the AI advice, whether or not any was bought.
    * `list`: anyone on a mailing list can write as this address (mail 0150) — its own sentence.
+   * `claimsOnly`: the store's queue says a screen-out of this sender sets aside the letters claiming
+   * `brand` alone and writes no rule (a list the person let in); absent, it is the address's.
    * `unverified`: no held letter claims anything, and the address is `brand`'s own while its
    * provider did not confirm the sender — said on the row, with no chip; a claim outranks it.
    * `brand` may then be a domain (`admin.ch`), where the address names no one brand.
    */
   checked?: {
     reason: "impersonation" | "unverified"; brand: string; domainShared: boolean; domain: string; list?: true;
+    claimsOnly?: true;
   };
   /**
    * HOW MANY LETTERS OF THIS SENDER THE LISTS SHOW PAST THE GATE — in the Ohbox, News or Receipts.
@@ -2020,6 +2023,11 @@ export interface ScreenerWaitingPageDTO {
   /** The subjects of decisions the server is still carrying out, which it leaves off every page. */
   inFlight: Array<{ scope: "sender" | "domain"; match: string }>;
   /**
+   * The mailboxes the queue leaves out, sorted (`ScreenerWaitingWire.gone`): the partition presents
+   * their mail itself. Absent from an older server's answer, whose page lists their senders.
+   */
+  gone?: string[];
+  /**
    * The copy this page was read beside was still taking in the account (`ScreenerWaitingWire`), or
    * this window has not yet settled a drain begun after the door said it had caught up.
    */
@@ -2057,6 +2065,8 @@ export interface ScreenerWaitingSenderDTO {
   total: number;
   /** A held letter of this sender claims a company (the page's `checked`): another address's press keeps them waiting. */
   marked?: true;
+  /** A screen-out of this sender files its claims alone and writes no rule (the page's `checked.claimsOnly`, mail 0150). */
+  claimsOnly?: true;
 }
 
 /**

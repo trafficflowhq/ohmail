@@ -180,16 +180,16 @@ const asRow = (r: Rowish & { sortAt: Date; markedBrand: string | null }): Row =>
 /** The page and its total, the old way and the new way, through the service's own window. */
 export class Probe extends ScreenerService {
   async newPage(ctx: ServiceContext, after: { time: number; messageId: string } | null, limit: number, cutline?: CutlineSet) {
-    const { rows, total } = await this.heldSenderPage(ctx, { after, limit, ...(cutline ? { cutline } : {}), withTotal: after === null });
+    const { rows, total } = await this.heldSenderPage(ctx, { after, limit, ...(cutline ? { cutline } : {}), withTotal: after === null, gone: [] });
     return { rows: rows.map((r) => asRow(r as never)), total };
   }
 
   async oldPage(ctx: ServiceContext, after: { time: number; messageId: string } | null, limit: number, cutline?: CutlineSet) {
-    const { reps, d } = this.heldSenderReps(ctx);
+    const { reps, d } = this.heldSenderReps(ctx, undefined, []);
     const sender = sql`lower(${reps.fromAddress})`;
-    const claim = cutline ? senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS) : undefined;
+    const claim = cutline ? senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS, []) : undefined;
     // The held arrival asked of every sender, with no window mark in front of it.
-    const arrival = cutline ? senderHasHeldArrivalSql(d, ctx.accountId, sender, cutline) : undefined;
+    const arrival = cutline ? senderHasHeldArrivalSql(d, ctx.accountId, sender, cutline, []) : undefined;
     const filters = [
       eq(reps.rank, 1),
       cutline ? sql`(${groupedActiveSql(d, ctx.accountId, sender, cutline)} or ${claim} or ${arrival})` : undefined,
@@ -247,7 +247,7 @@ export async function cutlineMatchesGrouped(w: World): Promise<void> {
     const rows = await d.exec(w.db, sql`
       select x.addr,
              case when ${groupedActiveSql(d, w.accountId, sql`x.addr`, set)} then 1 else 0 end as grouped,
-             case when ${senderIsActiveSql(d, w.accountId, sql`x.addr`, set)} then 1 else 0 end as per_row
+             case when ${senderIsActiveSql(d, w.accountId, sql`x.addr`, set, [])} then 1 else 0 end as per_row
         from (select distinct lower(m.from_address) as addr from messages m
                where m.account_id = ${d.castUuid(w.accountId)}) x
        order by 1`);

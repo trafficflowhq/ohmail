@@ -1272,6 +1272,8 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // A comma list of uuids, refused above `WHY_STAYED_IDS_MAX` and each validated as a uuid.
   "routes/screener.ts#ids": "clamped",
   "routes/screener.ts#limit": "clamped",
+  // The queue's opt-in (`?live=1`): compared to exactly "1", anything else is the page as before.
+  "routes/screener.ts#live": "closed-set",
   "routes/screener.ts#mailboxId": "identifier",
   // The organize decision's window: an integer refused outside 1-365, and one of two scope words.
   "routes/screener.ts#dormancyDays": "clamped",
@@ -1863,6 +1865,9 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
     count: 1,
   },
   "screener-service.ts :: messageIds": { origin: { bounded: "one screener page's ids" }, count: 1 },
+  // The page's claims-alone probe (mail 0150): subsets of one `clampLimit`ed page's rows.
+  "screener-service.ts :: [...letIn]": { origin: { bounded: "the list senders of one screener page a person let in" }, count: 1 },
+  "screener-service.ts :: computed": { origin: { bounded: "the representatives of one screener page whose claim the page computed" }, count: 1 },
   // The automatic request's admitted-set read: the representatives `rep` already holds.
   "screener-service.ts :: rows.map((r) => r.messageId)": {
     origin: { bounded: "one representative per named sender — MAX_SUGGEST_SENDERS, refused in parseSenderSet before any query" },

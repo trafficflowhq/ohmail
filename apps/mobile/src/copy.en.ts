@@ -1037,6 +1037,9 @@ const TABLE = {
   scopeDomain: "whole domain",
   decideRule: (target: string) =>
     `Becomes a rule — future mail from ${target} files automatically. The ✓ half also marks this mail read.`,
+  /** The same line where a screen-out files a list's claims alone (mail 0150): it writes no rule. */
+  decideRuleListClaim: (target: string) =>
+    `Ohbox, News and Receipts become a rule — future mail from ${target} files automatically. Screen out and Spam write no rule here. The ✓ half also marks this mail read.`,
   /**
    * WHAT SCREEN OUT AND SPAM SEND, BEFORE EITHER IS PRESSED (`unsubscribeClaim`): the sender-level
    * condition, now and for later mail, a fact where a held letter offers one-click. `domain`: `@domain`.
@@ -1736,6 +1739,9 @@ const TABLE = {
   readerPressRefusedNobody: "Nothing changed — this phone only reads this mailbox. Nothing organizes it now.",
   liveDecided: (dest: string, target: string) =>
     `${dest} — future mail from ${target} files there automatically.`,
+  /** A screen-out that filed a list's claims alone (mail 0150): what it set aside, and that no rule was made. */
+  liveDecidedClaims: (dest: string, brand: string) =>
+    `${dest} — only the messages that claim to be ${brand}. No rule was made, so the list's other mail stays where it is.`,
   /**
    * A SCREEN-OUT OR SPAM DECIDE THAT SENDS THE ONE-CLICK UNSUBSCRIBE — the webapp's `toastScreened`
    * `unsub` arms, after whatever the press said: with Undo still to come (`sends`, `may`) it says
@@ -2660,6 +2666,9 @@ const TABLE = {
   /** A whole-domain decision names, before the press, the other waiting senders whose letters it files. */
   domainAlsoFiles: (count: number, senders: string): string =>
     `Also files ${count === 1 ? "1 letter" : `${count} letters`} from others at this domain: ${senders}.`,
+  /** A list address's claims: a screen-out there files them alone (the web's `screener.listClaimScreenOut`). */
+  listClaimScreenOut: (brand: string): string =>
+    `Screening out sets aside only the messages that claim to be ${brand}. The list's other mail stays where it is.`,
   /** The same note when some of this sender's mail is already past the gate: no longer first contact. */
   senderPastTheGate: (n: number): string =>
     n === 1

@@ -13,6 +13,7 @@ import { REASON_CODES, toSuggestion } from "../app/shell/screener-suggest.js";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { settleFirstPaint } from "./_first-paint.js";
+import { queueDoor } from "./fixtures/queue-door.js";
 
 /**
  * **THE ROW SAYS WHAT OHMAIL CHECKED ABOUT THE SENDER.**
@@ -57,7 +58,8 @@ function held(id: string, from: string, hour: number, folder: Folder = "ohmail/S
   };
 }
 
-async function engineWith(mail: EngineMessage[], extra: SyncChange[] = []): Promise<OhmailEngine> {
+/** `claimsOnly`: the store's queue answers over the held mail, naming these senders' screen-out as the claims alone. */
+async function engineWith(mail: EngineMessage[], extra: SyncChange[] = [], claimsOnly?: readonly string[]): Promise<OhmailEngine> {
   const store = new MemoryMirrorStore();
   await store.load();
   await store.applyChanges([
@@ -77,6 +79,12 @@ async function engineWith(mail: EngineMessage[], extra: SyncChange[] = []): Prom
       mutate: async () => ({ changes: [], seq: null }),
       withdrawSend: async () => ({ outcome: "unsupported" as const }),
       fetchBody: async () => null,
+      ...(claimsOnly === undefined ? {} : {
+        screenerWaiting: queueDoor(mail.filter((m) => m.folder === "ohmail/Screener").map((m) => ({
+          messageId: m.id, address: m.from.address, receivedAt: m.date ?? "",
+          ...(m.senderCheck ? { checked: { ...m.senderCheck, ...(claimsOnly.includes(m.from.address) ? { claimsOnly: true } : {}) } } : {}),
+        }))),
+      }),
     },
   });
 }
@@ -86,12 +94,15 @@ const CLEAN = "anna@studio-nord.example";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+let toasts: string[] = [];
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
   root = null;
   host = null;
+  // A press's held decision is journalled here, and the next mount would restore it.
+  window.localStorage.clear();
 });
 
 /** Mount the REAL Screener over the REAL state hook, with one bounded suggestion in the overlay. */
@@ -101,11 +112,13 @@ async function mount(
   extra: SyncChange[] = [],
   advised = true,
   presented = false,
+  claimsOnly?: readonly string[],
 ): Promise<void> {
   const { useScreenerState } = await import("../app/shell/screener-state.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("../app/shell/keymap.js");
-  const engine = await engineWith(mail, extra);
+  const engine = await engineWith(mail, extra, claimsOnly);
+  toasts = [];
 
   // Through `toSuggestion`, so the WIRE shape is what is under test and not a hand-built object.
   const suggestions = new Map<string, unknown>(advised ? [
@@ -122,7 +135,7 @@ async function mount(
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const raw = engine.read();
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions as never,
+    const state = useScreenerState(engine, v, ((m: string) => { toasts.push(m); }) as never, suggestions as never,
       presented ? presentationReader(raw, consentPartition(raw, { now: NOW })) : undefined);
     const [sel, setSel] = React.useState<Record<string, string | null>>({
       waiting: null, screened: null, spam: null,
@@ -272,10 +285,20 @@ describe("the identity fact, outside the AI advice", () => {
   });
 
   it("says it in German too", async () => {
-    await mount("de", [listed("l1", "list@lists.example")], [], false);
+    await mount("de", [listed("l1", "list@lists.example")], [], false, false, ["list@lists.example"]);
     await open("list@lists.example");
     expect(host!.querySelector('.scn-why-checked[data-reason="list"]')?.textContent)
       .toBe("Über eine Mailingliste verschickt — alle auf der Liste können unter dieser Adresse schreiben.");
+    // Beside the bar, for a list the person let in: what a screen-out of this sender files, and that it writes no rule.
+    expect(host!.querySelector("[data-list-claim]")?.textContent)
+      .toBe("Aussortieren legt nur die Nachrichten ab, die sich als PostFinance ausgeben. Die übrigen Mails der Liste bleiben, wo sie sind.");
+    expect(host!.querySelector(".decide .d-note")?.textContent).toContain(
+      "Ohbox, News und Belege werden zur Regel: Künftige Mails von list@lists.example werden automatisch einsortiert. Aussortieren und Spam schreiben hier keine Regel.");
+    const out = [...host!.querySelectorAll<HTMLElement>(".decide .d-main")].find((b) => (b.textContent ?? "").startsWith("Aussortieren"))!;
+    await act(async () => { out.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flush();
+    expect(toasts.at(-1)).toBe("Aussortiert — nur die Nachrichten von list@lists.example, die sich als PostFinance ausgeben. "
+      + "Es wurde keine Regel erstellt, die übrigen Mails der Liste bleiben, wo sie sind.");
   });
 
   it("CONTROL: a marked sender that is no list address has no list line", async () => {
@@ -283,6 +306,7 @@ describe("the identity fact, outside the AI advice", () => {
     await open("kunden@postfinance-sicherheit.example");
     expect(host!.querySelector('[data-reason="identity"]')).not.toBeNull();
     expect(host!.querySelector('[data-reason="list"]')).toBeNull();
+    expect(host!.querySelector("[data-list-claim]")).toBeNull();
   });
 
   it("CONTROL: an unmarked sender has no identity line", async () => {

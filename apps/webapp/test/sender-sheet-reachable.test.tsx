@@ -8,7 +8,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore,
+  OhmailEngine,
   type EngineMessage,
+  type EntityReader,
   type Folder,
   type SyncChange,
   type UnsubscribeLetter,
@@ -17,6 +19,7 @@ import messages from "../messages/en.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
 import { senderScreening } from "../app/shell/sender-screening";
 import { shellSliceOf } from "./source-anchor";
+import { queueDoor } from "./fixtures/queue-door.js";
 
 /**
  * ── THE SHEET IS REACHED, NOT MERELY BUILT ──────────────────────────────────
@@ -101,10 +104,29 @@ async function render(
    * own default so every existing case in this file keeps asserting the shipped behaviour.
    * `address` is the contact-chip override (viewer), resolved exactly as `AppShell` does.
    */
-  opts: { autoUnsubscribe?: boolean; address?: string; letters?: readonly UnsubscribeLetter[] } = {},
+  /** `claimsOnly`: the store's queue answers, naming these senders' screen-out as filing their claims alone. */
+  opts: { autoUnsubscribe?: boolean; address?: string; letters?: readonly UnsubscribeLetter[]; claimsOnly?: readonly string[] } = {},
 ): Promise<Rendered> {
   const store = await mirror(list);
-  const sender = senderScreening(store, seedId, opts.address)!;
+  let reader: EntityReader = store;
+  if (opts.claimsOnly !== undefined) {
+    const named = opts.claimsOnly;
+    const engine = new OhmailEngine({
+      store,
+      adapter: {
+        sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: store.getCursor(), hasMore: false, serverTime: "2026-08-01T10:00:00.000Z" }),
+        mutate: async () => ({ changes: [], seq: null }),
+        fetchBody: async () => null,
+        screenerWaiting: queueDoor(list.filter((m) => m.folder === "ohmail/Screener").map((m) => ({
+          messageId: m.id, address: m.from.address, receivedAt: m.date ?? "",
+          ...(m.senderCheck ? { checked: { ...m.senderCheck, ...(named.includes(m.from.address) ? { claimsOnly: true } : {}) } } : {}),
+        }))),
+      } as never,
+    });
+    await engine.refreshScreenerWaiting();
+    reader = engine.read();
+  }
+  const sender = senderScreening(reader, seedId, opts.address)!;
   const onChoose = vi.fn();
   const onOpenDetail = vi.fn();
 
@@ -213,6 +235,35 @@ describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
     const confirm = el.querySelector(".sm-confirm");
     expect(confirm!.textContent).toContain("2 senders");
     expect(confirm!.textContent).toContain("bulk.example");
+  });
+
+  /* A CLAIM THROUGH A LIST'S ADDRESS THE PERSON LET IN (mail 0150): the server's screen-out sets the
+     claims aside alone and sends no request, so nothing is disclosed and no rule is promised for it. */
+  const listClaim = (id: string): EngineMessage => ({
+    ...msg(id, "post@lists.example", "ohmail/Screener"), from: { name: "PostFinance", address: "post@lists.example" },
+    senderCheck: { reason: "impersonation", brand: "PostFinance", domainShared: false, list: true },
+  });
+
+  it("a list the person let in: Screen out commits with no disclosure, and the foot says it makes no rule", async () => {
+    const { onChoose, el } = await render([listClaim("a")], "a", {
+      letters: [{ posture: "one_click", authVerdict: "pass" }], claimsOnly: ["post@lists.example"],
+    });
+    expect(el.querySelector(".sm-foot")!.textContent)
+      .toContain("Screen out and Spam are the exception here: they set aside only the messages that claim to be PostFinance, and make no rule.");
+    expect(byText(el, "li", "Screened")!.querySelector(".sm-warn"), "Screen out marked as sending mail").toBeNull();
+    await click(byText(el, "li", "Screened"));
+    expect(el.querySelector(".sm-confirm")).toBeNull();
+    expect(onChoose).toHaveBeenCalledWith("screened", "sender", true, true);
+  });
+
+  it("CONTROL: a list the store says no claims-only press for opens the disclosure, and the foot promises the rule alone", async () => {
+    const { onChoose, el } = await render([listClaim("a")], "a", {
+      letters: [{ posture: "one_click", authVerdict: "pass" }], claimsOnly: [],
+    });
+    expect(el.querySelector(".sm-foot")!.textContent).not.toContain("exception");
+    await click(byText(el, "li", "Screened"));
+    expect(onChoose).not.toHaveBeenCalled();
+    expect(el.querySelector(".sm-confirm")).toBeTruthy();
   });
 
   it("cancelling dispatches nothing and puts the destinations back", async () => {
