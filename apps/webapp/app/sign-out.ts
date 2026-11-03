@@ -348,6 +348,8 @@ export async function signOut(
     presses.set(thisTabName(), signOutPresses() + 1);
     markSignedOutPending();
     postSignedOut(owner ?? null);
+    // A tab closed before the door's request below left still sends it, from `pagehide`.
+    auth.armLogoutOnLeave();
   }
   // NEVER THROWS, and the refusal rides the result instead. A `return` inside a `finally`
   // would have silently swallowed this exception, which is the same shape of quiet loss the

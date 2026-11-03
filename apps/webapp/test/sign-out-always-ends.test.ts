@@ -7,10 +7,12 @@
  * end now: the door is asked even behind a held lock, and an unanswered request is given up at
  * its deadline with the local half done and the server half named as unconfirmed.
  */
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { apiRoutes, createApp, csrfTokenFor } from "@trafficflow/api";
 import { refreshTokens, sessions } from "@trafficflow/db";
+import { pushSubscriptions } from "@trafficflow/db/cloud";
 import { generateToken, hashToken } from "@trafficflow/services";
 import { FIXED_NOW, makeDeps, seedSession } from "../../../packages/api/test/helpers.js";
 import { withNodeBlobs } from "./fixtures/node-blobs";
@@ -143,11 +145,13 @@ describe("sign out ends, and asks the server even behind a renewal", () => {
  * settles at `release()` and its cookie clears apply then; an abort before that rejects with
  * AbortError and drops them. `hold` picks other answers to keep the same way: the server has
  * answered, the browser has not taken the answer in yet. Real timers: PGlite may stall under fake ones.
+ * `closable`: every request stays on its way, unseen by the server, until `close()` (a tab closed at that moment).
  */
-async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => boolean } = {}): Promise<{
+async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => boolean; closable?: boolean } = {}): Promise<{
   account: string; refresh: string; revoked: () => Promise<boolean>; familyLive: () => Promise<boolean>;
-  httpOnly: Map<string, { value: string; path: string }>;
+  httpOnly: Map<string, { value: string; path: string }>; db: Awaited<ReturnType<typeof makeDeps>>["db"];
   sent: Array<{ url: string; init: RequestInit }>; held: Array<{ url: string; release: () => void }>; releaseAll: () => void;
+  close: () => Promise<void>;
 }> {
   const { db, deps } = await withNodeBlobs(() => makeDeps());
   const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
@@ -178,8 +182,11 @@ async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => bo
   const app = createApp(apiRoutes);
   const sent: Array<{ url: string; init: RequestInit }> = [];
   const held: Array<{ url: string; release: () => void }> = [];
+  const onTheWay: Array<{ init: RequestInit; go: () => Promise<void>; drop: () => void }> = [];
+  let gone = false;
   globalThis.fetch = vi.fn((input: unknown, init: RequestInit = {}) => {
     const url = String(input);
+    if (gone) return Promise.reject(new TypeError("Failed to fetch"));
     sent.push({ url, init });
     const headers = new Headers(init.headers);
     const jar = [...httpOnly].filter(([, c]) => c.path === "/" || url === c.path || url.startsWith(`${c.path}/`))
@@ -194,7 +201,7 @@ async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => bo
       const abort = (): void => { aborted = true; reject(new DOMException("The operation was aborted.", "AbortError")); };
       if (init.signal?.aborted) return abort();
       init.signal?.addEventListener("abort", abort, { once: true });
-      void app.handle(request, { ...deps, session: null, idempotency: null }).then((res) => {
+      const go = (): Promise<void> => app.handle(request, { ...deps, session: null, idempotency: null }).then((res) => {
         const settle = (): void => {
           if (aborted) return;
           init.signal?.removeEventListener("abort", abort);
@@ -204,8 +211,19 @@ async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => bo
         if (res.headers.get("clear-site-data") === null && !keep) settle();
         else held.push({ url, release: settle });
       }, reject);
+      if (opts.closable === true) onTheWay.push({ init, go, drop: abort });
+      else void go();
     });
   }) as unknown as typeof globalThis.fetch;
+  /** `pagehide`, then the kept-alive requests on their way reach the server in order, the rest never; nothing after. */
+  const close = async (): Promise<void> => {
+    window.dispatchEvent(new Event("pagehide"));
+    gone = true;
+    for (const r of onTheWay.splice(0)) {
+      if (r.init.keepalive === true) await r.go();
+      else r.drop();
+    }
+  };
   (await import("../app/api-client.js")).bindApiOwner(s.accountId);
   const revoked = async (): Promise<boolean> => {
     const [r] = await db.select({ revokedAt: refreshTokens.revokedAt }).from(refreshTokens)
@@ -216,7 +234,7 @@ async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => bo
   const familyLive = async (): Promise<boolean> => (await db.select({ revokedAt: refreshTokens.revokedAt })
     .from(refreshTokens).where(eq(refreshTokens.familyId, row!.familyId))).some((r) => r.revokedAt === null);
   return {
-    account: s.accountId, refresh, revoked, familyLive, httpOnly, sent, held,
+    account: s.accountId, refresh, revoked, familyLive, httpOnly, db, sent, held, close,
     releaseAll: () => { for (const h of held.splice(0)) h.release(); },
   };
 }
@@ -417,6 +435,53 @@ describe("an answer Chrome holds for its cache walk never holds the sign-out or 
     } finally {
       world.releaseAll();
       await erase.catch(() => undefined);
+    }
+  }, 30_000);
+});
+
+/**
+ * A TAB CLOSED AT THE PRESS. No page load follows it to finish the sign-out, and the browser cancels the
+ * requests of a page that goes away unless they were sent `keepalive`: the server session lived on.
+ */
+describe("a tab closed at the Sign out press still ends the session at the server", () => {
+  const DOOR = "/auth/refresh/logout";
+
+  it("the door's request on its way: the browser finishes it, and it was sent once", async () => {
+    vi.useRealTimers();
+    const world = await heldBrowser({ closable: true });
+    const { signOut } = await import("../app/sign-out.js");
+    const out = signOut(world.account);
+    await until(() => world.sent.some((s) => s.url === DOOR));
+    await world.close();
+    expect({ familyLive: await world.familyLive(), doors: world.sent.filter((s) => s.url === DOOR).length },
+      "the door's request died with the tab, or went twice").toEqual({ familyLive: false, doors: 1 });
+    await out;
+  }, 30_000);
+
+  it("the wake row's DELETE on its way, the door not yet asked: both reach the server, the DELETE first", async () => {
+    vi.useRealTimers();
+    const world = await heldBrowser({ closable: true });
+    const endpoint = "https://push.example/ep/closed-tab";
+    const id = randomUUID();
+    await world.db.insert(pushSubscriptions).values({ id, accountId: world.account, transport: "webpush", endpoint });
+    localStorage.setItem("ohmail.notifications.subscriptionId", id);
+    localStorage.setItem("ohmail.notifications.subscriptionEndpoint", endpoint);
+    const subscription = { endpoint, unsubscribe: () => Promise.resolve(true) };
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(subscription) } }) },
+    });
+    try {
+      const { signOut } = await import("../app/sign-out.js");
+      const out = signOut(world.account);
+      await until(() => world.sent.some((s) => s.url === `/api/push/subscriptions/${id}`));
+      expect(world.sent.some((s) => s.url === DOOR), "premise: the door waits behind the DELETE").toBe(false);
+      await world.close();
+      expect({ wakeRows: (await world.db.select().from(pushSubscriptions)).length, familyLive: await world.familyLive() },
+        "the closed tab left its session or its wake row at the server").toEqual({ wakeRows: 0, familyLive: false });
+      await out;
+    } finally {
+      Reflect.deleteProperty(navigator, "serviceWorker");
     }
   }, 30_000);
 });
