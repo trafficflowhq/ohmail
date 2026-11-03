@@ -26,9 +26,9 @@ describe("the auto-act beside a rule written after its page was read", () => {
   let db: Tx;
   beforeAll(async () => { db = (await makeTestDb()) as unknown as Tx; });
 
-  /** One held letter of WHO, advised to `destination`; its provider's verdict NULL unless said. */
+  /** One held letter of WHO, advised to `destination` (Spam unless said); confirmed by its provider unless said. */
   async function world(o: { destination?: string; authVerdict?: string } = {}): Promise<{ accountId: string; messageId: string }> {
-    const destination = o.destination ?? "INBOX";
+    const destination = o.destination ?? SPAM;
     const accountId = randomUUID();
     await db.insert(accounts).values({ id: accountId, name: `twin-${accountId.slice(0, 8)}` });
     const [mb] = await db.insert(mailboxes).values({
@@ -38,7 +38,7 @@ describe("the auto-act beside a rule written after its page was read", () => {
     const [m] = await db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `twin:${randomUUID()}`, subject: "hello", fromAddress: WHO,
       nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
-      ...(o.authVerdict !== undefined ? { authVerdict: o.authVerdict } : {}),
+      authVerdict: o.authVerdict ?? "pass",
     }).returning();
     await db.insert(folderState).values({
       messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
@@ -83,7 +83,7 @@ describe("the auto-act beside a rule written after its page was read", () => {
   it("the positive control: with no rule written the sender is filed and one rule is promoted", async () => {
     const w = await world();
     expect(await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN })).toMatchObject({ filed: 1 });
-    expect((await rulesFor(w.accountId)).map((x) => [x.provenance, x.destination])).toEqual([["promoted", "INBOX"]]);
+    expect((await rulesFor(w.accountId)).map((x) => [x.provenance, x.destination])).toEqual([["promoted", SPAM]]);
   });
 
   /* A DENY ON A LETTER ITS PROVIDER DID NOT CONFIRM files that letter alone and writes no rule; a

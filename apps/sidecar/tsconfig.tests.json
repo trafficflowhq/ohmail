@@ -89,6 +89,7 @@
       "@trafficflow/worker/inbound-quiet": ["../worker/src/inbound-quiet.ts"],
       "@trafficflow/worker/sender-check-backfill": ["../worker/src/sender-check-backfill.ts"],
       "@trafficflow/worker/list-address-backfill": ["../worker/src/list-address-backfill.ts"],
+      "@trafficflow/worker/act-admission-retire": ["../worker/src/act-admission-retire.ts"],
       "@ohmail/sidecar": ["./src/index.ts"],
       "@ohmail/db-mail/sqlite-journal": ["../../packages/db-mail/src/sqlite-journal.ts"],
       "@ohmail/db-mail": ["../../packages/db-mail/src/index.ts"],

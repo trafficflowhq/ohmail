@@ -22,7 +22,7 @@ import { ruleRetroPass } from "../src/rule-retro.js";
  * — a row can never claim a convergence it does not have, and `pending` is what makes the
  * reconciler perform the move. Real Postgres because both passes take `FOR UPDATE OF
  * folder_state`, a no-op on a single-connection store: the pass would run and the lock would
- * prove nothing. `screener-auto.ts` writes through the same helper; its own suite covers it.
+ * prove nothing.
  */
 
 const AVAILABLE = await realPgAvailable();
@@ -90,12 +90,13 @@ describe.skipIf(!AVAILABLE)("the two rule passes write one folder_state intent",
     return row!;
   }
 
-  /** The tidy's world: `people_only`, armed, one bulk stranger the pass demotes out of the Ohbox. */
+  /** The tidy's world: `people_only`, armed, one contact's bulk letter the pass demotes out of the Ohbox. */
   async function tidyMove(): Promise<string> {
     const w = await newWorld();
     await db.insert(accountSettings).values({
       accountId: w.accountId, ohboxPolicy: "people_only", ohboxTidyRequestedAt: NOW,
     });
+    await db.insert(contacts).values({ accountId: w.accountId, address: "news@shop.test" });
     const id = await seedMessage(w, {
       from: "news@shop.test",
       headers: { "list-unsubscribe": ["<https://x.test/u>"], "list-id": ["<news.shop.test>"] },

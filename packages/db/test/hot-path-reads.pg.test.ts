@@ -8,9 +8,10 @@ import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 /**
  * EVERY HOT READ A ROW HAS NAMED, EACH ASKED WHETHER IT STILL HAS ITS INDEX.
  *
- * Three rows feed it. The missing-indexes row named four reads on tables that only grow and was
+ * Two rows feed it. The missing-indexes row named four reads on tables that only grow and was
  * worked in three separate landings, so "is it closed?" had to be re-derived from the code every
- * time somebody asked; a backend review named two newest-first `messages` pages, a database review one.
+ * time somebody asked; a backend review named two newest-first `messages` pages. (A database
+ * review named a third read, the Screener auto-apply's held page, retired with that pass.)
  * This file is the answer, executable: one row per read, naming the read, its source, the row
  * that named it and the index that serves it, asserted by asking the PLANNER on a grown table —
  * not by looking the index up in `pg_indexes`, which passes for an index the planner refuses and
@@ -62,7 +63,7 @@ interface HotRead {
   /** Where it lives — the thing a person greps for when this case goes red. */
   source: string;
   /** The row that named this read. Two rows feed this file; see the header. */
-  named: "missing indexes" | "newest-first pages" | "database does less";
+  named: "missing indexes" | "newest-first pages";
   /** The index that must serve it, and where that index comes from. */
   index: string;
   from: "the hot-path prebuild" | "the cloud journal";
@@ -103,42 +104,6 @@ async function grownMailbox(tx: postgres.TransactionSql, label: string): Promise
 }
 
 const READS: readonly HotRead[] = [
-  {
-    read: "the Screener auto-apply held page",
-    source: "apps/worker/src/screener-auto.ts heldPageSql",
-    named: "database does less",
-    index: "folder_state_screener_held_floor_idx",
-    from: "the hot-path prebuild",
-    // Without it the page reads a folder_state index and FILTERS on the held predicate, row by
-    // row; the partial index implies the predicate, so a plan that still spells it read around it.
-    // With every held row but 60 judged, a Merge Join over the account's whole messages range is
-    // the stale-statistics shape the floor mark must not fall into (ARCH-SCREENER-CANDIDATE-READS).
-    gone: /desired_folder = 'ohmail\/Screener'|Merge Join/,
-    shows: /Nested Loop[\s\S]*folder_state_screener_held_floor_idx[\s\S]*Index Cond: \(\(screener_floor_version IS NULL\) AND \(message_id > /,
-    seed: async (tx) => {
-      const acct = await grownMailbox(tx, "held");
-      // ONE update: a seventh of the rows held, every held row judged but this hour's 60. One
-      // statement because it changes an indexed column: a HOT update here leaves a chain the index
-      // built below cannot see past, and Postgres then hides that index from this transaction.
-      await tx.unsafe(
-        `update folder_state f set desired_folder = 'ohmail/Screener',
-                screener_floor_version = case when s.rn > 60 then 1 end
-           from (select message_id, row_number() over (order by md5(message_id::text)) as rn
-                   from folder_state
-                  where message_id in (select id from messages where account_id = $1::uuid)
-                    and ('x' || substr(md5(message_id::text), 1, 8))::bit(32)::int % 7 = 0) s
-          where f.message_id = s.message_id`,
-        [acct]);
-      await tx`analyze folder_state`;
-      return `select fs.message_id from folder_state fs
-                join messages m on m.id = fs.message_id
-               where m.account_id = '${acct}'::uuid
-                 and fs.desired_folder = 'ohmail/Screener' and fs.last_set_by = 'us'
-                 and fs.screener_floor_version is null
-                 and fs.message_id > '00000000-0000-0000-0000-000000000000'::uuid
-               order by fs.screener_floor_version, fs.message_id limit 100`;
-    },
-  },
   {
     read: "the profile-import already-resolved probe",
     source: "packages/db/src/organizer-profile-import.ts profileImportResolutionExists",
@@ -333,8 +298,7 @@ describe.skipIf(!PG_UP)("every hot read a row has named still has its index", ()
     const by = (n: HotRead["named"]) => READS.filter((r) => r.named === n).length;
     expect(by("missing indexes")).toBe(4);
     expect(by("newest-first pages")).toBe(2);
-    expect(by("database does less")).toBe(1);
-    expect(READS).toHaveLength(7);
+    expect(READS).toHaveLength(6);
     for (const r of READS) {
       if (r.from === "the hot-path prebuild") { expect(specOf(r.index).name).toBe(r.index); continue; }
       const rows = await client`select indexname from pg_indexes

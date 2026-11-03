@@ -114,8 +114,8 @@ import { alertGapPrunePass } from "./alert-gap-prune.js";
 import { alertDrillPass } from "./alert-drill-pass.js";
 import { retentionPrunePass, signInRetentionPass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
-import { newScreenerAutoWalk, screenerAutoApplyPass } from "./screener-auto.js";
 import { screenerActConsentFrom, screenerAutoActPass } from "./screener-auto-act.js";
+import { retireActAdmissionsPass } from "./act-admission-retire.js";
 import {
   CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass,
 } from "./screener-correspondent-retro.js";
@@ -895,8 +895,9 @@ export async function startWorkerWithLock(
     let lastBubbleUpAt = 0;
     /** When each served account last had its correspondent retro — due at a new leader's first cycle. */
     const correspondentRetroAt = new Map<string, number>();
-    /** Each opted-in account's auto-apply mark, shared by the owed serve and the cycle tail. */
-    const screenerAutoWalk = newScreenerAutoWalk();
+    /** The act's past admissions retired, per account, once per process: where each walk stands. */
+    const actAdmissionsRetired = new Set<string>();
+    const actAdmissionCursor = new Map<string, string>();
     /**
      * The thread-join heal's gate and resume points. Starts "due" like `lastBubbleUpAt`, and here
      * the reason is survival rather than latency: a deployment cadence shorter than
@@ -5066,8 +5067,7 @@ export async function startWorkerWithLock(
         // at the TOP of the pass sections — the section chain is why a suggestion trailed a landing
         // by over a minute while every piece was healthy. Two sources, union'd: the durable table
         // (survives a crash) and the in-process hints (visible to the SAME cycle that ingested).
-        // Intersected with THIS shard's served set; per account, auto-apply still runs BEFORE the
-        // buy (the suggest section's load-bearing order). The mark is cleared only up to the read
+        // Intersected with THIS shard's served set. The mark is cleared only up to the read
         // instant, so a hold landing mid-serve keeps its row; the unconditional suggest section
         // below stays as the backstop. All four spend bounds live in the pass, untouched here.
         enter: async (accounts) => {
@@ -5097,12 +5097,6 @@ export async function startWorkerWithLock(
           // MIXED: the suggest pass buys from the model and the entitlements program, so only the
           // database-only calls around it carry the tag.
           await runTailStage("cycle.screenerSuggestOwedServe", "mixed", async () => {
-            const applied = await asDatabaseFault("cycle.screenerAutoApplyPass", () => screenerAutoApplyPass(
-              db as unknown as Tx, { accountId, log, walk: screenerAutoWalk, until: sliceUntil() }, new Date(),
-            ));
-            if (applied.ran && applied.moved > 0) {
-              log.info("screener_auto_apply_pass", { accountId, moved: applied.moved, capped: applied.capped });
-            }
             const screening = await screeningFor(accountId);
             const { ran, bought, chargedAttempts, stopped: why, capped } = await screenerAutoSuggestPass(
               db as unknown as Tx,
@@ -5274,6 +5268,27 @@ export async function startWorkerWithLock(
                   "what was recorded stays, and new mail records its own list addresses at ingest",
               });
             });
+        },
+      },
+      act_admission_retire: {
+        // The act's past admissions retired, once per account per process: its allow rules and the
+        // contacts only it wrote go, so a stranger it let in waits at the Screener again. A page per
+        // tail until the walk ends; no letter moves. After the legacy contacts are marked above.
+        run: async (accountId) => {
+          if (actAdmissionsRetired.has(accountId)) return;
+          await runTailStage("cycle.retireActAdmissionsPass", "database", async () => {
+            const r = await retireActAdmissionsPass(db as unknown as Tx, {
+              accountId, log, ...(actAdmissionCursor.has(accountId) ? { after: actAdmissionCursor.get(accountId)! } : {}),
+            });
+            if (r.done) { actAdmissionsRetired.add(accountId); actAdmissionCursor.delete(accountId); }
+            else if (r.next !== null) actAdmissionCursor.set(accountId, r.next);
+          }, (err) => {
+            log.error("act_admission_retire_failed", {
+              accountId, err,
+              reason: "nothing of this page was retired and the walk stays where it was, so the next " +
+                "tail asks the same senders again; no letter was moved",
+            });
+          });
         },
       },
       rule_retro: {
@@ -5549,40 +5564,9 @@ export async function startWorkerWithLock(
             });
         },
       },
-      screener_auto_apply: {
-        // ── FILE THE OBVIOUS BULK OUT OF THE SCREENER, FOR OPTED-IN ACCOUNTS ────────────────
-        //
-        // Its OWN runner call and loop, for the reason the blocks above have one: one account's failure
-        // must not skip the rest. Unlike those two this is not owed-once backfill — it is a standing
-        // OPT-IN, off by default, so for every account that has not turned it on the pass is a single
-        // PK read and no more (the `screener_auto_apply_at IS NOT NULL` probe). It applies DETERMINISTIC
-        // routing only (the strong-bulk floor), never the model and never a spend, keeps sensitivity-
-        // flagged mail at the gate, and writes reversible intents the reconciler converges — same as
-        // the passes above, and like them it lives here on the worker needing nothing beyond db + core.
-        run: async (accountId) => {
-          await runTailStage("cycle.screenerAutoApplyPass", "database", async () => {
-            const { ran, moved, capped } = await screenerAutoApplyPass(
-              db as unknown as Tx, { accountId, log, walk: screenerAutoWalk, until: sliceUntil() }, new Date(),
-            );
-            if (ran && moved > 0) {
-              log.info("screener_auto_apply_pass", { accountId, moved, capped });
-            }
-          }, (err) => {
-            log.error("screener_auto_apply_failed", {
-              accountId, err,
-              reason: "the account's walk mark was not advanced, so the next cycle re-reads every row " +
-                "this one did not decide; mail already moved is desired state the reconciler " +
-                "converges independently of this pass",
-            });
-          });
-        },
-      },
       screener_auto_suggest: {
-        // Buy the model's advice about incoming held senders. Its OWN runner call and loop. It runs AFTER
-        // the deterministic auto-apply above, load-bearing: that pass files the obvious bulk OUT of the
-        // Screener with no model and no spend, so anything it takes this cycle is a sender this one never
-        // pays to ask about (wrong way round and the account buys advice about newsletters about to be
-        // filed for free). The ONLY pass here that spends money, and the only thing in the product that
+        // Buy the model's advice about incoming held senders. Its OWN runner call and loop. The ONLY
+        // pass here that spends money, and the only thing in the product that
         // spends with no press in the same minute — three bounds hold it (the `auto_suggest_at`
         // watermark, a ten-sender page per account per cycle, and `spend()` before every model call with
         // the first refusal stopping the account). Off by default. It books the SAME `debit_classify`
@@ -5626,10 +5610,9 @@ export async function startWorkerWithLock(
       screener_auto_act: {
         // ── ACT ON THE STORED SUGGESTIONS, ON THE ACT'S OWN CONSENT ─────────────────────────
         //
-        // The senders whose stored advice is confident are filed through `applyScreenerDecision`,
-        // the door a press uses; AFTER the suggest pass, so advice bought this cycle is acted on this
-        // cycle. The consent is the act's own, never `screener_auto_apply_at`, the switch that
-        // promises "no AI" and arms the deterministic pass above.
+        // The senders whose stored advice is a confident Spam or screen-out are filed through
+        // `applyScreenerDecision`, the door a press uses; AFTER the suggest pass, so advice bought this
+        // cycle is acted on this cycle. It never lets a sender in. The consent is the act's own.
         run: async (accountId) => {
           await runTailStage("cycle.screenerAutoActPass", "database", async () => {
             const acted = await screenerAutoActPass(

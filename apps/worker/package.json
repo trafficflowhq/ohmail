@@ -123,6 +123,12 @@
       "ohmail-source": "./src/list-address-backfill.ts",
       "node": "./dist/list-address-backfill.js",
       "default": "./src/list-address-backfill.ts"
+    },
+    "./act-admission-retire": {
+      "types": "./src/act-admission-retire.ts",
+      "ohmail-source": "./src/act-admission-retire.ts",
+      "node": "./dist/act-admission-retire.js",
+      "default": "./src/act-admission-retire.ts"
     }
   },
   "dependencies": {

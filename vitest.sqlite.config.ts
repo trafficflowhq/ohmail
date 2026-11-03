@@ -557,6 +557,10 @@ export default defineConfig({
       // is `applyScreenerDecision`, whose mark-read upsert bound a JavaScript boolean raw — this
       // driver refuses one, and the two denying cases failed here while the other store passed.
       "apps/worker/test/screener-auto-act.test.ts",
+      // Only a person lets a sender in: the decision door refuses a pass's yes, and the act's past
+      // admissions are retired once, both on the store the standalone desktop and phone keep.
+      "packages/db/test/screener-apply.test.ts",
+      "apps/worker/test/act-admission-is-no-identity-consent.test.ts",
       // Which rules the act wrote (a grouped read over the Screener decisions on record) and a
       // reader's settings change travelling: the phone materializes rules and runs these doors.
       "packages/services/test/rule-by-ohmail.test.ts",

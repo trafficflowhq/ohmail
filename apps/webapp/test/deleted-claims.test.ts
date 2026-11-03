@@ -8,7 +8,8 @@
  *
  * Found by the sweep and reworded here:
  *   · `screener.empty.spam.hint`               — was "… nothing is deleted unseen."
- *   · `settings.screening.autoApplyDescription` — was "… nothing is deleted."
+ *   · `settings.screening.autoApplyDescription` — was "… nothing is deleted." (since removed with
+ *                                                  its switch)
  *
  * Audited by the same sweep and LEFT ALONE, because each is scoped and true:
  *   · `host.offWhat`          — pairing: turning the desktop host off deletes nothing about
@@ -43,27 +44,15 @@ const ABSOLUTE_EN = /nothing is (?:ever )?deleted/i;
 const ABSOLUTE_DE = /nichts wird gelöscht|gelöscht wird nichts/i;
 
 describe("the delete-claims sweep", () => {
-  it("the two reworded sentences say ON ITS OWN, in both languages", () => {
-    type Cat = {
-      screener: { empty: { spam: { hint: string } } };
-      settings: { screening: { autoApplyDescription: string } };
-    };
-    const enc = en as unknown as Cat;
-    const dec = de as unknown as Cat;
-    const enSpam = enc.screener.empty.spam.hint;
-    const deSpam = dec.screener.empty.spam.hint;
-    const enAuto = enc.settings.screening.autoApplyDescription;
-    const deAuto = dec.settings.screening.autoApplyDescription;
+  it("the reworded sentence says ON ITS OWN, in both languages", () => {
+    type Cat = { screener: { empty: { spam: { hint: string } } } };
+    const enSpam = (en as unknown as Cat).screener.empty.spam.hint;
+    const deSpam = (de as unknown as Cat).screener.empty.spam.hint;
 
     expect(enSpam).toContain("on its own");
-    expect(enAuto).toContain("on its own");
     expect(deSpam).toContain("von sich aus");
-    expect(deAuto).toContain("von sich aus");
-
     expect(enSpam).not.toMatch(ABSOLUTE_EN);
-    expect(enAuto).not.toMatch(ABSOLUTE_EN);
     expect(deSpam).not.toMatch(ABSOLUTE_DE);
-    expect(deAuto).not.toMatch(ABSOLUTE_DE);
   });
 
   it("the Junk retention sentence carries NO hard number, in either language", () => {

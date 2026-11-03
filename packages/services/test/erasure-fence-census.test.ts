@@ -596,7 +596,6 @@ const ALLOWLIST: Record<string, string> = {
   "apps/worker/src/ohbox-tidy.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/redacted-restore.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/rule-retro.ts insert auditLog": "a background pass, no session",
-  "apps/worker/src/screener-auto.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/sensitive-backfill.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/workflow-cron.ts insert workflowRuns":
     "the workflow cron, which enqueues only for a workflow row the sweep deletes",

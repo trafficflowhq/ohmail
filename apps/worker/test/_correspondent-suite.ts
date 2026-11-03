@@ -491,7 +491,8 @@ export function defineCorrespondentSuite(
 
     /* AN ANSWER FROM AN ADDRESS THE COPY DOES NOT NAME, UNDER A COMPANY'S NAME, is no correspondent
        anywhere, as the gate and the retro already read it: the act keeps it for the claim, never as
-       somebody the account wrote to, and the suggestions ask about it. */
+       somebody the account wrote to, and the suggestions ask about it. An admission is no plan since
+       the act lets nobody in, so an advised one is kept, not counted as a correspondent. */
     const claim = async (id: string, checked = true): Promise<void> => {
       await db.update(messages).set({ fromName: "PayPal", ...(checked ? { senderCheck: "impersonation", senderCheckBrand: "PayPal" } : {}) })
         .where(eq(messages.id, id));
@@ -508,7 +509,7 @@ export function defineCorrespondentSuite(
       await suggest(w, answer, "INBOX", 0.99);
       const r = await act(w);
       expect(await desiredOf(answer)).toBe(SCREENER);
-      expect(r).toMatchObject({ correspondents: 0, identity: 1 });
+      expect(r).toMatchObject({ correspondents: 0, kept: 1 });
     });
 
     it.skipIf(!opts.act)("an OLDER held answer under a company's name keeps no act off its sender", async () => {
@@ -533,7 +534,7 @@ export function defineCorrespondentSuite(
       await suggest(w, answer, "INBOX", 0.99);
       const r = await act(w);
       expect(await desiredOf(answer)).toBe(SCREENER);
-      expect(r).toMatchObject({ correspondents: 0, identity: 1 });
+      expect(r).toMatchObject({ correspondents: 0, kept: 1 });
       const [row] = await db.select({ check: messages.senderCheck }).from(messages).where(eq(messages.id, answer));
       expect(row!.check).toBe("impersonation");
     });

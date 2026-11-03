@@ -1,9 +1,10 @@
 "use client";
 
 /**
- * "Filed automatically" — what the Screener's auto-apply filed that is still where it put it, under
- * the switch that turned it on (row 140). Review opens the list; Put back returns a message to the
- * Screener through the move door and the pass never files it again. It writes desired state only,
+ * "Filed automatically" — what ohmail filed out of the Screener on its own with no rule (the act's
+ * letter-by-letter filings, and the retired bulk filing's) that is still where it put it (row 140).
+ * Review opens the list; Put back returns a message to the
+ * Screener through the move door and no automatic path files it again. It writes desired state only,
  * so the sentence after a press says where the mail goes, never that it has moved. Absent while
  * the read has not answered, failed, or found nothing.
  */

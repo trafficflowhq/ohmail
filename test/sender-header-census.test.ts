@@ -171,6 +171,10 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["references"], classes: ["threading-corroborated"],
     why: "asks the correspondent predicate over the held mail's references before buying advice",
   },
+  "apps/worker/src/act-admission-retire.ts": {
+    terms: ["references"], classes: ["threading-corroborated"],
+    why: "asks the correspondent predicate, with no references of its own, before retiring what the act wrote for a sender",
+  },
   "apps/worker/src/screener-correspondent-retro.ts": {
     terms: ["references"], classes: ["threading-corroborated"],
     why: "the retro releases a held sender only on the correspondent predicate's answer, and for an answer the cited copy does not name only the messages that themselves cite it",
@@ -386,6 +390,7 @@ const CALL_SITES: Record<string, Record<string, number>> = {
     "apps/worker/src/screener-auto-suggest.ts#screenerAutoSuggestPass": 1,
     "apps/worker/src/screener-correspondent-retro.ts#screenerCorrespondentRetroPass": 1,
     "apps/worker/src/screener-correspondent-retro.ts#retireAutoActRules": 1,
+    "apps/worker/src/act-admission-retire.ts#retireActAdmissionsPass": 1,
     "packages/services/src/screener-service.ts#markCorrespondents": 1,
   },
 };

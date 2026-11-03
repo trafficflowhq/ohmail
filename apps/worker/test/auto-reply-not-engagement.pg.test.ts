@@ -4,7 +4,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, sql } from "drizzle-orm";
 import {
-  accountSettings, accounts, autoReplyByUsWhere, awayReplies, folderState,
+  accountSettings, accounts, autoReplyByUsWhere, awayReplies, contacts, folderState,
   mailboxes, messageBodies, messages, rules, threads,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
@@ -52,7 +52,7 @@ const READS = "ohmail/News";
  */
 const NONE = async (): Promise<ReadonlySet<string>> => new Set<string>();
 
-/** The strong-bulk floor `migrationBulkPlacement` demands: List-Unsubscribe PLUS a corroborator. */
+/** List-Unsubscribe PLUS a corroborator: the router files a contact's mail with these to News. */
 const BULK_HEADERS = {
   "list-unsubscribe": ["<https://sender.test/u>"],
   "list-id": ["<news.sender.test>"],
@@ -85,8 +85,10 @@ describe("FIX-016 — the away responder's reply does not pin mail in the Ohbox"
     return { accountId, mailboxId: mb!.id, own };
   }
 
-  /** `people_only` and ARMED — without both, `ohboxTidyPass` returns EMPTY and proves nothing. */
+  /** `people_only` and ARMED — without both, `ohboxTidyPass` returns EMPTY and proves nothing. The
+   *  sender is a contact: the tidy moves a contact's bulk and keeps a stranger's. */
   async function armTidy(w: World): Promise<void> {
+    await db.insert(contacts).values({ accountId: w.accountId, address: "news@sender.test" }).onConflictDoNothing();
     await db.insert(accountSettings).values({
       accountId: w.accountId, ohboxPolicy: "people_only", ohboxTidyRequestedAt: new Date(),
     }).onConflictDoUpdate({

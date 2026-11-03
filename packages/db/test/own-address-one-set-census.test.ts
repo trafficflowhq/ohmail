@@ -25,7 +25,6 @@ const WIDER: Readonly<Record<string, string>> = {
   "apps/worker/src/rule-retro.ts#ruleRetroPass": WE_ANSWERED,
   "apps/worker/src/gap-catchup.ts#gapCatchupPass": WE_ANSWERED,
   "apps/worker/src/ohbox-tidy.ts#ohboxTidyPass": WE_ANSWERED,
-  "apps/worker/src/screener-auto.ts#screenerAutoApplyPass": WE_ANSWERED,
   "packages/services/src/sensitive-rescreen.ts#runSensitiveRescreen": WE_ANSWERED,
   "packages/core/src/unscreened-set.ts#unscreenedWalk":
     `${WE_ANSWERED}; its not-from-myself filter keeps the same list, so the offer and the agree's sweep stay a subset of what the gate screens`,

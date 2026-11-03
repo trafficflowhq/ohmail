@@ -159,9 +159,9 @@ describe("every SQL reader of a rule's sender asks with the rule's destination",
     return text.includes("ruleNamesSenderSql(") ? twinCalls(f, text) : [];
   });
 
-  it("ten callers, each destination-aware — a new caller is a reading this census is told about", () => {
+  it("nine callers, each destination-aware — a new caller is a reading this census is told about", () => {
     expect(found.filter((c) => !c.destination).map((c) => c.at)).toEqual([]);
-    expect(found.length, found.map((c) => c.at).join("\n")).toBe(10);
+    expect(found.length, found.map((c) => c.at).join("\n")).toBe(9);
   });
 
   it("CONTROL: a call without the destination reads red, the definition is no call", () => {

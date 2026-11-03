@@ -103,7 +103,7 @@ export { readFlightOf } from "./read-flight.js";
 export {
   SCREENER_FOLDER, DECIDABLE_FOLDERS, DECISION_BATCH_MAX, admitsDestination, domainOf,
   heldRowById, heldRowsForSender, heldRowsForDomain, rerouteOwnHeldBag, rerouteUnconfirmedHeld, rerouteAdvisedLetter, heldRowMovesOnPress,
-  applyScreenerDecision, validateRequestPayload,
+  applyScreenerDecision, validateRequestPayload, PassMayNotAdmitError,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
   type HeldElsewhereMailbox, type UnconfirmedRerouteResult, type ValidatedRequestPayload,
 } from "./screener-apply.js";
@@ -225,7 +225,7 @@ export {
   RESTORABLE_PROVENANCE, restoredProvenanceSql,
 } from "./request-apply.js";
 export {
-  convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, keptProvenance, endOwedWalk,
+  convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, deleteRulesById, keptProvenance, endOwedWalk,
   isRefileRun, owesWholeWalk, pendingRefileFrom, refileOwed, isParkedFence, PARKED_FENCE_PREFIX,
   type ConvergedKey, type FoundRule, type KeyWriteResult, type RefileState, type RuleRowWrite,
 } from "./rule-key.js";
