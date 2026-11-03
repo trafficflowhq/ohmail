@@ -9,7 +9,7 @@
  * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { anyPartArms, assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partSidesOf, partWordKept, partWordTails, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands } from "./index.js";
+import { anyPartArms, assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partSidesOf, partWordKept, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands } from "./index.js";
 import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -164,19 +164,17 @@ function phraseOf(text: string): string | null {
 /**
  * A typed query as FTS5 syntax that cannot refuse, read the way `websearch_to_tsquery` reads it:
  * a quoted span or a punctuated word is a phrase, `-` before a word excludes it (`--` does not), a
- * bare `or` between words is OR, and the server's stopwords are dropped. `"parts"` is the part-word
- * arm's reading, as the server's: every word, from four letters also as the start of a longer one
- * or as itself plus a tail its stem drops (`elevat` → `elevation`, whose porter stem is `elev`),
- * ONE parenthesised group per such word, because FTS5 binds AND tighter than OR (and ANDs groups
- * only when told). `match` is null
- * when only exclusions are left (then `exclude` names them) or nothing is.
+ * bare `or` between words is OR, and the server's stopwords are dropped. The part-word arm reads a
+ * query twice, its kept words ANDed: `"stems"`, each word whole, which the porter tables stem;
+ * `"starts"`, from four letters the start of a word, which only the unstemmed tables (mail 0175)
+ * may be asked, because porter stems a prefix too (`ines`* reads `in`*). `match` is null when only
+ * exclusions are left (then `exclude` names them) or nothing is.
  */
-export function ftsQueryOf(q: string, mode: "words" | "parts" = "words"): { match: string | null; exclude: string | null } {
-  if (mode === "parts") {
+export function ftsQueryOf(q: string, mode: "words" | "stems" | "starts" = "words"): { match: string | null; exclude: string | null } {
+  if (mode !== "words") {
     const words = partWordsOf(q) ?? [];
-    // AND spelled out: FTS5 takes no implicit AND beside a parenthesised group.
-    const match = words.filter((_, i) => partWordKept(words, i)).map(partGroupOf).join(" AND ");
-    return { match: match === "" ? null : match, exclude: null };
+    const terms = words.filter((_, i) => partWordKept(words, i)).map(mode === "stems" ? stemOf : startOf);
+    return { match: terms.length === 0 || terms.includes(null) ? null : terms.join(" AND "), exclude: null };
   }
   const ops = queryOperandsOf(q);
   const groups = ops.any.map((g) => g.map((o) => phraseOf(o.text)!).join(" "));
@@ -186,9 +184,29 @@ export function ftsQueryOf(q: string, mode: "words" | "parts" = "words"): { matc
   return { match: [head, ...excluded.map((e) => `NOT ${e}`)].join(" "), exclude: null };
 }
 
-/** One part-word as FTS5: from four letters a group of its prefix and the word plus each tail, else the word. */
-function partGroupOf(w: string): string {
-  return [...w].length >= PART_PREFIX_MIN_CHARS ? `(${[`"${w}"*`, ...partWordTails(w).map((t) => `"${w}${t}"`)].join(" OR ")})` : `"${w}"`;
+/**
+ * Letters and digits of scripts every SQLite's `unicode61` has long read as word characters. The
+ * unstemmed tables keep no positions (`detail=none`) and refuse a phrase, so a word this device's
+ * tokenizer might split is asked of them not at all: its part is read by its stem alone.
+ */
+const ONE_TOKEN = /^[0-9A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u0370-\u037E\u0384-\u03FF\u0400-\u0527\u0531-\u0556\u0561-\u0587\u05D0-\u05EA\u0620-\u064A\u0660-\u0669\u0E01-\u0E30\u1E00-\u1EFF\u3041-\u3096\u30A1-\u30FA\u3400-\u4DB5\u4E00-\u9FCC\uAC00-\uD7A3]+$/;
+
+/** One kept part-word as the porter tables read it: whole, and they stem it. */
+const stemOf = (w: string): string => `"${w}"`;
+
+/** One kept part-word as the unstemmed tables read it: from four letters the start of a word, else the word. */
+function startOf(w: string): string | null {
+  if (!ONE_TOKEN.test(w)) return null;
+  return [...w].length >= PART_PREFIX_MIN_CHARS ? `"${w}"*` : `"${w}"`;
+}
+
+/** Part-words ANDed, each in every ß/ss form OR-ed; null with no word, or where one has no reading. */
+function readingOf(words: readonly string[], term: (w: string) => string | null): string | null {
+  const groups = words.map((w) => {
+    const forms = eszettForms(w).map(term);
+    return forms.includes(null) ? null : forms.length === 1 ? forms[0]! : `(${forms.join(" OR ")})`;
+  });
+  return groups.length === 0 || groups.includes(null) ? null : groups.join(" AND ");
 }
 
 /** One operand as an FTS5 expression over every ß/ss form of it; an excluded one as typed. */
@@ -216,15 +234,54 @@ function partArmsOf(q: string): MailWordArms {
   const recency = sql`coalesce(m.date, 0)`;
   const ops = partOperandsOf(q);
   if (ops !== null) {
-    // Each typed operand's kept words together in one table, each word in every ß/ss form.
-    const forms = (w: string): string => { const g = eszettForms(w).map(partGroupOf); return g.length === 1 ? g[0]! : `(${g.join(" OR ")})`; };
-    const letter = sql`(${sql.join(ops.map((op) => inLetter(op.map((i) => forms(words[i]!)).join(" AND "))), sql` AND `)})`;
+    // Each typed operand's kept words together in one table, each word in every ß/ss form, in both readings.
+    const letter = sql`(${sql.join(ops.map((op) => {
+      const kept = op.map((i) => words[i]!);
+      return partRows(readingOf(kept, stemOf), readingOf(kept, startOf), "letter");
+    }), sql` AND `)})`;
     return { head: { pred: letter, rank: recency }, text: { pred: letter, rank: recency }, across: true };
   }
+  const stems = ftsFoldedQueryOf(q, "stems").match;
+  const starts = ftsFoldedQueryOf(q, "starts").match;
   return {
-    head: { pred: headRows(q, "parts"), rank: recency },
-    text: { pred: textRows(q, "parts"), rank: recency },
+    head: { pred: partRows(stems, starts, "head"), rank: recency },
+    text: { pred: partRows(stems, starts, "text"), rank: recency },
   };
+}
+
+/**
+ * The part-word arm's reads: `stems` in the porter tables (the subject and sender, the body, the
+ * file names), `starts` in the unstemmed ones (mail 0175) and the people's; the header's, the text's,
+ * or the whole letter's. The reads keyed by one rowid are one set, so a row is asked once per key.
+ */
+function partRows(stems: string | null, starts: string | null, of: "head" | "text" | "letter"): SQL {
+  const letters: SQL[] = [];
+  const bodies: SQL[] = [];
+  if (of !== "text" && stems !== null) letters.push(matchRows("messages_fts", stems));
+  if (of !== "text" && starts !== null) letters.push(matchRows("messages_part_fts", starts), matchRows("message_people_fts", starts));
+  if (of !== "head" && stems !== null) {
+    letters.push(matchRows("message_files_fts", stems));
+    bodies.push(matchRows("message_bodies_fts", stems));
+  }
+  if (of !== "head" && starts !== null) {
+    letters.push(matchRows("message_files_part_fts", starts));
+    bodies.push(matchRows("message_bodies_part_fts", starts));
+  }
+  const sets = [
+    ...(letters.length === 0 ? [] : [sql`m.rowid IN (${sql.join(letters, sql` UNION ALL `)})`]),
+    ...(bodies.length === 0 ? [] : [sql`b.rowid IN (${sql.join(bodies, sql` UNION ALL `)})`]),
+  ];
+  return sets.length === 0 ? sql`0` : sql`(${sql.join(sets, sql` OR `)})`;
+}
+
+/** The rowids `table` holds for `match`. */
+function matchRows(
+  table: "messages_fts" | "message_bodies_fts" | "message_people_fts" | "message_files_fts"
+    | "messages_part_fts" | "message_bodies_part_fts" | "message_files_part_fts",
+  match: string,
+): SQL {
+  const t = sql.raw(table);
+  return sql`SELECT rowid FROM ${t} WHERE ${t} MATCH ${match}`;
 }
 
 /**
@@ -232,24 +289,23 @@ function partArmsOf(q: string): MailWordArms {
  * letter's own rowid, read as one set on `m` (no lookup of the document, per match or per letter), never null.
  */
 function wordRows(table: "message_people_fts" | "message_files_fts", match: string): SQL {
-  const t = sql.raw(table);
-  return sql`m.rowid IN (SELECT rowid FROM ${t} WHERE ${t} MATCH ${match})`;
+  return sql`m.rowid IN (${matchRows(table, match)})`;
 }
 
 /**
  * One word arm's rows: `own` (the subject and sender, or the body) or `table`'s words, either
  * matching; for a query of exclusions only, neither holding them.
  */
-function armRows(own: SQL, table: "message_people_fts" | "message_files_fts", q: string, mode: "words" | "parts"): SQL {
-  const f = ftsFoldedQueryOf(q, mode);
+function armRows(own: SQL, table: "message_people_fts" | "message_files_fts", q: string): SQL {
+  const f = ftsFoldedQueryOf(q);
   if (f.match !== null) return sql`(${own} OR ${wordRows(table, f.match)})`;
   if (f.exclude !== null) return sql`(${own} AND NOT ${wordRows(table, f.exclude)})`;
   return own;
 }
 
 /** The header arm's rows: the subject and sender, or the people's names and addresses. */
-function headRows(q: string, mode: "words" | "parts" = "words"): SQL {
-  return armRows(ftsRows(sql`m.rowid`, "messages_fts", q, mode), "message_people_fts", q, mode);
+function headRows(q: string): SQL {
+  return armRows(ftsRows(sql`m.rowid`, "messages_fts", q), "message_people_fts", q);
 }
 
 /**
@@ -263,8 +319,8 @@ function headRank(q: string): SQL {
 }
 
 /** The text arm's rows: the body, or the file names' words, which rank as a body word does. */
-function textRows(q: string, mode: "words" | "parts" = "words"): SQL {
-  return armRows(ftsRows(sql`b.rowid`, "message_bodies_fts", q, mode), "message_files_fts", q, mode);
+function textRows(q: string): SQL {
+  return armRows(ftsRows(sql`b.rowid`, "message_bodies_fts", q), "message_files_fts", q);
 }
 
 /** No excluded operand anywhere in the letter, each table read once for all of them; undefined when nothing is excluded. */
@@ -293,7 +349,7 @@ function acrossOf(q: string, head: SearchArm, recency: SQL): MailWordArms | null
  * {@link ftsQueryOf} over every ß/ss form of the query (`eszettForms`), each form's expression
  * parenthesised and OR-ed; a query with one form is exactly its own expression.
  */
-export function ftsFoldedQueryOf(q: string, mode: "words" | "parts" = "words"): { match: string | null; exclude: string | null } {
+export function ftsFoldedQueryOf(q: string, mode: "words" | "stems" | "starts" = "words"): { match: string | null; exclude: string | null } {
   const forms = eszettForms(q);
   if (forms.length === 1) return ftsQueryOf(q, mode);
   const matches = forms.map((f) => ftsQueryOf(f, mode).match).filter((m): m is string => m !== null);
@@ -330,18 +386,21 @@ function peopleLike(q: string): SQL {
 
 /**
  * The letters whose file names' words (mail 0173) hold the query as a word or as the start of one:
- * the text arms find them so, by the same reads. One read of the table, a list of letters.
+ * the text arms find them so, by the same reads. One read of each table, a list of letters.
  */
 function filesHold(q: string): SQL {
-  const reads = [ftsFoldedQueryOf(q).match, ftsFoldedQueryOf(q, "parts").match].filter((m): m is string => m !== null);
-  return reads.length === 0 ? sql`0` : wordRows("message_files_fts", reads.length === 1 ? reads[0]! : reads.map((m) => `(${m})`).join(" OR "));
+  const stems = [...new Set([ftsFoldedQueryOf(q).match, ftsFoldedQueryOf(q, "stems").match])].filter((m): m is string => m !== null);
+  const starts = ftsFoldedQueryOf(q, "starts").match;
+  const reads = [
+    ...(stems.length === 0 ? [] : [matchRows("message_files_fts", stems.length === 1 ? stems[0]! : stems.map((m) => `(${m})`).join(" OR "))]),
+    ...(starts === null ? [] : [matchRows("message_files_part_fts", starts)]),
+  ];
+  return reads.length === 0 ? sql`0` : sql`m.rowid IN (${sql.join(reads, sql` UNION ALL `)})`;
 }
 
 /** `col` among the rows `table` holds for this query — never a syntax error, whatever was typed. */
-function ftsRows(
-  col: SQL, table: "messages_fts" | "message_bodies_fts" | "kb_entries_fts", q: string, mode: "words" | "parts" = "words",
-): SQL {
-  const f = ftsFoldedQueryOf(q, mode);
+function ftsRows(col: SQL, table: "messages_fts" | "message_bodies_fts" | "kb_entries_fts", q: string): SQL {
+  const f = ftsFoldedQueryOf(q);
   const t = sql.raw(table);
   if (f.match !== null) return sql`${col} IN (SELECT rowid FROM ${t} WHERE ${t} MATCH ${f.match})`;
   if (f.exclude !== null) return sql`${col} NOT IN (SELECT rowid FROM ${t} WHERE ${t} MATCH ${f.exclude})`;
@@ -593,9 +652,9 @@ export function sqliteDialect(): Dialect {
         const excluded = noneOf(queryOperandsOf(q));
         return { head, text: { pred: textRows(q), rank: recency }, ...(excluded ? { excluded } : {}) };
       },
-      // The same two FTS5 tables as `words`, each word as itself and, from four letters, as the
-      // start of a longer one or as itself plus a tail (`ftsQueryOf`): the tables stem (porter,
-      // mail 0138), so a prefix alone misses `elevation`, whose stem `elev` is shorter than `elevat`.
+      // Each word whole in the stemming tables `words` reads, OR from four letters as the start of a
+      // word in the unstemmed ones (mail 0175, and the people's), each reading over all the words:
+      // porter stems a prefix term too, so `"ines"*` there read `in`*, every invoice (`ftsQueryOf`).
       partWords: (qs: string | readonly string[]): MailWordArms | null => {
         const sides = partSidesOf(typeof qs === "string" ? [qs] : qs);
         return sides === null ? null : anyPartArms(sides.map(partArmsOf));

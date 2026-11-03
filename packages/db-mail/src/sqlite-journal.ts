@@ -617,5 +617,39 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "INSERT INTO message_people_fts(rowid, people) SELECT rowid, people FROM (SELECT m.rowid AS rowid, substr(trim(\n    coalesce(m.from_name, '') || ' ' || m.from_address || ' ' ||\n    coalesce((SELECT group_concat(coalesce(json_extract(e.value, '$.name'), '') || ' ' || coalesce(json_extract(e.value, '$.address'), ''), ' ')\n      FROM json_each(CASE WHEN json_valid(m.to_addresses) THEN m.to_addresses ELSE '[]' END) e WHERE e.type = 'object'), '') || ' ' ||\n    coalesce((SELECT group_concat(coalesce(json_extract(e.value, '$.name'), '') || ' ' || coalesce(json_extract(e.value, '$.address'), ''), ' ')\n      FROM json_each(CASE WHEN json_valid(m.cc_addresses) THEN m.cc_addresses ELSE '[]' END) e WHERE e.type = 'object'), '')), 1, 16384) AS people\n  FROM message_search s JOIN messages m ON m.id = s.message_id) WHERE people <> '';",
       "INSERT INTO message_files_fts(rowid, files) SELECT m.rowid, substr(group_concat(a.filename, ' '), 1, 16384)\n  FROM message_search s JOIN messages m ON m.id = s.message_id\n  JOIN attachments a ON a.account_id = s.account_id AND a.message_id = s.message_id\n  WHERE a.filename IS NOT NULL GROUP BY m.rowid;"
     ]
+  },
+  {
+    "name": "0175_device_part_words.sql",
+    "statements": [
+      "DROP TRIGGER IF EXISTS messages_part_fts_after_insert;",
+      "DROP TRIGGER IF EXISTS messages_part_fts_after_delete;",
+      "DROP TRIGGER IF EXISTS messages_part_fts_after_update;",
+      "DROP TRIGGER IF EXISTS message_bodies_part_fts_after_insert;",
+      "DROP TRIGGER IF EXISTS message_bodies_part_fts_after_delete;",
+      "DROP TRIGGER IF EXISTS message_bodies_part_fts_after_update;",
+      "DROP TRIGGER IF EXISTS message_part_words_after_insert;",
+      "DROP TRIGGER IF EXISTS message_part_words_after_update;",
+      "DROP TRIGGER IF EXISTS message_part_words_after_delete;",
+      "DROP TRIGGER IF EXISTS messages_part_words_after_delete;",
+      "DROP TABLE IF EXISTS messages_part_fts;",
+      "DROP TABLE IF EXISTS message_bodies_part_fts;",
+      "DROP TABLE IF EXISTS message_files_part_fts;",
+      "CREATE VIRTUAL TABLE messages_part_fts USING fts5(\n  subject, from_address,\n  content='messages',\n  content_rowid='rowid',\n  detail=none,\n  columnsize=0,\n  tokenize='unicode61 remove_diacritics 2'\n);",
+      "CREATE VIRTUAL TABLE message_bodies_part_fts USING fts5(\n  text,\n  content='message_bodies',\n  content_rowid='rowid',\n  detail=none,\n  columnsize=0,\n  tokenize='unicode61 remove_diacritics 2'\n);",
+      "CREATE VIRTUAL TABLE message_files_part_fts USING fts5(\n  files,\n  content='',\n  contentless_delete=1,\n  detail=none,\n  tokenize='unicode61 remove_diacritics 2'\n);",
+      "CREATE TRIGGER messages_part_fts_after_insert AFTER INSERT ON messages BEGIN\n  INSERT INTO messages_part_fts(rowid, subject, from_address) VALUES (new.rowid, new.subject, new.from_address);\nEND;",
+      "CREATE TRIGGER messages_part_fts_after_delete AFTER DELETE ON messages BEGIN\n  INSERT INTO messages_part_fts(messages_part_fts, rowid, subject, from_address) VALUES ('delete', old.rowid, old.subject, old.from_address);\nEND;",
+      "CREATE TRIGGER messages_part_fts_after_update AFTER UPDATE OF subject, from_address ON messages BEGIN\n  INSERT INTO messages_part_fts(messages_part_fts, rowid, subject, from_address) VALUES ('delete', old.rowid, old.subject, old.from_address);\n  INSERT INTO messages_part_fts(rowid, subject, from_address) VALUES (new.rowid, new.subject, new.from_address);\nEND;",
+      "CREATE TRIGGER message_bodies_part_fts_after_insert AFTER INSERT ON message_bodies BEGIN\n  INSERT INTO message_bodies_part_fts(rowid, text) VALUES (new.rowid, new.text);\nEND;",
+      "CREATE TRIGGER message_bodies_part_fts_after_delete AFTER DELETE ON message_bodies BEGIN\n  INSERT INTO message_bodies_part_fts(message_bodies_part_fts, rowid, text) VALUES ('delete', old.rowid, old.text);\nEND;",
+      "CREATE TRIGGER message_bodies_part_fts_after_update AFTER UPDATE OF text ON message_bodies BEGIN\n  INSERT INTO message_bodies_part_fts(message_bodies_part_fts, rowid, text) VALUES ('delete', old.rowid, old.text);\n  INSERT INTO message_bodies_part_fts(rowid, text) VALUES (new.rowid, new.text);\nEND;",
+      "CREATE TRIGGER message_part_words_after_insert AFTER INSERT ON message_search BEGIN\n  DELETE FROM message_files_part_fts WHERE rowid = (SELECT rowid FROM messages WHERE id = new.message_id);\n  INSERT INTO message_files_part_fts(rowid, files) SELECT m.rowid, f.files FROM messages m,\n    (SELECT substr(group_concat(a.filename, ' '), 1, 16384) AS files FROM attachments a\n      WHERE a.account_id = new.account_id AND a.message_id = new.message_id AND a.filename IS NOT NULL) f\n    WHERE m.id = new.message_id AND f.files IS NOT NULL;\nEND;",
+      "CREATE TRIGGER message_part_words_after_update AFTER UPDATE ON message_search BEGIN\n  DELETE FROM message_files_part_fts WHERE rowid IN (SELECT rowid FROM messages WHERE id IN (old.message_id, new.message_id));\n  INSERT INTO message_files_part_fts(rowid, files) SELECT m.rowid, f.files FROM messages m,\n    (SELECT substr(group_concat(a.filename, ' '), 1, 16384) AS files FROM attachments a\n      WHERE a.account_id = new.account_id AND a.message_id = new.message_id AND a.filename IS NOT NULL) f\n    WHERE m.id = new.message_id AND f.files IS NOT NULL;\nEND;",
+      "CREATE TRIGGER message_part_words_after_delete AFTER DELETE ON message_search BEGIN\n  DELETE FROM message_files_part_fts WHERE rowid = (SELECT rowid FROM messages WHERE id = old.message_id);\nEND;",
+      "CREATE TRIGGER messages_part_words_after_delete AFTER DELETE ON messages BEGIN\n  DELETE FROM message_files_part_fts WHERE rowid = old.rowid;\nEND;",
+      "INSERT INTO messages_part_fts(messages_part_fts) VALUES('rebuild');",
+      "INSERT INTO message_bodies_part_fts(message_bodies_part_fts) VALUES('rebuild');",
+      "INSERT INTO message_files_part_fts(rowid, files) SELECT m.rowid, substr(group_concat(a.filename, ' '), 1, 16384)\n  FROM message_search s JOIN messages m ON m.id = s.message_id\n  JOIN attachments a ON a.account_id = s.account_id AND a.message_id = s.message_id\n  WHERE a.filename IS NOT NULL GROUP BY m.rowid;"
+    ]
   }
 ] as const;
