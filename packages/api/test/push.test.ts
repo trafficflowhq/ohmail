@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
+import { sessions } from "@trafficflow/db";
 import { pushSubscriptions } from "@trafficflow/db/cloud";
 import { eq } from "drizzle-orm";
-import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedSessionFor, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
@@ -52,6 +53,34 @@ describe("push subscriptions", () => {
 
     const rows = await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.accountId, s.accountId));
     expect(rows).toHaveLength(1);
+  });
+
+  it("a registration names its session's family; the same endpoint from a second session moves to it, and Devices revokes follow", async () => {
+    const { db, deps } = await makeDeps();
+    const s1 = await seedSession(db, { now: FIXED_NOW });
+    const s2 = await seedSessionFor(db, { accountId: s1.accountId, userId: s1.userId, now: FIXED_NOW });
+    const admin = await seedSessionFor(db, { accountId: s1.accountId, userId: s1.userId, now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const familyOf = async (id: string) => (await db.select({ f: sessions.familyId }).from(sessions).where(eq(sessions.id, id)))[0]!.f;
+    const post = (bearer: string) => H(req("POST", "/push/subscriptions", { bearer, body: JSON.stringify(WEBPUSH) }), deps);
+
+    const first = await post(s1.token);
+    expect(first.status).toBe(201);
+    const { id } = await first.json() as { id: string };
+    const stamp = async () => {
+      const [row] = await db.select({ f: pushSubscriptions.sessionFamilyId }).from(pushSubscriptions).where(eq(pushSubscriptions.id, id));
+      return row ? row.f : "gone";
+    };
+    expect(await stamp()).toBe(await familyOf(s1.sessionId));
+
+    const second = await post(s2.token);
+    expect((await second.json() as { id: string }).id).toBe(id);
+    expect(await stamp()).toBe(await familyOf(s2.sessionId));
+
+    // The first session's take-back no longer reaches the row; the second's does.
+    expect((await H(req("DELETE", `/devices/${s1.sessionId}`, { bearer: admin.token }), deps)).status).toBe(204);
+    expect(await stamp()).toBe(await familyOf(s2.sessionId));
+    expect((await H(req("DELETE", `/devices/${s2.sessionId}`, { bearer: admin.token }), deps)).status).toBe(204);
+    expect(await stamp()).toBe("gone");
   });
 
   it("missing transport identity → 400", async () => {

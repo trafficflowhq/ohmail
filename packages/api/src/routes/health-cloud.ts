@@ -227,6 +227,9 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // cloud 0055_account_storage_holds — `updated_at`, the table's LAST column. Absent, every metered cap
   // read faults: the worker meters nothing and the storage block is left out. The deploy gate names it.
   ["account_storage_holds", "updated_at"],
+  // cloud 0056_push_subscription_session_family — the column every registration writes and every revoke's
+  // prune reads. Absent, every registration 42703s and no browser is woken; the deploy gate names it.
+  ["push_subscriptions", "session_family_id"],
 ] as const;
 
 /**

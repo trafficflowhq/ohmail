@@ -10,7 +10,7 @@ import {
 import {
   AuthService, makeTestAuthDeps, ServiceError, resolveSession, generateToken, hashToken,
   classifyRefreshFailure, throttleKeysFor, mintPairingToken, redeemDevicePair, OAuthCodeReplayed,
-  makeSessionLifecycle, DESKTOP_LINK_PURPOSE, MailService, SpyMailer,
+  makeSessionLifecycle, DESKTOP_LINK_PURPOSE, MailService, SpyMailer, pushService,
   type AuthDeps, type SessionUser, type SessionEstablished, type ServiceContext, type SessionLifecycle,
 } from "../src/index.js";
 import { SoftwareAuthenticator } from "./webauthn-authenticator.js";
@@ -2964,12 +2964,20 @@ describe("AuthService — OAuth2 Authorization-Code + PKCE", () => {
     });
     expect(tokens.accessToken).toBeTruthy();
     expect(tokens.tokenType).toBe("Bearer");
+    // The session the code bought registers a wake; the replay below withdraws both.
+    const [minted] = await h.db.select({ id: sessions.id }).from(sessions)
+      .where(eq(sessions.accessTokenHash, hashToken(tokens.accessToken)));
+    await pushService.subscribe(h.ctxFor({ userId: user.userId, accountId: user.accountId, sessionId: minted!.id }), {
+      transport: "webpush", endpoint: `https://push.test/${randomUUID()}`, p256dh: "p", auth: "a",
+    });
 
     // Single-use: the same code cannot be redeemed twice.
     await expect(h.svc.token(h.ctxFor(), {
       grant_type: "authorization_code", code, redirect_uri: "trafficflow://auth",
       client_id: "tf-macos", code_verifier: verifier,
     })).rejects.toMatchObject({ code: "invalid_grant", httpStatus: 400 });
+    expect(await h.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.accountId, user.accountId)),
+      "the replayed code's session kept its wake registration").toEqual([]);
   });
 
   it("rejects a redirect_uri / client_id mismatch and a bad PKCE verifier (binding)", async () => {

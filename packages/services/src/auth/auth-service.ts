@@ -27,6 +27,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { bridgeTx, type Db, type ServiceContext } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
+import { pruneWakeRows } from "../push-service.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
 import { reserveIpSlot } from "../ip-throttle.js";
 import { addressUnitOf, ipClassOf, networkVerdict, type NetworkVerdict } from "./ip-class.js";
@@ -2081,7 +2082,7 @@ export class AuthService extends SessionLifecycle {
    * hash replaces the one just verified by a compare-and-set, so of two overlapping changes one
    * wins and the other is told. Then everything that could still mint a session is voided
    * ({@link voidPendingGrants}), and the credential-change rule: every OTHER session family goes,
-   * with its devices' wake registrations; the caller's session stays as it is.
+   * with its wake registrations; the caller's session stays as it is.
    */
   async changePassword(
     ctx: ServiceContext, b: { currentPassword?: unknown; newPassword?: unknown },
@@ -2129,9 +2130,9 @@ export class AuthService extends SessionLifecycle {
       if (swapped.length === 0) {
         throw new ServiceError("conflict", 409, "the password was changed by another request");
       }
-      // The revoke voids the pending grants around its claim ({@link revokeClaimedSessions}).
-      const { revoked, familyIds } = await this.revokeOtherSessions(txCtx, user.id);
-      await this.pruneWakeRegistrations(tx, familyIds);
+      // The revoke voids the pending grants around its claim and prunes the revoked families' wake
+      // registrations ({@link revokeClaimedSessions}).
+      const { revoked } = await this.revokeOtherSessions(txCtx, user.id);
       await this.audit(tx, user, "password_changed", "password", txCtx);
       return { revoked };
     }, { fence: { accountId: ctx.accountId, onErased: () => ({ revoked: 0 }) } });
@@ -2737,6 +2738,7 @@ export class AuthService extends SessionLifecycle {
     // and waiting for a correct one would mean the case this defends against never triggers it.
     if (row?.consumedAt) {
       const revoked = await this.revokeFamily(db, row.id, ctx.now());
+      await this.pruneWakeRegistrations(db, [row.id]);
       // The counts leave by the ERROR, which is the only seam this layer has to a logger: what the
       // client is told is the ordinary `invalid_grant`, and the route writes the one line. The
       // code is not a field on it and must not be — a log is read by more people than a database
@@ -3554,19 +3556,15 @@ export class AuthService extends SessionLifecycle {
     return this.inTransaction(ctx, async (txCtx) => {
       const out = await super.logout(txCtx, b);
       const db = asTx(txCtx);
-      if (b.allDevices) {
+      const mine = txCtx.userId;
+      if (b.allDevices && mine) {
         // ── SCOPED TO THIS USER'S DEVICES, because that is what the base logout revoked ───────
         //
         // `super.logout`'s mass arm revokes sessions and refresh families for `ctx.userId`
         // alone; an account can hold several users, and deleting every push row on the ACCOUNT
         // took another user's registrations down while that user stayed signed in — a take-back
         // reaching past the thing it was taking back. The device rows carry the user, so the
-        // prune follows the same scope the revoke used.
-        //
-        // Deviceless rows (a browser's web-push) are not reached, and cannot be: nothing on them
-        // names a user. That is the residue named on its own row, not a gap to guess at here.
-        const mine = txCtx.userId;
-        if (!mine) return out;
+        // prune follows the same scope the revoke used; a browser's rows go by their family, below.
         await db.delete(pushSubscriptions).where(and(
           eq(pushSubscriptions.accountId, txCtx.accountId),
           inArray(
@@ -3575,7 +3573,6 @@ export class AuthService extends SessionLifecycle {
               .where(and(eq(devices.accountId, txCtx.accountId), eq(devices.userId, mine))),
           ),
         ));
-        return out;
       }
       await this.pruneWakeRegistrations(db, out.familyIds);
       return out;
@@ -3583,23 +3580,12 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * The wake rows of every device-bearing session in these families, each in that session's OWN
-   * account: the door may resolve no session at all, so the request's account can name nothing. A
-   * session with no device prunes nothing — web-push rows carry `device_id = NULL`, and deleting
-   * them would silence another browser.
+   * The hosted prune, {@link pruneWakeRows}: the rows these families registered and the rows of their
+   * sessions' devices, each in that session's OWN account (the door may resolve no session at all, so
+   * the request's account can name nothing).
    */
-  protected async pruneWakeRegistrations(db: Tx, familyIds: readonly string[]): Promise<void> {
-    for (const familyId of familyIds) {
-      const owned = await db.select({ accountId: sessions.accountId, deviceId: sessions.deviceId })
-        .from(sessions).where(and(eq(sessions.familyId, familyId), isNotNull(sessions.deviceId)));
-      for (const { accountId, deviceId } of owned) {
-        if (deviceId === null) continue;
-        await db.delete(pushSubscriptions).where(and(
-          eq(pushSubscriptions.accountId, accountId),
-          eq(pushSubscriptions.deviceId, deviceId),
-        ));
-      }
-    }
+  protected override async pruneWakeRegistrations(db: Tx, familyIds: readonly string[]): Promise<void> {
+    await pruneWakeRows(db, familyIds);
   }
 
   /**

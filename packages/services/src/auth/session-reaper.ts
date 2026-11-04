@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { refreshTokens, sessions, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { authEvents } from "@trafficflow/db/cloud";
+import { pruneWakeRows } from "../push-service.js";
 import type { AuthAuditEvent } from "./types.js";
 
 /**
@@ -14,9 +15,9 @@ import type { AuthAuditEvent } from "./types.js";
  * cookie window (`refresh_expires_at - last_seen_at` under 100 days, migration 0061's
  * discriminator: a rotation writes the two in lockstep, 90 days apart on the browser and 400 on
  * the native surface, so a device-less desktop session keeps its 400 days), and the whole refresh
- * FAMILY dies with the session. Run by the hosted API's cron on the RUNTIME connection; hosted
- * barrel only. Bounded and convergent: at most `limit` per run, chunks of 500, each a GUARDED
- * update so a concurrent revocation counts once.
+ * FAMILY dies with the session, its wake registrations with it. Run by the hosted API's cron on the
+ * RUNTIME connection; hosted barrel only. Bounded and convergent: at most `limit` per run, chunks of
+ * 500, each a GUARDED update so a concurrent revocation counts once.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -74,6 +75,7 @@ export async function reapStaleWebSessions(
             inArray(refreshTokens.familyId, [...new Set(rows.map((c) => c.familyId))]),
             isNull(refreshTokens.revokedAt),
           ));
+        await pruneWakeRows(tx, rows.map((c) => c.familyId));
         // Under the session locks this chunk holds, which order it before an erasure's step 7.
         await tx.insert(authEvents).values(rows.map((r) => ({
           accountId: r.accountId, userId: r.userId, event: "session_reaped" satisfies AuthAuditEvent["event"], at: now,

@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { and, eq, getTableName, isNull, type Table } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, users, devices, sessions, refreshTokens, type Tx } from "@trafficflow/db";
-import { makeSessionLifecycle, makeTestAuthDeps, type ServiceContext } from "../src/index.js";
+import { pushSubscriptions } from "@trafficflow/db/cloud";
+import { makeAuthService, makeSessionLifecycle, makeTestAuthDeps, type ServiceContext } from "../src/index.js";
 
 /**
  * ═══ THE BULK REVOKE IS SET-BASED — a security verb must not be a per-row loop ═══
@@ -23,6 +24,27 @@ import { makeSessionLifecycle, makeTestAuthDeps, type ServiceContext } from "../
  */
 
 const NOW = new Date("2026-08-21T12:00:00.000Z");
+
+/** Counts `verb` statements per table, through the transactions the handle opens too. */
+const countWrap = (handle: object, verb: "update" | "delete", counts: Record<string, number>): object =>
+  new Proxy(handle, {
+    get(t, p, r) {
+      const v = Reflect.get(t, p, r);
+      if (p === verb) {
+        return (...a: unknown[]) => {
+          const table = getTableName(a[0] as Table);
+          counts[table] = (counts[table] ?? 0) + 1;
+          return (t as Record<string, (...x: unknown[]) => unknown>)[verb]!(...a);
+        };
+      }
+      if (p === "transaction") {
+        return (fn: (tx: object) => unknown, ...rest: unknown[]) =>
+          (t as unknown as { transaction: (f: (tx: object) => unknown, ...r: unknown[]) => unknown })
+            .transaction((tx) => fn(countWrap(tx, verb, counts)), ...rest);
+      }
+      return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+    },
+  });
 
 describe("revokeWebSessions — set-based, complete, bounded", () => {
   it("revokes 120 sessions + families in one claim and one token chunk, sparing caller and paired", async () => {
@@ -56,26 +78,7 @@ describe("revokeWebSessions — set-based, complete, bounded", () => {
     // Counts UPDATE statements per table through the transaction boundary too: the verb runs its
     // claim, sweeps and voids inside one tx, so the counter follows the tx handle it hands out.
     const updates: Record<string, number> = {};
-    const countWrap = (handle: object): object =>
-      new Proxy(handle, {
-        get(t, p, r) {
-          const v = Reflect.get(t, p, r);
-          if (p === "update") {
-            return (...a: unknown[]) => {
-              const table = getTableName(a[0] as Table);
-              updates[table] = (updates[table] ?? 0) + 1;
-              return (t as Tx).update(...(a as [never]));
-            };
-          }
-          if (p === "transaction") {
-            return (fn: (tx: object) => unknown, ...rest: unknown[]) =>
-              (t as unknown as { transaction: (f: (tx: object) => unknown, ...r: unknown[]) => unknown })
-                .transaction((tx) => fn(countWrap(tx)), ...rest);
-          }
-          return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(t) : v;
-        },
-      });
-    const counting = countWrap(db as object) as unknown as Tx;
+    const counting = countWrap(db as object, "update", updates) as unknown as Tx;
 
     const svc = makeSessionLifecycle({ config: makeTestAuthDeps().config });
     const ctx: ServiceContext = {
@@ -99,6 +102,44 @@ describe("revokeWebSessions — set-based, complete, bounded", () => {
       .from(refreshTokens)
       .where(and(eq(refreshTokens.userId, me.userId), isNull(refreshTokens.revokedAt)));
     expect(liveTokens.map((t) => t.sessionId).sort()).toEqual([caller.id, paired.id].sort());
+  });
+
+  it("the hosted revoke takes the 120 browsers' wake rows in at most two statements, sparing caller and paired", async () => {
+    const db = (await makeTestDb()) as unknown as Tx;
+    const [acct] = await db.insert(accounts).values({ name: "batch-wake" }).returning();
+    const [user] = await db.insert(users)
+      .values({ accountId: acct!.id, email: "batch-wake@x.example", displayName: "B" }).returning();
+    const me = { accountId: acct!.id, userId: user!.id };
+    /** A session and the wake row it registered, bound to its family (and its device, if any). */
+    const mkBrowser = async (o: { deviceId?: string; lastTwofaAt?: Date } = {}) => {
+      const [s] = await db.insert(sessions).values({
+        ...me, deviceId: o.deviceId ?? null, familyId: crypto.randomUUID(), scope: "full",
+        accessExpiresAt: new Date(NOW.getTime() + 60_000), refreshExpiresAt: new Date(NOW.getTime() + 60_000),
+        lastTwofaAt: o.lastTwofaAt ?? null, lastSeenAt: NOW,
+      }).returning();
+      const [row] = await db.insert(pushSubscriptions).values({
+        accountId: me.accountId, transport: "webpush", endpoint: `https://push.test/${s!.id}`,
+        deviceId: s!.deviceId, sessionFamilyId: s!.familyId,
+      }).returning({ id: pushSubscriptions.id });
+      return { id: s!.id, row: row!.id };
+    };
+    const caller = await mkBrowser({ lastTwofaAt: NOW });
+    const [dev] = await db.insert(devices).values({ ...me, kind: "mobile-android", label: "Mila's phone" }).returning();
+    const paired = await mkBrowser({ deviceId: dev!.id });
+    for (let i = 0; i < 120; i++) await mkBrowser();
+
+    const deletes: Record<string, number> = {};
+    const { revoked } = await makeAuthService(makeTestAuthDeps()).revokeWebSessions({
+      db: countWrap(db as object, "delete", deletes) as unknown as ServiceContext["db"],
+      accountId: me.accountId, userId: me.userId, sessionId: caller.id,
+      now: () => NOW, requestId: "batch-wake", ip: "1.2.3.4",
+    });
+    expect(revoked).toBe(120);
+    expect(deletes.push_subscriptions ?? 0).toBeGreaterThan(0);
+    expect(deletes.push_subscriptions, "the prune is a loop, not a set").toBeLessThanOrEqual(2);
+    const left = await db.select({ id: pushSubscriptions.id }).from(pushSubscriptions)
+      .where(eq(pushSubscriptions.accountId, me.accountId));
+    expect(left.map((r) => r.id).sort()).toEqual([caller.row, paired.row].sort());
   });
 
   it("a failure mid-sweep leaves NOTHING half-done, and the retry converges", async () => {

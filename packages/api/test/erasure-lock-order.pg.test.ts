@@ -1,20 +1,20 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, accountSyncState, changeLog, folderOps, mailboxFolders, mailboxes, messages,
   refreshTokens, sessions, threads, users, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, UNMETERED_ACCESS,
-  type EntitlementsPort,
+  type EntitlementsPort, type Tx,
 } from "@trafficflow/db";
 import {
-  credentials, invites, makeOwnedDb, recoveryCodes, totpSecrets, webauthnCredentials, type OwnedDb,
+  credentials, invites, makeOwnedDb, pushSubscriptions, recoveryCodes, totpSecrets, webauthnCredentials, type OwnedDb,
 } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import {
   generateToken, hashToken, makeAuthService, makeTestAuthDeps, mintPairingToken, redeemDevicePair,
-  FolderOpsService, MailService, SpyMailer, ThreadService, throttleKeysFor, type Db, type ServiceContext,
+  FolderOpsService, MailService, SpyMailer, ThreadService, reapStaleWebSessions, throttleKeysFor, type Db, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -768,4 +768,61 @@ describe.skipIf(!PG_UP)("DELETE /account against a keyed writer that takes the c
       });
     }, 60_000);
   }
+});
+
+/**
+ * THE SESSION REAPER AGAINST AN ERASURE THAT HAS DELETED THE ACCOUNT'S PUSH ROWS. The erasure deletes
+ * them before it takes the sessions at step 7, and the reaper prunes the rows of the families it reaps
+ * while it holds their sessions: a reaper that waited on those rows would wait on a transaction about
+ * to wait on it. A row another transaction holds is passed over, so the reaper finishes under a
+ * one-second lock timeout, and the unheld row of another account goes.
+ */
+describe.skipIf(!PG_UP)("the session reaper beside an uncommitted delete of an account's push rows", () => {
+  it("does not wait: the held row is passed over, the other account's row goes", async () => {
+    const stale = async (p: Person): Promise<string> => {
+      const familyId = randomUUID();
+      const now = Date.now();
+      await db().insert(sessions).values({
+        accountId: p.accountId, userId: p.userId, familyId, accessTokenHash: hashToken(generateToken()),
+        accessExpiresAt: new Date(now - 86_400_000), refreshExpiresAt: new Date(now - 86_400_000),
+        lastSeenAt: new Date(now - 91 * 86_400_000),
+      });
+      const id = randomUUID();
+      await db().insert(pushSubscriptions).values({
+        id, accountId: p.accountId, transport: "webpush", endpoint: `https://push.test/${familyId}`, sessionFamilyId: familyId,
+      });
+      return id;
+    };
+    const erased = await person();
+    const other = await person();
+    const heldRow = await stale(erased);
+    const freeRow = await stale(other);
+
+    const holder = named("c0056-holder");
+    const u = new URL(PG_TEST_URL);
+    u.searchParams.set("lock_timeout", "1000");
+    const reaper = makeOwnedDb(u.toString());
+    let release!: () => void;
+    const released = new Promise<void>((r) => { release = r; });
+    let took!: () => void;
+    const taken = new Promise<void>((r) => { took = r; });
+    const holding = holder.db.transaction(async (tx) => {
+      await tx.delete(pushSubscriptions).where(eq(pushSubscriptions.accountId, erased.accountId));
+      took();
+      await released;
+      throw new Error("rolled back");
+    }).catch(() => "rolled back");
+    try {
+      await taken;
+      const reaped = await reapStaleWebSessions(reaper.db as unknown as Tx, new Date()).then((r) => r.reaped, codeOf);
+      expect(typeof reaped === "number" && reaped >= 2, `the reaper answered ${String(reaped)}`).toBe(true);
+    } finally {
+      release();
+      await holding;
+      await Promise.all([holder.close(), reaper.close()]);
+    }
+    const left = await db().select({ id: pushSubscriptions.id }).from(pushSubscriptions)
+      .where(inArray(pushSubscriptions.id, [heldRow, freeRow]));
+    expect(left.map((r) => r.id), "the reaper waited, or took the held row, or left the free one").toEqual([heldRow]);
+  }, 60_000);
 });
