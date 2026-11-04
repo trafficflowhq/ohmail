@@ -384,10 +384,17 @@ export function anchorFor(candidate: string): { href: string; label: string } | 
 }
 
 /**
- * One paragraph's worth of text, with its safe URLs turned into anchors. Every href drawn goes into
- * `links`, which the body reports as on screen (`rendered-links.ts`).
+ * What a body's nodes draw, which it reports as on screen (`rendered-links.ts`): every href, and the
+ * marked ones among them ({@link LinkRun.elsewhere}), which the desktop shell asks about before it
+ * opens one.
  */
-function linkify(block: string, keyBase: string, links: string[]): ReactNode[] {
+interface DrawnLinks { hrefs: string[]; asks: string[] }
+
+/**
+ * One paragraph's worth of text, with its safe URLs turned into anchors. Every href drawn goes into
+ * `links`; a label made from its own address names no other site, so none is marked.
+ */
+function linkify(block: string, keyBase: string, links: DrawnLinks): ReactNode[] {
   const out: ReactNode[] = [];
   let cursor = 0;
   let n = 0;
@@ -403,7 +410,7 @@ function linkify(block: string, keyBase: string, links: string[]): ReactNode[] {
     if (!anchor) continue;
 
     if (start > cursor) out.push(block.slice(cursor, start));
-    links.push(anchor.href);
+    links.hrefs.push(anchor.href);
     out.push(
       <a
         key={`l${keyBase}-${n++}`}
@@ -438,7 +445,7 @@ function linkify(block: string, keyBase: string, links: string[]): ReactNode[] {
  * than the destination ({@link LinkRun.elsewhere}), the real host is printed beside it — the
  * framed path's anti-phishing marker, carried natively.
  */
-function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<string>, links: string[]): ReactNode[] {
+function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<string>, links: DrawnLinks): ReactNode[] {
   return nodes.map((node, i) => {
     const key = `${keyBase}i${i}`;
     switch (node.kind) {
@@ -452,7 +459,9 @@ function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<str
       // received mail, and the app is not pretending to be an editor for somebody else's source.
       case "code": return <code className="msg-code" key={key}>{renderInline(node.children, key, own, links)}</code>;
       case "link":
-        links.push(node.href);
+        links.hrefs.push(node.href);
+        // Marked: the desktop shell asks before it opens it, as it does a frame's.
+        if (node.elsewhere) links.asks.push(node.href);
         return (
           <a
             key={key}
@@ -479,8 +488,8 @@ function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<str
   });
 }
 
-/** `links` collects every href the nodes draw, for the body to report as on screen. */
-function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<string>, links: string[]): ReactNode[] {
+/** `links` collects every href the nodes draw, and the marked ones, for the body to report as on screen. */
+function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<string>, links: DrawnLinks): ReactNode[] {
   return nodes.map((node, i) => {
     const key = `${keyPrefix}${i}`;
     switch (node.kind) {
@@ -590,9 +599,9 @@ function parsePlain(text: string): BodyNode[] {
  * it reports its own links, as a surface of its own, once it is drawn.
  */
 const BodyPage = memo(function BodyPage({ text, index }: { text: string; index: number }) {
-  const links: string[] = [];
+  const links: DrawnLinks = { hrefs: [], asks: [] };
   const drawn = renderNodes(parsePlain(text), `p${index}-`, NO_OWN_IMAGES, links);
-  return <div className="msg-page">{drawn}<RenderedLinks hrefs={links} /></div>;
+  return <div className="msg-page">{drawn}<RenderedLinks hrefs={links.hrefs} asks={links.asks} /></div>;
 });
 
 /**
@@ -651,7 +660,7 @@ export interface RichFold {
 }
 
 /** One stretch of the text part: its nodes, or its pages when it is longer than one. */
-function plainPart(text: string, key: string, links: string[], ownEnd: boolean): ReactNode {
+function plainPart(text: string, key: string, links: DrawnLinks, ownEnd: boolean): ReactNode {
   if (pageEnd(text, 0) < text.length) return <PagedBody key={key} text={text} ownEnd={ownEnd} />;
   return (
     <Fragment key={key}>
@@ -700,7 +709,7 @@ export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, f
   const open = openedFor === key;
   // Every href drawn below, reported as on screen (`rendered-links.ts`): a folded history draws
   // nothing, so it reports nothing until it is open.
-  const links: string[] = [];
+  const links: DrawnLinks = { hrefs: [], asks: [] };
   const toggle = (
     <HistoryToggle key="t" open={open} controls={region} onToggle={() => setOpenedFor(open ? null : key)} />
   );
@@ -712,17 +721,17 @@ export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, f
     const history = open ? renderNodes(richHistory.history, "h", ownImages, links) : null;
     const after = renderNodes(richHistory.after, "a", ownImages, links);
     return richHistory.at === "leading" ? (
-      <>{before}{toggle}{shown(history)}{after}<OwnEnd /><RenderedLinks hrefs={links} /></>
+      <>{before}{toggle}{shown(history)}{after}<OwnEnd /><RenderedLinks hrefs={links.hrefs} asks={links.asks} /></>
     ) : (
-      <>{before}<OwnEnd />{toggle}{shown(history)}{after}<RenderedLinks hrefs={links} /></>
+      <>{before}<OwnEnd />{toggle}{shown(history)}{after}<RenderedLinks hrefs={links.hrefs} asks={links.asks} /></>
     );
   }
   if (useRich) {
-    return <>{renderNodes(rich, "b", ownImages, links)}<OwnEnd /><RenderedLinks hrefs={links} /></>;
+    return <>{renderNodes(rich, "b", ownImages, links)}<OwnEnd /><RenderedLinks hrefs={links.hrefs} asks={links.asks} /></>;
   }
   if (range === null) {
     if (pageEnd(body, 0) < body.length) return <PagedBody text={body} />;
-    return <>{renderNodes(parsePlain(body), "b", NO_OWN_IMAGES, links)}<OwnEnd /><RenderedLinks hrefs={links} /></>;
+    return <>{renderNodes(parsePlain(body), "b", NO_OWN_IMAGES, links)}<OwnEnd /><RenderedLinks hrefs={links.hrefs} asks={links.asks} /></>;
   }
   const part = (from: number, to: number): string => lines.slice(from, to).join("\n");
   const leading = range.at === "leading";
@@ -735,7 +744,7 @@ export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, f
       {toggle}
       {shown(history)}
       {plainPart(after, "a", links, true)}
-      <RenderedLinks hrefs={links} />
+      <RenderedLinks hrefs={links.hrefs} asks={links.asks} />
     </>
   ) : (
     <>
@@ -743,7 +752,7 @@ export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, f
       {toggle}
       {shown(history)}
       {after.trim() ? plainPart(after, "a", links, false) : null}
-      <RenderedLinks hrefs={links} />
+      <RenderedLinks hrefs={links.hrefs} asks={links.asks} />
     </>
   );
 }

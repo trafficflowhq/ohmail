@@ -7,7 +7,9 @@ import { join, relative, resolve } from "node:path";
 import { NextIntlClientProvider } from "next-intl";
 
 import { MessageBody, sanitizeMailHtml } from "../../webapp/app/components/MessageBody";
-import { setRenderedLinksBatchSink, setRenderedLinksSink } from "../../webapp/app/shell/rendered-links";
+import {
+  flushRenderedLinks, reportRenderedLinks, setRenderedLinksBatchSink, setRenderedLinksSink,
+} from "../../webapp/app/shell/rendered-links";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 import { PROVIDERS } from "../../webapp/app/shell/providers";
 import { RichEditor } from "../../webapp/app/shell/RichEditor";
@@ -249,6 +251,21 @@ describe("a message's links are on the shell's list while it is on screen", () =
     expect([...batches()[1]!.surfaces].sort()).toEqual([...batches()[0]!.surfaces].sort());
   });
 
+  it("a flush of more surfaces than the shell takes in one call reaches it whole, in order", async () => {
+    /* The shell refuses a call of more than 1,024 surfaces whole (`rendered_links.rs`), so such a
+       flush put none of its links on the list and every press on one was refused. Mutations: one
+       call per flush → the 1,025-surface call; a cut instead of a split → the last surface lost. */
+    for (let i = 0; i < 1025; i += 1) {
+      reportRenderedLinks(`s${i}`, [`https://example.test/${i}`], i === 1024 ? [`https://example.test/${i}`] : []);
+    }
+    flushRenderedLinks();
+    const sizes = batches().map((b) => b.surfaces.length);
+    expect(Math.max(...sizes), "a call carried more surfaces than the shell takes").toBeLessThanOrEqual(1024);
+    expect(batches().flatMap((b) => b.surfaces)).toEqual(Array.from({ length: 1025 }, (_, i) => `s${i}`));
+    expect(batches().flatMap((b) => b.urls).at(-1)).toEqual(["https://example.test/1024"]);
+    expect(batches().flatMap((b) => b.asks).at(-1)).toEqual(["https://example.test/1024"]);
+  });
+
   it("a frame's marked links ride with its links, one list per surface, in step", async () => {
     /* The shell asks before it opens a marked link (`rendered_links.rs`), and the desktop's frame
        keeps that link's address for the new-window request. Mutations: the asks not sent → no
@@ -267,6 +284,26 @@ describe("a message's links are on the shell's list while it is on screen", () =
     expect(link?.getAttribute("href"), "the desktop's frame took the marked link's address").toBe("https://example.test/a?b=1&c=2#f");
     await unmount();
     expect(batches().at(-1)?.asks.every((a) => a.length === 0), "the unmount left marked links on the list").toBe(true);
+  });
+
+  it("a letter in the app's own type sends its marked link as one the shell asks about", async () => {
+    /* Tester A's letter: no layout, so it is set in the app's type, and the label of its link is an
+       address on another site. The reader draws the real host beside it; without the mark the
+       shell's door opened it at once. Mutations: the prose path reports no asks → the ask list is
+       empty; it reports every link as asked → the honest link asks too. */
+    const html = '<p>Your session ended. Sign in again at <a href="https://example.net/r/a1?u=7">https://example.com/account/login</a> ' +
+      'or read <a href="https://example.net/help">our help pages</a>.</p>';
+    const el = await mount(h(MessageBody, {
+      messageId: "m6", text: "Your session ended. Sign in again at https://example.com/account/login or read our help pages.", html,
+    }));
+    expect(el.querySelector("iframe"), "this letter must render in the app's type").toBeNull();
+    expect([...el.querySelectorAll(".msg-link .msg-link-host")].map((n) => n.textContent)).toEqual([" (example.net)"]);
+    const [batch, ...more] = batches();
+    expect(more).toEqual([]);
+    expect(batch!.urls).toEqual([["https://example.net/r/a1?u=7", "https://example.net/help"]]);
+    expect(batch!.asks, "the marked link never reached the shell as one to ask about").toEqual([["https://example.net/r/a1?u=7"]]);
+    await unmount();
+    expect(batches().at(-1)?.asks, "the unmount left the marked link on the list").toEqual([[]]);
   });
 
   it("with no sink armed — the web app's state — nothing is reported", async () => {

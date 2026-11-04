@@ -6188,7 +6188,7 @@ pub fn open_target(key: &str, challenge: Option<&str>, request: Option<&str>) ->
 /// of them has a remedy the person can act on. The .deb and the .rpm declare no dependencies on
 /// purpose (the runtime ships inside the artifact), so this is a state the packages allow.
 #[cfg(all(feature = "local-engine", not(any(target_os = "macos", target_os = "windows"))))]
-const NO_OPENER: &str =
+pub(crate) const NO_OPENER: &str =
     "ohmail: this computer has no xdg-open — install xdg-utils and links will open again";
 
 /// The two places distributions put `xdg-open`, tried before `PATH`.
@@ -6206,6 +6206,17 @@ fn find_opener(
     path: Option<&std::ffi::OsStr>,
     appdir: Option<&Path>,
 ) -> Option<PathBuf> {
+    find_program("xdg-open", locations, path, appdir)
+}
+
+/// [`find_opener`]'s lookup for any program by name: `gio` is the Linux opener's third route.
+#[cfg(all(feature = "local-engine", not(any(target_os = "macos", target_os = "windows"))))]
+pub(crate) fn find_program(
+    name: &str,
+    locations: &[&str],
+    path: Option<&std::ffi::OsStr>,
+    appdir: Option<&Path>,
+) -> Option<PathBuf> {
     if let Some(found) = locations.iter().map(Path::new).find(|p| p.is_file()) {
         return Some(found.to_path_buf());
     }
@@ -6214,12 +6225,12 @@ fn find_opener(
             Some(root) => !dir.starts_with(root),
             None => true,
         })
-        .map(|dir| dir.join("xdg-open"))
+        .map(|dir| dir.join(name))
         .find(|p| p.is_file())
 }
 
 #[cfg(all(feature = "local-engine", not(any(target_os = "macos", target_os = "windows"))))]
-fn xdg_open_program() -> Option<PathBuf> {
+pub(crate) fn xdg_open_program() -> Option<PathBuf> {
     let appdir = std::env::var_os("APPDIR").map(PathBuf::from);
     find_opener(
         XDG_OPEN_LOCATIONS,
@@ -6299,8 +6310,10 @@ pub(crate) fn scrub_bundled_environment(command: &mut Command) {
     scrub_from(command, |key| std::env::var_os(key));
 }
 
+// Linux opens through `open_routes`; this table is still its tests' reading of the platform.
 #[cfg(feature = "local-engine")]
-fn opener_command(target: &std::ffi::OsStr) -> Result<Command, String> {
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub(crate) fn opener_command(target: &std::ffi::OsStr) -> Result<Command, String> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut c = Command::new("/usr/bin/open");
@@ -6333,10 +6346,10 @@ fn opener_command(target: &std::ffi::OsStr) -> Result<Command, String> {
 /// hands off exits in milliseconds; one that execs the browser itself is still running at the
 /// deadline, and still running is not a refusal.
 #[cfg(feature = "local-engine")]
-const OPENER_VERDICT: Duration = Duration::from_millis(1200);
+pub(crate) const OPENER_VERDICT: Duration = Duration::from_millis(1200);
 
 #[cfg(feature = "local-engine")]
-fn run_opener(mut command: Command, refused: &str) -> Result<(), String> {
+pub(crate) fn run_opener(mut command: Command, refused: &str) -> Result<(), String> {
     let child = command.spawn().map_err(|err| format!("{refused} ({err})"))?;
     // A THREAD BLOCKED ON THE CHILD, and this one waiting on a channel — rather than both asking
     // the kernel every 25 ms. It also REAPS: an opener that execs the browser itself is still
@@ -6355,9 +6368,18 @@ fn run_opener(mut command: Command, refused: &str) -> Result<(), String> {
     }
 }
 
+/// Linux tries the desktop portal, then `xdg-open`, then `gio` (`open_routes.rs`); the other
+/// platforms keep their one opener.
 #[cfg(feature = "local-engine")]
 pub(crate) fn spawn_opener(url: &str) -> Result<(), String> {
-    run_opener(opener_command(url.as_ref())?, "ohmail: this computer would not open a browser")
+    #[cfg(target_os = "linux")]
+    {
+        crate::open_routes::open(url)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        run_opener(opener_command(url.as_ref())?, "ohmail: this computer would not open a browser")
+    }
 }
 
 /// Open one of [`LINKS`] in the user's own browser.
@@ -6453,11 +6475,12 @@ pub fn external_url(url: &str) -> Result<&str, String> {
     }
 
     // `"` `<` `>` `\` and backtick are the five, and the test for admitting a character here is
-    // "does `URL.href` ever emit it", not "does it look dangerous". Every one of these is
-    // percent-encoded or normalised away by the URL serialiser that composes each value reaching
-    // this function (`\` becomes `/`), so refusing them costs no real link and closes the two
-    // that matter on Windows: a `"` ends an argument under `CommandLineToArgvW`, and a `\` runs
-    // into its backslash-before-quote rule.
+    // "does `URL.href` ever emit it", not "does it look dangerous". The serialiser that composes
+    // each value reaching this function percent-encodes the first three and turns a `\` in the
+    // path into `/`; the `\` and backtick it leaves past the path arrive encoded by the door
+    // ([`browser_form`]). So refusing them costs no real link and closes the two that matter on
+    // Windows: a `"` ends an argument under `CommandLineToArgvW`, and a `\` runs into its
+    // backslash-before-quote rule.
     //
     // `^` AND `|` ARE DELIBERATELY ADMITTED, and they were on this list until it was checked.
     // `URL.href` leaves both alone — `?ids=1|2|3` survives serialisation exactly as written — so
@@ -6489,6 +6512,30 @@ pub fn external_url(url: &str) -> Result<&str, String> {
     }
 
     Ok(url)
+}
+
+/// THE TWO CHARACTERS A LINK MAY CARRY AS THEY ARE PAST ITS PATH. `URL.href` and the webview's
+/// own parser leave `\` in a query and a fragment, and a backtick in a query, so a link a message
+/// draws arrives spelled so; [`external_url`] refuses both everywhere. Here they become `%5C` and
+/// `%60` from the first `?` or `#` on, before anything judges, compares or opens the address: the
+/// site decodes a query's escapes back to the same characters. Before that point a `\` is
+/// structure (a parser reads it as `/`) and stays, so the gate still refuses it there.
+#[cfg(feature = "local-engine")]
+pub fn browser_form(url: &str) -> std::borrow::Cow<'_, str> {
+    let Some(at) = url.find(['?', '#']) else { return url.into() };
+    if !url[at..].contains(['\\', '`']) {
+        return url.into();
+    }
+    let mut out = String::with_capacity(url.len() + 16);
+    out.push_str(&url[..at]);
+    for c in url[at..].chars() {
+        match c {
+            '\\' => out.push_str("%5C"),
+            '`' => out.push_str("%60"),
+            c => out.push(c),
+        }
+    }
+    out.into()
 }
 
 /// The scheme prefix, matched case-insensitively, with the remainder returned.
@@ -7145,8 +7192,10 @@ pub fn code_from_link(raw: &str) -> Option<String> {
 #[cfg(feature = "local-engine")]
 pub const MAILTO_EVENT: &str = "link:mailto";
 
-/// The event the shell emits when a link will not open, carrying the address: the window says so
-/// in one sentence, wherever the link was drawn. The payload is never written to a log.
+/// The event the shell emits when a link will not open, carrying the address and why
+/// ([`refusal_payload`]): the window says so in one sentence, wherever the link was drawn, in
+/// ohmail's words for its own gate and this computer's for its opener. The payload is never
+/// written to a log.
 #[cfg(feature = "local-engine")]
 pub const LINK_REFUSED_EVENT: &str = "link:refused";
 
@@ -7313,6 +7362,9 @@ pub fn popup_route(url: &str, set: Option<&crate::rendered_links::Rendered>, act
     if http_host(url).is_some_and(|host| OWN_HOSTS.contains(&host.as_str())) {
         return PopupRoute::Ignored;
     }
+    // Judged, compared and opened in one spelling: `\` and a backtick past the path encoded.
+    let encoded = browser_form(url);
+    let url: &str = &encoded;
     match crate::rendered_links::admitted(url, set) {
         Ok(admitted) if activation == Activation::Person && crate::rendered_links::asked(admitted, set) => {
             PopupRoute::Ask(admitted.to_string())
@@ -7429,15 +7481,16 @@ pub fn on_new_window<R: tauri::Runtime>(
     }
 }
 
-/// The address a refusal hands the window, cut to the gate's bound on a character boundary: the
-/// over-length refusal is said too, and the window's parser admits nothing longer.
+/// What a refusal hands the window: the address, cut to the gate's bound on a character boundary
+/// (the over-length refusal is said too, and the window's parser admits nothing longer), and why, in
+/// the log line's word, so the window says whether ohmail's gate or this computer's opener refused.
 #[cfg(feature = "local-engine")]
-pub fn refusal_payload(url: &str) -> String {
+pub fn refusal_payload(url: &str, why: crate::rendered_links::Why) -> serde_json::Value {
     let mut end = url.len().min(EXTERNAL_URL_MAX);
     while !url.is_char_boundary(end) {
         end -= 1;
     }
-    url[..end].to_string()
+    serde_json::json!({ "url": &url[..end], "why": why.word() })
 }
 
 /// Hand an admitted address to the person's browser. An opener's failure is said as a refusal
@@ -7451,7 +7504,7 @@ fn open_in_browser<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: String) {
         Err(sentence) => {
             log_line(format_args!("a link was not opened: {sentence}"));
             log_refusal(Door::Popup, Why::Opener, &url);
-            let _ = app.emit(LINK_REFUSED_EVENT, refusal_payload(&url));
+            let _ = app.emit(LINK_REFUSED_EVENT, refusal_payload(&url, Why::Opener));
         }
     }
 }
@@ -7465,7 +7518,7 @@ fn deliver_popup<R: tauri::Runtime>(app: &tauri::AppHandle<R>, route: PopupRoute
     use tauri::{Emitter, Manager};
     let refused = |url: String, why: Why| {
         log_refusal(Door::Popup, why, &url);
-        let _ = app.emit(LINK_REFUSED_EVENT, refusal_payload(&url));
+        let _ = app.emit(LINK_REFUSED_EVENT, refusal_payload(&url, why));
     };
     match route {
         PopupRoute::Browser(url) => open_in_browser(app, url),
@@ -7749,6 +7802,18 @@ pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
     app.manage(crate::rendered_links::RenderedLinks::default());
     // The one press held for the window's ask, before the grant that lets the window answer it.
     app.manage(LinkAskHeld::default());
+    // A refusal the Linux opener decides after the window was answered (a portal that took its
+    // time) is said as any other opener's refusal.
+    #[cfg(target_os = "linux")]
+    {
+        use tauri::Emitter;
+        let handle = app.handle().clone();
+        crate::open_routes::set_late_refusal(move |url| {
+            use crate::rendered_links::{log_refusal, Door, Why};
+            log_refusal(Door::Popup, Why::Opener, url);
+            let _ = handle.emit(LINK_REFUSED_EVENT, refusal_payload(url, Why::Opener));
+        });
+    }
 
     // EVERY url the activation carried, each judged on its own. The platform may deliver more than
     // one, and "the first one wins" would be a rule an attacker could aim by prepending a link this

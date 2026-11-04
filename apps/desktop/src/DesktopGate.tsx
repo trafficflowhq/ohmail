@@ -99,7 +99,7 @@ import { LocalSuggest } from "./local-suggest.js";
 import { CloudSuggest } from "./CloudSuggest.js";
 import {
   claimMailto, offLinkAsk, offLinkRefused, onLinkAsk, onLinkRefused, postOsNotice, onMailto, onMenuCommand, onMenuNavigate,
-  setBadge, type LinkAsk as HeldPress, type MenuCommand,
+  setBadge, type LinkAsk as HeldPress, type LinkRefusal, type MenuCommand,
 } from "./native.js";
 import { LinkAsk } from "./LinkAsk.js";
 import { decideNotices } from "@ohmail/client-engine";
@@ -379,13 +379,32 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
      console line and nothing on screen, which is the defect this feature exists to end. A long
      address is cut: the host is at the front and a toast is one line. Every link leaves as a
      new-window request and the shell refuses any of them with one event, `link:refused`, so a
-     link in the app's document and one in a message frame cannot be worded differently. */
+     link in the app's document and one in a message frame cannot be worded differently. The event
+     says why: ohmail's own gate refusing is said as ohmail's, and only the opener's refusal
+     blames this computer. */
   const toast = useOptionalToast();
   useEffect(() => {
     if (!toast) return;
-    const say = (url: string): void => {
+    /* The whole address, written inside the press; "copied" only once the write fulfilled
+       (`DesktopDevices.tsx`'s rule: a false "copied" strands the person). */
+    const copy = (url: string): void => {
+      void (async () => {
+        try {
+          await navigator.clipboard.writeText(url);
+          toast(DOOR_COPY.linkAddressCopied);
+        } catch {
+          toast(DOOR_COPY.linkAddressNotCopied);
+        }
+      })();
+    };
+    const say = ({ url, why }: LinkRefusal): void => {
       const shown = url.length > ADDRESS_SHOWN ? `${url.slice(0, ADDRESS_SHOWN)}…` : url;
-      toast(DOOR_COPY.linkNoBrowser(machineWord(), shown));
+      const sentence = why === "opener" ? DOOR_COPY.linkNoBrowser(machineWord(), shown) : DOOR_COPY.linkNotOpened(shown);
+      toast(sentence, {
+        action: DOOR_COPY.linkCopyAddress,
+        onAction: () => copy(url),
+        duration: 10_000,
+      });
     };
     void onLinkRefused(say);
     return () => {

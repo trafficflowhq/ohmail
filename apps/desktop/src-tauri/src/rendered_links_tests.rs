@@ -88,6 +88,54 @@ fn the_comparison_is_exact_after_the_parsers_own_serialisation() {
     }
 }
 
+/// A `\` OR A BACKTICK IN THE QUERY OR THE FRAGMENT, which `URL.href` and the webview leave as they
+/// are, opens percent-encoded, whether the surface reported it and the press asked for it raw or
+/// encoded; a marked one asks in that spelling. Before the query each is still refused, and so is
+/// every other character the shape refuses. Mutations: refuse them (the gate before) → the opened
+/// rows; encode the whole address → the path rows open; encode the query only → the fragment row;
+/// compare without encoding the report → the raw press is refused as unrendered.
+#[test]
+fn a_backslash_or_backtick_in_the_query_or_fragment_opens_percent_encoded() {
+    for (drawn, opened) in [
+        ("https://example.test/r?u=a\\b", "https://example.test/r?u=a%5Cb"),
+        ("https://example.test/r?q=`x`&n=1", "https://example.test/r?q=%60x%60&n=1"),
+        ("https://example.test/r#to\\here", "https://example.test/r#to%5Chere"),
+        ("https://example.test/r?a=\\#b`", "https://example.test/r?a=%5C#b%60"),
+    ] {
+        for (reported_as, pressed_as) in [(drawn, drawn), (drawn, opened), (opened, drawn)] {
+            let set = reported("s1", &[reported_as]);
+            assert_eq!(
+                popup_route(pressed_as, Some(&set), Activation::Person),
+                PopupRoute::Browser(opened.to_string()),
+                "reported {reported_as}, pressed {pressed_as}"
+            );
+        }
+    }
+    let marked = "https://evil.test/login?next=\\x";
+    let mut set = Rendered::default();
+    set.report_asking("s1", &owned(&[marked]), &owned(&[marked])).expect("report");
+    assert_eq!(
+        popup_route(marked, Some(&set), Activation::Person),
+        PopupRoute::Ask("https://evil.test/login?next=%5Cx".to_string())
+    );
+    for refused in [
+        "https://example.test\\@evil.test/?q=1",
+        "https://example.test/a\\b?q=1",
+        "https://example.test/`id`?q=1",
+        "https://example.test/?q=\"x\"",
+        "https://example.test/?q=<x>",
+        "https://example.test/?q=a b",
+        "https://example.test/#\u{202e}x",
+    ] {
+        let set = reported("s1", &[refused]);
+        assert_eq!(
+            popup_route(refused, Some(&set), Activation::Person),
+            PopupRoute::Refused { url: refused.to_string(), why: Why::Shape },
+            "{refused:?}"
+        );
+    }
+}
+
 /// A REPORT REPLACES, AN EMPTY ONE REMOVES, AND EVERY CAP HOLDS. Mutations: append instead of
 /// replace → the replaced link stays admitted; drop the surface cap → the first surface survives;
 /// drop the per-surface cap → the last entry is admitted; fail the whole report on one bad entry →

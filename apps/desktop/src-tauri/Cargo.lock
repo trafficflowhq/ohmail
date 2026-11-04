@@ -2589,6 +2589,7 @@ dependencies = [
  "webkit2gtk",
  "webview2-com",
  "windows-sys 0.60.2",
+ "zbus",
 ]
 
 [[package]]

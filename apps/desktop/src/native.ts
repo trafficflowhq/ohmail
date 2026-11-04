@@ -279,36 +279,51 @@ export function offLinkCode(run: (code: string) => void): void {
 }
 
 /**
- * The event the shell emits when a link will not open, wherever it was drawn, and the longest
- * address it carries (the shell's gate bound). One listener for the life of the window and the
- * latest handler wins, {@link onLinkCode}'s shape, because the gate re-registers with its toast.
+ * The event the shell emits when a link will not open, wherever it was drawn: the address, at most
+ * the shell's gate bound, and why. One listener for the life of the window and the latest handler
+ * wins, {@link onLinkCode}'s shape, because the gate re-registers with its toast.
  */
 export const LINK_REFUSED_EVENT = "link:refused";
 const REFUSED_URL_MAX = 4096;
-let linkRefusedHandler: ((url: string) => void) | null = null;
+
+/**
+ * Why a link did not open, in the shell's log word (`Why` in `rendered_links.rs`): ohmail's own gate
+ * refused it (`shape`, `unrendered`, `gesture`), or this computer's opener did (`opener`).
+ */
+export type LinkRefusalWhy = "shape" | "unrendered" | "gesture" | "opener";
+const REFUSAL_WHYS: readonly string[] = ["shape", "unrendered", "gesture", "opener"];
+
+/** A refused link: its address and why. */
+export interface LinkRefusal {
+  url: string;
+  why: LinkRefusalWhy;
+}
+
+let linkRefusedHandler: ((refusal: LinkRefusal) => void) | null = null;
 let linkRefusedListening = false;
 
-/** The address a `link:refused` payload carried, or null for anything that is not one. */
-export function urlOfRefusalPayload(payload: unknown): string | null {
-  const raw =
-    typeof payload === "string"
-      ? payload
-      : typeof (payload as { payload?: unknown } | null)?.payload === "string"
-        ? (payload as { payload: string }).payload
-        : null;
-  return raw !== null && raw.length > 0 && raw.length <= REFUSED_URL_MAX ? raw : null;
+/** The refusal a `link:refused` payload carried, or null for anything that is not one. */
+export function refusalOfPayload(payload: unknown): LinkRefusal | null {
+  const raw = typeof (payload as { url?: unknown } | null)?.url === "string"
+    ? payload
+    : (payload as { payload?: unknown } | null)?.payload;
+  const url = (raw as { url?: unknown } | null)?.url;
+  const why = (raw as { why?: unknown } | null)?.why;
+  if (typeof url !== "string" || url.length === 0 || url.length > REFUSED_URL_MAX) return null;
+  if (typeof why !== "string" || !REFUSAL_WHYS.includes(why)) return null;
+  return { url, why: why as LinkRefusalWhy };
 }
 
 /** Run `run` when the shell refuses a link a person clicked. */
-export async function onLinkRefused(run: (url: string) => void): Promise<void> {
+export async function onLinkRefused(run: (refusal: LinkRefusal) => void): Promise<void> {
   linkRefusedHandler = run;
   if (linkRefusedListening) return;
   linkRefusedListening = true;
-  await listen(LINK_REFUSED_EVENT, urlOfRefusalPayload, (url) => linkRefusedHandler?.(url));
+  await listen(LINK_REFUSED_EVENT, refusalOfPayload, (refusal) => linkRefusedHandler?.(refusal));
 }
 
 /** Stop answering refusals — the registering mount is going away and none replaced it. */
-export function offLinkRefused(run: (url: string) => void): void {
+export function offLinkRefused(run: (refusal: LinkRefusal) => void): void {
   if (linkRefusedHandler === run) linkRefusedHandler = null;
 }
 
@@ -584,27 +599,37 @@ export function reportWindowReady(canvas: string | null = frameCanvas()): void {
 }
 
 /**
+ * The most surfaces one call carries: the shell refuses a longer one whole (`SURFACES_MAX` in
+ * `rendered_links.rs`), and none of that flush's links would then open.
+ */
+const RENDERED_LINKS_BATCH_MAX = 1024;
+
+/**
  * THE LINKS THE SURFACES DRAW, TO THE SHELL (`rendered_links.rs`): besides the shell's own, the only
  * addresses its new-window door will open, on the person's click. `main.tsx` arms this as the shared
  * renderers' batched sink (`rendered-links.ts`): one call carries every surface's latest report, in
  * order, and an empty list takes a surface away. Not awaited — the shell applies a batch in order,
  * before a later open — and a refused one is said in the log, because it shows up later as a link
  * that will not open. `asks[i]` are the marked links among `urls[i]`, which the shell asks about.
+ * A flush of more surfaces than one call may carry goes as several calls, in order.
  */
 export function reportRenderedLinksToShell(
   reports: readonly { surface: string; hrefs: readonly string[]; asks?: readonly string[] }[],
 ): void {
   const shell = internals();
   if (!shell || reports.length === 0) return;
-  const surfaces = reports.map((r) => r.surface);
-  const urls = reports.map((r) => [...r.hrefs]);
-  const asks = reports.map((r) => [...(r.asks ?? [])]);
-  try {
-    void shell.invoke(RENDERED_LINKS_COMMAND, { surfaces, urls, asks }).catch((err: unknown) => {
+  for (let at = 0; at < reports.length; at += RENDERED_LINKS_BATCH_MAX) {
+    const part = reports.slice(at, at + RENDERED_LINKS_BATCH_MAX);
+    const surfaces = part.map((r) => r.surface);
+    const urls = part.map((r) => [...r.hrefs]);
+    const asks = part.map((r) => [...(r.asks ?? [])]);
+    try {
+      void shell.invoke(RENDERED_LINKS_COMMAND, { surfaces, urls, asks }).catch((err: unknown) => {
+        console.error("ohmail: the shell did not take the links on screen", err);
+      });
+    } catch (err) {
       console.error("ohmail: the shell did not take the links on screen", err);
-    });
-  } catch (err) {
-    console.error("ohmail: the shell did not take the links on screen", err);
+    }
   }
 }
 

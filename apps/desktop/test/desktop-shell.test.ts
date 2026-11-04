@@ -652,7 +652,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these fifty-six files and no others", () => {
+  it("is these fifty-eight files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -774,6 +774,13 @@ describe("the Rust side", () => {
       "omarchy.rs",
       "omarchy_core.rs",
       "omarchy_core_tests.rs",
+      // THE LINUX OPENER'S ROUTES: the desktop portal's OpenURI over the session bus (one private
+      // connection per open, never starting a portal that is not running), then `xdg-open`, then
+      // `gio open`, each judged by the shell's opener verdict. Only http(s) reaches a route, the
+      // address is one argument or one D-Bus string, and its one log line carries no address.
+      // Compiled only under `local-engine` on Linux; its tests drive a fake portal and stand-ins.
+      "open_routes.rs",
+      "open_routes_tests.rs",
       // A pairing that does not finish, undone by the window or by the next launch: the tests of
       // the one restore, declared under `host.rs` and compiled with it, under `local-engine`.
       "pairing_undo_tests.rs",
@@ -956,6 +963,8 @@ describe("the Rust side", () => {
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod rendered_links;/);
     // …and `link_gate.rs`, each engine's hook into that door: the preview arms nothing.
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod link_gate;/);
+    // …and `open_routes.rs`, the Linux opener's routes: the preview opens nothing.
+    expect(main).toMatch(/#\[cfg\(all\(feature = "local-engine", target_os = "linux"\)\)\]\s*\nmod open_routes;/);
     // …and `dropped_files.rs`: the preview has no compose to take a dropped file into.
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod dropped_files;/);
     // `default` exists and is empty. A missing `[features]` block would also match "not
@@ -986,6 +995,9 @@ describe("the Rust side", () => {
       "dep:tauri-plugin-deep-link",
       "dep:tauri-plugin-notification",
       "dep:tauri-plugin-single-instance",
+      // The desktop portal's OpenURI, the Linux opener's first route (`open_routes.rs`): Linux's
+      // own table, already in this build's graph through the single-instance plugin.
+      "dep:zbus",
       // The tray icon — host mode's window into an app whose window is closed. A TAURI feature
       // rather than a dependency, listed here so the preview neither draws a tray nor carries
       // the capability to.

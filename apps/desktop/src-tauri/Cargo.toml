@@ -58,6 +58,7 @@ local-engine = [
     "dep:tauri-plugin-notification",
     "dep:tauri-plugin-deep-link",
     "dep:tauri-plugin-single-instance",
+    "dep:zbus",
     # The tray icon is host mode's window into an app whose window is closed: when this
     # install publishes its mail to the user's own tailnet, closing the window hides it
     # instead of quitting, and the tray is then the only visible handle on the running
@@ -325,6 +326,10 @@ gtk = "0.18"
 # versions, so naming them adds no third-party code to audit; MIT OR Apache-2.0.
 libc = "0.2"
 dirs = "6"
+# THE DESKTOP PORTAL'S OpenURI, the Linux opener's first route (`src/open_routes.rs`). Already in the
+# engine build's graph through tauri-plugin-single-instance at this version with these features, so
+# it adds no third-party code to audit; MIT. Enabled by `local-engine`: the preview opens nothing.
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"], optional = true }
 
 # WEBVIEW2, NAMED FOR ONE EVENT: `ProcessFailed`, so a renderer that dies on Windows is reloaded
 # (`src/renderer_recovery.rs`). The crate is already in this binary's graph (wry links the same
