@@ -13,7 +13,7 @@ import {
   makeEntitlementsClient, refundObligationsOn, SESSION_ACQUIRE_TIMEOUT_MS, readDbTls,
   freshConnectProbe, type EntitlementsClient, type FreshConnectReading,
 } from "@trafficflow/db/cloud";
-import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, refusingAlertSink, acquireImapSlot, releaseImapSlot, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
+import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, refusingAlertSink, HOSTED_IMAP_ADMISSION, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
   // send path, because the retention sweep's caller is the worker, which may not depend on
   // `@trafficflow/services`. This host is the one place that needs both halves.
   makeSupabaseStagingStorage, // The organizer's last completed pass, for the filing strip (mail 0097).
@@ -136,7 +136,8 @@ function buildServices(cfg: HostConfig): ApiServices {
     }),
     // The hosted deployment IS the thing the admission cap protects: many tenants, one connection
     // budget per upstream account, two processes (this one and the worker) that share no lock.
-    imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot },
+    // With it, the connect probes' budget over time: no tenant tries passwords at a mail server back to back.
+    imapAdmission: HOSTED_IMAP_ADMISSION,
     // The add-time IMAP/SMTP probe's SSRF gate. ENFORCING here, because the probe dials a host the
     // caller typed and this is a multi-tenant network: a private/loopback/link-local target or a
     // non-mail port is refused before the socket opens. The resolver is `nodeHostResolver` for the

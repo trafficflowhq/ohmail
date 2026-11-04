@@ -17,7 +17,7 @@ export interface StoredIdempotent {
   /**
    * When an erasure blanked this row's stored response. NULL for every ordinary row. A stamped
    * row is NOT absent: absent means "run the mutation", and this one says the mutation already
-   * happened and its answer has been erased — `withIdempotency` turns that into a 410.
+   * happened and its answer has been erased — {@link replayOf} turns that into a 410.
    */
   erasedAt: Date | null;
 }
@@ -89,4 +89,19 @@ export function storedResponse(found: StoredIdempotent): Response {
     status: found.responseStatus,
     seq: found.seq ?? undefined,
   });
+}
+
+/**
+ * A RETRY'S ANSWER FROM ITS ROW, for every reader of a key. An erasure's stamp first: the answer is
+ * gone and so is the request's hash, which nothing may then compare. 410, the code every erased door
+ * answers. Then a different request under the key is 409; the same one replays.
+ */
+export function replayOf(found: StoredIdempotent, requestHash: string): Response {
+  if (found.erasedAt !== null) {
+    return errorResponse("erased", 410, "this request's result has been erased; it cannot be replayed");
+  }
+  if (found.requestHash !== requestHash) {
+    return errorResponse("idempotency_replay", 409, "idempotency key reused with a different request");
+  }
+  return storedResponse(found);
 }

@@ -5,7 +5,9 @@ import { join } from "node:path";
 import ts from "typescript";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { users } from "@trafficflow/db";
-import { authThrottle, AUTH_THROTTLE_RETENTION_MS } from "@trafficflow/db/cloud";
+import {
+  authThrottle, AUTH_THROTTLE_RETENTION_MS, PROBE_BUDGET, probeRowsOfAccount, spendProbeBudget,
+} from "@trafficflow/db/cloud";
 import { eq } from "drizzle-orm";
 import { deleteAccount, makeTestAuthDeps, throttleKeysFor, DEFAULT_AUTH_CONFIG, type ServiceContext } from "../src/index.js";
 import { NOTICE_EVERY_MS } from "../src/auth/auth-service.js";
@@ -19,8 +21,12 @@ import { NOW, seedFullAccount } from "./helpers/erasure-fixture.js";
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const keys = throttleKeysFor(makeTestAuthDeps().keyProvider);
+/** One login typed into both accounts' connect forms: their probe rows differ by the account alone. */
+const typed = keys.address("typed@example.invalid");
+/** A key's family words, never its hashes or ids: `imap:mailbox:probe:smtp`, `pw`, `email`. */
+const family = (k: string): string => k.split(":").filter((s) => /^[a-z-]+$/.test(s)).join(":");
 
-function families(userId: string, email: string): string[] {
+function families(accountId: string, userId: string, email: string): string[] {
   const hA = keys.address(email);
   const hC = keys.client("10.0.0.1");
   return [
@@ -28,6 +34,8 @@ function families(userId: string, email: string): string[] {
     `notice:factor:${userId}`, `notice:ceiling:${hA}`, `email:${email}`,
     // The mail quota's two budgets for the address (`mail-service.ts`).
     `mail:unsolicited:${hA}`, `mail:transactional:${hA}`,
+    // The connect probes' slots, IMAP and SMTP (`imap-probe.ts`).
+    `imap:mailbox:probe:${typed}:${accountId}`, `imap:mailbox:probe:smtp:${typed}:${accountId}`,
   ];
 }
 
@@ -37,17 +45,38 @@ describe("erasure and the sign-in throttle", () => {
     const mine = await seedFullAccount(db, "Erased");
     const theirs = await seedFullAccount(db, "Kept");
     const emailOf = async (id: string) => (await db.select({ e: users.email }).from(users).where(eq(users.id, id)))[0]!.e;
-    const myKeys = families(mine.userId, await emailOf(mine.userId));
-    const theirKeys = families(theirs.userId, await emailOf(theirs.userId));
     await db.delete(authThrottle);
-    await db.insert(authThrottle).values([...myKeys, ...theirKeys].map((key) => ({ key, failures: 1 })));
+    // The probes' budget rows, by their own writer: the typed login's windows and the account's.
+    for (const a of [mine, theirs]) {
+      expect(await spendProbeBudget(db, { accountId: a.accountId, target: typed, now: NOW })).toBeNull();
+    }
+    const budgetOf = async (accountId: string) => (await db.select({ key: authThrottle.key }).from(authThrottle))
+      .map((r) => r.key).filter((k) => k.endsWith(`:${accountId}`));
+    const myKeys = [...families(mine.accountId, mine.userId, await emailOf(mine.userId)), ...await budgetOf(mine.accountId)];
+    const theirKeys = [...families(theirs.accountId, theirs.userId, await emailOf(theirs.userId)), ...await budgetOf(theirs.accountId)];
+    expect(myKeys.filter((k) => k.startsWith("probe-rate:")), "the spend wrote no rows").toHaveLength(4);
+    await db.insert(authThrottle).values([...myKeys, ...theirKeys].filter((k) => !k.startsWith("probe-rate:"))
+      .map((key) => ({ key, failures: 1 })));
 
     const ctx: ServiceContext = { db, accountId: mine.accountId, userId: mine.userId, now: () => NOW, requestId: "del" };
     await deleteAccount(ctx, { throttleKeys: keys });
 
     const left = new Set((await db.select({ key: authThrottle.key }).from(authThrottle)).map((r) => r.key));
-    for (const k of myKeys) expect(left.has(k), `left behind: ${k.split(":")[0]}`).toBe(false);
-    for (const k of theirKeys) expect(left.has(k), `a neighbour's row went: ${k.split(":")[0]}`).toBe(true);
+    for (const k of myKeys) expect(left.has(k), `left behind: ${family(k)}`).toBe(false);
+    for (const k of theirKeys) expect(left.has(k), `a neighbour's row went: ${family(k)}`).toBe(true);
+  });
+
+  it("matches an account id as written: LIKE's wildcards in it match nothing else", async () => {
+    const db = await makeTestDb();
+    await db.delete(authThrottle);
+    // A trailing escape character, unescaped, is an error; `_` and `%`, unescaped, match `aXbYYc`.
+    const id = "a_b%c\\";
+    const gone = [`imap:mailbox:probe:h:${id}`, `probe-rate:a:60:${id}`];
+    const kept = ["imap:mailbox:probe:h:aXbYYc\\", `imap:mailbox:probe:h:${id}d`, "probe-rate:a:60:aXbYYc\\"];
+    await db.insert(authThrottle).values([...gone, ...kept].map((key) => ({ key, failures: 0 })));
+    await db.delete(authThrottle).where(probeRowsOfAccount(id));
+    expect((await db.select({ key: authThrottle.key }).from(authThrottle)).map((r) => r.key).sort())
+      .toEqual(kept.sort());
   });
 
   it("both production callers hand the keyer to the erasure, and say whether refunds drain", () => {
@@ -82,6 +111,7 @@ describe("erasure and the sign-in throttle", () => {
       factorDay: c.factorDayMs * 2,
       notice: NOTICE_EVERY_MS,
       mail: 60 * 60_000,
+      probe: Math.max(...[...PROBE_BUDGET.target, ...PROBE_BUDGET.account].map((w) => w.windowMs)),
     };
     for (const [name, ms] of Object.entries(spans)) expect(ms, name).toBeLessThanOrEqual(AUTH_THROTTLE_RETENTION_MS);
   });

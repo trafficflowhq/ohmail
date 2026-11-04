@@ -4,7 +4,7 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { mailboxes, mailboxCredentials } from "@trafficflow/db";
 /* The counter lives in the HOSTED schema, whose barrel a local install never imports — so the
    table comes from `/cloud` beside the two functions that write it, not from the root. */
-import { acquireImapSlot, authThrottle, imapAdmissionKey, releaseImapSlot } from "@trafficflow/db/cloud";
+import { acquireImapSlot, authThrottle, HOSTED_IMAP_ADMISSION, imapAdmissionKey, releaseImapSlot } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { eq } from "drizzle-orm";
 import {
@@ -244,6 +244,8 @@ describe("the probe's admission slot", () => {
 
   it("with no key to key it by, the probe answers 503, dials nothing and counts nothing", async () => {
     const { deps, db, accountId } = await seed();
+    // The hosted port, budget included: the keys are taken before anything is spent.
+    (deps.services as unknown as { imapAdmission: unknown }).imapAdmission = HOSTED_IMAP_ADMISSION;
     (deps as unknown as { keyProvider: unknown }).keyProvider = {
       decrypt: async () => "not-printed",
       deriveSubkey: () => { throw new ServiceError("install_key_absent", 503, "this install has no durable key"); },

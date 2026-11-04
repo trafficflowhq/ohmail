@@ -49,6 +49,11 @@ export interface ImapAdmissionPort {
   /** `false` means REFUSE — the caller must not dial. Throwing means the counter itself failed. */
   acquire(db: Db, input: { mailboxId: string; max: number; now: Date }): Promise<boolean>;
   release(db: Db, mailboxId: string, now: Date): Promise<void>;
+  /**
+   * A connect probe's budget over time, per account and keyed login: `null` admits, a number
+   * refuses with its seconds to wait. Absent, no budget: the local door dials for its owner alone.
+   */
+  spend?(db: Db, input: { accountId: string; target: string; now: Date }): Promise<number | null>;
 }
 
 /** The four doors whose ending {@link ApiDeps.connectAttempts} records. */

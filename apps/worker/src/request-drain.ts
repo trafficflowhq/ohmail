@@ -885,10 +885,11 @@ export async function applyMetaRequests(
         // THE CONTENT COMPARISON, and it happens before the claim so the common conflict is
         // caught without a write. A live row for this id whose hash differs is an id being reused
         // for different content — refused, and the genuine record (a different id, or this same id
-        // arriving with its original content) is untouched.
+        // arriving with its original content) is untouched. A row an erasure stamped was answered
+        // here and its hash blanked, so it is answered from the row, never compared.
         const existing = await readIdempotencyKey(tx, rt.accountId, idemKey, now);
         if (existing !== null) {
-          if (existing.requestHash !== hash) throw new RequestConflictError(e.requestId);
+          if (existing.erasedAt === null && existing.requestHash !== hash) throw new RequestConflictError(e.requestId);
           throw new AlreadyAnsweredError(e.requestId, recordedAnswerOf(existing.responseJson));
         }
 
@@ -911,7 +912,7 @@ export async function applyMetaRequests(
         // takes a fresh snapshot and sees the winner's row — same hash a replay, a different hash the `conflict`.
         if (!claimed) {
           const winner = await readIdempotencyKey(tx, rt.accountId, idemKey, now);
-          if (winner !== null && winner.requestHash !== hash) {
+          if (winner !== null && winner.erasedAt === null && winner.requestHash !== hash) {
             throw new RequestConflictError(e.requestId);
           }
           throw new AlreadyAnsweredError(e.requestId, recordedAnswerOf(winner?.responseJson));

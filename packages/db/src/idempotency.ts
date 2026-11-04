@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 /* The mail half directly — see the note in `change-log.ts`. `idempotency_keys` is a mail table. */
 import { drafts, idempotencyKeys, mailboxes, messages } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
@@ -80,8 +80,10 @@ export async function settleIdempotencyKey(tx: Tx, i: IdempotencyClaimInput): Pr
 
 /**
  * HAND BACK A PENDING KEY this request will not answer — a run that faulted or refused mid-way —
- * so its retry runs instead of waiting out the TTL. Only the pending row under this request's
- * hash: a settled answer is never deleted, since that would let a retry apply the effect twice.
+ * so its retry runs instead of waiting out the TTL. Only a pending row: under this request's hash,
+ * or one an erasure stamped, whose hash it blanked. A takeover clears the stamp, so a stamped row is
+ * this run's claim unless the claim outlived its TTL and a same-key request took it over before the
+ * erasure. A settled answer is never deleted: a retry would apply the effect twice.
  */
 export async function releasePendingIdempotencyKey(
   tx: Tx, i: { accountId: string; key: string; requestHash: string },
@@ -91,7 +93,7 @@ export async function releasePendingIdempotencyKey(
     .where(and(
       eq(idempotencyKeys.accountId, i.accountId),
       eq(idempotencyKeys.key, i.key),
-      eq(idempotencyKeys.requestHash, i.requestHash),
+      or(eq(idempotencyKeys.requestHash, i.requestHash), isNotNull(idempotencyKeys.erasedAt)),
       eq(idempotencyKeys.responseStatus, IDEMPOTENCY_PENDING_STATUS),
     ))
     .returning({ key: idempotencyKeys.key });
@@ -223,8 +225,9 @@ export async function eraseIdempotentResponses(
     // A JSON STRING, not `null`. The column is `not null`, and drizzle writes a JS `null` as SQL
     // NULL on both dialects, which the constraint refuses — measured, as a 500 on the erase route.
     // `"erased"` is a value both stores accept and reads as what it is; `erased_at` is the record
-    // that decides, and the replay never serves this either way.
-    .set({ responseJson: IDEMPOTENT_ERASED_BODY, erasedAt: now })
+    // that decides, and the replay never serves this either way. The request's hash goes too: a
+    // short body (a contact's address) is confirmed by hashing a guess. `""` matches no hash.
+    .set({ responseJson: IDEMPOTENT_ERASED_BODY, erasedAt: now, requestHash: "" })
     .where(and(eq(idempotencyKeys.accountId, accountId), isNull(idempotencyKeys.erasedAt), only))
     .returning({ key: idempotencyKeys.key });
   if (!scope) return (await blank()).length;

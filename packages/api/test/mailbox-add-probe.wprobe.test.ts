@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { mailboxes, mailboxCredentials } from "@trafficflow/db";
-import { authThrottle } from "@trafficflow/db/cloud";
+import { authThrottle, HOSTED_IMAP_ADMISSION } from "@trafficflow/db/cloud";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
@@ -248,6 +248,19 @@ describe("credentials are tried before they are stored", () => {
       // And the key carries no address: it is a digest, like the table's other identity namespaces.
       expect(row.key).not.toContain("example.invalid");
     }
+  });
+
+  it("past the probes' budget an Add is refused before it dials, and stores nothing", async () => {
+    // Add tries the password as Test does, so it spends the same budget (hosted hosts only).
+    const { db, deps, token } = await session();
+    (deps.services as unknown as { imapAdmission: unknown }).imapAdmission = HOSTED_IMAP_ADMISSION;
+    const dial = spyDial(() => Promise.reject(imapError({ serverResponseCode: "AUTHENTICATIONFAILED" })));
+    for (let i = 0; i < 10; i++) expect((await H(post(token), deps)).status).toBe(400);
+    const res = await H(post(token), deps);
+    expect({ status: res.status, code: (await res.json()).error.code }).toEqual({ status: 429, code: "rate_limited" });
+    expect(dial.dialed()).toBe(10);
+    expect(await db.select().from(mailboxes)).toHaveLength(0);
+    expect(await db.select().from(mailboxCredentials)).toHaveLength(0);
   });
 
   it("a refused probe releases its slot too", async () => {
