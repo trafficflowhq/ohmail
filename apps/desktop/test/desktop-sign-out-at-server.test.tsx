@@ -224,6 +224,14 @@ describe("Settings → Desktop → Sign out, read where it lands", () => {
     expect(text()).toContain(DOOR_COPY.signedOutStillListed(machineWord(), "kestrel"));
   });
 
+  it("the sign-out takes the recorded Sent folders the window kept for its mailbox", { timeout: 30_000 }, async () => {
+    fakeShell(MANAGED, { status: "signed_out", revokedAtHost: true });
+    const kept = "ohmail.window.sent-folders.mbx-1";
+    localStorage.setItem(kept, JSON.stringify([["mbx-1", "Envoyés"]]));
+    await signOutFromSettings("en");
+    expect(localStorage.getItem(kept)).toBeNull();
+  });
+
   it("a server that ended the session: the chooser says nothing", { timeout: 30_000 }, async () => {
     const shell = fakeShell(MANAGED, { status: "signed_out", revokedAtHost: true });
     await signOutFromSettings("en");
