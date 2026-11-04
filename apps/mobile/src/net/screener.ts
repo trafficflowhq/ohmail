@@ -1,6 +1,4 @@
 import type { ConnectedSession } from "./pairing.js";
-/* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
-import { requestBase } from "./request-base";
 import { relayedOf, type RelayedDecision } from "../state/relay";
 /**
  * The waiting queue as the server holds it — `GET /screener`, a derivation over mail physically in
@@ -33,6 +31,12 @@ export interface ServerWaitingSender {
  */
 const MAX_PAGES = 25;
 
+/** One walk of the queue: the waiting senders and, off its first page, this phone's relayed decisions. */
+export interface ScreenerQueueRead {
+  waiting: ServerWaitingSender[] | null;
+  relayed: RelayedDecision[] | null;
+}
+
 /**
  * Read the whole waiting queue, or `null` for "could not ask". A page can come back EMPTY WITH A
  * CURSOR STILL SET, meaning "keep going" (`screener-service.ts:523`): the page filters decided
@@ -45,13 +49,26 @@ const MAX_PAGES = 25;
 export async function readScreenerWaiting(
   session: ConnectedSession,
 ): Promise<ServerWaitingSender[] | null> {
+  return (await readScreenerQueue(session)).waiting;
+}
+
+/**
+ * THE QUEUE AND THIS PHONE'S OWN DECISIONS STILL WITH THE ORGANIZER, in one walk: the route's
+ * `pendingDecisions` ride the first page, so they are taken from it rather than asked again.
+ * Each half is `null` for "could not ask", never "nothing is waiting".
+ */
+export async function readScreenerQueue(session: ConnectedSession): Promise<ScreenerQueueRead> {
+  let relayed: RelayedDecision[] | null = null;
   try {
     const out: ServerWaitingSender[] = [];
     let cursor: string | null = null;
     for (let page = 0; page < MAX_PAGES; page++) {
       // The engine's parse keeps a row only when it names a message to decide and an author.
       const got = await session.engine.screenerWaitingPage(cursor);
-      if (got === null) return null;
+      if (got === null) return { waiting: null, relayed };
+      if (page === 0 && got.pendingDecisions !== undefined) {
+        relayed = got.pendingDecisions.map(relayedOf).filter((d): d is RelayedDecision => d !== null);
+      }
       for (const s of got.senders) {
         out.push({
           messageId: s.messageId, address: s.address, name: s.name,
@@ -60,30 +77,13 @@ export async function readScreenerWaiting(
         });
       }
       cursor = got.nextCursor;
-      if (cursor === null) return out;
+      if (cursor === null) return { waiting: out, relayed };
     }
     /* The page bound was reached with a cursor still in hand. What is in `out` is a PREFIX of the
        queue, and a prefix is the short list this read exists to stop reporting — so it is not an
        answer, and the caller keeps the partition's own list instead. */
-    return null;
+    return { waiting: null, relayed };
   } catch {
-    return null;
-  }
-}
-
-/**
- * THIS PHONE'S OWN DECISIONS STILL WITH THE ORGANIZER — the route's `pendingDecisions`, off one
- * short page. Asked on both doors: on the standalone door the engine in this app holds the rows,
- * on a paired one the server does. `null` means "could not ask", never "nothing is waiting".
- */
-export async function readRelayedDecisions(session: ConnectedSession): Promise<RelayedDecision[] | null> {
-  try {
-    const res = await session.fetch(`${requestBase(session)}/screener?limit=1`, { method: "GET" });
-    if (res.status !== 200) return null;
-    const body = (await res.json()) as { pendingDecisions?: unknown } | null;
-    if (!Array.isArray(body?.pendingDecisions)) return null;
-    return body.pendingDecisions.map(relayedOf).filter((d): d is RelayedDecision => d !== null);
-  } catch {
-    return null;
+    return { waiting: null, relayed };
   }
 }

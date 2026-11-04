@@ -41,7 +41,7 @@ import {
 } from "../net/consent";
 import { ownAddressesOf, readMailboxes, type PhoneMailbox } from "../net/mailboxes";
 import { junkFolderSaid } from "./folders";
-import { readRelayedDecisions, readScreenerWaiting, type ServerWaitingSender } from "../net/screener";
+import { readScreenerQueue, type ServerWaitingSender } from "../net/screener";
 import { withSentHere, type RelayedDecision } from "./relay";
 import { organizesHere } from "../engine/standalone-door";
 /* THE DOOR ANSWERING FOR ITSELF, with no request — `organizer-session.ts` holds the one engine
@@ -64,7 +64,7 @@ import { letterDoor } from "../compose/letter-store";
 import type { FaceName } from "../theme/face";
 import { accountFaceShown, faceMirrorStands, faceScope } from "./face-scope";
 import { foldersFlag, freshestRead, signatureSequence, type FreshestRead, type SignatureSequence } from "./folders-flag";
-import { askEngineQueues, drainReads } from "./drain-reads";
+import { askEngineQueues, drainReads, type DrainRead } from "./drain-reads";
 import { startUiVitals } from "../engine/engine-log";
 import { createProjector, listStamp, type Projected } from "./world-projection";
 import { usePrefs } from "./store";
@@ -940,6 +940,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const sub = AppState.addEventListener("change", (s) => {
       if (s !== "active") { flushHeldDeletes(); flushRouting(); }
+      else factsDueNow.current?.factsDue();
     });
     return () => {
       sub.remove();
@@ -1113,6 +1114,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /** The signatures' own sequence: every consent read and every signature write's echo. */
   const signaturesNow = useRef<SignatureSequence | null>(null);
   const relayReadNow = useRef<FreshestRead<readonly RelayedDecision[]> | null>(null);
+  /** The live session's drain read, so a return to the front can ask its facts again. */
+  const factsDueNow = useRef<DrainRead<FoldersConsent> | null>(null);
   const queueReadNow = useRef<FreshestRead<readonly ServerWaitingSender[]> | null>(null);
   /**
    * One {@link faceScope} per session, beside the folders machine and built with it — it
@@ -1205,16 +1208,22 @@ export function WorldProvider({ children }: { children: ReactNode }) {
          answer, which has its own epoch and its own correctness. The queue shelf comes FROM THE
          STORE on both doors (the standalone door serves `GET /screener` from this process's
          engine), and the decisions this phone sent live where its presses land. */
-      read: drainReads<FoldersConsent>({
-        rest: [
+      read: factsDueNow.current = drainReads<FoldersConsent>({
+        /* ONE GET /screener: the relayed decisions ride the queue's first page. */
+        rest: [() => {
+          const asked = readScreenerQueue(session);
+          void queueRead(() => asked.then((a) => a.waiting));
+          void relayRead(() => asked.then((a) => a.relayed));
+        }],
+        /* The roster when the mirror moved, the app came back or 30 s passed (the Ohbox line ages out at 90 s). */
+        facts: [
           () => void boxRead(async () => {
             const ans = await readMailboxes(session);
             if (ans !== null && current.current === m) mailboxesReadAt.current = Date.now();
             return ans;
           }),
-          () => void queueRead(() => readScreenerWaiting(session)),
-          () => void relayRead(() => readRelayedDecisions(session)),
         ],
+        stamp: () => session.store.version(),
         consent: () => {
           /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */
           const applyFace = faces.beginRead();
@@ -1399,6 +1408,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       const m = machine;
       if (!m) return false;
       setFoldersPending(true);
+      // The write's re-read (its drain, or a refusal's refresh) asks the consent answer again.
+      factsDueNow.current?.factsDue();
       try {
         return await m.set(on);
       } finally {

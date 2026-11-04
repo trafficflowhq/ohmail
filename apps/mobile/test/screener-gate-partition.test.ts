@@ -309,7 +309,7 @@ describe("the read itself", () => {
     const wiring = src("src/state/world.tsx");
     // The standalone door serves `GET /screener` from the engine in this process, so its shelf is
     // the store's too; the old gate that kept it on the partition's own list is gone.
-    expect(wiring).toContain("() => void queueRead(() => readScreenerWaiting(session)),");
+    expect(wiring).toContain("void queueRead(() => asked.then((a) => a.waiting));");
     expect(wiring).not.toContain("if (!session.standalone) void queueRead(");
     // The engine's own page is armed once per session by the drain read and asked again by its
     // settle (`drain-reads.ts`, driven in `drain-reads.test.ts`), on both doors.

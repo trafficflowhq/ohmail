@@ -8,7 +8,7 @@ import {
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import { drainReads } from "../src/state/drain-reads";
+import { FACTS_REREAD_MS, MAILBOXES_REREAD_MS, drainReads } from "../src/state/drain-reads";
 import { foldersFlag } from "../src/state/folders-flag";
 
 /**
@@ -90,5 +90,46 @@ describe("the drain read's cadence", () => {
     await flag.refresh();
     await flush();
     expect(asks.queue, "a gate arrival did not re-ask the page").toBe(2);
+  });
+
+  it("the mailboxes and the consent answer go when the mirror moved, the app came back or minutes passed", async () => {
+    const queues = { refreshScreenerWaiting: async () => undefined, refreshUnscreened: async () => undefined };
+    const asks = { rest: 0, facts: 0, consent: 0 };
+    let stamp = 1;
+    let now = 0;
+    let answer: { on: boolean } | null = { on: false };
+    const read = drainReads<{ on: boolean }>({
+      rest: [() => { asks.rest += 1; }],
+      facts: [() => { asks.facts += 1; }],
+      consent: async () => { asks.consent += 1; return answer; },
+      engine: queues,
+      stamp: () => stamp,
+      now: () => now,
+    });
+    const drain = async (): Promise<{ on: boolean } | null> => { const a = await read(); await flush(); return a; };
+    expect(await drain()).toEqual({ on: false });
+    for (let i = 0; i < 3; i++) { now += 8_000; expect(await drain(), "an idle drain asked the consent").toBeNull(); }
+    expect(asks).toEqual({ rest: 4, facts: 1, consent: 1 });
+    stamp = 2;
+    await drain();
+    expect(asks, "a moved mirror did not re-ask").toMatchObject({ facts: 2, consent: 2 });
+    read.factsDue();
+    await drain();
+    expect(asks, "the return to the front did not re-ask").toMatchObject({ facts: 3, consent: 3 });
+    now += FACTS_REREAD_MS;
+    await drain();
+    expect(asks, "minutes passed and nothing was re-asked").toMatchObject({ facts: 4, consent: 4 });
+    // A consent read that got no answer is asked again at the next drain.
+    stamp = 3;
+    answer = null;
+    await drain();
+    answer = { on: true };
+    expect(await drain()).toEqual({ on: true });
+    // The mailboxes were answered: the consent's retry does not ask them again.
+    expect(asks).toMatchObject({ rest: 9, facts: 5, consent: 6 });
+    // The mailboxes stand for less than the consent answer: the Ohbox's "Checked" line reads them.
+    now += MAILBOXES_REREAD_MS;
+    await drain();
+    expect(asks).toMatchObject({ facts: 6, consent: 6 });
   });
 });
