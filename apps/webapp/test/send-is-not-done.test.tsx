@@ -232,6 +232,37 @@ describe("a plain Send files nothing", () => {
   });
 });
 
+/** The reader eases the sent reply into view (`sent-reveal.ts`): every Send door tells it, not only the button. */
+describe("every Send door notes the press for the reader", () => {
+  async function openAndReply(): Promise<{ id: string; notes: string[]; off: () => void }> {
+    const { onReplyPress } = await import("../app/shell/sent-reveal.js");
+    await mountShell();
+    const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+    expect(id, "no row under the cursor").toBeTruthy();
+    await key("Enter");
+    await key("r");
+    await drain();
+    expect(replyFor()).toBe(id);
+    await type("Danke.");
+    const notes: string[] = [];
+    return { id: id!, notes, off: onReplyPress((m) => notes.push(m)) };
+  }
+
+  it("⌘↩", async () => {
+    const { id, notes, off } = await openAndReply();
+    await chord(false);
+    off();
+    expect(notes).toEqual([id]);
+  });
+
+  it("the Send button", async () => {
+    const { id, notes, off } = await openAndReply();
+    await act(async () => { sendButton().click(); });
+    off();
+    expect(notes).toEqual([id]);
+  });
+});
+
 describe("CONTROL: Send + Done still files, and Undo restores", () => {
   it("Send + Done on a pinned row files it with one deliberate read, and Undo re-pins it", async () => {
     await mountShell();

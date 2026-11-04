@@ -17,6 +17,7 @@ const ROOT = join(__dirname, "..", "app");
 const FILES = [
   "shell/MessagePane.tsx",
   "shell/InlineReply.tsx",
+  "shell/sent-reveal.ts",
   "components/MessageBody.tsx",
   "shell/MessageCard.tsx",
   "shell/Conversation.tsx",
