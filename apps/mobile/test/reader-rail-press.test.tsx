@@ -169,6 +169,7 @@ const { MARK_RING } = await import("../src/ui/MarkSquare");
 const { threadWalk } = await import("@ohmail/client-engine");
 const place = await import("../src/state/thread-place");
 const { forgetPaneScroll } = await import("../src/ui/pane-memory");
+const { noteReplySend } = await import("../src/ui/sent-reveal");
 
 type El = HTMLElement & { __props?: Record<string, any> };
 const src = (el: El) => String(el.__props?.onLayout ?? "");
@@ -1381,10 +1382,10 @@ describe("a reply that arrives below the opened message never moves the reader o
     for (let i = 0; i < ms; i += 16) { flushNative(); act(() => { vi.advanceTimersByTime(16); }); }
     flushNative();
   };
-  const conversation = (extra: { id: string; seen?: boolean }[] = []) => ({
+  const conversation = (extra: { id: string; seen?: boolean; mine?: boolean }[] = []) => ({
     ...mailOf("p4", [
       ...["p1", "p2", "p3"].map((id) => ({ ...memberOf(id, "Mara"), later: false })),
-      ...extra.map((x) => ({ ...memberOf(x.id, "Person 04"), later: true, seen: x.seen ?? false })),
+      ...extra.map((x) => ({ ...memberOf(x.id, "Person 04"), later: true, seen: x.seen ?? false, ...(x.mine ? { mine: true } : {}) })),
     ]),
     unread: true,
   });
@@ -1427,6 +1428,39 @@ describe("a reply that arrives below the opened message never moves the reader o
     return el;
   };
   const quiet = (): void => { pass(3000); flushNative(); };
+
+  /* THE REPLY THE PERSON SENT from the composer over this reader is the exception (`sent-reveal.ts`): once drawn,
+     the reader scrolls once to show it — at once here, as this theme asks for reduced motion. */
+  const send = (phase: "pressed" | "sent"): void => act(() => { noteReplySend("p4", phase); });
+  it("the person's own reply, sent from the composer over the reader: the reader scrolls once to show its bottom", () => {
+    const el = openAtEnd();
+    quiet();
+    send("pressed");
+    send("sent");
+    rerender(conversation([{ id: "p5", seen: true, mine: true }]));
+    layBelow(el, G, [["p5", 600]]);
+    settle(1000);
+    quiet();
+    const belowY = tops(G).opened + G.opened + 34;
+    expect(native.offset, "the reply under the fold").toBe(belowY + 600 - G.view + 16);
+    rerender(conversation([{ id: "p5", seen: true, mine: true }]));
+    settle(1000);
+    quiet();
+    expect(native.offset, "once, and the anchor does not take it back").toBe(belowY + 600 - G.view + 16);
+  });
+
+  it("the person dragged after pressing Send: their own reply moves nothing", () => {
+    const el = openAtEnd();
+    quiet();
+    send("pressed");
+    dragTo(endOf(G) - 200);
+    send("sent");
+    rerender(conversation([{ id: "p5", seen: true, mine: true }]));
+    layBelow(el, G, [["p5", 600]]);
+    settle(1000);
+    quiet();
+    expect(native.offset).toBe(endOf(G) - 200);
+  });
 
   it("an untouched open at the end: the reply is drawn, the reader stays and the reply stays unread", () => {
     const el = openAtEnd();

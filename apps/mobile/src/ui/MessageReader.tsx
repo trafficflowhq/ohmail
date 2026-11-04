@@ -43,6 +43,7 @@ import {
 } from "./reader-seen";
 import { standsInOhboxMail } from "./pane-routes";
 import { onReaderCover, readerSees, setReaderWindowFocused } from "./reader-cover";
+import { createSentReveal, onReplySend } from "./sent-reveal";
 import { Sheet, SheetRow } from "./Sheet";
 import { useBottomChromeExtent } from "./bottom-chrome";
 import {
@@ -315,6 +316,8 @@ export function MessageReader({
     seen.onScroll(y, jumpEnd.current !== null || anchorRef.current?.moving === true);
   };
   const box = useRef({ content: 0, view: 0 });
+  /** Each member panel's height, as laid out. */
+  const memberH = useRef(new Map<string, number>());
   /** The extent as the visit knew it: the content ends at its known foot plus the column's bottom padding. */
   const knewBox = (): { content: number; view: number } => {
     const b = box.current;
@@ -394,7 +397,10 @@ export function MessageReader({
     widths.current[which] = width;
     if (was > 0 && width > 0 && Math.abs(width - was) >= 1) { anchor.rearm(); seen.restart(); }
   };
+  /** The person's drag or square: a reply sent before it moves nothing (`sent-reveal.ts`). */
+  const revealHand = useRef<() => void>(() => undefined);
   const handOver = (): void => {
+    revealHand.current();
     handed.current = id;
     /* The person's own scroll or press: what is drawn now is what the visit knows. */
     for (const mid of idsRef.current) knewRef.current?.add(mid);
@@ -440,6 +446,45 @@ export function MessageReader({
   }, [railItems, here, id, m === undefined || m === null]);
   useEffect(() => (hasRail ? bindThreadJump((mid) => jumpRef.current(mid)) : undefined), [hasRail]);
 
+  /* THE REPLY THE PERSON SENT from the composer over this reader, shown once it is drawn (`sent-reveal.ts`): the
+     one arrival that moves the reader. It answers the person's own act, so the anchor lets go as for theirs. */
+  const mailRef = useRef(m);
+  mailRef.current = m;
+  const chromeRef = useRef(chromeOver);
+  chromeRef.current = chromeOver;
+  const glide = (y: number): void => {
+    handOver(); // the reveal is already spent: this lets the anchor go
+    seen.asked(y);
+    scrollRef.current?.scrollTo({ y, animated: !t.reduceMotion });
+    if (t.reduceMotion) stand(y);
+    else jumpEnd.current = setTimeout(() => { jumpEnd.current = null; stand(y); }, RAIL_JUMP_SETTLE_MS);
+  };
+  const glideRef = useRef(glide);
+  glideRef.current = glide;
+  const reveal = useMemo(
+    () => createSentReveal({
+      members: () => (mailRef.current?.earlier ?? []).map((h) => ({ id: h.id, mine: h.mine === true, ready: h.ready === true })),
+      measure: (mid) => {
+        const top = seen.topOf(mid);
+        const height = memberH.current.get(mid);
+        return top === null || height === undefined ? null : { top, height };
+      },
+      view: () => ({ y: paneScrollOf(scrollKey), height: box.current.view, chrome: chromeRef.current, content: box.current.content }),
+      inSight: () => shown.current && readerSees(AppState.currentState),
+      scrollTo: (y) => glideRef.current(y),
+    }),
+    [seen],
+  );
+  revealHand.current = reveal.hand;
+  useEffect(() => () => reveal.dispose(), [reveal]);
+  useEffect(() => onReplySend((n) => {
+    if (n.parentId !== id) return;
+    if (n.phase === "pressed") reveal.pressed();
+    else reveal.sent();
+  }), [reveal, id]);
+  useEffect(() => onReaderCover(() => reveal.poke()), [reveal]);
+  useEffect(() => { reveal.poke(); });
+
   if (!m) {
     return (
       <Screen fullWindow={!inPane}>
@@ -484,7 +529,12 @@ export function MessageReader({
   /** A member's panel, above or below the opened message: its header, its body, its own files. */
   const memberPanel = (h: WorldEarlier, group: "above" | "below") => (
     <Panel key={h.id} radius={t.radius.card} style={{ padding: 18 }}
-      onLayout={(e) => { seen.panel(h.id, group, e.nativeEvent.layout.y, e.nativeEvent.layout.height); anchor.layout(); }}
+      onLayout={(e) => {
+        seen.panel(h.id, group, e.nativeEvent.layout.y, e.nativeEvent.layout.height);
+        memberH.current.set(h.id, e.nativeEvent.layout.height);
+        anchor.layout();
+        reveal.layout();
+      }}
       {...(h.wordless ? { onPress: () => openMember(h.id) } : {})}>
       {inOhbox ? (
         <ReadTint unread={!h.seen} style={{ top: 0, left: 0, right: 0, bottom: 0, borderRadius: t.radius.card }} />
@@ -587,6 +637,7 @@ export function MessageReader({
           seen.viewport(e.nativeEvent.layout.height);
           widthSeen("view", e.nativeEvent.layout.width);
           anchor.layout();
+          reveal.layout();
         }}
       >
         <View

@@ -6919,12 +6919,22 @@ fn a_held_press_opens_once_by_its_token_within_its_time() {
     assert_eq!(LINK_ASK_HOLD, Duration::from_secs(120));
 }
 
-/// The refusal a window hears is never longer than its parser admits, and cut on a character.
+/// The refusal a window hears carries why, in the log line's word, so the window can say whose
+/// refusal it was; its address is never longer than the window's parser admits, and cut on a
+/// character. Mutations: no `why` → the word rows; the opener's word for every refusal → the gate
+/// rows; no cut → the bound row.
 #[test]
-fn a_refusal_payload_is_cut_to_the_gate_bound() {
-    assert_eq!(refusal_payload("https://example.test/x"), "https://example.test/x");
+fn a_refusal_payload_says_why_and_is_cut_to_the_gate_bound() {
+    use crate::rendered_links::Why;
+    for (why, word) in [(Why::Shape, "shape"), (Why::Unrendered, "unrendered"), (Why::Gesture, "gesture"), (Why::Opener, "opener")] {
+        assert_eq!(
+            refusal_payload("https://example.test/x", why),
+            serde_json::json!({ "url": "https://example.test/x", "why": word })
+        );
+    }
     let long = format!("https://example.test/{}", "é".repeat(EXTERNAL_URL_MAX));
-    let cut = refusal_payload(&long);
+    let payload = refusal_payload(&long, Why::Unrendered);
+    let cut = payload["url"].as_str().expect("the payload carries the address");
     assert!(cut.len() <= EXTERNAL_URL_MAX && cut.len() > EXTERNAL_URL_MAX - 2, "cut to {}", cut.len());
-    assert!(long.starts_with(&cut));
+    assert!(long.starts_with(cut));
 }

@@ -129,6 +129,7 @@ import {
   type SignatureState,
 } from "./signature";
 import { useStableCallback } from "./stable-callback";
+import { noteReplyPress } from "./sent-reveal";
 import type { OhboxReplyDone } from "../views/OhboxView";
 import type { MailboxEntity } from "../views/SettingsView";
 import type { SupportSeed } from "./HelpContactPane";
@@ -1848,6 +1849,7 @@ export function useShellCompose({
       const fwdHandOff = mayHandOffFor?.(from.mailboxId ?? parent.mailboxId) === true
         ? handOffDock(fwdLane, messageId, "forward") : undefined;
       const atPress = { row: replyRows.current.get(fwdLane)?.row ?? null, seed: null };
+      noteReplyPress(messageId);
       const went = mailSend.send(
         // The signature seals into the forward's note, and the server appends the quoted
         // original AFTER the body it is handed (`send-service.ts`) — so the block the editor
@@ -1906,6 +1908,8 @@ export function useShellCompose({
     const replyHandOff = mayHandOffFor?.(from.mailboxId ?? parentMailbox) === true
       ? handOffDock(messageId, messageId, "reply") : undefined;
     const atPress = { row: replyRows.current.get(messageId)?.row ?? null, seed: replySeedDrafts.current.get(messageId) ?? null };
+    // The reader brings the sent copy into view, whichever door pressed (`sent-reveal.ts`).
+    noteReplyPress(messageId);
     const went = mailSend.send(withSignature({
       kind: "mail_send",
       inReplyTo: messageId,

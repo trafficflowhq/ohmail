@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, anyPartArms, eszettForms, partOperandsOf, partSidesOf, partWordTails, partWordsOf, typoTrigramsOf, queryOperandsOf, straddlesParts, type QueryOperands, type QueryOperand } from "./index.js";
+import { type LockMode, containsPattern, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, anyPartArms, eszettForms, partOperandsOf, partSidesOf, partWordTails, partWordsOf, typoTrigramsOf, queryOperandsOf, straddlesParts, type QueryOperands, type QueryOperand } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -134,8 +134,22 @@ function acrossOf(q: string, head: SearchArm, headTsv: SQL, textTsv: SQL, recenc
   }) : null;
   return {
     head: { pred: sql`(${head.pred} and ${letter})`, rank: head.rank }, text: { pred: letter, rank: recency },
-    across: true, ...(none ? { excluded: none } : {}), ...(alone ? { alone } : {}),
+    across: true, ...(none ? { excluded: none, excludedTerms: excludedTermsOf(ops, headTsv, textTsv) } : {}), ...(alone ? { alone } : {}),
   };
+}
+
+/** {@link noneOf}'s letters as terms, each one vector asked one operand. */
+function excludedTermsOf(ops: QueryOperands, head: SQL, text: SQL): SQL[] {
+  return ops.none.flatMap((o) => [sql`${head} @@ ${headTsquery(typedOf(o), false)}`,
+    sql`${text} @@ websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${typedOf(o)})`]);
+}
+
+/** Each `or` group typed with every excluded operand, read by `one` and OR-ed: as typed, `a or -x` reads "or not". */
+function groupsOf(q: string, one: (typed: string) => SQL): SQL {
+  const ops = queryOperandsOf(q);
+  if (ops.none.length === 0 || ops.any.length === 0) return one(q);
+  const groups = ops.any.map((g) => [...g.map(typedOf), ...ops.none.map((o) => `-${typedOf(o)}`)].join(" "));
+  return groups.length === 1 ? one(groups[0]!) : sql`(${sql.join(groups.map(one), sql` || `)})`;
 }
 
 /** A group's operands in {@link letterTermsOf}: it reads 2^n terms, each one index scan. */
@@ -182,8 +196,8 @@ const NAME_TERMS = sql.raw("split_part(s.terms, chr(31), 2)");
 /** `col ilike '%q%'` for every ß/ss form of `q`; one form is the old single predicate. */
 function likeAny(col: SQL, q: string): SQL {
   const forms = eszettForms(q);
-  return forms.length === 1 ? sql`${col} ilike ${`%${q}%`}`
-    : sql`(${sql.join(forms.map((f) => sql`${col} ilike ${`%${f}%`}`), sql` or `)})`;
+  return forms.length === 1 ? sql`${col} ilike ${containsPattern(q)}`
+    : sql`(${sql.join(forms.map((f) => sql`${col} ilike ${containsPattern(f)}`), sql` or `)})`;
 }
 
 /**
@@ -192,7 +206,7 @@ function likeAny(col: SQL, q: string): SQL {
  */
 function likeAnyOf(col: SQL, q: string | readonly string[]): SQL {
   if (typeof q === "string" || q.length === 1) return likeAny(col, typeof q === "string" ? q : q[0]!);
-  return sql`${col} ~* ${q.flatMap(eszettForms).map((f) => likeRegex(`%${f}%`)).join("|")}`;
+  return sql`${col} ~* ${q.flatMap(eszettForms).map((f) => likeRegex(containsPattern(f))).join("|")}`;
 }
 
 /** A LIKE pattern as a regex: `%` any run, `_` any character, a backslash taking the next as typed. */
@@ -394,7 +408,7 @@ export function pgDialect(): Dialect {
         return { pred: sql`s.head_tsv @@ ${tsq}`, rank: sql`ts_rank_cd(s.head_tsv, ${tsq})` };
       },
       fuzzy: (q: string, corpus: SearchCorpus, opts): SearchArm => {
-        const like = `%${q}%`;
+        const like = containsPattern(q);
         if (corpus === "kb") {
           if (opts.trigram) {
             return {
@@ -436,8 +450,8 @@ export function pgDialect(): Dialect {
         return sql`(octet_length(${opts.terms}) > length(${opts.terms}) or (${sum}) >= ${sql.raw(String(need))})`;
       },
       words: (q: string): MailWordArms => {
-        const tsq = foldedTsquery(q);
-        const hq = headTsquery(q);
+        const tsq = groupsOf(q, foldedTsquery);
+        const hq = groupsOf(q, (t) => headTsquery(t));
         const head = { pred: sql`s.head_tsv @@ ${hq}`, rank: sql`ts_rank_cd(s.head_tsv, ${hq})` };
         const recency = sql`coalesce(extract(epoch from m.date), 0)`;
         const across = acrossOf(q, head, sql`s.head_tsv`, sql`s.text_tsv`, recency);
@@ -448,7 +462,7 @@ export function pgDialect(): Dialect {
         const none = ops.none.map((o) => notInHead(o, sql`s.head_tsv`));
         const pred = none.length === 0 ? head.pred : sql`(${head.pred} and ${sql.join(none, sql` and `)})`;
         const excluded = noneOf(ops, sql`s.head_tsv`, sql`s.text_tsv`);
-        return { head: { pred, rank: head.rank }, text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: recency }, ...(excluded ? { excluded } : {}) };
+        return { head: { pred, rank: head.rank }, text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: recency }, ...(excluded ? { excluded, excludedTerms: excludedTermsOf(ops, sql`s.head_tsv`, sql`s.text_tsv`) } : {}) };
       },
       partWords: (qs: string | readonly string[]): MailWordArms | null => {
         const sides = partSidesOf(typeof qs === "string" ? [qs] : qs);

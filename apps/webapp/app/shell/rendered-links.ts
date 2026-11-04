@@ -122,8 +122,11 @@ export function useRenderedLinks(hrefs: readonly string[], asks: readonly string
   }, [surface, key]);
 }
 
-/** {@link useRenderedLinks} as an element, for a renderer that collects its links while it draws. */
-export function RenderedLinks({ hrefs }: { hrefs: readonly string[] }): null {
-  useRenderedLinks(hrefs);
+/**
+ * {@link useRenderedLinks} as an element, for a renderer that collects its links while it draws;
+ * `asks` are the marked ones among them (a label naming another site), which the shell asks about.
+ */
+export function RenderedLinks({ hrefs, asks }: { hrefs: readonly string[]; asks?: readonly string[] }): null {
+  useRenderedLinks(hrefs, asks);
   return null;
 }

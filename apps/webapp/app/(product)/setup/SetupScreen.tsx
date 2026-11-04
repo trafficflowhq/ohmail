@@ -36,6 +36,7 @@ import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { apiConfigured, auth, codeOf, messageOf, pair } from "../../api-client";
 import { serverHello } from "../../hello";
+import { revokedWipeSettled } from "../../revoked-door";
 
 /**
  * What this page knows about the server, in order of discovery. `checking` is the mount state;
@@ -79,13 +80,18 @@ export function SetupScreen() {
       setPhase("setup");
       return;
     }
+    let live = false;
     try {
       await auth.session();
-      // Any live session — enrollment or full. `/join`'s bootstrap derives the true step.
-      router.replace("/join");
+      live = true;
     } catch {
-      setPhase("settled");
+      /* no session: the settled screen */
     }
+    // A revoke this read heard: that account's copy is gone before the page sends anyone on.
+    await revokedWipeSettled();
+    // Any live session — enrollment or full. `/join`'s bootstrap derives the true step.
+    if (live) router.replace("/join");
+    else setPhase("settled");
   }, [router]);
 
   useEffect(() => { void checkServer(); }, [checkServer]);
@@ -96,6 +102,8 @@ export function SetupScreen() {
       setBusy(true);
       setError(null);
       try {
+        // A revoke's wipe this browser still owes is done before the token is spent.
+        await revokedWipeSettled();
         const address = email.trim();
         let code = minted !== null && minted.email === address ? minted.code : null;
         if (code === null && minted !== null) {

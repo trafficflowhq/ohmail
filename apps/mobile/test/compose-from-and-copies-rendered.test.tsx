@@ -65,6 +65,7 @@ vi.mock("../src/state/world", () => ({ useWorld: () => scene.world, useWorldToas
 const { mount } = await import("./_rendered-dom");
 const { ComposeSheet } = await import("../src/ui/MessageActions");
 const { Copy } = await import("../src/copy");
+const { onReplySend } = await import("../src/ui/sent-reveal");
 
 const row = (id: string, address: string, createdAt: string) => ({
   id, address, createdAt, status: "connected", organizerRole: null, organizeConsentedAt: null, organizedBy: null,
@@ -156,5 +157,51 @@ describe("Cc and Bcc on a new mail", () => {
     c.type(Copy.composeBodyPlaceholder, "Hello");
     await c.send();
     expect(c.sendNew).not.toHaveBeenCalled();
+  });
+});
+
+/* THE READER UNDER THE SHEET HEARS A REPLY'S SEND (`sent-reveal.ts`): pressed, then confirmed, for the
+   message answered; a send that did not go says only that it was pressed, a new mail says nothing. */
+describe("a reply's send is said to the reader under the sheet", () => {
+  const answer = (outcome: "sent" | "failed", mode: "reply" | "new" = "reply") => {
+    const c = composer();
+    c.unmount();
+    const w = scene.world as { actions: Record<string, unknown> };
+    w.actions.sendReply = vi.fn(async () => ({ outcome }));
+    const m = { id: "m1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan", to: [], cc: [], earlier: [], canReplyAll: false };
+    const closed: number[] = [];
+    const r = mount(h(ComposeSheet, { m: mode === "new" ? null : m, mode, onClose: () => closed.push(1) } as never));
+    return { r, closed };
+  };
+  const heard = (): { said: string[]; off: () => void } => {
+    const said: string[] = [];
+    return { said, off: onReplySend((n) => said.push(`${n.parentId}:${n.phase}`)) };
+  };
+  const sendIn = async (el: HTMLElement) => {
+    act(() => {
+      const body = el.querySelector(`input[data-label="${Copy.replyPlaceholder}"]`) as HTMLInputElement;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(body, "Thanks, see you there.");
+      body.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { (el.querySelector(`button[data-button="${Copy.replySend}"]`) as HTMLElement).click(); });
+  };
+
+  it("sent: pressed, then sent, before the sheet closes", async () => {
+    const ear = heard();
+    const { r, closed } = answer("sent");
+    await sendIn(r.el);
+    expect(ear.said).toEqual(["m1:pressed", "m1:sent"]);
+    expect(closed).toEqual([1]);
+    ear.off();
+    r.unmount();
+  });
+
+  it("refused: pressed only", async () => {
+    const ear = heard();
+    const { r } = answer("failed");
+    await sendIn(r.el);
+    expect(ear.said).toEqual(["m1:pressed"]);
+    ear.off();
+    r.unmount();
   });
 });

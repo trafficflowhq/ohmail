@@ -118,6 +118,10 @@ mod rendered_links;
 // click or key press. Gated with the engine, like the door it feeds.
 #[cfg(feature = "local-engine")]
 mod link_gate;
+// The Linux opener's routes: the desktop portal's OpenURI, then xdg-open, then gio. Gated with the
+// engine, like the door it serves.
+#[cfg(all(feature = "local-engine", target_os = "linux"))]
+mod open_routes;
 // Files dropped on the window from another program, held by the drop's own signals and read by
 // token for the compose they landed on. Gated with the engine: the plain build has no compose.
 #[cfg(feature = "local-engine")]

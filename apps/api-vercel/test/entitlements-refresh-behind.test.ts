@@ -21,6 +21,8 @@ vi.mock("@trafficflow/db/cloud", async (importOriginal) => {
 
 const { loadHostConfig } = await import("../src/config.js");
 const { buildDeps } = await import("../src/deps.js");
+const { QUIET_HOLD_MS } = await import("../src/handler.js");
+const { POOLED_IDLE_TIMEOUT_S } = await import("@trafficflow/db/cloud");
 
 /**
  * THE REFRESH BEHIND A READ ROUTE, ON THIS HOST (2026-09-28). A read route answers on a held allow
@@ -104,7 +106,7 @@ async function serveRead(deps: ApiDeps, p: ReturnType<typeof plane>, planeMs: nu
   expect(answered, "the read route answered on the held allow").toMatchObject({ ok: true });
   if (handed.length > 0) {
     p.deliverAfter(planeMs);
-    await vi.advanceTimersByTimeAsync(planeMs + 1);
+    await vi.advanceTimersByTimeAsync(planeMs + 1 + QUIET_HOLD_MS);
     await Promise.all(handed.splice(0));
   }
   await vi.advanceTimersByTimeAsync(60_000);
@@ -147,6 +149,24 @@ describe("the refresh behind a read route is kept alive by the host", () => {
       errorClass: "EntitlementsCallOutlivedRequest", budgetMs: 5_000,
     });
     expect(lines[0]!.elapsedMs, "how long the call ran is on the line").toBeGreaterThanOrEqual(5_000);
+  });
+
+  it("the instance stays awake a quiet hold past the refresh's end, so a connection it opened closes first", async () => {
+    const p = plane();
+    const deps = depsFor();
+    await heldAllow(deps, p);
+    await accessOf(deps.services!.entitlementsPort!, ACC, { staleAllow: true });
+    expect(handed).toHaveLength(1);
+    let settled = false;
+    void handed[0]!.then(() => { settled = true; });
+    p.deliverAfter(PLANE_MS);
+    await vi.advanceTimersByTimeAsync(PLANE_MS + 1);
+    expect(p.pending, "the refresh was answered").toBe(0);
+    await vi.advanceTimersByTimeAsync(POOLED_IDLE_TIMEOUT_S * 1000);
+    expect(settled, "released before the pool's idle close").toBe(false);
+    await vi.advanceTimersByTimeAsync(QUIET_HOLD_MS);
+    expect(settled).toBe(true);
+    handed.length = 0;
   });
 
   it("control: a slow plane inside a live request stays a timeout the alert counts", async () => {

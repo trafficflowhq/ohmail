@@ -59,6 +59,14 @@ export function takeSignedOutNote(): SignedOutReason | null {
   return isSignedOutReason(raw) ? raw : null;
 }
 
+/**
+ * A REVOKE'S WIPE THIS BROWSER STILL OWES (`revoked-door.ts`): `<prefix><account>`, or the bare prefix when
+ * the refusal named nobody, holding the jar as the refusal left it (`MintWitness`: a mark, a name, a mint
+ * time; never a token). Written before the wipe starts and removed once the copy is proved gone or that
+ * account's session is back, so a page closed mid-wipe leaves it to the next page. A whole sign-out sweeps it.
+ */
+export const REVOKE_OWED_PREFIX = "ohmail.revoke.owed.";
+
 export function shareSignedOutNote(reason: SignedOutReason): void {
   durableSet(SHARED_NOTE_KEY, JSON.stringify({ reason, at: Date.now() }), "resume.note");
   // The edge's copy: a tab opened next is sent to /login, not the landing. Host-only, the reason's word only.

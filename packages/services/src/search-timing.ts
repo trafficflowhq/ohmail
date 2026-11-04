@@ -8,6 +8,13 @@
 export const SEARCH_TIMING_PHASES = ["session", "acquire", "flight", "dto", "total"] as const;
 export type SearchTimingPhase = (typeof SEARCH_TIMING_PHASES)[number];
 
+/**
+ * The mailbox's size as the catalog's statistics estimate it: `large` from 50,000 search documents.
+ * Two words, so the log line can split the timings by size without carrying a count.
+ */
+export const SEARCH_SIZES = ["small", "large"] as const;
+export type SearchSize = (typeof SEARCH_SIZES)[number];
+
 /** The closed facts beside the durations. */
 export interface SearchTimingFacts {
   part?: "both" | "page" | "summary" | "estimate" | "address";
@@ -15,6 +22,8 @@ export interface SearchTimingFacts {
   cut?: boolean;
   items?: number;
   statements?: number;
+  /** Logged only: the `Server-Timing` header leaves it out. */
+  size?: SearchSize;
 }
 
 /** The sink a request hands the service ({@link ServiceContext.timing}); a phase met twice adds up. */

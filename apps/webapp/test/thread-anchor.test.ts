@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { noteReplyPress } from "../app/shell/sent-reveal";
 
 /**
  * A THREAD OPENS AT THE OPENED MESSAGE, AND STAYS THERE WHILE THE BODIES LAND.
@@ -218,5 +219,200 @@ describe("the pane opens a thread on the opened message", () => {
     entryHeight = 340;
     await settle();
     expect(host!.scrollTop, "the pane yanked a reader who had scrolled away").toBe(0);
+  });
+});
+
+/**
+ * THE REPLY YOU SENT IS EASED INTO VIEW (`sent-reveal.ts`), in the pane: Send pressed in the editor,
+ * the editor closes, the sent copy joins at the foot. A lone letter's first reply turns it into a
+ * conversation, and the open anchor used to run again then, putting the letter's top on screen and
+ * the reply under the fold. Panels are `TALL` px each in a 500px column; the clock and the frames
+ * are the fake timers'.
+ */
+describe("the reply you sent is brought into view", () => {
+  const TALL = 600;
+  const S = { ...msg("s", "2026-08-02T11:59:00.000Z"), folder: "Sent", from: { name: "Me", address: "me@example.invalid" } };
+  let chrome: Record<string, unknown>;
+  let shown: Record<string, unknown> = B;
+  let sent: string[] = [];
+  let top = 0;
+  const panels = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>("[data-conv-id]")];
+  const contentH = (): number => panels().length * TALL + 120;
+
+  function geometry(): void {
+    const el = host!;
+    el.style.overflowY = "auto";
+    Object.defineProperty(el, "clientHeight", { configurable: true, get: () => VIEWPORT });
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => contentH() });
+    Object.defineProperty(el, "scrollTop", {
+      configurable: true,
+      get: () => top,
+      set: (v: number) => { top = Math.max(0, Math.min(contentH() - VIEWPORT, v)); },
+    });
+    el.getBoundingClientRect = (() => ({ top: 0, left: 0, right: 600, bottom: VIEWPORT, width: 600, height: VIEWPORT, x: 0, y: 0, toJSON: () => ({}) })) as never;
+    panels().forEach((p, i) => {
+      p.getBoundingClientRect = (() => {
+        const t = TALL * i - top;
+        return { top: t, left: 0, right: 600, bottom: t + TALL, width: 600, height: TALL, x: 0, y: t, toJSON: () => ({}) };
+      }) as never;
+    });
+  }
+
+  async function render(over: Record<string, unknown>): Promise<void> {
+    const { MessagePane } = await import("../app/shell/MessagePane.js");
+    const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
+    chrome = { ...chrome, ...over };
+    await act(async () => {
+      root!.render(
+        h(NextIntlClientProvider, {
+          locale: "en", messages, timeZone: "UTC", now: NOW,
+          children: h(MessageChromeProvider as never, {
+            value: chrome,
+            children: h(MessagePane as never, {
+              message: shown, tags: [], now: NOW, onAction: () => {}, onAddTag: () => {}, onAttachment: () => {},
+            } as never),
+          } as never),
+        }),
+      );
+    });
+    geometry();
+  }
+
+  async function open(conversation: Record<string, unknown>[]): Promise<void> {
+    host = document.createElement("div");
+    host.className = "read-col";
+    document.body.appendChild(host);
+    root = createRoot(host);
+    chrome = {
+      replyTo: "b",
+      replyBody: { text: "Thanks, see you there.", html: "" },
+      onReplyBody: () => {},
+      closeReply: () => {},
+      // The shell's one send door (button, mod+Enter, Send + Done) notes the press, as `shell-compose.ts` does.
+      sendReply: (id: string) => { noteReplyPress(id); sent.push(id); },
+      replySendState: () => ({ phase: "idle" }),
+      openSenderMenu: () => {},
+      conversationOf: () => conversation,
+      bodyOf: (m: Record<string, unknown>) => ({
+        text: m.snippet as string, state: "full", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
+      }),
+      hydrateBody: () => {},
+      hydrateThread: () => {},
+    };
+    await render({});
+  }
+  async function pressSend(): Promise<void> {
+    const send = [...host!.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Send")!;
+    expect(send, "the editor's Send").toBeTruthy();
+    await act(async () => { send.click(); });
+    expect(sent).toEqual(["b"]);
+  }
+  /** The mod+Enter binding: the shell's sendReply, never the button's onSend. */
+  async function sendByShortcut(): Promise<void> {
+    await act(async () => { (chrome.sendReply as (id: string) => void)("b"); });
+  }
+  /** The send confirmed: the editor closes and the copy joins; then frames run until none is asked for. */
+  async function confirm(conversation: Record<string, unknown>[]): Promise<void> {
+    await render({ replyTo: null, conversationOf: () => conversation });
+    for (let i = 0; i < 120 && vi.getTimerCount() > 0; i++) {
+      await act(async () => { vi.advanceTimersByTime(16); });
+      geometry();
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "requestAnimationFrame", "cancelAnimationFrame"] });
+    vi.setSystemTime(NOW);
+    sent = [];
+    shown = B;
+    top = 0;
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = undefined;
+    window.matchMedia = ((q: string) => ({ matches: false, media: q })) as unknown as typeof window.matchMedia;
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("a lone letter's first reply: no jump back to the letter; the reply eases in, its top a margin below the view's top", async () => {
+    await open([]);
+    top = 100;
+    await pressSend();
+    await confirm([B, S]);
+    const sTop = TALL * 1;
+    expect(top, "the anchor put the letter back on screen and the reply under the fold").toBe(sTop - 16);
+  });
+
+  it("a lone letter's reply sent with mod+Enter: no jump back; the reply eases in", async () => {
+    await open([]);
+    top = 100;
+    await sendByShortcut();
+    await confirm([B, S]);
+    expect(top).toBe(TALL * 1 - 16);
+  });
+
+  it("a lone letter, scrolled after Send: the switch to a conversation moves nothing", async () => {
+    await open([]);
+    top = 100;
+    await pressSend();
+    await act(async () => { window.dispatchEvent(new Event("wheel")); });
+    await confirm([B, S]);
+    expect(top, "the anchor jumped the view back to the letter's top").toBe(100);
+  });
+
+  it("a lone letter whose send confirms past the window: nothing moves", async () => {
+    await open([]);
+    top = 100;
+    await pressSend();
+    await act(async () => { vi.advanceTimersByTime(61_000); });
+    await confirm([B, S]);
+    expect(top).toBe(100);
+  });
+
+  it("in a conversation, sent with mod+Enter: the reply eases in", async () => {
+    await open([A, B]);
+    top = 700;
+    await sendByShortcut();
+    await confirm([A, B, S]);
+    expect(top).toBe(TALL * 2 - 16);
+  });
+
+  it("in a conversation: the reply eases in once the editor has closed", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    await confirm([A, B, S]);
+    expect(top).toBe(TALL * 2 - 16);
+  });
+
+  it("the person scrolled after pressing Send: nothing moves", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    await act(async () => { window.dispatchEvent(new Event("wheel")); });
+    await confirm([A, B, S]);
+    expect(top).toBe(700);
+  });
+
+  it("another conversation opened before the send confirmed opens at its opened message, and nothing eases", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    const X = { ...msg("x", "2026-08-01T10:00:00.000Z"), threadId: "t2" };
+    const Y = { ...msg("y", "2026-08-01T11:00:00.000Z"), threadId: "t2" };
+    const Own = { ...msg("o", "2026-08-01T12:00:00.000Z"), threadId: "t2", folder: "Sent" };
+    shown = Y;
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
+    await render({ replyTo: null, conversationOf: () => [X, Y, Own] });
+    await act(async () => { observing.forEach((cb) => cb()); });
+    expect(top, "the new conversation's anchor: its opened message").toBe(TALL * 1 - 14);
+    for (let i = 0; i < 60; i++) await act(async () => { vi.advanceTimersByTime(16); });
+    expect(top).toBe(TALL * 1 - 14);
+  });
+
+  it("an arrival that is not the person's own send moves nothing", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    const theirs = msg("theirs", "2026-08-02T11:59:30.000Z");
+    await confirm([A, B, theirs]);
+    expect(top).toBe(700);
   });
 });

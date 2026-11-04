@@ -104,6 +104,13 @@ export const PROD_SSE_POLL_MS = 8_000;
 export const DEFAULT_SSE_ENABLED = false;
 
 /**
+ * Whether this host holds an `/events` stream open. No: on Fluid compute an instance bills its whole
+ * memory for every wall-clock second an invocation is in flight, parked on `await` or not, so a held
+ * stream is the most expensive answer it can give. `TF_SSE=1` answers 204 and clients poll `/sync`.
+ */
+export const MANAGED_SSE_HOLDS = false;
+
+/**
  * SSE stream lifetime in production: how long one `/events` invocation runs
  * before closing cleanly so `EventSource` reconnects on the `retry:` hint.
  * `/events` has its own route module (`app/events/route.ts`, `maxDuration`
@@ -925,7 +932,7 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     kekError,
     kekRetiredThrough,
     authConfig,
-    sse: { ...DEFAULT_SSE, pollMs, lifetimeMs, enabled: sseEnabled },
+    sse: { ...DEFAULT_SSE, pollMs, lifetimeMs, enabled: sseEnabled, holds: MANAGED_SSE_HOLDS },
     // The LISTEN url is loaded regardless of `sseEnabled` so a bad value is a deploy-time error
     // in both states, but `buildDeps` only constructs the hub when SSE actually streams.
     sseListenUrl: loadSseListenUrl(env),

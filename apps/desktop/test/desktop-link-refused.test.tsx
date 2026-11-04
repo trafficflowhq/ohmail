@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
@@ -68,11 +68,15 @@ function emit(event: string, payload: unknown): void {
   callbacks.get(id)!({ event, id: 1, payload });
 }
 
-/* THE SHELL'S NEW-WINDOW DOOR, REFUSING: no window, and its one event carrying the address. */
+/* THE SHELL'S NEW-WINDOW DOOR, REFUSING: no window, and its one event carrying the address and why
+   (the opener's refusal here; the gate's own are emitted by the rows that need them). */
 window.open = ((url?: string | URL) => {
-  emit(LINK_REFUSED_EVENT, String(url));
+  emit(LINK_REFUSED_EVENT, { url: String(url), why: "opener" });
   return null;
 }) as typeof window.open;
+
+/** A refusal as the shell emits it: the address, and why in the log line's word. */
+const refusal = (url: string, why = "opener"): { url: string; why: string } => ({ url, why });
 
 type Loose = (props: Record<string, unknown>, ...children: unknown[]) => React.ReactElement;
 const looseH = h as unknown as (c: Loose, p: Record<string, unknown> | null, ...k: unknown[]) => React.ReactElement;
@@ -140,7 +144,7 @@ describe("a refused link says one sentence, wherever it was drawn", () => {
   it("a message frame's link the shell refused is said in the same words", async () => {
     await render();
     expect(listeners.has(LINK_REFUSED_EVENT), "the gate never listened for the shell's refusal").toBe(true);
-    await act(async () => { emit(LINK_REFUSED_EVENT, "https://example.test/frame"); });
+    await act(async () => { emit(LINK_REFUSED_EVENT, refusal("https://example.test/frame")); });
     await turns(5);
     expect(said()).toContain(sentence("https://example.test/frame"));
   });
@@ -151,7 +155,7 @@ describe("a refused link says one sentence, wherever it was drawn", () => {
     const inFrame = `https://example.test/frame/${"p".repeat(200)}`;
     await clickInApp(inApp);
     expect(said()).toContain(sentence(`${inApp.slice(0, 80)}…`));
-    await act(async () => { emit(LINK_REFUSED_EVENT, inFrame); });
+    await act(async () => { emit(LINK_REFUSED_EVENT, refusal(inFrame)); });
     await turns(5);
     expect(said(), "the frame's refusal was not cut the same way").toContain(sentence(`${inFrame.slice(0, 80)}…`));
     expect(said()).not.toContain(inFrame);
@@ -161,12 +165,133 @@ describe("a refused link says one sentence, wherever it was drawn", () => {
     await render();
     const before = said();
     await act(async () => {
-      emit(LINK_REFUSED_EVENT, "");
+      emit(LINK_REFUSED_EVENT, refusal(""));
       emit(LINK_REFUSED_EVENT, 7);
-      emit(LINK_REFUSED_EVENT, `https://example.test/${"x".repeat(4096)}`);
+      emit(LINK_REFUSED_EVENT, refusal(`https://example.test/${"x".repeat(4096)}`));
+      // No why, or one the shell never writes: whose refusal it was is not known.
+      emit(LINK_REFUSED_EVENT, "https://example.test/bare");
+      emit(LINK_REFUSED_EVENT, refusal("https://example.test/odd", "other"));
     });
     await turns(5);
     expect(said()).toBe(before);
+  });
+});
+
+/**
+ * THE TOAST SAYS WHOSE REFUSAL IT WAS. ohmail's own gate (an address of the wrong shape, one no
+ * surface drew, a press the webview did not count as the person's) is not this computer refusing to
+ * open a browser, and saying so sent the person after the wrong cause. Mutations watched red: every
+ * refusal in the computer's words (the gate row); every refusal in ohmail's (the opener row); the
+ * gate's toast without its Copy address (the copy row).
+ */
+describe("a refused link says whose refusal it was", () => {
+  const copyButtons = (): HTMLButtonElement[] =>
+    [...document.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.textContent === DOOR_COPY.linkCopyAddress);
+
+  it("ohmail's own gate refusals say ohmail could not open the link", async () => {
+    await render();
+    for (const why of ["shape", "unrendered", "gesture"]) {
+      const url = `https://example.test/${why}`;
+      await act(async () => { emit(LINK_REFUSED_EVENT, refusal(url, why)); });
+      await turns(5);
+      expect(said(), `a ${why} refusal`).toContain(DOOR_COPY.linkNotOpened(url));
+      expect(said(), `a ${why} refusal blamed the computer`).not.toContain(sentence(url));
+      expect(copyButtons().length, `a ${why} refusal offers no way to copy its address`).toBe(1);
+    }
+  });
+
+  it("the computer's opener refusing keeps the computer's words", async () => {
+    await render();
+    await act(async () => { emit(LINK_REFUSED_EVENT, refusal("https://example.test/opener", "opener")); });
+    await turns(5);
+    expect(said()).toContain(sentence("https://example.test/opener"));
+    expect(said()).not.toContain(DOOR_COPY.linkNotOpened("https://example.test/opener"));
+    expect(copyButtons().length).toBe(1);
+  });
+
+  it("a long address the gate refused is cut as the opener's is", async () => {
+    await render();
+    const long = `https://example.test/gate/${"p".repeat(200)}`;
+    await act(async () => { emit(LINK_REFUSED_EVENT, refusal(long, "unrendered")); });
+    await turns(5);
+    expect(said()).toContain(DOOR_COPY.linkNotOpened(`${long.slice(0, 80)}…`));
+    expect(said()).not.toContain(long);
+  });
+});
+
+/**
+ * THE REFUSED ADDRESS IS COPIED WHOLE, WITH ONE PRESS. The toast shows a cut address, which a person
+ * cannot paste anywhere; its one action copies the full address, written inside the press, and the
+ * toast says "copied" only once the write fulfilled. Mutations watched red: the action removed; the
+ * cut address copied; the sentence said before the write settled; a refused write said as copied.
+ */
+describe("a refused link's address is copied whole with one press", () => {
+  const LONG = `https://vercel.example/acme-team/~/settings/billing?${"q".repeat(120)}#spend-management`;
+  const written: string[] = [];
+  let settle: ((ok: boolean) => void) | null = null;
+  const copyButton = (): HTMLButtonElement | undefined =>
+    [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === DOOR_COPY.linkCopyAddress);
+
+  beforeEach(() => {
+    written.length = 0;
+    settle = null;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          written.push(text);
+          return new Promise<void>((resolve, reject) => {
+            settle = (ok) => (ok ? resolve() : reject(new Error("the clipboard refused")));
+          });
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+  });
+
+  async function refuse(url: string): Promise<HTMLButtonElement> {
+    await render();
+    await act(async () => { emit(LINK_REFUSED_EVENT, refusal(url)); });
+    await turns(5);
+    const button = copyButton();
+    expect(button, "the refusal offers no way to copy its address").toBeDefined();
+    return button!;
+  }
+
+  it("copies the full, uncut address inside the press", async () => {
+    const button = await refuse(LONG);
+    expect(said()).toContain(sentence(`${LONG.slice(0, 80)}…`));
+    expect(said(), "the uncut address was drawn").not.toContain(LONG);
+    await act(async () => {
+      button.click();
+      expect(written, "the write waited for a later turn").toEqual([LONG]);
+    });
+    await act(async () => { settle!(true); });
+    await turns(5);
+    expect(said()).toContain(DOOR_COPY.linkAddressCopied);
+  });
+
+  it("says copied only after the write fulfils", async () => {
+    const button = await refuse("https://example.test/held");
+    await act(async () => { button.click(); });
+    await turns(5);
+    expect(written).toEqual(["https://example.test/held"]);
+    expect(said(), "copied was said before the write settled").not.toContain(DOOR_COPY.linkAddressCopied);
+    await act(async () => { settle!(true); });
+    await turns(5);
+    expect(said()).toContain(DOOR_COPY.linkAddressCopied);
+  });
+
+  it("a refused write says the address was not copied", async () => {
+    const button = await refuse("https://example.test/refused");
+    await act(async () => { button.click(); });
+    await act(async () => { settle!(false); });
+    await turns(5);
+    expect(said()).toContain(DOOR_COPY.linkAddressNotCopied);
+    expect(said()).not.toContain(DOOR_COPY.linkAddressCopied);
   });
 });
 

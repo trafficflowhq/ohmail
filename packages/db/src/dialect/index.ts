@@ -223,6 +223,8 @@ export interface MailWordArms {
    * and the typo tier to it, on rows an arm has already cut where the store can.
    */
   readonly excluded?: SQL;
+  /** Each excluded operand's letters as single-vector terms over `s`: `excluded` holds exactly where none does. */
+  readonly excludedTerms?: readonly SQL[];
   /**
    * With an exclusion, one per `or` group: `pred`, every operand of the group in the text and no
    * excluded one anywhere, read off the text index alone (an exclusion there is the index's own);
@@ -373,6 +375,11 @@ export interface UnindexedMailArms {
  * name. The server reads each side apart, each through its own trigram index.
  */
 export const SEARCH_NAMES_MARK = "\u001f";
+
+/** `q` inside a text, as a LIKE pattern that takes a backslash, `%` and `_` as typed (each escaped with a backslash). */
+export function containsPattern(q: string): string {
+  return `%${q.replace(/[\\%_]/g, "\\$&")}%`;
+}
 
 /** From this many characters a query word is also read as the START of a longer word. */
 export const PART_PREFIX_MIN_CHARS = 4;

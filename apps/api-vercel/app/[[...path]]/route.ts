@@ -11,10 +11,9 @@ import { handleApiRequest } from "../../src/handler.js";
  *  • `runtime = "nodejs"` — NOT edge. The API opens raw TCP to IMAP :993 and SMTP :587 for
  *    on-demand attachment fetch and gated send: the edge
  *    runtime has no `node:net`, so this would fail at the first attachment, not at build.
- *  • `maxDuration = 60` — a cold IMAP LOGIN costs 1–3 s, `download-all` fetches parts
- *    sequentially on one connection, and `/events` self-closes at 30 s (`DEFAULT_SSE`).
- *    Anything less truncates SSE mid-lifetime and turns a slow provider into a timeout;
- *    the value must exceed the SSE lifetime, not merely match it.
+ *  • `maxDuration = 60` — a cold IMAP LOGIN costs 1–3 s and `download-all` fetches parts
+ *    sequentially on one connection; anything less turns a slow provider into a timeout.
+ *    `/events` has its own module (`app/events/route.ts`).
  *  • `dynamic = "force-dynamic"` — every response depends on a session cookie or bearer
  *    header. Any static optimisation here would be one account's data served to another.
  *  • `preferredRegion = "fra1"` — in the database's region, so the pooled round trip stays

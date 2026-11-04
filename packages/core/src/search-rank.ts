@@ -199,6 +199,17 @@ function readExclusions(q: string): { asked: string; excluded: string[] } {
     const held = ops.filter((x) => x.start > o && x.end <= i);
     if (cut[o] === 1 || cut[i] === 1 || (held.length > 0 && held.every((x) => x.out))) cut[o] = cut[i] = 1;
   }
+  // A bare `or` the cut left with no word asked on one side goes too: one `or` between two words asked.
+  const kept = ops.filter((o) => !o.out && cut[o.start] === 0);
+  const isOr = (o: { start: number; end: number }): boolean => q[o.start] !== '"' && /^or$/i.test(q.slice(o.start, o.end));
+  for (let i = 0; i < kept.length;) {
+    if (!isOr(kept[i]!)) { i++; continue; }
+    let j = i;
+    while (j < kept.length && isOr(kept[j]!)) j++;
+    const between = i > 0 && j < kept.length;
+    for (let k = between ? i + 1 : i; k < j; k++) cut.fill(1, kept[k]!.start, kept[k]!.end);
+    i = j;
+  }
   let asked = "";
   for (let i = 0; i < q.length; i++) asked += cut[i] === 1 ? " " : q[i];
   return { asked: asked.replace(/\s+/g, " ").trim(), excluded };
