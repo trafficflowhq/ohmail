@@ -400,15 +400,16 @@ describe("the world layer's shape — asserted over source, and said to be", () 
     expect(readFileSync(new URL("../src/state/world-projection.ts", import.meta.url), "utf8")).toContain("known: inp.mailboxes !== null,");
   });
 
-  it("the read rides the folders flag's cadence — boot and after every completed drain", () => {
+  it("the read rides the folders flag's cadence — boot, and a drain that moved the mirror", () => {
     // One cadence to reason about. The two questions go stale together: another client claiming
     // a mailbox writes into the very delta feed that drain just applied.
     expect(world).toMatch(/const boxRead = freshestRead<readonly PhoneMailbox\[\]>/);
     expect(world).toMatch(/\(\) => void boxRead\(async \(\) => \{\s*const ans = await readMailboxes\(session\);/);
     // …and every accepted answer, an unchanged one too, stamps when the facts were read.
     expect(world).toContain("if (ans !== null && current.current === m) mailboxesReadAt.current = Date.now();");
-    // …as one of the drain read's REST reads, which go on every drain (`drain-reads.test.ts`).
-    expect(world).toContain("read: drainReads<FoldersConsent>({");
+    // …as one of the drain read's facts, asked with the consent answer when the mirror moved (`drain-reads.test.ts`).
+    expect(world).toContain("read: factsDueNow.current = drainReads<FoldersConsent>({");
+    expect(world).toContain("stamp: () => session.store.version(),");
   });
 
   it("a superseded session's late answer applies NOTHING", () => {

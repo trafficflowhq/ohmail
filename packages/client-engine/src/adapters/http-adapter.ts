@@ -1403,6 +1403,7 @@ export class HttpAdapter implements EngineAdapter {
       total: typeof wire.total === "number" && Number.isFinite(wire.total) && wire.total >= 0
         ? Math.trunc(wire.total) : null,
       inFlight,
+      ...(Array.isArray(wire.pendingDecisions) ? { pendingDecisions: wire.pendingDecisions } : {}),
       ...(wire.copyBehind === true ? { copyBehind: true as const } : {}),
       // A list this build cannot read is no answer about any mailbox: read as absent, today's page.
       ...(Array.isArray(wire.gone) && wire.gone.every((id) => typeof id === "string" && id !== "")

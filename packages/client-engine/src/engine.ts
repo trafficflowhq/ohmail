@@ -7053,7 +7053,9 @@ export class OhmailEngine {
    * is a REST row, not mirror state). `null` from a door that cannot read the queue. Each
    * representative is remembered so a decision on it is sent even though the mirror has no row.
    */
-  async screenerWaitingPage(cursor: string | null): Promise<{ senders: ScreenerWaitingSenderDTO[]; nextCursor: string | null } | null> {
+  async screenerWaitingPage(cursor: string | null): Promise<{
+    senders: ScreenerWaitingSenderDTO[]; nextCursor: string | null; pendingDecisions?: unknown[];
+  } | null> {
     const ask = this.adapter.screenerWaiting;
     if (!ask) return null;
     const wire = await ask.call(this.adapter, cursor === null ? { limit: SCREENER_WAITING_PAGE } : { cursor, limit: SCREENER_WAITING_PAGE });
@@ -7074,7 +7076,10 @@ export class OhmailEngine {
     if (stored !== undefined && !sameGone(stored.gone, wire.gone)) {
       await this.refreshScreenerWaiting().catch(() => { /* marked dirty: the next settle asks again */ });
     } else if (cursor !== null) await this.noteQueueWalk(cursor, wire);
-    return { senders: wire.items.map((item, i) => waitingRow(item, i, total)), nextCursor: wire.nextCursor };
+    return {
+      senders: wire.items.map((item, i) => waitingRow(item, i, total)), nextCursor: wire.nextCursor,
+      ...(wire.pendingDecisions ? { pendingDecisions: wire.pendingDecisions } : {}),
+    };
   }
 
   /**

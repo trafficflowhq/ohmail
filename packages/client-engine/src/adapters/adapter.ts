@@ -278,6 +278,8 @@ export interface ScreenerWaitingWire {
   total: number | null;
   /** Decisions the server is still carrying out; their senders are on no page. */
   inFlight: Array<{ scope: "sender" | "domain"; match: string }>;
+  /** The route's `pendingDecisions` as sent, refused ones included, for a surface that says what became of them. */
+  pendingDecisions?: unknown[];
   /**
    * The door's own copy is still taking in the account (a mirror mid-bootstrap), so this page is
    * ahead of the mail and rules it is read beside. Absent everywhere else.
