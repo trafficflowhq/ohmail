@@ -5,6 +5,7 @@ import {
   MIN_FUZZY_QUERY_LEN,
   MIN_FUZZY_TERM_LEN,
   positiveText,
+  SEARCH_STOPWORDS,
   showSimilar,
   type RankedRow,
   type SearchTier,
@@ -572,18 +573,24 @@ export class SearchIndex {
    * The prefix arm is what makes the index answer as-you-type — "invoi" has to find the invoice
    * before the reader has finished the word — and it is counted as literal rather than as a
    * guess because the reader's characters are all present, in order, at the start of the term.
+   * `stopword`: the term itself counts only in the subject or sender, as the server finds it there by
+   * its characters; its text never holds it whole.
    */
-  private literalHits(q: string): Map<string, { score: number; match: SearchMatch }> {
+  private literalHits(q: string, stopword = false): Map<string, { score: number; match: SearchMatch }> {
     const hits = new Map<string, { score: number; match: SearchMatch }>();
     const exact = this.postings.get(q);
     if (exact) {
       for (const [id, p] of exact) {
+        if (stopword && p.weight === FIELD_WEIGHT.text) continue;
         hits.set(id, { score: p.weight, match: { token: q, term: q, fuzzy: false } });
       }
     }
     for (const [term, map] of this.postings) {
       if (term === q || !term.startsWith(q)) continue;
+      // `your` → `yours`: a longer stopword is no more in the server's text than the word itself.
+      const stopTerm = stopword && SEARCH_STOPWORDS.has(term);
       for (const [id, p] of map) {
+        if (stopTerm && p.weight === FIELD_WEIGHT.text) continue;
         const score = p.weight * 0.7;
         const prev = hits.get(id);
         if (!prev || prev.score < score) hits.set(id, { score, match: { token: q, term, fuzzy: false } });
@@ -601,8 +608,8 @@ export class SearchIndex {
    * `anna` reached twelve of them through `and`. Both floors live in `@trafficflow/core/search-rank` so the hosted
    * door can be held to the same shape.
    */
-  private fuzzyHits(q: string): Map<string, { score: number; match: SearchMatch }> {
-    const hits = this.literalHits(q);
+  private fuzzyHits(q: string, stopword = false): Map<string, { score: number; match: SearchMatch }> {
+    const hits = this.literalHits(q, stopword);
     if (q.length < MIN_FUZZY_QUERY_LEN) return hits;
     const qTri = trigrams(q);
     for (const [term, map] of this.postings) {
@@ -613,7 +620,10 @@ export class SearchIndex {
       if (cannotReach(qTri.size, tTri.size)) continue;
       const sim = diceSimilarity(qTri, tTri);
       if (sim < FUZZY_THRESHOLD) continue;
+      // The server's closest words hold no stopword: `yours` never reaches the text's `your`.
+      const stopTerm = SEARCH_STOPWORDS.has(term);
       for (const [id, p] of map) {
+        if (stopTerm && p.weight === FIELD_WEIGHT.text) continue;
         const score = p.weight * sim;
         const prev = hits.get(id);
         if (!prev || prev.score < score) hits.set(id, { score, match: { token: q, term, fuzzy: true } });
@@ -757,8 +767,10 @@ export class SearchIndex {
     // A single-token query has no phrase to prefer — the token IS the phrase, and every hit
     // would earn the same bonus, which is not an ordering.
     const phrase = qTokens.length > 1 ? phraseField(asked) : null;
+    // A server stopword alone, from four letters: the server reads it only as the start of a longer word.
+    const stopword = qTokens.length === 1 && qTokens[0]!.length >= 4 && SEARCH_STOPWORDS.has(qTokens[0]!);
 
-    const exact = without(this.intersect(qTokens, (q) => this.literalHits(q)), leftOut);
+    const exact = without(this.intersect(qTokens, (q) => this.literalHits(q, stopword)), leftOut);
     if (!showSimilar(exact.size)) {
       const items = this.rank(exact, phrase, limit);
       return { items, similar: [], tier: "exact", facets: facetsOf(items), coverage: this.coverage(), indexing: false };
@@ -766,7 +778,7 @@ export class SearchIndex {
 
     // `exact` is empty here under today's floor; the subtraction below does not assume that, so
     // the floor can move without this quietly listing a message under both headings.
-    const withFuzzy = without(this.intersect(qTokens, (q) => this.fuzzyHits(q)), leftOut);
+    const withFuzzy = without(this.intersect(qTokens, (q) => this.fuzzyHits(q, stopword)), leftOut);
     for (const id of exact.keys()) withFuzzy.delete(id);
     const items = this.rank(exact, phrase, limit);
     const similar = this.rank(withFuzzy, phrase, limit);
