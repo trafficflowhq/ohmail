@@ -587,8 +587,8 @@ export class SearchIndex {
     }
     for (const [term, map] of this.postings) {
       if (term === q || !term.startsWith(q)) continue;
-      // `your` → `yours`: a longer stopword is no more in the server's text than the word itself.
-      const stopTerm = stopword && SEARCH_STOPWORDS.has(term);
+      // `your` → `yours`, `agai` → `again`: from four letters the server's text holds no stopword to start.
+      const stopTerm = q.length >= 4 && SEARCH_STOPWORDS.has(term);
       for (const [id, p] of map) {
         if (stopTerm && p.weight === FIELD_WEIGHT.text) continue;
         const score = p.weight * 0.7;

@@ -35,6 +35,7 @@ const CORPUS: ReadonlyArray<readonly [key: string, subject: string, body: string
   ["out", "Report", "The report is out now."], ["on", "Budget", "Notes on the budget."], ["one", "Seats", "Only one seat left."],
   ["lunch", "Lunch with Mara", "At noon."], ["withdrawal", "Refund", "The withdrawal went through."],
   ["yours", "Thanks", "Yours sincerely, Ann."], ["yourself", "Kit", "Do it yourself."], ["against", "Vote", "We voted against it."],
+  ["about", "Hotel", "A word about the rooms."], ["aboutus", "About us", "Who we are."],
 ];
 
 /** Query → the keys Postgres answers in the exact tier; `[]` is a closest-words answer or none. */
@@ -61,6 +62,8 @@ const TABLE: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
   ["ines", ["ines"]], ["ones", ["one", "ones"]], ["willing", ["willing"]], ["outing", ["outing"]],
   // a stopword alone: inside a subject, or the start of a longer word; never the text holding it whole
   ["with", ["lunch", "withdrawal"]], ["your", ["duns", "email", "invoice"]], ["yours", []], ["again", []],
+  // a start that only completes to stopwords in the text: the subject still counts
+  ["agai", []], ["agains", []], ["yourse", []], ["abou", ["aboutus"]],
 ];
 
 /**
