@@ -107,8 +107,8 @@ const erasedAsRevoked = (err: unknown): never => { throw isAccountErased(err) ? 
  * SessionLifecycle — the session MACHINERY, carved out of `AuthService` so the desktop-as-host
  * tier can run it: `establish`, rotation with reuse detection, family revocation, logout,
  * devices, step-up introspection, the paired-device mint. NOT the identity ceremony — that stays
- * on `AuthService`, which extends this and overrides the three hosted hooks (`audit`,
- * `throttleReset`, `twofaEnrolled`) naming cloud-half tables. The desktop engine bundles this
+ * on `AuthService`, which extends this and overrides the hosted hooks (`audit`, `throttleReset`,
+ * `twofaEnrolled`, `pruneWakeRegistrations`, …) naming cloud-half tables. The desktop engine bundles this
  * module, so everything reached is the SHARED half (mail 0060); `auth-entry-census.test.ts` pins
  * the closure. One rotation protocol on both tiers: two implementations of reuse detection is how
  * one tier's stolen token stays alive on the other.
@@ -578,6 +578,7 @@ export class SessionLifecycle {
             isNull(refreshTokens.revokedAt),
           ));
       }
+      await this.pruneWakeRegistrations(tx, families);
       await this.voidPendingGrants(tx, userId, now);
       if (claimed.length > 0) {
         const u = await this.loadUser(tx, userId);
@@ -757,13 +758,16 @@ export class SessionLifecycle {
     // In session id order, the order every claim of several sessions takes.
     const byId = (a: { sessionId: string }, b: { sessionId: string }): number =>
       (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0);
+    const ended: string[] = [];
     for (const f of [...named.values()].sort(byId)) {
       const { sessions: revoked } = await this.revokeFamily(db, f.familyId, now);
+      if (revoked > 0) ended.push(f.familyId);
       if (revoked > 0 && f.userId === user.id) {
         await this.audit(db, user, "logout", undefined, ctx,
           `family=${f.familyId} session=${f.sessionId} by=supersede`);
       }
     }
+    await this.pruneWakeRegistrations(db, ended);
   }
 
   /** `establish`'s writes, after its refusal and inside its supersede when there is one. */
@@ -1104,6 +1108,12 @@ export class SessionLifecycle {
       if (isAccountErased(err)) return erasedRefusal();
       // The audit write must not block the security action: reuse still revokes the family.
       await this.revokeFamily(db, existing.familyId, now);
+    }
+    // After the revoke, and never in its way: the refusal and its record stand without the prune.
+    try {
+      await this.pruneWakeRegistrations(db, [existing.familyId]);
+    } catch {
+      /* the row stays until its endpoint dies */
     }
     return new ServiceError("refresh_revoked", 401, "refresh token reuse detected",
       event === "refresh_reuse_revoked" ? { cause: REFRESH_REUSE_CAUSE } : undefined);
@@ -1564,6 +1574,15 @@ export class SessionLifecycle {
   /** What a completed sign-in owes the throttle — see {@link throttleReset}; `AuthService` overrides it. */
   protected async signInCompleted(_db: Tx, _user: typeof users.$inferSelect, _ctx: ServiceContext): Promise<void> {
     /* no throttle table on the lifecycle half */
+  }
+
+  /**
+   * The wake registrations of session families a revoke ended. Every revoke calls it, inside its
+   * transaction where it has one. `push_subscriptions` is cloud-half, so the base deletes nothing;
+   * `AuthService` overrides it with the real prune.
+   */
+  protected async pruneWakeRegistrations(_db: Tx, _familyIds: readonly string[]): Promise<void> {
+    /* no push table on the lifecycle half */
   }
 
   /**

@@ -1,5 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { claimIdempotencyKey, sessions, type Tx } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import { pushSubscriptions } from "@trafficflow/db/cloud";
 import { SsrfRefusal, type PushEndpointGuard } from "@trafficflow/core/net";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
@@ -23,9 +24,10 @@ import type {
  * PushService — device-local push registrations. Subscriptions
  * are config, NOT client-visible entities: they emit NO `change_log`. `subscribe`
  * upserts, deduped at the DB level by the coalesced UNIQUE(account_id, transport,
- * COALESCE(endpoint, device_token)); a re-registration returns the existing id.
- * When an `Idempotency-Key` is present the idempotency row is written in the SAME
- * tx so a commit-then-crash retry replays verbatim. All scoped to
+ * COALESCE(endpoint, device_token)); a re-registration returns the existing id. Each row names
+ * the session family that registered it, and every revoke deletes the rows of the families it
+ * ends ({@link pruneWakeRows}). When an `Idempotency-Key` is present the idempotency row is
+ * written in the SAME tx so a commit-then-crash retry replays verbatim. All scoped to
  * `ctx.accountId`.
  */
 export class PushService implements PushServicePort {
@@ -90,22 +92,26 @@ export class PushService implements PushServicePort {
       // transports that already used it; the session wins when it names a device.
       let deviceId = body.deviceId ?? null;
       /**
-       * `webpush` JOINED THIS, AND IT HAD TO: the sign-out and device-revoke prunes are
-       * DEVICE-SCOPED, so a null `device_id` leaves a signed-out browser's registration live and
-       * still woken. FOR A BROWSER THE STAMP IS A NO-OP: `AUTO_MINT_DEVICE_LABELS` covers the
-       * four DESKTOP kinds only, so a browser session's `device_id` is null
-       * (`auth-service.test.ts` asserts it); what the stamp reaches is `unifiedpush`. A BROWSER'S
-       * ROW IS CLOSED FROM THE CLIENT — only the client can name it — via `DELETE
-       * /push/subscriptions/:id` BEFORE `auth.logout()`; `logout-push-prune.pg.test.ts` holds
-       * both halves. `apns` stays out: its identity is the device token.
+       * AND THE SESSION FAMILY, for every transport (cloud 0056). A browser session names no device
+       * (`AUTO_MINT_DEVICE_LABELS` covers the desktop kinds only), so the device stamp left a
+       * browser's row out of every revoke; the family is what every revoke ends, and each one
+       * deletes the rows of its families ({@link pruneWakeRows}). The session is read live and
+       * FOR SHARE, held to commit: a revoke that claims it waits for this row and then deletes
+       * it, and a registration that waits for a revoke is refused. `apns` keeps the body's device:
+       * its identity is the device token. No session (the worker's own tests) leaves the row unbound.
        */
-      if ((transport === "unifiedpush" || transport === "webpush") && ctx.sessionId) {
-        const [s] = await tx.select({ deviceId: sessions.deviceId }).from(sessions)
-          .where(eq(sessions.id, ctx.sessionId)).limit(1);
-        if (s?.deviceId) deviceId = s.deviceId;
+      let familyId: string | null = null;
+      if (ctx.sessionId) {
+        const [s] = await dialect(tx).forUpdate(tx.select({ deviceId: sessions.deviceId, familyId: sessions.familyId })
+          .from(sessions)
+          .where(and(eq(sessions.id, ctx.sessionId), eq(sessions.accountId, ctx.accountId), isNull(sessions.revokedAt)))
+          .limit(1), { mode: "share" });
+        if (!s) throw new ServiceError("unauthorized", 401, "no active session");
+        familyId = s.familyId;
+        if ((transport === "unifiedpush" || transport === "webpush") && s.deviceId) deviceId = s.deviceId;
       }
 
-      const inserted = await tx.insert(pushSubscriptions).values({
+      const insert = async (): Promise<string | undefined> => (await tx.insert(pushSubscriptions).values({
         accountId: ctx.accountId,
         transport,
         endpoint: body.endpoint ?? null,
@@ -115,31 +121,14 @@ export class PushService implements PushServicePort {
         bundleId: body.bundleId ?? null,
         environment: body.environment ?? null,
         deviceId,
-      }).onConflictDoNothing().returning({ id: pushSubscriptions.id });
+        sessionFamilyId: familyId,
+      }).onConflictDoNothing().returning({ id: pushSubscriptions.id }))[0]?.id;
 
-      // On conflict the coalesced unique index deduped the row → fetch the existing id.
-      const rowId = inserted[0]?.id ?? (await this.existingId(tx, ctx.accountId, transport, body));
-
-      /**
-       * A DEDUPED RE-REGISTRATION MUST RE-STAMP THE DEVICE, OR THE REVOKE LOSES ITS HANDLE.
-       * `onConflictDoNothing` is right about the ROW and was wrong about the device: a
-       * UnifiedPush endpoint is stable for the life of an install, so re-registering the same
-       * endpoint is the ORDINARY case (revoked and paired again). The insert conflicts, the row
-       * keeps the OLD device id — one a revoke already removed — and nothing can take the
-       * registration down: it keeps receiving wakes with no surface to stop it. So the stamp is
-       * refreshed in the same transaction, scoped to row and account; the keys travel with it — a
-       * re-registration is the connector's latest word on both.
-       */
-      if (transport === "unifiedpush" && inserted[0] === undefined) {
-        await tx.update(pushSubscriptions).set({
-          deviceId,
-          p256dh: body.p256dh ?? null,
-          auth: body.auth ?? null,
-        }).where(and(
-          eq(pushSubscriptions.id, rowId),
-          eq(pushSubscriptions.accountId, ctx.accountId),
-        ));
-      }
+      // On conflict the coalesced unique index deduped the row: it is re-stamped, or, when a prune
+      // took it in between, inserted afresh.
+      const rowId = await insert() ?? await this.restamp(tx, ctx.accountId, transport, body, deviceId, familyId)
+        ?? await insert();
+      if (rowId === undefined) throw new ServiceError("internal", 500, "push subscription vanished after upsert");
 
       // Store the verbatim response (201 { id }) in the SAME tx. Push emits no
       // change_log, so seq is null. On replay the middleware returns this untouched.
@@ -171,21 +160,71 @@ export class PushService implements PushServicePort {
     if (deleted.length === 0) throw new ServiceError("not_found", 404, "subscription not found");
   }
 
-  /** Resolve the id of the row the unique index deduped to (same account+transport+identity). */
-  private async existingId(
+  /**
+   * RE-STAMP the row the unique index deduped to (same account+transport+identity), or `undefined`
+   * when no such row is left. THE LATEST REGISTERING SESSION OWNS IT: a browser keeps one endpoint
+   * across sign-ins, and a row left on an older family would follow that family's revoke instead of
+   * the live session's. The write is skipped when nothing changes.
+   *
+   * UNIFIEDPUSH ALSO RE-STAMPS THE DEVICE AND THE KEYS: an endpoint is stable for the life of an
+   * install, so re-registering it is the ordinary case (revoked and paired again), and a row left on
+   * the old device id is one no revoke can take down. The keys travel with it — a re-registration is
+   * the connector's latest word on both.
+   */
+  private async restamp(
     tx: Tx, accountId: string, transport: PushTransport, body: PushSubscribeBody,
-  ): Promise<string> {
+    deviceId: string | null, familyId: string | null,
+  ): Promise<string | undefined> {
     const identity = transport === "apns"
       ? eq(pushSubscriptions.deviceToken, body.deviceToken!)
       : eq(pushSubscriptions.endpoint, body.endpoint!);   // webpush and unifiedpush both key on the endpoint
-    const [row] = await tx.select({ id: pushSubscriptions.id }).from(pushSubscriptions)
+    const [row] = await tx.select({ id: pushSubscriptions.id, familyId: pushSubscriptions.sessionFamilyId })
+      .from(pushSubscriptions)
       .where(and(
         eq(pushSubscriptions.accountId, accountId),
         eq(pushSubscriptions.transport, transport),
         identity,
       )).limit(1);
-    if (!row) throw new ServiceError("internal", 500, "push subscription vanished after upsert");
-    return row.id;
+    if (!row) return undefined;
+    const set = {
+      ...(transport === "unifiedpush" ? { deviceId, p256dh: body.p256dh ?? null, auth: body.auth ?? null } : {}),
+      ...(familyId !== null && familyId !== row.familyId ? { sessionFamilyId: familyId } : {}),
+    };
+    if (Object.keys(set).length === 0) return row.id;
+    const [kept] = await tx.update(pushSubscriptions).set(set)
+      .where(and(eq(pushSubscriptions.id, row.id), eq(pushSubscriptions.accountId, accountId)))
+      .returning({ id: pushSubscriptions.id });
+    return kept?.id;
+  }
+}
+
+/** Families one pair of prune statements takes. */
+const PRUNE_FAMILIES = 500;
+
+/** `pred`'s rows that no other transaction holds, as the id list one DELETE takes. */
+const unheld = (pred: SQL): SQL => sql`${pushSubscriptions.id} = any(array(select ${pushSubscriptions.id}
+  from ${pushSubscriptions} where ${pred} for update of ${pushSubscriptions} skip locked))`;
+
+/**
+ * THE WAKE ROWS OF THESE SESSION FAMILIES, deleted: the rows each family registered, and the rows of
+ * the devices its sessions name, each in that session's own account (a family id under another
+ * account names nothing of this one). Two statements per 500 families. A row another transaction
+ * holds is passed over (SKIP LOCKED), so no revoke ever waits on a push row: an erasure deletes an
+ * account's rows before it takes its sessions, and a revoke holding those sessions must not wait on
+ * it. A row with neither binding is never touched.
+ */
+export async function pruneWakeRows(db: Tx, familyIds: readonly string[]): Promise<void> {
+  const families = [...new Set(familyIds)];
+  for (let i = 0; i < families.length; i += PRUNE_FAMILIES) {
+    const chunk = families.slice(i, i + PRUNE_FAMILIES);
+    const registered = db.select({ familyId: sessions.familyId, accountId: sessions.accountId })
+      .from(sessions).where(inArray(sessions.familyId, chunk));
+    await db.delete(pushSubscriptions).where(unheld(
+      sql`(${pushSubscriptions.sessionFamilyId}, ${pushSubscriptions.accountId}) in ${registered}`));
+    const named = db.select({ deviceId: sessions.deviceId, accountId: sessions.accountId })
+      .from(sessions).where(and(inArray(sessions.familyId, chunk), isNotNull(sessions.deviceId)));
+    await db.delete(pushSubscriptions).where(unheld(
+      sql`(${pushSubscriptions.deviceId}, ${pushSubscriptions.accountId}) in ${named}`));
   }
 }
 

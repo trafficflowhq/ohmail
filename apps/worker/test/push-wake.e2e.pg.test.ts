@@ -9,13 +9,13 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { recordChange } from "@trafficflow/db";
+import { accounts, recordChange, sessions, users } from "@trafficflow/db";
 import { schema, pushSubscriptions, makeChangeWakeHub } from "@trafficflow/db/cloud";
 import {
   makePushEndpointGuard, makeVapidIdentity,
   type HostResolver, type VapidFromEnv,
 } from "@trafficflow/core/net";
-import { makePushService } from "@trafficflow/services";
+import { makeAuthService, makePushService, makeTestAuthDeps } from "@trafficflow/services";
 import { startPushWake, WAKE_BODY, type PushWakePost } from "../src/push-wake.js";
 import type { Tx } from "@trafficflow/db";
 import {
@@ -314,6 +314,64 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
       await mail(accountId);
       await tick(500);
       expect(posts.length, "a forgotten registration still received a wake").toBe(control);
+    } finally {
+      wake.stop();
+      await hub.end();
+    }
+  }, 60_000);
+
+  it("DEVICES REVOKE — a revoked browser's registration goes, and only the live browser is woken", async () => {
+    // Two real live sessions of one person, each registering its own browser; the first presses
+    // Devices revoke on the second. The control wake reaches both, the next one only the first.
+    const [acct] = await db.insert(accounts).values({ name: "wake-revoke" }).returning();
+    const accountId = acct!.id;
+    const [user] = await db.insert(users).values({ accountId, email: `wake-${randomUUID()}@lichtgrat.example` }).returning();
+    const session = async (twofaAt: Date | null): Promise<string> => (await db.insert(sessions).values({
+      accountId, userId: user!.id, familyId: randomUUID(), lastTwofaAt: twofaAt,
+      accessExpiresAt: new Date(Date.now() + 3_600_000), refreshExpiresAt: new Date(Date.now() + 3_600_000),
+    }).returning({ id: sessions.id }))[0]!.id;
+    const kept = await session(new Date());
+    const revoked = await session(null);
+
+    const host = "push.revoke-browser.example.com";
+    const guard = makePushEndpointGuard(fixedResolver({ [host]: [PUBLIC_IP] }), { allowPrivate: false });
+    const push = makePushService({ endpointGuard: guard });
+    const sub = makeSubscriber();
+    const liveEndpoint = `https://${host}/wp/${randomUUID()}`;
+    const goneEndpoint = `https://${host}/wp/${randomUUID()}`;
+    await push.subscribe(ctxFor(accountId, kept), { transport: "webpush", endpoint: liveEndpoint, p256dh: sub.p256dh, auth: sub.auth });
+    const gone = await push.subscribe(ctxFor(accountId, revoked), { transport: "webpush", endpoint: goneEndpoint, p256dh: sub.p256dh, auth: sub.auth });
+
+    const kp = makeSubscriber();
+    const vapid: VapidFromEnv = {
+      kind: "configured",
+      identity: makeVapidIdentity({ publicKey: kp.p256dh, privateKey: kp.privateKey.toString("base64url") }),
+    };
+    const posts: string[] = [];
+    const post: PushWakePost = (url) => { posts.push(url); return Promise.resolve({ status: 201 }); };
+    const hub = makeChangeWakeHub(PG_TEST_URL);
+    const wake = startPushWake({
+      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid, debounceMs: 100, minIntervalMs: 0,
+    });
+
+    try {
+      await settleHub(accountId, () => posts.length);
+      await waitFor(() => posts.length >= 2);
+      expect(new Set(posts), "the control wake did not reach both browsers").toEqual(new Set([liveEndpoint, goneEndpoint]));
+
+      await makeAuthService(makeTestAuthDeps()).revokeDevice(
+        { ...ctxFor(accountId, kept), userId: user!.id, requestId: "wake-revoke" } as Parameters<ReturnType<typeof makeAuthService>["revokeDevice"]>[0],
+        revoked,
+      );
+      const rows = await db.select({ id: pushSubscriptions.id }).from(pushSubscriptions).where(eq(pushSubscriptions.id, gone.id));
+      expect(rows, "the revoked browser's registration is still there").toEqual([]);
+
+      await tick(400);                                  // a wake already in flight lands before the count
+      const before = posts.length;
+      await mail(accountId);
+      await waitFor(() => posts.length > before);
+      await tick(300);
+      expect(posts.slice(before), "a wake went to the revoked browser, or none to the live one").toEqual([liveEndpoint]);
     } finally {
       wake.stop();
       await hub.end();

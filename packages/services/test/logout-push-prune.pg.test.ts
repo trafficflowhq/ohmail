@@ -3,15 +3,16 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { and, eq } from "drizzle-orm";
-import { devices, sessions, users } from "@trafficflow/db";
-import { schema, pushSubscriptions } from "@trafficflow/db/cloud";
+import { eq, inArray } from "drizzle-orm";
+import { generateSync } from "otplib";
+import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
+import { authEvents, credentials, schema, pushSubscriptions, webauthnCredentials } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  makeAuthService, makeTestAuthDeps, makePushService, type ServiceContext,
+  AuthService, generateToken, hashToken, makeAuthService, makeTestAuthDeps, pushService, type ServiceContext,
 } from "@trafficflow/services";
-import { seedFullAccount } from "./helpers/erasure-fixture.js";
+import { seedFullAccount, type SeededAccount } from "./helpers/erasure-fixture.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -42,17 +43,19 @@ import { seedFullAccount } from "./helpers/erasure-fixture.js";
  *
  * Delete the `logout` override in `auth-service.ts` and the first two cases go red with the
  * row still present — which is the defect verbatim. The isolation case goes red if the prune
- * widens its predicate past the one device (and the deviceless case pins the browser residue
- * this deliberately does NOT guess at).
+ * widens its predicate past the one device. A BROWSER's row carries no device; it names the session
+ * family that registered it (cloud 0056), and every revoke door below takes the rows of the families
+ * it ends, in their own account, and nothing else.
  */
 const PG_UP = await realPgAvailable();
 
 let client: ReturnType<typeof postgres>;
 let db: ReturnType<typeof drizzle<typeof schema>>;
 
-const ctxFor = (accountId: string, userId: string, sessionId: string | null): ServiceContext => ({
+let ipCell = 0;
+const ctxFor = (accountId: string, userId: string | null, sessionId: string | null): ServiceContext => ({
   db, accountId, userId, sessionId: sessionId ?? undefined,
-  now: () => new Date(), requestId: "logout-push-pg",
+  now: () => new Date(), requestId: "logout-push-pg", ip: `10.56.${(ipCell += 1) % 250}.7`,
 } as unknown as ServiceContext);
 
 /** One wake registration, stamped with the device the session belongs to. */
@@ -64,26 +67,55 @@ async function registerWakeRow(accountId: string, deviceId: string | null): Prom
 }
 
 /**
- * A SESSION THE WAY A BROWSER SIGN-IN LEAVES ONE: no device.
- *
- * `seedFullAccount` hands its session a device id, which is right for the phone and desktop cases
- * in this file and WRONG for every browser one — `auth/session-lifecycle.ts` auto-mints a device
- * row for the four desktop kinds only. Using the seeded session for a web registration is what
- * made the browser case here green while asserting the opposite of the truth, so the browser
- * cases mint their own.
+ * A BROWSER: a session the way a browser sign-in leaves one (no device), and the row it registers
+ * through the real service. `seedFullAccount` hands its session a device id, which is right for the
+ * phone and desktop cases in this file and wrong for every browser one: `auth/session-lifecycle.ts`
+ * auto-mints a device row for the four desktop kinds only.
  */
-async function devicelessSession(seeded: { accountId: string; userId: string }): Promise<string> {
-  const [row] = await db.insert(sessions).values({
-    accountId: seeded.accountId, userId: seeded.userId, familyId: randomUUID(),
+async function browser(
+  seeded: { accountId: string; userId: string }, o: { twofaAt?: Date; access?: string; refresh?: string } = {},
+): Promise<{ sessionId: string; familyId: string; row: string }> {
+  const familyId = randomUUID();
+  const [s] = await db.insert(sessions).values({
+    accountId: seeded.accountId, userId: seeded.userId, familyId, lastTwofaAt: o.twofaAt ?? null,
+    accessTokenHash: o.access ? hashToken(o.access) : null,
     accessExpiresAt: new Date(Date.now() + 3_600_000),
     refreshExpiresAt: new Date(Date.now() + 3_600_000),
   }).returning({ id: sessions.id });
-  return row!.id;
+  if (o.refresh) {
+    await db.insert(refreshTokens).values({
+      accountId: seeded.accountId, userId: seeded.userId, sessionId: s!.id, familyId,
+      tokenHash: hashToken(o.refresh), expiresAt: new Date(Date.now() + 3_600_000),
+    });
+  }
+  const { id } = await pushService.subscribe(ctxFor(seeded.accountId, seeded.userId, s!.id), {
+    transport: "webpush", endpoint: `https://push.test/${randomUUID()}`, p256dh: "p", auth: "a",
+  });
+  return { sessionId: s!.id, familyId, row: id };
 }
 
 const rowsFor = async (accountId: string) =>
   db.select({ id: pushSubscriptions.id, deviceId: pushSubscriptions.deviceId })
     .from(pushSubscriptions).where(eq(pushSubscriptions.accountId, accountId));
+
+/** Which of these rows are still there, sorted. */
+const live = async (ids: readonly string[]): Promise<string[]> =>
+  (await db.select({ id: pushSubscriptions.id }).from(pushSubscriptions)
+    .where(inArray(pushSubscriptions.id, [...ids]))).map((r) => r.id).sort();
+
+/** Poll, bounded, until a backend named `app` waits on a lock: a reading, not a sleep. */
+async function waitsOnALock(app: string, ms = 10_000): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const [row] = await client`select count(*)::int as n from pg_stat_activity
+      where datname = current_database() and application_name = ${app} and wait_event_type = 'Lock'`;
+    if ((row as { n: number }).n > 0) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return false;
+}
+
+const PASSWORD = "long-login-password";
 
 describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () => {
   beforeAll(async () => {
@@ -152,6 +184,8 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
     const mine2 = await registerWakeRow(seeded.accountId, mineB!.id);
     const notMine = await registerWakeRow(seeded.accountId, theirs!.id);
     const deviceless = await registerWakeRow(seeded.accountId, null);
+    const myBrowser = await browser(seeded);
+    const theirBrowser = await browser({ accountId: seeded.accountId, userId: second!.id });
 
     // `allDevices` needs the step-up the base class gates it with; the fixture's session
     // carries no `last_twofa_at`, so stamp it — the gate itself is `logout`'s own test, and
@@ -165,86 +199,42 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
     expect(ids).not.toContain(mine2);
     // The load-bearing half.
     expect(ids, "another user's wakes must not end because this one signed out").toContain(notMine);
-    // And the deviceless row survives, because nothing on it names a user — the same named
-    // residue the case below pins, not a gap this may guess at.
+    // This user's browser goes by its family; the other user's browser and a row that names no
+    // session stay.
+    expect(ids, "this user's browser kept its registration").not.toContain(myBrowser.row);
+    expect(ids, "another user's browser lost its registration").toContain(theirBrowser.row);
     expect(ids).toContain(deviceless);
   });
 
   /**
-   * ── THIS CASE WAS GREEN FOR THE WRONG REASON, AND SAID SO IN ITS OWN MESSAGE ─────────────
-   *
-   * It used to be called "a BROWSER registration is stamped with its device, so the prune reaches
-   * it too", and it passed — because it registered through `seedFullAccount`'s session, which
-   * HAS a device id. No browser sign-in produces such a session:
-   * `auth/session-lifecycle.ts`'s `AUTO_MINT_DEVICE_LABELS` auto-mints a device row for the four
-   * DESKTOP kinds only, and `auth-service.test.ts` asserts through the real ceremony that an
-   * exchanged web session's `device_id` is null. So the fixture was the thing being tested, and
-   * its own failure message — "a browser registration carries no device, so no sign-out can ever
-   * reach it" — stated the opposite of the assertion it was attached to.
-   *
-   * Seeding a genuinely DEVICELESS session below is what makes these a browser at all. The claim
-   * then comes out the other way, and the pair below is the truth: the server's device-scoped
-   * prune CANNOT reach a browser's row, and the browser's own delete is what does.
+   * A BROWSER REGISTRATION NAMES NO DEVICE, so the device-scoped prunes never reached it: a browser
+   * signed out from anywhere but itself kept receiving wakes. It names the session family that
+   * registered it, stamped from that session through the REAL service (a row inserted with the
+   * stamp already on it would say nothing about who put it there), and its sign-out takes it.
    */
-  it("a BROWSER registration is DEVICELESS — the server's prune cannot reach it", async () => {
-    /*
-     * Through the REAL service, because what is under test is the stamping decision: inserting a
-     * row with a device id already on it would assert nothing about who put it there. Here the
-     * decision is a no-op — `if (s?.deviceId)` never fires for a web session — and that no-op is
-     * the fact the sign-out design has to be built around.
-     */
+  it("a BROWSER registration carries its session's family, and that session's sign-out takes it", async () => {
     const seeded = await seedFullAccount(db);
-    const web = await devicelessSession(seeded);
-    const push = makePushService();
-    const { id } = await push.subscribe(
-      ctxFor(seeded.accountId, seeded.userId, web),
-      {
-        transport: "webpush",
-        endpoint: `https://push.test/${randomUUID()}`,
-        p256dh: "p", auth: "a",
-      },
-    );
+    const w1 = await browser(seeded);
+    const [stored] = await db.select({ deviceId: pushSubscriptions.deviceId, familyId: pushSubscriptions.sessionFamilyId })
+      .from(pushSubscriptions).where(eq(pushSubscriptions.id, w1.row));
+    expect(stored).toEqual({ deviceId: null, familyId: w1.familyId });
 
-    const [stored] = await db.select({ deviceId: pushSubscriptions.deviceId })
-      .from(pushSubscriptions).where(eq(pushSubscriptions.id, id));
-    expect(
-      stored!.deviceId,
-      "a web session named a device — then the stamp, not the client, would close this case",
-    ).toBeNull();
-
-    const svc = makeAuthService(makeTestAuthDeps());
-    await svc.logout(ctxFor(seeded.accountId, seeded.userId, web), {});
-    expect(
-      (await rowsFor(seeded.accountId)).map((r) => r.id),
-      "the device-scoped prune deleted a row it cannot name — which would mean it is deleting "
-      + "every deviceless registration on the account, ending another browser's notifications",
-    ).toContain(id);
+    await makeAuthService(makeTestAuthDeps()).logout(ctxFor(seeded.accountId, seeded.userId, w1.sessionId), {});
+    expect(await live([w1.row]), "the signed-out browser kept its registration").toEqual([]);
   });
 
-  it("…and the CLIENT's own delete is what closes it, account-scoped, by the id it kept", async () => {
+  it("…and the CLIENT's own delete still closes it first, account-scoped, by the id it kept", async () => {
     /*
-     * The other half, and the reason the row above is allowed to survive a `logout`. This browser
-     * is the only party that knows WHICH deviceless row is its own — it kept the id this endpoint
-     * handed back. So the sign-out ceremony issues `DELETE /push/subscriptions/:id` BEFORE
-     * `auth.logout()` revokes the session that authorizes it; the order is asserted on the client
-     * in `apps/webapp/test/sign-out-clears-durable-stores.test.ts`, and what is asserted here is
-     * that the route it calls actually removes the row a browser can reach.
-     *
-     * Not vacuous: a second account's row is present, and account scoping is what stops this
-     * being a delete-by-id anyone could aim anywhere.
+     * The browser's sign-out issues `DELETE /push/subscriptions/:id` BEFORE `auth.logout()` revokes
+     * the session that authorizes it; the order is asserted on the client in
+     * `apps/webapp/test/sign-out-clears-durable-stores.test.ts`, and what is asserted here is that the
+     * route it calls removes the row. Not vacuous: a second account's session tries first, and
+     * account scoping is what stops this being a delete-by-id anyone could aim anywhere.
      */
     const seeded = await seedFullAccount(db);
     const other = await seedFullAccount(db);
-    const web = await devicelessSession(seeded);
-    const push = makePushService();
-    const { id } = await push.subscribe(
-      ctxFor(seeded.accountId, seeded.userId, web),
-      {
-        transport: "webpush",
-        endpoint: `https://push.test/${randomUUID()}`,
-        p256dh: "p", auth: "a",
-      },
-    );
+    const { sessionId: web, row: id } = await browser(seeded);
+    const push = pushService;
 
     // The account that does NOT own it cannot delete it — 404, and the row stands.
     await expect(
@@ -252,7 +242,7 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
     ).rejects.toThrow();
     expect((await rowsFor(seeded.accountId)).map((r) => r.id)).toContain(id);
 
-    // The browser's own session can, and that is the whole of the take-back.
+    // The browser's own session can.
     await push.unsubscribe(ctxFor(seeded.accountId, seeded.userId, web), id);
     expect(
       (await rowsFor(seeded.accountId)).map((r) => r.id),
@@ -301,32 +291,149 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
     expect((await rowsFor(seeded.accountId)).map((r) => r.id)).not.toContain(phoneRow);
   });
 
-  it("a DEVICELESS session prunes nothing — the browser residue is named, not guessed at", async () => {
-    // A browser ceremony mints no device row, and web-push rows carry `device_id = NULL`. There
-    // is no predicate that names THIS browser rather than every deviceless registration on the
-    // account, so deleting them would silently end another browser's notifications. Recorded as
-    // a test rather than a comment, because "we chose not to" and "we forgot" look identical in
-    // a diff. The fix is to stamp the browser's own registration; that is a separate row.
+  it("a browser's sign-out takes ONLY its own row: another browser's, the phone's and an unbound one stay", async () => {
+    // A PHONE ROW and a SECOND BROWSER have to exist for the isolation half to mean anything: a
+    // prune that took every deviceless row of the account would end another browser's wakes. The
+    // unbound row names no session at all (a row the migration's backfill would have deleted).
     const seeded = await seedFullAccount(db);
-    const [deviceless] = await db.insert(sessions).values({
-      accountId: seeded.accountId, userId: seeded.userId, familyId: randomUUID(),
-      accessExpiresAt: new Date(Date.now() + 3_600_000),
-      refreshExpiresAt: new Date(Date.now() + 3_600_000),
-    }).returning({ id: sessions.id });
-    const webRow = await registerWakeRow(seeded.accountId, null);
-    // A PHONE ROW HAS TO EXIST for the isolation half to mean anything. Without it the query
-    // below returned `[]` because nothing had ever been inserted — the assertion was true for
-    // the wrong reason, and a widening of this prune could have turned every phone in the
-    // account off with the test that guards it still green.
+    const w1 = await browser(seeded);
+    const w2 = await browser(seeded);
     const phoneRow = await registerWakeRow(seeded.accountId, seeded.deviceId);
+    const unbound = await registerWakeRow(seeded.accountId, null);
 
-    const svc = makeAuthService(makeTestAuthDeps());
-    await svc.logout(ctxFor(seeded.accountId, seeded.userId, deviceless!.id), {});
-
-    const ids = (await rowsFor(seeded.accountId)).map((r) => r.id);
-    expect(ids).toContain(webRow);
-    // …and the phone's row is untouched by a browser sign-out, which is the other direction of
-    // the same rule.
-    expect(ids, "a browser sign-out must not take a phone's registration down").toContain(phoneRow);
+    await makeAuthService(makeTestAuthDeps()).logout(ctxFor(seeded.accountId, seeded.userId, w1.sessionId), {});
+    expect(await live([w1.row, w2.row, phoneRow, unbound])).toEqual([w2.row, phoneRow, unbound].sort());
   });
+
+  /** Every door that ends another session of the caller's, from the caller's fresh session. */
+  const DOORS: Array<[string, (s: AuthService, c: ServiceContext, w1: string, seeded: SeededAccount) => Promise<unknown>]> = [
+    ["Devices revoke, by the browser session's own id", (s, c, w1) => s.revokeDevice(c, w1)],
+    ["sign out all other web sessions", (s, c) => s.revokeWebSessions(c)],
+    ["a password change", async (s, c, _w1, seeded) => {
+      await db.update(credentials).set({ passwordHash: await makeTestAuthDeps().passwordHasher.hash(PASSWORD) })
+        .where(eq(credentials.userId, seeded.userId));
+      return s.changePassword(c, { currentPassword: PASSWORD, newPassword: `${PASSWORD}-next` });
+    }],
+    ["an authenticator removal", async (s, c, _w1, seeded) => {
+      await db.insert(webauthnCredentials).values({ userId: seeded.userId, credentialId: `c0056-${randomUUID()}`, publicKey: "AAAA" });
+      return s.totpRemove(c);
+    }],
+  ];
+  for (const [door, run] of DOORS) {
+    it(`${door} takes the revoked browser's row and keeps the caller's`, async () => {
+      const seeded = await seedFullAccount(db);
+      const caller = await browser(seeded, { twofaAt: new Date() });
+      const w1 = await browser(seeded);
+      await run(makeAuthService(makeTestAuthDeps()), ctxFor(seeded.accountId, seeded.userId, caller.sessionId), w1.sessionId, seeded);
+      expect(await live([caller.row, w1.row])).toEqual([caller.row]);
+    });
+  }
+
+  it("the reuse sweep takes the swept browser's row; with the prune down its answer and record stand", async () => {
+    class PruneDown extends AuthService {
+      protected override async pruneWakeRegistrations(): Promise<void> { throw new Error("push table unreachable"); }
+    }
+    for (const svc of [makeAuthService(makeTestAuthDeps()), new PruneDown(makeTestAuthDeps())]) {
+      const seeded = await seedFullAccount(db);
+      const caller = await browser(seeded);
+      const r1 = generateToken();
+      const w1 = await browser(seeded, { refresh: r1 });
+      const anon = ctxFor("", null, null);
+      await svc.refresh(anon, { refreshToken: r1 }, { surface: "native" });
+      await expect(svc.refresh(anon, { refreshToken: r1 }, { surface: "native" }))
+        .rejects.toMatchObject({ code: "refresh_revoked", httpStatus: 401, details: { cause: "reuse" } });
+      const events = await db.select({ event: authEvents.event }).from(authEvents).where(eq(authEvents.accountId, seeded.accountId));
+      expect(events.map((e) => e.event)).toContain("refresh_reuse_revoked");
+      const down = svc instanceof PruneDown;
+      expect(await live([caller.row, w1.row]), down ? "the sweep failed with its prune" : "the swept browser kept its row")
+        .toEqual(down ? [caller.row, w1.row].sort() : [caller.row]);
+    }
+  });
+
+  it("a sign-in by ANOTHER account over a browser's jar takes that browser's row; the account's other browser keeps its own", async () => {
+    const svc = makeAuthService(makeTestAuthDeps());
+    const seeded = await seedFullAccount(db);
+    const access = generateToken();
+    const w1 = await browser(seeded, { access });
+    const other = await browser(seeded);
+    // Another person signs up and finishes an authenticator in the jar that still holds that browser's access cookie.
+    const reg = await svc.register(ctxFor("", null, null), {
+      email: `b-${randomUUID()}@lichtgrat.example`, password: PASSWORD, displayName: "B", inviteCode: "INVITE-OK",
+    });
+    if (reg.status !== "enrollment") throw new Error(`expected an enrolment session, got ${reg.status}`);
+    const [enrol] = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.userId, reg.user.userId));
+    const b = ctxFor(reg.user.accountId, reg.user.userId, enrol!.id);
+    const { secret } = await svc.totpEnroll(b);
+    await svc.totpActivate({ ...b, supersedes: access }, { code: generateSync({ secret, epoch: Math.floor(Date.now() / 1000) }) });
+    expect(await live([w1.row, other.row])).toEqual([other.row]);
+  });
+
+  it("a row of ANOTHER account carrying the revoked family's id survives the revoke", async () => {
+    const a = await seedFullAccount(db);
+    const b = await seedFullAccount(db);
+    const w1 = await browser(a);
+    const [foreign] = await db.insert(pushSubscriptions).values({
+      accountId: b.accountId, transport: "webpush", endpoint: `https://push.test/${randomUUID()}`, sessionFamilyId: w1.familyId,
+    }).returning({ id: pushSubscriptions.id });
+    await makeAuthService(makeTestAuthDeps()).logout(ctxFor(a.accountId, a.userId, w1.sessionId), {});
+    expect(await live([w1.row, foreign!.id])).toEqual([foreign!.id]);
+  });
+
+  it("a registration from a revoked session is refused 401 and writes no row", async () => {
+    const seeded = await seedFullAccount(db);
+    const w1 = await browser(seeded);
+    await makeAuthService(makeTestAuthDeps()).logout(ctxFor(seeded.accountId, seeded.userId, w1.sessionId), {});
+    const endpoint = `https://push.test/${randomUUID()}`;
+    await expect(pushService.subscribe(ctxFor(seeded.accountId, seeded.userId, w1.sessionId), {
+      transport: "webpush", endpoint, p256dh: "p", auth: "a",
+    })).rejects.toMatchObject({ httpStatus: 401 });
+    expect(await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.endpoint, endpoint))).toEqual([]);
+  });
+
+  /**
+   * Both shapes of revoke: Devices revoke claims the session row FOR UPDATE first, a sign-out's family
+   * revoke only UPDATEs it, which a KEY SHARE read would not wait for.
+   */
+  const RACED: Array<[string, (s: AuthService, seeded: SeededAccount, caller: string, w1: string) => Promise<unknown>]> = [
+    ["Devices revoke", (s, seeded, caller, w1) => s.revokeDevice(ctxFor(seeded.accountId, seeded.userId, caller), w1)],
+    ["its own sign-out", (s, seeded, _caller, w1) => s.logout(ctxFor(seeded.accountId, seeded.userId, w1), {})],
+  ];
+  for (const [door, revokeW1] of RACED) it(`RACE: a registration that waits on ${door} is refused, and leaves no row`, async () => {
+    // The revoke is held at its prune, after it wrote the session row; the registration runs on a
+    // second connection and is seen WAITING on that row, then the revoke commits.
+    let reached!: () => void;
+    const atPrune = new Promise<void>((r) => { reached = r; });
+    let open!: () => void;
+    const gate = new Promise<void>((r) => { open = r; });
+    class Held extends AuthService {
+      protected override async pruneWakeRegistrations(tx: Tx, familyIds: readonly string[]): Promise<void> {
+        reached();
+        await gate;
+        return super.pruneWakeRegistrations(tx, familyIds);
+      }
+    }
+    const seeded = await seedFullAccount(db);
+    const caller = await browser(seeded, { twofaAt: new Date() });
+    const w1 = await browser(seeded);
+    const app = `c0056-race-${randomUUID().slice(0, 8)}`;
+    const second = postgres(PG_TEST_URL, { max: 1, onnotice: () => {}, connection: { application_name: app } });
+    try {
+      const revoke = revokeW1(new Held(makeTestAuthDeps()), seeded, caller.sessionId, w1.sessionId);
+      await atPrune;
+      const endpoint = `https://push.test/${randomUUID()}`;
+      const register = pushService.subscribe(
+        { ...ctxFor(seeded.accountId, seeded.userId, w1.sessionId), db: brandDialect(drizzle(second, { schema }), "pg") } as ServiceContext,
+        { transport: "webpush", endpoint, p256dh: "p", auth: "a" },
+      ).then(() => "registered", (e: { httpStatus?: number }) => e.httpStatus);
+      expect(await waitsOnALock(app, 5_000), "the registration never waited on the revoke").toBe(true);
+      open();
+      await revoke;
+      expect(await register).toBe(401);
+      expect(await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.endpoint, endpoint))).toEqual([]);
+      expect(await live([caller.row, w1.row])).toEqual([caller.row]);
+    } finally {
+      open();
+      await second.end({ timeout: 5 });
+    }
+  }, 30_000);
 });
