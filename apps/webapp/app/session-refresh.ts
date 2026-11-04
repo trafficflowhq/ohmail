@@ -671,7 +671,7 @@ const pendingSignOut = (): boolean => readOwnerMarker().kind === "signed-out";
 
 /**
  * THE REVOKE DOOR: told the refresh door's coded refusal, inside the lock and after the death latch.
- * `revoked-door.ts` registers it on import (the mailbox and the splash); anywhere else nothing hears.
+ * `revoked-door.ts` registers it on import (the mailbox, the splash and /login); anywhere else nothing hears.
  */
 export interface RevokeDoor {
   /** Who this refresh leaves under, read before it goes out: the refusal clears the jar. */

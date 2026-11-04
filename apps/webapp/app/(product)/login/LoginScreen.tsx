@@ -25,6 +25,7 @@ import { LOGIN_INVITE_KEY, anyoneCanSignUp, signupPosture } from "../../invite-p
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
 import { readOwnerMarker } from "../../shell/owner-cookie";
 import { refreshSettled } from "../../session-refresh";
+import { revokedWipeSettled } from "../../revoked-door";
 import { resolveOwnerOutcome } from "../session-outcome";
 import {
   REASON_BODY, takeSharedSignedOutNote, takeSignedOutNote, type SignedOutReason,
@@ -288,6 +289,8 @@ export function LoginScreen(
        * rather than to cancel one: it writes, then we write. See `refreshSettled`.
        */
       await refreshSettled();
+      // A revoke this page's check heard: that account's copy is gone before a sign-in leaves.
+      await revokedWipeSettled();
       /*
        * NO SIGN-IN BESIDE A SIGN-OUT THE SERVER HAS NOT CONFIRMED: its family is still live, and in
        * this jar, and a session minted beside it would leave it so. A pending sign-out's attempt still
