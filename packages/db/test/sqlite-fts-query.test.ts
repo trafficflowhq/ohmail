@@ -26,7 +26,7 @@ function fts(): Sqlite {
 /** Typed text built from the characters FTS5 and the server's parser give meaning to. */
 function typedShapes(): string[] {
   // ß and é fold, and U+19B0 is a letter here that SQLite's tokenizer parts a word at.
-  const alphabet = [..."ab1-'\".:/@*^()+{}[]!&|<>~#%$,;?\\ "].concat(["AND", "OR", "NOT", "NEAR", "or", "the", "sign"])
+  const alphabet = [..."ab1-'\".:/@*^()+{}[]!&|<>~#%$,;?\\ "].concat(["AND", "OR", "NOT", "NEAR", "or", "the", "sign", "over", "Your"])
     .concat(["ß", "é", String.fromCodePoint(0x19b0)]);
   let seed = 7;
   const next = (n: number): number => {
@@ -102,7 +102,9 @@ describe("the device store's full-text query builder", () => {
     expect(ftsQueryOf("sign-in code", "stems").match).toBe('"sign" AND "code"');
     expect(ftsQueryOf("sign-in code", "starts").match).toBe('"sign"* AND "code"*');
     expect(ftsQueryOf("ines pdf", "starts").match).toBe('"ines"* AND "pdf"');
-    expect(ftsQueryOf("look over", "starts").match).toBe('"look"* AND "over"*');
+    // A kept stopword (last and long) has no whole reading: the server's documents never hold it.
+    expect(ftsQueryOf("look over", "stems").match).toBeNull();
+    expect(ftsQueryOf("With", "stems").match).toBeNull();
     // A word a device's tokenizer may part is no start: its part is read by its stem alone.
     const parted = `ines a${String.fromCodePoint(0x19b0)}b`;
     expect(ftsQueryOf(parted, "starts").match).toBeNull();
@@ -121,6 +123,17 @@ describe("the device store's full-text query builder", () => {
     expect(rows("plain", ftsQueryOf("ines", "starts").match!)).toEqual([1, 3]);
     expect(rows("porter", ftsQueryOf("ines", "stems").match!), "the word itself, stemmed").toEqual([1]);
     expect(rows("plain", ftsQueryOf("elevat repo", "starts").match!), "a start its stem is shorter than").toEqual([4]);
+    // A stopword alone, or last: only the start of a longer word, as the server's `'with':*`.
+    db.exec(`insert into plain(rowid, x) values (5, 'coffee with Mara'), (6, 'the withdrawal'), (7, 'Withé 2'), (8, 'with2 look')`);
+    expect(rows("plain", ftsQueryOf("with", "starts").match!)).toEqual([6, 7, 8]);
+    expect(rows("plain", ftsQueryOf("WITH", "starts").match!)).toEqual([6, 7, 8]);
+    expect(rows("plain", ftsQueryOf("look with", "starts").match!)).toEqual([8]);
+    // Not a longer stopword it starts either (`yours`, `yourself`, `against`): those are left out of the server's documents too.
+    db.exec(`insert into plain(rowid, x) values (9, 'Yours sincerely'), (10, 'do it yourself'), (11, 'yourselves'),
+      (12, 'yourname'), (13, 'yoursa'), (14, 'yourselfie'), (15, 'voted against'), (16, 'againstx'), (17, 'agains')`);
+    expect(rows("plain", ftsQueryOf("your", "starts").match!)).toEqual([12, 13, 14]);
+    expect(rows("plain", ftsQueryOf("YOURS", "starts").match!)).toEqual([13, 14]);
+    expect(rows("plain", ftsQueryOf("again", "starts").match!)).toEqual([16, 17]);
   });
 
   it("keeps the tails the server's part-word arm reads, keyed by a part's last two letters", () => {
