@@ -47,7 +47,7 @@ import {
   connectAttemptRecorder,
 } from "@trafficflow/api";
 import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
-import { waitUntil } from "@vercel/functions";
+import { handOff } from "./quiet-hold.js";
 import { allowCookieAuthForRequest, type HostConfig } from "./config.js";
 import { makeChangeWakeHub } from "./wake-hub.js";
 
@@ -395,8 +395,8 @@ function buildServices(cfg: HostConfig): ApiServices {
           "api", { log: hostLogger(cfg) },
         ),
         // This platform freezes an instance once it answers; the refresh behind a read route
-        // runs after the answer, so it is handed to the platform to finish.
-        waitUntil,
+        // runs after the answer, so it is handed to the platform to finish, then a quiet hold.
+        waitUntil: handOff,
       })
       : UNMETERED;
     return composed;
@@ -650,10 +650,10 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
     services: servicesFor(cfg),
     sse: cfg.sse,
     // The `/events` push relay: ONE LISTEN connection per warm instance, fanned out in process
-    // (`wake-hub.ts`). Built only when this host both streams AND has a session-mode URL to
+    // (`wake-hub.ts`). Built only when this host holds streams AND has a session-mode URL to
     // hold the LISTEN on; in every other state the route's poll loop is the only wake source,
     // which is the pre-push behaviour exactly.
-    changeWake: cfg.sse.enabled !== false && cfg.sseListenUrl
+    changeWake: cfg.sse.enabled !== false && cfg.sse.holds !== false && cfg.sseListenUrl
       ? wakeHubFor(cfg)
       : null,
     allowCookieAuth: allowCookieAuthForRequest(req, cfg.cookieHosts),
@@ -747,8 +747,8 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         publicSignup: cfg.authConfig.publicSignup && customerMailerFor(cfg) !== null,
       },
       features: {
-        // The same flag that decides whether `GET /events` streams (503 `sse_disabled` off).
-        sse: cfg.sse.enabled === true,
+        // Whether `GET /events` streams: off is 503 `sse_disabled`, held nothing is 204.
+        sse: cfg.sse.enabled === true && cfg.sse.holds !== false,
         // Armed with the staging bucket: `POST /attachments/staging` answers 503 without it.
         staging: cfg.attachmentStaging !== null,
         // Armed with the model key: the draft/suggest surfaces answer 503 without it.

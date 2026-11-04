@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { waitUntil } from "@vercel/functions";
 import {
   createApp, apiRoutes, BodyOverCeilingError, isDbBusy, dbBusyResponse, MalformedPathError,
 } from "@trafficflow/api";
-import { API_MAX_DURATION_MS, POOLED_IDLE_TIMEOUT_S } from "@trafficflow/db/cloud";
-import { EVENTS_MAX_DURATION_S, hostState } from "./config.js";
+import { hostState } from "./config.js";
 import { buildDeps } from "./deps.js";
 import { normalizeRequest } from "./normalize.js";
+import { withQuietHold } from "./quiet-hold.js";
+
+export { QUIET_HOLD_MS } from "./quiet-hold.js";
 
 /**
  * The dispatch point. `app/[[...path]]/route.ts` is a thin shim over this so behaviour is
@@ -20,45 +21,6 @@ import { normalizeRequest } from "./normalize.js";
  */
 
 const app = createApp(apiRoutes);
-
-/**
- * HOW LONG AN INSTANCE STAYS AWAKE AFTER ITS LAST ANSWER: past the pool's idle close, so its idle
- * connections end before the platform suspends it. A suspended instance keeps its client
- * connections open at the pooler until it wakes; on 2026-10-26 those of ~160 cold instances filled
- * the pooler's client cap and every route failed for six minutes.
- */
-export const QUIET_HOLD_MS = (POOLED_IDLE_TIMEOUT_S + 2) * 1000;
-
-/** How far inside its invocation's `maxDuration` a hold ends at the latest. */
-const HOLD_MARGIN_MS = 5_000;
-
-/** The hold that ended last. The next one to end releases it, so one invocation lingers per instance. */
-let lingering: (() => void) | null = null;
-
-/**
- * Hand the platform a hold for this request and return its end. Once ended it lasts
- * {@link QUIET_HOLD_MS}, less if a later hold ends or the invocation's ceiling is near: past
- * `maxDuration` the platform kills the invocation. Outside a request context `waitUntil` does nothing.
- */
-function quietHold(url: string): () => void {
-  let ceilingMs = API_MAX_DURATION_MS;
-  try {
-    // `/events` is the one route module with its own `maxDuration`.
-    if (new URL(url).pathname === "/events") ceilingMs = EVENTS_MAX_DURATION_S * 1000;
-  } catch { /* the catch-all's ceiling */ }
-  const deadline = Date.now() + ceilingMs - HOLD_MARGIN_MS;
-  let release!: () => void;
-  waitUntil(new Promise<void>((resolve) => { release = resolve; }));
-  let ended = false;
-  return () => {
-    if (ended) return;
-    ended = true;
-    lingering?.();
-    const timer = setTimeout(release, Math.max(0, Math.min(QUIET_HOLD_MS, deadline - Date.now())));
-    (timer as { unref?: () => void }).unref?.();
-    lingering = () => { clearTimeout(timer); release(); };
-  };
-}
 
 /** `res`, with `end` called when its body is read to its end, cancelled or fails; at once with no body. */
 function heldUntilSent(res: Response, end: () => void): Response {
@@ -89,14 +51,15 @@ function heldUntilSent(res: Response, end: () => void): Response {
 }
 
 /** Every answer, and every exit, goes through the quiet hold. */
-export async function handleApiRequest(req: Request): Promise<Response> {
-  const end = quietHold(req.url);
-  try {
-    return heldUntilSent(await answer(req), end);
-  } catch (err) {
-    end();
-    throw err;
-  }
+export function handleApiRequest(req: Request): Promise<Response> {
+  return withQuietHold(req.url, async (end) => {
+    try {
+      return heldUntilSent(await answer(req), end);
+    } catch (err) {
+      end();
+      throw err;
+    }
+  });
 }
 
 async function answer(req: Request): Promise<Response> {

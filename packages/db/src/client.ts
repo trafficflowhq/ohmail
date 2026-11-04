@@ -244,13 +244,14 @@ export const POOLED_MAX_CONNECTIONS = 4;
 
 /**
  * How long, in seconds, a pooled connection may sit idle before the client closes it. Inside the
- * hosted API's quiet hold (`QUIET_HOLD_MS` in `apps/api-vercel/src/handler.ts`), so an instance's
+ * hosted API's quiet hold (`QUIET_HOLD_MS` in `apps/api-vercel/src/quiet-hold.ts`), so an instance's
  * idle connections close before the platform suspends it: a suspended instance holds its pooler
  * client slots until it wakes, and at 120 s ~160 cold instances filled the pooler's client cap
- * (2026-10-26). The cost: the first request after 20 s of quiet dials again, measured 134-178 ms
- * against 66-72 ms warm on a 10 ms round trip.
+ * (2026-10-26). One second because the platform bills the instance's memory for the whole hold.
+ * The cost: the first request after 1 s of quiet dials again, measured 134-178 ms against
+ * 66-72 ms warm on a 10 ms round trip.
  */
-export const POOLED_IDLE_TIMEOUT_S = 20;
+export const POOLED_IDLE_TIMEOUT_S = 1;
 
 /**
  * Thrown when a statement or a transaction spent its ceiling on the pooled handle without the

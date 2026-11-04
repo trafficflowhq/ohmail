@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp, apiRoutes, type ApiDeps, type SseConfig } from "@trafficflow/api";
 import { writeWebResponse } from "@trafficflow/core/adapters/http-host";
 import { createLogger } from "@trafficflow/core/mail";
+import { changeLog } from "@trafficflow/db";
 import { resetSseCounters, sseLiveCounts } from "../src/routes/events.js";
 import { makeDeps, seedSession, seedSessionFor, req, FIXED_NOW } from "./helpers.js";
 
@@ -375,5 +376,45 @@ describe("GET /events at the account cap supersedes a session's own earlier stre
     expect([third.status, other.status]).toEqual([200, 503]);
     expect(first.map((t) => t.ended())).toEqual([true, false]);
     expect(sseLiveCounts()).toEqual({ total: 2, byAccount: { [a.accountId]: 2 } });
+  });
+});
+
+describe("GET /events on a host that bills held time (sse.holds false)", () => {
+  /** Dial `/events` with a recording hub, noting every table the request selects from. */
+  async function dial(holds: boolean | undefined): Promise<{ res: Response; subscribed: () => number; tables: unknown[]; accountId: string }> {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const tables: unknown[] = [];
+    const select = db.select.bind(db);
+    vi.spyOn(db, "select").mockImplementation(((...fields: Parameters<typeof select>) => {
+      const builder = select(...fields);
+      const from = builder.from.bind(builder);
+      (builder as { from: unknown }).from = (t: unknown) => { tables.push(t); return from(t as never); };
+      return builder;
+    }) as typeof db.select);
+    let subscribed = 0;
+    const changeWake = { subscribe: () => { subscribed += 1; return () => {}; } };
+    const res = await app.handle(req("GET", "/events", { bearer: s.token }),
+      { ...deps, session: null, idempotency: null, sse: { ...CFG, holds }, changeWake });
+    return { res, subscribed: () => subscribed, tables, accountId: s.accountId };
+  }
+
+  it("answers 204 with no body: no slot, no hub subscription, no change_log read", async () => {
+    const { res, subscribed, tables } = await dial(false);
+    expect(res.status).toBe(204);
+    expect(res.body).toBeNull();
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    await sleep(2 * HB);
+    expect(sseLiveCounts().total).toBe(0);
+    expect(subscribed()).toBe(0);
+    expect(tables).not.toContain(changeLog);
+  });
+
+  it("CONTROL: absent, the host holds a stream as before", async () => {
+    const { res, subscribed, tables, accountId } = await dial(undefined);
+    await openTab(res, true);
+    expect(countFor(accountId)).toBe(1);
+    expect(subscribed()).toBe(1);
+    expect(tables).toContain(changeLog);
   });
 });
