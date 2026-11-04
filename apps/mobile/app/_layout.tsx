@@ -19,6 +19,7 @@ import { PostureCanvas, PostureProvider, WindowControlsInsets } from "../src/ui/
 import { NavRail } from "../src/ui/nav-rail";
 import { ThemeProvider, resolveFace, useTheme } from "../src/theme";
 import { ConnectionProvider, useConnection } from "../src/net/connection";
+import { noteActivity } from "../src/net/activity";
 import { gateFor } from "../src/state/gate";
 import { NavDrawnContext } from "../src/ui/nav-drawn";
 import { PrefsProvider, usePrefs } from "../src/state/store";
@@ -51,7 +52,8 @@ export default function RootLayout() {
      in a ref, so a fresh object per render would be harmless — this is tidiness, not correctness. */
   const kv = useMemo(secureKV, []);
   return (
-    <SafeAreaProvider>
+    /* Every touch, seen as it bubbles and never claimed: it ends an idle drain spacing. */
+    <SafeAreaProvider onTouchStart={noteActivity}>
       <WindowControlsInsets>
       {/* The posture sits above every screen: one derivation (window + the fold API + the
           OHMAIL_POSTURE override) that the tab nav and every pane layout read. */}

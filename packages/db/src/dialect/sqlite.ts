@@ -203,13 +203,40 @@ function stopsOf(words: ReadonlyArray<string | null>): string | null {
  */
 const ONE_TOKEN = /^[0-9A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u0370-\u037E\u0384-\u03FF\u0400-\u0527\u0531-\u0556\u0561-\u0587\u05D0-\u05EA\u0620-\u064A\u0660-\u0669\u0E01-\u0E30\u1E00-\u1EFF\u3041-\u3096\u30A1-\u30FA\u3400-\u4DB5\u4E00-\u9FCC\uAC00-\uD7A3]+$/;
 
-/** One kept part-word as the porter tables read it: whole, and they stem it. */
-const stemOf = (w: string): string => `"${w}"`;
+/** Is `w` one of the server's stopwords, which its documents never hold whole? */
+const isStopword = (w: string): boolean => ENGLISH_STOPWORDS.has(w.toLowerCase());
 
-/** One kept part-word as the unstemmed tables read it: from four letters the start of a word, else the word. */
+/** One kept part-word as the porter tables read it: whole, and they stem it; a kept stopword has no whole reading. */
+const stemOf = (w: string): string | null => (isStopword(w) ? null : `"${w}"`);
+
+/** What follows a start in a longer word of the unstemmed tables (folded); a letter of another script is not asked. */
+const NEXT_CHARS = [..."abcdefghijklmnopqrstuvwxyz0123456789"];
+
+/** Does a stopword start with `p` (or is it one)? */
+const startsAStopword = (p: string): boolean => {
+  const l = p.toLowerCase();
+  for (const s of ENGLISH_STOPWORDS) if (s.startsWith(l)) return true;
+  return false;
+};
+
+/** The longer words `w` starts, but never a stopword (`your`: not `yours`, `yourself`, `yourselves`). */
+function longerThan(w: string): string[] {
+  return NEXT_CHARS.flatMap((c) => {
+    const p = w + c;
+    if (!startsAStopword(p)) return [`"${p}"*`];
+    return [...(isStopword(p) ? [] : [`"${p}"`]), ...longerThan(p)];
+  });
+}
+
+/**
+ * One kept part-word as the unstemmed tables read it: from four letters the start of a word, else the
+ * word. A kept stopword (`over`, last and long) only as the start of a LONGER word, as the server's
+ * `'over':*` reads its documents, which hold `overview` and never `over`.
+ */
 function startOf(w: string): string | null {
   if (!ONE_TOKEN.test(w)) return null;
-  return [...w].length >= PART_PREFIX_MIN_CHARS ? `"${w}"*` : `"${w}"`;
+  if ([...w].length < PART_PREFIX_MIN_CHARS) return `"${w}"`;
+  return isStopword(w) ? `(${longerThan(w).join(" OR ")})` : `"${w}"*`;
 }
 
 /** Part-words ANDed, each in every ß/ss form OR-ed; null with no word, or where one has no reading. */

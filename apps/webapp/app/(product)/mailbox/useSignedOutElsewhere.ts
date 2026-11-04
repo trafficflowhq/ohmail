@@ -17,12 +17,16 @@ import { storageOwner } from "../../shell/storage-owner";
  * leaves at once, with no request. A jar that still names it asks the session door once, at once if
  * it changed, else after {@link SESSION_FRESH_MS}; only the server's `none` leaves. A mailbox whose
  * page pressed Sign out while it was mounted never leaves by this check: its pane says how that ended.
+ * A tab on screen with no `BroadcastChannel` may hear nothing at all (no storage event either, and no
+ * return while it stays in view), so it reads the jar every {@link JAR_WATCH_MS}, by the same rule.
  *
  * A TAB BOOTING WHILE A SIGN-OUT IS PENDING reads the jar before it draws any mail: at its first frame
  * (the page may have been served before the press), when its confirm answers, and once its listener is
  * up. Only the reserved word sends it away there; not on the demo, nor from the page that pressed.
  */
 export const SESSION_FRESH_MS = 60_000;
+
+export const JAR_WATCH_MS = 1_000;
 
 const useAfterHydration = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
@@ -115,14 +119,15 @@ export function useSignedOutElsewhere(demo: boolean, resolveOwner: OwnerResolver
     let askedAt = Date.now();
     let askedJar = jarReading();
     const mine = `account:${owner}`;
+    // A sign-out (or another account's sign-in) this tab never heard: nothing to ask the server.
+    const jarMovedOff = (): boolean => askedJar === mine && jarReading() !== mine;
     const onBack = (): void => {
       if (!live || left.current || document.visibilityState === "hidden" || pressedHere()) return;
-      const jar = jarReading();
-      // A sign-out (or another account's sign-in) this tab never heard: nothing to ask the server.
-      if (askedJar === mine && jar !== mine) {
+      if (jarMovedOff()) {
         leave();
         return;
       }
+      const jar = jarReading();
       if (jar === askedJar && Date.now() - askedAt < SESSION_FRESH_MS) return;
       askedAt = Date.now();
       askedJar = jar;
@@ -130,14 +135,31 @@ export function useSignedOutElsewhere(demo: boolean, resolveOwner: OwnerResolver
         .then((outcome) => { if (live && !pressedHere() && outcome.kind === "none") leave(); })
         .catch(() => { /* a build with no server: nothing to learn here */ });
     };
-    document.addEventListener("visibilitychange", onBack);
+    // Reads the jar only, never the server; a tab with a channel or out of view runs none.
+    let watch: ReturnType<typeof setInterval> | null = null;
+    const arm = (): void => {
+      const on = live && !left.current && typeof BroadcastChannel === "undefined" && document.visibilityState === "visible";
+      if (on && watch === null) {
+        watch = setInterval(() => { if (live && !left.current && !pressedHere() && jarMovedOff()) leave(); }, JAR_WATCH_MS);
+      } else if (!on && watch !== null) {
+        clearInterval(watch);
+        watch = null;
+      }
+    };
+    const onVisibility = (): void => {
+      onBack();
+      arm();
+    };
+    arm();
+    document.addEventListener("visibilitychange", onVisibility);
     // A frozen tab that the browser resumes (the Page Lifecycle API) fires this, not a visibility change.
     document.addEventListener("resume", onBack);
     window.addEventListener("focus", onBack);
     window.addEventListener("pageshow", onBack);
     return () => {
       live = false;
-      document.removeEventListener("visibilitychange", onBack);
+      if (watch !== null) clearInterval(watch);
+      document.removeEventListener("visibilitychange", onVisibility);
       document.removeEventListener("resume", onBack);
       window.removeEventListener("focus", onBack);
       window.removeEventListener("pageshow", onBack);

@@ -2,7 +2,7 @@ import { eq, and, inArray, sql } from "drizzle-orm";
 import type { Tx } from "./change-log.js";
 import { listAddresses } from "./schema-mail.js";
 import { dialect } from "./dialect/index.js";
-import { ruleMatchKeySql } from "./rule-match-sql.js";
+import { ruleMatchKeySql, ruleNamesSenderSql } from "./rule-match-sql.js";
 import { admitsDestination, DECIDABLE_FOLDERS } from "./screener-apply.js";
 
 /** Addresses per statement: under every store's bound-parameter limit. */
@@ -42,11 +42,13 @@ export async function readListAddresses(
 }
 
 /**
- * THE LIST ADDRESSES AMONG `senders` (lower-cased) A PERSON LET IN THEMSELVES (mail 0150): an enabled
- * allow `sender` rule naming it that a person wrote or decided (any provenance but the act's
- * `promoted`, or one with a person's stamp), or a contact that is not inferred. Only such a list's
- * screen-out files a claim alone: `List-Post` is the sender's to write, so at any other list address
- * the screen-out is the address's deny.
+ * THE LIST ADDRESSES AMONG `senders` (lower-cased) A PERSON LET IN THEMSELVES (mail 0150), by any
+ * door the admission retire honours: an enabled allow rule naming the address or its domain that a
+ * person wrote or decided (any provenance but the act's `promoted`, or one with a person's stamp;
+ * never a shared provider's domain), a contact that is not inferred or that carries a name or a
+ * note, or an approval of an AI filing into an admitting folder. Only such a list's screen-out files
+ * a claim alone: `List-Post` is the sender's to write, so at any other list address the screen-out
+ * is the address's deny.
  */
 export async function readListAddressesLetIn(tx: Tx, accountId: string, senders: readonly string[]): Promise<Set<string>> {
   const out = new Set<string>();
@@ -60,14 +62,20 @@ export async function readListAddressesLetIn(tx: Tx, accountId: string, senders:
         and la.address in (${sql.join(keys.slice(at, at + LIST_ADDRESS_CHUNK).map((a) => sql`${a}`), sql`, `)})
         and (exists (
               select 1 from rules rli
-               where rli.account_id = la.account_id and rli.enabled and rli.kind = 'sender'
+               where rli.account_id = la.account_id and rli.enabled
                  and rli.destination in (${sql.join(allow, sql`, `)})
                  and (rli.provenance <> 'promoted' or rli.person_decided_at is not null)
-                 and ${ruleMatchKeySql(sql`rli.match`)} = la.address
+                 and ${ruleNamesSenderSql(d, { kind: sql`rli.kind`, match: sql`rli.match`, destination: sql`rli.destination` }, sql`la.address`)}
             ) or exists (
               select 1 from contacts cli
                where cli.account_id = la.account_id and lower(cli.address) = la.address
-                 and (cli.source is null or cli.source <> 'inferred')
+                 and (cli.source is null or cli.source <> 'inferred' or coalesce(cli.name, '') <> ''
+                   or exists (select 1 from contact_notes nli where nli.account_id = cli.account_id and nli.contact_id = cli.id))
+            ) or exists (
+              select 1 from learning_signals sli
+               where sli.account_id = la.account_id and sli.kind = 'approval' and sli.label = 'positive'
+                 and sli.destination in (${sql.join(allow, sql`, `)})
+                 and ${ruleMatchKeySql(sql`sli.sender_address`)} = la.address
             ))`);
     for (const [address] of rows) if (typeof address === "string") out.add(address);
   }

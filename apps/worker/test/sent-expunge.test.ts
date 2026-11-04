@@ -12,7 +12,7 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { MessageService, SearchService, SyncService, buildSeedReview, type ServiceContext } from "@trafficflow/services";
 import { MemoryMirrorStore } from "@ohmail/client-engine";
 import { runSyncCycle } from "../src/sync.js";
-import { goneLetterTidyPass } from "../src/gone-letter-tidy.js";
+import { goneLetterTidyAccounts, goneLetterTidyPass } from "../src/gone-letter-tidy.js";
 import { FIXTURE_LEASE } from "./_door.js";
 
 /**
@@ -403,5 +403,23 @@ describe("letters emptied before deleted mail took its words keep none of them",
     for (const id of ids) expect(await wordsOf(db, id)).toEqual(NONE);
     // Done for this process: the next run asks nothing.
     expect(await goneLetterTidyPass(db, mine.accountId, { limit: 3, batch: 2, done: memo })).toMatchObject({ ran: false, tidied: 0 });
+  });
+
+  it("the worker's list holds every account with a mailbox not erased, synced or not, in its shard", async () => {
+    const { db, account } = await store();
+    const served = await account("served");
+    const disconnected = await account("disconnected");
+    await db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, disconnected.mailboxId));
+    const erased = await account("erased");
+    await db.update(accounts).set({ erasedAt: new Date() }).where(eq(accounts.id, erased.accountId));
+    const mailboxErased = await account("mailbox-erased");
+    await db.update(mailboxes).set({ erasedAt: new Date() }).where(eq(mailboxes.id, mailboxErased.mailboxId));
+    const gone = await letter(db, disconnected, "disconnected");
+
+    expect(await goneLetterTidyAccounts(db)).toEqual([served.accountId, disconnected.accountId].sort());
+    expect(await goneLetterTidyAccounts(db, { shard: eq(accounts.id, disconnected.accountId) }), "the shard was not asked")
+      .toEqual([disconnected.accountId]);
+    expect(await goneLetterTidyPass(db, disconnected.accountId)).toMatchObject({ tidied: 1, done: true });
+    expect(await wordsOf(db, gone), "a disconnected account's gone letter kept its words").toEqual(NONE);
   });
 });

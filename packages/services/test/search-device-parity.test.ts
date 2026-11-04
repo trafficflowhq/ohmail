@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { attachments, eraseOwedMailbox, mailboxes, messageBodies, messages, stampMailboxErasure } from "@trafficflow/db";
-import { dialect, queryOperandsOf } from "@trafficflow/db/dialect";
+import { dialect, ENGLISH_STOPWORDS, queryOperandsOf } from "@trafficflow/db/dialect";
 import { reindexMessageSearch, searchIndexBackfillPass } from "@trafficflow/core/mail";
-import { positiveText } from "@trafficflow/core/search-rank";
+import { positiveText, SEARCH_STOPWORDS } from "@trafficflow/core/search-rank";
 import { SearchIndex, type EngineMessage } from "@ohmail/client-engine";
 import { SearchService, type SearchParts, type SearchSort } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
@@ -33,6 +33,8 @@ const CORPUS: ReadonlyArray<readonly [key: string, subject: string, body: string
   ["ines", "Papers", "Ines sent the papers."], ["ones", "Glazes", "The red ones are sold."], ["willing", "Help", "Are you willing to help?"],
   ["outing", "Friday", "The team outing starts at nine."], ["will", "Call", "We will call tomorrow."],
   ["out", "Report", "The report is out now."], ["on", "Budget", "Notes on the budget."], ["one", "Seats", "Only one seat left."],
+  ["lunch", "Lunch with Mara", "At noon."], ["withdrawal", "Refund", "The withdrawal went through."],
+  ["yours", "Thanks", "Yours sincerely, Ann."], ["yourself", "Kit", "Do it yourself."], ["against", "Vote", "We voted against it."],
 ];
 
 /** Query → the keys Postgres answers in the exact tier; `[]` is a closest-words answer or none. */
@@ -57,6 +59,8 @@ const TABLE: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
   ["inv", ["invoice"]], ["del", ["delivery"]], ["co", ["coop"]], ["qua", []], ["ele", []],
   // a word whose stem a stopword shares: never the letters holding only the stopword
   ["ines", ["ines"]], ["ones", ["one", "ones"]], ["willing", ["willing"]], ["outing", ["outing"]],
+  // a stopword alone: inside a subject, or the start of a longer word; never the text holding it whole
+  ["with", ["lunch", "withdrawal"]], ["your", ["duns", "email", "invoice"]], ["yours", []], ["again", []],
 ];
 
 /**
@@ -90,6 +94,7 @@ function engineMessage(id: string, subject: string, body: string, i: number): En
 describe("the device answers what the server answers", () => {
   let store: (q: string) => Promise<string[]>;
   let mirror: (q: string) => string[];
+  let mirrorSimilar: (q: string) => string[];
   let device = false;
   beforeAll(async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
@@ -111,6 +116,7 @@ describe("the device answers what the server answers", () => {
       return r.tier === "exact" ? r.items.map((m) => keyOf.get(m.id)!).sort() : [];
     };
     mirror = (q) => index.search(q, { limit: 50 }).items.map((h) => keyOf.get(h.message.id)!).sort();
+    mirrorSimilar = (q) => index.search(q, { limit: 50 }).similar.map((h) => keyOf.get(h.message.id)!).sort();
   }, 60_000);
 
   it(`rule 1: the store answers the table (${TABLE.length} queries), the STEMMER and PREFIX classes apart on the device`, async () => {
@@ -137,6 +143,24 @@ describe("the device answers what the server answers", () => {
   it("the STEMMER class: each store's own pair, in its own direction", async () => {
     expect(await store("awfully"), device ? "Porter keeps awful apart" : "Snowball joins awful").toEqual(device ? ["awfully"] : ["awful", "awfully"]);
     expect(await store("awe"), device ? "Porter joins awful" : "Snowball keeps awful apart").toEqual(device ? ["awe", "awful"] : ["awe"]);
+  });
+
+  it("a stopword alone: the mirror leaves out the text holding it whole, with the stores' own list", () => {
+    expect([...SEARCH_STOPWORDS].sort()).toEqual([...ENGLISH_STOPWORDS].sort());
+    expect(mirror("With"), "typed in capitals").toEqual(["lunch", "withdrawal"]);
+    expect(mirror("withd"), "not a stopword: the start of a word, as before").toEqual(["withdrawal"]);
+    expect(mirror("your parcel"), "beside another word it is a word like any").toEqual(["delivered"]);
+  });
+
+  it("a longer stopword lists nothing under Similar either: the server's closest words hold no stopword", () => {
+    const letters = ["Thanks for your help.", "Your parcel left today.", "We meet again soon.", "Again the same notes.", "Do it yourself.", "The invoice is attached."];
+    const index = new SearchIndex();
+    letters.forEach((body, i) => index.add(engineMessage(`l${i}`, `Note ${i}`, body, i)));
+    const similar = (q: string) => index.search(q, { limit: 50 }).similar.map((h) => letters[Number(h.message.id.slice(1))]);
+    for (const q of ["yours", "against", "yourself"]) expect(similar(q), q).toEqual([]);
+    expect(similar("invoce"), "a typo of a word still finds its letter").toEqual(["The invoice is attached."]);
+    expect(mirrorSimilar("again"), "the corpus: `gain` is a word").toEqual(["elevation"]);
+    expect(mirrorSimilar("yours"), "the corpus").not.toContain("delivered");
   });
 });
 

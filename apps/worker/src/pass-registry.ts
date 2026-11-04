@@ -395,8 +395,8 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "gone_letter_tidy",
     module: `${W}/gone-letter-tidy.ts`, entry: "goneLetterTidyPass",
     triggers: ["cycle-tail", "sidecar-drain"],
-    cadence: "every cycle tail per served account, and at every local drain tail, until a run ends on a short page; then not again in this "
-      + "process (a restart asks once more)",
+    cadence: "every cycle tail per account of this shard with a mailbox not erased (synced or not, parked or not), and at every local "
+      + "drain tail, until a run ends on a short page; then not again in this process (a restart asks once more)",
     budget: "GONE_LETTER_TIDY_LIMIT letters per tail run, GONE_LETTER_TIDY_BATCH per transaction, under a TAIL_SLICE_BUDGET_MS `until` "
       + "clock; one page of GONE_LETTER_TIDY_BATCH per local drain",
     owns: "a letter that left the server before its preview, search document, summary, tracker address and header lines went with its text "

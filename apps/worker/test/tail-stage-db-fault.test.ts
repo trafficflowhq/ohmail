@@ -77,6 +77,7 @@ vi.mock("../src/storage-evict.js", (load) => fault.mocked({ storageEvictPass: "s
 vi.mock("../src/screener-correspondent-retro.js", (load) => fault.mocked({ screenerCorrespondentRetroPass: "screener_correspondent_retro" })(load));
 vi.mock("../src/screener-auto-act.js", (load) => fault.mocked({ screenerAutoActPass: "screener_auto_act" })(load));
 vi.mock("../src/mailbox-erasure-pass.js", (load) => fault.mocked({ mailboxErasurePass: "mailbox_erasure" })(load));
+vi.mock("../src/gone-letter-tidy.js", (load) => fault.mocked({ goneLetterTidyAccounts: "gone_letter_tidy" })(load));
 
 const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 7));
 let DB = "";
@@ -103,6 +104,7 @@ const STAGES = [
   ["screener_correspondent_retro", "screener_correspondent_retro_failed"],
   ["screener_auto_act", "screener_auto_act_failed"],
   ["search_index_backfill", "search_index_owed_read_failed"],
+  ["gone_letter_tidy", "gone_letter_tidy_accounts_read_failed"],
   ["mailbox_erasure", "mailbox_erasure_failed"],
   ["global_maintenance", "idempotency_prune_failed"],
   ["erased_notices", "erased_notices_prune_failed"],

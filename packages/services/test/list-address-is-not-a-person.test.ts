@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accounts, accountSettings, applyMessageMove, applyScreenerDecision, contacts, folderState, idempotencyKeys, learningSignals,
+  accounts, accountSettings, applyMessageMove, applyScreenerDecision, contactNotes, contacts, folderState, idempotencyKeys, learningSignals,
   listAddresses, listBrandsOf, mailboxFolders, mailboxes, messageBodies, messageInstances, messages, organizerRequests,
   routingDecisions, rules, SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, validateMovePayload, type Tx,
 } from "@trafficflow/db";
@@ -179,7 +179,7 @@ describe("a consent reset and a list address", () => {
  * nor consents the claim the person was never shown; the next forgery still waits. A person's own NO
  * consents nothing, and a moved claim that failed authentication consents no brand.
  */
-async function pressWorld(contactSource: "person" | "inferred" | null) {
+async function pressWorld(contactSource: "person" | "inferred" | null, list = LIST) {
   const db = await makeTestDb();
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `lpr-${accountId.slice(0, 8)}` });
@@ -194,7 +194,7 @@ async function pressWorld(contactSource: "person" | "inferred" | null) {
     const at = new Date(`2026-10-06T0${n}:00:00.000Z`);
     const [m] = await db.insert(messages).values({
       accountId, mailboxId, bodyHash: "h", dedupKey: `lpr:${randomUUID()}`, subject: `m${n}`, snippet: "",
-      fromAddress: LIST, fromName: name, authVerdict: auth, senderCheck: brand === null ? "none" : "impersonation",
+      fromAddress: list, fromName: name, authVerdict: auth, senderCheck: brand === null ? "none" : "impersonation",
       senderCheckBrand: brand, date: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: `1:${n}` },
     }).returning();
     await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
@@ -203,17 +203,17 @@ async function pressWorld(contactSource: "person" | "inferred" | null) {
     });
     return m!.id;
   };
-  if (contactSource !== null) await db.insert(contacts).values({ accountId, address: LIST, source: contactSource });
-  await db.insert(listAddresses).values({ accountId, address: LIST, consentedBrands: [] });
+  if (contactSource !== null) await db.insert(contacts).values({ accountId, address: list, source: contactSource });
+  await db.insert(listAddresses).values({ accountId, address: list, consentedBrands: [] });
   const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `lpr-${randomUUID().slice(0, 8)}` };
   const desired = async (id: string) =>
     (await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
   const brands = async () => listBrandsOf((await db.select({ b: listAddresses.consentedBrands }).from(listAddresses)
-    .where(and(eq(listAddresses.accountId, accountId), eq(listAddresses.address, LIST))))[0]?.b);
+    .where(and(eq(listAddresses.accountId, accountId), eq(listAddresses.address, list))))[0]?.b);
   const nextClaimHeld = async () => {
     const known = await makeDrizzleRepo(db as never).knownSenders(accountId);
     const msg = await normalizeMime(Buffer.from([
-      "Message-ID: <next@lists.invalid>", `From: "PostFinance" <${LIST}>`, "To: me@own.invalid",
+      "Message-ID: <next@lists.invalid>", `From: "PostFinance" <${list}>`, "To: me@own.invalid",
       "Subject: Konto", "Content-Type: text/plain; charset=utf-8", "", "x",
     ].join("\r\n")));
     return evaluateRules({
@@ -223,10 +223,10 @@ async function pressWorld(contactSource: "person" | "inferred" | null) {
   };
   const press = (decision: "yes" | "no") => (db as unknown as { transaction: <T>(f: (tx: unknown) => Promise<T>) => Promise<T> })
     .transaction((tx) => applyScreenerDecision(carryDialect(db as never, tx as object) as Tx, {
-      accountId, scope: "sender", address: LIST, appliedFolder: decision === "yes" ? "INBOX" : "ohmail/Screened", decision,
+      accountId, scope: "sender", address: list, appliedFolder: decision === "yes" ? "INBOX" : "ohmail/Screened", decision,
       triggeringActionId: `screener:${randomUUID()}`, now: NOW, overExisting: "converge", decidedBy: "person",
     }));
-  const listRules = async () => db.select().from(rules).where(and(eq(rules.accountId, accountId), eq(rules.match, LIST)));
+  const listRules = async () => db.select().from(rules).where(and(eq(rules.accountId, accountId), eq(rules.match, list)));
   return { db, accountId, mailboxId: mb!.id, ctx, held, desired, brands, nextClaimHeld, press, listRules };
 }
 
@@ -394,6 +394,130 @@ describe("a list address no person let in is screened out as an address", () => 
     expect((await w.listRules()).map((x) => x.destination)).toEqual(["ohmail/Screened"]);
     expect(r).toMatchObject({ createdRuleId: expect.any(String) });
   });
+});
+
+/**
+ * EVERY DOOR A PERSON LETS A LIST IN BY makes a claim's screen-out file the claim alone: a domain rule
+ * they wrote or stamped, an inferred contact they named or noted, an AI filing they approved. A
+ * claim that failed authentication there is filed alone too. What no person chose (an unstamped
+ * rule, a paused one, a rule into Screened, a shared provider's domain, another account's word) stays
+ * the address's deny.
+ */
+type Door =
+  | "domain rule" | "stamped domain rule" | "named inferred contact" | "noted inferred contact" | "approved filing"
+  | "unstamped domain rule" | "paused domain rule" | "domain rule into Screened" | "shared provider domain rule"
+  | "another account's doors" | "filing approved into Screened" | "rejected filing";
+
+async function admittedBy(door: Door) {
+  const list = door === "shared provider domain rule" ? ["club", "gmail.com"].join("@") : LIST;
+  const w = await pressWorld(null, list);
+  const stamp = new Date("2026-09-30T08:00:00.000Z");
+  const domainRule = (accountId: string, over: Partial<typeof rules.$inferInsert> = {}) => w.db.insert(rules).values({
+    accountId, kind: "domain", match: list.split("@")[1]!, destination: "ohmail/News", enabled: true, priority: 3,
+    provenance: "manual", personDecidedAt: stamp, retroRequestedAt: stamp, retroDoneAt: stamp, ...over,
+  });
+  const approvals = async (accountId: string, destination = "ohmail/News", label = "positive") => {
+    for (let i = 0; i < 3; i++) {
+      await w.db.insert(learningSignals).values({
+        accountId, kind: "approval", label, senderAddress: list, destination,
+        triggeringActionId: `approval:${randomUUID()}`,
+      });
+    }
+  };
+  if (door === "domain rule" || door === "shared provider domain rule") await domainRule(w.accountId);
+  else if (door === "stamped domain rule") await domainRule(w.accountId, { provenance: "promoted" });
+  else if (door === "unstamped domain rule") await domainRule(w.accountId, { provenance: "promoted", personDecidedAt: null });
+  else if (door === "paused domain rule") await domainRule(w.accountId, { enabled: false });
+  else if (door === "domain rule into Screened") await domainRule(w.accountId, { destination: "ohmail/Screened" });
+  else if (door === "named inferred contact") {
+    await w.db.insert(contacts).values({ accountId: w.accountId, address: list, source: "inferred", name: "The club list" });
+  } else if (door === "noted inferred contact") {
+    const [c] = await w.db.insert(contacts).values({ accountId: w.accountId, address: list, source: "inferred" }).returning();
+    await w.db.insert(contactNotes).values({ accountId: w.accountId, contactId: c!.id, body: "the club list" });
+  } else if (door === "approved filing") {
+    // The AI's filing the person approved became the act's rule, which no person stamped.
+    await w.db.insert(rules).values({
+      accountId: w.accountId, kind: "sender", match: list, destination: "ohmail/News", enabled: true, priority: 3,
+      provenance: "promoted", personDecidedAt: null, retroRequestedAt: stamp, retroDoneAt: stamp,
+    });
+    await approvals(w.accountId);
+  } else if (door === "filing approved into Screened") await approvals(w.accountId, "ohmail/Screened");
+  else if (door === "rejected filing") await approvals(w.accountId, "ohmail/News", "negative");
+  else {
+    const other = randomUUID();
+    await w.db.insert(accounts).values({ id: other, name: `oth-${other.slice(0, 8)}` });
+    await domainRule(other);
+    await w.db.insert(listAddresses).values({ accountId: other, address: list, consentedBrands: [] });
+    const [c] = await w.db.insert(contacts).values({ accountId: other, address: list, source: "person", name: "The club list" }).returning();
+    await w.db.insert(contactNotes).values({ accountId: other, contactId: c!.id, body: "the club list" });
+    await approvals(other);
+  }
+  const [mb] = await w.db.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, w.accountId));
+  const [post] = await w.db.insert(messages).values({
+    accountId: w.accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `adm:${randomUUID()}`, subject: "Agenda",
+    snippet: "", fromAddress: list, fromName: "The Lists", senderCheck: "none", date: stamp, createdAt: stamp,
+    nativeLocator: { folder: "ohmail/News", ref: "1:900" },
+  }).returning();
+  await w.db.insert(folderState).values({
+    messageId: post!.id, desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+  });
+  const unsubscribed: string[][] = [];
+  const svc = new ScreenerService({ unsubscribe: { onScreenOut: async (_ctx, ids) => { unsubscribed.push(ids); return { considered: ids.length }; } } });
+  const accountRules = async () => w.db.select().from(rules).where(eq(rules.accountId, w.accountId));
+  const signals = async () => w.db.select().from(learningSignals).where(eq(learningSignals.accountId, w.accountId));
+  const nextListLetter = async () => {
+    const repo = makeDrizzleRepo(w.db as never);
+    const msg = await normalizeMime(Buffer.from([
+      "Message-ID: <next-post@lists.invalid>", `From: "The Lists" <${list}>`, "To: me@own.invalid",
+      "Subject: Next meeting", "Content-Type: text/plain; charset=utf-8", "", "x",
+    ].join("\r\n")));
+    return evaluateRules({
+      msg, rules: await repo.listRules(w.accountId), knownSenders: await repo.knownSenders(w.accountId), auth: "pass",
+      ohboxPolicy: "people_and_replied", ownAddresses: new Set(), identity: null,
+    }).destination;
+  };
+  return { ...w, list, post: post!.id, svc, unsubscribed, accountRules, signals, nextListLetter };
+}
+
+describe("a list a person let in by any of their doors", () => {
+  for (const [door, auth] of [
+    ["domain rule", null], ["stamped domain rule", null], ["named inferred contact", null],
+    ["noted inferred contact", null], ["approved filing", null], ["domain rule", "fail"],
+  ] as const) {
+    it(`${door}${auth === null ? "" : ", a claim that failed authentication"}: the screen-out files the claim alone`, async () => {
+      const w = await admittedBy(door);
+      const claim = await w.held("PostFinance", "PostFinance", "us", auth);
+      const before = { rules: await w.accountRules(), signals: await w.signals(), next: await w.nextListLetter() };
+      const page = await w.svc.list(w.ctx, { limit: 50, live: true });
+      expect(page.items.find((i) => i.messageId === claim)?.checked).toMatchObject({ list: true, claimsOnly: true });
+      const r = await w.svc.decide(w.ctx, claim, { decision: "no", scope: "sender" });
+      expect(r).toMatchObject({ createdRuleId: null, appliedFolder: "ohmail/Screened" });
+      expect(await w.desired(claim)).toBe("ohmail/Screened");
+      await ruleRetroPass(w.db as never, { accountId: w.accountId, trustedAuthservIdsFor: async () => new Set<string>() }, NOW);
+      expect(await w.desired(w.post), "the list's own letter left News").toBe("ohmail/News");
+      expect(await w.nextListLetter(), "the list's next letter").toBe(before.next);
+      expect(await w.accountRules(), "the list's rules moved").toEqual(before.rules);
+      expect(await w.signals(), "a forgery taught the list's address").toEqual(before.signals);
+      expect(w.unsubscribed, "a forged letter unsubscribed the person from the list").toEqual([]);
+    });
+  }
+
+  for (const door of [
+    "unstamped domain rule", "paused domain rule", "domain rule into Screened", "shared provider domain rule", "another account's doors",
+    "filing approved into Screened", "rejected filing",
+  ] as const) {
+    it(`CONTROL: ${door} is no person letting this list in: the screen-out is the address's deny`, async () => {
+      const w = await admittedBy(door);
+      const claim = await w.held("PostFinance", "PostFinance", "us");
+      const page = await w.svc.list(w.ctx, { limit: 50, live: true });
+      const checked = page.items.find((i) => i.messageId === claim)?.checked;
+      expect([checked?.list, checked?.claimsOnly]).toEqual([true, undefined]);
+      const r = await w.svc.decide(w.ctx, claim, { decision: "no", scope: "sender" });
+      const ruled = await w.listRules();
+      expect(ruled.map((x) => `${x.kind}:${x.destination}`)).toEqual(["sender:ohmail/Screened"]);
+      expect(r).toMatchObject({ createdRuleId: ruled[0]!.id });
+    });
+  }
 });
 
 /**

@@ -39,7 +39,8 @@ import { unifiedPushDistributor } from "./unified-push";
 import type { ServerProfile } from "../state/servers";
 import type { FetchLike, SignOutOutcome } from "./bearer";
 import { SyncRunner, drainLine } from "./drain";
-import { keepDraining, type AppLifecycle } from "./drain-cadence";
+import { idleSpacing, keepDraining, type AppLifecycle } from "./drain-cadence";
+import { appActivity, noteActivity } from "./activity";
 import { installNetworkReader, networkDoor, networkNow, onNetworkChange } from "./network-door";
 import { nativeNetworkReader } from "./network-native";
 import { organizeHere, readMailboxes, type OrganizeOutcome } from "./mailboxes";
@@ -499,6 +500,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           stop: keepDraining({
             lifecycle: appLifecycle,
             network: networkDoor,
+            // An idle paired phone spaces its rounds out; a touch, a wake or a pull brings them back.
+            ...idleSpacing(session, appActivity),
             round: () => {
               const atRound = live.now();
               if (atRound.k !== "live" || atRound.session !== session) return Promise.resolve(0);
@@ -852,6 +855,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         // round's completion — the honest settle a pull spinner renders on. A pull landing
         // mid-probe chains on the verdict: the first drain starts the instant it clears (the
         // adopt continuation registered first, so this one joins that very round).
+        noteActivity();
         const atSync = live.now();
         if (atSync.k !== "live") return Promise.resolve();
         const session = atSync.session;

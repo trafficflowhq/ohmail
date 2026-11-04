@@ -21,7 +21,7 @@ import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { readingAtConnectSaid, sayReadingAtConnect } from "../src/engine/organizer-session";
 import type { ConnectedSession } from "../src/net/pairing";
-import { readRelayedDecisions } from "../src/net/screener";
+import { readScreenerQueue } from "../src/net/screener";
 import { liveActions, liveScreener, presentedOf, type WorldView } from "../src/state/live";
 import { relayMarkFor, senderSheetLine, withSentHere, type RelayedDecision } from "../src/state/relay";
 import { readingAtConnectLine } from "../src/ui/standalone-form";
@@ -93,7 +93,7 @@ describe("the sheet says where a decision goes before it is made", () => {
 
   it("the outstanding decisions are read on BOTH doors, on the queue read's cadence", () => {
     const world = read("src/state/world.tsx");
-    expect(world).toContain("() => void relayRead(() => readRelayedDecisions(session)),");
+    expect(world).toContain("void relayRead(() => asked.then((a) => a.relayed));");
     expect(world, "the relay read sits behind the paired-only gate").not.toContain(
       "if (!session.standalone) void relayRead",
     );
@@ -144,7 +144,7 @@ describe("the press on a mailbox another install organizes, over a real wire", (
     }
   });
 
-  it("reads this phone's outstanding decisions off the route, and a refused read as could-not-ask", async () => {
+  it("reads this phone's outstanding decisions off the queue's own page, and a refused read as could-not-ask", async () => {
     const fake = mailServer();
     const origin = await listen(fake.server);
     try {
@@ -153,14 +153,22 @@ describe("the press on a mailbox another install organizes, over a real wire", (
         { subject: "c@sender.test", scope: "sender", state: "refused", refusedReason: "wrong_mailbox" },
         { subject: "", scope: "sender", state: "sent" },
       ]);
-      const session = { profile: { origin, apiBase: null }, fetch: (u: string, i?: RequestInit) => globalThis.fetch(u, i) };
-      const got = await readRelayedDecisions(session as unknown as ConnectedSession);
-      expect(got).toEqual([
+      const boot = await bootEngine(deps, { origin, token: "tok-1", accountId: "acct-1" });
+      if (boot.kind !== "ready") throw new Error("boot refused");
+      await boot.verifyIdentity();
+      const session = { profile: { origin, apiBase: null }, engine: boot.engine } as unknown as ConnectedSession;
+      const asked = fake.seen.length;
+      const got = await readScreenerQueue(session);
+      expect(got.relayed).toEqual([
         sent(),
         { subject: "c@sender.test", scope: "sender", state: "refused", refusedReason: "wrong_mailbox" },
       ]);
+      expect(got.waiting).toEqual([]);
+      expect(fake.seen.slice(asked).filter((r) => r.url === "/screener"), "the decisions were asked apart from the queue")
+        .toHaveLength(1);
       fake.failNextStatus("GET", "/screener", 503);
-      expect(await readRelayedDecisions(session as unknown as ConnectedSession)).toBeNull();
+      expect(await readScreenerQueue(session)).toEqual({ waiting: null, relayed: null });
+      boot.store.close();
     } finally {
       fake.server.close();
     }
