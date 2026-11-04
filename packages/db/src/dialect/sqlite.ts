@@ -230,13 +230,14 @@ function longerThan(w: string): string[] {
 
 /**
  * One kept part-word as the unstemmed tables read it: from four letters the start of a word, else the
- * word. A kept stopword (`over`, last and long) only as the start of a LONGER word, as the server's
- * `'over':*` reads its documents, which hold `overview` and never `over`.
+ * word. A start of a stopword (`over`, `agai`) never reaches that stopword, as the server's `'over':*`
+ * reads its documents, which hold `overview` and never `over` or `again`.
  */
 function startOf(w: string): string | null {
   if (!ONE_TOKEN.test(w)) return null;
   if ([...w].length < PART_PREFIX_MIN_CHARS) return `"${w}"`;
-  return isStopword(w) ? `(${longerThan(w).join(" OR ")})` : `"${w}"*`;
+  if (!startsAStopword(w)) return `"${w}"*`;
+  return `(${[...(isStopword(w) ? [] : [`"${w}"`]), ...longerThan(w)].join(" OR ")})`;
 }
 
 /** Part-words ANDed, each in every ß/ss form OR-ed; null with no word, or where one has no reading. */

@@ -1,3 +1,4 @@
+/** @vitest-environment jsdom */
 /**
  * THE FOUND-SETTINGS QUESTION ON THE PHONE — the seam's four calls and the card's decisions.
  *
@@ -10,7 +11,9 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { createElement as h, type ReactNode } from "react";
+import { act } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Copy, DECKS } from "../src/copy";
 import { setActiveLocale } from "../src/i18n/locale";
 import {
@@ -21,6 +24,21 @@ import {
   keptSaid, mailboxesToAsk, retiredSaid, savedBySaid, savedRows,
 } from "../src/ui/profile-import-card";
 /* @reads: apps/mobile/src/ui/ProfileImportCard.tsx apps/mobile/src/state/world.tsx */
+import { mount } from "./_rendered-dom";
+
+/* The two readers rendered: the card above the lists and Settings' panel, on one world and session. */
+const scene = vi.hoisted(() => ({ world: null as unknown, session: null as unknown }));
+vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
+vi.mock("../src/state/world", () => ({ useWorld: () => scene.world }));
+vi.mock("../src/net/connection", () => ({ useConnection: () => ({ state: { k: "live", session: scene.session } }) }));
+vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
+vi.mock("../src/ui/base", () => ({
+  Button: (p: { label: string }) => h("button", null, p.label),
+  Panel: (p: { children?: ReactNode }) => h("div", null, p.children),
+  Txt: (p: { children?: ReactNode }) => h("span", null, p.children),
+  useTopPad: () => 0,
+}));
+import { ProfileImportCard, SavedSettingsPanel } from "../src/ui/ProfileImportCard";
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -243,7 +261,6 @@ describe("the card is asked for on the drain that carries the find", () => {
     const card = readFileSync(join(APP, "src/ui/ProfileImportCard.tsx"), "utf8");
     expect(card).toContain("const bell = w.mailboxes.settingsBell;");
     expect(card).toContain("for (const id of mailboxesToAsk(ids, asked.current, known.current, now, rang)) {");
-    expect(card).toContain("if (mounted.current && q !== null && tickets.current(id, ticket))");
     expect(card).toMatch(/\}, \[session, w\.mailboxes\.rows, bell, tickets\]\);/);
     expect(card).toContain("tickets.supersede(mailboxId);");
     const world = readFileSync(join(APP, "src/state/world-projection.ts"), "utf8");
@@ -332,5 +349,68 @@ describe("a press the organizer finishes (202), on the phone's own door", () => 
     expect(failureSaid(null)).toBe(`${Copy.pfiErrorTitle} ${Copy.pfiErrorGeneric} ${Copy.pfiErrorRetry}`);
     expect(importingSaid("slow")).toBe(Copy.pfiImportingSlow);
     expect(importingSaid("unreachable")).toBe(Copy.pfiImportingUnreachable);
+  });
+});
+
+describe("the card and Settings share one read per mailbox", () => {
+  /* Both readers asked each mailbox on their own, so an open Settings doubled every status read in
+     the same millisecond. Over an idle minute with two mailboxes: one read per mailbox per round. */
+  afterEach(() => { vi.useRealTimers(); });
+
+  const box = (id: string) => ({ id, address: `${id}@x.test`, displayName: null, status: "connected" });
+  const world = (rows: unknown[]) => ({ mailboxes: { rows, settingsBell: 7 } });
+  const tree = () => h("div", null, h(ProfileImportCard), h(SavedSettingsPanel));
+  const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  /** A session whose door answers `declined` for the mailboxes named, `none` for the rest. */
+  function door(declined: string[] = []) {
+    const reads: string[] = [];
+    scene.session = {
+      profile: { origin: "http://phone", apiBase: null },
+      fetch: async (url: string) => {
+        const id = /mailboxes\/([^/]+)\/profile-import$/.exec(url)?.[1] ?? "?";
+        reads.push(id);
+        return json(200, declined.includes(id) ? { ...FOUND, state: "declined" } : { state: "none" });
+      },
+    };
+    const per = (from = 0) => Object.fromEntries(["a", "b"].map((m) => [m, reads.slice(from).filter((x) => x === m).length]));
+    return { reads, per };
+  }
+
+  it("an idle minute: each mailbox asked once a round, however many readers are on screen", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(1_000_000);
+    const { reads, per } = door();
+    scene.world = world([box("a"), box("b")]);
+    const view = mount(tree());
+    await settle();
+    expect(per(), "the two readers each asked").toEqual({ a: 1, b: 1 });
+    // The mailbox read refreshes the rows through the idle minute, a new array each time.
+    const from = reads.length;
+    for (const at of [32_000, 61_000]) {
+      vi.setSystemTime(1_000_000 + at);
+      scene.world = world([box("a"), box("b")]);
+      view.render(tree());
+      await settle();
+    }
+    expect(per(from), "an idle minute asked a mailbox twice").toEqual({ a: 1, b: 1 });
+    // A ring asks every mailbox at once, still once each.
+    const rung = reads.length;
+    scene.world = { mailboxes: { rows: [box("a"), box("b")], settingsBell: 8 } };
+    view.render(tree());
+    await settle();
+    expect(per(rung), "a ring asked a mailbox once per reader").toEqual({ a: 1, b: 1 });
+    view.unmount();
+  });
+
+  it("the answer one reader asked is drawn by the other, also after the asker left", async () => {
+    const { per } = door(["a"]);
+    scene.world = world([box("a"), box("b")]);
+    const card = mount(h(ProfileImportCard));
+    const settings = mount(h(SavedSettingsPanel));
+    card.unmount();
+    await settle();
+    expect(per()).toEqual({ a: 1, b: 1 });
+    expect(settings.el.textContent, "Settings did not draw the answer the card's read brought").toContain(Copy.pfiSavedTitle("a@x.test"));
+    settings.unmount();
   });
 });

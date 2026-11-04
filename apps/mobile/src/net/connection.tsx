@@ -462,13 +462,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         // cause goes to the device's log from the registry, which hears every death.
         const closed = teardown(session);
         enter({ k: "ended", reason: deathRefusal(why) });
-        if (why !== "erased") {
+        if (session.bearer?.removesCopy !== true) {
           void refreshProfiles();
           return;
         }
-        /* THE ACCOUNT WAS ERASED: this pairing's copy goes — keystore row, profile, this owner's
-           mirror, pin, wake registration — through the Forget verb's own ceremony, once the store
-           handle is closed. Nothing to tell the server: the account and its sessions are gone.
+        /* THE ACCOUNT WAS ERASED, OR THE SERVER REVOKED THIS SESSION BY CODE (Devices, sign out
+           everywhere, a credential change): this pairing's copy goes — keystore row, profile, this
+           owner's mirror, pin, wake registration — through the Forget verb's own ceremony, once the
+           store handle is closed. Nothing to tell the server: the session is already gone there.
            Another profile on this phone is not touched. */
         void forgetProfile(env, session.profile.id, { closed, revoke: async () => true })
           .catch(() => undefined)
@@ -567,10 +568,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       }
       if (outcome.kind === "refused" && outcome.died !== undefined) {
         /* THE SLOT'S MANAGER DIED WITH NOBODY LISTENING (a launch's wake drain, a torn-down tree's
-           last request): answered as the dead-signal listener answers, with its state and, for an
-           erased account, its Forget — no store was opened, so there is nothing to close. */
+           last request): answered as the dead-signal listener answers, with its state and, for a
+           death that removes the copy, its Forget — no store was opened, so there is nothing to close. */
         enter({ k: "ended", reason: outcome.reason });
-        if (outcome.died === "erased") {
+        if (outcome.removesCopy === true) {
           void forgetProfile(env, id, { revoke: async () => true })
             .catch(() => undefined)
             .then(() => refreshProfiles());

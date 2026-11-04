@@ -151,17 +151,18 @@ const EN = {
     + "kept anywhere else.",
   /* THE DIALOG SAYS WHY IT IS OPEN when the engine knows (`/health.session`): the server refused
      this install's session with a code, or the saved sign-in cannot be read. Without a cause the
-     ordinary lead above is said. No window length in the expiry sentence: a server can set its own. */
+     ordinary lead above is said. No window length in the expiry sentence: a server can set its own.
+     A revoke takes this computer's copy (`cloud-engine.ts`), so its two sentences say so. */
   cloudLeadRevoked: (machine: string) =>
     `This ${machine} was signed out — from another device, or after a security check. The copy `
-    + "of your mail here is where you left it.",
+    + "of your mail here was removed.",
   /* A reuse sweep's own refusal: this install presented a sign-in already renewed. The server
      cannot tell another device from this one's own older state, so neither is named. */
   cloudLeadReused: (machine: string) =>
     `This ${machine} used a sign-in that had already been renewed. That is what a restored backup, `
     + "a copied home folder or a stolen sign-in looks like, so ohmail ended this sign-in everywhere. "
     + "Sign in again. If you did not restore or copy anything, change your password. The copy of "
-    + "your mail here is where you left it.",
+    + "your mail here was removed.",
   cloudLeadExpired: (machine: string) =>
     `Your sign-in on this ${machine} expired after a long time without use. The copy of your mail `
     + "here is where you left it.",
@@ -804,6 +805,10 @@ const EN = {
   gateUnpaired: (machine: string, host: string) =>
     `This ${machine} is no longer paired with ${host}. Pair again from its Settings → Devices, or `
     + `set this ${machine} up on its own. The copy of your mail here is kept.`,
+  /* …and when the pairing was revoked there (`refresh_revoked`): the engine removed the copy. */
+  gateUnpairedRemoved: (machine: string, host: string) =>
+    `This ${machine} is no longer paired with ${host}. Pair again from its Settings → Devices, or `
+    + `set this ${machine} up on its own. The copy of your mail here was removed.`,
   /* ── A PAIRING THAT WORKED AND NEEDS THE APP REOPENED ────────────────────────────────────
      The card for the one state where nothing is wrong and nothing can be done from inside the
      window. The old mailbox's copy is thrown away on the next launch — the engine cannot do it
@@ -918,6 +923,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   gateRestart: ["host"],
   gateEngineReported: ["name"],
   gateUnpaired: ["machine", "host"],
+  gateUnpairedRemoved: ["machine", "host"],
   gateAccountErased: ["machine"],
   aboutDoorHostWhy: ["host", "machine"],
   localLead: ["machine"],

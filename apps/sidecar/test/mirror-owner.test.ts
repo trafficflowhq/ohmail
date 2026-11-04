@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { enforceMirrorOwner, MIRROR_OWNER_FILE, readMirrorBase, readMirrorOwner } from "../src/cloud-engine.js";
-import { accountAnswer, accountIsForeign, decodeMirrorRecord } from "../src/cloud-origin.js";
+import { accountAnswer, accountIsForeign, decodeMirrorRecord, encodeMirrorRecord } from "../src/cloud-origin.js";
 
 /**
  * ONE MIRROR, ONE ACCOUNT — AND ONE ACCOUNT IS AN ADDRESS **ON A SERVER**.
@@ -448,6 +448,77 @@ describe("accountAnswer — the three things two ids can say", () => {
       expect(accountAnswer(recorded, B)).toBe("admitted");
       expect(accountAnswer(recorded, null)).toBe("admitted");
       expect(accountIsForeign(recorded, B)).toBe(false);
+    }
+  });
+});
+
+/**
+ * A REVOKED SESSION'S OWED REMOVAL, in the record: only the exact boolean, omitted when false, so
+ * every record without it is byte-identical to what earlier builds wrote, and the shell's reader
+ * of `erased` is unaffected.
+ */
+describe("the record's revoked flag", () => {
+  it("is written only when set, and read only as the exact boolean", () => {
+    expect(encodeMirrorRecord("me@ohmail.test", HOSTED, null)).toBe(`{"address":"me@ohmail.test","base":"${HOSTED}","account":null}`);
+    const set = encodeMirrorRecord("me@ohmail.test", HOSTED, null, false, false, true);
+    expect(set).toBe(`{"address":"me@ohmail.test","base":"${HOSTED}","account":null,"revoked":true}`);
+    expect(decodeMirrorRecord(set)).toMatchObject({ revoked: true, erased: false, discardPending: false });
+    for (const near of ['"true"', "1", "null"]) {
+      expect(decodeMirrorRecord(`{"address":"me@ohmail.test","base":"${HOSTED}","revoked":${near}}`).revoked, near).toBe(false);
+    }
+    expect(decodeMirrorRecord("me@ohmail.test").revoked, "a legacy record").toBe(false);
+  });
+});
+
+/**
+ * THE COPY A REVOKED SESSION STILL OWES goes before the database opens: when the record says so (a
+ * run that removed the mail and stopped short of its files), or when the kept refusal is a revoke and
+ * no seal stands beside it (a crash before the discard, an older build that heard it). Once: the
+ * database the launch makes is the next launch's. The seal, the window's changes and the record's
+ * address stay.
+ */
+describe("enforceMirrorOwner — the copy a revoked session owes", () => {
+  const REFUSED = "cloud-session-refused.json";
+  const OUTBOX = "window-outbox.0123456789abcdef01234567.json";
+  const refused = (dir: string, code: string): void =>
+    writeFileSync(join(dir, REFUSED), JSON.stringify({ code, since: new Date().toISOString() }));
+  const holdsCopy = (dir: string): boolean =>
+    existsSync(join(dir, "pgdata", "PG_VERSION")) || existsSync(join(dir, "cloud-cursor.json"));
+
+  it("the record's flag: the database and the cursor go; the seal, the window's changes and the address stay", () => {
+    const dir = tempDir();
+    seedMirror(dir, "me@ohmail.test", HOSTED);
+    writeFileSync(join(dir, MIRROR_OWNER_FILE), encodeMirrorRecord("me@ohmail.test", HOSTED, null, false, false, true));
+    writeFileSync(join(dir, OUTBOX), "{}");
+    expect(enforceMirrorOwner(dir, "me@ohmail.test", HOSTED), "not a change of owner").toBe(false);
+    expect(holdsCopy(dir), "the copy outlived the launch").toBe(false);
+    expect(existsSync(join(dir, "cloud-tokens.seal"))).toBe(true);
+    expect(existsSync(join(dir, OUTBOX))).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, MIRROR_OWNER_FILE), "utf8"))).toEqual({ address: "me@ohmail.test", base: HOSTED, account: null });
+  });
+
+  it("a kept revoke with no seal: the copy goes, and the launch after keeps the database the first made", () => {
+    const dir = tempDir();
+    seedMirror(dir, "me@ohmail.test", HOSTED);
+    rmSync(join(dir, "cloud-tokens.seal"));
+    refused(dir, "refresh_revoked");
+    enforceMirrorOwner(dir, "me@ohmail.test", HOSTED);
+    expect(holdsCopy(dir), "an older build's revoke left the copy").toBe(false);
+    mkdirSync(join(dir, "pgdata"), { recursive: true });
+    writeFileSync(join(dir, "pgdata", "PG_VERSION"), "17\n");
+    enforceMirrorOwner(dir, "me@ohmail.test", HOSTED);
+    expect(existsSync(join(dir, "pgdata", "PG_VERSION")), "removed again at the next launch").toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, REFUSED), "utf8")), "the sign-in no longer says why").toMatchObject({ code: "refresh_revoked" });
+  });
+
+  it("CONTROL — a revoke beside a seal (a later sign-in), a lapse and the legacy code keep the copy", () => {
+    for (const [code, sealed] of [["refresh_revoked", true], ["refresh_expired", false], ["unauthorized", false]] as const) {
+      const dir = tempDir();
+      seedMirror(dir, "me@ohmail.test", HOSTED);
+      if (!sealed) rmSync(join(dir, "cloud-tokens.seal"));
+      refused(dir, code);
+      enforceMirrorOwner(dir, "me@ohmail.test", HOSTED);
+      expect(holdsCopy(dir), `${code}${sealed ? " beside a seal" : ""}`).toBe(true);
     }
   });
 });

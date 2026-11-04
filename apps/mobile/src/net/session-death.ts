@@ -16,7 +16,7 @@ export function deathRefusal(why: SessionDeath): Refusal {
 
 /**
  * The cause, for whoever reads the device's log. It goes through the engine's sink because the
- * app has exactly one place lines leave from, and it carries a CLOSED SET of three literals and
+ * app has exactly one place lines leave from, and it carries a CLOSED SET of four literals and
  * nothing else — no interpolation, no free text, no identity — so it raises none of the
  * questions the engine's own logger answers (`engine/engine-log.ts`).
  */
@@ -25,7 +25,9 @@ export function noteSessionDeath(why: SessionDeath, sink = engineLogSink()): voi
     ? '{"service":"pairing","event":"session_dead","why":"revoked"}'
     : why === "erased"
       ? '{"service":"pairing","event":"session_dead","why":"erased"}'
-      : '{"service":"pairing","event":"session_dead","why":"refused"}');
+      : why === "signedOutElsewhere"
+        ? '{"service":"pairing","event":"session_dead","why":"signedOutElsewhere"}'
+        : '{"service":"pairing","event":"session_dead","why":"refused"}');
 }
 
 /** Is this the pairing-ended refusal? The sites that render it offer the scan beside it. */

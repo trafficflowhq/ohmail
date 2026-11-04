@@ -71,9 +71,9 @@ function fakeShell(start: EngineStatus, health: Record<string, unknown>): void {
   };
 }
 
-const refused = (count: number) => ({
+const refused = (count: number, code = "refresh_expired") => ({
   signedIn: false, sessionExpired: true,
-  session: { state: "refused", code: "refresh_revoked", since: new Date().toISOString() }, queued: { count },
+  session: { state: "refused", code, since: new Date().toISOString() }, queued: { count },
 });
 
 describe("the paired door's cards say what waits", () => {
@@ -131,6 +131,14 @@ describe("the paired door's cards say what waits", () => {
     await mount();
     await until("the not-paired card", () => text().includes(unpaired()));
     expect(statusLines(el?.querySelector(".session-end")), "the paired card said nothing about two changes waiting")
+      .toContain(DOOR_COPY.changesWaiting(2, "kestrel", machineWord()));
+  });
+
+  it("a pairing revoked there: the card says the copy was removed, and the changes still wait", { timeout: 30_000 }, async () => {
+    fakeShell(PAIRED, refused(2, "refresh_revoked"));
+    await mount();
+    await until("the removed card", () => text().includes(DOOR_COPY.gateUnpairedRemoved(machineWord(), "kestrel")));
+    expect(statusLines(el?.querySelector(".session-end")), "the removed card said nothing about two changes waiting")
       .toContain(DOOR_COPY.changesWaiting(2, "kestrel", machineWord()));
   });
 
