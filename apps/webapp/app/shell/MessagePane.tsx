@@ -32,6 +32,7 @@ import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import { SENDER_SHEET_ID } from "./SenderMenu";
 import { useFocusFollows } from "./focus-follows";
 import { scrollProgrammatically } from "./programmatic-scroll";
+import { useSentReveal } from "./sent-reveal";
 import { useThreadRead, type ThreadReadWiring } from "./reader-seen";
 import { ThreadMarks } from "./ThreadMarks";
 import type { ThreadWalkChannel } from "./thread-walk-channel";
@@ -1504,6 +1505,11 @@ export function MessagePane({
   /* The stream's panels: the lone letter is one panel of its own. */
   const panels = conversation.length > 0 ? conversation : [message];
   const inStream = stream !== undefined;
+  /* The reply sent from this pane's editor, eased into view once it joins (`sent-reveal.ts`); a stream keeps its place. */
+  const sentReveal = useSentReveal({
+    visit: message.id, members: panels, replying, enabled: !inStream, scroller,
+    pane: () => convRef.current ?? singleRef.current,
+  });
 
   /**
    * Ask for the whole conversation's bodies, once, in one request — this is what makes the panels honest. Every
@@ -1545,6 +1551,8 @@ export function MessagePane({
   const anchorRelease = useRef<(() => void) | null>(null);
   useLayoutEffect(() => {
     if (!showConversation || inStream) return;
+    // A lone letter's own reply made it a conversation: that is no open, and the reply is shown instead.
+    if (sentReveal.claims()) return;
     const conv = convRef.current;
     if (!conv) return;
 

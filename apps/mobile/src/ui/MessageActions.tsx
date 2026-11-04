@@ -127,6 +127,7 @@ import { useKeyboardLift } from "./keyboard-lift";
 import { conversationUnreadIds } from "./read-slot";
 import { useReaderCover } from "./reader-cover";
 import { replyOpen, type ReplyOpen } from "./compose-route";
+import { noteReplySend } from "./sent-reveal";
 
 /**
  * One pick's verdicts, held as KINDS — the sentence is derived where it is shown, so a refusal
@@ -1845,11 +1846,15 @@ export function ComposeSheet({
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,
           baseFor(base.current, draftId), waitedFor(base.current, draftId));
     const press = () => toRow(asNew && draftId !== null && w.actions.draftLeft(draftId) !== null ? null : draftId);
+    /* The reader under this sheet shows the sent copy once it is drawn (`sent-reveal.ts`). */
+    const answered = !fresh && m ? m.id : null;
+    if (answered !== null) noteReplySend(answered, "pressed");
     /* MARKED BEFORE THE DISPATCH: a hard stop from here on leaves the next launch a sent letter, which
        it never sends again (`compose/letter-restore.ts`). */
     const result = keeper ? await keeper.sendVia(press, sigText) : await press();
     // `superseded`: a newer press of this reply carries it and says its sentence.
     if (result.outcome === "sent" || result.outcome === "superseded") {
+      if (answered !== null && result.outcome === "sent") noteReplySend(answered, "sent");
       leave();
       return;
     }
