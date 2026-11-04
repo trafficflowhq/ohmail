@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ImapFlow } from "imapflow";
 import { META_FOLDER } from "@trafficflow/core/adapters/organizer-lease";
 import {
-  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
+  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, payloadFingerprintOf, profileFingerprint,
 } from "@trafficflow/core/adapters/organizer-profile";
 import {
   startPhoneEngine,
@@ -803,10 +803,11 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone organizing a mailbox with 
     await b.engine.stop();
     open.splice(open.indexOf(b.engine), 1);
     const afterB = await documentsOnServer(user);
-    /* Each copy by the decision only it carries. */
+    /* Each copy by the decision only it carries; a found copy's key begins with its payload fingerprint. */
     const named = (fp: string | undefined): string => {
-      if (fp === profileFingerprint(L)) return "L";
-      const rules = afterB.find((d) => d.fingerprint === fp)?.rules ?? [];
+      const payload = fp === undefined ? undefined : payloadFingerprintOf(fp);
+      if (payload === profileFingerprint(L)) return "L";
+      const rules = afterB.find((d) => d.fingerprint === payload)?.rules ?? [];
       return rules.some((x) => x.startsWith("dave@")) ? "A" : rules.some((x) => x.startsWith("erin@")) ? "B" : `?${fp}`;
     };
 

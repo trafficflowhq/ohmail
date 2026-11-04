@@ -14,7 +14,7 @@ import { DEFAULT_DORMANCY_DAYS } from "../rules.js";
 import { AWAY_AUDIENCES, AWAY_THROTTLES, nextEnabledAt, type AwayAudience, type AwayThrottle } from "../away-eligibility.js";
 import { awayScopeFitsAudience, isAwayPile, type AwayPile } from "../away-scope.js";
 import {
-  PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileCopyKey,
+  PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileCopyKey, namesCopy,
   profilePayloadAsRead, profileScreenerAddress, signatureReceipt,
   type ApplicableProfileRule, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileListCounts, type ProfileReadResult,
   type ProfileRemovedRule, type ProfileScreening,
@@ -437,7 +437,7 @@ export function importRefusalFor(fresh: ProfileReadResult, fingerprint: string):
   if (fresh.state === "none") return "gone";
   if (fresh.state === "unreadable") return "unreadable";
   if (oversizedProfileList(fresh.doc)) return "too_large";
-  return profileCopyKey(fresh.doc) === fingerprint ? null : "changed";
+  return namesCopy(fingerprint, profileCopyKey(fresh.doc, fresh.installId)) ? null : "changed";
 }
 
 /**

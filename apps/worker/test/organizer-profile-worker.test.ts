@@ -12,7 +12,7 @@ import { StaticKeyProvider, createLogger } from "@trafficflow/core";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import {
   PROFILE_LIST_MAX, PROFILE_VERSION,
-  formatProfileMessage, makeProfileDoc, parseProfileMessage, profileFingerprint, isMalformedProfile,
+  formatProfileMessage, makeProfileDoc, parseProfileMessage, profileCopyKey, profileFingerprint, isMalformedProfile,
   readOrganizerProfile,
   type OrganizerProfilePayload, type ParsedProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
@@ -925,7 +925,7 @@ describe("the worker's portable profile write-behind", () => {
     await new Promise((r) => setTimeout(r, 900));
     // The card offers what this marker names while no answer closes it.
     const marker = await latestProfileFoundMarker(db, mb.accountId, mb.mailboxId);
-    const fingerprint = profileFingerprint(left);
+    const fingerprint = profileCopyKey(left, INSTALL);
     expect({
       kept: meta.messages.filter((m) => parseProfileMessage(m.raw) !== null).map((m) => m.raw),
       marker: marker === null ? null : [marker.state, marker.heldForImport, marker.fingerprint === fingerprint],
@@ -964,7 +964,7 @@ describe("the worker's portable profile write-behind", () => {
     const marker = await latestProfileFoundMarker(db, mb.accountId, mb.mailboxId);
     expect({
       kept: meta.messages.filter((m) => parseProfileMessage(m.raw) !== null).map((m) => m.raw),
-      marker: marker === null ? null : [marker.state, marker.heldForImport, marker.fingerprint === profileFingerprint(after)],
+      marker: marker === null ? null : [marker.state, marker.heldForImport, marker.fingerprint === profileCopyKey(after, INSTALL)],
     }).toEqual({ kept: [raw], marker: ["found", true, true] });
   }, 60_000);
 
@@ -1894,12 +1894,10 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       rules: [], notifyRules: [], awayResponder: null, tagNames: ["theirs-pending-b"],
       signature: null,
     };
-    await meta.appendProfile(formatProfileMessage(
-      makeProfileDoc(replacement, {
-        updatedAt: new Date("2026-08-02T00:00:00Z"), producer: { kind: "local", version: "0.9.3" },
-      }),
-      { installId: "someone-elses-mac" },
-    ));
+    const replacementDoc = makeProfileDoc(replacement, {
+      updatedAt: new Date("2026-08-02T00:00:00Z"), producer: { kind: "local", version: "0.9.3" },
+    });
+    await meta.appendProfile(formatProfileMessage(replacementDoc, { installId: "someone-elses-mac" }));
     await recordProfileImportResolution(db, {
       accountId: mb.accountId, mailboxId: mb.mailboxId,
       decision: "replaced", fingerprint: seedForeignDocFingerprint(),
@@ -1912,7 +1910,7 @@ describe("the hold's OTHER release — the user's durable answer", () => {
       .orderBy(auditLog.createdAt);
     const latest = markers[markers.length - 1]!.payload as { fingerprint?: string | null };
     expect(latest.fingerprint, "the latest marker must stay the folder's current question")
-      .toBe(profileFingerprint(replacement));
+      .toBe(profileCopyKey(replacementDoc, "someone-elses-mac"));
   }, 30_000);
 
   it("a preflight that found NOTHING keeps probing — a document landing in the overlap window is still held", async () => {

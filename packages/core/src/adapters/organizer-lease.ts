@@ -3613,6 +3613,12 @@ export interface LeaseGateResult {
    * `organize` only; null when the server gave none or on any other verdict.
    */
   claimServerAt?: Date | null;
+  /**
+   * `true` when this `organize` continued a claim this process wrote and still found in the folder:
+   * no other install can have organized since this process last did. Absent otherwise (an empty
+   * folder, a press, a fresh process resuming its own claim).
+   */
+  continued?: true;
 }
 
 /**
@@ -4480,9 +4486,12 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   const written = verifyClaims.find(
     (c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce,
   );
+  const continued = !verdict.authorized && claims.some((c) =>
+    !isMalformed(c) && c.installId === self.installId && writtenByThisProcess(self, c.nonce));
   return {
     verdict, nonce: standingNonce, uidValidity: electionUidValidity, stamp: proveAndStamp(),
     claimServerAt: written?.serverStamp ?? null,
+    ...(continued ? { continued: true as const } : {}),
   };
 }
 

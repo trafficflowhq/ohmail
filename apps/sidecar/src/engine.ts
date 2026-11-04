@@ -5314,6 +5314,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       let lastLookAt: number | null = null;
       /** The role the last gated pass ran under — what `noteIdleOutcome` licenses the catch-up on. */
       let lastPassOrganizing = false;
+      /** The last gate's organize continued a claim this process still held in the folder (`continued`). */
+      let gateContinued = false;
 
       /**
        * An install that is not the organizer looks, and still does not claim. Two arms reach
@@ -6130,6 +6132,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            committed and lost its answer read as a copy of this install on the next pass. */
         const outcome = await readMailboxLease({ ...leaseArgs, now: gateAskedAt, onNonceMinted: noteMinted });
         holderLooked = true;
+        gateContinued = outcome.organize && outcome.continued === true;
         /* SPENT BY THE GATE THAT READ IT, and only once it RETURNED: a cycle that threw on the
            network never offered the correction to the lease, and spending it there would lose the
            one renewal it licenses until the person set their clock again. */
@@ -7412,6 +7415,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           /* THE GAP FOLLOWS THE ROLE THIS PASS RUNS UNDER: organizing re-arms the next gap's note, and
              a pass that does not organize withdraws the catch-up's licence until a new tenure has a
              quiet drain of its own (`noteIdleOutcome`). */
+          /* A stand-down ends this organizing life, as on the hosted worker (`forgetOrganizerLife`), and so
+             does an organizing pass that did not continue this process's claim: another install may have
+             organized in between (a hand-back and resume, a sleep through a takeover). */
+          if (lastPassOrganizing && !(organizing && gateContinued)) profileSync.forgetOrganizerLife();
           lastPassOrganizing = organizing;
           if (organizing) gapOpen = null;
           else gapCatchupReady.delete(mb.id);

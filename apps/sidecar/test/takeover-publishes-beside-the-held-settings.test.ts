@@ -8,7 +8,7 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import { formatClaim, type LeaseIo, type RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import {
-  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
+  contentKeyOf, formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileCopyKey, profileFingerprint,
   type OrganizerProfileDoc, type ParsedProfileMessage, type ProfileIo, type RawProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
@@ -352,7 +352,8 @@ describe("a desktop restored from a backup", () => {
     expect((await two.call("POST", "/rules", rule("b@b.test"))).status).toBe(201);
     await two.sidecar.syncUntilQuiet();
     await two.sidecar.stop();
-    const later = meta.docs().find((d) => d.installId !== "local:w-old")!.doc!;
+    const laterCopy = meta.docs().find((d) => d.installId !== "local:w-old")!;
+    const later = laterCopy.doc!;
 
     await new Promise((r) => setTimeout(r, 1_100));
     const three = await launch(meta, backup);
@@ -366,15 +367,15 @@ describe("a desktop restored from a backup", () => {
       // The route's own merge, as the import service runs it once its read of the mailbox fits the request.
       await fencedAccountWrite(three.sidecar.db as never, { accountId }, async (tx) => {
         await lockAccountRuleKeys(tx as never, accountId);
-        await applyOrganizerProfile(tx as never, { accountId, mailboxId, doc: OLD_DOC, fingerprint: profileFingerprint(OLD_DOC), now: new Date() });
+        await applyOrganizerProfile(tx as never, { accountId, mailboxId, doc: OLD_DOC, fingerprint: profileCopyKey(OLD_DOC, "local:w-old"), now: new Date() });
       });
     }
     for (let i = 0; i < 4; i++) await three.sidecar.syncUntilQuiet();
     const next = await card(three);
     expect({
-      asked: asked.fingerprint === profileFingerprint(OLD_DOC),
+      asked: asked.fingerprint === profileCopyKey(OLD_DOC, "local:w-old"),
       kept: meta.docs().some((d) => d.installId !== "local:w-old" && profileFingerprint(d.doc!) === profileFingerprint(later)),
-      card: [next.state, next.fingerprint === profileFingerprint(later)],
+      card: [next.state, next.fingerprint === profileCopyKey(later, laterCopy.installId)],
     }).toEqual({ asked: true, kept: true, card: ["found", true] });
   }, 120_000);
 });
@@ -473,12 +474,12 @@ describe("the install that stood down takes the mailbox back after a relaunch", 
   const clock = { skew: 0 };
   const at = (ms: number): Date => new Date(Date.now() + clock.skew + ms);
 
-  const launch = async (meta: MemoryMeta, machineName: string, dataDir: string) => {
+  const launch = async (meta: MemoryMeta, machineName: string, dataDir: string, profileFlushIntervalMs = 0) => {
     const sidecar = await createSidecar({
       dataDir,
       imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName,
-      pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
+      pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs,
       keks: { 1: Buffer.alloc(32, 9) }, adapterFactory: factory(meta), log: () => {}, now: () => at(0), dkimKeys: null,
     });
     let stopped = false;
@@ -746,6 +747,225 @@ describe("the install that stood down takes the mailbox back after a relaunch", 
     expect({ state: (await card(old)).state, rules: await rules(old) }).toEqual({ state: "none", rules: [] });
   }, 180_000);
 
+  /* A NEW COPY IS A NEW QUESTION. Both installs imported each other's settings; the person removed k@ on the new
+     laptop and made it again on W-old. W-old's copy then says what the new laptop imported at the start, but it is
+     a later copy, so the new laptop is asked about it and keeps k@. `inPlace`: W-old takes back without a relaunch. */
+  const remadeAfterARoundTrip = async (inPlace: boolean) => {
+    clock.skew = 0;
+    const meta = new MemoryMeta();
+    const dir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(dir, { recursive: true, force: true }));
+    const card = async (w: Install) => (await (await w.call("GET", `/mailboxes/${w.sidecar.world.mailboxId}/profile-import`)).json()) as {
+      state?: string; fingerprint?: string;
+    };
+    const importIt = async (w: Install) =>
+      (await w.call("POST", `/mailboxes/${w.sidecar.world.mailboxId}/profile-import`, { fingerprint: (await card(w)).fingerprint })).status;
+    const rules = async (w: Install) => (await w.sidecar.db.select().from(ruleRows)).map((r) => r.match).sort();
+    const remove = async (w: Install, match: string) =>
+      (await w.call("DELETE", `/rules/${(await w.sidecar.db.select().from(ruleRows)).find((r) => r.match === match)!.id}`)).status;
+    const takeBack = async (w: Install, name: string, wDir: string, from: Install) => {
+      clock.skew += 10 * 60_000;
+      if (inPlace) {
+        await passes(2, w, from);
+        expect(await organize(w, "takeover")).toBe(200);
+        await passes(2, w, from);
+        return w;
+      }
+      await w.stop();
+      const back = await launch(meta, name, wDir);
+      await passes(2, back, from);
+      expect(await organize(back, "takeover")).toBe(200);
+      await passes(2, back, from);
+      return back;
+    };
+    const newest = () => meta.docs().sort((a, b) => Date.parse(b.doc!.updatedAt) - Date.parse(a.doc!.updatedAt))[0]!;
+    let old = await launch(meta, "W-old", dir);
+    expect(await organize(old)).toBe(200);
+    for (const match of ["keep@shop.test", "k@shop.test"]) {
+      expect((await old.call("POST", "/rules", { kind: "sender", match, destination: "ohmail/Screened" })).status).toBe(201);
+    }
+    await passes(1, old);
+    clock.skew += 3 * HOUR;
+    await passes(1, old);
+    const nextDir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(nextDir, { recursive: true, force: true }));
+    let next = await launch(meta, "the new laptop", nextDir);
+    expect(await organize(next, "takeover")).toBe(200);
+    await passes(2, next, old);
+    const asked0 = await card(next);
+    expect({ state: asked0.state, status: await importIt(next) }).toEqual({ state: "found", status: 202 });
+    await passes(3, next, old);
+    clock.skew += HOUR;
+    expect(await remove(next, "k@shop.test")).toBe(204);
+    await passes(3, next, old);
+    old = await takeBack(old, "W-old", dir, next);
+    expect({ state: (await card(old)).state, status: await importIt(old) }).toEqual({ state: "found", status: 202 });
+    await passes(3, old, next);
+    expect(await rules(old)).toEqual(["keep@shop.test"]);
+    clock.skew += HOUR;
+    expect((await old.call("POST", "/rules", { kind: "sender", match: "k@shop.test", destination: "ohmail/Screened" })).status).toBe(201);
+    await passes(3, old, next);
+    const oldId = old.sidecar.world.accountId;
+    const again = meta.docs().filter((d) => d.installId === oldId)
+      .sort((a, b) => Date.parse(b.doc!.updatedAt) - Date.parse(a.doc!.updatedAt))[0]!.doc!;
+    next = await takeBack(next, "the new laptop", nextDir, old);
+    const asked2 = await card(next);
+    const status2 = asked2.state === "found" ? await importIt(next) : null;
+    await passes(3, next, old);
+    const last = newest();
+    expect({
+      state: asked2.state, status: status2, rules: await rules(next),
+      newest: [last.installId === next.sidecar.world.accountId ? "the new laptop" : "W-old", last.doc!.rules.map((r) => r.match).sort()],
+      newName: asked2.fingerprint !== asked0.fingerprint,
+      sameContent: asked2.fingerprint !== undefined && contentKeyOf(asked2.fingerprint) === contentKeyOf(asked0.fingerprint!),
+      askedAbout: asked2.fingerprint === profileCopyKey(again, oldId),
+      againRemoves: again.removedRules?.map((r) => r.match) ?? [],
+    }).toEqual({
+      state: "found", status: 202, rules: ["k@shop.test", "keep@shop.test"],
+      newest: ["the new laptop", ["k@shop.test", "keep@shop.test"]],
+      newName: true, sameContent: true, askedAbout: true, againRemoves: [],
+    });
+    return { meta, next, nextDir, old, card };
+  };
+
+  it("a rule removed on the new organizer and made again on W-old after a round trip is asked about and kept there", async () => {
+    const { meta, next, nextDir, old, card } = await remadeAfterARoundTrip(false);
+    // The answered copy asks nothing again.
+    clock.skew += 10 * 60_000;
+    await next.stop();
+    const relaunched = await launch(meta, "the new laptop", nextDir);
+    await passes(2, relaunched, old);
+    expect({ state: (await card(relaunched)).state, rules: (await relaunched.sidecar.db.select().from(ruleRows)).map((r) => r.match).sort() })
+      .toEqual({ state: "none", rules: ["k@shop.test", "keep@shop.test"] });
+  }, 240_000);
+
+  it("the same round trip, each install taking back without a relaunch", async () => {
+    await remadeAfterARoundTrip(true);
+  }, 240_000);
+
+  /* A STAND-DOWN ENDS THE ORGANIZING LIFE. W-old stood down without a relaunch while the new laptop made a rule; when
+     W-old takes back in place, the new laptop's copy is another install's settings, kept and asked about. */
+  it("W-old takes back without a relaunch: the new organizer's copy stays and is asked about", async () => {
+    clock.skew = 0;
+    const meta = new MemoryMeta();
+    const dir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(dir, { recursive: true, force: true }));
+    const old = await launch(meta, "W-old", dir);
+    expect(await organize(old)).toBe(200);
+    expect((await old.call("POST", "/rules", { kind: "sender", match: "a@shop.test", destination: "ohmail/Screened" })).status).toBe(201);
+    await passes(1, old);
+    clock.skew += 3 * HOUR;
+    await passes(1, old);
+    const nextDir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(nextDir, { recursive: true, force: true }));
+    const next = await launch(meta, "the new laptop", nextDir);
+    expect(await organize(next, "takeover")).toBe(200);
+    await passes(2, next, old);
+    clock.skew += HOUR;
+    expect((await next.call("POST", "/rules", { kind: "sender", match: "b@shop.test", destination: "ohmail/Screened" })).status).toBe(201);
+    await passes(3, next, old);
+    clock.skew += 10 * 60_000;
+    await passes(2, old, next);
+    expect(await organize(old, "takeover")).toBe(200);
+    await passes(3, old, next);
+    const nextId = next.sidecar.world.accountId;
+    const card = (await (await old.call("GET", `/mailboxes/${old.sidecar.world.mailboxId}/profile-import`)).json()) as { state?: string };
+    expect({
+      card: card.state,
+      rules: (await old.sidecar.db.select().from(ruleRows)).map((r) => r.match).sort(),
+      kept: meta.docs().filter((d) => d.installId === nextId).map((d) => d.doc!.rules.map((r) => r.match).sort()),
+    }).toEqual({ card: "found", rules: ["a@shop.test"], kept: [["b@shop.test"]] });
+  }, 120_000);
+
+  /* AWAY THROUGH THE OTHER INSTALL'S WHOLE TENURE. W-old runs no pass while the new laptop takes over, imports its
+     rules, removes k@ and quits: the phone handed back (`handBack`, then `resume`), or the desktop slept. W-old then
+     organizes again on a folder nobody holds; the new laptop's copy is another install's settings, kept and asked
+     about, and the removal it carries is not undone when the new laptop comes back. */
+  const awayThroughTheOtherTenure = async (away: "handBack" | "asleep") => {
+    clock.skew = 0;
+    const meta = new MemoryMeta();
+    const dir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(dir, { recursive: true, force: true }));
+    const card = async (w: Install) =>
+      (await (await w.call("GET", `/mailboxes/${w.sidecar.world.mailboxId}/profile-import`)).json()) as { state?: string; fingerprint?: string };
+    const importIt = async (w: Install) =>
+      (await w.call("POST", `/mailboxes/${w.sidecar.world.mailboxId}/profile-import`, { fingerprint: (await card(w)).fingerprint })).status;
+    const rules = async (w: Install) => (await w.sidecar.db.select().from(ruleRows)).map((r) => r.match).sort();
+    const old = await launch(meta, "W-old", dir);
+    expect(await organize(old)).toBe(200);
+    for (const match of ["keep@shop.test", "k@shop.test"]) {
+      expect((await old.call("POST", "/rules", { kind: "sender", match, destination: "ohmail/Screened" })).status).toBe(201);
+    }
+    await passes(1, old);
+    clock.skew += 3 * HOUR;
+    await passes(1, old);
+    if (away === "handBack") await old.sidecar.handBack();
+    clock.skew += 10 * 60_000;
+    const nextDir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(nextDir, { recursive: true, force: true }));
+    const next = await launch(meta, "the new laptop", nextDir);
+    expect(await organize(next, "takeover")).toBe(200);
+    await passes(2, next);
+    expect(await importIt(next)).toBe(202);
+    await passes(3, next);
+    clock.skew += HOUR;
+    const k = (await next.sidecar.db.select().from(ruleRows)).find((r) => r.match === "k@shop.test")!;
+    expect((await next.call("DELETE", `/rules/${k.id}`)).status).toBe(204);
+    await passes(3, next);
+    const nextId = next.sidecar.world.accountId;
+    await next.stop();
+    clock.skew += 10 * 60_000;
+    if (away === "handBack") await old.sidecar.resume();
+    await passes(3, old);
+    const asked = (await card(old)).state;
+    const kept = meta.docs().filter((d) => d.installId === nextId)
+      .map((d) => [d.doc!.rules.map((r) => r.match).sort(), d.doc!.removedRules?.map((r) => r.match) ?? []]);
+    const status = asked === "found" ? await importIt(old) : null;
+    await passes(3, old);
+    const oldRules = await rules(old);
+    clock.skew += 10 * 60_000;
+    const again = await launch(meta, "the new laptop", nextDir);
+    await passes(2, again, old);
+    expect(await organize(again, "takeover")).toBe(200);
+    await passes(2, again, old);
+    if ((await card(again)).state === "found") expect(await importIt(again)).toBe(202);
+    await passes(3, again, old);
+    expect({ asked, kept, status, oldRules, laptopRules: await rules(again) }).toEqual({
+      asked: "found", kept: [[["keep@shop.test"], ["k@shop.test"]]], status: 202,
+      oldRules: ["keep@shop.test"], laptopRules: ["keep@shop.test"],
+    });
+  };
+
+  it("the phone hands back and resumes after the new organizer's whole tenure: its copy stays and is asked about", async () => {
+    await awayThroughTheOtherTenure("handBack");
+  }, 180_000);
+
+  it("the desktop sleeps through the new organizer's whole tenure: its copy stays and is asked about", async () => {
+    await awayThroughTheOtherTenure("asleep");
+  }, 180_000);
+
+  /* A pass that continues this process's own claim keeps the organizing life: before the next save is due, quiet
+     passes read no copy. A resume after a hand-back starts a new life, which looks at the folder again. */
+  it("quiet passes on a continued claim read no settings copy, a resume after a hand-back does", async () => {
+    clock.skew = 0;
+    const meta = new MemoryMeta();
+    const dir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(dir, { recursive: true, force: true }));
+    const old = await launch(meta, "W-old", dir, HOUR);
+    expect(await organize(old)).toBe(200);
+    expect((await old.call("POST", "/rules", { kind: "sender", match: "a@shop.test", destination: "ohmail/Screened" })).status).toBe(201);
+    await passes(2, old);
+    let reads = 0;
+    const list = meta.listProfileMessages.bind(meta);
+    meta.listProfileMessages = async () => { reads++; return list(); };
+    await passes(3, old);
+    const quiet = reads;
+    await old.sidecar.handBack();
+    reads = 0;
+    await old.sidecar.resume();
+    expect({ quiet, resumed: reads > 0 }).toEqual({ quiet: 0, resumed: true });
+  }, 120_000);
+
   /* A RULE MADE AGAIN ENDS ITS REMOVAL. On the new laptop the person removed k@, made it again, then started the
      Screener over there, which records nothing: no removal of k@ is left to travel. W-old takes back, is asked
      nothing, and keeps k@, as it would had k@ never been removed. */
@@ -805,6 +1025,30 @@ describe("the install that stood down takes the mailbox back after a relaunch", 
       removedAfterMakingAgain: [], rulesDeleted: 2, nextCopy: { rules: 0, removed: [] }, asked: "none", status: null,
       rules: ["k@shop.test", "keep@shop.test"],
     });
+  }, 120_000);
+
+  // A start-over is local by nature: the removals recorded here go with the rules, and the next copy carries none.
+  it("a Screener start-over leaves no removal in the next copy", async () => {
+    clock.skew = 0;
+    const meta = new MemoryMeta();
+    const dir = await freshDataDir("ohmail-start-over-");
+    cleanups.unshift(() => rmSync(dir, { recursive: true, force: true }));
+    const w = await launch(meta, "W", dir);
+    expect(await organize(w)).toBe(200);
+    for (const match of ["keep@shop.test", "gone@shop.test"]) {
+      expect((await w.call("POST", "/rules", { kind: "sender", match, destination: "ohmail/Screened" })).status).toBe(201);
+    }
+    await passes(2, w);
+    const gone = (await w.sidecar.db.select().from(ruleRows)).find((r) => r.match === "gone@shop.test")!;
+    expect((await w.call("DELETE", `/rules/${gone.id}`)).status).toBe(204);
+    await passes(2, w);
+    const newest = () => meta.docs().sort((a, b) => Date.parse(b.doc!.updatedAt) - Date.parse(a.doc!.updatedAt))[0]!.doc!;
+    const before = newest().removedRules?.map((r) => r.match);
+    clock.skew += HOUR;
+    await resetScreeningState({ db: w.sidecar.db as never, accountId: w.sidecar.world.accountId, userId: null, now: () => at(0), requestId: "start-over" });
+    await passes(3, w);
+    expect({ before, after: { rules: newest().rules.length, removed: newest().removedRules ?? [] } })
+      .toEqual({ before: ["gone@shop.test"], after: { rules: 0, removed: [] } });
   }, 120_000);
 
   /* A COPY CARRIES THE REMOVALS OF THE YEAR BEFORE IT WAS WRITTEN, and is written only when the settings change:
