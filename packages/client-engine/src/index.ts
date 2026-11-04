@@ -38,6 +38,7 @@ export {
   readRefreshAnswer,
   REFRESH_MISSING,
   REFRESH_REUSE_CAUSE,
+  REFRESH_REVOKED,
   SESSION_REFUSAL_CODES,
   type RefreshAnswer,
 } from "./refresh-answer.js";

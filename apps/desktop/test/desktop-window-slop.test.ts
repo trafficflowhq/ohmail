@@ -146,7 +146,7 @@ const PAIRED_DOOR_KEYS = [
   "hostFootStale", "hostFootStaleWhy", "hostFootUnknown", "hostCheckLan", "hostCheckTs",
   "hostFootSettings",
   // the revoked notice
-  "gateUnpaired", "gatePairAgain", "gateOwn",
+  "gateUnpaired", "gateUnpairedRemoved", "gatePairAgain", "gateOwn",
   // Settings -> Desktop
   "mailboxWhyViaHost", "doorHostWhyLan", "doorHostWhyTs", "credHostLabel", "credHostLiveValue",
   "credHostLiveWhy", "credHostOutValue", "credHostOutWhy", "credHostCheckingWhy",

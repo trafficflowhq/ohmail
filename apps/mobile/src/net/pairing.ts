@@ -504,13 +504,13 @@ export type ConnectOutcome =
   /**
    * `needsRepair`: the credential is gone (a refusal cleared it) — one scan re-pairs. `died`: the
    * slot's manager died in this process with nobody listening, and this is how; the connection
-   * layer answers it as its dead-signal listener would.
+   * layer answers it as its dead-signal listener would. `removesCopy`: that death owes the Forget.
    */
-  | { kind: "refused"; reason: Refusal; needsRepair?: boolean; died?: SessionDeath };
+  | { kind: "refused"; reason: Refusal; needsRepair?: boolean; died?: SessionDeath; removesCopy?: boolean };
 
-/** A connect answered by a death of the slot's manager: said by the one function, re-paired unless erased. */
-function diedOutcome(died: SessionDeath): ConnectOutcome {
-  return { kind: "refused", reason: deathRefusal(died), died, needsRepair: died !== "erased" };
+/** A connect answered by a death of the slot's manager: said by the one function; re-paired unless it takes the copy. */
+function diedOutcome(died: SessionDeath, removesCopy: boolean): ConnectOutcome {
+  return { kind: "refused", reason: deathRefusal(died), died, removesCopy, needsRepair: !removesCopy };
 }
 
 const bareFetch = (): FetchLike => globalThis.fetch.bind(globalThis) as FetchLike;
@@ -518,17 +518,18 @@ const bareFetch = (): FetchLike => globalThis.fetch.bind(globalThis) as FetchLik
 /**
  * The BearerManager's persistence, bound to one profile's slot in the keystore — the ONLY caller
  * of the store's three credential writes, each of which lands only over a token its manager held.
- * An ERASED death owes the forget BEFORE the credential goes, so a kill between the two leaves the
- * debt the next launch pays before it connects (`drainPendingWipes`). The debt names the account,
- * not the family, so it is not fenced. A mark that cannot be written skips the clear: the next
- * launch presents the token, hears the erasure again, and marks it again.
+ * A death that removes the copy (an erasure, a coded revoke) owes the forget BEFORE the credential
+ * goes, so a kill between the two leaves the debt the next launch pays before it connects
+ * (`drainPendingWipes`). The debt names the account, not the family, so it is not fenced. A mark
+ * that cannot be written skips the clear: the next launch presents the token, hears the same
+ * answer again, and marks it again.
  */
 function vaultFor(profiles: ServerProfileStore, row: Pick<ServerProfile, "id" | "origin" | "accountId" | "pin">): RefreshVault {
   const { id } = row;
   return {
     save: (t, held) => profiles.saveRefreshToken(id, t, held),
-    clear: async (held, why) => {
-      if (why === "erased") await profiles.markPendingWipe(id, mirrorOwnerKey(row.origin, row.accountId));
+    clear: async (held, _why, removesCopy) => {
+      if (removesCopy) await profiles.markPendingWipe(id, mirrorOwnerKey(row.origin, row.accountId));
       return profiles.clearRefreshToken(id, held);
     },
     armAttempt: (a, head, held) => profiles.armRefreshAttempt(id, a, head, held),
@@ -1511,19 +1512,21 @@ async function buildSession(
     await env.standalone.standDownAway();
   }
   /* A SLOT WHOSE MANAGER DIED IN THIS PROCESS answers with that death, whoever was listening; the
-     read builds nothing, and one function says every cause. An ERASED death answers ahead of the
-     owed-forget refusal, because it owes a Forget nobody pressed; any other death answers after
-     it, so a Forget somebody pressed is still said as one. */
+     read builds nothing, and one function says every cause. A death that removes the copy (an
+     erasure, a coded revoke) answers ahead of the owed-forget refusal, because it owes a Forget
+     nobody pressed; any other death answers after it, so a Forget somebody pressed is still said
+     as one. */
   const slots = env.bearers ?? processBearers;
   const known = slots.deathOf(profile.id);
-  if (known === "erased") return diedOutcome(known);
+  const removes = slots.removesCopyOf(profile.id);
+  if (known !== null && removes) return diedOutcome(known, true);
   if (await env.profiles.isOwedForget(profile.id)) {
     return {
       kind: "refused",
       reason: refuse("forgetStillPending"),
     };
   }
-  if (known !== null) return diedOutcome(known);
+  if (known !== null) return diedOutcome(known, removes);
   /**
    * The mailbox on this phone — this arm's position is load-bearing. Ahead of
    * the admission: `LOCAL_ENGINE_ORIGIN` is `http://sidecar` and `admitOrigin`
@@ -1589,7 +1592,7 @@ async function buildSession(
   // manager that died since the read above (another holder's last request) answers as its death.
   if (!bearer.paired()) {
     const dying = bearer.deathSettled();
-    if (dying !== null) return diedOutcome(await dying);
+    if (dying !== null) return diedOutcome(await dying, bearer.removesCopy);
     return {
       kind: "refused",
       needsRepair: true,

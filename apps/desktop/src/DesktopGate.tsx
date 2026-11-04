@@ -47,7 +47,7 @@ import {
 } from "./bridge-fetch.js";
 import { forgetWindowSentFolders } from "./window-outbox-store.js";
 import {
-  cloudNoticeDue, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
+  cloudNoticeDue, copyRemovedBy, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
 } from "./cloud-session.js";
 import { DoorChooser, focusFirstControl } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
@@ -500,6 +500,11 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   /** This engine could not write the session to disk — Settings → Desktop says so; see `/health`. */
   const hostedSealFailed = hostedAuthKnown && hostedAuth.sealFailed;
   /**
+   * THE ENGINE REMOVED THIS COMPUTER'S COPY: the session was revoked at its server (`copyRemovedBy`).
+   * The window keeps no client and draws no mail; the card stands on the window's own page.
+   */
+  const copyRemoved = door === "cloud" && hostedAuthKnown && copyRemovedBy(hostedAuth.session);
+  /**
    * THE ONE FACT EVERY ACCOUNT-SHAPED SURFACE BELOW IS DECIDED BY — this engine's own live
    * verdict on the hosted session, in the door rules' shape ({@link HostedSession}). Derived
    * from the SAME probe state the whole-window routing reads — one expression, one name — so
@@ -814,12 +819,12 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   setComposerScope("window");
   // The hosted door stages a large send's bytes through the engine; no other door has storage.
   const stage = stagesAttachments(shell?.kind === "status" ? shell.status : null);
-  if (mount.kind === "engine" && (live?.key !== mount.key || live.stage !== stage)) {
+  if (mount.kind === "engine" && !copyRemoved && (live?.key !== mount.key || live.stage !== stage)) {
     setLive({ key: mount.key, stage, engine: createLocalEngine(mount.key, { stageAttachments: stage }) });
-  } else if (mount.kind !== "engine" && live !== null) {
-    /* Signed out, or the door was given up. Dropping the reference is what takes the mirror — a
-       copy of somebody's mail — out of this window's memory; keeping it would leave it sitting
-       behind the chooser for the life of the process. */
+  } else if ((mount.kind !== "engine" || copyRemoved) && live !== null) {
+    /* Signed out, the door given up, or the copy removed. Dropping the reference is what takes the
+       mirror — a copy of somebody's mail — out of this window's memory; keeping it would leave it
+       sitting behind the chooser for the life of the process. */
     forgetWindowSentFolders(live.key);
     setLive(null);
   }
@@ -1099,7 +1104,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
     return (
       <>
         <div className="gate">
-          <UnpairedCard host={hostLabel} notice={waitingNotice} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} />
+          <UnpairedCard host={hostLabel} notice={waitingNotice} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} removed={copyRemoved} />
         </div>
         {doorOverlay}
       </>
@@ -1191,7 +1196,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   const layer = overMail ? "session-end" : "session-end session-whole";
   const refusedCard = readers === null || readers.card === "closed" || overlay !== null ? null : paired ? (
     <RefusedLayer className={layer} label={DOOR_COPY.credHostOutValue}>
-      <UnpairedCard host={hostLabel} notice={waitingNotice} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} causeId={REFUSED_CAUSE} />
+      <UnpairedCard host={hostLabel} notice={waitingNotice} onPairAgain={() => setOverlay("host")} onOwn={beginTakeover} causeId={REFUSED_CAUSE} removed={copyRemoved} />
     </RefusedLayer>
   ) : (
     <RefusedLayer className={`${layer} session-signin`} label={ownServer ? DOOR_COPY.doorServerName : DOOR_COPY.cloudTitle}>
@@ -1224,6 +1229,17 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
      than at the render, where the early return has already made it non-null in fact but not
      in the type. */
   const shellKey = mount.kind === "engine" ? mount.key : "opening";
+
+  /* THE COPY WAS REMOVED: the card on the window's own page and nothing behind it — the mail it
+     would draw is gone from this computer. The door a press opens stands where the card stood. */
+  if (copyRemoved) {
+    return (
+      <>
+        {refusedCard}
+        {doorOverlay}
+      </>
+    );
+  }
 
   if (engine === null) {
     /* A door is chosen and no engine has served yet — a first launch migrating a database,
@@ -1686,17 +1702,21 @@ function RefusedLayer({ className, label, children }: { className: string; label
   );
 }
 
-/** "Not paired", the other computer named, and the two remedies: pair again, or stand alone. */
-function UnpairedCard({ host, notice = null, causeId, onPairAgain, onOwn }: {
-  host: string | null; notice?: string | null; causeId?: string; onPairAgain: () => void; onOwn: () => void;
+/**
+ * "Not paired", the other computer named, and the two remedies: pair again, or stand alone.
+ * `removed`: the pairing was revoked there, and the engine removed this computer's copy.
+ */
+function UnpairedCard({ host, notice = null, causeId, removed = false, onPairAgain, onOwn }: {
+  host: string | null; notice?: string | null; causeId?: string; removed?: boolean; onPairAgain: () => void; onOwn: () => void;
 }) {
   const card = useRef<HTMLDivElement | null>(null);
   useEffect(() => focusFirstControl(card.current), []);
+  const other = host ?? DOOR_COPY.doorHostName;
   return (
     <div className="gate-card" ref={card}>
       <span className="wordmark"><b>ohmail</b><em>.</em></span>
       <h1>{DOOR_COPY.credHostOutValue}</h1>
-      <p id={causeId}>{DOOR_COPY.gateUnpaired(machineWord(), host ?? DOOR_COPY.doorHostName)}</p>
+      <p id={causeId}>{removed ? DOOR_COPY.gateUnpairedRemoved(machineWord(), other) : DOOR_COPY.gateUnpaired(machineWord(), other)}</p>
       {notice ? <div className="join-note" role="status">{notice}</div> : null}
       <div className="gate-actions">
         <Button onClick={onPairAgain}>{DOOR_COPY.gatePairAgain}</Button>

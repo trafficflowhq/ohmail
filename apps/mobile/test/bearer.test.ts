@@ -18,14 +18,15 @@
  *  · recovery is generation-bound: a STALE 401 restamps and replays without rotating again.
  */
 import { describe, expect, it } from "vitest";
-import { BearerManagerRN, type BearerTokens, type RefreshVault } from "../src/net/bearer";
+import { BearerManagerRN, type BearerTokens, type RefreshVault, type SessionDeath } from "../src/net/bearer";
 
 /** An inspectable vault — what the keystore slot sees, and when. `keeps: false` refuses an owed sign-out. */
 function memoryVault(opts: { keeps?: boolean } = {}) {
   const saves: string[] = [];
   const armed: string[] = [];
   const owed: string[] = [];
-  let cleared = 0;
+  /** Each clear's death, and whether the copy's removal was owed before it. */
+  const clears: Array<[SessionDeath, boolean]> = [];
   const vault: RefreshVault = {
     oweSignOut: async (t) => {
       if (opts.keeps === false) return false;
@@ -36,8 +37,8 @@ function memoryVault(opts: { keeps?: boolean } = {}) {
       saves.push(t);
       return "landed";
     },
-    clear: async () => {
-      cleared += 1;
+    clear: async (_held, why, removesCopy) => {
+      clears.push([why, removesCopy]);
       return "landed";
     },
     armAttempt: async (a) => {
@@ -45,7 +46,7 @@ function memoryVault(opts: { keeps?: boolean } = {}) {
       return "landed";
     },
   };
-  return { vault, saves, armed, owed, clearedCount: () => cleared };
+  return { vault, saves, armed, owed, clears, clearedCount: () => clears.length };
 }
 
 interface Seen {
@@ -301,18 +302,27 @@ describe("what a refresh refusal means", () => {
     expect(clearedCount()).toBe(0);
   });
 
-  it.each<[string, number]>([
-    ["refresh_missing", 401], ["refresh_expired", 401], ["refresh_revoked", 401], ["unauthorized", 401],
-  ])("the server's %s signs out", async (code, status) => {
-    const { vault, clearedCount } = memoryVault();
-    const wire = scripted([() => json(401, {}), () => refusal(code, status)]);
+  /* …AND WHETHER THE COPY GOES WITH IT: a session the server revoked by code (Devices, sign out
+     everywhere, a credential change, a current server's reuse sweep) owes the account's copy; a
+     lapse, a missing token and the legacy code keep it. The reuse sentence still logs as theft. */
+  it.each<[string, string, SessionDeath, boolean]>([
+    ["refresh_missing", "refused", "refused", false],
+    ["refresh_expired", "refresh token expired", "refused", false],
+    ["refresh_revoked", "invalid refresh token", "signedOutElsewhere", true],
+    ["unauthorized", "refused", "refused", false],
+    ["refresh_revoked", "refresh token reuse detected", "revoked", true],
+    ["unauthorized", "refresh token reuse detected", "revoked", false],
+  ])("the server's %s (%s) signs out as %s; the copy goes: %s", async (code, message, death, removes) => {
+    const { vault, clears } = memoryVault();
+    const wire = scripted([() => json(401, {}), () => json(401, { error: { code, message } })]);
     const bearer = manager({ fetch: wire.fetch, vault });
-    let died = 0;
-    bearer.onSessionDead(() => died++);
+    const deaths: SessionDeath[] = [];
+    bearer.onSessionDead((why) => deaths.push(why));
     await bearer.fetch(`${ORIGIN}/sync`);
-    expect(died).toBe(1);
+    expect(deaths).toEqual([death]);
     expect(bearer.paired()).toBe(false);
-    expect(clearedCount()).toBe(1);
+    expect(bearer.removesCopy).toBe(removes);
+    expect(clears, "the vault is told before the token goes").toEqual([[death, removes]]);
   });
 
   it("after a sign-in page, the next 401 retries the SAME attempt and adopts its answer", async () => {
@@ -373,7 +383,7 @@ describe("logout", () => {
    * held. The refresh door ends the family any of its tokens names, so the held token goes there.
    */
   it("a cold logout presents the refresh token at the refresh door, and it LANDS", async () => {
-    const { vault, clearedCount } = memoryVault();
+    const { vault, clears } = memoryVault();
     const wire = scripted([
       (s) => {
         expect(s.url).toBe(`${ORIGIN}/auth/refresh/logout`);
@@ -391,7 +401,9 @@ describe("logout", () => {
     expect(await bearer.logout()).toBe(true);
     expect(wire.seen).toHaveLength(1);
     expect(bearer.paired()).toBe(false);
-    expect(clearedCount()).toBeGreaterThan(0);
+    // A sign-out pressed here owes no removal of its own: its Forget, if any, is the caller's.
+    expect(clears).toEqual([["refused", false]]);
+    expect(bearer.removesCopy).toBe(false);
     expect(died).toBe(1);
   });
 

@@ -158,11 +158,14 @@ export function encodeMirrorRecord(
   discardPending = false,
   /** The hosted account was ERASED — see {@link MirrorRecord.erased}. */
   erased = false,
+  /** The session was revoked at the server and the copy is still owed — see {@link MirrorRecord.revoked}. */
+  revoked = false,
 ): string {
   /* THE FLAGS ARE OMITTED WHEN FALSE, so an ordinary record is byte-identical to what every build
      before this wrote and a reader that has never heard of them is unaffected. */
   return JSON.stringify({
     address, base, account, ...(discardPending ? { discardPending } : {}), ...(erased ? { erased } : {}),
+    ...(revoked ? { revoked } : {}),
   });
 }
 
@@ -180,6 +183,7 @@ export function decodeMirrorRecord(raw: string): MirrorRecord {
     try {
       const parsed = JSON.parse(text) as {
         address?: unknown; base?: unknown; account?: unknown; discardPending?: unknown; erased?: unknown;
+        revoked?: unknown;
       };
       /* `null` AND NOT `""`, and the difference decides whether a mirror survives. An empty
          string is an address that WAS configured and is blank, which `sameOwner` matches against
@@ -198,14 +202,14 @@ export function decodeMirrorRecord(raw: string): MirrorRecord {
          must never select that branch. */
       return {
         address, base, account, discardPending: parsed.discardPending === true, erased: parsed.erased === true,
-        legacy: false,
+        revoked: parsed.revoked === true, legacy: false,
       };
     } catch {
       /* A torn or truncated write. Falls through to the legacy read, which yields an address that
          matches nothing — the same answer an empty file gives, and the safe one. */
     }
   }
-  return { address: text, base: null, account: null, discardPending: false, erased: false, legacy: true };
+  return { address: text, base: null, account: null, discardPending: false, erased: false, revoked: false, legacy: true };
 }
 
 export interface MirrorRecord {
@@ -250,6 +254,13 @@ export interface MirrorRecord {
    * session's record, so `/health.accountErased` says so after a relaunch until somebody signs in.
    */
   erased: boolean;
+  /**
+   * The server revoked this install's session by code (`refresh_revoked`: Devices, sign out
+   * everywhere, a credential change) and the mail is already out of the database; the database's
+   * files are still owed. Written by the revoke discard, cleared once `pgdata` and the cursor are
+   * gone (at the stop, or before the next launch opens anything) and by a new session.
+   */
+  revoked: boolean;
   /**
    * True when this record is the ONE-ADDRESS shape an earlier build wrote — load-bearing, not
    * informational. A `null` base means two different things by shape, and collapsing them leaks a

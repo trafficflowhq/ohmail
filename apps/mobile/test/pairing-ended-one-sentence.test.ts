@@ -23,8 +23,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.join(HERE, "..");
 
 describe("every door that ends a pairing says the same thing", () => {
-  it("both deaths the server can report answer with the one key", () => {
-    for (const why of ["refused", "revoked"] as const) {
+  it("every death the server can report but an erasure answers with the one key", () => {
+    for (const why of ["refused", "revoked", "signedOutElsewhere"] as const) {
       expect(deathRefusal(why).say).toBe("pairEnded");
       expect(isPairEnded(deathRefusal(why))).toBe(true);
     }
@@ -53,11 +53,13 @@ describe("every door that ends a pairing says the same thing", () => {
     const lines: string[] = [];
     noteSessionDeath("revoked", (l) => lines.push(l));
     noteSessionDeath("refused", (l) => lines.push(l));
+    noteSessionDeath("signedOutElsewhere", (l) => lines.push(l));
     expect(lines).toEqual([
       '{"service":"pairing","event":"session_dead","why":"revoked"}',
       '{"service":"pairing","event":"session_dead","why":"refused"}',
+      '{"service":"pairing","event":"session_dead","why":"signedOutElsewhere"}',
     ]);
-    // A closed set of two literals, which is why this is one line and not a second logger:
+    // A closed set of literals, which is why this is one line and not a second logger:
     // nothing a person or a mailbox owns can reach it.
     for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
   });

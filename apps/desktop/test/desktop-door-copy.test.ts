@@ -132,6 +132,13 @@ describe("with a German catalogue set, the standalone window answers German", ()
       "3 Änderungen für kestrel warten auf diesem PC. Sie werden gesendet, sobald sich kestrel hier wieder anmeldet.",
     );
     expect(DOOR_COPY.errorRefused("503")).toBe("Die Anfrage wurde abgelehnt (503).");
+    // A revoke takes this computer's copy, and both doors' cards say so.
+    expect(DOOR_COPY.cloudLeadRevoked("Mac")).toBe(
+      "Dieser Mac wurde abgemeldet, von einem anderen Gerät aus oder nach einer Sicherheitsprüfung. Die Kopie deiner Mails hier wurde entfernt.",
+    );
+    expect(DOOR_COPY.gateUnpairedRemoved("PC", "kestrel")).toBe(
+      "Dieser PC ist nicht mehr mit kestrel gekoppelt. Kopple ihn dort über Einstellungen → Geräte neu oder richte diesen PC eigenständig ein. Die Kopie deiner Mails hier wurde entfernt.",
+    );
     /* TWO VALUES, and the order is the FORMATTER's — a German sentence free to reorder them is
        exactly what the `params` list defends, so both numbers are asserted in their own holes. */
     expect(DOOR_COPY.bootMigratingOf(3, 12))

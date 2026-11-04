@@ -11,7 +11,7 @@
 
 import {
   ACCOUNT_ERASED, ERASED_ANSWER_HEADER, isCredentialRefusal, isSessionRefusal, readRefreshAnswer,
-  sessionEndedResponse,
+  REFRESH_REVOKED, sessionEndedResponse,
 } from "@ohmail/client-engine";
 import type { SessionRenewalDoor } from "@ohmail/client-engine";
 import type { RefreshWrite } from "../state/servers";
@@ -33,8 +33,8 @@ export interface BearerTokens {
  */
 export interface RefreshVault {
   save(refreshToken: string, held: ReadonlySet<string>): Promise<RefreshWrite>;
-  /** `why` is the death this clear follows: an erased account's copy is owed before the token goes. */
-  clear(held: ReadonlySet<string>, why: SessionDeath): Promise<RefreshWrite>;
+  /** `why` is the death this clear follows; with `removesCopy` the account's copy is owed before the token goes. */
+  clear(held: ReadonlySet<string>, why: SessionDeath, removesCopy: boolean): Promise<RefreshWrite>;
   /**
    * Persist the name of the attempt about to be submitted, beside `head`, the token it will
    * spend — written together, so a failed save is repaired here and a kill after this write
@@ -57,9 +57,11 @@ export type SignOutOutcome = "told" | "owed" | "untold" | "ended";
 /**
  * WHY A SESSION ENDED, for the surface that has to say it. `revoked` is the server withdrawing
  * this family because a spent token was presented by somebody — the one case a person meets as
- * "pair again" with no reason at all, and the one this app now names.
+ * "pair again" with no reason at all, and the one this app now names. `signedOutElsewhere` is the
+ * refresh door's `refresh_revoked`: this pairing was ended from another device (Devices, sign out
+ * everywhere, a credential change).
  */
-export type SessionDeath = "refused" | "revoked" | "erased";
+export type SessionDeath = "refused" | "revoked" | "signedOutElsewhere" | "erased";
 
 /**
  * Name an attempt. NOT a credential — it authorizes nothing, names no row without the token
@@ -76,11 +78,12 @@ const REUSE_REFUSAL = "refresh token reuse detected";
 
 /**
  * Which death a refusal names. Anything else is the ORDINARY refusal — a guess would be worse
- * than the plain sentence, and this decides only which words a person reads, never whether the
- * session ends.
+ * than the plain sentence, and this decides only which line the log carries, never whether the
+ * session ends or whether the copy goes ({@link REFRESH_REVOKED} decides that, beside an erasure).
  */
-function deathOf(message: string | null): SessionDeath {
-  return message === REUSE_REFUSAL ? "revoked" : "refused";
+function deathOf(answer: { code: string; message: string | null }): SessionDeath {
+  if (answer.message === REUSE_REFUSAL) return "revoked";
+  return answer.code === REFRESH_REVOKED ? "signedOutElsewhere" : "refused";
 }
 
 function mintAttemptId(): string {
@@ -185,6 +188,8 @@ export class BearerManagerRN implements SessionRenewalDoor {
   private settled: SessionDeath | null = null;
   /** The death in progress or settled; `null` for a manager that has not died. */
   private dying: Promise<SessionDeath> | null = null;
+  /** Set by the death before its vault clear and its listeners: {@link removesCopy}. */
+  private copyGoes = false;
 
   constructor(opts: {
     /** `https://host` or plain `http://192.168…` — the door this credential belongs to. */
@@ -224,6 +229,15 @@ export class BearerManagerRN implements SessionRenewalDoor {
   /** How this manager died, or `null` while it lives — set once every listener has heard it. */
   get death(): SessionDeath | null {
     return this.settled;
+  }
+
+  /**
+   * Does this death take the account's copy off the phone? An erasure, and any refusal the server
+   * coded `refresh_revoked` (its reuse sweep included); never a lapse, the legacy code or a sign-out
+   * pressed here. Readable from the moment the death begins.
+   */
+  get removesCopy(): boolean {
+    return this.copyGoes;
   }
 
   /** The death in progress or settled, resolving to its cause; `null` for a manager that has not died. */
@@ -292,7 +306,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
    * death is settled AFTER the listener loop: a listener that subscribed during the clear is
    * told by the loop, one that subscribes afterwards by `onSessionDead`, and nobody twice.
    */
-  private die(why: SessionDeath): Promise<void> {
+  private die(why: SessionDeath, removesCopy: boolean): Promise<void> {
     if (this.access === null && this.refresh === null) {
       return this.dying === null ? Promise.resolve() : this.dying.then(() => undefined);
     }
@@ -300,8 +314,9 @@ export class BearerManagerRN implements SessionRenewalDoor {
     this.accessExpiresAt = null;
     this.refresh = null;
     this.attempt = null;
+    this.copyGoes = removesCopy;
     const dying = (async (): Promise<SessionDeath> => {
-      await this.vault.clear(this.held(), why).catch(() => {
+      await this.vault.clear(this.held(), why, removesCopy).catch(() => {
         /* already gone, or the keystore refused — either way this session is over locally */
       });
       for (const cb of [...this.deadListeners]) cb(why);
@@ -373,13 +388,14 @@ export class BearerManagerRN implements SessionRenewalDoor {
       }
       if (answer.kind === "erased") {
         // The account is gone — only when the server named THIS pairing's account. Else the pair stays.
-        if (answer.account !== null && answer.account === this.accountId) await this.die("erased");
+        if (answer.account !== null && answer.account === this.accountId) await this.die("erased", true);
         return false;
       }
       if (answer.kind === "refused") {
         // The server judged the presented token and said no, by name. Definitive: sign out, and
         // say WHICH no — a family swept for reuse reads apart from a token that merely expired.
-        await this.die(deathOf(answer.message));
+        // A session ended at the server (`refresh_revoked`) takes this account's copy, as the web's does.
+        await this.die(deathOf(answer), answer.code === REFRESH_REVOKED);
         return false;
       }
       // Not the server's verdict: a 503, a sign-in page, a firewall's 403, an unreadable 200. Keep
@@ -451,7 +467,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
    */
   private async heard(res: Response): Promise<Response> {
     if (!(await erasesAccount(res, this.accountId))) return res;
-    await this.die("erased");
+    await this.die("erased", true);
     return sessionEndedResponse();
   }
 
@@ -493,7 +509,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
     const owed = !told && owing !== null && await this.vault.oweSignOut(owing).catch(() => false);
     // "refused", not "revoked": a deliberate sign-out is not a family somebody replayed, and the
     // surface must not tell the person their key was presented twice when they pressed the button.
-    await this.die("refused");
+    await this.die("refused", false);
     return told ? "told" : owed ? "owed" : "untold";
   }
 

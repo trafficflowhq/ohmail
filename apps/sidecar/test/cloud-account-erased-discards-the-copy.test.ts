@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { changeLog, messages } from "@trafficflow/db/mail";
 import type { MessageDTO, SyncChange, SyncResponse } from "@trafficflow/services/mail";
-import { createCloudSidecar, readMirrorErased, MIRROR_OWNER_FILE, type CloudSidecar } from "../src/cloud-engine.js";
+import {
+  createCloudSidecar, enforceMirrorOwner, readMirrorErased, readMirrorRevoked, MIRROR_OWNER_FILE, type CloudSidecar,
+} from "../src/cloud-engine.js";
+import { encodeMirrorRecord } from "../src/cloud-origin.js";
 import { openLocalDb } from "../src/db.js";
 import { windowOutboxFilesOf, windowOutboxOwnerKey } from "../src/window-outbox.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
@@ -82,6 +85,8 @@ afterEach(async () => {
 
 function hostedApi() {
   let erased = false;
+  /** The session revoked at the server (Devices, sign out everywhere): `refresh_revoked`, with the sweep's cause when one. */
+  let revoked: { cause?: "reuse" } | null = null;
   let hold: { arrived: () => void; gate: Promise<void> } | null = null;
   const fetchImpl = (async (input: string | URL | Request): Promise<Response> => {
     const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -94,6 +99,18 @@ function hostedApi() {
       return send(page([created(MSG_TWO, 2)], "c2"));
     }
     if (erased) return erasedAnswer();
+    // A sign-in on this computer is a new session: the account answers again.
+    if (url.pathname === "/auth/login") return send({ status: "twofa_required", loginToken: "lt-1" });
+    if (url.pathname === "/auth/2fa/totp/verify") {
+      revoked = null;
+      return send({ tokens: { accessToken: "a3", refreshToken: "r3" } });
+    }
+    if (url.pathname === "/auth/session") return send({ user: { email: "me@ohmail.test" }, scope: "full" });
+    if (revoked !== null) {
+      return url.pathname === "/auth/refresh"
+        ? send({ error: { code: "refresh_revoked", message: "invalid refresh token", ...(revoked.cause ? { details: { cause: revoked.cause } } : {}) } }, 401)
+        : send({ error: { code: "unauthorized", message: "no session" } }, 401);
+    }
     if (url.pathname === "/mailboxes") return send(mailboxList([hostedMailbox(CLOUD_MAILBOX, "me@ohmail.test")]));
     if (url.pathname === "/sync/snapshot") {
       return send({ asOfSeq: 1, changes: [created(MSG_ONE, 1)], nextCursor: null, window: { days: 90, minRows: 5000 } });
@@ -107,6 +124,7 @@ function hostedApi() {
   return {
     fetchImpl,
     erase: () => { erased = true; },
+    revoke: (cause?: "reuse") => { revoked = cause ? { cause } : {}; },
     holdNextSync: () => {
       let arrived!: () => void;
       let release!: () => void;
@@ -166,14 +184,19 @@ function snapshotTree(dir: string): Record<string, string> {
   return out;
 }
 
-/** What the directory's database holds: message rows, and mailbox-removal receipts. */
+/** What a database holds: message rows, and mailbox-removal receipts. */
+async function countsIn(db: CloudSidecar["db"]): Promise<{ messages: number; receipts: number }> {
+  const m = await db.select({ n: sql<number>`count(*)::int` }).from(messages);
+  const r = await db.select({ n: sql<number>`count(*)::int` }).from(changeLog)
+    .where(and(eq(changeLog.entityType, "mailbox"), eq(changeLog.op, "delete")));
+  return { messages: Number(m[0]!.n), receipts: Number(r[0]!.n) };
+}
+
+/** What the directory's database holds, opened with the engine stopped. */
 async function readStore(dataDir: string): Promise<{ messages: number; receipts: number }> {
   const opened = await openLocalDb(dataDir);
   try {
-    const m = await opened.db.select({ n: sql<number>`count(*)::int` }).from(messages);
-    const r = await opened.db.select({ n: sql<number>`count(*)::int` }).from(changeLog)
-      .where(and(eq(changeLog.entityType, "mailbox"), eq(changeLog.op, "delete")));
-    return { messages: Number(m[0]!.n), receipts: Number(r[0]!.n) };
+    return await countsIn(opened.db);
   } finally {
     await opened.close();
   }
@@ -287,7 +310,7 @@ describe("the paired desktop of an erased account", () => {
     expect(h.accountErased, "a launch after a sign-in and a sign-out showed the deleted-account card").toBe(false);
   });
 
-  it("CONTROL — a coded 401 at the refresh door signs out and keeps the copy", { timeout: 60_000 }, async () => {
+  it("CONTROL — a lapse at the refresh door (refresh_expired) signs out and keeps the copy", { timeout: 60_000 }, async () => {
     const root = mkdtempSync(join(realpathSync(tmpdir()), "ohmail-erased-discard-"));
     roots.push(root);
     const dataDir = join(root, "engine-cloud");
@@ -299,7 +322,7 @@ describe("the paired desktop of an erased account", () => {
       const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (refused) {
         return new URL(raw).pathname === "/auth/refresh"
-          ? send({ error: { code: "refresh_revoked", message: "no" } }, 401)
+          ? send({ error: { code: "refresh_expired", message: "no" } }, 401)
           : send({ error: { code: "unauthorized", message: "no" } }, 401);
       }
       return inner(input, init);
@@ -318,5 +341,125 @@ describe("the paired desktop of an erased account", () => {
     await r.sidecar.stop();
     sidecars.splice(sidecars.indexOf(r.sidecar), 1);
     expect((await readStore(dataDir)).messages, "a sign-out took the mail").toBe(1);
+  });
+});
+
+/**
+ * A SESSION REVOKED AT ITS SERVER LEAVES NO COPY EITHER. Devices → remove, signing out everywhere or a
+ * password or two-step change answers the next renewal `refresh_revoked` (a reuse sweep too): the
+ * mail goes now, with a removal receipt per mailbox, the cursor with it, and the database's files at
+ * the stop — or, after a crash or on a launch after an older build heard it, before the next launch
+ * opens anything, once. The window's changes stay for the account's next sign-in, as Sign out keeps
+ * them, and a sign-in in the same run keeps the database it fills again. Watched red: the revoke
+ * read as a lapse; the files left at the stop; a removal at every launch.
+ */
+describe("the desktop of a session revoked at its server", () => {
+  const recordOf = (dataDir: string): Record<string, unknown> =>
+    JSON.parse(readFileSync(join(dataDir, MIRROR_OWNER_FILE), "utf8")) as Record<string, unknown>;
+  const mirrored = async (r: Rig): Promise<void> => until("the first message mirrored", async () => {
+    const res = await r.sidecar.handle(new Request("http://sidecar/sync?since=0", { headers: r.auth }));
+    return res.ok && (await res.text()).includes(MSG_ONE);
+  });
+  const stopped = async (s: CloudSidecar): Promise<void> => {
+    await s.stop();
+    sidecars.splice(sidecars.indexOf(s), 1);
+  };
+
+  for (const [name, cause] of [["refresh_revoked", undefined], ["a reuse sweep", "reuse"]] as const) {
+    it(`${name}: the mail goes with a drain in flight, the window's changes stay, the files go at the stop`, { timeout: 60_000 }, async () => {
+      const r = await rig();
+      const local = join(r.root, "engine");
+      mkdirSync(join(local, "pgdata"), { recursive: true });
+      writeFileSync(join(local, "pgdata", "PG_VERSION"), "17\n");
+      writeFileSync(join(local, "config.json"), JSON.stringify({ door: "local" }));
+      const localBefore = snapshotTree(local);
+      await mirrored(r);
+      const before = recordOf(r.dataDir);
+      // This account's queued change (`ERASED_FILES[0]` is its file) and another account's files: both stay.
+      const mine = ERASED_FILES[0]!;
+      writeFileSync(join(r.dataDir, mine), JSON.stringify({ v: 1, rows: [{ type: "outbox_entry", id: "k-1", entity: { key: "k-1" } }] }));
+      for (const f of OTHER_FILES) writeFileSync(join(r.dataDir, f), "{}");
+      const held = r.holdNextSync();
+      await held.pending;
+      r.api.revoke(cause);
+      await r.sidecar.handle(new Request("http://sidecar/consent", { headers: r.auth }));
+      await until("/health.sessionExpired", async () => (await r.health()).sessionExpired === true);
+      await new Promise((res) => setTimeout(res, 150));
+      held.release();
+
+      // The sign-in door waits for the whole teardown, the removal in it: a body it cannot read is answered after.
+      const waited = await r.sidecar.handle(new Request("http://sidecar/cloud/signin", { method: "POST", headers: r.auth, body: "{" }));
+      expect(waited.status).toBe(400);
+      expect(readMirrorRevoked(r.dataDir), "the sign-in door answered before the copy was removed").toBe(true);
+      expect(existsSync(join(r.dataDir, "cloud-cursor.json")), "the cursor outlived the mail").toBe(false);
+      expect(await countsIn(r.sidecar.db), "the mail stayed, or no receipt for the window or a paired phone")
+        .toEqual({ messages: 0, receipts: 1 });
+      for (const f of [mine, ...OTHER_FILES]) {
+        expect(existsSync(join(r.dataDir, f)), `${f}: the window's queued changes went with the copy`).toBe(true);
+      }
+      expect(recordOf(r.dataDir), "the address, server and account are kept").toEqual({ ...before, revoked: true });
+      expect(await r.health()).toMatchObject({ restartRequired: false, accountErased: false, signedIn: false, queued: { count: 1 } });
+      writeFileSync(join(r.dataDir, "pgdata", "revoke-probe"), "the old database");
+      await stopped(r.sidecar);
+      expect(existsSync(join(r.dataDir, "pgdata", "revoke-probe")), "the database's files outlived the stop").toBe(false);
+      expect(existsSync(join(r.dataDir, "cloud-cursor.json"))).toBe(false);
+      expect(existsSync(join(r.dataDir, mine)), "the stop took the window's queued change").toBe(true);
+      expect(recordOf(r.dataDir), "the flag outlived the files").toEqual(before);
+      expect(snapshotTree(local), "the local-mode directory beside it was touched").toEqual(localBefore);
+      // The next launch keeps the database it makes: the stop paid what was owed.
+      mkdirSync(join(r.dataDir, "pgdata"), { recursive: true });
+      writeFileSync(join(r.dataDir, "pgdata", "revoke-probe"), "the next launch's database");
+      enforceMirrorOwner(r.dataDir, "me@ohmail.test", "https://cloud.test");
+      expect(existsSync(join(r.dataDir, "pgdata", "revoke-probe")), "the next launch removed its own database").toBe(true);
+    });
+  }
+
+  const refusal = JSON.stringify({ code: "refresh_revoked", since: new Date().toISOString() });
+  for (const [name, left] of [
+    ["a crash after the mail went", { flag: true }],
+    ["an older build that heard the revoke", { flag: false }],
+  ] as const) {
+    it(`${name}: the next launch removes the copy before it opens it, and only once`, { timeout: 90_000 }, async () => {
+      const r = await rig();
+      await mirrored(r);
+      await stopped(r.sidecar);
+      // What that run left: the kept refusal, no seal, the copy on disk, and the flag when the discard ran.
+      rmSync(join(r.dataDir, "cloud-tokens.seal"), { force: true });
+      writeFileSync(join(r.dataDir, "cloud-session-refused.json"), refusal);
+      if (left.flag) {
+        writeFileSync(join(r.dataDir, MIRROR_OWNER_FILE), encodeMirrorRecord("me@ohmail.test", "https://cloud.test", null, false, false, true));
+      }
+      writeFileSync(join(r.dataDir, "pgdata", "revoke-probe"), "the old database");
+
+      const again = await boot(r.root, r.dataDir, hostedApi(), false);
+      expect(existsSync(join(r.dataDir, "pgdata", "revoke-probe")), "the launch opened the copy").toBe(false);
+      expect((await countsIn(again.sidecar.db)).messages).toBe(0);
+      expect(readMirrorRevoked(r.dataDir)).toBe(false);
+      expect((await again.health()).session, "the sign-in no longer says why").toMatchObject({ state: "refused_before", code: "refresh_revoked" });
+      await stopped(again.sidecar);
+
+      writeFileSync(join(r.dataDir, "pgdata", "revoke-probe"), "the database the last launch made");
+      const third = await boot(r.root, r.dataDir, hostedApi(), false);
+      expect(existsSync(join(r.dataDir, "pgdata", "revoke-probe")), "every launch removes the database again").toBe(true);
+      expect((await third.health()).session).toMatchObject({ state: "refused_before", code: "refresh_revoked" });
+    });
+  }
+
+  it("a sign-in in the same run keeps the database it fills again", { timeout: 60_000 }, async () => {
+    const r = await rig();
+    await mirrored(r);
+    r.api.revoke();
+    await r.sidecar.handle(new Request("http://sidecar/consent", { headers: r.auth }));
+    await until("the copy removed", () => readMirrorRevoked(r.dataDir));
+    const signIn = await r.sidecar.handle(new Request("http://sidecar/cloud/signin", {
+      method: "POST", headers: { ...r.auth, "content-type": "application/json" },
+      body: JSON.stringify({ email: "me@ohmail.test", password: "pw", totp: "123456" }),
+    }));
+    expect(signIn.status, await signIn.clone().text()).toBe(200);
+    expect(readMirrorRevoked(r.dataDir), "a new session still owes the removal").toBe(false);
+    await until("the mail pulled again", async () => (await countsIn(r.sidecar.db)).messages > 0);
+    writeFileSync(join(r.dataDir, "pgdata", "revoke-probe"), "this session's database");
+    await stopped(r.sidecar);
+    expect(existsSync(join(r.dataDir, "pgdata", "revoke-probe")), "the stop removed a signed-in session's database").toBe(true);
   });
 });

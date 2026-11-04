@@ -724,6 +724,14 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   cloud_account_erased: "info",
   cloud_account_erased_discarded: "info",
   cloud_account_erased_discard_failed: "error",
+  // The hosted session was REVOKED (`refresh_revoked`: Devices, signing out everywhere, a credential
+  // change), so this computer's copy goes as the erased one's does: `…_discarded` with the mailbox
+  // COUNT, `…_discard_failed` with `err`. The database's files follow at the stop or before the next
+  // launch opens them (`cloud_revoked_copy_removed`); `…_remove_failed` says the next launch does it.
+  cloud_session_revoked_discarded: "info",
+  cloud_session_revoked_discard_failed: "error",
+  cloud_revoked_copy_removed: "info",
+  cloud_revoked_copy_remove_failed: "error",
   cloud_mirror_swept: "info",
   // The account's mailboxes, mirrored ahead of every drain. `cloud_mailboxes_refreshed` is emitted
   // only when the refresh CHANGED the local set, and carries three counts and the reason, never an

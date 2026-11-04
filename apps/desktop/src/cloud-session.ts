@@ -45,6 +45,15 @@ export function signInCauseOf(session: CloudSessionWire | null): SignInCause {
   return null;
 }
 
+/**
+ * DID THE ENGINE REMOVE THIS COMPUTER'S COPY? A session revoked at its server (`refresh_revoked`, a
+ * reuse sweep's included), now or at an earlier run: the engine took the mail out of its store
+ * (`apps/sidecar/src/cloud-engine.ts`), so the window draws none. A lapse keeps the copy.
+ */
+export function copyRemovedBy(session: CloudSessionWire | null): boolean {
+  return (session?.state === "refused" || session?.state === "refused_before") && session.code === "refresh_revoked";
+}
+
 /** The dialog's first sentence for a cause. */
 export function signInLead(cause: SignInCause): string {
   const machine = machineWord();
