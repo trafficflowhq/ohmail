@@ -101,11 +101,17 @@ const NO_COUNTS: ProfileImportCountsWire = { screener: 0, rules: 0, notifyRules:
  */
 function settledPhase(st: ProfileImportStatusWire): ProfileImportPhase | null {
   if (st.state === "imported") {
-    return { kind: "done", applied: { imported: st.imported ?? NO_COUNTS, skippedRules: st.skippedRules ?? 0, seq: null } };
+    return {
+      kind: "done",
+      applied: { imported: st.imported ?? NO_COUNTS, skippedRules: st.skippedRules ?? 0, retiredRules: countOf(st.retiredRules), seq: null },
+    };
   }
   if (st.state === "refused") return { kind: "failed", message: typeof st.message === "string" ? st.message : null };
   return null;
 }
+
+/** A count read leniently: a whole number above 0, else 0. */
+const countOf = (v: unknown): number => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : 0);
 
 /**
  * The same seam the away notice takes ({@link AwayTransport}'s shape, this feature's verbs), for
@@ -238,7 +244,7 @@ function asOffer(dto: unknown): OfferCandidate | null {
   }
   if (typeof counts.awayResponder !== "boolean") return null;
   // A receipt that is no string is not one: the card neither says "replacing" nor sends it back.
-  const { signatureReplaces, ...rest } = counts;
+  const { signatureReplaces, removedRules, ...rest } = counts;
   return {
     state: "found",
     fingerprint: d.fingerprint,
@@ -250,6 +256,7 @@ function asOffer(dto: unknown): OfferCandidate | null {
     counts: {
       ...(rest as unknown as ProfileImportCountsWire),
       ...(typeof signatureReplaces === "string" && signatureReplaces.length > 0 ? { signatureReplaces } : {}),
+      ...(countOf(removedRules) > 0 ? { removedRules: countOf(removedRules) } : {}),
     },
   };
 }
@@ -489,8 +496,8 @@ export function useProfileImport(
 
 /**
  * The counts, in plain words, joined the way the locale joins a list. Zero-count parts vanish. The
- * signature says it replaces this mailbox's when the offer names one, except where `replacing` is
- * false (the Replace note speaks of the copy in the mailbox, not of this one).
+ * signature says it replaces this mailbox's when the offer names one, and the copy's rule removals are
+ * said, except where `replacing` is false (the Replace note speaks of the copy's settings alone).
  */
 function detailsOf(
   t: (key: string, values?: Record<string, string | number | Date>) => string,
@@ -507,6 +514,7 @@ function detailsOf(
   if (counts.signature === true) {
     parts.push(replacing && typeof counts.signatureReplaces === "string" ? t("signatureReplacingPart") : t("signaturePart"));
   }
+  if (replacing && countOf(counts.removedRules) > 0) parts.push(t("removedPart", { count: countOf(counts.removedRules) }));
   if (parts.length === 0) return "";
   try {
     return new Intl.ListFormat(locale, { style: "long", type: "conjunction" }).format(parts);
@@ -557,6 +565,9 @@ export function ProfileImportCard({
             the count of what did NOT arrive is part of an honest confirmation. */}
         {phase.applied.skippedRules > 0
           ? <p className="pfi-note">{t("doneSkipped", { count: phase.applied.skippedRules })}</p>
+          : null}
+        {countOf(phase.applied.retiredRules) > 0
+          ? <p className="pfi-note">{t("doneRetired", { count: countOf(phase.applied.retiredRules) })}</p>
           : null}
         {/* The copy's signature was not taken over the one typed on this mailbox: said, never silent. */}
         {phase.applied.imported.signatureKept === true ? <p className="pfi-note">{t("doneSignatureKept")}</p> : null}
@@ -778,6 +789,7 @@ export function SavedProfileSection({
         const done = [
           imported ? t("doneDetails", { details: imported }) : "",
           phase.kind === "imported" && phase.applied.imported.signatureKept === true ? t("doneSignatureKept") : "",
+          phase.kind === "imported" && countOf(phase.applied.retiredRules) > 0 ? t("doneRetired", { count: countOf(phase.applied.retiredRules) }) : "",
         ].filter((line) => line.length > 0).join(" ");
         const plain = detailsOf(t, locale, counts, false);
         return (

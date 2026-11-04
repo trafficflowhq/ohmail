@@ -18,7 +18,7 @@ import { useWorld } from "../state/world";
 import { publishProfileQuestion } from "../state/seed-offer";
 import { Button, Panel, Txt, useTopPad } from "./base";
 import {
-  IMPORT_STATUS_BEAT_MS, askTickets, askableRows, cardQuestion, countsSaid, failureSaid, importSubject, importingSaid, keptSaid,
+  IMPORT_STATUS_BEAT_MS, askTickets, askableRows, cardQuestion, countsSaid, failureSaid, importSubject, importingSaid, keptSaid, retiredSaid,
   mailboxesToAsk, savedBySaid, savedRows, type CardPhase, type MailboxQuestion,
 } from "./profile-import-card";
 
@@ -136,6 +136,7 @@ export function ProfileImportCard() {
           details: a.imported === null ? "" : countsSaid(a.imported),
           skippedRules: a.skippedRules,
           kept: keptSaid(a.imported),
+          retired: retiredSaid(a.retiredRules),
         });
         set(current.mailboxId, { state: "none" });
         return;
@@ -152,6 +153,7 @@ export function ProfileImportCard() {
     if (a.kind !== "done") return;
     setPhase({
       kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported), skippedRules: a.skippedRules, kept: keptSaid(a.imported),
+      retired: retiredSaid(a.retiredRules),
     });
     if (importingFor !== null) set(importingFor.mailboxId, { state: "none" });
   });
@@ -163,6 +165,7 @@ export function ProfileImportCard() {
         {phase.details ? <Txt variant="note" tone="ink2">{Copy.pfiDoneDetails(phase.details)}</Txt> : null}
         {phase.skippedRules > 0 ? <Txt variant="note" tone="ink2">{Copy.pfiDoneSkipped(phase.skippedRules)}</Txt> : null}
         {phase.kept !== null ? <Txt variant="note" tone="ink2">{phase.kept}</Txt> : null}
+        {phase.retired !== null ? <Txt variant="note" tone="ink2">{phase.retired}</Txt> : null}
         <Button label={Copy.pfiDoneAction} variant="quiet" onPress={() => setPhase({ kind: "asking" })} />
       </Panel>
     );
@@ -212,7 +215,7 @@ type RowPhase =
   | { kind: "busy"; verb: "import" | "save" }
   | { kind: "importing"; fingerprint: string; reason: "slow" | "unreachable" | null }
   | { kind: "failed"; message: string | null }
-  | { kind: "imported"; details: string; kept: string | null }
+  | { kind: "imported"; details: string; kept: string | null; retired: string | null }
   | { kind: "saved" };
 
 /**
@@ -237,7 +240,7 @@ export function SavedSettingsPanel() {
       if (a.kind === "refused") { put({ kind: "failed", message: a.message }); return; }
       if (a.kind === "importing") { put({ kind: "importing", fingerprint: a.fingerprint, reason: a.reason }); return; }
       put(verb === "import"
-        ? { kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported), kept: keptSaid(a.imported) }
+        ? { kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported), kept: keptSaid(a.imported), retired: retiredSaid(a.retiredRules) }
         : { kind: "saved" });
       set(row.mailboxId, { state: "none" });
     });
@@ -251,7 +254,9 @@ export function SavedSettingsPanel() {
     if (a.kind === "refused") { setPhases((prev) => ({ ...prev, [mailboxId]: { kind: "failed", message: a.message } })); return; }
     if (a.kind !== "done") return;
     setPhases((prev) => ({
-      ...prev, [mailboxId]: { kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported), kept: keptSaid(a.imported) },
+      ...prev, [mailboxId]: {
+        kind: "imported", details: a.imported === null ? "" : countsSaid(a.imported), kept: keptSaid(a.imported), retired: retiredSaid(a.retiredRules),
+      },
     }));
     set(mailboxId, { state: "none" });
   });
@@ -282,6 +287,7 @@ export function SavedSettingsPanel() {
                   <Txt variant="note" tone="ink2" accessibilityRole="summary">{Copy.pfiDoneTitle}</Txt>
                   {phase.details ? <Txt variant="note" tone="ink2">{Copy.pfiDoneDetails(phase.details)}</Txt> : null}
                   {phase.kept !== null ? <Txt variant="note" tone="ink2">{phase.kept}</Txt> : null}
+                  {phase.retired !== null ? <Txt variant="note" tone="ink2">{phase.retired}</Txt> : null}
                 </>
               ) : phase.kind === "saved" ? (
                 <Txt variant="note" tone="ink2" accessibilityRole="summary">{Copy.pfiReplacedTitle}</Txt>

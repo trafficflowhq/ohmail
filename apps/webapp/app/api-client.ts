@@ -2341,6 +2341,8 @@ export interface ProfileImportCountsWire {
   signatureReplaces?: string;
   /** A result's: the copy carried a signature, and the different one on this mailbox stayed. */
   signatureKept?: boolean;
+  /** An offer's: the rule removals the copy records, absent when none (or from an older server). */
+  removedRules?: number;
 }
 
 /**
@@ -2394,6 +2396,8 @@ export interface ProfileImportAppliedWire {
   imported: ProfileImportCountsWire;
   /** Document rules the server's own validation refused — imported minus these arrived. */
   skippedRules: number;
+  /** Rules here the copy records as removed there, removed here too; absent from an older server. */
+  retiredRules?: number;
   seq: number | null;
 }
 
@@ -2411,7 +2415,7 @@ export interface ProfileImportPendingWire {
 /** `GET …/profile-import/status` — where a handed-over press stands. Never dials. */
 export type ProfileImportStatusWire =
   | { state: "importing"; fingerprint: string }
-  | { state: "imported"; imported: ProfileImportCountsWire | null; skippedRules: number }
+  | { state: "imported"; imported: ProfileImportCountsWire | null; skippedRules: number; retiredRules?: number }
   | { state: "refused"; reason: string; message: string };
 
 /** The header the import status read carries its fingerprint in (`packages/api`'s route reads it first). */

@@ -145,6 +145,47 @@ export async function profileWritesRecorded(
 }
 
 /**
+ * The newest second this store recorded writing the mailbox's copy at, before `before` (epoch ms), or
+ * null: what a removal made elsewhere must come after to retire a rule this store published since.
+ */
+export async function newestOwnProfileWriteBefore(
+  db: Tx, o: { accountId: string; mailboxId: string; before: number },
+): Promise<number | null> {
+  const rows = await db.select({ payload: auditLog.payload })
+    .from(auditLog)
+    .where(and(
+      eq(auditLog.accountId, o.accountId),
+      eq(auditLog.action, PROFILE_WRITTEN_AUDIT_ACTION),
+      sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
+    ));
+  let newest: number | null = null;
+  for (const r of rows) {
+    const p = r.payload as { second?: unknown; ours?: unknown } | null;
+    if (typeof p?.second !== "number" || !Number.isFinite(p.second) || p.ours === false) continue;
+    const at = p.second * 1000;
+    if (at < o.before && (newest === null || at > newest)) newest = at;
+  }
+  return newest;
+}
+
+/** When this store last applied an Import into the mailbox (epoch ms), or null. */
+export async function newestProfileImport(db: Tx, o: { accountId: string; mailboxId: string }): Promise<number | null> {
+  const [row] = await db.select({ createdAt: auditLog.createdAt })
+    .from(auditLog)
+    .where(and(
+      eq(auditLog.accountId, o.accountId),
+      eq(auditLog.action, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION),
+      sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
+      sql`${auditLog.payload}->>'decision' = 'imported'`,
+    ))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(1);
+  if (row === undefined) return null;
+  const at = new Date(row.createdAt as unknown as string | number | Date).getTime();
+  return Number.isFinite(at) ? at : null;
+}
+
+/**
  * `replaced` is the explicit "save this ohmail's settings to the mailbox": nothing is applied, and
  * the organizer may now overwrite the answered document.
  */
@@ -168,6 +209,8 @@ export interface ProfileFoundMarker {
     screener: number; rules: number; notifyRules: number; tagNames: number; awayResponder: number;
     /** 1 when the document carries a signature; absent on a marker an older organizer wrote. */
     signature?: number;
+    /** The rule removals the document records, present only when above 0. */
+    removedRules?: number;
   };
   /** `found` only: the document's signature's receipt (`signatureReceipt`), when it carries one. */
   signatureReceipt?: string;
@@ -338,7 +381,7 @@ export async function profileImportWriteReleased(
  */
 export async function recordProfileImportResolution(
   db: Tx,
-  o: { accountId: string; mailboxId: string; decision: ProfileImportDecision; result?: ProfileImportResult }
+  o: { accountId: string; mailboxId: string; decision: ProfileImportDecision; result?: ProfileImportResult; at?: Date }
     & ProfileImportSubject,
 ): Promise<void> {
   const decisionMatch = sql`${auditLog.payload}->>'decision' = ${o.decision}`;
@@ -372,6 +415,7 @@ export async function recordProfileImportResolution(
       ...(o.result === undefined ? {} : { result: o.result }),
     },
     inverse: null,
+    ...(o.at === undefined ? {} : { createdAt: o.at }),
   });
 }
 

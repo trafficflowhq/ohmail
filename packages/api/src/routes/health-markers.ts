@@ -882,6 +882,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // address. LOUD: `select().from(messages)` on every read surface and in the ingest's insert. Deploy
   // order migration → API → worker.
   ["messages", "unconfirmed_hold"],
+  // mail 0178_rule_removals — the rules a person removed, published beside the rules in the settings
+  // copy. A new table: deploy order migration → API → worker.
+  ["rule_removals", "rule_key"],
 ] as const;
 
 /**
@@ -1311,7 +1314,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0176_messages_unconfirmed_hold";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0178_rule_removals";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

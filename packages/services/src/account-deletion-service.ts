@@ -43,6 +43,7 @@ import {
   pairingTokens,
   refreshTokens,
   routingDecisions,
+  ruleRemovals,
   rules,
   sessions,
   snippets,
@@ -425,6 +426,8 @@ export async function deleteAccount(
     await drop("away_sender_state", tx.delete(awaySenderState).where(eq(awaySenderState.accountId, accountId)));
     await drop("away_responders", tx.delete(awayResponders).where(eq(awayResponders.accountId, accountId)));
     await drop("rules", tx.delete(rules).where(eq(rules.accountId, accountId)));
+    // The rules the person removed (mail 0178): each row names a rule's key, the person's own words.
+    await drop("rule_removals", tx.delete(ruleRemovals).where(eq(ruleRemovals.accountId, accountId)));
     await drop("graduations", tx.delete(graduations).where(eq(graduations.accountId, accountId)));
     await drop("learning_signals", tx.delete(learningSignals).where(eq(learningSignals.accountId, accountId)));
 

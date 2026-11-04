@@ -4,7 +4,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq, inArray } from "drizzle-orm";
-import { accounts, accountSettings, changeLog, contacts, folderState, mailboxes, messageBodies, messages, rules } from "@trafficflow/db";
+import { accounts, accountSettings, changeLog, contacts, folderState, mailboxes, messageBodies, messages, ruleRemovals, rules } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -221,8 +221,14 @@ describe.skipIf(!AVAILABLE)("the sent-mail seed writes consent and moves nothing
     const review = await buildSeedReview(ctx);
     // Everybody already consented to comes back marked, and comes back UNWRITTEN.
     expect(review.candidates.filter((c) => c.alreadyDecided).length).toBe(before.length);
+    // Ben's rule was removed once; the rule written for him now ends that removal, and nobody else's.
+    for (const match of ["ben@studio.example", "gone@elsewhere.example"]) {
+      await db.insert(ruleRemovals).values({ accountId: ACCOUNT, ruleKey: `["sender","${match}","",""]`, kind: "sender", match, removedAt: NOW });
+    }
 
     const result = await confirmSeed(ctx, review.candidates.map((c) => c.address));
+    expect((await db.select().from(ruleRemovals).where(eq(ruleRemovals.accountId, ACCOUNT))).map((r) => r.match))
+      .toEqual(["gone@elsewhere.example"]);
 
     expect(result.rulesCreated).toBe(1);            // Ben, and nobody else
     expect(result.skipped).toBe(before.length);

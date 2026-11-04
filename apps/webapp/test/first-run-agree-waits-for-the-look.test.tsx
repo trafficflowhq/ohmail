@@ -106,6 +106,12 @@ async function mount(
       if (!b) throw new Error(`no button labelled ${JSON.stringify(label)}`);
       await act(async () => { b.click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
     },
+    /** A choice on the claim question, as a click on its radio. */
+    pick: async (value: "here" | "read") => {
+      const radio = el.querySelector<HTMLInputElement>(`input[type=radio][value=${value}]`);
+      if (!radio) throw new Error(`no ${value} option`);
+      await act(async () => { radio.click(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
+    },
     /** Enter on the step's form — the keyboard's road to the same press. */
     submit: async () => {
       await act(async () => {
@@ -180,6 +186,7 @@ describe("setup waits for the first look before it asks for consent", () => {
     waiting(s);
     await s.read(LIVE);
     expect(s.heading(), "the claim question did not come").toBe(t.elsewhereTitle);
+    await s.pick("here");
     await s.press(t.continue);
     await s.press(t.continue);
     expect(s.heading()).toBe(t.windowTitle);

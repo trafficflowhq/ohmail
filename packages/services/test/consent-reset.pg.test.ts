@@ -4,7 +4,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
-import { accounts, accountSettings, changeLog, contacts, folderState, learningSignals, mailboxes, messages, routingDecisions, rules } from "@trafficflow/db";
+import { accounts, accountSettings, changeLog, contacts, folderState, learningSignals, mailboxes, messages, routingDecisions, ruleRemovals, rules } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -30,6 +30,7 @@ const db = brandDialect(drizzle(client, { schema }), "pg");
 
 const NOW = new Date("2026-08-05T09:00:00.000Z");
 const ACCOUNT = randomUUID();
+const OTHER = randomUUID();
 let mailboxId = "";
 
 const ctx: ServiceContext = {
@@ -96,6 +97,13 @@ describe.skipIf(!AVAILABLE)("resetting screening state keeps every message", () 
       { accountId: ACCOUNT, triggeringActionId: `screener:${randomUUID()}`, kind: "screener", label: "positive" },
       { accountId: ACCOUNT, triggeringActionId: `approval:${randomUUID()}`, kind: "approval", label: "positive" },
     ]);
+    // Removals the person recorded before starting over, and another account's, which stays.
+    await db.insert(accounts).values({ id: OTHER, name: `reset-${OTHER.slice(0, 8)}` });
+    for (const accountId of [ACCOUNT, OTHER]) {
+      await db.insert(ruleRemovals).values({
+        accountId, ruleKey: `["sender","removed@example.com","",""]`, kind: "sender", match: "removed@example.com", removedAt: NOW,
+      });
+    }
 
     before = await folderSnapshot();
   }, 120_000);
@@ -122,6 +130,9 @@ describe.skipIf(!AVAILABLE)("resetting screening state keeps every message", () 
 
     expect(await db.select().from(rules).where(eq(rules.accountId, ACCOUNT))).toHaveLength(0);
     expect(await db.select().from(contacts).where(eq(contacts.accountId, ACCOUNT))).toHaveLength(0);
+    // A start-over is local by nature: no removal is recorded, and none recorded before is left to travel.
+    expect(await db.select().from(ruleRemovals).where(eq(ruleRemovals.accountId, ACCOUNT))).toHaveLength(0);
+    expect(await db.select().from(ruleRemovals).where(eq(ruleRemovals.accountId, OTHER))).toHaveLength(1);
     // The routing AUDIT survives: the reset moves nothing, so why each message sits where it
     // does is still true, and deleting it would erase the explanation for mail that stays put.
     const audit = await db.select().from(routingDecisions).where(eq(routingDecisions.accountId, ACCOUNT));

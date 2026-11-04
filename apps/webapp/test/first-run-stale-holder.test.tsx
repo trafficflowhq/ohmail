@@ -123,7 +123,8 @@ describe("the claim question tells the lease's state", () => {
     expect(s.text()).not.toContain(t.elsewhereLeadStopped);
     expect(s.text()).not.toContain(with_(t.elsewhereChoiceHereStoppedWhy));
     expect(s.text()).not.toContain(t.elsewhereChoiceReadStoppedWhy);
-    expect(s.picked()).toBe("here");
+    // Over a live holder the person picks: nothing is pre-selected.
+    expect(s.picked()).toBeNull();
   });
 
   it("STALE holder: named as stopped, no hand-off promised, reading leaves nobody organizing", async () => {

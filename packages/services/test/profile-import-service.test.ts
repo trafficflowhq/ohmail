@@ -5,8 +5,8 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, accounts, auditLog, awayResponders, changeLog, contacts, eraseOwedMailbox, folderState, mailboxCredentials, mailboxes,
-  mailboxProfileMirror, messages, organizerRequests, profileImportWriteReleased, rules, settleReaderRuleRows, tags,
-  PROFILE_COPY_AUDIT_ACTION, PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, recordProfileCopy,
+  mailboxProfileMirror, messages, organizerRequests, profileImportWriteReleased, readRuleRemovals, recordRuleRemovals, rules, settleReaderRuleRows, tags,
+  PROFILE_COPY_AUDIT_ACTION, PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, recordProfileCopy, recordProfileWrite,
   type Tx,
 } from "@trafficflow/db";
 import {
@@ -1442,14 +1442,31 @@ describe("the screen-outs an import writes reach the mail this organizer held at
   });
 });
 
-describe("a takeover import retires the dead rule rows of a former reader-only install", () => {
-  /** A row this install kept while it only read the mailbox: no copy names it, and it is old. */
+describe("a takeover import retires the rule rows the copy records as removed there", () => {
+  /** A row this install kept: the copy does not name it, and records the person's removal of it there. */
   const DEAD = { kind: "sender", match: "gone@example.com", destination: "INBOX", priority: 0, enabled: true, provenance: "manual" };
   const LONG_AGO = new Date("2026-08-01T00:00:00.000Z");
+  const DOC_AT = new Date("2026-08-10T09:00:00.000Z");
+  const THERE = "someone-elses-install";
   async function dead(w: World, over: Partial<typeof rules.$inferInsert> = {}): Promise<string> {
-    const [row] = await w.db.insert(rules).values({ accountId: w.accountId, ...DEAD, updatedAt: LONG_AGO, ...over }).returning();
+    const [row] = await w.db.insert(rules).values({ accountId: w.accountId, ...DEAD, createdAt: LONG_AGO, updatedAt: LONG_AGO, ...over }).returning();
     return row!.id;
   }
+  /** The copy as the other install wrote it at `at`, recording each named removal (at `at` unless dated). */
+  const doc = (payload: OrganizerProfilePayload = PAYLOAD, o: { at?: Date; removed?: Array<string | { match: string; at: Date }>; applied?: string[] } = {}) => {
+    const at = o.at ?? DOC_AT;
+    return makeProfileDoc(payload, {
+      updatedAt: at, producer: { kind: "local", version: "0.9.3" }, ...(o.applied === undefined ? {} : { applied: o.applied }),
+      removedRules: (o.removed ?? [DEAD.match]).map((r) => typeof r === "string" ? { kind: "sender", match: r, removedAt: at.toISOString(), by: THERE }
+        : { kind: "sender", match: r.match, removedAt: r.at.toISOString(), by: THERE }),
+    });
+  };
+  /** This install's clock moved on: the next press is pressed then. */
+  const later = (w: World, ms: number): Date => {
+    const at = new Date(NOW.getTime() + ms);
+    (w.ctx as { now: () => Date }).now = () => at;
+    return at;
+  };
   const apply = (w: World, d: OrganizerProfileDoc) =>
     inlineApply(w.ctx, w.mailboxId, { fingerprint: profileFingerprint(d) }, { read: foundReader(d).read });
   const stillThere = async (w: World, id: string) => (await w.db.select().from(rules).where(eq(rules.id, id))).length === 1;
@@ -1464,8 +1481,9 @@ describe("a takeover import retires the dead rule rows of a former reader-only i
     accountId: w.accountId, mailboxId, kind: "rule.update", state: "applied", decidedAt, resolvedAt: decidedAt,
     payload: { key: { kind: "sender", match: "Gone@example.com", subjectContains: null, bodyContains: null }, set: { destination: "inbox" } },
   }).returning();
+  const HOUR = 3_600_000;
 
-  it("retires a row no copy names, one delete change each, says how many, and a second apply retires nothing", async () => {
+  it("retires a row the copy records as removed, one delete change each, says how many, and a second apply retires nothing", async () => {
     const w = await world();
     const id = await dead(w);
     const before = (await changeRows(w.db, w.accountId)).length;
@@ -1479,11 +1497,89 @@ describe("a takeover import retires the dead rule rows of a former reader-only i
     expect(again).toMatchObject({ retiredRules: 0, seq: null });
   });
 
+  /* THE ROW. A rule the other install never had is no removal there: kept, whatever the copy leaves out. */
+  it("a row the copy records no removal of stays", async () => {
+    const w = await world();
+    const id = await dead(w);
+    expect((await apply(w, doc(PAYLOAD, { removed: [] }))).retiredRules).toBe(0);
+    expect(await stillThere(w, id)).toBe(true);
+  });
+
+  it("the removals are adopted with the copy's own instant and install, and only where no row is left", async () => {
+    const w = await world();
+    await dead(w);
+    const removedAt = new Date(DOC_AT.getTime() - HOUR);
+    await apply(w, doc(PAYLOAD, { removed: [{ match: DEAD.match, at: removedAt }, "elsewhere@example.com", "anna@example.com"] }));
+    const recorded = (await readRuleRemovals(w.db as unknown as Tx, w.accountId)).map((r) => [r.match, r.removedAt.toISOString(), r.removedBy]);
+    expect(recorded.sort()).toEqual([
+      ["elsewhere@example.com", DOC_AT.toISOString(), THERE], ["gone@example.com", removedAt.toISOString(), THERE],
+    ]);
+  });
+
+  /* A rule the copy brings back is made again here: this store's own removal of its key ends with it. */
+  it("a rule the copy names arrives and ends this store's removal of its key; another key's removal stays", async () => {
+    const w = await world();
+    await (w.db as unknown as Tx).transaction((tx) => recordRuleRemovals(tx as unknown as Tx, w.accountId, [
+      { kind: "sender", match: "Anna@Example.com" }, { kind: "sender", match: "kept@example.com" },
+    ], LONG_AGO));
+    await apply(w, doc(PAYLOAD, { removed: [] }));
+    expect((await w.db.select().from(rules).where(eq(rules.accountId, w.accountId))).some((r) => r.match === "anna@example.com")).toBe(true);
+    expect((await readRuleRemovals(w.db as unknown as Tx, w.accountId)).map((r) => r.match)).toEqual(["kept@example.com"]);
+  });
+
+  it("a removal the copy also names a rule for, dated after the copy or ahead of this clock retires nothing", async () => {
+    const w = await world();
+    const id = await dead(w);
+    const named = doc({ ...PAYLOAD, rules: [...PAYLOAD.rules, DEAD] });
+    expect((await apply(w, named)).retiredRules, "the copy names the key").toBe(0);
+    expect(await stillThere(w, id)).toBe(true);
+    const w2 = await world();
+    const id2 = await dead(w2);
+    expect((await apply(w2, doc(PAYLOAD, { removed: [{ match: DEAD.match, at: new Date(DOC_AT.getTime() + 60_000) }] }))).retiredRules, "after the copy").toBe(0);
+    later(w2, HOUR);
+    const ahead = new Date(NOW.getTime() + 2 * HOUR);
+    expect((await apply(w2, doc({ ...PAYLOAD, tagNames: ["Other"] }, { at: ahead }))).retiredRules, "ahead of this clock").toBe(0);
+    expect(await stillThere(w2, id2)).toBe(true);
+  });
+
   it("a document that skipped a rule retires nothing", async () => {
     const w = await world();
     const id = await dead(w);
     const d = doc({ ...PAYLOAD, rules: [...PAYLOAD.rules, { kind: "sender", match: "past@example.com", destination: "ohmail/News", priority: 1001, enabled: true, provenance: "manual" }] });
     expect((await apply(w, d)).retiredRules).toBe(0);
+    expect(await stillThere(w, id)).toBe(true);
+  });
+
+  /* A copy naming no rule retires as any other: the person may have removed every one there. */
+  it("a document that names no rule retires the row", async () => {
+    const w = await world();
+    const id = await dead(w);
+    expect((await apply(w, doc({ ...PAYLOAD, rules: [] }))).retiredRules).toBe(1);
+    expect(await stillThere(w, id)).toBe(false);
+  });
+
+  /* So does a store that wrote this mailbox's copy before the removal: a rule the person removed on the install that
+     organized since stays removed when this one takes the mailbox back. */
+  it("a store that wrote this mailbox's copy before the removal retires the row; one written since keeps it", async () => {
+    const w = await world();
+    const id = await dead(w);
+    const own = (at: Date) => recordProfileWrite(w.db as unknown as Tx, {
+      accountId: w.accountId, mailboxId: w.mailboxId, installId: "local:here", second: Math.floor(at.getTime() / 1000), version: "0.30.31",
+    });
+    await own(new Date(DOC_AT.getTime() - 2 * HOUR));
+    expect((await apply(w, doc(PAYLOAD, { removed: [{ match: DEAD.match, at: new Date(DOC_AT.getTime() - 3 * HOUR) }] }))).retiredRules, "published here since").toBe(0);
+    expect(await stillThere(w, id)).toBe(true);
+    const at = later(w, HOUR);
+    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Other"] }, { at }))).retiredRules, "removed there after that").toBe(1);
+    expect(await stillThere(w, id)).toBe(false);
+  });
+
+  it("a removal older than this store's earlier Import keeps the row", async () => {
+    const w = await world();
+    const id = await dead(w);
+    await apply(w, doc({ ...PAYLOAD, tagNames: ["Other"] }, { removed: [] }));
+    later(w, HOUR);
+    expect((await apply(w, doc())).retiredRules).toBe(0);
     expect(await stillThere(w, id)).toBe(true);
   });
 
@@ -1500,10 +1596,12 @@ describe("a takeover import retires the dead rule rows of a former reader-only i
     const kept = await otherMailbox(w, "organizer");
     expect((await apply(w, doc())).retiredRules).toBe(0);
     await w.db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, kept));
-    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Other"] }))).retiredRules).toBe(0);
+    let at = later(w, HOUR);
+    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Other"] }, { at }))).retiredRules).toBe(0);
     expect(await stillThere(w, id)).toBe(true);
     await w.db.update(mailboxes).set({ organizerRole: "reader" }).where(eq(mailboxes.id, kept));
-    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Third"] }))).retiredRules, "a removed READ mailbox reads no copy").toBe(1);
+    at = later(w, 2 * HOUR);
+    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Third"] }, { at }))).retiredRules, "a removed READ mailbox reads no copy").toBe(1);
   });
 
   it("an Import after Not now on this document retires nothing: the rows organized here since", async () => {
@@ -1522,16 +1620,19 @@ describe("a takeover import retires the dead rule rows of a former reader-only i
     const read = await otherMailbox(w, "reader");
     expect((await apply(w, doc())).retiredRules, "a read mailbox with no copy").toBe(0);
     await w.db.insert(mailboxProfileMirror).values({ mailboxId: read, accountId: w.accountId, readAt: NOW, doc: { rules: [{ ...DEAD, match: "GONE@example.com" }] } });
-    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Other"] }))).retiredRules, "a copy naming the key").toBe(0);
+    let at = later(w, HOUR);
+    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Other"] }, { at }))).retiredRules, "a copy naming the key").toBe(0);
     expect(await stillThere(w, id)).toBe(true);
     await w.db.update(mailboxProfileMirror).set({ doc: { rules: [] } }).where(eq(mailboxProfileMirror.mailboxId, read));
-    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Third"] }))).retiredRules).toBe(1);
+    at = later(w, 2 * HOUR);
+    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Third"] }, { at }))).retiredRules).toBe(1);
   });
 
-  it("a row written, settled or pressed to create within the margin before the document stays", async () => {
+  it("a row written, made, settled or pressed to create within the margin before the removal stays", async () => {
     const w = await world();
-    const at = new Date(Date.parse(doc().updatedAt) - 4 * 60_000);
+    const at = new Date(DOC_AT.getTime() - 4 * 60_000);
     const written = await dead(w, { updatedAt: at });
+    const made = await dead(w, { match: "made@example.com", createdAt: at });
     const create = (match: string, state: string, decidedAt: Date) => w.db.insert(organizerRequests).values({
       accountId: w.accountId, mailboxId: w.mailboxId, kind: "rule.create", state, decidedAt,
       payload: { key: { kind: "sender", match, subjectContains: null, bodyContains: null }, destination: "inbox" },
@@ -1541,12 +1642,13 @@ describe("a takeover import retires the dead rule rows of a former reader-only i
     const [press] = await create("Settled@example.com", "applied", at);
     expect(await (w.db as unknown as Tx).transaction((tx) => settleReaderRuleRows(tx as unknown as Tx, w.accountId, press!)))
       .toEqual({ settled: true, lastSeq: null });
-    // A create pressed since the document, still on its way.
+    // A create pressed since the removal, still on its way.
     const asked = await dead(w, { match: "asked@example.com" });
     await create("asked@example.com", "pending", NOW);
-    const old = await dead(w, { match: "old@example.com", updatedAt: new Date(Date.parse(doc().updatedAt) - 6 * 60_000) });
-    expect((await apply(w, doc())).retiredRules).toBe(1);
-    expect(await Promise.all([written, settled, asked, old].map((id) => stillThere(w, id)))).toEqual([true, true, true, false]);
+    const old = await dead(w, { match: "old@example.com", updatedAt: new Date(DOC_AT.getTime() - 6 * 60_000) });
+    const removed = [DEAD.match, "made@example.com", "settled@example.com", "asked@example.com", "old@example.com"];
+    expect((await apply(w, doc(PAYLOAD, { removed }))).retiredRules).toBe(1);
+    expect(await Promise.all([written, made, settled, asked, old].map((id) => stillThere(w, id)))).toEqual([true, true, true, true, false]);
   });
 
   it("an applied press under the key keeps the row, unless it went to this mailbox and the copy names it", async () => {
@@ -1556,13 +1658,12 @@ describe("a takeover import retires the dead rule rows of a former reader-only i
     await w.db.insert(mailboxProfileMirror).values({ mailboxId: other, accountId: w.accountId, readAt: NOW, doc: { rules: [] } });
     const [toOther] = await appliedPress(w, other);
     expect((await apply(w, doc())).retiredRules, "a press to another mailbox").toBe(0);
-    await w.db.update(organizerRequests).set({ decidedAt: new Date(NOW.getTime() - 25 * 3_600_000) }).where(eq(organizerRequests.id, toOther!.id));
+    await w.db.update(organizerRequests).set({ decidedAt: new Date(NOW.getTime() - 25 * HOUR) }).where(eq(organizerRequests.id, toOther!.id));
     const [here] = await appliedPress(w, w.mailboxId);
-    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Other"] }))).retiredRules, "a press the copy does not name").toBe(0);
+    let at = later(w, HOUR);
+    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Other"] }, { at }))).retiredRules, "a press the copy does not name").toBe(0);
     expect(await stillThere(w, id)).toBe(true);
-    const named = makeProfileDoc({ ...PAYLOAD, tagNames: ["Third"] }, {
-      updatedAt: new Date("2026-08-10T09:00:00.000Z"), producer: { kind: "local", version: "0.9.3" }, applied: [here!.id],
-    });
-    expect((await apply(w, named)).retiredRules).toBe(1);
+    at = later(w, 2 * HOUR);
+    expect((await apply(w, doc({ ...PAYLOAD, tagNames: ["Third"] }, { at, applied: [here!.id] }))).retiredRules).toBe(1);
   });
 });

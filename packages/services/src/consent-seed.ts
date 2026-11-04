@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import {
-  accountSettings, contacts, mailboxes, mailboxProfileMirror, messageBodies, messages,
+  accountSettings, clearRuleRemovals, contacts, mailboxes, mailboxProfileMirror, messageBodies, messages,
   lockAccountRuleKeys, recordChanges, recordRuleDelta, ruleMatchKeySql, rules, PROFILE_SIGNATURE_MAX,
   TRAVELLING_SIGNATURE_HTML_MAX_BYTES, type LedgerTx, type OrganizedBy, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
@@ -612,6 +612,8 @@ export async function confirmSeed(
         releaseHeldAt: releaseAt,
         retroRequestedAt: releaseAt,
       }))).returning({ id: rules.id });
+      // Each rule made again under its key ends the key's recorded removal.
+      await clearRuleRemovals(bridgeTx(tx), ctx.accountId, part.map((c) => ({ kind: "sender", match: c.address })));
       const seqs = await recordRuleDelta(tx, ctx.accountId, rows.map((r) => r.id), "create");
       lastSeq = seqs[seqs.length - 1] ?? lastSeq;
     }

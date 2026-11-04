@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { makeTestDb } from "../src/testing.js";
 import { applyRuleRequest, validateRulePayload, type ValidatedRuleRequest } from "../src/request-apply.js";
 import { accounts, changeLog, rules } from "../src/schema-mail.js";
+import { RULE_REMOVAL_KEY_MAX_BYTES, readRuleRemovals, recordRuleRemovals } from "../src/rule-removals.js";
+import { writeRuleUnderKey } from "../src/rule-key.js";
 import type { LedgerTx, Tx } from "../src/change-log.js";
 
 /**
@@ -35,7 +37,8 @@ async function world(seeds: Seed[]) {
   const deltas = async (op: string) => (await db.select({ id: changeLog.entityId }).from(changeLog)
     .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityType, "rule"), eq(changeLog.op, op))))
     .map((r) => r.id).sort();
-  return { ids, apply, left, deltas };
+  const removed = async () => (await readRuleRemovals(db as unknown as Tx, accountId)).map((r) => [r.match, r.removedAt.toISOString(), r.removedBy]);
+  return { db, accountId, ids, apply, left, deltas, removed };
 }
 
 const req = (kind: string, match: string, extra: Record<string, unknown> = {}) =>
@@ -76,6 +79,7 @@ describe("two rows under one key act as the sender's one rule", () => {
     expect(res).toMatchObject({ applied: true, op: "delete" });
     expect(await w.left()).toEqual([]);
     expect(await w.deltas("delete")).toEqual([...w.ids].sort());
+    expect(await w.removed(), "the person's removal, at the press's instant").toEqual([["ann@shop.example", NOW.toISOString(), null]]);
   });
 
   it("an update edits the twin the router runs (the higher priority, not the oldest) and collapses the other", async () => {
@@ -88,6 +92,7 @@ describe("two rows under one key act as the sender's one rule", () => {
     expect(await w.left()).toEqual([{ id: w.ids[1], destination: "ohmail/Receipts" }]);
     expect(await w.deltas("delete")).toEqual([w.ids[0]]);
     expect(await w.deltas("update")).toEqual([w.ids[1]]);
+    expect(await w.removed(), "a collapsed twin is no rule removed").toEqual([]);
   });
 
   it("a create on an existing key reconciles the acting twin and collapses the rest", async () => {
@@ -112,5 +117,57 @@ describe("two rows under one key act as the sender's one rule", () => {
     await w.apply(req("rule.update", "ann@shop.example", { set: { destination: "receipts" } }));
     expect(await w.left()).toEqual([{ id: w.ids[0], destination: "ohmail/Receipts" }]);
     expect(await w.deltas("delete")).toEqual([]);
+  });
+});
+
+describe("a removal is recorded under a key the store's btree can hold", () => {
+  it("a key past its byte bound goes unrecorded, and one at the bound is recorded", async () => {
+    const db = await makeTestDb();
+    const accountId = randomUUID();
+    await db.insert(accounts).values({ id: accountId, name: `rrb-${accountId.slice(0, 8)}` });
+    // ["sender","<match>","",""] is 19 bytes around the match; "é" is two.
+    const fits = `${"é".repeat((RULE_REMOVAL_KEY_MAX_BYTES - 20) / 2)}a`;
+    await (db as unknown as Tx).transaction((tx) => recordRuleRemovals(tx as unknown as Tx, accountId, [
+      { kind: "sender", match: fits }, { kind: "sender", match: `${fits}x` },
+    ], NOW));
+    expect((await readRuleRemovals(db as unknown as Tx, accountId)).map((r) => r.match)).toEqual([fits]);
+  });
+});
+
+/* A RULE MADE AGAIN UNDER ITS KEY ENDS THE KEY'S REMOVAL. Kept, the removal would travel again once the rule
+   left by a door that records nothing, and an Import elsewhere would retire the rule the person made again. */
+describe("a rule made again under its key ends the key's recorded removal", () => {
+  /** Removals of ann and bob here an hour ago, and of ann on another account; reads that account's. */
+  async function removedBefore(w: Awaited<ReturnType<typeof world>>): Promise<() => Promise<string[]>> {
+    const earlier = new Date(NOW.getTime() - 60 * 60 * 1000);
+    const other = randomUUID();
+    await w.db.insert(accounts).values({ id: other, name: `rrm-${other.slice(0, 8)}` });
+    await (w.db as unknown as Tx).transaction(async (tx) => {
+      await recordRuleRemovals(tx as unknown as Tx, w.accountId, [
+        { kind: "sender", match: "ann@shop.example" }, { kind: "sender", match: "bob@shop.example" },
+      ], earlier);
+      await recordRuleRemovals(tx as unknown as Tx, other, [{ kind: "sender", match: "ann@shop.example" }], earlier);
+    });
+    return async () => (await readRuleRemovals(w.db as unknown as Tx, other)).map((r) => r.match);
+  }
+
+  it("a create applied under the key, in another spelling, clears it; another key's and another account's stay", async () => {
+    const w = await world([]);
+    const otherAccount = await removedBefore(w);
+    expect(await w.apply(req("rule.create", " Ann@Shop.example", { destination: "receipts" }))).toMatchObject({ applied: true, op: "create" });
+    expect((await w.removed()).map(([match]) => match)).toEqual(["bob@shop.example"]);
+    expect(await otherAccount()).toEqual(["ann@shop.example"]);
+  });
+
+  it("so does the insert of the writer for a door that names a sender (a Screener decision, a promotion)", async () => {
+    const w = await world([]);
+    await removedBefore(w);
+    const out = await (w.db as unknown as Tx).transaction((tx) => writeRuleUnderKey(tx as unknown as Tx, {
+      accountId: w.accountId, now: NOW, overExisting: "converge",
+      key: { kind: "sender", match: "ann@shop.example", subjectContains: null, bodyContains: null },
+      diff: () => ({}), insert: { destination: "INBOX", provenance: "promoted", enabled: true, retroRequestedAt: null },
+    }));
+    expect(out.op).toBe("create");
+    expect((await w.removed()).map(([match]) => match)).toEqual(["bob@shop.example"]);
   });
 });
