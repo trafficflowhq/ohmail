@@ -389,6 +389,11 @@ export interface SseConfig {
    * behaviour and every existing test; the hosted API turns it OFF unless `TF_SSE=1`.
    */
   enabled?: boolean;
+  /**
+   * `false`: this host bills every wall-clock second a request is in flight, so `GET /events` holds
+   * nothing and answers 204 at once; clients poll `GET /sync`. Absent means `true`.
+   */
+  holds?: boolean;
   /** Max concurrent streams per ACCOUNT (429 beyond it). A human has a few tabs, not fifty. */
   maxPerAccount?: number;
   /** Max concurrent streams in ONE warm instance — the per-instance backstop (503 beyond it). */

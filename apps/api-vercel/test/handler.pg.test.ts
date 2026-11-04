@@ -564,7 +564,7 @@ describe.skipIf(!PG_UP)("apps/api-vercel — the retired webhook door, and the c
 describe("every answer keeps its instance awake past the pool's idle close", () => {
   const REQUEST_CONTEXT = Symbol.for("@vercel/request-context");
   const IDLE_MS = POOLED_IDLE_TIMEOUT_S * 1000;
-  let holds: Array<{ settled: boolean }> = [];
+  let holds: Array<{ settled: boolean; from: number; to: number | null }> = [];
   beforeEach(() => {
     install(envFor());
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -572,13 +572,34 @@ describe("every answer keeps its instance awake past the pool's idle close", () 
     (globalThis as Record<symbol, unknown>)[REQUEST_CONTEXT] = {
       get: () => ({
         waitUntil: (p: Promise<unknown>) => {
-          const hold = { settled: false };
+          const hold = { settled: false, from: Date.now(), to: null as number | null };
           holds.push(hold);
-          void p.then(() => { hold.settled = true; });
+          void p.then(() => { hold.settled = true; hold.to = Date.now(); });
         },
       }),
     };
   });
+  /** Wall-clock time any hold was in flight: what the platform bills the instance's memory for. */
+  const heldMs = (): number => {
+    let total = 0;
+    let reach = -Infinity;
+    for (const h of [...holds].sort((a, b) => a.from - b.from)) {
+      const to = h.to ?? Date.now();
+      if (to > reach) total += to - Math.max(h.from, reach);
+      reach = Math.max(reach, to);
+    }
+    return total;
+  };
+  const HOUR_MS = 3_600_000;
+  /** Answer at each offset (ms into the hour, ascending), then let the last hold end. */
+  const answerAt = async (offsets: number[]): Promise<void> => {
+    const start = Date.now();
+    for (const offset of offsets) {
+      await vi.advanceTimersByTimeAsync(start + offset - Date.now());
+      await (await handleApiRequest(at("/apiary"))).text();
+    }
+    await vi.advanceTimersByTimeAsync(start + HOUR_MS - Date.now() + QUIET_HOLD_MS);
+  };
   afterEach(() => {
     vi.useRealTimers();
     delete (globalThis as Record<symbol, unknown>)[REQUEST_CONTEXT];
@@ -636,7 +657,22 @@ describe("every answer keeps its instance awake past the pool's idle close", () 
   });
 
   it("the hold outlasts the idle close and fits after a whole /events stream", () => {
-    expect(QUIET_HOLD_MS).toBeGreaterThanOrEqual((POOLED_IDLE_TIMEOUT_S + 1) * 1000);
+    expect(QUIET_HOLD_MS).toBeGreaterThan(IDLE_MS);
     expect(QUIET_HOLD_MS).toBeLessThanOrEqual(EVENTS_MAX_DURATION_S * 1000 - PROD_SSE_LIFETIME_MS - 5_000);
+  });
+
+  it("an answer every 8 s (a visible tab's or a phone's /sync) holds the instance under a fifth of the hour", async () => {
+    await answerAt(Array.from({ length: HOUR_MS / 8_000 }, (_, i) => i * 8_000));
+    expect(holds).toHaveLength(450);
+    expect(heldMs() / HOUR_MS).toBeLessThanOrEqual(0.2);
+  });
+
+  it("the worker's clock with no users (a poke every 20 s, two passes per 5 min, the 2-minute alert cron)", async () => {
+    const offsets = new Set<number>();
+    for (let t = 0; t < HOUR_MS; t += 20_000) offsets.add(t);
+    for (let t = 0; t < HOUR_MS; t += 300_000) { offsets.add(t + 7_000); offsets.add(t + 157_000); }
+    for (let t = 0; t < HOUR_MS; t += 120_000) offsets.add(t + 1_000);
+    await answerAt([...offsets].sort((a, b) => a - b));
+    expect(heldMs() / HOUR_MS).toBeLessThanOrEqual(0.12);
   });
 });

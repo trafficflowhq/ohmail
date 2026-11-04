@@ -4,7 +4,7 @@ import { changeLog, sessions } from "@trafficflow/db";
 import type { Db } from "@trafficflow/services/mail";
 import { DEFAULT_SSE } from "../deps.js";
 import { errorResponse } from "../responses.js";
-import { sseDisabledResponse } from "./sse-disabled.js";
+import { sseDisabledResponse, streamNotHeldResponse } from "./sse-disabled.js";
 import type { Route } from "../router.js";
 import { accessFor } from "./shared.js";
 
@@ -102,8 +102,9 @@ export function sseLiveCounts(): { total: number; byAccount: Record<string, numb
  * Lossy by design. Ends at a bounded lifetime, or at the first read that finds its session revoked
  * or its account refused by the entitlements port. Push: `deps.changeWake`, one session-mode LISTEN
  * per instance; poll: always, the floor (a dead LISTEN costs latency only). `sse.enabled === false`
- * ⇒ 503 `sse_disabled`; `maxPerAccount` 429, `maxPerInstance` 503; at the account cap a dial supersedes
- * a session's own earlier stream (`superseded`). One serialized, caught poll loop.
+ * ⇒ 503 `sse_disabled`; `sse.holds === false` ⇒ 204, no slot, hub or poll; `maxPerAccount` 429,
+ * `maxPerInstance` 503; at the account cap a dial supersedes a session's own earlier stream
+ * (`superseded`). One serialized, caught poll loop.
  */
 
 /**
@@ -131,6 +132,7 @@ export const eventsRoutes: Route[] = [
       const enc = new TextEncoder();
 
       if (cfg.enabled === false) return sseDisabledResponse();
+      if (cfg.holds === false) return streamNotHeldResponse();
       const raw = new URL(req.url).searchParams.get("stream");
       const name = raw !== null && STREAM_NAME.test(raw) ? raw : null;
       // The client left the stream it names, whether or not this host heard it go.
