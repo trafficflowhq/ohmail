@@ -102,6 +102,37 @@ export function cloudWakeStream(
   return () => new EventSource(url);
 }
 
+/**
+ * The push wake on the web: the service worker posts `{type: "ohmail:wake"}` to this app's windows
+ * when a push arrives (`public/sw.js`), and the scheduler drains on it. A subscribe function, or
+ * `null` on the desktop build, with no API base, or where there is no full service worker
+ * container. Best effort: a container that fails to subscribe is a no-op, never a throw.
+ */
+export function cloudPushWakes(
+  env: EngineEnv = BUILD_ENV,
+  container: Partial<Pick<ServiceWorkerContainer, "addEventListener" | "removeEventListener" | "startMessages">> | null =
+    typeof navigator === "undefined" ? null : navigator.serviceWorker ?? null,
+): ((onWake: () => void) => () => void) | null {
+  if (syncsWhileHidden(env) || !env.NEXT_PUBLIC_API_BASE || container === null) return null;
+  if (typeof container.addEventListener !== "function" || typeof container.removeEventListener !== "function") return null;
+  const sw = container as Pick<ServiceWorkerContainer, "addEventListener" | "removeEventListener" | "startMessages">;
+  return (onWake) => {
+    const onMessage = (event: Event): void => {
+      if ((event as MessageEvent).data?.type === "ohmail:wake") onWake();
+    };
+    try {
+      sw.addEventListener("message", onMessage);
+      // A listener added this way hears nothing until the queue is started.
+      sw.startMessages?.();
+    } catch {
+      // A push that cannot be heard leaves the tab on its poll.
+    }
+    return () => {
+      try { sw.removeEventListener("message", onMessage); } catch { /* already gone */ }
+    };
+  };
+}
+
 function wakeStreamName(): string | null {
   try {
     return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");

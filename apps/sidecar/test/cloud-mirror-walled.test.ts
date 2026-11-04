@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";
-import { createCloudMirror, RECONNECT_BASE_MS, WALLED_POLL_MS, type CloudMirror } from "../src/cloud-mirror.js";
+import { createCloudMirror, DEFAULT_CLOUD_POLL_MS, RECONNECT_BASE_MS, WALLED_POLL_MS, type CloudMirror } from "../src/cloud-mirror.js";
 import { builtAnswer, type CloudAuth } from "../src/cloud-auth.js";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
@@ -104,7 +104,7 @@ afterEach(async () => {
   await tearDown({ stop: [sidecars, mirrors], close: opens, remove: dirs });
 });
 
-async function standUp(pollIntervalMs: number) {
+async function standUp(pollIntervalMs: number | undefined, wakeLive?: () => boolean) {
   const dataDir = await freshDataDir("ohmail-mirror-walled-");
   dirs.push(dataDir);
   const opened = await openLocalDb(dataDir);
@@ -114,7 +114,8 @@ async function standUp(pollIntervalMs: number) {
   let served = 0;
   const mirror = createCloudMirror({
     db: opened.db, world, auth: cloud.auth, cursorPath: join(dataDir, "cloud-cursor.json"),
-    pollIntervalMs, onServed: () => { served += 1; },
+    ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {}), ...(wakeLive ? { wakeLive } : {}),
+    onServed: () => { served += 1; },
   });
   mirrors.push(mirror);
   return { mirror, cloud, served: (): number => served };
@@ -401,4 +402,43 @@ describe("the proxy's probe asks the mirror's question: only Cloud's own answer 
     expect(await served.d.move("k-2"), "the next move was not forwarded").toEqual({ status: 200, code: null });
     expect(served.cloud.moves()).toBe(1);
   }, 30_000);
+});
+
+describe("with no live wake stream the poll follows the window, not a fixed 20 s", () => {
+  /* The monotonic clock too: the person's request is measured against the last pull on it. */
+  const monotonicClock = (): void => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] }); };
+  const HOUR_MS = 3_600_000;
+
+  it("an idle hour asks at most 70 times, settling on a minute apart (a fixed 20 s asked 180)", async () => {
+    const t = await standUp(undefined);
+    monotonicClock();
+    void t.mirror.start();
+    await advance(HOUR_MS, 1_000);
+    expect(t.cloud.asked.length).toBeLessThanOrEqual(70);
+    within(gaps(t.cloud.asked).at(-1), 60_000, 2_000, "the idle poll did not settle on a minute");
+  }, 60_000);
+
+  it("a person's request after a quiet spell asks within a second, and the next pull is 8 s later", async () => {
+    const t = await standUp(undefined);
+    monotonicClock();
+    void t.mirror.start();
+    await advance(5 * 60_000, 1_000);
+    const before = t.cloud.asked.length;
+    t.mirror.personSeen();
+    await advance(1_000, 50);
+    expect(t.cloud.asked.length, "the window's request did not ask Cloud").toBe(before + 1);
+    await advance(10_000, 250);
+    expect(t.cloud.asked.length).toBe(before + 2);
+    within(gaps(t.cloud.asked).at(-1), 8_000, 1_000, "the pull after a person's request was not 8 s later");
+  }, 60_000);
+
+  it("CONTROL: a live wake keeps the 20 s poll, and a person's request does not speed it up", async () => {
+    const t = await standUp(undefined, () => true);
+    monotonicClock();
+    void t.mirror.start();
+    await advance(2 * 60_000, 500);
+    t.mirror.personSeen();
+    await advance(60_000, 500);
+    for (const gap of gaps(t.cloud.asked)) within(gap, DEFAULT_CLOUD_POLL_MS, 1_000, "a live wake's poll left 20 s");
+  }, 60_000);
 });

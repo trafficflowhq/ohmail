@@ -116,6 +116,33 @@ describe("startCloudWake", () => {
     wake.stop();
   });
 
+  it("a 204 (a host that holds no stream) is one dial, then off, and never live", async () => {
+    let dials = 0;
+    const wake = startCloudWake({
+      auth: { authedFetch: async () => { dials += 1; return new Response(null, { status: 204 }); } },
+      onWake: () => {},
+    });
+    await flush();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(dials).toBe(1);
+    expect(wake.live()).toBe(false);
+    wake.stop();
+  });
+
+  it("live() is true while a stream is open, and false once it ends", async () => {
+    const body = sseBody();
+    const wake = startCloudWake({
+      auth: { authedFetch: async () => new Response(body.stream, { status: 200 }) },
+      onWake: () => {},
+    });
+    await flush();
+    expect(wake.live()).toBe(true);
+    body.end();
+    await flush();
+    expect(wake.live()).toBe(false);
+    wake.stop();
+  });
+
   it("a 429 means LATER, not never: the throttled dial repeats on a slow cadence and connects", async () => {
     // MEASURED LIVE on a fresh install: the launch bootstrap's own /sync paging tripped the
     // rate limiter over the /events dial beside it, and the permanent-off doctrine turned one

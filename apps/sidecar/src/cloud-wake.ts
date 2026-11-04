@@ -47,6 +47,8 @@ export interface CloudWake {
    * admission, so a still-refused account parks again. A no-op on any other state.
    */
   rearm(): void;
+  /** Is a stream open right now? While it is, the mirror's poll is only the safety floor. */
+  live(): boolean;
 }
 
 /**
@@ -116,6 +118,8 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
   /** A 402 episode is open: the wall is said once, and the next 200 is said again. */
   let wallEpisode = false;
   let lastWalledDial = Number.NEGATIVE_INFINITY;
+  /** A stream answered 200 and has not ended. */
+  let open = false;
   /**
    * Aborts the held request on `stop()`. Without it a stop would leave the reader parked on a
    * `read()` that resolves only when the server next says something — a quit waiting on a
@@ -262,14 +266,17 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
     }
     const openedAt = performance.now();             // monotonic, as the walled redial floor below
     let frames = 0;
+    open = true;
     try {
       await readEvents(res.body, () => { frames += 1; wake(); }, honourRetry, () => stopped);
       // A clean end: the server cycles streams on a fixed lifetime by design. The first pull
       // after reconnecting is NOT forced: the poll bounds the loss, and a forced pull per cycle
       // would be a scheduled cost, which is the poll's job, not the stream's.
+      open = false;
       afterStream(openedAt, frames);
     } catch {
       // The stream died mid-read (or the abort on stop, which `scheduleReconnect` refuses).
+      open = false;
       afterStream(openedAt, frames);
     }
   };
@@ -277,6 +284,7 @@ export function startCloudWake(cfg: CloudWakeConfig): CloudWake {
   void connect();
 
   return {
+    live: () => open && !stopped,
     rearm() {
       if (stopped || !walled) return;
       const now = performance.now();
