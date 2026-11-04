@@ -16,6 +16,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { resumeOnceKey } from "../app/(product)/resume/ResumeScreen.js";
 import { shareSignedOutNote } from "../app/(product)/resume/signed-out-note.js";
+import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -23,7 +24,9 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), push: vi.fn() }) }));
+// One router, as Next's: a new one each render re-ran /login's session check on every keystroke.
+const router = { replace: vi.fn(), push: vi.fn() };
+vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
 const ONCE_KEY = resumeOnceKey("acct_A");
 const NOTE_KEY = "ohmail.signed-out-reason";
@@ -101,6 +104,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await unmount();
+  (await import("../app/revoked-door.js")).resetRevokedDoorForTests();
   globalThis.fetch = priorFetch;
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
   document.cookie = "tf_signed_out=; Path=/; Max-Age=0";
@@ -129,7 +133,7 @@ async function tick(ms: number): Promise<void> {
   }
 }
 
-async function mountResume(owner = "acct_A"): Promise<HTMLElement> {
+async function mountResume(owner: string | null = "acct_A"): Promise<HTMLElement> {
   const { ResumeScreen } = await import("../app/(product)/resume/ResumeScreen.js");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -140,7 +144,14 @@ async function mountResume(owner = "acct_A"): Promise<HTMLElement> {
     }));
   });
   await flush();
+  await wipesEnded([await import("../app/revoked-door.js")]);
   return host;
+}
+
+/** A revoke's wipe of this browser's copy is real I/O, and the splash leaves after it. */
+async function wipesEnded(doors: Array<{ revokedWipeSettled: () => Promise<void> }>): Promise<void> {
+  await act(async () => { await Promise.all(doors.map((d) => d.revokedWipeSettled())); });
+  await flush();
 }
 
 async function mountLogin(): Promise<HTMLElement> {
@@ -406,9 +417,11 @@ describe("(f) every tab on an ended sign-in says the same reason", () => {
   /** Tabs opened at the same moment, `initialOwner` as each one's edge saw it. */
   async function openTabs(...owners: Array<string | null>): Promise<void> {
     const screens: Array<typeof import("../app/(product)/resume/ResumeScreen.js").ResumeScreen> = [];
+    const doors: Array<typeof import("../app/revoked-door.js")> = [];
     for (const _ of owners) {
       vi.resetModules();
       screens.push((await import("../app/(product)/resume/ResumeScreen.js")).ResumeScreen);
+      doors.push(await import("../app/revoked-door.js"));
     }
     await act(async () => {
       owners.forEach((owner, i) => {
@@ -422,6 +435,7 @@ describe("(f) every tab on an ended sign-in says the same reason", () => {
       });
     });
     await tick(500);
+    await wipesEnded(doors);
   }
 
   it("opened together on a jar that names the account: both say the refusal's reason", async () => {
@@ -622,5 +636,233 @@ describe("the loop guard belongs to the account that wrote it", () => {
     stamp("minted");
     await mountResume("acct_A");
     expect(refreshes, "the guard stopped seeing the account's own loop").toBe(0);
+  });
+});
+
+/**
+ * A LAPTOP SIGNED OUT FROM DEVICES WHILE ITS TAB WAS CLOSED meets the refusal here, on its next visit:
+ * its copy of the mailbox is gone before the splash sends it to the sign-in form. An expired sign-in
+ * keeps the copy for the next sign-in.
+ */
+describe("(g) a revoked sign-in leaves no copy behind the sign-in form", () => {
+  let held: boolean[] = [];
+  let engine: typeof import("@ohmail/client-engine");
+  /** An account's copy on this browser's disk, closed as a reload leaves it. */
+  async function holdCopyOf(owner: string): Promise<void> {
+    const store = new engine.IndexedDbMirrorStore({ owner });
+    await store.load();
+    await store.putLocal("message", "m1", { id: "m1", subject: `a letter of ${owner}` });
+    store.close();
+  }
+  /** The wipe is real I/O, its module loaded on first use: the loop turns until the splash leaves (real time). */
+  async function untilLeft(): Promise<void> {
+    const end = performance.now() + 10_000;
+    while (replaced.length === 0 && performance.now() < end) await act(async () => { await new Promise((r) => setImmediate(r)); });
+  }
+  beforeEach(async () => {
+    const { createRequire } = await import("node:module");
+    const { resolve } = await import("node:path");
+    const fake = createRequire(resolve("packages/client-engine/package.json"))("fake-indexeddb") as { IDBFactory: new () => IDBFactory; IDBKeyRange: unknown };
+    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();
+    (globalThis as { IDBKeyRange?: unknown }).IDBKeyRange = fake.IDBKeyRange;
+    engine = await import("@ohmail/client-engine");
+    await holdCopyOf("acct_A");
+    held = [];
+    (window.location as unknown as { replace: (u: string) => void }).replace = (u) => {
+      replaced.push(u);
+      held.push(engine.holdsMirrorOf("acct_A"));
+    };
+  });
+  afterEach(() => {
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  it.each([
+    ["refresh_revoked", false],
+    ["refresh_expired", true],
+  ])("%s: the splash leaves for /login with the copy still here: %s", async (code, kept) => {
+    script = [refusedClearing(code)];
+    await mountResume();
+    await untilLeft();
+    expect(replaced).toEqual(["/login"]);
+    expect(held, kept ? "an expired sign-in's copy was taken" : "the splash left with the revoked account's copy").toEqual([kept]);
+  });
+
+  /*
+   * Safari keeps a cookie page script wrote for seven days, and every renewal writes `tf_owner` again from script:
+   * a laptop left for a week reaches the splash with no name in the jar, and the edge saw none either.
+   */
+  it("no name in the jar: the one copy this browser holds is gone before the splash leaves", async () => {
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    script = [refusedClearing("refresh_revoked")];
+    await mountResume(null);
+    await untilLeft();
+    expect(replaced).toEqual(["/login"]);
+    expect(held, "the splash left with the only copy this browser holds").toEqual([false]);
+  });
+
+  it("CONTROL — no name and two accounts' copies: neither is taken on a guess", async () => {
+    await holdCopyOf("acct_B");
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    script = [refusedClearing("refresh_revoked")];
+    await mountResume(null);
+    await untilLeft();
+    expect(replaced).toEqual(["/login"]);
+    expect([...held, engine.holdsMirrorOf("acct_B")], "a copy went on a guess").toEqual([true, true]);
+  });
+
+  it("CONTROL — a sign-in that lands while the copies are counted keeps its copy", async () => {
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    const factory = indexedDB as IDBFactory & { databases: () => Promise<IDBDatabaseInfo[]> };
+    const listed = factory.databases.bind(factory);
+    factory.databases = async () => { document.cookie = "tf_owner=acct_A; Path=/"; return listed(); };
+    script = [refusedClearing("refresh_revoked")];
+    await mountResume(null);
+    await untilLeft();
+    expect(held, "the copy of a session that came back was taken").toEqual([true]);
+  });
+
+  /**
+   * STRAIGHT TO THE SIGN-IN PAGE (a bookmark, a typed address): the page's own session check hears the refusal.
+   * Fresh modules each case: the splash above has registered the door already.
+   */
+  describe("on /login", () => {
+    type SignOut = typeof import("../app/sign-out");
+    let wire: string[] = [];
+    let loading = false;
+    let release = (): void => {};
+    let forgets: Array<Promise<unknown>> = [];
+    /** Real turns until `done`, at most 10 s: the wipe is real I/O. */
+    async function until(done: () => boolean): Promise<boolean> {
+      const end = performance.now() + 10_000;
+      while (!done() && performance.now() < end) await act(async () => { await new Promise((r) => setImmediate(r)); });
+      return done();
+    }
+    /** /login over a jar the refresh door refuses, once the page's session check has heard the answer. */
+    async function loginAfter(answer: () => Response): Promise<HTMLElement> {
+      script = [answer];
+      const el = await mountLogin();
+      const { lastRefreshReport } = await import("../app/session-refresh.js");
+      expect(await until(() => lastRefreshReport() !== null), "the page never asked the refresh door").toBe(true);
+      return el;
+    }
+    /** …over a revoke whose wipe waits at its module load for `release`; each forget it then starts is kept. */
+    async function loginOverHeldWipe(): Promise<HTMLElement> {
+      const gate = new Promise<void>((r) => { release = r; });
+      vi.doMock("../app/sign-out", async (importOriginal: () => Promise<SignOut>) => {
+        loading = true;
+        await gate;
+        const real = await importOriginal();
+        const forgetThisBrowser: SignOut["forgetThisBrowser"] = (...a) => {
+          const p = real.forgetThisBrowser(...a);
+          forgets.push(p);
+          return p;
+        };
+        return { ...real, forgetThisBrowser };
+      });
+      const el = await loginAfter(refusedClearing("refresh_revoked"));
+      expect(await until(() => loading), "no wipe started").toBe(true);
+      return el;
+    }
+    async function submit(el: HTMLElement, form: string, fields: Array<[string, string]>): Promise<void> {
+      await act(async () => {
+        for (const [id, value] of fields) {
+          const input = el.querySelector<HTMLInputElement>(id)!;
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      });
+      await act(async () => { el.querySelector(form)!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    }
+    const signIn = (el: HTMLElement): Promise<void> =>
+      submit(el, "form", [["#login-email", "m@example.test"], ["#login-pw", fixturePassword("resume-answers")]]);
+    /** The code step, whose answer mints the new session. */
+    async function secondFactor(el: HTMLElement): Promise<void> {
+      expect(await until(() => el.querySelector("#login-code") !== null), "no code step").toBe(true);
+      await submit(el, "form.login-totp", [["#login-code", "123456"]]);
+      expect(await until(() => wire.includes("verify")), "the code never left").toBe(true);
+    }
+    /** The held wipe let go: its module loaded, and whatever it removes, removed. */
+    async function wipeOver(): Promise<void> {
+      release();
+      await act(async () => { await vi.dynamicImportSettled(); });
+      await flush();
+      await act(async () => { await Promise.allSettled(forgets); });
+    }
+
+    beforeEach(() => {
+      vi.resetModules();
+      wire = [];
+      loading = false;
+      release = () => {};
+      forgets = [];
+      const base = globalThis.fetch;
+      globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/api/auth/login")) {
+          wire.push(`login, copy ${engine.holdsMirrorOf("acct_A") ? "kept" : "gone"}`);
+          return json({ status: "twofa_required", loginToken: "t", methods: ["totp"] }, 200);
+        }
+        if (!url.includes("/api/auth/2fa/totp/verify")) return base(input as RequestInfo, init);
+        wire.push("verify");
+        document.cookie = "tf_csrf=minted; Path=/";
+        document.cookie = "tf_owner=acct_A; Path=/";
+        return json({ user: { userId: "u", accountId: "acct_A" }, scope: "full" }, 200, { "X-Ohmail-Account": "acct_A" });
+      }) as unknown as typeof globalThis.fetch;
+    });
+    afterEach(() => {
+      release();
+      vi.doUnmock("../app/sign-out");
+      document.cookie = "tf_csrf=; Path=/; Max-Age=0";
+    });
+
+    it.each([
+      ["a revoke", refusedClearing("refresh_revoked"), "acct_A"],
+      ["a reuse sweep", reuseSwept("reuse", true), "acct_A"],
+      ["a revoke with no name in the jar", refusedClearing("refresh_revoked"), null],
+    ] as const)("%s heard by the page's own check: the copy is gone before anyone signs in", async (_, answer, owner) => {
+      if (owner === null) document.cookie = "tf_owner=; Path=/; Max-Age=0";
+      const el = await loginAfter(answer);
+      expect(await until(() => !engine.holdsMirrorOf("acct_A")), "the sign-in form stood over the revoked copy").toBe(true);
+      expect(el.querySelector("#login-pw"), "the form went").not.toBeNull();
+    });
+
+    it.each(["refresh_expired", "refresh_missing"])("CONTROL — %s: the next sign-in leaves with the copy kept", async (code) => {
+      await signIn(await loginAfter(refusedClearing(code)));
+      await until(() => wire.length > 0);
+      expect(wire).toEqual(["login, copy kept"]);
+    });
+
+    it("a sign-in pressed during the wipe leaves once the copy is gone, and the new session keeps its own", async () => {
+      const el = await loginOverHeldWipe();
+      await signIn(el);
+      await tick(10_000);
+      expect(wire, "the sign-in left beside the wipe").toEqual([]);
+      release();
+      await secondFactor(el);
+      await holdCopyOf("acct_A");
+      await wipeOver();
+      expect(wire).toEqual(["login, copy gone", "verify"]);
+      expect([document.cookie.includes("tf_owner=acct_A"), engine.holdsMirrorOf("acct_A")]).toEqual([true, true]);
+    });
+
+    it.each([
+      ["this tab's second factor", true],
+      ["another tab's sign-in", false],
+    ] as const)("a wipe still loading past its 15 s keeps what %s minted: tf_owner and the copy", async (_, here) => {
+      const el = await loginOverHeldWipe();
+      if (here) await signIn(el);
+      await tick(16_000);
+      if (here) await secondFactor(el);
+      else {
+        document.cookie = "tf_csrf=other-tab; Path=/";
+        document.cookie = "tf_owner=acct_A; Path=/";
+      }
+      await holdCopyOf("acct_A");
+      await wipeOver();
+      expect(wire).toEqual(here ? ["login, copy kept", "verify"] : []);
+      expect([document.cookie.includes("tf_owner=acct_A"), engine.holdsMirrorOf("acct_A")], "the late wipe took the new session's")
+        .toEqual([true, true]);
+    });
   });
 });

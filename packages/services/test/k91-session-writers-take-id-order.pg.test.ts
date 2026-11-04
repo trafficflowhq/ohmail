@@ -50,7 +50,7 @@ async function establish(svc: AuthService): Promise<Person> {
   let t = new Date();
   const at = (over: Partial<ServiceContext> = {}): ServiceContext => ctx({ now: () => t, ...over });
   const totp = (secret: string): string => generateSync({ secret, epoch: Math.floor(t.getTime() / 1000) });
-  const registered = await svc.register(at(), { email, password: "pw-correct-horse-password-password", displayName: "Gil", inviteCode: "INVITE-OK" });
+  const registered = await svc.register(at(), { email, password: "account-signin-password", displayName: "Gil", inviteCode: "INVITE-OK" });
   if (registered.status !== "enrollment") throw new Error(`expected enrolment, got ${registered.status}`);
   const user = registered.user;
   const [latest] = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.userId, user.userId)).limit(1);
@@ -63,7 +63,7 @@ async function establish(svc: AuthService): Promise<Person> {
 /** One more full sign-in, password and second factor, `offsetMs` after the person was made. */
 async function signIn(svc: AuthService, p: Person, offsetMs: number): Promise<void> {
   const t = new Date(p.t.getTime() + offsetMs);
-  const ch = await svc.login(ctx({ now: () => t }), { email: p.email, password: "pw-correct-horse-password-password" });
+  const ch = await svc.login(ctx({ now: () => t }), { email: p.email, password: "account-signin-password" });
   if (ch.status !== "twofa_required") throw new Error(`expected 2FA, got ${ch.status}`);
   await svc.totpVerify(ctx({ now: () => t }), {
     loginToken: ch.loginToken, code: generateSync({ secret: p.secret, epoch: Math.floor(t.getTime() / 1000) }),

@@ -43,7 +43,8 @@ One RFC822 message in `ohmail/_meta`:
   guaranteed not to contain `{`. Every string value except the format fields
   (`updatedAt`, `producer`, rule and notification kinds, a rule's provenance
   and decision date, the away reply's audience, rate, dates and piles, the
-  screening window's baseline and scope) is written as JSON
+  screening window's baseline and scope, a removed rule's kind, date and
+  install) is written as JSON
   `\uXXXX` escapes; any JSON parser reads the same values. The body is 7-bit ASCII
   (`Content-Transfer-Encoding: 7bit`). Where a server stored the body re-encoded
   and says so in one `Content-Transfer-Encoding: quoted-printable` or `base64`
@@ -65,6 +66,16 @@ One RFC822 message in `ohmail/_meta`:
     "dormancyDays": 60,
     "scope": "window" | "all_time"
   },
+  "removedRules": [                // optional: rules a person removed, newest first
+    {
+      "kind": "sender" | "domain" | "header",
+      "match": "<address | domain | header spec>",
+      "subjectContains": "<optional>",
+      "bodyContains": "<optional>",
+      "removedAt": "<ISO 8601>",
+      "by": "<install id>"
+    }
+  ],
   "screener": [                    // senders this mailbox has SCREENED IN (admitted)
     { "address": "<sender email, lowercased>", "name": "<display name, optional>", "source": "person" }
   ],
@@ -108,6 +119,7 @@ The envelope:
 | `v` | integer ≥ 1 | Format version. Required. This page documents version 2; ohmail reads version 1 as well, and always will. The number names the field set **and** the canonical ordering the document is written in — see versioning. |
 | `updatedAt` | ISO 8601 string | When this copy was written, by the writer's clock. Readers coalesce duplicate messages by it — newest wins. |
 | `producer` | object | Provenance, never identity: `kind` is an open set (`"local"`, `"cloud"`, a future value — readers must tolerate unknown kinds), `version` is the writer's build label. `stamped`, optional, is `true` when the copy's rules carry the date you decided them (`personDecidedAt`) wherever ohmail knows it. A copy written by an older ohmail has no `stamped`, so an import treats a promoted rule there that files a sender listed in that copy's `screener` into `INBOX`, `ohmail/News` or `ohmail/Receipts` as decided by you, unless this install already holds a rule for that sender or the rule is narrowed by a subject or body term. Only the value `true` counts. |
+| `removedRules` | array, optional | The rules a person removed, each by its key (`kind`, `match`, and `subjectContains` and `bodyContains` when the rule had them), with `removedAt` (when it was removed) and `by` (the install that removed it, or that took the removal in with an Import). Newest first, at most 5,000, none older than a year at the copy's `updatedAt`; absent when there are none. An entry that cannot be read is skipped on its own, and so is one dated after the copy's `updatedAt`. It is what an Import reads to tell a rule the other install never had from one the person removed there (see "Removals travel"). It describes what happened, not the configuration, so it is not part of the payload you compare. |
 | `screening` | object, optional | The screening window of the install that organizes the mailbox: `baselineAt` (when it finished screening its backlog, or `null` for a window measured from now), `dormancyDays` (a whole number from 1 to 365) and `scope` (`"window"`, or `"all_time"` to screen every sender). A device that only reads the mailbox applies this window to its Screener. Absent means the organizer did not state one; a reader then lists everyone in the Screener folder. It describes the organizer, not the configuration, so it is not part of the payload you compare. |
 
 **`screener`** — an array of senders this mailbox has screened **in**:
@@ -175,17 +187,19 @@ press names that exact signature; otherwise the mailbox keeps its own and the co
 mailbox with no signature takes the document's. Text and markup are compared and written as one value.
 
 What ohmail keeps of the settings and a signature for this: the organizer's record of a found document
-names the document by its fingerprint (a sha256 of its canonical settings, the signature among them)
-and the document's signature by a receipt (a sha256 of text and markup together, cut to 32 hex digits);
-the answer to it (Import, Not now, or saving this ohmail's settings over it) names the document by its
-fingerprint; and a press handed to the organizer keeps the fingerprint and the receipt of the signature
-its card said would be replaced. All are rows of the account's audit trail, which are deleted after 365
-days or with the account. Erasing the mailbox takes the fingerprints and the receipts off those rows
-when it is pressed, and again when the erasure finishes; an erasure an earlier ohmail finished loses
-them on the server's next erasure pass. Removing a mailbox from a computer takes them off that
-computer's store; a removal an earlier ohmail made on a computer or phone loses them at its next start.
-The rows themselves stay. The status read of a press handed to the organizer carries the fingerprint
-in a request header, never in the address it asks.
+names the document by its fingerprint (a sha256 of its canonical settings, the signature among them),
+followed by a digest of the removals it records when it records any (a sha256 of their keys, instants
+and installs, cut to 32 hex digits), and the document's signature by a receipt (a sha256 of text and
+markup together, cut to 32 hex digits); the answer to it (Import, Not now, or saving this ohmail's
+settings over it) names the document the same way; and a press handed to the organizer keeps the
+fingerprint and the receipt of the signature its card said would be replaced. All are rows of the
+account's audit trail, which are deleted after 365 days or with the account. Erasing the mailbox takes
+the fingerprints (the removals' digest with them) and the receipts off those rows when it is pressed,
+and again when the erasure finishes; an erasure an earlier ohmail finished loses them on the server's
+next erasure pass. Removing a mailbox from a computer takes them off that computer's store; a removal an
+earlier ohmail made on a computer or phone loses them at its next start. The rows themselves stay. The
+status read of a press handed to the organizer carries the fingerprint in a request header, never in the
+address it asks.
 
 **`signatureHtml`** — the same sign-off's formatting, when it has any. Optional, and ABSENT rather
 than `null` when there is none: a document that never carried this key must keep the fingerprint it
@@ -211,10 +225,11 @@ Content-Type: text/plain; charset=utf-8
 Content-Transfer-Encoding: 7bit
 
 This message stores your ohmail settings for this mailbox: which senders
-you have screened in, your filing rules, notification choices, away reply
-and tag names. Keeping them here means they live in YOUR mailbox: they
-travel with it to any computer or service you connect it from, and they
-remain yours even if you stop using ohmail.
+you have screened in, your filing rules, the rules you removed in the year
+before this copy was written, notification choices, away reply and tag
+names. Keeping them here means they live in YOUR mailbox: they travel with
+it to any computer or service you connect it from, and they remain yours
+even if you stop using ohmail.
 
 Names and addresses below are written as JSON escapes; any JSON tool
 shows them as text.
@@ -234,6 +249,14 @@ The format: versioned JSON, documented in ohmail's published source
     "version": "0.11.1",
     "stamped": true
   },
+  "removedRules": [
+    {
+      "kind": "sender",
+      "match": "\u006f\u0066\u0066\u0065\u0072\u0073\u0040\u006e\u0069\u006e\u0065\u0066\u006f\u006c\u0064\u002d\u0070\u0072\u0065\u0073\u0073\u002e\u0065\u0078\u0061\u006d\u0070\u006c\u0065",
+      "removedAt": "2026-08-20T14:05:00.000Z",
+      "by": "0f4c7d1e-2b6a-4a51-9c3e-7d8f1a2b3c4d"
+    }
+  ],
   "screener": [
     {
       "address": "\u0069\u006e\u0065\u0073\u002e\u0061\u0065\u0062\u0065\u0072\u0073\u006f\u006c\u0064\u0040\u0065\u0078\u0061\u006d\u0070\u006c\u0065\u002e\u006f\u0072\u0067",
@@ -437,7 +460,9 @@ refuses to answer it itself:
   this install's settings to the mailbox from Settings, answers the question,
   and the organizer then removes the found document. "Not now" answers the
   question for screening, leaves the found document in the mailbox and moves
-  the question to the next found copy, when there is one.
+  the question to the next found copy, when there is one. An answer covers
+  that one copy: a later copy with the same rules and other removals is a new
+  question.
 - **The consent gate holds, for the senders the document lets
   through.** While the decision is open, mail from a sender the found
   document screened in (or admits by a rule) keeps the folder the mailbox
@@ -538,14 +563,19 @@ answer, Settings offers the newest one answered "Not now", and the next once
 that one is imported or replaced. The question survives a restart, and a store
 that is removed leaves every found copy in the mailbox for the next install to
 ask about. A found copy that says exactly what the store says asks nothing, and
-the store's own copy replaces it. An older copy that lands beside an organizer
+the store's own copy replaces it; so does another install's copy that says only
+its Screener window and records no removed rule (an organizer that has decided
+nothing yet), since an Import of it would change nothing. A copy that names no
+rule but records a removal still asks: the person removed every rule there. An older copy that lands beside an organizer
 already organizing is an overlap's loser, not a question, and a found copy
 older than the eight newest, whoever wrote it, follows the ten-minute rule once
 the organizer has read every found copy; until then none goes by age, so a copy
 behind many others is still found and asked about.
 
-An empty store writes no copy beside found settings, so a reader never takes
-an empty copy for the mailbox's newest settings. An answer reaches the mailbox
+An organizer whose store says nothing yet still writes its Screener window
+beside another install's found settings once it has a consent, because readers
+apply the newest copy's window; beside an unanswered copy under its own id it
+writes nothing until the person answers. An answer reaches the mailbox
 within two profile passes, whatever the flush interval: the pass that reads the
 answer releases the question, and the next one writes the store as the answer
 left it. The copy the answer released stays in the mailbox until a copy of the
@@ -560,11 +590,64 @@ When an import makes the store say exactly what the found
 document says and a copy of this install's is newer beside it, that copy is
 replaced, so readers read the imported settings.
 
+## Removals travel
+
+An Import adds the copy's settings and keeps every rule this install has that
+the copy does not name, unless the copy records that a person removed that rule
+on the install that wrote it. A rule this install has goes in an Import only
+when all of these hold:
+
+- the copy names no rule under its key and its `removedRules` lists the key;
+  the newest entry
+  per key is read, and only one dated no later than the copy and no more than
+  the clock-skew bound ahead of this install's clock;
+- that removal, less twice the clock-skew bound, is later than the rule's own
+  last change and its creation, than a create pressed for that key, than the
+  newest copy this install wrote of the mailbox well before the imported one,
+  and than this install's newest earlier Import into the mailbox. A removal
+  from before this install last published or took in the rule says nothing
+  about it now;
+- the Import's other guards hold: this copy (its rules and its removals) was
+  not answered before with "Not now" or "Save this ohmail's settings", it skipped no rule and is under the
+  rules bound, its instant parses, no other mailbox of the account is organized
+  here, every other mailbox read here has a copy and none names the key, and no
+  rule request under the key was applied within the last day unless the copy
+  says it applied it.
+
+Each rule removed this way is one change, moves no mail and files nothing
+again. The copy's removals whose rule is gone here afterwards are kept here
+with their own date and install, so this install's next copy carries them on.
+Only a person's removal of one rule is recorded: on the rules page, an edit
+that moves a rule to another key, or a removal pressed on a reader and applied
+by the organizer. Removing many rules at once (starting the Screener over,
+undoing an import from another mail service) and the rules ohmail retires by
+itself are not recorded, so an Import never removes them elsewhere; nor is a
+rule whose key (kind, match and terms) runs past 2,048 bytes. A rule made again
+under a removed rule's key, whatever makes it (an edit that moves another rule
+there included), ends that removal here, so it does not travel when that rule
+goes again unrecorded; starting the Screener over drops every removal this
+install recorded.
+
+Copies written by an older ohmail record no removal, so an Import of one
+removes nothing and an empty one asks nothing; a rule removed on an older
+ohmail, or before an upgrade, does not travel. An older ohmail that reads a
+copy from this one ignores `removedRules` and may write its own copy once
+without them. A copy carries the removals of the year before it was written,
+and is written again only when the settings change, so a removed rule's key
+stays in the mailbox until ohmail next saves the settings more than a year
+after the removal; with no change after that, it stays for as long as that
+copy does. The copy names senders whose rules you removed as well as the ones
+you have. This install keeps its own record of a removal until it records
+another one more than a year later, a rule is made again under its key, the
+Screener is started over, or the account is erased.
+
 ## What a reader in another mail client sees
 
 `ohmail/_meta` is unsubscribed; some mail apps, Apple Mail among them, still
 list and search it. Someone who browses into it finds a short message that
 explains itself and is safe to delete. It never touches the Inbox and triggers no notifications. A note on
 exposure: your mail provider already sees every sender as messages; this
-document adds no information the mailbox does not already hold. Its size grows
-with the number of senders you have screened in.
+document adds no information the mailbox does not already hold, except the
+keys of the rules you removed in the year before the copy was written (see
+"Removals travel" for how long a copy stays). Its size grows with the number
+of senders you have screened in.

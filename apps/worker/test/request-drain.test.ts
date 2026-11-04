@@ -164,7 +164,7 @@ async function seedMailbox(db: TestDb): Promise<string> {
  * with the address. Nothing is stored, so there is nothing to seed — two installs agree because
  * they hold the same credential, which is the whole point of the derivation.
  */
-const PASSWORD = "correct-horse-battery-staple-password-password";
+const PASSWORD = "passphrase-entry-password";
 const ADDRESS = "person@mailbox.example";
 const KEY = deriveRequestKey({ auth: { user: ADDRESS, pass: PASSWORD }, address: ADDRESS })!;
 /** A DIFFERENT password — what an install that does not share the credential would derive. */

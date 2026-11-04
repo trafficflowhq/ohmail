@@ -10,7 +10,7 @@ import {
 import {
   AuthService, makeTestAuthDeps, ServiceError, resolveSession, generateToken, hashToken,
   classifyRefreshFailure, throttleKeysFor, mintPairingToken, redeemDevicePair, OAuthCodeReplayed,
-  makeSessionLifecycle, DESKTOP_LINK_PURPOSE, MailService, SpyMailer,
+  makeSessionLifecycle, DESKTOP_LINK_PURPOSE, MailService, SpyMailer, pushService,
   type AuthDeps, type SessionUser, type SessionEstablished, type ServiceContext, type SessionLifecycle,
 } from "../src/index.js";
 import { SoftwareAuthenticator } from "./webauthn-authenticator.js";
@@ -47,7 +47,7 @@ async function harness(depsOver?: AuthDeps): Promise<Harness> {
   return { db, svc, deps, clock, ctxFor };
 }
 
-async function register(h: Harness, email = "gil@x.example", password = "pw-correct-horse-password-password") {
+async function register(h: Harness, email = "gil@x.example", password = "account-signin-password") {
   const { user } = await h.svc.register(h.ctxFor(), { email, password, displayName: "Gil", inviteCode: "INVITE-OK" });
   return user;
 }
@@ -143,7 +143,7 @@ describe("AuthService — registration & first factor", () => {
     const h = await harness();
     // A REAL password (>= 12 chars). It used to be `"p"`, which now fails the length rule
     // first and would have masked both refusals below with a 400.
-    const PW = "pw-correct-horse-password-password";
+    const PW = "account-signin-password";
     await expect(h.svc.register(h.ctxFor(), { email: "a@x.example", password: PW, displayName: "A", inviteCode: "NOPE" }))
       .rejects.toMatchObject({ code: "invite_invalid", httpStatus: 403 });
     await register(h, "dup@x.example");
@@ -186,7 +186,7 @@ describe("AuthService — registration & first factor", () => {
     const h = await harness();
     const user = await register(h);
     await enrollTotp(h, user);
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     expect(ch.status).toBe("twofa_required");
     if (ch.status !== "twofa_required") throw new Error("unreachable");
     expect(ch.loginToken).toBeTruthy();
@@ -230,7 +230,7 @@ describe("AuthService — registration & first factor", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("AuthService — the enrollment-scoped session", () => {
-  const REG = { email: "gil@x.example", password: "pw-correct-horse-password-password", displayName: "Gil", inviteCode: "INVITE-OK" };
+  const REG = { email: "gil@x.example", password: "account-signin-password", displayName: "Gil", inviteCode: "INVITE-OK" };
 
   /** Bind a ServiceContext to the session an enrollment token resolves to. */
   async function ctxOf(h: Harness, user: SessionUser, token: string): Promise<ServiceContext & { sessionId: string }> {
@@ -425,7 +425,7 @@ describe("AuthService — the enrollment-scoped session", () => {
     const stray = await seedEnrollmentSession(h, user);
     h.clock.advance(30_000);
 
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     if (ch.status !== "twofa_required") throw new Error("unreachable");
     await h.svc.totpVerify(h.ctxFor(), {
       loginToken: ch.loginToken,
@@ -469,7 +469,7 @@ describe("AuthService — the enrollment-scoped session", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("AuthService — lockout integrity", () => {
-  const REG = { password: "pw-correct-horse-password-password", displayName: "Gil", inviteCode: "INVITE-OK" };
+  const REG = { password: "account-signin-password", displayName: "Gil", inviteCode: "INVITE-OK" };
 
   it("lockout leaks no account existence: a known and an unknown email answer identically past the threshold", async () => {
     const h = await harness(makeTestAuthDeps({ maxFailures: 3 }));
@@ -537,7 +537,7 @@ describe("AuthService — lockout integrity", () => {
     const row = (await h.db.select().from(authThrottle).where(eq(authThrottle.key, pwKey)).limit(1))[0]!;
     expect(row.failures).toBe(N);
     expect(row.lockedUntil).not.toBeNull();
-    await expect(h.svc.login(h.ctxFor(), { email: "race@x.example", password: "pw-correct-horse-password-password" }))
+    await expect(h.svc.login(h.ctxFor(), { email: "race@x.example", password: "account-signin-password" }))
       .rejects.toMatchObject({ code: "account_locked", httpStatus: 423 });
   });
 
@@ -662,7 +662,7 @@ describe("AuthService — WebAuthn (primary 2FA)", () => {
     const user = await register(h);
     const auth = await enrollWebauthn(h, user);
 
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const { options } = await h.svc.webauthnAssertOptions(h.ctxFor(), { loginToken: ch.loginToken });
     const assertion = auth.assert({ rpID: RPID, challenge: (options as any).challenge, origin: ORIGIN });
     const est = await h.svc.webauthnAssertVerify(h.ctxFor(), { loginToken: ch.loginToken, credential: assertion }) as SessionEstablished;
@@ -679,13 +679,13 @@ describe("AuthService — WebAuthn (primary 2FA)", () => {
     const auth = await enrollWebauthn(h, user);
 
     // First assertion succeeds and advances the stored counter to 1.
-    const ch1 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch1 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const o1 = await h.svc.webauthnAssertOptions(h.ctxFor(), { loginToken: ch1.loginToken });
     const a1 = auth.assert({ rpID: RPID, challenge: (o1.options as any).challenge, origin: ORIGIN }); // counter → 1
     await h.svc.webauthnAssertVerify(h.ctxFor(), { loginToken: ch1.loginToken, credential: a1 });
 
     // A cloned authenticator replays a LOWER counter → must be rejected.
-    const ch2 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch2 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const o2 = await h.svc.webauthnAssertOptions(h.ctxFor(), { loginToken: ch2.loginToken });
     const clone = auth.assert({ rpID: RPID, challenge: (o2.options as any).challenge, origin: ORIGIN, counter: 0 });
     await expect(h.svc.webauthnAssertVerify(h.ctxFor(), { loginToken: ch2.loginToken, credential: clone }))
@@ -696,7 +696,7 @@ describe("AuthService — WebAuthn (primary 2FA)", () => {
     const h = await harness();
     const user = await register(h);
     const auth = await enrollWebauthn(h, user);
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const { options } = await h.svc.webauthnAssertOptions(h.ctxFor(), { loginToken: ch.loginToken });
     const assertion = auth.assert({ rpID: RPID, challenge: (options as any).challenge, origin: ORIGIN });
     await h.svc.webauthnAssertVerify(h.ctxFor(), { loginToken: ch.loginToken, credential: assertion });
@@ -718,7 +718,7 @@ describe("AuthService — TOTP (fallback 2FA)", () => {
     expect(row.keyVersion).toBe(1);
 
     h.clock.advance(30_000); // move to a fresh step so activation's consumed step is behind us
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     const est = await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
     expect(est.status).toBe("authenticated");
@@ -733,18 +733,18 @@ describe("AuthService — TOTP (fallback 2FA)", () => {
     h.clock.advance(60_000); // fresh step, unrelated to activation
     const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
 
-    const ch1 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch1 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const est = await h.svc.totpVerify(h.ctxFor(), { loginToken: ch1.loginToken, code });
     expect(est.status).toBe("authenticated");
 
     // Same code, same 30s window, brand-new login token → replay rejected.
-    const ch2 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch2 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     await expect(h.svc.totpVerify(h.ctxFor(), { loginToken: ch2.loginToken, code }))
       .rejects.toMatchObject({ code: "credential_refused", httpStatus: 401 });
 
     // A fresh code in the NEXT window works again.
     h.clock.advance(30_000);
-    const ch3 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch3 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const next = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     const est3 = await h.svc.totpVerify(h.ctxFor(), { loginToken: ch3.loginToken, code: next });
     expect(est3.status).toBe("authenticated");
@@ -757,7 +757,7 @@ describe("AuthService — TOTP (fallback 2FA)", () => {
  * token's burn and the recovery code's burn go back with it, and the person can try again.
  */
 describe("AuthService — a sign-in refused after its session was written", () => {
-  const PW = "pw-correct-horse-password-password";
+  const PW = "account-signin-password";
   /** The day counter's refund is refused; the reservation before the verify still lands. */
   async function refuseRefund(h: Harness, userId: string): Promise<() => Promise<void>> {
     await h.db.execute(sql.raw(
@@ -833,7 +833,7 @@ describe("AuthService — replace authenticator", () => {
   const stepOf = (h: Harness): bigint => BigInt(Math.floor(h.clock.now().getTime() / 30_000));
 
   async function signInWith(h: Harness, secret: string): Promise<SessionEstablished> {
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     if (ch.status !== "twofa_required") throw new Error("unreachable");
     return h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code: codeOf(h, secret) });
   }
@@ -1026,7 +1026,7 @@ describe("AuthService — sessions & refresh reuse", () => {
     const user = await register(h);
     const secret = await enrollTotp(h, user);
     h.clock.advance(30_000);
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     const est = await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
     return est.tokens!.refreshToken;
@@ -1610,7 +1610,7 @@ describe("AuthService — lockout (both stages)", () => {
         .rejects.toMatchObject({ code: "credential_refused" });
     }
     // Even the correct password is now refused with a lockout.
-    await expect(h.svc.login(h.ctxFor(), { email: "lock1@x.example", password: "pw-correct-horse-password-password" }))
+    await expect(h.svc.login(h.ctxFor(), { email: "lock1@x.example", password: "account-signin-password" }))
       .rejects.toMatchObject({ code: "account_locked", httpStatus: 423 });
   });
 
@@ -1621,7 +1621,7 @@ describe("AuthService — lockout (both stages)", () => {
 
     let lastErr: ServiceError | null = null;
     for (let i = 0; i < 3; i++) {
-      const ch = await h.svc.login(h.ctxFor(), { email: "lock2@x.example", password: "pw-correct-horse-password-password" });
+      const ch = await h.svc.login(h.ctxFor(), { email: "lock2@x.example", password: "account-signin-password" });
       lastErr = await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code: "000000" }).catch((e) => e);
     }
     expect(lastErr).toBeInstanceOf(ServiceError);
@@ -1644,7 +1644,7 @@ describe("AuthService — lockout (both stages)", () => {
     const user = await register(h, "replay-stepup@x.example");
     const secret = await enrollTotp(h, user);
     h.clock.advance(30_000);
-    const ch = await h.svc.login(h.ctxFor(), { email: "replay-stepup@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "replay-stepup@x.example", password: "account-signin-password" });
     const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
 
@@ -1683,12 +1683,12 @@ describe("AuthService — lockout (both stages)", () => {
     const user = await register(h, "replay-signin@x.example");
     const secret = await enrollTotp(h, user);
     h.clock.advance(30_000);
-    const ch1 = await h.svc.login(h.ctxFor(), { email: "replay-signin@x.example", password: "pw-correct-horse-password-password" });
+    const ch1 = await h.svc.login(h.ctxFor(), { email: "replay-signin@x.example", password: "account-signin-password" });
     const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     await h.svc.totpVerify(h.ctxFor(), { loginToken: ch1.loginToken, code });
 
     // A second sign-in inside the same 30-second step — the desktop-then-browser shape.
-    const ch2 = await h.svc.login(h.ctxFor(), { email: "replay-signin@x.example", password: "pw-correct-horse-password-password" });
+    const ch2 = await h.svc.login(h.ctxFor(), { email: "replay-signin@x.example", password: "account-signin-password" });
     for (let i = 0; i < 3; i++) {
       h.clock.advance(1_000);
       await expect(h.svc.totpVerify(h.ctxFor(), { loginToken: ch2.loginToken, code }))
@@ -1710,7 +1710,7 @@ describe("AuthService — lockout (both stages)", () => {
     const user = await register(h, "replay-wrong@x.example");
     const secret = await enrollTotp(h, user);
     h.clock.advance(30_000);
-    const ch = await h.svc.login(h.ctxFor(), { email: "replay-wrong@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "replay-wrong@x.example", password: "account-signin-password" });
     const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
 
@@ -1736,7 +1736,7 @@ describe("AuthService — step-up & last-factor guard", () => {
     const user = await register(h);
     const secret = await enrollTotp(h, user);
     h.clock.advance(30_000);
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
 
@@ -1770,7 +1770,7 @@ describe("AuthService — step-up & last-factor guard", () => {
     const user = await register(h);
     const secret = await enrollTotp(h, user);        // TOTP is the ONLY factor
     h.clock.advance(30_000);
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
     const sid = await latestSessionId(h, user.userId);
@@ -1800,7 +1800,7 @@ describe("AuthService — step-up & last-factor guard", () => {
     const signIn = async (): Promise<string> => {
       h.clock.advance(31_000);                       // a fresh TOTP timestep — codes are single-use
       const ch = await h.svc.login(
-        h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" },
+        h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" },
       ) as { loginToken: string };
       const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
       await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
@@ -1832,7 +1832,7 @@ describe("AuthService — step-up & last-factor guard", () => {
 });
 
 /** The password `register` gives every user here. */
-const REGISTERED_PASSWORD = "pw-correct-horse-password-password";
+const REGISTERED_PASSWORD = "account-signin-password";
 
 /** A full sign-in through TOTP, so the session carries a refresh family. Returns its id. */
 async function signIn(h: Harness, user: SessionUser, secret: string): Promise<string> {
@@ -1865,7 +1865,7 @@ const totpCode = (h: Harness, secret: string): string =>
 describe("AuthService — changing the password", () => {
   const OLD = REGISTERED_PASSWORD;
   const NEW = "new-battery-staple-password";
-  const WRONG = "wrong-guess-password";
+  const WRONG = "mismatched-entry-password";
 
   const storedHash = async (h: Harness, userId: string): Promise<string> =>
     (await h.db.select({ hash: credentials.passwordHash }).from(credentials).where(eq(credentials.userId, userId)))[0]!.hash;
@@ -2837,7 +2837,7 @@ describe("AuthService — recovery codes", () => {
     const secret = await enrollTotp(h, user);
     h.clock.advance(30_000);
     // Establish a step-up'd session to generate recovery codes.
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
     const sid = await latestSessionId(h, user.userId);
@@ -2846,18 +2846,18 @@ describe("AuthService — recovery codes", () => {
     const { codes } = await h.svc.generateRecoveryCodes(sctx);
     expect(codes.length).toBe(10);
 
-    const l1 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const l1 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const est = await h.svc.recoveryVerify(h.ctxFor(), { loginToken: l1.loginToken, code: codes[0]! });
     expect(est.status).toBe("authenticated");
     expect(est.remainingCodes).toBe(9);
 
     // Re-using code[0] fails.
-    const l2 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const l2 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     await expect(h.svc.recoveryVerify(h.ctxFor(), { loginToken: l2.loginToken, code: codes[0]! }))
       .rejects.toMatchObject({ code: "credential_refused" });
 
     // A different, unused code works.
-    const l3 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const l3 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const est3 = await h.svc.recoveryVerify(h.ctxFor(), { loginToken: l3.loginToken, code: codes[1]! });
     expect(est3.status).toBe("authenticated");
 
@@ -2865,7 +2865,7 @@ describe("AuthService — recovery codes", () => {
     const sid2 = await latestSessionId(h, user.userId);
     const sctx2 = h.ctxFor({ userId: user.userId, accountId: user.accountId, sessionId: sid2 });
     await h.svc.generateRecoveryCodes(sctx2);
-    const l4 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const l4 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     await expect(h.svc.recoveryVerify(h.ctxFor(), { loginToken: l4.loginToken, code: codes[2]! }))
       .rejects.toMatchObject({ code: "credential_refused" });
   });
@@ -2888,7 +2888,7 @@ describe("AuthService — recovery codes", () => {
     const user = await register(h);
     const secret = await enrollTotp(h, user);
     h.clock.advance(30_000);
-    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const ch = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const code = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
     await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code });
     const sid = await latestSessionId(h, user.userId);
@@ -2904,12 +2904,12 @@ describe("AuthService — recovery codes", () => {
       createdAt: new Date(h.clock.now().getTime() - 60_000),
     });
 
-    const l1 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const l1 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     await expect(h.svc.recoveryVerify(h.ctxFor(), { loginToken: l1.loginToken, code: surplus }))
       .rejects.toMatchObject({ code: "credential_refused", httpStatus: 401 });
 
     // …and the batch that IS live is untouched by the scoping.
-    const l2 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "pw-correct-horse-password-password" });
+    const l2 = await h.svc.login(h.ctxFor(), { email: "gil@x.example", password: "account-signin-password" });
     const est = await h.svc.recoveryVerify(h.ctxFor(), { loginToken: l2.loginToken, code: codes[0]! });
     expect(est.status).toBe("authenticated");
     // Nine, not nineteen: the count answers for the batch that would actually be accepted.
@@ -2964,12 +2964,20 @@ describe("AuthService — OAuth2 Authorization-Code + PKCE", () => {
     });
     expect(tokens.accessToken).toBeTruthy();
     expect(tokens.tokenType).toBe("Bearer");
+    // The session the code bought registers a wake; the replay below withdraws both.
+    const [minted] = await h.db.select({ id: sessions.id }).from(sessions)
+      .where(eq(sessions.accessTokenHash, hashToken(tokens.accessToken)));
+    await pushService.subscribe(h.ctxFor({ userId: user.userId, accountId: user.accountId, sessionId: minted!.id }), {
+      transport: "webpush", endpoint: `https://push.test/${randomUUID()}`, p256dh: "p", auth: "a",
+    });
 
     // Single-use: the same code cannot be redeemed twice.
     await expect(h.svc.token(h.ctxFor(), {
       grant_type: "authorization_code", code, redirect_uri: "trafficflow://auth",
       client_id: "tf-macos", code_verifier: verifier,
     })).rejects.toMatchObject({ code: "invalid_grant", httpStatus: 400 });
+    expect(await h.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.accountId, user.accountId)),
+      "the replayed code's session kept its wake registration").toEqual([]);
   });
 
   it("rejects a redirect_uri / client_id mismatch and a bad PKCE verifier (binding)", async () => {

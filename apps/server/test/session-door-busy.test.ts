@@ -2,7 +2,7 @@ import { createServer, type Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import {
-  makeOwnedDb, makePooledDb, closePooledDbs, acquireCeilingHandle,
+  makeOwnedDb, makePooledDb, closePooledDbs, acquireCeilingHandle, HOSTED_IMAP_ADMISSION,
   WORKER_POOL_MAX, POOLED_MAX_CONNECTIONS, SESSION_ACQUIRE_TIMEOUT_MS, POOLED_ACQUIRE_TIMEOUT_MS,
 } from "@trafficflow/db/cloud";
 import { API_FAULT_RECORD_BUDGET_MS } from "@trafficflow/api";
@@ -191,5 +191,23 @@ describe("each host's send door keeps its owed Sent copies", () => {
     } as NodeJS.ProcessEnv));
     expect(managed.services?.sendKeepOwedCopy).toEqual(OWED_COPY_CLOUD);
     expect(OWED_COPY_CLOUD.files, "Cloud never writes attachment bytes down").toBe(false);
+  });
+});
+
+describe("each hosted host budgets its connect probes", () => {
+  it("both bags admit through the hosted port, which carries the probes' time budget", () => {
+    const cfg = loadServerConfig({
+      OHMAIL_ORIGIN: "https://mail.example.com", DATABASE_URL: "postgres://held:unused@127.0.0.1:1/never_dialed", [KEY_RING_V1]: KEK,
+    } as NodeJS.ProcessEnv);
+    const owned = makeOwnedDb(cfg.databaseUrl);
+    cleanups.push(() => owned.close());
+    resetManagedServices();
+    cleanups.push(() => resetManagedServices());
+    const managed = buildManagedDeps(new Request("https://api.ohmail.app/mailboxes/probe"), loadHostConfig({
+      DATABASE_URL_POOLED: "postgres://held:unused@127.0.0.1:1/never_dialed", [KEY_RING_V1]: KEK,
+    } as NodeJS.ProcessEnv));
+    expect(buildServerServices(cfg, owned.db).imapAdmission).toBe(HOSTED_IMAP_ADMISSION);
+    expect(managed.services?.imapAdmission).toBe(HOSTED_IMAP_ADMISSION);
+    expect(typeof HOSTED_IMAP_ADMISSION.spend).toBe("function");
   });
 });

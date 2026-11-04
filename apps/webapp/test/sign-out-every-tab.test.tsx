@@ -769,3 +769,75 @@ describe("the channel itself", () => {
     }
   });
 });
+
+/**
+ * A SESSION REVOKED FROM ANOTHER DEVICE TAKES THE MAIL OFF THIS SCREEN AND THIS BROWSER. Devices → Sign
+ * out elsewhere: this tab's next renewal hears `refresh_revoked`, drops the mailbox without the scrim,
+ * removes this browser's copy and only then leaves for the sign-in page, as Sign out does. An expired
+ * sign-in keeps the scrim over the mail, and the copy.
+ */
+describe("a session revoked from another device", { timeout: 60_000 }, () => {
+  afterEach(async () => {
+    (await import("../app/revoked-door")).resetRevokedDoorForTests();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  /** This browser's disk: the tab's mirror is an IndexedDB one, as in a browser. */
+  async function disk(): Promise<() => Promise<string[]>> {
+    const { createRequire } = await import("node:module");
+    const { resolve } = await import("node:path");
+    const fake = createRequire(resolve("packages/client-engine/package.json"))("fake-indexeddb") as { IDBFactory: new () => IDBFactory; IDBKeyRange: unknown };
+    const idb = new fake.IDBFactory();
+    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = idb;
+    (globalThis as { IDBKeyRange?: unknown }).IDBKeyRange = fake.IDBKeyRange;
+    return async () => (await idb.databases()).map((d) => d.name ?? "").filter((n) => n.startsWith("ohmail-mirror"));
+  }
+
+  /** The renewal the tab makes; the refresh door answers `code` and empties the jar. */
+  async function renewalRefused(code: string): Promise<void> {
+    shell.scriptRefresh(shell.refusedClearing(code));
+    const { resumeSession } = await import("../app/session-refresh");
+    expect(await drive(resumeSession())).toBe("refused");
+    await shell.tick(2_000);
+  }
+
+  it("the revoked tab shows no mail and no scrim, and leaves only once this browser's copy is gone", async () => {
+    const mirrors = await disk();
+    const { holdsMirrorOf } = await import("@ohmail/client-engine");
+    const tab1 = await openTab("tab-1");
+    expect(await mirrors(), "the tab opened no mirror, so this proves nothing").toEqual([`ohmail-mirror:${ACCOUNT}`]);
+    atLeave = () => holdsMirrorOf(ACCOUNT);
+    await renewalRefused("refresh_revoked");
+    expect(showsMail(tab1), "the revoked tab kept the mailbox on screen").toBe(false);
+    expect(tab1.querySelector(".session-end"), "the mail was dropped behind a scrim").toBeNull();
+    expect(leaves, "the revoked tab stayed").toBe(1);
+    expect(readAtLeave, "the tab left with its copy still on this browser").toEqual([false]);
+    expect(await mirrors()).toEqual([]);
+  });
+
+  it("a tab whose jar lost tf_owner (Safari keeps a script-written one seven days) takes its own copy, only its own", async () => {
+    const mirrors = await disk();
+    const { IndexedDbMirrorStore, holdsMirrorOf } = await import("@ohmail/client-engine");
+    const tab1 = await openTab("tab-1");
+    const other = new IndexedDbMirrorStore({ owner: OTHER });
+    await drive(other.load());
+    other.close();
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    atLeave = () => holdsMirrorOf(ACCOUNT);
+    await renewalRefused("refresh_revoked");
+    expect(showsMail(tab1), "the revoked tab kept the mailbox on screen").toBe(false);
+    expect(leaves, "the revoked tab stayed").toBe(1);
+    expect(readAtLeave, "the tab left with its copy still on this browser").toEqual([false]);
+    expect(await mirrors(), "the tab kept its own copy, or took another account's").toEqual([`ohmail-mirror:${OTHER}`]);
+  });
+
+  it("CONTROL: an expired sign-in keeps the scrim over the mail, and the copy", async () => {
+    const mirrors = await disk();
+    const tab1 = await openTab("tab-1");
+    await renewalRefused("refresh_expired");
+    expect(tab1.querySelector(".session-end")?.textContent).toContain(shell.messages.session.endedMidUse);
+    expect(tab1.querySelector(".row[data-id]"), "the rows left from behind the scrim").not.toBeNull();
+    expect(await mirrors()).toEqual([`ohmail-mirror:${ACCOUNT}`]);
+    expect(leaves).toBe(0);
+  });
+});

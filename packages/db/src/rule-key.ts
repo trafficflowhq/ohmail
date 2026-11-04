@@ -3,6 +3,7 @@ import { ACCOUNT_RULE_KEY_LOCK_CLASS, rules as rulesTbl } from "./schema-mail.js
 import { recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { ruleMatchKeySql, sharedProviderAllowRefusal } from "./rule-match-sql.js";
+import { clearRuleRemovals } from "./rule-removals.js";
 
 /**
  * ONE RULE PER FOUR-FIELD KEY — the key lookup and the converge every rules writer goes through.
@@ -224,6 +225,8 @@ export async function writeRuleUnderKey(tx: Tx, input: {
     accountId, kind: key.kind, match: input.match ?? key.match,
     subjectContains: key.subjectContains, bodyContains: key.bodyContains,
   }).returning({ id: rulesTbl.id });
+  // Made again under its key: the key's recorded removal ends here.
+  await clearRuleRemovals(tx, accountId, [key]);
   const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [row!.id], "create"))[0]!;
   return { op: "create", ruleId: row!.id, lastSeq, acting: null, collapsed: [] };
 }

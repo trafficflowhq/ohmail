@@ -20,14 +20,15 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, connectAttemptRecorder, type ApiDeps } from "@trafficflow/api";
 import { accounts, mailboxes, mailboxCredentials, type Tx } from "@trafficflow/db";
-import { connectAttempts } from "@trafficflow/db/cloud";
+import { authThrottle, connectAttempts, HOSTED_IMAP_ADMISSION } from "@trafficflow/db/cloud";
+import { deleteAccount, throttleKeysFor } from "@trafficflow/services";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 
-const IMAP = { host: "imap.example.invalid", port: 993, secure: true, user: "u@example.invalid", pass: "typed-secret-password-password" };
+const IMAP = { host: "imap.example.invalid", port: 993, secure: true, user: "u@example.invalid", pass: "user-entered-password" };
 
 const post = (token: string, over: Record<string, unknown> = {}): Request =>
   req("POST", "/mailboxes/probe", {
@@ -105,7 +106,7 @@ describe("the affirmative verdict, which did not exist before", () => {
     const { deps, token } = await session();
     spyDial(ok);
     const wire = await (await H(post(token), deps)).text();
-    expect(wire).not.toContain("typed-secret-password-password");
+    expect(wire).not.toContain("user-entered-password");
   });
 });
 
@@ -281,6 +282,84 @@ describe("the route is gated", () => {
   });
 });
 
+/**
+ * A BUDGET OVER TIME on the hosted hosts, per account and per login typed: ten a minute and thirty
+ * an hour for one login, twenty and sixty for the account. A refused press dials nothing and spends
+ * nothing; its wait is the refusing window's rest.
+ */
+describe("Test connection over time, on the hosted hosts", () => {
+  async function hosted() {
+    const { db, deps, clock } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    (deps.services as unknown as { imapAdmission: unknown }).imapAdmission = HOSTED_IMAP_ADMISSION;
+    return { db, deps, clock, s };
+  }
+  const press = (deps: ApiDeps, token: string, user = IMAP.user): Promise<Response> =>
+    H(post(token, { imap: { ...IMAP, user } }), deps);
+  const refusal = async (res: Response) =>
+    ({ status: res.status, wait: res.headers.get("retry-after"), code: (await res.json()).error?.code });
+  const budgetRows = async (db: Awaited<ReturnType<typeof makeDeps>>["db"]) =>
+    (await db.select().from(authThrottle)).filter((r) => r.key.startsWith("probe-rate:")).length;
+
+  it("ten presses for one login dial; the eleventh waits out the minute and dials nothing", async () => {
+    const { deps, clock, s } = await hosted();
+    const dial = spyDial(ok);
+    for (let i = 0; i < 10; i++) expect((await press(deps, s.token)).status).toBe(200);
+    expect(await refusal(await press(deps, s.token))).toEqual({ status: 429, wait: "60", code: "rate_limited" });
+    expect(dial.dialed()).toBe(10);
+    clock.advance(61_000);
+    expect((await press(deps, s.token)).status).toBe(200);
+    expect(dial.dialed()).toBe(11);
+  });
+
+  it("the budget is the account's own: another account's press for the same login dials", async () => {
+    const { db, deps, s } = await hosted();
+    const other = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const dial = spyDial(ok);
+    for (let i = 0; i < 10; i++) await press(deps, s.token);
+    expect((await press(deps, s.token)).status).toBe(429);
+    expect((await press(deps, other.token)).status).toBe(200);
+    expect(dial.dialed()).toBe(11);
+  });
+
+  it("twenty presses a minute for the account whatever the logins, and a refusal spends nothing", async () => {
+    const { db, deps, s } = await hosted();
+    const dial = spyDial(ok);
+    for (let i = 0; i < 20; i++) expect((await press(deps, s.token, `v${i}@example.invalid`)).status).toBe(200);
+    const before = await budgetRows(db);
+    expect(await refusal(await press(deps, s.token, "v20@example.invalid")))
+      .toEqual({ status: 429, wait: "60", code: "rate_limited" });
+    expect(dial.dialed()).toBe(20);
+    expect(await budgetRows(db), "the refused press counted against its login").toBe(before);
+  });
+
+  it("thirty an hour for one login: the refusal names what is left of the hour", async () => {
+    const { deps, clock, s } = await hosted();
+    spyDial(ok);
+    for (let m = 0; m < 3; m++) {
+      for (let i = 0; i < 10; i++) expect((await press(deps, s.token)).status).toBe(200);
+      clock.advance(61_000);
+    }
+    expect(await refusal(await press(deps, s.token)))
+      .toEqual({ status: 429, wait: String(3600 - 3 * 61), code: "rate_limited" });
+  });
+
+  it("an account's erasure takes the rows its presses wrote, and only its own", async () => {
+    const { db, deps, s } = await hosted();
+    const other = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    spyDial(ok);
+    await press(deps, s.token);
+    await press(deps, other.token);
+    const rowsOf = async (accountId: string) =>
+      (await db.select().from(authThrottle)).filter((r) => r.key.endsWith(`:${accountId}`)).length;
+    // The press's slot and its four windows.
+    expect([await rowsOf(s.accountId), await rowsOf(other.accountId)]).toEqual([5, 5]);
+    await deleteAccount({ db, accountId: s.accountId, userId: s.userId, now: deps.now, requestId: "erase" },
+      { throttleKeys: throttleKeysFor(deps.keyProvider) });
+    expect([await rowsOf(s.accountId), await rowsOf(other.accountId)]).toEqual([0, 5]);
+  });
+});
+
 describe("the plaintext consent on Test connection", () => {
   it("carries a ticked consent to the probe, which admits it for a server on the person's own network", async () => {
     // A home server with no TLS: 993 refuses, 143 has no STARTTLS, a plaintext login needs consent.
@@ -296,7 +375,7 @@ describe("the plaintext consent on Test connection", () => {
     });
     vi.spyOn(ImapAdapter.prototype, "listFolders").mockResolvedValue(["INBOX"]);
     vi.spyOn(ImapAdapter.prototype, "close").mockResolvedValue(undefined);
-    const home = { host: "mail.home.example", user: "u@example.invalid", pass: "typed-secret-password-password" };
+    const home = { host: "mail.home.example", user: "u@example.invalid", pass: "user-entered-password" };
 
     const first = await H(post(token, { imap: home }), deps);
     expect(first.status).toBe(400);

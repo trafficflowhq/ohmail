@@ -542,6 +542,10 @@ const ALLOWLIST: Record<string, string> = {
   "packages/db/src/request-apply.ts insert rules":
     "on the caller's tx — the organizer's request drain fences before it, and `RulesService.create` "
     + "calls `reconcileRuleCreate` inside `withAccountTx`, asserted by the rule-create case below",
+  "packages/db/src/rule-removals.ts insert ruleRemovals":
+    "on the caller's tx, after the rule-key lock: `RulesService.remove` and `update` run inside `withAccountTx`, "
+    + "the organizer's request drain fences before `applyRuleRequest`, and the import's merge fences first. A fence "
+    + "of its own would take the account row after the rule-key lock (`rule-lock-order-census.test.ts`)",
   "packages/db/src/rule-key.ts insert rules":
     "on the caller's tx — `writeRuleUnderKey`'s callers fence first: the Screener decision (its own "
     + "`readAccountErasedAt`), \"Not junk, always allow\" (`fenceErased`) and the HEY import (`withAccountTx`)",

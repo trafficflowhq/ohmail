@@ -4,9 +4,9 @@ import {
 } from "@trafficflow/services/mail";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { serviceContext } from "../context.js";
-import { lookupIdempotent, storedResponse, type StoredIdempotent } from "../idempotency.js";
+import { lookupIdempotent, replayOf } from "../idempotency.js";
 import { canonicalQuery } from "../middleware.js";
-import { errorResponse, jsonResponse } from "../responses.js";
+import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { rules, readBody } from "./shared.js";
 
@@ -149,14 +149,10 @@ export const rulesRoutes: Route[] = [
       // A DIFFERENT hash under the same key is a different request — most usefully, the same key
       // aimed at another rule's id — and that is a 409, never a silent success. A MATCHING hash
       // is answered by the row itself: this route has two statuses, and the premise that it could
-      // only have stored the 204 is what made a queued delete replay as done.
-      const replay = (found: StoredIdempotent): Response =>
-        found.requestHash !== requestHash
-          ? errorResponse("idempotency_replay", 409, "idempotency key reused with a different request")
-          : storedResponse(found);
-
+      // only have stored the 204 is what made a queued delete replay as done. A row an erasure
+      // stamped is 410 before either, as at every other door (`replayOf`).
       const found = await lookupIdempotent(deps.db, accountId, key, deps.now());
-      if (found) return replay(found);
+      if (found) return replayOf(found, requestHash);
 
       try {
         return answer(await rules(deps).remove(serviceContext(deps, req), params.id!, {
@@ -181,7 +177,7 @@ export const rulesRoutes: Route[] = [
         // (rethrow the honest 404, key unburnt) or the claim vanished, which is a real fault
         // and must become a 500 rather than a fabricated success.
         if (!winner) throw err;
-        return replay(winner);
+        return replayOf(winner, requestHash);
       }
     },
   },

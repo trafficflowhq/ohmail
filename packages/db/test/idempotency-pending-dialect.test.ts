@@ -73,6 +73,18 @@ describe("a pending idempotency key, on this store", () => {
     expect(await w.release("k5", "hA")).toBe(false);
     expect((await w.row("k5"))?.responseJson).toEqual({ answer: 1 });
   });
+
+  it("hands back its own claim after an erasure blanked it, never an erased answer", async () => {
+    const w = await world();
+    await w.pending("k9", "hA");
+    await w.pending("k10", "hA");
+    await w.settle("k10", "hA", { answer: 1 });
+    await eraseIdempotentResponses(w.db as unknown as Tx, w.accountId, NOW);
+    expect(await w.release("k9", "hA"), "the run's own claim stayed bound after the erasure").toBe(true);
+    expect(await w.row("k9")).toBeUndefined();
+    expect(await w.release("k10", "hA"), "an erased answer was handed back for a re-run").toBe(false);
+    expect((await w.row("k10"))?.responseJson).toBe("erased");
+  });
 });
 
 /*
@@ -116,7 +128,8 @@ describe("an expired key an erasure stamped, taken over on this store", () => {
     await eraseIdempotentResponses(w.db as unknown as Tx, w.accountId, NOW);
     expect(await claim(w, "k8", "hB", { second: 2 }, new Date(NOW.getTime() + 60_000))).toBe(false);
     const r = await read(w, "k8", new Date(NOW.getTime() + 60_000));
+    // The request's hash goes with its answer: a guess at a short body must confirm nothing.
     expect({ hash: r?.requestHash, json: r?.responseJson, stamped: r?.erasedAt instanceof Date })
-      .toEqual({ hash: "hA", json: "erased", stamped: true });
+      .toEqual({ hash: "", json: "erased", stamped: true });
   });
 });

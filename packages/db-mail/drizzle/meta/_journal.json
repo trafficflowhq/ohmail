@@ -1219,6 +1219,13 @@
       "when": 1791602600078,
       "tag": "0176_messages_unconfirmed_hold",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1791602600079,
+      "tag": "0178_rule_removals",
+      "breakpoints": true
     }
   ]
 }

@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
-import { IndexedDbMirrorStore } from "../src/idb.js";
+import { IndexedDbMirrorStore, clearAllMirrors } from "../src/idb.js";
 import { OhmailEngine } from "../src/engine.js";
-import type { EngineAdapter, SyncChange } from "../src/types.js";
+import { isFromSomeone, isOwnSent, ohboxView } from "../src/selectors.js";
+import { recordedSentFolderOf, replaceRecordedSentFolders } from "../src/sent-folders.js";
+import { MAILBOX_TYPE, type EngineAdapter, type EngineMessage, type SyncChange } from "../src/types.js";
 
 /**
  * ═══ THE DEVICE ALREADY HAS THE MAIL. THE SCREEN HAS TO BE TOLD. ═══════════════════════════
@@ -209,5 +211,154 @@ describe("hydrating the mirror publishes it", () => {
     // A public method's safety must not depend on one caller's latch: the desktop shell, the
     // sidecar and the contract tests all construct this engine themselves.
     expect(loads, "three callers each re-read the whole mirror").toBe(1);
+  });
+});
+
+/**
+ * THE RECORDED SENT FOLDERS RIDE THE MIRROR. `GET /mailboxes` states each mailbox's Sent folder
+ * ('Envoyés'); held in memory only, every start read the account's own letters there as received
+ * until that read answered. The statement is kept with the mirror and read by the hydration.
+ */
+describe("the recorded Sent folders ride the mirror", () => {
+  const OWNER = "acct_sf";
+  const letter = (folder: string): SyncChange =>
+    ({
+      type: "message", op: "create", id: "fr1", seq: 1, updatedAt: ISO,
+      entity: {
+        id: "fr1", accountId: "a", mailboxId: "mb-fr", threadId: null, messageIdHeader: null,
+        subject: "Bonjour", from: { name: null, address: "mila@ohmail.test" }, to: [], cc: [],
+        date: ISO, folder, snippet: "s", unread: true, hasAttachments: false, attachmentCount: 0,
+        sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+        triage: null, labels: [], remoteContent: "none", updatedAt: ISO,
+      },
+    }) as unknown as SyncChange;
+
+  async function seedLetter(factory: IDBFactory): Promise<void> {
+    const store = new IndexedDbMirrorStore({ owner: OWNER, factory });
+    await store.load();
+    await store.applyResponse({
+      changes: { creates: [letter("Envoyés")], updates: [], moves: [], deletes: [] },
+      cursor: "c1", hasMore: false, serverTime: ISO,
+    } as never);
+    store.close();
+  }
+
+  /** A boot over the account's mirror; `adapter` answers `/sync`, never `GET /mailboxes`. */
+  async function boot(factory: IDBFactory, adapter: EngineAdapter = heldAdapter()) {
+    const store = new IndexedDbMirrorStore({ owner: OWNER, factory });
+    const engine = new OhmailEngine({ adapter, store });
+    let firstFrame: { sent: boolean; fromSomeone: boolean; earlier: string[] } | null = null;
+    engine.subscribe(() => {
+      const m = engine.read().get<EngineMessage>("message", "fr1");
+      if (firstFrame === null && m) {
+        const earlier = ohboxView(engine.read()).previouslySeen.map((x) => x.id);
+        firstFrame = { sent: isOwnSent(m), fromSomeone: isFromSomeone(m), earlier };
+      }
+    });
+    await engine.hydrate();
+    /* A later write on the same object store lands after every earlier one: the statement is on disk. */
+    const settled = async () => { await store.setMeta("probe", true); };
+    const close = async () => { await settled(); store.close(); engine.dispose(); };
+    return { engine, firstFrame: () => firstFrame, close };
+  }
+
+  /** A new process: the module's statement is gone, the device's mirror is not. */
+  const freshProcess = () => replaceRecordedSentFolders(new Map());
+
+  afterEach(() => freshProcess());
+
+  it("a cold start reads a localized Sent folder before the first frame", async () => {
+    const factory = new IDBFactory();
+    await seedLetter(factory);
+    const before = await boot(factory);
+    // The symptom: with no statement yet the account's own letter is received, and out of the Ohbox.
+    expect(before.firstFrame()).toEqual({ sent: false, fromSomeone: true, earlier: [] });
+    expect(before.engine.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }])).toBe(true);
+    await before.close();
+    freshProcess();
+
+    const cold = await boot(factory);
+    expect(cold.firstFrame(), "the first frame read the letter as received")
+      .toEqual({ sent: true, fromSomeone: false, earlier: ["fr1"] });
+    await cold.close();
+  });
+
+  it("the mailbox read refreshes it: a renamed Sent folder replaces it, one left out is cleared, at the next boot too", async () => {
+    const factory = new IDBFactory();
+    await seedLetter(factory);
+    const first = await boot(factory);
+    first.engine.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }]);
+    await first.close();
+    freshProcess();
+
+    const renamed = await boot(factory);
+    expect(renamed.engine.setSentFolders([{ id: "mb-fr", sentFolder: "Éléments envoyés" }])).toBe(true);
+    expect(isOwnSent({ mailboxId: "mb-fr", folder: "Envoyés" })).toBe(false);
+    await renamed.close();
+    freshProcess();
+
+    const next = await boot(factory);
+    expect(next.firstFrame()).toEqual({ sent: false, fromSomeone: true, earlier: [] });
+    expect(recordedSentFolderOf("mb-fr")).toBe("Éléments envoyés");
+    expect(next.engine.setSentFolders([])).toBe(true);
+    await next.close();
+    freshProcess();
+
+    const removed = await boot(factory);
+    expect(recordedSentFolderOf("mb-fr")).toBeNull();
+    await removed.close();
+  });
+
+  it("a mailbox's removal receipt clears it, and the next boot does not read it back", async () => {
+    const factory = new IDBFactory();
+    await seedLetter(factory);
+    const first = await boot(factory);
+    first.engine.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }, { id: "mb-nl", sentFolder: "INBOX.Verzonden" }]);
+    await first.close();
+    freshProcess();
+
+    const receipt = {
+      changes: {
+        creates: [], updates: [], moves: [],
+        deletes: [{ type: MAILBOX_TYPE, op: "delete", id: "mb-fr", seq: 2, updatedAt: ISO, entity: null }],
+      },
+      cursor: "c2", hasMore: false, serverTime: ISO,
+    };
+    let answered = false;
+    const adapter = {
+      sync: async () => {
+        if (answered) return new Promise(() => {});
+        answered = true;
+        return receipt;
+      },
+      mutate: async () => ({ status: "applied" }),
+      fetchBody: async () => null,
+    } as unknown as EngineAdapter;
+    const live = await boot(factory, adapter);
+    expect(recordedSentFolderOf("mb-fr")).toBe("Envoyés");
+    await live.engine.syncOnce();
+    expect(recordedSentFolderOf("mb-fr")).toBeNull();
+    expect(recordedSentFolderOf("mb-nl")).toBe("INBOX.Verzonden");
+    await live.close();
+    freshProcess();
+
+    const next = await boot(factory);
+    expect([recordedSentFolderOf("mb-fr"), recordedSentFolderOf("mb-nl")]).toEqual([null, "INBOX.Verzonden"]);
+    await next.close();
+  });
+
+  it("sign-out's mirror wipe takes it: the next engine in the same page reads none", async () => {
+    const factory = new IDBFactory();
+    await seedLetter(factory);
+    const first = await boot(factory);
+    first.engine.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }]);
+    await first.close();
+    const wiped = await clearAllMirrors(OWNER, factory);
+    expect(wiped.remaining).toEqual([]);
+
+    // No fresh process: the page lives on and the next sign-in hydrates its own (empty) mirror.
+    const after = await boot(factory);
+    expect(recordedSentFolderOf("mb-fr")).toBeNull();
+    await after.close();
   });
 });

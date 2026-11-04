@@ -63,7 +63,7 @@ beforeAll(async () => {
   const logger = createSidecarLogger({ sink: (line) => { lines.push(JSON.parse(line) as Record<string, unknown>); } });
   sidecar = await createSidecar({
     dataDir: dir,
-    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "not-dialled-password-password" } },
+    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "mailbox-unreached-password" } },
     address: ADDRESS, machineName: "search phases host",
     pollIntervalMs: 60 * 60 * 1000, vitalsIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
     adapterFactory: quietMailbox(), log: diagnosticFor(logger), logger,

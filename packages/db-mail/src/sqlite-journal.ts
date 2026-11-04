@@ -665,5 +665,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "CREATE VIRTUAL TABLE stopwords_fts USING fts5(\n  words,\n  tokenize='porter unicode61 remove_diacritics 2'\n);",
       "INSERT INTO stopwords_fts(words) VALUES ('i me my myself we our ours ourselves you your yours yourself yourselves he him his himself she her hers herself it its itself they them their theirs themselves what which who whom this that these those am is are was were be been being have has had having do does did doing a an the and but if or because as until while of at by for with about against between into through during before after above below to from up down in out on off over under again further then once here there when where why how all any both each few more most other some such no nor not only own same so than too very s t can will just don should now');"
     ]
+  },
+  {
+    "name": "0178_rule_removals.sql",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"rule_removals\" (\n  \"account_id\" text NOT NULL,\n  \"rule_key\" text NOT NULL,\n  \"kind\" text NOT NULL,\n  \"match\" text NOT NULL,\n  \"subject_contains\" text,\n  \"body_contains\" text,\n  \"removed_at\" integer NOT NULL,\n  \"removed_by\" text,\n  CONSTRAINT \"rule_removals_account_id_rule_key_pk\" PRIMARY KEY (\"account_id\", \"rule_key\")\n);"
+    ]
   }
 ] as const;

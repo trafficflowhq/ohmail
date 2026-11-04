@@ -220,7 +220,7 @@ export {
   AWAY_PILES,
   validateProfileUpdatePayload, applyProfileUpdate,
   RULE_TERM_MAX, RULE_MATCH_MAX, RULE_PRIORITY_MAX, validateRulePayload, ruleCreatePayload, applyRuleRequest, settleReaderRuleRows,
-  reconcileRuleCreate, pressSettled, settlePressesLeavingMailbox, createPressKeysSince, type RuleCreateOutcome, type PressLeg, type ReaderSettleSkip,
+  reconcileRuleCreate, pressSettled, settlePressesLeavingMailbox, createPressKeysSince, createPressesSince, type RuleCreateOutcome, type PressLeg, type ReaderSettleSkip,
   type LeavingSettle,
   type ValidatedMovePayload, type MoveRefusal,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,
@@ -231,6 +231,11 @@ export {
   type ApplyRuleRequestInput, type ApplyRuleRequestResult,
   RESTORABLE_PROVENANCE, restoredProvenanceSql,
 } from "./request-apply.js";
+// The rules a person removed (mail 0178), recorded on the caller's transaction. Reaches `schema-mail.js` alone.
+export {
+  RULE_REMOVAL_KEY_MAX_BYTES, RULE_REMOVAL_MAX_AGE_MS, ruleRemovalKey, recordRuleRemovals, readRuleRemovals, clearRuleRemovals,
+  type RuleRemoval, type RuleRemovalKeyParts,
+} from "./rule-removals.js";
 export {
   convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, deleteRulesById, keptProvenance, endOwedWalk,
   isRefileRun, owesWholeWalk, pendingRefileFrom, refileOwed, isParkedFence, PARKED_FENCE_PREFIX,
@@ -464,7 +469,7 @@ export { GATE_SCREENING_AUTH_VERDICTS, storedAuthScreens, authScreensSql, unconf
  */
 export {
   PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, PROFILE_WRITTEN_AUDIT_ACTION,
-  recordProfileWrite, profileWritesRecorded,
+  recordProfileWrite, profileWritesRecorded, newestOwnProfileWriteBefore, newestProfileImport,
   PROFILE_COPY_AUDIT_ACTION, PROFILE_COPY_RENEW_MS, latestProfileCopy, recordProfileCopy, type ProfileCopyState,
   latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased,
   profileImportResolutionSince, recordProfileImportResolution, profileImportResult,

@@ -77,7 +77,7 @@ function endRunUncleanly(dataDir: string, generation: number): void {
 async function boot(dataDir: string, lines: Array<[string, Record<string, unknown>]> = []): Promise<Sidecar> {
   const sidecar = await createSidecar({
     dataDir,
-    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
     address: "owner@trafficflow.test",
     machineName: "window host",
     pollIntervalMs: 60 * 60 * 1000,

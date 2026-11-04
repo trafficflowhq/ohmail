@@ -60,7 +60,7 @@ async function establish(svc: AuthService, email: string): Promise<{ userId: str
   // NARROWED, not asserted away: `register` answers two shapes, and only the enrolment one
   // carries the user this helper goes on to enrol and sign in.
   const registered = await svc.register(at(), {
-    email, password: "pw-correct-horse-password-password", displayName: "Gil", inviteCode: "INVITE-OK",
+    email, password: "account-signin-password", displayName: "Gil", inviteCode: "INVITE-OK",
   });
   if (registered.status !== "enrollment") {
     throw new Error(`expected an enrolment session, got ${registered.status}`);
@@ -75,7 +75,7 @@ async function establish(svc: AuthService, email: string): Promise<{ userId: str
   await svc.totpActivate(enrollCtx, { code: totp(secret) });
 
   t = new Date(t.getTime() + 30_000);
-  const ch = await svc.login(at(), { email, password: "pw-correct-horse-password-password" });
+  const ch = await svc.login(at(), { email, password: "account-signin-password" });
   if (ch.status !== "twofa_required") throw new Error(`expected a 2FA challenge, got ${ch.status}`);
   const est = await svc.totpVerify(at(), { loginToken: ch.loginToken, code: totp(secret) });
   return { userId: user.userId, r1: est.tokens!.refreshToken };

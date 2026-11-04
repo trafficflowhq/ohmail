@@ -377,7 +377,7 @@ describe("MAILBOX-IMAP-EDIT — a refused probe never stands the mailbox down", 
 
     const el = await mount(dto());
     await click(byText(el, copy.edit!)!);
-    await fillEdit(el, { pass: "still-fine-password-password", host: "typo.example.test" });
+    await fillEdit(el, { pass: "unchanged-entry-password", host: "typo.example.test" });
     await finishCeremony(el);
 
     expect(el.querySelector("#mb-edit-pass"), "did not return to the edit form").toBeTruthy();

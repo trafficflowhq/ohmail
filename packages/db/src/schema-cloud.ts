@@ -210,6 +210,8 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
   environment: text("environment"),                     // apns: 'sandbox' | 'production'
   deviceId: uuid("device_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  // Cloud 0056: the registering session's family, stamped from that session and never from the body.
+  sessionFamilyId: uuid("session_family_id"),
 });
 
 // Billing + the credit ledger (migration 0018): five additive tables whose purpose is to make

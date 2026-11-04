@@ -194,7 +194,7 @@ async function controlStatesOverImport(
     dataDir,
     imap: {
       host: "imap.invalid", port: 993, secure: true,
-      auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+      auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
     },
     address: "owner@trafficflow.test",
     pollIntervalMs: 60 * 60 * 1000,
@@ -261,7 +261,7 @@ describe("the drain folds its own write-ahead log in", () => {
       dataDir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       // The poll timer must never fire on its own: every drain here is one this test asked for.
@@ -296,7 +296,7 @@ describe("the drain folds its own write-ahead log in", () => {
       dataDir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       pollIntervalMs: 60 * 60 * 1000,
@@ -343,7 +343,7 @@ describe("the drain folds its own write-ahead log in", () => {
       dataDir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       pollIntervalMs: 60 * 60 * 1000,
@@ -400,7 +400,7 @@ describe("the drain folds its own write-ahead log in", () => {
       dataDir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       pollIntervalMs: 60 * 60 * 1000,
@@ -529,7 +529,7 @@ describe("the drain folds its own write-ahead log in", () => {
       dataDir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       pollIntervalMs: 60 * 60 * 1000,

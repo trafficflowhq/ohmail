@@ -87,7 +87,7 @@ describe("a restart keeps the organizer claim; a quit gives it back", () => {
   async function boot(dir: string, meta: MemoryMetaFolder, events: string[]): Promise<Sidecar> {
     const sidecar = await createSidecar({
       dataDir: dir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test",
       machineName: "the desktop being restarted",
       pollIntervalMs: 60 * HOUR,

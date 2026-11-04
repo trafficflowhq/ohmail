@@ -12,7 +12,7 @@ import { reviveStandingDown } from "../../shell/sync-scheduler";
 import { useResolvedDemoModeFrom } from "../../shell/engine";
 import { sendSurfaceFor } from "./send-surface";
 import {
-  bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
+  apiOwnerBinding, bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
   type AccessRefusedFacts,
 } from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
@@ -24,6 +24,7 @@ import { AboutSection } from "./AboutSection";
 import { AccessLock } from "./AccessLock";
 import { ErasedWall } from "./ErasedWall";
 import { useErasedWall, watchErasedElsewhere } from "../../erased-door";
+import { useRevokedHere } from "../../revoked-door";
 import { AccountLocale } from "./AccountLocale";
 import { AiSection } from "./AiSection";
 import { LifecycleBanner } from "./LifecycleBanner";
@@ -71,6 +72,12 @@ const filingsApi: MailboxFilingsApi = {
   read: mailboxApi.filings, retry: mailboxApi.retryFilings, leave: mailboxApi.leaveFilings,
 };
 
+/** The account this tab is for, confirmed or pending: the revoke door's when the jar names nobody. */
+function tabAccount(): string | null {
+  const b = apiOwnerBinding();
+  return b.kind === "bound" || b.kind === "pending" ? b.owner : null;
+}
+
 /**
  * The Cloud client's seam. `AppShell` is shared with `apps/desktop`, whose build does not bundle this
  * app's session client, so the shell takes "ask the API who is signed in" as a function and this file
@@ -96,6 +103,8 @@ export function CloudShell({ demo }: { demo: boolean }) {
   const joinWait = useSyncExternalStore(subscribeOAuthOutcome, oauthLandsInJoin, noJoinLanding);
   /** Another tab of this browser signed out: the shell goes in the same task and the tab leaves. */
   const { gone: signedOutHere, confirmed: listenFor } = useSignedOutElsewhere(resolvedDemo, resolveOwnerOutcome);
+  /** This tab's session was revoked from another device: the mail goes, no scrim, and the copy with it. */
+  const revokedHere = useRevokedHere(resolvedDemo, tabAccount);
   /** The server-confirmed account, for the Help & contact pane's diagnostics block. */
   const [accountId, setAccountId] = useState<string | null>(null);
   const onConfirmed = useCallback((accountId: string) => {
@@ -239,7 +248,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
   }, []);
 
   // After every hook: the tab is leaving, and nothing of the mailbox may paint again.
-  if (signedOutHere) return <div className="gate" aria-busy="true" />;
+  if (signedOutHere || revokedHere) return <div className="gate" aria-busy="true" />;
   if (joinWait) return <WaitGate />;
 
   // Three injected panes, for the reason `resolveOwner` is a prop: the

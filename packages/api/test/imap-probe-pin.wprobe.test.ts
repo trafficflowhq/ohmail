@@ -43,7 +43,7 @@ import { FIXED_NOW } from "./helpers.js";
 const NAME = "mail.vanity.example";
 const PUBLIC_A = "93.184.216.34";
 const METADATA = "169.254.169.254";
-const CRED = { host: NAME, user: "u@vanity.example", pass: "typed-secret-password-password" } as const;
+const CRED = { host: NAME, user: "u@vanity.example", pass: "user-entered-password" } as const;
 
 function fakeDeps(guard: unknown): ApiDeps {
   return {
@@ -161,7 +161,7 @@ describe("makeImapProbe — the cleared address is the one dialled", () => {
 });
 
 describe("makeSmtpProbe — the submission leg is pinned by its own check", () => {
-  const smtpIn = { accountId: "a", address: "u@vanity.example", smtp: { host: "smtp.vanity.example", user: "u@vanity.example", pass: "typed-secret-password-password" } };
+  const smtpIn = { accountId: "a", address: "u@vanity.example", smtp: { host: "smtp.vanity.example", user: "u@vanity.example", pass: "user-entered-password" } };
 
   it("the dial receives the cleared address, and the name is resolved ONCE for the whole ladder", async () => {
     const { resolver, calls } = rebindingResolver();

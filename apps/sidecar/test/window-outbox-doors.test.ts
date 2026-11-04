@@ -136,7 +136,7 @@ describe("the local engine serves the window's outbox", () => {
   async function boot(dataDir: string): Promise<Sidecar> {
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "window host", pollIntervalMs: 60 * 60 * 1000,
       leaseStaleAfterMs: 60_000, adapterFactory: quiet(),
     });

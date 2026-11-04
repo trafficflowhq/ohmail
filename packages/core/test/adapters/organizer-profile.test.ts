@@ -8,14 +8,20 @@ import {
   makeProfileIo,
   parseProfileMessage,
   localSaysWhatAFingerprintSays,
+  payloadFingerprintOf,
+  profileCopyKey,
   profileFingerprint,
+  profileFingerprintVersion,
   profileGateView,
   profilePayloadAsRead,
   readOrganizerProfile,
   writeOrganizerProfile,
   isMalformedProfile,
+  readProfileRemovedRules,
+  PROFILE_REMOVED_MAX,
   type OrganizerProfilePayload,
   type ProfileIo,
+  type ProfileRemovedRule,
   type RawProfileMessage,
 } from "../../src/adapters/organizer-profile.js";
 import { formatClaim, parseClaim } from "../../src/adapters/organizer-lease.js";
@@ -895,6 +901,104 @@ describe("the requests an organizer applied travel in the envelope", () => {
     const parsed = read(raw);
     expect(parsed.doc!.applied).toBeUndefined();
     expect(parsed.doc!.rules.length).toBe(richPayload().rules.length);
+  });
+});
+
+describe("the rules a person removed travel in the envelope", () => {
+  const AGO = (days: number): string => new Date(AT.getTime() - days * 86_400_000).toISOString();
+  const GONE: ProfileRemovedRule = { kind: "sender", match: "Zorbelt@quindle.test", removedAt: AGO(1), by: "w-old" };
+  const NARROW: ProfileRemovedRule = { kind: "header", match: "list-id", subjectContains: "Quarvex", bodyContains: "plimsoll", removedAt: AGO(2), by: "w-new" };
+  const read = (raw: string) => {
+    const parsed = parseProfileMessage(raw);
+    if (parsed === null || isMalformedProfile(parsed) || parsed.status !== "ok") throw new Error("expected a readable document");
+    return parsed;
+  };
+  const write = (removedRules: ProfileRemovedRule[]) =>
+    formatProfileMessage(makeProfileDoc(richPayload(), { updatedAt: AT, producer: PRODUCER, applied: [], removedRules }), { installId: "a" });
+
+  it("round-trips newest first after `applied`, kind, instant and install plain, a person's words escaped, read as written", () => {
+    const raw = write([NARROW, GONE]);
+    const parsed = read(raw);
+    expect(parsed.doc!.removedRules).toEqual([GONE, NARROW]);
+    expect(Object.keys(parsed.doc!).slice(0, 7)).toEqual(["v", "updatedAt", "producer", "applied", "removedRules", "screener", "rules"]);
+    expect(parsed.encoded).toBe(true);
+    for (const plain of [`"kind": "header"`, `"removedAt": "${AGO(1)}"`, `"by": "w-new"`]) expect(raw).toContain(plain);
+    for (const word of ["zorbelt", "quindle", "quarvex", "plimsoll", "list-id"]) expect(raw.toLowerCase()).not.toContain(word);
+  });
+
+  it("the fingerprint is the same with and without removals, and none is written when there are none", () => {
+    const parsed = read(write([GONE, NARROW]));
+    expect(profileFingerprint(parsed.doc!)).toBe(profileFingerprint(richPayload()));
+    expect(profileFingerprint(read(write([])).doc!)).toBe(profileFingerprint(richPayload()));
+    expect(write([])).not.toContain("removedRules");
+  });
+
+  it("an entry that cannot be read, or one removed after the copy, is dropped alone, and a list read only to its cap", () => {
+    const bad = [
+      { kind: "folder", match: "a@b.test", removedAt: AGO(1), by: "w" }, { kind: "sender", match: " ", removedAt: AGO(1), by: "w" },
+      { kind: "sender", match: "a@b.test", subjectContains: 7, removedAt: AGO(1), by: "w" },
+      { kind: "sender", match: "a\u0000b", removedAt: AGO(1), by: "w" }, { kind: "sender", match: "a@b.test", removedAt: "yesterday", by: "w" },
+      { kind: "sender", match: "a@b.test", removedAt: new Date(AT.getTime() + 1000).toISOString(), by: "w" },
+      { kind: "sender", match: "a@b.test", removedAt: AGO(1), by: "x\ny" }, "nonsense", GONE,
+    ];
+    expect(readProfileRemovedRules(bad, AT.toISOString())).toEqual([GONE]);
+    expect(readProfileRemovedRules({ list: [GONE] }, AT.toISOString())).toBeUndefined();
+    const many = Array.from({ length: PROFILE_REMOVED_MAX + 3 }, (_, i) => ({ ...GONE, match: `m${i}@x.test` }));
+    expect(readProfileRemovedRules(many, AT.toISOString())!.length).toBe(PROFILE_REMOVED_MAX);
+    const raw = write([GONE]).replace(`"removedAt": "${AGO(1)}"`, `"removedAt": 12`);
+    expect(read(raw).doc!.removedRules).toEqual([]);
+    expect(read(raw).doc!.rules.length).toBe(richPayload().rules.length);
+  });
+
+  /* A COPY'S KEY: its payload fingerprint, and a digest of its removals when it records any. */
+  it("a copy's key is its fingerprint without removals, and names the removals it records", () => {
+    const at = (removedRules: ProfileRemovedRule[], o: { updatedAt?: Date; v?: number } = {}) => makeProfileDoc(richPayload(), {
+      updatedAt: o.updatedAt ?? AT, producer: PRODUCER, removedRules,
+    }, o.v);
+    const fp = profileFingerprint(richPayload());
+    expect(profileCopyKey(at([]))).toBe(fp);
+    const both = at([GONE, NARROW]);
+    const key = profileCopyKey(both);
+    expect(key).not.toBe(fp);
+    expect(key.length).toBeLessThanOrEqual(100);
+    expect([payloadFingerprintOf(key), profileFingerprintVersion(key), payloadFingerprintOf(fp)]).toEqual([fp, 2, fp]);
+    for (const other of [[GONE], [GONE, NARROW, { ...GONE, match: "x@quindle.test" }], [{ ...GONE, removedAt: AGO(3) }, NARROW],
+      [{ ...GONE, by: "w-new" }, NARROW], [GONE, { ...NARROW, subjectContains: "other" }]]) {
+      expect(profileCopyKey(at(other))).not.toBe(key);
+    }
+    const sameCopy = [
+      { ...both, removedRules: [...both.removedRules!].reverse() },
+      makeProfileDoc(richPayload(), {
+        updatedAt: new Date(AT.getTime() + 3_600_000), producer: { kind: "server", version: "9.9.9" }, removedRules: [NARROW, GONE],
+        applied: ["meta-request:1"], screening: { baselineAt: null, dormancyDays: 30, scope: "window" }, gap: { since: AGO(1), by: "w", at: AGO(1) },
+      }),
+      read(write([GONE, NARROW])).doc!,
+    ];
+    for (const d of sameCopy) expect(profileCopyKey(d)).toBe(key);
+    const v1 = profileCopyKey(at([GONE], { v: 1 }));
+    expect([payloadFingerprintOf(v1), profileFingerprintVersion(v1)]).toEqual([profileFingerprint(richPayload(), 1), 1]);
+    expect(localSaysWhatAFingerprintSays(richPayload(), key)).toBe(true);
+    expect(localSaysWhatAFingerprintSays({ ...richPayload(), tagNames: [] }, key)).toBe(false);
+  });
+
+  it("a write that saw one copy refuses a newer foreign copy with its rules and other removals", async () => {
+    const io = new MemMeta();
+    const copy = (removedRules: ProfileRemovedRule[]) => makeProfileDoc(richPayload(), { updatedAt: AT, producer: PRODUCER, removedRules });
+    const seen = copy([GONE]);
+    const later = copy([GONE, NARROW]);
+    await io.appendProfile(formatProfileMessage(later, { installId: "other-install" }));
+    const mine = makeProfileDoc({ ...richPayload(), tagNames: ["mine"] }, { updatedAt: new Date(AT.getTime() + 120_000), producer: PRODUCER });
+    const refused = await writeOrganizerProfile({ io, doc: mine, installId: "i", replaceable: [profileCopyKey(seen)] });
+    expect([refused.written, !refused.written && refused.reason, io.messages.length]).toEqual([false, "foreign", 1]);
+    expect(await writeOrganizerProfile({ io, doc: mine, installId: "i", replaceable: [profileCopyKey(later)] })).toEqual({ written: true, removed: 1 });
+  });
+
+  it("a copy carries at most the cap, the newest, none older than a year", () => {
+    const many = Array.from({ length: PROFILE_REMOVED_MAX + 2 }, (_, i) => ({ ...GONE, match: `m${i}@x.test`, removedAt: AGO(i % 300) }));
+    const doc = makeProfileDoc(richPayload(), { updatedAt: AT, producer: PRODUCER, removedRules: [...many, { ...GONE, removedAt: AGO(366) }] });
+    expect(doc.removedRules!.length).toBe(PROFILE_REMOVED_MAX);
+    expect(doc.removedRules!.some((r) => r.removedAt === AGO(366))).toBe(false);
+    expect(doc.removedRules![0]!.removedAt).toBe(AGO(0));
   });
 });
 

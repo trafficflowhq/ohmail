@@ -66,7 +66,7 @@ describe("the desktop's launch arm", () => {
     const dataDir = await freshDataDir("ohmail-launch-shrink-");
     const sidecar = await createSidecar({
       dataDir, installId: INSTALL,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "the laptop",
       pollIntervalMs: 60_000, idlePollCeilingMs: 60_000, leaseStaleAfterMs: 60_000,
       adapterFactory: adapterOver(server), log: (event, detail) => { lines.push({ event, detail }); },

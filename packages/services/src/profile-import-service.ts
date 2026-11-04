@@ -48,7 +48,7 @@ export type ProfileImportCandidateDTO = ProfileImportQuestionDTO & {
 type ProfileImportQuestionDTO =
   /** Nothing to ask about — the resting answer. */
   | { state: "none" }
-  /** A document is waiting on the user's answer. `fingerprint` names its exact content. */
+  /** A document is waiting on the user's answer. `fingerprint` names its exact copy, rules and removals. */
   | {
     state: "found";
     fingerprint: string;
@@ -99,7 +99,7 @@ type ProfileImportStatusRefusal = ImportAskRefusal | "superseded";
 /** Where a handed-over press stands, as `GET …/profile-import/status` answers it. */
 export type ProfileImportStatusDTO =
   | { state: "importing"; fingerprint: string }
-  | { state: "imported"; imported: ProfileImportCounts | null; skippedRules: number }
+  | { state: "imported"; imported: ProfileImportCounts | null; skippedRules: number; retiredRules: number }
   | { state: "refused"; reason: ProfileImportStatusRefusal; message: string };
 
 export { PROFILE_IMPORT_LOCK_CLASS, type ProfileImportApplied, type ProfileImportCounts };
@@ -166,6 +166,7 @@ function declinedFrom(
       awayResponder: c.awayResponder > 0,
       signature: (c.signature ?? 0) > 0,
       ...(signatureReplaces === null ? {} : { signatureReplaces }),
+      ...(typeof c.removedRules === "number" && c.removedRules > 0 ? { removedRules: c.removedRules } : {}),
     },
   };
 }
@@ -261,7 +262,7 @@ export class ProfileImportService {
    *
    * `fingerprint` is REQUIRED and is the confirm screen's receipt: the document is re-read from
    * the mailbox and applied only if its content is still exactly what the user was shown —
-   * counts and all. A document that changed in between answers 409 `profile_changed`, and the
+   * counts and all, removals included. A document that changed in between answers 409 `profile_changed`, and the
    * screen asks again over the new content rather than applying something nobody confirmed. A
    * read that does not fit the request hands the press to the organizer (`importing`).
    * `signatureReplaces` is the offer's receipt for the signature the card said the copy's replaces;
@@ -373,7 +374,10 @@ export class ProfileImportService {
     if (row === null || row.fingerprint !== fingerprint) return refused("superseded");
     if (row.outcome === "imported") {
       const result = await profileImportResult(asTx(ctx), { accountId: ctx.accountId, mailboxId, fingerprint });
-      return { state: "imported", imported: result ? arrived(result.imported) : null, skippedRules: result?.skippedRules ?? 0 };
+      return {
+        state: "imported", imported: result ? arrived(result.imported) : null, skippedRules: result?.skippedRules ?? 0,
+        retiredRules: result?.retiredRules ?? 0,
+      };
     }
     if (row.outcome === "refused") return refused(row.reason ?? "unreadable");
     if (row.organizerRole !== "organizer") return refused("not_organizer");

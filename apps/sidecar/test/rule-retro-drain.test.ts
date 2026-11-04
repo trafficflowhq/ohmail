@@ -71,7 +71,7 @@ describe("a rule's 'apply to existing mail' reaches the mailbox on a standalone 
     const dataDir = await freshDataDir("ohmail-rule-retro-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test",
       machineName: "retro host",
       pollIntervalMs: 60 * 60 * 1000,
@@ -153,7 +153,7 @@ describe("a rule's 'apply to existing mail' reaches the mailbox on a standalone 
     const dataDir = await freshDataDir("ohmail-rule-retro-reader-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "retro reader", pollIntervalMs: 60 * 60 * 1000,
       leaseStaleAfterMs: 60_000, adapterFactory: recordingMailbox(moves), log: () => {},
     });

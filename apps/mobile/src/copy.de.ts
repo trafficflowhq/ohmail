@@ -2276,6 +2276,7 @@ export const DE: Deck = {
   pfiAwayPart: "deine Abwesenheitsantwort",
   pfiSignaturePart: "deine Signatur",
   pfiSignatureReplacingPart: "deine Signatur, die die jetzige Signatur dieses Postfachs ersetzt",
+  pfiRemovedPart: (n: number) => (n === 1 ? "1 entfernte Regel" : `${n} entfernte Regeln`),
   pfiListPair: (first: string, second: string) => `${first} und ${second}`,
   pfiListMany: (head: string, last: string) => `${head} und ${last}`,
   pfiSavedByLocal: (when: string) => `Gespeichert ${when} von ohmail auf einem anderen Computer.`,
@@ -2283,7 +2284,7 @@ export const DE: Deck = {
   pfiSavedByPhone: (when: string) => `Gespeichert ${when} von ohmail auf einem Handy.`,
   pfiSavedBy: (when: string) => `Gespeichert ${when}.`,
   pfiWillDo:
-    "Der Import fügt sie den Einstellungen dieses Accounts hinzu. Mails, die dieses ohmail im Screener zurückgehalten hat, werden für Absender, die sie aussortieren, dort abgelegt, wo sie es sagen; sonst ändert sich an deinen Mails nichts. Bis du dich entscheidest, bleiben diese Einstellungen im Postfach.",
+    "Der Import fügt sie den Einstellungen dieses Accounts hinzu und behält jede Regel, die es nur hier gibt; eine Regel, die dort entfernt wurde, nachdem dieses ohmail das Postfach zuletzt organisiert hat, wird auch hier entfernt. Mails, die dieses ohmail im Screener zurückgehalten hat, werden für Absender, die sie aussortieren, dort abgelegt, wo sie es sagen; sonst ändert sich an deinen Mails nichts. Bis du dich entscheidest, bleiben diese Einstellungen im Postfach.",
   pfiHeldRouting:
     "Bis du antwortest, bleibt Mail von Absendern, die diese Einstellungen durchlassen, dort, wo sie angekommen ist; andere neue Absender werden wie gewohnt gescreent.",
   pfiImport: "Einstellungen importieren",
@@ -2297,6 +2298,8 @@ export const DE: Deck = {
   pfiDoneDetails: (details: string) => `Importiert: ${details}.`,
   pfiDoneSkipped: (n: number) =>
     (n === 1 ? "1 Regel konnte nicht importiert werden." : `${n} Regeln konnten nicht importiert werden.`),
+  pfiDoneRetired: (n: number) =>
+    (n === 1 ? "1 dort entfernte Regel wurde auch hier entfernt." : `${n} dort entfernte Regeln wurden auch hier entfernt.`),
   pfiDoneSignatureKept: "Die Signatur, die du in diesem Postfach eingegeben hast, bleibt; die gespeicherte wurde nicht importiert.",
   pfiDoneAction: "Fertig",
   pfiErrorTitle: "Das hat nicht geklappt.",

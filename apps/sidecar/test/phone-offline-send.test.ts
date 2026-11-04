@@ -164,7 +164,7 @@ async function scene(): Promise<Scene> {
   const net = { cut: false, sent: 0, delivered: [] as OutboundMessage[] };
   live = await startPhoneEngine({
     exec,
-    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
     machineName: "ohmail on a phone",
     installId: "install-offline-send",
     // A key ring, so the launch seals the password the send then opens — the device always has one.
@@ -317,7 +317,7 @@ async function appScene() {
   const net = { cut: false, sent: 0 };
   live = await startPhoneEngine({
     exec,
-    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
     machineName: "ohmail on a phone",
     installId: "install-offline-rearm",
     keks: { 1: "a1".repeat(32) },

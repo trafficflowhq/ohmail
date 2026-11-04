@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   mailboxes, messages, folderState, rules, organizerRequests, readIdempotencyKey, listOutstandingForAccount,
+  eraseIdempotentResponses,
 } from "@trafficflow/db";
 import {
   formatRequest, formatAck, acksIn, parseRequestEnvelope, deriveRequestKey, RequestUnavailableError,
@@ -136,6 +137,20 @@ async function desiredFolder(db: TestDb, messageId: string): Promise<string | nu
   return fs?.desiredFolder ?? null;
 }
 
+/** A signed decision record under a fixed id, for an id reused with other content. */
+const recordFor = (w: { mailboxId: string }, id: string, address: string): string => formatRequest({
+  requestId: id, kind: "screener.decide", mailboxId: w.mailboxId, installId: READER.installId,
+  organizerKind: "local", decidedAt: t0, key: KEY,
+  payload: { scope: "sender", address, appliedFolder: "INBOX", decision: "yes" },
+});
+
+/** Another mailbox of the account erased on the organizer's store: its erasure stamps the account's keys. */
+async function eraseSibling(w: { organizer: TestDb }, now: Date): Promise<void> {
+  const [sib] = await w.organizer.insert(mailboxes)
+    .values({ accountId: ACCT, provider: "imap", address: "sibling@mailbox.example" }).returning({ id: mailboxes.id });
+  await w.organizer.transaction((tx) => eraseIdempotentResponses(tx, ACCT, now, { mailboxId: sib!.id }));
+}
+
 describe("a lost acknowledgement is retried from the applied record, keyed on the request id", () => {
   /* The red-before. At the base the record was expunged beside the failed ack, so no pass could
      answer it: the reader's outstanding list kept the decision `sent` for a day, then the row read
@@ -259,17 +274,47 @@ describe("a lost acknowledgement is retried from the applied record, keyed on th
     const w = await twoWorlds();
     const m = sharedMeta();
     const id = randomUUID();
-    const record = (address: string): string => formatRequest({
-      requestId: id, kind: "screener.decide", mailboxId: w.mailboxId, installId: READER.installId,
-      organizerKind: "local", decidedAt: t0, key: KEY,
-      payload: { scope: "sender", address, appliedFolder: "INBOX", decision: "yes" },
-    });
-    await m.reader.append(record(SENDER));
+    await m.reader.append(recordFor(w, id, SENDER));
     await organizerRun(w, organizerAdapter(m.organizer), at(MIN));
     m.store.clear();
-    await m.reader.append(record("someone-else@example.com"));
+    await m.reader.append(recordFor(w, id, "someone-else@example.com"));
     expect((parseRequestEnvelope([...m.store.values()][0]!) as RequestEnvelope).requestId).toBe(id);
     await organizerRun(w, organizerAdapter(m.organizer), at(REQUEST_STALE_AFTER_MS + 30_000));
     expect(acksOf(m).map((a) => [a.outcome, a.reason ?? null])).toEqual([["refused", "stale"]]);
+  });
+});
+
+/**
+ * ANOTHER MAILBOX'S ERASURE STAMPS THE KEY AND BLANKS ITS HASH. The drain reads the stamp first: a
+ * stamped key was answered here, so the lost ack is still owed `applied`, and nothing re-applies.
+ */
+describe("a lost acknowledgement after another mailbox of the account was erased", () => {
+  it("the next pass acks it applied, and the decision applied once", async () => {
+    const w = await twoWorlds();
+    const m = sharedMeta();
+    const id = await queueDecision(w.reader, w.mailboxId, t0);
+    await readerRun(w, m, t0);
+    await organizerRun(w, ackFailing(m, w.organizer, id).adapter, at(MIN));
+    await eraseSibling(w, at(MIN + 1_000));
+    const held = await w.organizer.transaction((tx) => readIdempotencyKey(tx, ACCT, `meta-request:${id}`, at(2 * MIN)));
+    expect(held?.erasedAt, "the erasure did not reach the key").toBeInstanceOf(Date);
+
+    await organizerRun(w, organizerAdapter(m.organizer), at(2 * MIN));
+    expect(acksOf(m).map((a) => [a.requestId, a.outcome])).toEqual([[id, "applied"]]);
+    expect(await ruleCount(w.organizer)).toBe(1);
+  });
+
+  it("an id reused with other content after it applies nothing", async () => {
+    const w = await twoWorlds();
+    const m = sharedMeta();
+    const id = randomUUID();
+    await m.reader.append(recordFor(w, id, SENDER));
+    await organizerRun(w, organizerAdapter(m.organizer), at(MIN));
+    m.store.clear();
+    await eraseSibling(w, at(MIN + 1_000));
+    await m.reader.append(recordFor(w, id, "someone-else@example.com"));
+    await organizerRun(w, organizerAdapter(m.organizer), at(2 * MIN));
+    expect((await w.organizer.select().from(rules).where(eq(rules.accountId, ACCT))).map((r) => r.match)).toEqual([SENDER]);
+    expect(requestsIn(m), "the record was left unanswered").toBe(0);
   });
 });

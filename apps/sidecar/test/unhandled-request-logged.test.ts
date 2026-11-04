@@ -151,7 +151,7 @@ describe("a route fault on the standalone door reaches the log", () => {
       dataDir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: ADDRESS, pass: "not-dialled-password-password" },
+        auth: { user: ADDRESS, pass: "mailbox-unreached-password" },
       },
       address: ADDRESS,
       machineName: "unhandled fault host",

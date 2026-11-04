@@ -111,6 +111,13 @@ export const rate429 = (): Response =>
 export const coded401 = (): Response =>
   json({ error: { code: "unauthorized", message: "no session" } }, 401);
 
+/** The refresh door's coded refusal as the server sends it: the code, and the jar emptied. */
+export const refusedClearing = (code: string) => (): Response => {
+  const headers = new Headers({ "content-type": "application/json" });
+  for (const line of clearSessionCookies()) headers.append("set-cookie", line);
+  return new Response(JSON.stringify({ error: { code, message: "refused" } }), { status: 401, headers });
+};
+
 /** A 401 from a platform: no envelope, so nothing of ours refused anything. */
 export const uncoded401 = (): Response =>
   new Response("<html><body>Unauthorized</body></html>", {

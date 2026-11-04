@@ -6,7 +6,7 @@ import type {
   OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
-import { auditLog, contacts, learningSignals, rules } from "@trafficflow/db";
+import { auditLog, contacts, learningSignals, ruleRemovals, rules } from "@trafficflow/db";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -64,7 +64,7 @@ describe("a standalone drain retires what the act let in", () => {
     const dataDir = await freshDataDir("ohmail-act-retire-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test",
       machineName: "retire host",
       pollIntervalMs: 60 * 60 * 1000,
@@ -94,17 +94,19 @@ describe("a standalone drain retires what the act let in", () => {
       .where(and(eq(contacts.accountId, s.world.accountId), eq(contacts.address, COLD)))).length,
     audits: (await s.db.select({ id: auditLog.id }).from(auditLog)
       .where(and(eq(auditLog.accountId, s.world.accountId), eq(auditLog.action, "screener.act_admission_retired")))).length,
+    // A policy pass's retire is no person's removal: nothing travels for it.
+    removals: (await s.db.select({ key: ruleRemovals.ruleKey }).from(ruleRemovals).where(eq(ruleRemovals.accountId, s.world.accountId))).length,
   });
 
   it("an organizing drain retires the act's rule and contact, once, with one audit row", async () => {
     const sidecar = await boot(true);
     await sidecar.syncUntilQuiet();
-    expect(await left(sidecar)).toEqual({ rules: 0, contacts: 0, audits: 1 });
+    expect(await left(sidecar)).toEqual({ rules: 0, contacts: 0, audits: 1, removals: 0 });
   }, 60_000);
 
   it("CONTROL: a reader's drain writes nothing", async () => {
     const sidecar = await boot(false);
     await sidecar.syncUntilQuiet();
-    expect(await left(sidecar)).toEqual({ rules: 1, contacts: 1, audits: 0 });
+    expect(await left(sidecar)).toEqual({ rules: 1, contacts: 1, audits: 0, removals: 0 });
   }, 60_000);
 });

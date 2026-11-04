@@ -67,7 +67,7 @@ describe("the desktop row names what the gate could not do", () => {
     const dataDir = await freshDataDir("ohmail-meta-undeletable-");
     const sidecar: Sidecar = await createSidecar({
       dataDir, installId: INSTALL,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "the laptop",
       pollIntervalMs: 100, idlePollCeilingMs: 200, leaseStaleAfterMs: 60_000,
       adapterFactory: adapterOver(server), log: (event, detail) => { lines.push({ event, detail }); },

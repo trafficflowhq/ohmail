@@ -122,7 +122,7 @@ describe.runIf(ON_DEVICE_STORE)("Organize here after a hand-back, on the device 
     const exec = nodeExecutor();
     const meta = new MemoryMetaFolder();
     const engine = await startPhoneEngine({
-      exec, imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+      exec, imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
       machineName: "ohmail on a phone", installId: "install-orgwake", adapterFactory: quietServer(meta), log: () => {},
     } as Parameters<typeof startPhoneEngine>[0]);
     open.push(engine);

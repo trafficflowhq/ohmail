@@ -191,7 +191,7 @@ const LETTERS: ReadonlyArray<readonly [key: string, name: string, from: string, 
   ["k3", "Lumen Shop", "orders@lumen.example", "Invoice 4471 aquarium supplies", "Thank you for your order of lanternfish food."],
   ["k4", "Fish Digest", "weekly@fishdigest.example", "Weekly digest deep sea", "This week: why the lanternfish glows."],
   ["k5", "Kai Brandt", "kai.brandt@brandt.example", "Old harbour note", "A year-old note about the lanternfish survey."],
-  ["a1", "Anna Weber", "anna@weber.ch", "Dinner on Friday", "See you at the club after work."],
+  ["a1", "Anna Weber", "anna@weber.example", "Dinner on Friday", "See you at the club after work."],
   ["r1", "Ledger Desk", "desk@ledger.example", "Re: Quarterly figures", "Please enter the numbers."],
 ];
 const ACROSS: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
@@ -204,7 +204,7 @@ const ACROSS: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
   ["harbour -samples", ["k1", "k5"]], ["kai survey -samples", ["k1", "k5"]],
 ];
 /** One typed operand keeps its words in one part: each letter holds the operand's words only apart. */
-const APART: ReadonlyArray<readonly [q: string, key: string]> = [["anna@club.ch", "a1"], ["club.ch", "a1"], ["re-enter", "r1"]];
+const APART: ReadonlyArray<readonly [q: string, key: string]> = [["anna@club.example", "a1"], ["club.example", "a1"], ["re-enter", "r1"]];
 
 /** A newer letter, `j` its place: `newer` of them are seeded after the letters, each keyed `f<j>`. */
 type Filler = (j: number) => readonly [name: string, from: string, subject: string, body: string];

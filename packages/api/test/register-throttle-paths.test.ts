@@ -15,7 +15,7 @@ const post = (deps: ApiDeps, email: string, inviteCode?: string): Promise<Respon
   app.handle(req("POST", "/auth/register", {
     headers: { "x-vercel-forwarded-for": IP },
     body: JSON.stringify({
-      email, password: "pw-correct-horse-battery-password-password", displayName: "S",
+      email, password: "long-signin-password", displayName: "S",
       ...(inviteCode === undefined ? {} : { inviteCode }),
     }),
   }), { ...deps, session: null, idempotency: null });

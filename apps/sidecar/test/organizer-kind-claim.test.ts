@@ -138,7 +138,7 @@ describe("the organizer claim names the kind of install that wrote it", () => {
         host: "imap.invalid", port: 993, secure: true,
         // A password is what makes `start()` take the connected path at all — without one the
         // engine returns before it ever claims, and this file would assert on an empty folder.
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "kind control",

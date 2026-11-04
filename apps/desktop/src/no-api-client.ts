@@ -507,6 +507,7 @@ export interface ProfileImportCountsWire {
     signature?: boolean;
     signatureReplaces?: string;
     signatureKept?: boolean;
+    removedRules?: number;
 }
 
 export type ProfileImportCandidateWire = {
@@ -528,6 +529,7 @@ export type ProfileImportCandidateWire = {
 export interface ProfileImportAppliedWire {
     imported: ProfileImportCountsWire;
     skippedRules: number;
+    retiredRules?: number;
     seq: number | null;
 }
 
@@ -544,6 +546,7 @@ export type ProfileImportStatusWire = {
     state: "imported";
     imported: ProfileImportCountsWire | null;
     skippedRules: number;
+    retiredRules?: number;
 } | {
     state: "refused";
     reason: string;

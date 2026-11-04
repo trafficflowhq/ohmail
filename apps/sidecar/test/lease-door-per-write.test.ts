@@ -159,7 +159,7 @@ describe("the local engine asks the lease at the write", () => {
     const logger = createSidecarLogger({ level: "info", sink: (l) => lines.push(l) });
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "mailbox-unreached-password" } },
       address: ADDRESS,
       machineName: "organizing host",
       pollIntervalMs: 60 * 60 * 1000,
@@ -196,7 +196,7 @@ describe("the local engine asks the lease at the write", () => {
   }
 
   const requestKey = (): string => {
-    const key = deriveRequestKey({ auth: { user: ADDRESS, pass: "not-dialled-password-password" }, address: ADDRESS });
+    const key = deriveRequestKey({ auth: { user: ADDRESS, pass: "mailbox-unreached-password" }, address: ADDRESS });
     if (key === null) throw new Error("this rig's mailbox has no request key");
     return key;
   };

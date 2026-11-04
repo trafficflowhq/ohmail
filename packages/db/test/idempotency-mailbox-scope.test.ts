@@ -60,8 +60,12 @@ describe("the response cache at a mailbox erasure, on this store", () => {
     expect(await w.erasedKeys()).toEqual(
       ["both", "erased-sibling", "nothing", "other+draft", "other+message", "other+thread", "this"].sort());
     expect(n).toBe(7);
+    // A blanked row keeps no hash of its request either; the spared one keeps its own.
+    const blanked = await Promise.all((await w.erasedKeys()).map((k) => w.row(k)));
+    expect(new Set(blanked.map((r) => r.requestHash))).toEqual(new Set([""]));
     const kept = await w.row("other");
-    expect({ erasedAt: kept.erasedAt, json: kept.responseJson }).toEqual({ erasedAt: null, json: { id: expect.any(String), mailboxId: w.B, body: "kept" } });
+    expect({ erasedAt: kept.erasedAt, json: kept.responseJson, hash: kept.requestHash })
+      .toEqual({ erasedAt: null, json: { id: expect.any(String), mailboxId: w.B, body: "kept" }, hash: "h-other" });
     // A retried erasure keeps the first stamp and blanks nothing new.
     expect(await eraseIdempotentResponses(w.db as unknown as Tx, w.accountId, NOW, { mailboxId: w.A })).toBe(0);
   });
@@ -72,5 +76,6 @@ describe("the response cache at a mailbox erasure, on this store", () => {
     await w.store("this", { mailboxId: w.A });
     expect(await eraseIdempotentResponses(w.db as unknown as Tx, w.accountId, NOW)).toBe(2);
     expect(await w.erasedKeys()).toEqual(["other", "this"]);
+    expect([(await w.row("other")).requestHash, (await w.row("this")).requestHash]).toEqual(["", ""]);
   });
 });

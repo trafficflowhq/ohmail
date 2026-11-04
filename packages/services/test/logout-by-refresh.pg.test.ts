@@ -210,7 +210,7 @@ describe.skipIf(!PG_UP)("logout by refresh token on real Postgres", () => {
     await expectRevoked(bystander.familyId, "the bystander by its own token");
   });
 
-  it("the hosted override prunes the wake registration of the family's DEVICE, and only that one", async () => {
+  it("the hosted override prunes the family's own registrations and its DEVICE's, and only those", async () => {
     const s = svc();
     const seed = await seedFamily();
     const [phone] = await db.insert(devices)
@@ -218,18 +218,23 @@ describe.skipIf(!PG_UP)("logout by refresh token on real Postgres", () => {
     const [other] = await db.insert(devices)
       .values({ accountId: seed.accountId, userId: seed.userId, kind: "mobile-ios" }).returning();
     const f = await seedFamily({ deviceId: phone!.id, accountId: seed.accountId, userId: seed.userId });
-    const wake = async (deviceId: string | null) => (await db.insert(pushSubscriptions).values({
-      accountId: seed.accountId, transport: "unifiedpush", endpoint: `https://ntfy.test/${randomUUID()}`, deviceId,
+    const wake = async (deviceId: string | null, sessionFamilyId: string | null = null) => (await db.insert(pushSubscriptions).values({
+      accountId: seed.accountId, transport: "unifiedpush", endpoint: `https://ntfy.test/${randomUUID()}`, deviceId, sessionFamilyId,
     }).returning({ id: pushSubscriptions.id }))[0]!.id;
     const mine = await wake(phone!.id);
     const theirs = await wake(other!.id);
     const deviceless = await wake(null);
+    // A browser's registration names the family that made it, and the web's own sign-out takes it.
+    const browser = await seedFamily({ accountId: seed.accountId, userId: seed.userId });
+    const signedOut = await wake(null, browser.familyId);
+    const stays = await wake(null, seed.familyId);
 
     await s.logout(ctx(at(1_000)), { refreshToken: f.r1 });
+    await s.logout(ctx(at(1_000)), { refreshToken: browser.r1 });
     const left = (await db.select({ id: pushSubscriptions.id }).from(pushSubscriptions)
-      .where(inArray(pushSubscriptions.id, [mine, theirs, deviceless]))).map((r) => r.id).sort();
-    expect(left, "the signed-out device's row is gone; the other device and the browser row stay")
-      .toEqual([theirs, deviceless].sort());
+      .where(inArray(pushSubscriptions.id, [mine, theirs, deviceless, signedOut, stays]))).map((r) => r.id).sort();
+    expect(left, "the signed-out device's and browser's rows are gone; the other device, the live browser and the unbound row stay")
+      .toEqual([theirs, deviceless, stays].sort());
   });
 
   it("FAIL-CLOSED, hosted: an audit that cannot be written does not keep the family alive", async () => {

@@ -18,6 +18,7 @@ import { ensureLocalWorld } from "../../sidecar/src/identity.js";
 import { createCloudMirror } from "../../sidecar/src/cloud-mirror.js";
 import type { CloudAuth } from "../../sidecar/src/cloud-auth.js";
 import { hostedMailbox } from "./fixtures/approval-server.js";
+import { personalAt } from "../../../test/support/fixture-credentials.js";
 
 /* jsdom's `Blob` has no `arrayBuffer()`, and the store this test opens in-process loads its search
    extensions as a Blob: shimmed through jsdom's own FileReader, as desktop-first-cloud-door does. */
@@ -43,7 +44,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 const CLOUD_MAILBOX = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const OWN = "me@ohmail.test";
-const PHISH = "kartenservice@gmail.com";
+const PHISH = personalAt("fixture.kartenservice", "gmail.com");
 const MAILBOXES: readonly MailboxDTO[] = [hostedMailbox(CLOUD_MAILBOX, OWN)];
 const EMPTY: SnapshotResponse = { asOfSeq: 99, changes: [], nextCursor: null, window: { days: 90, minRows: 500 } };
 const iso = (): string => new Date().toISOString();

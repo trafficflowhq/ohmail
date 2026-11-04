@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 // From the modules directly, never the package index: the index re-exports this file, and a
 // module that imports its own barrel is a cycle waiting for the first consumer to hit it.
 import { authThrottle } from "./schema.js";
@@ -31,6 +31,86 @@ export const IMAP_ADMISSION_WINDOW_MS = 90_000;
 /** `imap:mailbox:<uuid>` — the counter row for one mailbox. */
 export function imapAdmissionKey(mailboxId: string): string {
   return `${IMAP_ADMISSION_NAMESPACE}${mailboxId}`;
+}
+
+/**
+ * THE PROBES' BUDGET OVER TIME, which the in-flight cap is not: a probe signs in with a password
+ * somebody typed, so a session could try passwords against a mail server back to back. Counted per
+ * account and per login typed under it, never across accounts: such a count would tell one tenant
+ * of another's probes, and no erasure could reach it. Rows `probe-rate:t:<login hash>:<window s>:
+ * <account>` and `probe-rate:a:<window s>:<account>`, pruned with every throttle row.
+ */
+const PROBE_RATE_NAMESPACE = "probe-rate:";
+
+/** Generous for a person: connecting ten mailboxes, each tested and added, is about forty probes. */
+export const PROBE_BUDGET = {
+  target: [{ max: 10, windowMs: 60_000 }, { max: 30, windowMs: 3_600_000 }],
+  account: [{ max: 20, windowMs: 60_000 }, { max: 60, windowMs: 3_600_000 }],
+} as const;
+
+/** Thrown inside the spend's transaction to roll back what its earlier windows counted. */
+class ProbeBudgetSpent extends Error {
+  constructor(readonly retryAfter: number) { super("probe budget spent"); }
+}
+
+/**
+ * Spend one probe against its login's windows and its account's, all or none, in one transaction
+ * and one order (the login's first), so two probes of an account take its rows alike. Each window
+ * is a claim compared before it counts (`reserveIpSlot`'s statement): a refused probe spends
+ * nothing. `null` admits; a number refuses, in whole seconds until the refusing window rolls. No
+ * `recordImapRefusal`: a person's budget is not a mailbox at its connection cap.
+ */
+export async function spendProbeBudget(
+  db: Tx, input: { accountId: string; target: string; now: Date },
+): Promise<number | null> {
+  const nowMs = input.now.getTime();
+  const nowIso = input.now.toISOString();
+  const windows = [
+    ...PROBE_BUDGET.target.map((w) => ({ ...w, key: `${PROBE_RATE_NAMESPACE}t:${input.target}:${w.windowMs / 1000}:${input.accountId}` })),
+    ...PROBE_BUDGET.account.map((w) => ({ ...w, key: `${PROBE_RATE_NAMESPACE}a:${w.windowMs / 1000}:${input.accountId}` })),
+  ];
+  try {
+    await db.transaction(async (tx) => {
+      for (const w of windows) {
+        const rolled = sql`${authThrottle.windowStartedAt} < ${new Date(nowMs - w.windowMs).toISOString()}::timestamptz`;
+        const [row] = await tx.insert(authThrottle)
+          .values({ key: w.key, failures: 1, windowStartedAt: input.now, updatedAt: input.now })
+          .onConflictDoUpdate({
+            target: authThrottle.key,
+            set: {
+              failures: sql`case when ${rolled} then 1 else ${authThrottle.failures} + 1 end`,
+              windowStartedAt: sql`case when ${rolled} then ${nowIso}::timestamptz else ${authThrottle.windowStartedAt} end`,
+              updatedAt: input.now,
+            },
+            setWhere: sql`${rolled} or ${authThrottle.failures} < ${w.max}`,
+          })
+          .returning({ failures: authThrottle.failures });
+        // No row: the window is full, or the write did not happen. Both refuse.
+        if ((row?.failures ?? Number.MAX_SAFE_INTEGER) <= w.max) continue;
+        const [held] = await tx.select({ at: authThrottle.windowStartedAt }).from(authThrottle)
+          .where(eq(authThrottle.key, w.key));
+        const ends = (held?.at.getTime() ?? nowMs) + w.windowMs;
+        throw new ProbeBudgetSpent(Math.max(1, Math.ceil((ends - nowMs) / 1000)));
+      }
+    });
+    return null;
+  } catch (err) {
+    if (err instanceof ProbeBudgetSpent) return err.retryAfter;
+    throw err;
+  }
+}
+
+/** LIKE's two wildcards and its escape character, escaped: an id is matched as written. */
+const likeLiteral = (s: string): string => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+/**
+ * Every probe row that names this account, for its erasure: the connect probes' IMAP and SMTP
+ * slots, `imap:mailbox:probe:[smtp:]<keyed address>:<account>` (`imap-probe.ts`), and their budget's.
+ */
+export function probeRowsOfAccount(accountId: string): SQL {
+  const id = likeLiteral(accountId);
+  return sql`(${authThrottle.key} like ${`${IMAP_ADMISSION_NAMESPACE}probe:%:${id}`} escape '\\'
+    or ${authThrottle.key} like ${`${PROBE_RATE_NAMESPACE}%:${id}`} escape '\\')`;
 }
 
 /**
@@ -191,3 +271,6 @@ export async function releaseImapSlot(db: Tx, mailboxId: string, now: Date): Pro
     .set({ failures: sql`greatest(${authThrottle.failures} - 1, 0)`, updatedAt: now })
     .where(eq(authThrottle.key, imapAdmissionKey(mailboxId)));
 }
+
+/** The hosted hosts' admission: the in-flight cap, and the probes' budget over time. */
+export const HOSTED_IMAP_ADMISSION = { acquire: acquireImapSlot, release: releaseImapSlot, spend: spendProbeBudget } as const;

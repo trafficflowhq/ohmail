@@ -134,7 +134,7 @@ describe("the phone that organizes next waits for its settings answer before it 
       dataDir,
       // A refused port and a sealed credential: the import's own dial fails, so the press is handed
       // to the organizer, which reads the settings on this rig's connection.
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "the phone", pollIntervalMs: 60 * 60 * 1000,
       leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0, adapterFactory: server(meta, pending, moves), log: () => {},
       keks: { 1: randomBytes(32) },

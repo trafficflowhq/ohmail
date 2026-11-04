@@ -46,7 +46,7 @@ let nowMs = Date.parse("2026-09-13T09:00:00.000Z");
 const now = (): Date => new Date(nowMs);
 
 const ADDRESS = "owner@trafficflow.test";
-const PASSWORD = "not-dialled-password-password";
+const PASSWORD = "mailbox-unreached-password";
 const RIVAL = "ohmail-cloud:production";
 
 /**

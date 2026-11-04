@@ -4,7 +4,8 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { FixturesAdapter, OhmailEngine } from "@ohmail/client-engine";
+import { IDBFactory } from "fake-indexeddb";
+import { FixturesAdapter, IndexedDbMirrorStore, OhmailEngine, ohboxView } from "@ohmail/client-engine";
 
 /** The fixture's ids, built from their numbers. */
 const tid = (n: number): string => `T${n}`;
@@ -149,6 +150,47 @@ describe("own-sent rows name the recipient", () => {
       expect(rowEl("fr2").textContent).toContain("Me → Nora Lindt");
     } finally {
       engine.setSentFolders([]);
+    }
+  });
+
+  it("a cold start paints a letter in the recorded 'Envoyés' as 'Me → <name>' before the mailbox read answers", async () => {
+    setViewport();
+    const row: Row = {
+      id: "fr3", unread: false, folder: "Envoyés", mailboxId: "mb-fr", from: OWN,
+      to: [{ name: "Nora Lindt", address: "nora@example.net" }], date: at(10),
+    };
+    const factory = new IDBFactory();
+    const held = { sync: () => new Promise(() => {}), mutate: async () => ({ status: "applied" }), fetchBody: async () => null };
+    // The last session: the letter in the mirror, and the mailbox read stated 'Envoyés'.
+    const store = new IndexedDbMirrorStore({ owner: "acct_fr", factory });
+    const last = new OhmailEngine({ adapter: held as never, store });
+    await last.hydrate();
+    await store.applyResponse({
+      changes: { creates: [{ type: "message", op: "create", id: "fr3", seq: 1, updatedAt: at(10), entity: msg(row) }], updates: [], moves: [], deletes: [] },
+      cursor: "c1", hasMore: false, serverTime: at(10),
+    } as never);
+    last.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }]);
+    await store.setMeta("probe", true); // a later write on the same store: the statement has landed
+    store.close();
+    last.dispose();
+    // A new process knows no statement: the letter reads as received.
+    const scratch = new OhmailEngine({ adapter: new FixturesAdapter() });
+    scratch.setSentFolders([{ id: "mb-other", sentFolder: "Archive" }]);
+    await render({ previouslySeen: [row] });
+    expect(rowEl("fr3").textContent).not.toContain("Me →");
+
+    // The start: the mirror hydrates and no mailbox read ever answers.
+    const engine = new OhmailEngine({ adapter: held as never, store: new IndexedDbMirrorStore({ owner: "acct_fr", factory }) });
+    let firstFrame: string[] | null = null;
+    engine.subscribe(() => { firstFrame ??= ohboxView(engine.read()).previouslySeen.map((m) => m.id); });
+    try {
+      await engine.hydrate();
+      expect(firstFrame, "the first frame left the account's own letter out of Earlier").toEqual(["fr3"]);
+      await render({ previouslySeen: [{ ...row, id: "fr4" }] });
+      expect(rowEl("fr4").textContent).toContain("Me → Nora Lindt");
+    } finally {
+      engine.setSentFolders([]);
+      engine.dispose();
     }
   });
 

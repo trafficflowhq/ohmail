@@ -2,9 +2,9 @@ import { and, asc, desc, eq, gt, isNull, like, ne, sql } from "drizzle-orm";
 import {
   accountSettings, awayResponders, contacts, idempotencyKeys, mailboxProfileMirror, mailboxes as mailboxesTbl,
   notifyRules as notifyRulesTbl, organizerRequests, rules as rulesTbl, tags as tagsTbl, IDEMPOTENCY_TTL_MS,
-  createPressKeysSince, fenceErased, lockAccountRuleKeys, lockSettingsStamp, moveSettingsStamp, profileImportResolutionExists, recordChanges,
-  recordProfileImportResolution, rerouteOwnHeldBag,
-  resolveImportAsk, ruleDelta,
+  clearRuleRemovals, createPressesSince, fenceErased, lockAccountRuleKeys, lockSettingsStamp, moveSettingsStamp, newestOwnProfileWriteBefore, newestProfileImport,
+  profileImportResolutionExists, readRuleRemovals, recordChanges, recordProfileImportResolution, recordRuleRemovals, rerouteOwnHeldBag,
+  resolveImportAsk, ruleDelta, ruleRemovalKey, RULE_REMOVAL_MAX_AGE_MS,
   type ChangeInput, type ImportAskRefusal, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -14,10 +14,10 @@ import { DEFAULT_DORMANCY_DAYS } from "../rules.js";
 import { AWAY_AUDIENCES, AWAY_THROTTLES, nextEnabledAt, type AwayAudience, type AwayThrottle } from "../away-eligibility.js";
 import { awayScopeFitsAudience, isAwayPile, type AwayPile } from "../away-scope.js";
 import {
-  PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileFingerprint,
+  PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileCopyKey,
   profilePayloadAsRead, profileScreenerAddress, signatureReceipt,
   type ApplicableProfileRule, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileListCounts, type ProfileReadResult,
-  type ProfileScreening,
+  type ProfileRemovedRule, type ProfileScreening,
 } from "./organizer-profile.js";
 
 /**
@@ -59,10 +59,14 @@ export async function serializeOrganizerProfileCounted(
    * republish then reads as the person having cleared their signature.
    */
   mailboxId: string,
-  /** `applied`: also read the request ids this organizer applied ({@link OrganizerProfileDoc.applied}). */
-  opts: { applied?: boolean; now?: Date } = {},
+  /**
+   * `applied`: also read the request ids this organizer applied ({@link OrganizerProfileDoc.applied}).
+   * `removed`: also read the rules removed here ({@link OrganizerProfileDoc.removedRules}), `by` naming this store.
+   */
+  opts: { applied?: boolean; removed?: { by: string }; now?: Date } = {},
 ): Promise<{
   payload: OrganizerProfilePayload; leftOut: ProfileLeftOut; normalized: ProfileListCounts; screening: ProfileScreening; applied?: string[];
+  removedRules?: ProfileRemovedRule[];
 }> {
   // ONE SNAPSHOT, not five. Under READ COMMITTED each statement sees its own snapshot, so a
   // screener decide committing between the contacts read and the rules read would serialize a
@@ -70,7 +74,7 @@ export async function serializeOrganizerProfileCounted(
   // something no store ever held (self-healing one flush later, but "a burst is one write" is
   // the contract, and a torn read is how it becomes two). REPEATABLE READ pins all five reads
   // to one snapshot; PGlite is real Postgres, so the same statement works on both stores.
-  const [contactRows, ruleRows, notifyRows, awayRows, tagRows, mailboxRows, screening, appliedRows] = await db.transaction(async (tx) => {
+  const [contactRows, ruleRows, notifyRows, awayRows, tagRows, mailboxRows, screening, appliedRows, removalRows] = await db.transaction(async (tx) => {
     return [
       // Each list is the newest PROFILE_LIST_MAX of its kind, so the import on another machine
       // takes what this one publishes; automatic (promoted) rules are the first to stay behind.
@@ -127,6 +131,8 @@ export async function serializeOrganizerProfileCounted(
           ))
           .orderBy(desc(idempotencyKeys.createdAt), desc(idempotencyKeys.key)).limit(PROFILE_APPLIED_MAX)
         : null,
+      // THE NINTH READ: the rules removed here, in the same snapshot as the rules they must not name.
+      opts.removed === undefined ? null : await readRuleRemovals(tx as unknown as Tx, accountId),
     ] as const;
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 
@@ -181,7 +187,36 @@ export async function serializeOrganizerProfileCounted(
     ...(mailboxRows[0]?.signatureHtml ? { signatureHtml: mailboxRows[0].signatureHtml } : {}),
   };
   const { payload, changed: normalized } = profilePayloadAsRead(stored);
-  return { payload, leftOut, normalized, screening, ...(appliedRows === null ? {} : appliedOf(appliedRows)) };
+  return {
+    payload, leftOut, normalized, screening, ...(appliedRows === null ? {} : appliedOf(appliedRows)),
+    ...(removalRows === null || opts.removed === undefined ? {} : removedOf(removalRows, ruleRows, leftOut.rules, opts.removed.by, opts.now ?? new Date())),
+  };
+}
+
+/**
+ * The removals a copy publishes: none whose key still has a row (judged against the whole rules read,
+ * so nothing when the bound cut it), none older than a year, NULL `by` as this store's id.
+ */
+function removedOf(
+  rows: ReadonlyArray<{ ruleKey: string; kind: string; match: string; subjectContains: string | null; bodyContains: string | null; removedAt: Date; removedBy: string | null }>,
+  live: ReadonlyArray<{ kind: string; match: string; subjectContains: string | null; bodyContains: string | null }>,
+  rulesLeftOut: number, by: string, now: Date,
+): { removedRules?: ProfileRemovedRule[] } {
+  if (rulesLeftOut > 0) return {};
+  const held = new Set(live.map((r) => ruleKey(r)));
+  const oldest = now.getTime() - RULE_REMOVAL_MAX_AGE_MS;
+  const removedRules: ProfileRemovedRule[] = [];
+  for (const r of rows) {
+    if (held.has(r.ruleKey) || r.removedAt.getTime() < oldest) continue;
+    if (r.kind !== "sender" && r.kind !== "domain" && r.kind !== "header") continue;
+    removedRules.push({
+      kind: r.kind, match: r.match,
+      ...(r.subjectContains === null ? {} : { subjectContains: r.subjectContains }),
+      ...(r.bodyContains === null ? {} : { bodyContains: r.bodyContains }),
+      removedAt: r.removedAt.toISOString(), by: r.removedBy ?? by,
+    });
+  }
+  return { removedRules };
 }
 
 const APPLIED_KEY_PREFIX = "meta-request:";
@@ -251,6 +286,8 @@ export interface ProfileImportCounts {
   signatureReplaces?: string;
   /** A result: the copy carried a signature, and the different one this mailbox held stayed. */
   signatureKept?: boolean;
+  /** An offer: the rule removals the copy records, present only when above 0. */
+  removedRules?: number;
 }
 
 export interface ProfileImportApplied {
@@ -277,24 +314,28 @@ const hasNul = (v: string): boolean => v.includes("\u0000");
  * `Alice@Example.com` and ` alice@example.com` are one key. A new row is stored as that key; an
  * existing row keeps its bytes. Terms are never `""` after normalization.
  */
-const ruleKey = (r: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null }): string =>
-  JSON.stringify([r.kind, ruleMatchKey(r.match), (r.subjectContains ?? "").toLowerCase(), (r.bodyContains ?? "").toLowerCase()]);
+const ruleKey = (r: { kind: string; match: string; subjectContains?: string | null; bodyContains?: string | null }): string => ruleRemovalKey(r);
 
 /**
- * THE LOCAL RULE ROWS A TAKEOVER IMPORT RETIRES, of the ones the document does not name: all of
- * them, or none when anything is unknown. Each guard must hold: this document was not answered
- * before (a Not now or Replace); it skipped no rule and is under its bound; its instant parses; no
- * other mailbox of the account, removed ones included, is organized here; no copy of another live
- * mailbox read here names the key (and each has one); the row was last written, and no create was
- * pressed under the key (one the belt may have settled without writing the row), well before the
- * document (twice the clock-skew bound); no applied rule request under the key was decided within
- * the request horizon, unless it went to this mailbox and the document's `applied` list names it.
+ * THE LOCAL RULE ROWS A TAKEOVER IMPORT RETIRES, of the ones the document does not name: only a row
+ * whose removal the copy records, made after this store last had the rule (the removal less twice the
+ * clock-skew bound later than the row's writes, a create pressed under its key, this store's own
+ * earlier copy of the mailbox and its earlier Import into it), and none when anything is unknown.
+ * Each guard must hold too: this copy (its rules and its removals) was not answered before (a Not now
+ * or Replace); it skipped no rule and is under its bound; its instant parses; no other mailbox of the
+ * account, removed ones included, is organized here; no copy of another live mailbox read here names
+ * the key (and each has one); no applied rule request under the key was decided within the request horizon, unless it went
+ * to this mailbox and the document's `applied` list names it.
  */
 async function retirableRules(
   tx: LedgerTx, o: { accountId: string; mailboxId: string; doc: OrganizerProfileDoc; fingerprint: string; now: Date }, skippedRules: number,
-  unnamed: ReadonlyArray<{ id: string; kind: string; match: string; subjectContains: string | null; bodyContains: string | null; updatedAt: Date }>,
+  unnamed: ReadonlyArray<{
+    id: string; kind: string; match: string; subjectContains: string | null; bodyContains: string | null; updatedAt: Date; createdAt: Date;
+  }>,
+  removedAt: ReadonlyMap<string, number>,
 ): Promise<string[]> {
-  if (unnamed.length === 0) return [];
+  const removed = unnamed.filter((r) => removedAt.has(ruleKey(r)));
+  if (removed.length === 0) return [];
   if (skippedRules !== 0 || o.doc.rules.length >= PROFILE_LIST_MAX.rules) return [];
   const docAt = Date.parse(o.doc.updatedAt);
   if (!Number.isFinite(docAt)) return [];
@@ -331,9 +372,39 @@ async function retirableRules(
     if (k === null) return [];
     named.add(k);
   }
-  const before = docAt - 2 * clockSkewBoundMs(DEFAULT_STALE_AFTER_MS);
-  for (const k of await createPressKeysSince(tx, o.accountId, new Date(before))) named.add(ruleKey(k));
-  return unnamed.filter((r) => !named.has(ruleKey(r)) && r.updatedAt.getTime() < before).map((r) => r.id);
+  const margin = 2 * clockSkewBoundMs(DEFAULT_STALE_AFTER_MS);
+  /* What this store had since: its own copy written well before the imported one, and its earlier Import. A removal
+     before either was made before this store last published or took in the rule, so it says nothing about it now. */
+  const since = Math.max(
+    (await newestOwnProfileWriteBefore(tx, { accountId: o.accountId, mailboxId: o.mailboxId, before: docAt - margin })) ?? -Infinity,
+    (await newestProfileImport(tx, { accountId: o.accountId, mailboxId: o.mailboxId })) ?? -Infinity,
+  );
+  const cutOf = (r: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null }): number =>
+    removedAt.get(ruleKey(r))! - margin;
+  const created = new Map<string, number>();
+  for (const p of await createPressesSince(tx, o.accountId, new Date(Math.min(...removed.map(cutOf))))) {
+    const k = ruleKey(p.key);
+    created.set(k, Math.max(created.get(k) ?? -Infinity, p.at.getTime()));
+  }
+  return removed.filter((r) => {
+    const cut = cutOf(r);
+    return !named.has(ruleKey(r)) && cut > r.updatedAt.getTime() && cut > r.createdAt.getTime() && cut > since
+      && !(cut <= (created.get(ruleKey(r)) ?? -Infinity));
+  }).map((r) => r.id);
+}
+
+/** The newest removal the copy records per key: none after the copy, none ahead of this clock's skew bound. */
+function recordedRemovals(doc: OrganizerProfileDoc, now: Date): Map<string, { at: number; e: ProfileRemovedRule }> {
+  const docAt = Date.parse(doc.updatedAt);
+  const ahead = now.getTime() + clockSkewBoundMs(DEFAULT_STALE_AFTER_MS);
+  const out = new Map<string, { at: number; e: ProfileRemovedRule }>();
+  for (const e of doc.removedRules ?? []) {
+    const at = Date.parse(e.removedAt);
+    if (!Number.isFinite(at) || !(at <= docAt) || at > ahead) continue;
+    const k = ruleKey(e);
+    if (!((out.get(k)?.at ?? -Infinity) >= at)) out.set(k, { at, e });
+  }
+  return out;
 }
 
 /** A rule entry's or a request key's {@link ruleKey}, or null where it does not say what a key says. */
@@ -356,17 +427,17 @@ const screensOut = (r: ApplicableProfileRule): r is ApplicableProfileRule & { ki
   && r.subjectContains === null && r.bodyContains === null;
 
 /**
- * WHY A FRESH READ MAY NOT BE APPLIED UNDER `fingerprint`, or null when it may — the one decision
- * the inline press and the organizer's job both make. The size refusal comes BEFORE the
- * fingerprint: hashing sorts and serializes the whole document, and a ceiling after it bounds
- * nothing but the transaction.
+ * WHY A FRESH READ MAY NOT BE APPLIED UNDER `fingerprint` (its copy key, removals included), or null
+ * when it may — the one decision the inline press and the organizer's job both make. The size refusal
+ * comes BEFORE the fingerprint: hashing sorts and serializes the whole document, and a ceiling after
+ * it bounds nothing but the transaction.
  */
 export function importRefusalFor(fresh: ProfileReadResult, fingerprint: string): ImportAskRefusal | null {
   if (fresh.state === "newer") return "newer";
   if (fresh.state === "none") return "gone";
   if (fresh.state === "unreadable") return "unreadable";
   if (oversizedProfileList(fresh.doc)) return "too_large";
-  return profileFingerprint(fresh.doc) === fingerprint ? null : "changed";
+  return profileCopyKey(fresh.doc) === fingerprint ? null : "changed";
 }
 
 /**
@@ -442,7 +513,7 @@ export async function applyOrganizerProfile(
     id: rulesTbl.id, kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination,
     priority: rulesTbl.priority, enabled: rulesTbl.enabled, provenance: rulesTbl.provenance,
     subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
-    personDecidedAt: rulesTbl.personDecidedAt, updatedAt: rulesTbl.updatedAt,
+    personDecidedAt: rulesTbl.personDecidedAt, updatedAt: rulesTbl.updatedAt, createdAt: rulesTbl.createdAt,
   }).from(rulesTbl).where(eq(rulesTbl.accountId, o.accountId)).orderBy(asc(rulesTbl.createdAt), asc(rulesTbl.id));
   const localByKey = new Map<string, typeof localRules>();
   for (const row of localRules) {
@@ -492,6 +563,8 @@ export async function applyOrganizerProfile(
           updatedAt: ageOf(want),
           retroRequestedAt: null,
         }).returning({ id: rulesTbl.id });
+        // Made again here under its key: this store's removal of the key ends with it.
+        await clearRuleRemovals(tx as unknown as Tx, o.accountId, [want]);
         changes.push(ruleDelta(o.accountId, row!.id, "create"));
         if (screensOut(want)) screenOuts.push(want);
       } else if (have) {
@@ -502,13 +575,23 @@ export async function applyOrganizerProfile(
     }
   }
 
-  /* ── a local row no copy names, on a former reader-only install, is retired ───────────
-     Such a row was never what the reader-only page listed and never filed mail here; kept, it
-     would start filing at the takeover. Only when every guard holds ({@link retirableRules}). */
-  const retired = await retirableRules(tx, o, skippedRules, localRules.filter((r) => !docByKey.has(ruleKey(r))));
+  /* ── a local row the copy records as removed there, and does not name, is retired ─────
+     The person removed it on the install that organized since; kept, it would go on filing here.
+     Only when every guard holds ({@link retirableRules}). */
+  const removals = recordedRemovals(o.doc, now);
+  const retired = await retirableRules(
+    tx, o, skippedRules, localRules.filter((r) => !docByKey.has(ruleKey(r))), new Map([...removals].map(([k, v]) => [k, v.at])),
+  );
   for (const id of retired) {
     await tx.delete(rulesTbl).where(and(eq(rulesTbl.id, id), eq(rulesTbl.accountId, o.accountId)));
     changes.push(ruleDelta(o.accountId, id, "delete"));
+  }
+  // The copy's removals of keys with no row left here are this store's too, at their own instant and install.
+  const gone = new Set(retired);
+  const left = new Set([...docByKey.keys(), ...localRules.filter((r) => !gone.has(r.id)).map((r) => ruleKey(r))]);
+  for (const [k, { at, e }] of removals) {
+    if (left.has(k)) continue;
+    await recordRuleRemovals(tx as unknown as Tx, o.accountId, [e], new Date(at), e.by, now);
   }
 
   /* ── the mail THIS organizer held at the gate for the senders those rules screen out ──
@@ -688,7 +771,7 @@ export async function applyOrganizerProfile(
   };
   await recordProfileImportResolution(tx, {
     accountId: o.accountId, mailboxId: o.mailboxId, decision: "imported", fingerprint: o.fingerprint,
-    result: { imported: applied.imported, skippedRules, retiredRules: retired.length },
+    result: { imported: applied.imported, skippedRules, retiredRules: retired.length }, at: now,
   });
   // The ask for this document, if one stands, is answered in the same commit (compare-and-set).
   await resolveImportAsk(tx, {

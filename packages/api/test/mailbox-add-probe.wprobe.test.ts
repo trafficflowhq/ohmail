@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { mailboxes, mailboxCredentials } from "@trafficflow/db";
-import { authThrottle } from "@trafficflow/db/cloud";
+import { authThrottle, HOSTED_IMAP_ADMISSION } from "@trafficflow/db/cloud";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
@@ -27,7 +27,7 @@ const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 const body = (o: unknown): string => JSON.stringify(o);
 
-const IMAP = { host: "imap.example.invalid", port: 993, secure: true, user: "u@example.invalid", pass: "typed-secret-password-password" };
+const IMAP = { host: "imap.example.invalid", port: 993, secure: true, user: "u@example.invalid", pass: "user-entered-password" };
 const SMTP = { host: "smtp.example.invalid", port: 465, secure: true, user: "u@example.invalid" };
 
 const post = (token: string, over: Record<string, unknown> = {}): Request =>
@@ -88,7 +88,7 @@ describe("credentials are tried before they are stored", () => {
     expect(await db.select().from(mailboxes)).toHaveLength(0);
     expect(await db.select().from(mailboxCredentials)).toHaveLength(0);
     // The sentence never contains what was typed.
-    expect(JSON.stringify(wire)).not.toContain("typed-secret-password-password");
+    expect(JSON.stringify(wire)).not.toContain("user-entered-password");
   });
 
   it("a mistyped host and a rejected password do NOT produce the same sentence", async () => {
@@ -248,6 +248,19 @@ describe("credentials are tried before they are stored", () => {
       // And the key carries no address: it is a digest, like the table's other identity namespaces.
       expect(row.key).not.toContain("example.invalid");
     }
+  });
+
+  it("past the probes' budget an Add is refused before it dials, and stores nothing", async () => {
+    // Add tries the password as Test does, so it spends the same budget (hosted hosts only).
+    const { db, deps, token } = await session();
+    (deps.services as unknown as { imapAdmission: unknown }).imapAdmission = HOSTED_IMAP_ADMISSION;
+    const dial = spyDial(() => Promise.reject(imapError({ serverResponseCode: "AUTHENTICATIONFAILED" })));
+    for (let i = 0; i < 10; i++) expect((await H(post(token), deps)).status).toBe(400);
+    const res = await H(post(token), deps);
+    expect({ status: res.status, code: (await res.json()).error.code }).toEqual({ status: 429, code: "rate_limited" });
+    expect(dial.dialed()).toBe(10);
+    expect(await db.select().from(mailboxes)).toHaveLength(0);
+    expect(await db.select().from(mailboxCredentials)).toHaveLength(0);
   });
 
   it("a refused probe releases its slot too", async () => {

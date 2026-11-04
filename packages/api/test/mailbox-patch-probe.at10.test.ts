@@ -48,7 +48,7 @@ const body = (o: unknown): string => JSON.stringify(o);
 /** The same KEK `makeDeps` injects, so a raw `secret_enc` can be decrypted independently. */
 const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 7), 1);
 
-const IMAP = { host: "imap.example.invalid", port: 993, secure: true, user: "u@example.invalid", pass: "original-secret-password-password" };
+const IMAP = { host: "imap.example.invalid", port: 993, secure: true, user: "u@example.invalid", pass: "before-rotation-password" };
 
 /**
  * A thrown value shaped like the ones `imapflow@1.5.0` really produces.
@@ -130,7 +130,7 @@ describe("a credential rewrite is tried before it is stored", () => {
     const before = await imapCred(db, id);
 
     const dial = spyDial(() => Promise.reject(imapError({ serverResponseCode: "AUTHENTICATIONFAILED" })));
-    const res = await H(patch(token, id, { imap: { pass: "typo-secret-password-password" } }), deps);
+    const res = await H(patch(token, id, { imap: { pass: "mistyped-entry-password" } }), deps);
 
     // The dial happened at all. Before this slice it never did, for any credential.
     expect(dial.dialed()).toBe(1);
@@ -143,7 +143,7 @@ describe("a credential rewrite is tried before it is stored", () => {
     // that would turn one typo into a mailbox that stops syncing.
     const after = await imapCred(db, id);
     expect(after.secretEnc).toBe(before.secretEnc);
-    expect(await KP.decrypt(after.secretEnc, after.keyVersion)).toBe("original-secret-password-password");
+    expect(await KP.decrypt(after.secretEnc, after.keyVersion)).toBe("before-rotation-password");
 
     // AND THE MAILBOX WAS NOT STOOD DOWN. The row is exactly as it was — still `connected`, still
     // on the worker's roster — so the organizer keeps running on the credential that survived
@@ -153,7 +153,7 @@ describe("a credential rewrite is tried before it is stored", () => {
     expect(row.status).toBe("connected");
 
     // The sentence never contains what was typed.
-    expect(JSON.stringify(wire)).not.toContain("typo-secret-password-password");
+    expect(JSON.stringify(wire)).not.toContain("mistyped-entry-password");
   });
 
   /**
@@ -182,14 +182,14 @@ describe("a credential rewrite is tried before it is stored", () => {
     const { db, deps, token, id } = await connected();
     spyDial(() => Promise.reject(imapError({ code: "ECONNREFUSED" })));
 
-    const res = await H(patch(token, id, { imap: { pass: "still-fine-password-password" } }), deps);
+    const res = await H(patch(token, id, { imap: { pass: "unchanged-entry-password" } }), deps);
     const wire = await res.json();
 
     expect(wire.error.details.reason).toBe("connect");
     expect(wire.error.message.toLowerCase()).toContain("reach");
     expect(wire.error.message.toLowerCase()).not.toContain("password");
     // Unproven ⇒ not stored, and the working credential is left alone.
-    expect(await KP.decrypt((await imapCred(db, id)).secretEnc, 1)).toBe("original-secret-password-password");
+    expect(await KP.decrypt((await imapCred(db, id)).secretEnc, 1)).toBe("before-rotation-password");
   });
 
   /**
@@ -210,7 +210,7 @@ describe("a credential rewrite is tried before it is stored", () => {
     const dial = spyDial(ok);
 
     const res = await H(patch(token, id, {
-      imap: { pass: "rotated-secret-password-password", host: "imap2.example.invalid" },
+      imap: { pass: "after-rotation-password", host: "imap2.example.invalid" },
     }), deps);
     expect(res.status).toBe(200);
 
@@ -227,7 +227,7 @@ describe("a credential rewrite is tried before it is stored", () => {
     expect(after.meta).toEqual({
       host: "imap2.example.invalid", port: 993, secure: true, user: "u@example.invalid",
     });
-    expect(await KP.decrypt(after.secretEnc, after.keyVersion)).toBe("rotated-secret-password-password");
+    expect(await KP.decrypt(after.secretEnc, after.keyVersion)).toBe("after-rotation-password");
   });
 
   /**
@@ -249,12 +249,12 @@ describe("a credential rewrite is tried before it is stored", () => {
 
     // Give the mailbox a full SMTP credential first, the shape `POST /mailboxes` writes.
     const seed = await H(patch(token, id, {
-      smtp: { pass: "smtp-secret-password-password", host: "smtp.example.invalid", port: 465, secure: true, user: "u@example.invalid" },
+      smtp: { pass: "outgoing-server-password", host: "smtp.example.invalid", port: 465, secure: true, user: "u@example.invalid" },
     }), deps);
     expect(seed.status).toBe(200);
 
     // Now correct ONLY the port.
-    const res = await H(patch(token, id, { smtp: { pass: "smtp-secret-password-password", port: 587 } }), deps);
+    const res = await H(patch(token, id, { smtp: { pass: "outgoing-server-password", port: 587 } }), deps);
     expect(res.status).toBe(200);
 
     const smtp = (await db.select().from(mailboxCredentials)
@@ -272,7 +272,7 @@ describe("a credential rewrite is tried before it is stored", () => {
     const { db, deps, token, id } = await connected();
     const dial = spyDial(ok);
 
-    await H(patch(token, id, { imap: { pass: "rotated-secret-password-password" } }), deps);
+    await H(patch(token, id, { imap: { pass: "after-rotation-password" } }), deps);
 
     expect(dial.closed()).toBe(1);
     const admission = (await db.select().from(authThrottle)).filter((r) => r.key.startsWith("imap:mailbox:"));
@@ -303,7 +303,7 @@ describe("a credential rewrite is tried before it is stored", () => {
     const err = await makeMailboxService({ keyProvider: KP }).update(
       { db, accountId: owner, now: () => FIXED_NOW } as never,
       id,
-      { imap: { pass: "unverifiable-password" } },
+      { imap: { pass: "unchecked-entry-password" } },
     ).catch((e: unknown) => e) as { httpStatus?: number };
 
     expect(err).toBeInstanceOf(Error);
@@ -312,7 +312,7 @@ describe("a credential rewrite is tried before it is stored", () => {
     // Untouched. Not the new password, not a blank, not a partial write.
     const after = await imapCred(db, id);
     expect(after.secretEnc).toBe(before.secretEnc);
-    expect(await KP.decrypt(after.secretEnc, after.keyVersion)).toBe("original-secret-password-password");
+    expect(await KP.decrypt(after.secretEnc, after.keyVersion)).toBe("before-rotation-password");
   });
 
   /**

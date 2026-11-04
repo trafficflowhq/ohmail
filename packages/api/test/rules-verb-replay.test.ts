@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { changeLog, mailboxes as mailboxesTbl, mailboxProfileMirror, organizerRequests, rules as rulesTbl, idempotencyKeys } from "@trafficflow/db";
+import {
+  changeLog, mailboxes as mailboxesTbl, mailboxProfileMirror, organizerRequests, rules as rulesTbl, idempotencyKeys,
+  eraseIdempotentResponses, type Tx,
+} from "@trafficflow/db";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
@@ -116,6 +119,22 @@ describe("DELETE /rules/:id replays its first outcome under a key", () => {
     expect(wrong.status).toBe(409);
     expect((await wrong.json()).error.code).toBe("idempotency_replay");
     // b survives: a 409 refuses, it does not half-apply.
+    expect(await db.select().from(rulesTbl).where(eq(rulesTbl.id, b))).toHaveLength(1);
+  });
+
+  it("after an erasure stamped the key, its retry is 410, at the same rule or another", async () => {
+    // The stamp is read before the hash: an erasure blanks both, so a blank hash decides nothing.
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const a = await makeRule(deps, s.token);
+    const b = await makeRule(deps, s.token, { match: "other.example" });
+    expect((await H(del(s.token, a, "stamped"), deps)).status).toBe(204);
+    await (db as unknown as Tx).transaction((tx) => eraseIdempotentResponses(tx, s.accountId, FIXED_NOW));
+
+    const same = await H(del(s.token, a, "stamped"), deps);
+    const other = await H(del(s.token, b, "stamped"), deps);
+    expect([same.status, other.status]).toEqual([410, 410]);
+    expect((await other.json()).error.code).toBe("erased");
     expect(await db.select().from(rulesTbl).where(eq(rulesTbl.id, b))).toHaveLength(1);
   });
 

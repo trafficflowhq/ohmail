@@ -93,8 +93,24 @@ let leave = (): void => {
   window.location.replace("/");
 };
 
+/** A wipe of this browser's copy still running (`revoked-door.ts`): the tab leaves once it ends. */
+let held: Promise<void> | null = null;
+
+/** Hold every leave of this page until `wipe` settles; `null` lets go. */
+export function holdSignedOutLeave(wipe: Promise<unknown> | null): void {
+  if (wipe === null) {
+    held = null;
+    return;
+  }
+  const settled = wipe.then(() => undefined, () => undefined);
+  held = settled;
+  void settled.then(() => { if (held === settled) held = null; });
+}
+
 export function leaveSignedOutTab(): void {
-  leave();
+  const wipe = held;
+  if (wipe === null) leave();
+  else void wipe.then(() => leave());
 }
 
 /** Test seams: jsdom cannot navigate, and two shells in one document are two tabs only by name. */

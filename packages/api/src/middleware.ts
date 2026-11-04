@@ -8,7 +8,7 @@ import { silentLogger } from "@trafficflow/core/mail";
 import { jarCookie } from "./cookies.js";
 import { csrfTokenFor } from "./csrf.js";
 import { errorResponse } from "./responses.js";
-import { lookupIdempotent, storedResponse, type StoredIdempotent } from "./idempotency.js";
+import { lookupIdempotent, replayOf } from "./idempotency.js";
 import type { ApiDeps, SessionVia } from "./deps.js";
 import { accessRefusedMayReach, accessRouteClassOf, unverifiedMayReach } from "./router.js";
 import { accessFor, parseCookies } from "./routes/shared.js";
@@ -683,8 +683,9 @@ export const withPressAge: Middleware = (next, route) => async (req, deps, param
 
 /**
  * Idempotency. On an idempotent route carrying `Idempotency-Key`: hash
- * `method\npath\ncanonicalQuery\nrawBody`; the same stored hash replays verbatim; a different
- * hash is 409 `idempotency_replay`; none exposes `deps.idempotency` so the handler's service
+ * `method\npath\ncanonicalQuery\nrawBody`; a row an erasure stamped is 410 `erased`, whatever the
+ * body; the same stored hash replays verbatim; a different hash is 409 `idempotency_replay`
+ * ({@link replayOf}); none exposes `deps.idempotency` so the handler's service
  * claims the row in its tx — inside the same `db.transaction` as the mutation (autocommit reopens
  * the commit-then-crash window), so every idempotent route carries a replay test. Concurrency:
  * the lookup runs before any transaction, so two simultaneous invocations both miss it; the claim
@@ -704,25 +705,12 @@ export const withIdempotency: Middleware = (next, route) => async (req, deps, pa
     `${req.method}\n${url.pathname}\n${canonicalQuery(url)}\n${rawBody}`,
   ).toString("hex");
 
-  const replay = (found: StoredIdempotent): Response => {
-    if (found.requestHash !== requestHash) {
-      return errorResponse("idempotency_replay", 409, "idempotency key reused with a different request");
-    }
-    /* THE FENCE, BEFORE A STORED RESPONSE IS SERVED.
-     *
-     * The stored response is a verbatim copy of what the mutation answered with, and for a draft
-     * that is the body and the recipients. An erasure blanks it and stamps the row, and the
-     * honest answer to a retry then is not the copy and not a fresh attempt: the thing this key
-     * describes was erased. 410, the same code every other erased door answers with. */
-    if (found.erasedAt !== null) {
-      return errorResponse("erased", 410,
-        "this request's result has been erased; it cannot be replayed");
-    }
-    return storedResponse(found);
-  };
-
+  /* THE FENCE, BEFORE A STORED RESPONSE IS SERVED. The stored response is a verbatim copy of what
+   * the mutation answered with, and for a draft that is the body and the recipients. An erasure
+   * blanks it and stamps the row, and the honest answer to a retry then is not the copy and not a
+   * fresh attempt: the thing this key describes was erased. `replayOf` reads the stamp first. */
   const found = await lookupIdempotent(deps.db, accountId, key, deps.now());
-  if (found) return replay(found);
+  if (found) return replayOf(found, requestHash);
 
   deps.idempotency = { key, requestHash };
   try {
@@ -734,6 +722,6 @@ export const withIdempotency: Middleware = (next, route) => async (req, deps, pa
     // No winner readable means the row is not there after all — a real fault, not a race.
     // Rethrow so it becomes a 500 rather than a fabricated success.
     if (!winner) throw err;
-    return replay(winner);
+    return replayOf(winner, requestHash);
   }
 };

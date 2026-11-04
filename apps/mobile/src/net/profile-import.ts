@@ -30,6 +30,8 @@ export interface ProfileImportCounts {
   signatureReplaces?: string;
   /** A result's: the copy carried a signature, and the different one on this mailbox stayed. */
   signatureKept?: boolean;
+  /** An offer's: the rule removals the copy records, absent when none (or from an older door). */
+  removedRules?: number;
 }
 
 /** What the door answered, narrowed to the three shapes a person is asked about. */
@@ -51,7 +53,7 @@ export type ProfileImportQuestion =
  * organizer finishes the import; {@link readImportStatus} says when.
  */
 export type ProfileImportAnswer =
-  | { kind: "done"; imported: ProfileImportCounts | null; skippedRules: number }
+  | { kind: "done"; imported: ProfileImportCounts | null; skippedRules: number; retiredRules: number }
   | { kind: "importing"; fingerprint: string; reason: "slow" | "unreachable" | null }
   | { kind: "refused"; status: number | null; message: string | null };
 
@@ -67,8 +69,12 @@ function countsOf(raw: unknown): ProfileImportCounts | null {
     tags: c.tags as number, awayResponder: c.awayResponder, signature: c.signature === true,
     ...(typeof c.signatureReplaces === "string" && c.signatureReplaces.length > 0 ? { signatureReplaces: c.signatureReplaces } : {}),
     ...(c.signatureKept === true ? { signatureKept: true } : {}),
+    ...(countOf(c.removedRules) > 0 ? { removedRules: countOf(c.removedRules) } : {}),
   };
 }
+
+/** A count read leniently: a whole number above 0, else 0. */
+const countOf = (v: unknown): number => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : 0);
 
 /**
  * THE TOLERANT READER, the web card's `asOffer` rule: only a fully formed answer asks anything.
@@ -171,16 +177,17 @@ export async function answerProfileImport(
     return { kind: "refused", status: 202, message: null };
   }
   if (res.status !== 200) return refusalOf(res);
-  if (verb !== "import") return { kind: "done", imported: null, skippedRules: 0 };
+  if (verb !== "import") return { kind: "done", imported: null, skippedRules: 0, retiredRules: 0 };
   try {
     const body = (await res.json()) as Record<string, unknown>;
     return {
       kind: "done",
       imported: countsOf(body.imported),
       skippedRules: typeof body.skippedRules === "number" ? body.skippedRules : 0,
+      retiredRules: countOf(body.retiredRules),
     };
   } catch {
-    return { kind: "done", imported: null, skippedRules: 0 };
+    return { kind: "done", imported: null, skippedRules: 0, retiredRules: 0 };
   }
 }
 
@@ -207,6 +214,7 @@ export async function readImportStatus(
         kind: "done",
         imported: countsOf(body.imported),
         skippedRules: typeof body.skippedRules === "number" ? body.skippedRules : 0,
+        retiredRules: countOf(body.retiredRules),
       };
     }
     if (body.state === "refused") {

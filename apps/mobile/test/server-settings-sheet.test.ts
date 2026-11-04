@@ -61,22 +61,22 @@ describe("changeServerSettings — the request", () => {
 
   it("sends both blocks with the password, and the outgoing host on the incoming block", async () => {
     const { s, fetch } = session({ ok: true, status: 200 });
-    const out = await changeServerSettings(s, "m1", { ...AT, password: "pw-sheet-password-password" });
+    const out = await changeServerSettings(s, "m1", { ...AT, password: "server-form-password" });
     expect(out).toEqual({ kind: "kept" });
     const [url, init] = fetch.mock.calls[0]!;
     expect(url).toMatch(/\/local\/mailboxes\/m1$/);
     expect(init?.method).toBe("PATCH");
     expect(JSON.parse(String(init?.body))).toEqual({
-      imap: { host: "imap.example.test", port: 993, secure: true, pass: "pw-sheet-password-password", smtpHost: "smtp.example.test" },
-      smtp: { host: "smtp.example.test", port: 587, secure: false, pass: "pw-sheet-password-password" },
+      imap: { host: "imap.example.test", port: 993, secure: true, pass: "server-form-password", smtpHost: "smtp.example.test" },
+      smtp: { host: "smtp.example.test", port: 587, secure: false, pass: "server-form-password" },
     });
   });
 
   it("names no outgoing server where the mailbox has none", async () => {
     const { s, fetch } = session({ ok: true, status: 200 });
-    await changeServerSettings(s, "m1", { imap: AT.imap, smtp: null, password: "pw-sheet-password-password" });
+    await changeServerSettings(s, "m1", { imap: AT.imap, smtp: null, password: "server-form-password" });
     expect(JSON.parse(String(fetch.mock.calls[0]![1]?.body))).toEqual({
-      imap: { host: "imap.example.test", port: 993, secure: true, pass: "pw-sheet-password-password" },
+      imap: { host: "imap.example.test", port: 993, secure: true, pass: "server-form-password" },
     });
   });
 });

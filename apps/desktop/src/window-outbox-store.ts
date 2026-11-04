@@ -6,9 +6,11 @@
  * at the next launch, where the engine's restore replays them under their original keys. Every
  * other row costs no request. Each request names the mailbox this window serves and the door
  * refuses any other, so an engine left behind by a switch of account never touches the next one's.
+ * One meta key outlives the launch too: the recorded Sent folders (`SENT_FOLDERS_META`), in this
+ * window's own storage under the mailbox it serves, so a start's first frame knows 'Envoyés'.
  */
 import {
-  BaseMirrorStore, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, recordKey, retryAfterMsOf,
+  BaseMirrorStore, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, SENT_FOLDERS_META, recordKey, retryAfterMsOf,
   type MirrorRecord,
 } from "@ohmail/client-engine";
 
@@ -24,6 +26,26 @@ const WRITE_WAIT_CAP_MS = 1_000;
 const MAX_PAGES = 1_000;
 
 const isCarriedType = (type: string): boolean => type === OUTBOX_TYPE || type === OUTBOX_ABANDONED_TYPE;
+
+/** Where a window keeps what outlives it besides the outbox: the webview's `localStorage` in the app. */
+export type WindowKeep = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+const sentFoldersKey = (scope: string): string => `ohmail.window.sent-folders.${scope}`;
+
+function defaultKeep(): WindowKeep | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** Sign-out's half: the mailbox's recorded Sent folders are not read by the next launch. */
+export function forgetWindowSentFolders(scope: string, keep: WindowKeep | null = defaultKeep()): void {
+  try {
+    keep?.removeItem(sentFoldersKey(scope));
+  } catch { /* a refused jar: the next mailbox read states them anew */ }
+}
 
 /** `recordKey` is `type:id` and neither type holds a colon, so the first one splits it. */
 function keyParts(key: string): { type: string; id: string } {
@@ -48,18 +70,24 @@ export interface WindowOutboxStoreOptions {
   write: OutboxFetch;
   /** The GET transport: the bridge's retrying one in the app. */
   read?: OutboxFetch;
+  /** Where the recorded Sent folders are kept; the webview's `localStorage` by default. */
+  keep?: WindowKeep | null;
 }
 
 export class WindowOutboxStore extends BaseMirrorStore {
   private readonly write: OutboxFetch;
   private readonly read: OutboxFetch;
   private readonly path: string;
+  private readonly keep: WindowKeep | null;
+  private readonly sentFoldersKey: string;
 
   constructor(opts: WindowOutboxStoreOptions) {
     super();
     this.write = opts.write;
     this.read = opts.read ?? opts.write;
     this.path = `${WINDOW_OUTBOX_PATH}?scope=${encodeURIComponent(opts.scope)}`;
+    this.keep = opts.keep === undefined ? defaultKeep() : opts.keep;
+    this.sentFoldersKey = sentFoldersKey(opts.scope);
   }
 
   /**
@@ -88,10 +116,22 @@ export class WindowOutboxStore extends BaseMirrorStore {
       const key = recordKey(rec.type, rec.id);
       if (!this.records.has(key)) this.records.set(key, rec);
     }
+    if (!this.meta.has(SENT_FOLDERS_META)) {
+      try {
+        const kept = this.keep?.getItem(this.sentFoldersKey) ?? null;
+        if (kept !== null) this.meta.set(SENT_FOLDERS_META, JSON.parse(kept) as unknown);
+      } catch { /* unreadable: names alone decide until the mailbox read */ }
+    }
     this.ver++;
   }
 
-  protected async persist(dirty: MirrorRecord[]): Promise<void> {
+  protected async persist(dirty: MirrorRecord[], _cursor: unknown, metaEntries: Array<[string, unknown]>): Promise<void> {
+    for (const [k, v] of metaEntries) {
+      if (k !== SENT_FOLDERS_META) continue;
+      try {
+        this.keep?.setItem(this.sentFoldersKey, JSON.stringify(v));
+      } catch { /* refused: the next launch waits for the mailbox read, as before */ }
+    }
     const mine = dirty.filter((r) => isCarriedType(r.type));
     if (mine.length === 0) return;
     await this.send(

@@ -142,7 +142,7 @@ describe("GET …/status — where a handed-over press stands, from the row alon
     const inline = await profileImportService.apply(w.ctx, w.mailboxId, { fingerprint: FP }, { read: found });
     expect(inline).toMatchObject({ imported: { screener: 1, rules: 1, tags: 1 } });
     expect(await st(w)).toEqual({
-      state: "imported", imported: { screener: 1, rules: 1, notifyRules: 0, tags: 1, awayResponder: false, signature: false }, skippedRules: 0,
+      state: "imported", imported: { screener: 1, rules: 1, notifyRules: 0, tags: 1, awayResponder: false, signature: false }, skippedRules: 0, retiredRules: 0,
     });
   });
 

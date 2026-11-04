@@ -138,7 +138,7 @@ describe("a reading desktop's cycle", () => {
     const dataDir = await freshDataDir("ohmail-reader-arrangement-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "mailbox-unreached-password" } },
       address: ADDRESS,
       machineName: "reading guest",
       pollIntervalMs: 60 * 60 * 1000,

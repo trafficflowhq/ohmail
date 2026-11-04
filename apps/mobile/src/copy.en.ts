@@ -3256,6 +3256,7 @@ const TABLE = {
   pfiSignaturePart: "your signature",
   /* The offer names the signature on this mailbox the copy's replaces; Import sends that receipt back. */
   pfiSignatureReplacingPart: "your signature, replacing the one on this mailbox now",
+  pfiRemovedPart: (n: number) => (n === 1 ? "1 rule removal" : `${n} rule removals`),
   /* The list the counts are said in: "a and b", and "a, b, and c" (`head` is "a, b"). */
   pfiListPair: (first: string, second: string) => `${first} and ${second}`,
   pfiListMany: (head: string, last: string) => `${head}, and ${last}`,
@@ -3264,7 +3265,7 @@ const TABLE = {
   pfiSavedByPhone: (when: string) => `Saved ${when} by ohmail on a phone.`,
   pfiSavedBy: (when: string) => `Saved ${when}.`,
   pfiWillDo:
-    "Importing adds them to this account's settings. Mail this ohmail held in the Screener from senders they screen out is filed where they say; nothing else in your mail changes. Until you choose, these settings stay in the mailbox.",
+    "Importing adds them to this account's settings and keeps every rule made only here; a rule removed there after this ohmail last organized the mailbox is removed here too. Mail this ohmail held in the Screener from senders they screen out is filed where they say; nothing else in your mail changes. Until you choose, these settings stay in the mailbox.",
   /* What the organizer files while the card is unanswered (`PlanDeps.importHold`). */
   pfiHeldRouting:
     "Until you answer, mail from senders these settings let through stays where it arrived; other new senders are screened as usual.",
@@ -3278,6 +3279,7 @@ const TABLE = {
   pfiDoneTitle: "Your settings are back.",
   pfiDoneDetails: (details: string) => `Imported: ${details}.`,
   pfiDoneSkipped: (n: number) => (n === 1 ? "1 rule couldn't be imported." : `${n} rules couldn't be imported.`),
+  pfiDoneRetired: (n: number) => (n === 1 ? "1 rule removed there was removed here too." : `${n} rules removed there were removed here too.`),
   pfiDoneSignatureKept: "The signature you typed on this mailbox stays; the saved one was not imported.",
   pfiDoneAction: "Done",
   pfiErrorTitle: "That didn't work.",

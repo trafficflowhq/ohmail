@@ -1,10 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, csrfTokenFor, ERASED_ANSWER_HEADER, type ApiDeps } from "@trafficflow/api";
-import { refreshTokens } from "@trafficflow/db";
+import { refreshTokens, sessions } from "@trafficflow/db";
 import { generateToken, hashToken } from "@trafficflow/services";
 import * as scan from "../../../scripts/lib/source-scan.mjs";
 import {
@@ -36,13 +35,15 @@ function browser(token: string): { cookie: string; headers: Record<string, strin
   return { cookie: `tf_session=${token}; tf_csrf=${csrfTokenFor(token)}`, headers: { "x-csrf-token": csrfTokenFor(token) } };
 }
 
+/** A refresh row in the session's own family, as a sign-in writes it: a family revoke reaches it. */
 async function seedRefresh(
   db: Awaited<ReturnType<typeof makeDeps>>["db"],
   s: { accountId: string; userId: string; sessionId: string },
 ): Promise<string> {
   const refresh = generateToken();
+  const [own] = await db.select({ familyId: sessions.familyId }).from(sessions).where(eq(sessions.id, s.sessionId));
   await db.insert(refreshTokens).values({
-    accountId: s.accountId, userId: s.userId, sessionId: s.sessionId, familyId: randomUUID(),
+    accountId: s.accountId, userId: s.userId, sessionId: s.sessionId, familyId: own!.familyId,
     tokenHash: hashToken(refresh), expiresAt: new Date(FIXED_NOW.getTime() + 2 * 60 * 60 * 1000),
   });
   return refresh;
@@ -95,21 +96,26 @@ describe("every response that ends a browser session empties the jar, and none i
   });
 
   /**
-   * SIGNED OUT ELSEWHERE. Another session signs every device out; this browser's next request
-   * answers 401 with the cache kept — that 401 also answers a live session whose access token
-   * another tab just rotated — and its refresh, refused, is where the session is found gone. The
-   * refusal clears the jar at once; the cache goes at the purge the browser sends after it.
+   * SIGNED OUT ELSEWHERE, by every door that does it. This browser's next request answers 401 with
+   * the cache kept — that 401 also answers a live session whose access token another tab just
+   * rotated — and its refresh, refused `refresh_revoked`, is where the session is found gone: the
+   * code the web client drops the mailbox and its copy on. The refusal clears the jar at once; the
+   * cache goes at the purge the browser sends after it.
    */
-  it("a session revoked from another device is told at its refused refresh, and its cache goes at the purge", async () => {
+  it.each([
+    ["Devices → Sign out", (id: string) => req("DELETE", `/devices/${id}`), 204],
+    ["Sign out all other web sessions", () => req("POST", "/devices/revoke-web-sessions", { body: "{}" }), 200],
+    ["sign out everywhere", () => req("POST", "/auth/logout", { body: JSON.stringify({ allDevices: true }) }), 204],
+  ] as const)("a session revoked from another device (%s) is told refresh_revoked, and its cache goes at the purge", async (_door, ask, status) => {
     const { db, deps } = await makeDeps();
     const here = await seedSession(db, { now: FIXED_NOW });
     const refresh = await seedRefresh(db, here);
     const elsewhere = await seedSessionFor(db, {
       accountId: here.accountId, userId: here.userId, now: FIXED_NOW, lastTwofaAt: FIXED_NOW,
     });
-    const all = await H(req("POST", "/auth/logout", { bearer: elsewhere.token, body: JSON.stringify({ allDevices: true }) }), deps);
-    expect(all.status).toBe(204);
-    expectSessionEnded(all, "the device that signed everybody out, its own session included");
+    const asked = ask(here.sessionId);
+    asked.headers.set("authorization", `Bearer ${elsewhere.token}`);
+    expect((await H(asked, deps)).status).toBe(status);
 
     const next = await H(req("GET", "/auth/session", { cookie: `tf_session=${here.token}` }), deps);
     expect(next.status).toBe(401);
@@ -120,6 +126,17 @@ describe("every response that ends a browser session empties the jar, and none i
     expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("refresh_revoked");
     expectSessionEnded(refused, "the refused refresh");
     await expectPurged(await H(req("POST", "/auth/refresh", { headers: PURGE }), deps), "the purge after it");
+  });
+
+  it("…and a sign-in that lapsed is told refresh_expired, the code that keeps the mailbox behind the sign-in prompt", async () => {
+    const { db, deps, clock } = await makeDeps();
+    const here = await seedSession(db, { now: FIXED_NOW });
+    const refresh = await seedRefresh(db, here);
+    clock.advance(2 * 60 * 60 * 1000 + 60_000);
+    const lapsed = await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${refresh}`, body: "{}" }), deps);
+    expect(lapsed.status).toBe(401);
+    expect(((await lapsed.json()) as { error: { code: string } }).error.code).toBe("refresh_expired");
+    expectSessionEnded(lapsed, "the lapsed refresh");
   });
 
   it("an erased account's refresh is told so at once, with no cache clear on the answer", async () => {

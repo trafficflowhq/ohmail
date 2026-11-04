@@ -70,7 +70,7 @@ async function reader(): Promise<Sidecar> {
   const dataDir = await freshDataDir("ohmail-reader-queue-");
   const s = await createSidecar({
     dataDir,
-    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "reader@ohmail.test", pass: "not-dialled-password-password" } },
+    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "reader@ohmail.test", pass: "mailbox-unreached-password" } },
     address: "reader@ohmail.test",
     machineName: "a phone reading the desktop's mailbox",
     pollIntervalMs: 60 * 60 * 1000,

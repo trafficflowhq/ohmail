@@ -231,6 +231,7 @@ describe("How far back names what agreeing screens", () => {
   it("CONTROL — a takeover asks for no count and no screening of older mail", async () => {
     const s = await mount(LIVE, () => EIGHTEEN);
     expect(s.heading()).toBe(t.elsewhereTitle);
+    await s.choose(t.elsewhereChoiceHere);
     await s.press(t.continue);
     await s.press(t.continue);
     expect(s.heading()).toBe(t.windowTitle);

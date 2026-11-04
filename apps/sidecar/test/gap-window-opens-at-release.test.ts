@@ -175,7 +175,7 @@ async function organizingPhone() {
   const meta = new MemoryMetaFolder();
   const server = mailServer(meta);
   const engine = await startPhoneEngine({
-    exec, imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+    exec, imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
     machineName: "ohmail on a phone", installId: "install-handback-gap", adapterFactory: server.factory, log: () => {},
   } as Parameters<typeof startPhoneEngine>[0]);
   open.push(engine);
@@ -398,7 +398,7 @@ describe.runIf(ON_DEVICE_STORE)("the gap window a hand-back opens, on the device
     /* A key ring and a refused port: the password is sealed, the import's own dial fails, and the
        press is handed to the organizer, which reads the settings on this rig's connection. */
     const engine = await startPhoneEngine({
-      exec, imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+      exec, imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
       machineName: "ohmail on a phone", installId: "install-fresh-phone", adapterFactory: server.factory, log: () => {},
       keks: { 1: "c".repeat(64) },
     } as Parameters<typeof startPhoneEngine>[0]);

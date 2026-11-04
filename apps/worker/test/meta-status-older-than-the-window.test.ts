@@ -69,7 +69,7 @@ describe("a STATUS count older than the window it precedes", () => {
     const out = await driveOutstandingRequests(db, {
       mailboxId: mb!.id, accountId: ACCT, installId: "reader-install",
       adapter: { requestReaderIo: () => makeRequestReaderIo(client, toServer) } as unknown as MailboxAdapter,
-      requestKey: deriveRequestKey({ auth: { user: "u@x.example", pass: "pw-fixture-password-password" }, address: "u@x.example" })!,
+      requestKey: deriveRequestKey({ auth: { user: "u@x.example", pass: "basic-account-password" }, address: "u@x.example" })!,
     }, { installId: "reader-install", kind: "local" }, NOW, () => undefined);
     const total = server.tree.get(META)!.messages.length;
     expect(total, `sent ${out.sent}: this install's appends took the folder past the window`).toBeLessThanOrEqual(500);

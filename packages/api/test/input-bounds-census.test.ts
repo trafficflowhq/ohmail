@@ -1639,6 +1639,7 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   "auth/session-lifecycle.ts :: live.map((r) => r.familyId)": { origin: { bounded: "the live families of ONE session's chain, which the refresh ladder bounds" }, count: 1 },
   "auth/session-reaper.ts :: [...new Set(rows.map((c) => c.familyId))]": { origin: { bounded: "the reaper's own claim batch, `limit`ed by its pass size" }, count: 1 },
   "auth/session-reaper.ts :: ids": { origin: { bounded: "the reaper's own claim batch, `limit`ed by its pass size" }, count: 1 },
+  "push-service.ts :: chunk": { origin: { bounded: "PRUNE_FAMILIES (500) of the families a revoke ended, sliced before the two reads of each chunk" }, count: 2 },
   // CHUNKED, and the disposition it used to carry — "bounded by SEED_SCAN_LIMIT messages scanned"
   // — was FALSE for the third time the same premise appeared: the review is built from that many
   // MESSAGES and one contributes every distinct recipient on it, so the candidate set can be far

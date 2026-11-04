@@ -89,13 +89,13 @@ describe.skipIf(!PG_UP)("auth races on real Postgres", () => {
     const svc = new AuthService(deps);
     const email = `race-${randomUUID()}@lichtgrat.example`;
     await svc.register(ctx(), {
-      email, password: "pw-correct-horse-password-password", displayName: "Gil", inviteCode: "INVITE-OK",
+      email, password: "account-signin-password", displayName: "Gil", inviteCode: "INVITE-OK",
     });
     verifies = 0;   // registration hashes, it does not verify — but be explicit.
 
     const results = await Promise.all(
       Array.from({ length: N }, () =>
-        svc.login(ctx(), { email, password: "wrong-guess-password" }).catch((e: ServiceError) => e)),
+        svc.login(ctx(), { email, password: "mismatched-entry-password" }).catch((e: ServiceError) => e)),
     );
 
     const statuses = results.map((r) => (r as ServiceError).httpStatus);
@@ -142,10 +142,10 @@ describe.skipIf(!PG_UP)("auth races on real Postgres", () => {
     };
     const svc = new AuthService(deps);
     const email = `spray-${randomUUID()}@lichtgrat.example`;
-    await svc.register(ctx(), { email, password: "pw-correct-horse-password-password", displayName: "Gil", inviteCode: "INVITE-OK" });
+    await svc.register(ctx(), { email, password: "account-signin-password", displayName: "Gil", inviteCode: "INVITE-OK" });
     verifies = 0;
     const results = await Promise.all(Array.from({ length: N }, (_, i) =>
-      svc.login(ctx({ ip: `10.77.${Math.floor(i / 200)}.${(i % 200) + 1}` }), { email, password: "wrong-guess-password" })
+      svc.login(ctx({ ip: `10.77.${Math.floor(i / 200)}.${(i % 200) + 1}` }), { email, password: "mismatched-entry-password" })
         .catch((e: ServiceError) => e)));
     const statuses = results.map((r) => (r as ServiceError).httpStatus);
     expect(statuses.every((s) => s === 401 || s === 429), statuses.join(",")).toBe(true);
@@ -170,7 +170,7 @@ describe.skipIf(!PG_UP)("auth races on real Postgres", () => {
     const totp = (secret: string): string =>
       generateSync({ secret, epoch: Math.floor(t.getTime() / 1000) });
     const { user } = await svc.register(at(), {
-      email, password: "pw-correct-horse-password-password", displayName: "Gil", inviteCode: "INVITE-OK",
+      email, password: "account-signin-password", displayName: "Gil", inviteCode: "INVITE-OK",
     });
 
     const latestSession = async (): Promise<string> =>
@@ -186,7 +186,7 @@ describe.skipIf(!PG_UP)("auth races on real Postgres", () => {
     const { secret } = await svc.totpEnroll(enrollCtx);
     await svc.totpActivate(enrollCtx, { code: totp(secret) });
     t = new Date(t.getTime() + 30_000);
-    const ch = await svc.login(at(), { email, password: "pw-correct-horse-password-password" });
+    const ch = await svc.login(at(), { email, password: "account-signin-password" });
     if (ch.status !== "twofa_required") throw new Error(`expected a 2FA challenge, got ${ch.status}`);
     await svc.totpVerify(at(), { loginToken: ch.loginToken, code: totp(secret) });
     const sctx = at({
@@ -205,7 +205,7 @@ describe.skipIf(!PG_UP)("auth races on real Postgres", () => {
     // One of the two sheets is dead, and the OTHER still works — the property is "exactly one",
     // not merely "at most one", so both halves are asserted.
     const tryCode = async (code: string): Promise<"accepted" | "refused"> => {
-      const l = await svc.login(at(), { email, password: "pw-correct-horse-password-password" });
+      const l = await svc.login(at(), { email, password: "account-signin-password" });
       if (l.status !== "twofa_required") throw new Error(`expected a 2FA challenge, got ${l.status}`);
       return svc.recoveryVerify(at(), { loginToken: l.loginToken, code })
         .then(() => "accepted" as const)

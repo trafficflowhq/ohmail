@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
-import { authEvents } from "@trafficflow/db/cloud";
+import { authEvents, pushSubscriptions } from "@trafficflow/db/cloud";
 import { deleteAccount } from "@trafficflow/services";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, users, devices, sessions, refreshTokens, type Tx } from "@trafficflow/db";
@@ -93,6 +93,23 @@ describe("reapStaleWebSessions", () => {
     const fam = (await db.select().from(refreshTokens)
       .where(eq(refreshTokens.familyId, stale.familyId)))[0]!;
     expect(fam.revokedAt?.toISOString()).toBe(NOW.toISOString());
+  });
+
+  it("a reaped browser's wake row goes with its family; a live browser's stays", async () => {
+    const db = (await makeTestDb()) as unknown as Tx;
+    const me = await seedUser(db);
+    const stale = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 91 * DAY) });
+    const fresh = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 89 * DAY) });
+    const wake = async (familyId: string) => (await db.insert(pushSubscriptions).values({
+      accountId: me.accountId, transport: "webpush", endpoint: `https://push.test/${familyId}`, sessionFamilyId: familyId,
+    }).returning({ id: pushSubscriptions.id }))[0]!.id;
+    await wake(stale.familyId);
+    const kept = await wake(fresh.familyId);
+
+    expect((await reapStaleWebSessions(db, NOW)).reaped).toBe(1);
+    const left = await db.select({ id: pushSubscriptions.id }).from(pushSubscriptions)
+      .where(eq(pushSubscriptions.accountId, me.accountId));
+    expect(left.map((r) => r.id)).toEqual([kept]);
   });
 
   it("reaps only a browser past its window; one with 29 days left and a device-less desktop renew; the reaped one hears expired", async () => {

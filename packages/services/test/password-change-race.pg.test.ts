@@ -26,7 +26,7 @@ import {
  */
 
 const PG_UP = await realPgAvailable();
-const OLD = "pw-correct-horse-battery-password-password";
+const OLD = "long-signin-password";
 const NEW = "new-battery-staple-horse-password";
 
 type Settled<T> = { ok: true; v: T } | { ok: false; e: unknown };

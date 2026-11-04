@@ -37,7 +37,7 @@ describe("GET /internal/security-notices/run", () => {
     const armed = { ...deps, alerts: { secret: SECRET, sinks: [] } as unknown as ApiDeps["alerts"] };
     const reg = await H(new Request("https://api.test/auth/register", {
       method: "POST", headers: { "Content-Type": "application/json", "x-vercel-forwarded-for": "10.200.0.1" },
-      body: JSON.stringify({ email: "target@example.com", password: "pw-correct-horse-battery-password-password", displayName: "T", inviteCode: "INVITE-OK" }),
+      body: JSON.stringify({ email: "target@example.com", password: "long-signin-password", displayName: "T", inviteCode: "INVITE-OK" }),
     }), armed);
     expect(reg.status).toBeLessThan(300);
     const before = mailer.sent.length;
