@@ -61,7 +61,8 @@ export {
  * satisfy this module however the imports are arranged.
  */
 export {
-  acquireImapSlot, releaseImapSlot, imapAdmissionKey,
+  acquireImapSlot, releaseImapSlot, imapAdmissionKey, probeRowsOfAccount,
+  spendProbeBudget, PROBE_BUDGET, HOSTED_IMAP_ADMISSION,
   recordImapRefusal, imapRefusalsInWindow,
   IMAP_ADMISSION_NAMESPACE, IMAP_ADMISSION_WINDOW_MS,
   IMAP_REFUSAL_KEY, IMAP_REFUSAL_WINDOW_MS,

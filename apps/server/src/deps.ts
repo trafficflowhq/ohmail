@@ -1,7 +1,7 @@
 import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, parkedAccountsOf, type Tx } from "@trafficflow/db";
 import { readDbTls, alertHeartbeatFor, type AlertHeartbeat } from "@trafficflow/db/cloud";
 import {
-  acquireImapSlot, releaseImapSlot, webhookAlertSink, telegramAlertSink, refusingAlertSink,
+  HOSTED_IMAP_ADMISSION, webhookAlertSink, telegramAlertSink, refusingAlertSink,
   recordApiFault, accountsAtCapOf, planeOpsReaderOf,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   makeSupabaseStagingStorage, makeS3StagingStorage,
@@ -255,8 +255,9 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     }),
     // This deployment is in the admission cap's exact position: several users, one connection
     // budget per upstream account, TWO processes (this one and the organizer) that share no
-    // lock. The counter's table exists here — this host runs both journals.
-    imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot },
+    // lock. The counter's table exists here — this host runs both journals. With it, the connect
+    // probes' budget over time: no user tries passwords at a mail server back to back.
+    imapAdmission: HOSTED_IMAP_ADMISSION,
     // ENFORCING by default; the operator's explicit TF_PROBE_ALLOW_PRIVATE=1 selects the
     // desktop's allow-any for a LAN mail server. See config.ts for the argument.
     probeHostGuard: cfg.probeAllowPrivate

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import { createApp, jsonResponse, recordIdempotent, type Route } from "@trafficflow/api";
 import { IdempotencyRaceLost } from "@trafficflow/services";
-import { rules, idempotencyKeys, recordChange, type Tx } from "@trafficflow/db";
+import { rules, idempotencyKeys, recordChange, eraseIdempotentResponses, type Tx } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
@@ -98,6 +99,29 @@ describe("withIdempotency", () => {
     );
     expect(res.status).toBe(409);
     expect((await res.json()).error.code).toBe("idempotency_replay");
+    expect(demo.calls()).toBe(1);
+  });
+
+  it("after an erasure, a retry under the key is 410 whatever its body, and the row confirms no guess", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const demo = makeDemo();
+    const app = createApp([{ method: "POST", pattern: "/rules", options: { idempotent: true }, handler: demo.handler }]);
+    const body = JSON.stringify({ match: "a@b.example" });
+    const send = (b: string) => app.handle(req("POST", "/rules", { bearer: s.token, headers: { "idempotency-key": "k1" }, body: b }), deps);
+    const storedHash = async () =>
+      (await db.select().from(idempotencyKeys).where(eq(idempotencyKeys.accountId, s.accountId)))[0]!.requestHash;
+    const guess = createHash("sha256").update(`POST\n/rules\n\n${body}`).digest("hex");
+
+    await send(body);
+    expect(await storedHash(), "the guess is not the stored hash's form").toBe(guess);
+    await (db as unknown as Tx).transaction((tx) => eraseIdempotentResponses(tx, s.accountId, FIXED_NOW));
+    expect(await storedHash()).not.toBe(guess);
+    const same = await send(body);
+    const other = await send(JSON.stringify({ match: "different@x.example" }));
+
+    expect([same.status, other.status]).toEqual([410, 410]);
+    expect((await other.json()).error.code).toBe("erased");
     expect(demo.calls()).toBe(1);
   });
 

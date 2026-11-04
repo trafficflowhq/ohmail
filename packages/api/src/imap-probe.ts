@@ -539,6 +539,25 @@ const busy = (): ServiceError => new ServiceError(
   true,
 );
 
+/** The refusal when this account has tried too many mail server sign-ins for now. */
+const probesSpent = (retryAfter: number): ServiceError => new ServiceError(
+  "rate_limited", 429, "too many connection attempts for now; try again later", { retryAfter }, true,
+);
+
+/**
+ * ADMIT ONE PROBE: its budget over time first (`spend`, the hosted hosts' alone), then its slot in
+ * flight. The caller derives both keys before this, so a host that cannot key them refuses with
+ * nothing counted, and a refused budget takes no slot. A slot held is the caller's to release.
+ */
+async function admitProbe(
+  deps: ApiDeps, i: { accountId: string; slot: string; login: string; max: number },
+): Promise<void> {
+  const admission = imapAdmission(deps);
+  const wait = await admission.spend?.(deps.db, { accountId: i.accountId, target: i.login, now: deps.now() }) ?? null;
+  if (wait !== null) throw probesSpent(wait);
+  if (!await admission.acquire(deps.db, { mailboxId: i.slot, max: i.max, now: deps.now() })) throw busy();
+}
+
 /**
  * The admission key for an address nothing has been stored for yet. The admission counter keys on
  * a mailbox id and does not hash it — an opaque internal UUID needs no protection. At probe time
@@ -696,14 +715,16 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
     const cleared = await checked(hostGuard, input.imap.host, input.imap.port, "imap");
     const pin = pinFrom(cleared);
 
-    const key = probeAdmissionKey(throttleKeysFor(deps.keyProvider), input.accountId, input.address);
+    const keys = throttleKeysFor(deps.keyProvider);
+    const key = probeAdmissionKey(keys, input.accountId, input.address);
+    const login = keys.address((input.imap.user || input.address).trim().toLowerCase());
 
     // ADMISSION FIRST, before a socket exists, and ONCE for the whole ladder: the rungs dial
     // strictly one at a time, so a ladder holds exactly one login against the provider — the
     // property the counter caps. A counter failure REFUSES rather than admitting: an uncapped
     // dial is precisely the state the counter exists to prevent, and letting a broken counter
     // mean "go ahead" is how a control stops controlling without anything failing.
-    if (!await imapAdmission(deps).acquire(deps.db, { mailboxId: key, max, now: deps.now() })) throw busy();
+    await admitProbe(deps, { accountId: input.accountId, slot: key, login, max });
 
     const startedAt = Date.now();
     const budgetLeft = (): number => callDeadlineMs - (Date.now() - startedAt);
@@ -1084,8 +1105,10 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
     const cleared = await checked(hostGuard, input.smtp.host, input.smtp.port, "smtp");
     const pin = pinFrom(cleared);
 
-    const key = smtpProbeAdmissionKey(throttleKeysFor(deps.keyProvider), input.accountId, input.address);
-    if (!await imapAdmission(deps).acquire(deps.db, { mailboxId: key, max, now: deps.now() })) throw busy();
+    const keys = throttleKeysFor(deps.keyProvider);
+    const key = smtpProbeAdmissionKey(keys, input.accountId, input.address);
+    const login = keys.address((input.smtp.user || input.address).trim().toLowerCase());
+    await admitProbe(deps, { accountId: input.accountId, slot: key, login, max });
 
     const startedAt = Date.now();
     const budgetLeft = (): number => deadlineMs - (Date.now() - startedAt);

@@ -70,6 +70,7 @@ import {
   connectAttempts,
   creditRefundObligations,
   authThrottle,
+  probeRowsOfAccount,
   credentials,
   invites,
   loginTokens,
@@ -563,6 +564,7 @@ export async function deleteAccount(
     // `mail:unsolicited:<hA>` and `mail:transactional:<hA>`), and the legacy
     // `email:<addr>` a row written before the keys were hashed still carries. The hash needs the
     // server's subkey, so the addresses are read here; hex keys, so a LIKE prefix has no wildcard.
+    // And the connect probes' rows, which name the account rather than a person.
     const people = await tx.select({ id: users.id, email: users.email })
       .from(users).where(eq(users.accountId, accountId));
     const exact: string[] = [];
@@ -577,9 +579,10 @@ export async function deleteAccount(
         prefixes.push(`${THROTTLE_PREFIX.password}${hA}:%`, `${THROTTLE_PREFIX.knownClient}${hA}:%`);
       }
     }
-    await drop("auth_throttle", exact.length === 0 ? Promise.resolve(0) : tx.delete(authThrottle).where(or(
-      inArray(authThrottle.key, exact),
+    await drop("auth_throttle", tx.delete(authThrottle).where(or(
+      ...(exact.length === 0 ? [] : [inArray(authThrottle.key, exact)]),
       ...prefixes.map((pattern) => like(authThrottle.key, pattern)),
+      probeRowsOfAccount(accountId),
     )));
     // ── 7b. THE SIGNUP FUNNEL — pseudonymised, not deleted ─────────────────────
     // `invites.email` and `waitlist.email` are the only thing in either row that names a person,
