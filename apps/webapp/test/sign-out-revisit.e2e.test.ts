@@ -1,17 +1,18 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
 import { chromium, type Browser, type BrowserContext, type Page, type Route } from "playwright";
 import { createApp, apiRoutes, csrfTokenFor, type ApiDeps } from "@trafficflow/api";
-import { refreshTokens, sessions } from "@trafficflow/db";
+import { accountSettings, refreshTokens, sessions } from "@trafficflow/db";
 import { generateToken, hashToken, type Db } from "@trafficflow/services";
 import { makeDeps, seedSession } from "../../../packages/api/test/helpers.js";
 import messages from "../messages/en.json";
@@ -329,6 +330,126 @@ function errorsOf(page: Page): string[] {
 async function finished(ctx: BrowserContext, familyId: string): Promise<boolean> {
   return (await jarNames(ctx)).length === 0 && !(await familyLive(familyId));
 }
+
+/** One record of a real tab: an event it heard, a document it started, or a frame it drew, and the shell then. */
+interface TabEvent {
+  tab: string; type: string; at: number; vis: string; shell: boolean; path: string;
+  persisted?: boolean; nav?: string | null; notRestored?: string[] | null;
+}
+
+/**
+ * Runs in every document from its first script: each lifecycle event (before the app's own listeners),
+ * the document's start (how it was reached, why a back was not restored) and the first frame after any of
+ * those, or after the shell came or went. Sent out at once, so the record outlives the tab's navigations.
+ */
+function recordTab(): void {
+  const w = window as unknown as { __soRec?: (r: Record<string, unknown>) => Promise<void> };
+  const queue: Array<Record<string, unknown>> = [];
+  const shell = (): boolean => document.querySelector(".app-root, .row[data-id]") !== null;
+  const send = (type: string, x: Record<string, unknown> = {}): void => {
+    queue.push({ at: Date.now(), type, vis: document.visibilityState, shell: shell(), path: location.pathname, ...x });
+    if (typeof w.__soRec === "function") for (const r of queue.splice(0)) void w.__soRec(r).catch(() => {});
+  };
+  let owed = true;
+  let drawn: boolean | null = null;
+  const event = (type: string, x: Record<string, unknown> = {}): void => { owed = true; send(type, x); };
+  for (const t of ["visibilitychange", "resume", "freeze"]) document.addEventListener(t, () => event(t), true);
+  for (const t of ["pageshow", "pagehide"]) {
+    window.addEventListener(t, (e) => event(t, { persisted: (e as PageTransitionEvent).persisted }), true);
+  }
+  for (const t of ["focus", "blur"]) window.addEventListener(t, (e) => { if (e.target === window) event(t); }, true);
+  const frame = (): void => {
+    const now = shell();
+    if (owed || now !== drawn) {
+      owed = false;
+      drawn = now;
+      send("frame");
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+  type Reasons = { reasons?: Array<{ reason: string }> | null; children?: Reasons[] | null };
+  const flat = (r: Reasons | null | undefined): string[] =>
+    r ? [...(r.reasons ?? []).map((x) => x.reason), ...(r.children ?? []).flatMap(flat)] : [];
+  const nav = performance.getEntriesByType("navigation")[0] as (PerformanceEntry & { type?: string; notRestoredReasons?: Reasons | null }) | undefined;
+  event("boot", { nav: nav?.type ?? null, notRestored: nav?.notRestoredReasons ? flat(nav.notRestoredReasons) : null });
+}
+
+interface RealTabs {
+  ctx: BrowserContext;
+  log: TabEvent[];
+  /** Name `page` in the log. */
+  tab: (page: Page, name: string) => Page;
+  /** A page in a window of its own, beside the others. */
+  newWindow: () => Promise<Page>;
+  close: () => Promise<void>;
+}
+
+/**
+ * A headful Chromium started here, on a fresh profile, on this run's display, attached with `noDefaults`: no
+ * focus emulation keeps a background tab visible and no launch flag turns bfcache off.
+ */
+async function realTabs(o: { channel: boolean } = { channel: true }): Promise<RealTabs> {
+  const profile = mkdtempSync(join(tmpdir(), "ohmail-real-tabs-"));
+  // Its own process group, so every helper process it starts goes with it before the profile is removed.
+  const proc = spawn(chromium.executablePath(), [
+    `--user-data-dir=${profile}`, "--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check",
+    "--disable-background-networking", "--disable-component-update", "--disable-sync", "--password-store=basic",
+    "--use-mock-keychain", "--window-size=1200,800", "about:blank",
+  ], { stdio: "ignore", detached: true });
+  const exited = once(proc, "exit");
+  let port = "";
+  for (let i = 0; i < 300 && port === ""; i += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+    try { port = readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0] ?? ""; } catch { /* not written yet */ }
+  }
+  const stop = async (): Promise<void> => {
+    try { process.kill(-proc.pid!, "SIGTERM"); } catch { /* already gone */ }
+    await exited;
+    rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  };
+  if (port === "") {
+    await stop();
+    throw new Error("the browser never opened its debugging port");
+  }
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { noDefaults: true });
+  const ctx = browser.contexts()[0]!;
+  const names = new Map<Page, string>();
+  const log: TabEvent[] = [];
+  await ctx.exposeBinding("__soRec", ({ page }: { page: Page }, r: Omit<TabEvent, "tab">) => {
+    log.push({ tab: names.get(page) ?? "?", ...r });
+  });
+  await ctx.addInitScript(recordTab);
+  // A browser with no `BroadcastChannel`: the post goes by the storage event alone.
+  if (!o.channel) await ctx.addInitScript(() => { delete (window as { BroadcastChannel?: unknown }).BroadcastChannel; });
+  const cdp = await browser.newBrowserCDPSession();
+  return {
+    ctx,
+    log,
+    tab: (page, name) => { names.set(page, name); return page; },
+    newWindow: async () => {
+      const [page] = await Promise.all([ctx.waitForEvent("page"), cdp.send("Target.createTarget", { url: "about:blank", newWindow: true })]);
+      return page;
+    },
+    close: async () => {
+      await browser.close().catch(() => {});
+      await stop();
+    },
+  };
+}
+
+/** A tab's records from `from` on, one line: ms after `from`, the record, the visibility, SHELL when drawn. */
+function storyOf(log: TabEvent[], tab: string, from: number): string {
+  return log.filter((e) => e.tab === tab && e.at >= from).map((e) => {
+    const extra = e.type === "boot" ? `(${e.nav}${e.notRestored ? ` ${e.notRestored.join(",")}` : ""})`
+      : e.persisted !== undefined ? `(persisted=${e.persisted})` : "";
+    return `${e.at - from} ${e.type}${extra} ${e.vis} ${e.shell ? "SHELL" : "-"} ${e.path}`;
+  }).join(" | ");
+}
+
+/** The frames `tab` drew from `from` on: whether each showed the shell. */
+const framesOf = (log: TabEvent[], tab: string, from: number): boolean[] =>
+  log.filter((e) => e.tab === tab && e.type === "frame" && e.at >= from).map((e) => e.shell);
 
 describe.skipIf(!ENABLED)("sign out, then come back — a production build over the real routes", () => {
   beforeAll(async () => {
@@ -941,4 +1062,239 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
       }
     }
   }, 60_000);
+
+  /*
+   * REAL TABS: a tab that missed the sign-out post, in the browser's own lifecycle. Playwright's launch
+   * cannot show it: its focus emulation keeps every page visible, its flags turn bfcache off, and CDP's
+   * freeze does nothing to a visible page. So a headful Chromium of this run's own, on this run's display
+   * (a private Xvfb, never a desktop):
+   *
+   *     TF_SIGNOUT_E2E=1 XDG_RUNTIME_DIR=<own dir> DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent \
+   *       xvfb-run -a npx vitest run apps/webapp/test/sign-out-revisit.e2e.test.ts -t "real tabs"
+   *
+   * B holds the mailbox; A signs out. Each case reads every frame B drew once it was looked at again, and
+   * whether it asked the session door.
+   */
+  describe.skipIf(!process.env.DISPLAY)("real tabs: a tab that missed the post", () => {
+    let rig: RealTabs | null = null;
+    afterEach(async () => {
+      await rig?.close();
+      rig = null;
+    });
+
+    /** Whether `page` shows the mailbox now; null between two documents. */
+    const shellOn = (page: Page): Promise<boolean | null> =>
+      page.evaluate(() => document.querySelector(".app-root, .row[data-id]") !== null).catch(() => null);
+
+    /**
+     * B on the mailbox, drawn, in the browser's first tab; its session reads from now on. The account has
+     * left its first run, so nothing sends B on to `/join`. `deaf`: B gets no storage event either.
+     */
+    async function mailboxTab(r: RealTabs, j: { access: string; refresh: string; accountId: string }, o: { deaf?: boolean } = {}):
+      Promise<{ b: Page; asked: number[] }> {
+      await world.db.insert(accountSettings).values({ accountId: j.accountId, onboardingCompletedAt: world.now });
+      await plant(r.ctx, j, { owner: j.accountId, access: true });
+      const b = r.tab(r.ctx.pages()[0] ?? await r.ctx.newPage(), "B");
+      if (o.deaf) await b.addInitScript(() => { window.addEventListener("storage", (e) => e.stopImmediatePropagation(), true); });
+      const asked: number[] = [];
+      b.on("request", (q) => { if (new URL(q.url()).pathname.endsWith("/auth/session")) asked.push(Date.now()); });
+      await b.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
+      await b.locator(".app-root").waitFor({ state: "attached", timeout: 60_000 });
+      await b.waitForTimeout(3_000);
+      expect(`${new URL(b.url()).pathname} ${await shellOn(b)}`, "B did not stay on its mailbox").toBe("/ true");
+      return { b, asked };
+    }
+
+    /** A opens its account pane, Sign out on screen. */
+    async function accountPane(a: Page): Promise<void> {
+      await a.goto(`http://localhost:${webPort}/#/settings/account`, { waitUntil: "commit" });
+      await a.getByRole("button", { name: /^Sign out$/ }).waitFor({ state: "visible", timeout: 60_000 });
+      await a.waitForTimeout(1_000);
+    }
+
+    /** A presses Sign out; resolves once the door answered (or holds) the request. */
+    async function pressSignOut(a: Page, door: "answer" | "hang"): Promise<number> {
+      signOutDoor = door;
+      doorFaultsLeft = 1;
+      heard = [];
+      const pressedAt = Date.now();
+      await a.getByRole("button", { name: /^Sign out$/ }).click();
+      const want = door === "answer" ? 204 : "held";
+      const until = Date.now() + 15_000;
+      while (!doorAnswers().includes(want) && Date.now() < until) await a.waitForTimeout(50);
+      expect(doorAnswers(), "the press never reached the door").toContain(want);
+      return pressedAt;
+    }
+
+    async function signOutOn(a: Page, door: "answer" | "hang"): Promise<number> {
+      await accountPane(a);
+      return pressSignOut(a, door);
+    }
+
+    /** B in the background, frozen, while A signs out (or only opens the app, `door` null); resumed hidden, then shown. */
+    async function frozenThrough(r: RealTabs, b: Page, door: "answer" | "hang" | null): Promise<{ pressedAt: number; shownAt: number }> {
+      const a = r.tab(await r.ctx.newPage(), "A");
+      await a.waitForTimeout(500);
+      expect(await b.evaluate(() => document.visibilityState), "B is not in the background").toBe("hidden");
+      const lifecycle = await r.ctx.newCDPSession(b);
+      await lifecycle.send("Page.setWebLifecycleState", { state: "frozen" });
+      let pressedAt = Date.now();
+      if (door !== null) pressedAt = await signOutOn(a, door);
+      else await accountPane(a);
+      await a.waitForTimeout(1_500);
+      await lifecycle.send("Page.setWebLifecycleState", { state: "active" });
+      await a.waitForTimeout(500);
+      const shownAt = Date.now();
+      await b.bringToFront();
+      await b.waitForTimeout(3_000);
+      return { pressedAt, shownAt };
+    }
+
+    it("E1 · a frozen tab, the sign-out answered: no frame of mail once it is shown, nothing asked", async () => {
+      const r = rig = await realTabs();
+      const { b, asked } = await mailboxTab(r, await signedIn());
+      const { pressedAt, shownAt } = await frozenThrough(r, b, "answer");
+      const frames = framesOf(r.log, "B", shownAt);
+      console.log(`e2e real-tabs E1 frozen-204 B: ${storyOf(r.log, "B", pressedAt)} · asked=${asked.filter((t) => t >= pressedAt).length} last=${new URL(b.url()).pathname}`);
+      expect(frames.length, "B drew no frame once shown, so this proves nothing").toBeGreaterThan(0);
+      expect(frames, "B drew the mailbox once it was shown").not.toContain(true);
+      expect(asked.filter((t) => t >= pressedAt), "B asked the session door").toEqual([]);
+      expect(new URL(b.url()).pathname).toBe("/");
+    }, 180_000);
+
+    it("E2 · a frozen tab, the sign-out request held: no frame of mail once shown, and the sign-in page", async () => {
+      const r = rig = await realTabs();
+      const { b, asked } = await mailboxTab(r, await signedIn());
+      const { pressedAt, shownAt } = await frozenThrough(r, b, "hang");
+      const frames = framesOf(r.log, "B", shownAt);
+      console.log(`e2e real-tabs E2 frozen-held B: ${storyOf(r.log, "B", pressedAt)} · asked=${asked.filter((t) => t >= pressedAt).length} last=${new URL(b.url()).pathname}`);
+      expect(frames.length, "B drew no frame once shown, so this proves nothing").toBeGreaterThan(0);
+      expect(frames, "B drew the mailbox once it was shown").not.toContain(true);
+      expect(asked.filter((t) => t >= pressedAt), "B asked the session door").toEqual([]);
+      expect(new URL(b.url()).pathname).toBe("/login");
+    }, 180_000);
+
+    it("E3 · CONTROL: a frozen tab nobody signed out draws its mailbox in every frame once shown", async () => {
+      const r = rig = await realTabs();
+      const { b } = await mailboxTab(r, await signedIn());
+      const { pressedAt, shownAt } = await frozenThrough(r, b, null);
+      const frames = framesOf(r.log, "B", shownAt);
+      console.log(`e2e real-tabs E3 frozen-control B: ${storyOf(r.log, "B", pressedAt)} · last=${new URL(b.url()).pathname}`);
+      expect(frames.length, "B drew no frame once shown, so this proves nothing").toBeGreaterThan(0);
+      expect(frames, "a signed-in tab dropped its mailbox when shown").not.toContain(false);
+      expect(new URL(b.url()).pathname).toBe("/");
+    }, 180_000);
+
+    it("E4 · back to the mailbox after a sign-out: the browser does not restore it, no frame of mail", async () => {
+      const r = rig = await realTabs();
+      const { b, asked } = await mailboxTab(r, await signedIn());
+      await b.goto(`http://localhost:${webPort}/no-such-page`, { waitUntil: "commit" });
+      await b.waitForTimeout(1_000);
+      const a = r.tab(await r.ctx.newPage(), "A");
+      const pressedAt = await signOutOn(a, "answer");
+      await a.waitForTimeout(1_000);
+      await b.bringToFront();
+      await b.waitForTimeout(500);
+      const backAt = Date.now();
+      await b.goBack({ waitUntil: "commit" });
+      await b.waitForTimeout(3_000);
+      const frames = framesOf(r.log, "B", backAt);
+      const boot = r.log.find((e) => e.tab === "B" && e.type === "boot" && e.at >= backAt);
+      console.log(`e2e real-tabs E4 back B: ${storyOf(r.log, "B", backAt)} · asked=${asked.filter((t) => t >= pressedAt).length} last=${new URL(b.url()).pathname}`);
+      expect(boot?.nav, "the back restored the mailbox from the browser's cache").toBe("back_forward");
+      expect(frames.length, "B drew no frame after the back, so this proves nothing").toBeGreaterThan(0);
+      expect(frames, "the back drew the mailbox").not.toContain(true);
+      expect(asked.filter((t) => t >= pressedAt), "B asked the session door").toEqual([]);
+    }, 180_000);
+
+    it("E5 · a discarded tab, reloaded unseen after the sign-out: no frame of mail once shown", async () => {
+      const r = rig = await realTabs();
+      const { b, asked } = await mailboxTab(r, await signedIn());
+      const a = r.tab(await r.ctx.newPage(), "A");
+      await a.waitForTimeout(500);
+      const lifecycle = await r.ctx.newCDPSession(b);
+      await lifecycle.send("Page.setWebLifecycleState", { state: "frozen" });
+      const pressedAt = await signOutOn(a, "answer");
+      await a.waitForTimeout(1_000);
+      // A discarded tab loads its address again; here the reload runs while it is still in the background.
+      await lifecycle.send("Page.setWebLifecycleState", { state: "active" });
+      const reloadAt = Date.now();
+      await b.reload({ waitUntil: "commit" });
+      await a.waitForTimeout(2_000);
+      await b.bringToFront();
+      await b.waitForTimeout(3_000);
+      const frames = framesOf(r.log, "B", reloadAt);
+      console.log(`e2e real-tabs E5 discard B: ${storyOf(r.log, "B", pressedAt)} · asked=${asked.filter((t) => t >= pressedAt).length} last=${new URL(b.url()).pathname}`);
+      expect(frames.length, "B drew no frame once shown, so this proves nothing").toBeGreaterThan(0);
+      expect(frames, "the reloaded tab drew the mailbox").not.toContain(true);
+      expect(asked.filter((t) => t >= pressedAt), "B asked the session door").toEqual([]);
+    }, 180_000);
+
+    it("E6 · no channel and no storage event, a background tab: shown, it draws no mail and asks nothing", async () => {
+      const r = rig = await realTabs({ channel: false });
+      const { b, asked } = await mailboxTab(r, await signedIn(), { deaf: true });
+      const a = r.tab(await r.ctx.newPage(), "A");
+      const pressedAt = await signOutOn(a, "answer");
+      await a.waitForTimeout(1_500);
+      expect(await shellOn(b), "sanity: B heard the post, so the return is not what is measured").toBe(true);
+      const shownAt = Date.now();
+      await b.bringToFront();
+      await b.waitForTimeout(3_000);
+      const frames = framesOf(r.log, "B", shownAt);
+      console.log(`e2e real-tabs E6 no-channel-background B: ${storyOf(r.log, "B", pressedAt)} · asked=${asked.filter((t) => t >= pressedAt).length} last=${new URL(b.url()).pathname}`);
+      expect(frames.length, "B drew no frame once shown, so this proves nothing").toBeGreaterThan(0);
+      expect(frames, "B drew the mailbox once it was shown").not.toContain(true);
+      expect(asked.filter((t) => t >= pressedAt), "B asked the session door").toEqual([]);
+    }, 180_000);
+
+    /** `b`'s shell read every 100 ms until it is gone or `ms` passes: the ms it went after `from`, or null. */
+    async function shellGoneWithin(b: Page, from: number, ms: number): Promise<number | null> {
+      while (Date.now() - from < ms) {
+        if (await shellOn(b) === false) return Date.now() - from;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return null;
+    }
+
+    /** The events that wake a tab's return check, heard by `tab` from `from` until its document went (or the next began). */
+    const returnsBeforeLeaving = (log: TabEvent[], tab: string, from: number): string[] => {
+      const mine = log.filter((e) => e.tab === tab && e.at >= from);
+      const end = mine.findIndex((e) => e.type === "pagehide" || e.type === "boot");
+      return mine.slice(0, end < 0 ? mine.length : end)
+        .filter((e) => ["visibilitychange", "focus", "pageshow", "resume"].includes(e.type)).map((e) => e.type);
+    };
+
+    it("E7 · no channel and no storage event, a tab visible the whole time beside the one that signs out: it leaves, asking nothing", async () => {
+      const r = rig = await realTabs({ channel: false });
+      const { b, asked } = await mailboxTab(r, await signedIn(), { deaf: true });
+      const a = r.tab(await r.newWindow(), "A");
+      await accountPane(a);
+      expect(`${await b.evaluate(() => document.visibilityState)} ${await shellOn(b)}`, "B is not on screen with its mailbox beside A")
+        .toBe("visible true");
+      const pressedAt = await pressSignOut(a, "answer");
+      const goneMs = await shellGoneWithin(b, pressedAt, 5_000);
+      await b.waitForTimeout(1_500);
+      console.log(`e2e real-tabs E7 no-channel-visible B: ${storyOf(r.log, "B", pressedAt)} · gone_ms=${goneMs} asked=${asked.filter((t) => t >= pressedAt).length} last=${new URL(b.url()).pathname}`);
+      expect(returnsBeforeLeaving(r.log, "B", pressedAt), "something woke B's return check, so the watch is not what is measured").toEqual([]);
+      expect(goneMs, "B kept the mailbox on screen 5 s after another tab signed out").not.toBeNull();
+      expect(framesOf(r.log, "B", pressedAt + goneMs! + 1_000), "B drew the mailbox again").not.toContain(true);
+      expect(asked.filter((t) => t >= pressedAt), "B asked the session door").toEqual([]);
+    }, 180_000);
+
+    it("E8 · CONTROL: nobody signs out: the tab visible beside the other keeps its mailbox and asks nothing", async () => {
+      const r = rig = await realTabs({ channel: false });
+      const { b, asked } = await mailboxTab(r, await signedIn(), { deaf: true });
+      const a = r.tab(await r.newWindow(), "A");
+      await accountPane(a);
+      expect(await b.evaluate(() => document.visibilityState), "B is not visible beside A's window").toBe("visible");
+      const from = Date.now();
+      await a.waitForTimeout(5_000);
+      const shown = await shellOn(b);
+      console.log(`e2e real-tabs E8 control-visible B: ${storyOf(r.log, "B", from)} · asked=${asked.filter((t) => t >= from).length} last=${new URL(b.url()).pathname}`);
+      expect(shown, "a signed-in tab dropped its mailbox").toBe(true);
+      expect(framesOf(r.log, "B", from), "a signed-in tab drew a frame without its mailbox").not.toContain(false);
+      expect(r.log.filter((e) => e.tab === "B" && e.at >= from && e.type === "pagehide"), "a signed-in tab left").toEqual([]);
+      expect(asked.filter((t) => t >= from), "B asked the session door").toEqual([]);
+    }, 180_000);
+  });
 });
