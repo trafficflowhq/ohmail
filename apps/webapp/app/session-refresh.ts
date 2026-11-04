@@ -669,6 +669,32 @@ let inFlightRepair: { answer: Promise<ResumeAnswer>; asked: { refused: boolean }
 /** The jar says this browser's sign-out went unconfirmed (`OWNER_SIGNED_OUT`): its family is never rotated. */
 const pendingSignOut = (): boolean => readOwnerMarker().kind === "signed-out";
 
+/**
+ * THE REVOKE DOOR: told the refresh door's coded refusal, inside the lock and after the death latch.
+ * `revoked-door.ts` registers it on import (the mailbox and the splash); anywhere else nothing hears.
+ */
+export interface RevokeDoor {
+  /** Who this refresh leaves under, read before it goes out: the refusal clears the jar. */
+  capture(): unknown;
+  /** Never awaited; a door that throws costs only itself. */
+  hear(refusal: { code: string; cause?: typeof REFRESH_REUSE_CAUSE }, before: unknown): void;
+}
+
+let revokeDoor: RevokeDoor | null = null;
+
+/** Last writer wins; `null` takes it down. */
+export function registerRevokeDoor(d: RevokeDoor | null): void {
+  revokeDoor = d;
+}
+
+function revokeCapture(): unknown {
+  try {
+    return revokeDoor?.capture() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAnswer> {
   const repair = inFlightRepair;
   if (repair !== null) {
@@ -750,6 +776,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       const csrf = csrfToken();
       // Who this refresh leaves under — BEFORE it goes: an erased account's answer clears the jar.
       const erasedBefore = erasedCapture();
+      const revokeBefore = revokeCapture();
       const attemptId = opts.attemptId ?? await attemptFor(csrf);
       // Asked again past the store's wait, as past the splash's: nothing may have ended the jar meanwhile.
       if (pendingSignOut()) return "refused";
@@ -829,6 +856,12 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
         if (code !== REFRESH_MISSING) purgeSiteCache();
         refusedJar = sessionMarks();
         markSessionDead();
+        // After the latch, so `api()` refuses the door's own requests before they reach the wire.
+        try {
+          revokeDoor?.hear({ code, ...(cause ? { cause } : {}) }, revokeBefore);
+        } catch {
+          /* the verdict above stands */
+        }
         return "refused";
       }
       // Everything else: an uncoded 401 or one naming another code (a platform interposing), a
