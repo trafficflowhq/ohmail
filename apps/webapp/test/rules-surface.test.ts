@@ -173,10 +173,10 @@ describe("the pane exists and says what the rule is", () => {
   });
 
   it("says 'anyone at' for a domain rule — a domain is a different promise from an address", async () => {
-    await renderSettings({ items: [rule({ kind: "domain", match: "lichtgrat.de" })] });
+    await renderSettings({ items: [rule({ kind: "domain", match: "lichtgrat.example" })] });
     await openRulesPane();
-    expect(host.textContent).toContain("Mail from anyone at lichtgrat.de");
-    expect(host.textContent).not.toContain("Mail from lichtgrat.de·");
+    expect(host.textContent).toContain("Mail from anyone at lichtgrat.example");
+    expect(host.textContent).not.toContain("Mail from lichtgrat.example·");
   });
 
   it("distinguishes a rule the user made from one a Screener decision made", async () => {

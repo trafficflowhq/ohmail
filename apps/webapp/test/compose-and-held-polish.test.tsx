@@ -122,7 +122,7 @@ describe("the To placeholder fits its field", () => {
   it("the short hint is the address alone in both catalogues", async () => {
     const de = (await import("../messages/de.json")).default as typeof messages;
     expect(messages.compose.toPlaceholderShort).toBe("name@example.com");
-    expect(de.compose.toPlaceholderShort).toBe("name@beispiel.de");
+    expect(de.compose.toPlaceholderShort).toBe("name@beispiel.example");
     expect(de.compose.toPlaceholder.startsWith(de.compose.toPlaceholderShort)).toBe(true);
   });
 });

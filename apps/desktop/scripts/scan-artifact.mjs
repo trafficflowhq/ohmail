@@ -156,7 +156,7 @@ const REAL_CLIENT_MARKERS = ["x-csrf-token", "/sync/snapshot"];
  * sentinels appear; retire the demo arm upstream and the stub disappears, either way this fails
  * loudly instead of going quietly green.
  */
-const FIXTURE_SENTINELS = ["Giulia Ferrari", "Petra Wyss", "terracotta-milano.it"];
+const FIXTURE_SENTINELS = ["Giulia Ferrari", "Petra Wyss", "terracotta-milano.example"];
 const NO_FIXTURES_REFUSAL = "ohmail Desktop carries no sample mail";
 
 /**
