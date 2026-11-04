@@ -3,10 +3,12 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import {
-  accounts, mailboxes, mailboxCredentials, workflows, workflowRuns, parkedResumeSet, parkedResumeWhere,
+  accounts, mailboxes, mailboxCredentials, messageBodies, messageInstances, messages, messageSearch, routingDecisions,
+  trackerEvents, workflows, workflowRuns, parkedResumeSet, parkedResumeWhere, type Tx,
 } from "@trafficflow/db";
 import { accountLifecycleNotices, makeDb, pushSubscriptions } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger, type DraftPort, type Logger } from "@trafficflow/core";
+import { reindexMessageSearch } from "@trafficflow/core/mail";
 import {
   formatClaim, isMalformed, parseClaim, type OrganizerClaim,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -171,6 +173,38 @@ const rowOf = async (db: Db, mailboxId: string) => {
 };
 const pushCount = async (db: Db, accountId: string): Promise<number> =>
   (await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.accountId, accountId))).length;
+
+const WHOLE = {
+  from: ["Anna <anna@example.test>"], to: ["me@example.test"], subject: ["harbour ledger"], "message-id": ["<old@example.test>"],
+  received: ["from mx.example.test by in.example.test"], references: ["<first@example.test>"],
+};
+const ALL = { snippet: "the ledger", documents: 1, rationale: "Order 4411 to the harbour", tracker: "https://t.example.test/o/4411", headers: WHOLE };
+const NONE = { snippet: "", documents: 0, rationale: null, tracker: null, headers: { to: WHOLE.to, references: WHOLE.references } };
+
+/** A stored letter with all its words. `gone`: deleted on the server and emptied, no copy on record. */
+async function storedLetter(db: Db, at: { accountId: string; mailboxId: string }, gone: boolean): Promise<string> {
+  const { accountId, mailboxId } = at;
+  const [m] = await db.insert(messages).values({
+    accountId, mailboxId, bodyHash: "h", dedupKey: `wall:${randomUUID()}`, subject: "harbour ledger", fromAddress: "anna@example.test",
+    snippet: ALL.snippet, deletedAt: gone ? new Date() : null, nativeLocator: { folder: "INBOX", ref: "1:7" },
+  }).returning();
+  const messageId = m!.id;
+  await db.insert(messageBodies).values({ messageId, text: gone ? "" : ALL.snippet, html: null, headers: WHOLE, withheldReason: gone ? "expunged" : null });
+  if (!gone) await db.insert(messageInstances).values({ accountId, messageId, mailboxId, folder: "INBOX", uid: 7, uidvalidity: 1n, isPrimary: true });
+  await reindexMessageSearch(db as unknown as Tx, accountId, messageId);
+  await db.insert(routingDecisions).values({
+    accountId, messageId, inputProvenance: "ai", destination: "ohmail/Receipts", status: "auto_applied", rationale: ALL.rationale,
+  });
+  await db.insert(trackerEvents).values({ accountId, messageId, kind: "pixel", trackerHost: "t.example.test", url: ALL.tracker });
+  return messageId;
+}
+const wordsOf = async (db: Db, id: string) => ({
+  snippet: (await db.select({ v: messages.snippet }).from(messages).where(eq(messages.id, id)))[0]!.v,
+  documents: (await db.select({ v: messageSearch.messageId }).from(messageSearch).where(eq(messageSearch.messageId, id))).length,
+  rationale: (await db.select({ v: routingDecisions.rationale }).from(routingDecisions).where(eq(routingDecisions.messageId, id)))[0]!.v,
+  tracker: (await db.select({ v: trackerEvents.url }).from(trackerEvents).where(eq(trackerEvents.messageId, id)))[0]!.v,
+  headers: (await db.select({ v: messageBodies.headers }).from(messageBodies).where(eq(messageBodies.messageId, id)))[0]!.v,
+});
 
 describe("a parked account leaves the roster and its organizer stands down (mail 0124)", () => {
   beforeAll(async () => { DB = await prepareIsolatedDb("trafficflow_worker_wall"); }, 60_000);
@@ -505,6 +539,32 @@ describe("a parked account leaves the roster and its organizer stands down (mail
     // passes never see the account. Removing the reader from THAT call site turns this red.
     await new Promise((r) => setTimeout(r, 1_000));
     expect(await statusOf(bRun), "a parked account's automation must not fire").toBe("pending");
+  }, 60_000);
+
+  it("the CYCLE-TAIL site, store-only: the gone-letter tidy takes a parked account's and a disconnected account's " +
+     "deleted letters' words in one tail walk, and a letter still on the server keeps them", async () => {
+    const db = makeDb(DB);
+    const plane = fakePlane();
+    await new Promise<void>((r) => plane.server.listen(0, "127.0.0.1", () => { r(); }));
+    closers.push(plane.close);
+
+    const A = await seedAccount(db);   // open: its letter is still on the server (the control)
+    const B = await seedAccount(db);   // parked from the start
+    plane.parked.add(B.accountId);
+    const C = await seedAccount(db);   // its only mailbox disconnected, its mail kept
+    await db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, C.mailboxId));
+    const kept = await storedLetter(db, A, false);
+    const gone = { parked: await storedLetter(db, B, true), disconnected: await storedLetter(db, C, true) };
+
+    const { logger, lines } = recordingLogger();
+    const w = await runWorkerSupervised(cfgFor(new FakeAdapterFleet(), plane.url(), { logger }));
+    closers.push(() => w.stop());
+    await waitFor(() => lines.some((l) => l.event === "cycle_phases"), 30_000, "one whole tail walk");
+
+    for (const [whose, id] of Object.entries(gone)) {
+      expect(await wordsOf(db, id), `the ${whose} account's deleted letter kept its words`).toEqual(NONE);
+    }
+    expect(await wordsOf(db, kept), "a letter still on the server lost its words").toEqual(ALL);
   }, 60_000);
 });
 

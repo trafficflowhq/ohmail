@@ -127,7 +127,7 @@ import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
 import { SEARCH_INDEX_ACCOUNTS_PER_TAIL, searchIndexBackfillPass, searchIndexOwedAccounts } from "@trafficflow/core/mail";
 import { HTML_WORDS_ACCOUNTS_PER_TAIL, htmlWordsBackfillPass, htmlWordsOwedAccounts } from "./html-words-backfill.js";
-import { goneLetterTidyPass } from "./gone-letter-tidy.js";
+import { goneLetterTidyAccounts, goneLetterTidyPass } from "./gone-letter-tidy.js";
 import { storageEvictPass } from "./storage-evict.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
 import {
@@ -5715,8 +5715,21 @@ export async function startWorkerWithLock(
         // ── LETTERS THAT LEFT THE SERVER BEFORE THEIR WORDS WENT WITH THEM ───────────────────
         // Store-only: the repo's own scrub over this account's gone letters that still hold a
         // preview, a search document, a summary, a tracker's address or a whole header block.
-        // Bounded per run under the slice clock; an account a run found clean is not asked again
-        // in this process, so a settled tail pays one set lookup per account.
+        // Its list is the snapshot and the accounts read here: a parked account, or one whose only
+        // mailbox is disconnected, never syncs and keeps its letters. Bounded per run under the slice
+        // clock; an account a run found clean is not asked again in this process, so a settled tail
+        // pays one list read.
+        enter: async (served) => {
+          let listed: readonly string[] = [];
+          await runTailStage("cycle.goneLetterTidyAccounts", "database", async () => {
+            listed = await goneLetterTidyAccounts(db as unknown as Tx, { shard: accountShardFilter(selection, accounts.id) });
+          }, (err) => {
+            log.warn("gone_letter_tidy_accounts_read_failed", {
+              err, reason: "the accounts that do not sync could not be read; this tail tidies the served ones and the next reads them again",
+            });
+          });
+          return [...new Set([...served, ...listed])].filter((a) => !goneLettersTidied.has(a));
+        },
         run: async (accountId) => {
           if (goneLettersTidied.has(accountId)) return;
           await runTailStage("cycle.goneLetterTidyPass", "database", async () => {
