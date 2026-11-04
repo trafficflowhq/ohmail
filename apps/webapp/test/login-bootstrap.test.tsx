@@ -147,6 +147,8 @@ beforeEach(() => {
       return new Promise((resolve) => {
         releaseRefresh = () => {
           wire.push("refresh:end");
+          // A renewal's 204 writes the new jar, the readable half of it included.
+          document.cookie = "tf_csrf=renewed; Path=/";
           resolve(new Response(null, { status: 204 }));
         };
       });
@@ -160,6 +162,7 @@ beforeEach(() => {
 afterEach(async () => {
   for (const root of roots) await act(() => root.unmount());
   roots = [];
+  document.cookie = "tf_csrf=; Path=/; Max-Age=0";
   document.body.innerHTML = "";
   globalThis.fetch = originalFetch;
   vi.useRealTimers();
@@ -255,9 +258,11 @@ describe("the already-signed-in check", () => {
    * with the OLD account's cookie, and a refresh rewrites every session cookie whenever it lands:
    * after a completed sign-in that restores the previous account or clears the new one.
    * Suppressing a promise continuation cannot undo a `Set-Cookie`; only stopping the request
-   * before it becomes a refresh can. So the request has to actually stop.
+   * before it becomes a refresh can. So the request has to actually stop — once its answer has been
+   * waited for, within the bound: a revoke it carries wipes the revoked account's copy before the
+   * sign-in leaves (`revoked-door.ts`).
    */
-  it("a session read still ON THE WIRE is aborted by the submit", async () => {
+  it("a session read still ON THE WIRE is heard until the bound, then aborted before the ceremony goes", async () => {
     sessionScript = [() => null];               // held open — see the fetch mock
     const el = await mountLogin();
     await tick(500);
@@ -277,12 +282,17 @@ describe("the already-signed-in check", () => {
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
-    await tick(1_000);
+    const { SETTLE_DEADLINE_MS } = await import("../app/session-refresh.js");
+    await tick(SETTLE_DEADLINE_MS - 1_000);
+    expect(wire, "the read was stopped before its answer or the bound").not.toContain("session:aborted");
+    expect(loginCalls, "the ceremony left before the read's answer or the bound").toBe(0);
+    await tick(2_000);
 
     expect(wire, "the in-flight session read was left running behind the ceremony")
       .toContain("session:aborted");
-    // …and the ceremony went ahead: nothing was in flight to be ordered behind.
+    // …and the ceremony went ahead, after the read was stopped.
     expect(loginCalls, "the ceremony never ran").toBe(1);
+    expect(wire.indexOf("session:aborted"), "the ceremony left beside the read").toBeLessThan(wire.indexOf("login"));
     expect(replaced, "a late confirm navigated out of the ceremony").toEqual([]);
   });
 
@@ -297,8 +307,9 @@ describe("the already-signed-in check", () => {
      *   · the refresh must NOT be aborted — it is shared single-flight state and other callers
      *     are awaiting it (a sync drain, a mailbox read, the resume splash);
      *   · the login must not be SENT until it has settled, so the ceremony writes last.
+     * The renewal mints, and the read it retries answers the old account: the check has its answer.
      */
-    sessionScript = [() => json({ error: { code: "unauthorized", message: "no" } }, 401)];
+    sessionScript = [() => json({ error: { code: "unauthorized", message: "no" } }, 401), full];
     const el = await mountLogin();
     await tick(500);
     expect(wire, "the bootstrap never entered the refresh, so this proves nothing")

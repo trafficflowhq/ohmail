@@ -16,7 +16,7 @@ import { READING_ALONG_PREFIX } from "../app/shell/reading-along";
 import { SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY } from "../app/session-refresh";
 import { ACCESS_VERDICT_PREFIX } from "../app/shell/wall-lift";
 import { ERASED_KEY } from "../app/shell/account-erased";
-import { SHARED_NOTE_KEY } from "../app/(product)/resume/signed-out-note";
+import { REVOKE_OWED_PREFIX, SHARED_NOTE_KEY } from "../app/(product)/resume/signed-out-note";
 
 /**
  * SIGN-OUT HAS TO REACH THE DURABLE-DECISION STORES, NOT JUST THE MIRROR AND THE BOOT CACHES.
@@ -76,6 +76,7 @@ const SWEPT = [
   ACCESS_VERDICT_PREFIX,
   ERASED_KEY,
   SHARED_NOTE_KEY,
+  REVOKE_OWED_PREFIX,
 ];
 
 /**

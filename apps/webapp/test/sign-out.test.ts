@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sliceOfDeclaration } from "./source-anchor.js";
 
 /** The sign-out door's answer, as each case scripts it. Only `auth` is replaced (see the last describe). */
@@ -595,5 +595,86 @@ describe("the finisher's predicate", () => {
     const out = await signOut();
     expect(out.serverRefused).toBe("We could not reach ohmail.");
     expect(pending(), "a press with no predicate skipped its local half").toBe(true);
+  });
+});
+
+/**
+ * THE REVOKE DOOR'S REACH (`revoked-door.ts`), asked before each step of a one-account wipe: `account` takes that
+ * account's own stores and leaves the jar's, which another session holds now; a reach that turns to `none` takes
+ * nothing more. The door drops its own owed records; a whole sign-out sweeps them.
+ */
+describe("a one-account wipe takes only what its reach allows", () => {
+  const A = "acct_A";
+  const B = "acct_B";
+  let engine: typeof import("@ohmail/client-engine");
+  let k = { locks: "", reply: "", minted: "", owed: "" };
+  const ownKeys = (owner: string): string[] => [`${k.locks}${owner}`, `ohmail.access.${owner}`, `ohmail.boot.ownAddresses.${owner}`];
+  const jarKeys = (): string[] => [`${k.reply}m-b`, k.minted];
+  const left = (keys: string[]): string[] => keys.filter((key) => localStorage.getItem(key) !== null);
+
+  beforeEach(async () => {
+    vi.resetModules();
+    localStorage.clear();
+    holdEveryRequest();
+    const { createRequire } = await import("node:module");
+    const { resolve } = await import("node:path");
+    const fake = createRequire(resolve("packages/client-engine/package.json"))("fake-indexeddb") as { IDBFactory: new () => IDBFactory };
+    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();
+    engine = await import("@ohmail/client-engine");
+    k = {
+      locks: (await import("../app/shell/send-lock")).SEND_LOCKS_PREFIX,
+      reply: (await import("../app/shell/mail-send")).REPLY_DRAFT_PREFIX,
+      minted: (await import("../app/session-refresh")).SESSION_MINTED_KEY,
+      owed: (await import("../app/(product)/resume/signed-out-note")).REVOKE_OWED_PREFIX,
+    };
+    for (const owner of [A, B]) {
+      const store = new engine.IndexedDbMirrorStore({ owner });
+      await store.load();
+      await store.putLocal("message", "m1", { id: "m1", subject: `a letter of ${owner}` });
+      store.close();
+      for (const key of ownKeys(owner)) localStorage.setItem(key, "account data");
+    }
+    for (const key of [...jarKeys(), `${k.owed}${A}`]) localStorage.setItem(key, "{}");
+    // Another account's session holds the jar now.
+    document.cookie = `tf_owner=${B}; Path=/`;
+  });
+  afterEach(() => {
+    vi.doUnmock("../app/shell/notification-settings");
+    Reflect.deleteProperty(globalThis, "indexedDB");
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  });
+
+  it("`account`: A's own keys and mirror go; the jar's keys, B's and the door's record stay", async () => {
+    const { forgetThisBrowser } = await import("../app/sign-out");
+    const out = await forgetThisBrowser(A, { only: true, reach: () => "account" });
+    expect(left([...ownKeys(A), ...ownKeys(B), ...jarKeys(), `${k.owed}${A}`]))
+      .toEqual([...ownKeys(B), ...jarKeys(), `${k.owed}${A}`]);
+    expect([engine.holdsMirrorOf(A), engine.holdsMirrorOf(B), document.cookie.includes(`tf_owner=${B}`)]).toEqual([false, true, true]);
+    expect(out.remaining).toEqual([]);
+  });
+
+  it("a reach that turns to `none` partway takes nothing more", async () => {
+    let reach: "jar" | "none" = "jar";
+    // A's session comes back while the wake registration is being revoked.
+    vi.doMock("../app/shell/notification-settings", async (importOriginal: () => Promise<object>) => ({
+      ...(await importOriginal()),
+      revokeWakeRegistration: async () => { reach = "none"; return null; },
+    }));
+    vi.resetModules();
+    const { forgetThisBrowser } = await import("../app/sign-out");
+    await forgetThisBrowser(A, { only: true, reach: () => reach });
+    const all = [...ownKeys(A), ...ownKeys(B), ...jarKeys()];
+    expect([reach, left(all), engine.holdsMirrorOf(A), engine.holdsMirrorOf(B)], "the wipe went on past its reach")
+      .toEqual(["none", all, true, true]);
+  });
+
+  it("a whole sign-out sweeps every revoke's record; a one-account wipe leaves them to the door", async () => {
+    const records = [`${k.owed}${A}`, k.owed];
+    localStorage.setItem(k.owed, "{}");
+    const { forgetThisBrowser } = await import("../app/sign-out");
+    await forgetThisBrowser(A, { only: true, revokeWake: false });
+    expect(left(records), "a one-account wipe took the door's records").toEqual(records);
+    await forgetThisBrowser(undefined, { revokeWake: false });
+    expect(left(records), "a sign-out left a revoke's record").toEqual([]);
   });
 });

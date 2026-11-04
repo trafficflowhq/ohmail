@@ -671,7 +671,7 @@ const pendingSignOut = (): boolean => readOwnerMarker().kind === "signed-out";
 
 /**
  * THE REVOKE DOOR: told the refresh door's coded refusal, inside the lock and after the death latch.
- * `revoked-door.ts` registers it on import (the mailbox, the splash and /login); anywhere else nothing hears.
+ * `revoked-door.ts` registers it on import, and every product page imports it (`providers.tsx`).
  */
 export interface RevokeDoor {
   /** Who this refresh leaves under, read before it goes out: the refusal clears the jar. */
@@ -1077,6 +1077,22 @@ function lastSessionMint(): number | null {
   }
   if (stored === null) return mintedHere;
   return mintedHere === null ? stored : Math.max(stored, mintedHere);
+}
+
+/** What the jar said of its session at one moment: its mark, its name, its newest mint. Never a value. */
+export interface MintWitness { mark: string; owner: string | null; minted: number | null }
+
+export function mintWitness(): MintWitness {
+  return { mark: jarMark(), owner: readOwner(), minted: lastSessionMint() };
+}
+
+/** A session was minted since `w` was read: the jar holds a new mark or a new name, or a newer mint was recorded. */
+export function mintedSince(w: MintWitness): boolean {
+  const mark = jarMark();
+  const owner = readOwner();
+  const minted = lastSessionMint();
+  return (mark !== "" && mark !== w.mark) || (owner !== null && owner !== w.owner)
+    || (minted !== null && (w.minted === null || minted > w.minted));
 }
 
 /**

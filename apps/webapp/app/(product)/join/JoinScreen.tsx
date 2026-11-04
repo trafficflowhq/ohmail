@@ -45,6 +45,8 @@ import { PendingSignOutSaid, usePendingSignOut } from "../login/pending-sign-out
 import { registerRefusal, totpRefusal } from "./signup-refusals";
 import { MailboxStep, useMailboxForm } from "./MailboxStep";
 import { awaitHandoff } from "./handoff";
+import { refreshSettled } from "../../session-refresh";
+import { checkAnswered, revokedWipeSettled } from "../../revoked-door";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
 
@@ -185,6 +187,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
    * marker (`enrollmentCookies` writes none) — only the server knows, asked again.
    */
   const wizardOwner = useRef<string | null>(null);
+  /** The bootstrap's session read, last one out: a registration hears its answer first (`submitAccount`). */
+  const sessionRead = useRef<Promise<unknown> | null>(null);
   const [codesSaved, setCodesSaved] = useState(false);
   /** The read before a generate said this account already has codes (another tab made them): none are made here. */
   const [codesElsewhere, setCodesElsewhere] = useState(false);
@@ -265,7 +269,9 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
         await auth.session({ ceremony: true });
         markSessionAlive();
       }
-      const s = await auth.session();
+      const read = auth.session();
+      sessionRead.current = read;
+      const s = await read;
       /*
        * ── THE FIRST READ FIXES THE OWNER; A LATER ONE IS COMPARED, NEVER APPLIED ────────────
        *
@@ -536,6 +542,12 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       // this jar, and the registration's session would leave it so. Its attempt still out ends first,
       // then the door is asked once more; anything short of a finished sign-out is said.
       stopFinish.current?.();
+      // The session read out now and any renewal answer first, within one bound: a revoke they carry
+      // is wiped before an account is made here. Then one read more inside it, for a read that met a busy
+      // server or none: after any refusal the session is held ended, and it leaves nothing (as under a
+      // pending sign-out).
+      await Promise.all([checkAnswered(sessionRead.current, (signal) => auth.session({ signal })), refreshSettled()]);
+      await revokedWipeSettled();
       if (!await pending.settle()) return;
       // The invite is validated by the SERVER, inside the transaction that creates the
       // account. There is no client-side pre-check, deliberately: a code this component

@@ -13,6 +13,7 @@ import { readOwnerMarker } from "../../shell/owner-cookie";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
 import { markSessionAlive, sessionIsDead } from "../../shell/session-truth";
 import { resolveOwnerOutcome } from "../session-outcome";
+import { revokedWipeSettled } from "../../revoked-door";
 
 /** `owner` is bound; `none` has no full session; `refused` binds nothing; `unchecked` got no answer. */
 export type Settled =
@@ -58,6 +59,8 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export async function settleOwner(signal: AbortSignal): Promise<Settled | null> {
   for (let attempt = 1; ; attempt += 1) {
     const outcome = await resolveOwnerOutcome({ signal }).catch(() => null);
+    // A revoke this check heard: that account's copy is gone before the page offers anything.
+    await revokedWipeSettled();
     if (signal.aborted) return null;
     if (outcome === null) return { kind: "unchecked" };
     if (outcome.kind === "none") return { kind: "none" };

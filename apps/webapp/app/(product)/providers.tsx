@@ -5,6 +5,8 @@ import { ThemeProvider, ToastHost, themeInitScript } from "@ohmail/ui";
 import { localStorageDoor } from "../shell/durable";
 import { columnsBootScript } from "../shell/column-store";
 import { textSizeBootScript } from "../shell/text-size";
+// Every product page hears a revoke and finishes a wipe a closed page left (`revoked-door.ts`).
+import "../revoked-door";
 
 /* One door per host, at module scope: the provider reads it through a ref, and a door rebuilt
    every render would be a new object on every frame for no reason. */

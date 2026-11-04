@@ -34,6 +34,8 @@ import { readOwnerMarker } from "../../shell/owner-cookie";
 import { offerHandoff } from "../join/handoff";
 import { verifyRefusal } from "../join/signup-refusals";
 import { PendingSignOutSaid, usePendingSignOut } from "../login/pending-sign-out";
+import { checkAnswered, revokedWipeSettled } from "../../revoked-door";
+import { resolveOwnerOutcome } from "../session-outcome";
 
 export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
   const t = useTranslations("verify");
@@ -97,6 +99,12 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
     void (async () => {
       try {
         stopFinish.current?.();
+        // Asked first, within the bound, unless a sign-out is pending (its door is asked below): an enrollment
+        // answer expires the jar's renewal, after which a revoke of its session could never be heard here. A jar
+        // naming nobody too: Safari keeps the script-written name seven days, the session cookie longer.
+        if (readOwnerMarker().kind !== "signed-out") await checkAnswered(null, (signal) => resolveOwnerOutcome({ signal }));
+        // A revoke's wipe this browser still owes, or the one just heard, is done before a confirmation mints a session.
+        await revokedWipeSettled();
         if (!await pending.settle()) return;
         const out = await auth.verifyEmail({ token: token.trim(), password });
         setPassword("");
