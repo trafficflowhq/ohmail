@@ -8,7 +8,7 @@ import {
 } from "@trafficflow/db";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
-  formatProfileMessage, isMalformedProfile, makeProfileDoc, makeProfileIo, parseProfileMessage, profileFingerprint,
+  formatProfileMessage, isMalformedProfile, makeProfileDoc, makeProfileIo, parseProfileMessage, profileCopyKey, profileFingerprint,
   type OrganizerProfileDoc, type ParsedProfileMessage, type ProfileIo, type RawProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { memoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
@@ -164,7 +164,7 @@ async function rig(o: {
   // Dated by the rig's clock, as a store's rows are by the clock its organizer reads.
   const decide = (name: string) => db.insert(tags).values({ accountId, name, createdAt: clock.at, updatedAt: clock.at });
   const answer = (decision: "declined" | "replaced") => recordProfileImportResolution(db, {
-    accountId, mailboxId: mb!.id, decision, fingerprint: profileFingerprint(theirs),
+    accountId, mailboxId: mb!.id, decision, fingerprint: profileCopyKey(theirs),
   });
   const ticks = async (n: number, s = sync): Promise<void> => {
     for (let i = 0; i < n; i++) { later(31_000); await s.onOrganize(); }
@@ -173,7 +173,7 @@ async function rig(o: {
   /** Import pressed where the store is, not handed to the organizer. */
   const importInline = (doc: OrganizerProfileDoc) => fencedAccountWrite(db, { accountId }, async (tx) => {
     await lockAccountRuleKeys(tx as Tx, accountId);
-    await applyOrganizerProfile(tx as LedgerTx, { accountId, mailboxId: mb!.id, doc, fingerprint: profileFingerprint(doc), now: clock.at });
+    await applyOrganizerProfile(tx as LedgerTx, { accountId, mailboxId: mb!.id, doc, fingerprint: profileCopyKey(doc), now: clock.at });
   });
   return { db, sync, folder, decide, answer, later, attach, store, ticks, routing, importInline, clock, accountId, mailboxId: mb!.id };
 }
@@ -1129,6 +1129,18 @@ describe("found settings and the Import that answers them", () => {
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
     expect({ open: r.sync.importDecisionOpen(), asked: marker?.state === "found" && marker.heldForImport, removed: marker?.counts?.removedRules, held: r.folder.writers().includes("w-old") })
       .toEqual({ open: true, asked: true, removed: 1, held: true });
+  });
+
+  // An answer names one copy: a later copy with the same rules and another removal is a new question at the seed.
+  it("a copy whose rules an earlier answered copy shares, with another removal, is held at the seed", async () => {
+    const r = await rig({ planted: true, theirs: REMOVED_ALL });
+    const earlier = { ...REMOVED_ALL, removedRules: [{ ...REMOVED_ALL.removedRules[0]!, match: "before@shop.test" }] };
+    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "replaced", fingerprint: profileCopyKey(earlier) });
+    await r.decide("mine");
+    await r.ticks(3);
+    const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
+    expect({ open: r.sync.importDecisionOpen(), asked: marker?.state === "found" && marker.heldForImport && marker.fingerprint === profileCopyKey(REMOVED_ALL), held: r.folder.writers().includes("w-old") })
+      .toEqual({ open: true, asked: true, held: true });
   });
 
   it("an Import reaches the mailbox within two passes, inside the flush interval", async () => {

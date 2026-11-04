@@ -8,7 +8,10 @@ import {
   makeProfileIo,
   parseProfileMessage,
   localSaysWhatAFingerprintSays,
+  payloadFingerprintOf,
+  profileCopyKey,
   profileFingerprint,
+  profileFingerprintVersion,
   profileGateView,
   profilePayloadAsRead,
   readOrganizerProfile,
@@ -945,6 +948,49 @@ describe("the rules a person removed travel in the envelope", () => {
     const raw = write([GONE]).replace(`"removedAt": "${AGO(1)}"`, `"removedAt": 12`);
     expect(read(raw).doc!.removedRules).toEqual([]);
     expect(read(raw).doc!.rules.length).toBe(richPayload().rules.length);
+  });
+
+  /* A COPY'S KEY: its payload fingerprint, and a digest of its removals when it records any. */
+  it("a copy's key is its fingerprint without removals, and names the removals it records", () => {
+    const at = (removedRules: ProfileRemovedRule[], o: { updatedAt?: Date; v?: number } = {}) => makeProfileDoc(richPayload(), {
+      updatedAt: o.updatedAt ?? AT, producer: PRODUCER, removedRules,
+    }, o.v);
+    const fp = profileFingerprint(richPayload());
+    expect(profileCopyKey(at([]))).toBe(fp);
+    const both = at([GONE, NARROW]);
+    const key = profileCopyKey(both);
+    expect(key).not.toBe(fp);
+    expect(key.length).toBeLessThanOrEqual(100);
+    expect([payloadFingerprintOf(key), profileFingerprintVersion(key), payloadFingerprintOf(fp)]).toEqual([fp, 2, fp]);
+    for (const other of [[GONE], [GONE, NARROW, { ...GONE, match: "x@quindle.test" }], [{ ...GONE, removedAt: AGO(3) }, NARROW],
+      [{ ...GONE, by: "w-new" }, NARROW], [GONE, { ...NARROW, subjectContains: "other" }]]) {
+      expect(profileCopyKey(at(other))).not.toBe(key);
+    }
+    const sameCopy = [
+      { ...both, removedRules: [...both.removedRules!].reverse() },
+      makeProfileDoc(richPayload(), {
+        updatedAt: new Date(AT.getTime() + 3_600_000), producer: { kind: "server", version: "9.9.9" }, removedRules: [NARROW, GONE],
+        applied: ["meta-request:1"], screening: { baselineAt: null, dormancyDays: 30, scope: "window" }, gap: { since: AGO(1), by: "w", at: AGO(1) },
+      }),
+      read(write([GONE, NARROW])).doc!,
+    ];
+    for (const d of sameCopy) expect(profileCopyKey(d)).toBe(key);
+    const v1 = profileCopyKey(at([GONE], { v: 1 }));
+    expect([payloadFingerprintOf(v1), profileFingerprintVersion(v1)]).toEqual([profileFingerprint(richPayload(), 1), 1]);
+    expect(localSaysWhatAFingerprintSays(richPayload(), key)).toBe(true);
+    expect(localSaysWhatAFingerprintSays({ ...richPayload(), tagNames: [] }, key)).toBe(false);
+  });
+
+  it("a write that saw one copy refuses a newer foreign copy with its rules and other removals", async () => {
+    const io = new MemMeta();
+    const copy = (removedRules: ProfileRemovedRule[]) => makeProfileDoc(richPayload(), { updatedAt: AT, producer: PRODUCER, removedRules });
+    const seen = copy([GONE]);
+    const later = copy([GONE, NARROW]);
+    await io.appendProfile(formatProfileMessage(later, { installId: "other-install" }));
+    const mine = makeProfileDoc({ ...richPayload(), tagNames: ["mine"] }, { updatedAt: new Date(AT.getTime() + 120_000), producer: PRODUCER });
+    const refused = await writeOrganizerProfile({ io, doc: mine, installId: "i", replaceable: [profileCopyKey(seen)] });
+    expect([refused.written, !refused.written && refused.reason, io.messages.length]).toEqual([false, "foreign", 1]);
+    expect(await writeOrganizerProfile({ io, doc: mine, installId: "i", replaceable: [profileCopyKey(later)] })).toEqual({ written: true, removed: 1 });
   });
 
   it("a copy carries at most the cap, the newest, none older than a year", () => {

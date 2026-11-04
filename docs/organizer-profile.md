@@ -187,17 +187,19 @@ press names that exact signature; otherwise the mailbox keeps its own and the co
 mailbox with no signature takes the document's. Text and markup are compared and written as one value.
 
 What ohmail keeps of the settings and a signature for this: the organizer's record of a found document
-names the document by its fingerprint (a sha256 of its canonical settings, the signature among them)
-and the document's signature by a receipt (a sha256 of text and markup together, cut to 32 hex digits);
-the answer to it (Import, Not now, or saving this ohmail's settings over it) names the document by its
-fingerprint; and a press handed to the organizer keeps the fingerprint and the receipt of the signature
-its card said would be replaced. All are rows of the account's audit trail, which are deleted after 365
-days or with the account. Erasing the mailbox takes the fingerprints and the receipts off those rows
-when it is pressed, and again when the erasure finishes; an erasure an earlier ohmail finished loses
-them on the server's next erasure pass. Removing a mailbox from a computer takes them off that
-computer's store; a removal an earlier ohmail made on a computer or phone loses them at its next start.
-The rows themselves stay. The status read of a press handed to the organizer carries the fingerprint
-in a request header, never in the address it asks.
+names the document by its fingerprint (a sha256 of its canonical settings, the signature among them),
+followed by a digest of the removals it records when it records any (a sha256 of their keys, instants
+and installs, cut to 32 hex digits), and the document's signature by a receipt (a sha256 of text and
+markup together, cut to 32 hex digits); the answer to it (Import, Not now, or saving this ohmail's
+settings over it) names the document the same way; and a press handed to the organizer keeps the
+fingerprint and the receipt of the signature its card said would be replaced. All are rows of the
+account's audit trail, which are deleted after 365 days or with the account. Erasing the mailbox takes
+the fingerprints (the removals' digest with them) and the receipts off those rows when it is pressed,
+and again when the erasure finishes; an erasure an earlier ohmail finished loses them on the server's
+next erasure pass. Removing a mailbox from a computer takes them off that computer's store; a removal an
+earlier ohmail made on a computer or phone loses them at its next start. The rows themselves stay. The
+status read of a press handed to the organizer carries the fingerprint in a request header, never in the
+address it asks.
 
 **`signatureHtml`** — the same sign-off's formatting, when it has any. Optional, and ABSENT rather
 than `null` when there is none: a document that never carried this key must keep the fingerprint it
@@ -458,7 +460,9 @@ refuses to answer it itself:
   this install's settings to the mailbox from Settings, answers the question,
   and the organizer then removes the found document. "Not now" answers the
   question for screening, leaves the found document in the mailbox and moves
-  the question to the next found copy, when there is one.
+  the question to the next found copy, when there is one. An answer covers
+  that one copy: a later copy with the same rules and other removals is a new
+  question.
 - **The consent gate holds, for the senders the document lets
   through.** While the decision is open, mail from a sender the found
   document screened in (or admits by a rule) keeps the folder the mailbox
@@ -603,8 +607,8 @@ when all of these hold:
   and than this install's newest earlier Import into the mailbox. A removal
   from before this install last published or took in the rule says nothing
   about it now;
-- the Import's other guards hold: the copy was not answered before with "Not
-  now" or "Save this ohmail's settings", it skipped no rule and is under the
+- the Import's other guards hold: this copy (its rules and its removals) was
+  not answered before with "Not now" or "Save this ohmail's settings", it skipped no rule and is under the
   rules bound, its instant parses, no other mailbox of the account is organized
   here, every other mailbox read here has a copy and none names the key, and no
   rule request under the key was applied within the last day unless the copy

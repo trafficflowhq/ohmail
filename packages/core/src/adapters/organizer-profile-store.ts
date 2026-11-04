@@ -14,7 +14,7 @@ import { DEFAULT_DORMANCY_DAYS } from "../rules.js";
 import { AWAY_AUDIENCES, AWAY_THROTTLES, nextEnabledAt, type AwayAudience, type AwayThrottle } from "../away-eligibility.js";
 import { awayScopeFitsAudience, isAwayPile, type AwayPile } from "../away-scope.js";
 import {
-  PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileFingerprint,
+  PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileCopyKey,
   profilePayloadAsRead, profileScreenerAddress, signatureReceipt,
   type ApplicableProfileRule, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileListCounts, type ProfileReadResult,
   type ProfileRemovedRule, type ProfileScreening,
@@ -321,10 +321,10 @@ const ruleKey = (r: { kind: string; match: string; subjectContains?: string | nu
  * whose removal the copy records, made after this store last had the rule (the removal less twice the
  * clock-skew bound later than the row's writes, a create pressed under its key, this store's own
  * earlier copy of the mailbox and its earlier Import into it), and none when anything is unknown.
- * Each guard must hold too: this document was not answered before (a Not now or Replace); it skipped
- * no rule and is under its bound; its instant parses; no other mailbox of the account, removed ones
- * included, is organized here; no copy of another live mailbox read here names the key (and each has
- * one); no applied rule request under the key was decided within the request horizon, unless it went
+ * Each guard must hold too: this copy (its rules and its removals) was not answered before (a Not now
+ * or Replace); it skipped no rule and is under its bound; its instant parses; no other mailbox of the
+ * account, removed ones included, is organized here; no copy of another live mailbox read here names
+ * the key (and each has one); no applied rule request under the key was decided within the request horizon, unless it went
  * to this mailbox and the document's `applied` list names it.
  */
 async function retirableRules(
@@ -427,17 +427,17 @@ const screensOut = (r: ApplicableProfileRule): r is ApplicableProfileRule & { ki
   && r.subjectContains === null && r.bodyContains === null;
 
 /**
- * WHY A FRESH READ MAY NOT BE APPLIED UNDER `fingerprint`, or null when it may — the one decision
- * the inline press and the organizer's job both make. The size refusal comes BEFORE the
- * fingerprint: hashing sorts and serializes the whole document, and a ceiling after it bounds
- * nothing but the transaction.
+ * WHY A FRESH READ MAY NOT BE APPLIED UNDER `fingerprint` (its copy key, removals included), or null
+ * when it may — the one decision the inline press and the organizer's job both make. The size refusal
+ * comes BEFORE the fingerprint: hashing sorts and serializes the whole document, and a ceiling after
+ * it bounds nothing but the transaction.
  */
 export function importRefusalFor(fresh: ProfileReadResult, fingerprint: string): ImportAskRefusal | null {
   if (fresh.state === "newer") return "newer";
   if (fresh.state === "none") return "gone";
   if (fresh.state === "unreadable") return "unreadable";
   if (oversizedProfileList(fresh.doc)) return "too_large";
-  return profileFingerprint(fresh.doc) === fingerprint ? null : "changed";
+  return profileCopyKey(fresh.doc) === fingerprint ? null : "changed";
 }
 
 /**
