@@ -14,7 +14,7 @@ import { readOwnerMarker } from "../app/shell/owner-cookie";
 import {
   listenSignedOut, postSignedOut, setSignedOutLeaveForTest, setThisTabForTest, signedOutChannel,
 } from "../app/signed-out-signal";
-import { SESSION_FRESH_MS } from "../app/(product)/mailbox/useSignedOutElsewhere";
+import { JAR_WATCH_MS, SESSION_FRESH_MS } from "../app/(product)/mailbox/useSignedOutElsewhere";
 
 /** Runs once, right before the next listener subscribes: the jar written between a tab's first frame and its listener. */
 const seam = vi.hoisted(() => ({ beforeListen: null as (() => void) | null }));
@@ -176,6 +176,13 @@ async function settle(p: Promise<unknown>): Promise<boolean> {
   void p.then(() => { settled = true; }, () => { settled = true; });
   for (let i = 0; i < 40 && !settled; i += 1) await shell.tick(250);
   return settled;
+}
+
+/** The tab goes to the background, or is shown again: the document's `visibilityState`, then its event. */
+async function setVisibility(state: "hidden" | "visible"): Promise<void> {
+  if (state === "hidden") Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+  else delete (document as { visibilityState?: unknown }).visibilityState;
+  await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
 }
 
 /** React's warning for a `flushSync` inside an effect: a tab leaving from its mount must not earn one. */
@@ -341,6 +348,18 @@ describe("which tabs hear it, and when", { timeout: 60_000 }, () => {
     } finally {
       stop();
     }
+  });
+
+  it("a tab with a channel runs no jar watch: a jar moved with no message waits for its return", async () => {
+    const tab1 = await openTab("tab-1");
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    const asked = shell.sessionCalls();
+    await shell.tick(3 * JAR_WATCH_MS);
+    expect(leaves, "a tab that hears the channel watched the jar").toBe(0);
+    expect(showsMail(tab1)).toBe(true);
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(leaves, "the return did not read the moved jar").toBe(1);
+    expect(shell.sessionCalls() - asked).toBe(0);
   });
 });
 
@@ -526,23 +545,68 @@ describe("the belt: a tab that missed the message asks when it is looked at agai
   });
   afterEach(() => {
     if (channel) (globalThis as { BroadcastChannel?: unknown }).BroadcastChannel = channel;
+    delete (document as { visibilityState?: unknown }).visibilityState;
   });
 
   it("a visible-again tab with no channel whose jar stopped naming the account leaves at once, asking nothing", async () => {
     const tab1 = await openTab("tab-1");
+    /* In the background while tab 0 signs out: a tab on screen watches the jar instead. */
+    await setVisibility("hidden");
     await signOutIn("tab-0");
     await oneTick();
+    await shell.tick(3 * JAR_WATCH_MS);
     /* One document cannot deliver itself a storage event, so tab 1 missed the message — the case
        the belt exists for. */
     expect(showsMail(tab1), "sanity: the tab heard nothing, so the belt is what is measured").toBe(true);
 
     atLeave = () => showsMail(tab1);
     const asked = shell.sessionCalls();
-    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    await setVisibility("visible");
 
     expect(shell.sessionCalls() - asked, "the tab showed the mail for a round trip first").toBe(0);
     expect(leaves).toBe(1);
     expect(readAtLeave, "the tab navigated with the mail still in its DOM").toEqual([false]);
+  });
+
+  /* A tab on screen the whole time (a second window beside the one that signs out) gets no event at all. */
+  it("a tab on screen with no channel and no storage event leaves within its jar watch of another tab's sign-out, asking nothing", async () => {
+    const tab1 = await openTab("tab-1");
+    atLeave = () => showsMail(tab1);
+    const asked = shell.sessionCalls();
+    const pressedAt = Date.now();
+    await signOutIn("tab-0");
+    const left = pressedAt + JAR_WATCH_MS - Date.now();
+    if (left > 0) await shell.tick(left);
+    expect(leaves, "the tab kept the mailbox on screen with nothing to wake it").toBe(1);
+    expect(readAtLeave, "the tab navigated with the mail still in its DOM").toEqual([false]);
+    expect(showsMail(tab1)).toBe(false);
+    expect(shell.sessionCalls() - asked, "the watch asked the session door").toBe(0);
+  });
+
+  it("CONTROL: a jar that still names the account: the watch never leaves and never asks", async () => {
+    const tab1 = await openTab("tab-1");
+    const asked = shell.sessionCalls();
+    /* Another tab's sign-in as the same account writes the jar again, naming it. */
+    document.cookie = `tf_owner=${ACCOUNT}; Path=/`;
+    await shell.tick(3 * JAR_WATCH_MS);
+    expect(shell.sessionCalls() - asked, "the watch asked the session door").toBe(0);
+    expect(showsMail(tab1), "a live session's tab left").toBe(true);
+    expect(leaves).toBe(0);
+  });
+
+  it("a hidden tab runs no jar watch: resumed while hidden it stays, shown it leaves, asking nothing", async () => {
+    const tab1 = await openTab("tab-1");
+    await setVisibility("hidden");
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    const asked = shell.sessionCalls();
+    await act(async () => { document.dispatchEvent(new Event("resume")); });
+    await shell.tick(3 * JAR_WATCH_MS);
+    expect(leaves, "a tab in the background left").toBe(0);
+    atLeave = () => showsMail(tab1);
+    await setVisibility("visible");
+    expect(leaves, "the shown tab kept a mailbox the jar no longer names").toBe(1);
+    expect(readAtLeave, "the tab navigated with the mail still in its DOM").toEqual([false]);
+    expect(shell.sessionCalls() - asked, "the return asked the session door").toBe(0);
   });
 
   it.each([
@@ -594,6 +658,8 @@ describe("the belt: a tab that missed the message asks when it is looked at agai
   it("the tab that pressed Sign out never leaves through the return check", async () => {
     const tab0 = await openTab("tab-0");
     await signOutIn("tab-0");
+    await shell.tick(3 * JAR_WATCH_MS);
+    expect(leaves, "the jar watch sent the pressing tab away").toBe(0);
     shell.scriptSession(shell.coded401);
     shell.scriptRefresh(shell.coded401);
     const asked = shell.sessionCalls();
