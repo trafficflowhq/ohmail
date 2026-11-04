@@ -54,6 +54,13 @@ vi.mock("@trafficflow/db", async (load) => {
  * of the new organizer's reached the mailbox until the person answered.
  */
 
+/** The name a document's copy in a folder goes by: its content, its save and the install that wrote it. */
+function copyName(parsed: ParsedProfileMessage[], doc: OrganizerProfileDoc): string {
+  const p = parsed.find((q) => q.doc!.updatedAt === doc.updatedAt && profileFingerprint(q.doc!) === profileFingerprint(doc));
+  if (p === undefined) throw new Error("no copy of that document in the folder");
+  return profileCopyKey(p.doc!, p.installId);
+}
+
 class Folder implements ProfileIo {
   messages: RawProfileMessage[] = [];
   private uid = 1;
@@ -84,6 +91,8 @@ class Folder implements ProfileIo {
       .filter((p): p is ParsedProfileMessage => p !== null && !isMalformedProfile(p));
   }
   holds(doc: OrganizerProfileDoc): boolean { return this.parsed().some((p) => profileFingerprint(p.doc!) === profileFingerprint(doc)); }
+  /** The name this document's copy here goes by, with the install that wrote it. */
+  keyOf(doc: OrganizerProfileDoc): string { return copyName(this.parsed(), doc); }
   /** The newest copy under an install id. */
   docBy(installId: string): OrganizerProfileDoc {
     return this.parsed().filter((p) => p.installId === installId)
@@ -164,16 +173,16 @@ async function rig(o: {
   // Dated by the rig's clock, as a store's rows are by the clock its organizer reads.
   const decide = (name: string) => db.insert(tags).values({ accountId, name, createdAt: clock.at, updatedAt: clock.at });
   const answer = (decision: "declined" | "replaced") => recordProfileImportResolution(db, {
-    accountId, mailboxId: mb!.id, decision, fingerprint: profileCopyKey(theirs),
+    accountId, mailboxId: mb!.id, decision, fingerprint: profileCopyKey(theirs, o.by ?? "w-old"),
   });
   const ticks = async (n: number, s = sync): Promise<void> => {
     for (let i = 0; i < n; i++) { later(31_000); await s.onOrganize(); }
   };
   const routing = async (s = sync): Promise<string> => (await s.importHoldNow())?.kind ?? "closed";
-  /** Import pressed where the store is, not handed to the organizer. */
-  const importInline = (doc: OrganizerProfileDoc) => fencedAccountWrite(db, { accountId }, async (tx) => {
+  /** Import pressed where the store is, not handed to the organizer; `by` wrote the copy. */
+  const importInline = (doc: OrganizerProfileDoc, by = "w-old") => fencedAccountWrite(db, { accountId }, async (tx) => {
     await lockAccountRuleKeys(tx as Tx, accountId);
-    await applyOrganizerProfile(tx as LedgerTx, { accountId, mailboxId: mb!.id, doc, fingerprint: profileCopyKey(doc), now: clock.at });
+    await applyOrganizerProfile(tx as LedgerTx, { accountId, mailboxId: mb!.id, doc, fingerprint: profileCopyKey(doc, by), now: clock.at });
   });
   return { db, sync, folder, decide, answer, later, attach, store, ticks, routing, importInline, clock, accountId, mailboxId: mb!.id };
 }
@@ -349,7 +358,7 @@ describe("a new store under the same install id keeps the settings the removed s
     const hold = await next.sync.importHoldNow();
     const marker = await latestProfileFoundMarker(r.db, next.accountId, next.mailboxId);
     expect({
-      kept: kept(r), copies: r.folder.messages.length, asked: marker?.fingerprint === profileFingerprint(PREVIOUS),
+      kept: kept(r), copies: r.folder.messages.length, asked: marker?.fingerprint === profileCopyKey(PREVIOUS, "w-new"),
       senders: hold?.kind === "document" ? [...hold.knownSenders.addresses].sort() : hold,
     }).toEqual({ kept: true, copies: 1, asked: true, senders: ["anna@example.test", "ben@example.test"] });
   });
@@ -378,7 +387,7 @@ describe("a new store under the same install id keeps the settings the removed s
     await r.decide("fresh");
     await r.ticks(2);
     await recordProfileImportResolution(r.db, {
-      accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileFingerprint(PREVIOUS),
+      accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileCopyKey(PREVIOUS, "w-new"),
     });
     await r.ticks(3);
     const again = r.attach();
@@ -401,7 +410,7 @@ describe("a new store under the same install id keeps the settings the removed s
   it("Import brings its settings into the store, and then one copy says them all", async () => {
     const r = await reconnect();
     await r.ticks(1);
-    await recordImportAsk(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, fingerprint: profileFingerprint(PREVIOUS), now: r.clock.at });
+    await recordImportAsk(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, fingerprint: profileCopyKey(PREVIOUS, "w-new"), now: r.clock.at });
     await r.ticks(3);
     const people = (await r.db.select({ a: contacts.address }).from(contacts)).map((c) => c.a).sort();
     expect({ people, open: r.sync.importDecisionOpen() }).toEqual({ people: ["anna@example.test", "ben@example.test"], open: false });
@@ -441,7 +450,7 @@ describe("a new store under the same install id keeps the settings the removed s
     await r.answer("declined");
     await r.ticks(3, again);
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
-    expect({ waiting, kept: kept(r), asking: marker?.fingerprint === profileFingerprint(PREVIOUS) && marker.heldForImport })
+    expect({ waiting, kept: kept(r), asking: marker?.fingerprint === profileCopyKey(PREVIOUS, "w-new") && marker.heldForImport })
       .toEqual({ waiting: true, kept: true, asking: true });
   });
 
@@ -512,7 +521,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     await r.decide("before");
     await r.ticks(1);
     const restored = await restore(r);
-    await recordImportAsk(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, fingerprint: profileFingerprint(restored.asked), now: r.clock.at });
+    await recordImportAsk(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, fingerprint: profileCopyKey(restored.asked, "w-new"), now: r.clock.at });
     await r.ticks(3, restored);
     await r.decide("later");
     await r.ticks(3, restored);
@@ -532,13 +541,13 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const restored = await restore(r);
     const asking = async (): Promise<string | null | undefined> => {
       const fp = (await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId))?.fingerprint;
-      return fp === profileFingerprint(restored.asked) ? "later" : fp === profileFingerprint(THEIRS) ? "theirs" : fp;
+      return fp === profileCopyKey(restored.asked, "w-new") ? "later" : fp === profileCopyKey(THEIRS, "w-old") ? "theirs" : fp;
     };
     const restoredAsks = { copies: r.folder.copies(), asking: await asking(), open: restored.importDecisionOpen() };
     await r.answer("replaced");
     await r.ticks(3, restored);
     const answered = { copies: r.folder.copies(), asking: await asking(), open: restored.importDecisionOpen() };
-    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileFingerprint(restored.asked) });
+    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileCopyKey(restored.asked, "w-new") });
     await r.ticks(3, restored);
     expect({ beside, restoredAsks, answered, published: r.folder.copies() }).toEqual({
       beside: ["w-new", "w-old"],
@@ -568,7 +577,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     await r.ticks(1);
     const restored = await restore(r);
     if (via === "inline") await r.importInline(THEIRS);
-    else await recordImportAsk(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, fingerprint: profileFingerprint(THEIRS), now: r.clock.at });
+    else await recordImportAsk(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, fingerprint: profileCopyKey(THEIRS, "w-old"), now: r.clock.at });
     await r.ticks(1, restored);
     // From the pass that reads the answer, routing holds the later copy's senders.
     const routing = await r.routing(restored);
@@ -576,12 +585,12 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const kept = (): boolean => r.folder.messages.some((m) => m.raw === formatProfileMessage(restored.asked, { installId: "w-new" }));
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
     const asked = {
-      kept: kept(), asking: marker?.fingerprint === profileFingerprint(restored.asked) && marker.heldForImport,
+      kept: kept(), asking: marker?.fingerprint === profileCopyKey(restored.asked, "w-new") && marker.heldForImport,
       routing, left: await restored.flushBeforeLeaving(HELD), risk: await restored.settingsLeftOnlyHere(),
       // The imported copy waits with the store's decisions: the write waits for the answer about the later copy.
       theirs: r.folder.writers().includes("w-old"),
     };
-    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileFingerprint(restored.asked) });
+    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileCopyKey(restored.asked, "w-new") });
     await r.ticks(3, restored);
     expect({ asked, published: { kept: kept(), newest: r.folder.newest(), left: await restored.flushBeforeLeaving(HELD), theirs: r.folder.writers().includes("w-old") } }).toEqual({
       asked: { kept: true, asking: true, routing: "document", left: "not_saved", risk: "answer", theirs: true },
@@ -603,7 +612,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
     expect({
       kept: r.folder.messages.some((m) => m.raw === formatProfileMessage(L, { installId: "w-new" })),
-      asking: marker?.fingerprint === profileFingerprint(L) && marker.heldForImport, routing: await r.routing(),
+      asking: marker?.fingerprint === profileCopyKey(L, "w-new") && marker.heldForImport, routing: await r.routing(),
       left: await r.sync.flushBeforeLeaving(HELD),
     }).toEqual({ kept: true, asking: true, routing: "document", left: "not_saved" });
   });
@@ -621,7 +630,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
     expect({
       kept: r.folder.messages.some((m) => m.raw === formatProfileMessage(L, { installId: "w-new" })),
-      asking: marker?.fingerprint === profileFingerprint(L) && marker.heldForImport, left: await r.sync.flushBeforeLeaving(HELD),
+      asking: marker?.fingerprint === profileCopyKey(L, "w-new") && marker.heldForImport, left: await r.sync.flushBeforeLeaving(HELD),
     }).toEqual({ kept: true, asking: true, left: "not_saved" });
   });
 
@@ -639,7 +648,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
     expect({
       kept: r.folder.messages.some((m) => m.raw === formatProfileMessage(restored.asked, { installId: "w-new" })),
-      asking: marker?.fingerprint === profileFingerprint(cloud) && marker.heldForImport,
+      asking: marker?.fingerprint === profileCopyKey(cloud, "w-cloud") && marker.heldForImport,
     }).toEqual({ kept: true, asking: true });
   });
 
@@ -702,7 +711,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const again = r.attach();
     await again.armHoldFromFolder();
     await r.ticks(3, again);
-    const asking = (await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId))?.fingerprint === profileFingerprint(THEIRS);
+    const asking = (await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId))?.fingerprint === profileCopyKey(THEIRS, "w-old");
     await r.answer("replaced");
     await r.ticks(4, again);
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
@@ -722,7 +731,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     await r.decide("after-forward");
     await r.ticks(4);
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
-    expect({ asking: marker?.fingerprint === profileFingerprint(THEIRS), newest: r.folder.newest() })
+    expect({ asking: marker?.fingerprint === profileCopyKey(THEIRS, "w-old"), newest: r.folder.newest() })
       .toEqual({ asking: true, newest: { by: "w-new", screener: 0, rules: 0, tags: ["after-forward", "mine", "rollback-window"] } });
   });
 
@@ -839,7 +848,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
     expect({
       kept: r.folder.messages.some((m) => m.raw === formatProfileMessage(L, { installId: "w-new" })),
-      asked: marker?.fingerprint === profileFingerprint(L) && marker?.heldForImport === true,
+      asked: marker?.fingerprint === profileCopyKey(L, "w-new") && marker?.heldForImport === true,
       left: await restored.flushBeforeLeaving(HELD),
     }).toEqual({ kept: true, asked: true, left: "not_saved" });
   });
@@ -859,7 +868,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
     expect({
       open: again.importDecisionOpen(), routing: await r.routing(again),
-      asked: marker?.fingerprint === profileFingerprint(restored.asked), copies: r.folder.copies(),
+      asked: marker?.fingerprint === profileCopyKey(restored.asked, "w-new"), copies: r.folder.copies(),
     }).toEqual({ open: true, routing: "document", asked: true, copies: [{ by: "w-new", screener: 1, rules: 0, tags: ["after", "before"] }] });
   });
 
@@ -879,14 +888,14 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     const restored = await restore(r);
     const asking = async (): Promise<string | null | undefined> => {
       const fp = (await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId))?.fingerprint;
-      return fp === profileFingerprint(restored.asked) ? "later" : fp === profileFingerprint(THEIRS) ? "theirs" : fp;
+      return fp === profileCopyKey(restored.asked, "w-new") ? "later" : fp === profileCopyKey(THEIRS, "w-old") ? "theirs" : fp;
     };
     const asked = await asking();
     if (when === "after the restore") await r.answer("declined");
     await r.decide("restored");
     await r.ticks(3, restored);
     const next = { asking: await asking(), routing: await r.routing(restored), left: await restored.flushBeforeLeaving(HELD) };
-    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileFingerprint(restored.asked) });
+    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileCopyKey(restored.asked, "w-new") });
     await r.ticks(3, restored);
     const published = { newest: r.folder.newest(), left: await restored.flushBeforeLeaving(HELD) };
     const again = r.attach();
@@ -916,7 +925,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     await r.answer("replaced");
     await r.ticks(3, again);
     const fp = (await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId))?.fingerprint;
-    expect({ asking: fp === profileFingerprint(restored.asked), open: again.importDecisionOpen(), copies: r.folder.copies() })
+    expect({ asking: fp === profileCopyKey(restored.asked, "w-new"), open: again.importDecisionOpen(), copies: r.folder.copies() })
       .toEqual({ asking: true, open: true, copies: [{ by: "w-old", screener: 1, rules: 0, tags: ["theirs"] }, { by: "w-new", screener: 1, rules: 0, tags: ["after", "before"] }] });
   });
 
@@ -962,7 +971,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     await YEAR(r, r.sync);
     const restored = await restore(r);
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
-    expect({ copies: r.folder.copies(), asked: marker?.fingerprint === profileFingerprint(restored.asked) })
+    expect({ copies: r.folder.copies(), asked: marker?.fingerprint === profileCopyKey(restored.asked, "w-new") })
       .toEqual({ copies: [{ by: "w-new", screener: 1, rules: 0, tags: ["after", "before"] }], asked: true });
   });
 
@@ -1011,7 +1020,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     await again.armHoldFromFolder();
     await r.ticks(3, again);
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
-    expect({ copies: r.folder.copies(), open: again.importDecisionOpen(), asked: marker?.fingerprint === profileFingerprint(restored.asked) })
+    expect({ copies: r.folder.copies(), open: again.importDecisionOpen(), asked: marker?.fingerprint === profileCopyKey(restored.asked, "w-new") })
       .toEqual({ copies: [{ by: "w-new", screener: 1, rules: 0, tags: ["after", "before"] }], open: true, asked: true });
   });
 
@@ -1022,7 +1031,7 @@ describe("a store restored from a backup never rolls the mailbox's settings back
     await r.decide("before");
     await r.ticks(1);
     const restored = await restore(r);
-    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileFingerprint(restored.asked) });
+    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "declined", fingerprint: profileCopyKey(restored.asked, "w-new") });
     await r.decide("after-not-now");
     await r.ticks(3, restored);
     const published = { newest: r.folder.newest(), left: await restored.flushBeforeLeaving(HELD) };
@@ -1135,11 +1144,23 @@ describe("found settings and the Import that answers them", () => {
   it("a copy whose rules an earlier answered copy shares, with another removal, is held at the seed", async () => {
     const r = await rig({ planted: true, theirs: REMOVED_ALL });
     const earlier = { ...REMOVED_ALL, removedRules: [{ ...REMOVED_ALL.removedRules[0]!, match: "before@shop.test" }] };
-    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "replaced", fingerprint: profileCopyKey(earlier) });
+    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "replaced", fingerprint: profileCopyKey(earlier, "w-old") });
     await r.decide("mine");
     await r.ticks(3);
     const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
-    expect({ open: r.sync.importDecisionOpen(), asked: marker?.state === "found" && marker.heldForImport && marker.fingerprint === profileCopyKey(REMOVED_ALL), held: r.folder.writers().includes("w-old") })
+    expect({ open: r.sync.importDecisionOpen(), asked: marker?.state === "found" && marker.heldForImport && marker.fingerprint === profileCopyKey(REMOVED_ALL, "w-old"), held: r.folder.writers().includes("w-old") })
+      .toEqual({ open: true, asked: true, held: true });
+  });
+
+  // A later copy with the same settings as an answered one is a new question too: it was saved again since.
+  it("a later copy with the same settings as an answered copy is held at the seed", async () => {
+    const r = await rig({ planted: true });
+    const earlier = { ...THEIRS, updatedAt: "2026-09-09T08:00:00.000Z" };
+    await recordProfileImportResolution(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, decision: "replaced", fingerprint: profileCopyKey(earlier, "w-old") });
+    await r.decide("mine");
+    await r.ticks(3);
+    const marker = await latestProfileFoundMarker(r.db, r.accountId, r.mailboxId);
+    expect({ open: r.sync.importDecisionOpen(), asked: marker?.state === "found" && marker.heldForImport && marker.fingerprint === profileCopyKey(THEIRS, "w-old"), held: r.folder.writers().includes("w-old") })
       .toEqual({ open: true, asked: true, held: true });
   });
 
@@ -1158,7 +1179,7 @@ describe("found settings and the Import that answers them", () => {
     const r = await rig({ planted: true, flushIntervalMs: 5 * 60_000 });
     await r.decide("mine");
     await r.ticks(1);
-    await recordImportAsk(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, fingerprint: profileFingerprint(THEIRS), now: r.clock.at });
+    await recordImportAsk(r.db, { accountId: r.accountId, mailboxId: r.mailboxId, fingerprint: profileCopyKey(THEIRS, "w-old"), now: r.clock.at });
     await r.ticks(2);
     expect(r.folder.newest()).toEqual({ by: "w-new", screener: 1, rules: 0, tags: ["mine", "theirs"] });
   });
@@ -1569,7 +1590,7 @@ describe("an imported copy stays until the store's copy carrying it lands", () =
   it("an Import committed after the tick read the store: theirs stays through that tick's write and the refused next", async () => {
     const r = await rig({ planted: true });
     await r.decide("mine");
-    Object.assign(answerLands, { fingerprint: profileFingerprint(THEIRS), record: () => r.importInline(THEIRS) });
+    Object.assign(answerLands, { fingerprint: profileCopyKey(THEIRS, "w-old"), record: () => r.importInline(THEIRS) });
     await r.ticks(1);
     const first = { theirs: r.folder.holds(THEIRS), newest: r.folder.newest() };
     await r.decide("more");
@@ -1625,13 +1646,13 @@ async function stores(o: { flushIntervalMs?: number } = {}) {
     const s = { sync: attach() };
     const decide = (name: string) => db.insert(tags).values({ accountId, name, createdAt: clock.at, updatedAt: clock.at });
     const answer = (d: OrganizerProfileDoc, decision: "declined" | "replaced") => recordProfileImportResolution(db, {
-      accountId, mailboxId, decision, fingerprint: profileFingerprint(d),
+      accountId, mailboxId, decision, fingerprint: folder.keyOf(d),
     });
-    const importIt = (d: OrganizerProfileDoc) => recordImportAsk(db, { accountId, mailboxId, fingerprint: profileFingerprint(d), now: clock.at });
+    const importIt = (d: OrganizerProfileDoc) => recordImportAsk(db, { accountId, mailboxId, fingerprint: folder.keyOf(d), now: clock.at });
     /** Import pressed on the card, applied where the store is. */
     const importInline = (d: OrganizerProfileDoc) => fencedAccountWrite(db, { accountId }, async (tx) => {
       await lockAccountRuleKeys(tx as Tx, accountId);
-      await applyOrganizerProfile(tx as LedgerTx, { accountId, mailboxId, doc: d, fingerprint: profileFingerprint(d), now: clock.at });
+      await applyOrganizerProfile(tx as LedgerTx, { accountId, mailboxId, doc: d, fingerprint: folder.keyOf(d), now: clock.at });
     });
     const ticks = async (n: number): Promise<void> => { for (let i = 0; i < n; i++) { later(31_000); await s.sync.onOrganize(); } };
     const marker = () => latestProfileFoundMarker(db, accountId, mailboxId);
@@ -1665,7 +1686,7 @@ async function aThenB(o: { idA: string; idB: string; bAnswers: "notNow" | "nothi
   w.later(30 * 60_000);
   const B = await w.store(o.idB);
   await B.takeOver();
-  const bAsked = (await B.asking()) === profileFingerprint(X);
+  const bAsked = (await B.asking()) === w.folder.keyOf(X);
   if (o.bAnswers === "notNow") await B.answer(X, "declined");
   await B.decide("b1");
   w.later(6 * 60_000);
@@ -1682,13 +1703,13 @@ describe("every found copy is kept and asked about", () => {
       const { w, X, Y, bAsked, bLeft, afterB } = await aThenB({ idA: "w-a", idB: "w-b", bAnswers });
       const C = await w.store("w-c");
       await C.takeOver();
-      const askedFirst = (await C.asking()) === profileFingerprint(Y);
+      const askedFirst = (await C.asking()) === w.folder.keyOf(Y);
       const keptAtTakeover = w.folder.holds(X);
       await C.importIt(Y);
       await C.ticks(3);
       w.later(20 * 60_000);
       await C.ticks(3);
-      expect({ bAsked, bLeft, afterB, askedFirst, keptAtTakeover, kept: w.folder.holds(X), askingNext: (await C.asking()) === profileFingerprint(X) })
+      expect({ bAsked, bLeft, afterB, askedFirst, keptAtTakeover, kept: w.folder.holds(X), askingNext: (await C.asking()) === w.folder.keyOf(X) })
         .toEqual({ bAsked: true, bLeft: "saved", afterB: ["w-a", "w-b"], askedFirst: true, keptAtTakeover: true, kept: true, askingNext: true });
     },
   );
@@ -1702,7 +1723,7 @@ describe("every found copy is kept and asked about", () => {
     await C.ticks(3);
     w.later(20 * 60_000);
     await C.ticks(3);
-    expect({ x: w.folder.holds(X), y: w.folder.holds(Y), askingNext: (await C.asking()) === profileFingerprint(X) })
+    expect({ x: w.folder.holds(X), y: w.folder.holds(Y), askingNext: (await C.asking()) === w.folder.keyOf(X) })
       .toEqual({ x: true, y: true, askingNext: true });
   });
 
@@ -1710,12 +1731,12 @@ describe("every found copy is kept and asked about", () => {
     const { w, X, Y } = await aThenB({ idA: "w-phone", idB: "w-phone", bAnswers: "notNow" });
     const C = await w.store("w-phone");
     await C.takeOver();
-    const askedFirst = (await C.asking()) === profileFingerprint(Y);
+    const askedFirst = (await C.asking()) === w.folder.keyOf(Y);
     await C.importIt(Y);
     await C.ticks(3);
     w.later(20 * 60_000);
     await C.ticks(3);
-    expect({ askedFirst, kept: w.folder.holds(X), askingNext: (await C.asking()) === profileFingerprint(X) })
+    expect({ askedFirst, kept: w.folder.holds(X), askingNext: (await C.asking()) === w.folder.keyOf(X) })
       .toEqual({ askedFirst: true, kept: true, askingNext: true });
   });
 
@@ -1727,14 +1748,14 @@ describe("every found copy is kept and asked about", () => {
     await w.plant("w-b", Y);
     const C = await w.store("w-c");
     await C.takeOver();
-    const first = { asking: (await C.asking()) === profileFingerprint(Y), routing: await C.routing() };
+    const first = { asking: (await C.asking()) === w.folder.keyOf(Y), routing: await C.routing() };
     await C.answer(Y, "declined");
     await C.decide("c1");
     await C.ticks(2);
-    const second = { asking: (await C.asking()) === profileFingerprint(X), routing: await C.routing() };
+    const second = { asking: (await C.asking()) === w.folder.keyOf(X), routing: await C.routing() };
     await C.restart();
     await C.ticks(2);
-    expect({ first, second, restarted: { asking: (await C.asking()) === profileFingerprint(X), x: w.folder.holds(X), y: w.folder.holds(Y), ours: w.folder.tagsOf("w-c") } })
+    expect({ first, second, restarted: { asking: (await C.asking()) === w.folder.keyOf(X), x: w.folder.holds(X), y: w.folder.holds(Y), ours: w.folder.tagsOf("w-c") } })
       .toEqual({
         first: { asking: true, routing: ["ben@example.test"] },
         second: { asking: true, routing: ["anna@example.test"] },
@@ -1755,10 +1776,10 @@ describe("every found copy is kept and asked about", () => {
     await C.ticks(2);
     await C.answer(X, "declined");
     await C.ticks(2);
-    const declined = { held: (await C.marker())?.fingerprint === profileFingerprint(Y), routing: await C.routing(), x: w.folder.holds(X), y: w.folder.holds(Y) };
+    const declined = { held: (await C.marker())?.fingerprint === w.folder.keyOf(Y), routing: await C.routing(), x: w.folder.holds(X), y: w.folder.holds(Y) };
     await C.answer(Y, "replaced");
     await C.ticks(3);
-    expect({ declined, next: { held: (await C.marker())?.fingerprint === profileFingerprint(X), x: w.folder.holds(X), y: w.folder.holds(Y) } }).toEqual({
+    expect({ declined, next: { held: (await C.marker())?.fingerprint === w.folder.keyOf(X), x: w.folder.holds(X), y: w.folder.holds(Y) } }).toEqual({
       declined: { held: true, routing: "closed", x: true, y: true },
       next: { held: true, x: true, y: false },
     });
@@ -1805,7 +1826,7 @@ describe("every found copy is kept and asked about", () => {
       await C.takeOver();
       await C.answer(Y, "declined");
       await C.ticks(2);
-      const asked = (await C.asking()) === profileFingerprint(X);
+      const asked = (await C.asking()) === w.folder.keyOf(X);
       if (via === "inline") await C.importInline(X); else await C.importIt(X);
       const said: boolean[] = [];
       for (let i = 0; i < 14; i++) {
@@ -1832,7 +1853,7 @@ describe("every found copy is kept and asked about", () => {
     await C.importIt(Y);
     const said: boolean[] = [];
     for (let i = 0; i < 12; i++) { await C.ticks(1); said.push(says(w, "ben")); }
-    expect({ published, said: said.every(Boolean), x: w.folder.holds(X), asking: (await C.asking()) === profileFingerprint(X) })
+    expect({ published, said: said.every(Boolean), x: w.folder.holds(X), asking: (await C.asking()) === w.folder.keyOf(X) })
       .toEqual({ published: [["c1"]], said: true, x: true, asking: true });
   });
 
@@ -1861,12 +1882,12 @@ describe("every found copy is kept and asked about", () => {
     const { w, X, Y } = await aThenB({ idA: "w-phone", idB: "w-phone", bAnswers: "notNow" });
     const C = await w.store("w-phone");
     await C.takeOver();
-    const askedFirst = (await C.asking()) === profileFingerprint(Y);
+    const askedFirst = (await C.asking()) === w.folder.keyOf(Y);
     await C.answer(Y, "declined");
     await C.decide("c1");
     await C.ticks(3);
     const left = await C.stopAndRemove();
-    expect({ askedFirst, left, c1: says(w, "c1"), x: w.folder.holds(X), y: w.folder.holds(Y), askingNext: (await C.asking()) === profileFingerprint(X) })
+    expect({ askedFirst, left, c1: says(w, "c1"), x: w.folder.holds(X), y: w.folder.holds(Y), askingNext: (await C.asking()) === w.folder.keyOf(X) })
       .toEqual({ askedFirst: true, left: "saved", c1: true, x: true, y: true, askingNext: true });
   });
 
@@ -1881,7 +1902,7 @@ describe("every found copy is kept and asked about", () => {
     await w.plant(byNewer, Y);
     const C = await w.store("w-phone");
     await C.takeOver();
-    const askedFirst = (await C.asking()) === profileFingerprint(Y);
+    const askedFirst = (await C.asking()) === w.folder.keyOf(Y);
     await C.answer(Y, "declined");
     await C.decide("c1");
     await C.ticks(3);
@@ -1909,7 +1930,7 @@ describe("every found copy is kept and asked about", () => {
     w.later(60_000);
     await A.decide("d2");
     await A.restart();
-    const restoredAsked = (await A.asking()) === profileFingerprint(L);
+    const restoredAsked = (await A.asking()) === w.folder.keyOf(L);
     await A.answer(L, "declined");
     w.later(6 * 60_000);
     await A.ticks(2);
@@ -1918,7 +1939,7 @@ describe("every found copy is kept and asked about", () => {
     w.later(60_000);
     const B = await w.store("w-b");
     await B.takeOver();
-    const bAsked = (await B.asking()) === profileFingerprint(ofA);
+    const bAsked = (await B.asking()) === w.folder.keyOf(ofA);
     await B.answer(ofA, "declined");
     await B.decide("d3");
     w.later(6 * 60_000);
@@ -1931,7 +1952,7 @@ describe("every found copy is kept and asked about", () => {
     await C.takeOver();
     const name = async (): Promise<string | null> => {
       const fp = await C.asking();
-      return fp === profileFingerprint(ofB) ? "B" : fp === profileFingerprint(ofA) ? "A" : fp === profileFingerprint(L) ? "L" : fp;
+      return fp === w.folder.keyOf(ofB) ? "B" : fp === w.folder.keyOf(ofA) ? "A" : fp === w.folder.keyOf(L) ? "L" : fp;
     };
     const offered = [await name()];
     await C.answer(ofB, "declined");
@@ -2005,12 +2026,12 @@ async function pile(o: { tidyMode: "remove" | "count"; rowAt?: Date; flushInterv
     return m?.state === "found" && m.heldForImport ? m.fingerprint : null;
   };
   return {
-    db, accountId, mailboxId, clock, plant, parsed, holds, ticks, asking, server,
+    db, accountId, mailboxId, clock, plant, parsed, holds, ticks, asking, server, keyOf: (d: OrganizerProfileDoc): string => copyName(parsed(), d),
     plan: (): Record<string, unknown> | undefined => plans.at(-1),
     planned: (): number => plans.length,
     decide: (name: string) => db.insert(tags).values({ accountId, name, createdAt: clock.at, updatedAt: clock.at }),
     answer: (d: OrganizerProfileDoc, decision: "declined" | "replaced") => recordProfileImportResolution(db, {
-      accountId, mailboxId, decision, fingerprint: profileFingerprint(d),
+      accountId, mailboxId, decision, fingerprint: copyName(parsed(), d),
     }),
     copies: (): Array<[string | null, string[]]> => parsed().map((p) => [p.installId, [...p.doc!.tagNames].sort()]),
     routing: async (): Promise<string> => (await s.sync.importHoldNow())?.kind ?? "closed",
@@ -2074,7 +2095,7 @@ describe("the store's own old copies on a server that kept them", () => {
     plantPile(r);
     const kept: boolean[] = [];
     for (let i = 0; i < 12; i++) { await r.ticks(1); kept.push(r.holds(phone)); }
-    expect({ kept: kept.every(Boolean), asking: (await r.asking()) === profileFingerprint(phone), copies: r.copies() })
+    expect({ kept: kept.every(Boolean), asking: (await r.asking()) === r.keyOf(phone), copies: r.copies() })
       .toEqual({ kept: true, asking: true, copies: [["w-phone", ["phone"]], ["w-cloud", ["now"]]] });
   });
 
@@ -2083,7 +2104,7 @@ describe("the store's own old copies on a server that kept them", () => {
     await r.decide("now");
     const gone = Array.from({ length: 12 }, (_, i) => r.plant("w-cloud", `gone-${i}`, new Date(Date.UTC(2026, 9, 1, i))));
     await r.ticks(6);
-    const asked = async (): Promise<number> => { const fp = await r.asking(); return gone.findIndex((d) => profileFingerprint(d) === fp); };
+    const asked = async (): Promise<number> => { const fp = await r.asking(); return gone.findIndex((d) => profileCopyKey(d, "w-cloud") === fp); };
     const before = { kept: gone.map((d) => r.holds(d)), asking: await asked() };
     await r.answer(gone[11]!, "declined");
     await r.ticks(2);
@@ -2100,7 +2121,7 @@ describe("the store's own old copies on a server that kept them", () => {
     await r.ticks(6);
     r.clock.at = new Date(r.clock.at.getTime() + 3 * 86_400_000);
     await r.ticks(4);
-    expect({ kept: r.holds(later), asking: (await r.asking()) === profileFingerprint(later) }).toEqual({ kept: true, asking: true });
+    expect({ kept: r.holds(later), asking: (await r.asking()) === r.keyOf(later) }).toEqual({ kept: true, asking: true });
   });
 
   it("seventy recorded copies of the store's own a server kept: after a restart none is a question, all are its own", async () => {
@@ -2151,10 +2172,10 @@ describe("the store's own old copies on a server that kept them", () => {
     await r.decide("now");
     const phone = r.plant("w-phone", "phone", new Date(Date.UTC(2026, 7, 1)), "0.30.10");
     plantPile(r, 70);
-    Object.assign(answerReadFault, { fingerprint: profileFingerprint(phone), fired: 0 });
+    Object.assign(answerReadFault, { fingerprint: r.keyOf(phone), fired: 0 });
     const kept: boolean[] = [];
     for (let i = 0; i < 12; i++) { await r.ticks(1); kept.push(r.holds(phone)); }
-    expect({ faults: answerReadFault.fired, kept: kept.every(Boolean), asking: (await r.asking()) === profileFingerprint(phone) })
+    expect({ faults: answerReadFault.fired, kept: kept.every(Boolean), asking: (await r.asking()) === r.keyOf(phone) })
       .toEqual({ faults: 1, kept: true, asking: true });
   });
 
@@ -2165,9 +2186,9 @@ describe("the store's own old copies on a server that kept them", () => {
     const tablet = r.plant("w-tablet", "tablet", new Date(Date.UTC(2026, 6, 1)), "0.30.10");
     await r.answer(tablet, "replaced");
     plantPile(r, 70);
-    Object.assign(answerReadFault, { fingerprint: profileFingerprint(tablet), fired: 0 });
+    Object.assign(answerReadFault, { fingerprint: r.keyOf(tablet), fired: 0 });
     await r.ticks(6);
-    expect({ faults: answerReadFault.fired, kept: r.holds(phone), asking: (await r.asking()) === profileFingerprint(phone) })
+    expect({ faults: answerReadFault.fired, kept: r.holds(phone), asking: (await r.asking()) === r.keyOf(phone) })
       .toEqual({ faults: 1, kept: true, asking: true });
   });
 
@@ -2206,7 +2227,7 @@ describe("the store's own old copies on a server that kept them", () => {
     await aYearAndTheAgeOut(r);
     r.restart();
     await r.ticks(4);
-    const asked = (await r.asking()) === profileFingerprint(later);
+    const asked = (await r.asking()) === r.keyOf(later);
     await r.answer(later, "replaced");
     await r.ticks(3);
     expect({ asked, then: await r.asking(), routing: await r.routing() }).toEqual({ asked: true, then: null, routing: "closed" });

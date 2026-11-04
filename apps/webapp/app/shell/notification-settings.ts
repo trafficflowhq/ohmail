@@ -15,6 +15,7 @@ import {
 } from "@ohmail/client-engine";
 import { apiConfigured, push as pushApi } from "../api-client";
 import { durableRemove, durableSet } from "./durable";
+import { readOwner } from "./owner-cookie";
 
 /** One key, one JSON object — so a partial write cannot leave two switches disagreeing. */
 export const NOTIFICATION_CHANNELS_KEY = "ohmail.notifications.channels";
@@ -294,14 +295,14 @@ export interface PushApi {
 }
 
 /**
- * The prefix sign-out sweeps, and the ruling that separates these two keys from the switches.
+ * The prefix sign-out sweeps, and the ruling that separates these keys from the switches.
  * `ohmail.notifications.channels` is a per-install preference and survives sign-out beside
- * `ohmail.theme` — the OS permission it mirrors is a fact about this machine. The two keys
- * below are NOT that: a server row's id and the address it was made for, minted inside a
- * signed-in session, meaningless to the next account — and a stale id makes {@link
+ * `ohmail.theme` — the OS permission it mirrors is a fact about this machine. The keys
+ * below are NOT that: a server row's id, the address and the account it was made for, minted
+ * inside a signed-in session, meaningless to the next account — and a stale id makes {@link
  * syncWebPushNow} answer "unchanged" for the NEXT account, which would then never register and
- * never be woken. One prefix rather than two entries: a sweep that names a prefix cannot be
- * half-updated when a third key joins.
+ * never be woken. One prefix rather than one entry per key: a sweep that names a prefix cannot be
+ * half-updated when a key joins, as the account did.
  */
 export const NOTIFICATION_SUBSCRIPTION_PREFIX = "ohmail.notifications.subscription";
 
@@ -318,6 +319,11 @@ const SUBSCRIPTION_ID_KEY = "ohmail.notifications.subscriptionId";
  * an ordinary re-announcement on the next visit.
  */
 const SUBSCRIPTION_ENDPOINT_KEY = "ohmail.notifications.subscriptionEndpoint";
+/**
+ * And the account the jar named when the row was announced, so a revoke of that account while another holds
+ * the jar forgets the id it left and keeps another account's (`sign-out.ts`).
+ */
+export const SUBSCRIPTION_OWNER_KEY = "ohmail.notifications.subscriptionOwner";
 
 /** What `syncWebPush` did, or why it could not. */
 export type PushSyncOutcome =
@@ -333,16 +339,23 @@ const readId = (): string | null => {
 const readEndpoint = (): string | null => {
   try { return globalThis.localStorage?.getItem(SUBSCRIPTION_ENDPOINT_KEY) ?? null; } catch { return null; }
 };
-/** Id and endpoint move together — a row is only ever meaningful with the address it was made for. */
-const writeId = (id: string | null, endpoint?: string): void => {
+/**
+ * Id and endpoint move together — a row is only ever meaningful with the address it was made for. Its account
+ * goes first and is written last, so a write that stops partway names nobody, never the wrong account.
+ */
+const writeId = (id: string | null, endpoint?: string, owner: string | null = null): void => {
+  durableRemove(SUBSCRIPTION_OWNER_KEY, "notifications.subscription");
   if (id === null) {
     durableRemove(SUBSCRIPTION_ID_KEY, "notifications.subscription");
     durableRemove(SUBSCRIPTION_ENDPOINT_KEY, "notifications.subscription");
     return;
   }
-  durableSet(SUBSCRIPTION_ID_KEY, id, "notifications.subscription");
+  const kept = [durableSet(SUBSCRIPTION_ID_KEY, id, "notifications.subscription")];
   if (endpoint !== undefined) {
-    durableSet(SUBSCRIPTION_ENDPOINT_KEY, endpoint, "notifications.subscription");
+    kept.push(durableSet(SUBSCRIPTION_ENDPOINT_KEY, endpoint, "notifications.subscription"));
+  }
+  if (owner !== null && kept.every((k) => k === "stored")) {
+    durableSet(SUBSCRIPTION_OWNER_KEY, owner, "notifications.subscription");
   }
 };
 
@@ -458,6 +471,8 @@ async function syncWebPushNow(
     const keys = subscriptionKeys(existing);
     if (keys === null) return "unsupported";
     try {
+      // The row is the account's whose session the POST carries: the jar's name now, not at its answer.
+      const owner = readOwner();
       const { id } = await api.subscribe(existing.endpoint, keys.p256dh, keys.auth);
       if (!namedRow(id)) return "not_registered";
       /* The superseded row is dropped AFTER the new one exists, so a failure here never leaves
@@ -470,7 +485,7 @@ async function syncWebPushNow(
       if (knownId !== null && knownId !== id) {
         try { await api.unsubscribe(knownId); } catch { /* pruned when its endpoint stops answering */ }
       }
-      writeId(id, existing.endpoint);
+      writeId(id, existing.endpoint, owner);
       return "subscribed";
     } catch {
       return "not_registered";
@@ -501,6 +516,7 @@ async function syncWebPushNow(
     return "unsupported";
   }
   try {
+    const owner = readOwner();
     const { id } = await api.subscribe(sub.endpoint, keys.p256dh, keys.auth);
     if (!namedRow(id)) {
       /* Same rollback as the throw below, for the same reason: a local subscription with no row
@@ -508,7 +524,7 @@ async function syncWebPushNow(
       try { await sub.unsubscribe(); } catch { /* nothing better to do */ }
       return "not_registered";
     }
-    writeId(id, sub.endpoint);
+    writeId(id, sub.endpoint, owner);
     return "subscribed";
   } catch {
     /* ROLL THE LOCAL HALF BACK. Leaving it subscribed with no row is the stuck state above —

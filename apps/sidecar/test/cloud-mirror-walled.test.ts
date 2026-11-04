@@ -10,6 +10,8 @@ import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
 import { idleSession } from "./fixtures/cloud-auth-double.js";
 import { tearDown } from "./_teardown.js";
+import { startWindowAttentionRelay } from "../../desktop/src/window-attention.js";
+import { WINDOW_ATTENTION_ROUTE } from "../src/window-report.js";
 
 /**
  * A REFUSED ACCOUNT'S MIRROR asks again on a flat minute, never the 1-2-4…300 s failure ladder, so
@@ -276,6 +278,8 @@ type CloudMode = "up" | "unreachable" | "outage" | "renewal-fault" | "edge-404" 
 
 function cloudFor(mode: () => CloudMode) {
   const seen: string[] = [];
+  /** When each pull began: its `/mailboxes` read. */
+  const pulls: number[] = [];
   let moves = 0;
   const json = (v: unknown, status = 200): Response =>
     new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
@@ -303,22 +307,27 @@ function cloudFor(mode: () => CloudMode) {
       return json({ error: { code: "unauthorized", message: "expired" } }, 401);
     }
     if (move) return json({ id: move[1], folder: "ohmail/News", updatedAt: new Date().toISOString() });
-    if (url.pathname === "/mailboxes") return json(mailboxList([hostedMailbox(MB, "me@ohmail.test")]));
+    if (url.pathname === "/mailboxes") {
+      pulls.push(Date.now());
+      return json(mailboxList([hostedMailbox(MB, "me@ohmail.test")]));
+    }
     if (url.pathname === "/sync") return json(empty());
     if (url.pathname === "/sync/snapshot") return json({ asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 5000 } });
     if (url.pathname === "/messages/bodies") return json({ items: [], nextCursor: null });
     if (url.pathname === "/screener") return json({ items: [] });
     return json({ error: { code: "not_found", message: "not in the stand-in" } }, 404);
   }) as unknown as typeof fetch;
-  return { fetchImpl, seen, moves: (): number => moves };
+  return { fetchImpl, seen, pulls, moves: (): number => moves };
 }
 
-async function composedDoor(cloud: ReturnType<typeof cloudFor>) {
+/** `pollIntervalMs` null: the idle ladder. */
+async function composedDoor(cloud: ReturnType<typeof cloudFor>, pollIntervalMs: number | null = 3_600_000) {
   const dataDir = await freshDataDir("ohmail-door-probe-");
   dirs.push(dataDir);
   const engine = await createCloudSidecar({
     dataDir, cloudUrl: "https://cloud.test", address: "me@ohmail.test",
-    tokens: { accessToken: "a", refreshToken: "r" }, fetchImpl: cloud.fetchImpl, pollIntervalMs: 3_600_000,
+    tokens: { accessToken: "a", refreshToken: "r" }, fetchImpl: cloud.fetchImpl,
+    ...(pollIntervalMs !== null ? { pollIntervalMs } : {}),
   });
   sidecars.push(engine);
   const ask = (path: string, init: RequestInit = {}): Promise<Response> => engine.handle(new Request(`http://sidecar${path}`, {
@@ -431,6 +440,59 @@ describe("with no live wake stream the poll follows the window, not a fixed 20 s
     expect(t.cloud.asked.length).toBe(before + 2);
     within(gaps(t.cloud.asked).at(-1), 8_000, 1_000, "the pull after a person's request was not 8 s later");
   }, 60_000);
+
+  /* READING MAIL THE WINDOW HOLDS asks the door nothing, so the window reports the person's input
+     (`window-attention.ts`, throttled) and the door takes it as a person's request. */
+  async function readingDoor() {
+    const cloud = cloudFor(() => "up");
+    const d = await composedDoor(cloud, null);
+    monotonicClock();
+    const target = new EventTarget();
+    const answered: number[] = [];
+    const stop = startWindowAttentionRelay({
+      target, isCloudDoor: async () => true, now: () => performance.now(),
+      post: async (path, init) => { answered.push((await d.ask(path, init)).status); },
+    });
+    void d.engine.start();
+    /** A person at the window, an input every 3.5 s, for `ms`. */
+    const read = async (ms: number): Promise<void> => {
+      for (let at = 0; at < ms; at += 3_500) {
+        target.dispatchEvent(new Event("pointerdown"));
+        await advance(3_500, 250);
+      }
+    };
+    return { cloud, read, stop, ask: d.ask, answered };
+  }
+
+  it("a person reading held mail, an input every 3.5 s for two minutes, keeps the pulls 8 s apart; ten quiet minutes after, a minute", async () => {
+    const t = await readingDoor();
+    await advance(3 * 60_000, 500);
+    within(gaps(t.cloud.pulls).at(-1), 60_000, 1_000, "the premise: three quiet minutes climbed the ladder");
+    const from = t.cloud.pulls.length;
+    await t.read(2 * 60_000);
+    const reading = t.cloud.pulls.slice(from);
+    within(reading[0]! - t.cloud.pulls[from - 1]!, 0, 60_000, "the first input after a quiet spell did not pull");
+    expect(reading.length, "the pulls while reading").toBeGreaterThanOrEqual(14);
+    for (const gap of gaps(reading)) within(gap, 8_000, 1_000, "a pull while a person read was not 8 s after the last");
+    // Throttled to one per 4 s: every other input of the 35.
+    expect(t.answered.length).toBe(18);
+    expect(new Set(t.answered), "the door did not take the window's input").toEqual(new Set([204]));
+    await advance(10 * 60_000, 1_000);
+    within(gaps(t.cloud.pulls).at(-1), 60_000, 1_000, "ten quiet minutes did not climb back to a minute");
+    t.stop();
+  }, 120_000);
+
+  it("CONTROL: the same reading with no input reported climbs 8, 16, 32 s after the last request the door saw", async () => {
+    const t = await readingDoor();
+    t.stop();
+    await advance(3 * 60_000, 500);
+    // The person opens a letter (a request the door sees), then reads what the window holds.
+    expect((await t.ask(WINDOW_ATTENTION_ROUTE, { method: "POST" })).status).toBe(204);
+    const from = t.cloud.pulls.length;
+    await t.read(2 * 60_000);
+    const climbed = gaps(t.cloud.pulls.slice(from)).slice(0, 3);
+    for (const [i, step] of [8_000, 16_000, 32_000].entries()) within(climbed[i], step, 1_000, `step ${i + 1} of the ladder`);
+  }, 120_000);
 
   it("CONTROL: a live wake keeps the 20 s poll, and a person's request does not speed it up", async () => {
     const t = await standUp(undefined, () => true);

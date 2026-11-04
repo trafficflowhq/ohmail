@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { contacts, rules, tags } from "@trafficflow/db";
 import { META_FOLDER, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
-import { formatProfileMessage, makeProfileDoc, profileFingerprint } from "@trafficflow/core/adapters/organizer-profile";
+import { formatProfileMessage, makeProfileDoc, profileCopyKey } from "@trafficflow/core/adapters/organizer-profile";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { startSlowProvider, type SlowProvider } from "./_slow-provider.js";
@@ -189,7 +189,7 @@ describe("Import settings finishes on a slow provider (the desktop local door)",
     const dials = relay.connections() - before;
     console.log(`SLOW-CARD status=${asked.status} ms=${asked.ms} state=${asked.json?.state ?? asked.json?.error?.code} dials=${dials}`);
     expect(asked.status, JSON.stringify(asked.json)).toBe(200);
-    expect(asked.json).toMatchObject({ state: "found", fingerprint: profileFingerprint(doc) });
+    expect(asked.json).toMatchObject({ state: "found", fingerprint: profileCopyKey(doc, "the-previous-mac") });
     expect(dials, "the card's question dialled the mailbox").toBe(0);
   }, 600_000);
 });

@@ -31,6 +31,7 @@ import "../../webapp/app/zero-layout.css";
 
 import { bridgeAvailable, bridgeFetch, connectLocalEngine, engineStatus } from "./bridge-fetch.js";
 import { startNetworkReturnRelay } from "./network-return.js";
+import { startWindowAttentionRelay } from "./window-attention.js";
 import { omarchySchemeSource, startOmarchyFeed } from "./omarchy.js";
 import { configureSchemeTransitions } from "./scheme-platform.js";
 import { startLeaveSave, startUpdateCadence } from "./update-cadence.js";
@@ -157,6 +158,14 @@ startLeaveSave();
 startNetworkReturnRelay({
   target: window,
   isLocalDoor: async () => bridgeAvailable() && (await engineStatus()).mode === "local",
+  post: (path, init) => bridgeFetch(path, init),
+});
+
+/* A PERSON'S INPUT, TO THE CLOUD DOOR: reading held mail asks it nothing, and its poll slows while
+   nobody asks (`window-attention.ts`). */
+startWindowAttentionRelay({
+  target: window,
+  isCloudDoor: async () => bridgeAvailable() && (await engineStatus()).mode === "cloud",
   post: (path, init) => bridgeFetch(path, init),
 });
 

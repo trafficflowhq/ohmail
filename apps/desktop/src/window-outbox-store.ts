@@ -30,7 +30,8 @@ const isCarriedType = (type: string): boolean => type === OUTBOX_TYPE || type ==
 /** Where a window keeps what outlives it besides the outbox: the webview's `localStorage` in the app. */
 export type WindowKeep = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
-const sentFoldersKey = (scope: string): string => `ohmail.window.sent-folders.${scope}`;
+/** Where the window keeps a mailbox's recorded Sent folders; an end of that account sweeps it (`window-sweep.ts`). */
+export const windowSentFoldersKey = (scope: string): string => `ohmail.window.sent-folders.${scope}`;
 
 function defaultKeep(): WindowKeep | null {
   try {
@@ -43,7 +44,7 @@ function defaultKeep(): WindowKeep | null {
 /** Sign-out's half: the mailbox's recorded Sent folders are not read by the next launch. */
 export function forgetWindowSentFolders(scope: string, keep: WindowKeep | null = defaultKeep()): void {
   try {
-    keep?.removeItem(sentFoldersKey(scope));
+    keep?.removeItem(windowSentFoldersKey(scope));
   } catch { /* a refused jar: the next mailbox read states them anew */ }
 }
 
@@ -87,7 +88,7 @@ export class WindowOutboxStore extends BaseMirrorStore {
     this.read = opts.read ?? opts.write;
     this.path = `${WINDOW_OUTBOX_PATH}?scope=${encodeURIComponent(opts.scope)}`;
     this.keep = opts.keep === undefined ? defaultKeep() : opts.keep;
-    this.sentFoldersKey = sentFoldersKey(opts.scope);
+    this.sentFoldersKey = windowSentFoldersKey(opts.scope);
   }
 
   /**

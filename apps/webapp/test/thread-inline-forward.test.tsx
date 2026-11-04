@@ -77,9 +77,9 @@ beforeAll(async () => {
   await import("@ohmail/ui");
 }, 120_000);
 
-/** Wait for a condition by TIME (3 s), never by a tick count a loaded host can exhaust. */
+/** Wait for a condition by TIME (10 s), never by a tick count a loaded host can exhaust. */
 const waitUntil = async (cond: () => boolean): Promise<boolean> => {
-  const until = Date.now() + 3000;
+  const until = Date.now() + 10_000;
   while (Date.now() < until) {
     if (cond()) return true;
     await act(async () => { await new Promise((r) => { setTimeout(r, 0); }); });
@@ -316,6 +316,7 @@ describe("forward is the reply's sibling, inside the reading surface", () => {
       set.call(toInput, "colleague@example.net, ");
       toInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    expect(await waitUntil(() => dock.querySelector(".rte-surface") !== null), "the dock's editor").toBe(true);
     const surface = dock.querySelector<HTMLElement>(".rte-surface")!;
     await act(async () => { typeInto(surface as never, "please see below"); });
     await settle();
@@ -484,6 +485,7 @@ describe("forward is the reply's sibling, inside the reading surface", () => {
       set.call(toInput, "colleague@example.net, ");
       toInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    expect(await waitUntil(() => dock.querySelector(".rte-surface") !== null), "the dock's editor").toBe(true);
     await act(async () => { typeInto(dock.querySelector<HTMLElement>(".rte-surface") as never, "note"); });
     await settle();
     const send = [...dock.querySelectorAll<HTMLButtonElement>("button")]

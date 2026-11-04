@@ -298,6 +298,9 @@ describe("a message's links are on the shell's list while it is on screen", () =
     }));
     expect(el.querySelector("iframe"), "this letter must render in the app's type").toBeNull();
     expect([...el.querySelectorAll(".msg-link .msg-link-host")].map((n) => n.textContent)).toEqual([" (example.net)"]);
+    // The shell asks here, so the marked link keeps its address; the web's ask page is not drawn.
+    expect([...el.querySelectorAll(".msg-link")].map((n) => n.getAttribute("href")))
+      .toEqual(["https://example.net/r/a1?u=7", "https://example.net/help"]);
     const [batch, ...more] = batches();
     expect(more).toEqual([]);
     expect(batch!.urls).toEqual([["https://example.net/r/a1?u=7", "https://example.net/help"]]);

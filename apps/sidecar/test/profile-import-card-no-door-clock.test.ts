@@ -10,7 +10,7 @@ import {
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import {
-  formatProfileMessage, makeProfileDoc, profileFingerprint,
+  formatProfileMessage, makeProfileDoc, profileCopyKey, profileFingerprint,
   type ProfileIo, type RawProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { PROFILE_FOUND_AUDIT_ACTION, auditLog } from "@trafficflow/db";
@@ -35,7 +35,7 @@ const DOC = makeProfileDoc({
   screener: [{ address: "friend@elsewhere.example" }],
   rules: [], notifyRules: [], awayResponder: null, tagNames: ["theirs"], signature: null,
 }, { updatedAt: new Date("2026-09-20T08:00:00Z"), producer: { kind: "local", version: "0.25.1" } });
-const FP = profileFingerprint(DOC);
+const FP = profileCopyKey(DOC, "the-previous-mac");
 const GENERATION = 4_100;
 
 /** An in-memory `ohmail/_meta` carrying the lease's claims and the settings documents. */

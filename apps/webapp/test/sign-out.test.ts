@@ -677,4 +677,62 @@ describe("a one-account wipe takes only what its reach allows", () => {
     await forgetThisBrowser(undefined, { revokeWake: false });
     expect(left(records), "a sign-out left a revoke's record").toEqual([]);
   });
+
+  /* The jar's items that name an account: reply text under its owner, the face mirror and the push id beside one. */
+  const FACE = ["ohmail.face.account", "ohmail.face.account.owner"];
+  const PUSH = ["Id", "Endpoint", "Owner"].map((k) => `ohmail.notifications.subscription${k}`);
+  /** The face mirror and the push id as the product leaves them, naming `who`, or nobody (an older build's). */
+  function seedNamed(who: string | null): string[] {
+    for (const key of [...FACE, ...PUSH]) localStorage.removeItem(key);
+    for (const [key, value] of [[FACE[0], "ohmarchy"], [PUSH[0], "row-1"], [PUSH[1], "https://push.example/ep"]]) {
+      localStorage.setItem(key!, value!);
+    }
+    if (who !== null) for (const key of [FACE[1]!, PUSH[2]!]) localStorage.setItem(key, who);
+    return [...FACE, ...PUSH].filter((key) => localStorage.getItem(key) !== null);
+  }
+  /** A's and B's reply text, body and meta, through the real writer. */
+  async function typeReplies(): Promise<typeof import("../app/shell/mail-send")> {
+    const send = await import("../app/shell/mail-send");
+    for (const owner of [A, B]) {
+      send.writeReplyDraft(`m-of-${owner}`, { text: `words of ${owner}`, html: "" }, owner);
+      send.writeReplyMeta(`m-of-${owner}`, { subject: `subject of ${owner}` }, owner);
+    }
+    return send;
+  }
+  const holding = (text: string): string[] =>
+    Object.keys(localStorage).filter((key) => localStorage.getItem(key)!.includes(text));
+  const repliesOf = (send: typeof import("../app/shell/mail-send"), owner: string): [string, string | undefined] =>
+    [send.readReplyDraft(`m-of-${owner}`, owner).text, send.readReplyMeta(`m-of-${owner}`, owner).subject];
+
+  it("`account`: A's reply text, face and push id go; B's reply text, an old key and what names B or nobody stay", async () => {
+    const send = await typeReplies();
+    const named = seedNamed(A);
+    const { forgetThisBrowser } = await import("../app/sign-out");
+    await forgetThisBrowser(A, { only: true, reach: () => "account" });
+    expect([holding(`of ${A}`), left(named)], "A's reply text, face or push id stayed").toEqual([[], []]);
+    expect(repliesOf(send, B), "B's reply text went with A").toEqual([`words of ${B}`, `subject of ${B}`]);
+    expect(left(jarKeys()), "an old reply key or the session stamp went").toEqual(jarKeys());
+    for (const who of [B, null]) {
+      const kept = seedNamed(who);
+      await forgetThisBrowser(A, { only: true, reach: () => "account" });
+      expect(left(kept), `a face or push id naming ${who ?? "nobody"} went with A`).toEqual(kept);
+    }
+  });
+
+  it("`jar`: the jar's items go whatever they name, and B's own reply text stays", async () => {
+    const send = await typeReplies();
+    const named = seedNamed(B);
+    const { forgetThisBrowser } = await import("../app/sign-out");
+    await forgetThisBrowser(A, { only: true, reach: () => "jar", revokeWake: false });
+    expect([holding(`of ${A}`), left([...named, ...jarKeys()])]).toEqual([[], []]);
+    expect(repliesOf(send, B), "B's reply text went with A's jar").toEqual([`words of ${B}`, `subject of ${B}`]);
+  });
+
+  it("a whole sign-out takes every account's reply text and both owner keys", async () => {
+    await typeReplies();
+    const named = seedNamed(A);
+    const { forgetThisBrowser } = await import("../app/sign-out");
+    await forgetThisBrowser(undefined, { revokeWake: false });
+    expect([holding("words of"), holding("subject of"), left(named)]).toEqual([[], [], []]);
+  });
 });

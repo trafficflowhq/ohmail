@@ -8,9 +8,10 @@
  * Attributes only: the frame runs no script and carries no listener. The desktop asks in its own
  * window instead (`link_ask_open` in `engine.rs`).
  */
+import { useEffect, useState } from "react";
 import { color, radius, shadow, typography } from "@ohmail/tokens";
 
-/** Where a marked link's address waits. Written only by the sanitizer's post-pass. */
+/** Where a marked link's address waits. Written only by the sanitizer's post-pass and the prose path's asked link. */
 export const ASK_ATTR = "data-ohmail-ask";
 
 /** Ask pages kept per frame, one per address; a marked link past them keeps no address. */
@@ -114,6 +115,37 @@ export function armAsks(doc: Document | null | undefined, page: (url: string) =>
     for (const blob of made.values()) URL.revokeObjectURL(blob);
     made.clear();
   };
+}
+
+/** Ask pages the app's own anchors hold (the prose path): one per address, counted per holder. */
+const held = new Map<string, { href: string; holders: number }>();
+
+/**
+ * The ask page a marked link of the app's own document points at, while it is mounted: one page per
+ * address shared by every holder, at most {@link ASK_PAGES_MAX} at once, taken back with the last
+ * holder. `null` until it is made, past the cap, or where no object URL can be made: no address.
+ */
+export function useAskPage(url: string, page: (url: string) => string): string | null {
+  const [href, setHref] = useState<string | null>(null);
+  useEffect(() => {
+    const at = httpAddress(url);
+    if (at === null || typeof URL.createObjectURL !== "function") return undefined;
+    let had = held.get(at);
+    if (had === undefined) {
+      if (held.size >= ASK_PAGES_MAX) return undefined;
+      had = { href: URL.createObjectURL(new Blob([page(at)], { type: "text/html;charset=utf-8" })), holders: 0 };
+      held.set(at, had);
+    }
+    had.holders += 1;
+    setHref(had.href);
+    return () => {
+      setHref(null);
+      if (--had.holders > 0) return;
+      held.delete(at);
+      URL.revokeObjectURL(had.href);
+    };
+  }, [url]); // eslint-disable-line react-hooks/exhaustive-deps -- a page is made once per address
+  return href;
 }
 
 /** `URL.href` of an absolute http(s) address, else null: the rule `linkHref` reports links by. */

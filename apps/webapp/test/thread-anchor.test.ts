@@ -236,6 +236,8 @@ describe("the reply you sent is brought into view", () => {
   let shown: Record<string, unknown> = B;
   let sent: string[] = [];
   let top = 0;
+  /** A new key remounts the pane, as a selection the shell drops and finds again does. */
+  let paneKey = "p";
   const panels = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>("[data-conv-id]")];
   const contentH = (): number => panels().length * TALL + 120;
 
@@ -269,7 +271,7 @@ describe("the reply you sent is brought into view", () => {
           children: h(MessageChromeProvider as never, {
             value: chrome,
             children: h(MessagePane as never, {
-              message: shown, tags: [], now: NOW, onAction: () => {}, onAddTag: () => {}, onAttachment: () => {},
+              key: paneKey, message: shown, tags: [], now: NOW, onAction: () => {}, onAddTag: () => {}, onAttachment: () => {},
             } as never),
           } as never),
         }),
@@ -326,6 +328,7 @@ describe("the reply you sent is brought into view", () => {
     sent = [];
     shown = B;
     top = 0;
+    paneKey = "p";
     (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = undefined;
     window.matchMedia = ((q: string) => ({ matches: false, media: q })) as unknown as typeof window.matchMedia;
   });
@@ -415,4 +418,136 @@ describe("the reply you sent is brought into view", () => {
     await confirm([A, B, theirs]);
     expect(top).toBe(700);
   });
+
+  /* The desktop on Cloud: the dock closes at once, the confirmed send paints its provisional copy 2.7 s on, and the
+     mirror's own Sent row takes its place (a new id) before the layout has settled. */
+  const Overlay = { ...S, id: "sent-overlay", local: true };
+  const Mirrored = { ...S, id: "mirrored" };
+  async function closeDock(): Promise<void> {
+    await render({ replyTo: null, conversationOf: () => [A, B] });
+    await act(async () => { vi.advanceTimersByTime(2700); });
+  }
+
+  it("desktop: the provisional copy replaced by the mirror's row mid-settle is still eased in", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    await closeDock();
+    await render({ conversationOf: () => [A, B, Overlay] });
+    await act(async () => { vi.advanceTimersByTime(60); });
+    await confirm([A, B, Mirrored]);
+    expect(top).toBe(TALL * 2 - 16);
+  });
+
+  it("desktop: the pane remounted before the copy joined still eases it in", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    await closeDock();
+    paneKey = "q";
+    await render({});
+    await confirm([A, B, Mirrored]);
+    expect(top).toBe(TALL * 2 - 16);
+  });
+
+  it("desktop: the person scrolled while the remounted pane held the reveal: nothing moves", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    await closeDock();
+    paneKey = "q";
+    await render({});
+    const held = top;
+    await act(async () => { window.dispatchEvent(new Event("wheel")); });
+    await confirm([A, B, Mirrored]);
+    expect(top).toBe(held);
+  });
+
+  /** The pane remounted with a live open anchor: its observer sees every later stack resize. */
+  async function remount(over: Record<string, unknown>): Promise<void> {
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
+    paneKey = "q";
+    await render(over);
+  }
+  async function resized(): Promise<void> {
+    await act(async () => { observing.forEach((cb) => cb()); });
+    geometry();
+  }
+
+  it("desktop: the remounted pane's open anchor stands down once the copy is eased in", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    await closeDock();
+    await remount({});
+    await confirm([A, B, Mirrored]);
+    expect(top).toBe(TALL * 2 - 16);
+    await act(async () => { vi.advanceTimersByTime(500); });
+    await resized();
+    expect(top, "the anchor pulled the view back to the opened letter").toBe(TALL * 2 - 16);
+  });
+
+  it("desktop: a stack resize partway through the ease neither re-anchors nor stops it", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    await closeDock();
+    await remount({});
+    await render({ replyTo: null, conversationOf: () => [A, B, Mirrored] });
+    const from = top;
+    let mid = false;
+    for (let i = 0; i < 120; i++) {
+      await act(async () => { vi.advanceTimersByTime(16); });
+      geometry();
+      if (!mid && top !== from) { mid = true; await resized(); }
+    }
+    expect(mid).toBe(true);
+    expect(top).toBe(TALL * 2 - 16);
+  });
+
+  it("desktop: the pane remounted just after the reveal keeps the reply in view", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    await confirm([A, B, S]);
+    expect(top).toBe(TALL * 2 - 16);
+    await remount({ conversationOf: () => [A, B, Mirrored] });
+    await resized();
+    expect(top).toBe(TALL * 2 - 16);
+  });
+
+  it("the same conversation remounted past the window opens at its opened message again", async () => {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    await confirm([A, B, S]);
+    await act(async () => { vi.advanceTimersByTime(61_000); });
+    await remount({});
+    await resized();
+    expect(top).toBe(TALL * 1 - 14);
+  });
+
+  /* The reader closed before the copy joined, the conversation opened again later: a new open, not a remount. */
+  async function reopenAfter(ms: number): Promise<void> {
+    await open([A, B]);
+    top = 700;
+    await pressSend();
+    await closeDock();
+    await act(async () => { root!.render(h("div")); });
+    await act(async () => { vi.advanceTimersByTime(ms); });
+    await remount({ conversationOf: () => [A, B, Mirrored] });
+    await resized();
+  }
+
+  for (const [label, ms] of [["10 s", 10_000], ["90 s", 90_000]] as const) {
+    it(`the reader closed before the copy joined, reopened ${label} on: it opens at the opened message and nothing eases`, async () => {
+      await reopenAfter(ms);
+      expect(top, "the open anchor stood down for a press of the closed reader").toBe(TALL * 1 - 14);
+      for (let i = 0; i < 60; i++) {
+        await act(async () => { vi.advanceTimersByTime(16); });
+        geometry();
+      }
+      expect(top).toBe(TALL * 1 - 14);
+    });
+  }
 });

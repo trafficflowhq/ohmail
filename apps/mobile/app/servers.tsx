@@ -8,10 +8,10 @@
  * negotiation offers the pair step on its own, so no client edit was needed
  * when that changed.
  */
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { sayArg, sayRefusal, type Refusal } from "../src/refusal";
-import { View } from "react-native";
-import { router } from "expo-router";
+import { BackHandler, View } from "react-native";
+import { Stack, router, useIsFocused } from "expo-router";
 import { Copy } from "../src/copy";
 import { organizesHere } from "../src/engine/standalone-door";
 import { organizerSettingsLeftOnlyHere } from "../src/engine/organizer-session";
@@ -23,9 +23,8 @@ import { isPairEnded } from "../src/net/session-death";
 import { gateFor } from "../src/state/gate";
 import type { ServerProfile } from "../src/state/servers";
 import { useTheme } from "../src/theme";
-import { Button, Panel, Screen, Scroller, Section, Tap, TapRow, Txt } from "../src/ui/base";
+import { Button, Panel, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
-import { Icon } from "../src/ui/Icon";
 import { Doors } from "../src/ui/Doors";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
@@ -43,48 +42,56 @@ function ServersBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const conn = useConnection();
-  const t = useTheme();
   /** What a forget could not take back. Held HERE — see the note beside where it renders. */
   const [forgetFailure, setForgetFailure] = useState<Refusal | null>(null);
 
   /* ── THIS PANE IS NEVER A DEAD END ──────────────────────────────────────────────────────────
-     With nothing paired the stack under it can be EMPTY — a first run, or the last pairing
-     forgotten, or a door that replaced its way here — and then `DetailBar` renders no Back
-     (`router.canGoBack()` is false) and the tabs are gone with the pairing: measured on the
-     iPhone 18 Pro as a pane three edge swipes and a relaunch could not leave. The way out is
-     stated rather than inherited, and it asks the GATE where this phone belongs rather than the
-     pairing count: with a pairing and no live session the gate sends every mail route back here,
-     so a Back keyed on the count alone would land on the pane it just left. */
+     With nothing paired the stack under it can be EMPTY (a first run, the last pairing forgotten,
+     a door that replaced its way here), and then the bar has nothing to pop. And where the GATE
+     holds the phone here (a pairing ended, no live session), a pop lands on the tabs and their
+     gate sends it straight back: a Back that does nothing. So there Back opens this phone's own
+     mailbox when it has one, else a pairing that keeps its credential (the active one first), and
+     the first-run door otherwise (a pairing whose credential is gone re-pairs from there); a
+     refused switch keeps the pane with its sentence. Elsewhere it pops, or routes by the gate.
+     The system Back (Android) takes the same way out while the pane is in front, and iOS's edge
+     swipe, which would pop into the same redirect, is off while held. */
   const verdict = gateFor(conn.state, conn.profiles.length);
-  const leave = () => {
+  const held = verdict.to === "servers";
+  const reopen =
+    conn.profiles.find(organizesHere) ??
+    conn.profiles.find((p) => p.id === conn.activeId && p.refreshToken !== null) ??
+    conn.profiles.find((p) => p.refreshToken !== null) ??
+    null;
+  const leave = async () => {
+    if (held && reopen !== null) {
+      if ((await conn.switchTo(reopen.id)).ok) router.replace("/");
+      return;
+    }
+    if (held) {
+      router.replace("/welcome");
+      return;
+    }
     if (router.canGoBack()) {
       router.back();
       return;
     }
     router.replace(verdict.to === "welcome" ? "/welcome" : "/");
   };
-  /* Rendered where there is somewhere to go: the bar's own Back covers a stack that can pop, and
-     where the gate holds the phone here this pane IS the destination, with its own remedies —
-     a control that returns to the screen it was pressed on is worse than none. */
-  const stranded = !router.canGoBack() && verdict.to !== "servers";
+  const ownBack = held || !router.canGoBack();
+  const leaveRef = useRef(leave);
+  leaveRef.current = leave;
+  const focused = useIsFocused();
+  useEffect(() => {
+    if (!held || !focused) return undefined;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => { void leaveRef.current(); return true; });
+    return () => sub.remove();
+  }, [held, focused]);
 
   return (
     <Screen>
+      <Stack.Screen options={{ gestureEnabled: !held }} />
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      <DetailBar />
-      {stranded ? (
-        <Tap
-          onPress={leave}
-          accessibilityRole="button"
-          accessibilityLabel={Copy.back}
-          style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 18, paddingBottom: 6 }}
-        >
-          <View style={{ transform: [{ rotate: "180deg" }] }}>
-            <Icon name="chev" size={15} color={t.c.ink2} />
-          </View>
-          <Txt variant="button" tone="ink2">{Copy.back}</Txt>
-        </Tap>
-      ) : null}
+      <DetailBar back={ownBack ? () => void leave() : undefined} />
       <Scroller bounded avoidKeyboard>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
           <Txt variant="h1">{Copy.serversTitle}</Txt>
@@ -148,6 +155,7 @@ function ServersBody() {
     </Screen>
   );
 }
+
 
 /** The connection's own words: live numbers, a boot in progress, a refusal, a death. */
 function StatusPanel() {

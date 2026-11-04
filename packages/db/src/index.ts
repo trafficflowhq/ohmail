@@ -471,7 +471,7 @@ export {
   PROFILE_FOUND_AUDIT_ACTION, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION, PROFILE_WRITTEN_AUDIT_ACTION,
   recordProfileWrite, profileWritesRecorded, newestOwnProfileWriteBefore, newestProfileImport,
   PROFILE_COPY_AUDIT_ACTION, PROFILE_COPY_RENEW_MS, latestProfileCopy, recordProfileCopy, type ProfileCopyState,
-  latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased,
+  latestProfileFoundMarker, profileImportResolutionExists, profileImportWriteReleased, PROFILE_ANSWER_CONTENT_MARGIN_MS,
   profileImportResolutionSince, recordProfileImportResolution, profileImportResult,
   type ProfileFoundMarker, type ProfileImportDecision, type ProfileImportResult, type ProfileImportSubject,
 } from "./organizer-profile-import.js";

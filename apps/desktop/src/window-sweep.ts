@@ -3,8 +3,9 @@
  * account's erasure, a revoke. The window keys its storage by the mailbox the engine serves
  * (`setStorageOwner` in `DesktopGate.tsx`), and the web's `forgetThisBrowser` never runs in it, so the
  * compose scratch, the reply buffers and the intent journals outlived the account. This is that sweep,
- * scoped to the mailboxes named: another mailbox's keys and the preferences stay. A lapse (an expired
- * sign-in) keeps them, as it keeps the mail. Only an erasure takes the send lanes as well.
+ * scoped to the mailboxes named: another mailbox's keys and the preferences stay, and the reply buffers
+ * that name no mailbox go whole. A lapse (an expired sign-in) keeps them, as it keeps the mail. Only an
+ * erasure takes the send lanes as well.
  */
 
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
@@ -13,12 +14,15 @@ import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY,
 } from "../../webapp/app/shell/compose";
 import { DELETE_INTENTS_PREFIX } from "../../webapp/app/shell/delete-intents";
-import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "../../webapp/app/shell/mail-send";
+import {
+  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX,
+} from "../../webapp/app/shell/mail-send";
 import { isOwnerShaped } from "../../webapp/app/shell/owner-cookie";
 import { READING_ALONG_PREFIX } from "../../webapp/app/shell/reading-along";
 import { SCREENER_INTENTS_PREFIX } from "../../webapp/app/shell/screener-intents";
 import { SEND_LOCKS_PREFIX } from "../../webapp/app/shell/send-lock";
 import { ACCESS_VERDICT_PREFIX } from "../../webapp/app/shell/wall-lift";
+import { windowSentFoldersKey } from "./window-outbox-store.js";
 
 /**
  * The keys built as `<prefix><mailbox>`, the compose three also as `<prefix><mailbox>.<composer>`. Not the
@@ -50,20 +54,23 @@ export function rememberedCloudScope(): string | null {
   }
 }
 
-/** `<p><scope>`, its hand-off slot, or `<p><scope>.<composer>` — never another mailbox's (mbx-10, mbx-1.x). */
+/**
+ * `<p><scope>`, its hand-off slot, or `<p><scope>.<composer>` — never another mailbox's (mbx-10, mbx-1.x) —
+ * and a reply buffer the mailbox typed, `<p><scope>:<lane>`.
+ */
 function scopedTo(key: string, scope: string): boolean {
   return WINDOW_SCOPED_PREFIXES.some((p) => {
     const at = `${p}${scope}`;
     return key === at || (key.startsWith(`${at}.`) && !key.slice(at.length + 1).includes("."));
-  });
+  }) || [OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX].some((p) => key.startsWith(`${p}${scope}:`));
 }
 
 /**
  * Remove the window's keys for `scopes`, read back: Sign out's and a revoke's sweep, the send lanes kept.
- * The reply buffers go whole: they are keyed by message and lane, never by mailbox. Nothing owed (no
- * scope) touches nothing and answers null, so a card still up at the next launch sweeps nothing again.
- * The marker goes once a clean sweep covered it; a sweep that did not read back clean keeps it, and the
- * next end retries.
+ * A reply buffer that names no mailbox (written before they did) goes whole; one that names a mailbox goes
+ * with it. Nothing owed (no scope) touches nothing and answers null, so a card still up at the next launch
+ * sweeps nothing again. The marker goes once a clean sweep covered it; a sweep that did not read back clean
+ * keeps it, and the next end retries.
  */
 export function forgetWindowScopes(scopes: readonly (string | null | undefined)[]): LocalSweep | null {
   return sweepScopes(scopes, () => false);
@@ -86,7 +93,7 @@ function sweepScopes(
   if (owed.length === 0) return null;
   const keys = dropLocalStorageKeysWhere((k) =>
     k === LEGACY_COMPOSE_DRAFT_KEY || k.startsWith(REPLY_DRAFT_PREFIX) || k.startsWith(REPLY_META_PREFIX)
-    || owed.some((s) => scopedTo(k, s) || alsoGone(k, s)));
+    || owed.some((s) => scopedTo(k, s) || k === windowSentFoldersKey(s) || alsoGone(k, s)));
   const sweeps = [keys, ...owed.map((s) => clearBootCaches(s))];
   const swept: LocalSweep = {
     survivors: sweeps.flatMap((s) => s.survivors),
