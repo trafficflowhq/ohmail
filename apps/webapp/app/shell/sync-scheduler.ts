@@ -125,6 +125,13 @@ export const SYNC_FAILURE_STREAK = 3;
 export const POLL_MS = 8_000;
 
 /**
+ * A push this soon after a drain started is that drain's echo: the worker sends at most one push
+ * per 2 s while the change log moves, so the tab's own write is pushed back about 2 s after the
+ * drain the write already ran.
+ */
+export const PUSH_ECHO_MS = 3_000;
+
+/**
  * The hidden cadence: one drain a minute, no stream held. Replaces "a
  * hidden tab performs ZERO syncs" on purpose — zero was the right floor
  * when every request was unaccompanied cost, and it bought a mailbox always
@@ -1159,6 +1166,12 @@ export interface SyncSchedulerOptions {
    * and again on each return to visibility; after a refusal, at most once per {@link WAKE_STREAM_REASK_MS}.
    */
   wake?: (() => WakeStreamLike) | null;
+  /**
+   * Hear the push wake (`engine-config.ts` `cloudPushWakes`): a visible tab drains at once, at most
+   * once per poll period and never on a drain's echo; a hidden one keeps its cadence. Returns the
+   * unsubscribe. A subscribe that throws leaves the tab polling.
+   */
+  pushWakes?: ((onWake: () => void) => () => void) | null;
   /** The hidden cadence; {@link HIDDEN_POLL_MS} unless a test shrinks it. */
   hiddenPollMs?: number;
   /** The safety cadence under a healthy stream; {@link WAKE_SAFETY_POLL_MS} unless a test shrinks it. */
@@ -2041,6 +2054,36 @@ export function startSyncScheduler(
   const renewals = options.renewals !== undefined ? options.renewals : subscribeSessionRevival;
   const stopHearingRenewals = renewals?.(onRenewed) ?? null;
 
+  /*
+   * THE PUSH FLOOR. The worker pushes about every 2 s while the change log moves (an import, the
+   * organizer, the person's own triage), and an unfloored push drained a visible tab on each: four
+   * times the poll's cost. A push drains at once only when no drain started in the last
+   * PUSH_ECHO_MS and no push drained in the last poll period; otherwise it only makes sure a drain
+   * is due within the poll period. Any other state is the ordinary wake's to floor.
+   */
+  let lastPushDrainAt = Number.NEGATIVE_INFINITY;
+  const onPush = (): void => {
+    if (stopped || failures > 0) return;
+    if (terminal || refusedAt !== null || standingDown || !visible()) {
+      wake();
+      return;
+    }
+    const now = Date.now();
+    if (now - engine.lastDriveAt() < PUSH_ECHO_MS || now - lastPushDrainAt < pollMs) {
+      if (!running && (timer === null || timerDueAt > now + pollMs)) arm(pollMs);
+      return;
+    }
+    lastPushDrainAt = now;
+    wake();
+  };
+  let stopHearingPushes: (() => void) | null = null;
+  try {
+    stopHearingPushes = options.pushWakes?.(onPush) ?? null;
+  } catch (err) {
+    // Push is a hint: a container that cannot be heard leaves the tab on its poll.
+    report("ohmail: the push wake could not be heard — polling", err);
+  }
+
   connectStream();
   publish();
   void tick();
@@ -2049,6 +2092,7 @@ export function startSyncScheduler(
     stopped = true;
     REVIVERS.delete(revive);
     stopHearingRenewals?.();
+    stopHearingPushes?.();
     disarm();
     closeStream();
     // The eager body pass is fire-and-forget behind the drain and NOT gated (fetchBodies is a

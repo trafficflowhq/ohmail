@@ -1084,6 +1084,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         ...(config.pollIntervalMs !== undefined ? { pollIntervalMs: config.pollIntervalMs } : {}),
         ...(config.walledPollMs !== undefined ? { walledPollMs: config.walledPollMs } : {}),
         onServed: () => { wake?.rearm(); },
+        wakeLive: () => wake?.live() ?? false,
       });
 
       const proxy: WriteThroughProxy = createWriteThroughProxy({
@@ -2283,7 +2284,10 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
        `/local/` routes (the window outbox, its reports): the local door answers those before it marks. */
     const queued = (req: Request): Promise<Response> => {
       const path = new URL(req.url).pathname;
-      return isPersonRequest(req.method, path) && !path.startsWith("/local/") ? forWindow(() => serial(req)) : serial(req);
+      const person = isPersonRequest(req.method, path);
+      // Somebody at the window: the mirror's idle poll starts over (`personSeen`).
+      if (person) authed?.mirror.personSeen();
+      return person && !path.startsWith("/local/") ? forWindow(() => serial(req)) : serial(req);
     };
 
     return {

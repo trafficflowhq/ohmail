@@ -3015,6 +3015,7 @@ export class OhmailEngine {
   /** The build in flight, with the token that abandons it. One at a time — see {@link OhmailEngine.startSearchBuild}. */
   private searchBuild: { version: number; cancelled: boolean; done: Promise<void> } | null = null;
   private syncing: Promise<void> | null = null;
+  private driveStartedAt = 0;
   /**
    * The held-release offer's freshness, kept beside its one door ({@link refreshHeldReleases}).
    * `armed`: a surface asked, so the offer is shown in this process. `stamp`: the settings stamp
@@ -3557,10 +3558,16 @@ export class OhmailEngine {
   async syncOnce(): Promise<void> {
     // Serialize concurrent callers onto one drain.
     if (this.syncing) return this.syncing;
+    this.driveStartedAt = Date.now();
     this.syncing = this.drive().finally(() => {
       this.syncing = null;
     });
     return this.syncing;
+  }
+
+  /** When the latest drive started (epoch ms, 0 before the first): a push this soon after is its echo. */
+  lastDriveAt(): number {
+    return this.driveStartedAt;
   }
 
   /**

@@ -438,8 +438,10 @@ export interface CloudMirrorConfig {
    * the floor. Test-only: the cursor file's read still caps at {@link OVERFLOW_MAX}.
    */
   overflowMax?: number;
-  /** How long to wait between full pulls when caught up. */
+  /** How long to wait between full pulls when caught up; absent, {@link IDLE_POLL_LADDER_MS} or the wake's 20 s. */
   pollIntervalMs?: number;
+  /** Is the wake stream live right now? While it is, the poll is {@link DEFAULT_CLOUD_POLL_MS}. */
+  wakeLive?: () => boolean;
   /** Test-only: production waits {@link WALLED_POLL_MS} after a refused account's pull. */
   walledPollMs?: number;
   /**
@@ -480,6 +482,11 @@ export interface CloudMirror {
    * schedule. Fire-and-forget on purpose — a wake has no caller waiting on it.
    */
   kick(): void;
+  /**
+   * Somebody is using the window: the idle ladder starts over, and with no live wake a pull older
+   * than {@link IDLE_POLL_LADDER_MS}' first step is asked for now.
+   */
+  personSeen(): void;
   /** Pull now, then poll. */
   start(): Promise<void>;
   /**
@@ -622,7 +629,15 @@ export interface CloudMirror {
   storeFault(): string | null;
 }
 
+/** The poll beside a live wake stream, which carries each commit within about a second. */
 export const DEFAULT_CLOUD_POLL_MS = 20_000;
+
+/**
+ * The poll with no live wake stream (Cloud holds none): 8 s after a pull that applied something or a
+ * person's request, then 16, 32 and 60 s while each pull finds nothing new. Every pull is two short
+ * requests; a held stream cost a whole server instance around the clock.
+ */
+export const IDLE_POLL_LADDER_MS: readonly number[] = [8_000, 16_000, 32_000, 60_000];
 
 /** Refused pulls before the copy is said to be stuck: the window's own failure streak. */
 export const STORE_FAULT_STREAK = 3;
@@ -2649,6 +2664,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
   /** Current reconnect delay; grows on failure, resets on success. See {@link scheduleAfter}. */
   let backoffMs = RECONNECT_BASE_MS;
+  /** Pulls in a row that applied nothing with nobody at the window: the step on {@link IDLE_POLL_LADDER_MS}. */
+  let quietPulls = 0;
+  /** When the last pull began, a person was last seen and the armed steady poll is due (monotonic). */
+  let lastPullAt = Number.NEGATIVE_INFINITY;
+  let lastPersonAt = Number.NEGATIVE_INFINITY;
+  let pollDueAt = 0;
+  let steadyArmed = false;
   /**
    * Every mailbox id this database holds, as of the last refresh — what an incoming `mailboxId` is
    * checked against before a message or draft may be written under it. Empty until the first
@@ -4291,7 +4313,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const pullOnce = (): Promise<number> => {
     // A stopped mirror asks nothing more — see {@link accountErased}.
     if (accountErased) return Promise.resolve(0);
-    inflight ??= runPull().finally(() => {
+    if (inflight === null) lastPullAt = monotonicNow();
+    const began = lastPullAt;
+    inflight ??= runPull().then((applied) => {
+      quietPulls = applied > 0 || lastPersonAt >= began ? 0 : quietPulls + 1;
+      return applied;
+    }).finally(() => {
       inflight = null;
       progressed();
     });
@@ -4437,6 +4464,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     return rows[0]?.next ?? 0n;
   };
 
+  const steadyPollMs = (): number => cfg.pollIntervalMs ?? (cfg.wakeLive?.()
+    ? DEFAULT_CLOUD_POLL_MS
+    : IDLE_POLL_LADDER_MS[Math.min(quietPulls, IDLE_POLL_LADDER_MS.length - 1)]!);
   /**
    * Schedule the next pull. A SUCCESS resets the backoff and polls at the steady cadence; a FAILURE
    * retries on an exponential backoff bounded by {@link RECONNECT_MAX_MS}, so a dropped network or a
@@ -4455,9 +4485,17 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       backoffMs = Math.min(backoffMs * 2, RECONNECT_MAX_MS);
     } else {
       backoffMs = RECONNECT_BASE_MS;
-      delay = cfg.pollIntervalMs ?? DEFAULT_CLOUD_POLL_MS;
+      delay = steadyPollMs();
     }
+    armPoll(delay, !failed);
+  };
+  const armPoll = (delay: number, steady: boolean): void => {
+    if (timer) clearTimeout(timer);
+    steadyArmed = steady;
+    pollDueAt = monotonicNow() + delay;
     timer = setTimeout(() => {
+      timer = null;
+      steadyArmed = false;
       void pullOnce()
         .then(() => scheduleAfter(false))
         .catch((err: unknown) => {
@@ -4480,6 +4518,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     pullOnce,
     bodyGapReads: () => gapReads,
     kick,
+    personSeen: () => {
+      if (stopped || accountErased) return;
+      quietPulls = 0;
+      lastPersonAt = monotonicNow();
+      if (!steadyArmed || cfg.pollIntervalMs !== undefined || cfg.wakeLive?.()) return;
+      const due = Math.max(0, lastPullAt + IDLE_POLL_LADDER_MS[0]! - monotonicNow());
+      if (monotonicNow() + due < pollDueAt) armPoll(due, true);
+    },
     draining: () => inflight !== null,
     online: () => reachable,
     markConnectivity: (v: boolean) => {

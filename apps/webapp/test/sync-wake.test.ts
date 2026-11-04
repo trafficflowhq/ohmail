@@ -18,6 +18,7 @@ import {
   startSyncScheduler,
   type WakeStreamLike,
 } from "../app/shell/sync-scheduler.js";
+import { cloudPushWakes } from "../app/shell/engine-config.js";
 
 /**
  * THE WAKE STREAM AT THE SCHEDULER SEAM — the client half of the realtime wake slice.
@@ -815,4 +816,158 @@ describe("a return dials its stream before the drain without a lane, after the d
       stop();
     });
   }
+});
+
+describe("the service worker's push wake drains a looked-at tab", () => {
+  /** The push wake as `cloudPushWakes` delivers it: a subscription the test fires by hand. */
+  function pushes() {
+    const listeners = new Set<() => void>();
+    return {
+      listeners,
+      subscribe: (l: () => void): (() => void) => { listeners.add(l); return () => { listeners.delete(l); }; },
+      fire: (): void => { for (const l of [...listeners]) l(); },
+    };
+  }
+
+  it("a push drains a visible tab at once, with no stream, inside its 8 s poll", async () => {
+    const adapter = new ScriptedAdapter((_p, n) => page(`c${n + 1}`, [`m${n + 1}`]));
+    const push = pushes();
+    const stop = startSyncScheduler(engineWith(adapter), {
+      ...quiet, visibility: fakeVisibility("visible"), online: fakeOnline(), wake: null, pushWakes: push.subscribe,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(adapter.calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(4_000);
+    push.fire();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(adapter.calls, "the push did not drain").toBe(2);
+    stop();
+  });
+
+  it("a push just after a drain is that drain's echo: the tab's own write is read once", async () => {
+    const adapter = new ScriptedAdapter((_p, n) => page(`c${n + 1}`, [`m${n + 1}`]));
+    const push = pushes();
+    const engine = engineWith(adapter);
+    const stop = startSyncScheduler(engine, {
+      ...quiet, visibility: fakeVisibility("visible"), online: fakeOnline(), wake: null, pushWakes: push.subscribe,
+    });
+    await vi.advanceTimersByTimeAsync(4_000);
+    // The engine's own drain after a write, then the push that write caused.
+    await engine.syncOnce();
+    expect(adapter.calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    push.fire();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(adapter.calls, "the write's echo bought a second drain").toBe(2);
+    stop();
+  });
+
+  it("a push every 2 s for an hour costs at most one more drain per poll period", async () => {
+    const hour = async (withPushes: boolean): Promise<number> => {
+      const adapter = new ScriptedAdapter((_p, n) => page(`c${n + 1}`, [`m${n + 1}`]));
+      adapter.latencyMs = 150;
+      const push = pushes();
+      const stop = startSyncScheduler(engineWith(adapter), {
+        ...quiet, visibility: fakeVisibility("visible"), online: fakeOnline(), wake: null, pushWakes: push.subscribe,
+      });
+      for (let t = 0; t < 3_600_000; t += 2_000) {
+        await vi.advanceTimersByTimeAsync(2_000);
+        if (withPushes) push.fire();
+      }
+      stop();
+      return adapter.calls;
+    };
+    const polled = await hour(false);
+    const pushed = await hour(true);
+    expect(pushed, `${pushed} drains against ${polled} without pushes`).toBeLessThanOrEqual(polled * 2);
+  });
+
+  it("a push subscription that throws leaves the tab polling, and teardown still lets go", async () => {
+    const adapter = new ScriptedAdapter((_p, n) => page(`c${n + 1}`, [`m${n + 1}`]));
+    const visibility = fakeVisibility("visible");
+    const online = fakeOnline();
+    const stop = startSyncScheduler(engineWith(adapter), {
+      ...quiet, visibility, online, wake: null,
+      pushWakes: () => { throw new TypeError("container.addEventListener is not a function"); },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(adapter.calls, "the tab never drained").toBe(1);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(adapter.calls).toBe(2);
+    stop();
+    online.fire();
+    visibility.set("visible");
+    await vi.advanceTimersByTimeAsync(POLL_MS * 3);
+    expect(adapter.calls, "a stopped scheduler drained").toBe(2);
+  });
+
+  it("a hidden tab keeps its minute, and teardown stops hearing", async () => {
+    const adapter = new ScriptedAdapter((_p, n) => page(`c${n + 1}`, [`m${n + 1}`]));
+    const push = pushes();
+    const stop = startSyncScheduler(engineWith(adapter), {
+      ...quiet, visibility: fakeVisibility("hidden"), online: fakeOnline(), wake: null, pushWakes: push.subscribe,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const first = adapter.calls;
+    push.fire();
+    await vi.advanceTimersByTimeAsync(HIDDEN_POLL_MS - 1_000);
+    expect(adapter.calls, "a push sped up a hidden tab").toBe(first);
+    expect(push.listeners.size).toBe(1);
+    stop();
+    expect(push.listeners.size, "the scheduler still hears pushes after teardown").toBe(0);
+  });
+});
+
+describe("cloudPushWakes hears the service worker's wake message", () => {
+  const container = () => {
+    const target = new EventTarget();
+    let started = 0;
+    return {
+      target,
+      started: () => started,
+      sw: Object.assign(target, { startMessages: () => { started += 1; } }) as unknown as ServiceWorkerContainer,
+      post: (data: unknown): void => { target.dispatchEvent(new MessageEvent("message", { data })); },
+    };
+  };
+  const live = { NEXT_PUBLIC_API_BASE: "/api" };
+
+  it("a wake message wakes, other messages do not, and the unsubscribe stops it", () => {
+    const c = container();
+    let wakes = 0;
+    const stop = cloudPushWakes(live, c.sw)!(() => { wakes += 1; });
+    expect(c.started(), "a listener added this way hears nothing until the queue starts").toBe(1);
+    c.post({ type: "ohmail:wake" });
+    c.post({ type: "something-else" });
+    c.post(null);
+    expect(wakes).toBe(1);
+    stop();
+    c.post({ type: "ohmail:wake" });
+    expect(wakes).toBe(1);
+  });
+
+  it("is null on the desktop build, with no API base, and with no service worker", () => {
+    const c = container();
+    expect(cloudPushWakes({ ...live, NEXT_PUBLIC_DESKTOP: "1" }, c.sw)).toBeNull();
+    expect(cloudPushWakes({}, c.sw)).toBeNull();
+    expect(cloudPushWakes(live, null)).toBeNull();
+  });
+
+  it("a partial container is no push wake, and one that fails to subscribe is a no-op", () => {
+    const stub = { register: async () => undefined } as unknown as ServiceWorkerContainer;
+    expect(cloudPushWakes(live, stub), "a container with no addEventListener").toBeNull();
+
+    const bare = new EventTarget() as unknown as ServiceWorkerContainer;
+    let wakes = 0;
+    const stop = cloudPushWakes(live, bare)!(() => { wakes += 1; });
+    (bare as unknown as EventTarget).dispatchEvent(new MessageEvent("message", { data: { type: "ohmail:wake" } }));
+    expect(wakes, "a container with no startMessages still hears").toBe(1);
+    stop();
+
+    const broken = Object.assign(new EventTarget(), {
+      startMessages: () => { throw new Error("no queue"); },
+      removeEventListener: () => { throw new Error("gone"); },
+    }) as unknown as ServiceWorkerContainer;
+    const off = cloudPushWakes(live, broken)!(() => {});
+    expect(() => off()).not.toThrow();
+  });
 });
