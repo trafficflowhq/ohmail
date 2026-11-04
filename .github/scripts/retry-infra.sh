@@ -11,7 +11,9 @@
 # each class may wrap.
 #
 #   npm-network      npm's own network error codes (a reset while a tarball streams is outside
-#                    npm's fetch retries). Never EINTEGRITY, an HTTP status, ENOSPC or EACCES.
+#                    npm's fetch retries), and EEXIST on a temp file in npm's cache (_cacache/tmp,
+#                    left by an earlier install on the runner), which is removed first. Never
+#                    EINTEGRITY, an HTTP status, ENOSPC, EACCES or an EEXIST anywhere else.
 #   cargo-exec-126   a build script the runner's kernel would not execute (exit 126, "cannot
 #                    execute binary file"); the scripts named are cleaned first so cargo relinks
 #                    them instead of running the same files again.
@@ -52,6 +54,11 @@ status=${PIPESTATUS[0]}
 [ "$status" -eq 0 ] && exit 0
 
 line=$(tr -d '\r' < "$out" | grep -E -m 1 -- "$sig")
+stale=
+if [ -z "$line" ] && [ "$cls" = npm-network ] && tr -d '\r' < "$out" | grep -qE '^npm (error|ERR!) code EEXIST$'; then
+  line=$(tr -d '\r' < "$out" | grep -E -m 1 '^npm (error|ERR!) path .*/_cacache/tmp/[A-Za-z0-9._-]+$' | grep -vE '/\.\.?(/|$)')
+  stale=${line#npm * path }
+fi
 [ -n "$line" ] || exit "$status"
 
 # Workflow-command escaping, spelled for bash 3.2: % first, then CR and LF.
@@ -75,6 +82,10 @@ if [ "$cls" = cargo-exec-126 ]; then
   else
     echo "retry-infra: no build script named to clean; retrying anyway"
   fi
+fi
+
+if [ -n "$stale" ]; then
+  rm -rf -- "$stale" || echo "retry-infra: could not remove $stale (exit $?); retrying anyway"
 fi
 
 [ "$pause" -gt 0 ] && sleep "$pause"
