@@ -230,7 +230,7 @@ describe("allowCookieAuth: false — cookie INGRESS and EGRESS are both refused"
     // Pre-session there is no client-type signal on the wire at all — no cookie, no bearer,
     // no prior session — so only the HOST can decide the transport.
     const body = JSON.stringify({
-      email: `s5-${randomUUID()}@lichtgrat.example`, password: "correct-horse-battery-password-password",
+      email: `s5-${randomUUID()}@lichtgrat.example`, password: "long-passphrase-password",
       displayName: "Gil", inviteCode: "TEST-INVITE",
     });
     const { deps } = await makeDeps(FIXED_NOW, { inviteCodes: new Set(["TEST-INVITE"]) });

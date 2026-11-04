@@ -89,7 +89,7 @@ describe("the launch drain and the window's first page", () => {
     const dataDir = await freshDataDir("ohmail-launch-first-page-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test",
       pollIntervalMs: 60 * 60 * 1000,
       leaseStaleAfterMs: 60_000,
@@ -196,7 +196,7 @@ describe("the launch drain and the window's first page", () => {
     cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
     const config = {
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
       searchBackfillTiming: { waitMs: 60 * 60 * 1000 }, log: () => {},
     };
@@ -260,7 +260,7 @@ describe("the launch drain and the window's first page", () => {
     cleanups.push(() => { vi.restoreAllMocks(); });
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
       searchBackfillTiming: { waitMs: 60 * 60 * 1000 }, adapterFactory: factory, log: () => {},
     });

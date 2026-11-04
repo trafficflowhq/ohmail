@@ -227,7 +227,7 @@ type AdapterFactory = NonNullable<Parameters<typeof startPhoneEngine>[0]["adapte
 function deps(exec: PhoneSqlExecutor, over: Record<string, unknown> = {}): Parameters<typeof startPhoneEngine>[0] {
   const made = {
     exec,
-    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
     machineName: "ohmail on a phone",
     installId: OUR_INSTALL,
     adapterFactory: () => ({

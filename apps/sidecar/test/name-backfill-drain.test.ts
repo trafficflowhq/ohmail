@@ -211,7 +211,7 @@ describe("the historical-name repair at the standalone drain's tail", () => {
       imap: {
         host: "imap.invalid", port: 993, secure: true,
         // A password is what makes `start()` take the connected path at all.
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "name backfill host",

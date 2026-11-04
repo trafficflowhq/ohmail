@@ -143,7 +143,7 @@ describe("the standalone door flips a due resurface", () => {
         host: "imap.invalid", port: 993, secure: true,
         // A password is what makes `start()` take the connected path at all — see the engine's
         // "NO PASSWORD, NO CONNECTION" branch, which returns before the first drain without one.
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "resurface host",

@@ -32,7 +32,7 @@ async function countingListener(): Promise<{ port: number; seen: string[]; close
 
 /** The credential shape `loadMailboxCreds` hands the pass, with a placeholder nobody can dial. */
 const creds = (host: string, port: number): SmtpSizeCreds => ({
-  host, port, secure: false, auth: { user: "probe", pass: "not-a-credential-password-password" },
+  host, port, secure: false, auth: { user: "probe", pass: "inert-entry-password" },
 });
 
 /** A resolver the test owns — the managed guard takes one at construction for exactly this. */

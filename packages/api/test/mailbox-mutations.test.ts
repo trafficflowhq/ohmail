@@ -82,7 +82,7 @@ describe("mailbox mutations (create / update / delete)", () => {
 
     const res = await H(req("PATCH", `/mailboxes/${id}`, {
       bearer: s.token, headers: { "content-type": "application/json" },
-      body: body({ displayName: "Renamed", imap: { pass: "rotated-pass-password-password" } }),
+      body: body({ displayName: "Renamed", imap: { pass: "after-change-password" } }),
     }), deps);
     expect(res.status).toBe(200);
     expect((await res.json()).displayName).toBe("Renamed");
@@ -90,7 +90,7 @@ describe("mailbox mutations (create / update / delete)", () => {
     const after = (await db.select().from(mailboxCredentials)
       .where(and(eq(mailboxCredentials.mailboxId, id), eq(mailboxCredentials.transport, "imap"))))[0]!;
     expect(after.secretEnc).not.toBe(before.secretEnc);           // re-encrypted
-    expect(await KP.decrypt(after.secretEnc, after.keyVersion)).toBe("rotated-pass-password-password");
+    expect(await KP.decrypt(after.secretEnc, after.keyVersion)).toBe("after-change-password");
   });
 
   it("PATCH a cross-account mailbox → 404", async () => {

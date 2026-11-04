@@ -258,7 +258,7 @@ describe.skipIf(!PG_UP)("the authentication trail", () => {
     const email = `erased-${randomUUID()}@lichtgrat.example`;
     await svc.register(
       authCtx(),
-      { email, password: "pw-correct-horse-password-password", displayName: "G", inviteCode: "INVITE-OK" },
+      { email, password: "account-signin-password", displayName: "G", inviteCode: "INVITE-OK" },
     );
     const accountId = await accountOf(email);
     await db.delete(authEvents).where(eq(authEvents.accountId, accountId));
@@ -283,7 +283,7 @@ describe.skipIf(!PG_UP)("the authentication trail", () => {
     const email = `live-${randomUUID()}@lichtgrat.example`;
     await svc.register(
       authCtx(),
-      { email, password: "pw-correct-horse-password-password", displayName: "G", inviteCode: "INVITE-OK" },
+      { email, password: "account-signin-password", displayName: "G", inviteCode: "INVITE-OK" },
     );
     const accountId = await accountOf(email);
     await db.delete(authEvents).where(eq(authEvents.accountId, accountId));

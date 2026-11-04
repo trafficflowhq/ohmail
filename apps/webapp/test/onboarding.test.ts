@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   PROTON, PROVIDERS, isProtonAddress, portMeansImplicitTls, presetForAddress, providerById,
 } from "../app/shell/providers.js";
+import { personalAt } from "../../../test/support/fixture-credentials.js";
 
 /**
  * Stage-2 the onboarding surface's checkable claims.
@@ -74,8 +75,8 @@ describe("provider parity — onboarding offers exactly what the landing promise
       const list = JSON.parse(read(m)) as { providers: Record<string, string> };
       expect(Object.values(list.providers).filter((v) => v.includes(PROTON.label)), m).toEqual([]);
     }
-    expect(isProtonAddress("info@proton.me")).toBe(true);
-    expect(presetForAddress("info@proton.me")).toBeNull();
+    expect(isProtonAddress(personalAt("fixture.info", "proton.me"))).toBe(true);
+    expect(presetForAddress(personalAt("fixture.info", "proton.me"))).toBeNull();
   });
 
   it("and the landing's 'any IMAP mailbox' promise has a manual entry behind it", () => {

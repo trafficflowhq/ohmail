@@ -60,7 +60,7 @@ async function establish(svc: AuthService, email: string, kind?: string): Promis
   const totp = (secret: string): string => generateSync({ secret, epoch: Math.floor(t.getTime() / 1000) });
 
   const { user } = await svc.register(at(), {
-    email, password: "pw-correct-horse-password-password", displayName: "Gil", inviteCode: "INVITE-OK",
+    email, password: "account-signin-password", displayName: "Gil", inviteCode: "INVITE-OK",
   });
   const latestSession = async (): Promise<string> =>
     (await db.select({ id: sessions.id }).from(sessions)
@@ -71,12 +71,12 @@ async function establish(svc: AuthService, email: string, kind?: string): Promis
   await svc.totpActivate(enrollCtx, { code: totp(secret) });
 
   t = new Date(t.getTime() + 30_000);
-  const ch = await svc.login(at(), { email, password: "pw-correct-horse-password-password" });
+  const ch = await svc.login(at(), { email, password: "account-signin-password" });
   if (ch.status !== "twofa_required") throw new Error(`expected a 2FA challenge, got ${ch.status}`);
   const est = await svc.totpVerify(at(), { loginToken: ch.loginToken, code: totp(secret), ...(kind ? { kind } : {}) });
   const signIn = async (): Promise<string> => {
     t = new Date(t.getTime() + 30_000);
-    const again = await svc.login(at(), { email, password: "pw-correct-horse-password-password" });
+    const again = await svc.login(at(), { email, password: "account-signin-password" });
     if (again.status !== "twofa_required") throw new Error(`expected a 2FA challenge, got ${again.status}`);
     await svc.totpVerify(at(), { loginToken: again.loginToken, code: totp(secret) });
     return latestSession();

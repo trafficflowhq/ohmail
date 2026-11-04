@@ -25,7 +25,7 @@ type Db = {
 };
 const sqlite = require_("node:sqlite") as { DatabaseSync: new (path: string) => Db };
 
-const PASSWORD = "pw-smtp-at-connect-fixture-password-password";
+const PASSWORD = "connect-time-password";
 
 /** The two native modules the bundle leaves external — `standalone-dial-refusal.test.ts`'s shape. */
 function loadArtifact(): Record<string, unknown> {

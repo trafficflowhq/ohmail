@@ -93,7 +93,7 @@ const OUT = process.env.HB_OUT ?? "/tmp/hb-stream.json";
 const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "hb-rig-")));
 const mailbox = new MemoryMailbox();
 const sidecar = await createSidecar({
-  dataDir, imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+  dataDir, imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
   address: "owner@trafficflow.test", displayName: "This Mac", machineName: "HB rig",
   pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, adapterFactory: mailbox.factory,
 });

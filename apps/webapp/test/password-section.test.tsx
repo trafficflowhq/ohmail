@@ -33,7 +33,7 @@ let originalFetch: typeof globalThis.fetch;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-const CURRENT = "pw-correct-horse-password";
+const CURRENT = "account-login-password";
 const NEXT = "new-battery-staple-password";
 const STEP_UP_REQUIRED: Answer = {
   status: 403, body: { error: { code: "step_up_required", message: "recent 2FA re-assertion required" } },
@@ -182,7 +182,7 @@ describe("changing the password", () => {
     answers["POST /api/auth/refresh"] = [{ status: 200, body: {} }];
     const where = window.location.href;
     const c = await mount();
-    await fill(c, "wrong-guess-password", NEXT);
+    await fill(c, "mismatched-entry-password", NEXT);
     await click(buttonByText(c, en.passwordChange.submit));
 
     expect(c.textContent).toContain(en.passwordChange.wrongCurrent);

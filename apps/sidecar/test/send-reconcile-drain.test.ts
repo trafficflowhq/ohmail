@@ -156,7 +156,7 @@ describe("the standalone drain settles a send this install stranded", () => {
       dataDir: dir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       ...(signedIn ? { keks: { 1: Buffer.alloc(32, 7) } } : {}),
       address: "owner@trafficflow.test",

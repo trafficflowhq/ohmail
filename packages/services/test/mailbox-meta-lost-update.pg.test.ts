@@ -115,8 +115,8 @@ describe.skipIf(!PG_UP)("a concurrent credential PATCH never restores a supersed
     const dto = await fastSvc.create(ctxOn(dbA, a!.id), {
       provider: "imap",
       address: `lost-${randomUUID().slice(0, 8)}@x.test`,
-      imap: { host: HOST_A, port: 993, secure: true, user: "u", pass: "original-password" },
-      smtp: { host: SMTP_A, port: 465, secure: true, user: "u", pass: "original-password" },
+      imap: { host: HOST_A, port: 993, secure: true, user: "u", pass: "earlier-entry-password" },
+      smtp: { host: SMTP_A, port: 465, secure: true, user: "u", pass: "earlier-entry-password" },
     }, PROBE_OK);
     return { accountId: a!.id, mailboxId: dto.id };
   }

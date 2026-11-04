@@ -157,7 +157,7 @@ describe("an away reply asks the lease at the send boundary", () => {
       dataDir: dir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: ADDRESS, pass: "not-dialled-password-password" },
+        auth: { user: ADDRESS, pass: "mailbox-unreached-password" },
       },
       address: ADDRESS,
       machineName: prefix,

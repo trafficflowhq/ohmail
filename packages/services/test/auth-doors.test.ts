@@ -19,7 +19,7 @@ import {
  */
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 const START = new Date("2026-09-26T10:00:00.000Z");
-const PASSWORD = "pw-correct-horse-password-password";
+const PASSWORD = "account-signin-password";
 
 class Clock {
   constructor(public t: Date = new Date(START)) {}
@@ -297,10 +297,10 @@ describe("rehash on sign-in", () => {
     const verify = h.deps.passwordHasher.verify.bind(h.deps.passwordHasher);
     h.deps.passwordHasher.verify = async (p, s) => {
       const ok = await verify(p, s);
-      await h.db.update(credentials).set({ passwordHash: "moved-underneath-password-hash-password-hash" }).where(eq(credentials.userId, user.userId));
+      await h.db.update(credentials).set({ passwordHash: "displaced-row-password-hash" }).where(eq(credentials.userId, user.userId));
       return ok;
     };
     expect(await attempt(h, "10.10.0.2", "moved@x.example", PASSWORD)).toBe("ok");
-    expect(await credentialOf(h, user.userId)).toBe("moved-underneath-password-hash-password-hash");
+    expect(await credentialOf(h, user.userId)).toBe("displaced-row-password-hash");
   }, 60_000);
 });

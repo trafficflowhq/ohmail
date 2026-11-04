@@ -190,12 +190,12 @@ describe.skipIf(!PG_UP)("a disabled mailbox never keeps a credential", () => {
     expect(await state(mailboxId)).toEqual({ status: "disabled", creds: 0 });
 
     const dto = await fastSvc.update(ctxOn(dbA, accountId), mailboxId, {
-      status: "connected", imap: { ...IMAP, pass: "fresh-pass-password-password" },
+      status: "connected", imap: { ...IMAP, pass: "newly-set-password" },
     }, PROBE_OK);
     expect(dto.status).toBe("connected");
     const [cred] = await dbA.select().from(mailboxCredentials)
       .where(eq(mailboxCredentials.mailboxId, mailboxId));
-    expect(await FAST_KP.decrypt(cred!.secretEnc, cred!.keyVersion)).toBe("fresh-pass-password-password");
+    expect(await FAST_KP.decrypt(cred!.secretEnc, cred!.keyVersion)).toBe("newly-set-password");
   });
 
   it("a PATCH that only renames a disabled mailbox is still fine — only SECRETS are gated", async () => {

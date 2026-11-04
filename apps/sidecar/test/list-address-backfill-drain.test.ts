@@ -68,7 +68,7 @@ describe("a standalone drain reads the list addresses before its retro", () => {
     const dataDir = await freshDataDir("ohmail-list-address-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test",
       machineName: "list host",
       pollIntervalMs: 60 * 60 * 1000,
@@ -157,7 +157,7 @@ describe("a standalone drain tidies the letters that left the server before thei
       const dataDir = await freshDataDir("ohmail-gone-tidy-");
       const sidecar = await createSidecar({
         dataDir,
-        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
         address: "owner@trafficflow.test", machineName: "tidy host", pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
         adapterFactory: quietMailbox(), log: () => {},
       });

@@ -114,7 +114,7 @@ async function seenOnServer(auth, ids) {
 }
 
 async function seed(host, port, inbox) {
-  const auth = { user: `rig-${randomUUID()}@trafficflow.test`, pass: "rig-fixture-password-password" };
+  const auth = { user: `rig-${randomUUID()}@trafficflow.test`, pass: "rig-worker-password" };
   const [row] = await db.insert(mailboxesTable).values({
     accountId: randomUUID(), provider: "imap", address: auth.user,
     organizerRole: "organizer", organizeConsentedAt: new Date(Date.now() - 3600_000),

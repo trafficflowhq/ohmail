@@ -429,7 +429,7 @@ describe.skipIf(!PG_UP)("CRYPTO-4 — the whole population, all five sites, agai
       userId: u!.id, secretEnc: seal(1, "totp-secret"), keyVersion: 1,
     });
     await db.insert(staffUsers).values({
-      email: `staff-${randomUUID()}@example.test`, passwordHash: "scrypt-x-password-hash",
+      email: `staff-${randomUUID()}@example.test`, passwordHash: "stored-row-password-hash",
       totpSecretEnc: seal(1, "staff-totp"), totpKeyVersion: 1,
     });
     await db.insert(mailboxOauthCeremonies).values({

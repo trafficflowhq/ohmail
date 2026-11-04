@@ -118,7 +118,7 @@ describe("the door marks a search as a person, and nothing else", () => {
     const dataDir = await freshDataDir("ohmail-person-door-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test",
       pollIntervalMs: 60 * 60 * 1000,
       leaseStaleAfterMs: 60_000,

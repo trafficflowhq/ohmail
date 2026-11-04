@@ -52,7 +52,7 @@ const sqlite = require_("node:sqlite") as {
 };
 
 /** The password the form carries. Asserted ABSENT from every refusal this file produces. */
-const PASSWORD = "not-the-one-the-server-wants-password-password";
+const PASSWORD = "server-rejects-password";
 
 /** The two native modules the bundle leaves external, and nothing else — see the banner. */
 function loadArtifact(): Record<string, unknown> {

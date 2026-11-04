@@ -52,7 +52,7 @@ async function establish(svc: AuthService): Promise<{ userId: string; access: st
   let t = Date.now();
   const at = (over: Partial<ServiceContext> = {}): ServiceContext => ctx(ip, { now: () => new Date(t), ...over });
   const email = `seal-replay-${randomUUID()}@lichtgrat.example`;
-  const registered = await svc.register(at(), { email, password: "pw-correct-horse-password-password", displayName: "S", inviteCode: "INVITE-OK" });
+  const registered = await svc.register(at(), { email, password: "account-signin-password", displayName: "S", inviteCode: "INVITE-OK" });
   if (registered.status !== "enrollment") throw new Error(`expected enrolment, got ${registered.status}`);
   const user = registered.user;
   const [row] = await owned.db.select({ id: sessions.id }).from(sessions)
@@ -61,7 +61,7 @@ async function establish(svc: AuthService): Promise<{ userId: string; access: st
   const { secret } = await svc.totpEnroll(enrol);
   await svc.totpActivate(enrol, { code: totp(secret, t) });
   t += 30_000;
-  const ch = await svc.login(at(), { email, password: "pw-correct-horse-password-password" });
+  const ch = await svc.login(at(), { email, password: "account-signin-password" });
   if (ch.status !== "twofa_required") throw new Error(`expected a 2FA challenge, got ${ch.status}`);
   const est = await svc.totpVerify(at(), { loginToken: ch.loginToken, code: totp(secret, t) });
   return { userId: user.userId, access: est.tokens!.accessToken, refresh: est.tokens!.refreshToken };

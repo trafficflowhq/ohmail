@@ -61,7 +61,7 @@ describe.skipIf(!PG_UP)("auth throttle against the postgres-js driver", () => {
     const svc = makeAuthService(makeTestAuthDeps({ inviteCodes: new Set(["INVITE-OK"]) }));
     const email = `throttle-${randomUUID()}@lichtgrat.example`;
     const out = await svc.register(ctx(), {
-      email, password: "pw-correct-horse-password-password", displayName: "Gil", inviteCode: "INVITE-OK",
+      email, password: "account-signin-password", displayName: "Gil", inviteCode: "INVITE-OK",
     });
     // A real enrollment session came back — the whole register path ran, not just the insert.
     expect(out.enrollmentToken).toEqual(expect.any(String));

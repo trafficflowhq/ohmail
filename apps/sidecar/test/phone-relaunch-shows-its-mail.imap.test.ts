@@ -363,7 +363,7 @@ describe.skipIf(!onServer)("a phone started again shows the mail it holds before
     phone.relay.target = { host: "127.0.0.1", port: refusing.port };
     const verdict = await startPhoneEngine({
       exec: dialectSeam(nodeExecutor(phone.file)),
-      imap: { host: "127.0.0.1", port: phone.relay.port, secure: false, auth: { user: phone.user, pass: "a-new-one-password" } },
+      imap: { host: "127.0.0.1", port: phone.relay.port, secure: false, auth: { user: phone.user, pass: "fresh-entry-password" } },
       machineName: "the relaunched phone",
       installId: phone.installId,
       keks: RING,

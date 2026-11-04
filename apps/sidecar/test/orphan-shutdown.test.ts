@@ -127,7 +127,7 @@ describe("an engine whose shell has gone", () => {
       .fetch("http://sidecar/cloud/signin", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
-        body: JSON.stringify({ email: "me@ohmail.test", password: "not-a-real-one-password-password", totp: "123456" }),
+        body: JSON.stringify({ email: "me@ohmail.test", password: "stand-in-entry-password", totp: "123456" }),
       })
       .catch(() => undefined);
     const deadline = Date.now() + 20_000;

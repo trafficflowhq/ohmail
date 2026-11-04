@@ -27,7 +27,7 @@ const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 const body = (o: unknown): string => JSON.stringify(o);
 
-const IMAP = { host: "imap.example.invalid", port: 993, secure: true, user: "u@example.invalid", pass: "typed-secret-password-password" };
+const IMAP = { host: "imap.example.invalid", port: 993, secure: true, user: "u@example.invalid", pass: "user-entered-password" };
 const SMTP = { host: "smtp.example.invalid", port: 465, secure: true, user: "u@example.invalid" };
 
 const post = (token: string, over: Record<string, unknown> = {}): Request =>
@@ -88,7 +88,7 @@ describe("credentials are tried before they are stored", () => {
     expect(await db.select().from(mailboxes)).toHaveLength(0);
     expect(await db.select().from(mailboxCredentials)).toHaveLength(0);
     // The sentence never contains what was typed.
-    expect(JSON.stringify(wire)).not.toContain("typed-secret-password-password");
+    expect(JSON.stringify(wire)).not.toContain("user-entered-password");
   });
 
   it("a mistyped host and a rejected password do NOT produce the same sentence", async () => {

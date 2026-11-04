@@ -205,7 +205,7 @@ const noStartTls = (): Error =>
 const refusedPort = (): Error =>
   Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED", authenticationFailed: true });
 
-const CRED = { host: "mail.vanity.example", user: "u@vanity.example", pass: "typed-secret-password-password" } as const;
+const CRED = { host: "mail.vanity.example", user: "u@vanity.example", pass: "user-entered-password" } as const;
 
 describe("makeImapProbe — the ladder, the consent gate, the suggestion", () => {
   it("walks 993 then 143 and reports the WINNING combination", async () => {
@@ -379,7 +379,7 @@ describe("makeImapProbe — the ladder, the consent gate, the suggestion", () =>
 });
 
 describe("makeSmtpProbe — the submission ladder and its own consent arm", () => {
-  const SMTP_IN = { accountId: "a", address: "u@vanity.example", smtp: { host: "smtp.vanity.example", user: "u@vanity.example", pass: "typed-secret-password-password" } };
+  const SMTP_IN = { accountId: "a", address: "u@vanity.example", smtp: { host: "smtp.vanity.example", user: "u@vanity.example", pass: "user-entered-password" } };
 
   it("walks 465 then 587 and reports the winning combination", async () => {
     const dialled: Array<[number, boolean]> = [];
@@ -592,7 +592,7 @@ function holdingFactory(holdMs: number, honour: boolean): {
 
 const typed = (host: string) => ({
   accountId: "a", address: "u@gateway.test",
-  imap: { host, port: 1143, secure: false, user: "u@gateway.test", pass: "typed-secret-password-password" },
+  imap: { host, port: 1143, secure: false, user: "u@gateway.test", pass: "user-entered-password" },
 });
 
 /** Run one probe under fake time; the verdict and the virtual instant it settled at. */
@@ -794,7 +794,7 @@ const manualPost = (
     body: JSON.stringify({
       provider: "imap", address: "u@vanity.example",
       // The manual-provider shape: HOSTS ONLY. Port and TLS mode are the probe's to prove.
-      imap: { host: "mail.vanity.example", user: "u@vanity.example", pass: "typed-secret-password-password", ...imapOver },
+      imap: { host: "mail.vanity.example", user: "u@vanity.example", pass: "user-entered-password", ...imapOver },
       smtp: { host: "smtp.vanity.example", user: "u@vanity.example", ...smtpOver },
     }),
   });

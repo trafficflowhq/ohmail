@@ -186,7 +186,7 @@ function storeFile(): string {
 }
 
 const ON_DEVICE_STORE = process.env.OHMAIL_EXPECT_DIALECT === "sqlite";
-const PASS = "pw-server-settings-case-password-password";
+const PASS = "settings-change-password";
 
 interface Phone {
   engine: PhoneEngine; id: string; meta: MetaFolder;

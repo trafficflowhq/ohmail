@@ -66,7 +66,7 @@ async function seedUnderFirstVersion(db: ReturnType<typeof makeDb>): Promise<voi
   });
   const staff = await firstRing.encrypt("staff-totp");
   await db.insert(staffUsers).values({
-    email: `staff-${randomUUID()}@example.test`, passwordHash: "scrypt-x-password-hash",
+    email: `staff-${randomUUID()}@example.test`, passwordHash: "stored-row-password-hash",
     totpSecretEnc: staff.ciphertext, totpKeyVersion: staff.keyVersion,
   });
   const client = await firstRing.encrypt("client-secret");

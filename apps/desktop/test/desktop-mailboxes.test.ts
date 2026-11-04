@@ -7,6 +7,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
 import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import { personalAt } from "../../../test/support/fixture-credentials.js";
 
 /**
  * ═══ SETTINGS → MAILBOXES ON A DESKTOP INSTALL SIGNED IN TO A HOSTED ACCOUNT ═══════════════
@@ -4632,7 +4633,7 @@ describe("the row takes a new password without the mailbox being removed", () =>
   });
 
   it("with nothing to place it, the form asks for the server once — pre-filled — and sends what it holds", async () => {
-    FACTS = [{ ...MAILBOX, address: "someone@gmail.com" }];
+    FACTS = [{ ...MAILBOX, address: personalAt("fixture.someone", "gmail.com") }];
     bridgeReply = earlier(() => unknownServer({ provider: "imap", login: "the-login", outgoingHost: "mail.example.test" }));
     const el = await render("local");
     await openAndType(el, "the-password");

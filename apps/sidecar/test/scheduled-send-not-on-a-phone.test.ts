@@ -154,7 +154,7 @@ describe("a composition that keeps no appointments", () => {
       imap: {
         host: "imap.invalid", port: 993, secure: true,
         // A password is what makes `start()` take the connected path at all.
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "the install under test",

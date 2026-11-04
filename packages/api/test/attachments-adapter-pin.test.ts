@@ -111,7 +111,7 @@ describe("the attachment door dials the address it checked", () => {
     });
     const verdict = await probe({
       accountId, address: ADDRESS,
-      imap: { host: NAME, port: 993, secure: true, user: ADDRESS, pass: "typed-secret-password-password" },
+      imap: { host: NAME, port: 993, secure: true, user: ADDRESS, pass: "user-entered-password" },
     });
     expect(verdict.verdict, "the probe must pass, or this proves nothing").toBe("ok");
 

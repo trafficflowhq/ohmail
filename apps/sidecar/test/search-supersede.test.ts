@@ -41,7 +41,7 @@ async function standUp(): Promise<Sidecar> {
   const s = await createSidecar({
     dataDir: dir,
     address: ADDRESS,
-    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "not-dialled-password-password" } },
+    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "mailbox-unreached-password" } },
     pollIntervalMs: 60 * 60 * 1000,
     vitalsIntervalMs: 60 * 60 * 1000,
     profileFlushIntervalMs: 60 * 60 * 1000,

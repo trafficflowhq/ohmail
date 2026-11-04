@@ -135,7 +135,7 @@ describe.skipIf(!HAVE_PG)("the add-time probe, live", () => {
     const verdict = await makeImapProbe(depsList[0]!)({
       accountId, address,
       // Port 1 on loopback: a real SYN, a real RST, a real ECONNREFUSED. No fixture involved.
-      imap: { host: "127.0.0.1", port: 1, secure: false, user: address, pass: "irrelevant-password" },
+      imap: { host: "127.0.0.1", port: 1, secure: false, user: address, pass: "ignored-entry-password" },
     });
     expect(verdict).toEqual({ verdict: "refuse", code: "connect" });
   }, 30_000);
@@ -145,7 +145,7 @@ describe.skipIf(!HAVE_PG)("the add-time probe, live", () => {
     const address = freshAddress();
     const key = track(accountId, address);
     const probe = makeImapProbe(depsList[0]!);
-    const target = { host: "127.0.0.1", port: 1, secure: false, user: address, pass: "irrelevant-password" };
+    const target = { host: "127.0.0.1", port: 1, secure: false, user: address, pass: "ignored-entry-password" };
     for (let i = 0; i < 3; i += 1) await probe({ accountId, address, imap: target });
     const [row] = await depsList[0]!.db.select().from(authThrottle)
       .where(eq(authThrottle.key, imapAdmissionKey(key)));

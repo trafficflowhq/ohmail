@@ -106,7 +106,7 @@ describe.runIf(ON_DEVICE_STORE)("the phone's change log has a retention, on the 
     const launch = async (exec: PhoneSqlExecutor): Promise<PhoneEngine> => {
       const engine = await startPhoneEngine({
         exec,
-        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
         machineName: "ohmail on a phone", installId: "install-phone-retention",
         adapterFactory: quiet(), log: (event: string) => { lines.push(event); },
       } as Parameters<typeof startPhoneEngine>[0]);

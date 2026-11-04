@@ -128,7 +128,7 @@ describe("the engine state the phone reads carries the refusal and the look", ()
       dataDir: dir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "the machine that pressed stop",

@@ -58,7 +58,7 @@ describe("resupplyPassword — the request, and the words a refusal comes back w
 
   it("sends the password to that mailbox's own path, and nothing else with it", async () => {
     const s = session({ ok: true, status: 200 });
-    expect(await resupplyPassword(s.it, "m1", "the-new-one-password-password")).toEqual({ kind: "sealed" });
+    expect(await resupplyPassword(s.it, "m1", "replacement-entry-password")).toEqual({ kind: "sealed" });
     expect(s.fetch).toHaveBeenCalledTimes(1);
     const [url, init] = s.fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain("/local/mailboxes/m1");
@@ -66,7 +66,7 @@ describe("resupplyPassword — the request, and the words a refusal comes back w
     /* THE SERVER, THE PORT AND THE USERNAME ARE NOT IN IT. They are in the credential this
        mailbox was proved against, and nothing on this phone is told them — a body that carried
        them would be this app inventing coordinates it never read. */
-    expect(init.body).toBe(JSON.stringify({ imap: { pass: "the-new-one-password-password" } }));
+    expect(init.body).toBe(JSON.stringify({ imap: { pass: "replacement-entry-password" } }));
   });
 
   it("a refusal carries the engine's own sentence, and nothing was stored", async () => {

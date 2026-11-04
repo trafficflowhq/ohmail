@@ -279,9 +279,11 @@ describe("BOUNCE — the report reaches the Ohbox only on evidence the sender ca
   const MICROSOFT = { trustedAuthservIds: providerAuthservIds("outlook.office365.com") };
   const GMAIL = { trustedAuthservIds: providerAuthservIds("imap.gmail.com") };
   const EXCHANGE = '"Microsoft Outlook" <MicrosoftExchange5e1f0c2a9b8d4e7f8a6b3c2d1e0f9a8b@lichtgrat.example>';
+  /** The providers' own report domains: the domain is the property, so it comes from a const. */
+  const [OUTLOOK, HOTMAIL, GOOGLEMAIL] = ["outlook.com", "hotmail.com", "googlemail.com"];
 
   it("on a Microsoft mailbox, Microsoft's own reports of the person's mail reach the Ohbox", async () => {
-    for (const [i, from] of [EXCHANGE, '"Microsoft Outlook" <postmaster@outlook.com>', '"Microsoft Outlook" <postmaster@hotmail.com>'].entries()) {
+    for (const [i, from] of [EXCHANGE, `"Microsoft Outlook" <postmaster@${OUTLOOK}>`, `"Microsoft Outlook" <postmaster@${HOTMAIL}>`].entries()) {
       const d = makeDeps();
       await seedOurSent(d);
       expect(await desiredFolderOf(bounce({ quotes: OURS, from }), d, `1:2${i}`, MICROSOFT), from).toBe("INBOX");
@@ -306,7 +308,7 @@ describe("BOUNCE — the report reaches the Ohbox only on evidence the sender ca
     const d = makeDeps();
     await seedOurSent(d);
     const folder = await desiredFolderOf(
-      bounce({ quotes: OURS, from: '"Mail Delivery Subsystem" <mailer-daemon@googlemail.com>' }), d, "1:11", GMAIL);
+      bounce({ quotes: OURS, from: `"Mail Delivery Subsystem" <mailer-daemon@${GOOGLEMAIL}>` }), d, "1:11", GMAIL);
     expect(folder).toBe("INBOX");
   });
 

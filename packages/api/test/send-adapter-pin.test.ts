@@ -77,7 +77,7 @@ async function seed(
   const [mb] = await d.db.insert(mailboxes).values({
     accountId: acct!.id, provider: "imap", address: USER,
   }).returning();
-  const imapSecret = await d.deps.keyProvider.encrypt("imap-pass-password");
+  const imapSecret = await d.deps.keyProvider.encrypt("incoming-relay-password");
   await d.db.insert(mailboxCredentials).values({
     mailboxId: mb!.id, transport: "imap",
     secretEnc: imapSecret.ciphertext, keyVersion: imapSecret.keyVersion,
@@ -85,7 +85,7 @@ async function seed(
     meta: { host: over.imapHost ?? IMAP_NAME, ...(over.imapConsent ? { port: 143, secure: false, insecureConsent: true } : { port: 993, secure: true }), user: USER },
   });
   if (over.smtpHost !== null) {
-    const enc = await d.deps.keyProvider.encrypt("smtp-pass-password");
+    const enc = await d.deps.keyProvider.encrypt("outgoing-relay-password");
     await d.db.insert(mailboxCredentials).values({
       mailboxId: mb!.id, transport: "smtp",
       secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
@@ -122,7 +122,7 @@ async function probeOnce(d: Deps, seeded: { accountId: string; address: string }
   });
   const verdict = await probe({
     accountId: seeded.accountId, address: seeded.address,
-    imap: { host: IMAP_NAME, port: 993, secure: true, user: USER, pass: "typed-secret-password-password" },
+    imap: { host: IMAP_NAME, port: 993, secure: true, user: USER, pass: "user-entered-password" },
   });
   return verdict.verdict;
 }

@@ -215,7 +215,7 @@ async function settle(ms = 250): Promise<void> {
 function deps(exec: PhoneSqlExecutor, over: Record<string, unknown> = {}): Parameters<typeof startPhoneEngine>[0] {
   return {
     exec,
-    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
     machineName: "Pixel 9",
     installId: "install-marker-abc",
     /* No socket is opened anywhere in this file. The double is the same shape the sidecar's own
@@ -633,7 +633,7 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
         adapterFactory: dialRecorder(dial),
         imap: {
           host: "imap.invalid", port: 993, secure: true,
-          auth: { user: "a@b.test", pass: "pw-not-used-password-password" },
+          auth: { user: "a@b.test", pass: "idle-fixture-password" },
           timeouts: mine,
         },
       }));

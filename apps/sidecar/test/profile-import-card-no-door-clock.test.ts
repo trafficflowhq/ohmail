@@ -142,7 +142,7 @@ describe("the settings card asks without the door's clock", () => {
     const dataDir = await freshDataDir("ohmail-card-clock-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "this computer",
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
       adapterFactory: box.factory,

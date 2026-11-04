@@ -157,7 +157,7 @@ describe.skipIf(!PG_UP)("cloud 0009 — the ceremony is consumed EXACTLY ONCE un
 describe.skipIf(!PG_UP)("cloud 0009 — the registration store's partial write", () => {
   it("an ABSENT field leaves the stored value alone; only an explicit null clears the secret", async () => {
     const [staff] = await dbA.insert(staffUsers)
-      .values({ email: `ops-${randomUUID().slice(0, 8)}@ohmail.app`, passwordHash: "scrypt-placeholder-password-hash-password-hash" })
+      .values({ email: `ops-${randomUUID().slice(0, 8)}@ohmail.app`, passwordHash: "seeded-row-password-hash" })
       .returning({ id: staffUsers.id });
     // The store is a SINGLETON per provider, so this test owns the one `microsoft` row for the run.
     await dbA.delete(oauthProviderConfig).where(eq(oauthProviderConfig.provider, "microsoft"));

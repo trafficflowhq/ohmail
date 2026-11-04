@@ -12,7 +12,7 @@ import { loopbackHarnessReason } from "../../src/adapters/imap-types.js";
  * elsewhere connected there and sent LOGIN in clear.
  */
 
-const AUTH = { user: "someone", pass: "fixture-not-a-secret-password-password" };
+const AUTH = { user: "someone", pass: "inert-label-password" };
 const restores: Array<() => void> = [];
 afterEach(() => { while (restores.length > 0) restores.pop()!(); });
 

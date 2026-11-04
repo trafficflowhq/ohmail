@@ -106,7 +106,7 @@ async function seedAllSites(version: number): Promise<Record<string, string>> {
     pendingKeyVersion: version, pendingStartedAt: new Date(),
   });
   await db.insert(staffUsers).values({
-    email: `staff-${randomUUID()}@example.test`, passwordHash: "scrypt-x-password-hash",
+    email: `staff-${randomUUID()}@example.test`, passwordHash: "stored-row-password-hash",
     totpSecretEnc: sealedAt(version, secrets["staff_users.totp_secret_enc"]), totpKeyVersion: version,
     totpPendingSecretEnc: sealedAt(version, secrets["staff_users.totp_pending_secret_enc"]),
     totpPendingKeyVersion: version,
@@ -279,7 +279,7 @@ describe("CRYPTO-4 — the census answers 'does anything still reference V<n>'",
    */
   it("a half-null row cannot be inserted at all — the CHECK, not the census, is the guard", async () => {
     await expect(db.insert(staffUsers).values({
-      email: `staff-${randomUUID()}@example.test`, passwordHash: "scrypt-x-password-hash",
+      email: `staff-${randomUUID()}@example.test`, passwordHash: "stored-row-password-hash",
       totpSecretEnc: sealedAt(1, "orphan"), totpKeyVersion: null,
     })).rejects.toThrow(/staff_users_totp_sealed_together/);
 
@@ -313,7 +313,7 @@ describe("CRYPTO-4 — the census answers 'does anything still reference V<n>'",
    */
   it("rows holding no secret at all are neither counted nor visited", async () => {
     await db.insert(staffUsers).values({
-      email: `staff-${randomUUID()}@example.test`, passwordHash: "scrypt-x-password-hash",
+      email: `staff-${randomUUID()}@example.test`, passwordHash: "stored-row-password-hash",
     });
     await db.insert(oauthProviderConfig).values({ provider: "microsoft" });
 
@@ -405,7 +405,7 @@ describe("CRYPTO-4 — the pass moves every site onto the current version", () =
     await seedAllSites(1);
     // A second credential row on the same mailbox, so one site holds two candidates.
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "smtp", secretEnc: sealedAt(1, "smtp-pass-password"), keyVersion: 1,
+      mailboxId, transport: "smtp", secretEnc: sealedAt(1, "outgoing-relay-password"), keyVersion: 1,
     });
     const r = await runKekRewrap({
       db: db as unknown as Tx, keyProvider: fakeProvider(2), apply: true, batchLimit: 1,
@@ -600,7 +600,7 @@ describe("retiring a version — what stored rows still name, asked at boot", ()
     });
     await db.insert(totpSecrets).values({ userId, secretEnc: sealedAt(2, "on-v2"), keyVersion: 2, activated: true });
     await db.insert(staffUsers).values({
-      email: `staff-${randomUUID()}@example.test`, passwordHash: "scrypt-x-password-hash",
+      email: `staff-${randomUUID()}@example.test`, passwordHash: "stored-row-password-hash",
       totpSecretEnc: sealedAt(3, "on-v3"), totpKeyVersion: 3,
     });
 
@@ -617,7 +617,7 @@ describe("retiring a version — what stored rows still name, asked at boot", ()
 
   it("a row holding no secret is not a reference", async () => {
     await db.insert(staffUsers).values({
-      email: `staff-${randomUUID()}@example.test`, passwordHash: "scrypt-x-password-hash",
+      email: `staff-${randomUUID()}@example.test`, passwordHash: "stored-row-password-hash",
     });
     expect((await kekRetiredReferences(db as unknown as Tx, 1)).total).toBe(0);
   });
