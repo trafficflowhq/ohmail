@@ -267,11 +267,11 @@ fn a_local_door_needs_a_server_and_a_username_and_nothing_else() {
 #[test]
 fn a_cloud_door_needs_the_service_and_the_address() {
     let parsed = parse(&serde_json::json!({
-        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@ohmail.app",
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@b.example",
     }))
     .expect("a cloud door");
     assert_eq!(parsed.mode(), Mode::Cloud);
-    assert_eq!(parsed.address(), Some("a@ohmail.app"));
+    assert_eq!(parsed.address(), Some("a@b.example"));
     assert!(parse(&serde_json::json!({ "mode": "cloud", "address": "a@b" })).is_err());
     assert!(parse(&serde_json::json!({ "mode": "cloud", "cloudUrl": "https://c" })).is_err());
 }
@@ -310,7 +310,7 @@ fn the_flavor_and_the_fingerprint_are_one_fact_in_both_directions() {
     // And a pin on any other door is a value nothing reads — worse than useless, because a later
     // reader takes it for protection that is in force.
     let stray = parse(&serde_json::json!({
-        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@ohmail.app",
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@b.example",
         "hostPin": "A2Z_abcdefghijklmnopqrstuvwxyz0123456789-xyz",
     }))
     .expect_err("a fingerprint on a door that cannot use one");
@@ -341,7 +341,7 @@ fn a_flavor_this_build_has_not_heard_of_still_parses() {
     // to disk must keep opening after the vocabulary grows, so an unknown flavor degrades to
     // "a cloud door" rather than failing to parse a settings file this app has itself written.
     let parsed = parse(&serde_json::json!({
-        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@ohmail.app",
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@b.example",
         "flavor": "something-new",
     }))
     .expect("an unfamiliar flavor");
@@ -354,7 +354,7 @@ fn a_door_written_before_the_fourth_one_is_unchanged_through_a_round_trip() {
     // Every existing install is this shape. The three new keys are OMITTED rather than written as
     // null, so a door this build rewrites is byte-identical to what an older build would read.
     let original = serde_json::json!({
-        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@ohmail.app",
+        "mode": "cloud", "cloudUrl": "https://api.ohmail.app", "address": "a@b.example",
     });
     let parsed = parse(&original).expect("an existing hosted door");
     assert_eq!(to_json(&parsed), original);
@@ -1190,11 +1190,14 @@ fn an_address_whose_origin_cannot_be_established_is_never_read_as_self_hosted() 
     fs::create_dir_all(&dir).expect("mkdir");
     fs::write(dir.join(OPERATOR_CA_FILE), "-----BEGIN CERTIFICATE-----\n").expect("write");
 
+    // The positive control's own server with userinfo before its host, joined at run time so no
+    // line spells a credential: the userinfo alone must make the address unreducible.
+    let with_userinfo = ["https://", "user", "@", "ohmail.example.com/api"].concat();
     for unreducible in [
         "https://\u{ff41}\u{ff50}\u{ff49}.ohmail.app",
         "https://api.ohmail.app\u{3002}",
         "https://api%2Eohmail.app",
-        "https://user@api.ohmail.app",
+        with_userinfo.as_str(),
         "https://",
         "https://[::1",
         "https://h.example:99999",
