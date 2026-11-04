@@ -673,8 +673,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    dials is shared with the profile now in use and therefore never lapses on its own.
         //    Awaited so a launch cannot start registering before the old rows are answered for.
         await drainPendingWakeDrops(env);
+        /* NO ACTIVE ROW (a Forget or a revoke removed it): this phone's own mailbox opens, if it
+           has one, rather than the Servers pane with nothing under it. */
+        const marked = await env.profiles.active();
+        const active = marked ?? (await env.profiles.list()).find(organizesHere) ?? null;
+        if (marked === null && active !== null) await env.profiles.setActive(active.id).catch(() => undefined);
         await refreshProfiles();
-        const active = await env.profiles.active();
         if (!stillCurrent()) return;
         if (active === null) {
           /* ONLY OUT OF `starting`, read from the DECIDED state rather than from React's

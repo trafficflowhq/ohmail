@@ -135,13 +135,17 @@ export function PaneTop() {
  * disconnected phone there), where there is no history to pop — the back
  * affordance hides rather than offering a press that goes nowhere.
  */
-export function DetailBar({ title, right }: { title?: string; right?: React.ReactNode }) {
+export function DetailBar({ title, right, back }: {
+  title?: string; right?: React.ReactNode;
+  /** The screen's own way out, drawn whatever the stack holds (the Servers pane: a pop can land back on it). */
+  back?: () => void;
+}) {
   const t = useTheme();
   const top = useTopPad(6);
   /* On the rail postures (the closed Duo) the root rail leads with Back on every pushed screen
      (`nav-rail.tsx`); the bar keeps its title and yields the affordance, so Back stands once. */
   const railBack = scaffoldPlan(usePosture(), platformName).nav === "rail";
-  const canBack = router.canGoBack() && !railBack;
+  const canBack = back !== undefined || (router.canGoBack() && !railBack);
   return (
     <View>
     {/* THE PUSHED SCREENS NEED IT TOO. A verb can be abandoned from the message, sender, triage,
@@ -161,7 +165,7 @@ export function DetailBar({ title, right }: { title?: string; right?: React.Reac
     >
       {canBack ? (
         <Tap
-          onPress={() => router.back()}
+          onPress={back ?? (() => router.back())}
           accessibilityRole="button"
           accessibilityLabel={Copy.back}
           style={{ flexDirection: "row", alignItems: "center", gap: 4, padding: 8 }}
