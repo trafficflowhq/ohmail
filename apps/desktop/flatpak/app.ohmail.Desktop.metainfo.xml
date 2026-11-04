@@ -78,6 +78,22 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.35" date="2026-11-04">
+      <description>
+        <ul>
+          <li>The desktop app's settings tests use a reserved example address</li>
+          <li>Mail server sign-ins are limited over time, and deleting leaves less behind</li>
+          <li>The test suite's sample passwords no longer echo older values</li>
+          <li>Setup no longer takes over a mailbox another computer organizes on a plain Continue</li>
+          <li>Removing every rule on another computer asks again each time</li>
+          <li>The sign-in page removes the mail of a browser signed out from another device</li>
+          <li>A browser signed out from elsewhere no longer gets new-mail notifications</li>
+          <li>Your own letters in a Sent folder with another name show as sent from the first frame</li>
+          <li>A browser signed out from another device no longer keeps your mail</li>
+          <li>Importing settings from another computer keeps the rules it never had</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.34" date="2026-11-04">
       <description>
         <ul>
@@ -129,19 +145,6 @@
           <li>A reinstalled phone takes its mailbox over from a claim nobody renews</li>
           <li>A letter deleted on the mail server keeps only who it was from and to, and older deleted letters lose their words too</li>
           <li>Removed mailboxes and mailing-list claims in the Screener</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.30" date="2026-11-03">
-      <description>
-        <ul>
-          <li>A file dragged from the file manager into a message is attached, not pasted as its path</li>
-          <li>Signing out closes the mail at once, and sign-in records stay bounded</li>
-          <li>Forged letters, disguised tracking pixels and mailing lists are caught in more places</li>
-          <li>A worker set to count old settings copies reads all of them while the mailbox stays connected</li>
-          <li>Coloured answers keep their colour, and five reading and sending fixes</li>
-          <li>Found settings keep their answers and stay out of the way</li>
-          <li>Six small fixes on the web and the desktop</li>
         </ul>
       </description>
     </release>
