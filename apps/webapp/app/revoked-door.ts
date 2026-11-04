@@ -2,7 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { REFRESH_REUSE_CAUSE, mirrorDbName } from "@ohmail/client-engine";
-import { SETTLE_DEADLINE_MS, registerRevokeDoor } from "./session-refresh";
+import { SETTLE_DEADLINE_MS, jarMark, registerRevokeDoor } from "./session-refresh";
 import { isOwnerShaped, readOwner } from "./shell/owner-cookie";
 import { subscribeSessionRevival } from "./shell/session-truth";
 import { holdSignedOutLeave, leaveSignedOutTab } from "./signed-out-signal";
@@ -14,11 +14,12 @@ import {
  * THE WEB'S DOOR FOR A SESSION REVOKED ELSEWHERE (`refresh_revoked`: Devices, Sign out all, sign out
  * everywhere, a credential change, a reuse sweep). The tab drops its mailbox, this browser's copy of
  * that account goes as Sign out takes it, and the tab leaves once the copy is gone. A lapse keeps the
- * scrim and the copy. Registered on import: `CloudShell` and the resume splash import it.
+ * scrim and the copy. Registered on import: `CloudShell`, the resume splash and the sign-in page import it.
  */
 
 interface Capture { owner: string | null }
-interface Revoked { owner: string | null; reason: SignedOutReason }
+/** `mark`: the jar as the refusal left it (`jarMark`); a session minted since moves it. */
+interface Revoked { owner: string | null; reason: SignedOutReason; mark: string }
 
 /** The revoke this page heard, until a session is minted again. */
 let revoked: Revoked | null = null;
@@ -59,6 +60,8 @@ function wipe(named: string | null, reason: SignedOutReason): Promise<void> {
       if (owner === null || (named === null && (revoked === null || readOwner() !== null))) return;
       // Loaded here, not with the splash: the wipe and the engine behind it are not the splash's to carry.
       const { forgetThisBrowser } = await import("./sign-out");
+      // A session minted since the refusal (this tab's revival ends `revoked`; another tab's moves tf_csrf) keeps all.
+      if (revoked === null || revoked.mark !== jarMark()) return;
       await forgetThisBrowser(owner, { only: true });
     } catch {
       /* what could not be removed stays; the tab leaves all the same */
@@ -86,7 +89,7 @@ registerRevokeDoor({
     if (refusal.code !== "refresh_revoked") return;
     const reason: SignedOutReason = refusal.cause === REFRESH_REUSE_CAUSE ? "reused" : "revoked";
     const owner = (before as Capture | null)?.owner ?? null;
-    setRevoked({ owner, reason });
+    setRevoked({ owner, reason, mark: jarMark() });
     // A sign-in landed during the round trip: the jar is that session's, and nothing of it is ended here.
     const now = readOwner();
     if (now !== null && now !== owner) return;

@@ -44,6 +44,8 @@ beforeEach(() => {
   assigned = [];
   session = () => json(FULL, 200);
   sessionStorage.clear();
+  localStorage.clear();
+  document.cookie = "tf_signed_out=; Path=/; Max-Age=0";
   Object.defineProperty(window, "location", {
     configurable: true,
     value: {
@@ -56,7 +58,8 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
     const url = String(input);
     if (url.includes("/auth/session")) return session();
-    if (url.includes("/auth/refresh")) return json({ error: { code: "refresh_revoked", message: "no" } }, 401);
+    // A signed-out visit's own answer: no refresh token in the jar.
+    if (url.includes("/auth/refresh")) return json({ error: { code: "refresh_missing", message: "no" } }, 401);
     if (url.includes("/hello")) return json({ features: { pairing: false } }, 200);
     return json({}, 200);
   }));
