@@ -22,7 +22,7 @@ import {
   forgetSplashPresentation, purgeSiteCache,
 } from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
-import { SHARED_NOTE_KEY } from "./(product)/resume/signed-out-note";
+import { REVOKE_OWED_PREFIX, SHARED_NOTE_KEY } from "./(product)/resume/signed-out-note";
 import { postSignedOut, thisTabName } from "./signed-out-signal";
 import { forgetMailDocs } from "./components/mail-doc-cache";
 
@@ -94,14 +94,21 @@ export async function forgetThisBrowser(
      * and this client's binding are touched only when they name `owner`.
      */
     only?: boolean;
+    /** With `only`: how far the wipe may still reach, asked before each step (the revoke door's). Absent, `jar`. */
+    reach?: () => WipeReach;
   } = {},
 ): Promise<{
   remaining: string[];
   inventoryComplete: boolean;
 }> {
   const only = opts.only === true && owner !== undefined;
+  /** May a step of this scope run now? Only the revoke door narrows it. */
+  const may = (scope: "jar" | "account"): boolean => {
+    const reach = only && opts.reach ? opts.reach() : "jar";
+    return reach === "jar" || (reach === "account" && scope === "account");
+  };
   if (only) {
-    if (readOwner() === owner) forgetOwner();
+    if (readOwner() === owner && may("jar")) forgetOwner();
   } else if (opts.serverHeld) markSignedOutPending();
   else forgetOwner();
   /*
@@ -122,9 +129,9 @@ export async function forgetThisBrowser(
    * receiving tab obeys only a jar that no longer does) and before the wipe, so no tab keeps
    * painting mail the next person at this browser would read. See `signed-out-signal.ts`.
    */
-  postSignedOut(owner ?? null);
+  if (may("account")) postSignedOut(owner ?? null);
   /* The sanitized documents this window kept per engine (`mail-doc-cache.ts`): mail, in memory. */
-  forgetMailDocs();
+  if (may("jar")) forgetMailDocs();
   /*
    * The wake registration goes first, before the id that names it is swept. This browser is the only party that knows
    * which push row is its own (the server's prune is device-scoped and a browser ceremony mints no device row), and
@@ -135,12 +142,14 @@ export async function forgetThisBrowser(
    * reads the 401 as recoverable, burning an `/auth/refresh` round trip on the flaky-network sign-out. The second
    * call is skipped rather than the site removed, so the erasure door keeps its own revoke.
    */
-  if (opts.revokeWake !== false) await revokeWakeRegistration();
+  if (may("jar")) {
+    if (opts.revokeWake !== false) await revokeWakeRegistration();
+  }
   // The boot caches: the account's dormancy window, screening baseline and own addresses,
   // remembered so the next boot can paint the partitioned piles before the server answers
   // (`shell/boot-cache.ts`). Cleared by prefix, not by owner — this browser forgets, including
   // whatever an earlier account left behind.
-  const boot = clearBootCaches(only ? owner : undefined);
+  const boot = may("account") ? clearBootCaches(only ? owner : undefined) : { survivors: [], enumerated: true };
   const survivors = [...boot.survivors];
   // The durable-decision stores, which are mail and are NOT in the mirror:
   // the send lanes, the Screener's intent journal, and the compose scratch
@@ -221,7 +230,9 @@ export async function forgetThisBrowser(
     // The erased-account word, which names an erased account's id (`shell/account-erased.ts`).
     // The erased door writes it after this sweep, so its own sweep never removes it.
     ERASED_KEY,
-  ]);
+    // A revoke's wipe still owed (`revoked-door.ts`): a sign-out takes every one; the door drops its own.
+    REVOKE_OWED_PREFIX,
+  ], may);
   survivors.push(...durable.survivors);
   // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it proved
   // gone and keeps the ones it did not), so it is deliberately NOT in the prefix sweep above —
@@ -230,15 +241,20 @@ export async function forgetThisBrowser(
    * AND THE HALF OF `COMPOSE_ROW_PREFIX` THAT IS NOT IN A JAR. A browser refusing this app its
    * storage remembers the row the composer opened in memory for the life of the tab
    * (`forgetComposeRows`), and every reason the key above is swept applies to it: left behind, the
-   * next sign-in's composer would be holding a row on the departed account. Unconditional and
-   * unwrapped — it touches no storage, so nothing here can throw.
+   * next sign-in's composer would be holding a row on the departed account. Unwrapped — it
+   * touches no storage, so nothing here can throw.
    */
-  forgetComposeRows();
-  const { survivors: tabLeft, deviceCeremonySwept } = forgetThisTab();
-  survivors.push(...tabLeft);
-  // The renewal name's durable copy, its own IndexedDB database (`session-refresh.ts`): it goes whole.
-  survivors.push(...await forgetRenewalName());
-  const wipe = only ? await clearAllMirrors(owner, undefined, { only: true }) : await clearAllMirrors(owner);
+  let deviceCeremonySwept = true;
+  if (may("jar")) {
+    forgetComposeRows();
+    const tab = forgetThisTab();
+    deviceCeremonySwept = tab.deviceCeremonySwept;
+    survivors.push(...tab.survivors);
+    // The renewal name's durable copy, its own IndexedDB database (`session-refresh.ts`): it goes whole.
+    survivors.push(...await forgetRenewalName());
+  }
+  const wipe = !may("account") ? { remaining: [], inventory: "complete" as const }
+    : only ? await clearAllMirrors(owner, undefined, { only: true }) : await clearAllMirrors(owner);
   return {
     remaining: [...survivors, ...wipe.remaining].sort(),
     // EVERY store has to be answerable, not just the mirrors. A jar that could not be walked
@@ -297,19 +313,30 @@ export function forgetThisTab(): { survivors: string[]; deviceCeremonySwept: boo
 const OWNER_KEYED: readonly string[] = [
   SEND_LOCKS_PREFIX, SCREENER_INTENTS_PREFIX, DELETE_INTENTS_PREFIX, ROUTING_INTENTS_PREFIX,
   COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, READING_ALONG_PREFIX,
+  ACCESS_VERDICT_PREFIX,
 ];
+
+/**
+ * How far a one-account wipe may still reach (`forgetThisBrowser`'s `reach`): `jar` takes all of it;
+ * `account` only that account's own stores, because another session holds the jar now; `none` takes
+ * nothing more, because that account's session is back.
+ */
+export type WipeReach = "jar" | "account" | "none";
 
 /**
  * The sweep, whole (`owner` null) or for ONE account: an owner-keyed prefix then matches only
  * `<prefix><owner>`, and the legacy compose key only itself — as a prefix it would also match
- * every account's `ohmail.ui.compose.<owner>.` buffers.
+ * every account's `ohmail.ui.compose.<owner>.` buffers. A one-account sweep never takes a revoke's
+ * owed record: the door drops its own once the copy is proved gone.
  */
-function sweepFor(owner: string | null, list: readonly string[]) {
+function sweepFor(owner: string | null, list: readonly string[], may: (scope: "jar" | "account") => boolean) {
   if (owner === null) return dropLocalStorageKeys(list);
+  const jar = may("jar");
+  const account = may("account");
   return dropLocalStorageKeysWhere((key) => list.some((p) =>
-    p === LEGACY_COMPOSE_DRAFT_KEY ? key === p
-      : OWNER_KEYED.includes(p) ? key.startsWith(`${p}${owner}`)
-        : key.startsWith(p)));
+    p === REVOKE_OWED_PREFIX ? false
+      : OWNER_KEYED.includes(p) ? account && key.startsWith(`${p}${owner}`)
+        : jar && (p === LEGACY_COMPOSE_DRAFT_KEY ? key === p : key.startsWith(p))));
 }
 
 /** Sign-out presses per page, by tab name (a test runs two tabs in one document). */

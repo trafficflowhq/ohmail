@@ -25,7 +25,7 @@ import { LOGIN_INVITE_KEY, anyoneCanSignUp, signupPosture } from "../../invite-p
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
 import { readOwnerMarker } from "../../shell/owner-cookie";
 import { refreshSettled } from "../../session-refresh";
-import { revokedWipeSettled } from "../../revoked-door";
+import { checkAnswered, revokedWipeSettled } from "../../revoked-door";
 import { resolveOwnerOutcome } from "../session-outcome";
 import {
   REASON_BODY, takeSharedSignedOutNote, takeSignedOutNote, type SignedOutReason,
@@ -121,6 +121,11 @@ export function LoginScreen(
    * first submit calls this; the effect owns what it does.
    */
   const cancelBootstrapRef = useRef<(() => void) | null>(null);
+  /** The ladder's attempt out now, and how its request is stopped: a submit hears it first (`submitPassword`). */
+  const checkOutRef = useRef<Promise<void> | null>(null);
+  const abortCheckRef = useRef<(() => void) | null>(null);
+  /** A check has answered (a session, or none): until one has, a submit asks once more first. */
+  const verdictRef = useRef(false);
 
   /**
    * HAS A CEREMONY STARTED? Latched on the first submit and never cleared.
@@ -145,14 +150,15 @@ export function LoginScreen(
    */
 
   /*
-   * Cancelled on unmount AND on the first submit — and cancelled means ABORTED, not ignored. A
-   * confirm still in flight when a password is submitted does not merely arrive too late: if it
-   * 401s it sends `POST /auth/refresh` with the OLD account's refresh cookie, and that response
-   * rewrites the whole jar — landing after the new session's cookies are set, a success overwrites
-   * them with the previous account's and a failure clears them, so the person is switched back or
-   * signed out seconds after completing a sign-in. Suppressing the promise continuation cannot undo
-   * a `Set-Cookie`; only stopping the request before it becomes a refresh can. The ladder made that
-   * window wider, so it carries the fix.
+   * Cancelled on unmount AND on the first submit. The submit first hears the attempt that is out,
+   * within the bound (its 401 may carry a revoke, whose wipe must start before the sign-in leaves),
+   * and then it is ABORTED, not ignored. A confirm still in flight when a password is submitted does
+   * not merely arrive too late: if it 401s it sends `POST /auth/refresh` with the OLD account's
+   * refresh cookie, and that response rewrites the whole jar — landing after the new session's
+   * cookies are set, a success overwrites them with the previous account's and a failure clears
+   * them, so the person is switched back or signed out seconds after completing a sign-in.
+   * Suppressing the promise continuation cannot undo a `Set-Cookie`; only stopping the request
+   * before it becomes a refresh can. The ladder made that window wider, so it carries the fix.
    */
   useEffect(() => {
     if (!configured) return;
@@ -162,8 +168,8 @@ export function LoginScreen(
     cancelBootstrapRef.current = () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
-      abort.abort();
     };
+    abortCheckRef.current = () => abort.abort();
     // A ceremony already owns this page — see `submittedRef`. Nothing to confirm.
     if (submittedRef.current) return;
     /*
@@ -183,6 +189,8 @@ export function LoginScreen(
       // from a page whose whole job is to render a form would be a worse outcome than a
       // ladder that ends early.
       const outcome = await resolveOwnerOutcome({ signal: abort.signal }).catch(() => null);
+      // Kept after a submit too: the submit hears this attempt, then asks only when it answered nothing.
+      if (outcome !== null && outcome.kind !== "unknown") verdictRef.current = true;
       if (cancelled || outcome === null) return;
       if (outcome.kind === "owner") {
         proceed(`/${window.location.hash}`, "replace");
@@ -191,9 +199,9 @@ export function LoginScreen(
       // `none` is the server's own answer that there is nothing to forward to, which is
       // exactly what this page is for. Stop asking.
       if (outcome.kind === "none" || attempt >= CONFIRM_ATTEMPTS) return;
-      timer = setTimeout(() => void ask(attempt + 1), nextConfirmDelay(attempt, outcome.retryAfterMs));
+      timer = setTimeout(() => { checkOutRef.current = ask(attempt + 1); }, nextConfirmDelay(attempt, outcome.retryAfterMs));
     };
-    void ask(1);
+    checkOutRef.current = ask(1);
     return () => {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
@@ -277,18 +285,27 @@ export function LoginScreen(
     // next one. See `cancelBootstrapRef` and `submittedRef`.
     submittedRef.current = true;
     cancelBootstrapRef.current?.();
+    const check = checkOutRef.current;
     void run(async () => {
       /*
        * LET ANY REFRESH ALREADY IN FLIGHT FINISH FIRST, and never cancel it.
        *
-       * The abort above stops the session READ, which is enough to prevent a NEW refresh from
-       * starting — but one the ladder had already entered is still running, and its response
-       * rewrites every session cookie whenever it arrives. Landing after this ceremony, it
-       * restores the previous account or clears the new session. The refresh is shared
-       * single-flight state that other callers are awaiting, so the fix is to order the two
-       * rather than to cancel one: it writes, then we write. See `refreshSettled`.
+       * A refresh the ladder already entered rewrites every session cookie whenever its response
+       * arrives. Landing after this ceremony, it restores the previous account or clears the new
+       * session. The refresh is shared single-flight state that other callers are awaiting, so the
+       * fix is to order the two rather than to cancel one: it writes, then we write. See
+       * `refreshSettled`. The session read still out is heard within the same bound, since its 401
+       * may carry a revoke; then it is aborted, before it can become a refresh after this ceremony.
+       * While no check has answered (a busy server, offline, a portal's page, a ladder run out), the
+       * submit asks once more inside that bound; never under a pending sign-out, whose family the
+       * read would renew.
        */
-      await refreshSettled();
+      const askOnce = async (signal: AbortSignal): Promise<void> => {
+        if (verdictRef.current || readOwnerMarker().kind === "signed-out") return;
+        if ((await resolveOwnerOutcome({ signal })).kind !== "unknown") verdictRef.current = true;
+      };
+      await Promise.all([checkAnswered(check, askOnce), refreshSettled()]);
+      abortCheckRef.current?.();
       // A revoke this page's check heard: that account's copy is gone before a sign-in leaves.
       await revokedWipeSettled();
       /*

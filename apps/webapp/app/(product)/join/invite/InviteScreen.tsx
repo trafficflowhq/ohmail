@@ -34,6 +34,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { apiConfigured, auth, codeOf, messageOf, pair } from "../../../api-client";
+import { checkAnswered, revokedWipeSettled } from "../../../revoked-door";
 
 /** What this page knows, in order of discovery. `reading` is the mount tick before the hash is read. */
 type Phase = "reading" | "form" | "missing" | "unconfigured";
@@ -97,6 +98,8 @@ export function InviteScreen() {
       setBusy(true);
       setError(null);
       try {
+        // A revoke's wipe this browser still owes is done before the token is spent.
+        await revokedWipeSettled();
         const address = email.trim();
         // The redeem answers the server's NORMALIZED recipient (trimmed, lowercased — the
         // mail port's rule), and `minted.email` stores that answer verbatim. So the "same
@@ -124,6 +127,10 @@ export function InviteScreen() {
             return;
           }
         }
+        // The session is asked, within one bound, before the account is made: a revoke it meets is wiped first.
+        // Not before the redeem: any refusal holds this tab's session ended, and the redeem would be refused here.
+        await checkAnswered(null, (signal) => auth.session({ signal }));
+        await revokedWipeSettled();
         await auth.register({
           email: address, password, displayName: displayName.trim(), inviteCode: code,
         });

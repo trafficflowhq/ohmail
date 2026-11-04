@@ -7,6 +7,7 @@ import { apiConfigured } from "../../api-client";
 import { confirmAccountReturn } from "../../account-return";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { SELF_HOST_BUILD } from "../../hello";
+import { revokedWipeSettled } from "../../revoked-door";
 
 /**
  * One `GET /auth/session` (through the shared classifier, so a lapsed-but-resumable session is
@@ -27,6 +28,8 @@ export function SubscribedScreen() {
     }
     let alive = true;
     void resolveOwnerOutcome()
+      // A revoke this check heard: that account's copy is gone before the page sends anyone on.
+      .then(async (outcome) => { await revokedWipeSettled(); return outcome; })
       .then((outcome) => {
         if (!alive) return;
         if (outcome.kind === "owner") {
