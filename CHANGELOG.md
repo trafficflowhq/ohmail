@@ -21,6 +21,32 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.36] — 2026-11-04
+
+### A word typed part way no longer lists the letters holding a common word it starts
+
+Typing the start of a common word that every search leaves out, such as `agai`, `abou` or `yourse`, listed
+every letter whose text held `again`, `about` or `yourself`, on the phone and in the first results every app
+shows while the full answer loads. Both now answer as the full search does: the letters whose subject or
+people hold what you typed, and the letters holding a longer word it starts that is no such common word.
+
+### A phone or computer signed out from another device no longer keeps your mail
+
+On the phone app and the desktop app, with ohmail Cloud, your own server or another computer of yours, a device
+whose sign-in was ended from elsewhere (removed under Devices, signed out everywhere, or after a password or
+two-step change) kept its copy of the mail. The phone now removes that account's copy the way forgetting the
+pairing does, and says its pairing ended; changes made there that had not yet reached the server are dropped with
+it. The desktop app now takes the mail off the screen and off the computer, and its sign-in card says the copy was
+removed; changes made there that had not yet been sent wait on that computer and are sent when the same account
+signs in again. Other accounts on the same device keep their mail. A sign-in that expired still keeps the copy.
+
+### The phone asks each mailbox about saved settings once, with Settings open
+
+A paired phone checks every mailbox for a settings document another ohmail saved there. The card
+above the lists and the saved-settings section in Settings each asked on their own, so with Settings
+open every mailbox was asked twice at the same moment, once a minute. Both now share one answer,
+and each mailbox is asked once.
+
 ## [0.30.35] — 2026-11-04
 
 ### The desktop app's settings tests use a reserved example address
@@ -16719,7 +16745,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.35...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.36...HEAD
+[0.30.36]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.36
 [0.30.35]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.35
 [0.30.34]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.34
 [0.30.33]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.33
