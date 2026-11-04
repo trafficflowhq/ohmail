@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE } from "@ohmail/client-engine";
+import {
+  LAST_DRAIN_AT_META, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, OhmailEngine, isOwnSent, type EngineAdapter,
+} from "@ohmail/client-engine";
 
-import { WINDOW_OUTBOX_PATH, WindowOutboxStore, type OutboxFetch } from "../src/window-outbox-store.js";
+import {
+  WINDOW_OUTBOX_PATH, WindowOutboxStore, forgetWindowSentFolders, type OutboxFetch, type WindowKeep,
+} from "../src/window-outbox-store.js";
 
 /**
  * The window's store (`window-outbox-store.ts`): the mirror in memory, the two outbox types on the
@@ -108,5 +112,39 @@ describe("WindowOutboxStore", () => {
     const store = new WindowOutboxStore({ scope: SCOPE, write: d.fetch });
     await store.load();
     expect(store.entries(OUTBOX_TYPE)).toEqual([]);
+  });
+
+  it("the recorded Sent folders outlive the window for its mailbox, and sign-out forgets them", async () => {
+    const jar = new Map<string, string>();
+    const keep: WindowKeep = {
+      getItem: (k) => jar.get(k) ?? null, setItem: (k, v) => { jar.set(k, v); }, removeItem: (k) => { jar.delete(k); },
+    };
+    const d = door((s) => (s.method === "GET" ? json({ rows: [] }) : new Response(null, { status: 204 })));
+    const held = { sync: () => new Promise(() => {}), mutate: async () => ({ status: "applied" }), fetchBody: async () => null } as unknown as EngineAdapter;
+    const launch = async (scope: string) => {
+      const store = new WindowOutboxStore({ scope, write: d.fetch, keep });
+      const engine = new OhmailEngine({ adapter: held, store });
+      await engine.hydrate();
+      return { engine, store };
+    };
+    const own = { mailboxId: "mb-fr", folder: "Envoyés" };
+
+    const first = await launch(SCOPE);
+    first.engine.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }]);
+    await first.store.setMeta(LAST_DRAIN_AT_META, "2026-11-04T09:00:00.000Z");
+    first.engine.setSentFolders([{ id: "mb-x", sentFolder: "Archive" }, { id: "mb-fr", sentFolder: "Envoyés" }]);
+    first.engine.setSentFolders([{ id: "mb-fr", sentFolder: "Envoyés" }]);
+    expect(d.sent.filter((s) => s.method === "POST"), "the statement never goes to the outbox door").toEqual([]);
+
+    const relaunch = await launch(SCOPE);
+    expect(isOwnSent(own), "the relaunch read the letter as received").toBe(true);
+    expect(relaunch.store.getMeta(LAST_DRAIN_AT_META), "the rest of meta is the launch's own").toBeUndefined();
+
+    await launch("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    expect(isOwnSent(own), "another mailbox's window read this one's statement").toBe(false);
+
+    forgetWindowSentFolders(SCOPE, keep);
+    await launch(SCOPE);
+    expect(isOwnSent(own)).toBe(false);
   });
 });

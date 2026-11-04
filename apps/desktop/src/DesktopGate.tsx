@@ -45,6 +45,7 @@ import {
   unlockRefusal,
   type UnlockRefusal,
 } from "./bridge-fetch.js";
+import { forgetWindowSentFolders } from "./window-outbox-store.js";
 import {
   cloudNoticeDue, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
 } from "./cloud-session.js";
@@ -819,6 +820,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
     /* Signed out, or the door was given up. Dropping the reference is what takes the mirror — a
        copy of somebody's mail — out of this window's memory; keeping it would leave it sitting
        behind the chooser for the life of the process. */
+    forgetWindowSentFolders(live.key);
     setLive(null);
   }
 

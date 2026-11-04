@@ -2076,6 +2076,13 @@ export const WINDOW_REFILL_OWED_META = "windowRefillOwed";
 export const RECEIVED_MESSAGES_META = "receivedMessages";
 
 /**
+ * EACH MAILBOX'S RECORDED SENT FOLDER, KEPT WITH THE MIRROR: {@link OhmailEngine.setSentFolders}'s
+ * statement as `[mailboxId, path]` pairs, read back by {@link OhmailEngine.hydrate} so the first
+ * frame of a start knows 'Envoyés' before `GET /mailboxes` answers. A wipe of the mirror takes it.
+ */
+export const SENT_FOLDERS_META = "sentFolders";
+
+/**
  * THE FRESHNESS CONTRACT'S THREE STATES, and the value a surface renders — re-exported from
  * `@trafficflow/core/drain-policy`, where the derivation that produces them lives beside them.
  *
@@ -3155,6 +3162,8 @@ export class OhmailEngine {
   private cutlineAllTime = false;
   /** This engine's last {@link OhmailEngine.setSentFolders} statement, as `[id, path]` pairs sorted by id. */
   private sentFoldersStated = "[]";
+  /** A mailbox read (or a removal receipt) has stated them in this engine: the stored copy never overrides it. */
+  private sentFoldersLive = false;
   /**
    * WHAT THE WINDOWED PRUNE LAST RAN OVER — the stamp of everything but bodies, and the cutline
    * generation it ran under. The pass reads the whole mirror and SORTS it; on a settled client
@@ -3415,6 +3424,7 @@ export class OhmailEngine {
         // publish below already carries every un-sent verb's optimistic effect — the boot
         // render is continuous with the killed session. See {@link OhmailEngine.restoreOutbox}.
         this.storeLoaded = true;
+        this.restoreSentFolders();
         this.restoreOutbox();
         // The bodies the load restored are bodies this session holds, and the bound is theirs to
         // pay too — count them, then trim ONCE, before anybody is told. See {@link
@@ -4228,6 +4238,8 @@ export class OhmailEngine {
           // back over the wire and would otherwise be counted a second time. The wipe emptied meta
           // with it, so there is no written count left for the next boot to read back.
           await this.resetReceived();
+          // …and the recorded Sent folders, which came from the mailbox read and not from the log.
+          this.stateSentFolders(this.statedSentFolders());
           // The wipe took the rules with it — the re-bootstrap owes the rules-first pass again.
           rulesFirstDone = false;
           publish();
@@ -4249,6 +4261,7 @@ export class OhmailEngine {
       const flat = flattenResponse(resp);
       // Before the rows, which tombstone the mailbox the receipt names.
       await this.noteRemovalOwesRefill(flat);
+      this.dropRemovedSentFolders(flat);
       this.noteApplied(flat);
       owed.rows = true;
       await this.store.applyResponse(resp);
@@ -4800,22 +4813,71 @@ export class OhmailEngine {
    * one): `isOwnSent` then knows a Sent folder by the server's own name ('Envoyés'). Kept only
    * when it is a non-empty path that is not INBOX and not already Sent-shaped; a mailbox left out
    * or stating `null` is cleared. A different statement bumps the overlay and notifies in one
-   * turn, so every derivation re-runs; the same one returns false and changes nothing.
+   * turn, so every derivation re-runs; the same one returns false and changes nothing. Written
+   * beside the mirror ({@link SENT_FOLDERS_META}) for the next start's first frame.
    */
   setSentFolders(mailboxes: Iterable<{ id: string; sentFolder?: string | null }>): boolean {
     const next = new Map<string, string>();
     for (const m of mailboxes) {
-      const p = m.sentFolder;
-      if (typeof p !== "string" || p === "" || p.toUpperCase() === "INBOX" || isSentFolderPath(p)) continue;
-      next.set(m.id, p);
+      if (OhmailEngine.keepsAsSent(m.sentFolder)) next.set(m.id, m.sentFolder);
     }
-    const stated = JSON.stringify([...next].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-    if (stated === this.sentFoldersStated) return false;
+    this.sentFoldersLive = true;
+    const changed = this.stateSentFolders(next);
+    if (changed) this.notify();
+    return changed;
+  }
+
+  private static keepsAsSent(p: unknown): p is string {
+    return typeof p === "string" && p !== "" && p.toUpperCase() !== "INBOX" && !isSentFolderPath(p);
+  }
+
+  /** Install a statement and write it beside the mirror; answers whether it differed. The caller notifies. */
+  private stateSentFolders(next: ReadonlyMap<string, string>, force = false): boolean {
+    const pairs = [...next].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const stated = JSON.stringify(pairs);
+    // Also when unchanged: a 410 wipe empties meta, and the next read writes it back.
+    if (this.storeLoaded && JSON.stringify(this.store.getMeta(SENT_FOLDERS_META) ?? []) !== stated) {
+      // A refused write costs the next start the round trip it had before; nothing else.
+      this.store.setMeta(SENT_FOLDERS_META, pairs).catch(() => undefined);
+    }
+    if (!force && stated === this.sentFoldersStated) return false;
     this.sentFoldersStated = stated;
     replaceRecordedSentFolders(next);
     this.overlayRev++;
-    this.notify();
     return true;
+  }
+
+  /**
+   * At hydration, before the publish: the mirror's stored statement becomes the module's — an empty
+   * one too, so an engine over a wiped mirror never reads the previous account's. A statement made
+   * before the load is written instead.
+   */
+  private restoreSentFolders(): void {
+    if (this.sentFoldersLive) {
+      this.stateSentFolders(this.statedSentFolders());
+      return;
+    }
+    const next = new Map<string, string>();
+    const stored = this.store.getMeta<unknown>(SENT_FOLDERS_META);
+    for (const pair of Array.isArray(stored) ? stored : []) {
+      if (Array.isArray(pair) && typeof pair[0] === "string" && OhmailEngine.keepsAsSent(pair[1])) next.set(pair[0], pair[1]);
+    }
+    this.stateSentFolders(next, true);
+  }
+
+  private statedSentFolders(): Map<string, string> {
+    return new Map(JSON.parse(this.sentFoldersStated) as Array<[string, string]>);
+  }
+
+  /** A `mailbox` removal receipt drops that mailbox's recorded Sent folder, in memory and on disk. */
+  private dropRemovedSentFolders(changes: SyncChange[]): void {
+    const gone = new Set(changes.filter((ch) => ch.type === MAILBOX_TYPE && ch.op === "delete").map((ch) => ch.id));
+    const stated = this.statedSentFolders();
+    let dropped = false;
+    for (const id of gone) dropped = stated.delete(id) || dropped;
+    if (!dropped) return;
+    this.sentFoldersLive = true;
+    this.stateSentFolders(stated);
   }
 
   /**
