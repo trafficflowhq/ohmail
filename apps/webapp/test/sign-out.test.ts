@@ -233,7 +233,7 @@ describe("the sign-out CONTROL is wired", () => {
     expect(account, "the pane still claims to say the server refused").not.toContain('t("signOutServerRefused"');
     // …and it is finished where the form is, never behind a page with nothing on it: the sign-in
     // page asks the sign-out door under the marker, and so do the sign-up and confirmation pages one
-    // link away (one hook, `pending-sign-out.tsx`); the splash never loads the sign-out at all.
+    // link away (one hook, `pending-sign-out.tsx`); the splash never finishes a sign-out.
     const login = read("../app/(product)/login/LoginScreen.tsx");
     expect(login).toMatch(/if \(readOwnerMarker\(\)\.kind === "signed-out"\) \{\s*void pending\.finish\(/);
     const join = read("../app/(product)/join/JoinScreen.tsx");

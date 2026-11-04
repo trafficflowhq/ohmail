@@ -310,3 +310,101 @@ describe("every tab, and the wall", () => {
     expect(localStorage.getItem(erased.ERASED_KEY)).toBeNull();
   });
 });
+
+/**
+ * A SESSION REVOKED ELSEWHERE LEAVES NO COPY EITHER. Devices → Sign out on another device (or Sign
+ * out all, sign out everywhere, a password change) answers this browser's next renewal
+ * `refresh_revoked`: the tab drops its mailbox, its account's copy goes and another account's stays,
+ * and the sign-in page is told why. A lapse keeps the copy, behind the scrim.
+ */
+describe("a session revoked elsewhere", () => {
+  const refusal = (code: string, cause?: string): Response => new Response(
+    JSON.stringify({ error: { code, message: code, ...(cause ? { details: { cause } } : {}) } }),
+    { status: 401, headers: { "content-type": "application/json" } },
+  );
+
+  /** The revoke door, and a tab that draws its mailbox unless the door dropped it; leaves are counted. */
+  async function tab() {
+    const door = await import("../app/revoked-door.js");
+    let leaves = 0;
+    (await import("../app/signed-out-signal.js")).setSignedOutLeaveForTest(() => { leaves += 1; });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    const Harness = () => (door.useRevokedHere(false) ? h("p", null, "dropped") : h("p", null, "the mailbox"));
+    await act(async () => { root.render(h(Harness)); });
+    const note = await import("../app/(product)/resume/signed-out-note.js");
+    return { door, container, leaves: () => leaves, note: note.takeSharedSignedOutNote };
+  }
+
+  /** A read meets its 401 and the refresh hears `answer`; then whatever the door started has ended. */
+  async function renewalRefused(client: { api: (p: string) => Promise<unknown> }, door: { revokedWipeSettled: () => Promise<void> }) {
+    await act(async () => { await codeOfThrow(client.api("/sync?limit=50")); });
+    await act(async () => { await door.revokedWipeSettled(); });
+  }
+
+  it("refresh_revoked: the tab drops its mail, this account's copy goes, another's stays, and the reason waits", async () => {
+    const { client, truth } = await signedIn(X);
+    const xKeys = await holdCopyOf(X);
+    const yKeys = await holdCopyOf(Y);
+    const t = await tab();
+    rig.refresh = () => { expireJar(); return refusal("refresh_revoked"); };
+    await renewalRefused(client, t.door);
+    expect(truth.sessionIsDead()).toBe(true);
+    expect(t.container.textContent, "the revoked tab kept its mailbox").toBe("dropped");
+    const left = await mirrors();
+    expect(left, "the revoked account's mirror is still in this browser").not.toContain(`ohmail-mirror:${X}`);
+    expect(left, "another account's mirror went with it").toEqual([`ohmail-mirror:${Y}`]);
+    expect(xKeys.filter((k) => localStorage.getItem(k) !== null)).toEqual([]);
+    expect(yKeys.filter((k) => localStorage.getItem(k) === null), "another account's keys were swept").toEqual([]);
+    expect(t.note(), "the sign-in page is not told why").toBe("revoked");
+    await settle(() => t.leaves() === 1, "the tab's leave");
+  });
+
+  it("a reuse sweep's refusal: the copy goes, and the reason is the sweep's", async () => {
+    const { client } = await signedIn(X);
+    await holdCopyOf(X);
+    const t = await tab();
+    rig.refresh = () => { expireJar(); return refusal("refresh_revoked", "reuse"); };
+    await renewalRefused(client, t.door);
+    expect(await mirrors()).toEqual([]);
+    expect(t.note()).toBe("reused");
+  });
+
+  it.each(["refresh_expired", "refresh_missing"])("CONTROL — %s is a lapse: the session ends, the mailbox and the copy stay", async (code) => {
+    const { client, truth } = await signedIn(X);
+    const keys = await holdCopyOf(X);
+    const t = await tab();
+    rig.refresh = () => { expireJar(); return refusal(code); };
+    await renewalRefused(client, t.door);
+    expect(truth.sessionIsDead()).toBe(true);
+    expect(t.container.textContent).toBe("the mailbox");
+    expect(await mirrors()).toEqual([`ohmail-mirror:${X}`]);
+    expect(keys.filter((k) => localStorage.getItem(k) === null)).toEqual([]);
+    expect(t.leaves()).toBe(0);
+  });
+
+  it("a session minted afterwards (a 204) lifts the revoke", async () => {
+    const { client } = await signedIn(X);
+    const t = await tab();
+    rig.refresh = () => { expireJar(); return refusal("refresh_revoked"); };
+    await renewalRefused(client, t.door);
+    expect(t.container.textContent).toBe("dropped");
+    rig.refresh = () => new Response(null, { status: 204 });
+    const { resumeSession } = await import("../app/session-refresh.js");
+    await act(async () => { expect(await resumeSession()).toBe("resumed"); });
+    expect(t.container.textContent, "a live session stayed dropped").toBe("the mailbox");
+  });
+
+  it("CONTROL — a refusal that lands under another account's jar wipes nothing and tells nobody", async () => {
+    const { client } = await signedIn(X);
+    await holdCopyOf(X);
+    await holdCopyOf(Y);
+    const t = await tab();
+    rig.refresh = () => { document.cookie = `tf_owner=${Y}; Path=/`; return refusal("refresh_revoked"); };
+    await renewalRefused(client, t.door);
+    expect(await mirrors()).toEqual([`ohmail-mirror:${X}`, `ohmail-mirror:${Y}`].sort());
+    expect(t.note()).toBeNull();
+  });
+});

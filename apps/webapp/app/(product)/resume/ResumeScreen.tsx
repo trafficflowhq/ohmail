@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { REFRESH_REUSE_CAUSE } from "@ohmail/client-engine";
 import { REFRESH_ENDPOINT, lastRefreshReport, resumeSession, type RefreshReport } from "../../session-refresh";
+import { revokedWipeSettled } from "../../revoked-door";
 import { readOwnerCookie, readOwnerMarker } from "../../shell/owner-cookie";
 import { storageOwner } from "../../shell/storage-owner";
 import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
@@ -201,6 +202,8 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
   const attempt = useCallback(async (n: number): Promise<void> => {
     const before = lastRefreshReport();
     const ok = await resumeSession({ mayProceed: stillMine, landing: true, staleJar, onRefused: tellOtherTabs }) === "resumed";
+    // A revoke's copy is gone before this tab goes anywhere.
+    await revokedWipeSettled();
     const report = lastRefreshReport();
     // The door's own refusal clears the jar, tf_owner with it: that is this splash's answer.
     const owner = readOwnerCookie();
