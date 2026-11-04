@@ -10,7 +10,7 @@ import type { Tx } from "./change-log.js";
  * A PRESS OF "IMPORT SETTINGS" THE REQUEST COULD NOT FINISH (mail 0129) — handed to the mailbox's
  * organizer, which reads the document on its own connection and answers here. Four columns on
  * the mailbox row, one per mailbox: the last press wins. The fingerprint is the ticket, the
- * consent to that exact content. The ONLY reader and writer of the columns, so both value sets
+ * consent to that exact copy, its removals included. The ONLY reader and writer of the columns, so both value sets
  * are closed here, on both stores, as `release_refusal` is.
  */
 
@@ -124,8 +124,8 @@ export async function importAskSignature(
 
 /**
  * The payload keys under which each action names a mailbox's settings or signature by a hash: the
- * copy's whole-settings `fingerprint` (the found-marker, the answer, a handed-over press), the copy's
- * signature receipt (the marker) and the mailbox's own (the press).
+ * copy's whole-settings `fingerprint` with its removals' digest (the found-marker, the answer, a
+ * handed-over press), the copy's signature receipt (the marker) and the mailbox's own (the press).
  */
 export const SETTINGS_HASH_KEYS: Readonly<Record<string, readonly string[]>> = {
   [PROFILE_FOUND_AUDIT_ACTION]: ["fingerprint", "signatureReceipt"],

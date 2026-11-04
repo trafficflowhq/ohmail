@@ -717,6 +717,29 @@ export function signatureReceipt(signature: string | null | undefined, signature
   return createHash("sha256").update(JSON.stringify([signature, markup]), "utf8").digest("hex").slice(0, 32);
 }
 
+/**
+ * THE IDENTITY OF ONE FOUND COPY — what its records and the person's answers name. A copy that records
+ * no removal is named by its payload fingerprint, byte for byte; one that does carries a digest of its
+ * readable removals after a `.`, so a later copy with the same rules and other removals is a new question.
+ */
+export function profileCopyKey(doc: OrganizerProfileDoc): string {
+  const fingerprint = profileFingerprint(doc);
+  // As a reader reads them, so a copy as written and as parsed name one copy.
+  const removed = readProfileRemovedRules(doc.removedRules, doc.updatedAt) ?? [];
+  if (removed.length === 0) return fingerprint;
+  const entries = removed
+    .map((r) => canonicalJson([r.kind, r.match, r.subjectContains ?? null, r.bodyContains ?? null, r.removedAt, r.by]))
+    .sort(byCodeUnit);
+  const digest = createHash("sha256").update(`[${entries.join(",")}]`, "utf8").digest("hex").slice(0, 32);
+  return `${fingerprint}.${digest}`;
+}
+
+/** The payload fingerprint a {@link profileCopyKey} begins with: the key itself when it records no removal. */
+export function payloadFingerprintOf(key: string): string {
+  const at = key.indexOf(".");
+  return at < 0 ? key : key.slice(0, at);
+}
+
 /** Which canonical form a fingerprint was taken in. An untagged one is v1, by construction. */
 export function profileFingerprintVersion(fingerprint: string): number {
   const at = fingerprint.indexOf(":");
@@ -731,7 +754,9 @@ export function profileFingerprintVersion(fingerprint: string): number {
  * states no source, which every older one is, names the same contacts, and an import changes the
  * source of no contact this install holds, so the key's arrival is never a question by itself.
  */
-export function localSaysWhatAFingerprintSays(local: OrganizerProfilePayload, fingerprint: string): boolean {
+export function localSaysWhatAFingerprintSays(local: OrganizerProfilePayload, key: string): boolean {
+  // A store holds no removals: what it says is the copy's payload.
+  const fingerprint = payloadFingerprintOf(key);
   const v = profileFingerprintVersion(fingerprint);
   if (profileFingerprint(local, v) === fingerprint) return true;
   const unstated = { ...local, screener: local.screener.map(({ address, name }) => (name === undefined ? { address } : { address, name })) };
@@ -2217,7 +2242,7 @@ async function listingOf(io: ProfileIo, opts?: ProfileListOptions): Promise<Prof
 /**
  * THE SETTINGS MESSAGE ANOTHER INSTALL LEFT WHILE THIS ORGANIZER ASKS ABOUT IT — named by what its
  * header says (the install id and the Date second, the writer's `isOurs` shape) and proved by its
- * fingerprint. The write, the tidy and the reads keep it until the question is answered; a
+ * copy key ({@link profileCopyKey}). The write, the tidy and the reads keep it until the question is answered; a
  * locator that matches nothing is a record that is gone.
  */
 export interface ProfileLocator { installId: string; second: number; fingerprint: string }
@@ -2225,7 +2250,7 @@ export interface ProfileLocator { installId: string; second: number; fingerprint
 /** The locator of a document read from the folder, or `null` where its writer named no install. */
 export function profileLocatorOf(installId: string | null, doc: OrganizerProfileDoc): ProfileLocator | null {
   if (installId === null || installId === "") return null;
-  return { installId, second: Math.floor(Date.parse(doc.updatedAt) / 1000), fingerprint: profileFingerprint(doc) };
+  return { installId, second: Math.floor(Date.parse(doc.updatedAt) / 1000), fingerprint: profileCopyKey(doc) };
 }
 
 /** Does this header name the located record — the body read and the fingerprint decide the rest. */
@@ -2239,7 +2264,7 @@ function locatedIn(view: ProfileView, at: ProfileLocator | undefined): ProfileEn
   if (at === undefined) return null;
   return view.entries.find((e) => e.record !== null && !isMalformedProfile(e.record) && e.record.status === "ok"
     && e.shape.installId === at.installId && e.shape.dateSecond === at.second
-    && profileFingerprint(e.record.doc!) === at.fingerprint) ?? null;
+    && profileCopyKey(e.record.doc!) === at.fingerprint) ?? null;
 }
 
 /**
@@ -2353,11 +2378,12 @@ function planTidy(
   counts.unseenCurrent = C.msg.flags !== undefined && !C.msg.flags.includes("\\Seen") ? 1 : 0;
   const cDoc = (C.record as ParsedProfileMessage).doc!;
   const cFingerprint = profileFingerprint(cDoc);
+  const cKey = profileCopyKey(cDoc);
   /* THE WRITE'S OWN RULE: a current document another install wrote, which this install has not
      seen (`replaceable`) and does not hold, may be the one that holds THIS install's older copy as
      its question. This install's copies stay until it has seen it. */
   const cSeen = ownCopy((C.record as ParsedProfileMessage).installId, C.shape.dateSecond, selfInstallId, ownSince, owns)
-    || held.has(C) || replaceable.has(cFingerprint);
+    || held.has(C) || replaceable.has(cKey);
   const freshClaim = (installId: string | null): boolean => claims.some((c) => c.installId === installId
     && now.getTime() - c.heartbeat.getTime() < DEFAULT_STALE_AFTER_MS);
   const older = (a: number | null, b: number | null): boolean => a !== null && b !== null && a < b;
@@ -2692,9 +2718,9 @@ export interface WriteProfileInput {
   /** Who is writing — recorded in the message header so the writer recognises its own copy. */
   installId: string;
   /**
-   * Payload fingerprints of FOREIGN documents the caller has already accounted for — its own
+   * Copy keys ({@link profileCopyKey}) of FOREIGN documents the caller has already accounted for — its own
    * last-written/seeded fingerprint, and any foreign document it has surfaced. A readable
-   * foreign document whose fingerprint is on this list is replaceable; one that is NOT is new
+   * foreign document whose key is on this list is replaceable; one that is NOT is new
    * information, and the write is refused as `foreign` so the caller can surface it first.
    */
   replaceable?: readonly string[];
@@ -2822,8 +2848,8 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   const unseen = [newest].find((r): r is ParsedProfileMessage => {
     if (r === null) return false;
     if (ownCopy(r.installId, secondOfDoc(r.doc!), installId, input.ownSince, input.owns)) return false;
-    // HAVE I SEEN THIS DOCUMENT — asked at the document's OWN version, the identity the caller stored.
-    if (known.has(profileFingerprint(r.doc!))) return false;
+    // HAVE I SEEN THIS COPY — its rules at their OWN version and its removals, the identity the caller stored.
+    if (known.has(profileCopyKey(r.doc!))) return false;
     // IS IT THE SAME CONFIGURATION — asked at ONE version, so a v1 twin is not a conflict.
     return profileFingerprint(r.doc!, doc.v) !== docFingerprint;
   });
@@ -2834,7 +2860,7 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   if (mode === "remove") {
     // The `unseen` refusal above cleared the newest: it is this writer's, held, seen or the same.
     const plan = planTidy(view, installId, now, claims, input.retain, [],
-      new Set([...known, ...(newest === null ? [] : [profileFingerprint(newest.doc!)])]), input.ownSince, input.owns, kept, input.found);
+      new Set([...known, ...(newest === null ? [] : [profileCopyKey(newest.doc!)])]), input.ownSince, input.owns, kept, input.found);
     if (plan.refs.length > 0) {
       log("profile_write_held_for_cleanup", { removable: plan.refs.length });
       const pass = await tidyPass(io, view, plan, { mode, max: PROFILE_TIDY_MAX_PER_PASS, log });

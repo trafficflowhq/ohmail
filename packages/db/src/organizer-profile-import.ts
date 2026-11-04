@@ -16,7 +16,8 @@ import type { Tx } from "./change-log.js";
 
 /**
  * The `audit_log.action` under which a found foreign profile is recorded — one row per DISTINCT
- * found document, deduplicated by the writer on the document's fingerprint. Payload:
+ * found document, deduplicated by the writer on the document's fingerprint (the copy's key: its payload
+ * fingerprint, and a digest of the removals it records when it records any). Payload:
  * `{ mailboxId, state: "found" | "newer", fingerprint, heldForImport, updatedAt?, producer?,
  * counts?, v? }`.
  */
@@ -25,7 +26,7 @@ export const PROFILE_FOUND_AUDIT_ACTION = "organizer_profile_found";
 /**
  * The `audit_log.action` under which the USER'S ANSWER to a found document is recorded. Payload:
  * `{ mailboxId, fingerprint, decision: "imported" | "declined" | "replaced", v? }` — `fingerprint`
- * names the exact document content answered (null for the `newer` state; `v` carries the refused
+ * names the exact copy answered, its rules and its removals (null for the `newer` state; `v` carries the refused
  * version). Any answer settles ROUTING. Only `imported` and `replaced` release WRITE-BEHIND
  * ({@link profileImportWriteReleased}): a decline keeps the document in the mailbox, because it
  * is the only copy there of the other install's settings.
@@ -195,7 +196,7 @@ export type ProfileImportDecision = "imported" | "declined" | "replaced";
 export interface ProfileFoundMarker {
   mailboxId: string;
   state: "found" | "newer";
-  /** The found document's PAYLOAD fingerprint; null for `newer` (unreadable at this version). */
+  /** The found copy's key (payload fingerprint, removals' digest); null for `newer` (unreadable at this version). */
   fingerprint: string | null;
   heldForImport: boolean;
   /** `newer` only: the version that refused this build. */
@@ -295,8 +296,8 @@ export type ProfileImportSubject =
   | { newerV: number };
 
 /**
- * Has the user already answered for THIS document? Keyed on the content itself — the payload
- * fingerprint for a readable document, the refused version for a `newer` one — so a document
+ * Has the user already answered for THIS document? Keyed on the content itself — the copy's key
+ * (rules and removals) for a readable document, the refused version for a `newer` one — so a document
  * that CHANGES after a decline legitimately re-asks (new content is new information), while the
  * same content never nags twice.
  */

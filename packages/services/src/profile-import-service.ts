@@ -48,7 +48,7 @@ export type ProfileImportCandidateDTO = ProfileImportQuestionDTO & {
 type ProfileImportQuestionDTO =
   /** Nothing to ask about — the resting answer. */
   | { state: "none" }
-  /** A document is waiting on the user's answer. `fingerprint` names its exact content. */
+  /** A document is waiting on the user's answer. `fingerprint` names its exact copy, rules and removals. */
   | {
     state: "found";
     fingerprint: string;
@@ -262,7 +262,7 @@ export class ProfileImportService {
    *
    * `fingerprint` is REQUIRED and is the confirm screen's receipt: the document is re-read from
    * the mailbox and applied only if its content is still exactly what the user was shown —
-   * counts and all. A document that changed in between answers 409 `profile_changed`, and the
+   * counts and all, removals included. A document that changed in between answers 409 `profile_changed`, and the
    * screen asks again over the new content rather than applying something nobody confirmed. A
    * read that does not fit the request hands the press to the organizer (`importing`).
    * `signatureReplaces` is the offer's receipt for the signature the card said the copy's replaces;

@@ -666,6 +666,86 @@ describe("the install that stood down takes the mailbox back after a relaunch", 
       .toEqual({ state: "found", counts: { rules: 0, removedRules: 1 }, status: 202, rules: [] });
   }, 120_000);
 
+  /* EVERY CYCLE ASKS. Each round of "remove every rule over there" leaves a copy with no rules; a copy that records
+     other removals is a new question, so a second round asks again and removes the rule made since. */
+  it("removing every rule on the new organizer a second time asks again, and an answered copy asks nothing on relaunch", async () => {
+    clock.skew = 0;
+    const meta = new MemoryMeta();
+    const dir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(dir, { recursive: true, force: true }));
+    const card = async (w: Install) => (await (await w.call("GET", `/mailboxes/${w.sidecar.world.mailboxId}/profile-import`)).json()) as {
+      state?: string; fingerprint?: string; counts?: { rules?: number; removedRules?: number };
+    };
+    const importIt = async (w: Install) =>
+      (await w.call("POST", `/mailboxes/${w.sidecar.world.mailboxId}/profile-import`, { fingerprint: (await card(w)).fingerprint })).status;
+    const rules = async (w: Install) => (await w.sidecar.db.select().from(ruleRows)).map((r) => r.match).sort();
+    const remove = async (w: Install, match: string) =>
+      (await w.call("DELETE", `/rules/${(await w.sidecar.db.select().from(ruleRows)).find((r) => r.match === match)!.id}`)).status;
+    const takeBack = async (w: Install, name: string, wDir: string, from: Install) => {
+      clock.skew += 10 * 60_000;
+      await w.stop();
+      const back = await launch(meta, name, wDir);
+      await passes(2, back, from);
+      expect(await organize(back, "takeover")).toBe(200);
+      await passes(2, back, from);
+      return back;
+    };
+    let old = await launch(meta, "W-old", dir);
+    expect(await organize(old)).toBe(200);
+    expect((await old.call("POST", "/rules", { kind: "sender", match: "gone@shop.test", destination: "ohmail/Screened" })).status).toBe(201);
+    await passes(1, old);
+    clock.skew += 3 * HOUR;
+    await passes(1, old);
+    const nextDir = await freshDataDir("ohmail-take-back-");
+    cleanups.unshift(() => rmSync(nextDir, { recursive: true, force: true }));
+    let next = await launch(meta, "the new laptop", nextDir);
+    expect(await organize(next, "takeover")).toBe(200);
+    await passes(2, next, old);
+    expect(await importIt(next)).toBe(202);
+    await passes(3, next, old);
+    clock.skew += HOUR;
+    expect(await remove(next, "gone@shop.test")).toBe(204);
+    await passes(3, next, old);
+    old = await takeBack(old, "W-old", dir, next);
+    const asked1 = await card(old);
+    expect({ state: asked1.state, status: await importIt(old) }).toEqual({ state: "found", status: 202 });
+    await passes(3, old, next);
+
+    // Cycle 2: W-old makes a rule; the new laptop takes over, imports it, and the person removes it there.
+    clock.skew += HOUR;
+    expect((await old.call("POST", "/rules", { kind: "sender", match: "again@shop.test", destination: "ohmail/Screened" })).status).toBe(201);
+    await passes(2, old, next);
+    clock.skew += 3 * HOUR;
+    await passes(1, old, next);
+    next = await takeBack(next, "the new laptop", nextDir, old);
+    expect(await importIt(next)).toBe(202);
+    await passes(3, next, old);
+    clock.skew += HOUR;
+    expect(await remove(next, "again@shop.test")).toBe(204);
+    await passes(3, next, old);
+    old = await takeBack(old, "W-old", dir, next);
+    const asked2 = await card(old);
+    const status2 = asked2.state === "found" ? await importIt(old) : null;
+    await passes(3, old, next);
+    const newest = meta.docs().sort((a, b) => Date.parse(b.doc!.updatedAt) - Date.parse(a.doc!.updatedAt))[0]!;
+    expect({
+      state: asked2.state, counts: asked2.counts && { rules: asked2.counts.rules, removedRules: asked2.counts.removedRules },
+      sameAsCycle1: asked2.fingerprint === asked1.fingerprint, status: status2, rules: await rules(old),
+      newest: [newest.installId === old.sidecar.world.accountId ? "W-old" : "the new laptop", newest.doc!.rules.length,
+        newest.doc!.removedRules?.map((r) => r.match).sort()],
+    }).toEqual({
+      state: "found", counts: { rules: 0, removedRules: 2 }, sameAsCycle1: false, status: 202, rules: [],
+      newest: ["W-old", 0, ["again@shop.test", "gone@shop.test"]],
+    });
+
+    // The answered copy asks nothing again.
+    clock.skew += 10 * 60_000;
+    await old.stop();
+    old = await launch(meta, "W-old", dir);
+    await passes(2, old, next);
+    expect({ state: (await card(old)).state, rules: await rules(old) }).toEqual({ state: "none", rules: [] });
+  }, 180_000);
+
   /* A RULE MADE AGAIN ENDS ITS REMOVAL. On the new laptop the person removed k@, made it again, then started the
      Screener over there, which records nothing: no removal of k@ is left to travel. W-old takes back, is asked
      nothing, and keeps k@, as it would had k@ never been removed. */

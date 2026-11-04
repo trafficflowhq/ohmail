@@ -10,7 +10,7 @@ import {
   type Tx,
 } from "@trafficflow/db";
 import {
-  PROFILE_VERSION, formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
+  PROFILE_VERSION, formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileCopyKey, profileFingerprint,
   signatureReceipt,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
@@ -145,7 +145,7 @@ const neverReader = (): (() => Promise<ProfileReadResult>) => async () => {
 
 /** Seed the organizer's found-marker exactly as `apps/worker/src/profile.ts#writeMarker` shapes it. */
 async function seedHeldMarker(w: World, d: OrganizerProfileDoc, signature?: number, copyReceipt?: string): Promise<string> {
-  const fingerprint = profileFingerprint(d);
+  const fingerprint = profileCopyKey(d);
   await w.db.insert(auditLog).values({
     accountId: w.accountId,
     action: PROFILE_FOUND_AUDIT_ACTION,
@@ -1468,7 +1468,7 @@ describe("a takeover import retires the rule rows the copy records as removed th
     return at;
   };
   const apply = (w: World, d: OrganizerProfileDoc) =>
-    inlineApply(w.ctx, w.mailboxId, { fingerprint: profileFingerprint(d) }, { read: foundReader(d).read });
+    inlineApply(w.ctx, w.mailboxId, { fingerprint: profileCopyKey(d) }, { read: foundReader(d).read });
   const stillThere = async (w: World, id: string) => (await w.db.select().from(rules).where(eq(rules.id, id))).length === 1;
   async function otherMailbox(w: World, role: "organizer" | "reader", status?: string): Promise<string> {
     const [mb] = await w.db.insert(mailboxes).values({
@@ -1612,6 +1612,34 @@ describe("a takeover import retires the rule rows the copy records as removed th
     await profileImportService.decline(w.ctx, w.mailboxId, { fingerprint });
     expect((await apply(w, d)).retiredRules).toBe(0);
     expect(await stillThere(w, id)).toBe(true);
+  });
+
+  /* A COPY IS ITS RULES AND ITS REMOVALS: an answer to an earlier copy with the same rules answers nothing about a later one. */
+  it("an Import of an earlier copy with the same rules does not stop a later copy's removal", async () => {
+    const w = await world();
+    const id = await dead(w);
+    expect((await apply(w, doc(PAYLOAD, { removed: [] }))).retiredRules).toBe(0);
+    const at = later(w, HOUR);
+    expect((await apply(w, doc(PAYLOAD, { at }))).retiredRules).toBe(1);
+    expect(await stillThere(w, id)).toBe(false);
+  });
+
+  it("after Not now, a copy with the same rules and other removals asks again", async () => {
+    const w = await world();
+    await profileImportService.decline(w.ctx, w.mailboxId, { fingerprint: await seedHeldMarker(w, doc()) });
+    const next = doc(PAYLOAD, { removed: [DEAD.match, "other@example.com"] });
+    await seedHeldMarker(w, next);
+    expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toMatchObject({ state: "found", fingerprint: profileCopyKey(next) });
+  });
+
+  it("a press naming a copy whose removals changed since the card answers 409 and applies nothing", async () => {
+    const w = await world();
+    const id = await dead(w);
+    await expect(profileImportService.apply(
+      w.ctx, w.mailboxId, { fingerprint: profileCopyKey(doc(PAYLOAD, { removed: [] })) }, { read: foundReader(doc()).read },
+    )).rejects.toMatchObject({ code: "profile_changed", httpStatus: 409 });
+    expect(await stillThere(w, id)).toBe(true);
+    expect(await resolutionRows(w.db, w.accountId)).toHaveLength(0);
   });
 
   it("another read mailbox's copy naming the key keeps it, and so does a read mailbox with no copy", async () => {
