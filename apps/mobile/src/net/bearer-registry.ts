@@ -66,6 +66,12 @@ export class BearerRegistry {
     return this.slots.get(profileId)?.death ?? null;
   }
 
+  /** Whether that death takes the account's copy off this phone (`BearerManagerRN.removesCopy`). */
+  removesCopyOf(profileId: string): boolean {
+    const held = this.slots.get(profileId);
+    return held !== undefined && held.death !== null && held.removesCopy;
+  }
+
   /** The pairing is forgotten: nobody holds this slot any more. */
   evict(profileId: string): void {
     this.slots.delete(profileId);

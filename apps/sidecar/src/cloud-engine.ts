@@ -592,6 +592,16 @@ export function enforceMirrorOwner(
     : windowOutboxOwnerKey({ address: priorAddress, base: priorBase });
   adoptLegacyWindowOutbox(dataDir, priorOwnerKey, log);
   const foreign = addressChanged || serverChanged || askedToStartOver;
+  /* A REVOKED SESSION'S COPY, owed by the record (a run that removed the mail and stopped short of
+     its files) or by a kept revoke with no seal beside it (a crash before the discard, an older
+     build): gone before anything opens it. The rewrite below drops the flag once the files are gone. */
+  if (!foreign && (priorRecord?.revoked === true || refusalOwesCopy(dataDir))) {
+    for (const name of REVOKED_COPY_FILES) rmSync(join(dataDir, name), { recursive: true, force: true });
+    markRefusalCopyRemoved(dataDir);
+    log?.("cloud_revoked_copy_removed", {
+      reason: "the hosted session was revoked, so the database it left on this computer was removed before this launch opened it",
+    });
+  }
   if (foreign) {
     /* THE SEAL SURVIVES A STAGED DISCARD, and this is the one asymmetry in this function. A
        start-over pairing has ALREADY sealed the new world's session — that is what it was for —
@@ -685,8 +695,30 @@ export function clearMirrorErased(dataDir: string): void {
   const r = decodeMirrorRecord(raw);
   if (!r.erased) return;
   writeFileSync(join(dataDir, MIRROR_OWNER_FILE),
-    encodeMirrorRecord(r.address, r.base, r.account, r.discardPending, false), { mode: 0o600 });
+    encodeMirrorRecord(r.address, r.base, r.account, r.discardPending, false, r.revoked), { mode: 0o600 });
 }
+
+/** Does a revoked session still owe this directory's database files? From the record; `false` for none. */
+export function readMirrorRevoked(dataDir: string): boolean {
+  const raw = readMirrorRecordRaw(dataDir);
+  return raw === null ? false : decodeMirrorRecord(raw).revoked;
+}
+
+/** Drop the revoked flag from the record and keep every other field; nothing to do when unset. */
+function clearMirrorRevoked(dataDir: string): void {
+  const raw = readMirrorRecordRaw(dataDir);
+  if (raw === null) return;
+  const r = decodeMirrorRecord(raw);
+  if (!r.revoked) return;
+  writeFileSync(join(dataDir, MIRROR_OWNER_FILE),
+    encodeMirrorRecord(r.address, r.base, r.account, r.discardPending, r.erased, false), { mode: 0o600 });
+}
+
+/** What a revoked session's copy leaves on disk once its mail is out of the database. */
+const REVOKED_COPY_FILES = ["pgdata", "cloud-cursor.json"] as const;
+
+/** The refresh door's code for a session ended at its server: Devices, signing out everywhere, a credential change, a reuse sweep. */
+const SESSION_REVOKED = "refresh_revoked";
 
 /**
  * THE REFUSAL AN EARLIER RUN HEARD, for the next launch: its teardown removes the seal, so that
@@ -706,6 +738,40 @@ function readSessionRefused(dataDir: string): { code: string; since: string; cau
   } catch {
     return null;
   }
+}
+
+/**
+ * Does the kept refusal still owe this directory's copy? A revoke an earlier run heard, no seal beside
+ * it (a later sign-in seals one), and not yet marked removed — so the database a launch makes after
+ * the removal is that launch's, and the next one does not remove it again.
+ */
+function refusalOwesCopy(dataDir: string): boolean {
+  if (existsSync(join(dataDir, "cloud-tokens.seal"))) return false;
+  try {
+    const v = JSON.parse(readFileSync(join(dataDir, SESSION_REFUSED_FILE), "utf8")) as { code?: unknown; copyRemoved?: unknown } | null;
+    return v?.code === SESSION_REVOKED && v.copyRemoved !== true;
+  } catch {
+    return false;
+  }
+}
+
+/** Mark a kept revoke's copy removed; the refusal itself is still said at the next launch. */
+function markRefusalCopyRemoved(dataDir: string): void {
+  const path = join(dataDir, SESSION_REFUSED_FILE);
+  try {
+    const v = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown> | null;
+    if (v === null || typeof v !== "object" || v.code !== SESSION_REVOKED || v.copyRemoved === true) return;
+    writeAtomic(path, JSON.stringify({ ...v, copyRemoved: true }), 0o600);
+  } catch {
+    /* none kept, or unreadable: it owes nothing */
+  }
+}
+
+/** A revoked session's database files, then the record's flag and the kept refusal's mark, in that order. */
+function removeRevokedCopy(dataDir: string): void {
+  for (const name of REVOKED_COPY_FILES) rmSync(join(dataDir, name), { recursive: true, force: true });
+  clearMirrorRevoked(dataDir);
+  markRefusalCopyRemoved(dataDir);
 }
 
 /** How long a sign-out waits for the server to end the session it held. */
@@ -1022,6 +1088,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // that fails costs only that: the next `account_erased` answer latches it back regardless.
       accountErasedLatch = false;
       try { clearMirrorErased(config.dataDir); } catch { /* see above */ }
+      // …and the database this session fills is not a revoked one's to remove at the stop.
+      try { clearMirrorRevoked(config.dataDir); } catch { /* a refused write leaves an empty copy to remove */ }
       forgetRefusal();
       const auth = createCloudAuth({
         baseUrl: cloudBase,
@@ -1047,6 +1115,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // teardown's stop() resolves only after that pull fails out — awaiting is the deadlock.
           // A DELETED account takes the same teardown and latches first, so the window says so.
           const erased = code === ACCOUNT_ERASED;
+          // A session REVOKED at its server takes this computer's copy as well; a lapse keeps it.
+          const revoked = code === SESSION_REVOKED;
           if (erased) accountErasedLatch = true;
           // Kept for the next launch, which finds no seal; a failed write loses only the sentence.
           else if (REFUSAL_CODES.has(code)) {
@@ -1059,12 +1129,15 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             reason: erased
               ? "the hosted account was deleted; the engine discards its session and asks the " +
                 "hosted API nothing more, and this computer's copy of that account's mail is removed"
-              : "the hosted API refused to renew the session; the engine returns to sign-in " +
-                "and the mirror keeps serving what it holds",
+              : revoked
+                ? "the hosted API revoked the session; the engine returns to sign-in and this " +
+                  "computer's copy of the account's mail is removed"
+                : "the hosted API refused to renew the session; the engine returns to sign-in " +
+                  "and the mirror keeps serving what it holds",
           });
           // AFTER the teardown, never beside it: `signOut` awaits the mirror's stop, so no drain
-          // is writing when the erased account's copy is removed.
-          retainTeardown(signOut().then(() => (erased ? discardErasedMirror() : undefined)));
+          // is writing when the copy is removed.
+          retainTeardown(signOut().then(() => (erased ? discardErasedMirror() : revoked ? discardRevokedCopy() : undefined)));
         },
       });
       setHostedSession(auth.session());
@@ -1226,16 +1299,13 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     };
 
     /**
-     * THE ERASED ACCOUNT'S COPY GOES — every piece of it a cache of an account that no longer
-     * exists. Now: every mailbox's mail (`deleteMailboxRows`, the walk a hosted mailbox erasure
-     * runs here) with a removal receipt each, in ONE transaction, so a mounted window and any phone
-     * paired to this door drop it; the cursor and the window's outbox. At the next launch: the
-     * database whole, through the staged discard. Stays: the key, `config.json`, a local-mode
-     * directory (never this one) and the mail server's mailbox, which nothing here can reach.
+     * EVERY MAILBOX'S MAIL OUT OF THIS COMPUTER'S DATABASE (`deleteMailboxRows`, the walk a hosted
+     * mailbox erasure runs here) with a removal receipt each, in ONE transaction, so a mounted window
+     * and any phone paired to this door drop it; then the cursor. Answers the count, or the fault.
      */
-    const discardErasedMirror = async (): Promise<void> => {
-      let mailboxesRemoved = 0;
+    const removeMirroredMail = async (): Promise<{ count: number } | { err: unknown }> => {
       try {
+        let count = 0;
         await db.transaction(async (tx) => {
           const rows = await tx.select({ id: mailboxes.id }).from(mailboxes)
             .where(eq(mailboxes.accountId, world.accountId));
@@ -1243,15 +1313,30 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             await deleteMailboxRows(tx as unknown as Tx, row.id, { unsentDrafts: "delete" });
             await recordMailboxRemoved(tx as unknown as LedgerTx, world.accountId, row.id);
           }
-          mailboxesRemoved = rows.length;
+          count = rows.length;
         });
+        return { count };
       } catch (err) {
+        return { err };
+      } finally {
+        rmSync(join(config.dataDir, "cloud-cursor.json"), { force: true });
+      }
+    };
+
+    /**
+     * THE ERASED ACCOUNT'S COPY GOES — every piece of it a cache of an account that no longer
+     * exists. Now: the mail ({@link removeMirroredMail}), the cursor and the window's outbox. At the
+     * next launch: the database whole, through the staged discard. Stays: the key, `config.json`, a
+     * local-mode directory (never this one) and the mail server's mailbox, which nothing here can reach.
+     */
+    const discardErasedMirror = async (): Promise<void> => {
+      const removed = await removeMirroredMail();
+      if ("err" in removed) {
         log?.("cloud_account_erased_discard_failed", {
-          err, reason: "the deleted account's mail could not be removed now; the next launch removes the database",
+          err: removed.err, reason: "the deleted account's mail could not be removed now; the next launch removes the database",
         });
       }
       await windowOutbox.discard().catch(() => undefined);
-      rmSync(join(config.dataDir, "cloud-cursor.json"), { force: true });
       const prior = readMirrorRecordRaw(config.dataDir);
       const record = prior === null ? null : decodeMirrorRecord(prior);
       writeFileSync(
@@ -1260,9 +1345,40 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         { mode: 0o600 },
       );
       log?.("cloud_account_erased_discarded", {
-        count: mailboxesRemoved,
+        count: "count" in removed ? removed.count : 0,
         reason: "the hosted account was deleted, so its mail was removed from this computer and the " +
           "database is removed at the next start",
+      });
+    };
+
+    /**
+     * A SESSION REVOKED AT ITS SERVER TAKES THIS COMPUTER'S COPY, as the web's and the phone's do:
+     * the mail now ({@link removeMirroredMail}), the database's files at the stop, or before the next
+     * launch opens them (the record's `revoked`). Never `discardPending`, which `/health` reads as a
+     * pairing waiting for a relaunch. The window's queued changes stay for this account's next
+     * sign-in, as Sign out keeps them; the record keeps the address, the server and the account.
+     */
+    const discardRevokedCopy = async (): Promise<void> => {
+      const removed = await removeMirroredMail();
+      if ("err" in removed) {
+        log?.("cloud_session_revoked_discard_failed", {
+          err: removed.err, reason: "the revoked session's mail could not be removed now; its database is removed at the stop",
+        });
+      }
+      const prior = readMirrorRecordRaw(config.dataDir);
+      const record = prior === null ? null : decodeMirrorRecord(prior);
+      writeFileSync(
+        join(config.dataDir, MIRROR_OWNER_FILE),
+        encodeMirrorRecord(
+          record?.address ?? config.address, record?.base ?? cloudBase, record?.account ?? null,
+          record?.discardPending ?? false, record?.erased ?? false, true,
+        ),
+        { mode: 0o600 },
+      );
+      log?.("cloud_session_revoked_discarded", {
+        count: "count" in removed ? removed.count : 0,
+        reason: "the hosted session was revoked, so its mail was removed from this computer and the " +
+          "database is removed at the stop",
       });
     };
 
@@ -2322,6 +2438,20 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         await sessionTeardown;
         session.end();
         await opened.close();
+        /* A REVOKED SESSION'S DATABASE FILES go once the database is closed, the flag after them; a
+           removal cut short is found again by the next launch, before it opens anything. */
+        if (readMirrorRevoked(config.dataDir)) {
+          try {
+            removeRevokedCopy(config.dataDir);
+            log?.("cloud_revoked_copy_removed", {
+              reason: "the hosted session was revoked, so the database it left on this computer was removed at the stop",
+            });
+          } catch (err) {
+            log?.("cloud_revoked_copy_remove_failed", {
+              err, reason: "the revoked session's database could not be removed at the stop; the next launch removes it first",
+            });
+          }
+        }
       },
     };
   } catch (err) {

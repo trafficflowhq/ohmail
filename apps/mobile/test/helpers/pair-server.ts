@@ -163,6 +163,11 @@ export function pairServer(opts: PairServerOptions = {}) {
   /** The family's one live refresh token — rotation moves it; reuse of an old one revokes. */
   let refreshHead: string | null = null;
   let revoked = false;
+  /**
+   * The code a family ended by `revoke(code)` or `expire()` is refused with, as the current server
+   * names it; that server also keeps every other route behind the session. Null: the legacy answer.
+   */
+  let endedWith: "refresh_revoked" | "refresh_expired" | null = null;
   /** Every refresh token minted, and the redeem's family it belongs to: the refresh door's reach. */
   const familyOf = new Map<string, number>();
   let family = 0;
@@ -252,6 +257,7 @@ export function pairServer(opts: PairServerOptions = {}) {
         }
         mintable.delete(parsed.token); // single-use: the burn
         revoked = false;
+        endedWith = null;
         family += 1;
         json(200, { grant: "device-pair", tokens: mintPair() });
         return;
@@ -282,7 +288,9 @@ export function pairServer(opts: PairServerOptions = {}) {
           // STRICT REUSE: an old head presented again is the theft signal — the family dies.
           revoked = true;
           liveAccess.clear();
-          json(401, { error: { code: "unauthorized", message: "this session cannot be resumed" } });
+          json(401, endedWith === null
+            ? { error: { code: "unauthorized", message: "this session cannot be resumed" } }
+            : { error: { code: endedWith, message: endedWith === "refresh_expired" ? "refresh token expired" : "invalid refresh token" } });
           return;
         }
         json(200, { tokens: mintPair() });
@@ -372,6 +380,10 @@ export function pairServer(opts: PairServerOptions = {}) {
         });
         return;
       }
+      if (endedWith !== null && !authed()) {
+        unauthorized();
+        return;
+      }
       json(404, { error: { code: "not_found", message: "no such route" } });
     });
   });
@@ -381,10 +393,20 @@ export function pairServer(opts: PairServerOptions = {}) {
     addMessage,
     /** Put a single-use pairing token on the table — what the desktop's Devices pane mints. */
     mintPairToken: (token: string) => mintable.add(token),
-    /** The desktop Devices revoke: every access token dies NOW, the refresh answers 401. */
-    revoke: () => {
+    /**
+     * The desktop Devices revoke: every access token dies NOW, the refresh answers 401 — naming
+     * `refresh_revoked` when asked to, as the current server does (Devices, sign out everywhere).
+     */
+    revoke: (code?: "refresh_revoked") => {
       revoked = true;
       liveAccess.clear();
+      endedWith = code ?? null;
+    },
+    /** The family's idle window closed: the refresh answers `refresh_expired`, a lapse. */
+    expire: () => {
+      revoked = true;
+      liveAccess.clear();
+      endedWith = "refresh_expired";
     },
     /** The account is erased: every session and refresh token of it now names an erased account. */
     erase: () => {

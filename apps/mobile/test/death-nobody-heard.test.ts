@@ -1,10 +1,11 @@
 /**
- * A DEATH NOBODY WAS SUBSCRIBED TO IS STILL TOLD, AND AN ERASED ACCOUNT STILL LEAVES NO COPY. The
- * launch pays the wake-row debts before it connects, through the slot's own manager, and that
- * manager can hear `410 account_erased` with no session listening yet. The registry hears every
- * death of a manager it holds; the next connect answers with it; and an erased verdict is written
- * down as an owed Forget BEFORE the credential goes, so a kill between the two is paid by the next
- * launch. Each "process" is a fresh module graph over the same keystore map and the same mirrors.
+ * A DEATH NOBODY WAS SUBSCRIBED TO IS STILL TOLD, AND AN ERASED ACCOUNT OR A REVOKED SESSION STILL
+ * LEAVES NO COPY. The launch pays the wake-row debts before it connects, through the slot's own
+ * manager, and that manager can hear `410 account_erased` or `refresh_revoked` with no session
+ * listening yet. The registry hears every death of a manager it holds; the next connect answers with
+ * it; and such a verdict is written down as an owed Forget BEFORE the credential goes, so a kill
+ * between the two is paid by the next launch. A lapse keeps the row and the mirror. Each "process"
+ * is a fresh module graph over the same keystore map and the same mirrors.
  */
 /* @reads: apps/mobile/src/net/connection.tsx */
 import { readFileSync } from "node:fs";
@@ -18,6 +19,7 @@ import type { SecureKV } from "../src/state/servers";
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ERASED_LINE = '{"service":"pairing","event":"session_dead","why":"erased"}';
+const REVOKED_LINE = '{"service":"pairing","event":"session_dead","why":"signedOutElsewhere"}';
 
 /** The device keystore: one map that outlives every process, read through a fresh door each time. */
 function keystore() {
@@ -76,8 +78,10 @@ function envOf(p: Awaited<ReturnType<typeof launch>>, kv: SecureKV, world: World
   return { profiles: new p.ServerProfileStore(kv), engineDeps };
 }
 
-/** Pair an account on its own server in process one, owe one wake-row deletion, then erase it. */
-async function pairedThenErased() {
+type Fake = ReturnType<Awaited<ReturnType<typeof launch>>["helpers"]["pairServer"]>;
+
+/** Pair an account on its own server in process one, owe one wake-row deletion, then `end` it at the server. */
+async function pairedThenEnded(end: (fake: Fake) => void) {
   const first = await launch();
   const store = keystore();
   const world = first.helpers.sqlWorld();
@@ -91,17 +95,30 @@ async function pairedThenErased() {
   paired.session.store.close();
   const id = paired.session.profile.id;
   await env.profiles.markPendingWakeDrop(id, "sub-1");
-  fake.erase();
+  end(fake);
   const mirror = first.client.mirrorDbName(first.boot.mirrorOwnerKey(origin, "acct-x"));
-  expect(world.names(), "the mirror is on the phone before the erasure").toContain(mirror);
+  expect(world.names(), "the mirror is on the phone before the session ended").toContain(mirror);
   return { store, world, fake, origin, id, mirror };
 }
 
-describe("an erased account heard only by the launch's wake drain", () => {
+/**
+ * THE TWO DEATHS THAT TAKE THE COPY: the account erased, and the session revoked at its server by
+ * code (Devices, sign out everywhere, a credential change — `refresh_revoked`). Both owe the Forget
+ * before the credential goes; the erasure says so, a revoke says the pairing ended.
+ */
+const COPY_GOES = [
+  { name: "an erased account", end: (f: Fake) => f.erase(), died: "erased", say: "accountErased", line: ERASED_LINE },
+  {
+    name: "a session revoked at its server", end: (f: Fake) => f.revoke("refresh_revoked"),
+    died: "signedOutElsewhere", say: "pairEnded", line: REVOKED_LINE,
+  },
+] as const;
+
+describe.each(COPY_GOES)("$name heard only by the launch's wake drain", ({ end, died, say, line }) => {
   it("(a) same process: the connect answers the death, and the Forget takes the copy", async () => {
     // MUTATIONS WATCHED: `died` dropped in `buildSession` — the connect reads the owed Forget as
     // `forgetStillPending`; the registry's listener not subscribed — no line and no `died`.
-    const { store, world, fake, id, mirror } = await pairedThenErased();
+    const { store, world, fake, id, mirror } = await pairedThenEnded(end);
     try {
       const p = await launch();
       const env = envOf(p, store.door(), world);
@@ -109,12 +126,13 @@ describe("an erased account heard only by the launch's wake drain", () => {
       const outcome = await p.pairing.connectProfileById(env, id);
       expect(outcome.kind).toBe("refused");
       if (outcome.kind !== "refused") return;
-      expect(outcome.died).toBe("erased");
-      expect(outcome.reason.say).toBe("accountErased");
+      expect(outcome.died).toBe(died);
+      expect(outcome.reason.say).toBe(say);
+      expect(outcome.removesCopy).toBe(true);
       expect(outcome.needsRepair).toBe(false);
-      expect(p.log.recentEngineLines().filter((l) => l === ERASED_LINE), "one line for the one death").toHaveLength(1);
+      expect(p.log.recentEngineLines().filter((l) => l === line), "one line for the one death").toHaveLength(1);
 
-      // What `runConnect` answers `died: "erased"` with — the listener's own call, no store to close.
+      // What `runConnect` answers a death that removes the copy with — the listener's own call, no store to close.
       expect((await p.pairing.forgetProfile(env, id, { revoke: async () => true })).kind).toBe("forgotten");
       expect(await env.profiles.list()).toEqual([]);
       expect(world.names()).not.toContain(mirror);
@@ -127,7 +145,7 @@ describe("an erased account heard only by the launch's wake drain", () => {
   it("(b) a kill between the death and the connect: the next launch pays the Forget first", async () => {
     // MUTATION WATCHED: the owed-Forget mark removed from `vaultFor`'s clear, or written after
     // the credential clear — the kill lands between, nothing is owed, and the mirror stays.
-    const { store, world, fake, id, mirror } = await pairedThenErased();
+    const { store, world, fake, id, mirror } = await pairedThenEnded(end);
     try {
       const b = await launch();
       const profileKey = `ohmail.servers.v1.${id}`;
@@ -140,7 +158,7 @@ describe("an erased account heard only by the launch's wake drain", () => {
       const c = await launch();
       const env = envOf(c, store.door(), world);
       expect(await c.pairing.drainPendingWipes(env)).toEqual([]);
-      expect(await env.profiles.list(), "the erased account's pairing is gone").toEqual([]);
+      expect(await env.profiles.list(), "the ended account's pairing is still here").toEqual([]);
       expect(world.names(), "and its mail").not.toContain(mirror);
       const outcome = await c.pairing.connectProfileById(env, id);
       expect(outcome.kind === "refused" ? outcome.reason.say : outcome.kind).toBe("notPairedHere");
@@ -148,7 +166,9 @@ describe("an erased account heard only by the launch's wake drain", () => {
       fake.server.close();
     }
   }, 60_000);
+});
 
+describe("the connection layer", () => {
   it("runConnect answers `died` the way the dead-signal listener answers a death", () => {
     const code = withoutCommentsAndLiterals(readFileSync(join(APP, "src/net/connection.tsx"), "utf8"));
     const text = withoutComments(readFileSync(join(APP, "src/net/connection.tsx"), "utf8"));
@@ -156,16 +176,16 @@ describe("an erased account heard only by the launch's wake drain", () => {
     expect(at, "runConnect reads the death").toBeGreaterThan(-1);
     const arm = text.slice(at, text.indexOf("return { ok: false, reason: outcome.reason };", at));
     expect(arm).toContain('enter({ k: "ended", reason: outcome.reason })');
-    expect(arm).toContain('outcome.died === "erased"');
+    expect(arm).toContain("if (outcome.removesCopy === true)");
     expect(arm).toContain("forgetProfile(env, id, { revoke: async () => true })");
   });
 });
 
-describe("an erased verdict whose owed Forget cannot be written", () => {
-  it("(d) skips the credential's clear, and the next launch hears the erasure again and owes the Forget", async () => {
+describe.each(COPY_GOES)("$name whose owed Forget cannot be written", ({ end }) => {
+  it("(d) skips the credential's clear, and the next launch hears the answer again and owes the Forget", async () => {
     // MUTATION WATCHED: the mark's refusal swallowed — the clear runs with no debt written, the
-    // next launch has no token to hear the erasure with, and the account's copy stays on the phone.
-    const { store, world, fake, id, mirror } = await pairedThenErased();
+    // next launch has no token to hear the answer with, and the account's copy stays on the phone.
+    const { store, world, fake, id, mirror } = await pairedThenEnded(end);
     try {
       const b = await launch();
       store.refuseNextSet("ohmail.servers.v1"); // the index, where the owed Forget is written
@@ -271,5 +291,25 @@ describe("a swept family heard only by the launch's wake drain", () => {
     expect(kept[0]!.refreshToken).toBeNull();
     expect(world.names(), "the mirror stays").toContain(mirror);
     expect(await env.profiles.pendingWipes(), "nothing owes a Forget").toEqual([]);
+  }, 60_000);
+
+  it("CONTROL — a lapse (refresh_expired): pair ended, one scan re-pairs, the row and the mirror are kept", async () => {
+    const { store, world, fake, id, mirror } = await pairedThenEnded((f) => f.expire());
+    try {
+      const p = await launch();
+      const env = envOf(p, store.door(), world);
+      await p.pairing.drainPendingWakeDrops(env);
+      const outcome = await p.pairing.connectProfileById(env, id);
+      expect(outcome.kind).toBe("refused");
+      if (outcome.kind !== "refused") return;
+      expect([outcome.died, outcome.reason.say, outcome.removesCopy, outcome.needsRepair]).toEqual(["refused", "pairEnded", false, true]);
+      const kept = await env.profiles.list();
+      expect(kept.map((r) => r.id), "the row stays, so one scan re-pairs into it").toEqual([id]);
+      expect(kept[0]!.refreshToken).toBeNull();
+      expect(world.names(), "the mirror stays").toContain(mirror);
+      expect(await env.profiles.pendingWipes(), "nothing owes a Forget").toEqual([]);
+    } finally {
+      fake.server.close();
+    }
   }, 60_000);
 });

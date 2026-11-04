@@ -4,7 +4,8 @@
  * the profile and its mirror. Now `410 account_erased` naming THIS pairing's account ends the
  * session as `erased` in the manager, before the engine sees it (to the adapter a 410 is a cursor
  * expiry, whose remedy is a re-bootstrap), and the connection layer forgets the profile through the
- * Forget verb's own ceremony. Real pairing, engine and forget against a fake of the hosted routes.
+ * Forget verb's own ceremony. A session the server revoked by code (`refresh_revoked`) takes the
+ * same Forget; a lapse does not. Real pairing, engine and forget against a fake of the hosted routes.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -95,6 +96,35 @@ describe("the paired phone of an erased account", () => {
     }
   }, 30_000);
 
+  it("a session revoked at its server by code: its copy is owed before the credential goes, and only it goes", async () => {
+    const { env, world } = testEnv();
+    const x = await paired(env, "acct-x");
+    const y = await paired(env, "acct-y");
+    try {
+      const deaths: SessionDeath[] = [];
+      x.session.bearer!.onSessionDead((why) => deaths.push(why));
+      x.fake.revoke("refresh_revoked");
+
+      await x.session.engine.syncOnce().catch(() => undefined);
+      expect(deaths, "a revoke read as a lapse").toEqual(["signedOutElsewhere"]);
+      expect(x.session.bearer!.removesCopy).toBe(true);
+      expect((await env.profiles.pendingWipes()).map((w) => w.id), "no Forget owed before the token went").toEqual([x.session.profile.id]);
+      expect(deathRefusal("signedOutElsewhere").say, "the sentence a pairing that ended says").toBe("pairEnded");
+
+      // What `connection.tsx` runs on a death that removes the copy: the Forget, nothing to tell the server.
+      const outcome = await forgetProfile(env, x.session.profile.id, {
+        closed: Promise.resolve().then(() => x.session.store.close()), revoke: async () => true,
+      });
+      expect(outcome.kind).toBe("forgotten");
+      expect((await env.profiles.list()).map((p) => p.accountId), "the other pairing went too").toEqual(["acct-y"]);
+      expect(holds(world, x.origin, "acct-x"), "the revoked account's mirror is still on the phone").toBe(false);
+      expect(holds(world, y.origin, "acct-y"), "account Y's mirror was taken").toBe(true);
+    } finally {
+      x.fake.server.close();
+      y.fake.server.close();
+    }
+  }, 30_000);
+
   it("at the refresh door: the rotation's 410 naming this account ends it as ERASED", async () => {
     const { env } = testEnv();
     const x = await paired(env, "acct-x");
@@ -107,6 +137,7 @@ describe("the paired phone of an erased account", () => {
       expect(deaths).toEqual(["erased"]);
       expect(res.status, "the engine must not be handed the 410").toBe(401);
       expect(x.session.bearer!.paired()).toBe(false);
+      expect(x.session.bearer!.removesCopy).toBe(true);
     } finally {
       x.fake.server.close();
     }
@@ -143,10 +174,11 @@ describe("what ends nothing as erased", () => {
     { status, headers: { "content-type": "application/json", ...(account ? { "x-ohmail-account": account } : {}) } },
   );
 
-  it("CONTROL — an ordinary 401 and a refused refresh: 'refused', the pair ends, the profile stays", async () => {
-    const { bearer, deaths } = manager(() => coded(401, "refresh_revoked", null));
+  it("CONTROL — an ordinary 401 and a lapsed refresh: 'refused', the pair ends, the profile stays", async () => {
+    const { bearer, deaths } = manager(() => coded(401, "refresh_expired", null));
     await bearer.fetch("https://cloud.test/sync", { method: "GET" });
     expect(deaths).toEqual(["refused"]);
+    expect(bearer.removesCopy).toBe(false);
     expect(deathRefusal("refused").say).toBe("pairEnded");
   });
 
@@ -196,11 +228,11 @@ describe("the sentence and the door", () => {
     expect(lines).toEqual(['{"service":"pairing","event":"session_dead","why":"erased"}']);
   });
 
-  it("the connection layer's dead signal forgets the profile on 'erased', after the store closes", () => {
+  it("the connection layer's dead signal forgets the profile on a death that removes the copy, after the store closes", () => {
     const src = withoutComments(fs.readFileSync(path.join(HERE, "..", "src", "net", "connection.tsx"), "utf8"));
     const arm = src.slice(src.indexOf("onSessionDead((why) =>"), src.indexOf("}) ?? null;", src.indexOf("onSessionDead((why) =>")));
     expect(arm).toMatch(/const closed = teardown\(session\);/);
-    expect(arm).toMatch(/if \(why !== "erased"\) \{/);
+    expect(arm).toMatch(/if \(session\.bearer\?\.removesCopy !== true\) \{/);
     expect(arm).toMatch(/forgetProfile\(env, session\.profile\.id, \{ closed, revoke: async \(\) => true \}\)/);
   });
 });

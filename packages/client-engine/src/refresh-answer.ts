@@ -11,9 +11,15 @@
 /** The door's refusal when the jar presented no token at all: every signed-out visit hears it. */
 export const REFRESH_MISSING = "refresh_missing";
 
+/**
+ * The door's refusal for a session ended at the server — Devices, signing out everywhere, a
+ * credential change, a reuse sweep — and not by its idle window: a client removes its copy on it.
+ */
+export const REFRESH_REVOKED = "refresh_revoked";
+
 /** The door's codes (`packages/services/src/auth/session-lifecycle.ts`), plus the legacy one. */
 export const SESSION_REFUSAL_CODES: ReadonlySet<string> = new Set([
-  REFRESH_MISSING, "refresh_expired", "refresh_revoked", "unauthorized",
+  REFRESH_MISSING, "refresh_expired", REFRESH_REVOKED, "unauthorized",
 ]);
 
 /**
