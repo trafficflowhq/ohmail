@@ -5,7 +5,7 @@
  * ({@link SavedSettingsPanel}). What to say is `profile-import-card.ts`'s; the calls are the
  * seam's. A read that could not be made draws nothing.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { View } from "react-native";
 import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
@@ -18,14 +18,15 @@ import { useWorld } from "../state/world";
 import { publishProfileQuestion } from "../state/seed-offer";
 import { Button, Panel, Txt, useTopPad } from "./base";
 import {
-  IMPORT_STATUS_BEAT_MS, askTickets, askableRows, cardQuestion, countsSaid, failureSaid, importSubject, importingSaid, keptSaid, retiredSaid,
-  mailboxesToAsk, savedBySaid, savedRows, type CardPhase, type MailboxQuestion,
+  IMPORT_STATUS_BEAT_MS, askableRows, cardQuestion, countsSaid, failureSaid, importSubject, importingSaid, keptSaid, retiredSaid,
+  mailboxesToAsk, questionStore, savedBySaid, savedRows, type CardPhase, type MailboxQuestion,
 } from "./profile-import-card";
 
 /**
  * Every mailbox's answer, asked on the session's own door when the mailbox read refreshes (after
  * each drain), throttled per mailbox, and at once when the settings doorbell rings (an
- * organizer's find). `set` lets a press record its own answer at once.
+ * organizer's find). Every reader shares the session's {@link questionStore}, so a mailbox is
+ * asked once however many are mounted. `set` lets a press record its own answer at once.
  */
 export function useProfileQuestions(): {
   session: ConnectedSession | null;
@@ -36,19 +37,14 @@ export function useProfileQuestions(): {
   const w = useWorld();
   const conn = useConnection();
   const session = conn.state.k === "live" ? conn.state.session : null;
-  const [answers, setAnswers] = useState<Record<string, ProfileImportQuestion>>({});
-  const asked = useRef(new Map<string, number>());
-  const [tickets] = useState(askTickets);
+  const shared = useMemo(() => questionStore(session), [session]);
+  const { asked, known, rung, tickets } = shared;
+  const answers = useSyncExternalStore(shared.subscribe, () => known.current, () => known.current);
   const bell = w.mailboxes.settingsBell;
-  const rung = useRef(bell);
-  const known = useRef(answers);
-  known.current = answers;
-  const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
 
   useEffect(() => {
     if (session === null) return;
-    const rang = rung.current !== bell;
+    const rang = rung.current !== undefined && rung.current !== bell;
     rung.current = bell;
     const now = Date.now();
     const ids = askableRows(w.mailboxes.rows).map((r) => r.id);
@@ -56,7 +52,7 @@ export function useProfileQuestions(): {
       asked.current.set(id, now);
       const ticket = tickets.begin(id);
       void readProfileImport(session, id).then((q) => {
-        if (mounted.current && q !== null && tickets.current(id, ticket)) setAnswers((prev) => ({ ...prev, [id]: q }));
+        if (q !== null && tickets.current(id, ticket)) shared.put(id, q);
       });
     }
   }, [session, w.mailboxes.rows, bell, tickets]);
@@ -64,8 +60,8 @@ export function useProfileQuestions(): {
   const set = useCallback((mailboxId: string, question: ProfileImportQuestion) => {
     asked.current.set(mailboxId, Date.now());
     tickets.supersede(mailboxId);
-    setAnswers((prev) => ({ ...prev, [mailboxId]: question }));
-  }, [tickets]);
+    shared.put(mailboxId, question);
+  }, [shared]);
 
   const rows = askableRows(w.mailboxes.rows)
     .filter((r) => answers[r.id] !== undefined)

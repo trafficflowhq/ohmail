@@ -61,6 +61,45 @@ export function askTickets(): {
 }
 
 /**
+ * ONE ASKER PER SESSION, shared by the card and Settings' panel: one throttle, one ticket per ask,
+ * one set of answers. Each reader asking on its own read every mailbox twice while Settings was open.
+ */
+export interface QuestionStore {
+  readonly asked: { readonly current: Map<string, number> };
+  readonly known: { current: Readonly<Record<string, ProfileImportQuestion>> };
+  /** The doorbell the last pass saw; `undefined` before the first pass. */
+  readonly rung: { current: number | null | undefined };
+  readonly tickets: ReturnType<typeof askTickets>;
+  put(mailboxId: string, question: ProfileImportQuestion): void;
+  subscribe(listener: () => void): () => void;
+}
+
+const stores = new WeakMap<object, QuestionStore>();
+
+/** The session's store; without a session, a fresh one nobody shares. */
+export function questionStore(session: object | null): QuestionStore {
+  const kept = session === null ? undefined : stores.get(session);
+  if (kept !== undefined) return kept;
+  const listeners = new Set<() => void>();
+  const store: QuestionStore = {
+    asked: { current: new Map() },
+    known: { current: {} },
+    rung: { current: undefined },
+    tickets: askTickets(),
+    put(mailboxId, question) {
+      store.known.current = { ...store.known.current, [mailboxId]: question };
+      for (const l of listeners) l();
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+  };
+  if (session !== null) stores.set(session, store);
+  return store;
+}
+
+/**
  * The question on the card: the one already shown (`pinned`) while it is still open, so another
  * mailbox's question never takes the card by itself; else the first open one, in the order the mailboxes came.
  */
