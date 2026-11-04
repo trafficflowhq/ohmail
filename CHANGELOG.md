@@ -21,6 +21,99 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.35] — 2026-11-04
+
+### The desktop app's settings tests use a reserved example address
+
+The desktop app's settings-file tests name the mailbox of a hosted door with an address at a reserved
+example domain, as the rest of that file already does, instead of an address at ohmail.app. Nothing
+changes in the apps.
+
+### Mail server sign-ins are limited over time, and deleting leaves less behind
+
+On ohmail Cloud and your own server, Test connection, adding a mailbox and updating its password sign in
+to the mail server with the password typed, and nothing limited how often a signed-in account could do
+that, so it could try password after password against a mail server. An account may now sign in with one
+login ten times a minute and thirty times an hour, and twenty times a minute and sixty times an hour
+across all logins; the incoming and the outgoing server each count. Past that, the attempt is refused
+until the minute or the hour has passed. That is far more than connecting several mailboxes in one
+sitting needs. The desktop app connecting a mailbox by itself is not limited.
+
+Deleting your account now also removes the records of those sign-ins, which held a keyed fingerprint of
+the address typed for up to two days. And when a mailbox is deleted, ohmail now also blanks the
+fingerprint of each recent change it keeps for a safe retry, as it already blanked the change's answer:
+for a short change, such as a contact's address, the fingerprint could confirm a guess for up to a day.
+
+### The test suite's sample passwords no longer echo older values
+
+The sample passwords across the test suite are named for what they stand for in their test, no longer
+for the values they replaced, and the last whole addresses at real mail domains in the tests are
+fixture addresses. Nothing changes in the apps.
+
+### Setup no longer takes over a mailbox another computer organizes on a plain Continue
+
+Setup on a mailbox another computer organizes no longer takes it over on a plain Continue: while that
+computer is still checking in, "Organize here instead" is not pre-selected and Continue waits until you
+pick (desktop and web). After a takeover, the computer that stood down shows the same Screener count at
+once, instead of counting with its old Screening window until the new organizer's first decision.
+Taking a mailbox back from a computer that had not decided anything yet does not ask you to import that
+computer's settings: they say only its Screening window, and importing them would change nothing.
+
+### Removing every rule on another computer asks again each time
+
+When you removed every rule on the computer that organized a mailbox, the computer taking it back asked
+to import those settings only the first time. The next time, its card asked nothing and it kept the rule
+you had made and removed since. An answer to imported settings now covers that one copy: a later copy with
+the same rules and other removals asks again, and importing it removes those rules here too. A copy you
+already answered asks nothing after a restart (desktop, web, phone, Cloud and your own server).
+
+### The sign-in page removes the mail of a browser signed out from another device
+
+On the web app, on ohmail Cloud and on your own server, a browser whose sign-in was ended from another device
+kept its copy of the mail when it was opened straight on the sign-in page (a bookmark, a typed address), until
+it next reached the mailbox. The sign-in page now removes that copy as soon as it learns the sign-in was ended,
+with any changes that had not yet reached the server, as Sign out does, and a sign-in started meanwhile waits
+for it. A sign-in that expired still keeps the copy, and a sign-in made meanwhile, in that tab or another,
+keeps its own.
+
+### A browser signed out from elsewhere no longer gets new-mail notifications
+
+On Cloud and your own server, a browser signed out from another place (Devices, "Sign out all other web
+sessions", "Sign out everywhere", a password change, removing an authenticator, or another sign-in in the
+same browser) kept receiving new-mail notifications, even if it was never opened again. A browser's
+notification registration now belongs to the sign-in that made it and ends with it; the other signed-in
+browsers and phones keep theirs. Browsers that had notifications on before this release get none while
+closed until their next visit to ohmail, which turns them back on by itself.
+
+### Your own letters in a Sent folder with another name show as sent from the first frame
+
+On a mailbox whose Sent folder has another name, such as 'Envoyés' or 'INBOX.Verzonden', the web app
+and the desktop app showed your own letters there as received at every start, until the mailbox list
+had loaded. The folder is now kept with the mail on your device and read before the first frame. It is
+refreshed whenever the mailbox list answers, and is forgotten when you sign out or remove the mailbox.
+
+### A browser signed out from another device no longer keeps your mail
+
+On the web app, on ohmail Cloud and on your own server, a browser whose sign-in was ended from another device
+(Devices, Sign out all, signing out everywhere, a password change) kept the mailbox on screen behind the
+sign-in prompt, and its copy of the mail stayed on that device. The next time that browser reaches ohmail it
+now removes its copy and shows the sign-in page, as Sign out does. Changes made there that had not yet reached
+the server are dropped with it. Where that browser holds more than one account's mail and no longer knows which
+of them was signed in, it keeps them. A sign-in that expired still keeps the mailbox behind the sign-in prompt.
+
+### Importing settings from another computer keeps the rules it never had
+
+The settings ohmail saves in a mailbox now record the rules you removed (each rule's sender, domain or
+header, when, and on which computer) in the year before each save; a removal leaves the mailbox when the
+settings are next saved after that year. Importing another computer's settings removes a rule
+here only when that computer records that you removed it there after this computer last organized the
+mailbox; a rule the other computer never had stays. Before, an Import removed every rule here that the
+other computer's settings did not name, so taking a mailbox back and importing settings from a computer
+that never had your rules removed them (desktop, web, phone, Cloud and your own server). Settings from a
+computer where you removed every rule now ask too, and importing them removes those rules here as well.
+The import card says how many rule removals the settings hold, and afterwards how many rules it removed.
+A rule you make again is no longer recorded as removed. Removals made with an older ohmail do not travel.
+
 ## [0.30.34] — 2026-11-04
 
 ### Contributors: migration numbers are checked across open pull requests, and a stale npm cache file no longer fails CI
@@ -16626,7 +16719,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.34...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.35...HEAD
+[0.30.35]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.35
 [0.30.34]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.34
 [0.30.33]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.33
 [0.30.32]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.32
