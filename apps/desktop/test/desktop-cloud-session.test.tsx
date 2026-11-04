@@ -15,6 +15,8 @@ import {
 } from "../src/cloud-session.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
 import messages from "../../webapp/messages/en.json";
+import { replyDraftKey } from "../../webapp/app/shell/mail-send";
+import { expectKept, expectSwept, seedWindowKeys } from "./_window-keys.js";
 
 /**
  * THE SIGN-IN DIALOG OPENS ON A REFUSAL AND SAYS WHICH ONE; A FAULT IS A NOTICE OVER THE MAIL.
@@ -389,6 +391,7 @@ describe("a session refused while the mail is on screen", () => {
     const el = await render();
     expect(mounted(el)).toBe(true);
     expect(dialog(el)).toBe(false);
+    const keys = seedWindowKeys();
 
     shell.move({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_expired", 0) });
     const took = await within(2_000, () => dialog(el));
@@ -398,6 +401,7 @@ describe("a session refused while the mail is on screen", () => {
     expect(engineDown(el)).toBe(false);
     expect(text(el)).not.toContain(RETRYING);
     holdsFocus(el.querySelector(".session-end"), DOOR_COPY.cloudLeadExpired(machineWord()), "in-session");
+    expectKept(keys, "a lapse");
   });
 
   /* A REVOKE TAKES THE MAIL OFF THE SCREEN AS THE ENGINE TAKES IT OFF THE DISK: the card stands on
@@ -412,6 +416,7 @@ describe("a session refused while the mail is on screen", () => {
       expect(mounted(el)).toBe(true);
       const cold = shell.snapshots();
       expect(cold, "control: the window's client asked for its cold start").toBeGreaterThan(0);
+      const keys = seedWindowKeys();
 
       shell.move({ signedIn: false, sessionExpired: true, session });
       expect(await within(2_000, () => dialog(el)), "the card did not open within 2 s of the engine's refusal").not.toBeNull();
@@ -419,12 +424,36 @@ describe("a session refused while the mail is on screen", () => {
       expect(mounted(el), "the mail of a removed copy stayed on screen").toBe(false);
       expect(el.querySelector(".session-end.session-whole"), "the card is not the whole page").not.toBeNull();
       holdsFocus(el.querySelector(".session-end"), lead(), "revoked");
+      expectSwept(keys, name);
 
       shell.move({ signedIn: true, sessionExpired: false, session: reading("live", null) });
       expect(await within(2_000, () => mounted(el)), "a live session drew no mail").not.toBeNull();
       expect(await within(2_000, () => shell.snapshots() > cold), "the old client came back instead of a fresh one").not.toBeNull();
     });
   }
+
+  /* HEARD AT A LAUNCH: the mailbox the last launch showed is swept, not the one this engine now names,
+     and once — a card still up at the launch after it leaves the reply buffers alone. */
+  it("a revoke heard at the next launch sweeps the mailbox the last launch showed, once", async () => {
+    fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) });
+    expect(mounted(await render())).toBe(true);
+    const keys = seedWindowKeys();
+    const quit = async (): Promise<void> => {
+      await act(async () => { root!.unmount(); });
+      mountPoint?.remove();
+      root = null;
+    };
+    await quit();
+    const revoked = { signedIn: false, sessionExpired: false, session: reading("refused_before", "refresh_revoked") };
+    fakeShell(revoked, { status: { ...CLOUD_SERVING, mailboxId: "mbx-2" } });
+    expect(dialog(await render())).toBe(true);
+    expectSwept(keys, "the next launch");
+    await quit();
+    localStorage.setItem(replyDraftKey("msg-2"), "a reply begun since");
+    fakeShell(revoked, { status: { ...CLOUD_SERVING, mailboxId: "mbx-2" } });
+    expect(dialog(await render())).toBe(true);
+    expect(localStorage.getItem(replyDraftKey("msg-2")), "swept again at the launch after").toBe("a reply begun since");
+  });
 
   it("gives focus back to where it stood once the session is live again and the card closes", async () => {
     const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true });
@@ -480,10 +509,12 @@ describe("a paired install removed on the other computer", () => {
     const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true, status: PAIRED_SERVING });
     const el = await render();
     expect(mounted(el)).toBe(true);
+    const keys = seedWindowKeys();
     shell.move({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_revoked", 0) });
     expect(await within(2_000, () => text(el).includes(removed())), "the removed card did not open within 2 s").not.toBeNull();
     expect(text(el)).not.toContain(unpaired());
     expect(mounted(el), "the mail of a removed copy stayed on screen").toBe(false);
+    expectSwept(keys, "paired, revoked");
     expect(buttons(el, DOOR_COPY.gatePairAgain)).toHaveLength(1);
     holdsFocus(el.querySelector(".session-end"), removed(), "paired, revoked");
     await act(async () => { root!.unmount(); });

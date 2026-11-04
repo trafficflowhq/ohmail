@@ -7,7 +7,7 @@
  * shape it refuses is planted into a copy of the real file and refused by name; the real tree is
  * admitted.
  */
-/* @reads: apps/webapp/app/shell/send-lock.ts */
+/* @reads: apps/webapp/app/shell/send-lock.ts apps/desktop/src/window-sweep.ts */
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -16,6 +16,15 @@ import ts from "typescript";
 const ROOT = process.cwd();
 const SEND_LOCK = resolve(ROOT, "apps/webapp/app/shell/send-lock.ts");
 const JAR_PREFIX = "ohmail.send.locks";
+
+/**
+ * THE THIRD DOOR TO THE JAR'S PREFIX (ruled 2026-11-04), beside the web's sign-out and the host door's pairing end:
+ * the desktop window's sweep of an ERASED account, in that one function. The engine discards the window's outbox with
+ * an erased account, so no send is owed and nothing else would ever prune its lanes. Sign out and a revoke keep them
+ * (the outbox replays at the next sign-in and the record still guards against a second send), so anywhere else in the
+ * file the prefix is refused; the desktop gate's behaviour tests pin that only the erasure calls it.
+ */
+const ERASURE_DOOR = { path: "apps/desktop/src/window-sweep.ts", fn: "forgetErasedWindowScopes" };
 
 /** The only functions that may call `save`: the door, the decoder's retirement, two same-length rewrites. */
 const SAVERS = new Set(["dropSendLocks", "load", "attachSendLockDraft", "markSendLockUnverified"]);
@@ -147,7 +156,10 @@ function censusOfCallers(files: Array<{ path: string; src: string }>): string[] 
         }
       }
       if (ts.isIdentifier(n) && n.text === "SEND_LOCKS_PREFIX" && !/(^|\/)(sign-out\.ts|HostGate\.tsx)$/.test(path)) {
-        refusals.push(`${path}: names the jar's prefix`);
+        if (path !== ERASURE_DOOR.path) refusals.push(`${path}: names the jar's prefix`);
+        else if (!ts.isImportSpecifier(n.parent) && fnName(n) !== ERASURE_DOOR.fn) {
+          refusals.push(`${path}: names the jar's prefix outside ${ERASURE_DOOR.fn}`);
+        }
       }
       if (!ts.isCallExpression(n)) return;
       const name = calleeName(n);
@@ -273,5 +285,33 @@ describe("a send record leaves the jar by one door", () => {
   it("a caller handing a const bound to sendLockOwed is admitted (the callers' positive control)", () => {
     const src = "function f(engine) {\n  const owed = sendLockOwed(engine);\n  releaseSendLock(lane, fp, owed, owner);\n  claimSendLock(lock, sendLockOwed(engine), owner);\n}\n";
     expect(censusOfCallers([{ path: "apps/webapp/app/shell/planted.ts", src }])).toEqual([]);
+  });
+
+  const sweep = readFileSync(resolve(ROOT, ERASURE_DOOR.path), "utf8");
+  const outside = `${ERASURE_DOOR.path}: names the jar's prefix outside ${ERASURE_DOOR.fn}`;
+
+  it("window-sweep.ts is admitted, naming the jar's prefix in the erasure's sweep alone", () => {
+    expect(censusOfCallers([{ path: ERASURE_DOOR.path, src: sweep }])).toEqual([]);
+    const renamed = sweep.replace(`export function ${ERASURE_DOOR.fn}(`, "export function forgetEveryWindowScope(");
+    expect(renamed, "the anchor moved").not.toBe(sweep);
+    expect(censusOfCallers([{ path: ERASURE_DOOR.path, src: renamed }])).toContain(outside);
+  });
+
+  const sweepPlants: Array<[string, string, string]> = [
+    ["the send lanes in the list every end sweeps", "export const WINDOW_SCOPED_PREFIXES: readonly string[] = [", "SEND_LOCKS_PREFIX, "],
+    ["a send-lane sweep in Sign out's and a revoke's sweep",
+      "export function forgetWindowScopes(scopes: readonly (string | null | undefined)[]): LocalSweep | null {",
+      "\n  dropLocalStorageKeysWhere((k) => k.startsWith(SEND_LOCKS_PREFIX));"],
+  ];
+  for (const [what, anchor, plant] of sweepPlants) {
+    it(`window-sweep.ts: ${what} is refused by name`, () => {
+      expect(sweep.includes(anchor), "the anchor moved").toBe(true);
+      expect(censusOfCallers([{ path: ERASURE_DOOR.path, src: sweep.replace(anchor, `${anchor}${plant}`) }])).toEqual([outside]);
+    });
+  }
+
+  it("the erasure's sweep in another file is refused by name: the door is one file", () => {
+    const src = "export function forgetErasedWindowScopes(s: string[]) {\n  return dropLocalStorageKeysWhere((k) => s.some((x) => k === `${SEND_LOCKS_PREFIX}${x}`));\n}\n";
+    expect(censusOfCallers([{ path: "apps/desktop/src/planted.ts", src }])).toEqual(["apps/desktop/src/planted.ts: names the jar's prefix"]);
   });
 });

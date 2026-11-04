@@ -110,6 +110,7 @@ import {
   createLocalEngine, onAccessRefused, waitingFor, type AccessRefusedFacts, type EngineStatus, type SignedOut,
 } from "./bridge-fetch.js";
 import { desktopSendSurface, stagesAttachments } from "./desktop-send-surface.js";
+import { forgetErasedWindowScopes, forgetWindowScopes, rememberCloudScope, rememberedCloudScope } from "./window-sweep.js";
 
 /** How much of a refused address the one-line toast shows. The host is at the front. */
 const ADDRESS_SHOWN = 80;
@@ -401,6 +402,22 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
     };
   }, [showAsk]);
 
+  /**
+   * THE MAILBOX WHOSE SHELL WAS ON SCREEN, and whether on a Cloud door: written only by `ScopeShown`,
+   * once the shell is drawn, and read when that account ends here (the sweeps below).
+   */
+  const served = useRef<{ scope: string; cloud: boolean } | null>(null);
+  /** The last door this window served: a Sign out's status names none. */
+  const leftDoor = useRef<string | null>(null);
+  /* THE WINDOW KEYS A SIGN OUT OWES (`window-sweep.ts`), swept after the commit that took the shell
+     away, never inside the press. */
+  const [owed, setOwed] = useState<(string | null)[] | null>(null);
+  useEffect(() => {
+    if (owed === null) return;
+    forgetWindowScopes(owed);
+    setOwed(null);
+  }, [owed]);
+
   const onStatus = useCallback((
     next: EngineStatus, stillListedFrom: EngineStatus | null = null, waiting: SignedOut["waiting"] = null,
   ) => {
@@ -408,6 +425,14 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
        lifecycle move at the next poll, which re-keyed the gate and remounted the mail a pairing had
        just opened. */
     delivered.current = lifecycleMark({ kind: "status", status: next });
+    /* SIGNED OUT — from Settings, the access lock or the last mailbox removed; no other not-configured
+       delivery has a shell on screen. The mailbox shown owes its window keys, and on a Cloud door the
+       one an earlier launch showed. */
+    if (next.state === "not_configured") {
+      const scopes = [served.current?.scope ?? null, leftDoor.current === "cloud" ? rememberedCloudScope() : null];
+      setOwed((held) => [...(held ?? []), ...scopes]);
+      served.current = null;
+    }
     setShell({ kind: "status", status: next });
     setOverlay(null);
     setSignedOutFrom(stillListedFrom);
@@ -441,6 +466,9 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    */
   const [ai, setAi] = useState<LocalAiStatus | null>(null);
   const door = shell?.kind === "status" ? (shell.status.mode ?? null) : null;
+  useEffect(() => {
+    if (door !== null) leftDoor.current = door;
+  }, [door]);
 
   /**
    * THE FIRST-RUN STAGE'S DOOR — built here, at the top, for `onUnread`'s reason: it is a
@@ -504,6 +532,20 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * The window keeps no client and draws no mail; the card stands on the window's own page.
    */
   const copyRemoved = door === "cloud" && hostedAuthKnown && copyRemovedBy(hostedAuth.session);
+  /** The hosted account was deleted (`/health.accountErased`): the window keeps no client for it either. */
+  const erased = hostedAuthKnown && hostedAuth.erased;
+  /* THE ACCOUNT ENDED HERE — a revoke or an erasure: the window's keys go with the copy, for the mailbox
+     shown and the one a Cloud door showed at an earlier launch (a card at launch shows none). An erasure
+     takes the send lanes too, since the engine discarded their outbox with the account; a revoke keeps
+     them for the next sign-in, as Sign out does. */
+  const accountEnded = copyRemoved || erased;
+  useEffect(() => {
+    if (!accountEnded) return;
+    const scopes = [served.current?.scope ?? null, rememberedCloudScope()];
+    if (erased) forgetErasedWindowScopes(scopes);
+    else forgetWindowScopes(scopes);
+    served.current = null;
+  }, [accountEnded, erased]);
   /**
    * THE ONE FACT EVERY ACCOUNT-SHAPED SURFACE BELOW IS DECIDED BY — this engine's own live
    * verdict on the hosted session, in the door rules' shape ({@link HostedSession}). Derived
@@ -819,12 +861,12 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   setComposerScope("window");
   // The hosted door stages a large send's bytes through the engine; no other door has storage.
   const stage = stagesAttachments(shell?.kind === "status" ? shell.status : null);
-  if (mount.kind === "engine" && !copyRemoved && (live?.key !== mount.key || live.stage !== stage)) {
+  if (mount.kind === "engine" && !copyRemoved && !erased && (live?.key !== mount.key || live.stage !== stage)) {
     setLive({ key: mount.key, stage, engine: createLocalEngine(mount.key, { stageAttachments: stage }) });
-  } else if ((mount.kind !== "engine" || copyRemoved) && live !== null) {
-    /* Signed out, the door given up, or the copy removed. Dropping the reference is what takes the
-       mirror — a copy of somebody's mail — out of this window's memory; keeping it would leave it
-       sitting behind the chooser for the life of the process. */
+  } else if ((mount.kind !== "engine" || copyRemoved || erased) && live !== null) {
+    /* Signed out, the door given up, the copy removed or its account erased. Dropping the reference is
+       what takes the mirror — a copy of somebody's mail — out of this window's memory; keeping it would
+       leave it sitting behind the chooser for the life of the process. */
     forgetWindowSentFolders(live.key);
     setLive(null);
   }
@@ -1057,6 +1099,24 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
     );
   }
 
+  /* THE HOSTED ACCOUNT WAS DELETED. Before the sign-in and the mail client, because it is
+     neither: a mailbox drawn here is empty and stopped, and a sign-in asks for an account that
+     no longer exists. One way on — this computer on its own, straight to the mail server. The
+     engine has already discarded the session and asks the hosted API nothing more. Before the
+     relaunch card too, which the erasure's staged discard also raises. */
+  if (erased) {
+    return (
+      <>
+        <GateNotice
+          reason={DOOR_COPY.gateAccountErased(machineWord())}
+          actionLabel={DOOR_COPY.gateOwn}
+          onAction={() => setOverlay("local")}
+        />
+        {doorOverlay}
+      </>
+    );
+  }
+
   /**
    * ═══ A PAIRING THAT WORKED AND IS WAITING FOR A RELAUNCH ══════════════════════════════
    * FIRST, by design: its `/health` shape (`signedIn:false, sessionExpired:false`) is
@@ -1065,7 +1125,8 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * exact moment a pairing succeeded (or, via `sessionExpired`, claim "no longer paired").
    * NO BUTTON — nothing here can restart the app, so the card says quit and reopen. NOT
    * `GateNotice`: its "cannot open your mailbox" and "Your mail is untouched" are both false
-   * here — the pairing SUCCEEDED and the previous copy is deliberately replaced.
+   * here — the pairing SUCCEEDED and the previous copy is deliberately replaced. Only the
+   * erased card stands before it: an erasure raises `restartRequired` too.
    */
   if (hostedRestartRequired) {
     return (
@@ -1076,23 +1137,6 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
           <p>{DOOR_COPY.gateRestart(hostLabel ?? DOOR_COPY.doorHostName)}</p>
         </div>
       </div>
-    );
-  }
-
-  /* THE HOSTED ACCOUNT WAS DELETED. Before the sign-in and the mail client, because it is
-     neither: a mailbox drawn here is empty and stopped, and a sign-in asks for an account that
-     no longer exists. One way on — this computer on its own, straight to the mail server. The
-     engine has already discarded the session and asks the hosted API nothing more. */
-  if (hostedAuthKnown && hostedAuth.erased) {
-    return (
-      <>
-        <GateNotice
-          reason={DOOR_COPY.gateAccountErased(machineWord())}
-          actionLabel={DOOR_COPY.gateOwn}
-          onAction={() => setOverlay("local")}
-        />
-        {doorOverlay}
-      </>
     );
   }
 
@@ -1665,8 +1709,24 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
       />
       {doorOverlay}
       {refusedCard}
+      <ScopeShown scope={shellKey} cloud={status?.mode === "cloud"} into={served} />
     </>
   );
+}
+
+/**
+ * THE MAILBOX ON SCREEN, recorded once its shell is drawn, and kept across launches on a Cloud door.
+ * Never from `live`: that client is built before the session is read, so a launch that shows only a
+ * revoke's card would record a mailbox it never showed, over the one whose keys are owed.
+ */
+function ScopeShown({ scope, cloud, into }: {
+  scope: string; cloud: boolean; into: { current: { scope: string; cloud: boolean } | null };
+}) {
+  useEffect(() => {
+    into.current = { scope, cloud };
+    if (cloud) rememberCloudScope(scope);
+  }, [scope, cloud, into]);
+  return null;
 }
 
 /** The id of the refused card's first sentence, which describes its dialog. One card is up at a time. */

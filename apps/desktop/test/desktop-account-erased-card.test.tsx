@@ -9,6 +9,7 @@ import { DesktopGate } from "../src/DesktopGate.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
 import messages from "../../webapp/messages/en.json";
+import { expectSwept, seedWindowKeys } from "./_window-keys.js";
 
 /**
  * A DELETED HOSTED ACCOUNT IS SAID, NEVER DRAWN AS AN EMPTY MAILBOX. The engine latches
@@ -16,6 +17,9 @@ import messages from "../../webapp/messages/en.json";
  * window then shows one card with the local-only door on it, before the mail client and before
  * the sign-in surface — a deleted account is neither a mailbox nor a sign-out. Read from the
  * RENDERED output. Watched red: the gate's branch cut — the empty mailbox and the sign-in return.
+ * The erasure also stages the relaunch's discard (`restartRequired`), and the card outranks that
+ * one too; the window's own keys for the mailbox go with the account, now or at the next launch, its
+ * send lanes included (the engine discarded the outbox they guard).
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,9 +57,16 @@ const EMPTY_PAGE = JSON.stringify({
 });
 const EMPTY_SNAPSHOT = JSON.stringify({ asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 500 } });
 
-function fakeShell(health: Record<string, unknown>): void {
+/**
+ * The stand-in shell. `move` changes what `/health` answers and releases the held session question
+ * (`wait`), as the engine does; `snapshots` counts cold starts, one per new window client.
+ */
+function fakeShell(health: Record<string, unknown>, opts: { wait?: boolean; status?: EngineStatus } = {}) {
   const callbacks = new Map<number, (payload: unknown) => void>();
   let next = 1;
+  let current = health;
+  let snapshots = 0;
+  const held: Array<() => void> = [];
   host.__TAURI_INTERNALS__ = {
     transformCallback: (cb) => {
       const id = next++;
@@ -63,13 +74,21 @@ function fakeShell(health: Record<string, unknown>): void {
       return id;
     },
     invoke: async (command, payload) => {
-      if (command === "engine_status") return CLOUD_SERVING;
+      if (command === "engine_status") return opts.status ?? CLOUD_SERVING;
       if (command === "mailto_claim") return null;
       if (command === "plugin:event|listen") return null;
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
-        if (url === "/health") return encode(200, JSON.stringify(health));
-        if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
+        if (url === "/health") return encode(200, JSON.stringify(current));
+        if (url.startsWith("/cloud/session/wait") && opts.wait) {
+          const named = new URLSearchParams(url.split("?")[1] ?? "").get("state");
+          if (named === ((current.session as { state?: string } | undefined)?.state ?? "none")) await new Promise<void>((r) => held.push(r));
+          return encode(200, JSON.stringify({ changed: true, session: current.session ?? null }));
+        }
+        if (url.startsWith("/sync/snapshot")) {
+          snapshots++;
+          return encode(200, EMPTY_SNAPSHOT);
+        }
         if (url.startsWith("/sync")) return encode(200, EMPTY_PAGE);
         if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: [] }));
         return encode(200, "{}");
@@ -77,7 +96,16 @@ function fakeShell(health: Record<string, unknown>): void {
       return null;
     },
   };
+  return { move: (n: Record<string, unknown>) => { current = n; for (const r of held.splice(0)) r(); }, snapshots: () => snapshots };
 }
+
+const since = new Date(0).toISOString();
+const LIVE = { signedIn: true, sessionExpired: false, online: true, session: { state: "live", code: null, since } };
+/** What `/health` says once the engine heard the erasure: it staged the discard, which also raises `restartRequired`. */
+const ERASED = {
+  signedIn: false, sessionExpired: false, accountErased: true, restartRequired: true,
+  session: { state: "refused", code: "account_erased", since },
+};
 
 let root: Root | null = null;
 let mountPoint: HTMLElement | null = null;
@@ -103,6 +131,20 @@ async function render(): Promise<HTMLElement> {
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 30; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
+}
+
+/** Real time, in small turns, until `ok` holds or 2 s pass. */
+async function until(ok: () => boolean): Promise<boolean> {
+  for (const t0 = Date.now(); Date.now() - t0 < 2_000 && !ok();) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+  }
+  return ok();
+}
+
+async function quit(): Promise<void> {
+  await act(async () => { root!.unmount(); });
+  mountPoint?.remove();
+  root = null;
 }
 
 function buttonsSaying(el: HTMLElement, label: string): HTMLButtonElement[] {
@@ -155,6 +197,39 @@ describe("a deleted hosted account", () => {
     expect(el.textContent ?? "", "the local door's lead is not on screen")
       .toContain(DOOR_COPY.localLead(machineWord()));
   });
+
+  it("in the shape the engine answers, its discard staged for the relaunch: the card, not 'Pairing finished'", async () => {
+    fakeShell(ERASED);
+    const el = await render();
+    expect(el.textContent ?? "").toContain(DOOR_COPY.gateAccountErased(machineWord()));
+    expect(el.textContent ?? "").not.toContain(DOOR_COPY.gateRestartTitle);
+    expect(buttonsSaying(el, DOOR_COPY.gateOwn)).toHaveLength(1);
+  });
+
+  it("erased under the mail: the card, the window's keys for that mailbox gone, its send lane too, and a later session on a fresh client", async () => {
+    const shell = fakeShell(LIVE, { wait: true });
+    const el = await render();
+    expect(mounted(el)).toBe(true);
+    const keys = seedWindowKeys("erased");
+    const cold = shell.snapshots();
+    shell.move(ERASED);
+    expect(await until(() => (el.textContent ?? "").includes(DOOR_COPY.gateAccountErased(machineWord()))), "no card").toBe(true);
+    expect(mounted(el)).toBe(false);
+    expectSwept(keys, "erased");
+    shell.move(LIVE);
+    expect(await until(() => mounted(el)), "a live session drew no mail").toBe(true);
+    expect(await until(() => shell.snapshots() > cold), "the erased account's client came back").toBe(true);
+  });
+
+  it("at the launch after the erasure: the mailbox the last launch showed is swept, its send lane too", async () => {
+    fakeShell(LIVE);
+    expect(mounted(await render())).toBe(true);
+    const keys = seedWindowKeys("erased");
+    await quit();
+    fakeShell(ERASED, { status: { ...CLOUD_SERVING, mailboxId: "mbx-2" } });
+    expect((await render()).textContent ?? "").toContain(DOOR_COPY.gateAccountErased(machineWord()));
+    expectSwept(keys, "the next launch");
+  });
 });
 
 describe("CONTROLS — the other states keep their cards", () => {
@@ -169,5 +244,12 @@ describe("CONTROLS — the other states keep their cards", () => {
     const el = await render();
     expect(signInSurface(el)).toBe(true);
     expect(el.textContent ?? "").not.toContain("deleted");
+  });
+
+  it("a pairing waiting for its relaunch, nothing erased: 'Pairing finished'", async () => {
+    fakeShell({ signedIn: false, sessionExpired: false, accountErased: false, restartRequired: true });
+    const el = await render();
+    expect(el.textContent ?? "").toContain(DOOR_COPY.gateRestartTitle);
+    expect(el.textContent ?? "").not.toContain(DOOR_COPY.gateAccountErased(machineWord()));
   });
 });

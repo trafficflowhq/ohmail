@@ -12,13 +12,15 @@ import { MACHINE_WORD } from "../src/platform.js";
 import { setActiveCatalog } from "../../webapp/app/shell/locale.js";
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
+import { expectKept, expectSwept, seedWindowKeys, type WindowKeys } from "./_window-keys.js";
 
 /**
  * A SIGN-OUT THE SERVER DID NOT CONFIRM IS SAID ONCE, WHERE THE PRESS LANDS. The window asks the
  * engine to end the session before the shell's own sign-out (whose answer the shell drops), and a
  * press whose server did not confirm leaves one line on the chooser: signed out here, maybe still
  * listed there. A refused or unanswered first step never refuses the press, and a pending switch
- * is left wholly to the shell, which refuses it.
+ * is left wholly to the shell, which refuses it. The window's own keys for the mailbox it showed
+ * go with the press, confirmed or not; a press the shell refused keeps them.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -63,8 +65,13 @@ const EMPTY_SNAPSHOT = JSON.stringify({ asOfSeq: 0, changes: [], nextCursor: nul
 /** What the engine's `DELETE /cloud/session` answers, or `"throw"` for an engine that cannot be asked. */
 type DeleteAnswer = Record<string, unknown> | "throw";
 
+/** The shell's refusal of its own sign-out, in the `logout: "throw"` stand-in. */
+const LOGOUT_REFUSED = "the shell could not remove the door";
+
 /** The stand-in shell: a serving door that `engine_logout` turns into an install with no door. */
-function fakeShell(start: EngineStatus, del: DeleteAnswer = { status: "signed_out", revokedAtHost: true }) {
+function fakeShell(
+  start: EngineStatus, del: DeleteAnswer = { status: "signed_out", revokedAtHost: true }, logout: "throw" | null = null,
+) {
   let current = start;
   const asked: string[] = [];
   host.__TAURI_INTERNALS__ = {
@@ -74,6 +81,7 @@ function fakeShell(start: EngineStatus, del: DeleteAnswer = { status: "signed_ou
       const url = String(payload?.url ?? "");
       asked.push(command === "engine_request" ? `${method} ${url}` : command);
       if (command === "engine_status") return current;
+      if (command === "engine_logout" && logout === "throw") throw new Error(LOGOUT_REFUSED);
       if (command === "engine_logout") { current = SIGNED_OUT; return current; }
       if (command === "engine_request") {
         if (method === "DELETE" && url === "/cloud/session") {
@@ -81,6 +89,7 @@ function fakeShell(start: EngineStatus, del: DeleteAnswer = { status: "signed_ou
           return encode(200, JSON.stringify(del));
         }
         if (url === "/health") return encode(200, JSON.stringify({ signedIn: true, sessionExpired: false }));
+        if (url === "/local/ai") return encode(404, "{}"); // no local model: the form draws nothing
         if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
         if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: [] }));
         return encode(200, EMPTY_PAGE);
@@ -173,8 +182,13 @@ describe("Settings → Desktop → Sign out, read where it lands", () => {
     await act(async () => { found[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   }
 
-  /** Mount the gate on Settings → Desktop, press Sign out and its confirmation, wait for the doors. */
-  async function signOutFromSettings(locale: "en" | "de"): Promise<void> {
+  /**
+   * Mount the gate on Settings → Desktop, run `seed` once the shell is up, press Sign out and its
+   * confirmation, and wait for the doors (or `landed`).
+   */
+  async function signOutFromSettings(
+    locale: "en" | "de", seed?: () => void, landed = (): boolean => (el?.querySelectorAll(".door-tile").length ?? 0) > 0,
+  ): Promise<void> {
     if (locale === "de") setActiveCatalog("de", de as never);
     window.location.hash = "#/settings/desktop";
     el = document.createElement("div");
@@ -188,10 +202,11 @@ describe("Settings → Desktop → Sign out, read where it lands", () => {
       );
     });
     await until("the Settings pane's Sign out", () => buttons(DOOR_COPY.signOut).length === 1);
+    seed?.();
     await press(DOOR_COPY.signOut);
     await until("the confirmation", () => text().includes(DOOR_COPY.installSignOutConfirm));
     await press(DOOR_COPY.signOut);
-    await until("the doors the press lands on", () => (el?.querySelectorAll(".door-tile").length ?? 0) > 0);
+    await until("the doors the press lands on", landed);
   }
 
   /** The German sentence, from the catalogue itself, with this build's machine word. */
@@ -238,5 +253,28 @@ describe("Settings → Desktop → Sign out, read where it lands", () => {
     expect(shell.deletes()).toBe(1);
     expect(el!.querySelector("[role=status]")?.textContent ?? "").not.toContain("Settings → Devices");
     expect(text()).not.toContain(DOOR_COPY.signedOutStillListed(machineWord(), "ohmail.app"));
+  });
+
+  /* THE WINDOW FORGETS THE MAILBOX IT SHOWED, on every door, whether or not the server confirmed. */
+  for (const [name, door, del] of [
+    ["managed", MANAGED, { status: "signed_out", revokedAtHost: true }],
+    ["managed, the server not confirming", MANAGED, { status: "signed_out", revokedAtHost: false }],
+    ["paired", PAIRED, { status: "signed_out", revokedAtHost: true }],
+    ["local", LOCAL, { status: "signed_out" }],
+  ] as const) {
+    it(`${name}: the window's keys for that mailbox go with the sign-out; another's and the preferences stay`, { timeout: 30_000 }, async () => {
+      fakeShell(door, del);
+      let keys: WindowKeys = { gone: [], kept: [] };
+      await signOutFromSettings("en", () => { keys = seedWindowKeys(); });
+      expectSwept(keys, name);
+    });
+  }
+
+  it("control: a sign-out the shell refused keeps them", { timeout: 30_000 }, async () => {
+    fakeShell(MANAGED, { status: "signed_out", revokedAtHost: true }, "throw");
+    let keys: WindowKeys = { gone: [], kept: [] };
+    await signOutFromSettings("en", () => { keys = seedWindowKeys(); }, () => text().includes(LOGOUT_REFUSED));
+    await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+    expectKept(keys, "refused");
   });
 });
